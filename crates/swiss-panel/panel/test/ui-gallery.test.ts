@@ -78,10 +78,14 @@ const SIG: Record<string, string> = {
   iconNode: "svg.ic > use",
   dot: ".dot",
   tag: ".tag",
+  spinner: ".spin",
+  note: ".note",
   sw: ".sw[role=switch]",
   styleSelect: ".dd",
   pane: "main.pane",
+  paneBody: ".wide",
   paneHead: ".pane-head",
+  resHead: ".pane-head.res + .res-meta + .pane-nav .seg",
   pageFoot: ".page-foot",
   inlineForm: ".inline-form",
   section: "section.sec",
@@ -97,6 +101,8 @@ const SIG: Record<string, string> = {
   popupMenu: "[data-demo=menu]",
   sheet: "[data-demo=sheet]",
   openFieldSheet: "[data-demo=field]",
+  anchoredMenu: ".pane-actions [data-demo=anchored]",
+  toTop: "[data-demo=totop]",
 };
 
 const settle = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });
@@ -262,6 +268,10 @@ describe("docs/46 G6 - the scenes", () => {
     expect(rows.length).toBe(4);
     expect(Array.from(rows).filter((r) => r.getAttribute("aria-selected") === "true").map((r) => r.querySelector(".side-name")!.textContent)).toEqual(["orders-db"]);
     expect(app().querySelector("main.pane .pane-title")!.textContent).toBe("orders-db");
+    // The resource head's layers are the pane frame's own children, so each can stick in it.
+    const frame = app().querySelector("main.pane > .wide")!;
+    expect(Array.from(frame.children).slice(0, 3).map((n) => n.className)).toEqual(["pane-head res", "res-meta", "pane-nav"]);
+    expect(frame.querySelector(":scope > .pane-nav > .seg [aria-selected=true]")!.textContent).toBe(tr("gallery.s.logs"));
     expect(app().querySelectorAll(".tl-item.open .tl-body pre.jv")).toHaveLength(2);
     expect(app().querySelector(".tl-n")!.textContent).toBe(tr("ui.timesN", { n: 3 }));
   });
@@ -400,6 +410,49 @@ describe("docs/46 G6 - the switches and demos answer", () => {
     click(item.querySelector(".tl-sum")!);
     expect(item.classList.contains("open")).toBe(false);
     expect(item.querySelector(".tl-body")).toBeNull();
+  });
+
+  it("anchored menu: a resource head's ⋯ hangs it inside the head's actions; Escape closes it", async () => {
+    await go("#components");
+    const more = app().querySelector<HTMLElement>("[data-demo=anchored]")!;
+    click(more);
+    const menu = document.getElementById("menu")!;
+    expect(ui.menuOpen()).toBe(true);
+    expect(menu.parentElement).toBe(more.closest(".pane-actions"));
+    expect(menu.classList.contains("float")).toBe(false);
+    expect(menu.querySelector(".menu-head")!.textContent).toBe(tr("gallery.d.menuHeading"));
+    expect(document.activeElement).toBe(menu.querySelector("button"));
+    key(document.activeElement!, "Escape");
+    expect(ui.menuOpen()).toBe(false);
+    expect(document.getElementById("menu")).toBeNull();
+  });
+
+  it("back to top: one per render, hidden at the top, shown a screen down, a click goes home", async () => {
+    await go("#components");
+    const buttons = document.querySelectorAll<HTMLButtonElement>("body > .btn.to-top");
+    expect(buttons).toHaveLength(1);
+    const top = buttons[0];
+    expect(top.getAttribute("aria-label")).toBe(tr("ui.toTop"));
+    const scroller = app().querySelector<HTMLElement>("main.pane")!;
+    expect(top.classList.contains("on")).toBe(false);
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 600 });
+    scroller.scrollTop = 500;
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(top.classList.contains("on")).toBe(false);
+    scroller.scrollTop = 1400;
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(top.classList.contains("on")).toBe(true);
+    const to = vi.spyOn(scroller, "scrollTo");
+    click(top);
+    // Smooth, since the test DOM reports no reduced-motion preference.
+    expect(to).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+    await vi.waitFor(() => { expect(scroller.scrollTop).toBe(0); });
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(top.classList.contains("on")).toBe(false);
+    // A scene is a new pane: the old button goes with the old pane.
+    await go("#scene-event");
+    expect(document.querySelectorAll("body > .btn.to-top")).toHaveLength(1);
+    expect(document.querySelector("body > .btn.to-top")).not.toBe(top);
   });
 
   it("nothing threw or logged an error along the way", () => {

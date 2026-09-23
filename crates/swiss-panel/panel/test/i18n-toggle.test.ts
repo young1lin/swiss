@@ -24,6 +24,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { LANG_KEY, install, locale, paintChrome, toggleLang } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
+import { trackPaneScroll } from "../src/pane-scroll.js";
 
 const flipGate = vi.hoisted(() => ({ veto: true }));
 vi.mock("../src/page-registry.js", () => ({
@@ -75,6 +76,18 @@ describe("paintChrome and the language flip (docs/38 §2.5)", () => {
     expect(document.getElementById("expandBtn")!.title).toContain("专注模式");
     expect(document.querySelector("aside.rail")!.getAttribute("aria-label")).toBe("插件");
     expect(document.documentElement.lang).toBe("zh-CN");
+  });
+
+  it("the back-to-top button the shell built at boot follows the flip (docs/46 U18)", () => {
+    const pane = document.createElement("main");
+    document.body.appendChild(pane);
+    trackPaneScroll(pane);
+    const top = document.getElementById("toTop")!;
+    expect(top.getAttribute("aria-label")).toBe("Back to top");
+    install("zh-CN", zh);
+    paintChrome();
+    expect(top.getAttribute("aria-label")).toBe("回到顶部");
+    expect(top.title).toBe("回到顶部");
   });
 
   it("a canLeave veto stops the flip before the preference is written, and says so", async () => {

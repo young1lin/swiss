@@ -248,7 +248,9 @@
        already pushing the pane off-centre the auto margins read as two blank gutters with the
        content floating between them. The cap stays, only the centring goes; emptiness belongs on
        the right, where it reads as room rather than as imbalance. */
-    .pane { flex: 1; overflow-y: auto; padding: var(--s5) var(--s8) var(--s8); }
+    /* The bottom padding clears the back-to-top button (.btn.to-top: --s6 off the bottom, --s8 +
+       --s1 tall): scrolled to the end, the last row rises above it instead of sitting under it. */
+    .pane { flex: 1; overflow-y: auto; padding: var(--s5) var(--s8) calc(var(--s6) + var(--s8) * 2); }
     .pane > * { max-width: var(--measure); margin-inline: 0; }
     .pane > .wide { max-width: var(--measure-wide); }
     .pane > .empty { max-width: none; }
@@ -269,26 +271,41 @@
        head's own size whose outset shadows are clipped back to their height. Shadows are ink,
        not scrollable overflow, so the pane grows no sideways scrollbar. The hairline shows only
        once the pane has scrolled - the shell keeps .pane.scrolled (pane-scroll.ts). The MCP
-       resource head pins with its seg in P2; it is .col > .pane-head and not matched here. */
+       resource head (resHead) is this pin too, with a second layer under it - below.
+       z-index 4, one over the nav layer: a menu hung in the head's actions must paint over the
+       tabs it drops across. */
     .pane > .wide > .pane-head {
-      position: sticky; top: calc(var(--s5) * -1); z-index: 3;
+      position: sticky; top: calc(var(--s5) * -1); z-index: 4;
       margin: calc(var(--s5) * -1) 0 var(--s2);
       padding: var(--s5) 0 var(--s3);
     }
-    .pane > .wide > .pane-head::before,
-    .pane > .wide > .pane-head::after { content: ""; position: absolute; left: 0; right: 0; clip-path: inset(0 -100vmax); pointer-events: none; }
-    .pane > .wide > .pane-head::before { top: 0; bottom: 0; z-index: -1; background: var(--bg); box-shadow: 0 0 0 100vmax var(--bg); }
-    .pane > .wide > .pane-head::after { bottom: -1px; height: 1px; background: var(--sep); box-shadow: 0 0 0 100vmax var(--sep); visibility: hidden; }
-    .pane.scrolled > .wide > .pane-head::after { visibility: visible; }
+    .pane > .wide > .pane-head::before, .pane > .wide > .pane-nav::before,
+    .pane > .wide > .pane-head::after, .pane > .wide > .pane-nav::after { content: ""; position: absolute; left: 0; right: 0; clip-path: inset(0 -100vmax); pointer-events: none; }
+    .pane > .wide > .pane-head::before, .pane > .wide > .pane-nav::before { top: 0; bottom: 0; z-index: -1; background: var(--bg); box-shadow: 0 0 0 100vmax var(--bg); }
+    .pane > .wide > .pane-head::after, .pane > .wide > .pane-nav::after { bottom: -1px; height: 1px; background: var(--sep); box-shadow: 0 0 0 100vmax var(--sep); visibility: hidden; }
+    .pane.scrolled > .wide > .pane-head::after, .pane.scrolled > .wide > .pane-nav::after { visibility: visible; }
+    /* The resource head (resHead, docs/46 §3.2) as two pinned layers. The name row is the pin
+       above, closed up to the name; the description and state line (.res-meta) are plain flow
+       and scroll away beneath it; the nav (.pane-nav: the resource's seg) sticks under the name
+       row at --pin-title-h, which the shell measures (pane-scroll.ts). Stuck, the two read as
+       the head folded to name + tabs, with no script state - and the head never changes height,
+       so the page under it never changes length. The hairline is drawn by the LAST layer only,
+       once something has scrolled under the stack (pane-scroll.ts keeps .scrolled to that). */
+    .pane-head.res { align-items: center; margin-bottom: var(--s2); }
+    .pane > .wide > .pane-head.res { padding-bottom: var(--s2); margin-bottom: 0; }
+    .pane-head.res .pane-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pane > .wide > .pane-head:has(~ .pane-nav)::after { display: none; }
+    .res-meta { padding-bottom: var(--s5); }
+    .res-meta > .pane-desc { margin-top: 0; }
+    .pane > .wide > .pane-nav {
+      position: sticky; top: calc(var(--pin-title-h, 0px) - var(--s5)); z-index: 3;
+      padding-bottom: var(--s3); margin-bottom: var(--s1);
+    }
     .pane-title { font-size: var(--f-title); font-weight: var(--w-title); letter-spacing: -0.02em; margin: 0; line-height: 1.25; }
     /* Body size, not head size: at 15px the description of a page outweighed the rows under it,
        and three lines of it pushed the first row below the fold on a laptop. It is a caption. */
     .pane-desc { font-size: var(--f-body); font-weight: var(--w-body); color: var(--text-2); margin-top: var(--s1); max-width: 68ch; line-height: 1.5; }
     .pane-sub { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); margin-top: var(--s2); }
-    /* The mount path — the one part of the header you would actually copy, so it keeps the monospace
-       face the title gave up. */
-    .sub-path { font-family: var(--mono); font-size: var(--f-caption); color: var(--text-2); }
-    .sub-path::after { content: "·"; color: var(--text-3); margin-left: var(--s2); }
     .pane-actions { margin-left: auto; display: flex; gap: var(--s2); position: relative; }
 
     /* height:100% resolves against .pane when this is a direct child; min-height carries it when the
@@ -303,7 +320,7 @@
     .empty [data-empty-action] { margin-top: var(--s4); }
 
     /* Segmented control. */
-    .seg { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: var(--s4); background: var(--sep-soft); border-radius: 8px; }
+    .seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--sep-soft); border-radius: 8px; }
     /* An emptied .seg is not a control: the padding over --sep-soft is the control's well, so
        with nothing inside it the well itself paints — a 6px grey square. The shell no longer
        empties a .seg (page navigation left the segmented control entirely), but a page-local
@@ -519,11 +536,6 @@
     .menu button .db-tab-dot { margin-left: auto; }
 
     .menu hr { border: 0; border-top: 1px solid var(--sep-soft); margin: var(--s1) 0; }
-    /* A caption for the first group: "Copy Codex command" needs to say what it is for. */
-    .menu-cap {
-      font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em;
-      color: var(--text-3); padding: var(--s1) var(--s2) 2px;
-    }
 
     /* Sheet (Add) + sign-in. */
     .backdrop { position: fixed; inset: 0; background: rgba(12, 14, 20, .38); display: grid; place-items: start center; padding-top: 8vh; z-index: 40; }
@@ -583,14 +595,23 @@
       font-size: var(--f-body); max-width: 78vw; z-index: 50;
     }
     .toast.err { border-color: var(--red); }
+    /* Back to top (toTop, docs/46 U18): one round glyph at the pane's bottom-right, fixed on
+       <body>. Hidden by visibility - which also takes it out of the Tab order - until its
+       scroller is more than a screen down. Under the menus (30), the backdrop (40), the toast (50). */
+    .btn.to-top {
+      position: fixed; right: var(--s6); bottom: var(--s6); z-index: 20;
+      width: calc(var(--s8) + var(--s1)); height: calc(var(--s8) + var(--s1)); padding: 0; border-radius: 50%;
+      background: var(--card); color: var(--text-2); box-shadow: var(--shadow-pop);
+      visibility: hidden; opacity: 0; transform: translateY(var(--s2));
+      transition: opacity .15s ease, transform .15s ease, visibility .15s;
+    }
+    .btn.to-top.on { visibility: visible; opacity: 1; transform: none; }
+    .btn.to-top:hover { color: var(--text); background: color-mix(in srgb, var(--hover), var(--card)); }
+    .btn.to-top .ic { width: var(--ic-m); height: var(--ic-m); }
+    @media (prefers-reduced-motion: reduce) { .btn.to-top { transition: none; } }
     .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--text-3); border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -1px; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* .seg's default bottom margin spaces it off the tab body. Where it sits inline beside
-       other controls instead — a section header like this page's own tab row — that margin
-       shifts it off their centre. (The shell's navigation left .seg behind entirely: plugins
-       live in the rail, pages in the context bar's switcher.) */
-    .sec-head .seg { margin-bottom: 0; }
 
     /* Section captions inside a sheet - the pane's .sec-cap, spaced for the sheet's grid. */
     .sheet-cap {

@@ -104,10 +104,10 @@ function clampMenuPos(anchor                                               , w  
    { label, fn, danger, sep, pick, on }. Keyboard (docs/13 D5): the menu is a real menu —
    first item focused on open, arrows walk the items, Escape closes — so a page switcher
    built on it needs no second menu idiom. */
-function popupMenu(anchor                                                               , items            )       {
-  closeMenu();
+/** The rows of a menu, as popupMenu and anchoredMenu both draw them. */
+function menuNode(cls        , items            )              {
   const node = document.createElement("div");
-  node.className = "menu float";
+  node.className = cls;
   node.id = "menu";
   items.forEach((it) => {
     if (it.sep) { node.appendChild(document.createElement("hr")); return; }
@@ -144,27 +144,17 @@ function popupMenu(anchor                                                       
     b.onclick = (ev) => { ev.stopPropagation(); closeMenu(); if (!b.disabled) it.fn(); };
     node.appendChild(b);
   });
-  document.body.appendChild(node);
-  // A menu dropped from a row never sits narrower than the row itself (found live on
-  // 19998: the connection menu measured 160px against its 233px sidebar row - the CSS
-  // content floor won and the dropdown floated 73px short of the thing that opened it).
-  // The anchor's width joins the CSS floor through max(), so a small anchor (a toolbar
-  // overflow button) keeps the stylesheet's 160px unchanged.
-  if (anchor.width) node.style.minWidth = "max(160px, " + Math.ceil(anchor.width) + "px)";
-  // Aligned to the button's LEFT edge and growing right, over the detail pane. Right-aligning it
-  // instead pushed a sidebar menu back across the list it was opened from, hiding those rows.
-  // The clamp itself is clampMenuPos — shared with the ctx menus (docs/22 closeout audit).
-  const r = node.getBoundingClientRect();
-  const pos = clampMenuPos(anchor, r.width, r.height, window.innerWidth, window.innerHeight);
-  node.style.left = pos.left + "px";
-  // Below the button, unless that would run off the bottom — then above it.
-  node.style.top = pos.top + "px";
+  return node;
+}
+
+/** Roles and keys, once the menu is in the document: the first item focused, arrows walk the
+ *  items, Escape closes. Guarded: four suites still drive popupMenu on a hand-rolled micro-DOM
+ *  with no querySelectorAll, focus or setAttribute (admin-revisions, admin-row-menu,
+ *  admin-data-redis-cellmenu, admin-logs-pagination). It is also why the menu is built with
+ *  createElement rather than h(): those stubs never derive textContent from a text child.
+ *  Both go when the last of those suites moves to happy-dom with the page that owns it (P7). */
+function wireMenu(node             )       {
   open = true;
-  // Roles and keys, guarded: four suites still drive this menu on a hand-rolled micro-DOM
-  // with no querySelectorAll, focus or setAttribute (admin-revisions, admin-row-menu,
-  // admin-data-redis-cellmenu, admin-logs-pagination). It is also why the menu is built with
-  // createElement rather than h(): those stubs never derive textContent from a text child.
-  // Both go when the suites move to happy-dom with the pages that own them (P2 MCP, P7 Data).
   if (typeof node.setAttribute === "function") node.setAttribute("role", "menu");
   const buttons = typeof node.querySelectorAll === "function"
     ? Array.prototype.slice.call(node.querySelectorAll                   ("button"))
@@ -193,4 +183,36 @@ function popupMenu(anchor                                                       
   }
 }
 
-export { clampMenuPos, popupMenu };
+function popupMenu(anchor                                                               , items            )       {
+  closeMenu();
+  const node = menuNode("menu float", items);
+  document.body.appendChild(node);
+  // A menu dropped from a row never sits narrower than the row itself (found live on
+  // 19998: the connection menu measured 160px against its 233px sidebar row - the CSS
+  // content floor won and the dropdown floated 73px short of the thing that opened it).
+  // The anchor's width joins the CSS floor through max(), so a small anchor (a toolbar
+  // overflow button) keeps the stylesheet's 160px unchanged.
+  if (anchor.width) node.style.minWidth = "max(160px, " + Math.ceil(anchor.width) + "px)";
+  // Aligned to the button's LEFT edge and growing right, over the detail pane. Right-aligning it
+  // instead pushed a sidebar menu back across the list it was opened from, hiding those rows.
+  // The clamp itself is clampMenuPos — shared with the ctx menus (docs/22 closeout audit).
+  const r = node.getBoundingClientRect();
+  const pos = clampMenuPos(anchor, r.width, r.height, window.innerWidth, window.innerHeight);
+  node.style.left = pos.left + "px";
+  // Below the button, unless that would run off the bottom — then above it.
+  node.style.top = pos.top + "px";
+  wireMenu(node);
+}
+
+/** The same menu hung INSIDE a positioned box - a page head's .pane-actions - right-aligned
+ *  under it, instead of floating on <body>. A resource's ⋯ sits at the pane's right edge,
+ *  where a float growing right from the button would run off-screen; hung in the pinned head,
+ *  it also rides the head when the page scrolls. Rows, keys and closing are popupMenu's. */
+function anchoredMenu(host             , items            )       {
+  closeMenu();
+  const node = menuNode("menu", items);
+  host.appendChild(node);
+  wireMenu(node);
+}
+
+export { anchoredMenu, clampMenuPos, popupMenu };

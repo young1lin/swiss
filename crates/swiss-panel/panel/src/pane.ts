@@ -17,7 +17,7 @@
 import type { ApiMcpRow } from "./types/api.js";
 import type { PhantomMcpRow } from "./types/dom.js";
 import type { McpDetail } from "./types/state.js";
-import { $, KINDS, emptyNode, iconNode, isMcpKind, targetEl } from "./util.js";
+import { $, KINDS, emptyNode, isMcpKind, targetEl } from "./util.js";
 import { fill, h } from "./h.js";
 import { openGroupSheet, openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
@@ -27,7 +27,8 @@ import { assignGroup, groupOf, rowOf, saveGroups } from "./sidebar.js";
 import { currentView } from "./ui-state.js";
 import { lastActionOf, mcpBusyVerb, mcpDetail, mcpGroups, mcpRows } from "./mcp-state.js";
 import { locale, tk, tr } from "./i18n.js";
-import { closeMenu, menuOpen, setMenuOpen } from "./ui/menu.js";
+import { anchoredMenu, btn, closeMenu, dot, menuOpen, moreBtn, note, paneBody, resHead, seg } from "./ui/index.js";
+import type { DotState, MenuItem } from "./ui/index.js";
 
 /* --- rendering: detail pane ------------------------------------------------------------------- */
 /** True when the user is typing inside the pane; a poll must never re-render over that. */
@@ -40,12 +41,12 @@ function patchDetailHead(): void {
   const d = mcpDetail();
   if (!d) return;
   const m = rowOf(d.name);
-  const dot = document.querySelector<HTMLElement>("#pane .pane-sub .dot");
+  const mark = document.querySelector<HTMLElement>("#pane .pane-sub .dot");
   const txt = document.querySelector<HTMLElement>("#pane .pane-sub .sub-text");
   const primary = $<HTMLButtonElement>("primaryBtn");
-  if (!m || !dot || !txt) return;
+  if (!m || !mark || !txt) return;
   const busyVerb = mcpBusyVerb(d.name);
-  dot.className = "dot " + (busyVerb ? "starting" : m.state);
+  if (typeof mark.replaceWith === "function") mark.replaceWith(stateDot(m, busyVerb));
   txt.textContent = headSubtitle(m);
   if (primary) {
     const started = m.lifecycle === "started";
@@ -53,6 +54,13 @@ function patchDetailHead(): void {
     primary.disabled = !!busyVerb;
     // No onclick here (docs/37 R5): #pane's delegated click derives the verb from live state.
   }
+}
+
+/** The head's state mark: the row's state, or "starting" while a verb this panel sent is in
+ *  flight. Its title is the state word the subtitle leads with. */
+function stateDot(m: ApiMcpRow | PhantomMcpRow, busyVerb: string | null | undefined): HTMLElement {
+  const state = (busyVerb ? "starting" : m.state) as DotState;
+  return dot(state, busyVerb ? busyVerb + "…" : m.state === "stopped" ? tr("pane.disabled") : m.state);
 }
 
 function headSubtitle(m: ApiMcpRow | PhantomMcpRow): string {
@@ -104,34 +112,26 @@ function renderPane(): void {
   // copy, so it keeps the monospace one — down in the status line, where it costs nothing.
   //
   // The head is BUILT (docs/37 R5): the MCP's name, description and status line are text nodes,
-  // so a name with markup in it is a name, not a payload.
+  // so a name with markup in it is a name, not a payload. It is the library's resource head
+  // (docs/46 §3.2): the name row and the tabs pin, the words between them scroll away.
   // Hoisted so the comparison literals stay out of the h() children (i18n gate).
   const oauthKind = !!d.config && (d.config.auth === "oauth" || d.config.type === "figma");
-  const head = h("div", { class: "pane-head" },
-    h("div", null,
-      h("h1", { class: "pane-title" }, d.name),
-      m.description ? h("div", { class: "pane-desc" }, m.description) : null,
-      h("div", { class: "pane-sub" },
-        h("span", { class: "dot " + (busyVerb ? "starting" : m.state) }),
-        h("span", { class: "sub-path" }, tr("pane.mcpPath", { name: d.name })),
-        h("span", { class: "sub-text" }, headSubtitle(m)))),
-    h("div", { class: "pane-actions" },
-      // OAuth MCPs get their authorize action in the header (docs/24 D5) — it is the one
-      // action this MCP cannot live without until it runs, and Reauthorize is the anytime
-      // re-consent path after a revoked grant. Disabled while a flow this panel started is
-      // still polling.
-      oauthKind
-        ? h("button", { class: "btn", id: "oauthBtn", disabled: !!d.oauthBusy },
-            tr(m.oauth === "authorized" ? "pane.reauthorize" : "pane.authorize"))
-        : null,
-      // Tinted only for Start: blue is the affirmative action, and a header full of blue Stop
-      // buttons on six healthy MCPs says nothing. Disable is a plain button with the same footprint.
-      // docs/28 D2: the verb is Disable/Enable, not Stop/Start — a stop that survives a boot and
-      // refuses every client IS a disable; the mechanism below keeps the stop/start verbs.
-      h("button", { class: "btn" + (started ? "" : " primary"), id: "primaryBtn", disabled: !!busyVerb },
-        busyVerb ? "…" : started ? tr("pane.disable") : tr("pane.enable")),
-      h("button", { class: "btn icon", id: "menuBtn", aria: { label: tr("pane.moreActions") }, title: tr("pane.moreActions") },
-        iconNode("ellipsis"))));
+  const actions = [
+    // OAuth MCPs get their authorize action in the header (docs/24 D5) — it is the one
+    // action this MCP cannot live without until it runs, and Reauthorize is the anytime
+    // re-consent path after a revoked grant. Disabled while a flow this panel started is
+    // still polling.
+    oauthKind
+      ? btn(tr(m.oauth === "authorized" ? "pane.reauthorize" : "pane.authorize"), { id: "oauthBtn", disabled: !!d.oauthBusy })
+      : null,
+    // Tinted only for Start: blue is the affirmative action, and a header full of blue Stop
+    // buttons on six healthy MCPs says nothing. Disable is a plain button with the same footprint.
+    // docs/28 D2: the verb is Disable/Enable, not Stop/Start — a stop that survives a boot and
+    // refuses every client IS a disable; the mechanism below keeps the stop/start verbs.
+    btn(busyVerb ? "…" : started ? tr("pane.disable") : tr("pane.enable"),
+      { kind: started ? undefined : "primary", id: "primaryBtn", disabled: !!busyVerb }),
+    moreBtn(tr("pane.moreActions"), { id: "menuBtn" }),
+  ].filter((b): b is HTMLButtonElement => b != null);
 
   /* Tab names are module-level data (docs/38 L7): stored as keys via tk(), painted through
    tr() so a language flip re-renders them with the page. */
@@ -140,34 +140,33 @@ function renderPane(): void {
     run: tk("pane.run"), config: tk("pane.config"), logs: tk("pane.logs"),
   };
   const tabs: string[] = [...KINDS, "run", "config", "logs"];
-  const seg = h("div", { class: "seg", role: "tablist" }, tabs.map((t) => {
+  const nav = seg(tabs.map((t) => {
     const kd = isMcpKind(t) ? d[t] : null;
-    const count = kd && kd.loaded
-      ? h("span", { class: "seg-n" }, String(kd.total != null ? kd.total : kd.items.length))
-      : null;
-    return h("button", { role: "tab", data: { tab: t }, aria: { selected: d.tab === t ? "true" : "false" } },
-      tr(TAB_LABELS[t] || t), count);
-  }));
+    return {
+      id: t, label: tr(TAB_LABELS[t] || t),
+      n: kd && kd.loaded ? (kd.total != null ? kd.total : kd.items.length) : null,
+    };
+  }), d.tab, { key: "tab", label: tr("pane.sections") });
+
+  const head = resHead({
+    title: d.name,
+    desc: m.description || null,
+    sub: [stateDot(m, busyVerb), h("code", null, tr("pane.mcpPath", { name: d.name })), "·", h("span", { class: "sub-text" }, headSubtitle(m))],
+    actions,
+    nav,
+  });
 
   const la = lastActionOf(d.name);
 
-  // One column holds the lot — header, tab bar, body, notes — so the measure is applied once and
-  // they all share a left edge. Capping each of them individually looked identical until the pane
-  // started centring: .seg is inline-flex, and an inline-level box ignores the auto margins that
-  // centre a block, so the tab bar stayed at the pane's padding edge ~240px left of the card it
-  // labels.
-  //
-  // One width for every tab, too. Logs used to opt into --measure-wide for its arguments column;
-  // once the column is centred that widening moves BOTH edges, so switching Config <-> Logs slid the
-  // whole page ~220px sideways and back. Changing tabs must not resize the page. The log rows lose
-  // nothing structural at the standard measure — .call-arg is a truncating preview, so it just
-  // ellipsises earlier, and the full request and reply are one click away in the expanded row.
-  fill(pane, h("div", { class: "col" },
+  // One frame holds the lot — head, tabs, body, notes — so the measure is applied once and they
+  // all share a left edge. The wide one (docs/46 §3.2): the resource template, and the frame the
+  // head's two layers pin in. One width for every tab: changing tabs must not resize the page, so
+  // Logs no longer opts into a wider measure of its own — every tab has it.
+  fill(pane, paneBody({ wide: true },
     head,
-    seg,
     h("div", { id: "tabbody" }, tabBody(d, m)),
-    m.reason ? h("div", { class: "note err" }, m.reason) : null,
-    la ? h("div", { class: "note" + (la.err ? " err" : "") }, la.at + " · " + la.msg) : null));
+    m.reason ? note(m.reason, { err: true }) : null,
+    la ? note(la.at + " · " + la.msg, { err: !!la.err }) : null));
 
   // Wire up — ONE delegated claim per event type on the pane (docs/37 R5), assigned (not
   // addEventListener) so a repaint re-assigns the same property instead of stacking listeners.
@@ -186,10 +185,10 @@ function renderPane(): void {
   if (menuWasOpen) openMenu(d, m);
 }
 
-/** The pane's own chrome, one click at a time (docs/37 R5): header buttons, the tab bar, the
- *  empty state's action, and the ... menu (wireMenu retired — the menu rides #pane's listener
- *  like everything else). Returns true when the click was chrome and run-history's tab-body
- *  dispatch must not see it.
+/** The pane's own chrome, one click at a time (docs/37 R5): header buttons, the tab bar and the
+ *  empty state's action. The ... menu's rows answer through the library menu's own handlers
+ *  (anchoredMenu), which stop the click before it reaches this listener. Returns true when the
+ *  click was chrome and run-history's tab-body dispatch must not see it.
  *
  *  Behavior note (docs/37 §10.1): the primary button and the menu's Enable/Disable verb are
  *  derived from the LIVE row at click time, not from the object renderPane closed over — a
@@ -198,24 +197,6 @@ function renderPane(): void {
 function paneChromeClick(ev: MouseEvent): boolean {
   const t = targetEl(ev);
   if (!t) return false;
-  // The ... menu is inside #pane — its buttons arrive here first.
-  const pick = t.closest<HTMLElement>(".menu [data-grp]");
-  if (pick) {
-    // stopPropagation is master's wireMenu semantics, carried into the delegation: without it
-    // the click reaches connect.ts's document listener, whose histClose() shuts the Run-history
-    // popover master kept open across a menu action.
-    ev.stopPropagation();
-    const d = mcpDetail();
-    if (d) void assignGroup(d.name, String(pick.dataset.grp)); // every name in the menu is a real group now
-    return true;
-  }
-  const mBtn = t.closest<HTMLElement>(".menu [data-act]");
-  if (mBtn) {
-    ev.stopPropagation(); // same wireMenu carry-over as the group items above
-    const d = mcpDetail();
-    if (d) menuAct(d, String(mBtn.dataset.act));
-    return true;
-  }
   const d = mcpDetail();
   // Buttons are matched by closest(), not t.id: the button's own glyph (svg/use) is what a real
   // pointer click lands on first, and the icon element does not carry the id.
@@ -279,41 +260,42 @@ function openMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
   // the captured object is orphaned from that moment on. The menu reads two things off it that
   // change (which group the MCP is in, and whether it is config-sourced), and with a stale object
   // the group tick stayed on whatever it was when the pane was last rendered.
-  const live = rowOf(d.name) || m;
-  host.append(menuNode(live));
-  setMenuOpen(true);
-  // No per-menu wiring (docs/37 R5): the menu lives inside #pane, so its buttons answer
-  // through paneChromeClick like every other click in the pane.
+  anchoredMenu(host, menuItems(d, rowOf(d.name) || m));
 }
 
 /** Grouped like a macOS menu: connect, then which group it is in, then manage, then the destructive
  *  one on its own. The group section is a pick list with a tick, not a submenu — a submenu built from
- *  a string is more machinery than four lines of choices are worth. Built as nodes (docs/37 R5):
- *  group names are text, and the buttons carry data-grp/data-act for #pane's delegated click. */
-function menuNode(m: ApiMcpRow | PhantomMcpRow): HTMLElement {
+ *  a string is more machinery than four lines of choices are worth. Group names are labels (text),
+ *  and each row's action runs through menuAct, which closes the menu first. */
+function menuItems(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): MenuItem[] {
   const current = groupOf(m);
+  const run = (a: string) => { return (): void => { menuAct(d, a); }; };
   // The server's list is complete (default included) and already in sidebar order.
-  const picks = mcpGroups().map((g) => {
-    return h("button", { class: "pick" + (g === current ? " on" : ""), data: { grp: g } }, g);
+  const picks: MenuItem[] = mcpGroups().map((g) => {
+    return { label: g, pick: true, on: g === current, fn: () => { void assignGroup(d.name, g); } };
   });
-  return h("div", { class: "menu", id: "menu" },
-    h("div", { class: "menu-cap" }, tr("pane.connectClient")),
-    h("button", { data: { act: "cp-claude" } }, tr("pane.copyClaudeCodeCommand")),
-    h("button", { data: { act: "cp-codex" } }, tr("pane.copyCodexCommand")),
-    h("button", { data: { act: "cp-json" } }, tr("pane.copyMcpJsonEntry")),
-    h("button", { data: { act: "cp-url" } }, tr("pane.copyEndpointUrl")),
-    h("hr"),
-    h("div", { class: "menu-cap" }, tr("pane.group")),
-    picks,
-    h("button", { data: { act: "new-group" } }, tr("pane.newGroup")),
-    h("hr"),
-    h("button", { data: { act: m.lifecycle === "started" ? "stop" : "start" } },
-      tr(m.lifecycle === "started" ? "pane.disable" : "pane.enable")),
-    h("button", { data: { act: "restart" } }, tr("pane.restart")),
-    h("button", { data: { act: "edit" } }, tr("pane.editConfiguration")),
-    h("button", { data: { act: "rename" } }, tr("pane.rename")),
-    h("hr"),
-    h("button", { class: "danger", data: { act: "delete" } }, tr("pane.delete")));
+  return [
+    { label: tr("pane.connectClient"), heading: true, fn: () => {} },
+    { label: tr("pane.copyClaudeCodeCommand"), fn: run("cp-claude") },
+    { label: tr("pane.copyCodexCommand"), fn: run("cp-codex") },
+    { label: tr("pane.copyMcpJsonEntry"), fn: run("cp-json") },
+    { label: tr("pane.copyEndpointUrl"), fn: run("cp-url") },
+    { sep: true },
+    { label: tr("pane.group"), heading: true, fn: () => {} },
+    ...picks,
+    { label: tr("pane.newGroup"), fn: run("new-group") },
+    { sep: true },
+    {
+      label: tr(m.lifecycle === "started" ? "pane.disable" : "pane.enable"),
+      // The verb is read from the live row at click time, like the primary button's (docs/37 §10.1).
+      fn: () => { const live = rowOf(d.name); menuAct(d, (live || m).lifecycle === "started" ? "stop" : "start"); },
+    },
+    { label: tr("pane.restart"), fn: run("restart") },
+    { label: tr("pane.editConfiguration"), fn: run("edit") },
+    { label: tr("pane.rename"), fn: run("rename") },
+    { sep: true },
+    { label: tr("pane.delete"), danger: true, fn: run("delete") },
+  ];
 }
 
-export { headSubtitle, menuNode, openMenu, paneHasFocus, patchDetailHead, renderPane, toggleMenu };
+export { headSubtitle, menuItems, openMenu, paneHasFocus, patchDetailHead, renderPane, toggleMenu };
