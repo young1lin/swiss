@@ -82,7 +82,7 @@ pub struct ZaiEngine {
 }
 
 impl ZaiEngine {
-    /// `def` must be the resolve_def() clone make_adapter hands over: an empty apiKey is a
+    /// `def` must be the resolve_def_checked() clone make_adapter hands over: an empty apiKey is a
     /// configuration error, refused here rather than at first call.
     pub fn new(def: &ServerDef, name: &str) -> Result<Self, String> {
         let api_key = def.get_str("apiKey").unwrap_or("").trim().to_string();

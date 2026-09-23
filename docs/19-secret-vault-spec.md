@@ -116,8 +116,8 @@ Infisical `infisical://…`——新一代密钥平台清一色 **URI scheme 型
 含 `${ENV}` 照旧展开。不是"四个白名单边界"，是一条合同；现有使用面全部遵守，未来的插件
 用同一个函数就自动继承（docs/09 合同修订，见 §2 定位）。当前使用面清单（测试按此逐面覆盖）：
 
-1. MCP http/rest：header、url、body 模板（config.rs `resolve_def`，整树递归）；
-2. MCP proc：args、env（同一 `resolve_def` 路径）；
+1. MCP http/rest：header、url、body 模板（config.rs `resolve_def_checked`，整树递归）；
+2. MCP proc：args、env（同一 `resolve_def_checked` 路径）；
 3. 隧道：connection 的 password / keyPassphrase、rule 的字段（ssh.rs 连接时）；
 4. job：command、env 值（runner.rs 运行时）；
 5. 面板的 MCP Test 端点（/api/mcpdefs/test，服务端展开后真连一次）；
@@ -193,7 +193,7 @@ Node 没有路由等于破了它自己的面板。
 | 使用面 | 单元测试 | 集成测试 |
 |---|---|---|
 | http/rest header、url、body | resolve 结果串、缺失报错措辞 | echo 探针断言收到的 header 是真值 |
-| proc args、env | 同上（resolve_def 树递归含数组/嵌套） | 子进程把收到的 env 回显，断言含真值 |
+| proc args、env | 同上（resolve_def_checked 树递归含数组/嵌套） | 子进程把收到的 env 回显，断言含真值 |
 | 隧道 password / keyPassphrase | 缺失 reason 措辞 | 连接路径展开（既有假 SSH 测试架） |
 | job command、env 值 | 缺失 run 失败记录 | job 输出含替换后真值；隔离测见上 |
 | 面板 Test 端点 | — | PUT 密钥 → Test 200；删密钥 → Test 失败且不泄值 |

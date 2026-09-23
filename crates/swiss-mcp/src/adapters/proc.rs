@@ -492,7 +492,7 @@ pub struct ProcAdapter {
 }
 
 impl ProcAdapter {
-    /// `def` must already be a `resolve_def()` clone (env refs expanded), exactly as
+    /// `def` must already be a `resolve_def_checked()` clone (env refs expanded), exactly as
     /// `make_adapter` hands it over.
     pub fn new(def: &ServerDef, name: &str, log: std::sync::Arc<crate::calls::CallLog>) -> Self {
         let env: BTreeMap<String, String> = def

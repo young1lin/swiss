@@ -103,7 +103,7 @@ pub struct DirectAdapter<E: Engine> {
 }
 
 impl<E: Engine> DirectAdapter<E> {
-    /// `def` must already be a `resolve_def()` clone (env refs expanded), exactly as
+    /// `def` must already be a `resolve_def_checked()` clone (env refs expanded), exactly as
     /// `make_adapter` hands it over.
     pub fn new(
         def: &ServerDef,
@@ -112,7 +112,7 @@ impl<E: Engine> DirectAdapter<E> {
         log: std::sync::Arc<crate::calls::CallLog>,
     ) -> Self {
         // Seed the toggles from the def at construction (boot + tests pass them on the def). The
-        // live path mutates the toggle cells directly — `def` here is a resolve_def() clone,
+        // live path mutates the toggle cells directly — `def` here is a resolve_def_checked() clone,
         // never the same object the registry holds, so writing to the def later would not reach
         // this adapter.
         let disabled: HashSet<String> = def

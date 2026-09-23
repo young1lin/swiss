@@ -518,7 +518,7 @@ pub struct RestEngine {
 }
 
 impl RestEngine {
-    /// `def` must be the resolve_def() clone make_adapter hands over. Tool declarations and
+    /// `def` must be the resolve_def_checked() clone make_adapter hands over. Tool declarations and
     /// the proxy URL are validated at construction (a bad one is a start error).
     pub fn new(def: &ServerDef, name: &str) -> Result<Self, String> {
         let decls = parse_tools(def)?;

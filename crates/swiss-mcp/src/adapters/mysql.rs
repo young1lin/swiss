@@ -647,7 +647,7 @@ pub struct MysqlEngine {
 }
 
 impl MysqlEngine {
-    /// `def` must be the resolve_def() clone make_adapter hands over.
+    /// `def` must be the resolve_def_checked() clone make_adapter hands over.
     pub fn new(def: &ServerDef, name: &str) -> Result<Self, String> {
         let database = def
             .get_str("database")

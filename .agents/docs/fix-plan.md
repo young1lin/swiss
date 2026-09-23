@@ -22,6 +22,22 @@
 > `the_tree_is_byte_for_byte_the_node_builds` no longer exists at all (ADR-025 retired byte-equality in favor of the
 > `npm run check` suite as the panel's gate). Batch 3 is no longer blocked on anything external.
 
+## Closure (2026-09-23, release-audit pass)
+
+Every actionable item is landed; what remains is listed in the Won't-Fix List below by design.
+
+| # | Landed as | Commit |
+| --- | --- | --- |
+| 1-#5,#7,#8,#11 | comments/docs batch | `b9c2cb0` |
+| 9 | TrafficLog instantiation + isolation test | `187ff25` |
+| 12,#14,#16,#17 | panel sheet/sprite/storage batch | `cd70fb9` + `8f182bd` |
+| 14 (tail) | find-bar chevrons + vendor shim headers | `e6f9da2` |
+| 10 | resolve_def chain deleted, comments/docs repointed | this pass (`post-1807005`) |
+| 6,#13,#15 | already done earlier (status lines / TS rewrite / V5) | see items |
+| 18-#27 | won't fix by design | see list below |
+
+#24 stays the one owner decision (enforce `retention.maxHistoryBytes` or mark advisory).
+
 ## Overview Table
 
 | # | Problem | Location (file:line) | Category | Batch |
