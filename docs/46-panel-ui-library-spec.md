@@ -395,10 +395,17 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
 
 ### 3.4 Tunnels（P4）
 
-- [ ] SSH Connections：说明一行；New group 变图标；规则数从副行挪到右侧一列（`cols`）；删掉与上方栏重复的底部计数，
-      底部只留 revision。
-- [ ] Port Forwards：四个按钮收成 `New` + ⋯（Start all / Stop all）+ 新建分组图标；本地端口单独一列；错误改成副行
+- [x] SSH Connections：说明一行；New group 变图标；规则数从副行挪到右侧一列（`cols`）；删掉与上方栏重复的底部计数，
+      底部只留 revision——隧道数据没有 revision，所以底部整行删掉。
+- [x] Port Forwards：四个按钮收成 `New` + ⋯（Start all / Stop all）+ 新建分组图标；本地端口单独一列；错误改成副行
       一句红字（`err`），每行一样高，完整原因在 title。
+- [x] 两个 sheet（P4 顺带）：新建 / 编辑连接与规则都用 `sheet()` + `ui/form.ts`；库里补了 `formCap()`（表单里的分组小标题）、
+      `formFold()`（Advanced 折叠）、`field({ action })`（控件旁的一个按钮：私钥路径 + Browse），以及 `stackSheet()`
+      ——sheet 上面再叠一层（私钥选择器）：它有自己的背板，Escape 只关它自己（以前会穿到壳的 Escape 链，把下面的 sheet
+      关掉、选择器还浮着）。私钥路径那一行和下一个标签贴在一起的问题随 `field()` 的堆叠间距一起修掉。行里的状态点
+      `tunDot()`：重连中是琥珀色脉冲；停着的是灰点。`dot(state, null)` 给"已被外层解释过"的点（服务列表里不存在的 MCP）
+      ——不带 title，不进辅助技术。库行 `row({ draggable })` 的拖动反馈（`.dragging` / `.drop-before` / `.drop-after`）补进 ui.css——之前只在 `.tun-row`
+      上，隧道行换成库行后拖动时看不到落点线。
 
 ### 3.5 Settings（P5）
 

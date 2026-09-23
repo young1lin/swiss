@@ -21,7 +21,10 @@
  *
  *   form        the padded grid inside a card: one grid step between fields.
  *   field       a label over its control, a hint under it. `required` adds the red star;
- *               `meta` is a quiet word after the name (an argument's type).
+ *               `meta` is a quiet word after the name (an argument's type); `action` is the
+ *               control's one button beside it (Browse).
+ *   formCap     a caption over one part of a form.
+ *   formFold    a part of a form that starts folded (Advanced).
  *   checkField  a checkbox with its label to the right, the hint under it.
  *   pair        two fields side by side (host + port).
  *   formActions the one primary and its companions, at the form's foot.
@@ -44,10 +47,27 @@ function labelText(label: HChild, required?: boolean, meta?: string): HTMLElemen
   return h("span", null, kids);
 }
 
-export function field(o: { label: HChild; control: HTMLElement; required?: boolean; meta?: string; hint?: HChild }): HTMLElement {
+export function field(o: { label: HChild; control: HTMLElement; required?: boolean; meta?: string; hint?: HChild; action?: HTMLElement }): HTMLElement {
+  const label = h("label", { class: "field" }, labelText(o.label, o.required, o.meta), o.control);
   return h("div", { class: "fld" },
-    h("label", { class: "field" }, labelText(o.label, o.required, o.meta), o.control),
+    // `action`: the control's one button beside it (a key path and Browse), on the control's row.
+    o.action ? h("div", { class: "field-row" }, label, o.action) : label,
     o.hint != null && o.hint !== false && o.hint !== "" ? hint(o.hint) : null);
+}
+
+/** A fold inside a form: the part most people never open (a connection's proxy and jump),
+ *  collapsed under a summary line that still names what is set in it (chips), so collapsed
+ *  never means hidden. Native <details>: keyboard and state for free. */
+export function formFold(o: { summary: HChild; id?: string }, ...body: HChild[]): HTMLElement {
+  return h("details", { class: "fold", id: o.id },
+    h("summary", null, o.summary),
+    h("div", { class: "fold-body" }, ...body));
+}
+
+/** A caption inside a form, over the part it names (a sheet's "Proxy", "Serves MCPs"): the
+ *  section caption's voice, a grid step above its fields. */
+export function formCap(text: HChild): HTMLElement {
+  return h("div", { class: "form-cap" }, text);
 }
 
 export function checkField(o: { label: HChild; control: HTMLInputElement; required?: boolean; hint?: HChild }): HTMLElement {

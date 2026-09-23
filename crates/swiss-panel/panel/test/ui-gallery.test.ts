@@ -70,6 +70,7 @@ const HELPERS: Record<string, string> = {
   JV_LINES: "jsonCodeNode()'s line cap - a number",
   JV_INLINE: "jsonCodeNode()'s one-line limit - a number",
   fitsOneLine: "the test jsonCodeNode({ oneLine }) applies - a predicate",
+  stackSheet: "a second layer over the open sheet - its dialog is sheet(), its backdrop showSheet's; the tunnel key picker drives it",
 };
 
 /** The shape each drawing function leaves in the DOM: how a claim is checked. */
@@ -93,6 +94,8 @@ const SIG: Record<string, string> = {
   pair: ".two > .fld + .fld",
   formActions: ".form-actions > .btn",
   hint: ".fld > .hint, .form > .hint",
+  formCap: ".form-cap",
+  formFold: "details.fold > summary + .fold-body .field-row > .btn",
   sw: ".sw[role=switch]",
   styleSelect: ".dd",
   pane: "main.pane",

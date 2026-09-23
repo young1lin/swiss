@@ -133,6 +133,12 @@
     /* ui/form.ts field({ meta }): a quiet word after the name - an argument's JSON type is a value,
        so mono, a caption's size, a grid step away. */
     .field-meta { margin-left: var(--s2); font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); }
+    /* field({ action }): the control and its one button share a row; the button sits on the
+       control's baseline, the control takes the rest. */
+    .field-row { display: flex; gap: var(--s2); align-items: flex-end; }
+    .field-row > label.field { flex: 1; min-width: 0; }
+    /* ui/form.ts formCap(): a caption over one part of a form, in the section caption's voice. */
+    .form-cap { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding-top: var(--s2); }
     label.check { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-body); }
     label.check input { width: auto; accent-color: var(--accent); }
 
@@ -389,6 +395,11 @@
     .lrow { display: flex; align-items: center; gap: var(--s3); min-height: var(--row-h); padding: var(--s2) var(--s4); }
     .lrow:hover { background: var(--hover); }
     .lrow[draggable="true"] { cursor: grab; }
+    /* The feedback the groups component toggles on a row it is moving (groups.ts): dimmed while
+       carried, a 2px accent edge on the side it will land. */
+    .lrow.dragging { opacity: 0.55; }
+    .lrow.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+    .lrow.drop-after { box-shadow: inset 0 calc(var(--s1) / -2) 0 var(--accent); } /* -2px, from the grid */
     .lrow.has-lead { --row-inset: calc(var(--s4) + var(--dot) + var(--s3)); }
     .lrow-lead { flex: none; display: inline-flex; align-items: center; }
     .lrow-main { flex: 1; min-width: 0; }
@@ -591,6 +602,8 @@
     .menu hr { border: 0; border-top: 1px solid var(--sep-soft); margin: var(--s1) 0; }
 
     /* Sheet (Add) + sign-in. */
+    /* ui/sheet.ts stackSheet(): a picker over the open sheet, one layer up (the toast stays on top). */
+    .backdrop.stacked { z-index: 45; }
     .backdrop { position: fixed; inset: 0; background: rgba(12, 14, 20, .38); display: grid; place-items: start center; padding-top: 8vh; z-index: 40; }
     /* A sheet is a card, not a second canvas: on the canvas colour its fields had no edge but their
        hairline and the whole dialog read as a grey slab over a grey slab. */
@@ -612,6 +625,8 @@
     .inline-form { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; margin-bottom: var(--s5); }
     .inline-form > input { flex: 1 1 200px; min-width: 0; }
     .inline-form > input.grow { flex: 2 1 260px; }
+    /* In a sheet the body's grid spaces its children; the page form's air below would double it. */
+    .sheet-body > .inline-form { margin-bottom: 0; }
     /* An input beside its button (the Tokens sheet's "label + Create"): the pair's second column
        shrinks to the button. */
     .sheet-body > .two:has(> .btn) { grid-template-columns: 1fr auto; gap: var(--s2); align-items: center; }
@@ -638,9 +653,9 @@
        hidden: the row's transport stays visible without unfolding. The interior grid gives
        the fold's content its own rhythm (the sheet-body gap stops at the <details> element),
        a touch tighter than the form above because it is a sub-section. */
-    .sheet-body > details.fold > summary { cursor: pointer; font-size: var(--f-label); color: var(--text-2); }
-    .sheet-body > details.fold > summary .tag { margin-left: var(--s1); }
-    .sheet-body > details.fold > .fold-body { display: grid; gap: var(--s2); padding-top: var(--s3); }
+    details.fold > summary { cursor: pointer; font-size: var(--f-label); color: var(--text-2); }
+    details.fold > summary .tag { margin-left: var(--s1); }
+    details.fold > .fold-body { display: grid; gap: var(--s2); padding-top: var(--s3); }
 
     .toast {
       position: fixed; bottom: var(--s5); left: 50%; transform: translateX(-50%);

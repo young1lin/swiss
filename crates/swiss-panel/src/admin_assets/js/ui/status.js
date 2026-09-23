@@ -25,9 +25,14 @@ import { h } from "../h.js";
 /** A 6px state dot. The title is required: a colour names no behaviour of its own (docs/18
  *  V6), so the dot says its state aloud - on hover, and to assistive tech. "off" is the bare
  *  .dot - the quiet grey of nothing running and nothing wrong - so it adds no class for a
- *  rule that would only repeat the base one. */
-export function dot(state          , title        )              {
-  return h("span", { class: state === "off" ? "dot" : "dot " + state, title, role: "img", aria: { label: title } });
+ *  rule that would only repeat the base one. `null` is the one exception, and it must be
+ *  deliberate: a dot inside something whose own title already explains it (a tunnel's
+ *  "serves ghost" for an MCP that does not exist) - a title here would shadow that hover, so
+ *  the dot has none and stays out of assistive tech. */
+export function dot(state          , title               )              {
+  const cls = state === "off" ? "dot" : "dot " + state;
+  if (title === null) return h("span", { class: cls, aria: { hidden: "true" } });
+  return h("span", { class: cls, title, role: "img", aria: { label: title } });
 }
 
 ;                         

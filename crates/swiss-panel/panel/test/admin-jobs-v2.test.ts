@@ -202,7 +202,9 @@ describe("visual refresh V6 — the status dot carries a title", () => {
     const bad = serialize(ruleRowNode({ id: "r1", name: "pg", localPort: 18989, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "error", reason: "SSH refused" }));
     expect(bad).toContain('class="dot error"');
     expect(bad).toContain('title="error: SSH refused"');
-    expect(bad).toContain("data-dot");
+    // docs/46 §3.4: the library row's lead column holds it, and the reason is the row's red line.
+    expect(bad).toContain('<span class="lrow-lead"><span class="dot error"');
+    expect(bad).toContain('<div class="lrow-err" title="SSH refused">SSH refused</div>');
     setTunBusy("r2", "start");
     const busy = serialize(ruleRowNode({ id: "r2", name: "pg", localPort: 18990, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "down" }));
     expect(busy).toContain('class="dot starting"');
@@ -221,10 +223,10 @@ describe("visual refresh V6 — the status dot carries a title", () => {
       id: "r1", name: "pg", localPort: 18989, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "up",
       mcpRows: [{ name: "mysql", state: "up", known: true }, { name: "ghost", state: "", known: false }],
     }));
-    expect(html).toContain('mysql<span class="dot up" title="up"></span>');
+    expect(html).toMatch(/mysql<span class="dot up" title="up"/);
     // No title on the unknown dot: the .serves span around it already answers the hover
     // ("no MCP named ghost"), and an empty title attribute would suppress that.
-    expect(html).toContain('ghost<span class="dot "></span>');
+    expect(html).toMatch(/ghost<span class="dot"(?![^>]*title)[^>]*><\/span>/);
   });
 });
 

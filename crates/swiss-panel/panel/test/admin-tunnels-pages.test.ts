@@ -148,8 +148,11 @@ describe("the tunnels plugin's two L2 pages", () => {
     // carries the id as a property, so the prop spelling is what the source pins.
     expect(src).toContain("tNewConn");
     expect(src).toContain("tNewRule");
-    expect(src).toContain('id: "tStartAll"');
-    expect(src).toContain('id: "tStopAll"');
+    // docs/46 §3.4: the rules-only pair waits behind the head's ⋯ (#tMore), not as two standing
+    // buttons beside New.
+    expect(src).toContain('{ id: "tMore" }');
+    expect(src).toContain('tr("tunnels.startAll")');
+    expect(src).toContain('tr("tunnels.stopAll")');
     // And no location title: the context bar says where we are.
     expect(src).not.toContain("pane-title");
   });

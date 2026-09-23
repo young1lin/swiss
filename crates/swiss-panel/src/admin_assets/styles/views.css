@@ -168,8 +168,6 @@
     .keylist button:hover { background: var(--hover); }
     .keylist button .ic { width: 14px; height: 14px; flex: none; color: var(--text-3); } /* fix-plan #14: folder/file rows */
     .mcp-picks { display: grid; gap: var(--s1); max-height: 168px; overflow-y: auto; padding: var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: 8px; }
-    .with-btn { display: flex; gap: var(--s2); align-items: flex-end; }
-    .with-btn > label { flex: 1; }
 
     /* Traffic clients (docs/18 V4): one line per client in a five-column grid — name, token,
        paths, last seen, request count — instead of a two-line card row. Same grid for the

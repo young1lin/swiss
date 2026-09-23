@@ -21,12 +21,12 @@ import { fill, h } from "./h.js";
                                      
 import { copyText } from "./connect.js";
 import { assignMember, groupOf as makeGroupOf, mountGroup, newGroupFlow, saveOrder, slice } from "./groups.js";
-import { connRowNode, isTunnelsView, loadList, loadTunnels, ruleRowNode, tunData, tunGroupsList, tunRows, tunScope } from "./polling.js";
+import { connRowNode, isTunnelsView, loadList, loadTunnels, ruleRowNode, tunData, tunDot, tunGroupsList, tunRows, tunScope } from "./polling.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
 import { currentView } from "./ui-state.js";
 import { clearTunBusy, clearTunView, setTunBusy, setTunDragging, setTunDraggingGroup, setTunPendingGroup, setMountedTunScope, tunBusyOf, tunDragging, tunDraggingGroup, tunFolds, mountedTunScope } from "./tunnel-state.js";
 import { tr, trn } from "./i18n.js";
-import { popupMenu } from "./ui/menu.js";
+import { btn, closeMenu, dot, iconBtn, menuOpen, moreBtn, paneBody, paneHead, popupMenu } from "./ui/index.js";
 
 /* --- tunnels: groups and drag-to-reorder --------------------------------------------------------
    The sidebar's model, shared through the groups component (docs/20 §4): one flat order per
@@ -111,14 +111,11 @@ function renderTunnels()       {
   // The page's actions, right-aligned in the body header (pane-actions is the panel's own
   // vocabulary for exactly this slot). Rules carry the bulk start/stop pair; connections
   // carry only New — Test lives on each row.
-  const acts           = [
-    h("button", { class: "btn primary", id: isConns ? "tNewConn" : "tNewRule" }, tr("tunnels.new")),
-    h("button", { class: "btn", id: "tNewGroup" }, tr("tunnels.newGroup")),
-  ];
-  if (!isConns) {
-    acts.push(h("button", { class: "btn", id: "tStartAll" }, tr("tunnels.startAll")));
-    acts.push(h("button", { class: "btn", id: "tStopAll" }, tr("tunnels.stopAll")));
-  }
+  // docs/46 §3.4: New group is the folder-plus glyph (the sidebar's, rule 7), the rules' bulk
+  // Start all / Stop all wait behind the head's ⋯, and New is the page's one primary.
+  const acts           = [iconBtn("folder-plus", tr("tunnels.newGroup"), { id: "tNewGroup" })];
+  if (!isConns) acts.push(moreBtn(tr("tunnels.moreForwardActions"), { id: "tMore" }));
+  acts.push(btn(tr("tunnels.new"), { kind: "primary", id: isConns ? "tNewConn" : "tNewRule" }));
 
   // One group per slice — the component owns the header band, the indent and the empty line
   // now (docs/20 §4.1). Empty groups keep their place: that is how you drag the first row into
@@ -127,17 +124,12 @@ function renderTunnels()       {
   const grouped = slice(tunRows(), tunGroupsList(), tunGroupOfRow);
   const list = isConns ? d.connections : d.rules;
 
-  // .wide for the same reason as the traffic log: a rule row is name + route + who it serves +
-  // three buttons. .pane-desc keeps its own 60ch cap, so the prose does not stretch with it.
-  // Built, not concatenated (docs/37 R5): the scope prose and the footer count are text
-  // nodes, so nothing here can be markup.
+  // .wide: a rule row is name + route + who it serves + its port column + its buttons. No foot:
+  // the count it carried is the context bar's chip (rule 25), and tunnels have no revision.
   fill($("pane"),
-    h("div", { class: "wide" },
-      h("div", { class: "pane-head" },
-        h("div", null, h("div", { class: "pane-desc" }, tunDesc(isConns))),
-        h("div", { class: "pane-actions" }, acts)),
-      h("div", { id: "tunGroups" }),
-      h("div", { class: "tun-foot" }, tunnelsCountText(isConns ? "conns" : "rules"))));
+    paneBody({ wide: true },
+      paneHead({ desc: tunDesc(isConns), actions: acts }),
+      h("div", { id: "tunGroups" })));
   const host = $("tunGroups");
   if (list.length) grouped.forEach((g                                                       )       => { host.appendChild(mountGroup(cfg, g)); });
   else fill(host, emptyNode(isConns
@@ -204,20 +196,23 @@ function patchTunnels() {
     const node = $("pane").querySelector("[" + attr + '="' + (window.CSS && CSS.escape ? CSS.escape(row.id) : row.id) + '"]');
     if (!node) { if (!tunDragging() && !tunDraggingGroup()) renderTunnels(); return; }
     const busy = tunBusyOf(row.id);
-    const dot = node.querySelector("[data-dot]")                      ;
-    const live = mountedTunScope() === "conns" ? (row.state === "connected" ? "up" : row.state) : row.state;
-    // Title and class move together (docs/18 V6): the poll only patches, and a dot whose
-    // class moved but whose title stayed would keep explaining the previous state.
-    if (dot) { dot.className = "dot " + (busy ? "starting" : live); dot.title = dotTitle(busy ? "starting" : live, null, row.reason); }
-    const reason = node.querySelector("[data-reason]");
-    if (reason && reason.textContent !== (row.reason || "")) reason.textContent = row.reason || "";
+    // A failure line appearing, going or changing words is structure - the row swaps its sub
+    // for the red line - so it rebuilds (never mid-drag); a poll with no such change patches.
+    const isRule = mountedTunScope() !== "conns";
+    const wantErr = (isRule ? (row.state === "error" || row.state === "reconnecting") : true) ? (row.reason || "") : "";
+    const hasErr = node.querySelector(".lrow-err")?.textContent || "";
+    if (wantErr !== hasErr) { if (!tunDragging() && !tunDraggingGroup()) renderTunnels(); return; }
+    const mark = node.querySelector(".lrow-lead .dot");
+    const live = busy ? "starting" : row.state;
+    // A fresh dot, not a patched class: its class, title and label move together (docs/18 V6),
+    // and a dot whose class moved but whose title stayed would explain the previous state.
+    if (mark) mark.replaceWith(dot(tunDot(live), dotTitle(live === "connected" ? "up" : live, null, row.reason)));
     const act = node.querySelector("[data-act]")                            ;
     if (act) {
       const running = row.state === "up" || row.state === "starting" || row.state === "reconnecting";
       const label = busy ? "…" : running ? tr("tunnels.stop") : tr("tunnels.start");
       if (act.textContent !== label) {
         act.textContent = label;
-        act.className = "btn" + (running ? "" : " primary");
         act.dataset.act = running ? "stop" : "start";
       }
       act.disabled = !!busy;
@@ -230,8 +225,6 @@ function patchTunnels() {
     const badge = grp.querySelector(".grp-n");
     if (badge) badge.textContent = String(n);
   });
-  const foot = $("pane").querySelector(".tun-foot");
-  if (foot) foot.textContent = tunnelsCountText(mountedTunScope() === "conns" ? "conns" : "rules");
 }
 
 /* --- wiring: ONE delegated click on #pane (docs/37 R5) --------------------------------------------
@@ -255,8 +248,16 @@ function wireTunnels() {
       newGroupFlow(tunScope(), tunGroupsList(), () => { return loadTunnels(); });
       return;
     }
-    if (t.closest("#tStartAll")) { void startAllRules(); return; }
-    if (t.closest("#tStopAll")) { void stopAllRules(false); return; }
+    const bulk = t.closest             ("#tMore");
+    if (bulk) {
+      ev.stopPropagation();
+      if (menuOpen()) { closeMenu(); return; }
+      popupMenu(bulk.getBoundingClientRect(), [
+        { label: tr("tunnels.startAll"), fn: ()       => { void startAllRules(); } },
+        { label: tr("tunnels.stopAll"), fn: ()       => { void stopAllRules(false); } },
+      ]);
+      return;
+    }
     // A rule's Start/Stop. Scoped to [data-rule] rows: connections carry [data-test].
     const act = t.closest             ("[data-act]");
     if (act) {

@@ -45,7 +45,7 @@ export { anchoredMenu, clampMenuPos, closeMenu, menuOpen, popupMenu, setMenuOpen
 export { closeSelect, initSelects, selectOpen, styleSelect } from "./select.js";
 export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode, valueBlock } from "./json-view.js";
                                               
-export { closeSheet, initSheet, openFieldSheet, sheet, sheetOpen, showSheet } from "./sheet.js";
+export { closeSheet, initSheet, openFieldSheet, sheet, sheetOpen, showSheet, stackSheet } from "./sheet.js";
                                                             
 export { toTop } from "./to-top.js";
-export { checkField, field, form, formActions, hint, pair } from "./form.js";
+export { checkField, field, form, formActions, formCap, formFold, hint, pair } from "./form.js";
