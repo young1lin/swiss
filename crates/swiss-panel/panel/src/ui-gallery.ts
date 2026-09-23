@@ -240,7 +240,16 @@ function catalogue(now: number): HTMLElement {
       row({ lead: dot("error", tr("gallery.dot.error")), name: "reports", err: tr("gallery.d.rowErr") }),
       row({ name: "nightly-backup", cols: [{ v: "0 3 * * *", mono: true, title: tr("gallery.d.schedule") }, tr("gallery.d.lastRun")] }),
       row({ lead: dot("up", tr("gallery.dot.up")), name: "grafana", sub: tr("gallery.d.rowSub"), toggle: sw(true, tr("gallery.d.enabled")), primary: btn(tr("gallery.d.copy"), { kind: "ghost", icon: "copy" }), more: moreBtn(tr("gallery.d.more")) }),
-      row({ lead: dot("off", tr("gallery.dot.off")), name: "load-test", sub: tr("gallery.d.rowMuted"), muted: true, cols: [tag(tr("gallery.d.revoked"))] }))),
+      row({ lead: dot("off", tr("gallery.dot.off")), name: "load-test", sub: tr("gallery.d.rowMuted"), muted: true, cols: [tag(tr("gallery.d.revoked"))] }),
+      // A record behind the row (a tool): the name and sub open in place; the controls stay out.
+      row({
+        name: h("code", null, "query_orders"), sub: tr("gallery.d.toolDesc"), title: tr("gallery.d.toolDesc"),
+        detail: [
+          valueBlock({ label: tr("gallery.d.fullDescription"), text: tr("gallery.d.toolDesc") }),
+          valueBlock({ label: tr("gallery.d.inputSchema") }, jsonCodeNode({ type: "object", required: ["status"], properties: { status: { type: "string" } } }, true).node),
+        ],
+        primary: btn(tr("gallery.d.try")), toggle: sw(true, tr("gallery.d.enabled")),
+      }))),
     entry(["sideRow"], tk("gallery.c.sideRows"), tk("gallery.c.sideRowsNote"), [], card(
       groupNode({ name: "default", count: 3, density: "side", addTitle: tr("gallery.d.newIn", { g: "default" }), moreTitle: tr("gallery.d.groupActions") },
         sideRow({ name: "orders-db", lead: dot("up", tr("gallery.dot.up")), tail: iconNode("pg", "pg"), selected: true }),
@@ -341,10 +350,19 @@ function openDemoFieldSheet(): void {
 
 /* --- render and wire -------------------------------------------------------------------------- */
 
+/** The made-up data's "now": today at 14:00, whatever the clock says. Items sit minutes and days
+ *  before it; measured from the REAL clock, a scene opened just after midnight put "30 minutes
+ *  ago" on yesterday and drew a fourth day - the page moved with the time of day. */
+function sceneNow(): number {
+  const d = new Date();
+  d.setHours(14, 0, 0, 0);
+  return d.getTime();
+}
+
 function render(): void {
   closeMenu();
   if (sheetOpen()) closeSheet();
-  const now = Date.now();
+  const now = sceneNow();
   const current = route();
   const scene = SCENES.find((s) => "scene-" + s.id === current);
   fill(appNode(), h("div", { class: "workbench" }, bar(current), scene ? scene.build(now) : catalogue(now)));

@@ -249,12 +249,14 @@ function textNode(text        , all         , cls        )          {
 /** A labelled value (docs/46 §3.2): a caption naming it (Arguments, Result), notes on what the
  *  body turned out to be ("JSON + text"), the block's tools at the end of that line - one visible
  *  Copy, the rest behind ⋯ - and then the body: a code block and whatever follows it. */
-function valueBlock(o                                                                       , ...body          )              {
+function valueBlock(o                                                                                      , ...body          )              {
   return h("div", { class: "vblock", data: o.data },
     h("div", { class: "vblock-head" },
       h("span", { class: "vblock-cap" }, o.label),
       (o.notes || []).map((n) => { return h("span", { class: "vblock-note" }, n); }),
       o.tools && o.tools.length ? h("span", { class: "vblock-tools" }, o.tools) : null),
+    // `text`: a body that is prose (a tool's description), wrapped as written.
+    o.text != null ? h("div", { class: "vblock-text" }, o.text) : null,
     ...body);
 }
 

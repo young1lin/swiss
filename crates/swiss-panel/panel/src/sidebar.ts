@@ -24,7 +24,8 @@ import { addTitle, assignMember, groupOf as makeGroupOf, newGroupFlow, saveGroup
 import { draggingGroupName, draggingRow, foldMap, listFilter, setDraggingGroupName, setDraggingRow } from "./ui-state.js";
 import { mcpGroups, mcpRows, selectedMcp, setMcpGroups, setMcpRows } from "./mcp-state.js";
 import { tr } from "./i18n.js";
-import { popupMenu } from "./ui/menu.js";
+import { dot, popupMenu, sideRow } from "./ui/index.js";
+import type { DotState } from "./ui/index.js";
 
 /* --- rendering: sidebar ----------------------------------------------------------------------- */
 /** The MCP side of the mcps scope: row rendering, the flat order and the glue between the
@@ -121,21 +122,10 @@ function nudgeSelected(up: boolean): boolean {
  *  button the Jobs/Tunnels rows use — the ctx-menu anchor pattern (data-csv.js) fits instead,
  *  and the tooltip says so. */
 function sideRowNode(m: ApiMcpRow): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.className = "side-row";
-  b.type = "button";
-  b.dataset.name = m.name;
-  b.setAttribute("role", "option");
-  const dot = document.createElement("span");
-  dot.className = "dot";
-  b.appendChild(dot);
-  const nm = document.createElement("span");
-  nm.className = "side-name";
-  nm.textContent = m.name;
-  b.appendChild(nm);
-  const tag = document.createElement("span");
-  tag.className = "side-type"; // http / rest / npx / uvx — filled by the patch pass
-  b.appendChild(tag);
+  // The library's source-list row (docs/46 §2.3). Built once per rebuild key; the dot's state and
+  // title, the trailing tag and the row title are painted by the patch pass (menu.ts
+  // patchSidebar), which keeps them current between rebuilds.
+  const b = sideRow({ name: m.name, lead: dot(m.state as DotState, m.state), data: { name: m.name } });
   b.onclick = () => { openDetail(m.name); };
   b.addEventListener("contextmenu", (ev) => {
     if (ev.preventDefault) ev.preventDefault();

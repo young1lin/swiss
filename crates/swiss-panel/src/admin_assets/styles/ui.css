@@ -400,6 +400,21 @@
     .lrow-col { flex: none; min-width: calc(var(--s6) * 3); text-align: right; font-size: var(--f-label); color: var(--text-2); white-space: nowrap; }
     .lrow-col.mono { font-family: var(--mono); }
     .lrow-acts { flex: none; display: flex; align-items: center; gap: var(--s2); }
+    /* row({ detail }): the name and sub are a <summary>; the record opens under them. The row
+       tops its columns so an open record does not drag Try and the switch to its middle - they
+       stay beside the name, centred on the name + sub lines. */
+    .lrow.has-disc { align-items: flex-start; --row-inset: calc(var(--s4) + var(--ic-s) + var(--s2)); }
+    .lrow.has-disc > .lrow-acts, .lrow.has-disc > .lrow-col { min-height: calc((var(--f-body) + var(--f-label)) * 1.35); }
+    .lrow-disc > summary { display: flex; align-items: flex-start; gap: var(--s2); cursor: pointer; list-style: none; }
+    .lrow-disc > summary::-webkit-details-marker { display: none; }
+    .lrow-text { flex: 1; min-width: 0; }
+    .lrow-chev { flex: none; display: inline-flex; margin-top: calc((var(--f-body) * 1.35 - var(--ic-s)) / 2); color: var(--text-3); transition: transform .15s ease; }
+    .lrow-chev .ic { width: var(--ic-s); height: var(--ic-s); }
+    .lrow-disc[open] .lrow-chev { transform: rotate(90deg); }
+    @media (prefers-reduced-motion: reduce) { .lrow-chev { transition: none; } }
+    /* Open, the one-line sub gives way to the whole record below it. */
+    .lrow-disc[open] .lrow-sub { display: none; }
+    .lrow-detail { display: flex; flex-direction: column; gap: var(--s3); margin: var(--s2) 0 var(--s1); padding-left: calc(var(--ic-s) + var(--s2)); }
 
     /* A label / value pair (ui/row.ts kvRow): config, system facts. */
     .kv { display: flex; align-items: baseline; gap: var(--s4); padding: var(--s2) var(--s4); }
@@ -476,6 +491,9 @@
     /* ui/page.ts section(): the caption's tools sit at the head's end; sections a full step apart. */
     .sec-tools { display: flex; align-items: center; gap: var(--s2); }
     .sec + .sec { margin-top: var(--s6); }
+    /* Two cards in one section (a master switch over its list) are two surfaces: a grid step apart,
+       never one card with a seam. */
+    .sec > .group + .group { margin-top: var(--s3); }
     /* A section's one-line note sits under the caption, a grid step above the card. */
     .sec-note { padding: 0 var(--s1); margin: calc(-1 * var(--s1)) 0 var(--s2); }
     /* ui/page.ts pageFoot(): the revision line under a list - prose left, the value right. */
@@ -507,6 +525,7 @@
     .vblock-tools { margin-left: auto; display: inline-flex; gap: var(--s1); }
     .vblock-tools .btn.icon { width: var(--s6); height: var(--s6); }
     .vblock-tools .btn.icon .ic { width: var(--ic-m); height: var(--ic-m); }
+    .vblock-text { font-size: var(--f-label); color: var(--text-2); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
     .vblock > pre.logs { padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: var(--r-row); max-height: none; overflow: visible; font-size: var(--f-label); line-height: 1.6; }
     .vblock > pre.logs.err { color: var(--red); }
     .vblock > pre + pre { margin-top: var(--s1); }

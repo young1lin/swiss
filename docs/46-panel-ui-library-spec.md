@@ -360,9 +360,13 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
       **修订 docs/33 C3**（它规定两个复制按钮都可见、JSON 一律缩进展开），在 docs/33 状态头记一笔。
       库里是 `valueBlock()`（标题、说明、工具一行，下面是正文）与 `jsonCodeNode(v, all, { oneLine })`；
       JSON 后面跟着文字（figma 的截图说明）时不压成一行。
-- [ ] Tools 行、侧栏行的字重按 U5。
-- [ ] P1b 留下的两件：`.seg` 自带的 `margin-bottom` 交给页面的流（组件不带摆放，P2-1 已做）；`sidebar.ts` 的
-      `sideRowNode` 换成 `sideRow()`（P2-3）。（`popupMenu` 改用 `h()` 等到最后一个手写微型 DOM 的套件——Data 的——换成 happy-dom，即 P7。）
+- [x] Tools 行、侧栏行的字重按 U5。Tools / Resources / Prompts 换成 `row()`（P2-3a）：名字是 `<code>`（工具名是要敲的值），
+      一行说明，行尾是 Try 与对客户端的开关（资源是 Read）。工具与 prompt 的完整记录（完整说明、输入 schema /
+      参数）用 `row({ detail })` 原地展开：名字与说明成为原生 `<details>`，行的按钮留在外面，点它们不会展开。
+      参数名那一行（加粗必填）不再挂在行上，进了展开的记录（原型 B 的行只有名字、说明、开关）。被关掉的工具是
+      自己的一节（"已停用"），不再是卡片里的一条小标题。
+- [x] P1b 留下的两件：`.seg` 自带的 `margin-bottom` 交给页面的流（组件不带摆放，P2-1 已做）；`sidebar.ts` 的
+      `sideRowNode` 换成 `sideRow()`（P2-3a）。（`popupMenu` 改用 `h()` 等到最后一个手写微型 DOM 的套件——Data 的——换成 happy-dom，即 P7。）
 
 ### 3.3 MCP › Traffic 与 Token（P3）
 

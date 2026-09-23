@@ -291,6 +291,21 @@ describe("docs/46 G6 - the scenes", () => {
     expect(app().querySelectorAll(".tl-who").length).toBeGreaterThan(0);
   });
 
+  it("the scenes' days do not move with the clock: just after midnight the event scene still has three", async () => {
+    // Found at 00:14: data placed minutes before the REAL now put "30 minutes ago" on yesterday.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const late = new Date();
+      late.setHours(0, 10, 0, 0);
+      vi.setSystemTime(late);
+      await go("#scene-content");
+      await go("#scene-event");
+      expect(app().querySelectorAll(".tl-day")).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("the empty scene: the one empty shape with its action", async () => {
     await go("#scene-empty");
     const empty = app().querySelector(".pane .empty")!;

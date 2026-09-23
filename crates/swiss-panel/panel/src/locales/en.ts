@@ -911,6 +911,7 @@ const en: Record<string, string> = {
   "logs.hiddenToolsListUntil": "hidden from tools/list until re-enabled",
   "logs.turnTool": "Turn this tool on",
   "logs.pageNM": "Page {n} of {m}",
+  "logs.itemPages": "List pages",
   /* --- main --- */
   "main.newPanelVersionReady": "A new panel version is ready — it will load once you finish editing",
   "main.switchLight": "Switch to light",
@@ -1768,6 +1769,10 @@ const en: Record<string, string> = {
   "gallery.d.result": "Result",
   "gallery.d.decodedNote": "JSON decoded from a string",
   "gallery.d.replySize": "reply {n} chars",
+  "gallery.d.toolDesc": "List open orders, newest first; filter by status and cap the rows returned.",
+  "gallery.d.fullDescription": "Full description",
+  "gallery.d.inputSchema": "Input schema",
+  "gallery.d.try": "Try",
   "gallery.s.blockMore": "More for this block",
   "gallery.s.viaMcp": "via mcp",
   "gallery.s.client": "client {who}",
