@@ -1812,14 +1812,35 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             // resurrects it. The write is atomic and touches only this key — ${ENV} refs
             // elsewhere survive verbatim.
             let source = ctx.registry.get(&name).and_then(|e| e.data.read().ok().map(|d| d.source));
-            if source == Some(swiss_mcp::registry::Source::Config)
-                && !swiss_host::config::remove_config_server(&name, &swiss_host::config::config_path()) {
-                    log::log(
-                        "warn",
-                        "config entry was already gone on delete",
-                        Some(json!({ "name": name })),
-                    );
+            if source == Some(swiss_mcp::registry::Source::Config) {
+                match swiss_host::config::remove_config_server(
+                    &name,
+                    &swiss_host::config::config_path(),
+                ) {
+                    swiss_host::config::ConfigRemoval::Removed => {}
+                    swiss_host::config::ConfigRemoval::NotFound => {
+                        log::log(
+                            "warn",
+                            "config entry was already gone on delete",
+                            Some(json!({ "name": name })),
+                        );
+                    }
+                    // The file leg failed, so the runtime leg must not run: deleting the entry
+                    // here would resurrect the MCP from gateway.config.json at the next start
+                    // while the API just claimed success. Refuse and let the operator retry.
+                    swiss_host::config::ConfigRemoval::WriteFailed(err) => {
+                        log::log(
+                            "error",
+                            "removing the config entry failed; delete refused",
+                            Some(json!({ "name": name, "err": err })),
+                        );
+                        return admin_error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            &format!("failed to remove {name} from gateway.config.json: {err}"),
+                        );
+                    }
                 }
+            }
             if let Err(err) = ctx.registry.delete(&name).await {
                 return admin_error(StatusCode::BAD_REQUEST, &err);
             }
