@@ -679,7 +679,10 @@ describe("body chrome dedup - no repeated location titles", () => {
     for (const rel of ["jobs.ts", "views/plugins.ts", "views/secrets.ts"]) {
       const src = read(rel);
       expect(src, rel).not.toContain("pane-title");
-      expect(src, rel).toContain("pane-desc");
+      // A description, and no title: the hand-built .pane-desc, or the library's paneHead()
+      // given a desc and no title (docs/46 P5 moved Plugins and Secrets onto it).
+      expect(/pane-desc|paneHead\(\{\s*desc:/.test(src), rel).toBe(true);
+      expect(src, rel).not.toMatch(/paneHead\(\{\s*title:/);
     }
   });
 });

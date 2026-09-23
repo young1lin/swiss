@@ -112,22 +112,47 @@ describe("the Secrets page (docs/19 D6)", () => {
     expect(rows.length).toBe(2);
     // The row shows the REFERENCE, in a code element, not any value: the page never even
     // holds a value to leak - its state is names + rev only.
-    expect(($("pane").querySelector('[data-secret="stripe-key"] .desc code') as HTMLElement).textContent)
+    expect(($("pane").querySelector('[data-secret="stripe-key"] .lrow-sub code') as HTMLElement).textContent)
       .toBe("${secret://stripe-key}");
-    expect($("pane").querySelector('[data-secret="stripe-key"] .desc')?.textContent)
-      .toContain("substituted at run time wherever a credential is used");
-    expect($("pane").querySelectorAll('[data-skcopy="stripe-key"]').length).toBe(1);
+    // docs/46 §3.5: the reference IS the sub-line. The sentence every row repeated after it
+    // ("substituted at run time wherever a credential is used") is the description's, once.
+    expect($("pane").querySelector('[data-secret="stripe-key"] .lrow-sub')?.textContent)
+      .toBe("${secret://stripe-key}");
+    expect($("pane").querySelector(".pane-desc")?.textContent)
+      .toBe("Write-only vault. Reference a value as ${secret://name}; it is never shown again.");
+    // Copy ref is a quiet ghost button with the copy glyph, one per row.
+    const copy = $("pane").querySelectorAll('[data-skcopy="stripe-key"]');
+    expect(copy.length).toBe(1);
+    expect(copy[0].className).toBe("btn ghost with-ic");
+    expect(copy[0].querySelector("use")?.getAttribute("href")).toBe("#i-copy");
+    expect(copy[0].textContent).toBe("Copy ref");
+    // New group is the folder-plus glyph - the sidebar's own for the same act (rule 7).
+    expect($("skNewGroup").querySelector("use")?.getAttribute("href")).toBe("#i-folder-plus");
     // Delete lives behind the row's overflow menu (design rule 4: red never sits on a row).
     expect($("pane").querySelector(".btn.danger")).toBeNull();
     expect($("pane").querySelectorAll("[data-skmore]").length).toBe(2);
     expect($("countChip").textContent).toBe("2 secrets");
   });
 
+  it("Copy ref says what it copied - and no token, because a reference carries none", async () => {
+    body = { secrets: ["stripe-key"], rev: 5 };
+    await view.mount();
+    const wrote: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: (t: string) => { wrote.push(t); return Promise.resolve(); } } });
+    ($("pane").querySelector('[data-skcopy="stripe-key"]') as HTMLElement).click();
+    for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(wrote).toEqual(["${secret://stripe-key}"]);
+    // Found on the docs/46 P5 walk: every copy in the panel toasted "... copied - the token is
+    // embedded", the secret reference and the endpoint URL included. Only the connect snippets
+    // embed a token (copyText's `token` option); a reference only names a secret.
+    expect($("toast").textContent).toBe("Reference copied");
+  });
+
   it("renders rows in the stored order, unranked names after in name order (docs/26)", async () => {
     // Through the real path this time: loadSecrets applies the order the server sent.
     body = { secrets: ["zz-last", "aa-unranked", "mm-mid"], rev: 5, order: ["zz-last", "mm-mid"] };
     await view.mount();
-    const names = Array.from($("pane").querySelectorAll("[data-secret] .name")).map((n) => n.textContent);
+    const names = Array.from($("pane").querySelectorAll("[data-secret] .lrow-name")).map((n) => n.textContent);
     expect(names).toEqual(["zz-last", "mm-mid", "aa-unranked"]);
   });
 
@@ -143,7 +168,7 @@ describe("the Secrets page (docs/19 D6)", () => {
     // The order PUT bumps the vault rev - the reload is mandatory, not polish.
     expect(calls.some((c) => c.method === "GET" && c.url === "/api/secrets")).toBe(true);
     // The moved list is what the rows show, even before the reload answers.
-    const names = Array.from($("pane").querySelectorAll("[data-secret] .name")).map((n) => n.textContent);
+    const names = Array.from($("pane").querySelectorAll("[data-secret] .lrow-name")).map((n) => n.textContent);
     expect(names).toEqual(["bb", "aa", "cc"]);
   });
 
@@ -226,11 +251,11 @@ describe("the Secrets page (docs/19 D6)", () => {
     const hostile = '<b>bold</b><img src=x onerror=1>';
     body = { secrets: [hostile], rev: 1 };
     await view.mount();
-    const name = $("pane").querySelector("[data-secret] .name") as HTMLElement;
+    const name = $("pane").querySelector("[data-secret] .lrow-name") as HTMLElement;
     expect(name.textContent).toContain(hostile);
     expect(name.querySelector("img")).toBeNull();
-    // Same for the reference in .desc, and the attribute values the delegate keys on.
-    expect($("pane").querySelector(".desc code")?.textContent).toBe("${secret://" + hostile + "}");
+    // Same for the reference on the sub-line, and the attribute values the delegate keys on.
+    expect($("pane").querySelector(".lrow-sub code")?.textContent).toBe("${secret://" + hostile + "}");
     expect($("pane").querySelector("[data-skmore]")?.getAttribute("aria-label")).toBe("Actions for " + hostile);
     expect($("pane").querySelectorAll('[data-secret="' + hostile + '"]').length).toBe(1);
   });

@@ -36,31 +36,32 @@ import { uiOwnedClasses } from "./styles.js";
    Prompts on row()). P2-3b: run.ts 24 -> 0, run-history.ts 47 -> 34 (the Run tab).
    P2-3c: run-history.ts 34 -> 0, fields.ts 6, add-sheet.ts 10, groups.ts 1, page-registry.ts 3 -> 0.
    P3: traffic.ts 32 -> 0 (the activity is the event list), views/tokens.ts 24 -> 0.
-   P4: tunnels.ts 8 -> 0, tunnel-sheets.ts 61 -> 0, polling.ts 12 -> 3 (its job row is P6). */
+   P4: tunnels.ts 8 -> 0, tunnel-sheets.ts 61 -> 0, polling.ts 12 -> 3 (its job row is P6).
+   P5: views/plugins.ts 13, views/secrets.ts 18, views/system.ts 17 -> 0 (Settings on row()). The
+   same commit deleted ui.css .inline-form > input.grow (its one user, the Secrets value box, no
+   longer needs the width), so `grow` is base.css's flex spacer alone and stopped counting as a
+   ui.css class: the Data files and views/terminal.ts drop by their spacers (11 in all). */
 const FROZEN: Record<string, number> = {
-  "data-browsers.ts": 12,
-  "data-cell.ts": 11,
-  "data-csv.ts": 12,
-  "data-ddl.ts": 19,
+  "data-browsers.ts": 10,
+  "data-cell.ts": 10,
+  "data-csv.ts": 11,
+  "data-ddl.ts": 18,
   "data-filters.ts": 1,
-  "data-form.ts": 5,
-  "data-grid.ts": 16,
+  "data-form.ts": 4,
+  "data-grid.ts": 15,
   "data-sql.ts": 6,
-  "data-stream.ts": 6,
-  "data-structure.ts": 2,
+  "data-stream.ts": 5,
+  "data-structure.ts": 1,
   "data-tabs.ts": 1,
-  "data-value.ts": 6,
+  "data-value.ts": 5,
   "data-view.ts": 3,
   "jobs.ts": 68,
   "polling.ts": 3,
   "views/jobs.ts": 2,
-  "views/plugins.ts": 13,
   "views/remote-runs.ts": 30,
   "views/remote.ts": 25,
-  "views/secrets.ts": 18,
-  "views/system.ts": 17,
   "views/terminal-settings.ts": 11,
-  "views/terminal.ts": 7,
+  "views/terminal.ts": 6,
 };
 
 const srcDir = path.resolve(import.meta.dirname, "../src");

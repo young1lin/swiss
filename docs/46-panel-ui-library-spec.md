@@ -409,10 +409,17 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
 
 ### 3.5 Settings（P5）
 
-- [ ] Plugins：状态与开关一致时**不画点**（开关已经说了开 / 关）；状态异常（failed、waitingDependency、not-built）时画
+- [x] Plugins：状态与开关一致时**不画点**（开关已经说了开 / 关）；状态异常（failed、waitingDependency、not-built）时画
       红 / 琥珀点，副行是原因。副行 `pages: a, b, c` 收成 "3 pages"（完整列表在 title）；说明一行；底部只留 revision。
-- [ ] Secrets：删掉每行重复的那句；说明一行；Copy ref 变成带 `copy` 图标的 ghost 按钮。
-- [ ] System：说明一行；行用 `kvRow` / `row`。
+      实施：`stateDot()`——开且 active / 开且 idle（插件宿主的懒启动）/ 关，都不画点；进行中是琥珀脉冲，failed 是红点，
+      `lastError` 是行的红字（`row({ err })`）。点放在名字后面而不是 lead 列：大多数行没有点，只给一行加 lead 会把它的
+      名字挤出对齐。依赖没满足不画点，是副行上的 `tag("no provider", { tone: "warn" })`——静止的琥珀点会被读成启动中的
+      脉冲。"· off" 字样删掉（开关已经说了）。轮询原地更新：行和开关是同一个节点，按过的开关不丢焦点。
+- [x] Secrets：删掉每行重复的那句；说明一行；Copy ref 变成带 `copy` 图标的 ghost 按钮。New group 变 `folder-plus` 图标，
+      创建表单是 `inlineForm()`。ui.css `.inline-form > input.grow` 随它最后一个使用者删掉（960 宽时两个输入框各约
+      320px，最长的占位符放得下）。
+- [x] System：说明一行；行用 `kvRow` / `row`。实施：一行 `row()`；退出确认改用 `sheet()` + `showSheet()`。Quit 按钮
+      按原型保留红色——这页唯一的操作就是这个，没有 ⋯ 可以收，确认在它打开的 sheet 里。
 
 ### 3.6 Jobs 与 Remote（P6）
 

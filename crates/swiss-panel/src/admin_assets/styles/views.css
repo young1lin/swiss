@@ -147,11 +147,8 @@
     .tun-name { font-size: var(--f-body); font-weight: var(--w-name); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tun-sub { font-size: var(--f-label); color: var(--text-2); font-family: var(--mono); line-height: 1.35; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tun-sub .via { font-family: var(--sans); }
-    .tun-err { font-size: var(--f-label); color: var(--red); font-family: var(--mono); margin-top: 2px; }
     .tun-acts { display: flex; gap: var(--s2); flex: none; }
     .tun-foot { font-size: var(--f-label); color: var(--text-3); padding: var(--s3) var(--s1) 0; display: flex; justify-content: space-between; gap: var(--s3); }
-    /* The right-hand slot: a value you would copy (the inventory revision), so it earns mono. */
-    .tun-foot-rev { font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); }
     /* Grouped tunnel lists are the groups component at page density (ui.css .grp--page):
        the group is the card, a 36px band over the rows. Only the row layout is tunnel-specific. */
     .tun-row[draggable="true"] { cursor: grab; }

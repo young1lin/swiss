@@ -149,6 +149,15 @@ describe("the Token page (MCP group)", () => {
     // The secret is the input's live value, not a value= default that a reset would restore.
     expect(($("tkSecret") as HTMLInputElement).value).toBe("s3cr3t-oneshot");
     expect(($("tkSecret") as HTMLInputElement).readOnly).toBe(true);
+    // The copies say what they carry: the connect commands have the token inside them, so their
+    // toast says so; the bare secret is only "copied" (docs/46 P5: copyText's claim is opt-in).
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => Promise.resolve() } });
+    $("tkCopyConn").click();
+    for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+    expect($("toast").textContent).toBe("Connect commands copied — the token is embedded.");
+    $("tkCopySecret").click();
+    for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+    expect($("toast").textContent).toBe("Token secret copied");
     view.setTokenViewSecret(null);
   });
 

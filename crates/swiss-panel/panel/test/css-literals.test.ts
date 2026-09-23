@@ -40,7 +40,7 @@ import { stylesDir } from "./styles.js";
  * fixed widths); ui.css and views.css fall with every migrated page. */
 const FROZEN: Record<string, number> = {
   "base.css": 22,
-  "ui.css": 75,
+  "ui.css": 74, // P5: the inline form's 260px wide-input basis went with its last user
   "views.css": 243, // P2-3c: MCP Logs, items, Run, Config (P1b-2: 251, the held-edits dot moved to ui.css on --dot)
 };
 

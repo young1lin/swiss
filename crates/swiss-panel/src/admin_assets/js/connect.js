@@ -87,7 +87,7 @@ async function copyConn(name        , kind        )                {
   if (!secret) return;
   const text = kind === "claude" ? claudeSnippet(name, secret)
     : kind === "codex" ? codexSnippet(name, secret) : mcpJsonSnippet(name, secret);
-  void copyText(text, kind === "claude" ? tr("connect.claudeCodeCommand") : kind === "codex" ? tr("connect.codexBlock") : tr("connect.mcpJsonEntry"));
+  void copyText(text, kind === "claude" ? tr("connect.claudeCodeCommand") : kind === "codex" ? tr("connect.codexBlock") : tr("connect.mcpJsonEntry"), { token: true });
 }
 
 /** `claude mcp add` — one line, secret embedded. Runs in any shell (cmd, PowerShell, bash, zsh). */
@@ -111,15 +111,19 @@ function mcpJsonSnippet(name        , secret        )         {
   return JSON.stringify({ mcpServers: entry }, null, 2);
 }
 
-async function copyText(text        , label        )                {
+/** Copy one value and say so. `token` is for a text that carries the token secret inside it (a
+ *  connect snippet): the toast says it is embedded, so nobody pastes it somewhere public by
+ *  accident. Everything else - a secret reference, an endpoint URL, a port, the bare token -
+ *  is just "copied": the success path used to claim an embedded token for every copy in the
+ *  panel (found on the docs/46 P5 walk, on Secrets' Copy ref). */
+async function copyText(text        , label        , o                      = {})                {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
     else legacyCopy(text);
-    toast(tr("connect.labelCopiedTokenEmbedded", { label }));
   } catch (e) {
     legacyCopy(text);
-    toast(tr("connect.labelCopied", { label }));
   }
+  toast(tr(o.token ? "connect.labelCopiedTokenEmbedded" : "connect.labelCopied", { label }));
 }
 
 /** Fallback for a browser that withholds the async clipboard (or a non-secure origin). */

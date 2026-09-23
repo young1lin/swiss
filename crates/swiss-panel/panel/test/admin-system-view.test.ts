@@ -71,12 +71,16 @@ beforeEach(async () => {
 describe("Settings / System", () => {
   it("places the low-frequency destructive action in a dedicated Runtime section", async () => {
     await view.mount();
-    expect($("pane").textContent).toContain("Control this running swiss process");
+    // docs/46 §3.5: one sentence (U11), and the one row is the library's row().
+    expect($("pane").querySelector(".pane-desc")?.textContent).toBe("Control this running swiss process; configuration and logs stay on disk.");
     const cap = $("pane").querySelector(".sec-cap");
     expect(cap?.textContent).toBe("Runtime");
     const quit = $("system-quit");
     expect(quit.className).toBe("btn danger");
     expect(quit.textContent).toBe("Quit swiss");
+    const row = quit.closest(".lrow");
+    expect(row?.querySelector(".lrow-name")?.textContent).toBe("Quit swiss");
+    expect(row?.querySelector(".lrow-sub")?.textContent).toBe("Gracefully stop MCPs, tunnels, jobs, terminals, and this local process.");
   });
 
   it("opens a visible, explicit confirmation sheet before stopping anything", async () => {

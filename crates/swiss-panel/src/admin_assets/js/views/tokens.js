@@ -325,7 +325,7 @@ function wire()       {
       return;
     }
     if (button.id === "tkCopySecret") { void copyText(tokensDomain.viewSecret , tr("tokens.tokenSecret")); return; }
-    if (button.id === "tkCopyConn") { void copyText(connectAll(tokensDomain.viewSecret ), tr("tokens.connectCommands")); return; }
+    if (button.id === "tkCopyConn") { void copyText(connectAll(tokensDomain.viewSecret ), tr("tokens.connectCommands"), { token: true }); return; }
     if (button.dataset.tkuse) {
       if (await fetchSecret(button.dataset.tkuse)) render();
       return;

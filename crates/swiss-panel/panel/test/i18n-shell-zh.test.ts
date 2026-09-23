@@ -101,24 +101,26 @@ describe("the I2 views in Chinese (plugins, secrets, system)", () => {
     localStorage.clear();
   });
 
-  it("speaks the plugins row's requirements and off markers", async () => {
+  it("speaks the plugins row's requirements and page count", async () => {
     const { requiresBadge, rowNode } = await import("../src/views/plugins.js");
     const met = requiresBadge({ requires: ["connection-catalog"], requiresMet: true } as never);
-    expect(Array.isArray(met) ? met.join("") : met).toContain("· 依赖 connection-catalog");
+    expect(met).toBe("依赖 connection-catalog");
     const unmet = requiresBadge({ requires: ["a", "b"], requiresMet: false } as never) as (string | HTMLElement)[];
-    expect(unmet.join("")).toContain("· 需要 a, b ");
+    expect(unmet.join("")).toContain("需要 a, b ");
     const warn = unmet.find((n) => { return typeof n !== "string"; }) as HTMLElement;
-    expect(warn.textContent).toBe("(无提供方)");
-    const row = rowNode({ id: "mcp", label: "MCP", enabled: false, state: "active", pages: [] } as never);
-    expect(row.textContent).toContain("· 已停用");
-    expect(row.textContent).toContain("· 无页面");
+    expect(warn.textContent).toBe("无提供方");
+    // The separators are the layout's, the words are the locale's (docs/46 P3).
+    const off = rowNode({ id: "mcp", label: "MCP", enabled: false, state: "disabled", pages: [] } as never);
+    expect(off.querySelector(".lrow-sub")?.textContent).toBe("mcp · 无页面");
+    const three = rowNode({ id: "mcp", label: "MCP", enabled: true, state: "active", pages: ["a", "b", "c"] } as never);
+    expect(three.querySelector(".lrow-sub")?.textContent).toBe("mcp · 3 个页面");
   });
 
   it("names the start-at-sign-in row and its toggle in Chinese", async () => {
     const { startupRowNode } = await import("../src/views/plugins.js");
     const row = startupRowNode({ enabled: false, detail: "HKCU\\...\\Run" })!;
     expect(row.textContent).toContain("登录时启动 swiss");
-    expect(row.textContent).toContain("· 已停用");
+    expect((row.querySelector("[data-autostart-toggle]") as HTMLElement).getAttribute("aria-checked")).toBe("false");
     expect((row.querySelector("[data-autostart-toggle]") as HTMLElement).getAttribute("aria-label")).toBe("切换开机自启");
   });
 
@@ -134,6 +136,9 @@ describe("the I2 views in Chinese (plugins, secrets, system)", () => {
     const buttons = Array.from(sheet.querySelectorAll("button")).map((b) => { return b.textContent; });
     expect(buttons).toEqual(["取消", "退出 swiss"]);
     expect(sheet.textContent).toContain("这会断开所有 MCP 客户端");
+    // The sentence ends in the locale, not in a "." the code appended (found on the docs/46 P5
+    // walk: "需要时用 swiss start." - an English full stop and no verb).
+    expect(sheet.querySelector(".hint")!.textContent).toBe("配置和日志会保留。需要时用 swiss start 重新启动。");
   });
 
   it("routes the secrets count through the zh other form", () => {

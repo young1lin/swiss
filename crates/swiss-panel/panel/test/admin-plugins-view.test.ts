@@ -16,9 +16,9 @@
 
 // @vitest-environment happy-dom
 
-/* The Plugins page (the host's own management view): dot + name + one grey line + a switch
-   per row, a start-at-sign-in row, and a poll that patches state in place without ever
-   rebuilding structure.
+/* The Plugins page (the host's own management view): name + one grey line + a switch per row,
+   a dot only when the state disagrees with the switch (docs/46 §3.5), a start-at-sign-in row,
+   and a poll that patches state in place without ever rebuilding structure.
 
    REWRITTEN FOR R5 (docs/37 §7), and the rewrite is the point. The builders used to return
    HTML strings, so every assertion here was a substring test against markup nobody parsed.
@@ -40,6 +40,9 @@ import type { ApiPluginRow } from "../src/types/api.js";
 let view: any;
 let inventory: unknown = { plugins: [], revision: 0 };
 let autostartReply: unknown = null;
+/* Runs inside the enable/disable POST, before it answers: a case uses it to do what the browser
+ * does in that window (blur the switch it just disabled) and to move the inventory on. */
+let duringToggle: (() => void) | null = null;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
@@ -64,9 +67,13 @@ function rendered(child: unknown): HTMLElement {
 
 beforeAll(async () => {
   Object.assign(globalThis, {
-    fetch: (url: string): Promise<Response> => {
+    fetch: (url: string, init?: RequestInit): Promise<Response> => {
       const u = String(url);
       if (u === "/api/plugins") return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve(inventory) } as Response);
+      if (init?.method === "POST" && /^\/api\/plugins\/[^/]+\/(enable|disable)$/.test(u)) {
+        if (duringToggle) duringToggle();
+        return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ plugin: {} }) } as Response);
+      }
       if (u === "/api/autostart") {
         return Promise.resolve({ status: autostartReply == null ? 404 : 200, ok: autostartReply != null, json: () => Promise.resolve(autostartReply) } as Response);
       }
@@ -80,6 +87,7 @@ beforeAll(async () => {
 beforeEach(() => {
   inventory = { plugins: [], revision: 0, pages: [] };
   autostartReply = null;
+  duringToggle = null;
   document.body.innerHTML = shellSkeleton();
   if (view) view.unmount(); // the real lifecycle between pages resets the module state
 });
@@ -93,16 +101,18 @@ beforeEach(() => {
 describe("plugins view dependency badge", () => {
   it("names the capability when the requirement is unmet", () => {
     const badge = rendered(view.requiresBadge({ id: "data", requires: ["connection-catalog"], requiresMet: false } as ApiPluginRow));
-    expect(badge.textContent).toBe("· needs connection-catalog (no provider)");
-    expect(badge.querySelector(".warn")?.textContent).toBe("(no provider)");
+    // docs/46 §3.5: the missing floor is a warn TAG (a state mark, amber), and the words carry
+    // no separator of their own - the sub-line puts the " · " between its parts.
+    expect(badge.textContent).toBe("needs connection-catalog no provider");
+    expect(badge.querySelector(".tag.warn")?.textContent).toBe("no provider");
   });
 
   it("names the requirement while it is met — the dependency stays visible, not only the break", () => {
     expect(view.requiresBadge({ id: "data", requires: ["connection-catalog"], requiresMet: true } as ApiPluginRow))
-      .toBe("· requires connection-catalog");
+      .toBe("requires connection-catalog");
     // An older inventory row that predates the verdict key reads as met-but-named.
     expect(view.requiresBadge({ id: "data", requires: ["connection-catalog"] } as ApiPluginRow))
-      .toBe("· requires connection-catalog");
+      .toBe("requires connection-catalog");
   });
 
   it("has nothing to say for plugins without requirements", () => {
@@ -113,15 +123,15 @@ describe("plugins view dependency badge", () => {
 
   it("a capability name is text, never markup (docs/37 R5)", () => {
     const badge = rendered(view.requiresBadge({ id: "x", requires: ["a<b", "c&d"], requiresMet: false } as ApiPluginRow));
-    expect(badge.textContent).toBe("· needs a<b, c&d (no provider)");
+    expect(badge.textContent).toBe("needs a<b, c&d no provider");
     expect(badge.querySelector("b")).toBeNull();
   });
 });
 
-/* Visual refresh V4 (docs/18): the plugins row is dot + name + one grey line, the toggle is
-   a switch, and the version moves into the row title — the row says what it is, the dot says
-   what it is doing. */
-describe("visual refresh V4 — the plugins row", () => {
+/* Visual refresh V4 (docs/18), on the library row since docs/46 P5: name + one grey line, the
+   toggle is a switch, and the version moves into the row title. The switch says on or off, so
+   the dot is left for what the switch cannot say - work in flight and a failed start. */
+describe("the plugins row", () => {
   it("toggles with a switch, not a Disable/Enable button", () => {
     const row = view.rowNode({ id: "data", label: "Data", enabled: true, state: "active", pages: ["mcps", "traffic"], version: "0.1" } as ApiPluginRow);
     const sw = row.querySelector("[data-toggle]");
@@ -130,38 +140,59 @@ describe("visual refresh V4 — the plugins row", () => {
     expect(sw?.textContent).toBe("");
   });
 
-  it("keeps id and pages on the grey line; version rides the title, state is the dot", () => {
-    const row = view.rowNode({ id: "data", label: "Data", enabled: true, state: "active", pages: ["mcps", "traffic"], version: "0.1" } as ApiPluginRow);
-    expect(row.querySelector("code")?.textContent).toBe("data");
-    expect(row.querySelector(".tun-sub")?.textContent).toContain("pages: mcps, traffic");
+  it("the sub-line is the id in mono, then how many pages - the list itself on hover", () => {
+    const row = view.rowNode({ id: "mcp", label: "MCP", enabled: true, state: "active", pages: ["mcps", "traffic", "tokens"], version: "0.1", requires: ["connection-catalog"], requiresMet: true } as ApiPluginRow);
+    expect(row.classList.contains("lrow")).toBe(true);
+    expect(row.querySelector(".lrow-sub code")?.textContent).toBe("mcp");
+    expect(row.querySelector(".lrow-sub")?.textContent).toBe("mcp · 3 pages · requires connection-catalog");
+    expect(row.querySelector('.lrow-sub [title="mcps, traffic, tokens"]')?.textContent).toBe("3 pages");
     expect(row.getAttribute("title")).toBe("v0.1");
     expect(row.textContent).not.toContain("v0.1");
-    expect(row.textContent).not.toContain("· active");
+    expect(row.textContent).not.toContain("active");
   });
 
-  it("a pageless plugin says so", () => {
-    expect(view.rowNode({ id: "host", label: "Settings", enabled: true, state: "active" } as ApiPluginRow).textContent).toContain("· no page");
+  it("one page is singular, and a pageless plugin says so", () => {
+    expect(view.rowNode({ id: "data", label: "Data", enabled: true, state: "active", pages: ["data"] } as ApiPluginRow).querySelector(".lrow-sub")?.textContent).toBe("data · 1 page");
+    expect(view.rowNode({ id: "host", label: "Settings", enabled: true, state: "active" } as ApiPluginRow).querySelector(".lrow-sub")?.textContent).toBe("host · no page");
   });
 
-  it("the dot carries the host's own state word as its title (docs/18 V6)", () => {
-    const dotOf = (p: ApiPluginRow): HTMLElement => view.rowNode(p).querySelector("[data-dot]");
-    expect(dotOf({ id: "data", label: "Data", enabled: true, state: "active" } as ApiPluginRow).getAttribute("title")).toBe("active");
-    expect(dotOf({ id: "mcp", label: "MCP", enabled: false, state: "active" } as ApiPluginRow).getAttribute("title")).toBe("disabled");
-    expect(dotOf({ id: "x", label: "X", enabled: true, state: "failed" } as ApiPluginRow).getAttribute("title")).toBe("failed");
-    expect(dotOf({ id: "x", label: "X", enabled: true, state: "failed" } as ApiPluginRow).className).toBe("dot down");
+  it("no dot while the state agrees with the switch - on and serving, on and lazily idle, off", () => {
+    const dotOf = (p: ApiPluginRow): Element | null => view.rowNode(p).querySelector(".dot");
+    expect(dotOf({ id: "data", label: "Data", enabled: true, state: "active" } as ApiPluginRow)).toBeNull();
+    expect(dotOf({ id: "jobs", label: "Jobs", enabled: true, state: "idle" } as ApiPluginRow)).toBeNull();
+    expect(dotOf({ id: "mcp", label: "MCP", enabled: false, state: "disabled" } as ApiPluginRow)).toBeNull();
+    // ...and the off row has no "off" word either: the switch beside it already says it.
+    expect(view.rowNode({ id: "mcp", label: "MCP", enabled: false, state: "disabled" } as ApiPluginRow).textContent).toBe("MCPmcp · no page");
+  });
+
+  it("a failed start is a red dot after the name and the reason as the row's red line", () => {
+    const row = view.rowNode({ id: "x", label: "X", enabled: true, state: "failed", lastError: "port 9000 is taken", pages: ["x"] } as ApiPluginRow);
+    const d = row.querySelector(".lrow-name .dot") as HTMLElement;
+    expect(d.className).toBe("dot error");
+    expect(d.getAttribute("title")).toBe("failed"); // the host's own word (docs/18 V6)
+    expect(row.querySelector(".lrow-err")?.textContent).toBe("port 9000 is taken");
+    expect(row.querySelector(".lrow-err")?.getAttribute("title")).toBe("port 9000 is taken");
+    expect(row.querySelector(".lrow-sub")).toBeNull(); // the red line takes the sub-line's place
+  });
+
+  it("work in flight is the amber pulse, titled with the host's word", () => {
+    const d = view.rowNode({ id: "x", label: "X", enabled: true, state: "stopping" } as ApiPluginRow).querySelector(".lrow-name .dot") as HTMLElement;
+    expect([d.className, d.getAttribute("title")]).toEqual(["dot stopping", "stopping"]);
+    const s = view.rowNode({ id: "x", label: "X", enabled: true, state: "starting" } as ApiPluginRow).querySelector(".lrow-name .dot") as HTMLElement;
+    expect([s.className, s.getAttribute("title")]).toEqual(["dot starting", "starting"]);
   });
 
   it("a hostile label is text in the name and the switch's aria-label (docs/37 R5)", () => {
     const hostile = '<b>bold</b><img src=x onerror=1>';
     const row = view.rowNode({ id: "x", label: hostile, enabled: true, state: "active" } as ApiPluginRow);
-    expect(row.querySelector(".tun-name")?.textContent).toContain(hostile);
-    expect(row.querySelector(".tun-name b")).toBeNull();
+    expect(row.querySelector(".lrow-name")?.textContent).toContain(hostile);
+    expect(row.querySelector(".lrow-name b")).toBeNull();
     expect(row.querySelector("[data-toggle]")?.getAttribute("aria-label")).toBe("Toggle " + hostile);
   });
 });
 
 /* Start-at-sign-in (the Plugins page's Startup section): the OS-level host setting rendered
-   with the same row vocabulary — dot + name + one grey line + the panel's switch. */
+   with the same row - name + one grey line + the panel's switch. */
 describe("plugins view start-at-sign-in row", () => {
   it("switches with the panel's switch and reflects the OS answer", () => {
     const row = view.startupRowNode({
@@ -179,11 +210,11 @@ describe("plugins view start-at-sign-in row", () => {
     expect(row.textContent).not.toContain("· off");
   });
 
-  it("an off row says so on the name line and checks off", () => {
+  it("an off row is the switch checked off - no dot and no \"off\" word to repeat it", () => {
     const row = view.startupRowNode({ enabled: false, detail: "launch agent: /Users/a/Library/LaunchAgents/dev.swiss.swiss.plist", command: "c" });
-    expect(row?.textContent).toContain("· off");
     expect(row?.querySelector("[data-autostart-toggle]")?.getAttribute("aria-checked")).toBe("false");
-    expect(row?.textContent).toContain("launch agent:");
+    expect(row?.querySelector(".dot")).toBeNull();
+    expect(row?.textContent).toBe("Start swiss when you sign inlaunch agent: /Users/a/Library/LaunchAgents/dev.swiss.swiss.plist");
   });
 
   it("renders nothing without an answer — an old gateway never grows a dead control", () => {
@@ -192,10 +223,10 @@ describe("plugins view start-at-sign-in row", () => {
 });
 
 /* The page itself, through the real load path: mount reads /api/plugins and /api/autostart
- * under the fetch stub, and the poll patches state IN PLACE - the row nodes keep their
- * identity while their dots, error tails and the foot follow the inventory. */
+ * under the fetch stub, and the poll patches state IN PLACE - the row nodes and their switches
+ * keep their identity while the words, the dot and the revision follow the inventory. */
 describe("the Plugins page through mount", () => {
-  it("paints rows, the Startup section and the foot with its revision", async () => {
+  it("paints rows, the Startup section and a foot that is the revision alone", async () => {
     inventory = { plugins: [
       { id: "mcp", label: "MCP", enabled: true, state: "active", pages: ["mcps", "traffic", "tokens"] },
       { id: "data", label: "Data", enabled: true, state: "active", pages: ["data"], requires: ["connection-catalog"] },
@@ -204,9 +235,11 @@ describe("the Plugins page through mount", () => {
     await view.mount();
     expect($("pane").querySelectorAll("[data-plugin]").length).toBe(2);
     expect($("pane").querySelector("[data-autostart]")).not.toBeNull();
-    expect($("pane").textContent).toContain("· requires connection-catalog");
-    expect($("pane").querySelector("[data-foot-text]")?.textContent).toBe("2 plugins · 2 on");
-    expect($("pane").textContent).toContain("revision 7");
+    expect($("pane").textContent).toContain("data · 1 page · requires connection-catalog");
+    expect(Array.from($("pane").querySelectorAll(".sec-cap")).map((c) => c.textContent)).toEqual(["Startup", "Installed"]);
+    // The count is the context bar's chip (rule 25); the foot keeps what nothing else says.
+    expect($("pane").querySelector(".page-foot")?.textContent).toBe("revision 7");
+    expect(view.countText()).toBe("2 plugins · 2 on");
   });
 
   it("an old gateway without /api/autostart grows no Startup section", async () => {
@@ -216,24 +249,56 @@ describe("the Plugins page through mount", () => {
     expect($("pane").querySelector("[data-autostart]")).toBeNull();
   });
 
-  it("poll patches state in place - the row is the SAME node, its dot and tail follow", async () => {
+  it("poll patches state in place - the row and its switch are the SAME nodes, the words follow", async () => {
     inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: true, state: "active" }], revision: 1, pages: [] };
     await view.mount();
     const row = $("pane").querySelector("[data-plugin]") as HTMLElement;
-    const dot = row.querySelector("[data-dot]") as HTMLElement;
-    const err = row.querySelector("[data-err]") as HTMLElement;
+    const toggle = row.querySelector("[data-toggle]") as HTMLButtonElement;
+    toggle.focus();
+    expect(row.querySelector(".dot")).toBeNull();
 
     inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: true, state: "failed", lastError: "port taken" }], revision: 2, pages: [] };
     await view.poll();
 
     expect($("pane").querySelector("[data-plugin]")).toBe(row); // patched, not rebuilt
-    expect(row.querySelector("[data-dot]")?.className).toBe("dot down");
-    expect(row.querySelector("[data-dot]")?.getAttribute("title")).toBe("failed");
-    expect(row.querySelector("[data-err]")?.textContent).toContain("· port taken");
-    expect($("pane").querySelector("[data-foot-text]")?.textContent).toBe("1 plugin · 1 on · 1 failed");
-    // The dot and err nodes are the same ones too - patch, not replace.
-    expect(row.querySelector("[data-dot]")).toBe(dot);
-    expect(row.querySelector("[data-err]")).toBe(err);
+    expect(row.querySelector(".lrow-name .dot")?.className).toBe("dot error");
+    expect(row.querySelector(".lrow-name .dot")?.getAttribute("title")).toBe("failed");
+    expect(row.querySelector(".lrow-err")?.textContent).toBe("port taken");
+    expect($("pane").querySelector(".page-foot-rev")?.textContent).toBe("revision 2");
+    expect(view.countText()).toBe("1 plugin · 1 on · 1 failed");
+    // The switch is the node a hand just pressed: a poll must not take the focus off it.
+    expect(row.querySelector("[data-toggle]")).toBe(toggle);
+    expect(document.activeElement).toBe(toggle);
+
+    // Switched off elsewhere: the same switch moves to unchecked, and the dot goes away.
+    inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: false, state: "disabled" }], revision: 3, pages: [] };
+    await view.poll();
+    expect(row.querySelector("[data-toggle]")).toBe(toggle);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(row.querySelector(".dot")).toBeNull();
+    expect(row.querySelector(".lrow-sub")?.textContent).toBe("mcp · no page");
+  });
+
+  it("a pressed switch gets its focus back once the write answers", async () => {
+    inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: true, state: "active" }], revision: 1, pages: [] };
+    await view.mount();
+    const toggle = $("pane").querySelector("[data-toggle]") as HTMLButtonElement;
+    toggle.focus();
+    // The switch is disabled while its write is out (no double send), and a real browser
+    // blurs a focused control the moment it is disabled - happy-dom does not, so the case
+    // does it by hand, inside the request, where Chrome does it. Found on the docs/46 P5 walk:
+    // after a click (or Space) the focus was on <body>, and the next Tab started over.
+    duringToggle = (): void => {
+      expect(toggle.disabled).toBe(true);
+      toggle.disabled = false; toggle.blur(); toggle.disabled = true; // happy-dom ignores blur() on a disabled control
+      expect(document.activeElement).not.toBe(toggle);
+      inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: false, state: "disabled" }], revision: 2, pages: [] };
+    };
+    toggle.click();
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(document.activeElement).toBe(toggle);
   });
 
   it("a structural change - a plugin appearing - re-renders the list", async () => {
@@ -246,7 +311,7 @@ describe("the Plugins page through mount", () => {
     await view.poll();
     const rows = $("pane").querySelectorAll("[data-plugin]");
     expect(rows.length).toBe(2);
-    expect(rows[1].textContent).toContain("· off");
+    expect(rows[1].querySelector("[data-toggle]")?.getAttribute("aria-checked")).toBe("false");
   });
 
   it("an empty inventory draws the empty state, not a bare list", async () => {
@@ -254,7 +319,8 @@ describe("the Plugins page through mount", () => {
     await view.mount();
     expect($("pane").querySelector(".empty h2")?.textContent).toBe("No plugins");
     expect($("pane").querySelector("[data-plugin]")).toBeNull();
-    expect($("pane").querySelector("[data-foot-text]")?.textContent).toBe("0 plugins · 0 on");
+    expect($("pane").querySelector(".page-foot-rev")?.textContent).toBe("revision 0");
+    expect(view.countText()).toBe("0 plugins · 0 on");
   });
 
   // The pane frame moved into the library with pane() (docs/46 P1b-3): ui.css owns it now.
