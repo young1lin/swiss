@@ -35,7 +35,8 @@ import { uiOwnedClasses } from "./styles.js";
    P2-2: logs.ts 85 -> 50 (the call log is the event list). P2-3a: logs.ts 50 -> 0 (Tools / Resources /
    Prompts on row()). P2-3b: run.ts 24 -> 0, run-history.ts 47 -> 34 (the Run tab).
    P2-3c: run-history.ts 34 -> 0, fields.ts 6, add-sheet.ts 10, groups.ts 1, page-registry.ts 3 -> 0.
-   P3: traffic.ts 32 -> 0 (the activity is the event list), views/tokens.ts 24 -> 0. */
+   P3: traffic.ts 32 -> 0 (the activity is the event list), views/tokens.ts 24 -> 0.
+   P4: tunnels.ts 8 -> 0, tunnel-sheets.ts 61 -> 0, polling.ts 12 -> 3 (its job row is P6). */
 const FROZEN: Record<string, number> = {
   "data-browsers.ts": 12,
   "data-cell.ts": 11,
@@ -51,9 +52,7 @@ const FROZEN: Record<string, number> = {
   "data-value.ts": 6,
   "data-view.ts": 3,
   "jobs.ts": 68,
-  "polling.ts": 12,
-  "tunnel-sheets.ts": 61,
-  "tunnels.ts": 8,
+  "polling.ts": 3,
   "views/jobs.ts": 2,
   "views/plugins.ts": 13,
   "views/remote-runs.ts": 30,

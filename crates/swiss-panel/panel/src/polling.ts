@@ -28,6 +28,8 @@ import { currentView } from "./ui-state.js";
 import { setTunResponse, tunBusyOf, tunDragging, tunResponse, mountedTunScope } from "./tunnel-state.js";
 import { jobGroupNames, jobIsBusy, jobRows, setJobGroupNames, setJobRows } from "./job-state.js";
 import { mcpDetail, mcpRows, memoryInfo, selectedMcp, setMcpDetail, setMcpGroups, setMcpRows, setMemoryInfo, setSelectedMcp } from "./mcp-state.js";
+import { btn, dot, moreBtn, row, tag } from "./ui/index.js";
+import type { DotState } from "./ui/index.js";
 
 
 /* --- polling ---------------------------------------------------------------------------------- */
@@ -147,7 +149,7 @@ async function loadTunnels(patchOnly?: boolean): Promise<void> {
   if (isTunnelsView(currentView())) {
     const { patchTunnels, renderTunnels } = await import("./tunnels.js");
     if (tunDragging()) return; // a rebuild under the pointer would cancel the drag; patch later
-    if (patchOnly && $("pane").querySelector(".tun-foot")) patchTunnels();
+    if (patchOnly && $("pane").querySelector("#tunGroups")) patchTunnels();
     else renderTunnels();
   }
   updateCountChip();
@@ -235,54 +237,63 @@ async function loadJobs(patchOnly?: boolean): Promise<void> {
   updateCountChip();
 }
 
-/** `18989 → 127.0.0.1:18989   via bastion · serves pg-app ●` — the sub-line's
- *  children (docs/37 R5): every host, connection name and remark the server sends is a
- *  text node, and the arrow is the character itself rather than the &rarr; entity a string
- *  builder had to spell out. */
+/** A tunnel's state as a status dot (rule 10): up is green, a failure red, a tunnel on its way
+ *  up (starting, reconnecting) the amber pulse, and a stopped one the plain grey dot. */
+function tunDot(state: string): DotState {
+  if (state === "up" || state === "connected") return "up";
+  if (state === "error" || state === "down") return "error";
+  if (state === "starting" || state === "reconnecting") return "starting";
+  if (state === "stopping") return "stopping";
+  return "off";
+}
+
+/** `→ 127.0.0.1:18989 · via bastion · serves pg-app ●` — a rule's sub-line (docs/37 R5: every
+ *  host, connection name and remark the server sends is a text node). The local port is the
+ *  row's own column now (docs/46 §3.4), so the line starts at the target; the target is a value
+ *  you would type, so mono. */
 function ruleSubNode(r: ApiTunnelRuleRow): HChild[] {
-  const out: HChild[] = [String(r.localPort), " → ", r.targetHost + ":" + r.targetPort,
-    " ", h("span", { class: "via" }, tr("polling.conn", { conn: r.connectionName }))];
+  const out: HChild[] = ["→ ", h("code", null, r.targetHost + ":" + r.targetPort), " · ", tr("polling.conn", { conn: r.connectionName })];
   if (r.mcpRows && r.mcpRows.length) {
-    out.push(" ", h("span", { class: "via" }, tr("polling.serves")));
+    out.push(" · ", tr("polling.serves"), " ");
     r.mcpRows.forEach((m, i) => {
       if (i) out.push(", ");
       // A known MCP's dot keeps its own one-word title (docs/18 V6); an unknown name paints
-      // no state, so it takes no title either — the hover falls through to the span around
-      // it, which already answers with "no MCP named …".
+      // no state - the hover falls through to the span around it ("no MCP named …").
       out.push(h("span", { class: "serves" + (m.known ? "" : " unknown"),
           title: m.known ? tr("polling.mcpNameState", { name: m.name, state: m.state }) : tr("polling.mcpNamedName", { name: m.name }) },
         m.name,
-        h("span", { class: "dot " + (m.known ? m.state : ""), title: m.known ? dotTitle(m.state) : undefined })));
+        m.known ? dot(m.state as DotState, dotTitle(m.state)) : dot("off", null)));
     });
   }
-  if (r.remark) out.push(" ", h("span", { class: "via" }, "· " + r.remark));
+  if (r.remark) out.push(" · ", r.remark);
   return out;
 }
 
-/** One rule row as a NODE (docs/37 R5): names, routes and reasons are text, and the two
- *  action buttons carry data-act/data-more for #pane's delegated click (tunnels.js) — no
- *  per-render handlers to re-attach after a repaint. */
+/** One rule row: the library row (docs/46 §3.4). The dot, the name, the route; the local port
+ *  in its own column (the value you point a client at); a failure as the row's one red line with
+ *  the whole reason in its title, so a failing row is as tall as a healthy one. Start / Stop is
+ *  the row's one word button - hairline, never the page's solid primary (docs/18 V5) - and the
+ *  rest is behind ⋯. data-act / data-more answer #pane's delegated click (tunnels.ts). */
 function ruleRowNode(r: ApiTunnelRuleRow): HTMLElement {
   const busy = tunBusyOf(r.id);
   const word = busy ? "starting" : r.state;
   const running = r.state === "up" || r.state === "starting" || r.state === "reconnecting";
-  // Hoisted so the comparison literals stay out of the h() children (i18n gate).
-  const failing = r.state === "error" || r.state === "reconnecting";
-  return h("div", { class: "tun-row", draggable: true, data: { rule: r.id } },
-    h("span", { class: "dot " + word, data: { dot: "" }, title: dotTitle(word, null, r.reason) }),
-    h("div", { class: "tun-main" },
-      h("div", { class: "tun-name" }, r.name),
-      h("div", { class: "tun-sub" }, ruleSubNode(r)),
-      failing
-        ? h("div", { class: "tun-err", data: { reason: "" } }, r.reason || "")
-        : null),
-    h("div", { class: "tun-acts" },
-      // Start/Stop is hairline, not solid (docs/18 V5 + 17 §2.1: one solid accent per page,
-      // and that is the page's New — a column of solid Starts is a column of shouting).
-      h("button", { class: "btn", data: { act: running ? "stop" : "start" }, disabled: !!busy },
-        busy ? "…" : running ? tr("polling.stop") : tr("polling.start")),
-      h("button", { class: "btn ghost icon", data: { more: "" }, aria: { label: tr("polling.rowActions") }, title: tr("polling.rowActions") },
-        iconNode("ellipsis"))));
+  return row({
+    lead: dot(tunDot(word), dotTitle(word, null, r.reason)),
+    name: r.name,
+    sub: ruleSubNode(r),
+    err: ruleFailing(r) ? r.reason || undefined : undefined,
+    cols: [{ v: String(r.localPort), mono: true, title: tr("tunnels.localPort") }],
+    primary: btn(busy ? "…" : running ? tr("polling.stop") : tr("polling.start"), { data: { act: running ? "stop" : "start" }, disabled: !!busy }),
+    more: moreBtn(tr("polling.rowActions"), { data: { more: "" } }),
+    data: { rule: r.id },
+    draggable: true,
+  });
+}
+
+/** Whether a rule's reason is a failure worth the red line (a stopped rule's reason is not). */
+function ruleFailing(r: ApiTunnelRuleRow): boolean {
+  return r.state === "error" || r.state === "reconnecting";
 }
 
 /** A jump id -> its connection's name (docs/27 §4). The row carries the id; the panel
@@ -300,33 +311,29 @@ function tunConnName(id: string): string {
  *  summary uses, one word for the same fact in both places. */
 function connBadgeNodes(c: ApiTunnelConnectionRow): HChild[] {
   const out: HChild[] = [];
-  if (c.proxy) out.push(" ", h("span", { class: "tag" }, tr("polling.proxy")));
-  if (c.jump) out.push(" ", h("span", { class: "tag" }, tr("polling.conn", { conn: tunConnName(c.jump) })));
+  if (c.proxy) out.push(" ", tag(tr("polling.proxy")));
+  if (c.jump) out.push(" ", tag(tr("polling.conn", { conn: tunConnName(c.jump) })));
   return out;
 }
 
-/** One connection row as a NODE (docs/37 R5) — same contract as ruleRowNode: the host line
- *  and any failure reason are text, the Test and ellipsis buttons carry data-test/data-more
- *  for #pane's delegated click. */
+/** One connection row: the library row (docs/46 §3.4). The host (a value, mono), who it signs in
+ *  as and how, the transport tags; how many rules ride it is the row's column now, not a clause
+ *  in the sub-line; a failure is the one red line. Test is the row's one word button. */
 function connRowNode(c: ApiTunnelConnectionRow): HTMLElement {
   const busy = tunBusyOf(c.id);
-  const word = busy ? "starting" : c.state === "connected" ? "up" : c.state;
-  return h("div", { class: "tun-row", draggable: true, data: { conn: c.id } },
-    h("span", { class: "dot " + word, data: { dot: "" }, title: dotTitle(word, null, c.reason) }),
-    h("div", { class: "tun-main" },
-      h("div", { class: "tun-name" }, c.name),
-      h("div", { class: "tun-sub" },
-        c.host + ":" + c.port, " ",
-        h("span", { class: "via" },
-          c.ruleCount
-            ? trn(c.ruleCount, "polling.userAuthNRules.one", "polling.userAuthNRules.other", { user: c.username, auth: c.authType })
-            : tr("polling.userAuth", { user: c.username, auth: c.authType })),
-        connBadgeNodes(c)),
-      c.reason ? h("div", { class: "tun-err", data: { reason: "" } }, c.reason) : null),
-    h("div", { class: "tun-acts" },
-      h("button", { class: "btn", data: { test: "" }, disabled: !!busy }, busy ? "…" : tr("polling.test")),
-      h("button", { class: "btn ghost icon", data: { more: "" }, aria: { label: tr("polling.rowActions") }, title: tr("polling.rowActions") },
-        iconNode("ellipsis"))));
+  const word = busy ? "starting" : c.state;
+  return row({
+    lead: dot(tunDot(word), dotTitle(word === "connected" ? "up" : word, null, c.reason)),
+    name: c.name,
+    sub: [h("code", null, c.host + ":" + c.port), " · ", tr("polling.userAuth", { user: c.username, auth: c.authType }), connBadgeNodes(c)],
+    err: c.reason || undefined,
+    cols: [trn(c.ruleCount || 0, "tunnels.nRules.one", "tunnels.nRules.other")],
+    primary: btn(busy ? "…" : tr("polling.test"), { data: { test: "" }, disabled: !!busy }),
+    more: moreBtn(tr("polling.rowActions"), { data: { more: "" } }),
+    data: { conn: c.id },
+    draggable: true,
+  });
 }
 
-export { connRowNode, isTunnelsView, jobDotClass, jobGroupsList, jobRowNode, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowNode, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };
+
+export { connRowNode, isTunnelsView, tunDot, jobDotClass, jobGroupsList, jobRowNode, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowNode, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };

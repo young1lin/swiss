@@ -27,7 +27,8 @@ import { h } from "../src/h.js";
 import { install } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 import {
-  checkField as checkFieldFn, field as fieldFn, form as formFn, formActions, hint as hintFn, pair,
+  checkField as checkFieldFn, field as fieldFn, form as formFn, formActions, formCap as formCapFn, formFold as formFoldFn, hint as hintFn,
+  pair, stackSheet,
 } from "../src/ui/index.js";
 import {
   anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, failNote, filterInput,
@@ -239,6 +240,32 @@ describe("ui/page", () => {
     expect(refusal.getAttribute("aria-live")).toBe("polite");
   });
 
+  it("field({ action }), formCap, formFold: a control with its button, a caption, a folded part", () => {
+    const f = fieldFn({ label: "Key", control: document.createElement("input"), action: btn("Browse") });
+    const rowEl = f.querySelector(":scope > .field-row")!;
+    expect(rowEl.firstElementChild!.className).toBe("field");
+    expect(rowEl.lastElementChild!.textContent).toBe("Browse");
+    expect(formCapFn("Proxy").className).toBe("form-cap");
+    const fold = formFoldFn({ summary: "Advanced", id: "adv" }, fieldFn({ label: "x", control: document.createElement("input") }));
+    expect(fold.tagName).toBe("DETAILS");
+    expect(fold.id).toBe("adv");
+    expect((fold as HTMLDetailsElement).open, "a fold starts folded").toBe(false);
+    expect(fold.querySelector(":scope > summary")!.textContent).toBe("Advanced");
+    expect(fold.querySelector(":scope > .fold-body > .fld")).not.toBeNull();
+  });
+
+  it("a draggable library row shows the drag: dimmed while carried, an accent edge where it lands (ui.css)", () => {
+    // Found on the P4 review: row({ draggable }) carried the grab cursor but not the feedback
+    // the groups component toggles (.dragging / .drop-before / .drop-after) - those lived on
+    // .tun-row, so a Tunnels row on the library dragged with no line showing where it lands.
+    const rules = parseCss(sheet("ui.css"));
+    const decl = (sel: string, prop: string): string | undefined =>
+      rules.find((r) => !r.at && r.selectors.includes(sel))?.decls.find((d) => d.prop === prop)?.value;
+    expect(decl(".lrow.dragging", "opacity")).toBe("0.55");
+    expect(decl(".lrow.drop-before", "box-shadow")).toBe("inset 0 2px 0 var(--accent)");
+    expect(decl(".lrow.drop-after", "box-shadow")).toBe("inset 0 calc(var(--s1) / -2) 0 var(--accent)");
+  });
+
   it("a pair's two fields sit level: the stacking margin never applies inside .two (ui.css)", () => {
     // Found on the P2-3c walk: in a sheet (not a .form) the second half of a pair sat 12px low.
     const rules = parseCss(sheet("ui.css"));
@@ -253,6 +280,16 @@ describe("ui/page", () => {
     const css = sheet("ui.css");
     expect(css).toMatch(/:is\(\.fld, \.two\) \+ :is\(\.fld, \.two\) \{ margin-top: var\(--s3\); \}/);
     expect(css).toMatch(/:is\(\.form, \.sheet-body, \.fold-body\) > :is\(\.fld, \.two\) \+ :is\(\.fld, \.two\) \{ margin-top: 0; \}/);
+  });
+
+  it("dot(state, null): a dot that defers its hover to what holds it - no title, out of AT", () => {
+    const d = dot("off", null);
+    expect(d.className).toBe("dot");
+    expect(d.hasAttribute("title")).toBe(false);
+    expect(d.getAttribute("aria-hidden")).toBe("true");
+    expect(d.hasAttribute("role")).toBe(false);
+    const said = dot("up", "up");
+    expect([said.getAttribute("title"), said.getAttribute("role"), said.getAttribute("aria-label")]).toEqual(["up", "img", "up"]);
   });
 
   it("pager: newer, a live status, older - a navigation landmark the view patches by id", () => {
@@ -684,6 +721,30 @@ describe("ui/menu - anchoredMenu", () => {
   });
 });
 
+describe("ui/sheet - stackSheet", () => {
+  it("a second layer over the open sheet: its own backdrop, Escape closes it alone and stops there", () => {
+    document.body.innerHTML = "";
+    let closedCb = 0;
+    let reachedDocument = 0;
+    const onDoc = (e: KeyboardEvent): void => { if (e.key === "Escape") reachedDocument++; };
+    document.addEventListener("keydown", onDoc);
+    const layer = stackSheet(() => { closedCb++; });
+    const node = layer.paint({ title: "Pick", body: h("input", { id: "p" }), foot: btn("Cancel") });
+    const back = node.parentElement!;
+    expect(back.className).toBe("backdrop stacked");
+    expect(node.getAttribute("role")).toBe("dialog");
+    // A repaint replaces the dialog inside the same layer.
+    const again = layer.paint({ title: "Pick 2", body: null, foot: null });
+    expect(back.children.length).toBe(1);
+    expect(again.querySelector("h2")!.textContent).toBe("Pick 2");
+    again.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(document.querySelector(".backdrop.stacked")).toBeNull();
+    expect(closedCb).toBe(1);
+    expect(reachedDocument, "the shell's Escape chain must not also close the sheet underneath").toBe(0);
+    document.removeEventListener("keydown", onDoc);
+  });
+});
+
 describe("ui/to-top - toTop", () => {
   it("a labelled round button that shows only past one screen of its scroller", () => {
     const scroller = document.createElement("div");
@@ -743,6 +804,7 @@ describe("docs/46 - every class the library draws is styled by base.css or ui.cs
       timelineMeta(["a", "b"]),
       formFn(pair(fieldFn({ label: "a", required: true, meta: "m", control: document.createElement("input"), hint: "h" }), checkFieldFn({ label: "c", control: document.createElement("input") })), hintFn("x", { bad: true }), formActions(btn("b"))),
       row({ name: "n", sub: "s", detail: valueBlock({ label: "l", text: "t" }), primary: btn("b") }),
+      formFn(formCapFn("c"), formFoldFn({ summary: "s" }, fieldFn({ label: "k", control: document.createElement("input"), action: btn("b") }))),
       toTop(document.createElement("div")),
       section({ cap: "c", tools: [btn("x")] }, card(row({ name: "n" }))),
       pageFoot({ note: "n", rev: "r" }), inlineForm(btn("x")),

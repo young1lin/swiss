@@ -252,7 +252,8 @@ describe("the connection sheet's Advanced fold (docs/27 §4)", () => {
     // The inline error line starts hidden.
     const err = get("c-err");
     expect(err.hidden).toBe(true);
-    expect(err.className).toBe("hint");
+    // A refusal from its first paint (hint({ bad })): the red is the class, not an inline style.
+    expect(err.className).toBe("hint bad");
   });
 
   it("folds with proxy / via chips when the connection is configured, still collapsed", () => {
@@ -343,7 +344,7 @@ describe("the connection sheet's Advanced fold (docs/27 §4)", () => {
     const err = get("c-err");
     expect(err.hidden).toBe(false);
     expect(err.textContent).toContain("jump cycle detected");
-    expect(err.style.color).toBe("var(--red)");
+    expect(err.className).toBe("hint bad");
     // The sheet stays open — the fix is a keystroke away, not a re-open.
     const sheet = get("sheet");
     expect(sheet.hidden).toBe(false);

@@ -15,7 +15,7 @@
  */
 
                                                                                                                                                                                                                                           
-import { $, api, apiJson, el, iconNode, toast } from "./util.js";
+import { $, api, apiJson, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
                                      
 import { loadTunnels, tunConnName, tunData, tunGroupsList } from "./polling.js";
@@ -23,7 +23,7 @@ import { assignTunScoped } from "./tunnels.js";
 import { groupFieldNode, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { setTunKeys, takeTunPendingGroup, tunKeys } from "./tunnel-state.js";
 import { tr } from "./i18n.js";
-import { closeSheet } from "./ui/sheet.js";
+import { btn, checkField, closeSheet, field, formCap, formFold, hint, inlineForm, pair, sheet, showSheet, stackSheet, tag } from "./ui/index.js";
 
 /* --- connection sheet -------------------------------------------------------------------------- */
 
@@ -48,35 +48,31 @@ async function loadKeys()                                  {
  *  error line), which h() flattens into the sheet body. */
 function advancedConnNode(d                , editing         )           {
   const chips           = [];
-  if (d.proxy) chips.push(" ", h("span", { class: "tag" }, tr("tunnelSheets.proxy")));
-  if (d.jump) chips.push(" ", h("span", { class: "tag" }, tr("tunnelSheets.name", { name: tunConnName(d.jump) })));
+  if (d.proxy) chips.push(" ", tag(tr("tunnelSheets.proxy")));
+  if (d.jump) chips.push(" ", tag(tr("tunnelSheets.name", { name: tunConnName(d.jump) })));
   const jumpOpts           = [h("option", { value: "" }, tr("tunnelSheets.none"))].concat(tunData().connections
     .filter((c                        )          => { return !editing || c.id !== d.id; })
     .map((c                        ) => {
       return h("option", { value: c.id, selected: d.jump === c.id }, c.name);
     }));
   return [
-    h("details", { class: "fold", id: "c-advanced" },
-      h("summary", null, tr("tunnelSheets.advanced"), chips),
-      h("div", { class: "fold-body" },
-        h("div", { class: "cap" }, tr("tunnelSheets.proxy2")),
-        h("label", { class: "field" },
-          h("span", null, tr("tunnelSheets.proxyUrl")),
-          h("input", { id: "c-proxy", value: d.proxy || "", placeholder: tr("tunnelSheets.socks5N127N0N0"), autocomplete: "off", spellcheck: false })),
-        h("div", { class: "two" },
-          h("label", { class: "field" },
-            h("span", null, tr("tunnelSheets.proxyUsername")),
-            h("input", { id: "c-proxy-user", value: d.proxyUsername || "", autocomplete: "off" })),
-          h("label", { class: "field" },
-            h("span", null, tr("tunnelSheets.proxyPassword")),
-            h("input", { id: "c-proxy-pass", type: "password", value: d.proxyPassword || "", autocomplete: "off" }))),
-        h("div", { class: "hint" }, tr("tunnelSheets.leaveEmptyConnectDirectly")),
-        h("div", { class: "cap" }, tr("tunnelSheets.connectionJump")),
-        h("label", { class: "field" },
-          h("span", null, tr("tunnelSheets.connection")),
-          h("select", { id: "c-jump" }, jumpOpts)),
-        h("div", { class: "hint" }, tr("tunnelSheets.dialsThroughChosenConnection")))),
-    h("div", { class: "hint", id: "c-err", hidden: true }),
+    formFold({ summary: [tr("tunnelSheets.advanced"), chips], id: "c-advanced" },
+        formCap(tr("tunnelSheets.proxy2")),
+        field({
+          label: tr("tunnelSheets.proxyUrl"),
+          control: h("input", { id: "c-proxy", value: d.proxy || "", placeholder: tr("tunnelSheets.socks5N127N0N0"), autocomplete: "off", spellcheck: false }),
+        }),
+        pair(
+          field({ label: tr("tunnelSheets.proxyUsername"), control: h("input", { id: "c-proxy-user", value: d.proxyUsername || "", autocomplete: "off" }) }),
+          field({ label: tr("tunnelSheets.proxyPassword"), control: h("input", { id: "c-proxy-pass", type: "password", value: d.proxyPassword || "", autocomplete: "off" }) })),
+        hint(tr("tunnelSheets.leaveEmptyConnectDirectly")),
+        formCap(tr("tunnelSheets.connectionJump")),
+        field({
+          label: tr("tunnelSheets.connection"), control: h("select", { id: "c-jump" }, jumpOpts),
+          hint: tr("tunnelSheets.dialsThroughChosenConnection"),
+        })),
+    // A refused save lands here, beside the fields that caused it (saveConn).
+    hint(null, { id: "c-err", bad: true, hidden: true, live: true }),
   ];
 }
 
@@ -89,56 +85,49 @@ function openConnSheet(def                               )       {
   const names = tunGroupsList();
   const initial = takeTunPendingGroup() || resolveDefaultGroup(names, lastGroup("conns"));
   const groupField = editing ? null : groupFieldNode(names, initial);
-  // The house sheet idiom (panel-proof-of-life rule 1): visible BEFORE the body is painted.
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog",
-        aria: { modal: "true", label: editing ? tr("tunnelSheets.editConnection") : tr("tunnelSheets.newConnection") } },
-      h("div", { class: "sheet-head" },
-        h("h2", { id: "t-title" }, editing ? tr("tunnelSheets.editConnection") : tr("tunnelSheets.newSshConnectionGroup", { group: initial }))),
-      h("div", { class: "sheet-body" },
-        h("label", { class: "field" },
-          h("span", null, tr("tunnelSheets.name2")),
-          h("input", { id: "c-name", value: d.name, placeholder: tr("tunnelSheets.testServer"), autocomplete: "off" })),
-        groupField,
-        h("div", { class: "two" },
-          h("label", { class: "field" },
-            h("span", null, tr("tunnelSheets.host")),
-            h("input", { id: "c-host", value: d.host, placeholder: tr("tunnelSheets.eGN192N168"), autocomplete: "off" })),
-          h("label", { class: "field" },
-            h("span", null, tr("tunnelSheets.port")),
-            h("input", { id: "c-port", value: String(d.port || 22), autocomplete: "off" }))),
-        h("label", { class: "field" },
-          h("span", null, tr("tunnelSheets.username")),
-          h("input", { id: "c-user", value: d.username, placeholder: tr("tunnelSheets.enterUsername"), autocomplete: "off" })),
-        h("label", { class: "field" },
-          h("span", null, tr("tunnelSheets.authentication")),
-          h("select", { id: "c-auth" },
-            h("option", { value: "key", selected: d.authType === "key" }, tr("tunnelSheets.keyPrivateKeyFile")),
-            h("option", { value: "password", selected: d.authType === "password" }, tr("tunnelSheets.password")))),
-        h("div", { id: "c-auth-fields" }),
-        advancedConnNode(d, editing)),
-      h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "c-cancel" }, tr("tunnelSheets.cancel")),
-        h("button", { class: "btn primary", id: "c-save" }, tr("tunnelSheets.save")))));
+  // The library sheet (showSheet: visible BEFORE painted, the backdrop closes).
+  showSheet(sheet({
+    title: editing ? tr("tunnelSheets.editConnection") : tr("tunnelSheets.newSshConnectionGroup", { group: initial }),
+    titleId: "t-title",
+    label: editing ? tr("tunnelSheets.editConnection") : tr("tunnelSheets.newConnection"),
+    body: [
+      field({ label: tr("tunnelSheets.name2"), control: h("input", { id: "c-name", value: d.name, placeholder: tr("tunnelSheets.testServer"), autocomplete: "off" }) }),
+      groupField,
+      pair(
+        field({ label: tr("tunnelSheets.host"), control: h("input", { id: "c-host", value: d.host, placeholder: tr("tunnelSheets.eGN192N168"), autocomplete: "off" }) }),
+        field({ label: tr("tunnelSheets.port"), control: h("input", { id: "c-port", value: String(d.port || 22), autocomplete: "off" }) })),
+      field({ label: tr("tunnelSheets.username"), control: h("input", { id: "c-user", value: d.username, placeholder: tr("tunnelSheets.enterUsername"), autocomplete: "off" }) }),
+      field({
+        label: tr("tunnelSheets.authentication"),
+        control: h("select", { id: "c-auth" },
+          h("option", { value: "key", selected: d.authType === "key" }, tr("tunnelSheets.keyPrivateKeyFile")),
+          h("option", { value: "password", selected: d.authType === "password" }, tr("tunnelSheets.password"))),
+      }),
+      h("div", { id: "c-auth-fields" }),
+      advancedConnNode(d, editing),
+    ],
+    foot: [btn(tr("tunnelSheets.cancel"), { id: "c-cancel" }), btn(tr("tunnelSheets.save"), { kind: "primary", id: "c-save" })],
+  }));
 
   const paint = async ()                => {
     const keys = await loadKeys();
     const isKey = $                   ("c-auth").value === "key";
     fill($("c-auth-fields"),
       isKey
-        ? [h("div", { class: "with-btn" },
-            h("label", { class: "field" },
-              h("span", null, tr("tunnelSheets.privateKeyPath")),
-              h("input", { id: "c-keypath", value: d.keyPath || "", placeholder: keys.defaultPath, autocomplete: "off", spellcheck: false })),
-            h("button", { class: "btn", id: "c-browse" }, tr("tunnelSheets.browse"))),
-          h("label", { class: "field" },
-            h("span", null, tr("tunnelSheets.passphraseOptional")),
-            h("input", { id: "c-pass", type: "password", value: d.passphrase || "", placeholder: tr("tunnelSheets.leaveEmptyKeyNone"), autocomplete: "off" })),
-          h("div", { class: "hint" }, tr("tunnelSheets.defaults"), h("code", null, keys.defaultPath), tr("tunnelSheets.whenLeftEmpty"))]
-        : [h("label", { class: "field" },
-            h("span", null, tr("tunnelSheets.password2")),
-            h("input", { id: "c-pass", type: "password", value: d.password || "", placeholder: tr("tunnelSheets.enterPassword"), autocomplete: "off" }))]);
+        ? [field({
+            label: tr("tunnelSheets.privateKeyPath"),
+            control: h("input", { id: "c-keypath", value: d.keyPath || "", placeholder: keys.defaultPath, autocomplete: "off", spellcheck: false }),
+            action: btn(tr("tunnelSheets.browse"), { id: "c-browse" }),
+          }),
+          field({
+            label: tr("tunnelSheets.passphraseOptional"),
+            control: h("input", { id: "c-pass", type: "password", value: d.passphrase || "", placeholder: tr("tunnelSheets.leaveEmptyKeyNone"), autocomplete: "off" }),
+            hint: [tr("tunnelSheets.defaults"), h("code", null, keys.defaultPath), tr("tunnelSheets.whenLeftEmpty")],
+          })]
+        : [field({
+            label: tr("tunnelSheets.password2"),
+            control: h("input", { id: "c-pass", type: "password", value: d.password || "", placeholder: tr("tunnelSheets.enterPassword"), autocomplete: "off" }),
+          })]);
     if ($("c-browse")) $                   ("c-browse").onclick = openKeyPicker;
   };
   void paint();
@@ -148,7 +137,6 @@ function openConnSheet(def                               )       {
   };
   $                   ("c-cancel").onclick = closeSheet;
   $                   ("c-save").onclick = ()       => { void saveConn(def ); };
-  $("sheet").onclick = (e            )       => { if (e.target === $("sheet")) closeSheet(); };
   $                  ("c-name").focus();
 }
 
@@ -162,16 +150,10 @@ async function openKeyPicker()                {
   // Start in the current key's folder if one is set, otherwise let the backend default to ~/.ssh.
   let cur = target.value && target.value.trim() ? target.value.trim().replace(/[/\\][^/\\]*$/, "") : "";
 
-  const back = el("div", "backdrop");
-  back.style.zIndex = "60";
-  const picker = el("div", "sheet");
-  picker.setAttribute("role", "dialog");
-  picker.setAttribute("aria-modal", "true");
-  picker.setAttribute("aria-label", tr("tunnelSheets.choosePrivateKeyFile"));
-  back.appendChild(picker);
-  document.body.appendChild(back);
-  const close = ()       => { document.body.removeChild(back); target.focus(); };
-  back.onclick = (e            )       => { if (e.target === back) close(); };
+  // A second layer over the connection sheet (ui/sheet.ts stackSheet): its own backdrop, and
+  // Escape closes the picker alone. Closing hands focus back to the path field it fills.
+  const layer = stackSheet(()       => { target.focus(); });
+  const close = layer.close;
 
   async function render()                {
     const j = await apiJson                          ("/api/tunnels/browse" + (cur ? "?dir=" + encodeURIComponent(cur) : ""));
@@ -179,23 +161,27 @@ async function openKeyPicker()                {
     cur = j.dir; // normalize to the resolved path the server returned
     const dirs = j.entries.filter((e                       )          => { return e.dir; });
     const files = j.entries.filter((e                       )          => { return !e.dir; });
-    fill(picker,
-      h("div", { class: "sheet-head" }, h("h2", null, tr("tunnelSheets.choosePrivateKey"))),
-      h("div", { class: "sheet-body" },
-        h("div", { class: "browse-cwd", style: "display:flex;gap:8px;align-items:center;margin-bottom:8px" },
-          // The disabled class is cosmetic; the disabled PROPERTY is what stops the click.
-          h("button", { class: "btn" + (j.parent ? "" : " disabled"), id: "b-up", disabled: !j.parent, title: tr("tunnelSheets.oneLevel") }, iconNode("arrow-up"), " ", tr("tunnelSheets.text")),
-          h("input", { id: "b-path", value: j.dir, spellcheck: false, autocomplete: "off", style: "flex:1" }),
-          h("button", { class: "btn", id: "b-go" }, tr("tunnelSheets.go"))),
-        j.error ? h("div", { class: "hint" }, j.error) : null,
+    const picker = layer.paint({
+      title: tr("tunnelSheets.choosePrivateKey"),
+      label: tr("tunnelSheets.choosePrivateKeyFile"),
+      body: [
+        // One row: up a level, the path (it takes the rest), Go - an inline form in all but name.
+        inlineForm(
+          // The disabled PROPERTY is what stops the click.
+          btn(tr("tunnelSheets.text"), { icon: "arrow-up", id: "b-up", disabled: !j.parent, title: tr("tunnelSheets.oneLevel") }),
+          h("input", { id: "b-path", value: j.dir, spellcheck: false, autocomplete: "off" }),
+          btn(tr("tunnelSheets.go"), { id: "b-go" })),
+        j.error ? hint(j.error, { bad: true }) : null,
         h("div", { class: "keylist" },
           dirs.map((e                       )              => {
             return h("button", { class: "is-dir", data: { dir: e.path } }, iconNode("folder"), " ", e.name);
           }),
           files.map((e                       )              => {
             return h("button", { data: { file: e.path } }, iconNode("file"), " ", e.name);
-          }))),
-      h("div", { class: "sheet-foot" }, h("button", { class: "btn", data: { close: "" } }, tr("tunnelSheets.cancel"))));
+          })),
+      ],
+      foot: btn(tr("tunnelSheets.cancel"), { data: { close: "" } }),
+    });
     picker.querySelector                   ("[data-close]") .onclick = close;
     if (j.parent) picker.querySelector                   ("#b-up") .onclick = ()       => { cur = j?.parent ; void render(); };
     const go = ()       => { cur = $                  ("b-path").value.trim(); void render(); };
@@ -257,7 +243,6 @@ async function saveConn(existing                               )                
       if (err) {
         err.hidden = false;
         err.textContent = j.error || tr("tunnelSheets.httpN", { n: r.status });
-        err.style.color = "var(--red)";
       }
       return;
     }
@@ -290,48 +275,33 @@ function openRuleSheet(def                         )       {
   const connOpts = d.connections.map((c                        )              => {
     return h("option", { value: c.id, selected: c.id === r.connectionId }, c.name);
   });
-  // The house sheet idiom: visible BEFORE the body is painted.
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog",
-        aria: { modal: "true", label: editing ? tr("tunnelSheets.editRule") : tr("tunnelSheets.newRule") } },
-      h("div", { class: "sheet-head" },
-        h("h2", { id: "t-title" }, editing ? tr("tunnelSheets.editForwardingRule") : tr("tunnelSheets.newForwardingRuleGroup", { group: initial }))),
-      h("div", { class: "sheet-body" },
-        h("label", { class: "field" },
-          h("span", null, tr("tunnelSheets.name2")),
-          h("input", { id: "r-name", value: r.name, placeholder: tr("tunnelSheets.testServerPostgresql"), autocomplete: "off" })),
-        groupField,
-        h("label", { class: "field" },
-          h("span", null, tr("tunnelSheets.sshConnection")),
-          h("select", { id: "r-conn" }, connOpts)),
-        h("label", { class: "field" },
-          h("span", null, tr("tunnelSheets.localPort")),
-          h("input", { id: "r-lport", value: String(r.localPort), placeholder: tr("tunnelSheets.n5433"), autocomplete: "off" })),
-        h("div", { class: "two" },
-          h("label", { class: "field" },
-            h("span", null, tr("tunnelSheets.targetHost")),
-            h("input", { id: "r-thost", value: r.targetHost, placeholder: tr("tunnelSheets.n127N0N0N1"), autocomplete: "off" })),
-          h("label", { class: "field" },
-            h("span", null, tr("tunnelSheets.targetPort")),
-            h("input", { id: "r-tport", value: String(r.targetPort), placeholder: tr("tunnelSheets.n5432"), autocomplete: "off" }))),
-        h("label", { class: "field" },
-          h("span", null, tr("tunnelSheets.remark")),
-          h("input", { id: "r-remark", value: r.remark || "", placeholder: tr("tunnelSheets.optional"), autocomplete: "off" })),
-        h("div", { class: "cap", style: "padding-top:var(--s2)" }, tr("tunnelSheets.servesMcps")),
-        h("div", { class: "mcp-picks", id: "r-mcps" }),
-        h("div", { class: "hint", id: "r-mcps-hint" }, tr("tunnelSheets.whichMcpsUseTunnel")),
-        h("div", { class: "cap", style: "padding-top:var(--s2)" }, tr("tunnelSheets.advanced")),
-        h("label", { class: "check" },
-          h("input", { type: "checkbox", id: "r-auto", checked: r.autoReconnect }),
-          tr("tunnelSheets.reconnectAutomatically")),
-        h("label", { class: "field" },
-          h("span", null, tr("tunnelSheets.reconnectIntervalSeconds")),
-          h("input", { id: "r-interval", value: String(r.reconnectInterval || 10), autocomplete: "off" })),
-        h("div", { class: "hint" }, tr("tunnelSheets.droppedTunnelReleasesLocal"))),
-      h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "r-cancel" }, tr("tunnelSheets.cancel")),
-        h("button", { class: "btn primary", id: "r-save" }, tr("tunnelSheets.save")))));
+  // The library sheet (showSheet: visible BEFORE painted, the backdrop closes).
+  showSheet(sheet({
+    title: editing ? tr("tunnelSheets.editForwardingRule") : tr("tunnelSheets.newForwardingRuleGroup", { group: initial }),
+    titleId: "t-title",
+    label: editing ? tr("tunnelSheets.editRule") : tr("tunnelSheets.newRule"),
+    body: [
+      field({ label: tr("tunnelSheets.name2"), control: h("input", { id: "r-name", value: r.name, placeholder: tr("tunnelSheets.testServerPostgresql"), autocomplete: "off" }) }),
+      groupField,
+      field({ label: tr("tunnelSheets.sshConnection"), control: h("select", { id: "r-conn" }, connOpts) }),
+      field({ label: tr("tunnelSheets.localPort"), control: h("input", { id: "r-lport", value: String(r.localPort), placeholder: tr("tunnelSheets.n5433"), autocomplete: "off" }) }),
+      pair(
+        field({ label: tr("tunnelSheets.targetHost"), control: h("input", { id: "r-thost", value: r.targetHost, placeholder: tr("tunnelSheets.n127N0N0N1"), autocomplete: "off" }) }),
+        field({ label: tr("tunnelSheets.targetPort"), control: h("input", { id: "r-tport", value: String(r.targetPort), placeholder: tr("tunnelSheets.n5432"), autocomplete: "off" }) })),
+      field({ label: tr("tunnelSheets.remark"), control: h("input", { id: "r-remark", value: r.remark || "", placeholder: tr("tunnelSheets.optional"), autocomplete: "off" }) }),
+      formCap(tr("tunnelSheets.servesMcps")),
+      h("div", { class: "mcp-picks", id: "r-mcps" }),
+      hint(tr("tunnelSheets.whichMcpsUseTunnel"), { id: "r-mcps-hint" }),
+      formCap(tr("tunnelSheets.advanced")),
+      checkField({ label: tr("tunnelSheets.reconnectAutomatically"), control: h("input", { type: "checkbox", id: "r-auto", checked: r.autoReconnect })                     }),
+      field({
+        label: tr("tunnelSheets.reconnectIntervalSeconds"),
+        control: h("input", { id: "r-interval", value: String(r.reconnectInterval || 10), autocomplete: "off" }),
+        hint: tr("tunnelSheets.droppedTunnelReleasesLocal"),
+      }),
+    ],
+    foot: [btn(tr("tunnelSheets.cancel"), { id: "r-cancel" }), btn(tr("tunnelSheets.save"), { kind: "primary", id: "r-save" })],
+  }));
 
   paintMcpPicks(r.mcps || [], []);
   // For a new rule, the suggestion is the point: type 5433 and the matching MCP checks itself.
@@ -350,21 +320,21 @@ function openRuleSheet(def                         )       {
   };
   $                   ("r-cancel").onclick = closeSheet;
   $                   ("r-save").onclick = ()       => { void saveRule(def ); };
-  $("sheet").onclick = (e            )       => { if (e.target === $("sheet")) closeSheet(); };
   $                  ("r-name").focus();
 }
 
 function paintMcpPicks(checked          , suggested          )       {
   const names = tunData().mcps || [];
   if (!names.length) {
-    fill($("r-mcps"), h("div", { class: "hint" }, tr("tunnelSheets.mcpsRegistered")));
+    fill($("r-mcps"), hint(tr("tunnelSheets.mcpsRegistered")));
     return;
   }
+  // One check per MCP; the one whose port matches the rule's wears a quiet tag, not a colour.
   fill($("r-mcps"), names.map((n        )              => {
-    return h("label", { class: "check" },
-      h("input", { type: "checkbox", data: { mcp: n }, checked: checked.includes(n) }),
-      n,
-      suggested.includes(n) ? h("span", { class: "hint" }, tr("tunnelSheets.matchesLocalPort")) : null);
+    return checkField({
+      label: suggested.includes(n) ? [n, " ", tag(tr("tunnelSheets.matchesLocalPort"))] : n,
+      control: h("input", { type: "checkbox", data: { mcp: n }, checked: checked.includes(n) })                    ,
+    });
   }));
 }
 

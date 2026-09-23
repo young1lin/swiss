@@ -66,6 +66,33 @@ export function showSheet(node             )       {
   el.onclick = (e) => { if (e.target === el) closeSheet(); };
 }
 
+/** A sheet over the open sheet: a picker a sheet opens for one of its own fields (the tunnel
+ *  key browser, docs/46 P4), on its own backdrop one layer up. It keeps its keys - Escape
+ *  closes THIS layer and stops there; before, it reached the shell's Escape chain, which closed
+ *  the sheet underneath and left the picker floating over nothing. `paint` (re)draws its dialog
+ *  (the picker repaints on every folder it opens); `close` removes the layer. */
+export function stackSheet(onClose             )                                                              {
+  const back = h("div", { class: "backdrop stacked" });
+  document.body.appendChild(back);
+  const close = ()       => {
+    back.remove();
+    if (onClose) onClose();
+  };
+  back.onclick = (e) => { if (e.target === back) close(); };
+  back.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Escape") close();
+  });
+  return {
+    paint: (o           )              => {
+      const node = sheet(o);
+      fill(back, node);
+      return node;
+    },
+    close,
+  };
+}
+
 /** Close the open sheet, dropping its markup (and with it any styled select's open list). */
 export function closeSheet()       {
   const el = host();

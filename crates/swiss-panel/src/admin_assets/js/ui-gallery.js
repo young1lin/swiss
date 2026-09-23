@@ -34,10 +34,10 @@ import { install, langPref, tk, tr } from "./i18n.js";
 import { SCENES } from "./ui-scenes.js";
 import {
   anchoredMenu, btn, card, checkField, closeMenu, closeSheet, decodeStrings, dot, emptyNode, failNote, field,
-  filterInput, form, formActions, groupNode, hint, iconBtn, iconNode, initSelects, initSheet, inlineForm,
-  jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot, pager, pair, pane, paneHead, popupMenu,
-  resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow, spinner, sw, tag, timeline, timelineMeta,
-  timelineToggle, toTop, valueBlock,
+  filterInput, form, formActions, formCap, formFold, groupNode, hint, iconBtn, iconNode, initSelects, initSheet,
+  inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot, pager, pair, pane, paneHead,
+  popupMenu, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow, spinner, sw, tag, timeline,
+  timelineMeta, timelineToggle, toTop, valueBlock,
 } from "./ui/index.js";
                                                             
 
@@ -183,6 +183,7 @@ const SQL_TYPE = "string";
 const SQL_SAMPLE = "SELECT 1";
 const HOST_SAMPLE = "127.0.0.1";
 const PORT_SAMPLE = "5432";
+const KEY_SAMPLE = "~/.ssh/id_ed25519";
 
 /** A status line's words that are the same in every language: an HTTP status is a value. */
 const HTTP_502 = "HTTP 502";
@@ -282,12 +283,15 @@ function catalogue(now        )              {
       [tr("gallery.st.codeBlock"), valueBlock({ label: tr("gallery.d.result"), notes: [tr("gallery.d.decodedNote")], tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
         jsonCodeNode(decodeStrings(SAMPLE_JSON), false, { oneLine: true }).node)],
     ]),
-    entry(["form", "field", "checkField", "pair", "formActions", "hint"], tk("gallery.c.forms"), tk("gallery.c.formsNote"), [], card(form(
+    entry(["form", "field", "checkField", "pair", "formActions", "formCap", "formFold", "hint"], tk("gallery.c.forms"), tk("gallery.c.formsNote"), [], card(form(
       pair(
         field({ label: tr("gallery.d.host"), control: h("input", { type: "text", value: HOST_SAMPLE }), hint: tr("gallery.d.hostHint") }),
         field({ label: tr("gallery.d.port"), control: h("input", { type: "text", value: PORT_SAMPLE }) })),
       field({ label: SQL_ARG, required: true, meta: SQL_TYPE, control: h("textarea", { placeholder: SQL_SAMPLE }) }),
       checkField({ label: tr("gallery.d.startNow"), control: h("input", { type: "checkbox", checked: true })                    , hint: tr("gallery.d.startNowHint") }),
+      formFold({ summary: tr("gallery.d.advanced") },
+        formCap(tr("gallery.d.sshKey")),
+        field({ label: tr("gallery.d.keyPath"), control: h("input", { type: "text", placeholder: KEY_SAMPLE }), action: btn(tr("gallery.d.browse")) })),
       hint(tr("gallery.d.refused"), { bad: true }),
       formActions(btn(tr("gallery.d.save"), { kind: "primary" }), btn(tr("gallery.d.cancel")))))),
     entry(["popupMenu", "sheet", "openFieldSheet", "toTop"], tk("gallery.c.floating"), tk("gallery.c.floatingNote"), [
