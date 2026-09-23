@@ -34,13 +34,15 @@
    ================================================================================================ */
                                                                                                   
                                                             
-import { $, TOKEN_ID_KEY, api, apiJson, emptyNode, iconNode, lsMigrate, targetEl } from "../util.js";
+import { $, TOKEN_ID_KEY, api, apiJson, lsMigrate, targetEl } from "../util.js";
 import { fill, h } from "../h.js";
 import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
 import { mcpRows } from "../mcp-state.js";
 import { locale, tr, trn } from "../i18n.js";
-import { popupMenu } from "../ui/menu.js";
+import {
+  btn, card, emptyNode, field, form, formActions, iconBtn, inlineForm, moreBtn, paneBody, paneHead, popupMenu, row, section, tag,
+} from "../ui/index.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed                          = {}; // the tokens fold map, loaded once before the first paint
@@ -126,30 +128,22 @@ function signature()         {
  *  rather than "whichever one you touched last". With no prior "Use", copies use `default`. */
 function inUse()                     { return pickCopyToken(tokenRows(), rememberedTokenId()); }
 
-/** One token's row: one button (Use, absent on the token copies already use) and the
- *  overflow menu with Rotate and Revoke - red never sits on a row (design rule 4). The
- *  buttons stay delegated on #pane (wire), so the groups component rebuilding a card never
- *  rewires them.
- *
- *  Built with h() (docs/37 R5), which is why there is no esc() left in here: a label and an
- *  id are text nodes and an attribute value, and neither can close a tag. The two literal
- *  " " children are the spaces the string version had between the tag and the name, and
- *  between the two buttons - inline boxes, so the gap is real layout, not formatting. */
+/** One token's row (the library row, docs/46 §3.3): its label, "copies use" as a tag on the one
+ *  the copy actions embed, the id - a value you copy, so mono - and when it was made; Use (absent
+ *  on the token copies already use) and the ⋯ with Rotate and Revoke - red never sits on a row
+ *  (design rule 4). The buttons stay delegated on #pane (wire), so the groups component
+ *  rebuilding a card never rewires them. */
 function rowNode(t             )              {
   const mine = inUse();
   const used = !!mine && t.id === mine.id;
-  return h("div", { class: "row", data: { token: t.id } },
-    h("div", { class: "row-main" },
-      h("div", { class: "name" }, t.label, used && [" ", h("span", { class: "tag" }, tr("tokens.copiesUse"))]),
-      h("div", { class: "desc" }, tr("tokens.idId", { id: t.id }), t.createdAt && [" ", tr("tokens.createdWhen", { when: new Date(t.createdAt).toLocaleString(locale()) })])),
-    h("div", { class: "row-act" },
-      !used && [h("button", { class: "btn", data: { tkuse: t.id } }, tr("tokens.use")), " "],
-      h("button", {
-        class: "btn ghost icon",
-        data: { tkmore: t.id },
-        aria: { label: tr("tokens.actionsName", { name: t.label }) },
-        title: tr("tokens.rotateRevoke"),
-      }, iconNode("ellipsis"))));
+  const when = t.createdAt ? tr("tokens.createdWhen", { when: new Date(t.createdAt).toLocaleString(locale()) }) : null;
+  return row({
+    name: used ? [t.label, " ", tag(tr("tokens.copiesUse"))] : t.label,
+    sub: [h("code", null, t.id), when ? " · " + when : null],
+    primary: used ? undefined : btn(tr("tokens.use"), { data: { tkuse: t.id } }),
+    more: moreBtn(tr("tokens.actionsName", { name: t.label }), { data: { tkmore: t.id } }),
+    data: { token: t.id },
+  });
 }
 
 /** The tokens scope's cfg for mountGroup. No drag contract: creation time is the order, the
@@ -227,7 +221,7 @@ function paintGroups()       {
  *  the selection, the attribute was only ever its initial default. */
 function groupSelectNode()                    {
   const names = tokenGroupNames().length ? tokenGroupNames() : ["default"];
-  const sel = h("select", { class: "v", id: "tkGroup", title: tr("tokens.groupTokenListsUnder") },
+  const sel = h("select", { id: "tkGroup", title: tr("tokens.groupTokenListsUnder") },
     names.map((n        )                    => { return h("option", { value: n }, n); }));
   sel.value = resolveDefaultGroup(names, lastGroup("tokens"));
   return sel;
@@ -239,39 +233,34 @@ function groupSelectNode()                    {
 function secretNode()                     {
   const secret = tokensDomain.viewSecret;
   if (!secret) return null;
-  return h("div", { class: "group", style: "margin-top:var(--s4)" },
-    h("div", { class: "row" },
-      h("div", { class: "row-main" },
-        h("div", { class: "name" }, tr("tokens.newSecretCopyNow")),
-        h("input", {
-          class: "v", id: "tkSecret", style: "width:100%",
-          value: secret, readOnly: true,
-          aria: { label: tr("tokens.newTokenSecretShown") },
-        }))),
-    h("div", { class: "form-actions" },
-      h("button", { class: "btn", id: "tkCopySecret" }, tr("tokens.copySecret")),
-      h("button", { class: "btn primary", id: "tkCopyConn" }, tr("tokens.copyConnectCommandsAll"))));
+  // Right under the form that made it: the one place the secret is ever shown.
+  return section({}, card(form(
+    field({
+      label: tr("tokens.newSecretCopyNow"),
+      control: h("input", { id: "tkSecret", value: secret, readOnly: true, aria: { label: tr("tokens.newTokenSecretShown") } }),
+    }),
+    formActions(
+      btn(tr("tokens.copyConnectCommandsAll"), { kind: "primary", id: "tkCopyConn" }),
+      btn(tr("tokens.copySecret"), { id: "tkCopySecret" })))));
 }
 
 function render()       {
   painted = signature();
-  // No location title: the context bar already says "MCP / Token".
-  fill($("pane"), h("div", { class: "wide" },
-    h("div", { class: "pane-head" },
-      h("div", null,
-        h("div", { class: "pane-desc" },
-          tr("tokens.oneTokenClientCopied"),
-          h("code", null, "default"),
-          tr("tokens.tokenUnlessYouClick"))),
-      h("div", { class: "pane-actions" },
-        h("button", { class: "btn", id: "tkNewGroup" }, tr("tokens.newGroup")))),
+  // No location title: the context bar already says "MCP / Token". One sentence (U11); which
+  // token the copies use is the row's own tag now, not a paragraph about it. New group is the
+  // folder-plus glyph - the sidebar's own, for the same act (rule 7).
+  fill($("pane"), paneBody({ wide: true },
+    paneHead({
+      desc: tr("tokens.descOneLine"),
+      actions: [iconBtn("folder-plus", tr("tokens.newGroup"), { id: "tkNewGroup" })],
+    }),
     // The inline create form (docs/35 §3): one row, the Group select beside the primary.
-    h("div", { class: "inline-form" },
+    inlineForm(
       h("input", { id: "tkLabel", placeholder: tr("tokens.labelEGClaude") }),
       groupSelectNode(),
-      h("button", { class: "btn primary", id: "tkCreate" }, tr("tokens.create"))),
-    h("div", { id: "tkGroups" }),
-    secretNode()));
+      btn(tr("tokens.create"), { kind: "primary", id: "tkCreate" })),
+    secretNode(),
+    section({}, h("div", { id: "tkGroups" }))));
   paintGroups();
   $("countChip").textContent = countText();
   // Re-claimed, not re-attached: fill() keeps #pane itself, so this handler already survives

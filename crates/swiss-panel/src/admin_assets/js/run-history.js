@@ -21,7 +21,7 @@
 import { $, api, apiJson, errText, iconNode, targetEl, toast } from "./util.js";
 import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsNode, parsePgUrl } from "./fields.js";
-import { callBlockCopyText, copyLogText, fmtChars, fmtJson, logsBodyNode, repaintCallBlock, toggleCall } from "./logs.js";
+import { callBlockCopyText, copyLogText, fmtChars, logsBodyNode, readableBody, repaintCallBlock, toggleCall } from "./logs.js";
 import { fill, frag, h } from "./h.js";
                                      
 import { renderPane } from "./pane.js";
@@ -32,8 +32,7 @@ import { locale, tr, trn } from "./i18n.js";
 import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
 import { closeSheet } from "./ui/sheet.js";
 import {
-  JV_LINES, btn, card, decodeStrings, dot, field, form, formActions, hint, iconBtn, jsonCodeNode, kvRow, note, row, section,
-  sheet, showSheet, spinner, splitJsonBlock, tag, textNode, valueBlock,
+  btn, card, dot, field, form, formActions, hint, iconBtn, kvRow, note, row, section, sheet, showSheet, spinner, tag, valueBlock,
 } from "./ui/index.js";
                                               
 
@@ -69,19 +68,6 @@ function histRowsNode(d           , tool        )         {
     return h("button", { type: "button", class: "hist-row", data: { seq: row.seq }, title: row.args || tr("runHistory.arguments") },
       row.args || tr("runHistory.arguments"));
   });
-}
-
-/** A value to read, the way Logs shows one (docs/46 §3.2): JSON as the panel's code block - on
- *  one line when it is short - and anything else exactly as it arrived; an error stays red text.
- *  Past JV_LINES the whole reply is plain formatted text instead: neither Run nor a hover has a
- *  Show all, and a 3,000-line reply painted token by token is DOM nobody reads. */
-function readableBody(text        , err         )           {
-  const parsed = err ? null : splitJsonBlock(text);
-  if (parsed) {
-    const code = jsonCodeNode(decodeStrings(parsed.value), false, { oneLine: !parsed.tail });
-    if (code.lines <= JV_LINES) return [code.node, parsed.tail ? textNode(parsed.tail, true, "logs jv-tail").node : null];
-  }
-  return [textNode(err ? text : fmtJson(text), true, "logs" + (err ? " err" : "")).node];
 }
 
 /** One hovered entry rendered in full: the meta line, the COMPLETE arguments (the row label is

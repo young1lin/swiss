@@ -115,6 +115,9 @@ describe("the Token page (MCP group)", () => {
     const uses = Array.from($("pane").querySelectorAll("[data-tkuse]")).map((b) => b.getAttribute("data-tkuse"));
     expect(uses).toEqual(["t1"]);
     expect($("pane").querySelector('[data-token="t0"] .tag')?.textContent).toBe("copies use this");
+    // docs/46 §3.3: the library row; the id is a value you copy, so it is mono.
+    expect($("pane").querySelector('[data-token="t1"].lrow .lrow-sub code')?.textContent).toBe("t1");
+    expect($("pane").querySelector("#tkNewGroup use")?.getAttribute("href"), "New group is the folder-plus glyph (rule 7)").toBe("#i-folder-plus");
   });
 
   it("a label the server sent is text, never markup (docs/37 R5)", async () => {
@@ -122,9 +125,14 @@ describe("the Token page (MCP group)", () => {
     // this passed only because someone remembered esc(); now the DOM cannot do otherwise.
     body = { tokens: [{ id: "t0", label: '<img src=x onerror="boom()">', createdAt: 1 }] };
     await view.mount();
-    const name = $("pane").querySelector('[data-token="t0"] .name') as HTMLElement;
+    const name = $("pane").querySelector('[data-token="t0"] .lrow-name') as HTMLElement;
     expect(name.textContent).toContain('<img src=x onerror="boom()">');
     expect(name.querySelector("img")).toBeNull();
+    // The id, then when it was made - one separator between them; the words carry none of
+    // their own (found on the P3 walk: "t0 · · created ...").
+    const sub = $("pane").querySelector('[data-token="t0"] .lrow-sub')!.textContent!;
+    expect(sub.startsWith("t0 · created ")).toBe(true);
+    expect(sub.split("·").length - 1).toBe(1);
     // Same for the id, which rides in an attribute and in the aria-label.
     expect($("pane").querySelector('[data-tkmore="t0"]')?.getAttribute("aria-label"))
       .toBe('Actions for <img src=x onerror="boom()">');

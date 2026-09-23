@@ -166,18 +166,23 @@ describe("the I3 views in Chinese (tokens, traffic)", () => {
     expect(ago(new Date(Date.now() - 300000).toISOString())).toBe("5 分钟前");
   });
 
-  it("builds the traffic meta skeleton with Chinese ok/err", async () => {
+  it("builds a traffic row as an event-list item: who is client · MCP, a failure says 失败", async () => {
     await loadLocale();
-    const { trafficRowNode } = await import("../src/traffic.js");
-    const row = trafficRowNode({
+    const { trafficItem, trafficBodyNode } = await import("../src/traffic.js");
+    const ok = trafficItem({
       seq: 1, method: "tools/list", params: "{}", ok: true, ms: 5,
       clientName: "claude-code", clientVersion: "1.0", mcp: "mcp", at: new Date().toISOString(),
-    } as never) as HTMLElement;
-    expect(row.textContent).toContain("claude-code 1.0  ·  /mcp  ·  成功  ·  5ms");
-    const bad = trafficRowNode({
+    } as never);
+    expect(ok.who).toBe("claude-code 1.0 · mcp");
+    expect(ok.status).toBeUndefined();
+    const bad = trafficItem({
       seq: 2, method: "tools/call", params: "", ok: false, ms: 12, mcp: "mcp", at: new Date().toISOString(),
-    } as never) as HTMLElement;
-    expect(bad.textContent).toContain("—  ·  /mcp  ·  失败  ·  12ms");
+    } as never);
+    expect(bad.who).toBe("— · mcp");
+    expect(bad.status!.text).toBe("失败");
+    const host = document.createElement("div");
+    host.append(...([trafficBodyNode({ seq: 2, method: "tools/call", ok: false, ms: 12, mcp: "mcp", clientName: "cc", at: new Date().toISOString() } as never)].flat() as Node[]).filter(Boolean));
+    expect(host.querySelector(".tl-meta")!.textContent).toBe("客户端 cc · /mcp/mcp");
   });
 
   it("composes the activity count with grouped numbers", async () => {
@@ -191,11 +196,10 @@ describe("the I3 views in Chinese (tokens, traffic)", () => {
   it("carries the token page's row vocabulary and confirm", async () => {
     await loadLocale();
     expect(tr("tokens.copiesUse")).toBe("复制时使用");
-    expect(tr("tokens.rotateRevoke")).toBe("轮换或吊销");
+    expect(tr("tokens.descOneLine")).toBe("每个客户端一个令牌;密钥只在创建或轮换时显示一次。");
     expect(tr("tokens.revokeTokenClientsUsing")).toBe(
       "吊销该令牌?使用它的客户端会立即停止工作。",
     );
-    expect(tr("tokens.idId", { id: "t_9" })).toBe("id t_9");
     expect(trn(2, "tokens.nTokens.one", "tokens.nTokens.other")).toBe("2 个令牌");
   });
 });
