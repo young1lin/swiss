@@ -20,13 +20,13 @@ import { $, api, apiJson, dotTitle, emptyNode, targetEl, toast } from "./util.js
 import { fill, h } from "./h.js";
                                      
 import { copyText } from "./connect.js";
-import { popupMenu } from "./menu.js";
 import { assignMember, groupOf as makeGroupOf, mountGroup, newGroupFlow, saveOrder, slice } from "./groups.js";
 import { connRowNode, isTunnelsView, loadList, loadTunnels, ruleRowNode, tunData, tunGroupsList, tunRows, tunScope } from "./polling.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
 import { currentView } from "./ui-state.js";
 import { clearTunBusy, clearTunView, setTunBusy, setTunDragging, setTunDraggingGroup, setTunPendingGroup, setMountedTunScope, tunBusyOf, tunDragging, tunDraggingGroup, tunFolds, mountedTunScope } from "./tunnel-state.js";
 import { tr, trn } from "./i18n.js";
+import { popupMenu } from "./ui/menu.js";
 
 /* --- tunnels: groups and drag-to-reorder --------------------------------------------------------
    The sidebar's model, shared through the groups component (docs/20 §4): one flat order per

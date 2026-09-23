@@ -21,7 +21,6 @@ import { $, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
 import { dbActiveIndex, dbConn, dbIsMounted, dbResetTabs, dbSetActive, dbTab, dbTabs, freshTab } from "./db-state.js";
 import { dbIsRedis, dbLoadRedisValue } from "./data-browsers.js";
-import { popupMenu } from "./menu.js";
 import { dbActivityPollStop, dbActivityStart } from "./data-activity.js";
 import { dbRestoreData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
@@ -29,6 +28,7 @@ import { renderDbBar } from "./data-sql.js";
 import { dbLoadDetail } from "./data-structure.js";
 import { dbIsPg, renderDbTables } from "./data-view.js";
 import { tr, trn } from "./i18n.js";
+import { popupMenu } from "./ui/menu.js";
 
 /* ================================================================================================
    The object tab strip (docs/42 T2).

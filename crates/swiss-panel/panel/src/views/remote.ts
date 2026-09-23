@@ -34,11 +34,11 @@ import type { ApiRemoteEndpointsResponse, ApiRemoteTargetsResponse } from "../ty
 import type { GroupCfg } from "../types/dom.js";
 import type { RemoteEndpointRow, RemoteTargetBody, RemoteTargetRow } from "../types/runs.js";
 import { $, apiJson, iconNode, targetEl, toast } from "../util.js";
-import { closeSheet } from "../add-sheet.js";
 import { fill, h } from "../h.js";
-import { popupMenu } from "../menu.js";
 import { assignMember, groupFieldNode, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
 import { tr, trn } from "../i18n.js";
+import { popupMenu } from "../ui/menu.js";
+import { closeSheet } from "../ui/sheet.js";
 
 let targets = [] as RemoteTargetRow[];
 let endpoints = [] as RemoteEndpointRow[];
@@ -223,7 +223,7 @@ async function assign(id: string, group: string | null): Promise<void> {
 }
 
 /* The Add/Edit sheet. Same shape as every sheet: #sheet unhidden BEFORE innerHTML,
-   closeSheet from add-sheet.js, backdrop click closes. */
+   closeSheet from ui/sheet.js, backdrop click closes. */
 function openSheet(target: RemoteTargetRow | null): void {
   editing = target ? target.id : null;
   const endpointOptions = endpoints.map((e) => {

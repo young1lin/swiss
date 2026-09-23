@@ -16,7 +16,7 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it } from "vitest";
-import { styleSelect } from "../src/dropdown.js";
+import { styleSelect } from "../src/ui/select.js";
 
 /* The styled dropdown's pick writes the native select programmatically, which fires no native
    change event, so dropdown.ts dispatches one itself. Before docs/37 R5 every view listened ON

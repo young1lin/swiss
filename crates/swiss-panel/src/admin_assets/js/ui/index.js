@@ -40,3 +40,10 @@ export { seg } from "./seg.js";
                                         
 export { collapseRuns, dayLabel, fmtMs, timeLabel, timeline, timelineToggle } from "./timeline.js";
                                                                 
+export { clampMenuPos, closeMenu, menuOpen, popupMenu, setMenuOpen } from "./menu.js";
+                                                                       
+export { closeSelect, initSelects, selectOpen, styleSelect } from "./select.js";
+export { DecodedString, JV_LINES, decodeStrings, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode } from "./json-view.js";
+                                              
+export { closeSheet, initSheet, openFieldSheet, sheet, sheetOpen, showSheet } from "./sheet.js";
+                                                            

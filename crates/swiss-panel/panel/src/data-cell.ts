@@ -18,11 +18,11 @@ import type { ApiDbColumn } from "./types/api.js";
 import type { DbCellMeta } from "./types/state.js";
 import { $, toast } from "./util.js";
 import { fill, h } from "./h.js";
-import { closeSheet } from "./add-sheet.js";
 import { renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
+import { closeSheet } from "./ui/sheet.js";
 
 /* --- cell editor dialog ------------------------------------------------------------------------- */
 /* Editing happens in a sheet, never inline: an inline input grows its row and reshuffles the

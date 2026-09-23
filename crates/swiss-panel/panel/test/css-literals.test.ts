@@ -41,7 +41,7 @@ import { stylesDir } from "./styles.js";
 const FROZEN: Record<string, number> = {
   "base.css": 22,
   "ui.css": 75,
-  "views.css": 253,
+  "views.css": 251, // P1b-2: the held-edits dot moved to ui.css on --dot
 };
 
 const TOKEN_BLOCK = /^:root(\[data-theme="(dark|light)"\])?$/;

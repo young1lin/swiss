@@ -23,17 +23,16 @@ import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
-// fix-plan #16: the Table menu's rename and the typed confirm ride the one-field sheet from
-// add-sheet.js (no import the other way, so no cycle).
-import { openFieldSheet } from "./add-sheet.js";
 // The strip's policy module: DROP closes the tabs the dropped table owned. Same accepted cycle
 // shape as the rest of the data-* edges — the call crosses inside a function, never at module
 // scope.
 import { dbDropTableTabs } from "./data-tabs.js";
-import { clampMenuPos } from "./menu.js";
-import { setMenuOpen } from "./ui-state.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
+import { clampMenuPos, setMenuOpen } from "./ui/menu.js";
+// fix-plan #16: the Table menu's rename and the typed confirm ride the one-field sheet from
+// the library (ui/sheet.js imports nothing of the panel's, so no cycle).
+import { openFieldSheet } from "./ui/sheet.js";
 
 /* --- structure operations (rename / truncate / drop) ---------------------------------------------- */
 /* A Table menu beside the tabs. Truncate and drop demand a TYPED confirmation — the user

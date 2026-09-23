@@ -45,8 +45,8 @@ Object.assign(globalThis, {
     createTextNode: (s: string) => { const n = el("#text"); n.textContent = s; return n; },
     getElementById: (id: string) => (byId[id] || (byId[id] = el("div"))),
     querySelectorAll: () => [],
-    // connect.ts registers its document-level click delegation at module top level, so the
-    // stub must answer addEventListener BEFORE menu.js (via pane.js to connect.js) imports.
+    // ui/menu.js wires nothing at import; the listeners stay stubbed for popupMenu's own
+    // keydown/click wiring.
     addEventListener: () => {}, removeEventListener: () => {},
     body,
   },
@@ -57,7 +57,7 @@ Object.assign(globalThis, {
 });
 
 const here = dirname(fileURLToPath(import.meta.url));
-const menu = await import(pathToFileURL(join(here, "..", "src", "menu.js")).href) as {
+const menu = await import(pathToFileURL(join(here, "..", "src", "ui", "menu.js")).href) as {
   popupMenu: (anchor: { left: number; top: number; bottom: number; width?: number }, items: unknown[]) => void;
 };
 

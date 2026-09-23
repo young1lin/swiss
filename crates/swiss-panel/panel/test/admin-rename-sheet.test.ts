@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 // @vitest-environment happy-dom
 
 /* fix-plan #16: the three renames share ONE surface — the general one-field sheet
-   (openFieldSheet in add-sheet.ts) — and no browser dialog remains. The suite runs on a
+   (openFieldSheet in ui/sheet.ts) — and no browser dialog remains. The suite runs on a
    real DOM (happy-dom) with the served shell's ids in place, then drives the real entry
    points: detail.js's renameMcp, data-edit.js's dbTableMenu (its Rename item), and the
    group sheet itself. What is pinned is the CONTRACT: the sheet opens visibly, Save

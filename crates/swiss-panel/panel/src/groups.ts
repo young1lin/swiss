@@ -56,7 +56,7 @@ import { groupNode } from "./ui/group.js";
 import { addTitle, deleteConfirmMsg, emptyLineText, groupOf, lastGroupKey, resolveDefaultGroup, slice } from "./group-logic.js";
 import { tr } from "./i18n.js";
 import { openGroupSheet } from "./add-sheet.js";
-import { popupMenu } from "./menu.js";
+import { popupMenu } from "./ui/menu.js";
 
 /* --- pure --------------------------------------------------------------------------------------
    groupOf / slice / deleteConfirmMsg / addTitle / resolveDefaultGroup / lastGroupKey live in

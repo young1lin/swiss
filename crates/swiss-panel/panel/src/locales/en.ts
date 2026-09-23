@@ -31,9 +31,6 @@ const en: Record<string, string> = {
   "addSheet.add": "Add",
   "addSheet.renameGroup": "Rename group",
   "addSheet.newGroup": "New group",
-  "addSheet.prod": "prod",
-  "addSheet.rename": "Rename",
-  "addSheet.create": "Create",
   "addSheet.nameRequired": "Name is required",
   "addSheet.couldReadFile": "Could not read file",
   "addSheet.validJson": "Not valid JSON",
@@ -1561,6 +1558,12 @@ const en: Record<string, string> = {
   "ui.sec": "{n} s",
   "ui.timesN": "×{n}",
   "ui.runN": "{n} identical in a row",
+  "ui.name": "Name",
+  "ui.sheetPlaceholder": "prod",
+  "ui.nameRequired": "Name is required",
+  "ui.cancel": "Cancel",
+  "ui.rename": "Rename",
+  "ui.create": "Create",
 };
 
 export default en;

@@ -17,9 +17,9 @@
 import type { ApiDbActivityReply, ApiDbActivityRow } from "./types/api.js";
 import { $, apiJson, el, iconNode, toast } from "./util.js";
 import { h } from "./h.js";
-import { popupMenu } from "./menu.js";
 import { dbConn, dbIsMounted, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
+import { popupMenu } from "./ui/menu.js";
 
 /* --- activity monitor (docs/22 W3.2) -------------------------------------------------------------- */
 /* One open object among the others (docs/42 T2): live sessions on the connection's server, one

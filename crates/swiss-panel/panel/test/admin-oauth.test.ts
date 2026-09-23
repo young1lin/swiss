@@ -15,8 +15,8 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
-import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
 import { lastActionOf, mcpDetail, resetMcpState, setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
+import { menuOpen, setMenuOpen } from "../src/ui/menu.js";
 
 /* OAuth authorize (docs/24): the form fields + the bool-to-string translation (fields.js),
    the pane header button (pane.js renderPane), and the one-click flow (detail.js authorizeMcp)

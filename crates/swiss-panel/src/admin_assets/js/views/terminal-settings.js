@@ -27,9 +27,9 @@
 import { $, apiJson, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import { configPutBody, targetRows } from "../terminal-core.js";
-import { closeSheet } from "../add-sheet.js";
 import { reload, sessions, targets } from "./terminal.js";
 import { tr, trn } from "../i18n.js";
+import { closeSheet } from "../ui/sheet.js";
 
 /* The Local shell settings sheet (docs/15 §2): the switch docs/14 §6.1 asks for and
    the shell picker. Saving is a plugin-config PUT — the terminal plugin restarts on

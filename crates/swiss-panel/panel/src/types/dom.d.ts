@@ -21,48 +21,11 @@
    docs/37 M3: handlers read e.currentTarget, guards narrow with instanceof, and the
    module-scoped singletons live in their modules now. */
 
-/** One popupMenu row - menu.ts:25. The union is load-bearing: a separator is { sep: true }
- *  with NO label/fn (tunnels.ts:256 was the strict-mode error that proved it), an action
- *  is label+fn with optional styling flags. pick/on drive the checked-mark row styles
- *  (danger reds the item); menu.ts never reads a field the arm does not carry. */
+/** The popupMenu row shapes live with the menu itself now (ui/menu.ts, docs/46 P1b-2); the
+ *  re-export keeps every "import type { MenuItem } from ./types/dom.js" site compiling. */
 import type { ApiMcpRow } from "./api.js";
-export interface MenuItemAction {
-  label: string;
-  fn: (ev?: MouseEvent) => void;
-  danger?: boolean;
-  pick?: boolean;
-  on?: boolean;
-  title?: string;
-  /* docs/43 M1: a row can carry the type glyph and the dirty dot its card does — the tab
-   *  strip's overflow lists open objects, and the menu is the whole set's one read. */
-  icon?: string;
-  dot?: boolean;
-  /* The drawer follow-up: a row can carry a MARK (the dialect word, painted by
-   * typeTagNode - glyph for whitelisted dialects, mono word otherwise) and a META (a dim
-   * trailing value like a table count). popupMenu ignores both; the sidebar drawers read
-   * them, because a drawer row has room a one-line menu label does not. */
-  mark?: string;
-  meta?: string;
-  /* docs/43 M3: a row the menu shows but refuses to run — the database selector lists
-   *  every database the instance names, browsable or not, so the reason (title) is one
-   *  hover away instead of the row simply being missing. */
-  disabled?: boolean;
-  /* fix-plan #14: a trailing glyph for rows that open ANOTHER menu (the "Table" row that
-   *  used to spell its caret in the label) - the leading icon field is the row's TYPE
-   *  glyph; this one is a direction, painted at the end of the row like the caret it
-   *  replaces. */
-  affordance?: string;
-  /* docs/43 M3: a non-interactive heading row (a connection GROUP name, "system" bands) —
-   *  styled like the menu's own chrome, never focused, never clicked. */
-  heading?: boolean;
-  sep?: never;
-}
-
-export interface MenuItemSep {
-  sep: true;
-}
-
-export type MenuItem = MenuItemSep | MenuItemAction;
+import type { MenuItem } from "../ui/menu.js";
+export type { MenuItem, MenuItemAction, MenuItemSep } from "../ui/menu.js";
 
 /** A switcher-menu item before its click handler is attached (pageMenuItems' output): the
  *  caller binds fn per item (page-registry) before popupMenu takes over. */

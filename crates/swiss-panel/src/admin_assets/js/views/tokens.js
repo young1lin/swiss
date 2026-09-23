@@ -37,10 +37,10 @@
 import { $, TOKEN_ID_KEY, api, apiJson, emptyNode, iconNode, lsMigrate, targetEl } from "../util.js";
 import { fill, h } from "../h.js";
 import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
-import { popupMenu } from "../menu.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
 import { mcpRows } from "../mcp-state.js";
 import { locale, tr, trn } from "../i18n.js";
+import { popupMenu } from "../ui/menu.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed                          = {}; // the tokens fold map, loaded once before the first paint

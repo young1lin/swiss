@@ -37,9 +37,7 @@ import type { ApiActionRow, ApiActionsResponse, ApiJobRow, ApiJobRunRecord } fro
 import type { GroupCfg, GroupSlice } from "./types/dom.js";
 import type { JobConfigRow, JobDef, JobFormValues, JobRetryOn, JobSched } from "./types/state.js";
 import { $, api, apiJson, dotTitle, emptyNode, errText, iconNode, targetEl, toast, whenLabel } from "./util.js";
-import { closeSheet } from "./add-sheet.js";
 import { assignMember, groupFieldNode, groupOf as makeGroupOf, lastGroup, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "./groups.js";
-import { popupMenu } from "./menu.js";
 import { jobDotClass, jobGroupsList, jobRowNode, jobsChipText, loadJobs } from "./polling.js";
 import { argFieldsNode, readRunArgs } from "./run.js";
 import { fill, frag, h } from "./h.js";
@@ -49,6 +47,8 @@ import { loadCronstrue } from "./vendor/cronstrue/2.52.0/index.js";
 import { currentView } from "./ui-state.js";
 import { appendJobRuns, clearJobBusy, jobDragging, jobDraggingGroup, jobFolds, jobHistory, jobHistoryIsFor, jobIsBusy, jobRows, paintedJobsSig, setJobBusy, setJobDragging, setJobDraggingGroup, setJobPendingGroup, setPaintedJobsSig, startJobHistory, takeJobPendingGroup } from "./job-state.js";
 import { locale, tk, tr } from "./i18n.js";
+import { popupMenu } from "./ui/menu.js";
+import { closeSheet } from "./ui/sheet.js";
 
 let probed: boolean | null = null; // null = not probed yet; then the cached boolean answer for this page load
 

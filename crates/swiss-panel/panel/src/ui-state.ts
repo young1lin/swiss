@@ -24,7 +24,6 @@
    this file: swapping it for a store or signals later is one file's work. */
 const ui: {
   view: string;
-  menuOpen: boolean;
   filter: string;
   collapsed: Record<string, boolean>;
   dragging: string | null;
@@ -33,7 +32,6 @@ const ui: {
   panelVersion: string | null;
 } = {
   view: "mcps",        // the toolbar switcher: "mcps" | "tunnels" | "traffic" | "data" | "jobs" | …
-  menuOpen: false,     // a row/cell menu holds the pointer; outside clicks and Escape close it first
   filter: "",          // the sidebar's MCP filter box — a non-empty filter unfolds every group
   collapsed: {},       // mcps fold map; group name -> true. Panel-only, so localStorage keeps it (groups.ts)
   dragging: null,      // name of the ROW being dragged — polls must not rebuild under it
@@ -49,8 +47,6 @@ export function setCurrentView(id: string): void { ui.view = id; }
 
 /** A menu has the pointer latched. Every outside-click closer asks this before it acts, which is
  *  why a row menu and the detail pane do not both react to the same click. */
-export function menuIsOpen(): boolean { return ui.menuOpen; }
-export function setMenuOpen(open: boolean): void { ui.menuOpen = open; }
 
 /** The sidebar's filter text, raw — callers that care about whitespace trim it themselves. */
 export function listFilter(): string { return ui.filter; }

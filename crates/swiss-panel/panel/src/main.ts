@@ -29,22 +29,22 @@
    ================================================================================================ */
 import { $, THEME_KEY, api, isTyping, toast } from "./util.js";
 import { loadCollapsed } from "./groups.js";
-import { closeSheet } from "./add-sheet.js";
-import { initSelects } from "./dropdown.js";
+import { initSelects } from "./ui/select.js";
 import { initPages, pageHasPendingChanges, pageUsesSidebar, pollPage } from "./page-registry.js";
 import { openDetail } from "./detail.js";
 import { patchSidebar } from "./menu.js";
-import { closeMenu } from "./pane.js";
 import { loadMemory, refreshNow } from "./polling.js";
 import { exitImmersive, immersiveOn, initImmersive } from "./immersive.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
 import { loadTokens } from "./views/tokens.js";
-import { knownPanelVersion, menuIsOpen, setFoldMap, setKnownPanelVersion, setListFilter } from "./ui-state.js";
+import { knownPanelVersion, setFoldMap, setKnownPanelVersion, setListFilter } from "./ui-state.js";
 import { setTunFolds } from "./tunnel-state.js";
 import { setJobFolds } from "./job-state.js";
 import { gatewayInfo, mcpDetail, selectedMcp, setGatewayInfo } from "./mcp-state.js";
 import { initLangButton, loadLocale, paintChrome, tr } from "./i18n.js";
+import { closeMenu, menuOpen } from "./ui/menu.js";
+import { closeSheet, initSheet, sheetOpen } from "./ui/sheet.js";
 
 /* The dictionary resolves before anything paints (docs/38 §2.1): this top-level await is
    the whole reason a Chinese screen never flashes English chrome — every statement below
@@ -63,7 +63,7 @@ paintChrome();
 let warnedNewPanel = false;
 function maybeReloadPanel(newVersion: string): void {
   const typing = isTyping();
-  const busy = !$("sheet").hidden || menuIsOpen();
+  const busy = sheetOpen() || menuOpen();
   const edits = pageHasPendingChanges();
   if (typing || busy || edits) {
     if (!warnedNewPanel) {
@@ -144,6 +144,8 @@ initLangButton(paintThemeBtn); // the 文/A flip (docs/38): hands over the theme
 // Every dropdown in the panel becomes the shared custom control: what is in the DOM now, plus
 // whatever the views create later (observed), so no view ever opts in or out.
 initSelects();
+// A sheet is modal: the keys pressed in it stay in it, Escape aside (ui/sheet.ts initSheet).
+initSheet();
 // Only matters while the preference is "auto"; a fixed choice is not the OS's business.
 if (window.matchMedia as unknown) {
   const mq = matchMedia("(prefers-color-scheme: dark)");
@@ -190,8 +192,8 @@ initImmersive(); // the context bar's focus control: the page body can take the 
    then the history popover, and leaves immersive mode last — the outermost layer goes last. */
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    if (!$("sheet").hidden) { closeSheet(); return; }
-    if (menuIsOpen()) { closeMenu(); return; }
+    if (sheetOpen()) { closeSheet(); return; }
+    if (menuOpen()) { closeMenu(); return; }
     const hd = mcpDetail();
     if (hd && hd.run && hd.run.histOpen) { histClose(); return; }
     if (immersiveOn()) { exitImmersive(); return; }

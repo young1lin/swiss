@@ -381,7 +381,7 @@ Use these words in specs and class names; if a design needs a word not here, add
 | **row** | One item: dot · name · mono sub-line · one primary `.btn` · `⋯` | `.row`, `.tun-row`, `.side-row` |
 | **chip** | A monochrome mono tag (launch method, dialect) or the count chip | `.side-type`, context-bar chip |
 | **sheet** | A modal form with head / body / foot; foot holds Cancel + one primary | `.sheet*` |
-| **popup menu** | `popupMenu(anchor, items)`: 30px items, separators, danger last | `menu.js` |
+| **popup menu** | `popupMenu(anchor, items)`: 30px items, separators, danger last | `ui/menu.ts` |
 | **segmented control** | L3 tabs inside one resource's detail (a server's Tools / Resources / Prompts); never plugin-page navigation (§5), never in the context bar — underline tabs are L2's shape | `.seg` |
 | **empty state** | `emptyNode(...)` | `util.ts` |
 | **toast** | One-line transient confirmation, bottom | `toast()` |

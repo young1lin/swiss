@@ -23,7 +23,7 @@ import type { HChild } from "./h.js";
 import { rowOf } from "./sidebar.js";
 import { mcpDetail } from "./mcp-state.js";
 import { locale, tr } from "./i18n.js";
-import { JV_LINES, decodeStrings, formattedCopyText, hasDecoded, jsonCodeNode, splitJsonBlock, textNode } from "./json-view.js";
+import { JV_LINES, decodeStrings, formattedCopyText, hasDecoded, jsonCodeNode, splitJsonBlock, textNode } from "./ui/json-view.js";
 
 /* --- Logs: what was called, with what, and what came back ------------------------------------- */
 function fmtChars(n: number): string {
@@ -78,7 +78,7 @@ async function copyLogText(text: string): Promise<void> {
 }
 
 /* --- docs/33 C3: one block of a call — the formatted JSON view -------------------------------
-   json-view.ts owns parsing, decoding and the code block; this is the Logs chrome around it: the
+   ui/json-view.ts owns parsing, decoding and the code block; this is the Logs chrome around it: the
    label row (caption, what the body turned out to be, Copy and Copy raw) and the Show all tail.
    The wrapper carries data-blk="<kind>:<seq>" so a full reply landing, or Show all, repaints this
    one block in place (repaintCallBlock) instead of the whole list. */

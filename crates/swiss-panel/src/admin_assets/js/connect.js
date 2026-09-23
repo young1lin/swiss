@@ -21,12 +21,11 @@ import { TOKEN_ID_KEY, apiJson, isMcpKind, targetEl, toast } from "./util.js";
 import { tr } from "./i18n.js";
 import { kindBodyNode, logsBodyNode } from "./logs.js";
                                      
-import { closeMenu } from "./pane.js";
 import { configBodyNode, histClose } from "./run-history.js";
 import { runBodyNode } from "./run.js";
 import { activeTokenSecret, pickCopyToken, refreshTokens, rememberedTokenId, setActiveTokenSecret, tokenRows } from "./views/tokens.js";
-import { menuIsOpen } from "./ui-state.js";
 import { gatewayInfo, mcpDetail } from "./mcp-state.js";
+import { closeMenu, menuOpen } from "./ui/menu.js";
 
 /* --- connecting a client ---------------------------------------------------------------------- */
 /**
@@ -136,7 +135,7 @@ function legacyCopy(text        )       {
   document.body.removeChild(ta);
 }
 document.addEventListener("click", (e) => {
-  if (menuIsOpen()) closeMenu();
+  if (menuOpen()) closeMenu();
   // The Run history popover closes on any click outside itself AND outside the popover — the
   // popover sits on <body>, so clicking its scrollbar or the preview pane must not count as "outside".
   // A row click closes it through applyRunHistory, its own handler.

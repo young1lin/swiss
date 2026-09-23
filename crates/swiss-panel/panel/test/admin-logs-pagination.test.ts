@@ -15,8 +15,8 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
 import { setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
+import { menuOpen, setMenuOpen } from "../src/ui/menu.js";
 
 /* docs/32 B1 — the Logs pager becomes a transaction. The suite drives the REAL module graph
    (wireTabBody -> callsPageStep -> loadCalls -> renderCallsOnly) under the FakeNode micro-DOM,
@@ -732,11 +732,11 @@ describe("docs/32 review fixes: the clear transaction and the error strip's edge
     const d = fakeDetail();
     mountLogs(d);
     fireTab("clMenu");
-    expect(menuIsOpen()).toBe(true);
+    expect(menuOpen()).toBe(true);
     fireTab("clMenu");
-    expect(menuIsOpen(), "a second click dismisses, not reopens").toBe(false);
+    expect(menuOpen(), "a second click dismisses, not reopens").toBe(false);
     fireTab("clMenu");
-    expect(menuIsOpen(), "a third click opens again").toBe(true);
+    expect(menuOpen(), "a third click opens again").toBe(true);
   });
 });
 

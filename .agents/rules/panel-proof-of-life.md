@@ -25,14 +25,16 @@ visible control was clicked with real pointer events and answered. vitest green 
 
 1. **Edit `panel/src/*.ts`, never hand-edit `js/`** — the served tree is emitted
    (`npm run build` in `crates/swiss-panel/panel`). Read the house idiom before writing
-   wiring: one existing view that already does the thing is the spec — sheets ->
-   `panel/src/add-sheet.ts` + `panel/src/views/terminal-settings.ts`
-   (`$("sheet").hidden = false` BEFORE `fill(...)` paints the body — an innerHTML
-   write is an eslint error now; `closeSheet` comes from add-sheet.ts);
-   empty states -> `util.ts emptyNode` (its action button answers `[data-empty-action]`);
-   icons -> the `i-*` sprite via `iconNode(name)` from util.ts; markup -> `h(tag, props,
-   ...kids)` from h.ts, `fill(host, ...kids)` to repaint a container.
-   Never invent a parallel mechanism.
+   wiring: one existing view that already does the thing is the spec, and the shapes and
+   mechanisms live in the library `panel/src/ui/` (docs/46) — sheets -> `ui/sheet.ts`:
+   `showSheet(sheet({ title, body, foot }))` unhides #sheet BEFORE it fills the body and
+   closes on a backdrop click (`add-sheet.ts openSheet` is the worked example; an
+   innerHTML write is an eslint error now); `closeSheet` and `openFieldSheet` come from
+   ui/sheet.ts — add-sheet.ts no longer exports them; menus -> `popupMenu` from
+   `ui/menu.ts`; empty states -> `emptyNode` from `ui/page.ts` (its action button answers
+   `[data-empty-action]`); icons -> the `i-*` sprite via `iconNode(name)` from
+   `ui/icon.ts`; markup -> `h(tag, props, ...kids)` from h.ts, `fill(host, ...kids)` to
+   repaint a container. Never invent a parallel mechanism.
 2. **`npm run check` in `crates/swiss-panel/panel`** (typecheck ×2 + lint + emit
    freshness + vitest). Catches syntax, link-time import errors and pure-function
    regressions.

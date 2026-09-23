@@ -33,7 +33,6 @@ import { dbStructureClick } from "./data-structure.js";
 import { dbFormChange, dbFormClick, dbFormKeydown } from "./data-form.js";
 import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
-import { popupMenu } from "./menu.js";
 import { loadCollapsed, mountGroup } from "./groups.js";
 import type { GroupCfg, GroupSlice, MenuItem } from "./types/dom.js";
 import { DB_TREE_SECTIONS, dbSectionOf, dbSectionSlices, redisNamespaceTree } from "./data-tree.js";
@@ -44,6 +43,7 @@ import { dbConn, dbIsMounted, dbSqlTab, dbTab, dbTabs, mountDbView } from "./db-
 // functions, never at module scope.
 import { dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsContext, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
+import { popupMenu } from "./ui/menu.js";
 
 /* ================================================================================================
    Data view — a DBeaver-style browser over the mysql/pg MCPs.
