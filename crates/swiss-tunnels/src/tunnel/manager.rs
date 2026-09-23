@@ -2949,8 +2949,8 @@ mod tests {
         assert_eq!(state_of(&m, &r.id), "error", "not 'reconnecting'");
         // Whatever the start itself spent (on Windows it reclaims what looks like its own stale
         // listener and tries once more), nothing may happen after the failure is reported: a
-        // port held by someone else will not free itself, so retrying only thrashes — and runs
-        // netstat + tasklist each attempt. Wait well past the interval.
+        // port held by someone else will not free itself, so retrying only thrashes — and walks
+        // the TCP owner table each attempt. Wait well past the interval.
         let (clients, dials) = (built_len(&built), total_dials(&built));
         tokio::time::sleep(Duration::from_millis(1400)).await;
         assert_eq!(state_of(&m, &r.id), "error");

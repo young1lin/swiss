@@ -23,7 +23,7 @@
 //!  - `store`   — validation + persistence to tunnels.json, a sealed envelope like every state
 //!    file. `${ENV_VAR}` refs in credentials stay refs on disk and expand at
 //!    connect time (`ssh.rs`).
-//!  - `port`    — local-port occupancy (probe / wait-for-release), the netstat+tasklist owner
+//!  - `port`    — local-port occupancy (probe / wait-for-release), the direct-Win32 owner
 //!    lookup, and Force free.
 //!  - `proxy`  — the HTTP CONNECT / SOCKS5 dialer a proxied connection dials through
 //!    before its SSH handshake (docs/27 §2): credentials reach the handshake as
