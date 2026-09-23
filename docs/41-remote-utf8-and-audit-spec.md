@@ -151,7 +151,7 @@ remote 动作都留痕、`swiss run audit`、七天）、面板和 `swiss --help
      Queued 四个键）。480px：页面不横向滚动，行可点开；meta 在行内被裁掉是 `.call` 行与
      Traffic 共用的既有布局，未动。
 3. **真机（owner 在 19998 上建的 `ubuntu-1`，root `/tmp/swiss`，2026-09-21 07:25–07:29 UTC，
-   `swiss run audit --since 30m` 能列出全部 13 条，actor 均为 `cli:young1lin@dev-box`）：**
+   `swiss run audit --since 30m` 能列出全部 13 条，actor 均为 `cli:<user>@<host>`——A1 的 `cli:<本机用户名>@<主机名>` 记法，此处脱敏）：**
    - `exec -- sh -c 'echo LANG=$LANG LC_ALL=$LC_ALL; locale charmap'` → `LANG=C.UTF-8 LC_ALL=C.UTF-8`
      / `UTF-8`：U4 的缺省到了远端。
    - `exec -- printf '中文\n'` 回来的字节是 `e4 b8 ad e6 96 87 0a`；`python3 -c "print('中文 ✓ émoji 😀')"`

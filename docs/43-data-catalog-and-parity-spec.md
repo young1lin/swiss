@@ -101,7 +101,7 @@ Data 页的对象页签（多开表 / 控制台 / Redis key / Activity，各自�
 
 ```bash
 # 工作目录：worktree 根，所有命令都从这里起。不要 cd 回主 checkout。
-C:\Users\young1lin\dev\local-mcp-gateway-rust\.agents\worktrees\data      # 分支 data-full-access
+<repo-root>\.agents\worktrees\data      # 分支 data-full-access
 
 # 面板（TypeScript 源）与它的门禁 —— 单独一条命令，不要和别的命令用 && 串起来跑：
 #   PowerShell 里 cd 混进链式命令会打断后面每一个相对路径。
