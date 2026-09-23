@@ -599,7 +599,7 @@ pub struct HttpAdapter {
 }
 
 impl HttpAdapter {
-    /// `def` must be the resolve_def() clone make_adapter hands over. A bad proxy URL or a
+    /// `def` must be the resolve_def_checked() clone make_adapter hands over. A bad proxy URL or a
     /// malformed header name is a start error, not a first-call mystery.
     pub fn new(
         def: &ServerDef,

@@ -93,29 +93,6 @@ pub struct GatewayConfig {
 /// shared with the tunnel connections so tunnels.json can hold refs exactly like the config
 /// files do.
 ///
-/// Now a thin wrapper over the ONE shared resolver (docs/19 D1/D4 + docs/25 E1, swiss-core
-/// refs.rs), which also speaks `${secret://name}`. This wrapper stays LENIENT on vault errors for the callers that
-/// have not been moved to the strict contract yet: a string it cannot fully resolve comes back
-/// exactly as authored, the pre-vault behaviour, rather than half-expanded.
-pub fn resolve_env_refs(value: &str) -> String {
-    swiss_core::secure::refs::resolve(value).unwrap_or_else(|_| value.to_string())
-}
-
-fn resolve_value(v: &Value) -> Value {
-    match v {
-        Value::String(s) => Value::String(resolve_env_refs(s)),
-        Value::Array(a) => Value::Array(a.iter().map(resolve_value).collect()),
-        Value::Object(o) => Value::Object(resolve_obj(o)),
-        other => other.clone(),
-    }
-}
-
-fn resolve_obj(o: &Map<String, Value>) -> Map<String, Value> {
-    o.iter()
-        .map(|(k, v)| (k.clone(), resolve_value(v)))
-        .collect()
-}
-
 /// True for a value that is exactly one credential reference — `${ENV_VAR}` (held in the
 /// sealed env store) or `${secret://name}` (held in the vault, docs/25 E1) — i.e. a secret
 /// held outside the file, not inline. The masking stack keys off this to show the reference
@@ -145,15 +122,9 @@ pub fn is_env_ref(v: &Value) -> bool {
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
 }
 
-/// Expand every `${ENV_VAR}` reference in a server definition. See the module comment for why
-/// this is build-time, not load-time.
-pub fn resolve_def(def: &ServerDef) -> ServerDef {
-    ServerDef(resolve_obj(&def.0))
-}
-
-/// The strict form (docs/19 D4): expand env refs AND vault refs across the whole definition
-/// tree, and refuse the definition when a vault reference names a secret this machine does not
-/// hold. The error carries the JSON path (`headers.Authorization references secret://x which is
+/// Expand every `${ENV_VAR}` and `${secret://name}` reference across the whole definition
+/// tree (docs/19 D4), and refuse the definition when a vault reference names a secret this
+/// machine does not hold. The error carries the JSON path (`headers.Authorization references secret://x which is
 /// not in the vault`) plus no value ever — the caller prefixes the MCP's name.
 pub fn resolve_def_checked(def: &ServerDef) -> Result<ServerDef, String> {
     let resolved = swiss_core::secure::refs::resolve_value(&Value::Object(def.0.clone()))?;
@@ -367,27 +338,15 @@ mod tests {
     }
 
     #[test]
-    fn env_ref_expansion_and_detection() {
-        set_env("SWISS_TEST_SECRET", "hunter2");
-        assert_eq!(
-            resolve_env_refs("pass=${SWISS_TEST_SECRET}!"),
-            "pass=hunter2!"
-        );
-        assert_eq!(resolve_env_refs("${SWISS_TEST_SECRET}"), "hunter2");
-        // Unknown refs expand empty, exactly like Node's `?? ""`.
-        assert_eq!(resolve_env_refs("${NOPE_MISSING}"), "");
-        // Non-conforming names are left as literal text.
-        assert_eq!(resolve_env_refs("${lowercase}"), "${lowercase}");
-        assert_eq!(resolve_env_refs("$NOPE {a}"), "$NOPE {a}");
+    fn env_ref_detection_only() {
         assert!(is_env_ref(&json!("${SWISS_TEST_SECRET}")));
         assert!(!is_env_ref(&json!("plain")));
         assert!(!is_env_ref(&json!("${a-b}")));
         assert!(!is_env_ref(&json!("${}")));
-        remove_env("SWISS_TEST_SECRET");
     }
 
     #[test]
-    fn resolve_def_expands_nested_values_only() {
+    fn resolve_def_checked_expands_nested_values() {
         let def = ServerDef(
             serde_json::from_value(json!({
                 "type": "mysql",
@@ -399,7 +358,7 @@ mod tests {
         );
         set_env("SWISS_X_PASS", "p");
         set_env("SWISS_X_TOKEN", "t");
-        let resolved = resolve_def(&def);
+        let resolved = resolve_def_checked(&def).expect("resolves");
         assert_eq!(resolved.get_str("password"), Some("p"));
         assert_eq!(resolved.get_str("host"), Some("db.local"));
         assert_eq!(resolved.0["env"]["TOKEN"], json!("t"));
