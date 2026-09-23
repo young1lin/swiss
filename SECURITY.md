@@ -11,7 +11,7 @@ Please do **not** open a public issue for anything that could be a vulnerability
 
 - Preferred: GitHub's private vulnerability reporting on this repository
   ("Security" tab → "Report a vulnerability").
-- Or email **young1lin** with `[swiss security]` in the subject.
+- Or open a private GitHub security advisory draft and mention `@young1lin` there.
 
 Include what you can: the version or commit (`swiss --version` prints the build stamp), the
 platform, steps to reproduce, and what an attacker gains. A minimal reproduction is worth more
