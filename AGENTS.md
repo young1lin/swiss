@@ -150,11 +150,10 @@ means fingerprints were invalidated, not that everyday work costs 4 minutes.
 minority of the suite — and the nine member crates, where most of the tests live, are never
 even built. The run still reports ok. Exact counts rot; the shape does not: only a green
 `--workspace` run means "the suite passed". The same applies to clippy. `swiss start` / `stop` / `status` / `logs` / `token`
-are the CLI; `swiss token` manages the bearer token; `SWISS_TOKEN` pins it, and the Node-era
-`MCP_GATEWAY_TOKEN` is still honored. A pin must use the name the config's `tokenEnv` carries:
-the named variable resolves first, so on a home upgraded from the Node era (whose config says
-`MCP_GATEWAY_TOKEN`) it is `MCP_GATEWAY_TOKEN` that pins — the pair partner is only consulted
-when the named variable holds nothing.
+are the CLI; `swiss token` manages the bearer token; `SWISS_TOKEN` pins it. A boot rewrites a
+legacy `tokenEnv` (`MCP_GATEWAY_TOKEN`) to `SWISS_TOKEN` once, carrying the token across names
+in the sealed store (bootstrap.rs `migrate_token_env`); the Node-era name stays honored as the
+pair partner, so a pre-rename shell keeps authenticating unchanged.
 
 The sealed-envelope format is frozen (docs/05) and its fixture is committed under `tests/`.
 The Node-era regeneration script `scripts/seal-fixture.mts` needs the retired sibling checkout

@@ -184,6 +184,72 @@ fn set_env_default_marker() -> Option<String> {
     set_env_default("SWISS_TOKEN", &random_hex(24), &env_store_path())
 }
 
+/// One-shot `tokenEnv` rename for homes upgraded from the Node era: a config still pointing
+/// at `MCP_GATEWAY_TOKEN` is rewritten to `SWISS_TOKEN`, and the token itself is carried
+/// across names in the sealed env store. Runs before the store is injected, so the very
+/// boot that migrated resolves the token under its new name; the legacy pairing in
+/// swiss-host's config keeps any pre-rename shell working either way. Idempotent — there is
+/// nothing to do once the config names the new variable.
+pub fn migrate_token_env() -> bool {
+    let (new_name, old_name) = (
+        swiss_host::config::TOKEN_ENV,
+        swiss_host::config::TOKEN_ENV_LEGACY,
+    );
+
+    let config_file = data_path(&["gateway.config.json"]);
+    let Some(mut raw) = read_secure_json(&config_file).ok().flatten() else {
+        return false;
+    };
+    if raw.get("tokenEnv").and_then(|v| v.as_str()) != Some(old_name) {
+        return false;
+    }
+
+    // Carry the value across names: the old entry MOVES, never copies — a leftover under the
+    // legacy name would keep authenticating stale tokens through the pair fallback after a
+    // rotation. A value in the process env wins (dotenv semantics) and is written into the
+    // store so the rename survives reboots.
+    let mut store = read_env_store(&env_store_path());
+    let value = std::env::var(old_name)
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| store.remove(old_name).filter(|v| !v.is_empty()));
+    match value {
+        Some(v) => {
+            store.entry(new_name.to_string()).or_insert(v);
+            if let Err(err) = write_env_store(&store, &env_store_path()) {
+                log::warn(
+                    "could not carry the token across names; config left as it was",
+                    Some(json!({ "error": err })),
+                );
+                return false;
+            }
+        }
+        None => {
+            // No token under either name existed to carry — an already-tokenless home. Seed
+            // one under the new name so the rename cannot leave auth worse than it found
+            // it (ensure_first_run's marker saw the legacy key and seeded nothing).
+            if !store.contains_key(new_name) {
+                set_env_default(new_name, &random_hex(24), &env_store_path());
+            }
+        }
+    }
+
+    let Some(obj) = raw.as_object_mut() else {
+        return false;
+    };
+    obj.insert("tokenEnv".to_string(), json!(new_name));
+    match write_secure_json(&config_file, &raw) {
+        Ok(()) => {
+            log::log("info", "renamed the config's tokenEnv to SWISS_TOKEN", None);
+            true
+        }
+        Err(err) => {
+            log::warn("could not rewrite the config's tokenEnv", Some(json!({ "error": err })));
+            false
+        }
+    }
+}
+
 /// The panel URL from the config we just wrote or migrated — never a hardcoded 19999.
 fn panel_url() -> String {
     let from_config = read_secure_json(&data_path(&["gateway.config.json"]))
@@ -324,6 +390,80 @@ mod tests {
         let token = report.new_token.expect("the first run generates a token");
         assert!(token.len() >= 32 && token.bytes().all(|b| b.is_ascii_hexdigit()));
         assert_eq!(sb.env().get("SWISS_TOKEN"), Some(&token));
+    }
+
+    #[test]
+    fn a_legacy_token_env_is_renamed_once_with_the_token_carried() {
+        let sb = Sandbox::new();
+        // boot() is not called here, so the home the Sandbox pins does not exist yet.
+        std::fs::create_dir_all(&sb.home).expect("scratch home");
+        // The pre-rename shape: the config names the Node-era variable and the sealed
+        // store holds the token under that name.
+        write_secure_json(
+            &data_path(&["gateway.config.json"]),
+            &json!({ "tokenEnv": "MCP_GATEWAY_TOKEN", "servers": {} }),
+        )
+        .expect("seed config");
+        write_env_store(
+            &std::iter::once(("MCP_GATEWAY_TOKEN".to_string(), "tok-legacy".to_string()))
+                .collect(),
+            &env_store_path(),
+        )
+        .expect("seed store");
+
+        assert!(migrate_token_env());
+
+        assert_eq!(sb.config()["tokenEnv"], json!("SWISS_TOKEN"));
+        let env = sb.env();
+        // Carried across names, moved not copied — a leftover legacy entry would keep
+        // authenticating stale tokens through the pair fallback after a rotation.
+        assert_eq!(env.get("SWISS_TOKEN"), Some(&"tok-legacy".to_string()));
+        assert!(!env.contains_key("MCP_GATEWAY_TOKEN"));
+
+        // Idempotent: a second run finds nothing to do and touches nothing.
+        assert!(!migrate_token_env());
+        assert_eq!(sb.env().get("SWISS_TOKEN"), Some(&"tok-legacy".to_string()));
+    }
+
+    #[test]
+    fn a_legacy_token_env_with_the_token_in_the_process_env_wins_from_there() {
+        let sb = Sandbox::new();
+        // boot() is not called here, so the home the Sandbox pins does not exist yet.
+        std::fs::create_dir_all(&sb.home).expect("scratch home");
+        write_secure_json(
+            &data_path(&["gateway.config.json"]),
+            &json!({ "tokenEnv": "MCP_GATEWAY_TOKEN", "servers": {} }),
+        )
+        .expect("seed config");
+        // dotenv semantics: what the OS injected beats the store.
+        let prev = std::env::var_os("MCP_GATEWAY_TOKEN");
+        unsafe { std::env::set_var("MCP_GATEWAY_TOKEN", "tok-env") };
+
+        assert!(migrate_token_env());
+        assert_eq!(sb.env().get("SWISS_TOKEN"), Some(&"tok-env".to_string()));
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("MCP_GATEWAY_TOKEN", v) },
+            None => unsafe { std::env::remove_var("MCP_GATEWAY_TOKEN") },
+        }
+    }
+
+    #[test]
+    fn a_legacy_token_env_with_no_token_anywhere_seeds_one_under_the_new_name() {
+        let sb = Sandbox::new();
+        // boot() is not called here, so the home the Sandbox pins does not exist yet.
+        std::fs::create_dir_all(&sb.home).expect("scratch home");
+        write_secure_json(
+            &data_path(&["gateway.config.json"]),
+            &json!({ "tokenEnv": "MCP_GATEWAY_TOKEN", "servers": {} }),
+        )
+        .expect("seed config");
+
+        assert!(migrate_token_env());
+
+        // No value existed to carry; the rename must not leave auth tokenless.
+        assert!(sb.env().contains_key("SWISS_TOKEN"));
+        assert_eq!(sb.config()["tokenEnv"], json!("SWISS_TOKEN"));
     }
 
     #[test]
