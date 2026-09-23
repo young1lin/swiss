@@ -17,7 +17,7 @@
 import type { KindPageState, McpDetail, McpKind } from "./types/state.js";
 import { $, KINDS, api, apiJson, isMcpKind, now, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
-import { callsErrNode, callsStatusNode, fmtJson, mountJsonTrees } from "./logs.js";
+import { callsErrNode, callsStatusNode, goneNode, repaintCallBlock } from "./logs.js";
 import { fill } from "./h.js";
 // The one-field sheet (fix-plan #16). Same accepted cycle shape as data-view/data-tabs:
 // add-sheet imports detail's openDetail, detail imports its sheet builder, and both sides
@@ -200,10 +200,10 @@ function openDetail(name: string): void {
     // Retry owes in callsRetryTarget), and callsRequest is the generation that drops stale
     // responses before they can commit over a newer needle/page.
     calls: null, stderr: "", callsOpen: {},
-    callsPage: 0, callsMore: false, callsFull: {}, callsQ: "",
+    callsPage: 0, callsMore: false, callsFull: {}, callsGone: {}, callsQ: "",
     callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
     callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
-    callsTree: {}, // docs/33 C2: per-seq JSON tree expansion, survives the poll repaint
+    callsAll: {}, // docs/33 C3: blocks the operator expanded past the line cap ("out:<seq>")
     // The three kind pages (views/mcps.ts stages the active one under d[d.tab]) open fresh.
     tools: pageState(), resources: pageState(), prompts: pageState(),
   };
@@ -388,10 +388,22 @@ function patchCallsChrome(d: McpDetail): void {
   }
 }
 
-/** Fetch one reply in full — the log page ships only the first 2 KB of each. */
+/* Replies being fetched right now, by "<mcp>:<seq>": opening, closing and reopening a row (or a
+   click on the button while the open's own fetch is out) must not stack requests for one body. */
+const fullInFlight = new Set<string>();
+
+/** Fetch one reply in full — the log page ships only the first 2 KB of each. Runs when a clipped
+ *  row opens (docs/33 C3) and from its Show full result button; a no-op once the reply is here,
+ *  known pruned, or already on its way. */
 async function showFullResult(seq: number): Promise<void> {
   const d = mcpDetail();
   if (!d) return;
+  const c = (d.calls || []).find((r) => { return r.seq === seq; });
+  if (c && !c.preview) return; // the page already carried the whole reply
+  if (d.callsFull[seq] != null || (d.callsGone || {})[seq]) return;
+  const flight = d.name + ":" + seq;
+  if (fullInFlight.has(flight)) return;
+  fullInFlight.add(flight);
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
     if (!r.ok) { toast(tr("detail.httpN", { n: r.status }), true); return; }
@@ -399,17 +411,22 @@ async function showFullResult(seq: number): Promise<void> {
     if (mcpDetail()?.name !== d.name || !j.call) return;
     if (j.call.bodyGone) {
       // Only the newest replies keep their payload; say which part is missing rather than showing a
-      // short result as if it were whole.
-      toast(tr("detail.fullReplyLongerStored"), true);
+      // short result as if it were whole. In place, not a toast: the fetch now runs on a plain
+      // open, and the row is where the operator is looking.
+      if (!d.callsGone) d.callsGone = {};
+      d.callsGone[seq] = true;
+      const btn = document.querySelector('#tabbody [data-full="' + seq + '"]');
+      if (btn) (btn.closest(".form-actions") || btn).replaceWith(goneNode(seq));
       return;
     }
     d.callsFull[seq] = j.call.output;
-    mountJsonTrees(d, seq); // docs/33 C2: a full reply that parses upgrades/refreshes the tree
-    const pre = document.querySelector('#tabbody .call[data-seq="' + seq + '"] pre[data-out]');
-    if (pre) pre.textContent = fmtJson(j.call.output);
+    // docs/33 C3: the result block repaints from the whole reply — a preview clipped mid-value
+    // could not be formatted, the full one usually can.
+    repaintCallBlock(d, "out:" + seq);
     const btn = document.querySelector('#tabbody [data-full="' + seq + '"]');
-    if (btn) btn.remove();
+    if (btn) (btn.closest(".form-actions") || btn).remove();
   } catch (e) { toast(tr("detail.requestFailed"), true); }
+  finally { fullInFlight.delete(flight); }
 }
 
 async function clearCalls(): Promise<void> {
@@ -428,6 +445,8 @@ async function clearCalls(): Promise<void> {
     d.calls = [];
     d.callsOpen = {};
     d.callsFull = {};
+    d.callsGone = {};
+    d.callsAll = {};
     d.callsPage = 0;
     d.callsMore = false;
     d.callsPendingPage = null;

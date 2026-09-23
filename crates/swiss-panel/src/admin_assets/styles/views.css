@@ -202,41 +202,36 @@
     .call-body { display: none; padding: 0 var(--s4) var(--s3); }
     .call.open .call-body { display: block; }
     .call-lbl { font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: var(--s2) 0 var(--s1); display: flex; align-items: center; gap: var(--s2); }
-    /* docs/33 C1: the copy affordance sits at the end of its label row, quiet until hovered. */
-    .call-lbl .btn.icon { margin-left: auto; color: var(--text-3); opacity: 0; transition: opacity .12s ease; }
-    .call-lbl:hover .btn.icon, .call-lbl .btn.icon:focus-visible { opacity: 1; }
-    /* docs/33 C2: a compact inspector, not a second code editor. The block already names the root,
-       so it starts at the useful top-level fields; nested containers open only on demand. */
-    .jtree { background: var(--sep-soft); border-radius: var(--r-row); padding: var(--s2); max-height: 360px; overflow: auto; }
-    .jtree-in { font-size: var(--f-label); }
-    .jt-row { display: flex; align-items: center; gap: var(--s1); padding: 1px var(--s1); min-width: 0; border-radius: var(--r-row); }
-    .jt-row:hover { background: var(--hover); }
-    /* Keys are field identity, not copyable values: text face and neutral colour. */
-    .jt-key { color: var(--text-2); font-weight: 500; flex: none; }
-    .jt-col { color: var(--text-3); font-family: var(--mono); flex: none; }
-    /* Chevrons, spacers, summaries and copy buttons are chrome — selection stays readable. */
-    .jtree .jt-chev, .jtree .jt-spc, .jtree .jt-sum, .jtree .jt-copy { user-select: none; }
-    .jt-val, .jt-sum, .jt-empty { font-family: var(--mono); }
-    .jt-val { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .jt-val.n { font-variant-numeric: tabular-nums; }
-    .jt-val.b { color: var(--text-2); font-weight: 500; }
-    .jt-sum, .jt-empty { color: var(--text-3); flex: none; }
-    .jt-spc { width: var(--s3); flex: none; }
-    /* Tree controls are inline chrome, not 28px push buttons; large buttons made every JSON line
-       look double-spaced and were the main source of the wall-of-cards appearance. */
-    .jt-row .jt-copy, .jt-row .jt-chev { width: var(--s6); height: var(--s6); padding: 0; box-shadow: none; background: none; }
-    .jt-row .jt-copy { margin-left: auto; flex: none; color: var(--text-3); opacity: 0; }
-    .jt-row:hover .jt-copy, .jt-row .jt-copy:focus-visible { opacity: 1; }
-    .jt-row .jt-copy .ic, .jt-row .jt-chev .ic { width: var(--s3); height: var(--s3); }
-    .jt-row .jt-chev { color: var(--text-3); opacity: 1; }
-    .jt-row.open > .jt-chev { transform: rotate(90deg); }
-    .jt-chev { transition: transform .15s ease; }
-    @media (prefers-reduced-motion: reduce) { .jt-chev { transition: none; } }
-    .jt-kids { margin-left: var(--s2); padding-left: var(--s3); border-left: 1px solid var(--sep); }
-    /* Formatted JSON needs room before it starts scrolling — this is the view you read a result in. */
+    /* docs/33 C3: a call block's label row says what the body turned out to be (decoded, JSON
+       plus text) and carries its two copies. They stay visible: copying a reply is the frequent
+       act on this page, not something to discover by hovering. */
+    .call-lbl .call-note { font-weight: 500; text-transform: none; letter-spacing: 0; }
+    .call-lbl .call-acts { margin-left: auto; display: inline-flex; gap: var(--s1); }
+    .call-lbl .call-acts .btn { display: inline-flex; align-items: center; gap: var(--s1); padding: 0 var(--s2); font-size: var(--f-caption); font-weight: 500; line-height: var(--s6); text-transform: none; letter-spacing: 0; color: var(--text-3); }
+    .call-lbl .call-acts .btn:hover { color: var(--text); }
+    .call-lbl .call-acts .btn .ic { width: var(--s3); height: var(--s3); }
+    /* docs/33 C3: the JSON view is one formatted code block (json-view.ts) — standard indented
+       JSON, every line visible, no fold and no inner scroll box: the page scrolls, and a block
+       past 200 lines ends in "Show all". Long values wrap instead of widening the pane. */
+    pre.jv { margin: 0; padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); line-height: 1.6; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
+    .jv-k { color: var(--syn-key); }
+    .jv-s { color: var(--syn-str); }
+    .jv-n { color: var(--syn-num); font-variant-numeric: tabular-nums; }
+    .jv-l { color: var(--syn-lit); }
+    .jv-p { color: var(--syn-punct); }
+    /* The decoded marker is chrome, not data: its words live in ::before, so a drag-selection of
+       the block copies the JSON and nothing the display added. */
+    .jv-dec { user-select: none; }
+    .jv-dec::before { content: attr(data-label); display: inline-block; margin-right: var(--s1); padding: 0 var(--s1); border-radius: 4px; box-shadow: inset 0 0 0 1px var(--sep); font-family: var(--sans); font-size: var(--f-caption); line-height: 16px; color: var(--text-3); vertical-align: 1px; }
+    /* Formatted JSON needs room before it starts scrolling — Traffic reads its bodies here. */
     .call-body pre.logs { padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: 8px; max-height: 360px; }
+    /* A Logs block that is text, or the prose after a reply's JSON, reads like the JSON beside it:
+       whole, no inner scroll box. */
+    .call-blk pre.logs { max-height: none; overflow: visible; font-size: var(--f-label); line-height: 1.6; }
+    .call-blk pre.jv-tail { margin-top: var(--s1); }
     #runOut:not(:empty) { max-height: 480px; margin-top: var(--s2); background: var(--sep-soft); border-radius: 8px; }
     .call-body pre.logs.err { color: var(--red); }
+    .call-body > .call-gone { padding-top: var(--s2); }
     .chev { color: var(--text-3); width: 12px; flex: none; transition: transform .15s ease; }
     .call.open .chev { transform: rotate(90deg); }
     @media (prefers-reduced-motion: reduce) { .chev { transition: none; } }

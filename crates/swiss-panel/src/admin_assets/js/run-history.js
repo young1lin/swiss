@@ -24,7 +24,7 @@ import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, dele
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsNode, parsePgUrl } from "./fields.js";
 import { popupMenu } from "./menu.js";
 import { closeMenu } from "./pane.js";
-import { copyLogText, fmtChars, fmtJson, logsBodyNode, mountJsonTrees, toggleCall } from "./logs.js";
+import { callBlockCopyText, copyLogText, fmtChars, fmtJson, logsBodyNode, repaintCallBlock, toggleCall } from "./logs.js";
 import { fill, frag, h } from "./h.js";
                                      
 import { renderPane } from "./pane.js";
@@ -592,6 +592,13 @@ function tunnelDepsNode(d           )         {
     h("div", { style: "height:var(--s5)" }));
 }
 
+/** docs/33 C3: the one way a call row opens or closes, from a click or from Enter/Space. The
+ *  operator opens a call to read its result, so a reply the page clipped to its 2 KB preview is
+ *  fetched whole right away instead of waiting behind a Show full result click. */
+function openOrCloseCall(seq        )       {
+  if (toggleCall(seq)) void showFullResult(seq);
+}
+
 
 /* --- pane-level delegation (docs/37 R5) --------------------------------------------------------
    wireTabBody used to walk the fresh tab body after every paint and assign ~34 handlers; each
@@ -654,26 +661,37 @@ function paneTabClick(ev            )       {
   if (t.id === "clPrev") { callsPageStep(-1, { fromKey: ev.detail === 0 }); return; }
   if (t.id === "clNext") { callsPageStep(1, { fromKey: ev.detail === 0 }); return; }
   if (t.id === "clRetry") { callsRetry({ fromKey: ev.detail === 0 }); return; }
-  // docs/33 C1: block copy buttons. The text comes from the CALL ROW, not the painted DOM —
-  // a truncated preview or a highlighted render still copies the full pretty payload.
+  // docs/33 C3: a block's Copy (formatted: the decoded structure as valid JSON) and Copy raw
+  // (the text exactly as stored). Both read the CALL ROW, not the painted DOM, so a block cut at
+  // its line cap still copies everything.
   const copyBtn = t.closest             ("[data-copy]");
-  if (copyBtn) {
+  const rawBtn = copyBtn ? null : t.closest             ("[data-copyraw]");
+  if (copyBtn || rawBtn) {
     const d = mcpDetail();
     if (!d) return;
-    const parts = String(copyBtn.dataset.copy || "").split(":");
-    const seq = Number(parts[1]);
-    const c = (d.calls || []).find((r) => { return r.seq === seq; });
-    if (!c) return;
-    const text = parts[0] === "args" ? fmtJson(c.args || "")
-      : fmtJson(d.callsFull[seq] != null ? d.callsFull[seq] : c.output);
-    void copyLogText(text || "");
+    const text = copyBtn
+      ? callBlockCopyText(d, String(copyBtn.dataset.copy), false)
+      : callBlockCopyText(d, String(rawBtn?.dataset.copyraw), true);
+    if (text != null) void copyLogText(text);
+    return;
+  }
+  // docs/33 C3: Show all lifts one block's line cap; the choice is state, so a poll repaint of
+  // the list keeps the block whole.
+  const showAll = t.closest             ("[data-showall]");
+  if (showAll) {
+    const d = mcpDetail();
+    if (!d) return;
+    const key = String(showAll.dataset.showall);
+    if (!d.callsAll) d.callsAll = {};
+    d.callsAll[key] = true;
+    repaintCallBlock(d, key);
     return;
   }
   // The full-result button sits inside an expandable row — it must not also toggle the row.
   const fullBtn = t.closest             ("[data-full]");
   if (fullBtn) { ev.stopPropagation(); void showFullResult(Number(fullBtn.dataset.full)); return; }
   const callRow = t.closest             ("[data-callseq]");
-  if (callRow) { toggleCall(Number(callRow.dataset.callseq)); return; }
+  if (callRow) { openOrCloseCall(Number(callRow.dataset.callseq)); return; }
   // Run tab
   if (t.id === "runBtn") { void runTool(); return; }
   if (t.id === "r-hist") { histToggle(); return; }
@@ -752,7 +770,7 @@ function paneTabKeydown(ev               )       {
   const callRow = t.closest             ("[data-callseq]");
   if (callRow && (ev.key === "Enter" || ev.key === " ")) {
     ev.preventDefault();
-    toggleCall(Number(callRow.dataset.callseq));
+    openOrCloseCall(Number(callRow.dataset.callseq));
     return;
   }
   // Ctrl/Cmd+Enter runs, so a SQL textarea can be submitted without reaching for the mouse.
@@ -888,7 +906,6 @@ function renderCallsOnly()       {
   // No re-wiring here (docs/37 R5): the pager, the copy buttons and the search box answer
   // through #pane's delegated listeners, which a body repaint never disturbs. The swap-back
   // of the live #callsQ node needs no re-attached oninput for the same reason.
-  mountJsonTrees(d); // docs/33 C2: open rows get their trees back, expansion restored
 }
 
 export { applyRunHistory, configBodyNode, fillRunArgs, histButtonLabel, histClose, histOpen, histPreview, histRowsNode, histSearchTimer, histToggle, histViewNode, histWhen, loadRunHistory, queueHistSearch, readResource, renderCallsOnly, renderHistoryOnly, renderRunResult, runTool, toggleResources, toggleTool, tryTool, tunnelDepsNode, paneTabClick, paneTabChange, paneTabInput, paneTabKeydown, afterTabPaint };
