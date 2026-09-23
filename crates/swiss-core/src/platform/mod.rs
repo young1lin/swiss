@@ -47,8 +47,9 @@ pub use windows::{
 mod unix;
 #[cfg(not(windows))]
 pub use unix::{
-    descendant_pids, dpapi_protect, dpapi_unprotect, machine_id, parent_process, pid_alive,
-    process_tree_working_set, self_private_bytes, self_working_set, tree_kill,
+    descendant_pids, dpapi_protect, dpapi_unprotect, kill_process_group, machine_id,
+    parent_process, pid_alive, process_tree_working_set, self_private_bytes,
+    self_working_set, tree_kill,
 };
 
 /// The process that spawned THIS one, as far as the platform can say without a subprocess:
