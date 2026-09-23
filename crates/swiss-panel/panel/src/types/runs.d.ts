@@ -151,10 +151,11 @@ export interface ApiRemoteRunRow extends ApiRunRow {
 export type RemoteRunBody = { text: string; next: number; total: number } | { gone: true };
 
 /** One opened live row's followed output (live[runId]): what has been shown, and where the
- *  next pull continues from. */
+ *  next pull continues from; capped once the held tail exceeded the live view's floor. */
 export interface RemoteLiveBody {
   text: string;
   cursor: number;
+  capped?: boolean;
 }
 
 /* --- pane click delegation (both remote pages) --------------------------------------------------- */
