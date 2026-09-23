@@ -283,27 +283,49 @@ pub fn load_config(path: &Path) -> Result<GatewayConfig, String> {
     })
 }
 
+/// The outcome of removing one server entry from gateway.config.json — the file leg of the
+/// panel's Delete for a config-sourced MCP. The cases are distinct because the caller must not
+/// mistake a failed write for an absent entry: the runtime half of the delete is only honest
+/// when the file half actually reached the disk (atomic_json's reporting rule).
+#[derive(Debug)]
+pub enum ConfigRemoval {
+    /// The entry was present and the rewritten file is on disk.
+    Removed,
+    /// Neither the file nor the entry has it — nothing to do, nothing was claimed.
+    NotFound,
+    /// The entry was there but the removal did not reach the disk; the file still has it.
+    WriteFailed(String),
+}
+
 /// Remove one server entry from gateway.config.json — the file leg of the panel's Delete for a
 /// config-sourced MCP. Without it the runtime entry goes away but the next start resurrects the
 /// MCP from the file. Only the named key is removed; the rest of the file keeps its `${ENV}`
-/// credential references verbatim. Returns false when neither the file nor the entry has it.
-pub fn remove_config_server(name: &str, path: &Path) -> bool {
+/// credential references verbatim.
+pub fn remove_config_server(name: &str, path: &Path) -> ConfigRemoval {
+    if !path.exists() {
+        return ConfigRemoval::NotFound;
+    }
     let Ok(Some(raw)) = read_secure_json(path) else {
-        return false;
+        // The file is there but cannot be read: whether the entry is inside it is unknowable,
+        // and claiming it was already gone is the lie this used to tell.
+        return ConfigRemoval::WriteFailed(format!("could not read {}", path.display()));
     };
     let Some(mut obj) = raw.as_object().cloned() else {
-        return false;
+        return ConfigRemoval::NotFound;
     };
     let Some(servers) = obj.get("servers").and_then(Value::as_object).cloned() else {
-        return false;
+        return ConfigRemoval::NotFound;
     };
     if !servers.contains_key(name) {
-        return false;
+        return ConfigRemoval::NotFound;
     }
     let mut next = servers.clone();
     next.remove(name);
     obj.insert("servers".into(), Value::Object(next));
-    write_secure_json(path, &Value::Object(obj)).is_ok()
+    match write_secure_json(path, &Value::Object(obj)) {
+        Ok(()) => ConfigRemoval::Removed,
+        Err(err) => ConfigRemoval::WriteFailed(err),
+    }
 }
 
 #[cfg(test)]
@@ -335,6 +357,52 @@ mod tests {
         ));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    // The Delete handler used to read one boolean and log "config entry was already gone on
+    // delete" for ANY false — including a failed sealed write, which leaves the entry very
+    // much present and resurrects the MCP at the next start. The outcomes must stay distinct.
+    #[test]
+    fn removal_tells_absent_entries_from_failed_writes() {
+        swiss_core::secure::key::use_test_master_key();
+        let dir = temp_dir("removal");
+        let p = write_cfg(
+            &dir,
+            json!({ "tokenEnv": "MCP_GATEWAY_TOKEN", "servers": { "a": { "type": "http" } } }),
+        );
+        // Absent name and absent file: NotFound, not a failure.
+        assert!(matches!(remove_config_server("nope", &p), ConfigRemoval::NotFound));
+        assert!(matches!(
+            remove_config_server("a", &dir.join("missing.json")),
+            ConfigRemoval::NotFound
+        ));
+        // Present name on a writable file: the sealed rewrite lands.
+        assert!(matches!(remove_config_server("a", &p), ConfigRemoval::Removed));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn removal_reports_a_write_failure_as_such() {
+        swiss_core::secure::key::use_test_master_key();
+        let dir = temp_dir("removal-ro");
+        let p = write_cfg(
+            &dir,
+            json!({ "tokenEnv": "MCP_GATEWAY_TOKEN", "servers": { "a": { "type": "http" } } }),
+        );
+        // A read-only target makes the atomic rename give up: the entry is present, the write
+        // is refused, and the answer must say WriteFailed — never "already gone".
+        let mut perms = std::fs::metadata(&p).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&p, perms).unwrap();
+        match remove_config_server("a", &p) {
+            ConfigRemoval::WriteFailed(err) => assert!(!err.is_empty()),
+            other => panic!("expected WriteFailed, got {other:?}"),
+        }
+        let mut perms = std::fs::metadata(&p).unwrap().permissions();
+        perms.set_readonly(false);
+        std::fs::set_permissions(&p, perms).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
