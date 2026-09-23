@@ -25,6 +25,7 @@ import { currentView, setCurrentView } from "./ui-state.js";
 import { resetPaneScroll, trackPaneScroll } from "./pane-scroll.js";
 import { tk, tr, wireLabel } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
+import { emptyNode, note } from "./ui/page.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
 const legacy                   = [
@@ -451,11 +452,15 @@ async function navigatePage(id        , force          )                {
   paintNavigation();
   history.replaceState(null, "", page.path || "#" + id);
   resetPaneScroll($("pane"));
+  // A switched-off plugin's page is the one empty shape (the glyph says "off"); a page still
+  // loading is a quiet busy line until its mount paints over it.
   fill($("pane"), off
-    ? h("div", { class: "empty" }, h("div", null,
-        h("h2", null, tr("pageRegistry.pageUnavailable", { page: tr(wireLabel(page.label)) })),
-        h("p", { class: "hint" }, off.lastError || tr("pageRegistry.pluginDisabledManagePlugins"))))
-    : h("div", { class: "empty" }, tr("pageRegistry.loadingPage", { page: tr(wireLabel(page.label)) })));
+    ? emptyNode({
+        icon: "power",
+        title: tr("pageRegistry.pageUnavailable", { page: tr(wireLabel(page.label)) }),
+        hint: off.lastError || tr("pageRegistry.pluginDisabledManagePlugins"),
+      })
+    : note(tr("pageRegistry.loadingPage", { page: tr(wireLabel(page.label)) }), { busy: true }));
   try { if (module.mount) await module.mount({ signal: controller.signal }); }
   catch (error) { if (ticket === sequence && error instanceof Error && error.name !== "AbortError") toast(errText(error), true); }
   if (ticket === sequence) $("countChip").textContent = currentPageCount();

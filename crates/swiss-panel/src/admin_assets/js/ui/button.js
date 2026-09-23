@@ -37,13 +37,15 @@ import { iconNode } from "./icon.js";
                  
                  
                      
+                                                                                      
+                   
  
 
 export function btn(label        , o          = {})                    {
   return h("button", {
     type: "button",
     class: "btn" + (o.kind ? " " + o.kind : "") + (o.icon ? " with-ic" : ""),
-    id: o.id, title: o.title, disabled: o.disabled, data: o.data,
+    id: o.id, title: o.title, disabled: o.disabled, hidden: o.hidden, data: o.data,
   }, o.icon ? iconNode(o.icon) : null, label);
 }
 

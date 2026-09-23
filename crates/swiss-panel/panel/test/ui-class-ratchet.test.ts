@@ -33,9 +33,9 @@ import { uiOwnedClasses } from "./styles.js";
 
 /* Frozen at docs/46 P1b-3: 623 classes in 35 files. P2-1: pane.ts 19 -> 0 (the MCP resource head).
    P2-2: logs.ts 85 -> 50 (the call log is the event list). P2-3a: logs.ts 50 -> 0 (Tools / Resources /
-   Prompts on row()). P2-3b: run.ts 24 -> 0, run-history.ts 47 -> 34 (the Run tab; its Config half is P2-3c). */
+   Prompts on row()). P2-3b: run.ts 24 -> 0, run-history.ts 47 -> 34 (the Run tab).
+   P2-3c: run-history.ts 34 -> 0, fields.ts 6, add-sheet.ts 10, groups.ts 1, page-registry.ts 3 -> 0. */
 const FROZEN: Record<string, number> = {
-  "add-sheet.ts": 10,
   "data-browsers.ts": 12,
   "data-cell.ts": 11,
   "data-csv.ts": 12,
@@ -49,12 +49,8 @@ const FROZEN: Record<string, number> = {
   "data-tabs.ts": 1,
   "data-value.ts": 6,
   "data-view.ts": 3,
-  "fields.ts": 6,
-  "groups.ts": 1,
   "jobs.ts": 68,
-  "page-registry.ts": 3,
   "polling.ts": 12,
-  "run-history.ts": 34,
   "traffic.ts": 32,
   "tunnel-sheets.ts": 61,
   "tunnels.ts": 8,

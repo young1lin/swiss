@@ -32,11 +32,6 @@
     .config-chev .ic { width: var(--s3); height: var(--s3); }
     details[open] > summary > .config-chev { transform: rotate(90deg); }
     .config-rows { border-top: 1px solid var(--sep-soft); }
-    .config-row { display: flex; gap: var(--s4); padding: var(--s2) var(--s4); }
-    .config-row + .config-row { position: relative; }
-    .config-row + .config-row::before { content: ""; position: absolute; top: 0; right: 0; left: var(--row-inset, var(--s4)); height: 1px; background: var(--sep-soft); pointer-events: none; }
-    .config-label { flex: 0 0 32%; min-width: 0; color: var(--text-2); font-size: var(--f-label); }
-    .config-value { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--f-label); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .config-revisions { margin-top: var(--s5); background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
     .config-revision-body { border-top: 1px solid var(--sep-soft); padding: var(--s3) var(--s4) var(--s4); }
     .config-revision-intro { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s3); color: var(--text-3); font-size: var(--f-label); }
@@ -73,13 +68,15 @@
     /* The Run tab's reply sits under the form's card, a full step down: a labelled value block
        (ui/json-view.ts valueBlock), the same shape a Logs call opens to. */
     .run-out:not(:empty) { margin-top: var(--s5); }
+    /* The Add sheet's foot: Import is the sheet's other way in, so it leads; the verbs that close
+       the sheet sit at the right, pushed there by the import's own margin. */
+    .sheet-foot > #a-import { margin-right: auto; }
     /* A reply can be thousands of lines (SHOW VARIABLES): it scrolls in its block, as the old
        output box did, so the form above it stays one scroll away rather than a page of JSON. */
     .run-out .vblock > pre { max-height: 60vh; overflow: auto; }
     /* A resource's contents in its sheet: the sheet keeps its head and foot, the body scrolls. */
     .rd-body { max-height: 60vh; overflow: auto; margin-top: var(--s2); }
     .call-body pre.logs.err { color: var(--red); }
-    .call-body > .call-gone { padding-top: var(--s2); }
 
     /* Result status beside the Run button — never styled before, so it inherited 13px body text and
        sat at the same weight as the button's own label. */

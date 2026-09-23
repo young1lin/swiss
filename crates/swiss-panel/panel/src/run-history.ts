@@ -32,8 +32,10 @@ import { locale, tr, trn } from "./i18n.js";
 import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
 import { closeSheet } from "./ui/sheet.js";
 import {
-  JV_LINES, btn, decodeStrings, dot, jsonCodeNode, note, sheet, showSheet, spinner, splitJsonBlock, textNode, valueBlock,
+  JV_LINES, btn, card, decodeStrings, dot, field, form, formActions, hint, iconBtn, jsonCodeNode, kvRow, note, row, section,
+  sheet, showSheet, spinner, splitJsonBlock, tag, textNode, valueBlock,
 } from "./ui/index.js";
+import type { DotState } from "./ui/index.js";
 
 /* --- Run history: the refill control in the actions row ------------------------------------------ */
 /** When an entry ran. Reuses ago() inside a day; past that, ago's time-of-day would be ambiguous,
@@ -464,49 +466,46 @@ function configBodyNode(d: McpDetail): HChild {
     else if (vals.autostart === undefined) vals.autostart = type !== "proc";
     const replacing = d.editMode === "replace";
     const pgRaw = type === "pg" && vals.__pgRaw !== undefined
-      ? h("label", { class: "field" },
-          h("span", null, tr("runHistory.connectionUrl")),
-          h("textarea", { id: "e-pgraw", rows: 2 }, String(vals.__pgRaw)),
-          h("div", { class: "hint" },
-            tr("runHistory.wholeValueRefUrl"),
-            tr("runHistory.fillFieldsAboveReplace")))
+      ? field({
+          label: tr("runHistory.connectionUrl"),
+          control: h("textarea", { id: "e-pgraw", rows: 2 }, String(vals.__pgRaw)),
+          hint: [tr("runHistory.wholeValueRefUrl"), tr("runHistory.fillFieldsAboveReplace")],
+        })
       : null;
-    return h("div", { class: "group" },
-      h("div", { class: "form" },
-        h("label", { class: "field" },
-          h("span", null, tr("runHistory.type")),
-          h("select", { id: "e-type" },
-            Object.keys(TYPE_FIELDS).map((t) => {
-              return h("option", { value: t, selected: t === type }, tr(TYPE_LABELS[t] || t));
-            }))),
-        fieldsNode(type, vals, "e-"),
-        pgRaw,
-        replacing
-          ? h("label", { class: "field" },
-              h("span", null, tr("runHistory.noteKeptParkedRevision")),
-              h("input", { id: "e-note", placeholder: tr("runHistory.optionalEGProc") }))
-          : null,
-        h("div", { class: "form-actions" },
-          h("button", { class: "btn primary", id: "e-save" }, replacing ? tr("runHistory.replaceDefinition") : tr("runHistory.saveRestart")),
-          TESTABLE_TYPES.includes(type)
-            ? h("button", { class: "btn", id: "e-test" }, tr("runHistory.testConnection"))
-            : null,
-          h("button", { class: "btn", id: "e-cancel" }, tr("runHistory.cancel"))),
-        h("div", { class: "hint", id: "e-test-out", hidden: true })));
+    return card(form(
+      field({
+        label: tr("runHistory.type"),
+        control: h("select", { id: "e-type" },
+          Object.keys(TYPE_FIELDS).map((t) => {
+            return h("option", { value: t, selected: t === type }, tr(TYPE_LABELS[t] || t));
+          })),
+      }),
+      fieldsNode(type, vals, "e-"),
+      pgRaw,
+      replacing
+        ? field({ label: tr("runHistory.noteKeptParkedRevision"), control: h("input", { id: "e-note", placeholder: tr("runHistory.optionalEGProc") }) })
+        : null,
+      formActions(
+        btn(replacing ? tr("runHistory.replaceDefinition") : tr("runHistory.saveRestart"), { kind: "primary", id: "e-save" }),
+        TESTABLE_TYPES.includes(type) ? btn(tr("runHistory.testConnection"), { id: "e-test" }) : null,
+        btn(tr("runHistory.cancel"), { id: "e-cancel" })),
+      hint(null, { id: "e-test-out", hidden: true })));
   }
   const c = d.config;
-  if (!c) return h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("runHistory.loading2"));
+  if (!c) return note(tr("runHistory.loading2"), { busy: true });
   const type = c.type as string || "proc";
   const settings = Object.keys(c).reduce((all, key) => {
     const value = c?.[key];
     if (value == null || value === "") return all;
-    all.push({ key: key, label: configFieldLabel(type, key), text: configValue(key, value) });
+    // Mono for a value you would copy (a host, a URL, a command); the description and the words
+    // this panel translates (At boot, On / Off) stay sans (rule 1).
+    const words = key === "description" || key === "lazy" || typeof value === "boolean";
+    all.push({ key: key, label: configFieldLabel(type, key), text: configValue(key, value), mono: !words });
     return all;
-  }, [] as { key: string; label: string; text: string }[]);
+  }, [] as { key: string; label: string; text: string; mono: boolean }[]);
+  // Every stored setting as a label / value pair.
   const rows = settings.map((setting) => {
-    return h("div", { class: "config-row" },
-      h("span", { class: "config-label" }, setting.label),
-      h("span", { class: "config-value", title: setting.text.replace(/\r?\n/g, " · ") }, setting.text));
+    return kvRow(setting.label, setting.text, { mono: setting.mono, title: setting.text.replace(/\r?\n/g, " · ") });
   });
   /* The adapter descriptors are "kind — detail" in English and "kind——detail" in Chinese;
    * split on whichever separator this locale's copy carries, so the detail tail reads
@@ -523,44 +522,40 @@ function configBodyNode(d: McpDetail): HChild {
   if (c.exposeResources !== undefined) badges.push(c.exposeResources ? tr("runHistory.resources") : tr("runHistory.resourcesOff"));
   if (c.exposePrompts !== undefined) badges.push(c.exposePrompts ? tr("runHistory.prompts") : tr("runHistory.promptsOff"));
   if (c.auth === "oauth") badges.push(tr("runHistory.oauthManaged"));
-  const summary = h("div", { class: "group config-summary" },
+  // The card holds the page's own summary layout (views.css .config-*); .config-summary is its hook.
+  const summary = card(h("div", { class: "config-summary" },
     h("div", { class: "config-head" },
       h("div", { class: "config-identity" },
         h("div", { class: "config-kind" },
-          h("span", { class: "tag" }, type),
+          tag(type, { mono: true }),
           h("span", null, kind)),
         h("div", { class: "config-target", title: target }, target)),
-      h("button", { class: "btn", id: "c-edit" }, tr("runHistory.editConfiguration"))),
-    badges.length ? h("div", { class: "config-badges" }, badges.map((badge) => {
-      return h("span", { class: "tag" }, badge);
-    })) : null,
+      btn(tr("runHistory.editConfiguration"), { id: "c-edit" })),
+    badges.length ? h("div", { class: "config-badges" }, badges.map((badge) => { return tag(badge); })) : null,
     h("details", { class: "config-more" },
       h("summary", null,
         h("span", null, tr("runHistory.allSettings")),
         h("span", { class: "config-count" }, trn(settings.length, "runHistory.nValues.one", "runHistory.nValues.other")),
         h("span", { class: "config-chev" }, iconNode("chevron-right"))),
-      h("div", { class: "config-rows" }, rows)));
-  const note = d.source === "config"
-    ? h("div", { class: "note" },
-        tr("runHistory.definedGatewayConfigJson"),
-        h("code", null, "${ENV}"),
-        tr("runHistory.referencesKeptReferencesCredential"))
+      h("div", { class: "config-rows" }, rows))));
+  const fromFile = d.source === "config"
+    ? note([tr("runHistory.definedGatewayConfigJson"), h("code", null, "${ENV}"), tr("runHistory.referencesKeptReferencesCredential")])
     : null;
   const revs = d.revisions || [];
   // Parked definition snapshots stay available without making an empty shelf a permanent section.
+  // One row per parked definition: its adapter, its note and when, Restore - and the delete as
+  // the row's trailing glyph, never a second red word button beside Restore (rule 4).
   const revRows: HChild = revs.length
-    ? revs.map((r, i) => {
+    ? card(revs.map((r, i) => {
         const when = r.at ? new Date(r.at).toLocaleString(locale()) : "";
-        return h("div", { class: "row" },
-          h("span", { class: "k" }, tr(TYPE_LABELS[r.type] || r.type || "?")),
-          h("span", { class: "v wrap" },
-            (r.note || tr("runHistory.note")) + (when ? " · " + when : ""), " ",
-            h("button", { class: "btn", data: { restore: i } }, tr("runHistory.restore")),
-            " ",
-            h("button", { class: "btn danger", data: { revdel: i } }, tr("runHistory.delete"))));
-      })
-    : h("div", { class: "row" },
-        h("span", { class: "rowmsg" }, tr("runHistory.noneReplacingDefinitionParks")));
+        return row({
+          name: tr(TYPE_LABELS[r.type] || r.type || "?"),
+          sub: (r.note || tr("runHistory.note")) + (when ? " · " + when : ""),
+          primary: btn(tr("runHistory.restore"), { data: { restore: i } }),
+          more: iconBtn("trash", tr("runHistory.delete"), { ghost: true, data: { revdel: i } }),
+        });
+      }))
+    : note(tr("runHistory.noneReplacingDefinitionParks"));
   const revBlock = h("details", { class: "config-revisions" },
     h("summary", null,
       h("span", null, tr("runHistory.savedRevisionsN", { n: revs.length })),
@@ -568,9 +563,10 @@ function configBodyNode(d: McpDetail): HChild {
     h("div", { class: "config-revision-body" },
       h("div", { class: "config-revision-intro" },
         h("span", null, tr("runHistory.swapAdapterDefinitionWhile")),
-        h("button", { class: "btn", id: "c-replace" }, tr("runHistory.replaceDefinition2"))),
-      h("div", { class: "group" }, revRows)));
-  return frag(tunnelDepsNode(d), summary, note, revBlock);
+        btn(tr("runHistory.replaceDefinition2"), { id: "c-replace" })),
+      revRows));
+  // Its own section, so a Depends-on section above sits a full step away (.sec + .sec).
+  return frag(tunnelDepsNode(d), section({}, summary, fromFile, revBlock));
 }
 
 /**
@@ -585,23 +581,17 @@ function tunnelDepsNode(d: McpDetail): HChild {
   const t = d.tunnels;
   if (!t || !t.length) return null;
   const rows = t.map((x) => {
-    const dot = x.state === "up" ? "up" : x.state === "error" ? "error" : x.state === "reconnecting" ? "starting" : "";
-    return h("div", { class: "row" },
-      h("span", { class: "k" }, tr("runHistory.tunnel")),
-      h("span", { class: "v" },
-        h("span", { class: "dot " + dot, style: "display:inline-block;margin-right:6px" }),
-        x.name + " · " + String(x.localPort) + " → " + x.targetHost + ":" + x.targetPort,
-        " · " + x.state, x.reason ? " — " + x.reason : "",
-        x.stalePool
-          ? h("div", { class: "tun-err" },
-              tr("runHistory.reconnectedAfterMcpStarted"),
-              tr("runHistory.useRestartAbove"))
-          : null));
+    const state: DotState = x.state === "up" ? "up" : x.state === "error" ? "error" : x.state === "reconnecting" ? "starting" : "off";
+    return row({
+      lead: dot(state, x.state),
+      name: x.name,
+      // The forward is a value you would type; the state and its reason are words.
+      sub: [h("code", null, String(x.localPort) + " → " + x.targetHost + ":" + x.targetPort), " · " + x.state + (x.reason ? " — " + x.reason : "")],
+      // A pool that may hold sockets of the old SSH session is the one thing to act on here.
+      err: x.stalePool ? tr("runHistory.reconnectedAfterMcpStarted") + tr("runHistory.useRestartAbove") : undefined,
+    });
   });
-  return frag(
-    h("div", { class: "cap" }, tr("runHistory.depends")),
-    h("div", { class: "group" }, rows),
-    h("div", { style: "height:var(--s5)" }));
+  return section({ cap: tr("runHistory.depends") }, card(rows));
 }
 
 /** docs/33 C3: the one way a call row opens or closes, from a click or from Enter/Space. The

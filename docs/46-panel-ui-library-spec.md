@@ -370,6 +370,15 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
       （与 Jobs 的动作表单共用 `argFieldsNode`），名字后是必填星号与类型（`field({ meta })`，等宽、灰）。运行结果移到
       卡片下面，是与 Logs 展开区同形的 `valueBlock`：短 JSON 一行、错误是红字、超过 200 行的回复退回纯文本并在块内
       滚动（60vh，原来的输出框也是有界的）。"过往运行"弹层里的参数与结果也换成同一个块；资源内容用库里的 `sheet()`。
+- [x] Config 与表单（P2-3c）：编辑表单、新增 sheet、组字段、MCP 的类型字段（`fields.ts`）都用 `ui/form.ts`。只读视图：
+      每项设置是 `kvRow`（主机、URL、命令等值用等宽；说明与面板自己的词——"开机启动"、开 / 关——用无衬线，规则 1）；
+      类型与徽标是 `tag()`；保存过的版本是 `row()`（恢复是唯一的文字按钮，删除是行尾的垃圾桶图标，规则 4）；隧道依赖是
+      带状态点的 `row()` 放在"依赖"一节，连接池可能过期的提示走 `err` 行。插件被关掉时的页面是 `emptyNode`，页面加载中是
+      `note({ busy })`（`page-registry.ts`）。走查时发现并修了两个既有的 sheet 排版问题：`.two` 只有在 `.form` 里或是
+      `.sheet-body` 的直接子元素时才是两列网格，新增 sheet 里按类型生成的成对字段因此上下叠放——现在 `.two` 自己就是
+      两列网格；平铺容器里的字段与成对字段之间没有间距——现在是一条 `:is(.fld, .two) + :is(.fld, .two)` 规则，网格
+      容器里归零（由 gap 负责）。
+      **`polling.ts` 不在这一步**：它画的是 Tunnels 的连接 / 转发行与 Jobs 的任务行（`tun-row`），随那两页迁移（P4 / P5）。
 - [x] P1b 留下的两件：`.seg` 自带的 `margin-bottom` 交给页面的流（组件不带摆放，P2-1 已做）；`sidebar.ts` 的
       `sideRowNode` 换成 `sideRow()`（P2-3a）。（`popupMenu` 改用 `h()` 等到最后一个手写微型 DOM 的套件——Data 的——换成 happy-dom，即 P7。）
 

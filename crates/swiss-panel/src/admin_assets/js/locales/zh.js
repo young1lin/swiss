@@ -1076,7 +1076,6 @@ const zh                         = {
   "runHistory.savedRevisionsN": "已保存的修订({n})",
   "runHistory.swapAdapterDefinitionWhile": "更换适配器定义,同时保留当前定义以便恢复。",
   "runHistory.replaceDefinition2": "替换定义…",
-  "runHistory.tunnel": "隧道",
   "runHistory.reconnectedAfterMcpStarted": "在此 MCP 启动后重连过——其连接池可能持有失效的 socket。",
   "runHistory.useRestartAbove": "请使用上方的“重启”。",
   "runHistory.depends": "依赖于",

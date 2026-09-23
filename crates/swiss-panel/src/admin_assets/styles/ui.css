@@ -69,7 +69,6 @@
     .sw:disabled { opacity: .4; cursor: default; }
     @media (prefers-reduced-motion: reduce) { .sw, .sw::after { transition: none; } }
     .row.muted .name { color: var(--text-3); }
-    .group-cap { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); padding: var(--s4) var(--s4) var(--s1); }
     .btn.icon { padding: 4px 8px; font-size: 14px; line-height: 1; color: var(--text-2); display: inline-flex; align-items: center; justify-content: center; }
     /* A toggle that is on (iconBtn's `pressed`, aria-pressed="true"): the glyph takes the accent and
        the seat a tint of it - the selected-seat treatment, not a new colour. Without it "pressed"
@@ -366,14 +365,13 @@
        reuse .v, which is why "No calls yet…" read like a config dump. */
     .rowmsg { flex: 1; min-width: 0; font-size: var(--f-body); color: var(--text-3); }
     .rowmsg.warn { color: var(--text-2); }
-    .row-b { display: block; }
     .row-act { display: flex; align-items: flex-start; gap: var(--s3); }
     .row-act .row-main { flex: 1; min-width: 0; }
-    .row-b .name, .row-act .name { font-family: var(--mono); font-weight: var(--w-name); word-break: break-all; }
+    .row-act .name { font-family: var(--mono); font-weight: var(--w-name); word-break: break-all; }
     /* .row-act was missing from this rule, so a tool's description came out at full body size in full
        body colour — the same weight as the monospace name above it. Nine rows of two equally loud
        lines is why the list read as nine cards instead of nine rows. */
-    .row-b .desc, .row-act .desc { color: var(--text-2); font-size: var(--f-label); margin-top: 2px; }
+    .row-act .desc { color: var(--text-2); font-size: var(--f-label); margin-top: 2px; }
 
     /* A tag (ui/status.ts): a word on a chip. Sans and monochrome by default - "proxy", a
        launch type, "copies use this" are words, not values (rule 1) and not states (rule 2).
@@ -539,7 +537,10 @@
     @media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
 
     .form { padding: var(--s4); display: grid; gap: var(--s3); }
-    .form .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+    /* ui/form.ts pair(): two fields side by side, wherever the pair sits. It used to be a grid only
+       under .form or as a direct child of .sheet-body, so a pair one div deeper (the Add sheet's
+       generated fields, docs/46 P2-3c) stacked its halves with no gap between them. */
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); align-items: start; }
     .form-actions { display: flex; align-items: center; gap: var(--s3); padding-top: var(--s1); }
 
     /* Overflow menu. */
@@ -611,15 +612,18 @@
     .inline-form { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; margin-bottom: var(--s5); }
     .inline-form > input { flex: 1 1 200px; min-width: 0; }
     .inline-form > input.grow { flex: 2 1 260px; }
-    /* An input beside its button (the Tokens sheet's "label + Create"): .two is the form's own
-       two-column grid, and outside a .form it was two stacked full-width blocks. */
-    .sheet-body > .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+    /* An input beside its button (the Tokens sheet's "label + Create"): the pair's second column
+       shrinks to the button. */
     .sheet-body > .two:has(> .btn) { grid-template-columns: 1fr auto; gap: var(--s2); align-items: center; }
-    /* One generated field after another (fields.js): the Add sheet pours them into a plain div,
-       so they carried no gap at all and every hint ran straight into the next label. Inside a
-       .form the grid gap already spaces them; the margin only fills in where there is none. */
-    .fld + .fld { margin-top: var(--s3); }
-    .form .fld + .fld { margin-top: 0; }
+    /* Fields and pairs stacked in a plain container (the Add sheet pours its generated fields into
+       a div): a grid step apart, or every hint runs straight into the next label and one pair's
+       inputs into the next pair's labels. In a grid (.form, .sheet-body, a fold's body) the gap
+       already spaces them, so the margin only fills in where there is none. */
+    :is(.fld, .two) + :is(.fld, .two) { margin-top: var(--s3); }
+    :is(.form, .sheet-body, .fold-body) > :is(.fld, .two) + :is(.fld, .two) { margin-top: 0; }
+    /* The two halves of a pair (ui/form.ts pair) are side by side: the stacking margin never
+       applies between them - in a sheet it pushed the second label a grid step below the first. */
+    .two > .fld + .fld { margin-top: 0; }
     .fld .hint { margin-top: var(--s1); }
     /* The nested card a sheet shows a list in (tokens, a job's runs) is inset, not lifted: it sits
        on the sheet's own colour, so it keeps a hairline and gives up the drop shadow. */
@@ -633,12 +637,10 @@
        carries whatever proxy/jump is configured as monochrome tags, so collapsed never means
        hidden: the row's transport stays visible without unfolding. The interior grid gives
        the fold's content its own rhythm (the sheet-body gap stops at the <details> element),
-       a touch tighter than the form above because it is a sub-section; .two needs its pairing
-       rule repeated here because .sheet-body > .two only reaches direct children. */
+       a touch tighter than the form above because it is a sub-section. */
     .sheet-body > details.fold > summary { cursor: pointer; font-size: var(--f-label); color: var(--text-2); }
     .sheet-body > details.fold > summary .tag { margin-left: var(--s1); }
     .sheet-body > details.fold > .fold-body { display: grid; gap: var(--s2); padding-top: var(--s3); }
-    .sheet-body > details.fold > .fold-body > .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
 
     .toast {
       position: fixed; bottom: var(--s5); left: 50%; transform: translateX(-50%);

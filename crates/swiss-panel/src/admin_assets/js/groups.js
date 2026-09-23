@@ -57,6 +57,7 @@ import { addTitle, deleteConfirmMsg, emptyLineText, groupOf, lastGroupKey, resol
 import { tr } from "./i18n.js";
 import { openGroupSheet } from "./add-sheet.js";
 import { popupMenu } from "./ui/menu.js";
+import { field } from "./ui/form.js";
 
 /* --- pure --------------------------------------------------------------------------------------
    groupOf / slice / deleteConfirmMsg / addTitle / resolveDefaultGroup / lastGroupKey live in
@@ -130,11 +131,12 @@ function newGroupFlow(scope        , names          , reload                    
  *  groupFieldNode is the builder (docs/37 R5); the string twin stays for the views not yet
  *  converted (jobs, remote, tunnels) and retires with them. */
 function groupFieldNode(names          , sel                )              {
-  return h("label", { class: "field" },
-    h("span", null, tr("groups.group")),
-    h("select", { id: "g-sel" }, names.map((n) => {
+  return field({
+    label: tr("groups.group"),
+    control: h("select", { id: "g-sel" }, names.map((n) => {
       return h("option", { value: n, selected: n === sel }, n);
-    })));
+    })),
+  });
 }
 function groupFieldHtml(names          , sel                )         {
   const opts = names.map((n) => {
