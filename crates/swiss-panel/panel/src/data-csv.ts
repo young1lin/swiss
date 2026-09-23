@@ -17,15 +17,14 @@
 import type { ApiDbColumn, ApiDbConnectionRow } from "./types/api.js";
 import { $, apiJson, el, errText, targetEl, toast } from "./util.js";
 import { fill, h } from "./h.js";
-import { closeSheet } from "./add-sheet.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
 import { dbOpenValueSheet } from "./data-value.js";
 import { dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data-view.js";
-import { clampMenuPos } from "./menu.js";
-import { setMenuOpen } from "./ui-state.js";
 import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
+import { clampMenuPos, setMenuOpen } from "./ui/menu.js";
+import { closeSheet } from "./ui/sheet.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
 /* Paste or upload CSV, map its columns to table columns, preview the first rows, then commit.

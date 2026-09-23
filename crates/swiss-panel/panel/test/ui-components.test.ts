@@ -23,11 +23,13 @@
    it drew is styled by base.css or ui.css - the two sheets the gallery links - so a typo in a
    class name fails here instead of rendering as an unstyled box. */
 import { afterEach, describe, expect, it } from "vitest";
+import { h } from "../src/h.js";
 import { install } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 import {
-  btn, card, collapseRuns, dayLabel, dot, emptyNode, fmtMs, groupNode, iconBtn, iconNode, inlineForm,
-  kvRow, moreBtn, pageFoot, paneHead, row, section, seg, sw, tag, timeLabel, timeline, timelineToggle,
+  btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, fmtMs, groupNode, iconBtn,
+  iconNode, inlineForm, jsonCodeNode, kvRow, moreBtn, openFieldSheet, pageFoot, paneHead, popupMenu, row, section,
+  seg, sheet as sheetFrame, styleSelect, sw, tag, timeLabel, timeline, timelineToggle,
 } from "../src/ui/index.js";
 import type { TimelineItem } from "../src/ui/index.js";
 import { allClassesOf, parseCss } from "./css-rules.js";
@@ -477,6 +479,30 @@ describe("ui/timeline - timelineToggle", () => {
   });
 });
 
+/** The P1b-2 mechanisms draw into the document (a menu on <body>, a select's face beside it
+ *  and its list on <body>, a sheet in #sheet): render each with every option and hand back the
+ *  roots, the field sheet with its inline error showing. */
+function mechanisms(): Element[] {
+  document.body.innerHTML = '<div id="sheet" class="backdrop" hidden></div><div id="host"></div>';
+  popupMenu({ left: 0, top: 0, bottom: 0 }, [
+    { label: "h", fn: () => {}, heading: true }, { label: "a", fn: () => {}, icon: "table", dot: true, affordance: "chevron-right" },
+    { label: "p", fn: () => {}, pick: true, on: true }, { label: "x", fn: () => {}, disabled: true }, { sep: true },
+    { label: "d", fn: () => {}, danger: true },
+  ]);
+  const menu = document.getElementById("menu")!;
+  const sel = document.getElementById("host")!.appendChild(h("select", null, h("option", { value: "a" }, "a")));
+  styleSelect(sel);
+  (sel.nextElementSibling as HTMLButtonElement).click();
+  const list = document.querySelector(".dd-menu")!;
+  openFieldSheet({ title: "t", submit: () => true });
+  (document.getElementById("g-save") as HTMLButtonElement).click(); // empty: the red hint shows
+  const out = [menu, document.getElementById("host")!, list, document.getElementById("sheet")!.firstElementChild!];
+  const snap = out.map((n) => n.cloneNode(true) as Element);
+  closeMenu();
+  closeSheet();
+  return snap;
+}
+
 describe("docs/46 - every class the library draws is styled by base.css or ui.css", () => {
   it("renders every component with every option; no class is left unstyled", () => {
     const tl = timeline([
@@ -498,6 +524,9 @@ describe("docs/46 - every class the library draws is styled by base.css or ui.cs
       groupNode({ name: "g", count: 1, density: "page", addTitle: "a", moreTitle: "m", collapsed: true }).root,
       groupNode({ name: "g", count: 0, density: "side", emptyText: "e" }).root,
       seg([{ id: "a", label: "A", n: 1 }], "a"), tl,
+      sheetFrame({ title: "t", body: "b", foot: [h("span", { class: "grow" }), btn("x", { kind: "primary" })] }),
+      jsonCodeNode(decodeStrings({ k: "s", n: 1, l: null, d: "{\"a\":[true]}" }), true).node,
+      ...mechanisms(),
     ];
     const drawn = new Set<string>();
     for (const root of all) {
@@ -512,6 +541,10 @@ describe("docs/46 - every class the library draws is styled by base.css or ui.cs
     }
     const unstyled = Array.from(drawn).filter((c) => !styled.has(c)).sort();
     expect(drawn.size).toBeGreaterThan(40);
+    // The mechanisms really drew (a silent no-op would pass the styled check with nothing in it).
+    for (const c of ["menu-head", "db-tab-dot", "dd-native", "dd-label", "dd-menu", "sheet-foot", "bad", "jv-dec", "jv-k"]) {
+      expect(drawn.has(c), c + " was drawn").toBe(true);
+    }
     expect(unstyled).toEqual([]);
   });
 });

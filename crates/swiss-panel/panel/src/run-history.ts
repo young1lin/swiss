@@ -19,20 +19,18 @@ import type { PgUrlParts } from "./types/dom.js";
 import type { ApiMcpResourceRead, McpConfigLike, McpRunResult } from "./types/runs.js";
 import type { McpDetail } from "./types/state.js";
 import { $, api, apiJson, errText, iconNode, targetEl, toast } from "./util.js";
-import { closeSheet } from "./add-sheet.js";
 import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsNode, parsePgUrl } from "./fields.js";
-import { popupMenu } from "./menu.js";
-import { closeMenu } from "./pane.js";
 import { callBlockCopyText, copyLogText, fmtChars, fmtJson, logsBodyNode, repaintCallBlock, toggleCall } from "./logs.js";
 import { fill, frag, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
 import { ago } from "./traffic.js";
-import { menuIsOpen } from "./ui-state.js";
 import { mcpDetail, selectedMcp } from "./mcp-state.js";
 import { locale, tr, trn } from "./i18n.js";
+import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
+import { closeSheet } from "./ui/sheet.js";
 
 /* --- Run history: the refill control in the actions row ------------------------------------------ */
 /** When an entry ran. Reuses ago() inside a day; past that, ago's time-of-day would be ambiguous,
@@ -650,7 +648,7 @@ function paneTabClick(ev: MouseEvent): void {
     const clMenu = clMenuBtn;
     ev.stopPropagation();
     // The house toggle idiom (pane.js toggleMenu): a second click dismisses instead of reopening.
-    if (menuIsOpen()) { closeMenu(); return; }
+    if (menuOpen()) { closeMenu(); return; }
     popupMenu(clMenu.getBoundingClientRect(), [
       { label: tr("runHistory.clearLogs"), danger: true, fn: (): void => { void clearCalls(); } },
     ]);

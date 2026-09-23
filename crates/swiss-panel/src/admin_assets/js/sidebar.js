@@ -18,12 +18,13 @@
                                                                        
 import { openSheet } from "./add-sheet.js";
 import { act, openDetail, removeMcp, renameMcp } from "./detail.js";
-import { patchSidebar, popupMenu } from "./menu.js";
+import { patchSidebar } from "./menu.js";
 import { loadList } from "./polling.js";
 import { addTitle, assignMember, groupOf as makeGroupOf, newGroupFlow, saveGroupNames, saveOrder, slice } from "./groups.js";
 import { draggingGroupName, draggingRow, foldMap, listFilter, setDraggingGroupName, setDraggingRow } from "./ui-state.js";
 import { mcpGroups, mcpRows, selectedMcp, setMcpGroups, setMcpRows } from "./mcp-state.js";
 import { tr } from "./i18n.js";
+import { popupMenu } from "./ui/menu.js";
 
 /* --- rendering: sidebar ----------------------------------------------------------------------- */
 /** The MCP side of the mcps scope: row rendering, the flat order and the glue between the

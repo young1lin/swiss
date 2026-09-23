@@ -17,8 +17,8 @@
 import { $ } from "./util.js";
 import { fill, h } from "./h.js";
 import type { HChild } from "./h.js";
-import { closeSheet } from "./add-sheet.js";
 import { locale, tr } from "./i18n.js";
+import { closeSheet } from "./ui/sheet.js";
 
 /* --- value viewer sheet (docs/22 W5.3) ----------------------------------------------------------- */
 /* A cell is a 30px row; its content is not. "View value\u2026" opens the full value in a

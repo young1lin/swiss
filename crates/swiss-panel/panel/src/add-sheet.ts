@@ -22,6 +22,7 @@ import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsNode, readFields, trans
 import { loadList } from "./polling.js";
 import { addTitle, groupFieldNode, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { tr } from "./i18n.js";
+import { closeSheet, openFieldSheet, sheet, showSheet } from "./ui/sheet.js";
 import { newGroup } from "./sidebar.js";
 import { addGroupTarget, setAddGroupTarget } from "./ui-state.js";
 import { mcpGroups, selectedMcp, setSelectedMcp } from "./mcp-state.js";
@@ -36,32 +37,33 @@ function openSheet(group: string | null): void {
   const initial = group || resolveDefaultGroup(names, lastGroup("mcps"));
   setAddGroupTarget(initial);
   const types = Object.keys(TYPE_FIELDS);
-  // The house sheet idiom (panel-proof-of-life rule 1): visible BEFORE the body is painted.
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("addSheet.addMcp") } },
-      h("div", { class: "sheet-head" }, h("h2", { id: "a-title" }, addTitle(tr("addSheet.mcp"), initial))),
-      h("div", { class: "sheet-body" },
-        h("div", { class: "two" },
-          h("label", { class: "field" },
-            h("span", null, tr("addSheet.name")),
-            h("input", { id: "a-name", placeholder: tr("addSheet.gitMcp"), autocomplete: "off" })),
-          h("label", { class: "field" },
-            h("span", null, tr("addSheet.type")),
-            h("select", { id: "a-type" }, types.map((t) => {
-              return h("option", { value: t }, tr(TYPE_LABELS[t] || t));
-            })))),
-        groupFieldNode(names, initial),
-        h("div", { id: "a-fields" }),
-        h("label", { class: "check" }, h("input", { type: "checkbox", id: "a-start", checked: true }), tr("addSheet.startNow")),
-        h("div", { class: "hint", id: "a-test-out", hidden: true })),
-      h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "a-import" }, tr("addSheet.importMcpJson")),
-        h("input", { id: "a-file", type: "file", accept: ".json,application/json", hidden: true }),
-        h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "a-cancel" }, tr("addSheet.cancel")),
-        h("button", { class: "btn", id: "a-test", hidden: true }, tr("addSheet.testConnection")),
-        h("button", { class: "btn primary", id: "a-save" }, tr("addSheet.add")))));
+  // showSheet keeps the house order (panel-proof-of-life rule 1): visible BEFORE painted.
+  showSheet(sheet({
+    title: addTitle(tr("addSheet.mcp"), initial),
+    titleId: "a-title",
+    label: tr("addSheet.addMcp"),
+    body: [
+      h("div", { class: "two" },
+        h("label", { class: "field" },
+          h("span", null, tr("addSheet.name")),
+          h("input", { id: "a-name", placeholder: tr("addSheet.gitMcp"), autocomplete: "off" })),
+        h("label", { class: "field" },
+          h("span", null, tr("addSheet.type")),
+          h("select", { id: "a-type" }, types.map((t) => {
+            return h("option", { value: t }, tr(TYPE_LABELS[t] || t));
+          })))),
+      groupFieldNode(names, initial),
+      h("div", { id: "a-fields" }),
+      h("label", { class: "check" }, h("input", { type: "checkbox", id: "a-start", checked: true }), tr("addSheet.startNow")),
+      h("div", { class: "hint", id: "a-test-out", hidden: true })],
+    foot: [
+      h("button", { class: "btn", id: "a-import" }, tr("addSheet.importMcpJson")),
+      h("input", { id: "a-file", type: "file", accept: ".json,application/json", hidden: true }),
+      h("span", { class: "grow" }),
+      h("button", { class: "btn", id: "a-cancel" }, tr("addSheet.cancel")),
+      h("button", { class: "btn", id: "a-test", hidden: true }, tr("addSheet.testConnection")),
+      h("button", { class: "btn primary", id: "a-save" }, tr("addSheet.add"))],
+  }));
   const paint = (): void => {
     fill($("a-fields"), fieldsNode($<HTMLSelectElement>("a-type").value, {}, "a-"));
     // The test button exists only for the types that have something to test.
@@ -78,64 +80,7 @@ function openSheet(group: string | null): void {
   $("a-save").onclick = submitAdd;
   $("a-import").onclick = () => { $("a-file").click(); };
   $("a-file").onchange = () => { void submitImport($<HTMLInputElement>("a-file")); };
-  $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
   $("a-name").focus();
-}
-function closeSheet() { $("sheet").hidden = true; fill($("sheet")); }
-
-/** The general single-field sheet (fix-plan #16): one text ask — creating or renaming a
- *  group, renaming an MCP, renaming a table, typing a destructive confirm — so none of them
- *  is a browser prompt(). `def` is the current value when renaming, null when creating.
- *  `submit` gets the TRIMMED value and resolves true on success (the sheet closes), false
- *  on a failure the caller has already reported (the sheet stays open, so what was typed is
- *  readable next to the reason), or a STRING that is an inline validation error — painted
- *  beside the field instead of dismissed into a toast. The sheet owns only two rules every
- *  caller shares: the value is required, and a rename that changed nothing is a cancel;
- *  everything else (the table-name charset, a name the server refuses) belongs to the
- *  caller's submit. */
-function openFieldSheet(spec: {
-  title: string;
-  def?: string | null;
-  label?: string;
-  placeholder?: string;
-  save?: string;
-  submit: (value: string) => Promise<boolean | string> | boolean | string;
-}): void {
-  const def = spec.def ?? null;
-  const editing = !!def;
-  // The house sheet idiom: visible BEFORE the body is painted.
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: spec.title } },
-      h("div", { class: "sheet-head" }, h("h2", null, spec.title)),
-      h("div", { class: "sheet-body" },
-        h("label", { class: "field" },
-          h("span", null, spec.label || tr("addSheet.name")),
-          h("input", { id: "g-name", value: def || "", placeholder: spec.placeholder || tr("addSheet.prod"), autocomplete: "off" })),
-        h("div", { class: "hint", id: "g-err", style: "color:var(--red)", aria: { live: "polite" }, hidden: true })),
-      h("div", { class: "sheet-foot" },
-        h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "g-cancel" }, tr("addSheet.cancel")),
-        h("button", { class: "btn primary", id: "g-save" }, spec.save || (editing ? tr("addSheet.rename") : tr("addSheet.create"))))));
-  const fail = (msg: string): void => {
-    const e = $("g-err");
-    e.textContent = msg;
-    e.hidden = false;
-  };
-  const save = async () => {
-    const value = $<HTMLInputElement>("g-name").value.trim();
-    if (!value) { fail(tr("addSheet.nameRequired")); return; }
-    if (value === def) { closeSheet(); return; } // a rename that changed nothing is a cancel
-    const out = await spec.submit(value);
-    if (out === true) closeSheet();
-    else if (typeof out === "string") fail(out);
-  };
-  $("g-cancel").onclick = closeSheet;
-  $("g-save").onclick = () => { void save(); };
-  $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
-  $("g-name").onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); void save(); } };
-  $("g-name").focus();
-  if (editing) $<HTMLInputElement>("g-name").select();
 }
 
 /** The group flavor of the one-field sheet — the same surface group create/rename already
@@ -203,4 +148,4 @@ async function submitAdd(): Promise<void> {
 // whole. Adding an MCP belongs to a group, so it lives on each group's own + instead.
 $("addBtn").onclick = newGroup;
 
-export { closeSheet, openFieldSheet, openGroupSheet, openSheet, submitAdd, submitImport };
+export { openGroupSheet, openSheet, submitAdd, submitImport };

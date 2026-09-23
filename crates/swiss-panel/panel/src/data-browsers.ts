@@ -18,23 +18,23 @@ import type { ApiDbConnectionRow, ApiDbRedisKeysResponse, ApiDbRedisValue } from
 import type { DbRedisEdits, DbRedisTypeCfg } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
-import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 // Cycle with data-edit.js (it reads dbIsRedis/dbLoadKeys from here): function declarations,
 // runtime-only use — the same shape as the data-sql import above.
 import { dbTypedConfirm } from "./data-edit.js";
+// Cycle with data-stream.js (it renders this module's stream branch and needs the display
+// decode + cell menu): function declarations, runtime-only use — the same shape as the
+// data-edit.js import above.
 import { dbRenderStream } from "./data-stream.js";
 import { dbCopyText } from "./data-csv.js";
 import { dbOpenValueSheet } from "./data-value.js";
 import { renderDbTables } from "./data-view.js";
-// Cycle with data-stream.js (it renders this module's stream branch and needs the display
-// decode + cell menu): function declarations, runtime-only use — the same shape as the
-// data-edit.js import above.
-import { popupMenu } from "./menu.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tk, tr, trn } from "./i18n.js";
+import { popupMenu } from "./ui/menu.js";
+import { closeSheet } from "./ui/sheet.js";
 
 /* --- redis key browser -------------------------------------------------------------------------- */
 /* A redis connection in the picker swaps the table list for a SCAN-paged key list, and the

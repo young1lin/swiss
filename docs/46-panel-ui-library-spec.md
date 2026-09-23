@@ -278,10 +278,17 @@ api 与状态，G1 当场失败，陈列页也没法只靠假数据渲染。改�
 | 类 | 放哪 | 例子 |
 | --- | --- | --- |
 | **纯标记** | 写进 `ui/`，由 `ui/index.ts` 导出 | `groupNode`（`ui/group.ts`，组的带、两个按钮、body；返回各部件而不是一个节点）、`seg`（`ui/seg.ts`，替掉手写的 `.seg` 与 `.db-tabs`，按钮上的 data 钩子名由页面传入，迁页不改委托监听） |
-| **通用机制**：只依赖 DOM 的交互（开 / 关 / 定位 / 键盘） | P1b-2 搬进 `ui/`，改成参数传入所需的一切；原模块留转出，调用点逐步改 | `popupMenu` / `clampMenuPos` / 关菜单（menu.ts、pane.ts）、`styleSelect`（dropdown.ts）、`codeBlock`（json-view.ts）、`openSheet` / `closeSheet`（add-sheet.ts） |
+| **通用机制**：只依赖 DOM 的交互（开 / 关 / 定位 / 键盘） | P1b-2 已搬进 `ui/`；调用点一次全部改指向，原模块不留转出（§9） | `ui/menu.ts`：`popupMenu` / `clampMenuPos` / `closeMenu` / `menuOpen`（menu.ts、pane.ts、ui-state.ts 搬来，行类型从 `types/dom.d.ts` 搬来）；`ui/select.ts`：`styleSelect` / `initSelects`（原 dropdown.ts）；`ui/json-view.ts`：代码块 `jsonCodeNode` 与解析（原 json-view.ts）；`ui/sheet.ts`：`sheet` 框架 / `showSheet` / `closeSheet` / `initSheet` / `openFieldSheet`（原 add-sheet.ts） |
 | **绑定应用的行为**：API 写入、拖放、存储、侧栏 | 留在原处，**建在库上** | `mountGroup` / `newGroupFlow`（groups.ts：用 `groupNode` 画，自己接折叠、拖放、+ 与 ⋯、API）、MCP 新增表单、`patchSidebar` |
 
-`ui/index.ts` 因此只转出 `ui/` 自己的模块（G1 同时钉住"`ui/` 下每个模块都由 index 转出"）。`.ctx-menu`
+`ui/index.ts` 因此只转出 `ui/` 自己的模块（G1 同时钉住"`ui/` 下每个模块都由 index 转出"）。
+
+机制的键盘分层（P1b-2 实测定下）：一个层自己处理了的键**不再往外传**，面板的 Escape 链与侧栏方向键
+（main.ts，document 冒泡阶段）只收没人处理的键。浮动菜单的方向键与 Escape 停在菜单；下拉列表打开时它的键
+在 document 捕获阶段处理，Escape 与方向键停住，Tab 关列表、焦点回到触发器、保留默认动作让焦点继续往后走；
+触发器上用来打开列表的键停在触发器；sheet 是模态的——`initSheet` 在 `#sheet` 宿主上拦住里面按下的键，只放
+Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，点背板关闭。MCP 新增表单（`openSheet`）
+绑着字段定义、详情与轮询，仍留在 add-sheet.ts，建在 `sheet` / `showSheet` 上。`.ctx-menu`
 （Data 的右键菜单）并入 `.menu.float` 不变。新类 `.lrow` / `.kv` / `.tl` 与旧的 `.row` / `.tun-row` / `.call`
 并存，旧类随页面迁移删除（U16）。
 
@@ -473,3 +480,10 @@ owner 要求"写 spec 后，review 一下，有问题就改"。初稿对照代�
 | owner 途中追加"组件库先把控好，后续设计复用组件" | 加 U17：P1 备齐全部形状并走查后才迁页；设计稿改用陈列页的场景（§1.3、§2.6、§6） |
 | （P1b 实施时）§2.5 "已有组件原地保留、由 `ui/index.ts` 转出"与 U2 冲突：转出 groups.ts 就把 api 与状态带进了库 | 按依赖分三类：纯标记进 `ui/`；只依赖 DOM 的机制 P1b-2 搬进 `ui/`；绑定应用的行为留原处、建在库上（§2.5） |
 | （P1b 实施时）组件的类名写错不会有任何测试发现——页面只是多一个没样式的盒子 | `ui-components.test.ts` 把每个组件的每个选项渲染一遍，断言画出的每个类都在 `base.css` / `ui.css` 里有规则；它当场抓到 `dot("off")` 的无样式类 |
+| （P1b-2）§2.5 写"原模块留转出，调用点逐步改" | 改成一次全部改指向（脚本改了 30 多个文件的 import），不留转出：转出是第二个家，搬完就没人再去删它 |
+| （P1b-2）§2.5 写的 `codeBlock` | 整个 json-view 搬进 `ui/`，名字沿用 `jsonCodeNode`，Logs 的调用不变 |
+| （P1b-2）菜单开着没有该从 DOM 推出来 | 开关留作 `ui/menu.ts` 自己的状态（`menuOpen`）：假 DOM 的测试里 `getElementById` 会凭空造节点，从 DOM 推会永远是"开着" |
+| （P1b-2）`popupMenu` 改用 `h()` 构建后，4 个测试套件（admin-revisions、admin-row-menu、admin-data-redis-cellmenu、admin-logs-pagination）的手写微型 DOM 挂了：它们不会从文本子节点算 `textContent`，也没有 `focus` | 这一步 `popupMenu` 原样搬、留着这些防护；那几个套件随拥有它们的页面（P2 MCP、P7 Data）换成 happy-dom 时，再把菜单改到 `h()` 上 |
+| （P1b-2 实测）下拉列表里按 Escape：旧代码先把 `openState` 置空再读 `openState.trig`，每次都抛错，键落到 main.ts 的 Escape 链，把下拉所在的 sheet 连同已填的内容一起关了 | 先取触发器再关；键在捕获阶段处理并停住（上文"键盘分层"） |
+| （P1b-2 实测）菜单、下拉列表、下拉触发器、sheet 里按方向键，main.ts 的侧栏方向键也会动，在 sheet 背后换了选中的 MCP；sheet 里按 `/` 会把焦点拽出对话框 | 各层停住自己的键；sheet 由 `initSheet` 设为模态，只放 Escape 出去 |
+| （P1b-2）菜单行的"有暂存改动"圆点 `.db-tab-dot` 只有 views.css 有规则，库画的类不在库的样式表里 | 规则搬进 ui.css，尺寸用 `--dot`；G4 views.css 字面值 253 → 251，G7 views.css 76412 → 76099 字节 |

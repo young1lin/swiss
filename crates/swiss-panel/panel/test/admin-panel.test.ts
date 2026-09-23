@@ -135,7 +135,7 @@ describe("admin panel assets", () => {
     expect(bodies.has("main.js")).toBe(true);
   });
 
-  // The regression: dropdown.js appends its menu to <body> as .menu.float.dd-menu, which must
+  // The regression: ui/select.js appends its menu to <body> as .menu.float.dd-menu, which must
   // paint ABOVE the sheet backdrop (40) — every select inside a sheet (the rule editor's
   // SSH-connection picker among them) opens its list over that full-screen overlay, where no click
   // can reach it: the backdrop eats the hit and closes the sheet instead. The first fix stated

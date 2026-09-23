@@ -16,9 +16,9 @@
 
 import { $, apiJson, emptyNode, targetEl } from "../util.js";
 import { fill, h } from "../h.js";
-import { closeSheet } from "../add-sheet.js";
 import { currentView } from "../ui-state.js";
 import { tr } from "../i18n.js";
+import { closeSheet } from "../ui/sheet.js";
 
 /** The process action is deliberately a Settings page, not permanent app chrome: quitting the
  *  whole toolbox is destructive, rare, and belongs beside other host-owned controls.
@@ -59,9 +59,9 @@ function quitSheetNode(): HTMLElement {
 
 function openQuitSheet(): void {
   const sheet = $("sheet");
-  sheet.hidden = false; // BEFORE the content, per the house sheet idiom (add-sheet.js)
+  sheet.hidden = false; // BEFORE the content, per the house sheet idiom (ui/sheet.ts showSheet)
   fill(sheet, quitSheetNode());
-  // Per-open wiring IS the house sheet idiom (add-sheet.js, the group sheet): #sheet is a
+  // Per-open wiring IS the house sheet idiom (ui/sheet.ts, the one-field sheet): #sheet is a
   // shared shell host that outlives this view, so its controls are claimed here and only
   // here - not delegated from the pane, which does not own the sheet.
   $("quit-cancel").onclick = closeSheet;

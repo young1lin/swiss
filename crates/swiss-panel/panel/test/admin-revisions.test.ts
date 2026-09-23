@@ -15,8 +15,8 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
 import { mcpDetail, mcpRows, resetMcpState, setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
+import { menuOpen, setMenuOpen } from "../src/ui/menu.js";
 
 /* h()/frag() route children through `instanceof Node`, so the stub must exist BEFORE the
    FakeNode class below evaluates, and FakeNode must be one of its instances. */

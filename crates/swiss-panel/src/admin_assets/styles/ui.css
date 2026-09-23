@@ -480,6 +480,11 @@
     /* docs/43 M1: the tab strip's overflow lists open objects, so its rows carry the same
        type glyph and dirty dot the cards do — the menu is the whole set's one read. */
     .menu button .ic { width: var(--ic-m); height: var(--ic-m); flex: none; color: var(--text-3); }
+    /* The held-edits dot (docs/43 M1): buffered writes are a STATE, so they get the dot (rule 10) -
+       amber for "held, not written", the count in its title. A Data tab carries it, and so does
+       the popupMenu row standing in for that tab (its item's `dot`), trailing the label. */
+    .db-tab-dot { flex: none; width: var(--dot); height: var(--dot); border-radius: 50%; background: var(--amber); }
+    .menu button .db-tab-dot { margin-left: auto; }
 
     .menu hr { border: 0; border-top: 1px solid var(--sep-soft); margin: var(--s1) 0; }
     /* A caption for the first group: "Copy Codex command" needs to say what it is for. */
@@ -525,6 +530,8 @@
     .sheet-body > .group { box-shadow: inset 0 0 0 1px var(--sep); }
 
     .hint { font-size: var(--f-label); color: var(--text-3); }
+    /* A hint that reports a refusal (the one-field sheet's inline error): state, so red (rule 2). */
+    .hint.bad { color: var(--red); }
     /* docs/27 §4: the connection sheet's Advanced fold. Native <details> is the house fold
        primitive (the data-value JSON tree); this is its form instance — a quiet summary that
        carries whatever proxy/jump is configured as monochrome tags, so collapsed never means

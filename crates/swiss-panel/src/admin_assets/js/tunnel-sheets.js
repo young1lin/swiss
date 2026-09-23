@@ -18,12 +18,12 @@
 import { $, api, apiJson, el, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
                                      
-import { closeSheet } from "./add-sheet.js";
 import { loadTunnels, tunConnName, tunData, tunGroupsList } from "./polling.js";
 import { assignTunScoped } from "./tunnels.js";
 import { groupFieldNode, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { setTunKeys, takeTunPendingGroup, tunKeys } from "./tunnel-state.js";
 import { tr } from "./i18n.js";
+import { closeSheet } from "./ui/sheet.js";
 
 /* --- connection sheet -------------------------------------------------------------------------- */
 

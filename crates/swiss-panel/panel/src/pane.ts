@@ -24,9 +24,10 @@ import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
 import { act, authorizeMcp, removeMcp, renameMcp, showTab, startEdit } from "./detail.js";
 import { afterTabPaint, paneTabChange, paneTabClick, paneTabInput, paneTabKeydown } from "./run-history.js";
 import { assignGroup, groupOf, rowOf, saveGroups } from "./sidebar.js";
-import { currentView, menuIsOpen, setMenuOpen } from "./ui-state.js";
+import { currentView } from "./ui-state.js";
 import { lastActionOf, mcpBusyVerb, mcpDetail, mcpGroups, mcpRows } from "./mcp-state.js";
 import { locale, tk, tr } from "./i18n.js";
+import { closeMenu, menuOpen, setMenuOpen } from "./ui/menu.js";
 
 /* --- rendering: detail pane ------------------------------------------------------------------- */
 /** True when the user is typing inside the pane; a poll must never re-render over that. */
@@ -94,7 +95,7 @@ function renderPane(): void {
   const m: ApiMcpRow | PhantomMcpRow = rowOf(d.name) || { name: d.name, state: "unknown", type: "?", source: "?", lifecycle: "stopped" };
   const started = m.lifecycle === "started";
   const busyVerb = mcpBusyVerb(d.name);
-  const menuWasOpen = menuIsOpen(); // reopened at the end; see the note there
+  const menuWasOpen = menuOpen(); // reopened at the end; see the note there
   // The history popover lives on <body>, so a pane rebuild leaves it stranded over whatever tab
   // replaced Run. wireTabBody reopens it when the rebuilt pane IS the Run tab; otherwise drop it.
   if (d.tab !== "run" && d.run && d.run.histOpen) { d.run.histOpen = false; const stray = $("r-hist-pop"); if (stray) stray.remove(); }
@@ -265,7 +266,7 @@ function menuAct(d: McpDetail, a: string): void {
 /** The overflow menu is attached and removed on its own, without re-rendering the pane — otherwise
  *  opening it would rebuild (and clear) a config form that was mid-edit. */
 function toggleMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
-  const wasOpen = menuIsOpen();
+  const wasOpen = menuOpen();
   closeMenu();
   if (wasOpen) return;
   openMenu(d, m);
@@ -283,12 +284,6 @@ function openMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
   setMenuOpen(true);
   // No per-menu wiring (docs/37 R5): the menu lives inside #pane, so its buttons answer
   // through paneChromeClick like every other click in the pane.
-}
-function closeMenu(): void {
-  const node = $("menu");
-  if (node) node.remove();
-  document.querySelectorAll(".ctx-menu").forEach((m) => { m.remove(); });
-  setMenuOpen(false);
 }
 
 /** Grouped like a macOS menu: connect, then which group it is in, then manage, then the destructive
@@ -321,4 +316,4 @@ function menuNode(m: ApiMcpRow | PhantomMcpRow): HTMLElement {
     h("button", { class: "danger", data: { act: "delete" } }, tr("pane.delete")));
 }
 
-export { closeMenu, headSubtitle, menuNode, openMenu, paneHasFocus, patchDetailHead, renderPane, toggleMenu };
+export { headSubtitle, menuNode, openMenu, paneHasFocus, patchDetailHead, renderPane, toggleMenu };

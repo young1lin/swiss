@@ -15,116 +15,13 @@
  */
 
 import type { ApiMcpRow } from "./types/api.js";
-import type { MenuItem } from "./types/dom.js";
-import { $, dotTitle, iconNode, typeTagNode } from "./util.js";
+import { $, dotTitle, typeTagNode } from "./util.js";
 import { fill } from "./h.js";
-import { closeMenu } from "./pane.js";
 import { groupedMcps, sideCfg, visibleMcps } from "./sidebar.js";
 import { mountGroup } from "./groups.js";
-import { currentView, draggingGroupName, draggingRow, foldMap, listFilter, setMenuOpen } from "./ui-state.js";
+import { currentView, draggingGroupName, draggingRow, foldMap, listFilter } from "./ui-state.js";
 import { mcpBusyVerb, mcpRows, selectedMcp } from "./mcp-state.js";
 import { locale, tr } from "./i18n.js";
-
-/* --- a menu anchored to a button ---------------------------------------------------------------
-   The pane's overflow menu anchors to .pane-actions; menus raised from the sidebar have no such
-   anchor, so they are positioned against the button that opened them. Items are
-   { label, fn, danger, sep, pick, on }. Keyboard (docs/13 D5): the menu is a real menu —
-   first item focused on open, arrows walk the items, Escape closes — so a page switcher
-   built on it needs no second menu idiom. */
-function popupMenu(anchor: { left: number; top: number; bottom: number; width?: number }, items: MenuItem[]): void {
-  closeMenu();
-  const node = document.createElement("div");
-  node.className = "menu float";
-  node.id = "menu";
-  items.forEach((it) => {
-    if (it.sep) { node.appendChild(document.createElement("hr")); return; }
-    // docs/43 M3: a heading is chrome, not a choice — a plain div, so it can neither take
-    // focus from the first real item nor answer a click.
-    if (it.heading) {
-      const h = document.createElement("div");
-      h.className = "menu-head";
-      h.textContent = it.label;
-      node.appendChild(h);
-      return;
-    }
-    const cls = (it.pick ? "pick" : "") + (it.on ? " on" : "") + (it.danger ? " danger" : "");
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = cls.trim();
-    b.textContent = it.label;
-    if (it.title && b.title !== undefined) b.title = it.title;
-    // docs/43 M3: shown but refused — the database selector's browsable:false rows carry
-    // the server's reason in title; a disabled button cannot be clicked, so no fn runs.
-    if (it.disabled) b.disabled = true;
-    // docs/43 M1: the same type glyph and dirty dot the object's card carries, on the menu
-    // row that stands in for it. Order is the card's order: glyph first, dot last.
-    if (it.icon) b.insertBefore(iconNode(it.icon), b.firstChild);
-    // fix-plan #14: a trailing affordance for rows that open ANOTHER menu - the caret class
-    // of promise, retired from the label copy. Painted after the dot for the same reason the
-    // dot paints last: it is a direction about what happens next, not a fact about the row.
-    if (it.affordance) b.appendChild(iconNode(it.affordance));
-    if (it.dot) {
-      const d = document.createElement("span");
-      d.className = "db-tab-dot";
-      b.appendChild(d);
-    }
-    b.onclick = (ev) => { ev.stopPropagation(); closeMenu(); if (!b.disabled) it.fn(); };
-    node.appendChild(b);
-  });
-  document.body.appendChild(node);
-  // A menu dropped from a row never sits narrower than the row itself (found live on
-  // 19998: the connection menu measured 160px against its 233px sidebar row - the CSS
-  // content floor won and the dropdown floated 73px short of the thing that opened it).
-  // The anchor's width joins the CSS floor through max(), so a small anchor (a toolbar
-  // overflow button) keeps the stylesheet's 160px unchanged.
-  if (anchor.width) node.style.minWidth = "max(160px, " + Math.ceil(anchor.width) + "px)";
-  // Aligned to the button's LEFT edge and growing right, over the detail pane. Right-aligning it
-  // instead pushed a sidebar menu back across the list it was opened from, hiding those rows.
-  // The clamp itself is clampMenuPos — shared with the ctx menus (docs/22 closeout audit).
-  const r = node.getBoundingClientRect();
-  const pos = clampMenuPos(anchor, r.width, r.height, window.innerWidth, window.innerHeight);
-  node.style.left = pos.left + "px";
-  // Below the button, unless that would run off the bottom — then above it.
-  node.style.top = pos.top + "px";
-  setMenuOpen(true);
-  // Roles and keys (guarded: the vitest micro-DOM has neither querySelectorAll nor focus).
-  if (node.setAttribute) node.setAttribute("role", "menu");
-  const buttons = typeof node.querySelectorAll === "function"
-    ? Array.prototype.slice.call(node.querySelectorAll<HTMLButtonElement>("button"))
-      .filter((b: HTMLButtonElement) => !b.disabled)
-    : [];
-  buttons.forEach((b) => { if (b.setAttribute) b.setAttribute("role", "menuitem"); });
-  if (buttons[0] && typeof buttons[0].focus === "function") buttons[0].focus();
-  if (typeof node.addEventListener === "function") {
-    node.addEventListener("keydown", (ev) => {
-      const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
-      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-        ev.preventDefault();
-        let n = ev.key === "ArrowDown" ? i + 1 : i - 1;
-        if (n < 0) n = buttons.length - 1;
-        if (n >= buttons.length) n = 0;
-        if (buttons[n] && typeof buttons[n].focus === "function") buttons[n].focus();
-      } else if (ev.key === "Escape") {
-        ev.stopPropagation();
-        closeMenu();
-      }
-    });
-  }
-}
-
-/** Where an anchored menu lands, clamped to the viewport: growing right from the anchor's
- *  left edge and down from 4px below its bottom, flipping above the anchor when the box
- *  would run off the bottom, never closer than 8px to an edge. A right-click passes the
- *  cursor POINT as the anchor ({left, top, bottom} all the cursor). popupMenu's arithmetic,
- *  factored out so the ctx menus (data-csv.js) and the Table menu (data-edit.js) clamp the
- *  same way instead of landing off-screen at an edge. Pure. */
-function clampMenuPos(anchor: { left: number; top: number; bottom: number }, w: number, h: number, vw: number, vh: number): { left: number; top: number } {
-  const below = anchor.bottom + 4;
-  return {
-    left: Math.max(8, Math.min(anchor.left, vw - w - 8)),
-    top: below + h > vh - 8 ? Math.max(8, anchor.top - h - 4) : below,
-  };
-}
 
 /** A sidebar row is one line, so everything that used to be crammed onto a second one — the
  *  description, the source, the latency, the reason a row is red — lives here, and in the pane
@@ -216,4 +113,4 @@ function patchSidebar(): void {
   cap.hidden = !listFilter();
 }
 
-export { clampMenuPos, patchSidebar, popupMenu, tooltipOf };
+export { patchSidebar, tooltipOf };

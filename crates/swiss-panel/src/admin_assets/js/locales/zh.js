@@ -33,9 +33,6 @@ const zh                         = {
   "addSheet.add": "添加",
   "addSheet.renameGroup": "重命名分组",
   "addSheet.newGroup": "新建分组",
-  "addSheet.prod": "prod",
-  "addSheet.rename": "重命名",
-  "addSheet.create": "创建",
   "addSheet.nameRequired": "必须填写名称",
   "addSheet.couldReadFile": "无法读取文件",
   "addSheet.validJson": "不是有效的 JSON",
@@ -1516,6 +1513,12 @@ const zh                         = {
   "ui.sec": "{n} s",
   "ui.timesN": "×{n}",
   "ui.runN": "连续 {n} 次相同",
+  "ui.name": "名称",
+  "ui.sheetPlaceholder": "prod",
+  "ui.nameRequired": "必须填写名称",
+  "ui.cancel": "取消",
+  "ui.rename": "重命名",
+  "ui.create": "创建",
 };
 
 export default zh;

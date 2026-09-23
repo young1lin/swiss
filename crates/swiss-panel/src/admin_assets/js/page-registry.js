@@ -24,6 +24,7 @@ import { loadLastPages, rememberLastPage, targetPageFor } from "./last-page.js";
 import { currentView, setCurrentView } from "./ui-state.js";
 import { resetPaneScroll, trackPaneScroll } from "./pane-scroll.js";
 import { tk, tr, wireLabel } from "./i18n.js";
+import { popupMenu } from "./ui/menu.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
 const legacy                   = [
@@ -250,10 +251,10 @@ function moreTab(current           )                    {
       it.fn = () => { b.setAttribute("aria-expanded", "false"); void navigatePage(p.id); };
       return it                  ;
     });
-    /* menu.js's module graph wires DOM at import time (add-sheet binds its buttons at the
-     * top level), so it loads HERE, at interaction time - the shell's own module graph stays
-     * DOM-free at eval, which the pure-helper suites (plugins.js) import it under. */
-    void import("./menu.js").then((menu) => { menu.popupMenu(b.getBoundingClientRect(), items); });
+    /* A static import since docs/46 P1b-2: ui/menu.js touches no DOM at eval (the old
+     * menu.js pulled add-sheet in, which binds its buttons at the top level, so it used to
+     * load here at interaction time to keep the shell's graph DOM-free for plugins.js). */
+    popupMenu(b.getBoundingClientRect(), items);
     /* The menu also closes without an item click (document click, Escape); a one-shot
      * listener puts the flag back whenever that lands. */
     setTimeout(() => {

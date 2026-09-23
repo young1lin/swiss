@@ -30,9 +30,9 @@ import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
 import { renderDbFormView } from "./data-form.js";
 import { h } from "./h.js";
 import { DB_PAGE_SIZES, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbResultKey } from "./data-view.js";
-import { popupMenu } from "./menu.js";
 import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
+import { popupMenu } from "./ui/menu.js";
 
 /* --- one page of rows --------------------------------------------------------------------------- */
 

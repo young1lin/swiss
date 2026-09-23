@@ -34,11 +34,11 @@
                                                 
                                                                                              
 import { $, apiJson, iconNode, targetEl, toast } from "../util.js";
-import { closeSheet } from "../add-sheet.js";
 import { fill, h } from "../h.js";
-import { popupMenu } from "../menu.js";
 import { assignMember, groupFieldNode, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
 import { tr, trn } from "../i18n.js";
+import { popupMenu } from "../ui/menu.js";
+import { closeSheet } from "../ui/sheet.js";
 
 let targets = []                     ;
 let endpoints = []                       ;
@@ -223,7 +223,7 @@ async function assign(id        , group               )                {
 }
 
 /* The Add/Edit sheet. Same shape as every sheet: #sheet unhidden BEFORE innerHTML,
-   closeSheet from add-sheet.js, backdrop click closes. */
+   closeSheet from ui/sheet.js, backdrop click closes. */
 function openSheet(target                        )       {
   editing = target ? target.id : null;
   const endpointOptions = endpoints.map((e) => {

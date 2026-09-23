@@ -183,8 +183,6 @@
       padding: var(--s4); font-size: var(--f-label); color: var(--text-3); text-align: center;
     }
 
-    .menu button .db-tab-dot { flex: none; margin-left: auto; }
-
     /* Expandable rows (a job's run history) stack flush — the sheet's grid gap is for fields, and a
        12px gutter between every run made a list of forty read as forty separate cards. */
     .sheet-body > .group > .call { margin: 0; }
@@ -398,9 +396,6 @@
     /* The filter count rides the card so a tab that is showing a SUBSET says so before it is
        opened — the number is descriptive, so it stays monochrome (rule 2). */
     .db-tab-n { flex: none; font-size: var(--f-caption); color: var(--text-3); background: var(--sep-soft); border-radius: var(--r-pill); padding: 0 5px; }
-    /* Buffered writes are a STATE, so they get the dot (rule 10) — 6px, amber for "held, not
-       written", with the count in its title. */
-    .db-tab-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
     /* The × is the browser-tab idiom: always there on the active card, on hover for the rest,
        and reachable by keyboard on either. */
     .db-tab-close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: none; background: none; border-radius: var(--r-btn); color: var(--text-3); cursor: pointer; opacity: 0; }

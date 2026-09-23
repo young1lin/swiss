@@ -19,18 +19,15 @@ import { $, KINDS, api, apiJson, isMcpKind, now, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
 import { callsErrNode, callsStatusNode, goneNode, repaintCallBlock } from "./logs.js";
 import { fill } from "./h.js";
-// The one-field sheet (fix-plan #16). Same accepted cycle shape as data-view/data-tabs:
-// add-sheet imports detail's openDetail, detail imports its sheet builder, and both sides
-// only call across inside functions, never at module scope.
-import { openFieldSheet } from "./add-sheet.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { loadList } from "./polling.js";
 import { renderCallsOnly } from "./run-history.js";
 import { rowOf } from "./sidebar.js";
-import { setMenuOpen } from "./ui-state.js";
 import { clearMcpBusy, mcpBusyVerb, mcpDetail, selectedMcp, setLastAction, setMcpBusy, setMcpDetail, setSelectedMcp } from "./mcp-state.js";
 import { tr, trn } from "./i18n.js";
+import { closeMenu } from "./ui/menu.js";
+import { openFieldSheet } from "./ui/sheet.js";
 
 /* --- lifecycle actions ------------------------------------------------------------------------ */
 async function act(name: string, verb: string): Promise<void> {
@@ -208,7 +205,7 @@ function openDetail(name: string): void {
     tools: pageState(), resources: pageState(), prompts: pageState(),
   };
   setMcpDetail(d);
-  setMenuOpen(false);
+  closeMenu(); // a fresh MCP opens with no menu: the flag and the node go together
   patchSidebar();
   renderPane();
   void loadMeta(name);

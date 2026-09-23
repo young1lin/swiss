@@ -37,12 +37,12 @@ vi.mock("../src/util.js", () => {
 vi.mock("../src/sidebar.js", () => ({ rowOf: () => null }));
 
 let logs: typeof import("../src/logs.js");
-let jv: typeof import("../src/json-view.js");
+let jv: typeof import("../src/ui/json-view.js");
 let util: typeof import("../src/util.js") & { __toasts: string[] };
 
 beforeAll(async () => {
   logs = await import("../src/logs.js");
-  jv = await import("../src/json-view.js");
+  jv = await import("../src/ui/json-view.js");
   util = (await import("../src/util.js")) as never;
 });
 

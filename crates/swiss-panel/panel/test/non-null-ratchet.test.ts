@@ -59,7 +59,6 @@ const FROZEN: Record<string, number> = {
   "data-form.ts": 7,
   "data-structure.ts": 4,
   "data-suggest.ts": 5,
-  "dropdown.ts": 2,
   "groups.ts": 15,
   "jobs.ts": 16,
   "tunnels.ts": 7,

@@ -48,8 +48,8 @@ import {
 import { createOverlay } from "../term-overlay.js";
 import { loadSearchAddon } from "../vendor/xterm/addon-search-0.16.0/index.js";
 import { openLocalSheet } from "./terminal-settings.js";
-import { closeSheet } from "../add-sheet.js";
 import { tr, trn } from "../i18n.js";
+import { closeSheet } from "../ui/sheet.js";
 
 /* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
    pipeline is text-only; a font file cannot enter the tree, by design. */
