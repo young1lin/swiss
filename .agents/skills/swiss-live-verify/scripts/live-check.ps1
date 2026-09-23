@@ -36,8 +36,8 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path
 $TestInstance = Join-Path $Root 'scripts\test-instance.ps1'
 $Exe = Join-Path $Root 'target-test\release\swiss.exe'
 $Port = 19998
-# The same literal acceptance-16.ps1 pins: arbitrary, but deliberately the legacy name,
-# because the snapshotted production config's tokenEnv still says MCP_GATEWAY_TOKEN.
+# The same literal acceptance-16.ps1 pins. The canonical name: a boot's one-shot rename points
+# the snapshot's tokenEnv at SWISS_TOKEN, so pin the name the config carries.
 $Token = 'acceptance-token-for-1998'
 
 if ($Stop) { & $TestInstance -Stop; exit $LASTEXITCODE }
@@ -65,7 +65,7 @@ if (-not $SkipBuild) {
 if (-not (Test-Path $Exe)) { Write-Error "no test binary at $Exe - drop -SkipBuild or build first"; exit 1 }
 
 # Pin BEFORE boot so the started process (and its children) inherit the known bearer.
-$env:MCP_GATEWAY_TOKEN = $Token
+$env:SWISS_TOKEN = $Token
 
 Write-Host '== booting the isolated 19998 instance'
 if ($Fresh) { & $TestInstance -Fresh } else { & $TestInstance }
@@ -88,5 +88,5 @@ if ($health.build.hash -ne $built -or $info.build.hash -ne $built) {
     exit 1
 }
 Write-Host "19998 is serving this build; state writes go to %LOCALAPPDATA%\swiss-test-home"
-Write-Host "bearer for /api/* probes: the pinned MCP_GATEWAY_TOKEN above"
+Write-Host "bearer for /api/* probes: the pinned SWISS_TOKEN above"
 exit 0

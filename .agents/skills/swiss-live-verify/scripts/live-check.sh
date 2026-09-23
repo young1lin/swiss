@@ -29,8 +29,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 PORT=19998
-# The same literal acceptance-16.ps1 pins: arbitrary, but deliberately the legacy name,
-# because the snapshotted production config's tokenEnv still says MCP_GATEWAY_TOKEN.
+# The same literal acceptance-16.ps1 pins. The canonical name: a boot's one-shot rename points
+# the snapshot's tokenEnv at SWISS_TOKEN, so pin the name the config carries.
 TOKEN='acceptance-token-for-1998'
 TEST_HOME="${SWISS_TEST_HOME:-$HOME/.swiss-test-home}"
 # The production home.
@@ -98,7 +98,7 @@ echo "test home: $TEST_HOME (snapshotted: ${copied[*]:-nothing to copy})"
 # so the serve process (and its children) inherit the known bearer.
 export SWISS_HOME="$TEST_HOME"
 export SWISS_PORT="$PORT"
-export MCP_GATEWAY_TOKEN="$TOKEN"
+export SWISS_TOKEN="$TOKEN"
 
 "$EXE" serve >"$TEST_HOME/serve.out" 2>"$TEST_HOME/serve.err" &
 PID=$!
@@ -132,5 +132,5 @@ if [ "$health_hash" != "$built" ] || [ "$info_hash" != "$built" ]; then
     exit 1
 fi
 echo "$PORT is serving this build; state writes go to $TEST_HOME - production config untouched"
-echo "bearer for /api/* probes: the pinned MCP_GATEWAY_TOKEN above"
+echo "bearer for /api/* probes: the pinned SWISS_TOKEN above"
 exit 0

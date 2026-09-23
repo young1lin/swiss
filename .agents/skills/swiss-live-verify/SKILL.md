@@ -41,9 +41,9 @@ Manually, the pieces:
 1. **Build the test exe into its own target tree** (a release build in `target/` is what the
    next `scripts/deploy.ps1` copies to `bin/` for 19999 — iteration must not overwrite it
    with a test build): `$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`.
-2. **Pin the token before starting.** The snapshotted production config carries the legacy
-   `tokenEnv: MCP_GATEWAY_TOKEN`, and the named variable resolves first — so pin that name and
-   the whole live session has a known bearer: `$env:MCP_GATEWAY_TOKEN = "acceptance-token-for-1998"`
+2. **Pin the token before starting.** A boot's one-shot rename points the snapshot's
+   `tokenEnv` at `SWISS_TOKEN`, so pin the name the config carries and the whole live session
+   has a known bearer: `$env:SWISS_TOKEN = "acceptance-token-for-1998"`
    (the literal acceptance-16.ps1 pins; arbitrary, not a typo).
 3. **Start the instance** — snapshot of real state by default, clean home when the change needs a
    first-run or bootstrap scenario. If the port is already held, a stale instance from an earlier
