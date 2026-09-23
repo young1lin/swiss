@@ -6,7 +6,7 @@
 
 The four properties come from the top of AGENTS.md ("A change that trades any of them away for convenience is the wrong change"); loopback security is a fifth, cross-cutting red line. Each principle has checkable style consequences:
 
-1. **Ruthlessly small (small is the product)** — memory is the product itself, not a final optimization pass. Consequences: the panel has no bundler, no framework, no npm runtime dependencies (node is a dev-only dependency for the check gate, docs/36) — 2 CSS files + native ES modules (docs/18 §0); lists are always paginated/filtered/collapsed server-side, full bodies and full results expand lazily (traffic.js:78-110); the subprocess-tree snapshot is cached 20s server-side; on the Rust side, current_thread, opt-level z, and every added dependency must justify itself (AGENTS.md Rust-specific rules).
+1. **Ruthlessly small (small is the product)** — memory is the product itself, not a final optimization pass. Consequences: the panel has no bundler, no framework, no npm runtime dependencies (node is a dev-only dependency for the check gate, docs/36) — 3 CSS files loaded base → ui → views + native ES modules (docs/18 §0, docs/46 U3); lists are always paginated/filtered/collapsed server-side, full bodies and full results expand lazily (traffic.js:78-110); the subprocess-tree snapshot is cached 20s server-side; on the Rust side, current_thread, opt-level z, and every added dependency must justify itself (AGENTS.md Rust-specific rules).
 2. **Plugin-shaped** — every capability is a plugin: the six contributions descriptor + config + actions + routes + pages + lifecycle (docs/09 §4); the host keeps only cross-cutting mechanism — zero business logic, zero match arms; panel navigation is rendered entirely from `/api/plugins` data, and the shell knows no specific plugin (page-core.js:12-30); a new tool reaches the panel by "contributing a descriptor, an action, a page" — never by editing the host (AGENTS.md).
 3. **Hot-pluggable** — enabled / running / visible are three different states; disabling really releases tasks, connections, child processes, routes. Consequences: rows on the panel's Plugins page show the compiled/desired/actual state machine together with lastError (views/plugins.js:1-13); a disabled plugin's page renders a structured unavailable empty state instead of vanishing (page-registry.js:34-37); Jobs hides its tab when it cannot detect the subsystem (jobs.js:28-41).
 4. **Three ways to bring a tool in** — a stdio child process / an HTTP endpoint / compiled into the binary. Consequences: proc MCPs start lazily and are reaped when idle ("do not make anything start eagerly for simplicity"); http/rest deliberately have no ping — a metered third-party endpoint would rather stay unknown than burn real requests; the first two are priced per process/socket and the third is nearly free, so the tools worth keeping eventually get compiled in.
@@ -14,22 +14,26 @@ The four properties come from the top of AGENTS.md ("A change that trades any of
 
 ## Panel Visual Design System (CSS variable inventory, light/dark theme mechanism, typographic scale)
 
-All tokens live in two blocks of `styles/base.css`: `:root` (base.css:26-82, light) and `:root[data-theme="dark"]` (base.css:87-108, dark). The panel's file header writes this system's three enforcement rules (base.css:6-20): **mono only for values you will copy** (endpoint paths, tool names, JSON — never for identity; a 26px monospace title is the biggest flaw of "imitating Apple rather than following Apple"); **saturation only for status** (dots, accent, error red; type tags are always monochrome, docs/18 V6); **text needs a measure** (cards never stretch to the full window width; logs/traffic use the wide tier). The shape language is borrowed from Apple System Settings: sidebar + detail pane, grouped inset lists, one primary action per view with the rest in an overflow menu, a strict type scale + the 4pt grid (base.css:2-4).
+All tokens live in two blocks at the head of `styles/base.css`: `:root` (light) and `:root[data-theme="dark"]` (dark); a literal outside that block fails gate G4 (docs/46). The panel's file header writes this system's three enforcement rules: **mono only for values you will copy** (endpoint paths, tool names, JSON — never for identity; a 26px monospace title is the biggest flaw of "imitating Apple rather than following Apple"); **saturation only for status** (dots, accent, error red; type tags are always monochrome, docs/18 V6); **text needs a measure** (cards never stretch to the full window width; logs/traffic use the wide tier). The shape language is borrowed from Apple System Settings: sidebar + detail pane, grouped inset lists, one primary action per view with the rest in an overflow menu, a strict type scale, four weights and the 4pt grid.
+
+Since docs/46 the shapes are drawn by one in-tree library: `crates/swiss-panel/panel/src/ui/*.ts` (exported by `ui/index.ts`) with its classes in `styles/ui.css`, shown in every state by the gallery at `/admin/ui.html`. CSS is three layers: `base.css` (tokens, reset, the shell), `ui.css` (the library's classes), `views.css` (workspace skeletons and page-local layout only). The swiss-ui-design skill §0 and §17 map every word to its function.
 
 ### CSS Variable Inventory (base.css:26-108; light values / dark values)
 
 | Group | Variable | Light | Dark | Use |
 | --- | --- | --- | --- | --- |
-| Fonts | `--sans` | "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif | the same one | Windows-first: use Inter when present, otherwise Segoe UI Variable Text with optical sizing (docs/18 V1, base.css:22-24,52) |
+| Fonts | `--sans` | "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, then the CJK faces (PingFang SC, Hiragino Sans GB, Microsoft YaHei), sans-serif | the same one | Inter is used where installed but never shipped; the design is judged in Segoe UI Variable and SF (docs/46 U6); CJK after system-ui (docs/38 §5.2) |
 | Fonts | `--mono` | "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace | same as above | Only for copyable values |
-| Type scale | `--f-title` 22 / `--f-head` 15 / `--f-body` 13 / `--f-label` 12 / `--f-caption` 11 (px) | — | — | Five steps, nothing in between (base.css:33-38); pane titles 600 + -0.02em (views.css:15); captions all uppercase (letter-spacing .04-.06em) |
+| Type scale | `--f-title` 22 / `--f-head` 15 / `--f-body` 13 / `--f-label` 12 / `--f-caption` 11 (px) | — | — | Five steps, nothing in between; pane titles `--w-title` + -0.02em; captions all uppercase (letter-spacing .04-.06em) |
+| Weights | `--w-body` 400 / `--w-name` 450 / `--w-emph` 500 / `--w-title` 600 | — | — | Four and only four (docs/46 U5): running text / identity in a list / a selected tab, a button, a caption, a band / titles. Any other `font-weight` fails gate G3 |
+| Component sizes | `--ic-s` 12 / `--ic-m` 14 / `--dot` 6 / `--row-h` 42 (px) | — | — | The few sizes a component needs off the 4pt scale: a disclosure chevron, a glyph in a button or menu row, the status dot, a two-line list row |
 | Grid | `--s1..--s8` = 4/8/12/16/20/24/32 (px) | — | — | The 4pt spacing grid (base.css:41) |
-| Measure | `--measure` 920px, `--measure-wide` 1180px | — | — | Content is never unbounded; `.pane > *` hugs the left under a width cap, `.wide` relaxes it (views.css:10-11;docs/18 V4) |
+| Measure | `--measure` 920px, `--measure-wide` 1180px | — | — | Content is never unbounded; `.pane > *` hugs the left under a width cap, `.wide` relaxes it (ui.css, `pane()` / `paneBody()`; docs/18 V4) |
 | Radius | `--r-card` 8 / `--r-row` 6 / `--r-btn` 6 / `--r-pill` 980 (px) | — | — | Three tiers card/row/button + the fully round pill (base.css:47-50) |
 | Surfaces | `--bg` | #fafafa | #0f1012 | The canvas; the dark one is a warm black that "reads as paper, not as an IDE theme" (base.css:83-86) |
 | Surfaces | `--sidebar` | #f4f4f5 | #141518 | The sidebar sits one step lower/higher than the canvas |
 | Surfaces | `--bar` / `--card` / `--field` | #ffffff ×3 | #141518 / #191a1e / #0f1012 | Brightness is hierarchy — in the dark theme a card is lifted only by hairline + a 1px top highlight |
-| Text | `--text` / `--text-2` / `--text-3` | #111114 / #6b7280 / #9ca3af | #ededef / #9a9ca3 / #66686f | The three-step text ladder |
+| Text | `--text` / `--text-2` / `--text-3` | #111114 / #6b7280 / #9ca3af | #e4e4e7 / #9a9ca3 / #66686f | The three-step text ladder; dark `--text` came down from #ededef, which glared at the lighter weights (docs/46 U5) |
 | Lines | `--sep` / `--sep-soft` | rgba(0,0,0,.08) / .05 | rgba(255,255,255,.08) / .05 | hairline separators; no shadow-based layering anywhere on the page |
 | Interaction | `--hover` | rgba(0,0,0,.04) | rgba(255,255,255,.05) | Hover background |
 | Status | `--accent` / `--accent-text` | #2563eb / #ffffff | #3b82f6 / — | The only brand color; one primary per view |
@@ -37,7 +41,9 @@ All tokens live in two blocks of `styles/base.css`: `:root` (base.css:26-82, lig
 | Shadows | `--shadow-card` | `0 0 0 1px var(--sep)` | plus `inset 0 1px 0 rgba(255,255,255,.04)` | The hairline ring is a card's entire edge — a shadow would let two near-identical surfaces masquerade as different layers; the grayscale must do honest work (base.css:55-58,78,104) |
 | Shadows | `--shadow-btn` | none | none | Flat buttons |
 | Shadows | `--shadow-sheet` / `--shadow-pop` | see base.css:80-81 | deepened | Only floating layers (sheet/menu) may cast a shadow |
-| Terminal | `--t-*` (ttyd palette) | — | — | term-page carries its own black-background foreground set and does not join the light/dark theme (views.css:521-527) |
+| Syntax | `--syn-key` / `--syn-str` / `--syn-num` / `--syn-lit` / `--syn-punct` | GitHub-light muted hues | GitHub-dark muted hues | Only inside a code block (the JSON view, the SQL highlighter): the one place hue marks something other than state (skill rule 2) |
+| Terminal | `--term-bg` / `--term-bar` / `--term-edge` / `--term-fg` / `--term-dim` / `--term-cursor` / `--term-sel` | a dark stage | one step below `--bg` | Derived from the panel's own colours (docs/46 U12); the terminal stays a dark stage in the light theme too |
+| Scrollbars | — | 10px, transparent track, no arrows, rounded thumb | the same | docs/46 U8; Firefox gets `scrollbar-width: thin` |
 
 ### Light/Dark Theme Mechanism
 
@@ -48,49 +54,53 @@ All tokens live in two blocks of `styles/base.css`: `:root` (base.css:26-82, lig
 ### Typography and Numbers
 
 - Global `font-variant-numeric: tabular-nums` (docs/18 V1; the base.css body block); count columns (request counts, byte counts, ms) are right-aligned, so polling patches never jitter in width.
-- The line-height and weight ladder: titles 600, group captions 500-600 uppercase, body default, secondary `--text-2`, explanatory `--text-3`; disabled `opacity .4` (base.css:150).
+- The weight ladder is the four `--w-*` tokens (titles `--w-title`, captions and bands `--w-emph`, a row's or a tool's name `--w-name`, running text `--w-body`); secondary `--text-2`, explanatory `--text-3`; disabled `opacity .4`.
 
 ## Layout Skeleton and Navigation
 
-A three-level vertical structure + one workspace, with every dimension pinned:
+The shell is a rail beside two rows, with every dimension pinned:
 
-| Region | Height | Contents | Source |
+| Region | Size | Contents | Source |
 | --- | --- | --- | --- |
-| toolbar (top bar) | 48px | The swiss brand, `#viewSeg` level-one navigation (group tabs, horizontally scrollable with no scrollbar), a flex gap, the memory chip (doubling as the refresh control), the theme icon-btn | index.html:52-63;base.css:238-262 |
-| subbar (page bar) | **36px always present** | Groups with ≥2 pages render `#subSeg` page tabs; single-page groups show `#subName`; `#countChip` counts on the right | index.html:65-75;base.css:278-285;docs/18 V3 (revising docs/13 D5's "hide the page bar for single-page groups") |
-| shell | the remainder | `#side` (only the Servers page mounts the MCP sidebar) + `#pane` | index.html:77-88 |
-| sheet/toast | floating layer | `#sheet` modal (backdrop click closes), `#toast` 3.4s | index.html:90-93 |
+| rail | 56px wide | The brand mark; one 42px seat per pinned plugin — its 18px glyph over its name (one caption size for the whole rail, fitted from 10px down to a 9px floor by `fitRailLabels`); `⋯` opens the plugin palette. No edge of its own (docs/46 U7) | base.css `.rail*`; page-registry.ts |
+| context bar | **40px, always present** | The plugin's title (its rail glyph + label); one underline tab per page when it has several (docs/39 S2); the count and memory readouts, theme, language and Focus at right | base.css `.ctxbar`; page-registry.ts |
+| shell | the remainder | the MCP sidebar (resource layout only) + `#pane`, the one scroller | index.html; pane-scroll.ts |
+| floating | — | `#sheet` (modal, backdrop click closes), `#toast`, the popup menus, the back-to-top button (shown past one screen of scroll, docs/46 U18) | ui/sheet.ts, ui/menu.ts, ui/to-top.ts |
 
-- **Navigation = data**: both levels come entirely from `/api/plugins`; group order = the smallest page.order in the group, and grouping is a pure function (docs/13 D1/D2;page-core.js:12-30). For the current live table (MCP group 3 pages / Tunnels / Data / Jobs / Terminal + the Gateway group's 2-page composite) see .agents/docs/panel.md §2.
-- **Four page-skeleton shapes**: ① sidebar+detail (Servers: sidebar.js + pane.js); ② grouped card lists (Tunnels/Jobs: `.group` cards + `.cap` uppercase small captions, views.css:59-61); ③ exclusive full-width data surfaces (Data `db-root`, Terminal `term-page` — both explicitly exempt from measure, views.css:358,521); ④ single-card form pages (Token/Secrets/Plugins).
-- **Left-hugging measure**: `.pane > * { max-width: var(--measure); margin-inline: 0 }` (views.css:10) — content hugs the left under a width cap, not centered, not full-bleed (docs/18 V4).
+- **Navigation = data**: both levels come entirely from `/api/plugins`; group order = the smallest page.order in the group, and grouping is a pure function (docs/13 D1/D2). For the current live table see .agents/docs/panel.md §2.
+- **Page-body templates** (skill §6): ① content — `paneBody({ wide })` + a pinned `paneHead` (Tunnels, Jobs, Token, Settings); ② split / resource — the source list beside a detail whose `resHead` pins as name row + tabs (MCP › Servers); ③ workspace — `pane({ full })`, full-bleed, no scroll of its own (Data, Terminal).
+- **Left-hugging measure**: `.pane > * { max-width: var(--measure); margin-inline: 0 }` (ui.css) — content hugs the left under a width cap, not centered, not full-bleed (docs/18 V4).
+- **Pinned heads** (docs/46 U9): the shell measures the pinned layers into `--pin-title-h` / `--pane-head-h` (pane-scroll.ts); the hairline under them appears only once content is under it; an event list's day heading sticks at `--pane-head-h`.
 
 ## Component Pattern Inventory
 
 | Component | Shape and rules | Source |
 | --- | --- | --- |
-| Rail `.rail` | Icon-only global navigation (docs/39 S1): 48px wide, 36px seats, 18px glyphs, the plugin's name in the seat's tooltip; selected seat = hover tint + 2px accent inset on the leading edge; `⋯` opens the palette; a plugin remembers its last page (docs/39 S4) so its seat returns there | base.css;page-registry.js;last-page.js;docs/39 |
-| Context bar `.ctxbar` | Always-present 40px bar (docs/13 D5 rev): `#pageTitle` (the plugin's rail glyph + label, once) and, for multi-page plugins, `#pageTabs` — one underline `<a>` tab per page, the current one marked by a 2px accent on the bar's bottom hairline (docs/39 S2); a trailing `⋯` seat catches overflow (fitTabs, docs/39 S3); readouts + theme + Focus at right | index.html;base.css;page-registry.js;docs/39 |
-| Buttons `.btn` | Default hairline (card background + 1px ring), active pressed inward; `.primary` solid accent, **at most one per view**; `.ghost` no background; `.danger` changes only the text color; `.icon` small icon button | base.css:133-150,175 |
-| One primary + ⋯ (V5) | One primary action per row/header (Start/Stop/Test/Run now/Open session), everything else goes into the ⋯ overflow menu; the red Delete lives only in the menu; "a whole column of solid Starts is a whole column shouting" | docs/18 V5;pane.js:157-177;polling.js:231-238 |
-| seg segmented control | `role=tablist`, aria-selected gets the white background, counts `.seg-n` in the secondary color; `.seg:empty { display:none }` | views.css:38-54 |
-| switch `.sw` | A 38×22 capsule, `role=switch` + aria-checked, colors follow accent | base.css:157-172 |
-| Status dots `.dot` | 6px circles: up green / down+error red / **idle hollow ring** (`box-shadow: inset 0 0 0 1.5px var(--text-3)`) / starting+stopping amber pulse (`prefers-reduced-motion` turns the animation off); the dot's title is the status story (dotTitle), and status words have ceded their place to the dot | base.css:385-394;menu.js;docs/18 V6 |
-| Type tags `.tag` / `side-type` | Monochrome mono 11px — they only say "what this is" and carry no hue (mysql and redis have both been red; zero information). A type GLYPH (`.side-type:has(.ic)`, docs/39 S6) carries no box at all: quiet `--text-3`, brightening to `--text-2` with its row on hover/selection; only word chips keep the 5% wash | views.css:99;base.css;docs/18 V6;docs/39 S6 |
-| Group cards `.group` + `.cap` | White card + hairline ring + r-card; group titles are small uppercase captions | views.css:59-61 |
-| Rows `.tun-row` | min-height 42px, sep-soft between rows, hover background, draggable cursor, drag insertion lines drop-before/after inlaid with accent | views.css:296-326 |
-| Group heads `.grp-head` | One shape (docs/35): a `--sep-soft` band — 28px in the sidebar, 36px across the top of the `.group` card at page density — chevron + name + count, `+` always, `⋯` on hover; no folder glyph, no guide line. The WHOLE head is draggable: grab cursor on the band and its toggle, `+`/`⋯` keep the pointer and cancel the drag at dragstart so their clicks survive | base.css groups section;groups.js wireHeadDrag |
-| Inline form `.inline-form` | Create-in-place (Tokens, Secrets): one flex row of fields + Group select + the one primary, `--s5` before the list; New group sits in the header's pane-actions | views.css .inline-form;docs/35 §3 |
-| Client grid `.cli-head/.cli-row` | A five-column grid, caption-uppercase headers, row hover, selected blends accent at 9% | views.css:342-350 |
-| Data grid `.db-grid` | Collapsed table, sticky headers, three-state sorting, cells truncate with ellipsis at 340px | views.css:426-448 |
-| sheet | `min(560px, 92vw)`, r 10px, three sections head/body/foot, `role=dialog aria-modal`; all editing lives in sheets (a separate subtree the poll cannot hit) | views.css:240;add-sheet.js |
-| Floating menus `.menu` | Anchored to the trigger button's left edge, flips up when it cannot fit downward, `.danger` red, `.pick` blue-check single-select, `hr` grouping (the MCP overflow menu is a macOS-style three-section grouping) | views.css:204-229;menu.js:9-30 |
-| Empty states `emptyNode()` | One unified template: sprite icon + h2 title + a 44ch width-capped p + optional ghost action button; every page's empty state must go through this function; the terminal page is the only registered exemption | util.js:80-94;views.css:28-35;docs/18 V7 |
-| toast | Auto-dismisses in 3.4s, err gets a red edge; once per error, never repeated every 6 seconds | util.js:138-145;base.css:273-279 |
-| Custom dropdowns | The native select is hidden but kept as the source of truth (value/event semantics unchanged), rendered as trigger button + floating layer; a MutationObserver takes over globally and automatically | dropdown.js |
-| chip | The context-bar readouts are one voice (docs/39 S5): count at `--f-label`, the mono memory value one step down at `--f-caption`, both `--text-3`, separated by a middle dot that exists only while the count does; the memory chip doubles as the refresh control (title hover details + click = refreshNow; a refresh button was deleted long ago) | base.css;polling.js:33-55;docs/39 S5 |
-| Terminal stage `term-page` | Full-width black surface, its own ttyd palette and --t-* foreground set, tab strip + status footer; does not join the light/dark theme | views.css:505-637 |
-| Schedule builder `.sched` | Control groups for the five modes interval/daily/weekly/monthly/cron + one-sentence cronstrue feedback | views.css:640-675;jobs.js:179-285 |
+| Buttons | `btn(label, { kind, icon, hidden })`: hairline default; `primary` solid accent, **at most one per view**; `ghost`; `danger` text colour only. `iconBtn` (with `aria-label`), `moreBtn` (the `⋯`) | ui/button.ts |
+| One primary + ⋯ (V5) | One primary action per row/header, everything else behind ⋯; destructive items last in the menu or the row's trailing glyph; "a whole column of solid Starts is a whole column shouting" | docs/18 V5; ui/row.ts |
+| Segmented control | `seg(items, current)`: `role=tablist`, counts `.seg-n`; L3 only; places no margin of its own (the page's flow does) | ui/seg.ts |
+| Switch | `sw(on, label)`: a 38×22 capsule, `role=switch` + `aria-checked` | ui/switch.ts |
+| Status dots | `dot(state, words)`: 6px; up green / down+error red / **idle hollow ring** / starting+stopping amber; the title is the state in words (dotTitle) | ui/status.ts; docs/18 V6 |
+| Tags | `tag(text, { mono, tone })`: monochrome, a 5% wash; `tone: "bad"` is the one red (a failure in a list, never a red row); sidebar type glyphs carry no box | ui/status.ts; docs/39 S6 |
+| Page head | `paneHead` (content page, pins) and `resHead` (resource: name row + tabs pin, the words scroll away) | ui/page.ts; docs/46 §3.2 |
+| Sections and cards | `section({ cap, note, tools })` — sections `--s6` apart; `card(...)` — the hairline-ringed surface (`.group`, historical name); two cards in one section `--s3` apart | ui/page.ts |
+| List row | `row({ lead, name, sub, err, cols, toggle, primary, more, detail })`: the ONE row; separators inset to the text column (U7); `detail` opens the item's record in a native `<details>` with the row's controls outside it | ui/row.ts |
+| Label / value row | `kvRow(label, value, { mono })` — config and system facts; mono only for a value you would copy | ui/row.ts |
+| Source-list row | `sideRow({ name, lead, tail, selected })`: 30px, `role=option`; the patch pass paints dot, tag and title | ui/row.ts; menu.ts patchSidebar |
+| Group band | `groupNode(...)`: a `--sep-soft` band — 28px in the sidebar, 36px across its card at page density — chevron + name + count, `+` always, `⋯` on hover; the WHOLE head drags, `+`/`⋯` cancel the drag at dragstart | ui/group.ts; groups.ts wireHeadDrag; docs/35 |
+| Event list | `timeline(items, { open, body })`: time column, sticky day headings, title, one line of arguments, who only when it varies, ×N, failure as a red tag, duration right (amber ≥ 1s); no box, no row lines, the open row is the card; `timelineMeta` is the open row's meta line. MCP Logs is the reference | ui/timeline.ts; docs/46 U10 |
+| Code block | `jsonCodeNode(value, all, { oneLine })`: one formatted block, `--syn-*` tokens, decoded-string markers, Show all past 200 lines, short values on one line; `valueBlock({ label, notes, tools, text })` is the labelled block around it (one visible Copy, the rest behind ⋯) | ui/json-view.ts; docs/33 C3 as revised |
+| Forms | `form`, `field({ label, control, required, meta, hint })`, `checkField`, `pair` (two columns wherever it sits), `formActions`, `hint`; fields and pairs `--s3` apart in a plain container, the grid gap inside `.form` / `.sheet-body` | ui/form.ts |
+| Inline form | `inlineForm(...)`: create in place (Tokens, Secrets) — one row of fields + Group select + the one primary, `--s5` before the list | ui/page.ts; docs/35 §3 |
+| Filter, pager, notes | `filterInput` (a section's search box), `pager({ status, prev, next })` (a live status), `note(body, { busy, err })`, `failNote({ text, why, action })` | ui/page.ts |
+| Sheet | `sheet({ title, body, foot })` + `showSheet` (unhidden before painted), `openFieldSheet` (one field, inline error, stays open on refusal); `min(560px, 92vw)`, modal keys | ui/sheet.ts |
+| Menus | `popupMenu(anchor, items)` floating, `anchoredMenu(host, items)` hung in a head's actions; headings, picks, glyphs, the held-edits dot, danger last; arrows walk, Escape closes | ui/menu.ts |
+| Custom dropdowns | The native `<select>` stays the source of truth; `styleSelect` / `initSelects` draw the trigger and the list | ui/select.ts |
+| Empty states | `emptyNode({ icon, title, hint, action })`: every page's empty state, and a switched-off plugin's page | ui/page.ts; docs/18 V7 |
+| Back to top | `toTop(scroller)`: mounted once by the shell on `#pane`; past one screen of scroll; relabelled with the language | ui/to-top.ts; pane-scroll.ts |
+| toast | Auto-dismisses in 3.4s, err gets a red edge; once per error, never repeated every 6 seconds | util.ts |
+| Readouts (chip) | The context-bar readouts are one voice (docs/39 S5): count at `--f-label`, the mono memory value at `--f-caption`, both `--text-3`; the memory chip doubles as the refresh control | base.css; polling.ts |
+| Not yet on the library | Tunnels and Jobs rows (`.tun-row`, polling.ts), Traffic / Remote runs / a job's runs (`.call*`), the client grid, Data's grid and Terminal's stage keep their own markup until their docs/46 phase (P3–P8) | views.css |
 
 ## Interaction Patterns
 
@@ -101,7 +111,7 @@ A three-level vertical structure + one workspace, with every dimension pinned:
 - **Copying is the credential exit**: connection commands (claude/codex/.mcp.json) are assembled in the browser, and a secret appears only in the one-time box after creation/rotation ("shown only once"); clipboard API + legacyCopy fallback + toast confirmation (connect.js:59-128).
 - **Edits live in buffers**: Data grid edits are all buffered client-side (amber bar LOCAL ONLY + SQL preview + single-transaction Commit + zero-query Discard); leave guards `canLeave/hasPendingChanges` + beforeunload; while typing/dragging/holding a sheet open, even the panel's self-reload yields (maybeReloadPanel, main.js:26-42).
 - **Keyboard**: `/` search, `r` refresh, ↑↓ walk rows, Alt+↑↓ reorder, Esc closes layer by layer (sheet→menu→popover); Data console/Run forms Ctrl+Enter; terminal Ctrl+=/-/0 and Ctrl+wheel zoom, Ctrl+C/V with Windows Terminal semantics, right-click copy/paste (main.js:152-181;terminal-core.js).
-- **Lazy expansion**: traffic parameters/results and Logs full results all show a preview first, and only expansion fetches the full payload by seq; 404 = already scrolled out of the ring buffer, and the copy says so plainly.
+- **Lazy expansion**: a Logs row paints its body only when opened, and opening a clipped reply fetches the whole of it by seq; Traffic still shows a preview first and fetches on expansion; 404 = already scrolled out of the ring buffer, and the copy says so plainly.
 - **Drag reorder**: rows drag to reorder/regroup with upper/lower half-plane insertion lines; groups reorder by dragging their whole header (docs/35) — the + and ⋯ cancel the drag at dragstart so they keep every click — dropping on the upper/lower half of another WHOLE group picks before/after, and Move up/Move down in the ⋯ menu are the click-precise counterpart, present only where the move exists (groups.js wireHeadDrag/wireGroupDrop). Persisted through the `/api/groups/{scope}` family (docs/20 §3 — `PUT /api/order`, `PUT /api/tunnels/order` and `PUT /api/groups` are retired): `PUT /api/groups/{scope}` replaces the whole list ("here is the new list"), `POST /api/groups/{scope}/rename`, `PUT /api/groups/{scope}/members/{id}`, `PUT /api/groups/{scope}/order`; polling stays silent during a row or group drag (menu.js:91-105).
 
 ## Copy and Naming Style
@@ -110,7 +120,7 @@ A three-level vertical structure + one workspace, with every dimension pinned:
 - **A small set of status words**: up / down / error / idle / starting / stopping / reconnecting / connected / active / disabled / failed / unavailable / off; the dot's title carries the full story ("idle — the process is not running; the first request starts it", menu.js:75-86).
 - **Count phrasing**: "N MCPs · N up · N down", "N rules, N active", "N plugins · N on · N failed", "n of m interactions", "N tokens", "N secrets", "N live" — always tabular-nums, with the middle dot · as the separator.
 - **Time and size**: `whenLabel` shows a 24h clock time for today and adds the date for anything earlier; `ago()` just now / Ns / Nm; sizes keep one decimal in MB, k chars for characters, B/KB; the terminal session grace window's copy is written as a story ("A dropped socket does not end a session").
-- **mono only for copyable values**: mount paths `.sub-path`, tool names, command lines, `secret://name` references, revision, SQL; titles and identity text are always sans.
+- **mono only for copyable values**: the mount path (a `<code>` in the resource head's state line), tool names, command lines, `secret://name` references, revision, SQL; titles, descriptions and the panel's own words are always sans.
 - **Naming conventions**: plugin ids kebab-case (mcp/tunnels/data/jobs/terminal/process); Rust snake_case; JSON camelCase; config keys kebab-case; page ids short and plural (mcps/tokens/tunnels/jobs/secrets); hash route = page id.
 - **Error copy states consequences, not technical detail**: "the Data view console is read-only — edit rows in the grid instead"; "the terminal plugin is not running"; "rolled out of the buffer".
 
@@ -147,16 +157,17 @@ A three-level vertical structure + one workspace, with every dimension pinned:
 
 ### Checklist
 
+0. Draw with the library (`panel/src/ui/`, the gallery at `/admin/ui.html`); a shape it lacks goes into the library first — function, `ui.css` classes, a gallery section, a test (skill §0) — and `npm run check` runs the seven gates.
 1. The descriptor's six contributions are complete; pages come as `page(id, …, order, sidebar)` with an order that avoids the existing tiers (10/20/30…/70/1000/1001); the entry lands in `/admin/js/views/` or `/admin/plugins/`.
 2. The page module implements `mount/poll/refresh/countText` (leave-blocking edits add `canLeave/hasPendingChanges`); polling only patches, skips on structure signature, and never rebuilds a focus-holding structure.
-3. Empty states go through `emptyNode()`; disabled/503 has structured degradation and does not manufacture a toast every 6 seconds.
+3. Empty states go through `emptyNode()` (ui/page.ts); disabled/503 has structured degradation and does not manufacture a toast every 6 seconds.
 4. At most one `primary` per view; red actions go into the ⋯ menu; icons use sprites, not Unicode glyphs; type tags are monochrome mono.
 5. Destructive operations confirm with the consequence named; table-level operations confirm verbatim; write operations carry a revision.
 6. fetch goes only through `api/apiJson`; error copy states consequences; mono only for copyable values; counts use tabular-nums.
 7. Backend: no `.unwrap()` (config/network/db/fs), no `serde_json::Value` materializing forwarding paths, dependencies defended with `default-features = false`, behavior changes ship with tests, comments in English.
 8. Changing behavior an older build also had: the reasons live in the module comments and in docs/ — read them before changing a shape; edit the TypeScript in `panel/src`, never the committed emit.
 9. Docs: the numbered docs/ series and the `.agents/docs/<id>.md` audit docs update in sync; status lines stay honest (see below).
-10. A reorderable list drags by a dedicated handle (never a header that carries buttons), offers the ⋯-menu Move up/down exactly where the move exists, shows the drop as before/after accent edges, persists as a whole-list PUT, and defers poll rebuilds while a drag is in flight (the MCP sidebar is the reference, sidebar.js:113-137,269-331).
+10. A reorderable group drags by its whole header, whose buttons cancel the drag at dragstart (docs/35); rows offer the ⋯-menu Move up/down exactly where the move exists, show the drop as before/after accent edges, persist as a whole-list PUT, and poll rebuilds wait while a drag is in flight (the MCP sidebar is the reference).
 
 ### Known Exceptions/Inconsistencies (found in this audit; code wins)
 
@@ -170,6 +181,7 @@ A three-level vertical structure + one workspace, with every dimension pinned:
 8. **Sidebar mechanism coupling**: `page.sidebar` is granted per page, yet the sidebar content always renders the MCP list; only mcps uses it today, and docs/13 §7 explicitly declines to fix it.
 9. **The panel-asset boundary (ADR-024)**: panel sources are `panel/src/*.ts`; the committed emit under `admin_assets/js` stays plain ES modules with no bundler — the exe build needs no node.
 10. **The grouped lists diverge at the edges**: only the MCP sidebar got grip handles and ⋯-menu moves — tunnel group headers are drop-into only (views.css:320-322) — and the two delete confirms disagree on where rows go: the sidebar names the first remaining group (sidebar.js:243-252), the tunnels still name the literal `default` (tunnels.js:92-97).
+11. **docs/46 is mid-migration**: MCP › Servers (P2) is on the library; Traffic and Token (P3), Tunnels (P4), Settings (P5), Jobs and Remote (P6), Data (P7) and Terminal (P8) still draw their own shapes, so G5's frozen rows and views.css's `.call*` / `.tun-*` rules are still non-zero. Each page deletes its share when it moves (U16).
 
 ## Style and Design Observations
 
