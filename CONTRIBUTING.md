@@ -8,7 +8,8 @@ version.
 ## Build
 
 - Rust stable, at least the `rust-version` in `Cargo.toml`. `cargo build --release` yields the
-  one `swiss` binary; nothing else is needed to build or run it.
+  one `swiss` binary; nothing else is needed to build or run it. On Linux, `cmake` and a C
+  compiler are also required — the TLS stack builds aws-lc-rs (CI installs exactly those two).
 - Node 24 is a **dev** dependency of the admin panel only: `crates/swiss-panel/panel` holds the
   TypeScript sources and the vitest suite, and `npm run build` there emits the plain ES modules
   that are committed under `crates/swiss-panel/src/admin_assets/js/` and embedded by cargo. The

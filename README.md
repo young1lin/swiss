@@ -25,8 +25,12 @@ Download the binary for your OS from
 | `swiss-<version>-x86_64-pc-windows-msvc.exe` | Windows x64 |
 | `swiss-<version>-x86_64-unknown-linux-gnu` | Linux x64 |
 | `swiss-<version>-aarch64-unknown-linux-gnu` | Linux arm64 |
-| `swiss-<version>-aarch64-apple-darwin` | macOS (Apple Silicon) |
-| `swiss-<version>-x86_64-apple-darwin` | macOS (Intel) |
+| `swiss-<version>-aarch64-apple-darwin` | macOS (Apple Silicon) — experimental¹ |
+| `swiss-<version>-x86_64-apple-darwin` | macOS (Intel) — experimental¹ |
+
+¹ macOS builds have no master-key source yet (no machine-id, no Keychain source), so the
+  first state save fails with "no master key available". The assets are published for
+  evaluation; a Keychain source is tracked future work.
 
 ```
 swiss start            # start the gateway on 127.0.0.1:19999 and open the panel
@@ -35,11 +39,25 @@ swiss creds            # panel URL + token, ready to paste into a client
 swiss skill install    # the shipped skill, for AI agents that drive swiss
 ```
 
-Or build from source: Rust stable, `cargo build --release` — the same single binary.
+Or build from source: Rust stable, `cargo build --release` — the same single binary. Linux
+additionally needs `cmake` and a C compiler (the TLS stack builds aws-lc-rs). No Node is
+needed to build: the panel's emitted assets are committed; Node 24 only develops the panel.
 
 Loopback-only is security, not a default: the gateway binds `127.0.0.1`, refuses every
 non-loopback `Host`/origin, and refuses a non-loopback `host` in config at load. Reach it
 remotely by forwarding the port over SSH, never by widening the bind.
+
+## Security model
+
+The loopback boundary is the entire model. Every request — panel page or `/api/*` — must
+arrive from a loopback peer with a loopback `Host`/`Origin`; the check exists because DNS
+rebinding can make a remote page send same-origin-looking requests at a loopback listener.
+There is deliberately no login and no session on the panel or the admin API: the person at
+the machine is the authentication. A bearer token gates only the MCP endpoints (`/mcp/*`,
+verified before the body is read), so other tools on the machine cannot use your MCP
+servers unchallenged; the terminal WebSocket adds a single-use ticket that burns in 10
+seconds. Run records mask resolved credential values before anything is stored. If you
+forward the port over SSH, the far side gains the token boundary — not the loopback one.
 
 ## Update
 
@@ -55,8 +73,10 @@ swiss start
 ```
 
 Nothing migrates during an update: all state lives in sealed files under the swiss home
-directory, never inside the binary. Moving machines uses `swiss export > bundle.json` and
-`swiss import bundle.json` — sealed files are bound to the machine that sealed them.
+directory (`%LOCALAPPDATA%\swiss` on Windows, `~/.swiss` elsewhere), never inside the
+binary. Moving machines uses `swiss export > bundle.json` and `swiss import bundle.json`.
+On Windows the seal binds to your user (DPAPI); on Linux it binds to the machine via the
+world-readable machine-id, not to your user — treat shared hosts accordingly.
 
 ## Start at sign-in
 

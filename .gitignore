@@ -27,9 +27,10 @@ master.key
 /lmg.exe
 /lmg-dev.exe
 
-# Claude Code scratch: agent worktrees and per-machine settings
-/.claude/worktrees/
-/.claude/settings.local.json
+# Claude Code scratch: agent worktrees, per-machine settings and the rest of its runtime
+# tree (skills, rules, checkpoints, registry) — none of it is source. These used to live
+# only in .git/info/exclude on the author's machine; shipping them keeps a fresh clone quiet.
+/.claude/
 
 # Dev-only npm tooling for the panel home (crates/swiss-panel/panel — sources, emit script
 # and the vitest suite; docs/36) — node is a dev dependency, never a cargo build step; its

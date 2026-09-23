@@ -12,9 +12,9 @@ Swiss is one small process behind one loopback port: **MCP** serves configured A
 files. This skill covers Remote. Invoke it only after the user explicitly asks to use swiss or one
 of its configured machines.
 
-Three boundaries are deliberate: Swiss binds loopback only and must never be widened; credentials
-stay sealed and no API, log, or run record returns them; `workspaceRoot` guides path resolution but
-is not a sandbox. Use `swiss open` for the panel, `swiss --help` for the whole product, and
+Three boundaries are deliberate: Swiss binds loopback only and must never be widened; vault
+credentials stay sealed and no API, log, or run record returns them (a panel-issued bearer token
+is the one deliberate read-back); `workspaceRoot` guides path resolution but is not a sandbox. Use `swiss open` for the panel, `swiss --help` for the whole product, and
 `swiss remote help` for the installed Remote CLI.
 
 ## The three names
