@@ -33,10 +33,11 @@ import { fill, h } from "./h.js";
 import { install, langPref, tk, tr } from "./i18n.js";
 import { SCENES } from "./ui-scenes.js";
 import {
-  anchoredMenu, btn, card, closeMenu, closeSheet, decodeStrings, dot, emptyNode, failNote, filterInput, groupNode,
-  iconBtn, iconNode, initSelects, initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note,
-  openFieldSheet, pageFoot, pager, pane, paneHead, popupMenu, resHead, row, section, seg, sheet, sheetOpen,
-  showSheet, sideRow, spinner, sw, tag, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
+  anchoredMenu, btn, card, checkField, closeMenu, closeSheet, decodeStrings, dot, emptyNode, failNote, field,
+  filterInput, form, formActions, groupNode, hint, iconBtn, iconNode, initSelects, initSheet, inlineForm,
+  jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot, pager, pair, pane, paneHead, popupMenu,
+  resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow, spinner, sw, tag, timeline, timelineMeta,
+  timelineToggle, toTop, valueBlock,
 } from "./ui/index.js";
 import type { DotState, TimelineItem } from "./ui/index.js";
 
@@ -176,6 +177,13 @@ function callBody(it: TimelineItem): HChild {
   ];
 }
 
+/** A tool argument's name, its JSON type and a sample value - data, the same in every language. */
+const SQL_ARG = "sql";
+const SQL_TYPE = "string";
+const SQL_SAMPLE = "SELECT 1";
+const HOST_SAMPLE = "127.0.0.1";
+const PORT_SAMPLE = "5432";
+
 /** A status line's words that are the same in every language: an HTTP status is a value. */
 const HTTP_502 = "HTTP 502";
 
@@ -274,6 +282,14 @@ function catalogue(now: number): HTMLElement {
       [tr("gallery.st.codeBlock"), valueBlock({ label: tr("gallery.d.result"), notes: [tr("gallery.d.decodedNote")], tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
         jsonCodeNode(decodeStrings(SAMPLE_JSON), false, { oneLine: true }).node)],
     ]),
+    entry(["form", "field", "checkField", "pair", "formActions", "hint"], tk("gallery.c.forms"), tk("gallery.c.formsNote"), [], card(form(
+      pair(
+        field({ label: tr("gallery.d.host"), control: h("input", { type: "text", value: HOST_SAMPLE }), hint: tr("gallery.d.hostHint") }),
+        field({ label: tr("gallery.d.port"), control: h("input", { type: "text", value: PORT_SAMPLE }) })),
+      field({ label: SQL_ARG, required: true, meta: SQL_TYPE, control: h("textarea", { placeholder: SQL_SAMPLE }) }),
+      checkField({ label: tr("gallery.d.startNow"), control: h("input", { type: "checkbox", checked: true }) as HTMLInputElement, hint: tr("gallery.d.startNowHint") }),
+      hint(tr("gallery.d.refused"), { bad: true }),
+      formActions(btn(tr("gallery.d.save"), { kind: "primary" }), btn(tr("gallery.d.cancel")))))),
     entry(["popupMenu", "sheet", "openFieldSheet", "toTop"], tk("gallery.c.floating"), tk("gallery.c.floatingNote"), [
       [tr("gallery.st.menu"), btn(tr("gallery.d.openMenu"), { icon: "ellipsis", data: { demo: "menu" } })],
       [tr("gallery.st.sheet"), btn(tr("gallery.d.openSheet"), { data: { demo: "sheet" } })],

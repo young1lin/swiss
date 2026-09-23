@@ -48,3 +48,4 @@ export type { Painted } from "./json-view.js";
 export { closeSheet, initSheet, openFieldSheet, sheet, sheetOpen, showSheet } from "./sheet.js";
 export type { FieldSheetSpec, SheetOpts } from "./sheet.js";
 export { toTop } from "./to-top.js";
+export { checkField, field, form, formActions, hint, pair } from "./form.js";
