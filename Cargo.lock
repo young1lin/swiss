@@ -4309,7 +4309,6 @@ dependencies = [
  "encoding_rs",
  "futures-core",
  "futures-util",
- "libc",
  "serde",
  "serde_json",
  "sha2 0.11.0",
