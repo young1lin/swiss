@@ -15,10 +15,10 @@
  */
 
 //! Postgres Data-view browser backed by the adapter's shared sqlx pool — the port of the
-//! `dbBrowser()` object Node's pg adapter returned. Same capability set as the MySQL browser in
-//! this build: list/read/describe plus the console; the buffered-edit grid, CSV export/import
-//! and DDL ops answer "not available in this build" (they are ported per dialect from
-//! dbbrowser.ts in one go, not piecemeal).
+//! `dbBrowser()` object Node's pg adapter returned. Same capability set as the MySQL browser:
+//! list/read/describe, the single-statement console (reads and writes alike), the
+//! buffered-edit grid, CSV export/import and DDL ops — all ported per dialect from
+//! dbbrowser.ts in one go, not piecemeal.
 
 use super::direct::Lazy;
 use super::pg::{

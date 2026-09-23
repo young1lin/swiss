@@ -52,28 +52,32 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-## 1. 现状
+## 1. 现状（as-built 快照，2026-09-23）
 
-面板顶栏只有一行 tab，由 `js/page-registry.js` 的 `paintNavigation()` 渲染进 `index.html` 的
-`<div class="seg" id="viewSeg" role="tablist">`：
+两级导航已按本文 §2 与 docs/39 落地：一级 = 插件（rail），二级 = 该插件贡献的页面（context bar
+的 underline tabs，仅当 ≥2 页时出现）。**本节是时点快照；`/api/plugins`、`src/builtin.rs` 与
+`crates/swiss-panel/panel/src/page-registry.ts` 是权威。**
 
-```
-MCPs | Traffic | Tunnels | Data | Jobs | Terminal | Plugins
-```
+当前的页面贡献（order 标在 label 后；host 三页由 page-registry 合成）：
 
-这一行是把 `/api/plugins` 的 `pages[]` 按 `order` 排序后平铺的结果。当前的贡献是（`src/builtin.rs`
-与 `src/plugins/terminal.rs`，docs/14）：
+| pluginId | 插件 label | page id | page label (order) | sidebar |
+| --- | --- | --- | --- | --- |
+| `mcp` | MCP | `mcps` | Servers (10) | ✅ |
+| `mcp` | MCP | `traffic` | Traffic (20) | |
+| `mcp` | MCP | `tokens` | Token (30) | |
+| `tunnels` | Tunnels | `tunnels` | SSH Connections (30) | |
+| `tunnels` | Tunnels | `tunnel-forwards` | Port Forwards (35) | |
+| `data` | Data | `data` | Data (40) | |
+| `jobs` | Jobs | `jobs` | Jobs (50) | |
+| `terminal` | Terminal | `terminal` | Terminal (70) | |
+| `remote` | Remote | `remote` | Targets (75) | |
+| `remote` | Remote | `remote-runs` | Runs (76) | |
+| `process` | Process | —（不贡献页面） | | |
+| （host，前端合成） | — | `plugins`/`secrets`/`system` | Plugins (1000) / Secrets (1001) / System (1002) | |
 
-| pluginId | 插件 label | page id | page label | order | sidebar |
-| --- | --- | --- | --- | --- | --- |
-| `mcp` | MCPs | `mcps` | MCPs | 10 | ✅ |
-| `mcp` | MCPs | `traffic` | Traffic | 20 | |
-| `tunnels` | Tunnels | `tunnels` | Tunnels | 30 | |
-| `data` | Data | `data` | Data | 40 | |
-| `jobs` | Jobs | `jobs` | Jobs | 50 | |
-| `terminal` | Terminal | `terminal` | Terminal | 70 | |
-| （无，前端合成） | — | `plugins` | Plugins | 1000 | |
-| `process` | Process | —（不贡献页面） | | | |
+> 历史快照（实施前，N1 时点）：顶栏只有一行平铺 tab `MCPs | Traffic | Tunnels | Data | Jobs |
+> Terminal | Plugins`，由 `paintNavigation()` 渲染 —— 层级信息在渲染时被丢掉，正是下文三处代价
+> 所针対的起点（保留为动机记录）。
 
 **问题不是「太长」，是层级信息在渲染时被丢掉了。** `pages[].pluginId` 已经说清楚 Traffic 和 MCPs
 属于同一个插件，而这一行把它们并列成两个同级入口。结果有三处代价：
