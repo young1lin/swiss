@@ -95,3 +95,31 @@ export function kvRow(label        , value        , o                           
     h("span", { class: "kv-k" }, label),
     h("span", { class: "kv-v" + (o.mono ? " mono" : ""), title: o.title }, value));
 }
+
+;                             
+               
+                                   
+                
+                                                                                    
+                
+                     
+                 
+                 
+ 
+
+/** One source-list row: the sidebar beside a detail pane (the MCP list; skill §17 "sidebar").
+ *  One line, 30px: dot, name, the trailing tag. Everything else - the description, the source,
+ *  the reason a row is red - lives in the title and in the pane head of the selected one (the
+ *  second line it used to carry was a ruler of ellipses). A <button role=option>: the list is a
+ *  listbox, the row is what you pick, and aria-selected is both the state and the style hook
+ *  (base.css .side-row). Moves here from sidebar.ts's builder at P2; the shape is the same node
+ *  for node. */
+export function sideRow(o             )                    {
+  return h("button", {
+    type: "button", class: "side-row", role: "option", title: o.title, data: o.data,
+    aria: { selected: o.selected ? "true" : "false" },
+  },
+  o.lead ?? null,
+  h("span", { class: "side-name" }, o.name),
+  h("span", { class: "side-type" }, o.tail ?? null));
+}

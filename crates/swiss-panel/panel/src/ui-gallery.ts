@@ -1,0 +1,357 @@
+/*
+ * Copyright 2026 young1lin
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* The UI library's gallery (docs/46 §2.6, U13): /admin/ui.html, reached by typing it - it is
+ * not a user feature and has no seat in the panel. It shows every shape the library draws, in
+ * every state, then the scenes (ui-scenes.ts): whole pages composed from those shapes, which is
+ * where a new design is proposed before any page is built.
+ *
+ * It is a page of the panel in everything but navigation: the same base.css + ui.css (and not
+ * views.css - what renders right here renders right on any page), the shell's context bar, the
+ * one sprite (fetched from index.html rather than copied, so there is never a second list of
+ * icons), the same tr() tables. Its three switches - theme, language, width - are the page's
+ * own and live in the query string (?theme=dark&lang=zh&w=960), so a view is a link and
+ * flipping one never touches the panel's stored preferences.
+ *
+ * Everything drawn here goes through ./ui/index.js; the gallery owns only its bar and the
+ * few handlers that make the demos answer (a menu opens, a sheet opens, a call expands). */
+import type { HChild } from "./h.js";
+import { fill, h } from "./h.js";
+import { install, langPref, tk, tr } from "./i18n.js";
+import { SCENES } from "./ui-scenes.js";
+import {
+  btn, card, closeMenu, closeSheet, decodeStrings, dot, emptyNode, groupNode, iconBtn, iconNode, initSelects,
+  initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, openFieldSheet, pageFoot, pane, paneHead,
+  popupMenu, row, section, seg, sheet, sheetOpen, showSheet, sideRow, sw, tag, timeline, timelineToggle,
+} from "./ui/index.js";
+import type { DotState, TimelineItem } from "./ui/index.js";
+
+type Lang = "en" | "zh-CN";
+interface View { theme: "light" | "dark"; lang: Lang; width: 1440 | 960 }
+
+const MIN = 60 * 1000;
+
+/* --- the view: theme, language, width --------------------------------------------------------- */
+
+/** The query string wins; without one the gallery opens the way the panel is set, and never
+ *  writes that setting back. */
+function readView(): View {
+  const q = new URLSearchParams(location.search);
+  const theme = q.get("theme");
+  const lang = q.get("lang");
+  return {
+    theme: theme === "dark" || theme === "light" ? theme : document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+    lang: lang === "zh" ? "zh-CN" : lang === "en" ? "en" : langPref(),
+    width: q.get("w") === "960" ? 960 : 1440,
+  };
+}
+
+function writeView(v: View): void {
+  const q = new URLSearchParams(location.search);
+  q.set("theme", v.theme);
+  q.set("lang", v.lang === "zh-CN" ? "zh" : "en");
+  q.set("w", String(v.width));
+  history.replaceState(null, "", location.pathname + "?" + q.toString() + location.hash);
+}
+
+let view: View = { theme: "light", lang: "en", width: 1440 };
+
+async function applyView(v: View): Promise<void> {
+  view = v;
+  document.documentElement.setAttribute("data-theme", v.theme);
+  if (v.lang === "zh-CN") {
+    const table: { default: Record<string, string> } = await import("./locales/zh.js");
+    install("zh-CN", table.default);
+  } else {
+    install("en", null);
+  }
+  // The width is the viewport the page is judged at: the app column is held to it, and a
+  // hairline marks its right edge when the window is wider.
+  const app = appNode();
+  app.style.width = v.width + "px";
+  app.style.maxWidth = "100%";
+  app.style.boxShadow = "1px 0 0 var(--sep)";
+}
+
+function appNode(): HTMLElement {
+  const node = document.getElementById("app");
+  if (!node) throw new Error("ui.html has no #app");
+  return node;
+}
+
+/* --- the one sprite --------------------------------------------------------------------------- */
+
+/** The icons live once, in index.html. Fetch it and move its sprite into this page - a second
+ *  copy would drift, and a missing glyph here would pass unnoticed for the same reason. */
+async function loadSprite(): Promise<string[]> {
+  const res = await fetch("/admin/index.html");
+  const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+  const sprite = doc.querySelector("svg[hidden]");
+  if (!sprite) return [];
+  document.body.prepend(document.importNode(sprite, true));
+  return Array.from(sprite.querySelectorAll("symbol")).map((s) => s.id.replace(/^i-/, ""));
+}
+
+let icons: string[] = [];
+
+/* --- the bar ---------------------------------------------------------------------------------- */
+
+function route(): string {
+  const id = location.hash.replace(/^#/, "");
+  return SCENES.some((s) => "scene-" + s.id === id) ? id : "components";
+}
+
+function bar(current: string): HTMLElement {
+  const tabs = [{ id: "components", key: tk("gallery.components") }]
+    .concat(SCENES.map((s) => ({ id: "scene-" + s.id, key: s.titleKey })));
+  return h("header", { class: "ctxbar" },
+    h("span", { class: "ctx-title" }, iconNode("puzzle"), h("span", { class: "ctx-name" }, tr("gallery.title"))),
+    h("nav", { class: "ctx-tabs", aria: { label: tr("gallery.views") } },
+      tabs.map((t) => h("a", { class: "ctx-tab", href: "#" + t.id, aria: { current: t.id === current ? "page" : null } }, tr(t.key)))),
+    h("span", { class: "chip" }, tr("gallery.widthChip", { w: view.width })),
+    h("span", { class: "app-zone" },
+      iconBtn(view.width === 1440 ? "collapse" : "expand", tr(view.width === 1440 ? "gallery.to960" : "gallery.to1440"),
+        { ghost: true, data: { g: "width" } }),
+      iconBtn(view.theme === "dark" ? "sun" : "moon", tr(view.theme === "dark" ? "gallery.toLight" : "gallery.toDark"),
+        { ghost: true, data: { g: "theme" } }),
+      iconBtn("languages", tr("gallery.toOtherLang"), { ghost: true, data: { g: "lang" } })));
+}
+
+/* --- the catalogue ---------------------------------------------------------------------------- */
+
+/** One component's section: its words, and a row per state. `uses` is the coverage ledger the
+ *  gallery test reads (G6): every library component must be claimed by a section or a scene. */
+function entry(uses: string[], cap: string, note: string, rows: Array<[string, HChild]>, extra?: HChild): HTMLElement {
+  const node = section({ cap: tr(cap), note: tr(note) },
+    rows.length ? card(rows.map(([label, v]) => kvRow(label, v))) : null, extra);
+  node.dataset.ui = uses.join(" ");
+  return node;
+}
+
+/** Every dot state, with its word. */
+const DOTS: Array<[DotState, string]> = [
+  ["up", tk("gallery.dot.up")], ["starting", tk("gallery.dot.starting")], ["stopping", tk("gallery.dot.stopping")],
+  ["idle", tk("gallery.dot.idle")], ["error", tk("gallery.dot.error")], ["down", tk("gallery.dot.down")],
+  ["off", tk("gallery.dot.off")],
+];
+const CHOICES = ["default", "staging", "production"];
+const MANY = ["* * * * *", "*/5 * * * *", "*/15 * * * *", "0 * * * *", "0 3 * * *", "0 3 * * 1", "0 0 1 * *", "@reboot"];
+
+function sampleCalls(now: number): TimelineItem[] {
+  return [
+    { id: "g1", at: now - 3 * MIN, title: "query_orders", arg: '{"status":"open"}', ms: 42, same: "open" },
+    { id: "g2", at: now - 4 * MIN, title: "query_orders", arg: '{"status":"open"}', ms: 40, same: "open" },
+    { id: "g3", at: now - 12 * MIN, title: "list_tables", arg: "{}", ms: 1650 },
+    { id: "g4", at: now - 27 * 60 * MIN, title: "export_frame", arg: '{"frame":"hero"}', ms: 88,
+      status: { text: tr("gallery.d.error"), tone: "bad" } },
+  ];
+}
+
+const SAMPLE_JSON = {
+  id: 1042, status: "open", paid: false, discount: null,
+  lines: [{ sku: "A-17", qty: 2 }, { sku: "B-03", qty: 1 }],
+  meta: '{"source":"import","batch":7}',
+};
+
+function callBody(it: TimelineItem): HChild {
+  return jsonCodeNode(decodeStrings(JSON.parse(it.arg || "{}")), false).node;
+}
+
+function catalogue(now: number): HTMLElement {
+  const sections = [
+    entry(["btn", "iconBtn", "moreBtn"], tk("gallery.c.buttons"), tk("gallery.c.buttonsNote"), [
+      [tr("gallery.st.push"), btn(tr("gallery.d.save"))],
+      [tr("gallery.st.primary"), btn(tr("gallery.d.create"), { kind: "primary" })],
+      [tr("gallery.st.ghost"), btn(tr("gallery.d.cancel"), { kind: "ghost" })],
+      [tr("gallery.st.danger"), btn(tr("gallery.d.delete"), { kind: "danger" })],
+      [tr("gallery.st.withIcon"), btn(tr("gallery.d.run"), { icon: "play" })],
+      [tr("gallery.st.disabled"), btn(tr("gallery.d.save"), { disabled: true })],
+      [tr("gallery.st.iconBtn"), iconBtn("copy", tr("gallery.d.copy"))],
+      [tr("gallery.st.iconGhost"), iconBtn("folder-plus", tr("gallery.d.newGroup"), { ghost: true })],
+      [tr("gallery.st.iconPressed"), iconBtn("star", tr("gallery.d.pin"), { ghost: true, pressed: true })],
+      [tr("gallery.st.more"), moreBtn(tr("gallery.d.more"))],
+    ]),
+    entry(["dot", "tag"], tk("gallery.c.status"), tk("gallery.c.statusNote"),
+      DOTS.map(([s, k]): [string, HChild] => [tr(k), dot(s, tr(k))]).concat([
+        [tr("gallery.st.tagWord"), tag(tr("gallery.d.proxy"))],
+        [tr("gallery.st.tagMono"), tag("npx", { mono: true })],
+        [tr("gallery.st.tagBad"), tag(tr("gallery.d.error"), { tone: "bad" })],
+        [tr("gallery.st.tagWarn"), tag(tr("gallery.d.slow"), { tone: "warn" })],
+      ])),
+    entry(["sw"], tk("gallery.c.switch"), tk("gallery.c.switchNote"), [
+      [tr("gallery.st.on"), sw(true, tr("gallery.d.enabled"))],
+      [tr("gallery.st.off"), sw(false, tr("gallery.d.enabled"))],
+      [tr("gallery.st.disabled"), sw(true, tr("gallery.d.enabled"), { disabled: true })],
+    ]),
+    entry(["styleSelect"], tk("gallery.c.select"), tk("gallery.c.selectNote"), [
+      [tr("gallery.st.closed"), h("select", { aria: { label: tr("gallery.d.group") } }, CHOICES.map((c) => h("option", { value: c }, c)))],
+      [tr("gallery.st.longList"), h("select", { aria: { label: tr("gallery.d.schedule") } }, MANY.map((c) => h("option", { value: c }, c)))],
+      [tr("gallery.st.disabled"), h("select", { disabled: true, aria: { label: tr("gallery.d.group") } }, CHOICES.map((c) => h("option", { value: c }, c)))],
+    ]),
+    entry(["paneHead", "pageFoot", "inlineForm", "section", "card", "kvRow"], tk("gallery.c.page"), tk("gallery.c.pageNote"), [
+      [tr("gallery.st.contentHead"), paneHead({ desc: tr("gallery.d.headDesc"), actions: [iconBtn("folder-plus", tr("gallery.d.newGroup")), btn(tr("gallery.d.newItem"), { kind: "primary", icon: "plus" })] })],
+      [tr("gallery.st.resourceHead"), paneHead({ title: "orders-db", desc: tr("gallery.d.resourceDesc"), sub: [dot("up", tr("gallery.dot.up")), " ", h("code", null, "/mcp/orders-db")], actions: [btn(tr("gallery.d.disable")), moreBtn(tr("gallery.d.more"))] })],
+      [tr("gallery.st.inlineForm"), inlineForm(h("input", { placeholder: tr("gallery.d.label"), aria: { label: tr("gallery.d.label") } }), btn(tr("gallery.d.create"), { kind: "primary" }))],
+      [tr("gallery.st.foot"), pageFoot({ note: tr("gallery.d.footNote"), rev: "rev 14" })],
+      [tr("gallery.st.kvSans"), tr("gallery.d.kvSentence")],
+      [tr("gallery.st.kvMono"), h("code", null, "~/.swiss/gateway.json")],
+    ]),
+    entry(["row"], tk("gallery.c.rows"), tk("gallery.c.rowsNote"), [], card(
+      row({ lead: dot("up", tr("gallery.dot.up")), name: "orders-db", sub: [h("code", null, "5432 → 127.0.0.1:15432"), " · ", tr("gallery.d.via", { host: "bastion-eu" })] }),
+      row({ lead: dot("error", tr("gallery.dot.error")), name: "reports", err: tr("gallery.d.rowErr") }),
+      row({ name: "nightly-backup", cols: [{ v: "0 3 * * *", mono: true, title: tr("gallery.d.schedule") }, tr("gallery.d.lastRun")] }),
+      row({ lead: dot("up", tr("gallery.dot.up")), name: "grafana", sub: tr("gallery.d.rowSub"), toggle: sw(true, tr("gallery.d.enabled")), primary: btn(tr("gallery.d.copy"), { kind: "ghost", icon: "copy" }), more: moreBtn(tr("gallery.d.more")) }),
+      row({ lead: dot("off", tr("gallery.dot.off")), name: "load-test", sub: tr("gallery.d.rowMuted"), muted: true, cols: [tag(tr("gallery.d.revoked"))] }))),
+    entry(["sideRow"], tk("gallery.c.sideRows"), tk("gallery.c.sideRowsNote"), [], card(
+      groupNode({ name: "default", count: 3, density: "side", addTitle: tr("gallery.d.newIn", { g: "default" }), moreTitle: tr("gallery.d.groupActions") },
+        sideRow({ name: "orders-db", lead: dot("up", tr("gallery.dot.up")), tail: iconNode("pg", "pg"), selected: true }),
+        sideRow({ name: "cache", lead: dot("idle", tr("gallery.dot.idle")), tail: iconNode("redis", "redis") }),
+        sideRow({ name: "design-files", lead: dot("error", tr("gallery.dot.error")), tail: tag("http", { mono: true }) })).root)),
+    entry(["groupNode"], tk("gallery.c.groups"), tk("gallery.c.groupsNote"), [], [
+      groupNode({ name: "default", count: 2, density: "page", addTitle: tr("gallery.d.newIn", { g: "default" }), moreTitle: tr("gallery.d.groupActions") },
+        row({ name: "ci-runner", sub: h("code", null, "swk_…3f9a") }), row({ name: "grafana", sub: h("code", null, "swk_…c07e") })).root,
+      groupNode({ name: "archive", count: 5, density: "page", collapsed: true, addTitle: tr("gallery.d.newIn", { g: "archive" }), moreTitle: tr("gallery.d.groupActions") }).root,
+      groupNode({ name: "staging", count: 0, density: "page", emptyText: tr("gallery.d.emptyGroup"), addTitle: tr("gallery.d.newIn", { g: "staging" }), moreTitle: tr("gallery.d.groupActions") }).root,
+      groupNode({ name: "tables", label: tr("gallery.d.derived"), count: 2, density: "page", addTitle: null, moreTitle: null },
+        row({ name: "orders" }), row({ name: "order_lines" })).root,
+    ]),
+    entry(["seg"], tk("gallery.c.seg"), tk("gallery.c.segNote"), [
+      [tr("gallery.st.counts"), seg([{ id: "tools", label: tr("gallery.d.tools"), n: 4 }, { id: "resources", label: tr("gallery.d.resources"), n: 0 }, { id: "logs", label: tr("gallery.d.logs") }], "tools")],
+      [tr("gallery.st.second"), seg([{ id: "all", label: tr("gallery.d.all") }, { id: "errors", label: tr("gallery.d.errors"), n: 1 }], "errors")],
+    ]),
+    entry(["timeline"], tk("gallery.c.timeline"), tk("gallery.c.timelineNote"), [], timeline(sampleCalls(now), { now, open: new Set(["g3"]), body: callBody })),
+    entry(["jsonCodeNode"], tk("gallery.c.code"), tk("gallery.c.codeNote"), [], jsonCodeNode(decodeStrings(SAMPLE_JSON), false).node),
+    entry(["popupMenu", "sheet", "openFieldSheet"], tk("gallery.c.floating"), tk("gallery.c.floatingNote"), [
+      [tr("gallery.st.menu"), btn(tr("gallery.d.openMenu"), { icon: "ellipsis", data: { demo: "menu" } })],
+      [tr("gallery.st.sheet"), btn(tr("gallery.d.openSheet"), { data: { demo: "sheet" } })],
+      [tr("gallery.st.fieldSheet"), btn(tr("gallery.d.openFieldSheet"), { data: { demo: "field" } })],
+    ]),
+    entry(["emptyNode"], tk("gallery.c.empty"), tk("gallery.c.emptyNote"), [], card(emptyNode({ icon: "plug", title: tr("gallery.d.emptyTitle"), hint: tr("gallery.d.emptyHint"), action: tr("gallery.d.emptyAction") }))),
+    entry(["iconNode"], tk("gallery.c.icons"), tk("gallery.c.iconsNote"), icons.map((id): [string, HChild] => [id, iconNode(id)])),
+  ];
+  return h("div", { class: "shell" },
+    pane({ wide: true }, paneHead({ desc: tr("gallery.intro") }), sections));
+}
+
+/* --- the demos -------------------------------------------------------------------------------- */
+
+/** A table name - data, the same in every language. */
+const OPEN_TABLE = "orders";
+
+function openDemoMenu(anchor: HTMLElement): void {
+  const r = anchor.getBoundingClientRect();
+  popupMenu({ left: r.left, top: r.top, bottom: r.bottom, width: r.width }, [
+    { label: tr("gallery.d.menuHeading"), fn: () => {}, heading: true },
+    { label: OPEN_TABLE, fn: () => {}, icon: "table", dot: true },
+    { label: tr("gallery.d.menuPicked"), fn: () => {}, pick: true, on: true },
+    { label: tr("gallery.d.menuPick"), fn: () => {}, pick: true },
+    { label: tr("gallery.d.menuMore"), fn: () => {}, affordance: "chevron-right" },
+    { label: tr("gallery.d.menuRefused"), fn: () => {}, disabled: true, title: tr("gallery.d.menuRefusedWhy") },
+    { sep: true },
+    { label: tr("gallery.d.delete"), fn: () => {}, danger: true },
+  ]);
+}
+
+function openDemoSheet(): void {
+  const cancel = btn(tr("gallery.d.cancel"));
+  const ok = btn(tr("gallery.d.save"), { kind: "primary" });
+  showSheet(sheet({
+    title: tr("gallery.d.sheetTitle"),
+    body: card(kvRow(tr("gallery.d.label"), "ci-runner"), kvRow(tr("gallery.d.group"), "default"),
+      kvRow(tr("gallery.d.key"), h("code", null, "swk_…3f9a"))),
+    // .sheet-foot right-aligns its buttons; a .grow spacer is only for a leading secondary.
+    foot: [cancel, ok],
+  }));
+  cancel.onclick = closeSheet;
+  ok.onclick = closeSheet;
+}
+
+function openDemoFieldSheet(): void {
+  openFieldSheet({
+    title: tr("gallery.d.fieldTitle"),
+    // "taken" shows the inline error a caller's refusal paints; anything else succeeds.
+    submit: (v) => (v === "taken" ? tr("gallery.d.nameTaken") : true),
+  });
+}
+
+/* --- render and wire -------------------------------------------------------------------------- */
+
+function render(): void {
+  closeMenu();
+  if (sheetOpen()) closeSheet();
+  const now = Date.now();
+  const current = route();
+  const scene = SCENES.find((s) => "scene-" + s.id === current);
+  fill(appNode(), h("div", { class: "workbench" }, bar(current), scene ? scene.build(now) : catalogue(now)));
+  document.title = tr("gallery.docTitle");
+}
+
+async function flip(what: string): Promise<void> {
+  const next: View = { ...view };
+  if (what === "theme") next.theme = view.theme === "dark" ? "light" : "dark";
+  else if (what === "lang") next.lang = view.lang === "en" ? "zh-CN" : "en";
+  else if (what === "width") next.width = view.width === 1440 ? 960 : 1440;
+  await applyView(next);
+  writeView(next);
+  render();
+}
+
+function onClick(e: MouseEvent): void {
+  const t = e.target instanceof Element ? e.target : null;
+  if (!t) return;
+  const g = t.closest<HTMLElement>("[data-g]");
+  if (g && g.dataset.g) { void flip(g.dataset.g); return; }
+  const demo = t.closest<HTMLElement>("[data-demo]");
+  if (demo) {
+    // The opening click must not reach the document closer below.
+    e.stopPropagation();
+    if (demo.dataset.demo === "menu") openDemoMenu(demo);
+    else if (demo.dataset.demo === "sheet") openDemoSheet();
+    else if (demo.dataset.demo === "field") openDemoFieldSheet();
+    return;
+  }
+  const sum = t.closest(".tl-sum");
+  const item = sum && sum.closest<HTMLElement>(".tl-item");
+  const list = item && item.closest<HTMLElement>(".tl");
+  if (item && list && item.dataset.tlId) {
+    const arg = item.querySelector(".tl-arg");
+    timelineToggle(list, item.dataset.tlId, callBody({ id: "", at: 0, title: "", arg: arg ? arg.textContent || "{}" : "{}" }));
+  }
+}
+
+/** Boot: the sprite, the view, the shared mechanisms, the first paint. ui.html calls it; the
+ *  gallery test calls it on happy-dom. */
+export async function boot(): Promise<void> {
+  icons = await loadSprite().catch(() => []);
+  await applyView(readView());
+  writeView(view);
+  initSelects();
+  initSheet();
+  const app = appNode();
+  app.addEventListener("click", onClick);
+  // The panel's closers live in main.ts and connect.ts; the gallery has just these two.
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("menu");
+    if (menuOpen() && menu && !(e.target instanceof Node && menu.contains(e.target))) closeMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sheetOpen()) closeSheet();
+  });
+  window.addEventListener("hashchange", render);
+  render();
+}
+
+if (document.documentElement.dataset.page === "gallery") void boot();

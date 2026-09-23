@@ -202,10 +202,11 @@ async function loadDbView(): Promise<void> {
 
 function renderDbView(): void {
   const pane = $("pane");
-  // db-host turns the pane into a full-bleed workspace body (layout "workspace", docs/13
-  // D5 as revised): no pane padding, no measure — the explorer divides its own space.
-  // views/data.js takes the class back off on unmount so no other page inherits it.
-  pane.classList.add("db-host");
+  // "full" turns the pane into the library's full-bleed workspace body (ui.css .pane.full;
+  // docs/13 D5 as revised): no padding, no measure - the explorer divides its own space.
+  // db-host is this page's own hook for its child rules. views/data.js takes both back off
+  // on unmount so no other page inherits them.
+  pane.classList.add("db-host", "full");
   pane.textContent = "";
   // docs/37 R5: the skeleton is a node tree, and the pane carries ONE delegated listener per
   // event type (property-assigned, never addEventListener — a repaint re-assigns the same

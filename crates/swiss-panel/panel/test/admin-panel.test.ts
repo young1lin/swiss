@@ -88,7 +88,10 @@ describe("admin panel assets", () => {
       const path = queue.shift()!;
       if (bodies.has(path)) continue;
       bodies.set(path, readFileSync(join(jsDir, path), "utf8")); // a missing file throws here
-      for (const m of bodies.get(path)!.matchAll(/import\s*\{([^}]*)\}\s*from\s*"((?:\.{1,2})(?:\/[\w.-]+)+)"/g)) {
+      // `export { a } from "./x.js"` links like an import: the browser resolves x.js and
+      // refuses the module when x.js has no `a`. ui/index.js (docs/46) is all re-exports, so
+      // walking only `import {` would have left the library's barrel unchecked.
+      for (const m of bodies.get(path)!.matchAll(/(?:import|export)\s*\{([^}]*)\}\s*from\s*"((?:\.{1,2})(?:\/[\w.-]+)+)"/g)) {
         // Resolve the specifier like the browser would: "." stays in the importing
         // module's directory, ".." climbs one level, and intermediate segments are KEPT
         // ("./views/tokens.js" is views/tokens.js, not tokens.js).
@@ -106,10 +109,13 @@ describe("admin panel assets", () => {
         const tbody = readFileSync(join(jsDir, target), "utf8");
         const exported = new Set<string>();
         if (!target.startsWith("vendor/")) {
-          const exportMatch = tbody.match(/export\s*\{([^}]*)\}/);
-          for (const spec of (exportMatch?.[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
-            // `export { a as b }`: the importable name is the alias, b.
-            exported.add(spec.split(/\s+as\s+/).pop()!.trim());
+          // Every clause, not the first: a barrel has one per module, and reading only the
+          // first made ui/index.js look like it exported btn, iconBtn and moreBtn alone.
+          for (const clause of tbody.matchAll(/export\s*\{([^}]*)\}/g)) {
+            for (const spec of clause[1].split(",").map((s) => s.trim()).filter(Boolean)) {
+              // `export { a as b }`: the importable name is the alias, b.
+              exported.add(spec.split(/\s+as\s+/).pop()!.trim());
+            }
           }
           // Inline declarations are the other export dialect the tree actually uses
           // (terminal-core.js ships `export function configPutBody(...)` with no clause).

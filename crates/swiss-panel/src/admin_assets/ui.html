@@ -1,0 +1,55 @@
+<!--
+ * Copyright 2026 young1lin
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+-->
+
+<!doctype html>
+<!-- The UI library's gallery (docs/46 §2.6): every component in every state, then the scenes.
+     Not a user feature and not in the navigation - open /admin/ui.html. It links base.css and
+     ui.css only: a shape that needs views.css to look right is not in the library yet. The
+     sprite is not copied here; ui-gallery.js fetches index.html and moves its one sprite in. -->
+<html lang="en" data-page="gallery">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>swiss UI</title>
+  <link rel="icon" type="image/svg+xml" href="/admin/logo.svg">
+  <link rel="stylesheet" href="/admin/styles/base.css">
+  <link rel="stylesheet" href="/admin/styles/ui.css">
+  <script>
+    /* Resolve theme and language before the first paint, as index.html does - but the query
+       string (?theme=dark&lang=zh) wins, and nothing here writes the panel's own preference. */
+    (function () {
+      var q = new URLSearchParams(location.search);
+      var pref = q.get("theme");
+      if (pref !== "dark" && pref !== "light") {
+        try { pref = localStorage.getItem("swiss_theme") || "auto"; } catch (e) { pref = "auto"; }
+      }
+      var dark = pref === "dark" ||
+        (pref !== "light" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+      var lang = q.get("lang");
+      if (lang === "zh") document.documentElement.lang = "zh-CN";
+      else if (lang !== "en") {
+        try { if (localStorage.getItem("swiss_lang") === "zh-CN") document.documentElement.lang = "zh-CN"; } catch (e) { /* blocked */ }
+      }
+    })();
+  </script>
+</head>
+<body>
+<div id="app"></div>
+<div id="sheet" class="backdrop" hidden></div>
+<script type="module" src="/admin/js/ui-gallery.js"></script>
+</body>
+</html>

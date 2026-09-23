@@ -175,22 +175,23 @@ describe("the Data view survives unmount and remount", () => {
 });
 
 /* The workspace framing (docs/13 D5, as revised): renderDbView turns the pane into a
-   full-bleed body by adding .db-host, and views/data.js's unmount must take it back off —
+   full-bleed body by adding the library's .full (and the page's own hook,
+   .db-host), and views/data.js's unmount must take both back off —
    navigatePage always awaits unmount before the next page paints, so a class left behind
    would strip the NEXT page's padding and measure no matter which page it is. */
 describe("the workspace framing class is taken back off on unmount", () => {
-  it("mount adds db-host to the pane; unmount removes it — no page inherits it", async () => {
+  it("mount adds db-host and full to the pane; unmount removes both — no page inherits them", async () => {
     const pane = els.get("pane")!;
     const ops: string[] = [];
     pane.classList = {
-      add: (c: string) => ops.push("+" + c),
-      remove: (c: string) => ops.push("-" + c),
+      add: (...cs: string[]) => { cs.forEach((c) => ops.push("+" + c)); },
+      remove: (...cs: string[]) => { cs.forEach((c) => ops.push("-" + c)); },
       toggle: () => {},
       contains: () => false,
     };
     await view.mount();
     view.unmount();
-    expect(ops).toEqual(["+db-host", "-db-host"]);
+    expect(ops).toEqual(["+db-host", "+full", "-db-host", "-full"]);
   });
 });
 

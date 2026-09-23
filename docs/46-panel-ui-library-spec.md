@@ -302,7 +302,9 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
   timeline）、事件页（按天分组的 timeline，含 ×N 与失败）、空状态页。场景只许调用 `ui/` 与 §2.5 的组件，
   不许带自己的 CSS；地址 `/admin/ui.html#scene-<id>`。以后提一个新设计，就是加一个场景。
 - 门禁 G6：`ui/index.ts` 的每个导出组件必须在陈列页出现；场景模块不许写 `style=` 或自带类名以外的样式
-  （场景里 `h()` 的 `class` 只能是 `ui.css` 的类），否则套件失败。
+  （场景里 `h()` 的 `class` 只能是 `base.css` / `ui.css` 定义过的类——壳的 `.shell`、`.sidebar` 在 `base.css`；
+  手写 `ui.css` 已有的形状由 G5 管，陈列页与场景都是 0），否则套件失败。视图（明暗、中英、宽度）放在查询串
+  `?theme=&lang=&w=` 里，一个视图就是一个链接，切换不写面板自己的偏好。
 
 ## 3. 逐页整理（验收）
 
@@ -487,3 +489,14 @@ owner 要求"写 spec 后，review 一下，有问题就改"。初稿对照代�
 | （P1b-2 实测）下拉列表里按 Escape：旧代码先把 `openState` 置空再读 `openState.trig`，每次都抛错，键落到 main.ts 的 Escape 链，把下拉所在的 sheet 连同已填的内容一起关了 | 先取触发器再关；键在捕获阶段处理并停住（上文"键盘分层"） |
 | （P1b-2 实测）菜单、下拉列表、下拉触发器、sheet 里按方向键，main.ts 的侧栏方向键也会动，在 sheet 背后换了选中的 MCP；sheet 里按 `/` 会把焦点拽出对话框 | 各层停住自己的键；sheet 由 `initSheet` 设为模态，只放 Escape 出去 |
 | （P1b-2）菜单行的"有暂存改动"圆点 `.db-tab-dot` 只有 views.css 有规则，库画的类不在库的样式表里 | 规则搬进 ui.css，尺寸用 `--dot`；G4 views.css 字面值 253 → 251，G7 views.css 76412 → 76099 字节 |
+| （P1b-3）§2.6 写"场景里的 class 只能是 `ui.css` 的类"，但场景画的是整页，壳的 `.shell` / `.sidebar` / `.side-head` 在 `base.css` | G6 查画出来的每个类都在 `base.css` ∪ `ui.css` 里有规则；"不手写库的形状"交给 G5（数 `ui.css` 的类），陈列页与场景冻结为 0（§2.6 已改） |
+| （P1b-3）`pane()` 进库，但 `.pane` 的框（内边距、量度、`.wide`）在 views.css，只链 base + ui 的陈列页画不出页面 | 框搬进 ui.css；Data / Terminal 的通栏改成通用的 `.pane.full`（两页在 `db-host` / `term-host` 旁加上它）；G7 views.css 76099 → 74519 字节 |
+| （P1b-3）四个场景要用而库里没有：侧栏的一行、节标题下的一句说明 | 加 `sideRow()`（侧栏行的形状；`sidebar.ts` 的 `sideRowNode` 在 P2 换成它）、`section({ note })`；`pane()` 同上 |
+| （P1b-3 陈列页查出）`.dot` 不在 flex 里就是 0 宽；`iconBtn({ pressed })` 画得和没按下一样 | `.dot` 加 `inline-block`；`aria-pressed="true"` 取强调色与一层淡底 |
+| （P1b-3 陈列页查出）菜单行带图标或"有暂存改动"圆点时不是 flex：图标贴着字，圆点是有尺寸的内联 span、根本没有盒子——Data 标签栏溢出菜单从 docs/43 M1 起就这样，有暂存改动的行看上去是干净的 | `.menu button:has(> .ic, > .db-tab-dot)` 成为 flex 行（间距 `--s2`）；19997 上 Data 溢出菜单实测图标与字间距 8px、圆点 6×6 |
+| （P1b-3 陈列页查出）timeline 展开的正文放两块代码（参数与返回）时上下贴死，成一整块灰 | `.tl-body` 改成纵向 flex、间距 `--s2`（P2 的 Logs 用 timeline 时正是参数 + 返回两块） |
+| （P1b-3 陈列页查出）空状态说明 `max-width: 44ch`，一个中文字约 2ch：23 个字的中文说明第二行只剩一个字 | `.empty p` 加 `text-wrap: balance` |
+| （P1b-3）admin-panel 的"整张模块图能链接"测试只读目标文件的**第一个** `export {}`，也不跟 `export … from`：`ui/index.js` 在它眼里只导出 btn / iconBtn / moreBtn，桶文件本身的转出从没被查过 | 读全部导出子句；`export { a } from` 与 import 同样解析、同样查名字（改错一个转出名当场红） |
+| （P1b-3）G5 的基线 | 冻结在 35 个文件、623 个 `ui.css` 类名；只许降，降了同一个 commit 改表 |
+| （P1b-3，留给 P2）`.seg` 自带 `margin-bottom`——摆放写进了组件，放进 kv 行就多出一截 | 不在这步动：它改 MCP 详情的纵向节奏，P2 迁 MCP 时把间距交给页面的流 |
+| （P1b-3）陈列页字节：§1 估计 < 20 KB | 实数 ui.html 2,482 + ui-gallery.js 20,029 + ui-scenes.js 10,126 = 32,637 字节，另有中英各 166 个 `gallery.*` 键；超估计，P9 汇总时一并记 |

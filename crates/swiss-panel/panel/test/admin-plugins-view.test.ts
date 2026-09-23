@@ -257,8 +257,9 @@ describe("the Plugins page through mount", () => {
     expect($("pane").querySelector("[data-foot-text]")?.textContent).toBe("0 plugins · 0 on");
   });
 
-  it("views.css stops centring pane content", () => {
-    const css = readFileSync(join(here, "../..", "src", "admin_assets", "styles", "views.css"), "utf8");
-    expect(css).toContain("margin-inline: 0");
+  // The pane frame moved into the library with pane() (docs/46 P1b-3): ui.css owns it now.
+  it("the pane stops centring its content", () => {
+    const css = readFileSync(join(here, "../..", "src", "admin_assets", "styles", "ui.css"), "utf8");
+    expect(css).toMatch(/\.pane > \* \{[^}]*margin-inline: 0;/);
   });
 });

@@ -23,7 +23,7 @@
 import { describe, expect, it } from "vitest";
 import { sheet } from "./styles.js";
 
-const FROZEN_VIEWS_BYTES = 76099; // docs/46 P1b-2 (P1a-2: 76412)
+const FROZEN_VIEWS_BYTES = 74519; // docs/46 P1b-3: the pane frame moved to ui.css (P1b-2: 76099, P1a-2: 76412)
 
 export function lfBytes(css: string): number {
   return Buffer.byteLength(css.replace(/\r\n/g, "\n"), "utf8");

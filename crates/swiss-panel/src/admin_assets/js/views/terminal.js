@@ -1034,9 +1034,10 @@ async function closeSession(id        ) {
 function render() {
   const pane = $("pane");
   if (!pane) return;
-  // term-host turns the pane into the definite-height flex column the page fills exactly
-  // (views.css); unmount() takes it back off so no other page inherits the layout.
-  pane.classList.add("term-host");
+  // "full" turns the pane into the library's workspace body, the definite-height flex column
+  // the page fills exactly (ui.css .pane.full); term-host is this page's hook for its child
+  // rule (views.css). unmount() takes both back off so no other page inherits the layout.
+  pane.classList.add("term-host", "full");
   const pick = targetRows(targets);
   fill(pane,
     h("div", { class: "term-page" },
@@ -1206,7 +1207,7 @@ export function countText() {
 export function unmount() {
   epoch += 1;
   const pane = $("pane");
-  if (pane) pane.classList.remove("term-host");
+  if (pane) pane.classList.remove("term-host", "full");
   if (fitTimer) { clearTimeout(fitTimer); fitTimer = null; }
   window.removeEventListener("resize", scheduleFit);
   document.removeEventListener("keydown", pageFindShortcut, true);
