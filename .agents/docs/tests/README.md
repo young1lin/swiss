@@ -33,7 +33,7 @@ let registry = Registry::new(3_600_000, calls.clone());
 let store = Arc::new(ManagedStore::open_at(scratch.join("managed.json")));
 let adapter = make_adapter(&echo_def(), "echo", &calls).expect("echo adapter");
 registry.register("echo", Source::Config, echo_def(), adapter).expect("register");
-let ctx = AppContext::new(registry, tokens, store, calls, "MCP_GATEWAY_TOKEN", 19998);
+let ctx = AppContext::new(registry, tokens, store, calls, "SWISS_TOKEN", 19998);
 let app = build_app(ctx, None);
 
 // Request: patch in a loopback Host header (the loopback guard reads it before routing) → oneshot → read body
@@ -46,14 +46,14 @@ assert_eq!(res.status(), StatusCode::OK);
 
 ## 4. Shared Helpers Quick Reference (the existing ones — reuse before building new)
 
-- **tests/adminapi.rs**: `sandbox()` (a one-shot OnceLock setting MCP_GATEWAY_HOME + MASTER_KEY), `Harness` (setup/register/register_fixture/get/post/put/delete/send/mcp/names), `Fixture` (a Rust stand-in for the Node stdio-echo.mjs: an echo tool + a single resource + ping + rename), `traffic_lock()`/`VAULT_LOCK` (process-level global-state mutexes), `row_named`/`field_of`/`json_req`/`rest_def`.
+- **tests/adminapi.rs**: `sandbox()` (a one-shot OnceLock setting SWISS_HOME + MASTER_KEY), `Harness` (setup/register/register_fixture/get/post/put/delete/send/mcp/names), `Fixture` (a Rust stand-in for the Node stdio-echo.mjs: an echo tool + a single resource + ping + rename), `traffic_lock()`/`VAULT_LOCK` (process-level global-state mutexes), `row_named`/`field_of`/`json_req`/`rest_def`.
 - **tests/plugin_host.rs**: `full_app(tag, raw)` (BuiltinDeps fully assembled), `full_app_file_backed` (seals jobs.json, then boots; uses "gone/..." to force a persistence failure), `await_run(app, run_id)` (20ms polling to a terminal state), `echo_input`/`legacy_echo` (cross-platform cmd/sh spellings), `plugin_row`.
 - **tests/terminal_ws.rs**: `rig(tag, config)` (full assembly + tunnels disabled + FakeShells taking the shell seat + a real temp port), `recv` (5s timeout), `wait_detached`.
 - **Crate level** (`#[cfg(any(test, feature = "test-utils"))]`): `swiss_core::paths::test_home()` + `DATA_DIR_LOCK` (serializes data-dir writes), `swiss_mcp::calls::test_log()`, `random_hex`, jobs `clock.rs testing` (an injectable fake Clock, synthesizing DST), tunnels `SshLike`/`FakeConn` (counting + fault injection, zero sshd).
 
 ## 5. Environment and Time Iron Rules
 
-1. **Every test binary sets MCP_GATEWAY_MASTER_KEY** (deterministic bytes, e.g. "ab"×32; a one-shot unsafe set_var inside a OnceLock, the comment arguing "before any read") — the suite never spawns the keystore, so CI can run.
+1. **Every test binary sets SWISS_MASTER_KEY** (deterministic bytes, e.g. "ab"×32; a one-shot unsafe set_var inside a OnceLock, the comment arguing "before any read") — the suite never spawns the keystore, so CI can run.
 2. **Temp home**: `temp_dir().join(format!("swiss-<tag>-{}", random_hex(8)))`; no tempfile crate (ADR-007).
 3. **Time**: ticket/idle/stall use `#[tokio::test(start_paused = true)]` + `advance()` (gotcha: the paused clock creeps forward 1s per park; terminal_ws.rs:588-594 has the full countermeasure); jobs does not use tokio time, it goes through Clock injection.
 4. **env changes**: only inside an integration binary that owns the process (the env_precedence.rs pattern), with restore() putting things back.

@@ -51,7 +51,7 @@ docs/08 第 36–37 行写着"**DB tests self-skip without credentials.** `direc
 - **进程内的远端 MCP 已有先例**：`tests/http_adapter.rs:54-84` 用 axum 在 `127.0.0.1:0` 起一个 echo
   远端，`HttpAdapter` 打它——http/rest 两种接法的集成测试模式已经存在，本文不重造。
 - **网关的进程内启动已有先例**：`tests/adminapi.rs:50-112`——`sandbox()` 造隔离的
-  `MCP_GATEWAY_HOME` + 固定 master key，`setup()` 用 `Registry::new` / `ManagedStore::open_at` /
+  `SWISS_HOME` + 固定 master key，`setup()` 用 `Registry::new` / `ManagedStore::open_at` /
   `AppContext::new` / `build_app` 拼出完整路由。根 crate 是 lib（`src/lib.rs:22-29` 导出 `app`、
   `adminapi` 等），别的 crate 能 dev-depend 它。
 - **真实 rmcp client 已在 dev-deps**：根 `Cargo.toml` `[dev-dependencies]` 的 `rmcp` 带
@@ -321,8 +321,8 @@ prepared-statement 元数据把无别名结果名大写，行键恒不匹配，F
 
 副本落在 `tests/it/gateway.rs`（不在 src/——它只服务测试二进制）：`boot(defs: Vec<(&str, Value)>) ->
 Gateway`，在 `127.0.0.1:0` 上真监听（不是 `tower::oneshot`——rmcp client 要一个 URL），返回 `port`/
-`base_url`、`token`、`registry`、`store`。副本沿用 adminapi 的两行隔离（`MCP_GATEWAY_HOME` 指临时目录 +
-`MCP_GATEWAY_MASTER_KEY` 钉成固定 32 字节，token 固定），外加两条 daemon 启动才有的行为：
+`base_url`、`token`、`registry`、`store`。副本沿用 adminapi 的两行隔离（`SWISS_HOME` 指临时目录 +
+`SWISS_MASTER_KEY` 钉成固定 32 字节，token 固定），外加两条 daemon 启动才有的行为：
 `Registry::new(60_000, calls)` 的健康探测，与 `registry.start_timer()` 的 **1 s idle-reap sweeper**——
 第一版 boot 漏了它，懒 proc 的子进程永远不会被收回，这个坑是 L3 组自己抓住的。**根 crate 的
 `tests/adminapi.rs` 不动**；两处漂移由 I5 的一条对照测试守（`gateway_rows_match_the_adminapi_contract`：

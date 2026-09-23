@@ -123,7 +123,7 @@ mod tests {
     /// State with a secret in it, so a leak into the file bytes is visible.
     fn secretive() -> Value {
         json!({
-            "tokenEnv": "MCP_GATEWAY_TOKEN",
+            "tokenEnv": "SWISS_TOKEN",
             "servers": { "db": { "type": "mysql", "password": "hunter2-in-the-clear" } },
         })
     }

@@ -132,10 +132,10 @@ The detailed per-view notes survive in the sibling files and are NOT duplicated 
 | --- | --- | --- |
 | `swiss_theme` | Theme preference (default auto) | util.js:4;index.html:17 |
 | `swiss_lang` | UI language (absent = English) | i18n.js:36 |
-| `mcp_gateway_collapsed` | Sidebar group collapse | util.js:1 |
-| `mcp_gateway_tun_collapsed` | Tunnel group collapse (independent of the sidebar) | util.js:2 |
-| `mcp_gateway_token_id` | Which token the copied commands embed | util.js:3 |
-| `mcp_gateway_db_sql_history` | SQL history (≤50) | data-view.js:18-19 |
+| `swiss.collapsed` | Sidebar group collapse | util.js:1 |
+| `swiss.tun_collapsed` | Tunnel group collapse (independent of the sidebar) | util.js:2 |
+| `swiss.tokenId` | Which token the copied commands embed | util.js:3 |
+| `swiss.dbSqlHistory` | SQL history (≤50) | data-view.js:18-19 |
 | `swiss.terminal.fontSize` | Terminal font size | views/terminal.js:44 |
 | `swiss.lastPage` | Per-plugin last visited page | last-page.js:31 |
 

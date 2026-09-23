@@ -20,7 +20,7 @@ docs/21 用五个成熟参照逐条核对了 swiss Data 模块,35 条差距定�
 
 ## 1 通用约束(每个 W 项适用,不逐条重复)
 
-1. **面板源在 Node 仓**:`../local-mcp-gateway/src/admin/` 先改、整树拷回 `crates/swiss-panel/src/admin_assets/`;`the_tree_is_byte_for_byte_the_node_builds` 必须过。禁止直接改 admin_assets。
+1. **面板源在 Node 仓**:`../node-original/src/admin/` 先改、整树拷回 `crates/swiss-panel/src/admin_assets/`;`the_tree_is_byte_for_byte_the_node_builds` 必须过。禁止直接改 admin_assets。
 2. **测试**:后端行为变化带 Rust 测试(失败于前、通过于后,集成测试走 `tower::ServiceExt::oneshot`);面板纯函数沿用导出习惯(先例:`dbNextSort` 的 "Pure so the cycle can be tested without a DOM")并在 Node 仓补用例;交互项验收 = 19998 实测清单(swiss-live-verify / agent-browser,亮暗双主题 + 1440/900 两宽度)。
 3. **门禁**(每项提交前):`cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo tree -d`。
 4. **提交粒度**:一个 W 项一个 commit,标题带 `(docs/22 Wx.y)`;批次内顺序即依赖顺序(§11)。
@@ -127,7 +127,7 @@ docs/21 用五个成熟参照逐条核对了 swiss Data 模块,35 条差距定�
 
 ### W2.1 列宽拖调 + 列隐藏
 参照:dbgate `packages/datalib/src/GridConfig.ts:18-36` + `packages/web/src/utility/useGridConfig.ts:7-34`。
-改动:per-connection 单对象存 localStorage(`mcp_gateway_db_grid_<conn>_<schema.table>`):`{widths:{},hidden:[]}`;表头右缘 4px 拖手柄调宽(inline width);表头 `⋯` 菜单 "Hide column",隐藏列后有恢复入口("Show all columns";全部隐藏时显示空态提示行)。
+改动:per-connection 单对象存 localStorage(`swiss.dbGrid.<conn>_<schema.table>`):`{widths:{},hidden:[]}`;表头右缘 4px 拖手柄调宽(inline width);表头 `⋯` 菜单 "Hide column",隐藏列后有恢复入口("Show all columns";全部隐藏时显示空态提示行)。
 验收:19998:拖宽与隐藏刷新后仍在;恢复入口可达;900px 宽度表头不溢出。
 
 ### W2.2 键盘导航 + TSV 粘贴 + 行复制
@@ -224,7 +224,7 @@ docs/21 用五个成熟参照逐条核对了 swiss Data 模块,35 条差距定�
 
 ### W5.4 收藏查询 + 轻量格式化
 参照:cloudbeaver 脚本资源化(只取"可保存"这一步,不做服务端存储)。
-改动:History 下拉旁 `★`(`aria-label` "Save to favorites");localStorage `mcp_gateway_db_favorites`(上限 50,名 = 首行截断);下拉分组 History / Favorites。"Format" 按钮:纯函数 `dbFormatSql` 在现有词法上做缩进(子句换行 + 两空格缩进;不动大小写、不解析语义)。
+改动:History 下拉旁 `★`(`aria-label` "Save to favorites");localStorage `swiss.dbFavorites`(上限 50,名 = 首行截断);下拉分组 History / Favorites。"Format" 按钮:纯函数 `dbFormatSql` 在现有词法上做缩进(子句换行 + 两空格缩进;不动大小写、不解析语义)。
 验收:纯函数用例(格式化仅改变空白);19998:保存/召回/格式化往返,运行结果与格式化前一致。
 
 ---

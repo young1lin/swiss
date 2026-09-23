@@ -53,7 +53,7 @@ Do not reflexively run the full suite. Pick the smallest command that can go red
 
 - **Sealing tests never spawn an OS keystore helper.** Unit tests inject key material directly;
   any test that boots the real key path pins the env override instead — `SWISS_MASTER_KEY` (new
-  name, checked first) or `MCP_GATEWAY_MASTER_KEY` — which bypasses every OS key source
+  name, checked first) or `SWISS_MASTER_KEY` — which bypasses every OS key source
   (`crates/swiss-core/src/secure/key.rs`).
 - **Real-engine DB tests live behind gate 2** (`swiss-it`, feature `it`): they fail — never
   self-skip — when no engine is reachable (docs/44). The Node-era self-skipping suites were never

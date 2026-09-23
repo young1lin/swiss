@@ -75,28 +75,18 @@ const grid = await import(
 // holding dragged widths and hidden columns (dbgate's useGridConfig precedent, one object
 // per grid, never one key per value).
 describe("grid config storage", () => {
-  it("keys on connection and schema-qualified table (fix-plan #17: the swiss.dbGrid.* namespace)", () => {
+  it("keys on connection and schema-qualified table, under the swiss.dbGrid.* namespace", () => {
     expect(grid.dbGridConfigKey("shop-mysql", null, "users"))
       .toBe("swiss.dbGrid.shop-mysql_users");
     expect(grid.dbGridConfigKey("shop-pg", "public", "events"))
       .toBe("swiss.dbGrid.shop-pg_public.events");
   });
 
-  it("fix-plan #17: a first read migrates an old mcp_gateway_db_grid_* entry and deletes the old key", () => {
-    store.clear();
-    store.set("mcp_gateway_db_grid_im-mysql_users", '{"widths":{"id":120},"hidden":["note"]}');
-    const key = grid.dbGridConfigKey("shop-mysql", null, "users");
-    const cfg = grid.dbGridConfigLoad(key);
-    expect(cfg).toEqual({ widths: { id: 120 }, hidden: ["note"] });
-    expect(store.has(key), "the value moved to the new key").toBe(true);
-    expect(store.has("mcp_gateway_db_grid_im-mysql_users"), "the old key is gone").toBe(false);
-  });
-
-  it("fix-plan #17: a fresh install writes only the new key", () => {
+  it("writes only swiss.* keys, never anything else", () => {
     store.clear();
     const key = grid.dbGridConfigKey("shop-pg", "public", "events");
     grid.dbGridConfigSave(key, { widths: { a: 100 }, hidden: [] });
-    expect(Array.from(store.keys()).some((k) => k.startsWith("mcp_gateway_"))).toBe(false);
+    expect(Array.from(store.keys()).every((k) => k.startsWith("swiss."))).toBe(true);
     expect(store.has(key)).toBe(true);
   });
 

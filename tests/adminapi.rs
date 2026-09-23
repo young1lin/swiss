@@ -104,7 +104,7 @@ fn setup() -> Harness {
         store.clone(),
         calls.clone(),
         traffic.clone(),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19999,
     );
     Harness {
@@ -699,7 +699,7 @@ async fn exposes_the_tokens_env_var_name_never_the_token() {
     let h = setup();
     let (status, body) = h.get("/api/info").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["tokenEnv"], json!("MCP_GATEWAY_TOKEN"));
+    assert_eq!(body["tokenEnv"], json!("SWISS_TOKEN"));
     assert!(!body.to_string().contains(TOKEN), "{body}");
     // The build stamp (docs/16 H3) — present, and never a secret either.
     assert_eq!(body["build"]["hash"], json!(env!("SWISS_GIT_HASH")));
@@ -2259,7 +2259,7 @@ fn setup_with_tunnels() -> (
         store.clone(),
         calls.clone(),
         traffic.clone(),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19999,
     );
     swiss_tunnels::tunnel::register_tunnel_scopes(&ctx.group_scopes, &tun);
@@ -2430,7 +2430,7 @@ fn setup_with_remote() -> (Harness, Arc<swiss_remote::RemoteSystem>) {
         store.clone(),
         calls.clone(),
         traffic.clone(),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19999,
     );
     swiss_remote::register_remote_scopes(&ctx.group_scopes, &system);
@@ -2626,7 +2626,7 @@ async fn removes_the_entry_from_gateway_config_json_and_the_runtime_registry() {
         &config,
         &json!({
             "port": 19999,
-            "tokenEnv": "MCP_GATEWAY_TOKEN",
+            "tokenEnv": "SWISS_TOKEN",
             "servers": {
                 "doomed": { "type": "echo" },
                 "keeper": { "type": "echo", "password": "${KEEPER_PASS}" },
@@ -3232,7 +3232,7 @@ fn setup_with_jobs() -> (Harness, Arc<swiss_jobs::jobs::JobSystem>) {
         store.clone(),
         calls.clone(),
         traffic.clone(),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19999,
     );
     swiss_jobs::jobs::groups::register_job_scopes(&ctx.group_scopes, &jobs);

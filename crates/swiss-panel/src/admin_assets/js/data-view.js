@@ -56,7 +56,7 @@ import { locale, tr, trn } from "./i18n.js";
    ================================================================================================ */
 
 const DB_PAGE_SIZES = [10, 20, 50, 100, 200, 500];
-const DB_HISTORY_KEY = "swiss.dbSqlHistory"; // fix-plan #17: was mcp_gateway_db_sql_history; data-sql migrates on read
+const DB_HISTORY_KEY = "swiss.dbSqlHistory";
 const DB_HISTORY_MAX = 50;
 
 

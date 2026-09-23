@@ -134,34 +134,9 @@ pub fn resolve_def_checked(def: &ServerDef) -> Result<ServerDef, String> {
 /// The token env var this build seeds into new configs.
 pub const TOKEN_ENV: &str = "SWISS_TOKEN";
 
-/// The Node-era token env var, still honored so pre-rename shells and sealed stores keep
-/// working.
-pub const TOKEN_ENV_LEGACY: &str = "MCP_GATEWAY_TOKEN";
-
-/// The other well-known token env var, when `name` is one of the two. The two names are a
-/// pair: a config from one era may point at a token pinned under the other era's name, and the
-/// auth check, `swiss creds` and the panel must all resolve that the same way, from this one
-/// place. A config naming its own variable gets no pairing — it must not quietly authenticate
-/// with somebody else's secret.
-pub fn token_pair_other(name: &str) -> Option<&'static str> {
-    match name {
-        TOKEN_ENV => Some(TOKEN_ENV_LEGACY),
-        TOKEN_ENV_LEGACY => Some(TOKEN_ENV),
-        _ => None,
-    }
-}
-
-/// The bearer token for a configured `tokenEnv` name: the name itself, then its well-known
-/// pair partner when the name is one of the two eras' variables (see `token_pair_other`).
-/// An empty value counts as missing, exactly as a direct lookup treated it before the pair
-/// existed.
+/// The bearer token for a configured `tokenEnv` name. An empty value counts as missing.
 fn token_lookup(token_env: &str) -> Option<String> {
-    if let Some(t) = env_lookup(token_env).filter(|t| !t.is_empty()) {
-        return Some(t);
-    }
-    token_pair_other(token_env)
-        .and_then(env_lookup)
-        .filter(|t| !t.is_empty())
+    env_lookup(token_env).filter(|t| !t.is_empty())
 }
 
 /// A missing port must not reach the listener as "pick any free port" — the gateway would come
@@ -368,7 +343,7 @@ mod tests {
         let dir = temp_dir("removal");
         let p = write_cfg(
             &dir,
-            json!({ "tokenEnv": "MCP_GATEWAY_TOKEN", "servers": { "a": { "type": "http" } } }),
+            json!({ "tokenEnv": "SWISS_TOKEN", "servers": { "a": { "type": "http" } } }),
         );
         // Absent name and absent file: NotFound, not a failure.
         assert!(matches!(remove_config_server("nope", &p), ConfigRemoval::NotFound));
@@ -391,7 +366,7 @@ mod tests {
         let dir = temp_dir("removal-ro");
         let p = write_cfg(
             &dir,
-            json!({ "tokenEnv": "MCP_GATEWAY_TOKEN", "servers": { "a": { "type": "http" } } }),
+            json!({ "tokenEnv": "SWISS_TOKEN", "servers": { "a": { "type": "http" } } }),
         );
         // A read-only target makes the atomic rename give up: the entry is present, the write
         // is refused, and the answer must say WriteFailed — never "already gone".
@@ -451,7 +426,7 @@ mod tests {
         let dir = temp_dir("scalar");
         let p = write_cfg(
             &dir,
-            json!({ "tokenEnv": "MCP_GATEWAY_TOKEN", "servers": "nope" }),
+            json!({ "tokenEnv": "SWISS_TOKEN", "servers": "nope" }),
         );
         let err = load_config(&p).unwrap_err();
         assert!(err.contains("servers"), "{err}");
@@ -463,7 +438,7 @@ mod tests {
         let dir = temp_dir("host");
         let p = write_cfg(
             &dir,
-            json!({ "tokenEnv": "MCP_GATEWAY_TOKEN", "host": "0.0.0.0", "servers": {} }),
+            json!({ "tokenEnv": "SWISS_TOKEN", "host": "0.0.0.0", "servers": {} }),
         );
         let err = load_config(&p).unwrap_err();
         assert!(err.contains("not local"), "{err}");
@@ -482,52 +457,29 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// Serialises the tests that write the two well-known token names: unlike the unique
-    /// SWISS_TOK_V-style vars elsewhere, these are shared, and set/remove from two tests at
-    /// once makes each read the other's value.
-    static WELL_KNOWN_TOKEN_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn the_well_known_pair_maps_both_ways() {
-        // The pair rule is what every reader (serve, CLI, panel) routes through; a custom name
-        // is never a member.
-        assert_eq!(token_pair_other(TOKEN_ENV), Some(TOKEN_ENV_LEGACY));
-        assert_eq!(token_pair_other(TOKEN_ENV_LEGACY), Some(TOKEN_ENV));
-        assert_eq!(token_pair_other("MINE_TOKEN"), None);
-    }
-
-    #[test]
-    fn a_present_primary_token_wins_over_its_pair() {
-        // When the config's own name holds a value, the pair partner is not consulted. Only
-        // the process-env legs are asserted here: the absent-primary fallback cannot be
-        // observed in this process — load_config injects the machine's real sealed store into
-        // a sticky overlay, and this machine's store legitimately holds MCP_GATEWAY_TOKEN.
-        // That fallback leg is covered end-to-end by the daemon tests' hermetic scratch home.
-        let _well_known = WELL_KNOWN_TOKEN_TESTS
-            .lock()
-            .expect("well-known token test lock");
-        for (named, held) in [(TOKEN_ENV, TOKEN_ENV_LEGACY), (TOKEN_ENV_LEGACY, TOKEN_ENV)] {
-            set_env(named, "primary-value");
-            set_env(held, "pair-value");
-            assert_eq!(token_lookup(named).as_deref(), Some("primary-value"));
-            remove_env(named);
-            remove_env(held);
-        }
-    }
-
     #[test]
     fn a_custom_token_env_name_gets_no_fallback() {
-        // Only the two well-known names are a pair; a config naming its own variable must not
-        // quietly authenticate with a token pinned under either of them.
-        let _well_known = WELL_KNOWN_TOKEN_TESTS
-            .lock()
-            .expect("well-known token test lock");
+        // Only the name the config carries resolves; a config naming its own variable must
+        // not quietly authenticate with a token pinned under the well-known one.
         let dir = temp_dir("token-custom");
         let p = write_cfg(&dir, json!({ "tokenEnv": "MINE_TOKEN", "servers": {} }));
         set_env(TOKEN_ENV, "not-mine");
         let err = load_config(&p).unwrap_err();
         assert!(err.contains("MINE_TOKEN"), "{err}");
         remove_env(TOKEN_ENV);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_node_era_token_name_no_longer_pins() {
+        // The pairing window closed with the rename: a leftover MCP_GATEWAY_TOKEN pin is
+        // inert, and the config's own name is the only resolution.
+        let dir = temp_dir("token-legacy");
+        let p = write_cfg(&dir, json!({ "tokenEnv": TOKEN_ENV, "servers": {} }));
+        set_env("MCP_GATEWAY_TOKEN", "legacy-pin");
+        let err = load_config(&p).unwrap_err();
+        assert!(err.contains(TOKEN_ENV), "{err}");
+        remove_env("MCP_GATEWAY_TOKEN");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

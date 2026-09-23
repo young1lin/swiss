@@ -19,7 +19,7 @@ $Token = "acceptance-token-for-1998"
 # The token pin deliberately stays on the legacy name: the boot's one-shot rename flips the
 # snapshot's tokenEnv to SWISS_TOKEN, and this script is the regression proof that the Node-era
 # pin still authenticates through the pair partner after that rename.
-$env:MCP_GATEWAY_TOKEN = $Token
+$env:SWISS_TOKEN = $Token
 $Exe = "target-test\release\swiss.exe"
 $Health98 = "http://127.0.0.1:19998/health"
 

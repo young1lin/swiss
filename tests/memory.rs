@@ -112,7 +112,7 @@ async fn app_with_echo() -> axum::Router {
         store,
         calls,
         Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19998,
     );
     build_app(ctx, None)

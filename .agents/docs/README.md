@@ -11,7 +11,7 @@
 **swiss** — the developer's pocket multitool: one very-low-memory Rust process (a single static exe) that hangs every
 small tool AI programming needs (MCP gateway, database browsing, SSH tunnels, scheduled jobs, web terminal, process
 management) behind one loopback port, `127.0.0.1:19999`, and one admin panel. It is the port and plugin-shaped
-refactor of the Node project local-mcp-gateway: the same on-disk formats (sealed state files, gateway.config.json,
+refactor of the Node project node-original: the same on-disk formats (sealed state files, gateway.config.json,
 tunnels.json); for the workload where the Node build measured 113.8 MB RSS, the Rust side runs at
 22.4 MB (8.6 MB private bytes).
 
@@ -21,7 +21,7 @@ tunnels.json); for the workload where the Node build measured 113.8 MB RSS, the 
 | --- | --- |
 | Listening | 127.0.0.1:19999 (loopback is the security boundary, not a default; a non-loopback host is refused at load time) |
 | Artifact | a single self-contained swiss.exe (current_thread Tokio runtime, opt-level z + fat LTO) |
-| Auth | **The panel and /api/* are entirely unauthenticated**: the loopback guard (any non-local Host/Origin gets 403) is the entire security boundary ("The gate: there is none"); the Bearer token belongs to MCP endpoints only (the tokenEnv-named variable wins; SWISS_TOKEN / the legacy name MCP_GATEWAY_TOKEN both honored) |
+| Auth | **The panel and /api/* are entirely unauthenticated**: the loopback guard (any non-local Host/Origin gets 403) is the entire security boundary ("The gate: there is none"); the Bearer token belongs to MCP endpoints only (the tokenEnv-named variable wins; SWISS_TOKEN / the legacy name SWISS_TOKEN both honored) |
 | Credentials | config stores only ${ENV_VAR} or secret:// vault references, expanded only at adapter build time; the panel round-trips sentinel masks; vault values go in but never out |
 | State files | AES-256-GCM + HKDF-derived per-file keys; master.key through DPAPI (each build opens the other's files; format frozen) |
 | Panel | crates/swiss-panel/panel/src/*.ts with the emit committed under src/admin_assets/js (ADR-024); gate: npm run check in crates/swiss-panel/panel/; a SHA-1 version stamp drives /api/info self-reload |
@@ -80,7 +80,7 @@ swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-
 - **Stale comments**: mem.rs says /api/mem which is actually /api/memory; plugins/mod.rs points at src/host, which no longer exists; the pg_browser.rs module header contradicts the implementation; the panel's data-view.js header says "default 500" but it is 50; the util.js view-list comment lags behind.
 - **Transitional states / dual philosophies**: traffic.rs is still a process-level OnceLock (CallLog is already instantiated); credential resolution has lenient and strict resolve_def coexisting; process.legacy-command's lenient refs vs process.exec's strict (Node compatibility preserved); tunnels replicates JS Number() leniency vs jobs' native-Rust strictness — ported vs native, two philosophies, each declared in comments.
 - **Deliberate asymmetries**: /api/tokens/{id}/secret can be read back in plaintext (tokens and the vault have different threat models); CLI open uses cmd /c start (the platform default opener); local terminal sessions are uncapped (the user's call, deviation on record); a recording failure only warns and does not block the session.
-- **Panel leftovers**: the V2 Unicode-glyph ban is not fully covered (⚙/✕/↺/↑↓ remain); the V5 red-button-into-menu rule misses Tokens Revoke / Secrets Delete; three renames with three interactions; two generations of localStorage key names coexist (mcp_gateway_* and swiss_*).
+- **Panel leftovers**: the V2 Unicode-glyph ban is not fully covered (⚙/✕/↺/↑↓ remain); the V5 red-button-into-menu rule misses Tokens Revoke / Secrets Delete; three renames with three interactions; two generations of localStorage key names coexist (swiss.* and swiss_*).
 - **Re-audit deltas (through 6b84f26)**: stale comments contradicting the ordinary-group model on the panel side (util.js:13, base.css:334-337 — fixable only via the Node repo) and on the Rust side (adminapi.rs still says members "return to the default group"; recorded as host.md inconsistency item 7); the grouped lists diverge at the edges — only the MCP sidebar got drag grips + menu moves, and the sidebar's delete confirm names the first remaining group and refuses the last delete while Tunnels still names the literal default with no panel-side guard (tunnels.js:92-97).
 
 ## Style and Conventions Entry Point
