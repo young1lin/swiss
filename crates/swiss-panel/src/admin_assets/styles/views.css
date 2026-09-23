@@ -14,18 +14,6 @@
  * limitations under the License.
  */
 
-    /* --- detail pane --------------------------------------------------------------------------- */
-    .pane { flex: 1; overflow-y: auto; padding: var(--s5) var(--s8) var(--s8); }
-    /* The measure. Every top-level block in the pane is capped, so one tool card reads as a card and
-       not as a stripe across a 2560px monitor. `.wide` is the opt-out for content whose rows are
-       genuinely wide (the call log, the traffic log, the tunnel table) — still capped, just further. */
-    /* Left-hugging (docs/18 V4). Centring was the first attempt, and with the sidebar already
-       pushing the pane off-centre the auto margins read as two blank gutters with the content
-       floating between them. The cap stays — only the centring goes; emptiness belongs on the
-       right, where it reads as room rather than as imbalance. */
-    .pane > * { max-width: var(--measure); margin-inline: 0; }
-    .pane > .wide { max-width: var(--measure-wide); }
-    .pane > .empty { max-width: none; }
 
     /* A tool's argument names: one dimmed line under the description, truncated, never wrapped.
        They were a wrapping row of filled chips, which cost every row about 30px and read as loud as
@@ -276,15 +264,11 @@
 
     /* --- data view (the DBeaver-style browser) --------------------------------------------------- */
     .pane > .db-root { max-width: none; }
-    /* A workspace body (docs/13 D5 as revised): the pane drops its padding and measure so
-       the explorer consumes everything under the context bar — but the boundary it used to
-       draw as one giant enclosing rounded card is gone too. The shell already provides the
-       application boundary; the two halves now divide STRUCTURALLY — the browser column
-       wears the resource sidebar's own surface and hairline, the work area sits on the
-       canvas — the same vocabulary the shell's own sidebar uses, not a second application
-       embedded inside the panel. (docs/18 V4's "one surface" stays true at the row level:
-       list and value area are still halves of one plane, split by a hairline.) */
-    .pane.db-host { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+    /* A workspace body (.pane.full, ui.css; docs/13 D5 as revised): no padding, no measure,
+       the explorer consumes everything under the context bar. The boundary it used to draw as
+       one giant enclosing card is gone too - the browser column wears the sidebar's own surface
+       and hairline, the work area sits on the canvas: the shell's vocabulary, not a second
+       application embedded in the panel. */
     .pane.db-host > .db-root { flex: 1; min-height: 0; }
     .db-root { display: flex; height: 100%; min-height: 420px; }
     .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; background: var(--sidebar); border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
@@ -670,10 +654,8 @@
        page fills EXACTLY what is left — the old calc(100vh - 100px) was a hand-measured
        constant that went stale the moment any bar or padding changed, and every miss by one
        pixel grew the pane's own scrollbar beside the terminal. */
-    /* A workspace page owns its whole BODY: no pane padding, no measure — the dark
-       surface runs edge to edge under the context bar (and, immersive, to the window).
-       The shell's chrome is still drawn above it (docs/13 D5, as revised). */
-    .pane.term-host { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+    /* A workspace page owns its whole body (.pane.full): the dark surface runs edge to edge
+       under the context bar (and, immersive, to the window). */
     .pane.term-host > .term-page { flex: 1; }
     .term-page {
       display: flex; flex-direction: column;

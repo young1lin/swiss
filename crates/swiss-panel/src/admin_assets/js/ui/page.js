@@ -18,6 +18,9 @@
  * of description, the page's actions), maybe an inline create form, sections of cards, a
  * foot. Each piece is one function here so every page draws it the same way:
  *
+ *   pane       the page body itself: the padded, scrolling frame under the bars, every block
+ *              in it capped at the measure (skill §6). `wide` for genuinely wide rows (and the
+ *              frame the pinned head lives in), `full` for a workspace (Data, Terminal).
  *   paneHead   pinned on a content page (ui.css, docs/46 U9). No location title - the
  *              context bar already says where you are (skill §7); `title` is for a RESOURCE
  *              head (the selected MCP), where the name is the page's subject.
@@ -32,6 +35,21 @@
 import { h } from "../h.js";
 import { iconNode } from "./icon.js";
 
+                           
+                                                                                          
+                 
+                                                                                            
+                 
+              
+ 
+
+/** The page body. The shell's #pane is this element (index.html); a gallery scene builds its
+ *  own, which is how a design shows a whole page without a line of its own CSS. */
+export function pane(o          , ...body          )              {
+  return h("main", { class: o.full ? "pane full" : "pane", id: o.id },
+    o.wide ? h("div", { class: "wide" }, ...body) : body);
+}
+
 export function paneHead(o                                                                     )              {
   return h("div", { class: "pane-head" },
     h("div", null,
@@ -41,13 +59,16 @@ export function paneHead(o                                                      
     o.actions && o.actions.length ? h("div", { class: "pane-actions" }, o.actions) : null);
 }
 
-export function section(o                                    , ...body          )              {
+/** `note` is one line under the caption that says what the section holds - a sentence, so
+ *  sans and --text-3 (the page's own copy, never a value). */
+export function section(o                                                   , ...body          )              {
   const head = o.cap || (o.tools && o.tools.length)
     ? h("div", { class: "sec-head" },
         o.cap ? h("span", { class: "sec-cap" }, o.cap) : h("span"),
         o.tools && o.tools.length ? h("span", { class: "sec-tools" }, o.tools) : null)
     : null;
-  return h("section", { class: "sec" }, head, ...body);
+  const note = o.note != null && o.note !== false ? h("div", { class: "hint sec-note" }, o.note) : null;
+  return h("section", { class: "sec" }, head, note, ...body);
 }
 
 export function card(...rows          )              {

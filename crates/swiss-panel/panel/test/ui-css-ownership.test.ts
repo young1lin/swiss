@@ -27,24 +27,10 @@
    class is owned: ".db-bar .btn" restyles the button, while ".db-drawer.open" is the page's
    own drawer wearing a state modifier the library also happens to use. */
 import { describe, expect, it } from "vitest";
-import { classesOf, allClassesOf, parseCss, specificity, subjectOf } from "./css-rules.js";
-import { sheet } from "./styles.js";
+import { classesOf, allClassesOf, baseClassOf, parseCss, specificity, subjectOf } from "./css-rules.js";
+import { sheet, uiOwnedClasses } from "./styles.js";
 
 const FROZEN_VIOLATIONS = 48; // docs/46 P1a-2
-
-/** The class a compound is: ".btn.icon:hover" -> "btn", "pre.logs" -> "logs". */
-export function baseClassOf(selector: string): string | undefined {
-  return classesOf(subjectOf(selector))[0];
-}
-
-export function uiOwnedClasses(): Set<string> {
-  const owned = new Set<string>();
-  for (const r of parseCss(sheet("ui.css"))) for (const s of r.selectors) {
-    const c = baseClassOf(s);
-    if (c) owned.add(c);
-  }
-  return owned;
-}
 
 export function ownershipViolations(): string[] {
   const owned = uiOwnedClasses();

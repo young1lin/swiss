@@ -205,6 +205,13 @@ describe("ui/page", () => {
     expect(bare.querySelector(".hint")).toBeNull();
     expect(bare.querySelector("button")).toBeNull();
   });
+
+  it("the empty hint balances its lines (ui.css)", () => {
+    // 44ch is 44 Latin digits but about 22 CJK characters: a 23-character Chinese hint left one
+    // character alone on its second line (the gallery's empty scene, P1b-3).
+    const rule = parseCss(sheet("ui.css")).find((r) => !r.at && r.selectors.includes(".empty p"));
+    expect(rule?.decls.find((d) => d.prop === "text-wrap")?.value).toBe("balance");
+  });
 });
 
 function nameInput(): HTMLInputElement {
@@ -476,6 +483,16 @@ describe("ui/timeline - timelineToggle", () => {
     const before = tl.outerHTML;
     expect(timelineToggle(tl, "zzz", "x")).toBe(false);
     expect(tl.outerHTML).toBe(before);
+  });
+
+  it("an open body stacks its blocks a grid step apart (ui.css)", () => {
+    // A call's body is its arguments AND its reply - two code blocks. As a plain block the body
+    // drew them edge to edge, one grey slab (found in the gallery's resource scene, P1b-3).
+    const rule = parseCss(sheet("ui.css")).find((r) => !r.at && r.selectors.includes(".tl-body"));
+    const decl = (p: string): string | undefined => rule?.decls.find((d) => d.prop === p)?.value;
+    expect(decl("display")).toBe("flex");
+    expect(decl("flex-direction")).toBe("column");
+    expect(decl("gap")).toBe("var(--s2)");
   });
 });
 

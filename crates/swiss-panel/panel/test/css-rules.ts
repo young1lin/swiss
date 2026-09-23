@@ -143,6 +143,12 @@ export function classesOf(compound: string): string[] {
   return out;
 }
 
+/** The class a compound is: ".btn.icon:hover" -> "btn", "pre.logs" -> "logs". Identity for the
+ *  ownership gates (G2, G5): a sheet owns the base class of every subject it styles. */
+export function baseClassOf(selector: string): string | undefined {
+  return classesOf(subjectOf(selector))[0];
+}
+
 /** Every class name a selector mentions anywhere (arguments included). */
 export function allClassesOf(selector: string): string[] {
   return Array.from(selector.matchAll(/\.([A-Za-z_-][A-Za-z0-9_-]*)/g)).map((m) => m[1]);

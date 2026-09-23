@@ -29,6 +29,8 @@ import {
   closeMenu, closeSelect, closeSheet, initSelects, initSheet, menuOpen, openFieldSheet, popupMenu, selectOpen,
   setMenuOpen, sheet, sheetOpen, showSheet, styleSelect,
 } from "../src/ui/index.js";
+import { parseCss } from "./css-rules.js";
+import { sheet as styleSheet } from "./styles.js";
 
 /** What reached main.ts's layer: every keydown that bubbled to document. */
 const reached: string[] = [];
@@ -84,6 +86,18 @@ describe("ui/menu - popupMenu", () => {
     expect(kids[1].textContent).toBe("orders");
     expect((kids[2] as Element).getAttribute("class")).toBe("ic");
     expect((kids[3] as Element).className).toBe("db-tab-dot");
+  });
+
+  it("such a row is a flex row in ui.css - inline, the glyph touched its label and the dot drew nothing", () => {
+    // Found by the gallery walk (docs/46 P1b-3), shipped that way since docs/43 M1: the dot is
+    // a sized span, and a sized inline span has no box. Layout is the browser's to prove (the
+    // walk measures the dot); this pins the rule that gives it one.
+    const rule = parseCss(styleSheet("ui.css")).find((r) => !r.at && r.selectors.some((sel) => /^\.menu button:has\(/.test(sel) && sel.includes(".ic") && sel.includes(".db-tab-dot")));
+    expect(rule, "a .menu button:has(> .ic, > .db-tab-dot) rule").toBeDefined();
+    const decl = (p: string): string | undefined => rule?.decls.find((d) => d.prop === p)?.value;
+    expect(decl("display")).toBe("flex");
+    expect(decl("align-items")).toBe("center");
+    expect(decl("gap")).toMatch(/^var\(--s\d\)$/);
   });
 
   it("an item click runs its fn once and closes; a disabled one runs nothing", () => {

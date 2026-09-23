@@ -22,6 +22,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { allClassesOf, baseClassOf, parseCss } from "./css-rules.js";
 
 export const assetsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets");
 export const stylesDir = join(assetsDir, "styles");
@@ -42,4 +43,25 @@ export function linkedSheets(): Array<{ name: string; css: string }> {
 /** Every linked sheet, concatenated in cascade order. */
 export function allCss(): string {
   return linkedSheets().map((s) => s.css).join("\n");
+}
+
+/** The classes ui.css owns: the base class of every subject it styles (G2, G5). ".menu button
+ *  .ic" owns "ic"; ".pane > .wide > .pane-head" owns "pane-head", not the "pane" it sits in. */
+export function uiOwnedClasses(): Set<string> {
+  const owned = new Set<string>();
+  for (const r of parseCss(sheet("ui.css"))) for (const s of r.selectors) {
+    const c = baseClassOf(s);
+    if (c) owned.add(c);
+  }
+  return owned;
+}
+
+/** Every class base.css or ui.css mentions - what a page that links only those two sheets (the
+ *  gallery, docs/46 §2.6) can draw and still be styled. */
+export function libraryClasses(): Set<string> {
+  const out = new Set<string>();
+  for (const name of ["base.css", "ui.css"] as const) {
+    for (const r of parseCss(sheet(name))) r.selectors.forEach((sel) => allClassesOf(sel).forEach((c) => out.add(c)));
+  }
+  return out;
 }

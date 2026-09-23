@@ -29,7 +29,7 @@ export function unmount() {
   // Take the workspace framing back off (data-view.js's renderDbView adds it) so the next
   // page — whatever it is — starts from the pane's ordinary padding.
   const pane = $("pane");
-  if (pane) pane.classList.remove("db-host");
+  if (pane) pane.classList.remove("db-host", "full");
 }
 /* The context bar's count chip. It used to return "Data", which the location label one slot
    left already says — the bar read "Data … Data". It names the connection being browsed instead,

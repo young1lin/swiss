@@ -30,10 +30,10 @@ export { iconNode } from "./icon.js";
 export { dot, tag } from "./status.js";
                                                      
 export { sw } from "./switch.js";
-export { card, emptyNode, inlineForm, pageFoot, paneHead, section } from "./page.js";
-                                           
-export { kvRow, row } from "./row.js";
-                                                
+export { card, emptyNode, inlineForm, pageFoot, pane, paneHead, section } from "./page.js";
+                                                     
+export { kvRow, row, sideRow } from "./row.js";
+                                                             
 export { groupNode } from "./group.js";
                                                             
 export { seg } from "./seg.js";
