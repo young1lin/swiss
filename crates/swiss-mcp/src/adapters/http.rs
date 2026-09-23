@@ -45,6 +45,7 @@ use rmcp::model::{
     ListPromptsResult, ListResourcesResult, ListToolsResult, ReadResourceRequestParams,
     ReadResourceResult,
 };
+use serde_json::value::RawValue;
 use serde_json::{json, Value};
 
 use swiss_host::config::ServerDef;
@@ -225,6 +226,36 @@ impl OauthHalf {
     }
 }
 
+/// The JSON-RPC request envelope, assembled without materializing a DOM: `params` rides
+/// through as raw JSON whatever its size (AGENTS.md — no serde_json::Value on a forwarding
+/// path).
+#[derive(serde::Serialize)]
+struct RequestEnvelope<'a> {
+    jsonrpc: &'a str,
+    id: i64,
+    method: &'a str,
+    params: &'a RawValue,
+}
+
+/// The response envelope — only the fields the transport ROUTES on: the id match that
+/// demultiplexes SSE, and the error pointer. `result` stays raw; callers that need it typed
+/// parse it once, directly from the borrowed bytes.
+#[derive(Debug, serde::Deserialize)]
+struct ResponseEnvelope {
+    #[serde(default)]
+    id: Option<i64>,
+    #[serde(default)]
+    error: Option<RemoteErrorShape>,
+    #[serde(default)]
+    result: Option<Box<RawValue>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RemoteErrorShape {
+    #[serde(default)]
+    message: Option<String>,
+}
+
 /// The connected remote: one reqwest client, the negotiated protocol version and session id,
 /// and the request-id counter that multiplexes concurrent POSTs.
 pub struct RemoteMcpClient {
@@ -268,28 +299,26 @@ impl RemoteMcpClient {
             protocol_version: Mutex::new(OFFERED_PROTOCOL_VERSION.to_string()),
             next_id: AtomicI64::new(1),
         });
-        let result = session
-            .request(
-                "initialize",
-                json!({
-                    "protocolVersion": OFFERED_PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": { "name": "mcp-gateway", "version": "1.0" },
-                }),
-                None,
-            )
-            .await?;
-        if let Some(negotiated) = result.get("protocolVersion").and_then(Value::as_str) {
-            if !negotiated.is_empty() {
-                if let Ok(mut version) = session.protocol_version.lock() {
-                    *version = negotiated.to_string();
+        let init_params = small_raw(&json!({
+            "protocolVersion": OFFERED_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": { "name": "mcp-gateway", "version": "1.0" },
+        }))?;
+        let result = session.request("initialize", &init_params, None).await?;
+        // The negotiated version and capabilities are envelope fields the client routes on,
+        // so this one small parse is the sanctioned exception; nothing else reads the answer.
+        let negotiated: Value = serde_json::from_str(result.get()).unwrap_or_else(|_| json!({}));
+        if let Some(version) = negotiated.get("protocolVersion").and_then(Value::as_str) {
+            if !version.is_empty() {
+                if let Ok(mut cell) = session.protocol_version.lock() {
+                    *cell = version.to_string();
                 }
             }
         }
         // The spec-mandated follow-up. A server that refuses it is not speaking streamable
         // HTTP, and refusing to connect here is the same start error the Node build produced.
         session.notify("notifications/initialized").await?;
-        let caps = result.get("capabilities").cloned().unwrap_or(json!({}));
+        let caps = negotiated.get("capabilities").cloned().unwrap_or(json!({}));
         Ok((session, caps))
     }
 
@@ -329,16 +358,20 @@ impl RemoteMcpClient {
     async fn request(
         &self,
         method: &str,
-        params: Value,
+        params: &RawValue,
         timeout_ms: Option<u64>,
-    ) -> Result<Value, String> {
+    ) -> Result<Box<RawValue>, String> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
+        // Raw envelope assembly — no DOM on this path (AGENTS.md): the params blob rides
+        // through verbatim whatever its size, and only the fields the transport routes on
+        // (the id match, the error pointer) are ever parsed out of the answer.
+        let body = serde_json::to_string(&RequestEnvelope {
+            jsonrpc: "2.0",
+            id,
+            method,
+            params,
+        })
+        .map_err(|err| format!("building {method} request: {err}"))?;
         // OAuth 401s get ONE refresh-retry, no more (docs/24 D4): a second refusal after a
         // fresh token means the grant itself is dead, and the marker below sends the operator
         // to the panel's Authorize button instead of into a refresh loop.
@@ -349,7 +382,7 @@ impl RemoteMcpClient {
                 .timeout(Duration::from_millis(
                     timeout_ms.unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS),
                 ))
-                .body(serde_json::to_string(&body).unwrap_or_default());
+                .body(body.clone());
             let response = builder
                 .send()
                 .await
@@ -415,19 +448,16 @@ impl RemoteMcpClient {
             let message = if content_type.contains("text/event-stream") {
                 sse_message(&text, id)?
             } else {
-                serde_json::from_str::<Value>(&text)
+                serde_json::from_str::<ResponseEnvelope>(&text)
                     .map_err(|err| format!("{method} response is not JSON: {err}"))?
             };
-            match message.get("error") {
-                Some(Value::Object(_)) => {
-                    let message_text = message
-                        .pointer("/error/message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown remote error");
-                    return Err(message_text.to_string());
-                }
-                _ => return Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+            if let Some(error) = message.error {
+                let message_text = error
+                    .message
+                    .unwrap_or_else(|| "unknown remote error".to_string());
+                return Err(message_text);
             }
+            return Ok(message.result.unwrap_or_else(null_raw));
         }
     }
 
@@ -478,11 +508,13 @@ fn preview(text: &str, max: usize) -> String {
 }
 
 /// Parse one SSE payload and pick out the JSON-RPC response carrying `id`. Everything else in
-/// the stream — notifications, other ids — is not ours to read.
-fn sse_message(text: &str, id: i64) -> Result<Value, String> {
+/// the stream — notifications, other ids — is not ours to read: the envelope carries only the
+/// routed-on fields and the result payload stays raw (AGENTS.md), so a chatty stream costs
+/// scans, not trees.
+fn sse_message(text: &str, id: i64) -> Result<ResponseEnvelope, String> {
     let mut data: Vec<String> = Vec::new();
-    let mut messages: Vec<Value> = Vec::new();
-    let flush = |data: &mut Vec<String>, out: &mut Vec<Value>| {
+    let mut found: Option<ResponseEnvelope> = None;
+    let flush = |data: &mut Vec<String>, found: &mut Option<ResponseEnvelope>| {
         if data.is_empty() {
             return;
         }
@@ -490,14 +522,16 @@ fn sse_message(text: &str, id: i64) -> Result<Value, String> {
         // way, but honoring it costs nothing and keeps the parser honest.
         let joined = data.join("\n");
         data.clear();
-        if let Ok(value) = serde_json::from_str::<Value>(&joined) {
-            out.push(value);
+        if let Ok(message) = serde_json::from_str::<ResponseEnvelope>(&joined) {
+            if message.id == Some(id) {
+                *found = Some(message);
+            }
         }
     };
     for line in text.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if line.is_empty() {
-            flush(&mut data, &mut messages);
+            flush(&mut data, &mut found);
             continue;
         }
         if let Some(payload) = line.strip_prefix("data:") {
@@ -505,19 +539,42 @@ fn sse_message(text: &str, id: i64) -> Result<Value, String> {
         }
         // "event:", "id:", "retry:" and ":" comments carry nothing this reader needs.
     }
-    flush(&mut data, &mut messages);
-    messages
-        .into_iter()
-        .find(|message| message.get("id") == Some(&json!(id)))
-        .ok_or_else(|| format!("SSE stream carried no response for request {id}"))
+    flush(&mut data, &mut found);
+    found.ok_or_else(|| format!("SSE stream carried no response for request {id}"))
+}
+
+/// Wrap a small JSON value this module itself constructed — handshake params, list cursors —
+/// as raw JSON. Never for forwarded payloads: those arrive typed and serialize once, direct.
+fn small_raw(value: &Value) -> Result<Box<RawValue>, String> {
+    serde_json::to_string(value)
+        .ok()
+        .and_then(|text| RawValue::from_string(text).ok())
+        .ok_or_else(|| "envelope params failed to encode".to_string())
+}
+
+/// Serialize a typed request-params object straight to raw JSON — one typed encode, no DOM
+/// in between (AGENTS.md).
+fn typed_params<T: serde::Serialize>(params: &T, what: &str) -> Result<Box<RawValue>, String> {
+    serde_json::to_string(params)
+        .map_err(|err| format!("{what}: {err}"))
+        .and_then(|text| RawValue::from_string(text).map_err(|err| format!("{what}: {err}")))
+}
+
+/// The JSON `null` as a raw value — the answer a spec-loose remote gives when it omits
+/// `result` entirely.
+fn null_raw() -> Box<RawValue> {
+    // Static JSON: from_string cannot fail.
+    RawValue::from_string("null".to_string()).expect("static null is valid JSON")
 }
 
 impl RemoteMcpClient {
-    fn list_params(cursor: Option<String>) -> Value {
-        match cursor {
+    fn list_params(cursor: Option<String>) -> Box<RawValue> {
+        let envelope = match cursor {
             Some(cursor) => json!({ "cursor": cursor }),
             None => json!({}),
-        }
+        };
+        // A static shape this module wrote itself; encoding it cannot fail.
+        small_raw(&envelope).expect("static envelope params are valid JSON")
     }
 }
 
@@ -525,9 +582,9 @@ impl RemoteMcpClient {
 impl RemoteMcp for RemoteMcpClient {
     async fn list_tools(&self, cursor: Option<String>) -> Result<ListToolsResult, String> {
         let result = self
-            .request("tools/list", Self::list_params(cursor), None)
+            .request("tools/list", &Self::list_params(cursor), None)
             .await?;
-        serde_json::from_value(result).map_err(|err| format!("tools/list response: {err}"))
+        serde_json::from_str(result.get()).map_err(|err| format!("tools/list response: {err}"))
     }
 
     async fn call_tool(
@@ -535,41 +592,40 @@ impl RemoteMcp for RemoteMcpClient {
         params: CallToolRequestParams,
         timeout_ms: Option<u64>,
     ) -> Result<CallToolResult, String> {
-        let params =
-            serde_json::to_value(&params).map_err(|err| format!("tools/call params: {err}"))?;
-        let result = self.request("tools/call", params, timeout_ms).await?;
-        serde_json::from_value(result).map_err(|err| format!("tools/call response: {err}"))
+        // One typed encode, one raw ride, one typed decode: no DOM and no clone in between —
+        // the tool arguments and results this carries are exactly why the rule exists.
+        let params = typed_params(&params, "tools/call params")?;
+        let result = self.request("tools/call", &params, timeout_ms).await?;
+        serde_json::from_str(result.get()).map_err(|err| format!("tools/call response: {err}"))
     }
 
     async fn list_resources(&self, cursor: Option<String>) -> Result<ListResourcesResult, String> {
         let result = self
-            .request("resources/list", Self::list_params(cursor), None)
+            .request("resources/list", &Self::list_params(cursor), None)
             .await?;
-        serde_json::from_value(result).map_err(|err| format!("resources/list response: {err}"))
+        serde_json::from_str(result.get()).map_err(|err| format!("resources/list response: {err}"))
     }
 
     async fn read_resource(
         &self,
         params: ReadResourceRequestParams,
     ) -> Result<ReadResourceResult, String> {
-        let params =
-            serde_json::to_value(&params).map_err(|err| format!("resources/read params: {err}"))?;
-        let result = self.request("resources/read", params, None).await?;
-        serde_json::from_value(result).map_err(|err| format!("resources/read response: {err}"))
+        let params = typed_params(&params, "resources/read params")?;
+        let result = self.request("resources/read", &params, None).await?;
+        serde_json::from_str(result.get()).map_err(|err| format!("resources/read response: {err}"))
     }
 
     async fn list_prompts(&self, cursor: Option<String>) -> Result<ListPromptsResult, String> {
         let result = self
-            .request("prompts/list", Self::list_params(cursor), None)
+            .request("prompts/list", &Self::list_params(cursor), None)
             .await?;
-        serde_json::from_value(result).map_err(|err| format!("prompts/list response: {err}"))
+        serde_json::from_str(result.get()).map_err(|err| format!("prompts/list response: {err}"))
     }
 
     async fn get_prompt(&self, params: GetPromptRequestParams) -> Result<GetPromptResult, String> {
-        let params =
-            serde_json::to_value(&params).map_err(|err| format!("prompts/get params: {err}"))?;
-        let result = self.request("prompts/get", params, None).await?;
-        serde_json::from_value(result).map_err(|err| format!("prompts/get response: {err}"))
+        let params = typed_params(&params, "prompts/get params")?;
+        let result = self.request("prompts/get", &params, None).await?;
+        serde_json::from_str(result.get()).map_err(|err| format!("prompts/get response: {err}"))
     }
 }
 
@@ -843,10 +899,10 @@ mod tests {
     fn reads_the_response_carrying_our_id_out_of_an_sse_stream() {
         let stream =
             "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"ok\":true}}\n\n";
-        assert_eq!(
-            sse_message(stream, 7).unwrap(),
-            json!({ "jsonrpc": "2.0", "id": 7, "result": { "ok": true } })
-        );
+        let message = sse_message(stream, 7).expect("our id came back");
+        assert_eq!(message.id, Some(7));
+        assert!(message.error.is_none());
+        assert_eq!(sse_result(stream, 7), json!({ "ok": true }));
     }
 
     #[test]
@@ -863,8 +919,8 @@ mod tests {
             "data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"ours\"}\n",
             "\n",
         );
-        assert_eq!(sse_message(stream, 2).unwrap()["result"], json!("ours"));
-        assert_eq!(sse_message(stream, 1).unwrap()["result"], json!("not ours"));
+        assert_eq!(sse_result(stream, 2), json!("ours"));
+        assert_eq!(sse_result(stream, 1), json!("not ours"));
     }
 
     #[test]
@@ -877,7 +933,15 @@ mod tests {
         assert!(sse_message(stream, 3).is_err());
 
         let proper = "data: {\"jsonrpc\":\"2.0\",\ndata:\"id\":3,\ndata:\"result\":1}\n\n";
-        assert_eq!(sse_message(proper, 3).unwrap()["result"], json!(1));
+        assert_eq!(sse_result(proper, 3), json!(1));
+    }
+
+    /// Decode the raw result of the answer carrying `id` — the tests care what rode through,
+    /// the transport itself only routes on the envelope.
+    fn sse_result(text: &str, id: i64) -> Value {
+        let message = sse_message(text, id).expect("response for our id");
+        serde_json::from_str(message.result.expect("result payload").get())
+            .expect("raw result parses")
     }
 
     #[test]
@@ -893,7 +957,7 @@ mod tests {
     #[test]
     fn a_final_event_without_a_trailing_blank_line_is_still_read() {
         let stream = "data: {\"jsonrpc\":\"2.0\",\"id\":5,\"result\":\"last\"}";
-        assert_eq!(sse_message(stream, 5).unwrap()["result"], json!("last"));
+        assert_eq!(sse_result(stream, 5), json!("last"));
     }
 
     // ---- construction ------------------------------------------------------------------
