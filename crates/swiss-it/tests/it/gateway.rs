@@ -107,6 +107,7 @@ pub(crate) async fn boot(defs: Vec<(&str, Value)>) -> Gateway {
         tokens,
         store.clone(),
         calls.clone(),
+        Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
         "MCP_GATEWAY_TOKEN",
         port,
     );

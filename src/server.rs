@@ -249,15 +249,19 @@ pub async fn run_gateway() -> Result<(), String> {
             .or(Some(cfg.token.as_str())),
     ));
 
-    // Restore the traffic ring's pre-restart tail before the server accepts requests, so the
-    // first panel poll sees the history that was there before the restart.
-    swiss_mcp::traffic::init_traffic_log();
+    // The ONE traffic ring for this app (S2 instantiation, beside the call log above): the
+    // constructor restores the pre-restart tail synchronously, before the server accepts
+    // requests, so the first panel poll sees the history that was there before the restart.
+    let traffic = std::sync::Arc::new(swiss_mcp::traffic::TrafficLog::at(
+        swiss_core::paths::data_path(&["logs"]),
+    ));
 
     let ctx = AppContext::new(
         registry.clone(),
         tokens,
         store.clone(),
         call_log.clone(),
+        traffic.clone(),
         cfg.token_env.clone(),
         cfg.port,
     );
@@ -450,7 +454,7 @@ pub async fn run_gateway() -> Result<(), String> {
     }
     registry.close_all().await;
     ctx.calls.flush_calls(None).await; // the last calls before a restart are the ones worth having on disk
-    swiss_mcp::traffic::flush_traffic().await; // and the last traffic rows
+    ctx.traffic.flush_traffic().await; // and the last traffic rows
     Ok(())
 }
 

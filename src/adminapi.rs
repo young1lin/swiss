@@ -751,7 +751,6 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         get(
             |State(ctx): State<Arc<AppContext>>,
              Query(q): Query<std::collections::HashMap<String, String>>| async move {
-                let _ = &ctx;
                 let page = q
                     .get("page")
                     .and_then(|p| p.parse::<usize>().ok())
@@ -765,34 +764,37 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     page,
                     page_size,
                 };
-                let mut out = swiss_mcp::traffic::read_traffic(&query);
-                out["clients"] = json!(swiss_mcp::traffic::traffic_clients());
+                let mut out = ctx.traffic.read_traffic(&query);
+                out["clients"] = json!(ctx.traffic.traffic_clients());
                 admin_json(StatusCode::OK, out)
             },
         )
         .delete(
-            |Query(q): Query<std::collections::HashMap<String, String>>| async move {
+            |State(ctx): State<Arc<AppContext>>,
+             Query(q): Query<std::collections::HashMap<String, String>>| async move {
                 // ?client=<prefixed key> clears only that client's rows; without it, all traffic.
                 let client = q.get("client").cloned();
-                swiss_mcp::traffic::clear_traffic(client.as_deref());
+                ctx.traffic.clear_traffic(client.as_deref());
                 admin_json(StatusCode::OK, json!({ "ok": true, "client": client }))
             },
         ),
     );
     r = r.route(
         "/api/traffic/{seq}",
-        get(|Path(seq): Path<String>| async move {
-            let Ok(seq) = seq.parse::<u64>() else {
-                return admin_error(StatusCode::BAD_REQUEST, "seq must be a number");
-            };
-            match swiss_mcp::traffic::read_traffic_entry(seq) {
-                None => admin_error(
-                    StatusCode::NOT_FOUND,
-                    "No such interaction (the ring may have rolled over)",
-                ),
-                Some(entry) => admin_json(StatusCode::OK, entry),
-            }
-        }),
+        get(
+            |State(ctx): State<Arc<AppContext>>, Path(seq): Path<String>| async move {
+                let Ok(seq) = seq.parse::<u64>() else {
+                    return admin_error(StatusCode::BAD_REQUEST, "seq must be a number");
+                };
+                match ctx.traffic.read_traffic_entry(seq) {
+                    None => admin_error(
+                        StatusCode::NOT_FOUND,
+                        "No such interaction (the ring may have rolled over)",
+                    ),
+                    Some(entry) => admin_json(StatusCode::OK, entry),
+                }
+            },
+        ),
     );
 
     // /api/order and /api/groups are retired (docs/20 §3): the group-scope family below

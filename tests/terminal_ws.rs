@@ -196,6 +196,7 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
         Arc::new(single_token_manager(TOKEN)) as Arc<TokenManager>,
         managed.clone(),
         calls,
+        Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
         "MCP_GATEWAY_TOKEN",
         19997,
     );
@@ -882,6 +883,7 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
         Arc::new(single_token_manager(TOKEN)) as Arc<TokenManager>,
         managed.clone(),
         calls,
+        Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
         "MCP_GATEWAY_TOKEN",
         19997,
     );
