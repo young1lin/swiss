@@ -117,13 +117,19 @@ EnabledIdle -> WaitingDependency -> Starting -> Active
                                     Failed <- Stopping -> EnabledIdle / Disabled
 ```
 
-实现时使用清晰枚举，Disabled、依赖缺失、配置错误、启动失败、未编译必须可区分。默认启用的无配置插件可以 idle；Jobs 有启用计划、Tunnels 有常开规则时在后台启动，不能等打开页面。
+实现时使用清晰枚举，Disabled、依赖缺失、配置错误、启动失败、未编译必须可区分（→ as-built：依赖缺失最终由 requires/requiresMet 投影表达，见本节末尾增补）。默认启用的无配置插件可以 idle；Jobs 有启用计划、Tunnels 有常开规则时在后台启动，不能等打开页面。
 
 - 首次启动 single-flight；并发请求共享一个启动结果。
 - 配置更新先验证，持久化 desired revision 后 reconcile；运行中实例维护 actual revision。
 - 支持安全在线修改的字段走 apply；其余明确标为 plugin restart 或 host restart。不能把所有配置修改都当热更新。
 - 缺依赖由注册/撤销事件触发状态变化，不为每个待启动插件开轮询任务。
 - Host 自身安全/配置不可用才导致整体启动失败；单个 MCP/可选插件失败必须隔离、记录并可诊断，不机械照搬 RH 全树启动断言。
+
+> **As-built（2026-09-23）**：实现的枚举是六个状态 —— `Disabled` / `Idle` / `Starting` / `Active` /
+> `Stopping` / `Failed`（`crates/swiss-host/src/host/descriptor.rs:107`）。上图与第 120 行要求的
+> `WaitingDependency` **未实现**：依赖缺失不是一个可停留的状态，而是注册表上的 `requires` /
+> `requiresMet` 投影 —— 未满足的 require 在路由层得到一个点名依赖的明确拒绝，inventory 同样携带
+> met/unmet 判定（Data 的 `connection-catalog` 就是这么表达的）。
 
 ### 停用必须真的释放
 

@@ -2782,6 +2782,10 @@ pub fn ddl_script(statements: &[String]) -> String {
 /// Both dialects spell it the same way. Read-only-ness still gates the WHOLE statement inside
 /// run_query: EXPLAIN of an INSERT is refused there by the write-keyword scan, and EXPLAIN ANALYZE
 /// of a SELECT is allowed (it executes the select — reads only).
+///
+/// Not on any production path: the console's plan view gets its prefix from the panel twin
+/// (panel/src/data-sql.ts, dbWithExplain); this copy anchors the semantics and the tests
+/// (with_explain_prefixes_once_and_strips_the_terminator) — kept deliberately (fix-plan #23).
 pub fn with_explain(sql: &str) -> String {
     // .replace(/\s+$/, "").replace(/;\s*$/, "").replace(/\s+$/, "") — one trailing terminator,
     // then whitespace gone again.

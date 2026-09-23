@@ -155,9 +155,11 @@ impl PluginFactory for TerminalPlugin {
             // restarting the instance is honest AND cheap — sessions close with a
             // visible reason and the panel reopens them.
             restart_on_config_change: true,
-            // NOT ["ssh-shell"] (docs/14 §4): a local session needs no SSH, and an
-            // unmet requirement would park the whole plugin in waitingDependency.
-            // The targets route says honestly whether remote hosts are reachable.
+            // NOT ["ssh-shell"] (docs/14 §4): a local session needs no SSH — `requires`
+            // expresses a functional dependency, not a hard gate. WaitingDependency was
+            // never implemented (docs/09 as-built): an unmet require is a plain refusal
+            // naming the dependency, and the targets route already says honestly whether
+            // remote hosts are reachable.
             requires: Vec::new(),
         }
     }

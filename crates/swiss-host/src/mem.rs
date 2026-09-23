@@ -31,7 +31,7 @@ use serde_json::{json, Value};
 
 use swiss_core::platform::{process_tree_working_set, self_private_bytes, self_working_set};
 
-/// The JSON the admin API answers for `/api/mem` and `/api/mem?tree=1` — `MemoryInfo` in mem.ts,
+/// The JSON the admin API answers for `/api/memory` and `/api/memory?tree=1` — `MemoryInfo` in mem.ts,
 /// camelCase with absent-not-null Optionals.
 fn mb(bytes: u64) -> f64 {
     ((bytes as f64 / 1_048_576.0) * 10.0).round() / 10.0

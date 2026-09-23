@@ -152,9 +152,11 @@ impl PluginFactory for RemotePlugin {
             // restart the instance.
             restart_on_config_change: false,
             // NOT ["remote-transport"] (docs/34): the target table must be
-            // editable while tunnels is off - an unmet requirement would park
-            // the whole plugin in waitingDependency and lock the table. Exec
-            // actions answer honestly when the transport is missing.
+            // editable while tunnels is off - `requires` is a functional
+            // dependency, not a hard gate (WaitingDependency was never
+            // implemented, docs/09 as-built; an unmet require is a plain route-
+            // level refusal). Exec actions answer honestly when the transport
+            // is missing.
             requires: Vec::new(),
         }
     }
