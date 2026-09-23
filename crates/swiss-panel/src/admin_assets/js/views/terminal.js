@@ -266,7 +266,7 @@ function writeTerm(m           , bytes            ) {
   });
 }
 
-/* The "N new \u2193" chip over a terminal the user has scrolled away from (docs/22
+/* The "N new" chip over a terminal the user has scrolled away from (docs/22
    §2.10): one button, absolutely positioned, honest about how far behind they are. */
 function paintJump(m           ) {
   if (!m.holder) return;
@@ -274,6 +274,7 @@ function paintJump(m           ) {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "term-jump";
+    chip.append(iconNode("chevron-down"), document.createElement("span"));
     chip.addEventListener("click", () => {
       m.unseen = 0;
       if (m.toBottom) m.toBottom();
@@ -283,7 +284,10 @@ function paintJump(m           ) {
     m.jump = chip;
   }
   m.jump.hidden = m.pinned || !m.unseen;
-  m.jump.textContent = tr("terminal.nNewDown", { n: m.unseen });
+  // fix-plan #14: the down affordance is the i-chevron-down sprite; the count text lives in
+  // a span so painting it never wipes the icon the chip was built with.
+  const label = m.jump.querySelector("span");
+  if (label) label.textContent = tr("terminal.nNewDown", { n: m.unseen });
 }
 
 /* The tab inventory paintTabs and the Alt-shortcuts agree on: wired models first

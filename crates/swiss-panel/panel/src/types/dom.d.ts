@@ -47,6 +47,11 @@ export interface MenuItemAction {
    *  every database the instance names, browsable or not, so the reason (title) is one
    *  hover away instead of the row simply being missing. */
   disabled?: boolean;
+  /* fix-plan #14: a trailing glyph for rows that open ANOTHER menu (the "Table" row that
+   *  used to spell its caret in the label) - the leading icon field is the row's TYPE
+   *  glyph; this one is a direction, painted at the end of the row like the caret it
+   *  replaces. */
+  affordance?: string;
   /* docs/43 M3: a non-interactive heading row (a connection GROUP name, "system" bands) —
    *  styled like the menu's own chrome, never focused, never clicked. */
   heading?: boolean;

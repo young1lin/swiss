@@ -94,10 +94,27 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
 
   it("the toolbar token button is gone - token management lives under the MCP group", () => {
     // The token exists FOR MCP clients, so the panel manages it where that story is told:
-    // the MCP group's Token page. The toolbar's right side keeps only Appearance, and the
-    // key icon went with the button (nothing else uses it).
+    // the MCP group's Token page. The toolbar's right side keeps only Appearance. i-key is
+    // BACK in the sprite since fix-plan #14 (the Data grid's PK column marker, not the
+    // token button - which stays gone).
     expect(shell).not.toContain('id="tokenBtn"');
-    expect(shell).not.toContain("i-key"); // the sprite entry goes with the button
+  });
+
+  it("fix-plan #14: the V2 cleanup's symbols are in the sprite", () => {
+    // The key marker, the remove/undo row controls, the picker's folder/file rows and its
+    // Up button; i-x and i-history were already there for the chrome.
+    for (const id of ["i-key", "i-undo", "i-arrow-up", "i-folder", "i-file", "i-history", "i-x"]) {
+      expect(shell, `symbol ${id}`).toContain(`<symbol id="${id}"`);
+    }
+  });
+
+  it("fix-plan #14: the retired unicode glyphs are gone from every module source", () => {
+    // The acceptance grep as a pin: key marker, remove/undo, history, folder, file (and
+    // the gear the plan found already retired). Locale dictionaries never carried these.
+    for (const glyph of ["\u26bf", "\u2715", "\u21a9", "\u21ba", "\ud83d\udcc1", "\ud83d\udcc4", "\u2699"]) {
+      for (const src of modules) expect(src, glyph).not.toContain(glyph);
+    }
+    expect(shell, "the shell too").not.toContain("\u26bf");
   });
 
   it("the unicode icon entities are gone from the shell and every module", () => {

@@ -41,8 +41,9 @@ function histWhen(iso        )         {
   return Date.now() - new Date(iso).getTime() < 86400000 ? ago(iso) : new Date(iso).toLocaleString(locale());
 }
 
-/** The control's closed label. "↺ Past runs (12)" says what it opens and how much is in it, so the
- *  closed control explains itself without looking like a form value. */
+/** The control's closed label. "Past runs (12)" says what it opens and how much is in it, so
+ *  the closed control explains itself without looking like a form value — the history glyph
+ *  beside the words is the i-history sprite the paint sites carry (fix-plan #14). */
 function histButtonLabel(d           , tool        )         {
   if (d.run.histTool !== tool) return tr("runHistory.pastRuns"); // never loaded, or a fetch in flight
   const n = (d.run.hist || []).length;
@@ -262,7 +263,7 @@ function renderHistoryOnly()       {
   if (!d || d.tab !== "run" || !d.run.tool) return;
   const btn = $                   ("r-hist");
   if (btn) {
-    btn.textContent = histButtonLabel(d, d.run.tool);
+    fill(btn, iconNode("history"), " ", histButtonLabel(d, d.run.tool));
     // "No history at all" disables the control — but a filter that matched nothing must not: the
     // popover is mid-search, its empty state is the answer, and slamming it shut would eat the query.
     btn.disabled = !d.run.histQ && d.run.histTool === d.run.tool && !(d.run.hist || []).length;

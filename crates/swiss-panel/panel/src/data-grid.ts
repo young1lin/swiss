@@ -17,7 +17,7 @@
 import type { ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage, ApiDbFkRow, DbQueryReply } from "./types/api.js";
 import type { DbCellMeta, DbFilterTerm, DbGridConfig, DbInsert, DbTableTab } from "./types/state.js";
 import type { MenuItem } from "./types/dom.js";
-import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, lsMigrate, toast } from "./util.js";
 import { DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbRedisKeyMenu, dbRenderRedisValue } from "./data-browsers.js";
 import { dbActivityLoad, dbActivityRender } from "./data-activity.js";
 import { dbCloseAllTabs, dbOpenTab } from "./data-tabs.js";
@@ -42,7 +42,11 @@ import { locale, tr, trn } from "./i18n.js";
    the columns they hid. The helpers are pure (or storage-only) so the key format, the parse's
    tolerance of a corrupt entry and the clamp pin without a DOM. The grid reloads the config on
    every page load — a rename or a second tab's change is picked up, never cached stale. */
-const DB_GRID_PREFIX = "mcp_gateway_db_grid_";
+/* fix-plan #17: the swiss.dbGrid.* namespace replaced the mcp_gateway_db_grid_* prefix.
+   The suffix after the prefix is unchanged, so dbGridConfigLoad can derive the old key and
+   carry a stored config across on its first read. */
+const DB_GRID_PREFIX = "swiss.dbGrid.";
+const DB_GRID_PREFIX_OLD = "mcp_gateway_db_grid_";
 const DB_COL_MIN = 48;  // narrower than the header's own name line and nothing reads
 const DB_COL_MAX = 1200; // wider than the grid itself — a runaway drag helps nobody
 
@@ -73,9 +77,16 @@ function dbGridConfigParse(raw: string | null): DbGridConfig {
   return out;
 }
 
-function dbGridConfigLoad(key: string): DbGridConfig {
+function dbGridConfigLoad(key: string | null): DbGridConfig {
+  // New key first, old key only as the fallback (fix-plan #17); lsMigrate already answers
+  // null for a blocked store, which parses to the fresh config below. A null key (no
+  // object open) reads like the old code did: getItem(null) is just "absent".
   let raw: string | null = null;
-  try { raw = localStorage.getItem(key); } catch (e) { /* private mode: defaults */ }
+  if (key != null && key.indexOf(DB_GRID_PREFIX) === 0) {
+    raw = lsMigrate(key, DB_GRID_PREFIX_OLD + key.slice(DB_GRID_PREFIX.length));
+  } else {
+    try { raw = key == null ? null : localStorage.getItem(key); } catch (e) { raw = null; }
+  }
   return dbGridConfigParse(raw);
 }
 
@@ -506,7 +517,10 @@ function dbMoreItemsForTable(more: HTMLElement, tt: DbTableTab): MenuItem[] {
   }
   if (!dbIsRedis()) {
     items.push({ sep: true });
-    items.push({ label: tr("dataStructure.table"), title: tr("dataStructure.renameTruncateDropTable"), fn: (): void => { dbTableMenu(more); } });
+    // fix-plan #14: the down-caret the copy used to spell is the trailing chevron
+    // affordance - the row opens ANOTHER menu (rename/truncate/drop), and menu.ts paints
+    // that promise.
+    items.push({ label: tr("dataStructure.table"), title: tr("dataStructure.renameTruncateDropTable"), affordance: "chevron-down", fn: (): void => { dbTableMenu(more); } });
   }
   return items;
 }
@@ -877,7 +891,14 @@ function renderDbGrid(): void {
     th.setAttribute("data-sort", c.name);
     const main = el("div", "db-col-main");
     main.appendChild(el("span", "db-col-name", c.name));
-    if (c.isPrimaryKey) main.appendChild(el("span", "db-key", "⚿"));
+    // fix-plan #14: the PK marker is the i-key sprite (the key-shaped unicode glyph it
+    // retires was the last one here); the hover keeps saying "primary key" in words.
+    if (c.isPrimaryKey) {
+      const keyMark = el("span", "db-key");
+      keyMark.title = tr("dataSql.primaryKey");
+      keyMark.appendChild(iconNode("key"));
+      main.appendChild(keyMark);
+    }
     main.appendChild(el("span", "db-col-type", c.dataType));
     // docs/22 W5.2: the FK column's jump — one small straight arrow (the chevron belongs to
     // pagination) that opens the referenced table with the FOCUSED row's value as an eq
@@ -971,7 +992,7 @@ function renderDbGrid(): void {
   d.inserts.forEach((ins: DbInsert, i: number): void => {
     const tri = el("tr", "db-ins");
     const rc = el("td", "db-rowctl");
-    rc.appendChild(h("button", { class: "db-act", title: tr("dataGrid.removeBufferedInsert"), data: { irm: String(i) } }, "✕"));
+    rc.appendChild(h("button", { class: "db-act", title: tr("dataGrid.removeBufferedInsert"), data: { irm: String(i) } }, iconNode("x")));
     tri.appendChild(rc);
     cols.forEach((c: ApiDbColumn, ci: number): void => {
       const has = Object.prototype.hasOwnProperty.call(ins.values, c.name);
@@ -1016,7 +1037,7 @@ function renderDbGrid(): void {
     const tri = el("tr", (deleted ? "db-del " : "") + (d.sel[key] ? "db-sel" : ""));
     // The row's controls carry data-srow/data-rdel addresses instead of handlers (docs/37
     // R5): #pane's delegated change/click resolve the row and its delete state from live
-    // state at event time — the shift-range and the ↩/✕ glyph both recompute, never capture.
+    // state at event time — the shift-range and the undo/remove glyph both recompute, never capture.
     const rc = el("td", "db-rowctl");
     rc.appendChild(h("input", {
       type: "checkbox", class: "db-selbox", checked: !!d.sel[key],
@@ -1026,7 +1047,7 @@ function renderDbGrid(): void {
       rc.appendChild(h("button", {
         class: "db-act", title: deleted ? tr("dataGrid.undoBufferedDelete") : tr("dataGrid.bufferDeleteAppliedOnly"),
         data: { rdel: String(rowIdx) },
-      }, deleted ? "↩" : "✕"));
+      }, iconNode(deleted ? "undo" : "x")));
     }
     tri.appendChild(rc);
     cols.forEach((c: ApiDbColumn, ci: number): void => {

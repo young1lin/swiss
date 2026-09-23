@@ -21,7 +21,7 @@ import { h } from "./h.js";
 /* i18n has no import back into util (its element lookup is a local byId), so this edge is
    one-way: util may localize its own copy without a module cycle. */
 import { locale, tr } from "./i18n.js";
-const TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
+const TOKEN_ID_KEY = "swiss.tokenId"; // which token copied connect commands embed (fix-plan #17: was mcp_gateway_token_id; lsMigrate carries an old value across)
 const THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
 /* The three kind pages, in tab order. Typed so a kind indexes McpDetail's three slots
    directly (d[kind]) - the tab string narrows through isMcpKind, not through a cast. */
@@ -211,6 +211,23 @@ async function apiJson             (path        , opts              )           
   }
 }
 
+/** One-shot localStorage key migration (fix-plan #17): read the NEW key first; only when
+ *  it is missing, fall back to the OLD key, move the value across and delete the old one.
+ *  A fresh browser (neither key present) writes nothing, a blocked store answers null -
+ *  every caller already treats null as "absent". The old-key literals exist only as these
+ *  migration arguments, so the mcp_gateway_* prefix retires with the keys themselves. */
+function lsMigrate(newKey        , oldKey        )                {
+  try {
+    const cur = localStorage.getItem(newKey);
+    if (cur != null) return cur;
+    const old = localStorage.getItem(oldKey);
+    if (old == null) return null;
+    localStorage.setItem(newKey, old);
+    localStorage.removeItem(oldKey);
+    return old;
+  } catch (e) { return null; }
+}
+
 /* esc() survives for the few string contexts that remain (sheet titles via textContent
  * builds are nodes now; the callers left are attribute values and pure-string suites). */
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyNode, errText, esc, iconNode, isMcpKind, isTyping, now, targetEl, toast, typeTagNode, TYPE_ICONS, whenLabel };
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyNode, errText, esc, iconNode, isMcpKind, isTyping, lsMigrate, now, targetEl, toast, typeTagNode, TYPE_ICONS, whenLabel };

@@ -17,7 +17,7 @@
                                                                                              
                                                     
                                                   
-import { $ } from "./util.js";
+import { $, iconNode } from "./util.js";
 import { h } from "./h.js";
                                      
 import { histButtonLabel } from "./run-history.js";
@@ -162,7 +162,7 @@ function runBodyNode(d           , m                           )         {
             disabled: !d.run.histQ && d.run.histTool === d.run.tool && !(d.run.hist || []).length,
             aria: { haspopup: "true", expanded: d.run.histOpen ? "true" : "false" },
             title: tr("run.fillArgumentsPastRun"),
-          }, histButtonLabel(d, current.name))),
+          }, iconNode("history"), " ", histButtonLabel(d, current.name))),
         h("span", { class: "run-meta", id: "runMeta" })),
       h("pre", { class: "logs", id: "runOut" })));
 }

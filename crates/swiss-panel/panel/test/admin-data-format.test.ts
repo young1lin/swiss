@@ -159,7 +159,7 @@ describe("dbFormatSql — the running equivalence the format button promises", (
   }
 });
 
-describe("favorites — localStorage mcp_gateway_db_favorites (docs/22 W5.4)", () => {
+describe("favorites — localStorage swiss.dbFavorites (docs/22 W5.4, key renamed fix-plan #17)", () => {
   it("names a query by its first line, folded and truncated", () => {
     expect(sql.dbFavoriteName("select 1\nfrom t")).toBe("select 1");
     expect(sql.dbFavoriteName("  select  a,\nb from t")).toBe("select a,");
@@ -178,7 +178,7 @@ describe("favorites — localStorage mcp_gateway_db_favorites (docs/22 W5.4)", (
     expect(dbState.dbConn().favorites.length).toBe(50);
     expect(dbState.dbConn().favorites[0]).toBe("select 159");
     // and it round-trips through storage under the panel's key
-    expect(store.get("mcp_gateway_db_favorites")).toBe(JSON.stringify(dbState.dbConn().favorites));
+    expect(store.get("swiss.dbFavorites")).toBe(JSON.stringify(dbState.dbConn().favorites));
   });
 });
 

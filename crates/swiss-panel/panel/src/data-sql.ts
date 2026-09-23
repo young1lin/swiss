@@ -16,7 +16,7 @@
 
 import type { ApiDbColumn, ApiDbConnectionRow, DbQueryReply } from "./types/api.js";
 import type { DbInsert } from "./types/state.js";
-import { $, apiJson, dbReqGuard, el, errText, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, errText, lsMigrate, toast } from "./util.js";
 import { fill, h } from "./h.js";
 import type { HChild } from "./h.js";
 import {
@@ -343,7 +343,9 @@ function dbWithExplain(sql: string, mode: string): string {
 
 function dbHistoryLoad(): void {
   const d = dbConn();
-  try { d.history = JSON.parse(localStorage.getItem(DB_HISTORY_KEY) as string) || []; }
+  // fix-plan #17: swiss.dbSqlHistory replaced mcp_gateway_db_sql_history; the first read
+  // carries an old value across and deletes the old key, a fresh browser stays untouched.
+  try { d.history = JSON.parse(lsMigrate(DB_HISTORY_KEY, "mcp_gateway_db_sql_history") as string) || []; }
   catch (e) { d.history = []; }
 }
 
@@ -402,12 +404,12 @@ function dbHistoryRender(): void {
    bounded list, the history's own rules (newest first, a repeat save moves to the top
    rather than duplicating). */
 
-const DB_FAV_KEY = "mcp_gateway_db_favorites";
+const DB_FAV_KEY = "swiss.dbFavorites"; // fix-plan #17: was mcp_gateway_db_favorites; migrated on read
 const DB_FAV_MAX = 50;
 
 function dbFavLoad(): void {
   const d = dbConn();
-  try { d.favorites = JSON.parse(localStorage.getItem(DB_FAV_KEY) as string) || []; }
+  try { d.favorites = JSON.parse(lsMigrate(DB_FAV_KEY, "mcp_gateway_db_favorites") as string) || []; }
   catch (e) { d.favorites = []; }
 }
 

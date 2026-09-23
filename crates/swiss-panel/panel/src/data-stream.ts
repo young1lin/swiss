@@ -27,7 +27,7 @@
 import type { ApiDbStreamEntry, ApiDbStreamGroupRow, ApiDbStreamWindow } from "./types/api.js";
 import type { ApiDbRedisValue } from "./types/api.js";
 import type { DbKeyTab } from "./types/state.js";
-import { $, apiJson, dbReqGuard, el } from "./util.js";
+import { $, apiJson, dbReqGuard, el, iconNode } from "./util.js";
 import { h } from "./h.js";
 import { renderDbGrid } from "./data-grid.js";
 import { dbConn, dbTab } from "./db-state.js";
@@ -348,6 +348,7 @@ export async function dbStreamTick(): Promise<void> {
    updates them in place — the pill count, the rate readout, the gap bar's
    visibility — without touching the table the operator is reading. */
 let dbStreamPill: HTMLElement | null = null;
+let dbStreamPillN: HTMLElement | null = null; // the count text; the arrow icon sits beside it, painted once (fix-plan #14)
 let dbStreamRateEl: HTMLElement | null = null;
 let dbStreamGapEl: HTMLElement | null = null;
 
@@ -355,8 +356,8 @@ function dbStreamBarDyn(t: DbKeyTab): void {
   const n = (t.redisStreamPending || []).length;
   if (dbStreamPill) {
     dbStreamPill.hidden = n === 0;
-    if (n) {
-      dbStreamPill.textContent = t.redisStreamPendingDropped
+    if (n && dbStreamPillN) {
+      dbStreamPillN.textContent = t.redisStreamPendingDropped
         ? tr("dataStream.pendingNewOver", { n: STREAM_ROW_CAP })
         : trn(n, "dataStream.pendingNew.one", "dataStream.pendingNew.other");
     }
@@ -432,13 +433,15 @@ function dbStreamFollowBar(wrap: HTMLElement, t: DbKeyTab): void {
   // The pending pill (docs/45 §2.3): the not-pinned holdback's one visible fact. Click
   // IS the flush — pool merges at the live edge, the view returns to the top.
   const pendN = (t.redisStreamPending || []).length;
-  const pill = h("button", { class: "btn db-stream-pill", type: "button" }, "");
-  pill.hidden = pendN === 0;
-  if (pendN) {
-    pill.textContent = t.redisStreamPendingDropped
+  // fix-plan #14: the "new rows above" arrow is the i-arrow-up sprite, so the count lives
+  // in its own span — a repaint updates the text without rebuilding the icon.
+  const pillN = h("span", null, pendN
+    ? (t.redisStreamPendingDropped
       ? tr("dataStream.pendingNewOver", { n: STREAM_ROW_CAP })
-      : trn(pendN, "dataStream.pendingNew.one", "dataStream.pendingNew.other");
-  }
+      : trn(pendN, "dataStream.pendingNew.one", "dataStream.pendingNew.other"))
+    : "");
+  const pill = h("button", { class: "btn db-stream-pill", type: "button" }, iconNode("arrow-up"), " ", pillN);
+  pill.hidden = pendN === 0;
   pill.onclick = (): void => {
     const cur = dbTab();
     if (cur.kind !== "key") return;
@@ -454,6 +457,7 @@ function dbStreamFollowBar(wrap: HTMLElement, t: DbKeyTab): void {
   };
   bar.appendChild(pill);
   dbStreamPill = pill;
+  dbStreamPillN = pillN;
   // The gap bar: a truncated live-edge page skipped a middle chunk; the honest move is
   // reopening the latest window, not splicing two ends into a lie.
   const gap = h("button", { class: "btn db-stream-gap", type: "button" },

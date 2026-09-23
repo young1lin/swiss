@@ -445,6 +445,7 @@
     .keylist { display: grid; gap: 2px; max-height: 210px; overflow-y: auto; }
     .keylist button { text-align: left; font-family: var(--mono); font-size: var(--f-label); padding: 4px var(--s2); border-radius: 6px; }
     .keylist button:hover { background: var(--hover); }
+    .keylist button .ic { width: 14px; height: 14px; flex: none; color: var(--text-3); } /* fix-plan #14: folder/file rows */
     .mcp-picks { display: grid; gap: var(--s1); max-height: 168px; overflow-y: auto; padding: var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: 8px; }
     .with-btn { display: flex; gap: var(--s2); align-items: flex-end; }
     .with-btn > label { flex: 1; }
@@ -748,6 +749,7 @@
     .db-col-name { overflow: hidden; text-overflow: ellipsis; }
     .db-col-comment { font-size: var(--f-caption); font-weight: 450; color: var(--green); margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
     .db-key { color: var(--amber); margin-left: 4px; }
+    .db-key .ic { width: 12px; height: 12px; } /* fix-plan #14: the i-key sprite, sized to the marker it replaced */
     .db-col-type { color: var(--text-3); font-size: var(--f-caption); margin-left: 6px; font-family: var(--mono); }
     /* docs/22 W5.2 — the FK column's jump arrow: a quiet straight arrow after the type (the
        chevron shape belongs to pagination), accent only under the pointer. Its click stops
@@ -872,6 +874,8 @@
     tr.db-sel td.db-conflict { background: color-mix(in srgb, var(--red) 26%, transparent); }
     .db-act { border: none; background: none; cursor: pointer; font-size: var(--f-label); color: var(--text-3); padding: 0 4px; border-radius: 4px; }
     .db-act:hover { color: var(--red); background: var(--hover); }
+    .db-act .ic { width: 13px; height: 13px; } /* fix-plan #14: the remove/undo sprites in the row controls */
+    .db-stream-pill .ic { width: 13px; height: 13px; } /* fix-plan #14: the pending-rows arrow */
 
     .db-bar { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s3); background: color-mix(in srgb, var(--amber) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--sep)); border-radius: var(--r-card); font-size: var(--f-body); }
     .db-bar .btn { margin-left: auto; }
@@ -1058,14 +1062,15 @@
       border: 1px solid var(--t-accent); border-radius: 4px;
       padding: 1px 4px; width: 9em; height: 19px; outline: none;
     }
-    /* The "N new \u2193" chip rides the holder's bottom-right corner, one hop from the
-       scrollbar thumb it answers to. */
+    /* The "N new" chip rides the holder's bottom-right corner, one hop from the
+       scrollbar thumb it answers to; its down affordance is the chevron sprite (fix-plan #14). */
     .term-jump {
       position: absolute; right: var(--s3); bottom: var(--s2);
       font-size: var(--f-label); color: var(--t-fg);
       background: var(--t-bar); border: 1px solid var(--t-edge); border-radius: var(--r-pill);
       padding: 3px 10px; cursor: pointer; box-shadow: none;
     }
+    .term-jump .ic { width: 12px; height: 12px; }
     .term-jump:hover { border-color: var(--t-accent); }
     .term-jump[hidden] { display: none; }
     /* The centered toast pill: resize geometry, the copy scissors, attach states. */

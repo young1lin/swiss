@@ -59,6 +59,10 @@ function popupMenu(anchor: { left: number; top: number; bottom: number; width?: 
     // docs/43 M1: the same type glyph and dirty dot the object's card carries, on the menu
     // row that stands in for it. Order is the card's order: glyph first, dot last.
     if (it.icon) b.insertBefore(iconNode(it.icon), b.firstChild);
+    // fix-plan #14: a trailing affordance for rows that open ANOTHER menu - the caret class
+    // of promise, retired from the label copy. Painted after the dot for the same reason the
+    // dot paints last: it is a direction about what happens next, not a fact about the row.
+    if (it.affordance) b.appendChild(iconNode(it.affordance));
     if (it.dot) {
       const d = document.createElement("span");
       d.className = "db-tab-dot";
