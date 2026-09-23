@@ -835,3 +835,29 @@ The cost that stays: a red machine without Docker still cannot run gate 2 — th
 harness's own failure copy pointing at docs/44-wsl-docker-setup.md, not a skip; and the seeds
 are a maintained surface (a schema change in a test's expectation is a seed change, reviewed
 as such).
+
+## ADR-029 — The panel's UI library lives in-tree; pages compose it and never style it (docs/46)
+
+**Status: Accepted (2026-09-23).** The design rules (swiss-ui-design) were written down but
+enforced by nothing: every view built its own rows, headers and button clusters with `h()`, so
+`views.css` grew to 352 classes and 247 hand-written px values, `font-weight` took nine
+different values, and one "row" existed in four implementations (`.row`, `.tun-row`, `.call`,
+`.cli-row`). A visual refresh (direction B, docs/46) would have drifted again within weeks.
+
+The options were weighed in docs/46 §1.3: keep rules-only (free, and the numbers above are its
+result); an **in-tree library** — `panel/src/ui/*.ts` components plus one `ui.css` that owns
+their classes, with ratchet gates in `npm run check`; a separate npm/workspace package (a hard
+boundary, but it needs a bundler or a second emit and breaks "cargo build needs no node",
+ADR-024); a second rust_embed crate (splits the asset tree and the version stamp for nothing);
+a third-party component library (a framework and an npm dependency, both ruled out by the
+skill). The decision is the in-tree library. `ui/` may import only `h.ts`, `i18n.ts` and
+itself; `views.css` may not style a class `ui.css` owns; font weights are four tokens; a
+hidden gallery page (`/admin/ui.html`) renders every component, and design mockups are
+gallery scenes built from the real components rather than hand-written HTML (owner: "后续设计
+可以直接复用组件，而不是纯自己手搓").
+
+The costs, stated plainly: a one-time migration of thirteen pages; ratchet tables that every
+migration commit must lower by hand; a gallery that ships in the binary (a few KB, no route
+in the navigation); and a new component is slower to add than an inline `h("div", …)` —
+which is the point. Rollback is page by page until the last page migrates; after that,
+removing the library means rewriting the views.
