@@ -66,7 +66,7 @@ impl Served {
             store,
             calls,
             Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-            "MCP_GATEWAY_TOKEN",
+            "SWISS_TOKEN",
             19999,
         );
         let app = build_app(ctx, None);

@@ -98,7 +98,7 @@
 - 不做嵌套组（组里再套组）。一层足够；嵌套会把"第一组兜底"变成树上的路径问题。
 - 不做跨作用域的组（一个组同时装 MCP 和 job）。作用域之间的名字可以重复，互不相干。
 - 不做批量多选拖拽、不做组内排序以外的排序（按名字 / 按状态排序是过滤器的事，不是分组的事）。
-- 不动 Node 仓库的服务端（用户决定：只做本项目）。面板文件仍经 `../local-mcp-gateway/src/admin/`
+- 不动 Node 仓库的服务端（用户决定：只做本项目）。面板文件仍经 `../node-original/src/admin/`
   编辑后整目录复制——那只是为了让 `the_tree_is_byte_for_byte_the_node_builds` 继续成立，
   Node 的 `src/*.ts` 一行不改。Node 服务端的同款实现记入 §7 待办，与 docs/19 同款处理。
 - Jobs 的 `labels` 不动、不迁移成组。label 是多对多的标签（过滤），group 是单亲的分区（有序、可改名、
@@ -359,7 +359,7 @@ docs/05 的测试断言"Rust 能打开 Node 封的文件"仍成立。反方向�
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo tree -d                        # 不得出现新的双份
-# 面板（在 ../local-mcp-gateway 里，只跑既有 vitest；不改 Node 服务端）
+# 面板（在 ../node-original 里，只跑既有 vitest；不改 Node 服务端）
 npx vitest run test/admin-pages.test.ts test/admin-groups.test.ts
 ```
 

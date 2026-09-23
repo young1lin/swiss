@@ -528,7 +528,7 @@ async fn full_app_with_store(
         managed.clone(),
         calls,
         Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19998,
     );
     // The /api/db routes and the inventory's requiresMet read the SAME catalog instance

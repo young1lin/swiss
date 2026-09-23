@@ -20,7 +20,7 @@
 
 ## 0. 边界：什么不能碰
 
-- **面板源码在 `../local-mcp-gateway/src/admin/`**。本仓库的 `crates/swiss-panel/src/admin_assets/` 是
+- **面板源码在 `../node-original/src/admin/`**。本仓库的 `crates/swiss-panel/src/admin_assets/` 是
   它的逐字节拷贝，改完整目录复制回来；`the_tree_is_byte_for_byte_the_node_builds` 会拦住任何分叉。
 - **不加依赖、不加构建步骤。** 没有 bundler、没有 Tailwind、没有 npm 包、没有 CSS 预处理。面板是
   直接从磁盘/嵌入树服务的 ES module + 两个 CSS 文件，改完还是。
@@ -269,7 +269,7 @@ panel」提交，或者 Node 侧攒到一起再一次复制——二选一，但
 ## 6. 交给实施模型的 Prompt
 
 > 复制下面整段。它假设模型在 `<repo>` 下工作，旁边有
-> `..\local-mcp-gateway`（Node 仓库，面板源码在那里）。
+> `..\node-original`（Node 仓库，面板源码在那里）。
 
 ---
 

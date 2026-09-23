@@ -6,7 +6,7 @@ Guidance for AI coding agents working in this repo. Single source of truth for a
 ## What this is
 
 The project is named **swiss** — the developer's pocket multitool. It began as the Rust
-port of `local-mcp-gateway` (the Node original — retired as the reference on 2026-09-13, see
+port of a Node original that has since been retired as the reference (2026-09-13, see
 docs/07; the sibling checkout is no longer needed or consulted). One local process, every MCP
 server on an HTTP path under the `/mcp/` prefix on `127.0.0.1:19999` (docs/24, ADR-018 —
 the prefix is the MCP plugin's domain; the root belongs to host chrome and future plugins),
@@ -150,10 +150,9 @@ means fingerprints were invalidated, not that everyday work costs 4 minutes.
 minority of the suite — and the nine member crates, where most of the tests live, are never
 even built. The run still reports ok. Exact counts rot; the shape does not: only a green
 `--workspace` run means "the suite passed". The same applies to clippy. `swiss start` / `stop` / `status` / `logs` / `token`
-are the CLI; `swiss token` manages the bearer token; `SWISS_TOKEN` pins it. A boot rewrites a
-legacy `tokenEnv` (`MCP_GATEWAY_TOKEN`) to `SWISS_TOKEN` once, carrying the token across names
-in the sealed store (bootstrap.rs `migrate_token_env`); the Node-era name stays honored as the
-pair partner, so a pre-rename shell keeps authenticating unchanged.
+are the CLI; `swiss token` manages the bearer token; `SWISS_TOKEN` pins it — the only
+well-known name. A leftover Node-era `MCP_GATEWAY_TOKEN` pin is inert (pinned by tests),
+so a pre-rename shell must switch names to keep authenticating.
 
 The sealed-envelope format is frozen (docs/05) and its fixture is committed under `tests/`.
 The Node-era regeneration script `scripts/seal-fixture.mts` needs the retired sibling checkout

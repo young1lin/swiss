@@ -99,7 +99,7 @@ Two things do come free with the move, and both are real:
   direct Win32 calls. This removes the transient peaks *and* lets the memory view stop being
   opt-in — it can go back to being free and always current.
 - **The npx wrapper stops being a foot-gun.** The Node README has to warn that
-  `npx local-mcp-gateway` keeps ~103 MB of `cmd.exe` + npx resident for the life of the process.
+  `npx node-original` keeps ~103 MB of `cmd.exe` + npx resident for the life of the process.
   A single exe has nothing to warn about.
 
 ## The tactics, in descending order of payoff

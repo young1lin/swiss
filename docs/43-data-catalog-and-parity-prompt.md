@@ -128,7 +128,7 @@ cargo tree -d
 ## 实例纪律
 
 19998 是隔离测试实例（`scripts/test-instance.ps1 -Stop` / `-Fresh`，`CARGO_TARGET_DIR=target-test`，
-令牌 `MCP_GATEWAY_TOKEN=acceptance-token-for-1998`）。
+令牌 `SWISS_TOKEN=acceptance-token-for-1998`）。
 **19999 是 owner 正在用的生产实例，一次都不许碰**——唯一允许的是只读 `GET /health`。
 停实例**按端口的属主 PID 停**（`scripts/test-instance.ps1 -Stop`），**绝不按进程名**：
 `Get-Process swiss` 会把 owner 的 19999 一起杀掉。19998 若被别的会话占着，换 19997（同脚本、独立测试 home）。

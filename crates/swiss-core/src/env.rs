@@ -26,7 +26,7 @@
 //! This is a BLACKLIST, deliberately short: a whitelist-style rebuild would one day delete a
 //! variable nobody thought of (a proxy, a locale) on some machine we never saw. Only the
 //! variables whose whole job is to describe the launcher get struck; everything else — PATH,
-//! HOME, TEMP, proxies, MCP_GATEWAY_* — is inherited untouched.
+//! HOME, TEMP, proxies, SWISS_* — is inherited untouched.
 
 use std::process::Command;
 

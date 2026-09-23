@@ -43,7 +43,7 @@
 两个仓库的门禁分别是：
 
 ```bash
-# ../local-mcp-gateway （面板的事实来源）
+# ../node-original （面板的事实来源）
 npx vitest run test/admin-pages.test.ts test/admin-panel.test.ts
 npx vitest run                                    # 全量，别只跑改动的那两个
 
@@ -307,9 +307,9 @@ page("mcps", MCP_ID, "MCPs", 10, true),   // →  page("mcps", MCP_ID, "Servers"
 
 ### N1 — `page-core.js` 的分组纯函数（Node 仓库）
 
-- `../local-mcp-gateway/src/admin/js/page-core.js`：加 `groupPages()`（D2），导出它，并在
+- `../node-original/src/admin/js/page-core.js`：加 `groupPages()`（D2），导出它，并在
   `createPageRegistry` 的返回对象上加 `groups(plugins, fallbackLabels)`。
-- `../local-mcp-gateway/test/admin-pages.test.ts`：加一个 `describe("page grouping")`，至少覆盖
+- `../node-original/test/admin-pages.test.ts`：加一个 `describe("page grouping")`，至少覆盖
   1. 两页同 `pluginId` 合成一组，组内按 `order` 排；
   2. 组顺序按组内最小 `order`，且「某组补一个 order=1 的页面」会把该组顶到最前（证明用的是 min）；
   3. `plugins` 里没有对应行时用 `fallbackLabels`，两者都没有时用页面自己的 label，**页面绝不丢失**；
@@ -339,7 +339,7 @@ page("mcps", MCP_ID, "MCPs", 10, true),   // →  page("mcps", MCP_ID, "Servers"
 
 ```powershell
 Remove-Item -Recurse -Force crates\swiss-panel\src\admin_assets
-Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\swiss-panel\src\admin_assets
+Copy-Item -Recurse ..\node-original\src\admin crates\swiss-panel\src\admin_assets
 ```
 
 - 复制**整棵树**，不要挑文件（ADR-009）。

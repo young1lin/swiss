@@ -67,10 +67,6 @@ pub async fn run_gateway() -> Result<(), String> {
     // Create the data dir, seed a default config, and guarantee a token exists — before
     // load_config reads that token. A no-op on every boot after the first.
     ensure_first_run();
-    // One-shot tokenEnv rename (Node era -> SWISS_TOKEN) before the store is injected, so
-    // this very boot resolves the token under its new name. No-op on every home that
-    // already names it (bootstrap.rs).
-    crate::bootstrap::migrate_token_env();
     // Load the sealed env store into the in-process overlay (the .env replacement), then read
     // the config through it. The vault (docs/19) loads the same way — into its own lookup
     // path, never into the env overlay: nothing merges vault values into a child environment.

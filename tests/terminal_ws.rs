@@ -197,7 +197,7 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
         managed.clone(),
         calls,
         Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19997,
     );
     let _ = ctx.catalog.set(services.catalog.clone());
@@ -884,7 +884,7 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
         managed.clone(),
         calls,
         Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19997,
     );
     let _ = ctx.catalog.set(services.catalog.clone());

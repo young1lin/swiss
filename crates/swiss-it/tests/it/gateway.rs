@@ -108,7 +108,7 @@ pub(crate) async fn boot(defs: Vec<(&str, Value)>) -> Gateway {
         store.clone(),
         calls.clone(),
         Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         port,
     );
     // The connection catalog the daemon's MCP plugin registers on start (docs/12

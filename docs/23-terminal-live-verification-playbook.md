@@ -39,7 +39,7 @@ Lifecycle rules, each learned the hard way:
 - **Always re-check `/health` after a restart and read the build hash.** A restart whose
   Start-Process silently failed leaves the old process serving, and everything after it
   verifies the wrong binary. The hash must name the commit you think you shipped.
-- The junction `.agents/worktrees/local-mcp-gateway` → the Node repo makes the
+- The junction `.agents/worktrees/node-original` → the Node repo makes the
   byte-for-byte guard genuinely run from inside the worktree. It is gitignored; create it
   when entering, remove it when leaving.
 

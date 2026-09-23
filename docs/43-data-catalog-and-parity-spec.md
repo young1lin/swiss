@@ -120,7 +120,7 @@ cargo tree -d
 scripts/test-instance.ps1 -Stop                 # 先停干净，别叠在旧实例上（旧实例 = 旧二进制）
 $env:CARGO_TARGET_DIR = "target-test"; cargo build --release
 scripts/test-instance.ps1                       # 或 -Fresh 清掉测试 home
-# 令牌：MCP_GATEWAY_TOKEN = "acceptance-token-for-1998"；SWISS_HOME = %LOCALAPPDATA%\swiss-test-home
+# 令牌：SWISS_TOKEN = "acceptance-token-for-1998"；SWISS_HOME = %LOCALAPPDATA%\swiss-test-home
 curl http://127.0.0.1:19998/health               # build.hash 必须等于这次构建的 exe
 ```
 

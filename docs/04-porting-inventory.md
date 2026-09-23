@@ -1,7 +1,7 @@
 # 04 — Porting inventory
 
 Every backend source file in the Node build, with its destination, phase and risk. Line counts are
-from `../local-mcp-gateway/src` on 2026-09-07. **15,395 lines of backend TypeScript** is the real
+from `../node-original/src` on 2026-09-07. **15,395 lines of backend TypeScript** is the real
 size of this job — the other 7,193 lines of that tree are the panel, which is copied, not ported.
 
 > **The port is complete; the destinations below are pre-workspace paths.** Every `src/…`

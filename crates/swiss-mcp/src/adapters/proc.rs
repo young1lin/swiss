@@ -287,7 +287,7 @@ impl SpawnedChild {
 }
 
 /// The client side the gateway presents to the child: `{ name: "swiss", version: "1.0" }`
-/// with no capabilities (Node presented itself as "mcp-gateway"). A no-op handler otherwise —
+/// with no capabilities (Node presented itself under the old product name). A no-op handler otherwise —
 /// the proxy drives every request.
 struct ProcClientHandler;
 

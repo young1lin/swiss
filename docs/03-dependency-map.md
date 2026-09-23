@@ -64,7 +64,7 @@ Not yet committed as a real manifest — versions get pinned when Phase 0 actual
 
 ```toml
 [package]
-name = "local-mcp-gateway"
+name = "node-original"
 edition = "2024"
 
 [[bin]]

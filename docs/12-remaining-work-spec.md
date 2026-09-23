@@ -4,7 +4,7 @@
 > W1 文档校正 · W2 内存实测（2026-09-11，见下）· W3 连接目录 `2026831` · W4 试金石插件 `3d81d30`
 > · W5 workspace 拆分 `2937034`。W2 最终在 `3b4934f`（ADR-012 之后的 release）上完成：
 > 本机没有独立 DB 服务，mysql/pg/redis 全部经网关自己的 SSH 隧道到达，压测用官方 MCP SDK
-> 客户端直打各适配器端点（`../local-mcp-gateway/scripts/w2-drive.mjs`），Node 侧同数据目录
+> 客户端直打各适配器端点（`../node-original/scripts/w2-drive.mjs`），Node 侧同数据目录
 > 同流量顺序复测（隧道本地端口互斥，无法并排）。数字在 docs/01 的表里。
 > Jobs 的部分单独在 [11](11-jobs-v2-implementation-spec.md)。
 > 前置阅读：`AGENTS.md`、`docs/09-toolbox-plugin-architecture.md` §3/§4/§10。
