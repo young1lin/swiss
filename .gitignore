@@ -52,3 +52,12 @@ master.key
 # the docs/20 record lists them as not shipped.
 /docs/assets/20/03-tunnels-groups-*.png
 /docs/assets/20/06-data-dropdown-*.png
+# docs/43 M3/M4: shot against the operator's real internal DB (schema names + row counts
+# visible). Off the tree pending a retake against the swiss-it it_seed fixture DB.
+/docs/assets/43/m3-databases-*.png
+/docs/assets/43/m4-toolbar-*.png
+# The rest of the credential-shaped strays the seals never cover.
+.env.*
+*.cast
+*.pem
+*.kdbx

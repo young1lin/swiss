@@ -26,7 +26,8 @@
 > 终态数字（增补五/六合入后在 HEAD `13ec65c` 复测，`npm run check` 全绿）：85 个文件 / 795 个用例
 > （typecheck ×2 + eslint + 发射新鲜度 + vitest）；`base.css` 36,533 B + `views.css` 94,245 B；
 > 发射 JS 931,856 B / 51 个文件；`swiss.exe` 10,294,784 B（`4b08c43` 时的记录，未重建）。
-> 截图在 `docs/assets/43/`（多库目录、工具条，明暗各一，另有一张 Redis UTF-8 解码对照；页签溢出与
+> 截图在 `docs/assets/43/`（多库目录、工具条，明暗各一，另有一张 Redis UTF-8 解码对照——其中 m3/m4
+> 四张已暂撤：原图带真实库表名与行数，待以 it_seed 夹具库重拍后回归；页签溢出与
 > 成树侧栏两张始终未拍——目录里从来没有）。基线 `4b08c43`（master，2026-09-21）。实施分支 `data-full-access`
 > （worktree `.agents/worktrees/data`）。本文承接 `docs/42-data-object-tabs-spec.md`：42 的 T1（状态切分）
 > 与 T2（页签条）已经做完，**T3（侧栏成树）与 T4（工具条收敛 + 状态条）一行没动**——本文把它们原样收编，
