@@ -26,7 +26,7 @@
     /* A push button, not a pill: macOS reserves the full-round shape for toolbar segments and tags.
        These are "Start", "Try", "Read" — rounded rects. */
     .btn {
-      font-size: var(--f-body); font-weight: 500; line-height: 20px;
+      font-size: var(--f-body); font-weight: var(--w-emph); line-height: 20px;
       padding: 4px var(--s3); border-radius: var(--r-btn);
       background: var(--card); color: var(--text);
       box-shadow: inset 0 0 0 1px var(--sep);
@@ -35,7 +35,7 @@
     }
     .btn:hover { background: color-mix(in srgb, var(--hover), var(--card)); }
     .btn:active { box-shadow: inset 0 0 0 1px var(--sep); }
-    .btn.primary { background: var(--accent); color: var(--accent-text); box-shadow: var(--shadow-btn); font-weight: 550; }
+    .btn.primary { background: var(--accent); color: var(--accent-text); box-shadow: var(--shadow-btn); font-weight: var(--w-emph); }
     .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
     .btn.danger { color: var(--red); }
     /* The quiet slots: toolbar icon buttons, a row's secondary affordance (docs/18 V1). Chrome
@@ -66,7 +66,7 @@
     .sw:disabled { opacity: .4; cursor: default; }
     @media (prefers-reduced-motion: reduce) { .sw, .sw::after { transition: none; } }
     .row.muted .name { color: var(--text-3); }
-    .group-cap { font-size: var(--f-caption); font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); padding: var(--s4) var(--s4) var(--s1); }
+    .group-cap { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); padding: var(--s4) var(--s4) var(--s1); }
     .btn.icon { padding: 4px 8px; font-size: 14px; line-height: 1; color: var(--text-2); display: inline-flex; align-items: center; justify-content: center; }
     /* Inline icons (docs/18 V2): one sprite in the shell, stroke=currentColor, sized here. */
     .ic { width: 16px; height: 16px; flex: none; }
@@ -123,7 +123,7 @@
     label.field > span { display: block; font-size: var(--f-label); color: var(--text-2); margin-bottom: var(--s1); }
     /* The one place colour marks something other than state: a required argument in Run. Leaving it
        out is the error the form is about to report, so it is the same red that reports it. */
-    .req-star { color: var(--red); font-weight: 700; }
+    .req-star { color: var(--red); font-weight: var(--w-emph); }
     label.check { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-body); }
     label.check input { width: auto; accent-color: var(--accent); }
 
@@ -172,7 +172,7 @@
     .grp-toggle {
       flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s2);
       text-align: left; color: var(--text);
-      font-size: var(--f-body); font-weight: 600;
+      font-size: var(--f-body); font-weight: var(--w-emph);
     }
     .grp-chev { flex: none; width: 12px; color: var(--text-3); transition: transform .15s ease; }
     .grp:not(.collapsed) .grp-chev { transform: rotate(90deg); }
@@ -180,7 +180,7 @@
     .grp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* Tabular so a count change does not wiggle the name beside it; dimmed because it is
        metadata, kept visible folded because 0 versus 3 is how a folded group explains itself. */
-    .grp-n { flex: none; font-size: var(--f-caption); font-variant-numeric: tabular-nums; font-weight: 500; color: var(--text-3); }
+    .grp-n { flex: none; font-size: var(--f-caption); font-variant-numeric: tabular-nums; font-weight: var(--w-emph); color: var(--text-3); }
     .grp-add, .grp-more {
       flex: none; padding: 2px 6px; border-radius: 4px; line-height: 1;
       font-size: 13px; color: var(--text-3);
@@ -231,10 +231,32 @@
 
     /* --- page scaffolding, lists, menus, sheets (from views.css) -------------------------------- */
     .pane-head { display: flex; align-items: flex-start; gap: var(--s4); margin-bottom: var(--s5); }
-    .pane-title { font-size: var(--f-title); font-weight: 600; letter-spacing: -0.02em; margin: 0; line-height: 1.25; }
+    /* The pinned page head (docs/46 U9). On a content page (.pane > .wide > .pane-head) the
+       description and the page's actions stay in reach while a long list scrolls under them -
+       New on Port Forwards is one click away at row forty. At rest nothing moves: the head takes
+       the pane's 20px top padding inside itself (margin -20 / padding 20) and splits its 20px of
+       bottom air into 12 inside + 8 outside, so the text sits exactly where it did. The sticky
+       rectangle is the pane's padding box INSET by its padding, so top is -20 too: stuck at the
+       pane's very top edge, which is where the head already sits at rest.
+       Its ground and hairline run the pane's full width, not the measure: two pseudo boxes the
+       head's own size whose outset shadows are clipped back to their height. Shadows are ink,
+       not scrollable overflow, so the pane grows no sideways scrollbar. The hairline shows only
+       once the pane has scrolled - the shell keeps .pane.scrolled (pane-scroll.ts). The MCP
+       resource head pins with its seg in P2; it is .col > .pane-head and not matched here. */
+    .pane > .wide > .pane-head {
+      position: sticky; top: calc(var(--s5) * -1); z-index: 3;
+      margin: calc(var(--s5) * -1) 0 var(--s2);
+      padding: var(--s5) 0 var(--s3);
+    }
+    .pane > .wide > .pane-head::before,
+    .pane > .wide > .pane-head::after { content: ""; position: absolute; left: 0; right: 0; clip-path: inset(0 -100vmax); pointer-events: none; }
+    .pane > .wide > .pane-head::before { top: 0; bottom: 0; z-index: -1; background: var(--bg); box-shadow: 0 0 0 100vmax var(--bg); }
+    .pane > .wide > .pane-head::after { bottom: -1px; height: 1px; background: var(--sep); box-shadow: 0 0 0 100vmax var(--sep); visibility: hidden; }
+    .pane.scrolled > .wide > .pane-head::after { visibility: visible; }
+    .pane-title { font-size: var(--f-title); font-weight: var(--w-title); letter-spacing: -0.02em; margin: 0; line-height: 1.25; }
     /* Body size, not head size: at 15px the description of a page outweighed the rows under it,
        and three lines of it pushed the first row below the fold on a laptop. It is a caption. */
-    .pane-desc { font-size: var(--f-body); font-weight: 400; color: var(--text-2); margin-top: var(--s1); max-width: 68ch; line-height: 1.5; }
+    .pane-desc { font-size: var(--f-body); font-weight: var(--w-body); color: var(--text-2); margin-top: var(--s1); max-width: 68ch; line-height: 1.5; }
     .pane-sub { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); margin-top: var(--s2); }
     /* The mount path — the one part of the header you would actually copy, so it keeps the monospace
        face the title gave up. */
@@ -249,7 +271,7 @@
        maybe one ghost action — vertical, centred, nothing else competing. */
     .empty > div { display: grid; justify-items: center; }
     .empty-ic .ic { width: 20px; height: 20px; }
-    .empty h2 { font-size: var(--f-head); font-weight: 550; color: var(--text-2); margin: var(--s3) 0 0; }
+    .empty h2 { font-size: var(--f-head); font-weight: var(--w-emph); color: var(--text-2); margin: var(--s3) 0 0; }
     .empty p { font-size: var(--f-label); color: var(--text-3); max-width: 44ch; margin: var(--s1) 0 0; }
     .empty [data-empty-action] { margin-top: var(--s4); }
 
@@ -261,11 +283,11 @@
        .seg may still empty itself after a poll. :empty, not a hidden flag, so every .seg
        that empties itself is covered — empties happen via innerHTML = "", no whitespace. */
     .seg:empty { display: none; }
-    .seg button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; transition: color .12s ease; }
+    .seg button { font-size: var(--f-body); font-weight: var(--w-body); color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; transition: color .12s ease; }
     .seg button:hover { color: var(--text); }
     /* Hairline rings, no drops (docs/18 V6): the selected tab is a card with an edge, not a
        keycap — brightness separates it from the well, and the ring closes the silhouette. */
-    .seg button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--sep); }
+    .seg button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: var(--w-emph); box-shadow: 0 0 0 1px var(--sep); }
     :root[data-theme="dark"] .seg button[aria-selected="true"] { background: color-mix(in srgb, var(--card), white 7%); box-shadow: inset 0 0 0 1px var(--sep); }
     /* A tab's item count. Glued straight onto the label ("Tools 1") it read as a typo; separated and
        dimmed, it reads as a count. */
@@ -277,9 +299,13 @@
        white card on a near-white canvas read as a surface instead of an outline. */
     .group { background: var(--card); border: 0; box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
     .group + .cap { margin-top: var(--s5); }
-    .cap { font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: 0 var(--s1) var(--s2); }
+    .cap { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: 0 var(--s1) var(--s2); }
     .row { display: flex; gap: var(--s3); padding: var(--s3) var(--s4); align-items: baseline; }
-    .row + .row { border-top: 1px solid var(--sep-soft); }
+    /* Separators start at the text column, not the card's edge (docs/46 U7, the System Settings
+       inset): a line that runs under the leading dot or chevron cuts the row's own lead off from
+       its name. --row-inset is the text column's x; a row with no lead keeps the padding's 16. */
+    .row + .row { position: relative; }
+    .row + .row::before { content: ""; position: absolute; top: 0; right: 0; left: var(--row-inset, var(--s4)); height: 1px; background: var(--sep-soft); pointer-events: none; }
     /* A row's main column grows; the trailing .row-act stays its natural width. Without this the
        Tokens sheet's buttons hugged the label instead of sitting at the row's end. */
     .row > .row-main { flex: 1; min-width: 0; }
@@ -296,7 +322,7 @@
     .row-b { display: block; }
     .row-act { display: flex; align-items: flex-start; gap: var(--s3); }
     .row-act .row-main { flex: 1; min-width: 0; }
-    .row-b .name, .row-act .name { font-family: var(--mono); font-weight: 550; word-break: break-all; }
+    .row-b .name, .row-act .name { font-family: var(--mono); font-weight: var(--w-name); word-break: break-all; }
     /* .row-act was missing from this rule, so a tool's description came out at full body size in full
        body colour — the same weight as the monospace name above it. Nine rows of two equally loud
        lines is why the list read as nine cards instead of nine rows. */
@@ -329,7 +355,7 @@
     /* docs/32 B4: the head may wrap under ~900px — the caption and the trailing menu button
        keep the first row, the search box takes what width is left rather than forcing overflow. */
     .sec-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s3); padding: 0 var(--s1) var(--s2); min-height: 36px; }
-    .sec-cap { font-size: var(--f-caption); font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
+    .sec-cap { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
 
     /* docs/33 C3: the JSON view is one formatted code block (json-view.ts) — standard indented
        JSON, every line visible, no fold and no inner scroll box: the page scrolls, and a block
@@ -392,7 +418,7 @@
     .menu hr { border: 0; border-top: 1px solid var(--sep-soft); margin: var(--s1) 0; }
     /* A caption for the first group: "Copy Codex command" needs to say what it is for. */
     .menu-cap {
-      font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+      font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em;
       color: var(--text-3); padding: var(--s1) var(--s2) 2px;
     }
 
@@ -407,7 +433,7 @@
     .sheet, .menu.float { animation: pop-in .12s ease-out; }
     @media (prefers-reduced-motion: reduce) { .sheet, .menu.float { animation: none; } }
     .sheet-head { display: flex; align-items: center; padding: var(--s4) var(--s5); border-bottom: 1px solid var(--sep-soft); }
-    .sheet-head h2 { font-size: var(--f-head); font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+    .sheet-head h2 { font-size: var(--f-head); font-weight: var(--w-title); margin: 0; letter-spacing: -0.01em; }
     .sheet-body { padding: var(--s4) var(--s5); display: grid; gap: var(--s3); max-height: 66vh; overflow-y: auto; }
     .sheet-foot { display: flex; justify-content: flex-end; gap: var(--s2); padding: var(--s3) var(--s5); border-top: 1px solid var(--sep-soft); background: color-mix(in srgb, var(--bg) 60%, var(--card)); }
     /* The inline create form (docs/35 §3): Tokens and Secrets create in place, not in a sheet.
@@ -463,6 +489,6 @@
 
     /* Section captions inside a sheet - the pane's .sec-cap, spaced for the sheet's grid. */
     .sheet-cap {
-      font-size: var(--f-caption); font-weight: 600; text-transform: uppercase;
+      font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase;
       letter-spacing: .04em; color: var(--text-3); margin-top: var(--s2);
     }

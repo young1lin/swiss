@@ -35,9 +35,14 @@
           tool card look lost in a 1500px field. Content is capped at --measure; the log and traffic
           views, whose rows are genuinely wide, get --measure-wide. Neither is ever unbounded.
 
-       Font note (docs/18 V1): Windows-first — Inter is honored first if installed, then Segoe UI
-       Variable Text with optical sizing on, then plain Segoe UI. Tracking is neutral except on the
-       sizes large enough to want it (pane titles pull -0.02em).
+       Font note (docs/18 V1, docs/46 U6): the design is drawn for Segoe UI Variable Text on Windows
+       and SF on macOS - the faces a user actually has. Inter stays first in --sans so a machine that
+       has it installed uses it, but nothing is embedded and nothing is tuned for it. Tracking is
+       neutral except on the sizes large enough to want it (pane titles pull -0.02em).
+
+       Weight note (docs/46 U5): four roles, nothing in between - body 400, a name 450, emphasis
+       (a selected tab, a button, a caption) 500, a title 600. Nine hand-picked weights on a dark
+       ground read as "everything is bold"; a tenth needs a new role, not a new number.
     --------------------------------------------------------------------------------------------- */
     :root {
       /* Set from <head> before first paint, and re-resolved whenever the picker or the OS changes.
@@ -52,6 +57,12 @@
       --f-body: 13px;       /* default */
       --f-label: 12px;      /* secondary text */
       --f-caption: 11px;    /* group captions, uppercase */
+
+      /* Weight ramp (docs/46 U5) - four roles; every font-weight in every sheet is one of these. */
+      --w-body: 400;        /* running text, an unselected tab */
+      --w-name: 450;        /* identity in a list: a row's name, a tool, a sidebar entry */
+      --w-emph: 500;        /* a selected tab, a button, a caption, a group band */
+      --w-title: 600;       /* pane, sheet and bar titles */
 
       /* 4pt spacing grid. */
       --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
@@ -103,6 +114,20 @@
       --shadow-btn: none;
       --shadow-sheet: 0 24px 60px rgba(20, 24, 36, 0.24), 0 0 0 1px var(--sep);
       --shadow-pop: 0 8px 24px rgba(20, 24, 36, 0.14), 0 0 0 1px var(--sep);
+      /* Scrollbars (docs/46 U8) are ink of the text colour, so one declaration serves both themes
+         and a surface with its own ground (the terminal stage) re-points the two tokens. */
+      --scroll-thumb: color-mix(in srgb, var(--text) 16%, transparent);
+      --scroll-thumb-hover: color-mix(in srgb, var(--text) 32%, transparent);
+      /* The terminal (docs/46 U12): the panel's own palette one step darker, and dark in BOTH
+         themes - a terminal is a dark instrument, and a white one would fight every program's
+         colours. Chrome only: the 16 ANSI colours are content and stay in terminal.ts. */
+      --term-bg: #17181b;
+      --term-bar: #1f2023;
+      --term-edge: rgba(255, 255, 255, 0.08);
+      --term-fg: #d4d4d8;
+      --term-dim: #8b8d94;
+      --term-cursor: #e4e4e7;
+      --term-sel: rgba(59, 130, 246, 0.35);
     }
     /* Dark. Written once; `data-theme` is always resolved before it reaches the DOM. A warm
        near-black (#0f1012, not the old blue-grey): the dark side should read as paper,
@@ -115,7 +140,7 @@
       --bar: #141518;
       --card: #191a1e;
       --field: #0f1012;
-      --text: #ededef;
+      --text: #e4e4e7;      /* docs/46 U5: #ededef glared at the lighter weights */
       --text-2: #9a9ca3;
       --text-3: #66686f;
       --sep: rgba(255, 255, 255, 0.08);
@@ -134,6 +159,8 @@
       --shadow-btn: none;
       --shadow-sheet: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--sep);
       --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--sep);
+      --term-bg: #0b0c0e;   /* one step below --bg, so the stage still reads as its own surface */
+      --term-bar: #141518;
     }
 
     * { box-sizing: border-box; }
@@ -151,6 +178,20 @@
       font-optical-sizing: auto;             /* Segoe UI Variable / Inter pick their own cut */
     }
     [hidden] { display: none !important; }
+    /* The user agent's bold is 700 - a fifth weight. Anything that relies on the default gets
+       the emphasis role instead (docs/46 U5). */
+    b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: var(--w-emph); }
+    /* Thin scrollbars everywhere (docs/46 U8): 10px, a rounded thumb inset 3px, no arrows, no
+       track. Chromium reads the ::-webkit-scrollbar rules; setting the standard properties too
+       would switch those off, so they are for engines without the pseudo-elements (Firefox). */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+    ::-webkit-scrollbar-button { display: none; }
+    ::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); border: 3px solid transparent; background-clip: padding-box; border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
+    @supports not selector(::-webkit-scrollbar) {
+      * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+    }
     code { font-family: var(--mono); font-size: 0.92em; }
 
     /* --- controls ------------------------------------------------------------------------------ */
@@ -173,7 +214,8 @@
     .rail {
       width: 56px; flex: none;
       display: flex; flex-direction: column;
-      background: var(--sidebar); border-right: 1px solid var(--sep);
+      background: var(--sidebar);   /* no edge of its own (docs/46 U7): beside a page the ground change
+                                       is the edge; beside the MCP sidebar the two are one surface */
       padding: var(--s2) 0;
     }
     /* The brand carries a mark: the swiss logo (logo.svg), a red tile with three white tools
@@ -267,7 +309,7 @@
        an underlined tab, a pill segment inside the page. The title wears the glyph so it
        can never be read as a fourth tab, and so an icon-only rail still has the plugin's
        name on screen. */
-    .ctx-title { display: inline-flex; align-items: center; gap: var(--s2); font-weight: 600; color: var(--text); margin-right: var(--s3); min-width: 0; }
+    .ctx-title { display: inline-flex; align-items: center; gap: var(--s2); font-weight: var(--w-title); color: var(--text); margin-right: var(--s3); min-width: 0; }
     .ctx-title .ic { color: var(--text-2); }
     .ctx-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* flex:1 caps the strip at the slack the bar has; overflow:hidden plus the ⋯ seat
@@ -276,10 +318,10 @@
     .ctx-tabs { display: flex; align-self: stretch; gap: 2px; flex: 1; min-width: 0; overflow: hidden; }
     .ctx-tab {
       position: relative; display: inline-flex; align-items: center; padding: 0 var(--s2);
-      color: var(--text-2); font-size: var(--f-body); font-weight: 500; text-decoration: none; white-space: nowrap;
+      color: var(--text-2); font-size: var(--f-body); font-weight: var(--w-body); text-decoration: none; white-space: nowrap;
     }
     .ctx-tab:hover { color: var(--text); }
-    .ctx-tab[aria-current="page"] { color: var(--text); font-weight: 600; }
+    .ctx-tab[aria-current="page"] { color: var(--text); font-weight: var(--w-emph); }
     /* The current page's mark sits ON the bar's bottom hairline: the same 2px accent as a
        selected row's leading edge, turned horizontal. */
     .ctx-tab[aria-current="page"]::after {
@@ -329,7 +371,7 @@
        file, so the states are named here to keep this rule the winner (docs/46 P1a-1). */
     .side-head .btn, .side-head .btn:hover, .side-head .btn:active, .side-head .btn:disabled { background: none; box-shadow: none; }
     .side-cap {
-      font-size: var(--f-caption); font-weight: 500; text-transform: uppercase; letter-spacing: .06em;
+      font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .06em;
       color: var(--text-3); padding: var(--s2) var(--s3) var(--s1);
     }
     .side-list { flex: 1; overflow-y: auto; padding: 0 var(--s2) var(--s4); }
@@ -349,20 +391,20 @@
        stays flat in the list and the status dot survives it. The previous white-card float (the
        Finder/Xcode idiom) read as a second surface and fought the dot it sat beside. */
     .side-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
-    .side-row[aria-selected="true"] .side-name { color: var(--text); font-weight: 600; }
+    .side-row[aria-selected="true"] .side-name { color: var(--text); font-weight: var(--w-emph); }
     /* Drag-to-reorder: the insertion point, shown on the row the payload would land beside. */
     .side-row.dragging { opacity: 0.55; }
     .side-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
     .side-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
     .side-name {
-      flex: 1; min-width: 0; font-size: var(--f-body); font-weight: 500;
+      flex: 1; min-width: 0; font-size: var(--f-body); font-weight: var(--w-name);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     /* How this MCP is launched (docs/18 V6): an address, not a state — one monochrome chip.
        The per-method hues carried nothing a scan could use (mysql and redis were both red,
        pg and http both blue); mono on a 5% wash says "launch method" and nothing else. */
     .side-type {
-      flex: none; font-family: var(--mono); font-size: var(--f-caption); font-weight: 550;
+      flex: none; font-family: var(--mono); font-size: var(--f-caption); font-weight: var(--w-name);
       white-space: nowrap; padding: 1px 6px; border-radius: 4px;
       color: var(--text-3); background: color-mix(in srgb, var(--text) 5%, transparent);
     }
