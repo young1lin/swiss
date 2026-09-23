@@ -31,13 +31,18 @@
    host-owned like this page, so it lives here rather than in a page of its own — and its store
    is the OS (a registry Run value, a LaunchAgent, a systemd user unit), not the gateway, so the
    toggle reads and writes /api/autostart with no revision to race on.
+
+   Drawn from the library (docs/46 P5): row() and sw() for both sections, section() + card()
+   for their frames, pageFoot() for the revision.
    ================================================================================================ */
                                                                         
-import { $, api, apiJson, emptyNode, targetEl, toast } from "../util.js";
+import { $, api, apiJson, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
                                       
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
 import { tr, trn } from "../i18n.js";
+import { card, dot, emptyNode, pageFoot, paneBody, paneHead, row, section, sw, tag } from "../ui/index.js";
+                                               
 
 let busy                          = {}; // plugin id -> true while its own toggle is in flight
 let painted = ""; // the structural signature of the drawn list; a change means rebuild
@@ -50,84 +55,85 @@ function inv()                     { return pluginInventory() || { plugins: [], 
 function rows()                 { return inv().plugins || []; }
 function signature()         { return rows().map((p              )         => { return p.id; }).join("\n"); }
 
-function dotClass(p              )         {
+/** The dot a row needs, or null (docs/46 §3.5). The switch already says on or off, so a plugin
+ *  whose state agrees with it - on and serving, on and lazily idle, off - draws no dot at all:
+ *  six green dots beside six "on" switches said the same thing twice. A dot appears only when
+ *  the state is not what the switch promises: work in flight (the amber pulse) or a failed
+ *  start (red, with the reason as the row's red line). An unmet requirement is not a dot: it
+ *  is the "no provider" warn tag on the sub-line, beside the capability it names - a static
+ *  amber dot would read as the pulse of a start. */
+function stateDot(p              )                  {
   if (busy[p.id] || p.state === "starting") return "starting";
   if (p.state === "stopping") return "stopping";
-  if (p.state === "failed") return "down";
-  return p.enabled && p.state === "active" ? "up" : "idle";
+  if (p.state === "failed") return "error";
+  return null;
 }
 
-/** What the row says it is doing, in the host's own words — never a guess of our own. */
+/** What the dot says it is doing, in the host's own words - never a guess of our own. */
 function stateLabel(p              )         {
   if (busy[p.id]) return tr("plugins.working");
   return p.enabled ? p.state : tr("plugins.disabled");
 }
-// (docs/18 V4): the state word left the row — the dot carries it; stateLabel is the dot's
-// title (docs/18 V6), so the host's own vocabulary explains the colour on hover.
 
-/** The dependency badge (docs/12 W3): the row ALWAYS names what a plugin requires —
- *  "requires connection-catalog" while the host reports the floor met, "needs X (no
- *  provider)" when it does not — so the build's dependency structure is visible at a glance,
- *  not only in the moment something breaks. Plugins that require nothing say nothing, but the
- *  row always carries the (empty) span so poll-patch has its anchor either way.
- *  Exported pure for the suite: no DOM writes, just the row JSON in and badge children out -
- *  a string, a text-plus-span pair, or null (docs/37 R5: h() children, so a capability name
- *  is a text node and cannot close anything). */
+/** The dependency badge (docs/12 W3): the row ALWAYS names what a plugin requires -
+ *  "requires connection-catalog" while the host reports the floor met, "needs X" with a
+ *  "no provider" warn tag when it does not - so the build's dependency structure is visible
+ *  at a glance, not only in the moment something breaks. Plugins that require nothing say
+ *  nothing (null). Exported pure for the suite: the row JSON in, h() children out, so a
+ *  capability name is a text node and cannot close anything (docs/37 R5). The words carry no
+ *  separator of their own: the sub-line puts the " · " between its parts (docs/46 P3). */
 export function requiresBadge(p              )         {
   const requires = p.requires || [];
   if (!requires.length) return null;
   if (p.requiresMet === false) {
-    return [tr("plugins.needsList", { list: requires.join(", ") }) + " ", h("span", { class: "warn" }, tr("plugins.provider"))];
+    return [tr("plugins.needsList", { list: requires.join(", ") }), " ", tag(tr("plugins.provider"), { tone: "warn" })];
   }
   return tr("plugins.requiresList", { list: requires.join(", ") });
 }
 
-/** One plugins row (docs/18 V4): dot + name + one grey line (id, pages, requirements,
- *  error) — version rides the row title, the state word is the dot's job — and the toggle
- *  is the panel's switch, the control every other row-level on/off uses. Exported pure;
- *  built with h() (docs/37 R5), so there is no esc() left in it: every server string here
- *  is a text node or an attribute value. */
-export function rowNode(p              )              {
-  const pages = (p.pages || []).join(", ");
-  return h("div", { class: "tun-row", data: { plugin: p.id }, title: p.version ? "v" + p.version : undefined },
-    h("span", { class: "dot " + dotClass(p), data: { dot: true }, title: stateLabel(p) }),
-    h("div", { class: "tun-main" },
-      h("div", { class: "tun-name" }, p.label || p.id, !p.enabled && [" ", h("span", { class: "via" }, tr("plugins.off"))]),
-      h("div", { class: "tun-sub" },
-        h("code", null, p.id),
-        " ",
-        h("span", { class: "via" }, pages ? tr("plugins.pagesPages", { pages }) : tr("plugins.page")),
-        h("span", { class: "via", data: { reqs: true } }, requiresBadge(p)),
-        h("span", { data: { err: true } }, p.lastError && [" ", h("span", { class: "via" }, tr("plugins.error", { error: p.lastError }))]))),
-    h("div", { class: "tun-acts" },
-      h("button", {
-        class: "sw",
-        data: { toggle: true },
-        role: "switch",
-        aria: { checked: p.enabled ? "true" : "false", label: tr("plugins.toggleName", { name: p.label || p.id }) },
-        disabled: !!busy[p.id],
-      })));
+/** "3 pages", with the list itself on hover: the ids are for the curious, the count is what
+ *  a row has room for (docs/46 §3.5; "pages: mcps, traffic, tokens" ran every row long). */
+function pagesNode(p              )         {
+  const pages = p.pages || [];
+  return pages.length
+    ? h("span", { title: pages.join(", ") }, trn(pages.length, "plugins.nPages.one", "plugins.nPages.other"))
+    : tr("plugins.noPage");
 }
 
-/** The start-at-sign-in row — the same vocabulary as a plugin row (dot + name + one grey
- *  line + the panel's switch), because it is the same kind of fact: a thing that is on or
- *  off. The grey line says where the OS registration lives, so the operator can check it
- *  outside the panel; the row title carries the exact command the OS would run. Exported
- *  pure; null (an old gateway without the route) renders nothing. */
+/** One plugins row: row() with the name, the id in mono and what the plugin serves and needs
+ *  on the sub-line, and the panel's switch. The version rides the row title. The state dot
+ *  sits after the name, not in the lead column, because most rows have none (stateDot): a
+ *  lead on one row in six would push that one name out of line with the rest. A failed
+ *  start's reason replaces the sub-line as the row's one red line. Exported pure; every
+ *  server string is a text node or an attribute value (docs/37 R5). */
+export function rowNode(p              )              {
+  const name = p.label || p.id;
+  const state = stateDot(p);
+  const reqs = requiresBadge(p);
+  return row({
+    name: state ? [name, " ", dot(state, stateLabel(p))] : name,
+    sub: [h("code", null, p.id), " · ", pagesNode(p), reqs ? [" · ", reqs] : null],
+    err: p.lastError || undefined,
+    toggle: sw(p.enabled, tr("plugins.toggleName", { name }), { data: { toggle: true }, disabled: !!busy[p.id] }),
+    data: { plugin: p.id },
+    title: p.version ? "v" + p.version : undefined,
+  });
+}
+
+/** The start-at-sign-in row - the same row as a plugin's, because it is the same kind of
+ *  fact: a thing that is on or off, and the switch says which. The sub-line says where the OS
+ *  registration lives, so the operator can check it outside the panel; the row title carries
+ *  the exact command the OS would run. Exported pure; null (an old gateway without the route)
+ *  renders nothing. */
 export function startupRowNode(a                                                                )                     {
   if (!a) return null;
-  return h("div", { class: "tun-row", data: { autostart: true }, title: a.command || "" },
-    h("span", { class: "dot " + (a.enabled ? "up" : "idle"), title: a.enabled ? tr("plugins.enabled") : tr("plugins.off2") }),
-    h("div", { class: "tun-main" },
-      h("div", { class: "tun-name" }, tr("plugins.startSwissWhenYou"), !a.enabled && [" ", h("span", { class: "via" }, tr("plugins.off"))]),
-      h("div", { class: "tun-sub" }, h("span", { class: "via" }, a.detail || ""))),
-    h("div", { class: "tun-acts" },
-      h("button", {
-        class: "sw",
-        data: { "autostart-toggle": true },
-        role: "switch",
-        aria: { checked: a.enabled ? "true" : "false", label: tr("plugins.toggleStartSign") },
-      })));
+  return row({
+    name: tr("plugins.startSwissWhenYou"),
+    sub: a.detail || null,
+    toggle: sw(a.enabled, tr("plugins.toggleStartSign"), { data: { "autostart-toggle": true }, disabled: autostartBusy }),
+    data: { autostart: true },
+    title: a.command || undefined,
+  });
 }
 
 function chipText()         {
@@ -139,55 +145,68 @@ function chipText()         {
     : trn(all.length, "plugins.nPlugins.one", "plugins.nPlugins.other", { on });
 }
 
+function revText()         { return tr("plugins.revisionN", { n: inv().revision }); }
+
 function render()       {
   painted = signature();
   const all = rows();
   const startup = startupRowNode(autostart);
-  // No location title: the context bar already says "Settings / Plugins".
-  fill($("pane"), h("div", { class: "wide" },
-    h("div", { class: "pane-head" },
-      h("div", null,
-        h("div", { class: "pane-desc" }, tr("plugins.whatBuildComposedDisabling")))),
-    startup && [
-      h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, tr("plugins.startup"))),
-      h("div", { class: "group" }, startup),
-    ],
-    h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, tr("plugins.installed"))),
-    all.length
-      ? h("div", { class: "group" }, all.map(rowNode))
-      : emptyNode({ icon: "power", title: tr("plugins.plugins"), hint: tr("plugins.gatewayReportsEmptyInventory") }),
-    h("div", { class: "tun-foot", data: { foot: true } },
-      h("span", { data: { "foot-text": true } }, chipText()),
-      h("span", { class: "tun-foot-rev" }, tr("plugins.revisionN", { n: inv().revision })))));
+  // No location title: the context bar already says "Settings / Plugins", and its chip is
+  // the count the foot used to repeat (rule 25) - the foot keeps the revision alone.
+  fill($("pane"), paneBody({ wide: true },
+    paneHead({ desc: tr("plugins.descOneLine") }),
+    startup ? section({ cap: tr("plugins.startup") }, card(startup)) : null,
+    section({ cap: tr("plugins.installed") },
+      all.length
+        ? card(all.map(rowNode))
+        : emptyNode({ icon: "power", title: tr("plugins.plugins"), hint: tr("plugins.gatewayReportsEmptyInventory") })),
+    pageFoot({ rev: revText() })));
   wire();
 }
 
-/** Poll-safe update: dots, the state word, the error tail and the button. Never structure. */
+/** Bring a drawn row up to a freshly built one without replacing it: the text block (name,
+ *  dot, sub-line or red line) is swapped only when it reads differently, and the switch is
+ *  the SAME node with its state moved - so a poll never steals keyboard focus from the switch
+ *  a hand just pressed, and a hover title under the pointer does not flicker every tick. */
+function patchRow(node         , fresh             )       {
+  const main = node.querySelector(".lrow-main");
+  const next = fresh.querySelector(".lrow-main");
+  if (main && next && main.outerHTML !== next.outerHTML) main.replaceWith(next);
+  if (fresh.title) node.setAttribute("title", fresh.title); else node.removeAttribute("title");
+  const was = node.querySelector                   (".sw");
+  const now = fresh.querySelector                   (".sw");
+  if (was && now) {
+    was.disabled = now.disabled;
+    was.setAttribute("aria-checked", now.getAttribute("aria-checked") || "false");
+    was.setAttribute("aria-label", now.getAttribute("aria-label") || "");
+  }
+}
+
+/** Poll-safe update: every row's words, dot and switch, the startup row and the revision.
+ *  Structure - a plugin appearing or going - is a rebuild. */
 function patch()       {
   const pane = $("pane");
-  if (!pane.querySelector(".group") || signature() !== painted) { render(); return; }
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-plugin]"), (row         )       => {
-    let p = null                       ;
-    rows().forEach((cand              )       => { if (cand.id === row.getAttribute("data-plugin")) p = cand; });
-    if (!p) return;
-    const dot = row.querySelector("[data-dot]")                      ;
-    // Class and title in one pass (docs/18 V6): the poll patches, never rebuilds, so the
-    // title must follow the class or it keeps explaining the state before the last change.
-    if (dot) { dot.className = "dot " + dotClass(p); dot.title = stateLabel(p); }
-    const err = row.querySelector("[data-err]")                      ;
-    if (err) fill(err, p.lastError && [" ", h("span", { class: "via" }, tr("plugins.error", { error: p.lastError }))]);
-    const reqs = row.querySelector("[data-reqs]")                      ;
-    if (reqs) fill(reqs, requiresBadge(p));
-    const button = row.querySelector("[data-toggle]")                            ;
-    if (button) {
-      button.disabled = !!busy[p.id];
-      button.setAttribute("aria-checked", p.enabled ? "true" : "false");
-    }
-    const name = row.querySelector(".tun-name")                      ;
-    if (name) fill(name, p.label || p.id, !p.enabled && [" ", h("span", { class: "via" }, tr("plugins.off"))]);
+  const rev = pane.querySelector(".page-foot-rev");
+  if (!rev || signature() !== painted) { render(); return; }
+  rev.textContent = revText();
+  Array.prototype.forEach.call(pane.querySelectorAll("[data-plugin]"), (node         )       => {
+    const p = rows().find((cand              )          => { return cand.id === node.getAttribute("data-plugin"); });
+    if (p) patchRow(node, rowNode(p));
   });
-  const foot = pane.querySelector("[data-foot-text]")                      ;
-  if (foot) foot.textContent = chipText();
+  const startup = pane.querySelector("[data-autostart]");
+  const fresh = startupRowNode(autostart);
+  if (startup && fresh) patchRow(startup, fresh);
+}
+
+/** Give focus back to the switch a hand (or Space) pressed, once its write has answered. The
+ *  switch is disabled while the write is out, so a double click cannot send the opposite write
+ *  behind the first - and a browser blurs a focused control the moment it is disabled, which
+ *  left the focus on <body> after every toggle and the next Tab starting over (found on the
+ *  docs/46 P5 walk). Only when nothing else took the focus meanwhile, and only while the switch
+ *  is still on the page (a rebuild replaced it). */
+function refocus(pressed                )       {
+  const idle = !document.activeElement || document.activeElement === document.body;
+  if (pressed instanceof HTMLElement && pressed.isConnected && idle) pressed.focus();
 }
 
 function wire()       {
@@ -203,51 +222,55 @@ function wire()       {
 }
 
 /** Read the OS registration the way the host reads it. A gateway without the route answers
- *  404 and leaves autostart null — the section stays hidden, an old binary never grows a
+ *  404 and leaves autostart null - the section stays hidden, an old binary never grows a
  *  dead control. */
 async function loadAutostart()                {
   const r = await api("/api/autostart");
   if (r.ok) autostart = await r.json()                                                           ;
 }
 
-/** Flip the OS registration, then redraw from the host's own read-back — never from our
- *  guess of what the click should have done. */
+/** Flip the OS registration, then redraw from the host's own read-back - never from our
+ *  guess of what the click should have done. The switch is disabled while the write is out
+ *  (see refocus). */
 async function toggleAutostart()                {
   if (!autostart || autostartBusy) return;
+  const pressed = document.activeElement;
   autostartBusy = true;
+  patch();
   const j = await apiJson                                                         ("/api/autostart", {
     method: "PUT",
     body: JSON.stringify({ enabled: !autostart.enabled }),
   });
   autostartBusy = false;
-  if (!j) return; // apiJson already toasted the refusal
-  autostart = j;
-  render();
+  if (j) autostart = j; // else apiJson already toasted the refusal
+  patch();
+  refocus(pressed);
 }
 
-/** Enable or disable one plugin, then redraw from the host's answer — never from our guess of
+/** Enable or disable one plugin, then redraw from the host's answer - never from our guess of
  *  what the click should have done. The revision goes with the request so a stale list is
  *  refused rather than applied. */
 async function toggle(id               )                {
-  let p = null                       ;
-  rows().forEach((cand              )       => { if (cand.id === id) p = cand; });
-  const id_ = id ;
-  if (!p || busy[id_]) return;
+  const p = rows().find((cand              )          => { return cand.id === id; });
+  if (!p || !id || busy[id]) return;
   const action = p.enabled ? "disable" : "enable";
-  busy[id_] = true;
+  const pressed = document.activeElement;
+  busy[id] = true;
   patch();
-  const reply = await apiJson                           ("/api/plugins/" + encodeURIComponent(id_) + "/" + action, {
+  const reply = await apiJson                           ("/api/plugins/" + encodeURIComponent(id) + "/" + action, {
     method: "POST",
     body: JSON.stringify({ revision: inv().revision }),
   });
-  delete busy[id_];
+  delete busy[id];
   // Reload either way: a refused write means our copy is stale, and a successful one changed
   // the page list the tab strip is drawn from.
   try { await reloadPluginInventory(); }
   catch (error) { /* reloadPluginInventory already toasted; keep the old rows on screen */ }
-  render();
+  patch(); // in place: the pressed switch is the same node, so refocus can hand it back
+  refocus(pressed);
+  $("countChip").textContent = chipText();
   // The enable stood and the START failed: a 200 whose row carries a lastError. The row already
-  // shows it, but the click deserves an answer of its own — otherwise pressing Enable on a
+  // shows it, but the click deserves an answer of its own - otherwise pressing Enable on a
   // plugin that cannot start looks like nothing happened.
   if (reply && reply.plugin && reply.plugin.lastError) toast(reply.plugin.lastError, true);
 }

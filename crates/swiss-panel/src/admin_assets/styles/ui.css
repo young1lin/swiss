@@ -624,7 +624,6 @@
        input, its buttons wrapped under it, the list glued straight onto them. */
     .inline-form { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; margin-bottom: var(--s5); }
     .inline-form > input { flex: 1 1 200px; min-width: 0; }
-    .inline-form > input.grow { flex: 2 1 260px; }
     /* In a sheet the body's grid spaces its children; the page form's air below would double it. */
     .sheet-body > .inline-form { margin-bottom: 0; }
     /* An input beside its button (the Tokens sheet's "label + Create"): the pair's second column

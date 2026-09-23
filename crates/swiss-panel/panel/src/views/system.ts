@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-import { $, apiJson, emptyNode, targetEl } from "../util.js";
+import { $, apiJson, targetEl } from "../util.js";
 import { fill, h } from "../h.js";
 import { currentView } from "../ui-state.js";
 import { tr } from "../i18n.js";
-import { closeSheet } from "../ui/sheet.js";
+import { btn, card, closeSheet, emptyNode, hint, paneBody, paneHead, row, section, sheet, showSheet } from "../ui/index.js";
 
 /** The process action is deliberately a Settings page, not permanent app chrome: quitting the
  *  whole toolbox is destructive, rare, and belongs beside other host-owned controls.
@@ -26,47 +26,46 @@ import { closeSheet } from "../ui/sheet.js";
  *  Built with h() (docs/37 R5): every string here is the panel's own prose, so the security
  *  face that moved the other views off innerHTML does not exist on this page - what the
  *  builders buy here is the ledger (the file joins the node side of the eventual ratchet)
- *  and a pane whose wiring survives its own repaint. */
+ *  and a pane whose wiring survives its own repaint.
+ *
+ *  On the library since docs/46 P5: paneHead, section + card, and the one row(). The Quit
+ *  button keeps its red on the row - the prototype's call, and the exception rule 4 allows
+ *  for a page whose ONE act is the destructive one: there is no overflow to hide it in, and
+ *  the sheet it opens is the confirmation. */
 function systemBodyNode(): HTMLElement {
-  return h("div", { class: "wide" },
-    h("div", { class: "pane-head" },
-      h("div", null,
-        h("div", { class: "pane-desc" }, tr("system.controlRunningSwissProcess")))),
-    h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, tr("system.runtime"))),
-    h("div", { class: "group" },
-      h("div", { class: "tun-row" },
-        h("div", { class: "tun-main" },
-          h("div", { class: "tun-name" }, tr("system.quitSwiss")),
-          h("div", { class: "tun-sub" },
-            h("span", { class: "via" }, tr("system.gracefullyStopMcpsTunnels")))),
-        h("div", { class: "tun-acts" },
-          h("button", { class: "btn danger", id: "system-quit" }, tr("system.quitSwiss"))))));
+  return paneBody({ wide: true },
+    paneHead({ desc: tr("system.descOneLine") }),
+    section({ cap: tr("system.runtime") },
+      card(row({
+        name: tr("system.quitSwiss"),
+        sub: tr("system.gracefullyStopMcpsTunnels"),
+        primary: btn(tr("system.quitSwiss"), { kind: "danger", id: "system-quit" }),
+      }))));
 }
 
 function quitSheetNode(): HTMLElement {
-  return h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("system.quitSwiss") } },
-    h("div", { class: "sheet-head" }, h("h2", null, tr("system.quitSwiss2"))),
-    h("div", { class: "sheet-body" },
+  return sheet({
+    title: tr("system.quitSwiss2"),
+    label: tr("system.quitSwiss"),
+    body: [
       h("p", null, tr("system.disconnectsEveryMcpClient")),
-      h("p", { class: "hint" },
-        tr("system.configurationLogsKeptStart"),
-        h("code", null, "swiss start"), ".")),
-    h("div", { class: "sheet-foot" },
-      h("span", { class: "grow" }),
-      h("button", { class: "btn", id: "quit-cancel" }, tr("system.cancel")),
-      h("button", { class: "btn danger", id: "quit-confirm" }, tr("system.quitSwiss"))));
+      hint([tr("system.configurationLogsKeptStart"), h("code", null, "swiss start"), tr("system.startAgainTail")]),
+    ],
+    foot: [
+      btn(tr("system.cancel"), { id: "quit-cancel" }),
+      btn(tr("system.quitSwiss"), { kind: "danger", id: "quit-confirm" }),
+    ],
+  });
 }
 
 function openQuitSheet(): void {
-  const sheet = $("sheet");
-  sheet.hidden = false; // BEFORE the content, per the house sheet idiom (ui/sheet.ts showSheet)
-  fill(sheet, quitSheetNode());
-  // Per-open wiring IS the house sheet idiom (ui/sheet.ts, the one-field sheet): #sheet is a
-  // shared shell host that outlives this view, so its controls are claimed here and only
-  // here - not delegated from the pane, which does not own the sheet.
+  // showSheet unhides the host BEFORE it paints (the house sheet idiom) and claims the
+  // backdrop click. Per-open wiring of the two buttons IS the idiom (ui/sheet.ts, the
+  // one-field sheet): #sheet is a shared shell host that outlives this view, so its controls
+  // are claimed here and only here - not delegated from the pane, which does not own the sheet.
+  showSheet(quitSheetNode());
   $("quit-cancel").onclick = closeSheet;
   $("quit-confirm").onclick = () => { void requestQuit(); };
-  sheet.onclick = (event) => { if (event.target === sheet) closeSheet(); };
   $("quit-cancel").focus();
 }
 

@@ -31,12 +31,12 @@
    beyond its name.
    ================================================================================================ */
                                                             
-import { $, apiJson, emptyNode, iconNode, targetEl, toast } from "../util.js";
+import { $, apiJson, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import { copyText } from "../connect.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
 import { tr, trn } from "../i18n.js";
-import { popupMenu } from "../ui/menu.js";
+import { btn, emptyNode, iconBtn, inlineForm, moreBtn, paneBody, paneHead, popupMenu, row, section } from "../ui/index.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed                          = {}; // the secrets fold map, loaded once before the first paint
@@ -87,30 +87,23 @@ function applyOrder()       {
   });
 }
 
-/** One secret's row: the one button (Copy ref) and the overflow menu holding Delete - red
- *  never sits on a row (design rule 4). The buttons stay delegated on #pane (wire), so the
- *  groups component rebuilding a card never rewires them.
- *
- *  Built with h() (docs/37 R5), which is why there is no esc() left in here: a name is a
- *  text node and an attribute value, and neither can close a tag. The literal " " child is
- *  the space the string version carried between the two buttons - an inline box, so the gap
- *  is real layout, not formatting. The reference in .desc keeps its <code> element: it is
- *  the thing a user is meant to recognise on sight. */
+/** One secret's row (docs/46 §3.5): the name, and under it the reference in mono - the value
+ *  a user copies into a credential field, so it is the one thing the sub-line says. The
+ *  sentence every row used to repeat after it ("substituted at run time wherever a credential
+ *  is used") said the same thing N times; the page description says it once. Copy ref is a
+ *  ghost button with the copy glyph - a quiet act beside each row, not N standing hairline
+ *  buttons - and Delete waits behind the ⋯ (rule 4: red never sits on a row). The buttons stay
+ *  delegated on #pane (wire), so the groups component rebuilding a card never rewires them.
+ *  A name is a text node and an attribute value (docs/37 R5): neither can close a tag. */
 function rowNode(name        )              {
-  return h("div", { class: "row", data: { secret: name } },
-    h("div", { class: "row-main" },
-      h("div", { class: "name" }, name),
-      h("div", { class: "desc" },
-        h("code", null, "${secret://" + name + "}"),
-        " ", tr("secrets.substitutedRunTimeWherever"))),
-    h("div", { class: "row-act" },
-      h("button", { class: "btn", data: { skcopy: name } }, tr("secrets.copyRef")), " ",
-      h("button", {
-        class: "btn ghost icon",
-        data: { skmore: name },
-        aria: { label: tr("secrets.actionsName", { name }) },
-        title: tr("secrets.delete"),
-      }, iconNode("ellipsis"))));
+  return row({
+    name,
+    sub: h("code", null, "${secret://" + name + "}"),
+    primary: btn(tr("secrets.copyRef"), { kind: "ghost", icon: "copy", data: { skcopy: name } }),
+    more: moreBtn(tr("secrets.actionsName", { name }), { data: { skmore: name } }),
+    data: { secret: name },
+    draggable: true,
+  });
 }
 
 /** The secrets scope's cfg for mountGroup (docs/26): the full family contract — rows drag
@@ -230,7 +223,7 @@ function refreshGroupSelect()       {
  *  the selection, the attribute was only ever its initial default. */
 function groupSelectNode()                    {
   const names = secrets.groups && secrets.groups.length ? secrets.groups : ["default"];
-  const sel = h("select", { class: "v v-sk-group", id: "skGroup", title: tr("secrets.groupSecretListsUnder") },
+  const sel = h("select", { id: "skGroup", title: tr("secrets.groupSecretListsUnder") },
     names.map((n        )                    => { return h("option", { value: n }, n); }));
   sel.value = resolveDefaultGroup(names, lastGroup("secrets"));
   return sel;
@@ -238,23 +231,21 @@ function groupSelectNode()                    {
 
 function render()       {
   painted = signature();
-  // No location title: the context bar already says "Settings / Secrets".
-  fill($("pane"), h("div", { class: "wide" },
-    h("div", { class: "pane-head" },
-      h("div", null,
-        h("div", { class: "pane-desc" },
-          tr("secrets.deviceBoundVaultValue"),
-          h("code", null, "${secret://name}"),
-          tr("secrets.headerUrlCommandEnv"))),
-      h("div", { class: "pane-actions" },
-        h("button", { class: "btn", id: "skNewGroup" }, tr("secrets.newGroup")))),
+  // No location title: the context bar already says "Settings / Secrets". One sentence (U11):
+  // write-only, and the reference to use - the two facts every row used to repeat. New group
+  // is the folder-plus glyph, the sidebar's own for the same act (rule 7).
+  fill($("pane"), paneBody({ wide: true },
+    paneHead({
+      desc: [tr("secrets.descLead"), h("code", null, "${secret://name}"), tr("secrets.descTail")],
+      actions: [iconBtn("folder-plus", tr("secrets.newGroup"), { id: "skNewGroup" })],
+    }),
     // The inline create form (docs/35 §3): one row, the Group select beside the primary.
-    h("div", { class: "inline-form" },
-      h("input", { class: "v", id: "skName", placeholder: tr("secrets.nameLowercaseKebabZ") }),
-      h("input", { class: "v grow", id: "skValue", type: "password", placeholder: tr("secrets.valueWriteOnlyNever") }),
+    inlineForm(
+      h("input", { id: "skName", placeholder: tr("secrets.nameLowercaseKebabZ") }),
+      h("input", { id: "skValue", type: "password", placeholder: tr("secrets.valueWriteOnlyNever") }),
       groupSelectNode(),
-      h("button", { class: "btn primary", id: "skStore" }, tr("secrets.store"))),
-    h("div", { id: "skGroups" })));
+      btn(tr("secrets.store"), { kind: "primary", id: "skStore" })),
+    section({}, h("div", { id: "skGroups" }))));
   paintGroups();
   const chip = $("countChip");
   if (chip) chip.textContent = countText();

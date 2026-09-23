@@ -40,7 +40,6 @@ const FROZEN: Record<string, number> = {
   "add-sheet.ts": 1,
   "menu.ts": 1,
   "sidebar.ts": 1,
-  "views/plugins.ts": 1,
   "views/secrets.ts": 1,
   "views/tokens.ts": 6,
   "detail.ts": 8,
