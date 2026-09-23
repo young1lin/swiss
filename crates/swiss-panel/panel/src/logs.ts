@@ -16,8 +16,8 @@
 
 import type { ApiMcpCallRow, ApiMcpItem, ApiMcpRow } from "./types/api.js";
 import type { PhantomMcpRow } from "./types/dom.js";
-import type { McpDetail, McpKind } from "./types/state.js";
-import { iconNode, toast } from "./util.js";
+import type { KindPageState, McpDetail, McpKind } from "./types/state.js";
+import { toast } from "./util.js";
 import { frag, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { rowOf } from "./sidebar.js";
@@ -25,8 +25,8 @@ import { mcpDetail } from "./mcp-state.js";
 import { tr } from "./i18n.js";
 import { JV_LINES, decodeStrings, formattedCopyText, hasDecoded, jsonCodeNode, splitJsonBlock, textNode, valueBlock } from "./ui/json-view.js";
 import {
-  btn, card, collapseRuns, emptyNode, failNote, filterInput, fmtMs, iconBtn, moreBtn, note, pager, section, spinner,
-  timeLabel, timeline, timelineMeta, timelineToggle,
+  btn, card, collapseRuns, emptyNode, failNote, filterInput, fmtMs, iconBtn, moreBtn, note, pager, row, section, spinner,
+  sw, timeLabel, timeline, timelineMeta, timelineToggle,
 } from "./ui/index.js";
 import type { TimelineItem } from "./ui/index.js";
 
@@ -345,161 +345,110 @@ function toggleCall(seq: number): boolean {
   return open;
 }
 
-/** One truncated line of argument names, required ones in bold. `args` is [{ name, req }].
- *  The title carries the full list, because the line is clipped rather than wrapped and a tool with
- *  eight arguments would otherwise lose the last four with no way to see them from here.
- *  A NODE since docs/37 R5: the bold distinction is an element, not markup glued around a name. */
-function argLineNode(args: { name: string; req?: boolean }[]): HTMLElement | null {
-  if (!args.length) return null;
-  const plain = args.map((a) => { return a.name; }).join(", ");
-  return h("div", { class: "args", title: plain },
-    args.map((a) => { return a.req ? h("b", null, a.name) : a.name; }).reduce<HChild[]>(function (out, piece, i) {
-      if (i) out.push(", ");
-      out.push(piece);
-      return out;
-    }, []));
+/* --- docs/46 §3.2: Tools, Resources, Prompts ---------------------------------------------------
+   One library row per item: the name (mono - a tool name is a value you type), one line of
+   description, and the row's controls - Try and the client switch on a tool, Read on a resource.
+   A tool or a prompt opens in place to its whole record: the full description, then its
+   arguments as the code block every JSON value in the panel is (the same block Logs draws). */
+
+/** The record behind a tool or a prompt row: what the one-line row cuts off. */
+function itemRecordNode(it: ApiMcpItem, kind: McpKind): HChild[] {
+  const args: unknown = kind === "tools" ? it.inputSchema : it.arguments && it.arguments.length ? it.arguments : null;
+  return [
+    valueBlock({ label: tr("logs.fullDescription"), text: it.description || tr("logs.descriptionProvided") }),
+    // A tool is described by its input schema, a prompt by its argument list: each says so
+    // under its own name, and says it has none rather than leaving the block out.
+    kind === "tools"
+      ? valueBlock({ label: tr("logs.inputSchema"), text: args == null ? tr("logs.inputSchemaProvided") : undefined },
+          args != null ? jsonCodeNode(args, true).node : null)
+      : valueBlock({ label: tr("logs.arguments2"), text: args == null ? tr("logs.arguments") : undefined },
+          args != null ? jsonCodeNode(args, true).node : null),
+  ];
 }
 
-/** A tool stays one quiet row until the user asks for its complete MCP metadata. */
-function toolDetailNode(it: ApiMcpItem, args: HChild): HTMLElement {
-  const description = it.description || tr("logs.descriptionProvided");
-  const schema = it.inputSchema ? JSON.stringify(it.inputSchema, null, 2) : tr("logs.inputSchemaProvided");
-  return h("details", { class: "item-detail" },
-    h("summary", { title: description },
-      h("span", { class: "item-chev" }, iconNode("chevron-right")),
-      h("span", { class: "item-summary" },
-        h("span", { class: "name" }, it.name),
-        h("span", { class: "desc item-teaser" }, description),
-        args)),
-    h("div", { class: "item-full" },
-      h("div", { class: "item-full-label" }, tr("logs.fullDescription")),
-      h("div", { class: "item-full-text" }, description),
-      h("div", { class: "item-full-label" }, tr("logs.inputSchema")),
-      h("pre", { class: "item-schema" }, schema)));
+/** An item list's pages. Tools, resources and prompts page by cursor, so the status says the
+ *  page number, "of M" only when the MCP reported a total. */
+function kindPager(kd: KindPageState): HTMLElement | null {
+  const page = kd.cursors.length;
+  if (page <= 1 && !kd.nextCursor) return null;
+  const words = kd.total != null
+    ? tr("logs.pageNM", { n: page, m: Math.max(1, Math.ceil(kd.total / kd.pageSize)) })
+    : tr("logs.pageN2", { n: page });
+  return pager({
+    label: tr("logs.itemPages"), status: kd.loading ? [words, spinner()] : words,
+    prev: btn(tr("logs.previous"), { id: "pgPrev", disabled: page <= 1 }),
+    next: btn(tr("logs.next"), { id: "pgNext", disabled: !kd.nextCursor }),
+  });
 }
 
 function kindBodyNode(d: McpDetail, kind: McpKind, m: ApiMcpRow | PhantomMcpRow): HChild {
   const kd = d[kind];
-  // Resources get a master on/off at the top: off empties the list (the capability stays, so the
-  // notify stays valid) and tells connected clients to re-list. Symmetric with the per-tool toggle.
-  let resToggle: HTMLElement | null = null;
-  if (kind === "resources" && kd.loaded) {
-    const on = kd.resourceEnabled !== false;
-    resToggle = h("div", { class: "row row-act" },
-      h("div", { class: "row-main" },
-        h("div", { class: "name" }, tr("logs.exposeResources")),
-        h("div", { class: "desc" }, on ? tr("logs.visibleClients") : tr("logs.hiddenClientsSeeResources"))),
-      h("button", {
-        class: "sw", role: "switch",
-        aria: { checked: on ? "true" : "false", label: tr("logs.exposeResources") },
-        data: { restog: on ? "1" : "0" },
-        title: on ? tr("logs.clickHideAllResources") : tr("logs.clickExposeResources"),
-      }));
-  }
-  if (m.lifecycle !== "started") {
-    return h("div", { class: "group" },
-      h("div", { class: "row" }, h("span", { class: "rowmsg" }, tr("logs.startedStartListKind", { kind }))));
-  }
-  if (kd.loading && !kd.loaded) {
-    return h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("logs.loadingKind", { kind }));
-  }
+  if (m.lifecycle !== "started") return note(tr("logs.startedStartListKind", { kind }));
+  if (kd.loading && !kd.loaded) return note(tr("logs.loadingKind", { kind }), { busy: true });
   if (kd.error) {
     // Keep the pager: pageNext/pagePrev push the cursor optimistically, so a failed page used to
     // leave the tab with no way back except the global Refresh (which resets to page one).
-    const errPager = kd.cursors.length > 1
-      ? h("div", { class: "pager" },
-          h("button", { class: "btn", id: "pgPrev" }, tr("logs.previous")),
-          h("span", null, tr("logs.pageN2", { n: kd.cursors.length })),
-          h("button", { class: "btn", id: "pgNext", disabled: !kd.nextCursor }, tr("logs.next")))
-      : null;
-    return frag(
-      h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "rowmsg warn" }, kd.error))),
-      errPager);
+    return frag(note(kd.error, { err: true }), kd.cursors.length > 1 ? kindPager(kd) : null);
   }
-  let rows: HChild;
+  // Resources get a master on/off at the top: off empties the list (the capability stays, so the
+  // notify stays valid) and tells connected clients to re-list. Symmetric with the per-tool switch.
+  let resToggle: HTMLElement | null = null;
+  if (kind === "resources" && kd.loaded) {
+    const on = kd.resourceEnabled !== false;
+    resToggle = card(row({
+      name: tr("logs.exposeResources"),
+      sub: on ? tr("logs.visibleClients") : tr("logs.hiddenClientsSeeResources"),
+      toggle: sw(on, tr("logs.exposeResources"), {
+        data: { restog: on ? "1" : "0" },
+        title: on ? tr("logs.clickHideAllResources") : tr("logs.clickExposeResources"),
+      }),
+    }));
+  }
+  let list: HChild;
   if (!kd.items.length && !(kind === "tools" && kd.disabled && kd.disabled.length)) {
-    // An empty list still needs the toggle bar above it (resources can be hidden, not just absent),
-    // so this is composed into `rows` and the resToggle header is added by the normal return below
-    // rather than short-circuiting out of the function.
-    const emptyMsg = kind === "resources" && kd.resourceEnabled === false
+    list = note(kind === "resources" && kd.resourceEnabled === false
       ? tr("logs.resourcesHiddenTurnThem")
-      : tr("logs.kind", { kind });
-    rows = h("div", { class: "row" }, h("span", { class: "rowmsg" }, emptyMsg));
-  } else {
-    rows = kd.items.map((it) => {
+      : tr("logs.kind", { kind }));
+  } else if (kd.items.length) {
+    list = card(kd.items.map((it) => {
       if (kind === "resources") {
         // Read mirrors the tools' Try button: a resource is only believable once you have seen its
         // contents, and its URI is the whole input, so no form is needed.
-        return h("div", { class: "row row-act" },
-          h("div", { class: "row-main" },
-            h("div", { class: "name" }, it.uri),
-            it.name ? h("div", { class: "desc" }, it.name) : null,
-            it.description ? h("div", { class: "desc" }, it.description) : null),
-          h("button", { class: "btn", data: { read: it.uri }, title: tr("logs.readResource") }, tr("logs.read")));
+        return row({
+          name: h("code", null, it.uri),
+          sub: [it.name, it.description].filter(Boolean).join(" · ") || null,
+          primary: btn(tr("logs.read"), { data: { read: it.uri }, title: tr("logs.readResource") }),
+        });
       }
-      let args: HChild = null;
-      if (kind === "prompts" && it.arguments && it.arguments.length) {
-        args = argLineNode(it.arguments.map((a) => { return { name: a.name, req: !!a.required }; }));
-      }
-      if (kind === "tools" && it.inputSchema && it.inputSchema.properties) {
-        const req = it.inputSchema.required || [];
-        args = argLineNode(Object.keys(it.inputSchema.properties).map((k) => {
-          return { name: k, req: req.includes(k) };
-        }));
-      }
-      const main = h("div", { class: "row-main" },
-        h("div", { class: "name" }, it.name),
-        it.description ? h("div", { class: "desc" }, it.description) : null,
-        args);
-      // Tools get a Try button: it opens Run with this tool already selected, so a tool can be
-      // exercised from the list it was found in. A toggle turns the tool off for clients — it drops
-      // out of tools/list and clients are told to re-list (notifications/tools/list_changed).
-      if (kind === "tools") {
-        return h("div", { class: "row row-act item-row" },
-          toolDetailNode(it, args),
-          h("button", { class: "btn", data: { try: it.name }, title: tr("logs.tryTool") }, tr("logs.try")),
-          h("button", {
-            class: "sw", role: "switch",
-            aria: { checked: "true", label: tr("logs.visibleClients2") },
-            data: { toggle: it.name, on: "1" },
-            title: tr("logs.visibleClientsClickHide"),
-          }));
-      }
-      return h("div", { class: "row row-b" }, main);
-    });
+      // Tools get Try (it opens Run with this tool already selected) and the client switch: off
+      // drops the tool out of tools/list and tells clients to re-list (list_changed).
+      return row({
+        name: h("code", null, it.name),
+        sub: it.description || null,
+        // The one line is cut; hovering the row reads the whole of it.
+        title: it.description || undefined,
+        detail: itemRecordNode(it, kind),
+        primary: kind === "tools" ? btn(tr("logs.try"), { data: { try: it.name }, title: tr("logs.tryTool") }) : undefined,
+        toggle: kind === "tools"
+          ? sw(true, tr("logs.visibleClients2"), { data: { toggle: it.name, on: "1" }, title: tr("logs.visibleClientsClickHide") })
+          : undefined,
+      });
+    }));
+  } else {
+    list = null;
   }
-
-  // Disabled tools are absent from the live list, so they get their own rows here — greyed, with the
-  // toggle the other way, so a tool can be switched back on from the same place it was switched off.
-  const disabledRows: HChild[] = [];
-  if (kind === "tools" && kd.disabled && kd.disabled.length) {
-    disabledRows.push(h("div", { class: "group-cap" }, tr("logs.disabledShownClients")));
-    kd.disabled.forEach((name) => {
-      disabledRows.push(h("div", { class: "row row-act muted" },
-        h("div", { class: "row-main" },
-          h("div", { class: "name" }, name),
-          h("div", { class: "desc" }, tr("logs.hiddenToolsListUntil"))),
-        h("button", {
-          class: "sw", role: "switch",
-          aria: { checked: "false", label: tr("logs.visibleClients2") },
-          data: { toggle: name, on: "0" },
-          title: tr("logs.turnTool"),
-        })));
-    });
-  }
-
-  const page = kd.cursors.length;
-  const pages = kd.total != null ? tr("logs.pageNM", { n: page, m: Math.max(1, Math.ceil(kd.total / kd.pageSize)) }) : tr("logs.pageN2", { n: page });
-  const pager = (page > 1 || kd.nextCursor)
-    ? h("div", { class: "pager" },
-        h("button", { class: "btn", id: "pgPrev", disabled: page <= 1 }, tr("logs.previous")),
-        h("span", null, pages + " ", kd.loading ? h("span", { class: "spin" }) : null),
-        h("button", { class: "btn", id: "pgNext", disabled: !kd.nextCursor }, tr("logs.next")))
+  // Disabled tools are absent from the live list, so they get their own section - muted, with the
+  // switch the other way, so a tool is switched back on from the same place it was switched off.
+  const hidden = kind === "tools" && kd.disabled && kd.disabled.length
+    ? section({ cap: tr("logs.disabledShownClients") }, card(kd.disabled.map((name) => {
+        return row({
+          name: h("code", null, name), sub: tr("logs.hiddenToolsListUntil"), muted: true,
+          toggle: sw(false, tr("logs.visibleClients2"), { data: { toggle: name, on: "0" }, title: tr("logs.turnTool") }),
+        });
+      })))
     : null;
-  return frag(
-    resToggle ? h("div", { class: "group" }, resToggle) : null,
-    h("div", { class: "group" }, rows, disabledRows),
-    pager);
+  // One section for the live list, so the hidden tools' section sits a full step below it.
+  return frag(section({}, resToggle, list, kindPager(kd)), hidden);
 }
 
-export { argLineNode, callBlockCopyText, callBlockNode, callBodyNode, callItem, callRunOf, callsErrNode, callsStatusNode, copyLogText, fmtChars, fmtJson, goneNode, kindBodyNode, logsBodyNode, repaintCallBlock, toggleCall, toolDetailNode };
+export { callBlockCopyText, callBlockNode, callBodyNode, callItem, callRunOf, callsErrNode, callsStatusNode, copyLogText, fmtChars, fmtJson, goneNode, itemRecordNode, kindBodyNode, logsBodyNode, repaintCallBlock, toggleCall };

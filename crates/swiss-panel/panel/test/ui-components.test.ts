@@ -195,6 +195,21 @@ describe("ui/page", () => {
     expect(spinner().getAttribute("aria-hidden")).toBe("true");
   });
 
+  it("row({ detail }): the name and sub become a disclosure; the controls stay outside it", () => {
+    const r = row({ name: "query_orders", sub: "Lists orders.", detail: valueBlock({ label: "Input schema", text: "none" }), primary: btn("Try"), toggle: sw(true, "Visible") });
+    expect(r.className).toBe("lrow has-disc");
+    const disc = r.querySelector<HTMLDetailsElement>("details.lrow-main.lrow-disc")!;
+    expect(disc.querySelector("summary > .lrow-chev use")!.getAttribute("href")).toBe("#i-chevron-right");
+    expect(disc.querySelector("summary .lrow-name")!.textContent).toBe("query_orders");
+    expect(disc.querySelector("summary .lrow-sub")!.textContent).toBe("Lists orders.");
+    expect(disc.querySelector(".lrow-detail .vblock-text")!.textContent).toBe("none");
+    expect(disc.open).toBe(false);
+    const acts = r.querySelector(".lrow-acts")!;
+    expect(disc.contains(acts)).toBe(false);
+    expect(acts.querySelectorAll("button").length).toBe(2);
+    expect(row({ name: "plain" }).querySelector("details"), "no detail, no disclosure").toBeNull();
+  });
+
   it("pager: newer, a live status, older - a navigation landmark the view patches by id", () => {
     const p = pager({ id: "pg", label: "Pages", statusId: "st", status: "Page 2", prev: btn("Newer"), next: btn("Older", { disabled: true }) });
     expect(p.getAttribute("role")).toBe("navigation");
@@ -681,6 +696,7 @@ describe("docs/46 - every class the library draws is styled by base.css or ui.cs
       failNote({ text: "t", why: "w", action: btn("r") }), filterInput({ placeholder: "q", label: "q" }),
       valueBlock({ label: "l", notes: ["n"], tools: [iconBtn("copy", "c")] }, jsonCodeNode({ v: 1 }, false, { oneLine: true }).node),
       timelineMeta(["a", "b"]),
+      row({ name: "n", sub: "s", detail: valueBlock({ label: "l", text: "t" }), primary: btn("b") }),
       toTop(document.createElement("div")),
       section({ cap: "c", tools: [btn("x")] }, card(row({ name: "n" }))),
       pageFoot({ note: "n", rev: "r" }), inlineForm(btn("x")),

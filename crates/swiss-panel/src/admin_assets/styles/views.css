@@ -15,41 +15,6 @@
  */
 
 
-    /* A tool's argument names: one dimmed line under the description, truncated, never wrapped.
-       They were a wrapping row of filled chips, which cost every row about 30px and read as loud as
-       the name; then they were chips on the name's own line, which was worse — a tool with five
-       arguments stretched a monospace bar the full width of the card and buried the name at the
-       front of it. Neither earns a third weight in the row. The names are an annotation; Run holds
-       the real signature, with types, descriptions and required markers. */
-    .args {
-      font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); line-height: 1.3;
-      margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    /* Required ones by weight and contrast, not by hue: red here would compete with the error red on
-       a failed call two rows down, and "required" is not a failure. Run's red * is a form marker. */
-    .args b { font-weight: var(--w-emph); color: var(--text-2); }
-
-    /* Tool rows are summaries first: one name, one clipped description, one signature. Native
-       details keeps the complete MCP metadata keyboard-reachable without making every row tall. */
-    .item-row { align-items: flex-start; }
-    .item-detail { flex: 1; min-width: 0; }
-    .item-detail > summary { display: flex; gap: var(--s2); min-width: 0; cursor: pointer; list-style: none; }
-    .item-detail > summary::-webkit-details-marker { display: none; }
-    .item-summary { display: block; flex: 1; min-width: 0; }
-    .item-summary > .name, .item-summary > .item-teaser, .item-summary > .args { display: block; }
-    .item-chev { flex: none; color: var(--text-3); transition: transform .15s ease; }
-    .item-chev .ic { width: var(--s3); height: var(--s3); }
-    .item-detail[open] .item-chev { transform: rotate(90deg); }
-    .item-teaser { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .item-detail[open] .item-teaser { display: none; }
-    .item-detail[open] .args { display: none; }
-    .item-full { margin: var(--s2) 0 0 var(--s5); padding-left: var(--s3); border-left: 1px solid var(--sep); }
-    .item-full-label { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-top: var(--s3); }
-    .item-full-label:first-child { margin-top: 0; }
-    .item-full-text { font-size: var(--f-label); color: var(--text-2); line-height: 1.5; margin-top: var(--s1); white-space: pre-wrap; }
-    .item-schema { margin: var(--s1) 0 0; padding: var(--s2) var(--s3); max-height: 40vh; overflow: auto; background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-caption); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-    @media (prefers-reduced-motion: reduce) { .item-chev { transition: none; } }
-
     /* Read-only MCP configuration is an overview plus two deliberate folds. The target and badges
        answer the common questions; all raw settings and parked revisions remain one click away. */
     .config-head { display: flex; align-items: flex-start; gap: var(--s3); padding: var(--s4); }

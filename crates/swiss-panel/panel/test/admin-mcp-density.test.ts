@@ -82,16 +82,32 @@ describe("MCP detail progressive disclosure", () => {
     const host = document.createElement("div");
     host.append(logs.kindBodyNode(d, "tools", { lifecycle: "started" }));
 
-    const detail = host.querySelector("details.item-detail")!;
+    // docs/46 P2-3: the library row with a record behind it (row({ detail })).
+    const detail = host.querySelector("details.lrow-disc")!;
     expect(detail).not.toBeNull();
-    expect(detail.querySelector(".desc.item-teaser")).not.toBeNull();
-    expect(detail.querySelector("summary")!.getAttribute("title")).toBe(description);
-    expect(detail.querySelector(".item-full")).not.toBeNull();
-    expect(detail.textContent).toContain("Full description");
-    expect(detail.textContent).toContain("Input schema");
-    expect(detail.textContent).toContain("The SQL statement to execute.");
-    expect(host.querySelector('[data-try="mysql_query"]')).not.toBeNull();
-    expect(host.querySelector('[data-toggle="mysql_query"]')).not.toBeNull();
+    expect(detail.querySelector("summary .lrow-name")!.textContent).toBe("mysql_query");
+    expect(detail.querySelector("summary .lrow-name code"), "a tool name is a value: mono").not.toBeNull();
+    expect(detail.querySelector("summary .lrow-sub")!.textContent).toBe(description);
+    expect(detail.closest(".lrow")!.getAttribute("title"), "the cut line reads whole on hover").toBe(description);
+    const record = detail.querySelector(".lrow-detail")!;
+    expect([...record.querySelectorAll(".vblock-cap")].map((n) => n.textContent)).toEqual(["Full description", "Input schema"]);
+    expect(record.querySelector(".vblock-text")!.textContent).toBe(description);
+    expect(record.querySelector("pre.jv")!.textContent, "the schema is the panel's one code block").toContain('"The SQL statement to execute."');
+    const tryBtn = host.querySelector('[data-try="mysql_query"]')!;
+    const toggle = host.querySelector('[data-toggle="mysql_query"]')!;
+    expect(detail.contains(tryBtn) || detail.contains(toggle), "the row's controls never open the record").toBe(false);
+    expect(toggle.getAttribute("role")).toBe("switch");
+  });
+
+  it("a prompt's record names its arguments - or says it has none - never an input schema", () => {
+    const withArgs = document.createElement("div");
+    withArgs.append(logs.kindBodyNode({ prompts: loadedKind([{ name: "summarize", description: "Sum up.", arguments: [{ name: "topic", required: true }] }]) }, "prompts", { lifecycle: "started" }));
+    expect([...withArgs.querySelectorAll(".vblock-cap")].map((n) => n.textContent)).toEqual(["Full description", "Arguments"]);
+    expect(withArgs.querySelector(".lrow-detail pre.jv")!.textContent).toContain('"topic"');
+    expect(withArgs.querySelector("[data-try], [role=switch]"), "a prompt has no Try and no client switch").toBeNull();
+    const bare = document.createElement("div");
+    bare.append(logs.kindBodyNode({ prompts: loadedKind([{ name: "rules" }]) }, "prompts", { lifecycle: "started" }));
+    expect([...bare.querySelectorAll(".vblock-text")].map((n) => n.textContent)).toEqual(["No description provided.", "no arguments"]);
   });
 
   it("turns read-only configuration into a short overview with every setting behind disclosure", () => {
@@ -150,8 +166,9 @@ describe("MCP detail progressive disclosure", () => {
   it("pins the one-line teaser and expanded readability in the shipped stylesheet", () => {
     const panel = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets");
     const css = readFileSync(join(panel, "styles", "views.css"), "utf8");
-    expect(css).toMatch(/\.item-teaser\s*{[^}]*white-space:\s*nowrap[^}]*text-overflow:\s*ellipsis/);
-    expect(css).toMatch(/\.item-detail\[open\] \.item-teaser\s*{[^}]*display:\s*none/);
+    const ui = readFileSync(join(panel, "styles", "ui.css"), "utf8");
+    expect(ui).toMatch(/\.lrow-sub, \.lrow-err\s*{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap/);
+    expect(ui).toMatch(/\.lrow-disc\[open\] \.lrow-sub\s*{[^}]*display:\s*none/);
     expect(css).toMatch(/\.config-target\s*{[^}]*text-overflow:\s*ellipsis/);
   });
 });

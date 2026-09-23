@@ -886,6 +886,7 @@ const zh                         = {
   "logs.hiddenToolsListUntil": "重新启用前不会出现在 tools/list",
   "logs.turnTool": "启用此工具",
   "logs.pageNM": "第 {n} 页,共 {m} 页",
+  "logs.itemPages": "列表分页",
   /* --- main --- */
   "main.newPanelVersionReady": "面板新版本已就绪——完成编辑后会自动加载",
   "main.switchLight": "切换到浅色",
@@ -1723,6 +1724,10 @@ const zh                         = {
   "gallery.d.result": "结果",
   "gallery.d.decodedNote": "从字符串解码的 JSON",
   "gallery.d.replySize": "回复 {n} 字符",
+  "gallery.d.toolDesc": "列出未完成的订单,最新的在前;可按状态筛选并限制返回行数。",
+  "gallery.d.fullDescription": "完整说明",
+  "gallery.d.inputSchema": "输入结构",
+  "gallery.d.try": "试用",
   "gallery.s.blockMore": "这一块的更多操作",
   "gallery.s.viaMcp": "经 mcp",
   "gallery.s.client": "客户端 {who}",

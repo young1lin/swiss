@@ -32,10 +32,16 @@
  *   toggle / primary / more
  *            at most one word button per row (rule 4, by type: `primary` is ONE button).
  *
+ *   detail   the item's whole record (a tool's description and input schema): the name and sub
+ *            become a native disclosure - a chevron, and a <details> that opens under them. The
+ *            row's own controls stay outside it, so Try or the switch never opens it.
+ *
  * Separators are inset to the text column (docs/46 U7): .lrow.has-lead moves the line past
- * the dot. No handlers - the row carries the caller's data hooks for its delegated listener. */
+ * the dot, .has-disc past the chevron. No handlers - the row carries the caller's data hooks
+ * for its delegated listener. */
 import type { AttrMap, HChild } from "../h.js";
 import { h } from "../h.js";
+import { iconNode } from "./icon.js";
 
 export interface RowCol {
   v: HChild;
@@ -57,6 +63,8 @@ export interface RowOpts {
   /** Dims the name - a switched-off item. Its state still belongs to a tag or the switch. */
   muted?: boolean;
   title?: string;
+  /** The record behind the row, opened in place (a <details>: no script, keyboard for free). */
+  detail?: HChild;
 }
 
 function isCol(c: HChild | RowCol): c is RowCol {
@@ -65,17 +73,25 @@ function isCol(c: HChild | RowCol): c is RowCol {
 
 export function row(o: RowOpts): HTMLElement {
   const hasLead = o.lead != null && o.lead !== false;
+  const disc = o.detail != null && o.detail !== false;
   const acts = [o.toggle, o.primary, o.more].filter((x): x is HTMLElement => x != null);
+  const text: HChild[] = [
+    h("div", { class: "lrow-name" }, o.name),
+    o.err
+      ? h("div", { class: "lrow-err", title: o.err }, o.err)
+      : o.sub != null && o.sub !== false ? h("div", { class: "lrow-sub" }, o.sub) : null,
+  ];
+  const main = disc
+    ? h("details", { class: "lrow-main lrow-disc" },
+        h("summary", null, h("span", { class: "lrow-chev" }, iconNode("chevron-right")), h("span", { class: "lrow-text" }, text)),
+        h("div", { class: "lrow-detail" }, o.detail))
+    : h("div", { class: "lrow-main" }, text);
   const node = h("div", {
-    class: "lrow" + (hasLead ? " has-lead" : "") + (o.muted ? " muted" : ""),
+    class: "lrow" + (hasLead ? " has-lead" : "") + (disc ? " has-disc" : "") + (o.muted ? " muted" : ""),
     data: o.data, title: o.title,
   },
     hasLead ? h("span", { class: "lrow-lead" }, o.lead) : null,
-    h("div", { class: "lrow-main" },
-      h("div", { class: "lrow-name" }, o.name),
-      o.err
-        ? h("div", { class: "lrow-err", title: o.err }, o.err)
-        : o.sub != null && o.sub !== false ? h("div", { class: "lrow-sub" }, o.sub) : null),
+    main,
     (o.cols || []).map((c) => {
       return isCol(c)
         ? h("span", { class: "lrow-col" + (c.mono ? " mono" : ""), title: c.title }, c.v)
