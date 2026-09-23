@@ -183,7 +183,7 @@ function mountGroup     (cfg               , g                 )              {
 
   const head = el("div", "grp-head");
 
-  // The head's leading columns - chevron, name, count - are the contract base.css aligns
+  // The head's leading columns - chevron, name, count - are the contract ui.css aligns
   // to: the members' dot column sits under the band's name (side) or the chevron sits in
   // the rows' dot column and the name over their names (page). aria-expanded says the fold
   // state to assistive tech.

@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emptyLineText } from "../src/group-logic.js";
+import { sheet } from "./styles.js";
 
 /* The group component DOM contract (docs/20 section 4 as revised by docs/35): one shape at
  * two densities. The head is a BAND that leads with chevron, name, count, with the two
@@ -250,7 +251,8 @@ describe("empty-line wording (pure)", () => {
 });
 
 describe("the CSS contract (over the shipped sheet)", () => {
-  const base = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "styles", "base.css"), "utf8");
+  // The groups component's rules live in the component layer since docs/46.
+  const base = sheet("ui.css");
   const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "index.html"), "utf8");
 
   it("the head is a band in both densities: --sep-soft ground, no tree rail, no folder glyph", () => {

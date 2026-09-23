@@ -20,6 +20,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setMemoryInfo } from "../src/mcp-state.js";
+import { allCss, linkedSheets } from "./styles.js";
 
 // The memory-chip click and the r key share polling.js but must not share side effects:
 // refreshing the reading must never reload the active view under the pointer. The spy is
@@ -43,8 +44,11 @@ describe("admin panel assets", () => {
   it("the shell references its styles and its module entry, with the theme boot inline", () => {
     const shell = readFileSync(join(panelDir, "index.html"), "utf8");
     expect(shell).toContain('src="/admin/js/main.js"');
-    expect(shell).toContain('href="/admin/styles/base.css"');
-    expect(shell).toContain('href="/admin/styles/views.css"');
+    // Three layers in cascade order (docs/46): tokens + shell, the component layer, page layouts.
+    const at = (f: string): number => shell.indexOf('href="/admin/styles/' + f + '"');
+    expect(at("base.css")).toBeGreaterThan(-1);
+    expect(at("ui.css")).toBeGreaterThan(at("base.css"));
+    expect(at("views.css")).toBeGreaterThan(at("ui.css"));
     // The pre-paint theme resolver must stay inline in the shell — a linked script would flash.
     // (The localStorage key was renamed swiss_theme by the rebrand; this assertion lagged it.)
     expect(shell).toContain("swiss_theme");
@@ -141,11 +145,10 @@ describe("admin panel assets", () => {
   // pure-class rule in both sheets that matches the menu's class set, rank by specificity then
   // sheet order then position, and demand the winner beats the backdrop.
   it("layers the dropdown menu above the sheet backdrop it can open over", () => {
-    const styles = join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "styles");
-    // In link order — the shell references base.css before views.css, which is the whole trap.
-    // Comments are stripped first, the way the browser sees the sheet — otherwise a comment
-    // glued to the front of a selector ("/* … */ .menu {") defeats the pure-class check below.
-    const sheets = ["base.css", "views.css"].map((f, fi) => ({ fi, css: readFileSync(join(styles, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "") }));
+    // In link order — the shell references base.css before ui.css before views.css, which is
+    // the whole trap. Comments are stripped first, the way the browser sees the sheet — otherwise
+    // a comment glued to the front of a selector ("/* … */ .menu {") defeats the pure-class check.
+    const sheets = linkedSheets().map((s, fi) => ({ fi, css: s.css.replace(/\/\*[\s\S]*?\*\//g, "") }));
     const rules: Array<{ classes: string[]; z: number; rank: number[] }> = [];
     for (const s of sheets) {
       // Leaf rules only: a media query's wrapper cannot match (it is not a class list), while its
@@ -257,7 +260,8 @@ describe("visual refresh V1 — token contract", () => {
    selected row is an accent bar over a tint, not a white card floating out of the list. The
    segmented controls drop their drop-shadows for hairline rings. */
 describe("visual refresh V6 — state and controls", () => {
-  const base = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "styles", "base.css"), "utf8");
+  // Every linked sheet: the dot and the segmented control live in ui.css since docs/46.
+  const base = allCss();
 
   it("launch tags are one colour: the per-tag hue table is gone", () => {
     expect(base).not.toContain("data-tag");
@@ -268,8 +272,7 @@ describe("visual refresh V6 — state and controls", () => {
   });
 
   it("segmented controls carry hairline rings, not drop shadows", () => {
-    const views = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "styles", "views.css"), "utf8");
-    expect(views).not.toContain("0 1px 2px");
+    expect(allCss()).not.toContain("0 1px 2px");
   });
 
   it("dotTitle speaks for every state the dots paint", async () => {
