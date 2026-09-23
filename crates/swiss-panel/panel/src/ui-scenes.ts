@@ -32,7 +32,7 @@ import { h } from "./h.js";
 import { tk, tr } from "./i18n.js";
 import {
   btn, card, decodeStrings, dot, emptyNode, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, moreBtn,
-  pageFoot, pane, paneHead, row, section, seg, sideRow, sw, tag, timeline,
+  pageFoot, pane, paneHead, resHead, row, section, seg, sideRow, sw, tag, timeline,
 } from "./ui/index.js";
 import type { TimelineItem } from "./ui/index.js";
 
@@ -153,19 +153,19 @@ function resource(now: number): HTMLElement {
         iconBtn("folder-plus", tr("gallery.s.newGroup"))),
       h("nav", { class: "side-list", role: "listbox", aria: { label: tr("gallery.s.servers") } }, bands)),
     pane({ wide: true },
-      paneHead({
+      ...resHead({
         title: "orders-db",
         desc: tr("gallery.s.ordersDesc"),
-        sub: [dot("up", stateWord.up), " ", h("code", null, "/mcp/orders-db"), " · ", stateWord.up, " · pg · 38 ms"],
+        sub: [dot("up", stateWord.up), h("code", null, "/mcp/orders-db"), "·", stateWord.up + " · pg · 38 ms"],
         actions: [btn(tr("gallery.s.disable")), moreBtn(tr("gallery.s.moreFor", { name: "orders-db" }))],
+        nav: seg([
+          { id: "tools", label: tr("gallery.s.tools"), n: 4 },
+          { id: "resources", label: tr("gallery.s.resources") },
+          { id: "run", label: tr("gallery.s.run") },
+          { id: "config", label: tr("gallery.s.config") },
+          { id: "logs", label: tr("gallery.s.logs") },
+        ], "logs", { label: tr("gallery.s.sections") }),
       }),
-      seg([
-        { id: "tools", label: tr("gallery.s.tools"), n: 4 },
-        { id: "resources", label: tr("gallery.s.resources") },
-        { id: "run", label: tr("gallery.s.run") },
-        { id: "config", label: tr("gallery.s.config") },
-        { id: "logs", label: tr("gallery.s.logs") },
-      ], "logs", { label: tr("gallery.s.sections") }),
       section({ cap: tr("gallery.s.toolCalls") },
         timeline(calls(now), { now, open: new Set(["c1"]), body: callBody })),
       section({ cap: tr("gallery.s.childProcess") },
@@ -193,7 +193,7 @@ export const SCENES: Scene[] = [
   { id: "content", titleKey: tk("gallery.scene.content"), build: content,
     uses: ["pane", "paneHead", "iconBtn", "inlineForm", "btn", "groupNode", "row", "tag", "moreBtn", "pageFoot"] },
   { id: "resource", titleKey: tk("gallery.scene.resource"), build: resource,
-    uses: ["sideRow", "dot", "iconNode", "groupNode", "pane", "paneHead", "seg", "section", "card", "timeline", "jsonCodeNode", "row", "sw"] },
+    uses: ["sideRow", "dot", "iconNode", "groupNode", "pane", "paneBody", "resHead", "btn", "moreBtn", "seg", "section", "card", "timeline", "jsonCodeNode", "row", "sw"] },
   { id: "event", titleKey: tk("gallery.scene.event"), build: events,
     uses: ["pane", "paneHead", "moreBtn", "timeline"] },
   { id: "empty", titleKey: tk("gallery.scene.empty"), build: empty,

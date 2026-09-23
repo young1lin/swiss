@@ -21,12 +21,15 @@
  *   pane       the page body itself: the padded, scrolling frame under the bars, every block
  *              in it capped at the measure (skill §6). `wide` for genuinely wide rows (and the
  *              frame the pinned head lives in), `full` for a workspace (Data, Terminal).
+ *   paneBody   the same measure frame for a view that fills the shell's own #pane.
  *   paneHead   pinned on a content page (ui.css, docs/46 U9). No location title - the
- *              context bar already says where you are (skill §7); `title` is for a RESOURCE
- *              head (the selected MCP), where the name is the page's subject.
+ *              context bar already says where you are (skill §7).
+ *   resHead    a RESOURCE head (the selected MCP), where the name is the page's subject: the
+ *              name row and the resource's tabs pin, its words scroll away (docs/46 §3.2).
  *   section    a product-named caption over its body, with the section's tools at its end.
  *              A caption the user named is a group band instead (rule 5).
  *   card       the grouped inset surface rows sit on.
+ *   note       a quiet line under a body (busy: with the spinner; err: a contained failure).
  *   pageFoot   the revision line. Never a count the context bar already shows (rule 25).
  *   inlineForm one row: the fields, a Group select, the one primary (docs/35 §3).
  *   emptyNode  the one "nothing here" shape (docs/18 V7); its action answers
@@ -34,6 +37,7 @@
 import type { HChild } from "../h.js";
 import { h } from "../h.js";
 import { iconNode } from "./icon.js";
+import { spinner } from "./status.js";
 
 export interface PaneOpts {
   /** Wrap the body in .wide: the wider measure, and the frame paneHead pins itself in. */
@@ -47,7 +51,14 @@ export interface PaneOpts {
  *  own, which is how a design shows a whole page without a line of its own CSS. */
 export function pane(o: PaneOpts, ...body: HChild[]): HTMLElement {
   return h("main", { class: o.full ? "pane full" : "pane", id: o.id },
-    o.wide ? h("div", { class: "wide" }, ...body) : body);
+    o.wide ? paneBody({ wide: true }, ...body) : body);
+}
+
+/** A page's body inside the shell's own #pane (which a view fills, never replaces): one frame
+ *  so the measure is applied once and header, tabs and body share a left edge. `wide` is the
+ *  wider measure and the frame a pinned head (paneHead, resHead) sticks in. */
+export function paneBody(o: { wide?: boolean }, ...body: HChild[]): HTMLElement {
+  return h("div", o.wide ? { class: "wide" } : null, ...body);
 }
 
 export function paneHead(o: { title?: HChild; desc?: HChild; sub?: HChild; actions?: HChild[] }): HTMLElement {
@@ -57,6 +68,30 @@ export function paneHead(o: { title?: HChild; desc?: HChild; sub?: HChild; actio
       o.desc != null && o.desc !== false ? h("div", { class: "pane-desc" }, o.desc) : null,
       o.sub != null && o.sub !== false ? h("div", { class: "pane-sub" }, o.sub) : null),
     o.actions && o.actions.length ? h("div", { class: "pane-actions" }, o.actions) : null);
+}
+
+/** A RESOURCE head (docs/46 §3.2) - the selected MCP's name, words, state and sections - as
+ *  two pinned layers instead of one block. The name row pins at the top (the content-page
+ *  pin, .pane > .wide > .pane-head); the description and state line are ordinary flow and
+ *  scroll away beneath it; the nav (a seg) pins under the name row. Stuck, it reads as the
+ *  head "collapsing" to name + tabs, with no script state and no change in the head's own
+ *  height - a head that shrank on scroll would shorten the page it was scrolling. The shell
+ *  measures the layers into --pin-title-h / --pane-head-h (pane-scroll.ts). Returned as the
+ *  pane's children, since each layer must be a child of the .wide frame to stick in it. */
+export function resHead(o: { title: HChild; desc?: HChild; sub?: HChild; actions?: HChild[]; nav?: HTMLElement }): HTMLElement[] {
+  const has = (x: HChild | undefined): boolean => x != null && x !== false;
+  // The name row clips a long name to one line; the tooltip keeps the whole of it.
+  const whole = typeof o.title === "string" ? o.title : undefined;
+  const out = [h("div", { class: "pane-head res" },
+    h("h1", { class: "pane-title", title: whole }, o.title),
+    o.actions && o.actions.length ? h("div", { class: "pane-actions" }, o.actions) : null)];
+  if (has(o.desc) || has(o.sub)) {
+    out.push(h("div", { class: "res-meta" },
+      has(o.desc) ? h("div", { class: "pane-desc" }, o.desc) : null,
+      has(o.sub) ? h("div", { class: "pane-sub" }, o.sub) : null));
+  }
+  if (o.nav) out.push(h("div", { class: "pane-nav" }, o.nav));
+  return out;
 }
 
 /** `note` is one line under the caption that says what the section holds - a sentence, so
@@ -69,6 +104,14 @@ export function section(o: { cap?: string; note?: HChild; tools?: HChild[] }, ..
     : null;
   const note = o.note != null && o.note !== false ? h("div", { class: "hint sec-note" }, o.note) : null;
   return h("section", { class: "sec" }, head, note, ...body);
+}
+
+/** A quiet line under a body: what just happened, what is loading. `busy` leads it with the
+ *  spinner; `err` is a failure from the far side - contained, tinted, scrolled, never the
+ *  loudest thing on the screen (ui.css .note.err). */
+export function note(body: HChild, o: { err?: boolean; busy?: boolean; id?: string } = {}): HTMLElement {
+  return h("div", { class: o.err ? "note err" : "note", id: o.id },
+    o.busy ? [spinner(), " "] : null, body);
 }
 
 export function card(...rows: HChild[]): HTMLElement {

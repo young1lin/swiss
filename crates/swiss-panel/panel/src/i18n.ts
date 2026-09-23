@@ -209,6 +209,12 @@ export function paintChrome(): void {
   if (rail) rail.setAttribute("aria-label", tr("i18n.plugins"));
   byId("railNav").setAttribute("aria-label", tr("i18n.plugins"));
   byId("list").setAttribute("aria-label", tr("i18n.hostedMcps"));
+  // Not index.html's, but chrome all the same: the shell builds it once at boot (pane-scroll.ts).
+  const top = document.getElementById("toTop");
+  if (top) {
+    top.title = tr("ui.toTop");
+    top.setAttribute("aria-label", tr("ui.toTop"));
+  }
   if (repaintThemeBtn) repaintThemeBtn();
 }
 

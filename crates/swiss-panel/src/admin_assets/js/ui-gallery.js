@@ -33,9 +33,10 @@ import { fill, h } from "./h.js";
 import { install, langPref, tk, tr } from "./i18n.js";
 import { SCENES } from "./ui-scenes.js";
 import {
-  btn, card, closeMenu, closeSheet, decodeStrings, dot, emptyNode, groupNode, iconBtn, iconNode, initSelects,
-  initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, openFieldSheet, pageFoot, pane, paneHead,
-  popupMenu, row, section, seg, sheet, sheetOpen, showSheet, sideRow, sw, tag, timeline, timelineToggle,
+  anchoredMenu, btn, card, closeMenu, closeSheet, decodeStrings, dot, emptyNode, groupNode, iconBtn, iconNode,
+  initSelects, initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot, pane,
+  paneHead, popupMenu, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow, spinner, sw, tag, timeline,
+  timelineToggle, toTop,
 } from "./ui/index.js";
                                                             
 
@@ -184,12 +185,13 @@ function catalogue(now        )              {
       [tr("gallery.st.iconPressed"), iconBtn("star", tr("gallery.d.pin"), { ghost: true, pressed: true })],
       [tr("gallery.st.more"), moreBtn(tr("gallery.d.more"))],
     ]),
-    entry(["dot", "tag"], tk("gallery.c.status"), tk("gallery.c.statusNote"),
+    entry(["dot", "tag", "spinner"], tk("gallery.c.status"), tk("gallery.c.statusNote"),
       DOTS.map(([s, k])                   => [tr(k), dot(s, tr(k))]).concat([
         [tr("gallery.st.tagWord"), tag(tr("gallery.d.proxy"))],
         [tr("gallery.st.tagMono"), tag("npx", { mono: true })],
         [tr("gallery.st.tagBad"), tag(tr("gallery.d.error"), { tone: "bad" })],
         [tr("gallery.st.tagWarn"), tag(tr("gallery.d.slow"), { tone: "warn" })],
+        [tr("gallery.st.spinner"), [spinner(), " ", tr("gallery.d.loading")]],
       ])),
     entry(["sw"], tk("gallery.c.switch"), tk("gallery.c.switchNote"), [
       [tr("gallery.st.on"), sw(true, tr("gallery.d.enabled"))],
@@ -201,9 +203,18 @@ function catalogue(now        )              {
       [tr("gallery.st.longList"), h("select", { aria: { label: tr("gallery.d.schedule") } }, MANY.map((c) => h("option", { value: c }, c)))],
       [tr("gallery.st.disabled"), h("select", { disabled: true, aria: { label: tr("gallery.d.group") } }, CHOICES.map((c) => h("option", { value: c }, c)))],
     ]),
-    entry(["paneHead", "pageFoot", "inlineForm", "section", "card", "kvRow"], tk("gallery.c.page"), tk("gallery.c.pageNote"), [
+    entry(["paneHead", "resHead", "anchoredMenu", "note", "pageFoot", "inlineForm", "section", "card", "kvRow"], tk("gallery.c.page"), tk("gallery.c.pageNote"), [
       [tr("gallery.st.contentHead"), paneHead({ desc: tr("gallery.d.headDesc"), actions: [iconBtn("folder-plus", tr("gallery.d.newGroup")), btn(tr("gallery.d.newItem"), { kind: "primary", icon: "plus" })] })],
-      [tr("gallery.st.resourceHead"), paneHead({ title: "orders-db", desc: tr("gallery.d.resourceDesc"), sub: [dot("up", tr("gallery.dot.up")), " ", h("code", null, "/mcp/orders-db")], actions: [btn(tr("gallery.d.disable")), moreBtn(tr("gallery.d.more"))] })],
+      // Out of a pane the two layers do not pin; the resource scene shows them stuck.
+      [tr("gallery.st.resourceHead"), resHead({
+        title: "orders-db", desc: tr("gallery.d.resourceDesc"),
+        sub: [dot("up", tr("gallery.dot.up")), h("code", null, "/mcp/orders-db"), "·", tr("gallery.dot.up")],
+        actions: [btn(tr("gallery.d.disable")), moreBtn(tr("gallery.d.more"), { data: { demo: "anchored" } })],
+        nav: seg([{ id: "tools", label: tr("gallery.d.tools"), n: 4 }, { id: "logs", label: tr("gallery.d.logs") }], "logs"),
+      })],
+      [tr("gallery.st.note"), note(tr("gallery.d.noteQuiet"))],
+      [tr("gallery.st.noteBusy"), note(tr("gallery.d.loading"), { busy: true })],
+      [tr("gallery.st.noteErr"), note(tr("gallery.d.noteErr"), { err: true })],
       [tr("gallery.st.inlineForm"), inlineForm(h("input", { placeholder: tr("gallery.d.label"), aria: { label: tr("gallery.d.label") } }), btn(tr("gallery.d.create"), { kind: "primary" }))],
       [tr("gallery.st.foot"), pageFoot({ note: tr("gallery.d.footNote"), rev: "rev 14" })],
       [tr("gallery.st.kvSans"), tr("gallery.d.kvSentence")],
@@ -234,10 +245,12 @@ function catalogue(now        )              {
     ]),
     entry(["timeline"], tk("gallery.c.timeline"), tk("gallery.c.timelineNote"), [], timeline(sampleCalls(now), { now, open: new Set(["g3"]), body: callBody })),
     entry(["jsonCodeNode"], tk("gallery.c.code"), tk("gallery.c.codeNote"), [], jsonCodeNode(decodeStrings(SAMPLE_JSON), false).node),
-    entry(["popupMenu", "sheet", "openFieldSheet"], tk("gallery.c.floating"), tk("gallery.c.floatingNote"), [
+    entry(["popupMenu", "sheet", "openFieldSheet", "toTop"], tk("gallery.c.floating"), tk("gallery.c.floatingNote"), [
       [tr("gallery.st.menu"), btn(tr("gallery.d.openMenu"), { icon: "ellipsis", data: { demo: "menu" } })],
       [tr("gallery.st.sheet"), btn(tr("gallery.d.openSheet"), { data: { demo: "sheet" } })],
       [tr("gallery.st.fieldSheet"), btn(tr("gallery.d.openFieldSheet"), { data: { demo: "field" } })],
+      // The real one is on this page already: it shows once the page is a screen down.
+      [tr("gallery.st.toTop"), btn(tr("gallery.d.toEnd"), { data: { demo: "totop" } })],
     ]),
     entry(["emptyNode"], tk("gallery.c.empty"), tk("gallery.c.emptyNote"), [], card(emptyNode({ icon: "plug", title: tr("gallery.d.emptyTitle"), hint: tr("gallery.d.emptyHint"), action: tr("gallery.d.emptyAction") }))),
     entry(["iconNode"], tk("gallery.c.icons"), tk("gallery.c.iconsNote"), icons.map((id)                   => [id, iconNode(id)])),
@@ -263,6 +276,25 @@ function openDemoMenu(anchor             )       {
     { sep: true },
     { label: tr("gallery.d.delete"), fn: () => {}, danger: true },
   ]);
+}
+
+/** The ⋯ of a resource head: the same rows, hung under the head's actions instead of floating. */
+function openDemoAnchored(anchor             )       {
+  const host = anchor.closest             (".pane-actions");
+  if (!host) return;
+  anchoredMenu(host, [
+    { label: tr("gallery.d.menuHeading"), fn: () => {}, heading: true },
+    { label: tr("gallery.d.menuPicked"), fn: () => {}, pick: true, on: true },
+    { label: tr("gallery.d.menuPick"), fn: () => {}, pick: true },
+    { sep: true },
+    { label: tr("gallery.d.delete"), fn: () => {}, danger: true },
+  ]);
+}
+
+/** Scroll the gallery's own pane to its end, where its back-to-top button is showing. */
+function scrollToEnd()       {
+  const p = appNode().querySelector             ("main.pane");
+  if (p) p.scrollTop = p.scrollHeight;
 }
 
 function openDemoSheet()       {
@@ -296,6 +328,10 @@ function render()       {
   const current = route();
   const scene = SCENES.find((s) => "scene-" + s.id === current);
   fill(appNode(), h("div", { class: "workbench" }, bar(current), scene ? scene.build(now) : catalogue(now)));
+  // Every render builds a new pane, so its back-to-top button is rebuilt with it (docs/46 U18).
+  document.querySelectorAll(".to-top").forEach((b) => { b.remove(); });
+  const scroller = appNode().querySelector             ("main.pane");
+  if (scroller) document.body.appendChild(toTop(scroller));
   document.title = tr("gallery.docTitle");
 }
 
@@ -321,6 +357,8 @@ function onClick(e            )       {
     if (demo.dataset.demo === "menu") openDemoMenu(demo);
     else if (demo.dataset.demo === "sheet") openDemoSheet();
     else if (demo.dataset.demo === "field") openDemoFieldSheet();
+    else if (demo.dataset.demo === "anchored") openDemoAnchored(demo);
+    else if (demo.dataset.demo === "totop") scrollToEnd();
     return;
   }
   const sum = t.closest(".tl-sum");

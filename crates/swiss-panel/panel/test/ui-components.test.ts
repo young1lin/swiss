@@ -27,9 +27,10 @@ import { h } from "../src/h.js";
 import { install } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 import {
-  btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, fmtMs, groupNode, iconBtn,
-  iconNode, inlineForm, jsonCodeNode, kvRow, moreBtn, openFieldSheet, pageFoot, paneHead, popupMenu, row, section,
-  seg, sheet as sheetFrame, styleSelect, sw, tag, timeLabel, timeline, timelineToggle,
+  anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, fmtMs, groupNode,
+  iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot, paneBody, paneHead,
+  popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag, timeLabel, timeline,
+  timelineToggle, toTop,
 } from "../src/ui/index.js";
 import type { TimelineItem } from "../src/ui/index.js";
 import { allClassesOf, parseCss } from "./css-rules.js";
@@ -157,6 +158,41 @@ describe("ui/page", () => {
     expect(res.querySelector(".pane-sub")?.textContent).toBe("stdio · 12 tools");
     expect(res.querySelector(".pane-actions")).toBeNull();
     expect(paneHead({ desc: "x", actions: [] }).querySelector(".pane-actions")).toBeNull();
+  });
+
+  it("resHead: the name row, the words, the nav - three layers, each a child of the frame", () => {
+    const nav = seg([{ id: "tools", label: "Tools" }], "tools");
+    const layers = resHead({ title: "orders-db", desc: "Orders.", sub: "up", actions: [moreBtn("More")], nav });
+    expect(layers.map((n) => n.className)).toEqual(["pane-head res", "res-meta", "pane-nav"]);
+    const [head, meta, pinned] = layers;
+    expect(head.querySelector("h1.pane-title")?.textContent).toBe("orders-db");
+    // The name row clips a long name; its tooltip keeps the whole one.
+    expect(head.querySelector("h1")?.getAttribute("title")).toBe("orders-db");
+    expect(head.querySelector(".pane-actions > .btn.icon")).not.toBeNull();
+    expect(meta.querySelector(".pane-desc")?.textContent).toBe("Orders.");
+    expect(meta.querySelector(".pane-sub")?.textContent).toBe("up");
+    expect(pinned.firstElementChild).toBe(nav);
+    const frame = paneBody({ wide: true }, ...layers);
+    expect(frame.className).toBe("wide");
+    expect(frame.children).toHaveLength(3);
+    expect(paneBody({}).getAttribute("class")).toBeNull();
+  });
+
+  it("resHead without words or tabs is the name row alone", () => {
+    const only = resHead({ title: "x", desc: null, sub: false });
+    expect(only.map((n) => n.className)).toEqual(["pane-head res"]);
+    expect(only[0].querySelector(".pane-actions")).toBeNull();
+  });
+
+  it("note: quiet by default, the spinner first when busy, contained when it is a failure", () => {
+    expect(note("restarted").className).toBe("note");
+    const busy = note("Loading…", { busy: true, id: "n1" });
+    expect(busy.id).toBe("n1");
+    expect(busy.firstElementChild?.className).toBe("spin");
+    expect(busy.textContent).toBe(" Loading…");
+    expect(note("401", { err: true }).className).toBe("note err");
+    // The spinner is decoration beside the words that say what is loading.
+    expect(spinner().getAttribute("aria-hidden")).toBe("true");
   });
 
   it("section: caption and tools share the head; tools alone keep the head's two columns", () => {
@@ -520,6 +556,71 @@ function mechanisms(): Element[] {
   return snap;
 }
 
+describe("ui/menu - anchoredMenu", () => {
+  it("hangs the menu in the host, not on <body>: same rows, focus on the first, Escape closes", () => {
+    document.body.innerHTML = '<div class="pane-actions" id="host"></div>';
+    const host = document.getElementById("host")!;
+    let ran = "";
+    anchoredMenu(host, [
+      { label: "Group", fn: () => {}, heading: true },
+      { label: "default", fn: () => { ran = "default"; }, pick: true, on: true },
+      { sep: true },
+      { label: "Delete", fn: () => { ran = "delete"; }, danger: true },
+    ]);
+    const menu = document.getElementById("menu")!;
+    expect(menu.parentElement).toBe(host);
+    expect(menu.className).toBe("menu");
+    expect(menu.getAttribute("role")).toBe("menu");
+    expect(menuOpen()).toBe(true);
+    expect(document.activeElement?.textContent).toBe("default");
+    menu.querySelector<HTMLButtonElement>("button.danger")!.click();
+    expect(ran).toBe("delete");
+    expect(document.getElementById("menu")).toBeNull();
+    expect(menuOpen()).toBe(false);
+    anchoredMenu(host, [{ label: "a", fn: () => {} }]);
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(menuOpen()).toBe(false);
+  });
+});
+
+describe("ui/to-top - toTop", () => {
+  it("a labelled round button that shows only past one screen of its scroller", () => {
+    const scroller = document.createElement("div");
+    Object.defineProperty(scroller, "clientHeight", { value: 400 });
+    const b = toTop(scroller);
+    expect(b.classList.contains("to-top")).toBe(true);
+    expect(b.getAttribute("aria-label")).toBe("Back to top");
+    expect(b.querySelector("use")?.getAttribute("href")).toBe("#i-arrow-up");
+    scroller.scrollTop = 400;
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(b.classList.contains("on")).toBe(false);
+    scroller.scrollTop = 401;
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(b.classList.contains("on")).toBe(true);
+  });
+
+  it("jumps rather than glides when the reader asked for reduced motion", () => {
+    const scroller = document.createElement("div");
+    const calls: unknown[] = [];
+    scroller.scrollTo = ((o: unknown) => { calls.push(o); }) as typeof scroller.scrollTo;
+    const real = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q.includes("reduce") })) as unknown as typeof window.matchMedia;
+    try { toTop(scroller).click(); } finally { window.matchMedia = real; }
+    expect(calls).toEqual([{ top: 0, behavior: "auto" }]);
+  });
+
+  it("hidden means out of the Tab order too, and it sits under every overlay (ui.css)", () => {
+    const rule = parseCss(sheet("ui.css")).find((r) => !r.at && r.selectors.includes(".btn.to-top"));
+    const decl = (p: string): string | undefined => rule?.decls.find((d) => d.prop === p)?.value;
+    expect(decl("position")).toBe("fixed");
+    expect(decl("visibility")).toBe("hidden");
+    // Menus 30, the sheet backdrop 40, the toast 50.
+    expect(Number(decl("z-index"))).toBeLessThan(30);
+    const on = parseCss(sheet("ui.css")).find((r) => !r.at && r.selectors.includes(".btn.to-top.on"));
+    expect(on?.decls.find((d) => d.prop === "visibility")?.value).toBe("visible");
+  });
+});
+
 describe("docs/46 - every class the library draws is styled by base.css or ui.css", () => {
   it("renders every component with every option; no class is left unstyled", () => {
     const tl = timeline([
@@ -533,6 +634,9 @@ describe("docs/46 - every class the library draws is styled by base.css or ui.cs
       ...(["up", "down", "error", "idle", "starting", "stopping", "off"] as const).map((s) => dot(s, s)),
       tag("t", { mono: true, tone: "bad" }), tag("t", { tone: "warn" }), sw(true, "on"),
       paneHead({ title: "t", desc: "d", sub: "s", actions: [btn("x")] }),
+      paneBody({ wide: true }, ...resHead({ title: "t", desc: "d", sub: "s", actions: [btn("x")], nav: seg([{ id: "a", label: "A" }], "a") })),
+      note("n"), note("n", { busy: true }), note("n", { err: true }), spinner(),
+      toTop(document.createElement("div")),
       section({ cap: "c", tools: [btn("x")] }, card(row({ name: "n" }))),
       pageFoot({ note: "n", rev: "r" }), inlineForm(btn("x")),
       emptyNode({ icon: "server", title: "t", hint: "h", action: "a" }),

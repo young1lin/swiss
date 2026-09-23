@@ -219,12 +219,14 @@ describe("docs/28 D2: the verb is disable, the word is disabled", () => {
   it("the header subtitle and the overflow menu use the operator's word", () => {
     const stopped = { ...ROW, lifecycle: "stopped", state: "stopped" };
     expect(pane.headSubtitle(stopped as never)).toContain("disabled");
-    const menu = pane.menuNode(stopped as never);
-    expect(menu.innerHTML).toContain(">Enable</button>");
-    expect(menu.innerHTML).toContain('data-act="start"');
-    const startedMenu = pane.menuNode({ ...ROW } as never);
-    expect(startedMenu.innerHTML).toContain(">Disable</button>");
-    expect(startedMenu.innerHTML).toContain('data-act="stop"');
+    // The menu is the library's (anchoredMenu, docs/46 P2-1): its rows are items, and the verb
+    // row's label is the operator's word for the row it was opened on.
+    const labels = (row: unknown): string[] => pane.menuItems(fakeDetail("m", { type: "echo" }) as never, row as never)
+      .map((it) => ("label" in it ? it.label : "")).filter(Boolean);
+    expect(labels(stopped)).toContain("Enable");
+    expect(labels(stopped)).not.toContain("Disable");
+    expect(labels({ ...ROW })).toContain("Disable");
+    expect(labels({ ...ROW })).not.toContain("Enable");
   });
 });
 

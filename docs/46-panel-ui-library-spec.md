@@ -147,6 +147,7 @@ skill 是宪法，但它有几处已经和代码对不上。本文 P1c 一并修
 | **U15** | **skill 与库在 P1 内一起落地**（P1c 紧跟 P1b，P2 开始前 skill 已经描述库），skill 不描述还不存在的东西；逐页整理的规则在各页落地时补进 skill 的例子。 |
 | **U16** | **每迁一页，删一页的旧 CSS 与旧类**。迁完的页面不许留旧类名做兼容（记忆：refactor means changing the code）。 |
 | **U17** | **库先行，设计也用库**（需求第 6 条）。P1 把 13 页要用的形状一次备齐并在陈列页走查通过，之后才迁第一页；迁页时缺一个形状，先停下来补进库（组件 + ui.css + 陈列页 + 测试），再回到页面。以后的设计稿不再像 `docs/assets/46/directions.html` 那样手写一套 `.m-*` 样式：设计 = 陈列页里的一个**场景**（§2.6），用真组件和虚构数据拼出整页，明暗中英开关现成。 |
+| **U18** | **回到顶部**（owner 2026-09-23 在 P2 前追加："MCP log 太长了……不管是往下还是往上都太麻烦了"）：一个浮在 pane 右下角的圆形图标按钮，pane 滚过一屏后出现，点一下 pane 平滑回到顶部（`prefers-reduced-motion` 下直接跳）。它是**壳**的：启动时在 `#pane` 上装一个，所有内容页共用；工作区页面（`.pane.full`）从不滚动，所以从不出现。库里是只依赖 DOM 的机制 `toTop(scroller)`（§2.5 的"通用机制"类），陈列页在自己的 pane 上也装一个。 |
 
 U1 的取舍：
 
@@ -208,6 +209,13 @@ pageFoot(o: { note?: HChild; rev?: string }): HTMLElement   // prose left, the r
                                               // never a count the bar already shows
 inlineForm(...controls: HChild[]): HTMLElement
 emptyNode(o: { icon: string; title: string; hint?: string; action?: string }): HTMLElement  // moves from util.ts
+
+// P2 additions (§3.2)
+resHead(o: { title: HChild; desc?: HChild; sub?: HChild; actions?: HChild[]; nav?: HTMLElement }): HChild[]
+// the RESOURCE head as two pinned layers: [.pane-head.res (title + actions), .res-meta (desc + sub,
+// scrolls away beneath it), .pane-nav (the seg, pins under the title row)]
+// ui/to-top.ts - a DOM-only mechanism (§2.5)
+toTop(scroller: HTMLElement): HTMLButtonElement   // shown past one screen; click scrolls to the top
 ```
 
 ### 2.3 行
@@ -326,12 +334,29 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
 
 ### 3.2 MCP › Servers（P2）
 
-- [ ] 资源头（名字、说明、状态行、动作）与 seg 一起吸顶；`scrollTop > 48` 收起说明与状态行，`< 8` 展开（滞回，防抖动）。
+涉及的文件：`pane.ts`（详情头与 ⋯ 菜单）、`connect.ts`（tab 正文）、`logs.ts`（Logs 与 Tools / Resources / Prompts）、
+`run.ts` 与 `run-history.ts`（Run 与调用记录）、`detail.ts`、`polling.ts`、`sidebar.ts`、`add-sheet.ts` 与 `fields.ts`
+（新增 / 编辑表单）。迁完后这些文件的 G5 为 0。分三个 commit：**P2-1** 壳（回到顶部、`--pane-head-h`）与资源头，
+**P2-2** Logs，**P2-3** 其余 tab、侧栏、表单。缺的形状照 U17 先补进库。
+
+- [x] 回到顶部（U18）：`toTop(#pane)` 由壳在启动时装一次，挂在 `body` 上、`position: fixed`；pane 滚过一屏
+      （`scrollTop > clientHeight`）出现，回到一屏以内消失；隐藏时 `visibility: hidden`，不进 Tab 顺序。
+      层级低于菜单（30）、sheet 背板（40）、toast（50）。实走时补的两件：它是启动时建的一次性 chrome，
+      切换语言靠 `paintChrome` 按 `#toTop` 重写标签（否则中文界面里读作 "Back to top"）；`.pane` 的下内边距
+      让出按钮的高度，滚到底时最后一行停在按钮上方，不被它盖住。
+- [x] 资源头（P2 实施前修订，原文"`scrollTop > 48` 收起说明与状态行，`< 8` 展开，滞回防抖动"）：改成**两层吸顶**。
+      名字 + 动作一行吸顶；说明与状态行照常滚走，从名字行下面穿过；seg 滚到名字行下沿时停住。停下来的样子与原文相同，
+      但没有 JS 状态，也不会因为头变矮改变滚动高度（滞回要防的正是这个）。壳用 `ResizeObserver` 量两层的高度，
+      写进 `#pane` 的 `--pin-title-h`（seg 停住的位置）与 `--pane-head-h`（按天分组的标题停住的位置，§2.4）。
+      库里是 `resHead()`：名字行、说明与状态行、seg 三块，由它一起画。
+- [x] MCP 详情用 `.wide` 量度（资源页模板，陈列页的资源场景就是这样）。所有 tab 仍是同一个宽度，换 tab 不改页宽。
 - [ ] Logs → `timeline`：行内只留时间；日期是按天分组的标题；耗时一列；`via` / `client` / 字符数进展开区的
       meta 行；连续相同的调用（同 tool + 同参数 + 同结果）合并 ×N，展开 ×N 列出每一次。
 - [ ] 展开区：短 JSON（紧凑形式 ≤ 80 字符）一行显示；每块一个可见的复制按钮，"复制原文"进 ⋯。
       **修订 docs/33 C3**（它规定两个复制按钮都可见、JSON 一律缩进展开），在 docs/33 状态头记一笔。
 - [ ] Tools 行、侧栏行的字重按 U5。
+- [ ] P1b 留下的两件：`.seg` 自带的 `margin-bottom` 交给页面的流（组件不带摆放，P2-1 已做）；`sidebar.ts` 的
+      `sideRowNode` 换成 `sideRow()`（P2-3）。（`popupMenu` 改用 `h()` 等到最后一个手写微型 DOM 的套件——Data 的——换成 happy-dom，即 P7。）
 
 ### 3.3 MCP › Traffic 与 Token（P3）
 
@@ -500,3 +525,6 @@ owner 要求"写 spec 后，review 一下，有问题就改"。初稿对照代�
 | （P1b-3）G5 的基线 | 冻结在 35 个文件、623 个 `ui.css` 类名；只许降，降了同一个 commit 改表 |
 | （P1b-3，留给 P2）`.seg` 自带 `margin-bottom`——摆放写进了组件，放进 kv 行就多出一截 | 不在这步动：它改 MCP 详情的纵向节奏，P2 迁 MCP 时把间距交给页面的流 |
 | （P1b-3）陈列页字节：§1 估计 < 20 KB | 实数 ui.html 2,482 + ui-gallery.js 20,029 + ui-scenes.js 10,126 = 32,637 字节，另有中英各 166 个 `gallery.*` 键；超估计，P9 汇总时一并记 |
+| （P2 前，owner 2026-09-23）"MCP log 太长了……不管是往下还是往上都太麻烦了"，要一个右下角回到顶部的浮动按钮 | 加 U18 与 §3.2 一项：壳在 `#pane` 上装一个 `toTop()`，所有内容页共用 |
+| （P2 前，owner 2026-09-23）看 19999 的 Logs 仍是旧样子，问为什么 B 没落到页面上——P1 只建了库与陈列页，页面从 P2 起才迁 | P2 提到 P1c 之前做（P1c 只改 skill 与清单，页面看不出区别）；P1c 紧跟 P2，skill 照 P2 落地后的实际形状写。U15 "P2 开始前 skill 已经描述库"因此放宽为"P3 开始前" |
+| （P2 前自审）§3.2 资源头的"`scrollTop > 48` 收起、`< 8` 展开"：收起让头变矮、滚动高度随之变小，内容短的页面会在两个阈值之间来回跳，滞回只能减少不能消除；还要一段 JS 状态 | 两层吸顶（§3.2）：名字行吸顶，说明与状态行从它下面滚走，seg 停在它下沿。停下来的样子相同，零 JS 状态，头的高度从不变化 |

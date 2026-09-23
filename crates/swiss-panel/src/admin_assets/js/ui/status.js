@@ -43,3 +43,9 @@ export function tag(text        , o          = {})              {
     title: o.title,
   }, text);
 }
+
+/** Work in flight, inline with the words that say what it is ("Loading calls…"). Decorative:
+ *  the words carry the meaning, so it is hidden from assistive tech. */
+export function spinner()              {
+  return h("span", { class: "spin", aria: { hidden: "true" } });
+}
