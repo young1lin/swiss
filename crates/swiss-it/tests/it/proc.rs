@@ -10,7 +10,9 @@
 //! - the five tools: UTF-8 echo, byte-identical blob over the &RawValue proxy path,
 //!   a real sleep, an MCP error that does not kill the process, and the env NAMES
 //!   the child sees (the daemon's launcher-noise scrub, docs/16 H1, proven on a proc
-//!   child for the first time).
+//!   child for the first time);
+//! - the call log the Logs tab reads (docs/33 C3): replies stored verbatim, a long one
+//!   clipped on the page and served whole by seq.
 
 use std::time::{Duration, Instant};
 
@@ -188,6 +190,60 @@ async fn echo_round_trips_utf8_and_stderr_never_pollutes_stdout() {
     assert_eq!(back.as_str(), Some(text), "UTF-8 over the whole stdio path: {back}");
 
     stop(&g, "l3-echo").await;
+    await_no_child(Duration::from_secs(2)).await;
+}
+
+/// docs/33 C3: the Logs JSON view's contract with the call log. The panel decodes a reply that is
+/// JSON held in a string and hands the stored text back on Copy raw, so the log must keep a reply
+/// VERBATIM - never re-encoded or unwrapped on the way in. And it fetches a clipped reply whole
+/// the moment its row opens, so the page must mark a reply past the 2 KB preview (`preview`, the
+/// full `chars`) and `calls/{seq}` must serve every byte of it.
+#[tokio::test]
+async fn the_call_log_keeps_replies_verbatim_for_the_logs_view() {
+    let _guard = L3.lock().await;
+    let g = boot(vec![("l3-logs", server_def(0))]).await;
+    let c = mcp(&g, "l3-logs").await;
+    let _ = tool_names(&c).await;
+
+    // web_search_prime's shape: the whole reply is one JSON string literal holding JSON.
+    let inner = json!([{ "title": "a", "content": "line one\nline two" }]);
+    let wrapped = serde_json::to_string(&inner.to_string()).expect("a JSON string literal");
+    assert_eq!(call_text(&c, "echo", json!({ "text": wrapped })).await, wrapped);
+    // A reply past the page's 2 KB preview (calls.rs PREVIEW_MAX).
+    let rows: Vec<Value> = (0..120).map(|i| json!({ "id": i, "name": format!("row-{i}") })).collect();
+    let long = json!({ "rows": rows }).to_string();
+    assert!(long.chars().count() > 2048, "the fixture must outgrow the preview");
+    assert_eq!(call_text(&c, "echo", json!({ "text": long })).await, long);
+
+    let (status, page) = g
+        .api(reqwest::Method::GET, "/api/mcps/l3-logs/calls", None)
+        .await;
+    assert_eq!(status, 200, "{page}");
+    let calls = page["calls"].as_array().expect("a calls page");
+    assert_eq!(calls.len(), 2, "both calls logged, newest first: {page}");
+    let (long_row, wrapped_row) = (&calls[0], &calls[1]);
+
+    // Stored verbatim: Copy raw is the wire text, and the arguments still parse to what was sent.
+    assert_eq!(wrapped_row["output"].as_str(), Some(wrapped.as_str()));
+    assert!(wrapped_row["preview"].is_null(), "a short reply is whole on the page");
+    let args: Value = serde_json::from_str(wrapped_row["args"].as_str().expect("args text"))
+        .expect("the stored arguments are JSON");
+    assert_eq!(args["text"].as_str(), Some(wrapped.as_str()));
+
+    // Clipped on the page, whole on calls/{seq}: what opening the row fetches.
+    assert_eq!(long_row["preview"], json!(true));
+    assert_eq!(long_row["chars"].as_u64(), Some(long.chars().count() as u64));
+    let head: String = long.chars().take(2048).collect();
+    assert_eq!(long_row["output"].as_str(), Some(head.as_str()));
+    let seq = long_row["seq"].as_u64().expect("a seq");
+    let (status, one) = g
+        .api(reqwest::Method::GET, &format!("/api/mcps/l3-logs/calls/{seq}"), None)
+        .await;
+    assert_eq!(status, 200, "{one}");
+    assert!(one["call"]["bodyGone"].is_null(), "the newest body is kept: {one}");
+    assert_eq!(one["call"]["output"].as_str(), Some(long.as_str()));
+
+    stop(&g, "l3-logs").await;
     await_no_child(Duration::from_secs(2)).await;
 }
 

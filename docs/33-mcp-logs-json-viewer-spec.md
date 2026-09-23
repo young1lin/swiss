@@ -1,6 +1,6 @@
 # docs/33 — MCP Logs: JSON viewer for arguments and replies
 
-Status: Shipped — C1 in e844b98, C2 in 26a448f, then refined after the live result exposed excessive density. The current viewer omits the redundant synthetic root, shows only the useful top level initially, folds nested containers, uses neutral text-face keys and compact inline controls, and keeps pretty-printing entirely in the panel. Direct-adapter tool results travel to the AI as compact JSON; display whitespace never consumes model context. The original live-found fixes remain covered (dataset-string seq mounting and preserving the slot's `jtree` class).
+Status: Shipped — C1 in e844b98, C2 in 26a448f, **C3 (2026-09-23) supersedes the C2 tree**: the operator found that reading a reply took a click per level and that the tree itself was uncomfortable to read, so a call's arguments and reply are now one formatted JSON code block, the same for every MCP. Direct-adapter tool results still travel to the AI as compact JSON; all display formatting stays in the panel and never consumes model context.
 
 The Logs tab (docs/31 search, docs/32 paging) ships tool arguments and replies as flat
 pretty-printed `<pre>` text. Three gaps, reported by the operator on the live panel:
@@ -15,9 +15,11 @@ pretty-printed `<pre>` text. Three gaps, reported by the operator on the live pa
 - No editing, no diffing, no external viewer link. The log is a record, not an editor.
 - No streaming/virtualised tree: a log page is 20 rows and only OPEN rows render bodies;
   lazy child rendering keeps the built DOM proportional to what the operator opened.
-- No new dependency, no web font, no second highlight engine. The SQL highlighter's
-  token palette (views.css `.db-sql-hl`) is the colour precedent; JSON reuses its
-  variables, not new colours.
+- No new dependency, no web font, no second highlight engine. (C1/C2 reused the SQL
+  highlighter's variables; C3 adds five muted `--syn-*` tokens, see C3 below.)
+- Nothing MCP-specific. The view must read the same for mysql, redis, pg, search, figma
+  and any MCP added later — no SQL- or redis-shaped special cases (the operator rejected
+  an SQL-first design for exactly this reason).
 
 ## C1 — initial colour + copy (colour superseded by C2)
 
@@ -28,7 +30,7 @@ pretty-printed `<pre>` text. Three gaps, reported by the operator on the live pa
   `i-copy` sprite. It copies the formatted display text. House clipboard idiom: async
   clipboard, execCommand fallback, toast `Copied`.
 
-## C2 — the collapsible tree
+## C2 — the collapsible tree (superseded by C3)
 
 - A block whose text parses as a JSON object or array renders as a tree instead of a
   highlighted pre. Everything else (plain strings, error text, truncated payloads that
@@ -51,14 +53,70 @@ pretty-printed `<pre>` text. Three gaps, reported by the operator on the live pa
 - The existing `Show full result` fetch is unchanged: the preview's 2 KB head may not
   parse; once the full reply lands the tree replaces the truncated view.
 
+## C3 — one formatted code block (supersedes C2)
+
+Why: the C2 tree folded every level, so seeing what a reply said took several clicks; its
+sans-serif unquoted keys beside quoted mono values read as neither JSON nor prose; replies
+that are JSON inside a string (web_search_prime, webReader, redis hash values) or JSON
+followed by prose (figma) did not parse at all and fell back to one long escaped line; and
+a 360px inner scroll box sat inside the page's own scroll. The operator's ask was plain:
+format the JSON input and output, and make it easy to copy.
+
+- **One block per side.** Arguments and Result each render as a single `<pre class="jv">`:
+  standard JSON, two-space indent, every line visible, no folding (json-view.ts
+  `jsonCodeNode`). Its text IS `JSON.stringify(v, null, 2)` for a plain value, so a
+  drag-selection copies valid, indented JSON.
+- **JSON in a string is shown as JSON.** A string whose text is an object, array or JSON
+  string literal is parsed — as many layers as the wire stacked — and printed as the
+  structure it holds behind a `decoded` / `decoded ×N` marker, so the display never claims a
+  shape the wire did not have. `"50"` and `"true"` stay strings (only `{`, `[` and `"`
+  qualify). The label row says `JSON decoded from a string`.
+- **JSON + prose.** A leading object/array followed by text keeps the JSON formatted and the
+  text in a plain block below (label note `JSON + text`) — also the gateway's own
+  `[showing the first N of M …]` note.
+- **Everything else is honest.** Text that is not JSON, markdown, a preview clipped
+  mid-value, and every error reply stay exactly as they arrived (errors in red).
+- **Real line breaks.** A string's `
+` / `
+` print as real breaks so a SQL statement or a
+  message keeps its shape; every other escape stays JSON-escaped.
+- **Two copies per block, always visible** (copying is the frequent act here, not a hover
+  discovery): `Copy` = valid indented JSON of the decoded structure (plus the prose after
+  it); `Copy raw` = the stored text byte for byte. Both read the call row, not the DOM, so a
+  block cut at its line cap still copies everything. The decoded marker's words live in
+  `::before`, so no selection picks them up.
+- **No inner scroll box.** The page scrolls. A block past 200 lines (`JV_LINES`) stops
+  building nodes and ends in `Show all N lines`; the choice is state (`d.callsAll`), so the
+  6-second repaint keeps it. The cap also bounds the DOM a 1 MB stored body could build.
+- **Opening a clipped row fetches it whole.** The page carries a 2 KB preview of each reply;
+  opening the row (click or Enter/Space) fetches the full body once — an open/close/open does
+  not stack requests — and repaints only that block. `Show full result` stays as the retry.
+  A pruned body (`bodyGone`) is recorded (`d.callsGone`) and said in place under the
+  preview instead of by toast; the row stops offering the fetch.
+- **Colour is information here.** Keys, strings, numbers, literals and punctuation take five
+  muted `--syn-*` tokens (light and dark in base.css) — the one documented exception to
+  design rule 2 (swiss-ui-design §16), because in a code block the hue says which token a
+  character belongs to.
+
+| Feature point | Unit (vitest) | Integration | Rationale comment |
+| --- | --- | --- | --- |
+| formatted block = `JSON.stringify(v,null,2)`, token colours, real line breaks | admin-logs-json-viewer `jsonCodeNode` suite | real-module-graph paint in the same suite (`callNode` → DOM) | json-view.ts header, `stringLiteral` |
+| JSON-in-string decoding, multi-layer, `"50"` stays text | `decodeStrings` suite | swiss-it `proc::the_call_log_keeps_replies_verbatim_for_the_logs_view` (the log stores the wrapped reply verbatim) | json-view.ts `parseJsonText`, `decodeStrings` |
+| JSON + prose split; text/errors untouched | `splitJsonBlock` suite, error/empty paint test | — (pure display) | json-view.ts `splitJsonBlock`, logs.ts `callBlockNode` |
+| Copy formatted / Copy raw | `formattedCopyText`, `callBlockCopyText` | admin-logs-pagination "the block buttons dispatch" (real dispatcher) + swiss-it verbatim storage | run-history.ts dispatcher, logs.ts `blockText` |
+| 200-line cap + Show all | cap tests in both suites | admin-logs-pagination Show all dispatch | json-view.ts `JV_LINES`, run-history.ts dispatcher |
+| fetch on open, once; pruned said in place | clipped/pruned paint test | admin-logs-pagination "opening a clipped call fetches its full reply" (5) + swiss-it (preview on the page, whole on `calls/{seq}`) | detail.ts `showFullResult`, run-history.ts `openOrCloseCall` |
+
 ## Acceptance
 
-- vitest: compact-wire display formatting and truncation-note preservation; copy wiring per
-  block; tree build from real and empty payloads; lazy children; expansion persistence across
-  a repaint; per-node copy payloads; non-JSON fallbacks. Red first.
-- Live on 19998 (real pointer events): a nested call opens to its useful top-level fields,
-  every nested container starts folded, levels expand and collapse, copy buttons answer with
-  `Copied`, the poll repaint keeps open nodes, light and dark are legible, and 900px does not
-  overflow horizontally.
+- vitest (C3): the table above; the 22 new json-viewer tests and the 7 new pagination tests
+  were run red against the C2 code first.
+- swiss-it gate 2: `proc::the_call_log_keeps_replies_verbatim_for_the_logs_view`.
+- Live on a test instance (real pointer events, 2026-09-23): a synthetic stdio MCP returning
+  every shape (JSON-in-string, redis hash with a twice-encoded value, JSON + prose, a 369-line
+  reply over 2 KB, markdown, an error) plus a real mysql reply: each renders as above; one
+  click on a clipped row fetched it whole; Show all, Copy and Copy raw produced the expected
+  clipboard text; a mouse drag across a decoded block selected the JSON without the marker;
+  zh and dark mode checked.
 - The direct-adapter serialization test pins the AI-facing text to compact JSON. The panel
   independently parses that compact text and owns all display formatting.
