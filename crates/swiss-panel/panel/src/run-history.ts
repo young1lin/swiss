@@ -661,16 +661,30 @@ function paneTabClick(ev: MouseEvent): void {
   if (t.id === "clRetry") { callsRetry({ fromKey: ev.detail === 0 }); return; }
   // docs/33 C3: a block's Copy (formatted: the decoded structure as valid JSON) and Copy raw
   // (the text exactly as stored). Both read the CALL ROW, not the painted DOM, so a block cut at
-  // its line cap still copies everything.
+  // its line cap still copies everything. docs/46 §3.2: Copy is the block's one visible button;
+  // Copy raw is the one item behind its ⋯.
   const copyBtn = t.closest<HTMLElement>("[data-copy]");
-  const rawBtn = copyBtn ? null : t.closest<HTMLElement>("[data-copyraw]");
-  if (copyBtn || rawBtn) {
+  if (copyBtn) {
     const d = mcpDetail();
-    if (!d) return;
-    const text = copyBtn
-      ? callBlockCopyText(d, String(copyBtn.dataset.copy), false)
-      : callBlockCopyText(d, String(rawBtn?.dataset.copyraw), true);
+    const text = d ? callBlockCopyText(d, String(copyBtn.dataset.copy), false) : null;
     if (text != null) void copyLogText(text);
+    return;
+  }
+  const blkMore = t.closest<HTMLElement>("[data-blkmore]");
+  if (blkMore) {
+    ev.stopPropagation();
+    if (menuOpen()) { closeMenu(); return; }
+    const key = String(blkMore.dataset.blkmore);
+    popupMenu(blkMore.getBoundingClientRect(), [{
+      label: tr("logs.copyRaw"),
+      title: key.startsWith("args:") ? tr("logs.copyArgumentsRaw") : tr("logs.copyResultRaw"),
+      fn: (): void => {
+        // Resolved at click time, like every other verb here: the log may have moved meanwhile.
+        const d = mcpDetail();
+        const text = d ? callBlockCopyText(d, key, true) : null;
+        if (text != null) void copyLogText(text);
+      },
+    }]);
     return;
   }
   // docs/33 C3: Show all lifts one block's line cap; the choice is state, so a poll repaint of
@@ -688,7 +702,10 @@ function paneTabClick(ev: MouseEvent): void {
   // The full-result button sits inside an expandable row — it must not also toggle the row.
   const fullBtn = t.closest<HTMLElement>("[data-full]");
   if (fullBtn) { ev.stopPropagation(); void showFullResult(Number(fullBtn.dataset.full)); return; }
-  const callRow = t.closest<HTMLElement>("[data-callseq]");
+  // A call row's summary is a real <button> (ui/timeline.ts), so Enter and Space arrive here as
+  // clicks too. Only the summary toggles: a click inside the open body is someone reading it.
+  const callSum = t.closest<HTMLElement>(".tl-sum");
+  const callRow = callSum ? callSum.closest<HTMLElement>("[data-callseq]") : null;
   if (callRow) { openOrCloseCall(Number(callRow.dataset.callseq)); return; }
   // Run tab
   if (t.id === "runBtn") { void runTool(); return; }
@@ -762,13 +779,6 @@ function paneTabKeydown(ev: KeyboardEvent): void {
     d.callsErrStatus = "";
     d.calls = null;
     void loadCalls(d.name);
-    return;
-  }
-  // docs/32 B2: a call row is focusable (tabindex) — Enter/Space must toggle it like a click.
-  const callRow = t.closest<HTMLElement>("[data-callseq]");
-  if (callRow && (ev.key === "Enter" || ev.key === " ")) {
-    ev.preventDefault();
-    openOrCloseCall(Number(callRow.dataset.callseq));
     return;
   }
   // Ctrl/Cmd+Enter runs, so a SQL textarea can be submitted without reaching for the mouse.

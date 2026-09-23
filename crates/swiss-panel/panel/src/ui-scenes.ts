@@ -31,8 +31,8 @@ import type { HChild } from "./h.js";
 import { h } from "./h.js";
 import { tk, tr } from "./i18n.js";
 import {
-  btn, card, decodeStrings, dot, emptyNode, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, moreBtn,
-  pageFoot, pane, paneHead, resHead, row, section, seg, sideRow, sw, tag, timeline,
+  btn, card, decodeStrings, dot, emptyNode, filterInput, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, moreBtn,
+  pageFoot, pager, pane, paneHead, resHead, row, section, seg, sideRow, sw, tag, timeline, timelineMeta, valueBlock,
 } from "./ui/index.js";
 import type { TimelineItem } from "./ui/index.js";
 
@@ -87,12 +87,15 @@ function traffic(now: number): TimelineItem[] {
   ];
 }
 
-/** An expanded call's body: the arguments and the reply, the Logs code block. */
+/** An expanded call's body, as Logs draws it (docs/46 §3.2): the meta the row left out, then
+ *  the arguments (short: one line) and the reply, each with one Copy and a ⋯. */
 function callBody(it: TimelineItem): HChild {
   const reply = { rows: [{ id: 1042, status: "open", total: "18.40" }], more: false, note: '{"cached":true}' };
+  const tools = (): HChild[] => [iconBtn("copy", tr("gallery.s.copy"), { ghost: true }), moreBtn(tr("gallery.s.blockMore"))];
   return [
-    jsonCodeNode(decodeStrings(JSON.parse(it.arg || "{}")), false).node,
-    jsonCodeNode(decodeStrings(reply), false).node,
+    timelineMeta([tr("gallery.s.viaMcp"), it.who ? tr("gallery.s.client", { who: it.who }) : null, tr("gallery.s.reply", { n: 118 })]),
+    valueBlock({ label: tr("gallery.s.arguments"), tools: tools() }, jsonCodeNode(decodeStrings(JSON.parse(it.arg || "{}")), false, { oneLine: true }).node),
+    valueBlock({ label: tr("gallery.s.result"), tools: tools() }, jsonCodeNode(decodeStrings(reply), false, { oneLine: true }).node),
   ];
 }
 
@@ -166,8 +169,12 @@ function resource(now: number): HTMLElement {
           { id: "logs", label: tr("gallery.s.logs") },
         ], "logs", { label: tr("gallery.s.sections") }),
       }),
-      section({ cap: tr("gallery.s.toolCalls") },
-        timeline(calls(now), { now, open: new Set(["c1"]), body: callBody })),
+      section({
+        cap: tr("gallery.s.toolCalls"),
+        tools: [filterInput({ placeholder: tr("gallery.s.searchCalls"), label: tr("gallery.s.searchCalls") }), moreBtn(tr("gallery.s.logActions"))],
+      },
+      timeline(calls(now), { now, open: new Set(["c1"]), body: callBody }),
+      pager({ label: tr("gallery.s.pages"), status: tr("gallery.s.pageN", { n: 1 }), prev: btn(tr("gallery.s.newer"), { disabled: true }), next: btn(tr("gallery.s.older")) })),
       section({ cap: tr("gallery.s.childProcess") },
         card(row({ lead: dot("up", stateWord.up), name: "postgres-mcp", sub: h("code", null, "npx -y @example/postgres-mcp"),
           toggle: sw(true, tr("gallery.s.enabled")) })))));
@@ -193,7 +200,7 @@ export const SCENES: Scene[] = [
   { id: "content", titleKey: tk("gallery.scene.content"), build: content,
     uses: ["pane", "paneHead", "iconBtn", "inlineForm", "btn", "groupNode", "row", "tag", "moreBtn", "pageFoot"] },
   { id: "resource", titleKey: tk("gallery.scene.resource"), build: resource,
-    uses: ["sideRow", "dot", "iconNode", "groupNode", "pane", "paneBody", "resHead", "btn", "moreBtn", "seg", "section", "card", "timeline", "jsonCodeNode", "row", "sw"] },
+    uses: ["sideRow", "dot", "iconNode", "groupNode", "pane", "paneBody", "resHead", "btn", "moreBtn", "seg", "section", "filterInput", "card", "timeline", "timelineMeta", "valueBlock", "jsonCodeNode", "pager", "row", "sw"] },
   { id: "event", titleKey: tk("gallery.scene.event"), build: events,
     uses: ["pane", "paneHead", "moreBtn", "timeline"] },
   { id: "empty", titleKey: tk("gallery.scene.empty"), build: empty,

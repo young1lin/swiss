@@ -31,7 +31,8 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { uiOwnedClasses } from "./styles.js";
 
-/* Frozen at docs/46 P1b-3: 623 classes in 35 files. P2-1: pane.ts 19 -> 0 (the MCP resource head). */
+/* Frozen at docs/46 P1b-3: 623 classes in 35 files. P2-1: pane.ts 19 -> 0 (the MCP resource head).
+   P2-2: logs.ts 85 -> 50 (the call log is the event list; Tools/Resources/Prompts are P2-3). */
 const FROZEN: Record<string, number> = {
   "add-sheet.ts": 10,
   "data-browsers.ts": 12,
@@ -50,7 +51,7 @@ const FROZEN: Record<string, number> = {
   "fields.ts": 6,
   "groups.ts": 1,
   "jobs.ts": 68,
-  "logs.ts": 85,
+  "logs.ts": 50,
   "page-registry.ts": 3,
   "polling.ts": 12,
   "run-history.ts": 47,

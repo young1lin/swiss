@@ -350,10 +350,16 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
       写进 `#pane` 的 `--pin-title-h`（seg 停住的位置）与 `--pane-head-h`（按天分组的标题停住的位置，§2.4）。
       库里是 `resHead()`：名字行、说明与状态行、seg 三块，由它一起画。
 - [x] MCP 详情用 `.wide` 量度（资源页模板，陈列页的资源场景就是这样）。所有 tab 仍是同一个宽度，换 tab 不改页宽。
-- [ ] Logs → `timeline`：行内只留时间；日期是按天分组的标题；耗时一列；`via` / `client` / 字符数进展开区的
-      meta 行；连续相同的调用（同 tool + 同参数 + 同结果）合并 ×N，展开 ×N 列出每一次。
-- [ ] 展开区：短 JSON（紧凑形式 ≤ 80 字符）一行显示；每块一个可见的复制按钮，"复制原文"进 ⋯。
+- [x] Logs → `timeline`：行内只留时间；日期是按天分组的标题；耗时一列；`via` / `client` / 字符数进展开区的
+      meta 行；连续相同的调用（同 tool + 同参数 + 同结果）合并 ×N，展开 ×N 列出每一次。失败是行上的红色标签
+      （`failed`）。展开状态按调用记，一个 ×N 行只要有一次被打开就算开着：轮询带来一条相同的新调用、行首的 seq
+      变了，正在读的那一行也不会被合上。展开区只在打开时才画（关着的行不建代码块）。×N 按页合并：跨页的一串
+      相同调用在两页各显示一段。库里补了 `timelineMeta()`（展开区的 meta 行）、`pager()`、`failNote()`、
+      `filterInput()`。
+- [x] 展开区：短 JSON（紧凑形式 ≤ 80 字符）一行显示；每块一个可见的复制按钮，"复制原文"进 ⋯。
       **修订 docs/33 C3**（它规定两个复制按钮都可见、JSON 一律缩进展开），在 docs/33 状态头记一笔。
+      库里是 `valueBlock()`（标题、说明、工具一行，下面是正文）与 `jsonCodeNode(v, all, { oneLine })`；
+      JSON 后面跟着文字（figma 的截图说明）时不压成一行。
 - [ ] Tools 行、侧栏行的字重按 U5。
 - [ ] P1b 留下的两件：`.seg` 自带的 `margin-bottom` 交给页面的流（组件不带摆放，P2-1 已做）；`sidebar.ts` 的
       `sideRowNode` 换成 `sideRow()`（P2-3）。（`popupMenu` 改用 `h()` 等到最后一个手写微型 DOM 的套件——Data 的——换成 happy-dom，即 P7。）

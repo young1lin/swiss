@@ -27,10 +27,10 @@ import { h } from "../src/h.js";
 import { install } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 import {
-  anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, fmtMs, groupNode,
-  iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot, paneBody, paneHead,
-  popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag, timeLabel, timeline,
-  timelineToggle, toTop,
+  anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, failNote, filterInput,
+  fmtMs, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
+  pager, paneBody, paneHead, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
+  timeLabel, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
 } from "../src/ui/index.js";
 import type { TimelineItem } from "../src/ui/index.js";
 import { allClassesOf, parseCss } from "./css-rules.js";
@@ -193,6 +193,47 @@ describe("ui/page", () => {
     expect(note("401", { err: true }).className).toBe("note err");
     // The spinner is decoration beside the words that say what is loading.
     expect(spinner().getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("pager: newer, a live status, older - a navigation landmark the view patches by id", () => {
+    const p = pager({ id: "pg", label: "Pages", statusId: "st", status: "Page 2", prev: btn("Newer"), next: btn("Older", { disabled: true }) });
+    expect(p.getAttribute("role")).toBe("navigation");
+    expect(p.getAttribute("aria-label")).toBe("Pages");
+    expect([...p.children].map((c) => c.className)).toEqual(["btn", "pager-status", "btn"]);
+    const st = p.querySelector(".pager-status")!;
+    expect(st.id).toBe("st");
+    expect(st.getAttribute("aria-live")).toBe("polite");
+    expect(st.textContent).toBe("Page 2");
+  });
+
+  it("failNote: the sentence, the status only when there is one, the way out", () => {
+    const f = failNote({ id: "e", text: "Could not load.", why: "HTTP 502", action: btn("Retry", { id: "r" }) });
+    expect(f.getAttribute("role")).toBe("status");
+    expect(f.querySelector(".fail-why")!.textContent).toBe("HTTP 502");
+    expect(f.querySelector("#r")).not.toBeNull();
+    expect(failNote({ text: "x", why: "" }).querySelector(".fail-why"), "no status, no empty span").toBeNull();
+  });
+
+  it("filterInput: a search field with a name, not a form field", () => {
+    const f = filterInput({ id: "q", placeholder: "Search calls", label: "Search tool calls", value: "GET" });
+    expect(f.type).toBe("search");
+    expect(f.className).toBe("filter");
+    expect(f.getAttribute("aria-label")).toBe("Search tool calls");
+    expect(f.value).toBe("GET");
+  });
+
+  it("valueBlock: caption, notes, tools on one line, then the body", () => {
+    const b = valueBlock({ label: "Result", notes: ["JSON + text"], tools: [iconBtn("copy", "Copy result")], data: { blk: "out:7" } },
+      jsonCodeNode({ v: 1 }, false, { oneLine: true }).node);
+    expect(b.dataset.blk).toBe("out:7");
+    const head = b.firstElementChild!;
+    expect([...head.children].map((c) => c.className)).toEqual(["vblock-cap", "vblock-note", "vblock-tools"]);
+    expect(b.querySelector("pre.jv.one")!.textContent).toBe('{"v": 1}');
+    expect(valueBlock({ label: "Arguments" }).querySelector(".vblock-tools"), "no tools, no empty cell").toBeNull();
+  });
+
+  it("timelineMeta: the parts that are there, joined by a middle dot", () => {
+    expect(timelineMeta(["via mcp", null, "", "reply 4 chars"]).textContent).toBe("via mcp · reply 4 chars");
   });
 
   it("section: caption and tools share the head; tools alone keep the head's two columns", () => {
@@ -636,6 +677,10 @@ describe("docs/46 - every class the library draws is styled by base.css or ui.cs
       paneHead({ title: "t", desc: "d", sub: "s", actions: [btn("x")] }),
       paneBody({ wide: true }, ...resHead({ title: "t", desc: "d", sub: "s", actions: [btn("x")], nav: seg([{ id: "a", label: "A" }], "a") })),
       note("n"), note("n", { busy: true }), note("n", { err: true }), spinner(),
+      pager({ label: "p", status: [spinner(), "1"], prev: btn("a"), next: btn("b") }),
+      failNote({ text: "t", why: "w", action: btn("r") }), filterInput({ placeholder: "q", label: "q" }),
+      valueBlock({ label: "l", notes: ["n"], tools: [iconBtn("copy", "c")] }, jsonCodeNode({ v: 1 }, false, { oneLine: true }).node),
+      timelineMeta(["a", "b"]),
       toTop(document.createElement("div")),
       section({ cap: "c", tools: [btn("x")] }, card(row({ name: "n" }))),
       pageFoot({ note: "n", rev: "r" }), inlineForm(btn("x")),

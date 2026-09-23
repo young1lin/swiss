@@ -2,6 +2,13 @@
 
 Status: Shipped — C1 in e844b98, C2 in 26a448f, **C3 (2026-09-23) supersedes the C2 tree**: the operator found that reading a reply took a click per level and that the tree itself was uncomfortable to read, so a call's arguments and reply are now one formatted JSON code block, the same for every MCP. Direct-adapter tool results still travel to the AI as compact JSON; all display formatting stays in the panel and never consumes model context.
 
+**Revised by docs/46 §3.2 (P2-2, 2026-09-23):** two C3 rules changed when Logs became the library's
+event list. (1) A value whose compact JSON is at most 80 characters, with no string that breaks
+lines, prints on ONE line (`{"sql": "SELECT 1"}`) instead of always indented; longer values, and
+JSON followed by prose, keep the indented block. (2) Each block has ONE visible copy button (Copy:
+the decoded structure as valid JSON); Copy raw moved behind the block's ⋯. What each copy writes
+is unchanged. A call's body is also painted on open only, no longer on every closed row.
+
 The Logs tab (docs/31 search, docs/32 paging) ships tool arguments and replies as flat
 pretty-printed `<pre>` text. Three gaps, reported by the operator on the live panel:
 

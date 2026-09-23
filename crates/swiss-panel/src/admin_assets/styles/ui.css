@@ -413,7 +413,9 @@
        expanded row becomes a card. The time, the count and the duration are tabular so a
        column of them does not wiggle. */
     .tl { display: grid; }
-    .tl-day { position: sticky; top: var(--pane-head-h, 0px); z-index: 1; background: var(--bg); font-size: var(--f-caption); font-weight: var(--w-emph); color: var(--text-3); padding: var(--s3) var(--s2) var(--s1) calc(var(--s2) + var(--ic-s) + var(--s2)); }
+    /* Stuck over an open row (a card), the heading's ground also covers the card's 1px outline
+       on either side of it - otherwise two stubs of the card's edge stand beside the words. */
+    .tl-day { position: sticky; top: var(--pane-head-h, 0px); z-index: 1; background: var(--bg); box-shadow: -1px 0 0 var(--bg), 1px 0 0 var(--bg); font-size: var(--f-caption); font-weight: var(--w-emph); color: var(--text-3); padding: var(--s3) var(--s2) var(--s1) calc(var(--s2) + var(--ic-s) + var(--s2)); }
     .tl-item { border-radius: var(--r-row); }
     .tl-sum { display: flex; align-items: center; gap: var(--s2); width: 100%; min-height: var(--s8); padding: var(--s1) var(--s2); border-radius: var(--r-row); text-align: left; color: var(--text); }
     .tl-sum:hover { background: var(--hover); }
@@ -433,6 +435,12 @@
     /* A column, a grid step between blocks: a call's body is its arguments and its reply, and as
        plain blocks the two code slabs met edge to edge (the gallery's resource scene, P1b-3). */
     .tl-body { display: flex; flex-direction: column; gap: var(--s2); padding: 0 var(--s3) var(--s3) calc(var(--s2) + var(--ic-s) + var(--s2)); }
+    /* A button in the body (Show full result) keeps its own width; the column's gap is the only
+       space a note in it needs. */
+    .tl-body > .btn { align-self: flex-start; }
+    .tl-body > .note { padding-top: 0; }
+    /* ui/timeline.ts timelineMeta(): what the row's own columns left out, a caption's size. */
+    .tl-meta { font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
     .note { font-size: var(--f-label); color: var(--text-3); padding: var(--s3) var(--s1) 0; }
     /* A failure reason comes from the far side and can be enormous — a rejected JSON-RPC handshake
@@ -447,11 +455,17 @@
     }
     pre.logs { margin: 0; padding: var(--s3) var(--s4); font-family: var(--mono); font-size: var(--f-caption); line-height: 1.5; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 
+    /* ui/page.ts pager(): newer, where you are, older. The status holds a spinner while a
+       switch is out, so it is a row of its own. */
     .pager { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s1) 0; font-size: var(--f-label); color: var(--text-2); }
-    /* A failed foreground load, patched in beside the pager: the sentence and the way out, nothing
-       else — the HTTP status is the only secondary text, never a response body (docs/32 B1). */
-    .calls-err { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s1) 0; color: var(--red); font-size: var(--f-label); }
-    .calls-err-why { color: var(--text-3); font-size: var(--f-caption); }
+    .pager-status { display: inline-flex; align-items: center; gap: var(--s1); font-variant-numeric: tabular-nums; }
+    /* ui/page.ts failNote(): a failed load, patched in beside the pager - the sentence and the way
+       out, nothing else; the HTTP status is the only secondary text, never a body (docs/32 B1). */
+    .fail-note { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s1) 0; color: var(--red); font-size: var(--f-label); }
+    .fail-why { color: var(--text-3); font-size: var(--f-caption); }
+    /* ui/page.ts filterInput(): a filter in a section's tools takes a filter's width, not a
+       form field's 100%, and a caption's size. */
+    input.filter { width: calc(var(--s8) * 7); max-width: 100%; padding: var(--s1) var(--s2); font-size: var(--f-caption); }
 
     /* center, not baseline: this header carries a segmented control and a button next to its caption,
        and a segmented control has no baseline to share. */
@@ -472,6 +486,8 @@
        JSON, every line visible, no fold and no inner scroll box: the page scrolls, and a block
        past 200 lines ends in "Show all". Long values wrap instead of widening the pane. */
     pre.jv { margin: 0; padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); line-height: 1.6; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
+    /* A short value on one line (jsonCodeNode oneLine): it still wraps before it widens the pane. */
+    pre.jv.one { line-height: 1.5; }
     .jv-k { color: var(--syn-key); }
     .jv-s { color: var(--syn-str); }
     .jv-n { color: var(--syn-num); font-variant-numeric: tabular-nums; }
@@ -481,6 +497,20 @@
        the block copies the JSON and nothing the display added. */
     .jv-dec { user-select: none; }
     .jv-dec::before { content: attr(data-label); display: inline-block; margin-right: var(--s1); padding: 0 var(--s1); border-radius: 4px; box-shadow: inset 0 0 0 1px var(--sep); font-family: var(--sans); font-size: var(--f-caption); line-height: 16px; color: var(--text-3); vertical-align: 1px; }
+
+    /* ui/json-view.ts valueBlock(): a labelled value. The caption names it, a note says what the
+       body turned out to be, the tools (one Copy, the rest behind ⋯) close the line. A text body
+       (not JSON) gets the code block's own slab, so the two kinds read as one shape. */
+    .vblock-head { display: flex; align-items: center; gap: var(--s2); min-height: var(--s6); margin-bottom: var(--s1); font-size: var(--f-caption); font-weight: var(--w-emph); color: var(--text-3); }
+    .vblock-cap { text-transform: uppercase; letter-spacing: .04em; }
+    .vblock-note { font-weight: var(--w-body); }
+    .vblock-tools { margin-left: auto; display: inline-flex; gap: var(--s1); }
+    .vblock-tools .btn.icon { width: var(--s6); height: var(--s6); }
+    .vblock-tools .btn.icon .ic { width: var(--ic-m); height: var(--ic-m); }
+    .vblock > pre.logs { padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: var(--r-row); max-height: none; overflow: visible; font-size: var(--f-label); line-height: 1.6; }
+    .vblock > pre.logs.err { color: var(--red); }
+    .vblock > pre + pre { margin-top: var(--s1); }
+    .vblock > .btn { margin-top: var(--s2); }
 
     .chev { color: var(--text-3); width: 12px; flex: none; transition: transform .15s ease; }
     .call.open .chev { transform: rotate(90deg); }

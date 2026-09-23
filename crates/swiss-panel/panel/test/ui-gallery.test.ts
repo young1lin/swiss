@@ -68,6 +68,8 @@ const HELPERS: Record<string, string> = {
   textNode: "jsonCodeNode()'s non-JSON fallback - drawn by it",
   DecodedString: "decodeStrings()'s marker class",
   JV_LINES: "jsonCodeNode()'s line cap - a number",
+  JV_INLINE: "jsonCodeNode()'s one-line limit - a number",
+  fitsOneLine: "the test jsonCodeNode({ oneLine }) applies - a predicate",
 };
 
 /** The shape each drawing function leaves in the DOM: how a claim is checked. */
@@ -80,6 +82,11 @@ const SIG: Record<string, string> = {
   tag: ".tag",
   spinner: ".spin",
   note: ".note",
+  failNote: ".fail-note[role=status] .fail-why",
+  filterInput: "input.filter[type=search]",
+  pager: ".pager[role=navigation] .pager-status[aria-live=polite]",
+  valueBlock: ".vblock > .vblock-head .vblock-cap",
+  timelineMeta: ".tl-meta",
   sw: ".sw[role=switch]",
   styleSelect: ".dd",
   pane: "main.pane",

@@ -172,6 +172,23 @@ describe("docs/33 C3: jsonCodeNode — one formatted code block", () => {
     expect(two.querySelector(".jv-dec")!.getAttribute("data-label")).toBe("decoded ×2");
   });
 
+  it("oneLine: a value whose compact form fits 80 characters prints on one line, spaced", () => {
+    const short = jv.jsonCodeNode({ sql: "SELECT 1", n: [1, 2], ok: true }, false, { oneLine: true });
+    expect(short.node.textContent).toBe('{"sql": "SELECT 1", "n": [1, 2], "ok": true}');
+    expect(short.node.className).toBe("jv one");
+    expect(short.lines).toBe(1);
+    expect(short.node.querySelector(".jv-k"), "still coloured by token").not.toBeNull();
+    // The boundary is JSON.stringify's length: 80 fits, 81 does not.
+    const at = { k: "x".repeat(80 - '{"k":""}'.length) };
+    expect(JSON.stringify(at).length).toBe(80);
+    expect(jv.jsonCodeNode(at, false, { oneLine: true }).lines).toBe(1);
+    expect(jv.jsonCodeNode({ k: at.k + "x" }, false, { oneLine: true }).lines).toBe(3);
+    // A string that breaks lines prints its breaks, so it is never squeezed onto one line.
+    expect(jv.jsonCodeNode({ sql: "SELECT 1\nFROM t" }, false, { oneLine: true }).node.className).toBe("jv");
+    // Without the option nothing changes: the Run tab and the gallery keep the indented block.
+    expect(jv.jsonCodeNode({ v: 1 }, false).node.textContent).toBe('{\n  "v": 1\n}');
+  });
+
   it("past 200 lines it stops building nodes but still counts every line; all shows everything", () => {
     const v = Array.from({ length: 300 }, (_, i) => i);
     const capped = jv.jsonCodeNode(v, false);
@@ -184,49 +201,59 @@ describe("docs/33 C3: jsonCodeNode — one formatted code block", () => {
 });
 
 describe("docs/33 C3: a call paints its blocks as code, with Copy, Copy raw and Show all", () => {
-  it("both blocks are formatted code blocks, each with its own two copies", () => {
+  it("both blocks are code blocks - a short one on one line - each with one Copy and a ⋯", () => {
     const host = paint({ calls: [call()], callsOpen: { 7: true } });
-    expect(block(host, "args:7").querySelector("pre.jv")!.textContent).toBe('{\n  "command": "GET",\n  "args": [\n    "k"\n  ]\n}');
-    expect(block(host, "out:7").querySelector("pre.jv")!.textContent).toBe('{\n  "v": 1\n}');
+    expect(block(host, "args:7").querySelector("pre.jv")!.textContent).toBe('{"command": "GET", "args": ["k"]}');
+    expect(block(host, "out:7").querySelector("pre.jv")!.textContent).toBe('{"v": 1}');
+    const long = paint({ calls: [call({ output: JSON.stringify({ rows: [{ id: 1, name: "a".repeat(40) }, { id: 2, name: "b".repeat(40) }] }) })], callsOpen: { 7: true } });
+    expect(block(long, "out:7").querySelector("pre.jv")!.textContent!.split("\n").length, "past 80 characters it is indented").toBeGreaterThan(3);
     expect(host.querySelector('[data-copy="args:7"]')!.getAttribute("aria-label")).toBe("Copy arguments");
     expect(host.querySelector('[data-copy="out:7"]')!.getAttribute("aria-label")).toBe("Copy result");
-    expect(host.querySelector('[data-copyraw="args:7"]')!.textContent).toBe("Copy raw");
-    expect(host.querySelector('[data-copyraw="out:7"]')).not.toBeNull();
+    expect(host.querySelector('[data-copy="out:7"]')!.textContent, "the glyph is the whole button").toBe("");
+    expect(host.querySelector('[data-blkmore="args:7"]')!.getAttribute("aria-label")).toBe("More for the arguments");
+    expect(host.querySelector('[data-blkmore="out:7"]')!.getAttribute("aria-label")).toBe("More for the result");
+    expect(host.querySelector("[data-copyraw]"), "Copy raw is behind the ⋯, not a standing button (docs/46 §3.2)").toBeNull();
+    expect(block(host, "args:7").querySelector(".vblock-cap")!.textContent).toBe("Arguments");
     expect(host.querySelector(".jtree, [data-jtree]"), "the folding tree is gone").toBeNull();
   });
 
   it("a string-wrapped reply says it was decoded; JSON plus prose says so and keeps the prose", () => {
-    const zhipu = paint({ calls: [call({ output: ZHIPU })] });
-    expect(block(zhipu, "out:7").querySelector(".call-note")!.textContent).toBe("JSON decoded from a string");
+    const zhipu = paint({ calls: [call({ output: ZHIPU })], callsOpen: { 7: true } });
+    expect(block(zhipu, "out:7").querySelector(".vblock-note")!.textContent).toBe("JSON decoded from a string");
     expect(block(zhipu, "out:7").querySelector(".jv-dec")).not.toBeNull();
-    const figma = paint({ calls: [call({ output: FIGMA })] });
-    expect(block(figma, "out:7").querySelector(".call-note")!.textContent).toBe("JSON + text");
+    const figma = paint({ calls: [call({ output: FIGMA })], callsOpen: { 7: true } });
+    expect(block(figma, "out:7").querySelector(".vblock-note")!.textContent).toBe("JSON + text");
+    expect(block(figma, "out:7").querySelector("pre.jv")!.className, "prose after it: the JSON stays a block").toBe("jv");
     expect(block(figma, "out:7").querySelector("pre.jv-tail")!.textContent).toBe("The screenshot above is the selected frame.");
   });
 
   it("text stays as it arrived; an error stays red text even when it is JSON", () => {
-    const host = paint({ calls: [call({ args: "GET k", output: '{"error":"no <such> key"}', ok: false })] });
+    const host = paint({ calls: [call({ args: "GET k", output: '{"error":"no <such> key"}', ok: false })], callsOpen: { 7: true } });
     expect(block(host, "args:7").querySelector("pre.logs")!.textContent).toBe("GET k");
     expect(block(host, "args:7").querySelector("pre.jv")).toBeNull();
     expect(block(host, "out:7").querySelector("pre.logs.err")!.textContent).toBe('{"error":"no <such> key"}');
-    const empty = paint({ calls: [call({ args: "", output: "" })] });
+    const empty = paint({ calls: [call({ args: "", output: "" })], callsOpen: { 7: true } });
     expect(block(empty, "args:7").querySelector("pre.logs")!.textContent).toBe("(none)");
     expect(block(empty, "out:7").querySelector("pre.logs")!.textContent).toBe("(empty)");
   });
 
-  it("the bodies are painted on a closed row too — opening is only a class flip", () => {
-    const host = paint({ calls: [call()] });
-    expect(host.querySelector(".call.open")).toBeNull();
-    expect(host.querySelectorAll("pre.jv").length).toBe(2);
+  it("a closed row paints no body; an open one paints its meta and both blocks (docs/46 §2.4)", () => {
+    const shut = paint({ calls: [call()] });
+    expect(shut.querySelector(".tl-item.open")).toBeNull();
+    expect(shut.querySelectorAll("pre.jv").length, "a closed row costs no code block").toBe(0);
+    const open = paint({ calls: [call()], callsOpen: { 7: true } });
+    expect(open.querySelector(".tl-item.open .tl-sum")!.getAttribute("aria-expanded")).toBe("true");
+    expect(open.querySelectorAll(".tl-body pre.jv").length).toBe(2);
+    expect(open.querySelector(".tl-body > .tl-meta")!.textContent).toBe("via panel · client panel · reply 100 chars");
   });
 
   it("a long block ends in Show all N lines; once shown, the button is gone", () => {
     const big = JSON.stringify(Array.from({ length: 300 }, (_, i) => i));
-    const capped = paint({ calls: [call({ output: big })] });
+    const capped = paint({ calls: [call({ output: big })], callsOpen: { 7: true } });
     const btn = capped.querySelector('[data-showall="out:7"]')!;
     expect(btn.textContent).toBe("Show all 302 lines");
     expect(capped.querySelector('[data-showall="args:7"]'), "a short block has no button").toBeNull();
-    const whole = paint({ calls: [call({ output: big })], callsAll: { "out:7": true } });
+    const whole = paint({ calls: [call({ output: big })], callsOpen: { 7: true }, callsAll: { "out:7": true } });
     expect(whole.querySelector("[data-showall]")).toBeNull();
     expect(block(whole, "out:7").querySelector("pre.jv")!.textContent).toBe(JSON.stringify(JSON.parse(big), null, 2));
   });
@@ -239,6 +266,50 @@ describe("docs/33 C3: a call paints its blocks as code, with Copy, Copy raw and 
     const pruned = paint({ calls: [clipped], callsOpen: { 7: true }, callsGone: { 7: true } });
     expect(pruned.querySelector('[data-full="7"]'), "nothing left to fetch — no button").toBeNull();
     expect(pruned.querySelector('[data-gone="7"]')!.textContent).toContain("no longer stored");
+  });
+});
+
+describe("docs/46 §3.2: a call is one event-list row", () => {
+  it("time, tool, arguments, the duration - no date, no transport, no size on the row", () => {
+    const host = paint({ calls: [call({ ms: 1250 })] });
+    const row = host.querySelector<HTMLElement>('.tl-item[data-callseq="7"]')!;
+    expect(row.querySelector(".tl-title")!.textContent).toBe("redis_command");
+    expect(row.querySelector(".tl-arg")!.textContent).toBe('{"command":"GET","args":["k"]}');
+    expect(row.querySelector(".tl-time")!.getAttribute("datetime")).toBe("2026-09-17T10:00:00.000Z");
+    expect(row.querySelector(".tl-ms")!.textContent).toBe("1.3 s");
+    expect(row.querySelector(".tl-ms")!.className, "past a second it is amber").toContain("slow");
+    expect(row.querySelector(".tl-sum")!.textContent).not.toContain("panel");
+    expect(row.querySelector(".tl-sum")!.textContent).not.toContain("chars");
+    expect(host.querySelector(".tl-day"), "the date is a heading over the day").not.toBeNull();
+  });
+
+  it("a failure is a red tag on the row, not a red row", () => {
+    const host = paint({ calls: [call({ ok: false, output: "boom" })] });
+    const tag = host.querySelector(".tl-sum .tag")!;
+    expect(tag.textContent).toBe("failed");
+    expect(tag.className).toContain("bad");
+    expect(paint({ calls: [call()] }).querySelector(".tl-sum .tag"), "success says nothing").toBeNull();
+  });
+
+  it("the client is a column only when the page holds more than one", () => {
+    expect(paint({ calls: [call(), call({ seq: 6, args: "{}" })] }).querySelector(".tl-who")).toBeNull();
+    const two = paint({ calls: [call(), call({ seq: 6, args: "{}", client: "claude-code" })] });
+    expect([...two.querySelectorAll(".tl-who")].map((n) => n.textContent)).toEqual(["panel", "claude-code"]);
+  });
+
+  it("identical consecutive calls fold into ×N, and the open row lists every one of them", () => {
+    const at = (m: number) => "2026-09-17T10:0" + m + ":00.000Z";
+    const calls = [call({ seq: 9, at: at(3), ms: 9 }), call({ seq: 8, at: at(2), ms: 4, client: "cc" }), call({ seq: 7, at: at(1), ms: 5 })];
+    const host = paint({ calls, callsOpen: { 9: true } });
+    expect(host.querySelectorAll(".tl-item").length).toBe(1);
+    expect(host.querySelector(".tl-n")!.textContent).toBe("×3");
+    const metas = [...host.querySelectorAll(".tl-body > .tl-meta")].map((n) => n.textContent);
+    expect(metas[1]).toMatch(/^3 identical calls · .+ – .+ · 4 ms – 9 ms$/);
+    expect(metas[2]!.split(" · ").length, "one entry per call").toBe(3);
+    expect(metas[2], "a call from another client names it").toContain("4 ms cc");
+    // A different reply breaks the run.
+    const split = paint({ calls: [call({ seq: 9 }), call({ seq: 8, output: '{"v":2}' })] });
+    expect(split.querySelectorAll(".tl-item").length).toBe(2);
   });
 });
 
@@ -257,12 +328,12 @@ describe("docs/33 C3: copy text and in-place repaint read the call row", () => {
     const d = stub({ calls: [call({ output: '{"rows":[', preview: true })] });
     const tb = document.createElement("div");
     tb.id = "tabbody";
-    tb.append(logs.callNode(d, (d as { calls: never[] }).calls[0]));
+    tb.append(...[logs.callBodyNode(d, [(d as { calls: never[] }).calls[0]])].flat().filter((n): n is Node => n != null));
     document.body.append(tb);
     const argsBefore = block(tb, "args:7");
     (d as { callsFull: Record<number, string> }).callsFull[7] = '{"rows":[1,2]}';
     logs.repaintCallBlock(d, "out:7");
-    expect(block(tb, "out:7").querySelector("pre.jv")!.textContent).toBe('{\n  "rows": [\n    1,\n    2\n  ]\n}');
+    expect(block(tb, "out:7").querySelector("pre.jv")!.textContent).toBe('{"rows": [1, 2]}');
     expect(block(tb, "args:7"), "the arguments block is the same node").toBe(argsBefore);
     tb.remove();
   });

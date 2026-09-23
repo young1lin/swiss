@@ -78,10 +78,9 @@
     .config-revision-intro > span { flex: 1; }
     @media (prefers-reduced-motion: reduce) { .config-chev { transition: none; } }
 
-    /* --- call log (Logs tab) ------------------------------------------------------------------- */
-    /* docs/31: the Logs search sits in the section head, next to the toolbar menu — a filter,
-       not a form field: it shrinks before the row overflows and grows into spare space. */
-    .sec-head #callsQ { margin-left: auto; flex: 1 1 180px; min-width: 140px; max-width: 260px; width: auto; padding: 3px var(--s2); font-size: var(--f-caption); }
+    /* --- call rows (Traffic activity, Remote runs, a job's runs, the Run tab's history) --------
+       MCP Logs left these for the library's event list (ui/timeline.ts, docs/46 P2-2); each page
+       still drawing .call deletes its share when it moves (P2-3, P3, P5, P6). */
     .call + .call { border-top: 1px solid var(--sep-soft); }
     .call-sum { display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left; padding: var(--s2) var(--s4); cursor: pointer; }
     .call-sum:hover { background: var(--hover); }
