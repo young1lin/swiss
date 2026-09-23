@@ -15,7 +15,7 @@
  */
 
 import type { DbFilterTerm } from "./types/state.js";
-import { $ } from "./util.js";
+import { $, iconNode } from "./util.js";
 import { fill, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
@@ -167,7 +167,7 @@ function dbFiltersNodes(): HChild[] {
             data: { fi: String(i), fk: "val" },
           })
         : null,
-      h("button", { class: "db-act", title: tr("dataFilters.removeFilter"), data: { frm: String(i) } }, "✕"));
+      h("button", { class: "db-act", title: tr("dataFilters.removeFilter"), data: { frm: String(i) } }, iconNode("x")));
   });
   rows.push(h("button", {
     class: "btn db-filter-add", title: tr("dataFilters.filterRowsColumnValue"), data: { fadd: "" },

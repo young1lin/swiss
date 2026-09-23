@@ -34,7 +34,7 @@
    ================================================================================================ */
                                                                                                   
                                                             
-import { $, TOKEN_ID_KEY, api, apiJson, emptyNode, iconNode, targetEl } from "../util.js";
+import { $, TOKEN_ID_KEY, api, apiJson, emptyNode, iconNode, lsMigrate, targetEl } from "../util.js";
 import { fill, h } from "../h.js";
 import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
 import { popupMenu } from "../menu.js";
@@ -98,7 +98,9 @@ async function refreshTokens()                {
 }
 
 function rememberedTokenId()                {
-  try { return localStorage.getItem(TOKEN_ID_KEY); } catch (e) { return null; }
+  // fix-plan #17: one-shot migration off the mcp_gateway_token_id era; a fresh browser
+  // only ever answers - and later writes - the swiss.tokenId slot.
+  return lsMigrate(TOKEN_ID_KEY, "mcp_gateway_token_id");
 }
 
 /** One `claude mcp add` line per MCP, embedding the given secret — a whole client setup in one copy. */

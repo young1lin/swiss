@@ -132,8 +132,9 @@ const zh: Record<string, string> = {
   "dataStream.colPending": "待确认",
   "dataStream.colLag": "积压",
   "dataStream.colLastDelivered": "最后投递",
-"dataStream.pendingNew.other": "↑ {n} 条新",
-"dataStream.pendingNewOver": "↑ {n}+ 条新",
+/* fix-plan #14: direction glyphs moved to the sprite icons at the paint sites. */
+"dataStream.pendingNew.other": "{n} 条新",
+"dataStream.pendingNewOver": "{n}+ 条新",
 "dataStream.gapSkipped": "有更多，已跳过中间部分",
 "dataStream.jumpLatest": "跳到最新",
 "dataStream.followStopped": "已停止跟随——上次轮询失败",
@@ -427,7 +428,7 @@ const zh: Record<string, string> = {
   "dataStructure.references": "引用",
   "dataStructure.renameTruncateDropTable": "重命名、清空或删除此表",
   "dataStructure.selectTableStructure": "在左侧选择一个表以查看其结构。",
-  "dataStructure.table": "表 ▾",
+  "dataStructure.table": "表",
   "dataStructure.loading": "加载中…",
   /* --- dataTabs --- */
   "dataTabs.activity": "活动",
@@ -989,9 +990,10 @@ const zh: Record<string, string> = {
   "polling.test": "测试",
   /* --- runHistory --- */
   "runHistory.durationMs": "{ms} 毫秒",
-  "runHistory.pastRuns": "↺ 过往运行…",
-  "runHistory.pastRunsN": "↺ 过往运行({n})",
-  "runHistory.pastRuns2": "↺ 没有过往运行",
+  /* fix-plan #14: the history glyph is the i-history sprite at the two paint sites. */
+  "runHistory.pastRuns": "过往运行…",
+  "runHistory.pastRunsN": "过往运行({n})",
+  "runHistory.pastRuns2": "没有过往运行",
   "runHistory.loading": "加载中…",
   "runHistory.resourceMeta": "{type} · {ms} 毫秒",
   "runHistory.runsWhoseArgumentsContain": "没有参数包含\"{q}\"的运行。",
@@ -1091,7 +1093,7 @@ const zh: Record<string, string> = {
   "sidebar.mcp": "MCP",
   /* --- traffic --- */
   "terminal.ctrl0Resets": "Ctrl+0 重置",
-  "terminal.nNewDown": "{n} 条新输出 ↓",
+  "terminal.nNewDown": "{n} 条新输出",
   "terminal.noResults": "无结果",
   "terminal.packagesLoadFailed": "无法加载终端软件包：{error}",
   "terminal.pasteLinesConfirm.other": "将 {n} 行粘贴到 shell？\n\n{preview}",
@@ -1178,7 +1180,7 @@ const zh: Record<string, string> = {
   "tunnelSheets.couldReadFolder": "无法读取该文件夹",
   "tunnelSheets.choosePrivateKey": "选择私钥",
   "tunnelSheets.oneLevel": "上一级",
-  "tunnelSheets.text": "↑ 上级",
+  "tunnelSheets.text": "上级",
   "tunnelSheets.go": "前往",
   "tunnelSheets.httpN": "HTTP {n}",
   "tunnelSheets.requestFailedGatewayRunning": "请求失败——网关在运行吗?",

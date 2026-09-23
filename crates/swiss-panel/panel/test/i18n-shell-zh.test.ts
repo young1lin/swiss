@@ -362,8 +362,10 @@ describe("the I7 jobs machinery in Chinese", () => {
 
   it("fills the run tab's own controls (the I4 runBtn mystery, solved)", async () => {
     await loadLocale();
-    expect(tr("runHistory.pastRunsN", { n: 12 })).toBe("↺ 过往运行(12)");
-    expect(tr("runHistory.pastRuns2")).toBe("↺ 没有过往运行");
+    // fix-plan #14: the history glyph is the i-history sprite at the paint sites, so the
+    // zh copies carry words only.
+    expect(tr("runHistory.pastRunsN", { n: 12 })).toBe("过往运行(12)");
+    expect(tr("runHistory.pastRuns2")).toBe("没有过往运行");
     expect(tr("runHistory.running")).toBe("运行中…");
     expect(tr("run.run")).toBe("运行");
     expect(tr("runHistory.arguments2")).toBe("参数");

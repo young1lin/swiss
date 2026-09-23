@@ -502,7 +502,7 @@ describe("the stream Follow edge (docs/45 S3)", () => {
     await p;
     expect(rowIds()).toEqual(["9-0", "8-0"]); // NOTHING inserted under the reader
     expect(pill().hidden).toBe(false);
-    expect(text(pill())).toBe("↑ 2 new entries");
+    expect(text(pill()).trim()).toBe("2 new entries"); // fix-plan #14: the arrow is the i-arrow-up sprite, not copy
     expect(gapBar().hidden).toBe(true); // an untruncated page is no gap
     setScroll(500, 24); // still reading; the flush itself returns to the top
     pill().onclick();
@@ -542,7 +542,7 @@ describe("the stream Follow edge (docs/45 S3)", () => {
     expect(tab.redisStreamPendingDropped).toBe(true);
     expect(tab.redisStreamGap, "the drop is a hole in the middle — same flag as a truncated page").toBe(true);
     expect(gapBar().hidden).toBe(false);
-    expect(text(pill())).toBe("↑ 500+ new entries"); // the count stopped moving, the copy says so
+    expect(text(pill()).trim()).toBe("500+ new entries"); // the count stopped moving, the copy says so (the arrow is the sprite)
     pill().onclick();
     const ids = rowIds();
     expect(ids.length, "pool 500 + 2 held rows, capped newest-first").toBe(500);

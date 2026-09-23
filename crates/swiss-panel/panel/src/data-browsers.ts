@@ -358,7 +358,7 @@ function dbRedisTtl(v: ApiDbRedisValue): HTMLElement {
 }
 
 /** The typed table — the row grid's own vocabulary (inserts first, db-dirty cells, db-del
- *  struck rows, the narrow ✕/↩ control column), pointing at the redis buffer instead of the
+ *  struck rows, the narrow remove/undo control column), pointing at the redis buffer instead of the
  *  SQL edit buffer. */
 function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTypeCfg): void {
   const b = dbRedisEdits();
@@ -468,8 +468,9 @@ function dbRedisCellMenu(e: MouseEvent, colLabel: string, text: string, where: s
   ]);
 }
 
-/** The narrow ✕/↩ column the row grid uses, in the value view's words: ✕ buffers a delete
- *  (HDEL / ZREM / SREM on Commit) or removes a buffered insert, ↩ undoes a delete. A type
+/** The narrow remove/undo column the row grid uses, in the value view's words: remove
+ *  buffers a delete (HDEL / ZREM / SREM on Commit) or removes a buffered insert, undo
+ *  undoes a delete (fix-plan #14: the glyphs are i-x / i-undo now). A type
  *  with no honest delete command (list) gets no control at all. The button's address is
  *  data-raddr (a stored entry) or data-rins (a buffered insert row's index). */
 function dbRedisRowCtl(deletable: boolean, deleted: boolean, addr: string | null, insIdx: number): HTMLElement {
@@ -479,7 +480,7 @@ function dbRedisRowCtl(deletable: boolean, deleted: boolean, addr: string | null
     class: "db-act", type: "button",
     title: tr(deleted ? "dataBrowsers.undoBufferedDelete" : "dataBrowsers.bufferDeleteCommit"),
     data: addr != null ? { raddr: addr } : { rins: String(insIdx) },
-  }, deleted ? "↩" : "✕"));
+  }, iconNode(deleted ? "undo" : "x")));
   return td;
 }
 

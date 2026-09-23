@@ -134,9 +134,11 @@ const en                         = {
   "dataStream.colPending": "pending",
   "dataStream.colLag": "lag",
   "dataStream.colLastDelivered": "last delivered",
-"dataStream.pendingNew.one": "↑ {n} new entry",
-"dataStream.pendingNew.other": "↑ {n} new entries",
-"dataStream.pendingNewOver": "↑ {n}+ new entries",
+/* fix-plan #14: the direction glyphs left the copies - the paint sites carry the
+   i-arrow-up / i-chevron-down sprites beside these words (docs/38: copy is words). */
+"dataStream.pendingNew.one": "{n} new entry",
+"dataStream.pendingNew.other": "{n} new entries",
+"dataStream.pendingNewOver": "{n}+ new entries",
 "dataStream.gapSkipped": "more arrived than one page — a middle chunk was skipped",
 "dataStream.jumpLatest": "Jump to latest",
 "dataStream.followStopped": "Follow stopped — the last poll failed",
@@ -445,7 +447,7 @@ const en                         = {
   "dataStructure.references": "References",
   "dataStructure.renameTruncateDropTable": "Rename, truncate or drop this table",
   "dataStructure.selectTableStructure": "Select a table on the left to see its structure.",
-  "dataStructure.table": "Table ▾",
+  "dataStructure.table": "Table",
   "dataStructure.loading": "Loading…",
   /* --- dataTabs --- */
   "dataTabs.activity": "Activity",
@@ -1016,9 +1018,10 @@ const en                         = {
   "polling.test": "Test",
   /* --- runHistory --- */
   "runHistory.durationMs": "{ms} ms",
-  "runHistory.pastRuns": "↺ Past runs…",
-  "runHistory.pastRunsN": "↺ Past runs ({n})",
-  "runHistory.pastRuns2": "↺ No past runs",
+  /* fix-plan #14: the history glyph is the i-history sprite at the two paint sites. */
+  "runHistory.pastRuns": "Past runs…",
+  "runHistory.pastRunsN": "Past runs ({n})",
+  "runHistory.pastRuns2": "No past runs",
   "runHistory.loading": "loading…",
   "runHistory.resourceMeta": "{type} · {ms} ms",
   "runHistory.runsWhoseArgumentsContain": "No runs whose arguments contain \"{q}\".",
@@ -1119,7 +1122,7 @@ const en                         = {
   "sidebar.mcp": "MCP",
   /* --- traffic --- */
   "terminal.ctrl0Resets": "Ctrl+0 resets",
-  "terminal.nNewDown": "{n} new ↓",
+  "terminal.nNewDown": "{n} new",
   "terminal.noResults": "no results",
   "terminal.packagesLoadFailed": "could not load the terminal packages: {error}",
   "terminal.pasteLinesConfirm.one": "Paste {n} line into the shell?\n\n{preview}",
@@ -1208,7 +1211,7 @@ const en                         = {
   "tunnelSheets.couldReadFolder": "Could not read that folder",
   "tunnelSheets.choosePrivateKey": "Choose a private key",
   "tunnelSheets.oneLevel": "Up one level",
-  "tunnelSheets.text": "↑ Up",
+  "tunnelSheets.text": "Up",
   "tunnelSheets.go": "Go",
   "tunnelSheets.httpN": "HTTP {n}",
   "tunnelSheets.requestFailedGatewayRunning": "request failed — is the gateway running?",

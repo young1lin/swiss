@@ -259,7 +259,11 @@ describe("the CSS contract (over the shipped sheet)", () => {
     expect(base).toMatch(/\.grp--page \.grp-head \{ height: 36px/);
     expect(base).not.toMatch(/.grp[^ {]*::before/);
     expect(base).not.toContain("grp-folder");
-    expect(html).not.toContain('id="i-folder"');
+    // fix-plan #14 brought i-folder back to the sprite (the tunnel key picker's directory
+    // rows), so the symbol's presence in the shell proves nothing about the tree - the
+    // tree's own module must not reference it.
+    const groupsSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "groups.ts"), "utf8");
+    expect(groupsSrc).not.toContain("i-folder");
   });
 
   it("members sit one grid step in under the sidebar band; the card's rows run edge to edge", () => {

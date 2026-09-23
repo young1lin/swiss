@@ -15,7 +15,7 @@
  */
 
                                                                                                                                                                                                                                           
-import { $, api, apiJson, el, toast } from "./util.js";
+import { $, api, apiJson, el, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
                                      
 import { closeSheet } from "./add-sheet.js";
@@ -184,16 +184,16 @@ async function openKeyPicker()                {
       h("div", { class: "sheet-body" },
         h("div", { class: "browse-cwd", style: "display:flex;gap:8px;align-items:center;margin-bottom:8px" },
           // The disabled class is cosmetic; the disabled PROPERTY is what stops the click.
-          h("button", { class: "btn" + (j.parent ? "" : " disabled"), id: "b-up", disabled: !j.parent, title: tr("tunnelSheets.oneLevel") }, tr("tunnelSheets.text")),
+          h("button", { class: "btn" + (j.parent ? "" : " disabled"), id: "b-up", disabled: !j.parent, title: tr("tunnelSheets.oneLevel") }, iconNode("arrow-up"), " ", tr("tunnelSheets.text")),
           h("input", { id: "b-path", value: j.dir, spellcheck: false, autocomplete: "off", style: "flex:1" }),
           h("button", { class: "btn", id: "b-go" }, tr("tunnelSheets.go"))),
         j.error ? h("div", { class: "hint" }, j.error) : null,
         h("div", { class: "keylist" },
           dirs.map((e                       )              => {
-            return h("button", { class: "is-dir", data: { dir: e.path } }, "📁 ", e.name);
+            return h("button", { class: "is-dir", data: { dir: e.path } }, iconNode("folder"), " ", e.name);
           }),
           files.map((e                       )              => {
-            return h("button", { data: { file: e.path } }, "📄 ", e.name);
+            return h("button", { data: { file: e.path } }, iconNode("file"), " ", e.name);
           }))),
       h("div", { class: "sheet-foot" }, h("button", { class: "btn", data: { close: "" } }, tr("tunnelSheets.cancel"))));
     picker.querySelector                   ("[data-close]") .onclick = close;
