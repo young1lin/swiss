@@ -76,6 +76,13 @@
       --r-btn: 6px;
       --r-pill: 980px;
 
+      /* Component sizes (docs/46): the few a component needs that are not a step of the 4pt
+         scale. A new one lands here, named, before any rule uses it (test/css-literals.test.ts). */
+      --ic-s: 12px;         /* a disclosure chevron */
+      --ic-m: 14px;         /* a glyph inside a button, a menu row */
+      --dot: 6px;           /* the status dot - and so the lead column of a list row */
+      --row-h: 42px;        /* a list row: two lines of text clear it (docs/18 V4) */
+
       /* CJK after system-ui (docs/38 §5.2): latin glyphs stay Inter, Chinese falls to the system's own faces. */
       --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
       --mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;

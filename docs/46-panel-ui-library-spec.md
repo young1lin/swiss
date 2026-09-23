@@ -176,33 +176,36 @@ vitest 用例。下面是 P1 的初始集；签名以实现为准，但**形状*
 
 ```ts
 // ui/button.ts
-btn(label: string, o?: { kind?: "primary" | "ghost"; icon?: string; id?: string;
+btn(label: string, o?: { kind?: "primary" | "ghost" | "danger"; icon?: string; id?: string;
     data?: AttrMap; title?: string; disabled?: boolean }): HTMLButtonElement
 iconBtn(icon: string, label: string, o?: { id?: string; data?: AttrMap; title?: string;
-    pressed?: boolean }): HTMLButtonElement          // aria-label = label, always
+    pressed?: boolean; ghost?: boolean; disabled?: boolean }): HTMLButtonElement   // aria-label = label, always
 moreBtn(label: string, o?: { id?: string; data?: AttrMap }): HTMLButtonElement   // the ⋯
 
 // ui/icon.ts — iconNode moves here; util.ts keeps a re-export for its import sites
-iconNode(name: string, cls?: string): SVGSVGElement
+iconNode(name: string, label?: string): SVGSVGElement   // label -> role=img + aria-label; else aria-hidden
 
 // ui/status.ts
 dot(state: "up" | "down" | "error" | "idle" | "starting" | "stopping" | "off", title: string): HTMLElement
+// "off" is the bare grey .dot - no class for a rule that would only repeat the base one
 tag(text: string, o?: { tone?: "bad" | "warn"; mono?: boolean; title?: string }): HTMLElement
 // tone is STATE only (a non-zero exit, a failed run) — rule 2; descriptive tags are monochrome
 
 // ui/switch.ts
-sw(on: boolean, label: string, o?: { data?: AttrMap; disabled?: boolean }): HTMLButtonElement
+sw(on: boolean, label: string, o?: { id?: string; data?: AttrMap; title?: string; disabled?: boolean }): HTMLButtonElement
 ```
 
 ### 2.2 页面骨架
 
 ```ts
 // ui/page.ts
-paneHead(o: { desc?: HChild; sub?: HChild; actions?: HChild[] }): HTMLElement
-// sticky; the shell toggles .pane.scrolled from ONE scroll listener on #pane (P1a)
+paneHead(o: { title?: HChild; desc?: HChild; sub?: HChild; actions?: HChild[] }): HTMLElement
+// sticky; the shell toggles .pane.scrolled from ONE scroll listener on #pane (P1a).
+// title only on a RESOURCE head (the selected MCP): a content page's location is the bar's (skill §7)
 section(o: { cap?: string; tools?: HChild[] }, ...body: HChild[]): HTMLElement   // .sec-head + body
 card(...rows: HChild[]): HTMLElement                                          // the .group surface
-pageFoot(...parts: HChild[]): HTMLElement     // a revision line; never a count the bar already shows
+pageFoot(o: { note?: HChild; rev?: string }): HTMLElement   // prose left, the revision (mono) right;
+                                              // never a count the bar already shows
 inlineForm(...controls: HChild[]): HTMLElement
 emptyNode(o: { icon: string; title: string; hint?: string; action?: string }): HTMLElement  // moves from util.ts
 ```
@@ -216,13 +219,14 @@ row(o: {
   name: HChild;            // identity, sans, --w-name
   sub?: HChild;            // one line, --f-label, --text-2; mono only when it is a value (rule 1)
   err?: string;            // replaces sub: one red line, ellipsized, full text in title
-  cols?: HChild[];         // right-aligned value columns (a port, a rule count, a last run)
+  cols?: Array<HChild | { v: HChild; mono?: boolean; title?: string }>;
+                           // right-aligned value columns (a port, a rule count, a last run)
   toggle?: HTMLElement;    // a sw()
   primary?: HTMLButtonElement;   // at most ONE non-icon button (rule 4, by type)
   more?: HTMLButtonElement;      // the ⋯
-  data?: AttrMap; draggable?: boolean; muted?: boolean;
+  data?: AttrMap; draggable?: boolean; muted?: boolean; title?: string;
 }): HTMLElement
-kvRow(label: string, value: HChild, o?: { mono?: boolean }): HTMLElement   // config / system pairs
+kvRow(label: string, value: HChild, o?: { mono?: boolean; title?: string }): HTMLElement   // config / system pairs
 ```
 
 inset 分隔线的位置由行首列决定：有 `lead` 时从名字那一列开始（`--row-inset`），与 groups 的对齐契约
@@ -244,10 +248,17 @@ interface TimelineItem {
   data?: AttrMap;
 }
 timeline(items: TimelineItem[], o: {
-  open?: Set<string>; body?: (it: TimelineItem) => HChild;   // the view owns the expanded body
+  open?: Set<string>;
+  body?: (it: TimelineItem, run: TimelineItem[]) => HChild;   // the view owns the expanded body;
+                                                              // run = every item a ×N row stands for
   slowMs?: number; dayHeads?: boolean; now?: number;
+  showWho?: boolean;                                          // overrides "only when it varies"
 }): HTMLElement
+timelineToggle(root: HTMLElement, id: string, body?: HChild): boolean   // pure DOM; the new state
 dayLabel(at: number, now: number): string    // "Today" / "Yesterday" / locale date — tr() keys
+timeLabel(at: number): string                // HH:MM:SS, 24-hour
+fmtMs(ms: number): string                    // "12 ms" / "1.2 s" / "61 s", cut where rounding lands
+collapseRuns(items: TimelineItem[]): TimelineItem[][]   // ×N folding, never across a day
 ```
 
 一行的列：`[chev] [时间 HH:MM:SS tnum] [title] [arg] [who] [×N] [status] [ms 右对齐]`。
@@ -259,11 +270,20 @@ dayLabel(at: number, now: number): string    // "Today" / "Yesterday" / locale d
 - **交互不在组件里**：展开 / 收起、×N 展开由视图的委托监听处理，组件只提供一个纯 DOM 帮手
   `timelineToggle(root, id)`，给定节点改类与 `aria-expanded`，不挂监听。
 
-### 2.5 其他（原地保留，类搬进 ui.css，由 `ui/index.ts` 转出）
+### 2.5 其他：已有的机制（P1b 修订，见 §9）
 
-`mountGroup` / `newGroupFlow`（groups.ts）、`popupMenu`（menu.ts）、`styleSelect`（dropdown.ts）、
-`openSheet` / `closeSheet`（add-sheet.ts）、`codeBlock`（json-view.ts）、`seg`（新写，替掉手写的
-`.seg` 与 `.db-tabs` 两套）。`.ctx-menu`（Data 的右键菜单）并入 `.menu.float`。
+初稿写"原地保留，由 `ui/index.ts` 转出"。这和 U2 冲突：`ui/index.ts` 若转出 `../groups.js`，库就 import 了
+api 与状态，G1 当场失败，陈列页也没法只靠假数据渲染。改成按"它依赖什么"分三类：
+
+| 类 | 放哪 | 例子 |
+| --- | --- | --- |
+| **纯标记** | 写进 `ui/`，由 `ui/index.ts` 导出 | `groupNode`（`ui/group.ts`，组的带、两个按钮、body；返回各部件而不是一个节点）、`seg`（`ui/seg.ts`，替掉手写的 `.seg` 与 `.db-tabs`，按钮上的 data 钩子名由页面传入，迁页不改委托监听） |
+| **通用机制**：只依赖 DOM 的交互（开 / 关 / 定位 / 键盘） | P1b-2 搬进 `ui/`，改成参数传入所需的一切；原模块留转出，调用点逐步改 | `popupMenu` / `clampMenuPos` / 关菜单（menu.ts、pane.ts）、`styleSelect`（dropdown.ts）、`codeBlock`（json-view.ts）、`openSheet` / `closeSheet`（add-sheet.ts） |
+| **绑定应用的行为**：API 写入、拖放、存储、侧栏 | 留在原处，**建在库上** | `mountGroup` / `newGroupFlow`（groups.ts：用 `groupNode` 画，自己接折叠、拖放、+ 与 ⋯、API）、MCP 新增表单、`patchSidebar` |
+
+`ui/index.ts` 因此只转出 `ui/` 自己的模块（G1 同时钉住"`ui/` 下每个模块都由 index 转出"）。`.ctx-menu`
+（Data 的右键菜单）并入 `.menu.float` 不变。新类 `.lrow` / `.kv` / `.tl` 与旧的 `.row` / `.tun-row` / `.call`
+并存，旧类随页面迁移删除（U16）。
 
 ### 2.6 陈列页（U13）
 
@@ -451,3 +471,5 @@ owner 要求"写 spec 后，review 一下，有问题就改"。初稿对照代�
 | Plugins "去掉状态点"会把 failed / waitingDependency 这类异常一起藏掉 | 只在状态与开关一致时不画点，异常照画并在副行写原因（§3.5） |
 | 组件"不挂处理函数"与 timeline 的展开冲突 | 组件只给纯 DOM 帮手 `timelineToggle`，监听留在视图（§2.4） |
 | owner 途中追加"组件库先把控好，后续设计复用组件" | 加 U17：P1 备齐全部形状并走查后才迁页；设计稿改用陈列页的场景（§1.3、§2.6、§6） |
+| （P1b 实施时）§2.5 "已有组件原地保留、由 `ui/index.ts` 转出"与 U2 冲突：转出 groups.ts 就把 api 与状态带进了库 | 按依赖分三类：纯标记进 `ui/`；只依赖 DOM 的机制 P1b-2 搬进 `ui/`；绑定应用的行为留原处、建在库上（§2.5） |
+| （P1b 实施时）组件的类名写错不会有任何测试发现——页面只是多一个没样式的盒子 | `ui-components.test.ts` 把每个组件的每个选项渲染一遍，断言画出的每个类都在 `base.css` / `ui.css` 里有规则；它当场抓到 `dot("off")` 的无样式类 |

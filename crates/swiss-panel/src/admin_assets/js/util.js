@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-                                                     
                                                 
                                      
-import { h } from "./h.js";
+import { iconNode } from "./ui/icon.js";
+import { emptyNode } from "./ui/page.js";
 /* i18n has no import back into util (its element lookup is a local byId), so this edge is
    one-way: util may localize its own copy without a module cycle. */
 import { locale, tr } from "./i18n.js";
@@ -47,25 +47,9 @@ function esc(s         )         {
 }
 function now()         { return new Date().toLocaleTimeString(locale()); }
 
-/* The sprite reference is a NODE (docs/18 V2, docs/37 R5): the pre-R5 string twin icon()
- * retired with the last innerHTML caller — every glyph is iconNode() now. */
-
-/** The same sprite reference as a NODE, for the h() callers (docs/37 R5). SVG is its own
- *  namespace: createElement("svg") builds an HTMLUnknownElement that renders nothing, so this
- *  goes through createElementNS and cannot be folded into h(), which is typed for HTML tags.
- *  <use href> without the xlink alias is SVG 2 — the same markup icon() has always emitted, so
- *  the two builders agree on what reaches the browser. */
-function iconNode(name        , label         )                {
-  const NS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(NS, "svg");
-  svg.setAttribute("class", "ic");
-  if (label) { svg.setAttribute("role", "img"); svg.setAttribute("aria-label", label); }
-  else svg.setAttribute("aria-hidden", "true");
-  const use = document.createElementNS(NS, "use");
-  use.setAttribute("href", "#i-" + name);
-  svg.appendChild(use);
-  return svg;
-}
+/* iconNode and emptyNode live in the UI library now (docs/46 §2.1-2.2: ui/icon.ts,
+ * ui/page.ts); they are re-exported below so the import sites that name util.ts keep working.
+ * New code imports them from ui/. */
 
 /** Launch-tag glyphs (docs/29): a monochrome brand mark where one exists, the text chip
  *  otherwise. Keys are the tags tag_of produces on the server: the type for in-process and
@@ -85,22 +69,6 @@ function typeTagNode(tag        )         {
   // A mapped tag renders its glyph (the word rides the aria-label, docs/29); anything else
   // keeps the text chip exactly as before - the tag string is a text node, not markup.
   return name ? iconNode(name, tag) : tag;
-}
-
-/** One empty state (docs/18 V7): icon, title, one line of hint, optional ghost action. Every
- *  view's "nothing here" is this shape — the Terminal alone keeps its own, because it lives in
- *  the black frame with its own tokens. The action button carries data-empty-action so the
- *  owning view can wire it without inventing per-view ids.
- *
- *  A NODE since docs/37 R5 — same markup, same data-empty-action contract; the esc() calls
- *  are gone because the title and hint are text nodes. */
-function emptyNode(opts                )              {
-  return h("div", { class: "empty" },
-    h("div", null,
-      h("span", { class: "empty-ic" }, iconNode(opts.icon)),
-      h("h2", null, opts.title),
-      opts.hint ? h("p", { class: "hint" }, opts.hint) : null,
-      opts.action ? h("button", { class: "btn ghost", data: { "empty-action": opts.action } }, opts.action) : null));
 }
 
 /** The status dot's tooltip (docs/18 V6): a colour — and the idle hollow ring above all —

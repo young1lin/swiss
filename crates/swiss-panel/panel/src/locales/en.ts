@@ -1554,6 +1554,13 @@ const en: Record<string, string> = {
   "wire.plugins": "Plugins",
   "wire.secrets": "Secrets",
   "wire.system": "System",
+  /* --- ui (docs/46: the component library) --- */
+  "ui.today": "Today",
+  "ui.yesterday": "Yesterday",
+  "ui.ms": "{n} ms",
+  "ui.sec": "{n} s",
+  "ui.timesN": "×{n}",
+  "ui.runN": "{n} identical in a row",
 };
 
 export default en;

@@ -40,7 +40,7 @@ import { stylesDir } from "./styles.js";
  * fixed widths); ui.css and views.css fall with every migrated page. */
 const FROZEN: Record<string, number> = {
   "base.css": 22,
-  "ui.css": 82,
+  "ui.css": 75,
   "views.css": 253,
 };
 
