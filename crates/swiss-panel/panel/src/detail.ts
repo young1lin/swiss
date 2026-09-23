@@ -19,6 +19,10 @@ import { $, KINDS, api, apiJson, isMcpKind, now, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
 import { callsErrNode, callsStatusNode, fmtJson, mountJsonTrees } from "./logs.js";
 import { fill } from "./h.js";
+// The one-field sheet (fix-plan #16). Same accepted cycle shape as data-view/data-tabs:
+// add-sheet imports detail's openDetail, detail imports its sheet builder, and both sides
+// only call across inside functions, never at module scope.
+import { openFieldSheet } from "./add-sheet.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { loadList } from "./polling.js";
@@ -65,18 +69,25 @@ async function act(name: string, verb: string): Promise<void> {
   }
 }
 
-async function renameMcp(name: string): Promise<void> {
-  let next = prompt(tr("detail.renameName", { name }), name);
-  if (!next || next.trim() === name) return;
-  next = next.trim();
-  const ok = await apiJson("/api/mcps/" + encodeURIComponent(name) + "/rename", { method: "POST", body: JSON.stringify({ name: next }) });
-  if (!ok) return;
-  if (selectedMcp() === name) setSelectedMcp(next);
-  const open = mcpDetail();
-  if (open && open.name === name) open.name = next;
-  toast(tr("detail.renamedNameNext", { name, next }));
-  await loadList();
-  renderPane();
+/* fix-plan #16: the rename is the one-field sheet (openFieldSheet), the same surface as a
+ * group rename and a table rename. The sheet owns "required" and "unchanged is a cancel";
+ * a POST refusal keeps the sheet open with the typed name still in it. */
+function renameMcp(name: string): void {
+  openFieldSheet({
+    title: tr("detail.renameName", { name }),
+    def: name,
+    submit: async (next: string): Promise<boolean> => {
+      const ok = await apiJson("/api/mcps/" + encodeURIComponent(name) + "/rename", { method: "POST", body: JSON.stringify({ name: next }) });
+      if (!ok) return false;
+      if (selectedMcp() === name) setSelectedMcp(next);
+      const open = mcpDetail();
+      if (open && open.name === name) open.name = next;
+      toast(tr("detail.renamedNameNext", { name, next }));
+      await loadList();
+      renderPane();
+      return true;
+    },
+  });
 }
 
 async function removeMcp(name: string): Promise<void> {

@@ -23,6 +23,9 @@ import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
+// fix-plan #16: the Table menu's rename and the typed confirm ride the one-field sheet from
+// add-sheet.js (no import the other way, so no cycle).
+import { openFieldSheet } from "./add-sheet.js";
 // The strip's policy module: DROP closes the tabs the dropped table owned. Same accepted cycle
 // shape as the rest of the data-* edges — the call crosses inside a function, never at module
 // scope.
@@ -72,10 +75,17 @@ function dbTableMenu(anchorEl             )       {
   });
   menu.appendChild(document.createElement("hr"));
   item(tr("dataEdit.renameTable"), () => {
-    const to = prompt(tr("dataEdit.renameTo", { name: (d.schema ? d.schema + "." : "") + d.table }), d.table );
-    if (!to || to === d.table) return;
-    if (!/^[A-Za-z0-9_$]{1,64}$/.test(to)) { toast(tr("dataEdit.validTableName"), true); return;}
-    void dbRunDdl("rename", to);
+    // fix-plan #16: the one-field sheet — an illegal name errors INLINE (the typed value
+    // stays on the sheet), and nothing is sent until the charset holds.
+    openFieldSheet({
+      title: tr("dataEdit.renameTo", { name: (d.schema ? d.schema + "." : "") + d.table }),
+      def: d.table ,
+      submit: (to        )                   => {
+        if (!/^[A-Za-z0-9_$]{1,64}$/.test(to)) return tr("dataEdit.validTableName");
+        void dbRunDdl("rename", to);
+        return true;
+      },
+    });
   });
   item(tr("dataEdit.truncateTable"), () => {
     dbTypedConfirm({ what: tr("dataEdit.whatTruncate"), name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, ()       => { void dbRunDdl("truncate"); });
@@ -100,19 +110,28 @@ function dbTableMenu(anchorEl             )       {
   }, 0);
 }
 
-/* The typed-name confirm the destructive acts share (a W1 audit follow-up): the prompt
-   names the act and the exact target, the operator types the name back, and anything else
-   leaves the world untouched. Parameterized, not table-shaped — the redis key delete reuses
-   it word for word. `typed` is what must be typed and defaults to `name`: the table flavor
-   SHOWS a qualified name but demands the bare one; the key flavor's display name is the
-   thing itself. */
+/* The typed-name confirm the destructive acts share (a W1 audit follow-up): the one-field
+   sheet names the act and the exact target, the operator types the name back, and anything
+   else leaves the world untouched. Parameterized, not table-shaped — the redis key delete
+   reuses it word for word. `typed` is what must be typed and defaults to `name`: the table
+   flavor SHOWS a qualified name but demands the bare one; the key flavor's display name is
+   the thing itself. */
 function dbTypedConfirm(o                                                                     , fn            )       {
-  const typed = prompt(tr("dataEdit.typedConfirm", { what: o.what, name: o.name, kind: o.kind }), "");
-  if (typed !== (o.typed != null ? o.typed : o.name)) {
-    if (typed !== null) toast(tr("dataEdit.nameMatchNothingDone"), true);
-    return;
-  }
-  fn();
+  const expected = o.typed != null ? o.typed : o.name;
+  // fix-plan #16: the typed confirm rides the same one-field sheet as the renames. The old
+  // dialog's cancel-with-empty-string early exit is the sheet's Cancel, and a mismatch is
+  // an inline error beside the field instead of a toast that dismisses the retyping.
+  openFieldSheet({
+    title: tr("dataEdit.typedConfirmTitle", { what: o.what, name: o.name }),
+    label: tr("dataEdit.typedConfirmLabel", { kind: o.kind }),
+    placeholder: expected,
+    save: tr("dataEdit.confirm"),
+    submit: (typed        )                   => {
+      if (typed !== expected) return tr("dataEdit.nameMatchNothingDone");
+      fn();
+      return true;
+    },
+  });
 }
 
 async function dbRunDdl(op        , to         )                {

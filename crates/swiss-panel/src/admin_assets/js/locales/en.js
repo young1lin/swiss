@@ -247,7 +247,12 @@ const en                         = {
   "dataEdit.renameTable": "Rename table…",
   "dataEdit.renameTo": "Rename {name} to:",
   "dataEdit.truncateTable": "Truncate table…",
-  "dataEdit.typedConfirm": "{what} {name}\nThis cannot be undone. Type the {kind} name to confirm:",
+  /* fix-plan #16: the typed confirm is the one-field sheet now — a short title, the field
+     caption that names what must be typed, and the button word. The old single prompt
+     sentence could not carry the three. */
+  "dataEdit.typedConfirmTitle": "{what} {name} — this cannot be undone",
+  "dataEdit.typedConfirmLabel": "{kind} name",
+  "dataEdit.confirm": "Confirm",
   "dataEdit.validTableName": "Not a valid table name",
   "dataEdit.nameMatchNothingDone": "Name did not match — nothing was done",
   /* --- dataFilters --- */
