@@ -52,11 +52,12 @@ describe("admin panel assets", () => {
     // — docs/18 V2 (~26 lines of hand-drawn symbols), docs/29 (13 more: the launch-tag glyphs),
     // docs/42 T2 (i-table, the object strip's own glyph), 2693073 (the Lucide ISC attribution
     // line, which landed one over the bound), fix-plan #14 (five more: key, undo, arrow-up,
-    // folder, file) — still small, still no markup. The Apache-2.0 banner is stripped
+    // folder, file), the find-bar pass (i-chevron-up, the last escape-sequence glyph site)
+    // — still small, still no markup. The Apache-2.0 banner is stripped
     // before counting: it is a fixed licence cost, not shell content, and it must never buy
     // anyone headroom.
     const shellBody = shell.replace(/^<!--[\s\S]*?-->\s*/, "");
-    expect(shellBody.split("\n").length).toBeLessThan(158);
+    expect(shellBody.split("\n").length).toBeLessThan(161);
   });
 
   it("links the whole module graph: every import resolves to a file that exports the name", () => {
