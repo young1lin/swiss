@@ -546,10 +546,29 @@ impl Registry {
             return Ok(());
         }
         let entry = self.require(old_name)?;
+        // The same per-entry lifecycle lock as start/stop/delete. Without it a rename can re-key
+        // the map while a concurrent delete is parked in its stop(): delete then removes only the
+        // OLD key, and the tombstoned entry survives under the new name - listed by names()/all(),
+        // unstartable, its call history carried over. The lock also serializes two renames of one
+        // entry, which used to leave it registered under both target names.
+        let _guard = entry.op.lock().await;
+        if entry.deleted.load(Ordering::SeqCst) {
+            return Err(format!("unknown MCP: {old_name}"));
+        }
         {
             let mut entries = self.entries.write().map_err(|_| "registry poisoned")?;
             if entries.contains_key(new_name) {
                 return Err(format!("name already exists: {new_name}"));
+            }
+            // `require` ran before the lock was taken; delete removes the entry while this rename
+            // waits behind its stop(), so a stale reference must not re-key a detached entry back
+            // into the map under the new name.
+            let still_registered = entries
+                .get(old_name)
+                .map(|current| Arc::ptr_eq(current, &entry))
+                .unwrap_or(false);
+            if !still_registered {
+                return Err(format!("unknown MCP: {old_name}"));
             }
             if let Ok(mut d) = entry.data.write() {
                 d.name = new_name.to_string();
@@ -1179,6 +1198,49 @@ mod tests {
         .unwrap();
         r.rename("a", "a").await.unwrap();
         assert!(r.has("a"));
+    }
+
+    // delete() parks inside adapter.close() holding the entry's op lock; a rename arriving in
+    // that window used to re-key the map WITHOUT the lock, and delete's removal of the old key
+    // then left the tombstoned entry alive under the new name — listed by names()/all(), yet
+    // unstartable, with its call history carried over. The rename must queue behind the stop
+    // and refuse once the tombstone is visible.
+    #[tokio::test]
+    async fn refuses_a_rename_that_slips_into_the_delete_window() {
+        use_temp_call_log();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let fake = Fake {
+            close_gate: Some(gate.clone()),
+            ..Default::default()
+        }
+        .arc();
+        let r = reg();
+        r.register(
+            "x",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            fake.clone(),
+        )
+        .unwrap();
+        r.start("x").await.unwrap();
+
+        let del = {
+            let r = r.clone();
+            tokio::spawn(async move { r.delete("x").await })
+        };
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let ren = {
+            let r = r.clone();
+            tokio::spawn(async move { r.rename("x", "y").await })
+        };
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        gate.notify_one();
+
+        del.await.unwrap().unwrap();
+        let err = ren.await.unwrap().unwrap_err();
+        assert!(err.contains("unknown MCP: x"), "{err}");
+        assert!(!r.has("x"));
+        assert!(!r.has("y"), "the rename must not re-key a deleting entry");
     }
 
     #[tokio::test]
