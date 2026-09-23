@@ -272,7 +272,8 @@ impl JobStore {
 }
 
 /// Why a run could not start. Every variant is a REFUSAL the caller is told about: a manual
-/// request never gets a success reply for work that did not happen (docs/10 §4, "队列满").
+/// request never gets a success reply for work that did not happen (docs/10 §4, the
+/// queue-full refusal).
 #[derive(Debug)]
 pub enum RunError {
     Unknown(String),
@@ -736,7 +737,7 @@ impl JobSystem {
     }
 
     /// The definition snapshot for `name`, or Unknown. The clone IS the snapshot
-    /// (docs/11 §8, 修改中任务): an apply_config that rewrites the table mid-flight
+    /// (docs/11 §8, modifying-a-job): an apply_config that rewrites the table mid-flight
     /// cannot reach into a run that already claimed its definition - the run finishes
     /// under the one it started with.
     fn definition_of(&self, name: &str) -> Result<JobDefinition, RunError> {

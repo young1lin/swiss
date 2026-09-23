@@ -20,7 +20,8 @@
 //! process-tree teardown. It no longer does. Running a command is a shared capability now
 //! (`process.legacy-command` over `services::process::Supervisor`), submitted through the
 //! shared [`swiss_host::services::runs::RunCoordinator`] like every other run in the gateway
-//! (docs/10 §8: "进程能力上移到共享服务", §9 step 2). Keeping a second spawner here would mean
+//! (docs/10 §8, the process-capabilities-move-up decision; §9 step 2). Keeping a second
+//! spawner here would mean
 //! two execution paths with two sets of teardown bugs — exactly what the shared service
 //! exists to prevent.
 //!

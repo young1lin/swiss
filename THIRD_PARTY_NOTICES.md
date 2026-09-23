@@ -5,6 +5,10 @@ against, or reproduces the third-party material listed here, each under its own 
 in this file changes those terms; it exists so that every notice reaches everyone who receives
 a copy of swiss — source or binary.
 
+The panel's engine badges (MySQL, MariaDB, Redis, PostgreSQL, Figma, Docker) are redrawn
+monochrome from Simple Icons (CC0) and used nominatively; the names and marks belong to
+their respective owners.
+
 ## 1. Vendored into the panel (served by the binary)
 
 The admin panel is plain ES modules embedded in the executable. Two upstream projects are
@@ -29,6 +33,25 @@ license text: `js/vendor/cronstrue/LICENSE`.
     Copyright (c) 2017 Brady Holt
 
 ## 2. Reproduced in source
+
+### Lucide icon path data — ISC
+
+Several glyphs in the panel's icon sprite (`crates/swiss-panel/src/admin_assets/index.html`)
+use 24x24 path data copied verbatim from Lucide (https://lucide.dev), in the Lucide idiom the
+sprite follows. The full ISC text:
+
+    Copyright (c) Lucide Icons and Contributors
+
+    Permission to use, copy, modify, and/or distribute this software for any purpose with or
+    without fee is hereby granted, provided that the above copyright notice and this
+    permission notice appear in all copies.
+
+    THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO
+    THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO
+    EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL
+    DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
+    AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+    CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ### @z_ai/mcp-server 0.1.5 — Apache-2.0
 
