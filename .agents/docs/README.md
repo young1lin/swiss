@@ -125,6 +125,7 @@ The second batch's 7 agents deliver two executable things:
 
 | Document | Coverage | Audit agent |
 | --- | --- | --- |
+| [features.md](features.md) | **the consolidated feature-point master inventory**: one line per point across all nine domains (surface / code / tests / status) + the open-items rollup | rollup |
 | [mcp.md](mcp.md) | MCP plugin: 27 functionality points, ~30 endpoints, 8 adapter classes | A |
 | [data.md](data.md) | Data plugin: 20 /api/db/* routes, the lease contract, the docs/45 stream view | B |
 | [tunnels.md](tunnels.md) / [jobs.md](jobs.md) | Tunnels (16 route paths; proxy/jump per docs/27) / Jobs (v2 schema, the producer contract) | C |
