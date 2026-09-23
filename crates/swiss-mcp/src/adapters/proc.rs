@@ -286,15 +286,15 @@ impl SpawnedChild {
     }
 }
 
-/// The client side the gateway presents to the child: `{ name: "mcp-gateway", version: "1.0" }`
-/// with no capabilities (Node: `new Client({ name: "mcp-gateway", version: "1.0" }, {
-/// capabilities: {} })`). A no-op handler otherwise — the proxy drives every request.
+/// The client side the gateway presents to the child: `{ name: "swiss", version: "1.0" }`
+/// with no capabilities (Node presented itself as "mcp-gateway"). A no-op handler otherwise —
+/// the proxy drives every request.
 struct ProcClientHandler;
 
 impl ClientHandler for ProcClientHandler {
     fn get_info(&self) -> ClientInfo {
         let mut client_info = Implementation::default();
-        client_info.name = "mcp-gateway".into();
+        client_info.name = "swiss".into();
         client_info.version = "1.0".into();
         ClientInfo::new(ClientCapabilities::default(), client_info)
     }

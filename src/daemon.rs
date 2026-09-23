@@ -733,7 +733,6 @@ mod tests {
         for key in [
             "SWISS_PORT",
             "SWISS_TOKEN",
-            "MCP_GATEWAY_PORT",
             "MCP_GATEWAY_TOKEN",
             "SWISS_TEST_TOKEN",
         ] {
@@ -890,9 +889,9 @@ mod tests {
         );
         assert_eq!(resolve_port(), 18080);
 
-        unsafe { std::env::set_var("MCP_GATEWAY_PORT", "18081") };
+        unsafe { std::env::set_var("SWISS_PORT", "18081") };
         assert_eq!(resolve_port(), 18081); // the env wins over the file
-        unsafe { std::env::set_var("MCP_GATEWAY_PORT", "not-a-port") };
+        unsafe { std::env::set_var("SWISS_PORT", "not-a-port") };
         assert_eq!(resolve_port(), 18080); // an unusable env value is not an override
         clear_state();
     }

@@ -353,7 +353,7 @@ impl ServerHandler for ToolServer {
             capabilities.resources = Some(res_cap);
         }
         let mut server_info = Implementation::default();
-        server_info.name = "mcp-gateway-direct".into();
+        server_info.name = "swiss-direct".into();
         server_info.version = "1.0".into();
         let mut info = ServerInfo::new(capabilities).with_server_info(server_info);
         if let Some(instructions) = build_instructions(&meta) {

@@ -228,7 +228,7 @@ mod tests {
     /// The shared test home cannot serve here: `ensure_first_run` reports whether it CREATED the
     /// dir and refuses to migrate over state that is already present, so both answers are only
     /// observable on a genuinely new path. The data-dir lock is held throughout, because
-    /// `MCP_GATEWAY_HOME` is process-wide and is put back on the way out.
+    /// `SWISS_HOME` is process-wide and is put back on the way out.
     struct Sandbox {
         _lock: tokio::sync::MutexGuard<'static, ()>,
         base: std::path::PathBuf,
@@ -248,11 +248,10 @@ mod tests {
             let repo = base.join("repo");
             std::fs::create_dir_all(&repo).expect("create the scratch repo");
             let home = base.join("home");
-            unsafe { std::env::set_var("MCP_GATEWAY_HOME", &home) };
-            unsafe { std::env::remove_var("MCP_GATEWAY_PORT") };
-            // data_dir() honours SWISS_HOME first, so one leaked from another test would
-            // defeat the pin above and redirect this sandbox's whole data dir.
-            unsafe { std::env::remove_var("SWISS_HOME") };
+            // data_dir() honours SWISS_HOME, so pin it to the sandbox home; Drop puts the
+            // shared test home back.
+            unsafe { std::env::set_var("SWISS_HOME", &home) };
+            unsafe { std::env::remove_var("SWISS_PORT") };
             unsafe { std::env::remove_var("SWISS_PORT") };
             Self {
                 _lock: lock,
@@ -284,11 +283,9 @@ mod tests {
 
     impl Drop for Sandbox {
         fn drop(&mut self) {
-            unsafe { std::env::set_var("MCP_GATEWAY_HOME", swiss_core::paths::test_home()) };
-            unsafe { std::env::remove_var("MCP_GATEWAY_PORT") };
-            // test_home() pins the legacy name, so the SWISS_* twins must be cleared here too —
-            // a leak would redirect the next test's data dir or steer its seeded port.
-            unsafe { std::env::remove_var("SWISS_HOME") };
+            // test_home()'s OnceLock has already run in new(), so this only returns the dir —
+            // re-point SWISS_HOME at it, or the next test's data dir would leak into ours.
+            unsafe { std::env::set_var("SWISS_HOME", swiss_core::paths::test_home()) };
             unsafe { std::env::remove_var("SWISS_PORT") };
             let _ = std::fs::remove_dir_all(&self.base);
         }
@@ -337,8 +334,8 @@ mod tests {
         // missing parent instead of seeding a gateway.
         let sb = Sandbox::new();
         let nested = sb.base.join("home").join("a").join("b");
-        // SAFETY: under the Sandbox's data-dir lock, like every other MCP_GATEWAY_HOME write.
-        unsafe { std::env::set_var("MCP_GATEWAY_HOME", &nested) };
+        // SAFETY: under the Sandbox's data-dir lock, like every other SWISS_HOME write.
+        unsafe { std::env::set_var("SWISS_HOME", &nested) };
         let report = sb.boot();
         assert!(
             report.created,
@@ -367,9 +364,9 @@ mod tests {
 
     #[test]
     fn the_seed_honours_the_port_the_operator_asked_for() {
-        // The legacy name still steers the seed — an operator's pre-rename scripts keep working.
+        // The env port steers the seed — the operator's variable beats any default.
         let sb = Sandbox::new();
-        unsafe { std::env::set_var("MCP_GATEWAY_PORT", "18091") };
+        unsafe { std::env::set_var("SWISS_PORT", "18091") };
         sb.boot();
         assert_eq!(sb.config()["port"], json!(18091));
         assert_eq!(panel_url(), "http://127.0.0.1:18091/");
@@ -515,7 +512,7 @@ mod tests {
         // Held for the data dir it installs and puts back, not for anything read off it.
         let _sb = Sandbox::new();
         assert_eq!(panel_url(), format!("http://127.0.0.1:{DEFAULT_PORT}/"));
-        unsafe { std::env::set_var("MCP_GATEWAY_PORT", "18092") };
+        unsafe { std::env::set_var("SWISS_PORT", "18092") };
         assert_eq!(panel_url(), "http://127.0.0.1:18092/");
     }
 }

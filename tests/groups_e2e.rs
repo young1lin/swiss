@@ -132,8 +132,8 @@ async fn move_up_keeps_members_across_the_wire_and_a_restart() {
     // Safety: this test binary's own scratch home, set once before any state file opens, the
     // same pin every suite uses so nothing touches the operator's real home or OS keystore.
     unsafe {
-        std::env::set_var("MCP_GATEWAY_HOME", &dir);
-        std::env::set_var("MCP_GATEWAY_MASTER_KEY", "cd".repeat(32));
+        std::env::set_var("SWISS_HOME", &dir);
+        std::env::set_var("SWISS_MASTER_KEY", "cd".repeat(32));
     }
     let names = ["context7", "deepwiki", "github"];
 

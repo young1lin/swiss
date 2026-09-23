@@ -51,8 +51,8 @@ $ErrorActionPreference = 'Stop'
 # a 19997 instance and a 19998 instance sharing one home would race each other's saves.
 $HomeName = if ($Port -eq 19998) { 'swiss-test-home' } else { "swiss-test-home-p$Port" }
 $TestHome = Join-Path $env:LOCALAPPDATA $HomeName
-# ~\.swiss since the 2026-09-18 rename; ~\.mcp-gateway until the next production start moves it.
-$ProdHome = if ((Test-Path (Join-Path $env:USERPROFILE '.swiss')) -and (Get-ChildItem (Join-Path $env:USERPROFILE '.swiss') -Force | Select-Object -First 1)) { Join-Path $env:USERPROFILE '.swiss' } else { Join-Path $env:USERPROFILE '.mcp-gateway' }
+# The production home to snapshot.
+$ProdHome = Join-Path $env:USERPROFILE '.swiss'
 $Exe = Join-Path $PSScriptRoot '..\target-test\release\swiss.exe'
 $HealthUrl = "http://127.0.0.1:$Port/health"
 

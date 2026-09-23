@@ -33,9 +33,8 @@ PORT=19998
 # because the snapshotted production config's tokenEnv still says MCP_GATEWAY_TOKEN.
 TOKEN='acceptance-token-for-1998'
 TEST_HOME="${SWISS_TEST_HOME:-$HOME/.swiss-test-home}"
-# ~/.swiss since the 2026-09-18 rename; ~/.mcp-gateway until the next production start moves it.
+# The production home.
 PROD_HOME="$HOME/.swiss"
-[ -f "$PROD_HOME/gateway.config.json" ] || PROD_HOME="$HOME/.mcp-gateway"
 EXE="$ROOT/target-test/release/swiss"
 # Sealed state worth snapshotting - same list as test-instance.ps1. master.key is optional
 # here: on mac the key lives in the Keychain, on Linux in secret-tool or the machine id,
