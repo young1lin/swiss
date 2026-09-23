@@ -43,6 +43,9 @@
     .btn.ghost { background: none; box-shadow: none; color: var(--text-2); }
     .btn.ghost:hover { background: var(--hover); color: var(--text); }
     .btn:disabled, .btn.disabled { opacity: .4; cursor: default; background: var(--card); }
+    /* A word with a leading glyph (btn({ icon })): the glyph is a hint, the word the meaning. */
+    .btn.with-ic { display: inline-flex; align-items: center; gap: var(--s1); }
+    .btn.with-ic .ic { width: var(--ic-m); height: var(--ic-m); }
 
     /* A tool's visibility is a state you set, not an action you fire, so it is a switch — the control
        every row-level on/off in System Settings uses. It was an outlined uppercase "ON" pill, and a
@@ -71,7 +74,7 @@
     /* Inline icons (docs/18 V2): one sprite in the shell, stroke=currentColor, sized here. */
     .ic { width: 16px; height: 16px; flex: none; }
     /* Disclosure chevrons read better a step smaller than action icons. */
-    .chev .ic, .grp-chev .ic { width: 12px; height: 12px; }
+    .chev .ic, .grp-chev .ic { width: var(--ic-s); height: var(--ic-s); }
 
     /* Fields sit on --field, not --card: inside a white card or a white sheet a white input has no
        edge but its hairline, and on the dark side a field one step darker than its card is what
@@ -174,7 +177,7 @@
       text-align: left; color: var(--text);
       font-size: var(--f-body); font-weight: var(--w-emph);
     }
-    .grp-chev { flex: none; width: 12px; color: var(--text-3); transition: transform .15s ease; }
+    .grp-chev { flex: none; width: var(--ic-s); color: var(--text-3); transition: transform .15s ease; }
     .grp:not(.collapsed) .grp-chev { transform: rotate(90deg); }
     @media (prefers-reduced-motion: reduce) { .grp-chev { transition: none; } }
     .grp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -219,7 +222,7 @@
     .grp--page.drop-after { box-shadow: var(--shadow-card), inset 0 -2px 0 var(--accent); }
 
     /* Status is a dot plus neutral text — color is reserved for interaction, not for body copy. */
-    .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--text-3); }
+    .dot { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; background: var(--text-3); }
     .dot.up { background: var(--green); }
     .dot.down, .dot.error { background: var(--red); }
     /* A lazy proc (docs/18 V6): idle is the absence of a claim, so the dot is a hollow ring in
@@ -304,8 +307,8 @@
     /* Separators start at the text column, not the card's edge (docs/46 U7, the System Settings
        inset): a line that runs under the leading dot or chevron cuts the row's own lead off from
        its name. --row-inset is the text column's x; a row with no lead keeps the padding's 16. */
-    .row + .row { position: relative; }
-    .row + .row::before { content: ""; position: absolute; top: 0; right: 0; left: var(--row-inset, var(--s4)); height: 1px; background: var(--sep-soft); pointer-events: none; }
+    .row + .row, .lrow + .lrow, .kv + .kv { position: relative; }
+    .row + .row::before, .lrow + .lrow::before, .kv + .kv::before { content: ""; position: absolute; top: 0; right: 0; left: var(--row-inset, var(--s4)); height: 1px; background: var(--sep-soft); pointer-events: none; }
     /* A row's main column grows; the trailing .row-act stays its natural width. Without this the
        Tokens sheet's buttons hugged the label instead of sitting at the row's end. */
     .row > .row-main { flex: 1; min-width: 0; }
@@ -328,8 +331,65 @@
        lines is why the list read as nine cards instead of nine rows. */
     .row-b .desc, .row-act .desc { color: var(--text-2); font-size: var(--f-label); margin-top: 2px; }
 
-    /* One-off label chip (the token list's "copies use this"). */
-    .tag { font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); background: var(--sep-soft); padding: 1px 6px; border-radius: 5px; }
+    /* A tag (ui/status.ts): a word on a chip. Sans and monochrome by default - "proxy", a
+       launch type, "copies use this" are words, not values (rule 1) and not states (rule 2).
+       .mono for a value you would copy (an exit code); a tone only for STATE. */
+    .tag { font-size: var(--f-caption); color: var(--text-2); background: var(--sep-soft); padding: 1px 6px; border-radius: 5px; white-space: nowrap; }
+    .tag.mono { font-family: var(--mono); color: var(--text-3); }
+    .tag.bad { color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
+    .tag.warn { color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); }
+
+    /* --- the list row (ui/row.ts, docs/46 §2.3) ----------------------------------------------
+       One shape for every list: [lead] name / sub-or-err [cols] [acts]. At --row-h two lines of
+       text clear it, so a row with an error is exactly as tall as a healthy one. The lead is the
+       dot column: row pad 16 + dot 6 + gap 12 puts the name at x 34 - the groups contract - and
+       the inset separator starts there too (U7). */
+    .lrow { display: flex; align-items: center; gap: var(--s3); min-height: var(--row-h); padding: var(--s2) var(--s4); }
+    .lrow:hover { background: var(--hover); }
+    .lrow[draggable="true"] { cursor: grab; }
+    .lrow.has-lead { --row-inset: calc(var(--s4) + var(--dot) + var(--s3)); }
+    .lrow-lead { flex: none; display: inline-flex; align-items: center; }
+    .lrow-main { flex: 1; min-width: 0; }
+    .lrow-name { font-weight: var(--w-name); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lrow.muted .lrow-name { color: var(--text-3); }
+    .lrow-sub, .lrow-err { font-size: var(--f-label); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lrow-sub { color: var(--text-2); }
+    .lrow-err { color: var(--red); }
+    /* Value columns line up down a card because each takes the same floor. */
+    .lrow-col { flex: none; min-width: calc(var(--s6) * 3); text-align: right; font-size: var(--f-label); color: var(--text-2); white-space: nowrap; }
+    .lrow-col.mono { font-family: var(--mono); }
+    .lrow-acts { flex: none; display: flex; align-items: center; gap: var(--s2); }
+
+    /* A label / value pair (ui/row.ts kvRow): config, system facts. */
+    .kv { display: flex; align-items: baseline; gap: var(--s4); padding: var(--s2) var(--s4); }
+    .kv-k { flex: 0 0 32%; min-width: 0; font-size: var(--f-label); color: var(--text-2); }
+    .kv-v { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .kv-v.mono { font-family: var(--mono); font-size: var(--f-label); }
+
+    /* --- the event list (ui/timeline.ts, docs/46 §2.4, U10) -----------------------------------
+       No box and no row lines: rows sit on the page and the hover is the row. A day heading
+       sticks under the pinned head (--pane-head-h, measured by the shell from P2 on); the one
+       expanded row becomes a card. The time, the count and the duration are tabular so a
+       column of them does not wiggle. */
+    .tl { display: grid; }
+    .tl-day { position: sticky; top: var(--pane-head-h, 0px); z-index: 1; background: var(--bg); font-size: var(--f-caption); font-weight: var(--w-emph); color: var(--text-3); padding: var(--s3) var(--s2) var(--s1) calc(var(--s2) + var(--ic-s) + var(--s2)); }
+    .tl-item { border-radius: var(--r-row); }
+    .tl-sum { display: flex; align-items: center; gap: var(--s2); width: 100%; min-height: var(--s8); padding: var(--s1) var(--s2); border-radius: var(--r-row); text-align: left; color: var(--text); }
+    .tl-sum:hover { background: var(--hover); }
+    .tl-chev { flex: none; display: inline-flex; color: var(--text-3); transition: transform .15s ease; }
+    .tl-chev .ic { width: var(--ic-s); height: var(--ic-s); }
+    .tl-item.open .tl-chev { transform: rotate(90deg); }
+    @media (prefers-reduced-motion: reduce) { .tl-chev { transition: none; } }
+    .tl-time { flex: none; font-size: var(--f-label); color: var(--text-3); font-variant-numeric: tabular-nums; }
+    .tl-title { flex: none; font-family: var(--mono); font-size: var(--f-label); font-weight: var(--w-name); white-space: nowrap; }
+    .tl-arg { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--f-caption); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tl-who { flex: none; max-width: calc(var(--s8) * 5); font-size: var(--f-label); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tl-n { flex: none; font-size: var(--f-caption); color: var(--text-2); background: var(--sep-soft); padding: 0 var(--s1); border-radius: var(--s1); font-variant-numeric: tabular-nums; }
+    .tl-ms { flex: none; min-width: calc(var(--s6) + var(--s8)); text-align: right; font-size: var(--f-label); color: var(--text-3); font-variant-numeric: tabular-nums; }
+    .tl-ms.slow { color: var(--amber); }
+    .tl-item.open { background: var(--card); box-shadow: 0 0 0 1px var(--sep-soft); margin: var(--s1) 0; }
+    .tl-item.open > .tl-sum:hover { background: none; }
+    .tl-body { padding: 0 var(--s3) var(--s3) calc(var(--s2) + var(--ic-s) + var(--s2)); }
 
     .note { font-size: var(--f-label); color: var(--text-3); padding: var(--s3) var(--s1) 0; }
     /* A failure reason comes from the far side and can be enormous — a rejected JSON-RPC handshake
@@ -356,6 +416,12 @@
        keep the first row, the search box takes what width is left rather than forcing overflow. */
     .sec-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s3); padding: 0 var(--s1) var(--s2); min-height: 36px; }
     .sec-cap { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
+    /* ui/page.ts section(): the caption's tools sit at the head's end; sections a full step apart. */
+    .sec-tools { display: flex; align-items: center; gap: var(--s2); }
+    .sec + .sec { margin-top: var(--s6); }
+    /* ui/page.ts pageFoot(): the revision line under a list - prose left, the value right. */
+    .page-foot { display: flex; justify-content: space-between; gap: var(--s3); padding: var(--s3) var(--s1) 0; font-size: var(--f-label); color: var(--text-3); }
+    .page-foot-rev { font-family: var(--mono); font-size: var(--f-caption); }
 
     /* docs/33 C3: the JSON view is one formatted code block (json-view.ts) — standard indented
        JSON, every line visible, no fold and no inner scroll box: the page scrolls, and a block
@@ -413,7 +479,7 @@
     .menu button.pick.on::before { visibility: visible; }
     /* docs/43 M1: the tab strip's overflow lists open objects, so its rows carry the same
        type glyph and dirty dot the cards do — the menu is the whole set's one read. */
-    .menu button .ic { width: 14px; height: 14px; flex: none; color: var(--text-3); }
+    .menu button .ic { width: var(--ic-m); height: var(--ic-m); flex: none; color: var(--text-3); }
 
     .menu hr { border: 0; border-top: 1px solid var(--sep-soft); margin: var(--s1) 0; }
     /* A caption for the first group: "Copy Codex command" needs to say what it is for. */

@@ -1509,6 +1509,13 @@ const zh: Record<string, string> = {
   "wire.plugins": "插件",
   "wire.secrets": "密钥",
   "wire.system": "系统",
+  /* --- ui (docs/46: the component library) --- */
+  "ui.today": "今天",
+  "ui.yesterday": "昨天",
+  "ui.ms": "{n} ms",
+  "ui.sec": "{n} s",
+  "ui.timesN": "×{n}",
+  "ui.runN": "连续 {n} 次相同",
 };
 
 export default zh;

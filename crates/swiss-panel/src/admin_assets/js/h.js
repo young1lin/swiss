@@ -44,7 +44,7 @@
 
      NO RAW HTML CHILD. There is no `html:` prop and no dangerouslySetInnerHTML. A caller with
      real markup to insert (the icon sprite) uses a builder that returns a NODE — see iconNode in
-     util.ts. Leaving a raw-HTML door in this module would hand back exactly the hole the text
+     ui/icon.ts. Leaving a raw-HTML door in this module would hand back exactly the hole the text
      nodes just closed.
    ================================================================================================ */
 
@@ -71,7 +71,7 @@
  *  writing the string "null" — the conditional attributes in this panel ("selected" only when
  *  it is, aria-label only when the button has no text) read better as an expression than as an
  *  if around an setAttribute. */
-                                                                            
+                                                                                   
 
 /* className is omitted in favour of `class`: two spellings of one thing is how the old code
  * ended up with rows that set both. `style` comes back as a string because that is how this

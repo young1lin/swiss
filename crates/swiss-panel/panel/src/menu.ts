@@ -23,7 +23,7 @@ import { groupedMcps, sideCfg, visibleMcps } from "./sidebar.js";
 import { mountGroup } from "./groups.js";
 import { currentView, draggingGroupName, draggingRow, foldMap, listFilter, setMenuOpen } from "./ui-state.js";
 import { mcpBusyVerb, mcpRows, selectedMcp } from "./mcp-state.js";
-import { tr } from "./i18n.js";
+import { locale, tr } from "./i18n.js";
 
 /* --- a menu anchored to a button ---------------------------------------------------------------
    The pane's overflow menu anchors to .pane-actions; menus raised from the sidebar have no such
@@ -157,7 +157,10 @@ function patchSidebar(): void {
   const rows = visibleMcps();
   // The rebuild key covers everything structural: which groups exist, what is in each, and which are
   // folded shut. Dot colour, latency and selection are patched below and stay out of it on purpose.
-  const sig = groups.map((g) => {
+  // The language is in it too: the group bands' words (the empty line, the + and ⋯ labels) are
+  // built once per rebuild, so without it a 文/A flip left them in the old language until the
+  // membership next changed (found live on 19998 in the docs/46 P1b second-language pass).
+  const sig = locale() + "\u0003" + groups.map((g) => {
     return g.name + "\u0001" + (foldMap()[g.name] && !listFilter().trim() ? "c" : "o") + "\u0001" +
       g.rows.map((m) => { return m.name; }).join("\u0000");
   }).join("\u0002");

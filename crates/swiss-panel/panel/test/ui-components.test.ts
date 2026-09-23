@@ -1,0 +1,517 @@
+/*
+ * Copyright 2026 young1lin
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// @vitest-environment happy-dom
+
+/* docs/46 §2 - the ui/ component library, one describe per module. Each pins the markup a
+   page and the stylesheet agree on (class, role, aria, data hooks) and the option that
+   changes it, so a component cannot drift from ui.css or from the delegated listeners that
+   address it. The last block renders every component with every option and checks each class
+   it drew is styled by base.css or ui.css - the two sheets the gallery links - so a typo in a
+   class name fails here instead of rendering as an unstyled box. */
+import { afterEach, describe, expect, it } from "vitest";
+import { install } from "../src/i18n.js";
+import zh from "../src/locales/zh.js";
+import {
+  btn, card, collapseRuns, dayLabel, dot, emptyNode, fmtMs, groupNode, iconBtn, iconNode, inlineForm,
+  kvRow, moreBtn, pageFoot, paneHead, row, section, seg, sw, tag, timeLabel, timeline, timelineToggle,
+} from "../src/ui/index.js";
+import type { TimelineItem } from "../src/ui/index.js";
+import { allClassesOf, parseCss } from "./css-rules.js";
+import { sheet } from "./styles.js";
+
+afterEach(() => { install("en", null); });
+
+function useHref(root: Element): string | null {
+  const use = root.querySelector("use");
+  return use ? use.getAttribute("href") : null;
+}
+
+describe("ui/icon - iconNode", () => {
+  it("is an SVG-namespace <svg class=ic> over one <use href=#i-name>, hidden from AT", () => {
+    const svg = iconNode("plus");
+    expect(svg.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(svg.getAttribute("class")).toBe("ic");
+    expect(svg.getAttribute("aria-hidden")).toBe("true");
+    expect(useHref(svg)).toBe("#i-plus");
+  });
+
+  it("a label makes the glyph speak instead", () => {
+    const svg = iconNode("server", "stdio");
+    expect(svg.getAttribute("role")).toBe("img");
+    expect(svg.getAttribute("aria-label")).toBe("stdio");
+    expect(svg.hasAttribute("aria-hidden")).toBe(false);
+  });
+});
+
+describe("ui/button", () => {
+  it("btn is a type=button .btn with the word as its text", () => {
+    const b = btn("Save");
+    expect(b.tagName).toBe("BUTTON");
+    expect(b.type).toBe("button");
+    expect(b.className).toBe("btn");
+    expect(b.textContent).toBe("Save");
+    expect(b.querySelector("svg")).toBeNull();
+  });
+
+  it("kind, a leading glyph, the data hook, id, title and disabled", () => {
+    const b = btn("Run", { kind: "primary", icon: "play", id: "go", title: "Run it now", data: { act: "run" }, disabled: true });
+    expect(b.className).toBe("btn primary with-ic");
+    expect(b.firstElementChild?.getAttribute("class")).toBe("ic");
+    expect(useHref(b)).toBe("#i-play");
+    expect(b.textContent).toBe("Run");
+    expect(b.id).toBe("go");
+    expect(b.title).toBe("Run it now");
+    expect(b.dataset.act).toBe("run");
+    expect(b.disabled).toBe(true);
+    expect(btn("Remove", { kind: "danger" }).className).toBe("btn danger");
+    expect(btn("Cancel", { kind: "ghost" }).className).toBe("btn ghost");
+  });
+
+  it("iconBtn: the word is the aria-label and, by default, the tooltip", () => {
+    const b = iconBtn("copy", "Copy");
+    expect(b.className).toBe("btn icon");
+    expect(b.getAttribute("aria-label")).toBe("Copy");
+    expect(b.title).toBe("Copy");
+    expect(b.hasAttribute("aria-pressed")).toBe(false);
+    expect(b.textContent).toBe("");
+    expect(useHref(b)).toBe("#i-copy");
+  });
+
+  it("iconBtn: a toggle says its state; ghost and an own title", () => {
+    const off = iconBtn("maximize", "Focus", { pressed: false, ghost: true, title: "Focus mode (F)" });
+    expect(off.getAttribute("aria-pressed")).toBe("false");
+    expect(off.className).toBe("btn icon ghost");
+    expect(off.title).toBe("Focus mode (F)");
+    expect(off.getAttribute("aria-label")).toBe("Focus");
+    expect(iconBtn("maximize", "Focus", { pressed: true }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("moreBtn is the ghost ellipsis with the caller's hook", () => {
+    const b = moreBtn("More actions", { data: { more: "fs" } });
+    expect(b.className).toBe("btn icon ghost");
+    expect(useHref(b)).toBe("#i-ellipsis");
+    expect(b.getAttribute("aria-label")).toBe("More actions");
+    expect(b.dataset.more).toBe("fs");
+  });
+});
+
+describe("ui/status", () => {
+  it("dot: the state is the class, the title says it aloud", () => {
+    const d = dot("error", "Failed to start");
+    expect(d.className).toBe("dot error");
+    expect(d.title).toBe("Failed to start");
+    expect(d.getAttribute("role")).toBe("img");
+    expect(d.getAttribute("aria-label")).toBe("Failed to start");
+    // "off" is the bare grey dot: no class for a rule that would only repeat .dot's own.
+    expect(dot("off", "Stopped").className).toBe("dot");
+  });
+
+  it("tag: sans and toneless by default; mono for a value, a tone only for state", () => {
+    expect(tag("proxy").className).toBe("tag");
+    expect(tag("exit 2", { mono: true, tone: "bad", title: "non-zero exit" }).className).toBe("tag mono bad");
+    expect(tag("slow", { tone: "warn" }).className).toBe("tag warn");
+    expect(tag("exit 2", { title: "non-zero exit" }).title).toBe("non-zero exit");
+  });
+});
+
+describe("ui/switch - sw", () => {
+  it("is a role=switch button whose aria-checked is the state", () => {
+    const on = sw(true, "Enable github", { data: { sw: "github" } });
+    expect(on.className).toBe("sw");
+    expect(on.type).toBe("button");
+    expect(on.getAttribute("role")).toBe("switch");
+    expect(on.getAttribute("aria-checked")).toBe("true");
+    expect(on.getAttribute("aria-label")).toBe("Enable github");
+    expect(on.dataset.sw).toBe("github");
+    const off = sw(false, "Enable github", { disabled: true });
+    expect(off.getAttribute("aria-checked")).toBe("false");
+    expect(off.disabled).toBe(true);
+  });
+});
+
+describe("ui/page", () => {
+  it("paneHead: a description and the actions; no location title unless asked", () => {
+    const head = paneHead({ desc: "Forward local ports.", actions: [btn("New", { kind: "primary" })] });
+    expect(head.className).toBe("pane-head");
+    expect(head.querySelector("h1")).toBeNull();
+    expect(head.querySelector(".pane-desc")?.textContent).toBe("Forward local ports.");
+    expect(head.querySelector(".pane-actions > .btn.primary")).not.toBeNull();
+    const res = paneHead({ title: "github", sub: "stdio · 12 tools" });
+    expect(res.querySelector("h1.pane-title")?.textContent).toBe("github");
+    expect(res.querySelector(".pane-sub")?.textContent).toBe("stdio · 12 tools");
+    expect(res.querySelector(".pane-actions")).toBeNull();
+    expect(paneHead({ desc: "x", actions: [] }).querySelector(".pane-actions")).toBeNull();
+  });
+
+  it("section: caption and tools share the head; tools alone keep the head's two columns", () => {
+    const s = section({ cap: "Scheduled commands", tools: [iconBtn("plus", "Add")] }, card(row({ name: "backup" })));
+    expect(s.tagName).toBe("SECTION");
+    expect(s.className).toBe("sec");
+    expect(s.querySelector(".sec-head > .sec-cap")?.textContent).toBe("Scheduled commands");
+    expect(s.querySelector(".sec-head > .sec-tools > .btn.icon")).not.toBeNull();
+    expect(s.querySelector(":scope > .group > .lrow")).not.toBeNull();
+    const toolsOnly = section({ tools: [iconBtn("plus", "Add")] });
+    const kids = Array.from(toolsOnly.querySelector(".sec-head")?.children || []);
+    expect(kids.map((k) => k.className)).toEqual(["", "sec-tools"]);
+    expect(section({}, "body").querySelector(".sec-head")).toBeNull();
+  });
+
+  it("card is the .group surface over its rows", () => {
+    const c = card(row({ name: "a" }), row({ name: "b" }));
+    expect(c.className).toBe("group");
+    expect(c.querySelectorAll(".lrow").length).toBe(2);
+  });
+
+  it("pageFoot: prose left, the revision (mono) right only when there is one", () => {
+    const f = pageFoot({ note: "Saved to gateway.config.json", rev: "rev 42" });
+    expect(f.className).toBe("page-foot");
+    expect(f.firstElementChild?.textContent).toBe("Saved to gateway.config.json");
+    expect(f.querySelector(".page-foot-rev")?.textContent).toBe("rev 42");
+    expect(pageFoot({ note: "x" }).querySelector(".page-foot-rev")).toBeNull();
+  });
+
+  it("inlineForm is one .inline-form row of the given controls", () => {
+    const f = inlineForm(nameInput(), btn("Add", { kind: "primary" }));
+    expect(f.className).toBe("inline-form");
+    expect(f.children.length).toBe(2);
+  });
+
+  it("emptyNode: glyph, title, hint, and an action the view answers by data-empty-action", () => {
+    const e = emptyNode({ icon: "server", title: "No MCP servers", hint: "Add one to begin.", action: "Add server" });
+    expect(e.className).toBe("empty");
+    expect(useHref(e.querySelector(".empty-ic") as Element)).toBe("#i-server");
+    expect(e.querySelector("h2")?.textContent).toBe("No MCP servers");
+    expect(e.querySelector("p.hint")?.textContent).toBe("Add one to begin.");
+    const act = e.querySelector("button.btn.ghost") as HTMLButtonElement;
+    expect(act.dataset.emptyAction).toBe("Add server");
+    expect(act.textContent).toBe("Add server");
+    const bare = emptyNode({ icon: "server", title: "Nothing" });
+    expect(bare.querySelector(".hint")).toBeNull();
+    expect(bare.querySelector("button")).toBeNull();
+  });
+});
+
+function nameInput(): HTMLInputElement {
+  const i = document.createElement("input");
+  i.placeholder = "name";
+  return i;
+}
+
+describe("ui/row", () => {
+  it("row: lead, name, sub - and has-lead moves the separator past the dot", () => {
+    const r = row({ lead: dot("up", "Running"), name: "github", sub: "stdio", data: { srv: "github" } });
+    expect(r.className).toBe("lrow has-lead");
+    expect(r.dataset.srv).toBe("github");
+    expect(r.querySelector(":scope > .lrow-lead > .dot.up")).not.toBeNull();
+    expect(r.querySelector(".lrow-main > .lrow-name")?.textContent).toBe("github");
+    expect(r.querySelector(".lrow-main > .lrow-sub")?.textContent).toBe("stdio");
+    expect(r.querySelector(".lrow-acts")).toBeNull();
+    expect(r.hasAttribute("draggable")).toBe(false);
+  });
+
+  it("an error replaces the sub line and carries its whole text in the tooltip", () => {
+    const why = "spawn npx ENOENT: the command was not found on PATH";
+    const r = row({ name: "fs", sub: "stdio", err: why });
+    const err = r.querySelector(".lrow-err") as HTMLElement;
+    expect(err.textContent).toBe(why);
+    expect(err.title).toBe(why);
+    expect(r.querySelector(".lrow-sub")).toBeNull();
+    expect(r.classList.contains("has-lead")).toBe(false);
+  });
+
+  it("cols: a plain child is a sans column, a RowCol may be mono with a title", () => {
+    const r = row({ name: "pg", cols: ["3 rules", { v: "5432", mono: true, title: "local port" }] });
+    const cols = Array.from(r.querySelectorAll<HTMLElement>(".lrow-col"));
+    expect(cols.map((c) => c.className)).toEqual(["lrow-col", "lrow-col mono"]);
+    expect(cols.map((c) => c.textContent)).toEqual(["3 rules", "5432"]);
+    expect(cols[1].title).toBe("local port");
+  });
+
+  it("the acts keep their order - switch, the one word, the ellipsis", () => {
+    const r = row({
+      name: "nightly", muted: true, draggable: true, title: "nightly backup",
+      more: moreBtn("More"), primary: btn("Run"), toggle: sw(false, "Enable nightly"),
+    });
+    const acts = Array.from(r.querySelector(".lrow-acts")?.children || []);
+    expect(acts.map((a) => a.className)).toEqual(["sw", "btn", "btn icon ghost"]);
+    expect(r.className).toBe("lrow muted");
+    expect(r.getAttribute("draggable")).toBe("true");
+    expect(r.title).toBe("nightly backup");
+  });
+
+  it("kvRow: the key column and a value that is mono only when asked", () => {
+    const kv = kvRow("Config file", "C:/swiss/gateway.config.json", { mono: true, title: "copy me" });
+    expect(kv.className).toBe("kv");
+    expect(kv.querySelector(".kv-k")?.textContent).toBe("Config file");
+    const v = kv.querySelector(".kv-v") as HTMLElement;
+    expect(v.className).toBe("kv-v mono");
+    expect(v.title).toBe("copy me");
+    expect(kvRow("Uptime", "3 days").querySelector(".kv-v")?.className).toBe("kv-v");
+  });
+});
+
+describe("ui/group - groupNode", () => {
+  it("page density: the group IS the card; the band holds toggle, + and ⋯", () => {
+    const p = groupNode({ name: "learn", label: "Learn", count: 2, density: "page", addTitle: "Add to learn", moreTitle: "Group actions", data: { scope: "jobs" } },
+      row({ name: "a" }), row({ name: "b" }));
+    expect(p.root.className).toBe("grp grp--page group");
+    expect(p.root.dataset.group).toBe("learn");
+    expect(p.root.dataset.scope).toBe("jobs");
+    expect(p.head.parentElement).toBe(p.root);
+    expect(p.toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(p.toggle.querySelector(".grp-chev use")?.getAttribute("href")).toBe("#i-chevron-right");
+    expect(p.toggle.querySelector(".grp-name")?.textContent).toBe("Learn");
+    expect(p.toggle.querySelector(".grp-n")?.textContent).toBe("2");
+    expect(p.add?.title).toBe("Add to learn");
+    expect(p.add?.getAttribute("aria-label")).toBe("Add to learn");
+    expect(p.more?.getAttribute("aria-label")).toBe("Group actions");
+    expect(Array.from(p.head.children)).toEqual([p.toggle, p.add, p.more]);
+    expect(p.body.querySelectorAll(":scope > .lrow").length).toBe(2);
+    expect(p.empty).toBeNull();
+  });
+
+  it("side density, folded, empty, read-only: no card class, no buttons, the quiet line", () => {
+    const p = groupNode({ name: "Views", count: 0, density: "side", collapsed: true, emptyText: "No views" });
+    expect(p.root.className).toBe("grp grp--side collapsed");
+    expect(p.toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(p.toggle.querySelector(".grp-name")?.textContent).toBe("Views");
+    expect(p.add).toBeNull();
+    expect(p.more).toBeNull();
+    expect(p.empty?.className).toBe("grp-empty");
+    expect(p.empty?.parentElement).toBe(p.body);
+    expect(p.body.lastElementChild).toBe(p.empty);
+  });
+});
+
+describe("ui/seg", () => {
+  it("a tablist whose buttons carry the page's own data hook and the selection", () => {
+    const s = seg([
+      { id: "tools", label: "Tools", n: 12 },
+      { id: "logs", label: "Logs" },
+      { id: "run", label: "Run", hidden: true, title: "Needs a running server" },
+    ], "logs", { key: "pane", label: "Server sections", id: "srvSeg" });
+    expect(s.className).toBe("seg");
+    expect(s.id).toBe("srvSeg");
+    expect(s.getAttribute("role")).toBe("tablist");
+    expect(s.getAttribute("aria-label")).toBe("Server sections");
+    const bs = Array.from(s.querySelectorAll<HTMLButtonElement>("button"));
+    expect(bs.map((b) => b.dataset.pane)).toEqual(["tools", "logs", "run"]);
+    expect(bs.map((b) => b.getAttribute("aria-selected"))).toEqual(["false", "true", "false"]);
+    expect(bs.every((b) => b.getAttribute("role") === "tab" && b.type === "button")).toBe(true);
+    expect(bs[0].querySelector(".seg-n")?.textContent).toBe("12");
+    expect(bs[1].querySelector(".seg-n")).toBeNull();
+    expect(bs[2].hidden).toBe(true);
+    expect(bs[2].title).toBe("Needs a running server");
+  });
+
+  it("the hook defaults to data-seg", () => {
+    const s = seg([{ id: "all", label: "Everything" }], "all");
+    expect((s.querySelector("button") as HTMLButtonElement).dataset.seg).toBe("all");
+  });
+});
+
+/* A fixed local "now": 2026-09-23 10:00, so the day arithmetic is the reader's local days. */
+const NOW = new Date(2026, 8, 23, 10, 0, 0).getTime();
+const at = (d: number, hh: number, mm = 0, ss = 0): number => new Date(2026, 8, d, hh, mm, ss).getTime();
+
+function item(id: string, when: number, extra: Partial<TimelineItem> = {}): TimelineItem {
+  return Object.assign({ id, at: when, title: "mysql_query" }, extra);
+}
+
+describe("ui/timeline - the helpers", () => {
+  it("dayLabel: today and yesterday are LOCAL days, not 24-hour windows", () => {
+    expect(dayLabel(at(23, 0, 30), NOW)).toBe("Today");
+    expect(dayLabel(at(22, 23, 50), NOW)).toBe("Yesterday");
+    expect(dayLabel(at(22, 0, 0), NOW)).toBe("Yesterday");
+    const older = dayLabel(at(21, 12), NOW);
+    expect(older).toContain("Sep");
+    expect(older).toContain("21");
+    expect(older).not.toContain("2026");
+    expect(dayLabel(new Date(2025, 11, 31, 9).getTime(), NOW)).toContain("2025");
+  });
+
+  it("dayLabel speaks the installed language", () => {
+    install("zh-CN", zh);
+    expect(dayLabel(at(23, 1), NOW)).toBe("今天");
+    expect(dayLabel(at(22, 1), NOW)).toBe("昨天");
+  });
+
+  it("timeLabel is 24-hour HH:MM:SS", () => {
+    expect(timeLabel(at(23, 14, 2, 11))).toBe("14:02:11");
+    expect(timeLabel(at(23, 9, 5, 7))).toBe("09:05:07");
+  });
+
+  it("fmtMs: whole ms, then one decimal of seconds, then whole seconds - cut where rounding lands", () => {
+    expect([0, 12.4, 999.4, 999.6, 1234, 9949, 9950, 61234].map(fmtMs))
+      .toEqual(["0 ms", "12 ms", "999 ms", "1.0 s", "1.2 s", "9.9 s", "10 s", "61 s"]);
+  });
+
+  it("collapseRuns folds consecutive equal signatures within one day, keeping order", () => {
+    const runs = collapseRuns([
+      item("a", at(23, 9, 3), { same: "q" }),
+      item("b", at(23, 9, 2), { same: "q" }),
+      item("c", at(23, 9, 1), { same: "r" }),
+      item("d", at(23, 9, 0)),
+      item("e", at(23, 8, 59)),
+      item("f", at(22, 23, 59), { same: "r" }),
+    ]);
+    expect(runs.map((r) => r.map((i) => i.id).join(""))).toEqual(["ab", "c", "d", "e", "f"]);
+    // Same signature across midnight: two days, two rows.
+    const split = collapseRuns([item("x", at(23, 0, 1), { same: "s" }), item("y", at(22, 23, 59), { same: "s" })]);
+    expect(split.length).toBe(2);
+  });
+});
+
+describe("ui/timeline - timeline()", () => {
+  it("one day heading per local day, rows beneath it, the date never repeated per row", () => {
+    const tl = timeline([item("a", at(23, 9)), item("b", at(23, 8)), item("c", at(22, 17))], { now: NOW });
+    expect(tl.className).toBe("tl");
+    const kids = Array.from(tl.children).map((k) => k.className === "tl-day" ? "#" + k.textContent : k.getAttribute("data-tl-id"));
+    expect(kids).toEqual(["#Today", "a", "b", "#Yesterday", "c"]);
+    expect(timeline([item("a", at(23, 9))], { now: NOW, dayHeads: false }).querySelector(".tl-day")).toBeNull();
+  });
+
+  it("a row: chevron, time, title, argument, the ms - and aria-expanded on the summary", () => {
+    const tl = timeline([item("a", at(23, 14, 2, 11), { arg: '{"sql":"select 1"}', ms: 12, data: { call: "7" } })], { now: NOW });
+    const it0 = tl.querySelector(".tl-item") as HTMLElement;
+    expect(it0.dataset.tlId).toBe("a");
+    expect(it0.dataset.call).toBe("7");
+    const sum = it0.querySelector(":scope > button.tl-sum") as HTMLButtonElement;
+    expect(sum.type).toBe("button");
+    expect(sum.getAttribute("aria-expanded")).toBe("false");
+    expect(Array.from(sum.children).map((c) => c.className)).toEqual(["tl-chev", "tl-time", "tl-title", "tl-arg", "tl-ms"]);
+    expect(sum.querySelector("time.tl-time")?.textContent).toBe("14:02:11");
+    expect(sum.querySelector("time")?.getAttribute("datetime")).toBe(new Date(at(23, 14, 2, 11)).toISOString());
+    expect((sum.querySelector(".tl-arg") as HTMLElement).title).toBe('{"sql":"select 1"}');
+    expect(sum.querySelector(".tl-ms")?.textContent).toBe("12 ms");
+    expect(it0.querySelector(".tl-body")).toBeNull();
+  });
+
+  it("who appears only when the loaded items disagree about it (or when forced)", () => {
+    const one = [item("a", at(23, 9), { who: "claude-code" }), item("b", at(23, 8), { who: "claude-code" })];
+    expect(timeline(one, { now: NOW }).querySelector(".tl-who")).toBeNull();
+    expect(timeline(one, { now: NOW, showWho: true }).querySelectorAll(".tl-who").length).toBe(2);
+    const two = [item("a", at(23, 9), { who: "claude-code" }), item("b", at(23, 8), { who: "cursor" })];
+    const who = Array.from(timeline(two, { now: NOW }).querySelectorAll<HTMLElement>(".tl-who"));
+    expect(who.map((w) => w.textContent)).toEqual(["claude-code", "cursor"]);
+    expect(who[1].title).toBe("cursor");
+  });
+
+  it("×N for a folded run; a failure is a red tag, not a red row; slow is amber", () => {
+    const tl = timeline([
+      item("a", at(23, 9, 3), { same: "q", ms: 1500, status: { text: "error", tone: "bad" } }),
+      item("b", at(23, 9, 2), { same: "q" }),
+      item("c", at(23, 9, 1), { same: "q" }),
+      item("d", at(23, 9, 0), { ms: 200 }),
+    ], { now: NOW });
+    const rows = Array.from(tl.querySelectorAll<HTMLElement>(".tl-item"));
+    expect(rows.map((r) => r.dataset.tlId)).toEqual(["a", "d"]);
+    const n = rows[0].querySelector(".tl-n") as HTMLElement;
+    expect(n.textContent).toBe("×3");
+    expect(n.title).toBe("3 identical in a row");
+    expect(rows[0].querySelector(".tag.bad")?.textContent).toBe("error");
+    expect(rows[0].className).toBe("tl-item");
+    expect(rows[0].querySelector(".tl-ms")?.className).toBe("tl-ms slow");
+    expect(rows[1].querySelector(".tl-ms")?.className).toBe("tl-ms");
+    expect(rows[1].querySelector(".tl-n")).toBeNull();
+    const strict = timeline([item("a", at(23, 9), { ms: 200 })], { now: NOW, slowMs: 100 });
+    expect(strict.querySelector(".tl-ms")?.className).toBe("tl-ms slow");
+  });
+
+  it("an open row paints the body the view owns, handed the whole run", () => {
+    const seen: string[] = [];
+    const tl = timeline([item("a", at(23, 9), { same: "q" }), item("b", at(23, 8), { same: "q" })], {
+      now: NOW, open: new Set(["a"]),
+      body: (it, run) => { seen.push(it.id + ":" + run.length); return "the full request"; },
+    });
+    const it0 = tl.querySelector(".tl-item") as HTMLElement;
+    expect(it0.className).toBe("tl-item open");
+    expect(it0.querySelector(".tl-sum")?.getAttribute("aria-expanded")).toBe("true");
+    expect(it0.querySelector(":scope > .tl-body")?.textContent).toBe("the full request");
+    expect(seen).toEqual(["a:2"]);
+  });
+
+  it("the Chinese pass: ×N's tooltip and the durations come from the table", () => {
+    install("zh-CN", zh);
+    const tl = timeline([item("a", at(23, 9), { same: "q", ms: 2500 }), item("b", at(23, 8), { same: "q" })], { now: NOW });
+    expect((tl.querySelector(".tl-n") as HTMLElement).title).toBe("连续 2 次相同");
+    expect(tl.querySelector(".tl-day")?.textContent).toBe("今天");
+    expect(tl.querySelector(".tl-ms")?.textContent).toBe("2.5 s");
+  });
+});
+
+describe("ui/timeline - timelineToggle", () => {
+  it("opens with the body it is handed, closes and drops it, and answers the new state", () => {
+    const tl = timeline([item("a", at(23, 9)), item("b", at(23, 8))], { now: NOW });
+    expect(timelineToggle(tl, "b", "detail")).toBe(true);
+    const b = tl.querySelector('[data-tl-id="b"]') as HTMLElement;
+    expect(b.classList.contains("open")).toBe(true);
+    expect(b.querySelector(".tl-sum")?.getAttribute("aria-expanded")).toBe("true");
+    expect(b.querySelector(":scope > .tl-body")?.textContent).toBe("detail");
+    expect(timelineToggle(tl, "b")).toBe(false);
+    expect(b.classList.contains("open")).toBe(false);
+    expect(b.querySelector(".tl-sum")?.getAttribute("aria-expanded")).toBe("false");
+    expect(b.querySelector(".tl-body")).toBeNull();
+    expect(tl.querySelector('[data-tl-id="a"]')?.classList.contains("open")).toBe(false);
+  });
+
+  it("an unknown id changes nothing", () => {
+    const tl = timeline([item("a", at(23, 9))], { now: NOW });
+    const before = tl.outerHTML;
+    expect(timelineToggle(tl, "zzz", "x")).toBe(false);
+    expect(tl.outerHTML).toBe(before);
+  });
+});
+
+describe("docs/46 - every class the library draws is styled by base.css or ui.css", () => {
+  it("renders every component with every option; no class is left unstyled", () => {
+    const tl = timeline([
+      item("a", at(23, 9), { same: "q", ms: 1500, arg: "{}", who: "x", status: { text: "error", tone: "bad" } }),
+      item("b", at(23, 9), { same: "q" }),
+      item("c", at(22, 8), { who: "y", status: { text: "slow", tone: "warn" } }),
+    ], { now: NOW, open: new Set(["a"]), body: () => "body" });
+    const all = [
+      btn("a"), btn("b", { kind: "primary", icon: "play" }), btn("c", { kind: "ghost" }), btn("d", { kind: "danger" }),
+      iconBtn("copy", "Copy", { ghost: true }), moreBtn("More"),
+      ...(["up", "down", "error", "idle", "starting", "stopping", "off"] as const).map((s) => dot(s, s)),
+      tag("t", { mono: true, tone: "bad" }), tag("t", { tone: "warn" }), sw(true, "on"),
+      paneHead({ title: "t", desc: "d", sub: "s", actions: [btn("x")] }),
+      section({ cap: "c", tools: [btn("x")] }, card(row({ name: "n" }))),
+      pageFoot({ note: "n", rev: "r" }), inlineForm(btn("x")),
+      emptyNode({ icon: "server", title: "t", hint: "h", action: "a" }),
+      row({ lead: dot("up", "up"), name: "n", sub: "s", cols: ["c", { v: "v", mono: true }], toggle: sw(true, "x"), primary: btn("x"), more: moreBtn("m"), muted: true }),
+      row({ name: "n", err: "e" }), kvRow("k", "v", { mono: true }),
+      groupNode({ name: "g", count: 1, density: "page", addTitle: "a", moreTitle: "m", collapsed: true }).root,
+      groupNode({ name: "g", count: 0, density: "side", emptyText: "e" }).root,
+      seg([{ id: "a", label: "A", n: 1 }], "a"), tl,
+    ];
+    const drawn = new Set<string>();
+    for (const root of all) {
+      for (const el of [root, ...Array.from(root.querySelectorAll("*"))]) {
+        const cls = el.getAttribute("class");
+        if (cls) cls.split(/\s+/).filter(Boolean).forEach((c) => drawn.add(c));
+      }
+    }
+    const styled = new Set<string>();
+    for (const name of ["base.css", "ui.css"] as const) {
+      for (const rule of parseCss(sheet(name))) rule.selectors.forEach((s) => allClassesOf(s).forEach((c) => styled.add(c)));
+    }
+    const unstyled = Array.from(drawn).filter((c) => !styled.has(c)).sort();
+    expect(drawn.size).toBeGreaterThan(40);
+    expect(unstyled).toEqual([]);
+  });
+});
