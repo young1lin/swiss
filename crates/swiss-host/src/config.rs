@@ -383,6 +383,9 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    // Clearing the bit the only way Windows allows before delete: test cleanup over a file
+    // this test itself made readonly, so the swap race the lint guards against cannot happen.
+    #[allow(clippy::permissions_set_readonly_false)]
     fn removal_reports_a_write_failure_as_such() {
         swiss_core::secure::key::use_test_master_key();
         let dir = temp_dir("removal-ro");
