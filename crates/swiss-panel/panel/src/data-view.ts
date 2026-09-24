@@ -44,6 +44,7 @@ import { dbConn, dbIsMounted, dbSqlTab, dbTab, dbTabs, mountDbView } from "./db-
 import { dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsContext, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
+import { tag } from "./ui/status.js";
 
 /* ================================================================================================
    Data view — a DBeaver-style browser over the mysql/pg MCPs.
@@ -239,8 +240,9 @@ function renderDbView(): void {
       h("div", { class: "db-headrow" },
         h("div", { class: "db-head", id: "dbHead" }),
         // Pane-level actions live behind one ⋯ next to the head (docs/22 W3.2); the Activity
-        // monitor is the first. Hidden until a SQL connection exists — redis has no sessions.
-        h("button", { class: "btn icon", id: "dbMore", type: "button", title: tr("dataView.morePaneActions"), hidden: true }, iconNode("ellipsis"))),
+        // monitor is the first. Shown only on a SQL connection (redis has no sessions) and only
+        // while the open object has no ⋯ of its own - renderDbToolbar decides (docs/46 P7).
+        h("button", { class: "btn icon", id: "dbMore", type: "button", title: tr("dataView.morePaneActions"), aria: { haspopup: "menu" }, hidden: true }, iconNode("ellipsis"))),
       h("div", { class: "db-filters", id: "dbFilters" }),
       // The console is the sql tab's BODY now (docs/42 T2), not a block toggled over the
       // pane: renderDbGrid unhides it for a sql tab and hides it for every other kind.
@@ -326,7 +328,7 @@ function dbPaneClick(ev: MouseEvent): void {
   if (dbFiltersClick(t)) return;
   if (dbFormClick(t)) return;
   if (dbStructureClick(t, ev)) return;
-  if (dbRedisClick(t, ev)) return;
+  if (dbRedisClick(t)) return;
   if (dbActivityClick(t, ev)) return;
 }
 
@@ -530,32 +532,29 @@ function dbRedisCompare(a: ApiDbRedisKeyRow, b: ApiDbRedisKeyRow): number {
    switch — it used to run once, at mount, before /api/db had even answered, so it never saw a
    redis connection. */
 function dbSyncKind(): void {
-  const grep = $<HTMLInputElement>("dbGrep"), sql = $<HTMLTextAreaElement>("dbSql"), explain = $("dbSqlExplain"), hint = $("dbSqlHint");
-  if (!grep || !sql || !explain || !hint) return;
-  const fmt = $("dbSqlFormat");
+  // Only the skeleton's own ids. This used to demand #dbSqlExplain too, and docs/43 M4 took the
+  // console's flat row (Explain, Format) into the toolbar's overflow: the early return then fired
+  // on every mount and switch, so the pane's ⋯ never showed and a Redis key list's search said
+  // "Filter tables" (found on the docs/46 P7 walk). Explain and Format are overflow rows now,
+  // and dbMoreItemsForSql leaves them out for a Redis command.
+  const grep = $<HTMLInputElement>("dbGrep"), sql = $<HTMLTextAreaElement>("dbSql"), hint = $("dbSqlHint");
+  if (!grep || !sql || !hint) return;
   if (dbIsRedis()) {
     grep.placeholder = tr("dataView.filterKeys"); grep.setAttribute("aria-label", tr("dataView.filterKeys"));
     grep.title = tr("dataView.filterKeysScanPattern");
     sql.placeholder = tr("dataView.redisConsolePlaceholder");
-    explain.hidden = true;
-    if (fmt) fmt.hidden = true; // docs/22 W5.4: SQL formatting has nothing to say about a command
     hint.textContent = tr("dataView.redisConsoleHint");
   } else {
     // The placeholder IS the grammar (docs/22 W1.6): comma AND, | OR, * wildcard.
     grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", tr("dataView.filterTables"));
     grep.title = tr("dataView.filterTablesGrammar");
     sql.placeholder = tr("dataView.selectUpdateDeleteStatements");
-    explain.hidden = false;
-    if (fmt) fmt.hidden = false;
     // docs/22 W4.3: the ; split answers one result tab per statement; the blank-line block
     // rule (W1.8) still decides what a single Run covers.
     hint.textContent = tr("dataView.blankLineStartsNew");
   }
-  // The pane's ⋯ exists for the Activity page, which is a SQL-connection feature: a redis
-  // connection (or none) hides the button rather than the menu hiding its one item.
-  const more = $("dbMore");
-  const d = dbConn();
-  if (more) more.hidden = !d.conn || dbIsRedis();
+  // The pane's ⋯ (#dbMore) is renderDbToolbar's to show: it depends on the open object too,
+  // and every caller of this repaints the toolbar right after.
 }
 
 /** The one label a connection goes by — the sidebar dropdown's option text. The page-bar
@@ -636,10 +635,14 @@ function dbDrawerFill(host: HTMLElement | null, items: MenuItem[], open: boolean
   items.forEach((it: MenuItem): void => {
     if (it.sep) { inner.appendChild(h("hr")); return; }
     if (it.heading) { inner.appendChild(h("div", { class: "db-drawer-head" }, it.label)); return; }
+    // The current pick is a tick in its own column (docs/46 §3.7, rule 15), the menu's .pick
+    // idiom: blue text said "selected" in the colour links and actions use. Every row keeps the
+    // column, so the names line up whether or not their row is the current one.
     const b = h("button", {
       class: "db-drow" + (it.on ? " on" : ""), type: "button",
       disabled: !!it.disabled, title: it.title || undefined,
     },
+    h("span", { class: "db-drow-tick" }, it.on ? iconNode("check") : null),
     it.mark ? typeTagNode(it.mark) : null,
     h("span", { class: "db-drow-name" }, it.label),
     it.meta != null ? h("span", { class: "db-drow-meta" }, it.meta) : null);
@@ -672,14 +675,17 @@ function renderDbSide(): void {
   const dot = el("span", "db-dot" + (cur && cur.state === "stopped" ? " off" : ""));
   row.appendChild(dot);
   row.appendChild(el("span", "db-row-name", cur ? cur.name : tr("dataView.pickConnection")));
-  // The dialect chip follows the MCP sidebar's launch-tag vocabulary (docs/29): a mapped
-  // dialect paints its brand glyph (the word rides the aria-label), anything outside the
-  // whitelist keeps the mono word chip - a mark and a word are different things, and the
-  // same tag should never be a mark in one sidebar and a word in the other.
+  // The dialect follows the MCP sidebar's launch-tag vocabulary (docs/29): a mapped dialect
+  // paints its brand glyph, bare (the word rides the aria-label); anything outside the
+  // whitelist is the library's mono tag (docs/46 §3.7) - a mark and a word are different
+  // things, and the same tag should never be a mark in one sidebar and a word in the other.
   if (cur) {
-    const chip = el("span", "db-chip");
-    fill(chip, typeTagNode(cur.dialect));
-    row.appendChild(chip);
+    const mark = typeTagNode(cur.dialect);
+    if (typeof mark === "string") row.appendChild(tag(mark, { mono: true }));
+    else {
+      (mark as SVGElement).classList.add("db-row-mark");
+      row.appendChild(mark as SVGElement);
+    }
   }
   const chev = iconNode("chevron-down");
   chev.setAttribute("class", "ic db-row-chev");

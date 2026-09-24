@@ -220,11 +220,11 @@ describe("the six panes fold into four tabs (docs/43 M4)", () => {
 });
 
 describe("the status line (docs/43 M4)", () => {
-  it("says the server's own read-only sentence when editable is false", () => {
+  it("leaves the server's read-only sentence to the head (docs/46 §3.7: said once)", () => {
     openTable(false, "Read-only: ops_dev is not this connection's configured database (acme_app_dev).");
     const note = find(byId.dbStatus, (n) => String(n.className).includes("db-status-note"))
       .map((n) => n.textContent).join(" ");
-    expect(note).toContain("Read-only: ops_dev is not this connection's configured database (acme_app_dev).");
+    expect(note).toBe("");
   });
   it("carries the pager and the connection name on an editable table", () => {
     openTable(true);

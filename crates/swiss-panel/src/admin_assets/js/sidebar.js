@@ -119,8 +119,8 @@ function nudgeSelected(up         )          {
  *  in the tooltip and the pane header. Click opens the detail pane; drag is wired by the
  *  groups component (reorder + re-home in one gesture). Right-click raises the row's action
  *  menu (docs/28 D3): the row itself is a <button>, and a button cannot nest the ellipsis
- *  button the Jobs/Tunnels rows use — the ctx-menu anchor pattern (data-csv.js) fits instead,
- *  and the tooltip says so. */
+ *  button the Jobs/Tunnels rows use — a menu at the cursor fits instead, the way the data
+ *  grid's cell menus open, and the tooltip says so. */
 function sideRowNode(m           )                    {
   // The library's source-list row (docs/46 §2.3). Built once per rebuild key; the dot's state and
   // title, the trailing tag and the row title are painted by the patch pass (menu.ts
@@ -129,7 +129,7 @@ function sideRowNode(m           )                    {
   b.onclick = () => { openDetail(m.name); };
   b.addEventListener("contextmenu", (ev) => {
     if (ev.preventDefault) ev.preventDefault();
-    // The cursor point as anchor — the same shape the data grid's ctx menus pass.
+    // The cursor point as anchor — the same shape the data grid's cell menus pass.
     const pt = { left: ev.clientX || 0, top: ev.clientY || 0, bottom: ev.clientY || 0 };
     rowMenu(m.name, pt);
   });

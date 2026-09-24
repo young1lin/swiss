@@ -21,9 +21,9 @@
  *
  * The open flag is the menu's own state, like the dropdown's (ui/select.ts): main.ts must not
  * reload the panel under an open menu and Escape closes a menu before anything else, and both
- * ask menuOpen(). Two menus are still built by hand and set it themselves - the MCP pane's
- * overflow (it lives inside #pane and answers #pane's delegated click; P2 rebuilds it) and
- * Data's context menus (.ctx-menu, P7) - which is the only reason setMenuOpen is exported. */
+ * ask menuOpen(). Every menu in the panel is built here: the MCP pane's overflow became
+ * anchoredMenu (docs/46 P2) and Data's hand-built .ctx-menu popups became popupMenu (P7).
+ * setMenuOpen stays exported for the suites that reset the flag between cases. */
 import { iconNode } from "./icon.js";
 
 /** One popupMenu row. The union is load-bearing: a separator is { sep: true } with NO
@@ -76,20 +76,18 @@ export function menuOpen(): boolean { return open; }
 /** For the two hand-built menus above only; popupMenu and closeMenu keep it themselves. */
 export function setMenuOpen(v: boolean): void { open = v; }
 
-/** Close whatever menu is open: the anchored one (#menu) and any Data context menu. */
+/** Close whatever menu is open: there is only ever one, #menu. */
 export function closeMenu(): void {
   const node = document.getElementById("menu");
   if (node) node.remove();
-  document.querySelectorAll(".ctx-menu").forEach((m) => { m.remove(); });
   open = false;
 }
 
 /** Where an anchored menu lands, clamped to the viewport: growing right from the anchor's
  *  left edge and down from 4px below its bottom, flipping above the anchor when the box
  *  would run off the bottom, never closer than 8px to an edge. A right-click passes the
- *  cursor POINT as the anchor ({left, top, bottom} all the cursor). popupMenu's arithmetic,
- *  factored out so the ctx menus (data-csv.js) and the Table menu (data-edit.js) clamp the
- *  same way instead of landing off-screen at an edge. Pure. */
+ *  cursor POINT as the anchor ({left, top, bottom} all the cursor): Data's cell menus and the
+ *  MCP sidebar's row menu do. Pure, so the clamp pins in a test of its own. */
 function clampMenuPos(anchor: { left: number; top: number; bottom: number }, w: number, h: number, vw: number, vh: number): { left: number; top: number } {
   const below = anchor.bottom + 4;
   return {
@@ -195,7 +193,7 @@ function popupMenu(anchor: { left: number; top: number; bottom: number; width?: 
   if (anchor.width) node.style.minWidth = "max(160px, " + Math.ceil(anchor.width) + "px)";
   // Aligned to the button's LEFT edge and growing right, over the detail pane. Right-aligning it
   // instead pushed a sidebar menu back across the list it was opened from, hiding those rows.
-  // The clamp itself is clampMenuPos — shared with the ctx menus (docs/22 closeout audit).
+  // The clamp itself is clampMenuPos (docs/22 closeout audit).
   const r = node.getBoundingClientRect();
   const pos = clampMenuPos(anchor, r.width, r.height, window.innerWidth, window.innerHeight);
   node.style.left = pos.left + "px";

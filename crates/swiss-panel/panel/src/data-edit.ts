@@ -29,7 +29,8 @@ import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
 import { dbDropTableTabs } from "./data-tabs.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
-import { clampMenuPos, setMenuOpen } from "./ui/menu.js";
+import type { MenuItem } from "./ui/menu.js";
+import { popupMenu } from "./ui/menu.js";
 // fix-plan #16: the Table menu's rename and the typed confirm ride the one-field sheet from
 // the library (ui/sheet.js imports nothing of the panel's, so no cycle).
 import { openFieldSheet } from "./ui/sheet.js";
@@ -60,19 +61,17 @@ function dbTableMenu(anchorEl: HTMLElement): void {
   const d = dbTab();
   if (d.kind !== "table") return;
   if (!c.conn || !d.table) return;
-  const menu = el("div", "ctx-menu");
-  function item(label: string, fn: () => void): void {
-    const b = el("button", "", label) as HTMLButtonElement;
-    b.onclick = () => { closeMenu2(); fn(); };
-    menu.appendChild(b);
-  }
+  // The library's floating menu under the button (docs/46 §3.7): rows, keys, clamp and close
+  // are popupMenu's, the same as the ⋯ this menu is opened from.
+  const items: MenuItem[] = [];
+  const item = (label: string, fn: () => void): void => { items.push({ label, fn }); };
   // docs/22 W1.10: generate this table's four statements from the column set the page already
   // carries (the describe_table shape). Identifiers pass the whitelist, values are ?
   // placeholders, and the template lands in the console — fill the ?s, run, and it is history.
   ["select", "insert", "update", "delete"].forEach((kind: string): void => {
     item(tr("dataEdit.generateKind", { kind: kind.toUpperCase() }), () => { dbGenerateSql(kind); });
   });
-  menu.appendChild(document.createElement("hr"));
+  items.push({ sep: true });
   item(tr("dataEdit.renameTable"), () => {
     // fix-plan #16: the one-field sheet — an illegal name errors INLINE (the typed value
     // stays on the sheet), and nothing is sent until the charset holds.
@@ -92,21 +91,7 @@ function dbTableMenu(anchorEl: HTMLElement): void {
   item(tr("dataEdit.dropTable"), () => {
     dbTypedConfirm({ what: tr("dataEdit.whatDrop"), name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, (): void => { void dbRunDdl("drop"); });
   });
-  document.body.appendChild(menu);
-  // docs/22 closeout audit: the Table menu now clamps to the viewport like popupMenu — a
-  // button near the bottom edge used to drop its menu off-screen. Measured after the append.
-  const r = anchorEl.getBoundingClientRect();
-  const box = menu.getBoundingClientRect();
-  const pos = clampMenuPos(r, box.width, box.height, window.innerWidth, window.innerHeight);
-  menu.style.left = pos.left + "px";
-  menu.style.top = pos.top + "px";
-  setMenuOpen(true);
-  function closeMenu2(): void { menu.remove(); setMenuOpen(false); }
-  setTimeout(() => {
-    document.addEventListener("mousedown", function h(ev) {
-      if (!menu.contains(ev.target as Node)) { menu.remove(); setMenuOpen(false); document.removeEventListener("mousedown", h); }
-    });
-  }, 0);
+  popupMenu(anchorEl.getBoundingClientRect(), items);
 }
 
 /* The typed-name confirm the destructive acts share (a W1 audit follow-up): the one-field

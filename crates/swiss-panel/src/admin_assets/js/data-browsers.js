@@ -303,24 +303,12 @@ function dbRenderRedisValue(wrap             )       {
   meta.appendChild(dbRedisTtl(v));
   if (v.length != null) meta.appendChild(document.createTextNode(" · " + trn(v.length, "dataBrowsers.nEntries.one", "dataBrowsers.nEntries.other")));
   if (v.truncated) meta.appendChild(document.createTextNode(" · " + tr("dataBrowsers.truncated")));
-  meta.appendChild(el("span", "grow"));
-  const cfg = DB_REDIS_TYPES[v.type];
-  if (cfg) {
-    // One add action per view; it buffers a row, never touches redis directly. data-radd —
-    // the click resolves the live type config at event time (docs/37 R5).
-    meta.appendChild(h("button", {
-      class: "btn", type: "button", title: tr("dataBrowsers.bufferNewThingApplied", { thing: tr(REDIS_THING_KEYS[cfg.thing] ?? cfg.thing) }),
-    }, tr(cfg.add)));
-  }
-  // docs/22 W1.3: the key's own actions ride the value header. Rename takes a one-input
-  // sheet, Delete is last and red and demands the key name typed back — the same confirm
-  // vocabulary as the table DDL ops. Everything runs through the guarded /command console.
-  // stopPropagation lives in the dispatcher (dbRedisClick): connect.js closes any open menu
-  // on clicks that reach document, and without it the same click tears the menu back down.
-  meta.appendChild(h("button", {
-    class: "btn icon", type: "button", title: tr("dataBrowsers.renameDeleteKey"), data: { rkeymenu: "" },
-  }, iconNode("ellipsis")));
+  // The facts only. The key's add action and its ⋯ (Rename / Delete, docs/22 W1.3) are the
+  // head's since docs/43 M4 (renderDbToolbar: one primary + one overflow). This line kept a
+  // second copy of both until docs/46 P7, and its "+ Field" had lost its data-radd address, so
+  // a real click on it did nothing.
   wrap.appendChild(meta);
+  const cfg = DB_REDIS_TYPES[v.type];
   if (v.type === "none") {
     wrap.appendChild(el("div", "db-hint", tr("dataBrowsers.keyFoundMayExpired")));
     return;
@@ -368,9 +356,10 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
   const hr = el("tr");
   hr.appendChild(el("th", "db-rowctl", ""));
   cfg.cols.forEach((c        )       => {
-    const th = el("th", "db-col", tr(REDIS_COL_KEYS[c] ?? c));
-    th.classList.add("db-rowctl"); // no sort affordance on a typed value table
-    hr.appendChild(th);
+    // db-nosort: a typed value table does not sort. It wore db-rowctl for that until docs/46 P7,
+    // which also handed every column the control column's width and stretched the control
+    // column to a third of the table.
+    hr.appendChild(el("th", "db-col db-nosort", tr(REDIS_COL_KEYS[c] ?? c)));
   });
   thead.appendChild(hr);
   tbl.appendChild(thead);
@@ -470,16 +459,24 @@ function dbRedisCellMenu(e            , colLabel        , text        , where   
 
 /** The narrow remove/undo column the row grid uses, in the value view's words: remove
  *  buffers a delete (HDEL / ZREM / SREM on Commit) or removes a buffered insert, undo
- *  undoes a delete (fix-plan #14: the glyphs are i-x / i-undo now). A type
- *  with no honest delete command (list) gets no control at all. The button's address is
- *  data-raddr (a stored entry) or data-rins (a buffered insert row's index). */
+ *  undoes a delete (fix-plan #14: the glyphs are i-x / i-undo now). A stored entry of a type
+ *  with no honest delete command (list) gets no control at all; a buffered insert always has
+ *  one, because dropping it is local (the SQL grid's data-irm). The insert rows passed "not
+ *  deletable" until docs/46 P7 and drew an empty cell, so Discard-all was their only way back.
+ *  The button's address is data-raddr (a stored entry) or data-rins (a buffered insert's index). */
 function dbRedisRowCtl(deletable         , deleted         , addr               , insIdx        )              {
   const td = el("td", "db-rowctl");
+  if (addr == null) {
+    td.appendChild(h("button", {
+      class: "db-act", type: "button", title: tr("dataGrid.removeBufferedInsert"), data: { rins: String(insIdx) },
+    }, iconNode("x")));
+    return td;
+  }
   if (!deletable && !deleted) return td;
   td.appendChild(h("button", {
     class: "db-act", type: "button",
     title: tr(deleted ? "dataBrowsers.undoBufferedDelete" : "dataBrowsers.bufferDeleteCommit"),
-    data: addr != null ? { raddr: addr } : { rins: String(insIdx) },
+    data: { raddr: addr },
   }, iconNode(deleted ? "undo" : "x")));
   return td;
 }
@@ -762,7 +759,7 @@ function dbRedisDeleteKey()       {
    row-control addresses all re-read dbTab(), so a re-read or a key switch between render
    and click acts on what is on screen now, never on the painted snapshot. */
 
-function dbRedisClick(t         , ev            )          {
+function dbRedisClick(t         )          {
   const d = dbTab();
   if (d.kind !== "key") return false; // the value view's affordances belong to the key tab
   if (t.closest("[data-radd]")) {
@@ -775,14 +772,6 @@ function dbRedisClick(t         , ev            )          {
     b.inserts.push(ins);
     renderDbGrid();
     renderDbBar();
-    return true;
-  }
-  const keyMenu = t.closest             ("[data-rkeymenu]");
-  if (keyMenu) {
-    // stopPropagation: connect.js closes any open menu on clicks that reach document, and
-    // without this the very click that opens the menu also tears it down.
-    ev.stopPropagation();
-    dbRedisKeyMenu(keyMenu);
     return true;
   }
   if (t.closest("[data-rttl]")) {

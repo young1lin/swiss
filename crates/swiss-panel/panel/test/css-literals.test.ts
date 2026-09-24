@@ -41,7 +41,7 @@ import { stylesDir } from "./styles.js";
 const FROZEN: Record<string, number> = {
   "base.css": 22,
   "ui.css": 72, // P6-2: the legacy .row family (.row .k 152px) and the .call chevron (12px) went with Remote (P5: 74, the inline form's 260px wide-input basis)
-  "views.css": 234, // P6-2: Remote off .call, .rm-* and #rrTarget; P6-1: 240, Jobs off .tun-* (its 42px and 6px); P2-3c: 243, MCP Logs, items, Run, Config (P1b-2: 251, the held-edits dot moved to ui.css on --dot)
+  "views.css": 222, // P7-1: Data off .ctx-menu, .db-tabs, .db-chip and .db-keytype, the grid and drawer on tokens; P6-2: 234, Remote off .call, .rm-* and #rrTarget; P6-1: 240, Jobs off .tun-* (its 42px and 6px); P2-3c: 243, MCP Logs, items, Run, Config (P1b-2: 251, the held-edits dot moved to ui.css on --dot)
 };
 
 const TOKEN_BLOCK = /^:root(\[data-theme="(dark|light)"\])?$/;

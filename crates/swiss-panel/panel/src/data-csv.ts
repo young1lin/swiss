@@ -23,7 +23,8 @@ import { dbOpenValueSheet } from "./data-value.js";
 import { dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data-view.js";
 import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
-import { clampMenuPos, setMenuOpen } from "./ui/menu.js";
+import type { MenuItem } from "./ui/menu.js";
+import { popupMenu } from "./ui/menu.js";
 import { closeSheet } from "./ui/sheet.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
@@ -270,12 +271,10 @@ function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: str
   const names = d.data?.columns.map((c: ApiDbColumn): string => { return c.name; });
   const dialect = (c.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === c.conn; }) || {} as { dialect?: string }).dialect || "mysql";
 
-  const menu = el("div", "ctx-menu");
-  function item(label: string, fn: () => void): void {
-    const b = el("button", "", label) as HTMLButtonElement;
-    b.onclick = (): void => { closeMenu2(); fn(); };
-    menu.appendChild(b);
-  }
+  // The library's floating menu (docs/46 §3.7): its rows, keys, clamp and close are the ones
+  // every other menu in the panel has; this one only lists what a cell can do.
+  const items: MenuItem[] = [];
+  const item = (label: string, fn: () => void): void => { items.push({ label, fn }); };
   item(tr("logs.copyValue"), (): void => { dbCopyText(value === null || value === undefined ? "NULL" : String(value)); });
   // docs/22 W5.3: the read-only viewer — full text, a JSON tree, hex or the link. NULL has
   // no content to view, so it gets no item (same rule as the filter items below).
@@ -297,8 +296,7 @@ function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: str
   // Checked-row copies live in the SAME menu — one right-click reaches every format. No
   // sqlResult guard left (docs/42 T2): this is the TABLE grid's cell menu, and a query reply
   // now paints in its own tab with dbResultCellMenu below — the two can no longer overlap.
-  const hint = dbAppendSelItems(item, dbSelectedForCopy());
-  if (hint) menu.appendChild(hint);
+  dbAppendSelItems(items, dbSelectedForCopy());
   item(tr("dataCsv.selectAllOnPage"), (): void => { dbSelAll(true); });
   if (Object.keys(d.sel).length) item(tr("dataCsv.clearSelection"), (): void => { dbSelAll(false); });
   if (full) {
@@ -320,21 +318,9 @@ function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: str
       } catch (err) { toast(errText(err), true); }
     });
   }
-  document.body.appendChild(menu);
-  // The cursor point is the anchor, clamped to the viewport (docs/22 closeout audit): a
-  // right-click at the right or bottom edge used to strand the menu off-screen. Measured
-  // AFTER the append — offsetWidth is zero until the menu is in the document.
-  const box1 = menu.getBoundingClientRect();
-  const pos1 = clampMenuPos({ left: e.clientX, top: e.clientY, bottom: e.clientY }, box1.width, box1.height, window.innerWidth, window.innerHeight);
-  menu.style.left = pos1.left + "px";
-  menu.style.top = pos1.top + "px";
-  setMenuOpen(true);
-  function closeMenu2() { menu.remove(); setMenuOpen(false); }
-  setTimeout(() => {
-    document.addEventListener("mousedown", function h(ev) {
-      if (!menu.contains(ev.target as Node)) { menu.remove(); setMenuOpen(false); document.removeEventListener("mousedown", h); }
-    });
-  }, 0);
+  // The cursor point is the anchor; popupMenu clamps it to the viewport (docs/22 closeout
+  // audit: a right-click at an edge used to strand the menu off-screen).
+  popupMenu({ left: e.clientX, top: e.clientY, bottom: e.clientY }, items);
 }
 
 /* --- multi-row copy ------------------------------------------------------------------------------ */
@@ -422,14 +408,11 @@ function dbSelAll(on: boolean): void {
   renderDbToolbar(); renderDbGrid();
 }
 
-function dbAppendSelItems(item: (label: string, fn: () => void) => void, sel: { cols: string[]; rows: Record<string, unknown>[] }): HTMLElement | null {
+function dbAppendSelItems(items: MenuItem[], sel: { cols: string[]; rows: Record<string, unknown>[] }): void {
   const n = sel.rows.length;
-  if (!n) {
-    const hint = el("button", "ctx-hint", tr("dataCsv.noRowsChecked")) as HTMLButtonElement;
-    hint.disabled = true;
-    // item() only makes enabled buttons; the hint is appended by the caller's menu directly
-    return hint;
-  }
+  // Nothing checked: the four copies are one shown-but-refused row that says why.
+  if (!n) { items.push({ label: tr("dataCsv.noRowsChecked"), fn: (): void => {}, disabled: true }); return; }
+  const item = (label: string, fn: () => void): void => { items.push({ label, fn }); };
   // The noun is plural-aware (trn) and rides the four format labels as a {noun} var — the
   // same nested-trn shape dataBrowsers.commitNKOne uses.
   const noun = trn(n, "dataCsv.checkedRows.one", "dataCsv.checkedRows.other");
@@ -437,7 +420,6 @@ function dbAppendSelItems(item: (label: string, fn: () => void) => void, sel: { 
   item(tr("dataCsv.copySelAsTsv", { noun }), (): void => { dbCopyText(dbRowsTsv(sel)); });
   item(tr("dataCsv.copySelAsMarkdownTable", { noun }), (): void => { dbCopyText(dbRowsMarkdown(sel)); });
   item(tr("dataCsv.copySelAsJson", { noun }), (): void => { dbCopyText(dbRowsJson(sel)); });
-  return null;
 }
 
 /* Right-click a QUERY-RESULT cell: the value copy plus the same checked-row section.
@@ -447,12 +429,8 @@ function dbResultCellMenu(e: MouseEvent, row: Record<string, unknown> | null, co
   const d = dbTab();
   const st = dbSqlTab();
   const i = st && st.sqlResult ? st.sqlResult.rows.indexOf(row!) : -1;
-  const menu = el("div", "ctx-menu");
-  function item(label: string, fn: () => void): void {
-    const b = el("button", "", label) as HTMLButtonElement;
-    b.onclick = (): void => { closeMenu(); fn(); };
-    menu.appendChild(b);
-  }
+  const items: MenuItem[] = [];
+  const item = (label: string, fn: () => void): void => { items.push({ label, fn }); };
   const v = row ? row[column] : undefined;
   item(tr("logs.copyValue"), (): void => { dbCopyText(v === null || v === undefined ? "NULL" : String(v)); });
   // docs/22 W5.3: the same read-only viewer on a console-result cell (no column types there —
@@ -469,23 +447,10 @@ function dbResultCellMenu(e: MouseEvent, row: Record<string, unknown> | null, co
       renderDbToolbar(); renderDbGrid();
     });
   }
-  const hint = dbAppendSelItems(item, dbSelectedForCopy());
-  if (hint) menu.appendChild(hint);
+  dbAppendSelItems(items, dbSelectedForCopy());
   item(tr("dataCsv.selectAllOnPage"), (): void => { dbSelAll(true); });
   if (Object.keys(d.sel).length) item(tr("dataCsv.clearSelection"), (): void => { dbSelAll(false); });
-  document.body.appendChild(menu);
-  // Same clamp as dbCellMenu (docs/22 closeout audit) — measured after the append.
-  const box2 = menu.getBoundingClientRect();
-  const pos2 = clampMenuPos({ left: e.clientX, top: e.clientY, bottom: e.clientY }, box2.width, box2.height, window.innerWidth, window.innerHeight);
-  menu.style.left = pos2.left + "px";
-  menu.style.top = pos2.top + "px";
-  setMenuOpen(true);
-  function closeMenu() { menu.remove(); setMenuOpen(false); }
-  setTimeout(() => {
-    document.addEventListener("mousedown", function h(ev) {
-      if (!menu.contains(ev.target as Node)) { menu.remove(); setMenuOpen(false); document.removeEventListener("mousedown", h); }
-    });
-  }, 0);
+  popupMenu({ left: e.clientX, top: e.clientY, bottom: e.clientY }, items);
 }
 
 /* --- CSV export of whatever the grid is showing --------------------------------------------------- */

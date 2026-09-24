@@ -245,7 +245,8 @@ describe("a cell mousedown keeps the keyboard layer alive (docs/22 closeout audi
     const labels = menuBtns.map((b: any) => String(b.textContent));
     expect(labels.some((t: string) => t.includes("Edit in dialog")), "the menu offers the dialog path").toBe(true);
     const item = menuBtns.find((b: any) => String(b.textContent).includes("Edit in dialog"))!;
-    expect(() => item.onclick(), "clicking it opens the dialog without throwing").not.toThrow();
+    // A click always carries its event: popupMenu's row stops it before closing the menu.
+    expect(() => item.onclick({ stopPropagation: () => {} }), "clicking it opens the dialog without throwing").not.toThrow();
   });
 });
 
