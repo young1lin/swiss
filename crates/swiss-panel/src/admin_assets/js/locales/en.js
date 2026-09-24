@@ -1456,7 +1456,6 @@ const en                         = {
   "system.swissStopping": "swiss is stopping",
   "system.localProcessClosingGracefully": "The local process is closing gracefully. You can close this tab and run swiss start when you need it again.",
   /* --- terminalSettings --- */
-  "terminalSettings.localShellSettings": "Local shell settings",
   "terminalSettings.localShell": "Local shell",
   "terminalSettings.enabled": "Enabled",
   "terminalSettings.shell": "Shell",

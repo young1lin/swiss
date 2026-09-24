@@ -40,16 +40,19 @@ import { loadUnicode11Addon } from "../vendor/xterm/addon-unicode11-0.8.0/index.
 import { loadWebLinksAddon } from "../vendor/xterm/addon-web-links-0.11.0/index.js";
 import { loadWebglAddon } from "../vendor/xterm/addon-webgl-0.18.0/index.js";
 import {
-  FONT_DEFAULT, clampGeometry, embeddedNewlines, frameStatus, isPinned, keyAction, mouseAction,
+  FONT_DEFAULT, applyTermTheme, clampGeometry, embeddedNewlines, frameStatus, isPinned, keyAction, mouseAction,
   nextFontSize, nextReconnectDelay, readBellMode, readCopyOnSelect, readFontSize, resizeFrame,
   resizeUrl, sessionAlive, sessionsUrl, streamUrl, tabLabel, targetRows,
-  targetsUrl, ticketUrl, trimSelection, wheelAction,
+  targetsUrl, termTheme, ticketUrl, trimSelection, wheelAction,
 } from "../terminal-core.js";
 import { createOverlay } from "../term-overlay.js";
 import { loadSearchAddon } from "../vendor/xterm/addon-search-0.16.0/index.js";
 import { openLocalSheet } from "./terminal-settings.js";
 import { tr, trn } from "../i18n.js";
-import { closeSheet } from "../ui/sheet.js";
+import { closeSheet, sheet, showSheet } from "../ui/sheet.js";
+import { btn, iconBtn } from "../ui/button.js";
+import { objTab } from "../ui/tab.js";
+import { heldDot } from "../ui/status.js";
 
 /* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
    pipeline is text-only; a font file cannot enter the tree, by design. */
@@ -162,12 +165,18 @@ function paintTabs() {
      (docs/37 R5): same tree in, same markup out - skip. */
   const tabs = all.map((m) => {
     const label = tabLabel(m, m.shellTitle, m.customTitle) + (m.gone ? tr("terminal.closed") : "");
-    return h("button", { role: "tab", data: { act: "select", id: m.id },
-        aria: { selected: String(m.id === active) }, title: label },
-      h("span", { class: "term-tab-label" }, label),
-      m.bell && !m.gone ? h("span", { class: "term-tab-bell", aria: { label: tr("terminal.bell") } }, "\u25cf") : null,
-      " ",
-      h("span", { class: "term-tab-x", data: { act: "close", id: m.id }, title: tr("terminal.closeSession"), role: "button" }, "\u00d7"));
+    /* docs/46 P8-2: the session tab is the library's objTab - the same card Data's objects
+     * wear, top 2px accent and all. Three old shapes went with it: a button holding a
+     * span that played a close button, the Unicode × it drew, and the Unicode ● the bell
+     * drew - the bell is now the library's CSS dot (heldDot), which carries its words. */
+    return objTab({
+      name: label,
+      selected: m.id === active,
+      title: label,
+      data: { term: m.id },
+      mark: m.bell && !m.gone ? heldDot(tr("terminal.bell")) : null,
+      close: { label: tr("terminal.closeSession"), data: { termx: m.id } },
+    });
   });
   const html = tabs.map((n) => { return n.outerHTML; }).join("");
   if (html === paintTabsLast) return;
@@ -328,9 +337,9 @@ function startRename(id        ) {
   const bar = $("term-tabs");
   if (!m || !bar) return;
   const btn = Array.prototype.find.call(bar.children, (c) => {
-    return c.getAttribute("data-id") === id;
+    return c.getAttribute("data-term") === id;
   });
-  const labelEl = btn && btn.querySelector(".term-tab-label");
+  const labelEl = btn && btn.querySelector(".otab-name");
   if (!labelEl || btn.querySelector(".term-rename")) return;
   const input = document.createElement("input");
   input.className = "term-rename";
@@ -426,12 +435,12 @@ function openHelpSheet() {
   };
   const cap = (title        ) => { return h("div", { class: "term-key-cap" }, title); };
   const k = (t        ) => { return h("kbd", null, t); };
-  // Visible before the paint (panel-proof-of-life rule 1).
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("terminal.terminalShortcuts") } },
-      h("div", { class: "sheet-head" }, h("h2", null, tr("terminal.terminalShortcuts"))),
-      h("div", { class: "sheet-body term-key-body" },
+  /* The library's sheet frame (docs/46 P8-2): showSheet unhides the host BEFORE the paint
+     (panel-proof-of-life rule 1) and owns the backdrop click; the Close button and the
+     shell's Escape chain (main.ts) are the two ways out. */
+  showSheet(sheet({
+    title: tr("terminal.terminalShortcuts"),
+    body: h("div", { class: "term-key-body" },
         cap(tr("terminal.keys")),
         row([k("Ctrl+Shift+F")], tr("terminal.findSessionsBuffer")),
         row([k("Enter"), k("Shift+Enter")], tr("terminal.nextPreviousMatch")),
@@ -450,15 +459,9 @@ function openHelpSheet() {
         row(tr("terminal.bell"), tr("terminal.dotTabUntilYou")),
         row(tr("terminal.copySelect"), tr("terminal.scissorsPillConfirmsEach")),
         row(tr("terminal.multilinePaste"), tr("terminal.asksFirstPasteWhole"))),
-      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }), h("button", { class: "btn", id: "th-close" }, tr("terminal.close2")))));
-  const onKey = (ev               ) => { if (ev.key === "Escape") close(); };
-  const close = () => {
-    document.removeEventListener("keydown", onKey, true);
-    closeSheet();
-  };
-  document.addEventListener("keydown", onKey, true);
-  $("th-close").onclick = close;
-  $("sheet").onclick = (ev) => { if (ev.target === $("sheet")) close(); };
+    foot: [h("span", { class: "grow" }), btn(tr("terminal.close2"), { id: "th-close" })],
+  }));
+  $("th-close").onclick = closeSheet;
 }
 
 /* Ctrl+Shift+F while the terminal page is staged, even when the terminal itself does
@@ -713,19 +716,21 @@ function wireTerminal(m           ) {
   });
 }
 
-/* A terminal wears its own palette whatever the panel theme is doing — this is ttyd's
-   xterm theme, used verbatim because it is the most-copied xterm.js palette and its
-   bg/fg/cursor and 16 ANSI colors are tuned as a set (borrowing half of it is how you
-   get a terminal that looks almost right). */
-function termTheme() {
-  return {
-    foreground: "#d2d2d2", background: "#2b2b2b", cursor: "#adadad",
-    black: "#000000", red: "#d81e00", green: "#5ea702", yellow: "#cfae00",
-    blue: "#427ab3", magenta: "#89658e", cyan: "#00a7aa", white: "#dbded8",
-    brightBlack: "#686a66", brightRed: "#f54235", brightGreen: "#99e343",
-    brightYellow: "#fdeb61", brightBlue: "#84b0d8", brightMagenta: "#bc94b7",
-    brightCyan: "#37e6e8", brightWhite: "#f1f1f0",
-  };
+/* The xterm theme is built by terminal-core (termTheme, docs/46 P8-2): the chrome reads
+   the panel's --term-* tokens so a theme switch reaches the canvas, while the 16 ANSI
+   colours are ttyd's literal set - content, not chrome. The theme-switch observer below
+   is the other half of that promise. */
+/* A theme switch re-skins every CSS surface through the token block; the xterm canvas is
+   the one surface that cannot read a token on its own. data-theme on the html element is
+   the whole signal (main.ts flips it for a click AND for the OS's auto change), so this
+   observer re-reads the --term-* chrome and hands it to every open terminal. */
+let themeWatch                          = null;
+function watchTheme()       {
+  if (themeWatch) return;
+  themeWatch = new MutationObserver(() => {
+    applyTermTheme(models.filter((m) => m.term).map((m) => m.term                                               ));
+  });
+  themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 }
 
 /* The shared encoder is made on first use; the const capture keeps the narrowed type
@@ -883,7 +888,7 @@ function select(id        ) {
     if (cur && cur.bell) {
       cur.bell = false;
       const barEl = $("term-tabs");
-      const dot = barEl && barEl.querySelector('button[data-id="' + id + '"] .term-tab-bell');
+      const dot = barEl && barEl.querySelector('[data-term="' + id + '"] .db-tab-dot');
       if (dot) dot.remove();
     }
     if (cur && cur.term) cur.term.focus();
@@ -1050,15 +1055,15 @@ function render() {
                <select> is invalid DOM and the browser drops it - the Open session
                button vanished exactly this way once. */
             ? frag(
-                h("select", { id: "term-target", class: "term-pick", aria: { label: tr("terminal.target") } },
+                h("select", { id: "term-target", aria: { label: tr("terminal.target") } },
                   pick.rows.map((r) => {
                     return h("option", { value: r.id }, r.label + (r.state ? " (" + r.state + ")" : ""));
                   })),
                 /* The Local shell settings entry (docs/15 §2.1): a quiet gear beside the
                    picker, not a second loud button — Open session stays the bar's one accent.
                    The gear is the sprite (i-gear), never a Unicode glyph (design rule 9). */
-                h("button", { class: "term-gear", id: "term-set", title: tr("terminal.localShellSettings"), aria: { label: tr("terminal.localShellSettings") } }, iconNode("gear")),
-                h("button", { class: "btn term-new", id: "term-new" }, tr("terminal.openSession")))
+                iconBtn("gear", tr("terminal.localShellSettings"), { id: "term-set", ghost: true }),
+                btn(tr("terminal.openSession"), { kind: "primary", id: "term-new" }))
             /* Local off and nothing to pick: the line itself is the way in (docs/15
                §2.1) — a dead-end note that names a setting nobody can reach is how the
                gap this sheet closes came to exist. The tunnels reason, when there is one,
@@ -1072,7 +1077,7 @@ function render() {
              in every branch, including the empty ones, where it matters most. The empty slot
              after it accepts the shell-owned app zone only during Terminal fullscreen; there
              is no duplicate page-owned fullscreen control (immersive.js). */
-          h("button", { class: "term-gear", id: "term-help", title: tr("terminal.shortcutsGestures"), aria: { label: tr("terminal.shortcutsGestures") } }, iconNode("help"))),
+          iconBtn("help", tr("terminal.shortcutsGestures"), { id: "term-help", ghost: true })),
         /* term-bar ENDS here (the second paren below closes it): master's term-page owns
            [bar, find, stage, foot] as siblings - an unclosed bar once swallowed find+stage,
            the stage went 0px tall inside the fixed-height bar, and xterm rendered nothing. */
@@ -1110,28 +1115,32 @@ function render() {
   if (off) off.onclick = () => { void openLocalSheet(); };
   const tabs = $("term-tabs");
   if (tabs) {
+    /* The delegated answers speak objTab's data hooks (docs/37 R5): data-termx on the
+       library's close button, data-term on the tab itself. The close is checked FIRST -
+       it sits inside the tab, and the tab's own hook would swallow it. */
     tabs.onclick = (event) => {
-      const closer = targetEl(event)?.closest('[data-act="close"]');
-      if (closer) { void closeSession(closer.getAttribute("data-id") ); return; }
-      const tab = targetEl(event)?.closest('[data-act="select"]');
-      if (tab) select(tab.getAttribute("data-id") );
+      const closer = targetEl(event)?.closest("[data-termx]");
+      if (closer) { void closeSession(closer.getAttribute("data-termx") ); return; }
+      const tab = targetEl(event)?.closest("[data-term]");
+      if (tab) select(tab.getAttribute("data-term") );
     };
     tabs.ondblclick = (event) => {
-      const tab = targetEl(event)?.closest('[data-act="select"]');
-      if (tab) startRename(tab.getAttribute("data-id") );
+      const tab = targetEl(event)?.closest("[data-term]");
+      if (tab) startRename(tab.getAttribute("data-term") );
     };
     tabs.onauxclick = (event) => {
       if (event.button !== 1) return;   // middle-click closes (Tabby / native terminals)
-      const tab = targetEl(event)?.closest('[data-act="select"]');
-      if (tab) void closeSession(tab.getAttribute("data-id") );
+      const tab = targetEl(event)?.closest("[data-term]");
+      if (tab) void closeSession(tab.getAttribute("data-term") );
     };
     tabs.oncontextmenu = (event) => {
-      const tab = targetEl(event)?.closest('[data-act="select"]');
+      const tab = targetEl(event)?.closest("[data-term]");
       if (!tab) return;
       event.preventDefault();   // the browser menu has nothing to say about a session tab
-      startRename(tab.getAttribute("data-id") );
+      startRename(tab.getAttribute("data-term") );
     };
   }
+  watchTheme();   // the one xterm surface that cannot read a token re-reads them on flip
   window.addEventListener("resize", scheduleFit);
   /* The fill above replaced the whole pane - a fresh, EMPTY tab bar - so the memo
      from the previous paint is a lie here. Without this reset, a settings save
@@ -1208,6 +1217,7 @@ export function unmount() {
   epoch += 1;
   const pane = $("pane");
   if (pane) pane.classList.remove("term-host", "full");
+  if (themeWatch) { themeWatch.disconnect(); themeWatch = null; }
   if (fitTimer) { clearTimeout(fitTimer); fitTimer = null; }
   window.removeEventListener("resize", scheduleFit);
   document.removeEventListener("keydown", pageFindShortcut, true);
