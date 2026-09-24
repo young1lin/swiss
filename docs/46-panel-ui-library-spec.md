@@ -477,12 +477,41 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
 
 ### 3.7 Data（P7）
 
-- [ ] 列注释（表头第二行、Columns tab 的 Comment 列、表头悬停卡）从 `--green` 改成 `--text-3` / `--text-2`；
+- [x] 列注释（表头第二行、Columns tab 的 Comment 列、表头悬停卡）从 `--green` 改成 `--text-3` / `--text-2`；
       删掉 CSS 里自称例外的注释。
-- [ ] 表列表选中：竖条 + 浅底 + `--w-emph`，不变蓝（规则 15）；抽屉里的当前库 / 连接同样处理（勾号列代替蓝字）。
-- [ ] 网格去竖线；行高 +4px；行首复选框与删除按钮只在悬停该行或已勾选时出现（键盘焦点在行内时也出现）。
-- [ ] `.db-tabs` 换成 `seg()`；`.ctx-menu` 换成 `.menu.float`；`.db-chip` / `.db-keytype` 换成 `tag()`。
-- [ ] 状态栏里与表头重复的可编辑说明去掉（实施时截图确认是哪一句，写进 commit）。
+      实施：表头第二行 `.db-col-comment` 用 `--text-3`；悬停卡的 `.t-comment` 与 Columns tab 的 Comment 列用 `--text-2`
+      （正文里的说明比表头下的小字深一级）。
+- [x] 表列表选中：竖条 + 浅底 + `--w-emph`，不变蓝（规则 15）；抽屉里的当前库 / 连接同样处理（勾号列代替蓝字）。
+      实施：`.db-table.sel` 是 8% accent 浅底 + 2px inset accent 竖条，名字 `--text` / `--w-emph`。连接与库的抽屉每行
+      最前一列是勾号（`.db-drow-tick`，当前项放 accent 的 `i-check`，其余行留同宽的空位，名字对齐），当前行加粗。
+      连接行的方言：有图标的是裸图标（`.db-row-mark`，`--text-3`，悬停 `--text-2`），没有图标的（sqlite）是
+      `tag({ mono })`。
+- [x] 网格去竖线；行高 +4px；行首复选框与删除按钮只在悬停该行或已勾选时出现（键盘焦点在行内时也出现）。
+      实施：`th` / `td` 只留横线；`td` 上下各 6px（表头 4px，所以行比表头高 4px）。`.db-selbox` / `.db-act` 在行没有
+      hover、没有 focus-within、没勾选、也没有暂存的删除 / 插入时是 `opacity: 0`，仍占位、仍能 Tab 到；表头的全选框
+      一直在。表头悬停时列宽把手显出 `--sep`，指到把手本身才是 accent。
+      走查发现（Redis 值表）：暂存的插入行从来没有移除按钮——插入行传的是"不可删"，派发器里 `data-rins` 那一支永远
+      走不到，空行塌成 13px 的一条绿，只能 Discard 全部；改成插入行总有 ×（与 SQL 网格的 `data-irm` 同形，list 也有）。
+      field / value 表头借 `db-rowctl` 表示"不排序"，于是每列都拿到控制列的 58px，控制列被撑到表宽的三分之一；改用
+      `db-nosort`。两处都先写 RED 测试。
+- [x] `.db-tabs` 换成 `seg()`；`.ctx-menu` 换成 `.menu.float`；`.db-chip` / `.db-keytype` 换成 `tag()`。
+      实施：表 tab 的 Data / Form / Structure / DDL、Structure 下的 Columns / Indexes / Foreign keys、脚本的结果 tab
+      都是 `seg()`（结果 tab 一多就横向滚，不画滚动条）。单元格、结果单元格、Table、CSV 的菜单全部走 `popupMenu`
+      （`#menu.menu.float`，`role=menu`，打开时第一项得焦点，Escape 关）；`.ctx-menu*`、`.db-tabs*`、`.db-chip*`、
+      `.db-keytype` 整块删掉。Activity 里本面板自己的会话是 `tag()`（"this panel"，title 说明）。
+      走查发现：① `dbSyncKind` 还要求 `#dbSqlExplain` 存在，而 docs/43 M4 把 Explain / Format 收进溢出菜单后这个元素
+      没了：早退每次都触发，pane 的 ⋯ 从没显示过，Redis 的键搜索框写着 "Filter tables"。② 那次折叠还丢了"Redis 命令
+      没有 Explain / Format"。③ 修好 ① 后表头出现两个挨着的 ⋯（对象的与 pane 的），打开两个不同的菜单——改成一个头
+      一个 ⋯：SQL 连接上对象的 ⋯ 末尾是分隔线 + Activity…，pane 的 ⋯ 只在没有打开对象时出现。④ Redis 值视图的 meta
+      行还留着 M4 之前的 "+ Field" 与 ⋯，那个 "+ Field" 丢了 `data-radd`，真点击什么也不做——meta 行只留事实，动作只在
+      表头。四处都先写 RED 测试。
+- [x] 状态栏里与表头重复的可编辑说明去掉（实施时截图确认是哪一句，写进 commit）。
+      实施：去掉的是 `renderDbStatus` 里的可编辑说明——"editable — changes buffer until Commit"，或服务端给的只读
+      原因——表头的 meta 行已经说过一遍。状态栏只留分页、每页行数、连接。
+      P7-1 数字：G4 views.css 字面值降到 222；G5 `data-browsers.ts` 10 → 8；G7 views.css 64049 → 63479 字节。
+- [ ] （P7-2）Data 的 sheet（data-cell / csv / ddl / value / browsers）迁 `sheet()` + `ui/form.ts`，按钮迁 `btn()` /
+      `iconBtn()`，`pane-title` 换成 views.css 自己的类，`db-tab-dot` / `hint` 走库；G5 的 data-* 各行归零。手写微型
+      DOM 的套件换成 happy-dom 后，`popupMenu` 改用 `h()` 构建（见偏差表 P1b-2 那一行）。
 
 ### 3.8 Terminal（P8）
 
@@ -526,7 +555,7 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
 | **P6** | Jobs、Remote（§3.6） | P2 |
 | **P7** | Data（§3.7） | P1 |
 | **P8** | Terminal（§3.8） | P1 |
-| **P9** | 收尾：棘轮收到目标值、`views.css` 里迁完页面的残留清零、数字（§7）写进状态头、截图进 `docs/assets/46/`、README 状态、docs/33 状态头的修订记录 | 全部 |
+| **P9** | 收尾：棘轮收到目标值、`views.css` 里迁完页面的残留清零、数字（§7）写进状态头、截图进 `docs/assets/46/`、README 状态、docs/33 状态头的修订记录；zh 字典里约 50 处句中半角逗号改全角（docs/38 的译文风格，P7 走查发现） | 全部 |
 
 ## 6. skill 改写（P1c，`.agents/skills/swiss-ui-design/SKILL.md`）
 

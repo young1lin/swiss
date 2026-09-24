@@ -172,7 +172,7 @@ describe("the connection menu's groups (docs/20 G5, docs/43 M3)", () => {
     expect(mysql?.title).toBe("shop-mysql · mysql");
   });
 
-  it("the connection row's dialect chip follows the MCP tag vocabulary: a mark, not a word", () => {
+  it("the connection row's dialect follows the MCP tag vocabulary: a bare mark, or a word tag", () => {
     unmountDbView();
     mountDbView();
     const d = dbConn();
@@ -180,29 +180,28 @@ describe("the connection menu's groups (docs/20 G5, docs/43 M3)", () => {
       { name: "redis", dialect: "redis", state: "running", group: "" } as ApiDbConnectionRow,
     ];
     Object.assign(d, { conn: "redis", conns, databases: [] });
-    const chipOf = (): Record<string, any> => {
+    const rowKids = (): Record<string, any>[] => {
       // renderDbSide wipes by assigning textContent - a plain property on this stub - so
       // the row is handed back fresh for each render the way the real DOM would be.
       byId.dbConnRow = el();
       byId.dbDatabaseRow = el();
       dataView.renderDbSide();
-      const chip = (byId.dbConnRow.children as Record<string, any>[])
-        .find((c) => String(c.className).includes("db-chip")) as Record<string, any>;
-      expect(chip, "the chip exists").toBeTruthy();
-      return chip;
+      const kids = byId.dbConnRow.children as Record<string, any>[];
+      // docs/46 §3.7: the bordered .db-chip wrapper is gone in both cases.
+      expect(kids.some((c) => String(c.className).includes("db-chip")), "no chip wrapper").toBe(false);
+      return kids;
     };
-    // A whitelisted dialect paints its glyph: typeTagNode hands back a node whose word
-    // rides the aria-label, so the chip carries a node child, not a text node - the word
-    // chip it replaced is the string case below (textContent does not aggregate on the
-    // stub, so the child is read directly).
-    const mark = chipOf();
-    expect(mark.textContent).toBe("");
-    expect(mark.children.length, "a glyph node, not a string").toBe(1);
-    expect(mark.children[0].textContent, "the glyph node carries no word").toBe("");
-    // A dialect outside the icon whitelist keeps the word chip - sqlite is not a mark.
+    // A whitelisted dialect paints its glyph, bare in the row: typeTagNode hands back the
+    // svg whose word rides the aria-label (data-look.test.ts pins its class on a real DOM).
+    const kids = rowKids();
+    const mark = kids[kids.findIndex((c) => String(c.className) === "db-row-name") + 1];
+    expect(String(mark.className), "the glyph sits bare after the name, in no wrapper").not.toContain("tag");
+    expect(mark.children.length, "an svg with its <use>, not a text node").toBe(1);
+    // A dialect outside the icon whitelist is the library's mono tag - sqlite is not a mark.
     (conns[0] as { dialect: string }).dialect = "sqlite";
-    const word = chipOf();
-    expect(word.children[0].textContent).toBe("sqlite");
+    const word = rowKids().find((c) => String(c.className) === "tag mono");
+    expect(word, "the word tag").toBeTruthy();
+    expect(word!.children[0].textContent).toBe("sqlite");
     unmountDbView();
   });
 });

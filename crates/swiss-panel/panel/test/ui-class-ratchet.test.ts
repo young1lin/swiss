@@ -45,9 +45,10 @@ import { uiOwnedClasses } from "./styles.js";
    P6-2: views/remote.ts 25 and views/remote-runs.ts 30 -> 0 (Targets on row(), Runs on timeline()).
    Their going took the legacy .row family out of ui.css (its last users). `.row-act .desc` was
    one, so data-grid.ts's "desc" - a sort direction compared inside el()'s class expression, which
-   this counter reads as a class token - stopped counting: 15 -> 14. */
+   this counter reads as a class token - stopped counting: 15 -> 14.
+   P7-1: data-browsers.ts 10 -> 8 (the Redis value view's second + and ⋯ went; the head has them). */
 const FROZEN: Record<string, number> = {
-  "data-browsers.ts": 10,
+  "data-browsers.ts": 8,
   "data-cell.ts": 10,
   "data-csv.ts": 11,
   "data-ddl.ts": 18,

@@ -27,6 +27,7 @@ import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tk, tr, trn } from "./i18n.js";
+import { seg } from "./ui/seg.js";
 
 /* --- structure tabs (columns / indexes / DDL / foreign keys) ------------------------------------ */
 
@@ -107,10 +108,8 @@ function dbRenderTabs(ctl: HTMLElement): void {
   // their data-dtab addresses (docs/37 R5) — no per-render handlers on the strip. The main
   // segment folds three catalog panes into Structure (docs/43 M4): the selected mark reads
   // dbPaneToTab, the click sends the pane id the same handler already knew.
-  ctl.appendChild(h("div", { class: "db-tabs", role: "tablist" },
-    DB_TABS.map((x: { id: string; label: string }) => {
-      return h("button", { role: "tab", data: { dtab: x.id }, aria: { selected: String(pane != null && dbPaneToTab(pane) === x.id) } }, tr(x.label));
-    })));
+  ctl.appendChild(seg(DB_TABS.map((x: { id: string; label: string }) => { return { id: x.id, label: tr(x.label) }; }),
+    pane != null ? dbPaneToTab(pane) : "", { key: "dtab" }));
 }
 
 /** The Structure tabs reuse the grid wrapper: Columns/Indexes/FKs render as plain tables,
@@ -125,10 +124,12 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
   // data-dtab address the main segment uses, so dbSetTab already knows every pane id.
   if (d.pane === "columns" || d.pane === "indexes" || d.pane === "fks") {
     if (!d.detail) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.selectTableStructure"))); return; }
-    wrap.appendChild(h("div", { class: "db-tabs db-struct-sub", role: "tablist" },
-      h("button", { role: "tab", data: { dtab: "columns" }, aria: { selected: String(d.pane === "columns") } }, tr("dataStructure.columns")),
-      h("button", { role: "tab", data: { dtab: "indexes" }, aria: { selected: String(d.pane === "indexes") } }, tr("dataStructure.indexes")),
-      h("button", { role: "tab", data: { dtab: "fks" }, aria: { selected: String(d.pane === "fks") } }, tr("dataStructure.foreignKeys"))));
+    wrap.appendChild(h("div", { class: "db-struct-sub" },
+      seg([
+        { id: "columns", label: tr("dataStructure.columns") },
+        { id: "indexes", label: tr("dataStructure.indexes") },
+        { id: "fks", label: tr("dataStructure.foreignKeys") },
+      ], d.pane, { key: "dtab" })));
   }
   if (!d.detail) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.selectTableStructure"))); return; }
   const det = d.detail;
@@ -155,8 +156,9 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
         return [c.name, c.dataType, c.nullable ? "YES" : "NO",
           c.defaultValue == null ? "—" : String(c.defaultValue),
           c.isPrimaryKey ? "PRI" : "",
-          // { text, cls } marks a cell that carries a class of its own: real comments join the
-          // header caption's green, the "—" placeholder stays in the default cell color.
+          // { text, cls } marks a cell that carries a class of its own: a real comment is the
+          // quiet --text-2 the header caption and the hover card use for it (docs/46 §3.7),
+          // the "—" placeholder stays in the default cell color.
           c.comment == null ? "—" : { text: String(c.comment), cls: "db-det-comment" }];
       },
       rows: det.columns,

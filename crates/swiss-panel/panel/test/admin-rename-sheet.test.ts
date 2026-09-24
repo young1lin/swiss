@@ -106,7 +106,7 @@ describe("fix-plan #16 — one one-field sheet for every rename", () => {
     };
     // The REAL menu, the way the toolbar opens it; its Rename item must open the sheet.
     edit.dbTableMenu(document.createElement("button"));
-    const items = Array.from(document.querySelectorAll(".ctx-menu button")) as HTMLButtonElement[];
+    const items = Array.from(document.querySelectorAll("#menu button")) as HTMLButtonElement[];
     const renameItem = items.find((b) => (b.textContent || "").includes("Rename"));
     expect(renameItem, "the Table menu carries the Rename item").toBeTruthy();
     renameItem!.click();

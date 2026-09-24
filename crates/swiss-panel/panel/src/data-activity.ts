@@ -20,6 +20,7 @@ import { h } from "./h.js";
 import { dbConn, dbIsMounted, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
+import { tag } from "./ui/status.js";
 
 /* --- activity monitor (docs/22 W3.2) -------------------------------------------------------------- */
 /* One open object among the others (docs/42 T2): live sessions on the connection's server, one
@@ -100,11 +101,8 @@ function dbActivityRender() {
     pid.title = tr("dataActivity.pidTip", { pid: r.pid });
     tri.appendChild(pid);
     const user = el("td", "", r.user == null ? "" : r.user);
-    if (r.own) {
-      const chip = el("span", "db-keytype", tr("dataActivity.thisPanel"));
-      chip.title = tr("dataActivity.thisPanelTip");
-      user.appendChild(chip);
-    }
+    // The panel's own session is a descriptive word: the library's toneless tag (docs/46 §3.7).
+    if (r.own) user.append(" ", tag(tr("dataActivity.thisPanel"), { title: tr("dataActivity.thisPanelTip") }));
     tri.appendChild(user);
     // state and wait are COALESCE'd to "" in activity_sql on both dialects - never null.
     tri.appendChild(el("td", "", r.state));

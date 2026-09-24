@@ -33,6 +33,7 @@ import { DB_PAGE_SIZES, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop,
 import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
+import { seg } from "./ui/seg.js";
 
 /* --- one page of rows --------------------------------------------------------------------------- */
 
@@ -522,20 +523,32 @@ function dbMoreItemsForTable(more: HTMLElement, tt: DbTableTab): MenuItem[] {
     // that promise.
     items.push({ label: tr("dataStructure.table"), title: tr("dataStructure.renameTruncateDropTable"), affordance: "chevron-down", fn: (): void => { dbTableMenu(more); } });
   }
+  return dbWithActivity(items);
+}
+
+/** One ⋯ per head (docs/46 P7): on a SQL connection the open object's overflow ends with the
+ *  pane's own action, the Activity monitor, so the pane's ⋯ never stands beside it. */
+function dbWithActivity(items: MenuItem[]): MenuItem[] {
+  if (dbIsRedis()) return items;
+  items.push({ sep: true });
+  items.push({ label: tr("dataView.activity"), fn: (): void => { dbOpenTab({ kind: "activity" }); } });
   return items;
 }
 
 /** The overflow items for a SQL tab: the secondary run modes, the formatter, favorites and
- *  history — everything the console's old flat row carried, one hover deep. */
+ *  history — everything the console's old flat row carried, one hover deep. A Redis command
+ *  has no plan and SQL formatting has nothing to say about it (docs/22 W5.4), so its console
+ *  gets neither: the old flat row hid both buttons, and the fold into this menu had dropped
+ *  that until docs/46 P7. */
 function dbMoreItemsForSql(): MenuItem[] {
   const st = dbSqlTab();
   const d = dbConn();
-  const items: MenuItem[] = [
+  const items: MenuItem[] = dbIsRedis() ? [] : [
     { label: tr("dataView.explain"), fn: (): void => { void dbRunSql("plan"); } },
     { label: tr("dataView.explainAnalyze"), fn: (): void => { void dbRunSql("analyze"); } },
     { label: tr("dataView.format"), fn: (): void => { dbSqlFormatNow(); } },
-    { label: tr("dataView.saveFavorites"), title: tr("dataView.saveConsoleTextFavorites"), fn: (): void => { if (st) dbFavPush(st.sqlText); } },
   ];
+  items.push({ label: tr("dataView.saveFavorites"), title: tr("dataView.saveConsoleTextFavorites"), fn: (): void => { if (st) dbFavPush(st.sqlText); } });
   const loadSql = (q: string): void => {
     const s2 = dbSqlTab();
     if (!s2) return;
@@ -557,7 +570,7 @@ function dbMoreItemsForSql(): MenuItem[] {
       items.push({ label: q.slice(0, 60), title: q, fn: (): void => { loadSql(q); } });
     });
   }
-  return items;
+  return dbWithActivity(items);
 }
 
 /** The overflow items for a redis KEY tab: the key's own guarded menu plus the console. */
@@ -629,13 +642,8 @@ function renderDbStatus(): void {
       class: "btn icon", title: tr("dataGrid.nextPage"),
       disabled: t.data.nextPage != null ? !t.data.nextPage : to >= t.data.total, data: { pg: "next" },
     }, iconNode("chevron-right")));
-    // docs/43 M3/M4: the editability fact in the server's own words — editable:false carries
-    // editNote verbatim (a foreign database names the configured one), editable:true carries
-    // the buffer promise.
-    const pkCols0 = t.data.primaryKey || [];
-    bar.appendChild(el("span", "db-status-note", t.data.editable
-      ? (pkCols0.length ? tr("dataGrid.editableChangesBufferUntil") : tr("dataGrid.editableNote", { note: t.data.editNote || tr("dataGrid.rowsAddressedAllColumns") }))
-      : (t.data.editNote || tr("dataGrid.browsingOnly"))));
+    // No editability sentence here (docs/46 §3.7): the head's meta line already says it in the
+    // server's own words, and the same sentence twice on one screen read as two facts.
   } else if (t.kind === "sql" && t.sqlResult) {
     const res = t.sqlResult;
     bar.appendChild(el("span", "db-status-note",
@@ -668,11 +676,12 @@ function renderDbToolbar(): void {
       (res.note ? tr("dataGrid.note", { note: res.note }) : "") +
       (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
     if ((t.sqlResults || []).length > 1) {
-      left.appendChild(h("div", { class: "db-tabs", role: "tablist" },
-        t.sqlResults?.map((r: DbQueryReply, ti: number) => {
-          return h("button", { role: "tab", data: { rtab: String(ti) }, aria: { selected: ti === t.resultTab ? "true" : "false" } },
-            r.tabLabel || tr("dataGrid.resultN", { n: ti + 1 }));
-        })));
+      // The library's seg (docs/46 §3.7), inside a strip that scrolls sideways: eight results
+      // fit, a longer script's ninth scrolls the strip instead of wrapping the head.
+      left.appendChild(h("div", { class: "db-rtabs" },
+        seg((t.sqlResults || []).map((r: DbQueryReply, ti: number) => {
+          return { id: String(ti), label: r.tabLabel || tr("dataGrid.resultN", { n: ti + 1 }) };
+        }), String(t.resultTab), { key: "rtab" })));
     }
   } else if (t.kind === "table" && t.data) {
     left.appendChild(el("h2", "db-title pane-title", (t.data.schema ? t.data.schema + "." : "") + t.data.table));
@@ -706,6 +715,7 @@ function renderDbToolbar(): void {
   const ctl = el("div", "db-head-ctl");
   const nosql = dbIsRedis();
   const tt = t.kind === "table" ? t : null;
+  let objMore = true; // every branch below that draws controls ends with the object's ⋯
   if (tt && tt.data && !nosql) dbRenderTabs(ctl);
   if (tt && tt.data) {
     if (tt.data.editable) {
@@ -732,8 +742,14 @@ function renderDbToolbar(): void {
       class: "btn", title: tr("dataActivity.title"), data: { actrefresh: "" },
     }, tr("dataGrid.refresh")));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForActivity(); }));
-  }
+  } else objMore = false;
   head.appendChild(ctl);
+  // One ⋯ per head (docs/46 P7): the pane's ⋯ - the Activity monitor, a SQL connection's page
+  // action - stands in only while no open object has a ⋯ of its own; an object's ⋯ carries
+  // Activity… as its last row instead. Two identical glyphs a hairline apart, opening two
+  // different menus, was what the docs/43 M4 regression fix first put on screen.
+  const paneMore = $("dbMore");
+  if (paneMore) paneMore.hidden = !d.conn || nosql || objMore;
 }
 
 

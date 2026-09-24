@@ -57,11 +57,10 @@ const menu = await import(
 ) as { clampMenuPos: (anchor: { left: number; top: number; bottom: number }, w: number, h: number, vw: number, vh: number) => { left: number; top: number } };
 
 /* docs/22 closeout audit: the right-click cell menus (data-csv.js) and the Table menu
-   (data-edit.js) positioned their .ctx-menu at the raw cursor / button rect with no clamp,
-   so a click near the right or bottom edge put the menu off-screen with no way to reach it.
-   popupMenu (ui/menu.js) has always clamped; that arithmetic is factored into clampMenuPos so
-   every anchored menu shares it. Pure, so the clamp pins here; the three call sites are
-   wired onto it in code. */
+   (data-edit.js) positioned their hand-built .ctx-menu at the raw cursor / button rect with no
+   clamp, so a click near the right or bottom edge put the menu off-screen with no way to reach
+   it. popupMenu (ui/menu.js) has always clamped; that arithmetic is clampMenuPos, and since
+   docs/46 P7 those three menus ARE popupMenu. Pure, so the clamp pins here. */
 describe("clampMenuPos (anchored-menu viewport clamp)", () => {
   const VW = 1920, VH = 1080;
 

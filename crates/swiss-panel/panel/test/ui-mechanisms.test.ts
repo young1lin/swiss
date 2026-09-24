@@ -27,7 +27,7 @@ import { install } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 import {
   closeMenu, closeSelect, closeSheet, initSelects, initSheet, menuOpen, openFieldSheet, popupMenu, selectOpen,
-  setMenuOpen, sheet, sheetOpen, showSheet, styleSelect,
+  sheet, sheetOpen, showSheet, styleSelect,
 } from "../src/ui/index.js";
 import { parseCss } from "./css-rules.js";
 import { sheet as styleSheet } from "./styles.js";
@@ -132,14 +132,11 @@ describe("ui/menu - popupMenu", () => {
     expect(reached).toEqual([]);
   });
 
-  it("a second menu replaces the first; closeMenu takes the Data context menus too", () => {
+  it("a second menu replaces the first; closeMenu takes it and the flag", () => {
     popupMenu(anchor, [{ label: "one", fn: () => {} }]);
     popupMenu(anchor, [{ label: "two", fn: () => {} }]);
     expect(document.querySelectorAll("#menu")).toHaveLength(1);
     expect(document.querySelector("#menu button")!.textContent).toBe("two");
-    const ctx = document.body.appendChild(document.createElement("div"));
-    ctx.className = "menu float ctx-menu";
-    setMenuOpen(true);
     closeMenu();
     expect(document.querySelector(".menu")).toBeNull();
     expect(menuOpen()).toBe(false);
