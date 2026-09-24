@@ -15,21 +15,23 @@
  */
 
 import { $ } from "../util.js";
-import { fill, h } from "../h.js";
+import { fill } from "../h.js";
 import { jobsChipText, loadJobs } from "../polling.js";
 import { probeJobs } from "../jobs.js";
 import { pluginInventory } from "../page-registry.js";
 import { clearJobsView } from "../job-state.js";
 import { tr } from "../i18n.js";
+import { emptyNode } from "../ui/page.js";
 
 /** On a gateway without the jobs subsystem (no inventory API and a failed probe) the view says
- *  so once instead of parking on its loading placeholder — the row the tab could still show. */
+ *  so once instead of parking on its loading placeholder — the row the tab could still show.
+ *  The library's one empty-state shape (docs/18 V7), the last two ui.css tokens in a view. */
 function unavailable() {
-  fill($("pane"),
-    h("div", { class: "empty" },
-      h("div", null,
-        h("h2", null, tr("jobs.jobsUnavailable")),
-        h("p", { class: "hint" }, tr("jobs.gatewayServeJobsSubsystem")))));
+  fill($("pane"), emptyNode({
+    icon: "clock",   // the sprite's own clock (i-calendar does not exist)
+    title: tr("jobs.jobsUnavailable"),
+    hint: tr("jobs.gatewayServeJobsSubsystem"),
+  }));
 }
 
 export async function mount() {

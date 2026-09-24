@@ -34,9 +34,11 @@ import { h } from "../h.js";
                    
  
 
-export function seg(items           , selected        , o                                                                = {})              {
+export function seg(items           , selected        , o                                                              
+                                                                                               
+                   = {})              {
   const key = o.key || "seg";
-  return h("div", { class: "seg", role: "tablist", id: o.id, data: o.data, aria: { label: o.label } },
+  return h("div", { class: "seg" + (o.fill ? " fill" : ""), role: "tablist", id: o.id, data: o.data, aria: { label: o.label } },
     items.map((it) => {
       return h("button", {
         type: "button", role: "tab", title: it.title, hidden: it.hidden,

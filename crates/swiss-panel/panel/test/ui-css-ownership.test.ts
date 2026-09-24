@@ -30,7 +30,21 @@ import { describe, expect, it } from "vitest";
 import { classesOf, allClassesOf, baseClassOf, parseCss, specificity, subjectOf } from "./css-rules.js";
 import { sheet, uiOwnedClasses } from "./styles.js";
 
-const FROZEN_VIOLATIONS = 48; // docs/46 P1a-2
+/* docs/46 P9: the ratchet's floor. P1a froze 48; per-page migrations walked it down; P9's
+   sweep took the rest - a host sizes and inks the glyphs in its own rows through the icon's
+   knobs (--ic, --ic-ink on the host; ui.css .ic reads them), the two dd sizings ride the
+   selects' own classes (ui/select.ts carries ownClasses to the trigger), and the rules that
+   restated a library default (.dot, .hint, a btn's flex) are gone. A NEW hit fails outright
+   now: there is no allowance left to land in. */
+const FROZEN_VIOLATIONS = 0;
+
+/* The one library shape a page could reach by ELEMENT: every sprite glyph is iconNode()'s
+   svg.ic, so a views.css subject of svg (or its use) is ".ic" under another name - the
+   restyle this gate exists to stop, with the class spelled out of sight. Buttons and labels
+   stay out of it: a page hand-builds those too, and there the element is the page's own. */
+export function iconByElement(selector: string): boolean {
+  return /^(svg|use)(?![\w-])/.test(subjectOf(selector));
+}
 
 export function ownershipViolations(): string[] {
   const owned = uiOwnedClasses();
@@ -39,6 +53,7 @@ export function ownershipViolations(): string[] {
     for (const s of r.selectors) {
       const c = baseClassOf(s);
       if (c && owned.has(c)) out.push(s + "  (" + c + ")");
+      else if (iconByElement(s)) out.push(s + "  (svg = .ic: set --ic / --ic-ink on the host)");
     }
   }
   return out;
@@ -57,6 +72,11 @@ describe("docs/46 G2 - views.css does not restyle the component layer", () => {
     expect(specificity(".side-head .btn:hover")).toEqual([0, 3, 0]);
     expect(specificity("body.immersive #expandBtn")).toEqual([1, 1, 1]);
     expect(specificity(".x::before")).toEqual([0, 1, 1]);
+    expect(iconByElement(".keylist button svg")).toBe(true);
+    expect(iconByElement(".db-key svg:hover")).toBe(true);
+    expect(iconByElement(".pal-row > use")).toBe(true);
+    expect(iconByElement(".svg-wrap .x")).toBe(false);
+    expect(iconByElement(".keylist button")).toBe(false);
   });
 
   it("the violation count is at or below its frozen value", () => {

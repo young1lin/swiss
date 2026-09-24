@@ -576,7 +576,7 @@ function openJobSheet(job: ApiJobRow | null): void {
       h("div", { class: "sched-say cmd-say", id: "jf-cmd-say" }),
       formCap(tr("jobs.schedule")),
       h("div", { class: "sched", id: "jf-sched" },
-        seg(SCHED_MODES.map((m: string) => { return { id: m, label: tr(MODE_LABELS[m] ?? m) }; }), sched.mode || "daily", { key: "mode", label: tr("jobs.schedule") }),
+        seg(SCHED_MODES.map((m: string) => { return { id: m, label: tr(MODE_LABELS[m] ?? m) }; }), sched.mode || "daily", { key: "mode", label: tr("jobs.schedule"), fill: true }),
         h("div", { id: "jf-sched-fields" }),
         h("div", { class: "sched-say", id: "jf-say" })),
       formCap(tr("jobs.options")),

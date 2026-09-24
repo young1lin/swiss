@@ -53,9 +53,10 @@ import { uiOwnedClasses } from "./styles.js";
    summing the tree and counts a fixed source instead: at P9 the tree is meant to reach 0.
    P8-2: views/terminal.ts 6 -> 0 and views/terminal-settings.ts 11 -> 0 (the session tabs on
    objTab() - bell on heldDot() - the picker on the panel's own select face, the bar's buttons
-   on btn()/iconBtn(), both sheets on sheet() + ui/form.ts). Only jobs.ts is left for P9. */
+   on btn()/iconBtn(), both sheets on sheet() + ui/form.ts).
+   P9: views/jobs.ts 2 -> 0 (the unavailable note on the library's emptyNode, its hint included).
+   The tree is at 0 - the table stays empty: any new hit fails with no row to soften it. */
 const FROZEN: Record<string, number> = {
-  "views/jobs.ts": 2,
 };
 
 const srcDir = path.resolve(import.meta.dirname, "../src");

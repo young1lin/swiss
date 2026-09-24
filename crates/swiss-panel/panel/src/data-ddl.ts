@@ -354,8 +354,9 @@ function renderDbDdlRows(): void {
     tri.appendChild(mk("default", r.default, "0"));
     tri.appendChild(mk("comment", r.comment, ""));
     const tdx = el("td");
+    // Ghost: a remove on every row of a form grid is quiet until the pointer reaches it.
     const rm = iconBtn("x", tr("dataDdl.removeColumn"), {
-      data: { i: String(i) }, disabled: !r.isNew, title: r.isNew ? undefined : tr("dataDdl.onlyNewColumnsCan"),
+      ghost: true, data: { i: String(i) }, disabled: !r.isNew, title: r.isNew ? undefined : tr("dataDdl.onlyNewColumnsCan"),
     });
     rm.onclick = (): void => {
       S?.rows.splice(i, 1);

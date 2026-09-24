@@ -76,8 +76,10 @@
        the seat a tint of it - the selected-seat treatment, not a new colour. Without it "pressed"
        drew exactly like "not pressed" (found by the gallery, docs/46 P1b-3). */
     .btn.icon[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-    /* Inline icons (docs/18 V2): one sprite in the shell, stroke=currentColor, sized here. */
-    .ic { width: 16px; height: 16px; flex: none; }
+    /* Inline icons (docs/18 V2): one sprite in the shell, stroke=currentColor, sized here.
+       Size and ink are knobs the HOST sets on its own element (--ic, --ic-ink): a page's row
+       sizes its glyphs without a rule on .ic, which stays the library's (docs/46 G2). */
+    .ic { width: var(--ic, 16px); height: var(--ic, 16px); flex: none; color: var(--ic-ink, currentColor); }
     /* Disclosure chevrons read better a step smaller than action icons. */
     .grp-chev .ic { width: var(--ic-s); height: var(--ic-s); }
 
@@ -331,6 +333,10 @@
 
     /* Segmented control. */
     .seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--sep-soft); border-radius: 8px; }
+    /* The control-slot seg (docs/46 P9): fills its row the way .field .dd does, so equal
+       pills split the slot - a schedule's mode picker. */
+    .seg.fill { display: flex; width: 100%; }
+    .seg.fill button { flex: 1; }
     /* An emptied .seg is not a control: the padding over --sep-soft is the control's well, so
        with nothing inside it the well itself paints — a 6px grey square. The shell no longer
        empties a .seg (page navigation left the segmented control entirely), but a page-local

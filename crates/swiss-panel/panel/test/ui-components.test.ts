@@ -659,6 +659,11 @@ describe("ui/seg", () => {
     const s = seg([{ id: "all", label: "Everything" }], "all");
     expect((s.querySelector("button") as HTMLButtonElement).dataset.seg).toBe("all");
   });
+
+  it("fill is a class the page asks for, not a width it restyles (docs/46 P9)", () => {
+    expect(seg([{ id: "daily", label: "Daily" }], "daily", { fill: true }).className).toBe("seg fill");
+    expect(seg([{ id: "x", label: "X" }], "x").className).toBe("seg");
+  });
 });
 
 /* A fixed local "now": 2026-09-23 10:00, so the day arithmetic is the reader's local days. */
