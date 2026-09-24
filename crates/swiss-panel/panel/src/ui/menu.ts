@@ -24,7 +24,9 @@
  * ask menuOpen(). Every menu in the panel is built here: the MCP pane's overflow became
  * anchoredMenu (docs/46 P2) and Data's hand-built .ctx-menu popups became popupMenu (P7).
  * setMenuOpen stays exported for the suites that reset the flag between cases. */
+import { h } from "../h.js";
 import { iconNode } from "./icon.js";
+import { heldDot } from "./status.js";
 
 /** One popupMenu row. The union is load-bearing: a separator is { sep: true } with NO
  *  label/fn (tunnels.ts was the strict-mode error that proved it), an action is label+fn with
@@ -104,81 +106,52 @@ function clampMenuPos(anchor: { left: number; top: number; bottom: number }, w: 
    built on it needs no second menu idiom. */
 /** The rows of a menu, as popupMenu and anchoredMenu both draw them. */
 function menuNode(cls: string, items: MenuItem[]): HTMLElement {
-  const node = document.createElement("div");
-  node.className = cls;
-  node.id = "menu";
-  items.forEach((it) => {
-    if (it.sep) { node.appendChild(document.createElement("hr")); return; }
+  return h("div", { class: cls, id: "menu" }, items.map((it): HTMLElement => {
+    if (it.sep) return h("hr");
     // docs/43 M3: a heading is chrome, not a choice — a plain div, so it can neither take
     // focus from the first real item nor answer a click.
-    if (it.heading) {
-      const h = document.createElement("div");
-      h.className = "menu-head";
-      h.textContent = it.label;
-      node.appendChild(h);
-      return;
-    }
-    const cls = (it.pick ? "pick" : "") + (it.on ? " on" : "") + (it.danger ? " danger" : "");
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = cls.trim();
-    b.textContent = it.label;
-    if (it.title) b.title = it.title;
-    // docs/43 M3: shown but refused — the database selector's browsable:false rows carry
-    // the server's reason in title; a disabled button cannot be clicked, so no fn runs.
-    if (it.disabled) b.disabled = true;
-    // docs/43 M1: the same type glyph and dirty dot the object's card carries, on the menu
-    // row that stands in for it. Order is the card's order: glyph first, dot last.
-    if (it.icon) b.insertBefore(iconNode(it.icon), b.firstChild);
-    // fix-plan #14: a trailing affordance for rows that open ANOTHER menu - the caret class
-    // of promise, retired from the label copy. Painted after the dot for the same reason the
-    // dot paints last: it is a direction about what happens next, not a fact about the row.
-    if (it.affordance) b.appendChild(iconNode(it.affordance));
-    if (it.dot) {
-      const d = document.createElement("span");
-      d.className = "db-tab-dot";
-      b.appendChild(d);
-    }
+    if (it.heading) return h("div", { class: "menu-head" }, it.label);
+    // Order is the object card's (docs/43 M1): the type glyph first, then the word, then a
+    // trailing affordance for a row that opens ANOTHER menu (fix-plan #14 - a direction about
+    // what happens next), then the held-writes dot last, a fact about the row. A refused row
+    // (docs/43 M3: a database the server will not browse) is shown disabled, its reason in
+    // the title, and a disabled button runs no fn.
+    const b = h("button", {
+      type: "button", class: [it.pick ? "pick" : "", it.on ? "on" : "", it.danger ? "danger" : ""].filter(Boolean).join(" ") || undefined,
+      title: it.title, disabled: it.disabled,
+    }, it.icon ? iconNode(it.icon) : null, it.label, it.affordance ? iconNode(it.affordance) : null, it.dot ? heldDot(null) : null);
     b.onclick = (ev) => { ev.stopPropagation(); closeMenu(); if (!b.disabled) it.fn(); };
-    node.appendChild(b);
-  });
-  return node;
+    return b;
+  }));
 }
 
 /** Roles and keys, once the menu is in the document: the first item focused, arrows walk the
- *  items, Escape closes. Guarded: four suites still drive popupMenu on a hand-rolled micro-DOM
- *  with no querySelectorAll, focus or setAttribute (admin-revisions, admin-row-menu,
- *  admin-data-redis-cellmenu, admin-logs-pagination). It is also why the menu is built with
- *  createElement rather than h(): those stubs never derive textContent from a text child.
- *  Both go when the last of those suites moves to happy-dom with the page that owns it (P7). */
+ *  items, Escape closes. It used to guard every DOM call (and menuNode used createElement, not
+ *  h()) for four suites that drove popupMenu on hand-rolled micro-DOMs; three moved to
+ *  happy-dom and the fourth's stub grew the calls (docs/46 P7-3), so the guards are gone. */
 function wireMenu(node: HTMLElement): void {
   open = true;
-  if (typeof node.setAttribute === "function") node.setAttribute("role", "menu");
-  const buttons = typeof node.querySelectorAll === "function"
-    ? Array.prototype.slice.call(node.querySelectorAll<HTMLButtonElement>("button"))
-      .filter((b: HTMLButtonElement) => !b.disabled)
-    : [];
-  buttons.forEach((b) => { if (b.setAttribute) b.setAttribute("role", "menuitem"); });
-  if (buttons[0] && typeof buttons[0].focus === "function") buttons[0].focus();
-  if (typeof node.addEventListener === "function") {
-    node.addEventListener("keydown", (ev) => {
-      const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
-      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-        // The arrows are the menu's own, like Escape below: left to bubble, they also reached
-        // main.ts's sidebar walk, which moved the MCP selection behind an open menu - and
-        // selecting an MCP closes every menu, so the first ArrowDown shut the one in use.
-        ev.preventDefault();
-        ev.stopPropagation();
-        let n = ev.key === "ArrowDown" ? i + 1 : i - 1;
-        if (n < 0) n = buttons.length - 1;
-        if (n >= buttons.length) n = 0;
-        if (buttons[n] && typeof buttons[n].focus === "function") buttons[n].focus();
-      } else if (ev.key === "Escape") {
-        ev.stopPropagation();
-        closeMenu();
-      }
-    });
-  }
+  node.setAttribute("role", "menu");
+  const buttons = Array.from(node.querySelectorAll<HTMLButtonElement>("button")).filter((b) => !b.disabled);
+  buttons.forEach((b) => { b.setAttribute("role", "menuitem"); });
+  if (buttons[0]) buttons[0].focus();
+  node.addEventListener("keydown", (ev) => {
+    const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      // The arrows are the menu's own, like Escape below: left to bubble, they also reached
+      // main.ts's sidebar walk, which moved the MCP selection behind an open menu - and
+      // selecting an MCP closes every menu, so the first ArrowDown shut the one in use.
+      ev.preventDefault();
+      ev.stopPropagation();
+      let n = ev.key === "ArrowDown" ? i + 1 : i - 1;
+      if (n < 0) n = buttons.length - 1;
+      if (n >= buttons.length) n = 0;
+      buttons[n].focus();
+    } else if (ev.key === "Escape") {
+      ev.stopPropagation();
+      closeMenu();
+    }
+  });
 }
 
 function popupMenu(anchor: { left: number; top: number; bottom: number; width?: number }, items: MenuItem[]): void {

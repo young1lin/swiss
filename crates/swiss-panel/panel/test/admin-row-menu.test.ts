@@ -13,8 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// @vitest-environment happy-dom
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /* Integration: the row overflow menus (docs/18 V5) against the document-level click closer in
    connect.js. Regression (2026-09-12): the Jobs/Tunnels row ellipsis wired popupMenu WITHOUT
@@ -23,345 +27,122 @@ import { describe, it, expect, beforeAll } from "vitest";
    The pane's own overflow button and the tunnel group-head menus never had this because they
    call ev.stopPropagation() first.
 
-   There is no DOM library in this repo, so this suite drives the real modules (wireJobs /
-   wireTunnels -> menu.js popupMenu -> pane.js closeMenu -> connect.js's document closer) under
-   a micro-DOM whose click events REALLY BUBBLE — the bug only exists in the presence of
-   bubbling, so a fake without it cannot catch it. */
+   The suite drives the real modules (wireJobs / wireTunnels -> ui/menu popupMenu -> closeMenu
+   -> connect.js's document closer). The bug only exists where clicks bubble, so the DOM must
+   bubble them: happy-dom does (docs/46 P7-3; this suite used to carry its own micro-DOM with a
+   hand-written bubbling loop, from before the repo had a DOM library). */
 
-interface FakeEvent {
-  type: string;
-  target: FakeNode;
-  stopped: boolean;
-  stopPropagation(): void;
-  preventDefault(): void;
-}
-
-/* docs/37 R5: jobs now paints its sheets with h()/fill(), so the micro-DOM needs the
-   Node identity the builder checks, text nodes, fragments that splice on append, and an
-   innerHTML that READS the built tree back as markup (what the assertions grep). */
-class NodeStub {}
-(globalThis as unknown as { Node: unknown }).Node = NodeStub;
-
-class FakeNode extends NodeStub {
-  tag: string;
-  attrs: Record<string, string> = {};
-  children: FakeNode[] = [];
-  parent: FakeNode | null = null;
-  className = "";
-  isText = false;
-  private _text = "";
-  private _html = "";
-  get textContent(): string { return this._text; }
-  set textContent(v: string) {
-    if (v === "") { this.children = []; this._html = ""; } // fill()'s wipe
-    this._text = v;
-  }
-  get innerHTML(): string { return this._html || serialize(this); }
-  set innerHTML(v: string) { this._html = v; this.children = []; }
-  id = "";
-  type = "button"; // sheet/form code sets .type on buttons
-  onclick: ((ev: FakeEvent) => void) | null = null;
-  listeners: Record<string, Array<(e: FakeEvent) => void>> = {};
-  style: Record<string, string> = {};
-  hidden = false;
-  /** Only the document node ever sets this; typed so doc.body.appendChild narrows cleanly. */
-  body: FakeNode | null = null;
-
-  constructor(tag: string) {
-    super();
-    this.tag = tag.toUpperCase();
-  }
-
-  get dataset(): Record<string, string> {
-    const d: Record<string, string> = {};
-    for (const k of Object.keys(this.attrs)) {
-      if (k.startsWith("data-")) d[k.slice(5).replace(/-([a-z])/g, (_m, c) => c.toUpperCase())] = this.attrs[k];
-    }
-    return d;
-  }
-
-  setAttribute(k: string, v: string) {
-    this.attrs[k] = v;
-    if (k === "id") this.id = v;
-  }
-  getAttribute(k: string) {
-    return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null;
-  }
-  appendChild(n: FakeNode) {
-    if (n.tag === "#DOCUMENT-FRAGMENT") {
-      n.children.slice().forEach((c) => { this.appendChild(c); });
-      n.children = [];
-      this._html = "";
-      return n;
-    }
-    n.remove();
-    n.parent = this;
-    this.children.push(n);
-    this._html = "";
-    return n;
-  }
-  removeChild(n: FakeNode) {
-    const i = this.children.indexOf(n);
-    if (i >= 0) this.children.splice(i, 1);
-    n.parent = null;
-    return n;
-  }
-  remove() {
-    if (this.parent) this.parent.removeChild(this);
-  }
-  contains(n: FakeNode): boolean {
-    return n === this || this.children.some((c) => c.contains(n));
-  }
-  addEventListener(t: string, fn: (e: FakeEvent) => void) {
-    (this.listeners[t] ||= []).push(fn);
-  }
-  select() {} /* the clipboard textarea path in copyText */
-  focus() {}
-  getBoundingClientRect() {
-    return { left: 100, right: 160, top: 100, bottom: 132, width: 60, height: 32 };
-  }
-
-  /** One compound token, e.g. "button", "#menu", ".danger", "button.danger", "div[data-x]" —
-   *  every segment must match (tag + class/attr filters glued together). */
-  matchesSimple(part: string): boolean {
-    const segs = part.match(/[a-zA-Z][a-zA-Z0-9-]*|#[^.#[]+|\.[^.#[]+|\[[^\]]+\]/g) || [];
-    return segs.every((s) => {
-      if (s[0] === "#") return this.id === s.slice(1);
-      if (s[0] === ".") return this.className.split(/\s+/).includes(s.slice(1));
-      if (s[0] === "[") return this.getAttribute(s.slice(1, -1)) !== null;
-      return this.tag === s.toUpperCase();
-    });
-  }
-  matches(sel: string): boolean {
-    return sel.split(",").some((p) => {
-      const parts = p.trim().split(/\s+/);
-      // Last part matches this node; each earlier part must be matched by some ancestor.
-      if (!this.matchesSimple(parts[parts.length - 1])) return false;
-      let anc = this.parent;
-      for (let i = parts.length - 2; i >= 0; i--) {
-        while (anc && !anc.matchesSimple(parts[i])) anc = anc.parent;
-        if (!anc) return false;
-        anc = anc.parent;
-      }
-      return true;
-    });
-  }
-  closest(sel: string): FakeNode | null {
-    let n: FakeNode | null = this;
-    while (n) {
-      if (n.matches(sel)) return n;
-      n = n.parent;
-    }
-    return null;
-  }
-  querySelectorAll(sel: string): FakeNode[] {
-    const out: FakeNode[] = [];
-    const walk = (n: FakeNode) => {
-      if (n !== this && n.matches(sel)) out.push(n);
-      n.children.forEach(walk);
-    };
-    walk(this);
-    return out;
-  }
-  querySelector(sel: string): FakeNode | null {
-    return this.querySelectorAll(sel)[0] || null;
-  }
-}
-
-function serialize(n: FakeNode): string {
-  if (n.isText) return n.textContent;
-  const attrs = Object.keys(n.attrs).map((k) => { return " " + k + "=\"" + n.attrs[k] + "\""; }).join("");
-  const id = n.id ? " id=\"" + n.id + "\"" : "";
-  const cls = n.className ? " class=\"" + n.className + "\"" : "";
-  const hid = n.hidden ? " hidden" : "";
-  const kids = n.children.map((c) => serialize(c)).join("");
-  const tag = n.tag.toLowerCase();
-  return "<" + tag + id + cls + attrs + hid + ">" + (kids || (n.textContent && !n.children.length ? n.textContent : "")) + "</" + tag + ">";
-}
-
-const doc = new FakeNode("#document");
-const docBody = new FakeNode("body");
-doc.body = docBody;
-doc.appendChild(doc.body);
-(doc as unknown as { getElementById(id: string): FakeNode }).getElementById = (id: string) => {
-  const walk = (n: FakeNode): FakeNode | null => {
-    if (n.id === id) return n;
-    for (const c of n.children) {
-      const hit = walk(c);
-      if (hit) return hit;
-    }
-    return null;
-  };
-  const hit = walk(doc);
-  if (hit) return hit;
-  // Permissive: ids the shell owns but this micro-DOM never builds (addBtn, sheet, toasts...)
-  // still need to exist so module-top-level wiring does not explode.
-  const made = new FakeNode("div");
-  made.id = id;
-  docBody.appendChild(made);
-  return made;
-};
-(doc as unknown as { querySelector(sel: string): FakeNode | null }).querySelector = (sel: string) =>
-  (doc as unknown as { querySelectorAll(s: string): FakeNode[] }).querySelectorAll.call(doc, sel)[0] || null;
-(doc as unknown as { querySelectorAll(sel: string): FakeNode[] }).querySelectorAll = (sel: string) => {
-  const out: FakeNode[] = [];
-  const walk = (n: FakeNode) => {
-    if (n !== doc && n.matches(sel)) out.push(n);
-    n.children.forEach(walk);
-  };
-  walk(doc);
-  return out;
-};
-(doc as unknown as { createElement(t: string): FakeNode }).createElement = (t: string) => new FakeNode(t);
-(doc as unknown as { createElementNS(ns: string, t: string): FakeNode }).createElementNS = (_ns: string, t: string) => new FakeNode(t);
-(doc as unknown as { createDocumentFragment(): FakeNode }).createDocumentFragment = () => new FakeNode("#document-fragment");
-(doc as unknown as { createTextNode(s: string): FakeNode }).createTextNode = (s: string) => {
-  const n = new FakeNode("#text");
-  n.isText = true;
-  n.textContent = s;
-  return n;
-};
-
-const documentCloserCalls: string[] = [];
-
-/** A click that really bubbles: target handler first, then each ancestor's, honoring
- *  stopPropagation exactly like the browser. */
-function click(node: FakeNode) {
-  const ev: FakeEvent = {
-    type: "click",
-    target: node,
-    stopped: false,
-    stopPropagation() {
-      this.stopped = true;
-    },
-    preventDefault() {},
-  };
-  let n: FakeNode | null = node;
-  while (n) {
-    if (typeof n.onclick === "function") n.onclick(ev);
-    for (const fn of n.listeners.click || []) {
-      if (n === doc) documentCloserCalls.push("click");
-      fn(ev);
-    }
-    if (ev.stopped) break;
-    n = n.parent;
-  }
+const here = dirname(fileURLToPath(import.meta.url));
+function shellSkeleton(): string {
+  const html = readFileSync(join(here, "..", "..", "src", "admin_assets", "index.html"), "utf8");
+  const ids = Array.from(html.matchAll(/id="([a-zA-Z0-9_-]+)"/g)).map((m) => m[1]);
+  return Array.from(new Set(ids)).map((id) => '<div id="' + id + '"></div>').join("");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mods: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let tunState: any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let jobState: any;
 
 const JOB_RUNS_URL = "/api/jobs/env-check/runs";
 
 beforeAll(async () => {
-  const anyG = globalThis as unknown as Record<string, unknown>;
-  anyG.window = { innerWidth: 1440, innerHeight: 900, addEventListener() {} };
-  anyG.confirm = () => true;
-  anyG.fetch = async (url: string) => ({
-    ok: true,
-    status: 200,
-    json: async () => {
-      if (String(url).includes(JOB_RUNS_URL)) return { runs: [], nextBefore: null };
-      if (String(url).startsWith("/api/jobs")) return { jobs: [] };
-      return {};
-    },
+  document.body.innerHTML = shellSkeleton();
+  Object.assign(globalThis, {
+    confirm: () => true,
+    fetch: async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        if (String(url).includes(JOB_RUNS_URL)) return { runs: [], nextBefore: null };
+        if (String(url).startsWith("/api/jobs")) return { jobs: [] };
+        return {};
+      },
+    }),
   });
-  anyG.document = doc;
-
   // connect.js installs the document-level click closer — the code the bug lived under.
   await import("../src/connect.js");
   mods = {
     jobs: await import("../src/jobs.js"),
     tunnels: await import("../src/tunnels.js"),
-    util: await import("../src/util.js"),
   };
   tunState = await import("../src/tunnel-state.js");
   jobState = await import("../src/job-state.js");
 });
 
-describe("row overflow menu vs the document click closer (docs/18 V5)", () => {
-  function actionButton(attr: string): FakeNode {
-    const b = new FakeNode("button");
-    b.setAttribute(attr, "");
-    b.className = "btn ghost icon";
-    return b;
+beforeEach(() => {
+  document.getElementById("menu")?.remove();
+  const sheet = document.getElementById("sheet")!;
+  sheet.hidden = true;
+  sheet.textContent = "";
+});
+
+describe("row overflow menus vs the document click closer (docs/18 V5)", () => {
+  function row(attr: string, id: string, act: string): HTMLElement {
+    const r = document.createElement("div");
+    r.setAttribute(attr, id);
+    for (const a of [act, "data-more"]) {
+      const b = document.createElement("button");
+      b.setAttribute(a, "");
+      b.className = "btn ghost icon";
+      r.appendChild(b);
+    }
+    return r;
   }
-  function paneNode(): FakeNode {
-    const get = (doc as unknown as { getElementById(id: string): FakeNode }).getElementById("pane");
-    get.children.length = 0;
-    get.innerHTML = "";
-    return get;
+  function pane(...rows: HTMLElement[]): void {
+    document.getElementById("pane")!.replaceChildren(...rows);
   }
-  function openMenuOf(button: FakeNode): FakeNode {
-    click(button);
-    // querySelector, not the permissive getElementById (which auto-creates): an eaten menu
-    // must read as null here.
-    const menu = doc.querySelector("#menu");
-    expect(menu).toBeTruthy();
+  /** A real click on the ⋯: it bubbles through the row, #pane and on to document. */
+  function openMenuOf(r: HTMLElement): HTMLElement {
+    r.querySelector<HTMLButtonElement>("[data-more]")!.click();
+    const menu = document.getElementById("menu");
+    expect(menu, "the menu survived its own click").not.toBeNull();
     return menu!;
   }
-  const labelsOf = (menu: FakeNode) => menu.querySelectorAll("button").map((b) => b.textContent);
+  const labelsOf = (menu: HTMLElement): string[] => Array.from(menu.querySelectorAll("button")).map((b) => b.textContent ?? "");
 
-  /** One Jobs row against the real jobRowNode contract, wired by the real wireJobs. */
-  function wiredJobRow(): FakeNode {
-    const pane = paneNode();
-    const row = new FakeNode("div");
-    row.setAttribute("data-job", "env-check");
-    row.appendChild(actionButton("data-run"));
-    row.appendChild(actionButton("data-more"));
-    pane.appendChild(row);
+  /** One Jobs row against the real row contract, wired by the real wireJobs. */
+  function wiredJobRow(): HTMLElement {
+    const r = row("data-job", "env-check", "data-run");
+    pane(r);
     // jobByName() reads the jobs domain rows — the payload loadJobs stores.
     jobState.setJobRows([{ name: "env-check", cron: "5 * * * *", enabled: true, editableInV1: true }]);
     jobState.clearJobBusy("env-check");
     mods.jobs.wireJobs();
-    return row;
+    return r;
   }
 
   it("a Jobs row ellipsis opens its menu even though the click bubbles to document", () => {
-    const row = wiredJobRow();
     // THE regression: without stopPropagation the same click that opens the menu reaches
     // connect.js's closer, which removes it before the browser even paints.
-    const menu = openMenuOf(row.querySelector("[data-more]")!);
+    const menu = openMenuOf(wiredJobRow());
     expect(labelsOf(menu)).toEqual(["Edit", "History", "Delete"]);
-    expect(menu.querySelectorAll("button.danger").map((b) => b.textContent)).toEqual(["Delete"]);
+    expect(Array.from(menu.querySelectorAll("button.danger")).map((b) => b.textContent)).toEqual(["Delete"]);
   });
 
   it("an outside click still closes an open menu (the closer itself must keep working)", () => {
-    const row = wiredJobRow();
-    openMenuOf(row.querySelector("[data-more]")!);
-    expect(doc.querySelector("#menu")).toBeTruthy();
-    click(docBody);
-    expect(doc.querySelector("#menu")).toBe(null);
+    openMenuOf(wiredJobRow());
+    document.body.click();
+    expect(document.getElementById("menu")).toBeNull();
   });
 
   it("History from the menu opens the runs sheet for that job", async () => {
-    const row = wiredJobRow();
-    const menu = openMenuOf(row.querySelector("[data-more]")!);
-    const hist = labelsOf(menu).indexOf("History");
-    click(menu.querySelectorAll("button")[hist]);
-    await new Promise((r) => setTimeout(r, 0));
-    const sheet = (doc as unknown as { getElementById(id: string): FakeNode }).getElementById("sheet");
-    expect(sheet.innerHTML).toContain("Runs — env-check");
+    const menu = openMenuOf(wiredJobRow());
+    Array.from(menu.querySelectorAll("button")).find((b) => b.textContent === "History")!.click();
+    await new Promise((r) => { setTimeout(r, 0); });
+    const sheet = document.getElementById("sheet")!;
+    expect(sheet.hidden).toBe(false);
+    expect(sheet.textContent).toContain("Runs — env-check");
     // The menu closed behind the action.
-    expect(doc.querySelector("#menu")).toBe(null);
+    expect(document.getElementById("menu")).toBeNull();
   });
 
   it("a Tunnels rule ellipsis opens its menu; Force free appears only while a port is held", () => {
-    const pane = paneNode();
-    const held = new FakeNode("div");
-    held.setAttribute("data-rule", "r1");
-    held.appendChild(actionButton("data-act"));
-    held.appendChild(actionButton("data-more"));
-    const free = new FakeNode("div");
-    free.setAttribute("data-rule", "r2");
-    free.appendChild(actionButton("data-act"));
-    free.appendChild(actionButton("data-more"));
-    pane.appendChild(held);
-    pane.appendChild(free);
-
+    const held = row("data-rule", "r1", "data-act");
+    const free = row("data-rule", "r2", "data-act");
+    pane(held, free);
     // tunData() reads the tunnel domain payload — the payload loadTunnels stores.
     tunState.setMountedTunScope("rules");
     tunState.setTunResponse({
@@ -376,22 +157,14 @@ describe("row overflow menu vs the document click closer (docs/18 V5)", () => {
     });
     mods.tunnels.wireTunnels();
 
-    const menu1 = openMenuOf(held.querySelector("[data-more]")!);
-    expect(labelsOf(menu1)).toEqual(["Edit", "Copy local port", "Force free 50383", "Delete"]);
-
-    click(docBody); // close before opening the next
-    const menu2 = openMenuOf(free.querySelector("[data-more]")!);
-    expect(labelsOf(menu2)).toEqual(["Edit", "Copy local port", "Delete"]);
+    expect(labelsOf(openMenuOf(held))).toEqual(["Edit", "Copy local port", "Force free 50383", "Delete"]);
+    document.body.click(); // close before opening the next
+    expect(labelsOf(openMenuOf(free))).toEqual(["Edit", "Copy local port", "Delete"]);
   });
 
   it("a Tunnels connection ellipsis opens its menu", () => {
-    const pane = paneNode();
-    const conn = new FakeNode("div");
-    conn.setAttribute("data-conn", "c1");
-    conn.appendChild(actionButton("data-test"));
-    conn.appendChild(actionButton("data-more"));
-    pane.appendChild(conn);
-
+    const conn = row("data-conn", "c1", "data-test");
+    pane(conn);
     tunState.setMountedTunScope("conns");
     tunState.setTunResponse({
       connections: [{ id: "c1", host: "192.168.1.24", port: 22 }],
@@ -401,8 +174,6 @@ describe("row overflow menu vs the document click closer (docs/18 V5)", () => {
       mcps: [],
     });
     mods.tunnels.wireTunnels();
-
-    const menu = openMenuOf(conn.querySelector("[data-more]")!);
-    expect(labelsOf(menu)).toEqual(["Edit", "Copy host", "Delete"]);
+    expect(labelsOf(openMenuOf(conn))).toEqual(["Edit", "Copy host", "Delete"]);
   });
 });

@@ -88,7 +88,9 @@ const el = (tag = "div"): Stub => {
     set: () => { n.children = []; }, // a real innerHTML="" wipes the subtree — the test's oracle
   });
   Object.defineProperty(n, "textContent", {
-    get: (): string => (n as any)._text ?? "",
+    // Set directly, or read back from the children as a real DOM does: h() builds a menu row's
+    // word as a text child (docs/46 P7-3).
+    get: (): string => (n as any)._text || n.children.map((c: Stub) => String(c.textContent)).join(""),
     set: (v: string) => { if (v === "") n.children = []; (n as any)._text = v; }, // the R5 wipe
   });
   Object.setPrototypeOf(n, NodeStub.prototype);

@@ -529,10 +529,16 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
       Unicode ✕ / ↩，改成与网格相同的 `i-x` / `i-undo`。⑤ CSV 文本框清空后旧的预览不消失。①–④ 先写 RED 测试。
       G5 的 data-* 13 行（87 个 token）全部归零；因为树里只剩 19 个，G5 的"不是瞎数"检查改成数一段固定源码，
       不再要求全树 > 50（P9 时全树应为 0）。G4 views.css 222 → 220；G7 views.css 63479 → 63072 字节。
-- [ ] （P7-3）手写微型 DOM 的四个套件（admin-revisions、admin-row-menu、admin-data-redis-cellmenu、
+- [x] （P7-3）手写微型 DOM 的四个套件（admin-revisions、admin-row-menu、admin-data-redis-cellmenu、
       admin-logs-pagination）换成 happy-dom，`popupMenu` 改用 `h()` 构建、`wireMenu` 的 typeof 防护一起删（见偏差表
       P1b-2 那一行）。P7-2 试过：`h()` 版的菜单只让这四个套件挂（它们的桩不从文本子节点算 `textContent`），
       happy-dom 的套件全绿。
+      实施：菜单的每一行由 `h()` 画（字形、字、下一级的箭头、暂存圆点 `heldDot(null)`，顺序不变），`wireMenu` 不再
+      判断 DOM 方法在不在。admin-revisions、admin-row-menu、admin-data-redis-cellmenu 三个换成 happy-dom：真的
+      contextmenu / click 事件，真的冒泡——row-menu 那个回归（打开菜单的点击冒到 document 又把菜单关掉）用变异验证过
+      仍然能抓到。与原计划不同：admin-logs-pagination 保留它的微型 DOM——它的 40 个用例数的是 FakeNode 上的重绘
+      次数、错误条与 focus 调用，真 DOM 不记这些；它的桩改成像真 DOM 一样从子节点算 `textContent`（admin-data-grid-focus
+      的桩同样处理）。
 
 ### 3.8 Terminal（P8）
 
