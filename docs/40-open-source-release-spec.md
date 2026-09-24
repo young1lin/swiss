@@ -24,7 +24,8 @@
   （Apache-2.0，author Z.AI），头注却只写 swiss 自己。vendored xterm.js 5.5.0 + 五个 addon、
   cronstrue 2.52.0（MIT）：minified `.js` 不带 license 文本，只有 `xterm.css` 带。
 - 50 处个人绝对路径（本机 `C:\Users\<user>\...` 三种写法，加上一台远端主机的
-  `/home/<user>/<project>`），其中 `src/skill_assets/SKILL.md` 随二进制发布。
+  `/home/<user>/<project>`），其中 `src/skill_assets/SKILL.md` 随二进制发布（后续拆分：现为
+  `SKILL.md` + `remote/SKILL.md` 两份，见 docs/41 顶部）。
 - Logo 是红盾白十字，SVG 注释自称 "the pocket-knife emblem"——Victorinox 注册徽标的构图；
   tagline "Swiss Army knife" 是其商标。
 - 分支 `terminal-parity`（未合并，领先 94 commit）的历史里提交过

@@ -156,6 +156,9 @@ jobs:
           mkdir -p dist-stage dist-bin
           cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" dist-stage/
           cp LICENSE NOTICE THIRD_PARTY_NOTICES.md dist-stage/
+          mkdir -p dist-stage/skills/swiss dist-stage/skills/swiss-remote
+          cp src/skill_assets/SKILL.md dist-stage/skills/swiss/SKILL.md
+          cp src/skill_assets/remote/SKILL.md dist-stage/skills/swiss-remote/SKILL.md
           if [ "${{ runner.os }}" = "Windows" ]; then
             pwsh -NoProfile -Command "Compress-Archive -Path 'dist-stage/*' -DestinationPath 'dist-bin/${ASSET}.zip'"
           else

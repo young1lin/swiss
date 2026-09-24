@@ -120,7 +120,7 @@ usage: swiss <command> [options]
   export           dump every state file as plaintext JSON to stdout — the recovery /
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
-  skill install    copy the shipped AI skill to ~/.agents/skills, ~/.claude/skills, ~/.cursor/skills
+  skill install    install swiss and swiss-remote in each AI client's skills directory
   autostart [on|off]
                    show, enable or disable start-at-sign-in — a registry Run value on
                    Windows, a LaunchAgent on macOS, a systemd user unit on Linux
@@ -671,7 +671,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
             }
             match ops.skill_install() {
                 Ok(targets) => {
-                    io.out("skill installed:");
+                    io.out("skills installed:");
                     for t in &targets {
                         io.out(&format!("  {t}"));
                     }
