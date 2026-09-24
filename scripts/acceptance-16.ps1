@@ -16,17 +16,17 @@
 # Never touches 19999 except a read-only /health at the very end.
 $ErrorActionPreference = "Continue"
 $Token = "acceptance-token-for-1998"
-# The token pin deliberately stays on the legacy name: the snapshotted production config still
-# carries tokenEnv MCP_GATEWAY_TOKEN, and this script is the regression proof that pin still works.
-$env:MCP_GATEWAY_TOKEN = $Token
+# The token pin deliberately stays on the legacy name: the boot's one-shot rename flips the
+# snapshot's tokenEnv to SWISS_TOKEN, and this script is the regression proof that the Node-era
+# pin still authenticates through the pair partner after that rename.
+$env:SWISS_TOKEN = $Token
 $Exe = "target-test\release\swiss.exe"
 $Health98 = "http://127.0.0.1:19998/health"
 
 Write-Output "=== [0] launcher env (this very shell) ==="
 Write-Output ("NO_COLOR=[" + $env:NO_COLOR + "] WT_SESSION=[" + $env:WT_SESSION + "] CLAUDECODE=[" + $env:CLAUDECODE + "]")
 
-$prodHome = if (Test-Path (Join-Path $env:USERPROFILE ".swiss\gateway.config.json")) { ".swiss" } else { ".mcp-gateway" }
-$prodCfg = Join-Path $env:USERPROFILE "$prodHome\gateway.config.json"
+$prodCfg = Join-Path $env:USERPROFILE ".swiss\gateway.config.json"
 $prodBefore = (Get-Item $prodCfg).LastWriteTimeUtc
 Write-Output ("=== [1] prod config mtime BEFORE: " + $prodBefore.ToString("o"))
 

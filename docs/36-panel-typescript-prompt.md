@@ -8,7 +8,7 @@
 ---
 
 你在 `<repo>\.agents\worktrees\panel-ts` 工作——这是仓库
-`local-mcp-gateway-rust`（产品名 swiss）的一个 git worktree，分支 `panel-ts`。它是 Rust cargo
+`swiss`（产品名 swiss）的一个 git worktree，分支 `panel-ts`。它是 Rust cargo
 workspace，产物是单个 `swiss.exe`；管理面板是 `crates/swiss-panel/src/admin_assets/` 下的纯 ES
 module，由 rust-embed 嵌进 exe。
 

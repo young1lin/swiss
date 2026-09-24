@@ -1,7 +1,7 @@
 # 交给实施模型的 Prompt
 
 > 复制下面整段给实施模型。它假设模型在 `<repo>` 目录下工作，
-> 旁边有 `..\local-mcp-gateway`（Node 仓库，只有 H6 会碰）。
+> 旁边有 `..\node-original`（Node 仓库，只有 H6 会碰）。
 
 ---
 
@@ -20,14 +20,14 @@
 - `src/bootstrap.rs`（`serve` 的入口；注意 edition 2024 里 `set_var` / `remove_var` 是 unsafe，
   仿照 231 行附近的现有写法）
 - `src/cli.rs`（`--version`、`status_json`）
-- `src/pidfile.rs`、`crates/swiss-core/src/paths.rs`（`data_dir` 与 `MCP_GATEWAY_HOME`）
+- `src/pidfile.rs`、`crates/swiss-core/src/paths.rs`（`data_dir` 与 `SWISS_HOME`）
 - `src/app.rs` 的 `/health`、`src/adminapi.rs` 的 `/api/info`
 - `crates/swiss-terminal/src/terminal/local.rs::shell_command` 及其测试（H1 的前情，保留不动）
 - `crates/swiss-host/src/services/process.rs` 与 `crates/swiss-mcp/src/adapters/proc.rs` 里子进程
   怎么建环境（确认它们全盘继承——这就是 H1 存在的理由）
 - `docs/05-wire-compatibility.md`「The master key」一节（H2 拷贝 `master.key` 为什么同机有效）
 - `crates/swiss-panel/src/admin.rs` 的 `the_tree_is_byte_for_byte_the_node_builds`（H4 靠它的 `CI=1` 口子）
-- `../local-mcp-gateway/.github/workflows/ci.yml`（H4 的参照）
+- `../node-original/.github/workflows/ci.yml`（H4 的参照）
 
 交付：**每条一个提交，顺序 H1 → H2 → H3 → H4 → H5 →（H6，可选）**。每个提交的硬性要求：
 
@@ -38,7 +38,7 @@
   双份。
 - 代码注释英文，解释「为什么」，风格跟周围一致；文档散文中文。
 - 不提交 `gateway.config.json`、`.env`、`managed.json`、`tunnels.json`、`master.key`、`*.log`、
-  `~/.mcp-gateway/terminal/*.cast`、`$env:LOCALAPPDATA\swiss-test-home\` 里的任何东西。
+  `~/.swiss/terminal/*.cast`、`$env:LOCALAPPDATA\swiss-test-home\` 里的任何东西。
 - Commit message 末尾按 `AGENTS.md` 的 attribution 规则。
 
 运行与验证的铁律：
@@ -47,7 +47,7 @@
   绝不对 19999 执行；部署由用户自己做。
 - 所有实测在 19998。H2 落地之前按旧规矩：
   `$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`，
-  `$env:MCP_GATEWAY_PORT = "19998"; & target-test\release\swiss.exe serve`；永远用环境变量，
+  `$env:SWISS_PORT = "19998"; & target-test\release\swiss.exe serve`；永远用环境变量，
   不要 `--port`（它会写进配置）。H2 落地之后改用你自己写的 `scripts/test-instance.ps1`。
 - 停 19998 只按端口找 PID：`Get-NetTCPConnection -LocalPort 19998`。绝不 `Get-Process swiss`。
 - `cargo build` 报 `Access is denied (os error 5)`，是因为要覆盖的 exe 正被某个实例占着——先停那个

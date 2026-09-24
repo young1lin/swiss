@@ -25,15 +25,10 @@
 # all. Creation is exclusive (FileShare None), so two acquires cannot both win; a lock
 # whose holder pid is dead is stale by definition (crash, hard kill) and is taken over
 # with a warning - a lock file must never outlive its ability to block.
-# The production home: ~\.swiss since the 2026-09-18 rename, or ~\.mcp-gateway while a home
-# written before it has not been moved yet (the move happens on the next `swiss start`).
+# The production home: ~\.swiss.
 function Get-SwissProdHome {
     if ($env:SWISS_HOME) { return $env:SWISS_HOME }
-    $new = Join-Path $env:USERPROFILE '.swiss'
-    $old = Join-Path $env:USERPROFILE '.mcp-gateway'
-    if ((Test-Path $new) -and (Get-ChildItem $new -Force | Select-Object -First 1)) { return $new }
-    if (Test-Path $old) { return $old }
-    $new
+    Join-Path $env:USERPROFILE '.swiss'
 }
 function Get-DeployLockPath {
     param([string]$Path)

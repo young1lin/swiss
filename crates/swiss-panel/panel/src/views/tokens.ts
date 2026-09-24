@@ -34,7 +34,7 @@
    ================================================================================================ */
 import type { ApiMcpRow, ApiTokenCreated, ApiTokenRow, ApiTokensResponse } from "../types/api.js";
 import type { GroupCfg, GroupSlice } from "../types/dom.js";
-import { $, TOKEN_ID_KEY, api, apiJson, lsMigrate, targetEl } from "../util.js";
+import { $, TOKEN_ID_KEY, api, apiJson, targetEl } from "../util.js";
 import { fill, h } from "../h.js";
 import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
@@ -100,9 +100,8 @@ async function refreshTokens(): Promise<void> {
 }
 
 function rememberedTokenId(): string | null {
-  // fix-plan #17: one-shot migration off the mcp_gateway_token_id era; a fresh browser
-  // only ever answers - and later writes - the swiss.tokenId slot.
-  return lsMigrate(TOKEN_ID_KEY, "mcp_gateway_token_id");
+  // A blocked store answers null, which every caller treats as "nothing remembered".
+  try { return localStorage.getItem(TOKEN_ID_KEY); } catch (e) { return null; }
 }
 
 /** One `claude mcp add` line per MCP, embedding the given secret — a whole client setup in one copy. */

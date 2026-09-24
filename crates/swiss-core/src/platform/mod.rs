@@ -39,16 +39,18 @@ mod windows;
 #[cfg(windows)]
 pub use windows::{
     descendant_pids, dpapi_protect, dpapi_unprotect, keep_std_handles_from_children, machine_id,
-    parent_process, pid_alive, process_tree_working_set, run_entry_read, run_entry_remove,
-    run_entry_write, self_private_bytes, self_working_set, tree_kill,
+    parent_process, pid_alive, process_name, process_tree_working_set, run_entry_read,
+    run_entry_remove, run_entry_write, self_private_bytes, self_working_set, tcp_listener_pid,
+    tree_kill,
 };
 
 #[cfg(not(windows))]
 mod unix;
 #[cfg(not(windows))]
 pub use unix::{
-    descendant_pids, dpapi_protect, dpapi_unprotect, machine_id, parent_process, pid_alive,
-    process_tree_working_set, self_private_bytes, self_working_set, tree_kill,
+    descendant_pids, dpapi_protect, dpapi_unprotect, kill_process_group, machine_id,
+    parent_process, pid_alive, process_tree_working_set, self_private_bytes,
+    self_working_set, tree_kill,
 };
 
 /// The process that spawned THIS one, as far as the platform can say without a subprocess:

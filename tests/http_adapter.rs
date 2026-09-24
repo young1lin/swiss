@@ -73,7 +73,7 @@ async fn remote_echo() -> Remote {
         store,
         swiss_mcp::calls::test_log(),
         Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19998,
     );
     let app = swiss::app::build_app(ctx, None);

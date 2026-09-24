@@ -29,9 +29,8 @@
 //!            landed, so today every state save fails with "no master key available" — the
 //!            login-Keychain route is the tracked future work.
 //!
-//! An explicit SWISS_MASTER_KEY / MCP_GATEWAY_MASTER_KEY (64 hex chars, new name first)
-//! overrides every source — for CI, containers and recovery, and what the test suite uses so it
-//! never spawns a single OS helper.
+//! An explicit SWISS_MASTER_KEY (64 hex chars) overrides every source — for CI, containers and
+//! recovery, and what the test suite uses so it never spawns a single OS helper.
 //!
 //! The key is resolved at most once per process and cached. On Windows the DPAPI calls are direct
 //! Win32 (no PowerShell spawn — see platform/windows.rs).
@@ -48,11 +47,8 @@ use crate::platform;
 /// Part of the on-disk format — a different string here and `master.key` does not open.
 pub const APP: &str = "local-mcp-gateway/v1";
 
-/// The env vars that override every key source, the new name checked first. What CI and the
-/// test suite use; the Node-era name keeps every existing shell, script and recovery runbook
-/// working.
+/// The env var that overrides every key source. What CI and the test suite use.
 pub const MASTER_KEY_ENV_SWISS: &str = "SWISS_MASTER_KEY";
-pub const MASTER_KEY_ENV: &str = "MCP_GATEWAY_MASTER_KEY";
 
 const KEY_LEN: usize = 32;
 
@@ -167,17 +163,17 @@ fn cached() -> &'static Vec<KeyMaterial> {
     })
 }
 
-/// The first set master-key variable, new name first, as (name, raw value) — the name comes
-/// back so a malformed value is reported against the variable the user actually set.
+/// The `SWISS_MASTER_KEY` variable when set, as (name, raw value) — the name comes back so a
+/// malformed value is reported against the variable the user actually set.
 fn master_key_env_raw() -> Option<(&'static str, String)> {
-    [MASTER_KEY_ENV_SWISS, MASTER_KEY_ENV]
+    [MASTER_KEY_ENV_SWISS]
         .into_iter()
         .find_map(|name| std::env::var(name).ok().map(|raw| (name, raw)))
 }
 
-/// Every key a sealed file might open with, strongest first. An explicit SWISS_MASTER_KEY or
-/// MCP_GATEWAY_MASTER_KEY never mixes with OS sources; a malformed one is a configuration error
-/// and surfaces as such, naming the variable it came from.
+/// Every key a sealed file might open with, strongest first. An explicit SWISS_MASTER_KEY never
+/// mixes with OS sources; a malformed one is a configuration error and surfaces as such,
+/// naming the variable it came from.
 pub fn master_key_candidates() -> Result<Vec<KeyMaterial>, String> {
     if let Some((name, raw)) = master_key_env_raw() {
         return Ok(vec![KeyMaterial {
@@ -200,11 +196,11 @@ pub fn master_key_candidates() -> Result<Vec<KeyMaterial>, String> {
 #[cfg(any(test, feature = "test-utils"))]
 pub fn use_test_master_key() {
     static ONCE: OnceLock<()> = OnceLock::new();
-    ONCE.get_or_init(|| unsafe { std::env::set_var(MASTER_KEY_ENV, "ab".repeat(32)) });
+    ONCE.get_or_init(|| unsafe { std::env::set_var(MASTER_KEY_ENV_SWISS, "ab".repeat(32)) });
 }
 
-/// True when no key source worked at all (the plaintext read-only fallback engages) — both
-/// master-key names unset and nothing from the OS.
+/// True when no key source worked at all (the plaintext read-only fallback engages) — the
+/// master-key variable unset and nothing from the OS.
 pub fn no_key_available() -> bool {
     master_key_env_raw().is_none() && cached().is_empty()
 }

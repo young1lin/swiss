@@ -12,7 +12,7 @@
 - 分成 S1–S6 六个阶段，**一个阶段一个提交**，每个阶段独立可验收、独立可回退。
 - 每个阶段的"完成"是机械可检查的：本文列出的测试全部存在且通过，加上四条门禁命令全绿。
 - 行为变化先有测试：改动前失败、改动后通过（AGENTS.md「Making changes」）。
-- **本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能改。** 面板改动先落在 `../local-mcp-gateway/src/admin/`，再整目录复制回来，见 S6。
+- **本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能改。** 面板改动先落在 `../node-original/src/admin/`，再整目录复制回来，见 S6。
 - 新写的代码注释一律英文。文档散文可以中文。
 - 每个阶段提交前跑：
 
@@ -213,7 +213,7 @@ pub struct ConfigError {
 
 定义是用户意图，运行状态是网关维护的事实，两者不能共用一个可写文件（docs/10 §5）。
 
-新文件 `~/.mcp-gateway/jobs-state.json`（密封，私有权限），由 `crates/swiss-jobs/src/jobs/state.rs` 拥有：
+新文件 `~/.swiss/jobs-state.json`（密封，私有权限），由 `crates/swiss-jobs/src/jobs/state.rs` 拥有：
 
 ```json
 {
@@ -484,7 +484,7 @@ Jobs 的 `apply_config` 语义：
 
 ### S6 — 面板
 
-**先在 `../local-mcp-gateway/src/admin/` 改**，Node 端 `node --check` 通过，再整目录复制回本仓库，并附 SHA256 一致性核对（现有做法）。
+**先在 `../node-original/src/admin/` 改**，Node 端 `node --check` 通过，再整目录复制回本仓库，并附 SHA256 一致性核对（现有做法）。
 
 改动范围：
 - Jobs 列表读 v2 字段（title / labels / trigger 摘要 / 下次触发 / 上次结果）。

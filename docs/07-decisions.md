@@ -129,8 +129,8 @@ The Node build is an npm package with a `swiss` bin. A Rust binary can ship eith
 
 | | Approach | Effect |
 | --- | --- | --- |
-| **A** | **Keep npm.** Per-platform `optionalDependencies` carrying prebuilt binaries, the way esbuild and swc do it | `npm i -g local-mcp-gateway` and `swiss start` keep working. Existing users notice nothing. Keeps the package name, the README, the install instructions |
-| **B** | **GitHub Releases only.** A bare `.exe` per platform | Simplest to build. Every existing user has to change how they install, and `npx local-mcp-gateway` stops existing |
+| **A** | **Keep npm.** Per-platform `optionalDependencies` carrying prebuilt binaries, the way esbuild and swc do it | `npm i -g node-original` and `swiss start` keep working. Existing users notice nothing. Keeps the package name, the README, the install instructions |
+| **B** | **GitHub Releases only.** A bare `.exe` per platform | Simplest to build. Every existing user has to change how they install, and `npx node-original` stops existing |
 | **C** | Both | A little release plumbing; nobody has to move |
 
 **Recommendation: C.** The npm path costs one CI matrix and preserves the whole existing install
@@ -142,7 +142,7 @@ self-contained — no MSVC redistributable to chase on a user's machine. Verify 
 
 **What shipped.** `.github/workflows/build.yml` builds five targets and attaches the bare binaries
 to a GitHub Release on a `v*` tag. There is no `package.json` in this repository and no npm publish
-step, so `npm i -g local-mcp-gateway` and `npx local-mcp-gateway` still resolve to the **Node**
+step, so `npm i -g node-original` and `npx node-original` still resolve to the **Node**
 build. That is the safe order while the two builds run side by side (Phase 6) — the npm name keeps
 pointing at the thing it has always pointed at, and nobody is upgraded onto the port by surprise.
 Option C stays available: adding the per-platform `optionalDependencies` package is release
@@ -155,7 +155,7 @@ Two things this leaves open, recorded rather than resolved:
   `RUSTFLAGS` in CI, so the Windows binary links the CRT dynamically. Turn it on and verify with
   `dumpbin /dependents` before the first release that is handed to a machine this repository has
   never built on.
-- **Does the npm package keep the same name?** Publishing a Rust binary under `local-mcp-gateway`
+- **Does the npm package keep the same name?** Publishing a Rust binary under `node-original`
   replaces the Node build for existing users on upgrade. Given the shared data directory and
   identical CLI that is probably right, but it deserves a deliberate yes — and it is only a
   question once option A is actually built.
@@ -314,7 +314,7 @@ The shipped build is now plain `cargo build --release`; the gate suite runs one 
 combination.
 
 **Follow-up (2026-09-11, later the same day).** The Node build dropped MongoDB too
-(`local-mcp-gateway` d1957fe: adapter, resources, browser, panel, driver), so the one thing this
+(`node-original` d1957fe: adapter, resources, browser, panel, driver), so the one thing this
 ADR had kept — a `"mongo"` arm in `make_adapter` that named the removal for a config migrated
 from Node — lost its reason and went with it. A `mongo`-typed MCP now fails like any other
 unknown type, listing the built-ins. Neither build carries the word.

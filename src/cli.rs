@@ -103,33 +103,6 @@ pub trait Ops {
         crate::autostart::set(enabled)
     }
 
-    // The one-time `~/.mcp-gateway` -> `~/.swiss` move (swiss_core::paths). Only RealOps
-    // does it: the default is a no-op so a test fake can never reach the operator's home.
-    fn migrate_home(&self) -> swiss_core::paths::LegacyHomeMigration {
-        swiss_core::paths::LegacyHomeMigration::NotNeeded
-    }
-}
-
-/// One human line for what the home migration did — nothing for the common no-op.
-fn report_home_migration(m: swiss_core::paths::LegacyHomeMigration, io: &dyn Io) {
-    use swiss_core::paths::LegacyHomeMigration as M;
-    match m {
-        M::NotNeeded => {}
-        M::Moved { from, to } => io.out(&format!(
-            "moved the state home {} -> {}",
-            from.display(),
-            to.display()
-        )),
-        M::Blocked { pid, port } => io.err(&format!(
-            "state home not moved to ~/{}: a gateway (pid {pid}, port {port}) is still running out of the old one; stop it and start again",
-            swiss_core::paths::HOME_DIR_NAME
-        )),
-        M::Failed { from, to, err } => io.err(&format!(
-            "could not move the state home {} -> {}: {err}; still serving from the old one",
-            from.display(),
-            to.display()
-        )),
-    }
 }
 
 pub const USAGE: &str = "swiss — one local endpoint in front of your databases and remote MCPs
@@ -147,7 +120,7 @@ usage: swiss <command> [options]
   export           dump every state file as plaintext JSON to stdout — the recovery /
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
-  skill install    copy the shipped AI skill to ~/.agents/skills, ~/.claude/skills, ~/.cursor/skills
+  skill install    install swiss and swiss-remote in each AI client's skills directory
   autostart [on|off]
                    show, enable or disable start-at-sign-in — a registry Run value on
                    Windows, a LaunchAgent on macOS, a systemd user unit on Linux
@@ -479,7 +452,6 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
                 return 0;
             }
             warn_if_npx_cache(io);
-            report_home_migration(ops.migrate_home(), io);
             let r = ops
                 .start(StartOptions {
                     port: p.port,
@@ -526,7 +498,6 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
                 return report_stop(stopped, io);
             }
             warn_if_npx_cache(io);
-            report_home_migration(ops.migrate_home(), io);
             let r = ops
                 .start(StartOptions {
                     port: p.port,
@@ -700,7 +671,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
             }
             match ops.skill_install() {
                 Ok(targets) => {
-                    io.out("skill installed:");
+                    io.out("skills installed:");
                     for t in &targets {
                         io.out(&format!("  {t}"));
                     }
@@ -840,9 +811,6 @@ pub struct RealOps;
 impl Ops for RealOps {
     fn port(&self) -> u16 {
         resolve_port()
-    }
-    fn migrate_home(&self) -> swiss_core::paths::LegacyHomeMigration {
-        swiss_core::paths::migrate_legacy_home()
     }
     async fn start(&self, opts: StartOptions) -> StartResult {
         daemon::start_daemon(opts).await

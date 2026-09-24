@@ -604,12 +604,15 @@ impl RunCoordinator {
         if let Some(path) = inner.sequence.clone() {
             write_sequence(&path, inner.next_id);
         }
-        // The output buffer exists from the moment the run id is committed, so the
-        // output route can follow a QUEUED run too (it simply has nothing yet).
         let output = RunOutputBuffer::new();
-        inner.outputs.insert(run_id, output.clone());
         let queued_at = now_ms();
         if inner.active.len() < inner.capacity.max_concurrent {
+            // The output buffer exists from the moment the run id is committed, so the
+            // output route can follow a QUEUED run too (it simply has nothing yet). It is
+            // registered only on the paths that commit the run: nothing ever retires a buffer
+            // for a run that was refused, so registering before the capacity checks leaked one
+            // map entry per refusal, forever.
+            inner.outputs.insert(run_id, output.clone());
             self.start_locked(
                 &mut inner,
                 run_id,
@@ -626,6 +629,7 @@ impl RunCoordinator {
                     inner.capacity.max_queued
                 )));
             }
+            inner.outputs.insert(run_id, output.clone());
             inner.queued.push_back(QueuedRun {
                 run_id,
                 request,
@@ -1343,6 +1347,39 @@ mod tests {
             1,
             "only the first ever started"
         );
+        runs.shutdown_all().await;
+    }
+
+    // A refused submission must not park an output buffer for a run id that will never run:
+    // retire paths only run for started or queued runs, so each refusal used to leak one
+    // `outputs` entry forever - invisible to list()/get(), unbounded under a schedule that
+    // keeps hammering a full pool.
+    #[tokio::test]
+    async fn refused_submissions_leave_no_output_buffer_behind() {
+        let (runs, _starts) = coordinator(RunCapacity {
+            max_concurrent: 1,
+            max_queued: 0,
+        });
+        let _first = runs
+            .submit(request("manual", "long", 30_000))
+            .expect("first runs");
+        settle().await;
+        for _ in 0..3 {
+            // Both Capacity refusals: the queue-full arm (queue_if_busy against a zero-length
+            // queue) and the pool-full arm.
+            let mut queued = request("manual", "other", 30_000);
+            queued.queue_if_busy = true;
+            assert!(runs.submit(queued).is_err(), "queue is full");
+            assert!(
+                runs.submit(request("manual", "other", 30_000)).is_err(),
+                "pool is full"
+            );
+        }
+        let buffered = {
+            let inner = runs.inner.lock().unwrap_or_else(|e| e.into_inner());
+            inner.outputs.len()
+        };
+        assert_eq!(buffered, 1, "only the buffer of the running run remains");
         runs.shutdown_all().await;
     }
 

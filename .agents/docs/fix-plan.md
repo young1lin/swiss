@@ -58,7 +58,7 @@ Every actionable item is landed; what remains is listed in the Won't-Fix List be
 | 14 | V2 Unicode glyph leftovers: ⚙/⚿/✕/↩/↺/↑↓/▾/↑Up/📁/📄 | crates/swiss-panel/panel/src: data-grid.ts:880,974,1019,1029;data-filters.ts:170;data-browsers.ts:359,469-480;run-history.ts:44;tunnel-sheets.ts:193,196 (+ the ↑↓/▾↑Up copies in locales/en.ts+zh.ts — copy, not icons) | panel side (this repo) | 3 |
 | 15 | V5 red-button-into-menu not covered: Tokens Revoke, Secrets Delete | crates/swiss-panel/panel/src/views/tokens.ts:346-349;views/secrets.ts:280-281 | panel side (this repo) | 3 — **done** (both already ride the ⋯ popupMenu with danger items) |
 | 16 | three renames, three interactions (prompt ×2, sheet ×1) | crates/swiss-panel/panel/src: detail.ts:68-72;data-edit.ts:74-77 (prompt);add-sheet.ts openGroupSheet (the sheet) | panel side (this repo) | 3 |
-| 17 | two generations of localStorage key names coexist (mcp_gateway_* and swiss_*) | crates/swiss-panel/panel/src: util.ts:24;data-view.ts:58;data-grid.ts:45;data-sql.ts:405 | panel side (this repo) | 3 (low priority) |
+| 17 | two generations of localStorage key names coexist (swiss.* and swiss_*) | crates/swiss-panel/panel/src: util.ts:24;data-view.ts:58;data-grid.ts:45;data-sql.ts:405 | panel side (this repo) | 3 (low priority) |
 | 18 | /api/tokens/{id}/secret can be read back in plaintext | src/adminapi.rs:428-444 | won't fix | — |
 | 19 | CLI open uses `cmd /c start` | src/cli.rs:687-711 | won't fix | — |
 | 20 | local terminal sessions have no cap | crates/swiss-terminal/src/terminal/session.rs:606-614 | won't fix | — |
@@ -193,10 +193,10 @@ Every actionable item is landed; what remains is listed in the Won't-Fix List be
 
 ### 3.6 localStorage key unification and migration (#17, low priority)
 
-- **Files** (crates/swiss-panel/panel/src): util.ts:24 (`mcp_gateway_token_id`; `swiss_theme` beside it is already new-style, and the old collapsed keys are gone), data-view.ts:58 (`mcp_gateway_db_sql_history`), data-grid.ts:45 (`mcp_gateway_db_grid_*` prefix), data-sql.ts:405 (`mcp_gateway_db_favorites`).
+- **Files** (crates/swiss-panel/panel/src): util.ts:24 (`swiss.tokenId`; `swiss_theme` beside it is already new-style, and the old collapsed keys are gone), data-view.ts:58 (`swiss.dbSqlHistory`), data-grid.ts:45 (`swiss.dbGrid.*` prefix), data-sql.ts:405 (`swiss.dbFavorites`).
 - **What to change**: unify into the `swiss.*` namespace (e.g. `swiss.collapsed`, `swiss.tunCollapsed`, `swiss.tokenId`, `swiss.dbSqlHistory`); one-shot migration at the read sites: new key missing, old key present → read the old value, write the new key, delete the old one. Current values are confirmed to be small JSON/short strings, so the migration has no blast surface. If judged not worth it (purely panel-local preferences, near-zero loss), it can be downgraded to won't-fix — the executor decides at run time; the default is to do it.
 - **vitest cases**: a migration case — seed the old key, after the first read assert the new key has the value and the old key is deleted; the fresh-install path asserts only the new key is written.
-- **Acceptance**: `grep -rn "mcp_gateway_" crates/swiss-panel/panel/src` returns zero hits (unless an old-key constant is kept solely for migration reads); after one refresh on 19998, the old keys are gone in DevTools.
+- **Acceptance**: `grep -rn "swiss." crates/swiss-panel/panel/src` returns zero hits (unless an old-key constant is kept solely for migration reads); after one refresh on 19998, the old keys are gone in DevTools.
 
 ## Won't-Fix List (item by item: why deliberate + provenance)
 

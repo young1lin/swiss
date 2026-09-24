@@ -7,7 +7,7 @@
 > 0 条 trailer、工作树与全历史 0 命中、四张截图与 build 树从历史消失、无 >5 MB blob、pack
 > 110 MB → 7 MB、`cargo test --workspace` 1365 通过、clippy `-D warnings` 与 `npm run check`
 > （76 文件 682 用例）绿、`cargo deny check` 四项 ok。重写前的完整备份：
-> `../local-mcp-gateway-rust-pre-oss.bundle`（所有分支、旧 hash）。GitHub 建仓、push、CI 首跑、
+> `../swiss-pre-oss.bundle`（所有分支、旧 hash）。GitHub 建仓、push、CI 首跑、
 > tag 不在本 spec 内——owner 另行决定何时做。
 
 ## 0. 审计结论（动手前的事实）
@@ -24,7 +24,8 @@
   （Apache-2.0，author Z.AI），头注却只写 swiss 自己。vendored xterm.js 5.5.0 + 五个 addon、
   cronstrue 2.52.0（MIT）：minified `.js` 不带 license 文本，只有 `xterm.css` 带。
 - 50 处个人绝对路径（本机 `C:\Users\<user>\...` 三种写法，加上一台远端主机的
-  `/home/<user>/<project>`），其中 `src/skill_assets/SKILL.md` 随二进制发布。
+  `/home/<user>/<project>`），其中 `src/skill_assets/SKILL.md` 随二进制发布（后续拆分：现为
+  `SKILL.md` + `remote/SKILL.md` 两份，见 docs/41 顶部）。
 - Logo 是红盾白十字，SVG 注释自称 "the pocket-knife emblem"——Victorinox 注册徽标的构图；
   tagline "Swiss Army knife" 是其商标。
 - 分支 `terminal-parity`（未合并，领先 94 commit）的历史里提交过
@@ -121,7 +122,7 @@
 
 ### O7 历史重写（D1、D2、D3、D4、D8）
 
-先 `git bundle create ../local-mcp-gateway-rust-pre-oss.bundle --all`（完整备份，含所有分支与
+先 `git bundle create ../swiss-pre-oss.bundle --all`（完整备份，含所有分支与
 未重写的 hash），再一次 `git filter-repo --force`：
 
 - `--mailmap`：旧邮箱 → `young1lin`（author 与 committer 一并）。

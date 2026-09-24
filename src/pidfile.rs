@@ -162,8 +162,8 @@ mod tests {
         PidRecord {
             pid: 4242,
             port,
-            entry: "D:\\dev\\mcp-gateway\\swiss.exe".into(),
-            node: "D:\\dev\\mcp-gateway\\swiss.exe".into(),
+            entry: "D:\\dev\\swiss\\swiss.exe".into(),
+            node: "D:\\dev\\swiss\\swiss.exe".into(),
             started_at: "2026-08-14T15:00:00.000Z".into(),
         }
     }
@@ -181,10 +181,10 @@ mod tests {
         // Named by port, and kept in the data dir rather than beside the config: `swiss status` has
         // to find a running daemon from any cwd, and the port is what tells two instances apart.
         let home = swiss_core::paths::test_home();
-        // Pin it: paths reads MCP_GATEWAY_HOME fresh on every call, and a parallel test in
+        // Pin it: paths reads SWISS_HOME fresh on every call, and a parallel test in
         // this binary may install its own scratch home between our two lines otherwise —
         // the equality below only holds while the variable points at OUR home.
-        unsafe { std::env::set_var("MCP_GATEWAY_HOME", &home) };
+        unsafe { std::env::set_var("SWISS_HOME", &home) };
         assert_eq!(pid_file_path(19999), home.join("gateway-19999.pid"));
         assert_eq!(log_file_path(19999), home.join("gateway-19999.log"));
     }

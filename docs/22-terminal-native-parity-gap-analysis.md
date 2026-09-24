@@ -177,7 +177,7 @@ AI 功能(留 seam:记录结构里加可选 opaque metadata 字段即可)、桌�
 
 ## 6. 实施纪律
 
-- 面板改动全部在 `../local-mcp-gateway/src/admin` 做,纯逻辑进 terminal-core.js 并由
+- 面板改动全部在 `../node-original/src/admin` 做,纯逻辑进 terminal-core.js 并由
   `test/admin-terminal.test.ts` 钉死;vitest 过后 `recopy-panel.ps1` 整树复制,cargo 门禁,
   19998 实测(swiss-live-verify),最后才 deploy.ps1 上 19999。
 - P0-P3 不动后端适配器与依赖,不量内存;P4 每项按 swiss-memory-record 量边际 RSS 记 docs/01。

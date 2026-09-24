@@ -58,7 +58,7 @@
 
 ## 三、分批落地
 
-每批独立可交付;面板改动一律先改 `../local-mcp-gateway/src/admin` 再整树拷回(字节级一致测试强制),行为变化带测试,19998 实测。
+每批独立可交付;面板改动一律先改 `../node-original/src/admin` 再整树拷回(字节级一致测试强制),行为变化带测试,19998 实测。
 
 **批次 0 — 接线级(合计约 1~2 天)**:#1 导出格式下拉;#2 export 带 filters(后端把 filter→WHERE 抽成 rows/export 共用函数);#3 Redis type 下拉;#4 耗时(后端 Instant 计时进响应);#5 EXPLAIN ANALYZE 前缀选项。全部零新增常驻内存。
 

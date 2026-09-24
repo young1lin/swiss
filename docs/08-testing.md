@@ -32,11 +32,11 @@ porting the module they cover:
 | `vi.useFakeTimers()` | `tokio::time::pause()` + `advance()` |
 | `vi.mock()` of a module | Inject a trait object. Where the Node build mocks a module, the Rust port takes a `&dyn` parameter — this is where the port improves on the original |
 | `test/fixtures/` | `tests/fixtures/`, copied verbatim |
-| `beforeEach` tmp data dir | `std::env::temp_dir().join(format!("swiss-<tag>-{}", random_hex(8)))` + `MCP_GATEWAY_HOME` — no `tempfile` crate, in the spirit of ADR-007 |
+| `beforeEach` tmp data dir | `std::env::temp_dir().join(format!("swiss-<tag>-{}", random_hex(8)))` + `SWISS_HOME` — no `tempfile` crate, in the spirit of ADR-007 |
 
 Two environment rules carry over exactly:
 
-- **`MCP_GATEWAY_MASTER_KEY` in every test.** It overrides every OS key source, so the suite never
+- **`SWISS_MASTER_KEY` in every test.** It overrides every OS key source, so the suite never
   spawns a keystore helper (`powershell`, `security`, `secret-tool`) and runs identically in CI.
 - **DB tests self-skip without credentials.** `direct-adapters`, `dbbrowser`, `sql` and
   `db-resources` must skip cleanly, not fail, on a machine with no database.

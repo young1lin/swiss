@@ -15,13 +15,13 @@
 | 现象 | 根因 | 这份文档的条目 |
 |---|---|---|
 | 19999 上的本地 PowerShell 7 黑白无色 | 部署 19999 的那个 agent 工具 shell 带着 `NO_COLOR=1`；`swiss start` 把启动者的整个环境原样交给守护进程，守护进程再原样交给每个子进程。终端插件已在 `local.rs::shell_command` 单点堵住（提交 `fcf012c`），但 jobs 的子进程、MCP 的 stdio 子进程仍然全盘继承 | H1 |
-| 在 19998 上保存 terminal 配置，写进了生产的 `gateway.config.json` | 两个实例共用 `~/.mcp-gateway`。`MCP_GATEWAY_HOME` 早就存在（`crates/swiss-core/src/paths.rs::data_dir`），只是没有一条把它用于 19998 的规矩和脚本 | H2 |
+| 在 19998 上保存 terminal 配置，写进了生产的 `gateway.config.json` | 两个实例共用 `~/.swiss`。`SWISS_HOME` 早就存在（`crates/swiss-core/src/paths.rs::data_dir`），只是没有一条把它用于 19998 的规矩和脚本 | H2 |
 | 「19999 跑的还是旧二进制」被误以为已部署；`cargo build` 报 `Access is denied (os error 5)` | 部署是三步手工仪式（stop → build → start），顺序错一步就失败；而且没有任何地方能看出**正在运行的**二进制是哪次构建 | H3 |
 | 门禁全靠人跑 | Rust 仓库没有 CI；Node 仓库有三个 workflow | H4 |
 | `cargo tree -d` 里 RustCrypto 整条栈双份 | russh 0.63 拉的是 `aes-gcm 0.11` / `digest 0.11` / `getrandom 0.3` 这一代，本仓库自己的 sealing 用的是 `aes-gcm 0.10` 一代 | H5 |
 | `views/terminal.js` 707 行还在长 | 一个文件里同时住着 xterm 接线、会话机、Local shell 设置表 | H6（可选） |
 
-**已经存在、不用重做**的东西：`MCP_GATEWAY_HOME`（`paths.rs`）、`/health`（`src/app.rs`，
+**已经存在、不用重做**的东西：`SWISS_HOME`（`paths.rs`）、`/health`（`src/app.rs`，
 无鉴权，返回 `{"ok":true}`）、`/api/info`（`src/adminapi.rs`，返回 `tokenEnv` 与 `panelVersion`）、
 `swiss start / stop / status / logs / token / --version`（`src/cli.rs`、`src/daemon.rs`）、
 pid 文件与日志都在 `data_dir()` 下按端口命名（`src/pidfile.rs`）。
@@ -42,7 +42,7 @@ shell 的环境」。具体地：
   - `WT_SESSION`、`WT_PROFILE_ID`（Windows Terminal 会话标识，子进程据此以为自己在 WT 里）
   - `TERM_PROGRAM`、`TERM_PROGRAM_VERSION`
 - **不**碰 `PATH`、`HOME`/`USERPROFILE`、`SystemRoot`、`COMSPEC`、`PATHEXT`、`TEMP`、代理变量、
-  `MCP_GATEWAY_*`。这不是白名单，是黑名单：删掉少数几个有毒的，其余原样。
+  `SWISS_*`。这不是白名单，是黑名单：删掉少数几个有毒的，其余原样。
 - 两条路径都要覆盖：`swiss start` spawn 出的守护进程（`src/daemon.rs::start_daemon` 的
   `Command`），以及直接 `swiss serve`（19998 就是这么起的，进程内自己清）。
 - 清单只写在**一个地方**，每一项旁边一句英文注释说为什么。终端插件里的
@@ -75,11 +75,11 @@ shell 的环境」。具体地：
 ### 2.1 目标行为
 
 - 一个 `scripts/test-instance.ps1`：
-  - `-Start`（默认）：把 `~/.mcp-gateway` 里的状态**拷贝**（不是链接）到测试家
+  - `-Start`（默认）：把 `~/.swiss` 里的状态**拷贝**（不是链接）到测试家
     `$env:LOCALAPPDATA\swiss-test-home\`（固定路径，便于 `swiss logs` 之类手工查看）——
     拷 `master.key`、`gateway.config.json`、`managed.json`、`tunnels.json`、`jobs.json`、
     `jobs-state.json`、`env.json`；**不拷** `gateway-*.pid`、`gateway-*.log`、`terminal/`。
-    然后 `$env:MCP_GATEWAY_HOME = <测试家>; $env:MCP_GATEWAY_PORT = "19998"`，
+    然后 `$env:SWISS_HOME = <测试家>; $env:SWISS_PORT = "19998"`，
     `Start-Process target-test\release\swiss.exe serve`（隐藏窗口，stdout/stderr 落到测试家的
     `serve.out` / `serve.err`），等 `/health` 200 或 20 秒超时后报告 pid。
   - `-Stop`：只按 `Get-NetTCPConnection -LocalPort 19998` 的 OwningProcess 杀，找不到就说没在跑。
@@ -95,7 +95,7 @@ shell 的环境」。具体地：
 ### 2.2 测试
 
 PowerShell 脚本没有单元测试；验收在 §7。但 Rust 侧要确认一件事并写成测试（如果还没有）：
-`data_dir()` 在 `MCP_GATEWAY_HOME` 指向不存在的目录时，`serve` 会创建它而不是 panic
+`data_dir()` 在 `SWISS_HOME` 指向不存在的目录时，`serve` 会创建它而不是 panic
 （`start_daemon` 里有 `create_dir_all(data_dir())`，`serve` 路径核对一下）。
 
 ## 3. H3 — 一步部署，以及「正在跑的是哪次构建」
@@ -218,7 +218,7 @@ rand 0.9），九对重复（aead、aes、aes-gcm、cipher、ctr、ghash、polyv
 ## 6. H6（可选）— `views/terminal.js` 拆出设置表
 
 只在 H1–H5 都交付之后再做，做不做都不算失败。把 `openLocalSheet` / `saveLocalSheet` 移到
-`../local-mcp-gateway/src/admin/js/views/terminal-settings.js`，`terminal.js` 只 import 一个
+`../node-original/src/admin/js/views/terminal-settings.js`，`terminal.js` 只 import 一个
 `openLocalSheet`。纯函数不动（都在 `terminal-core.js`），测试不动。改完整树复制回
 `admin_assets/`，面板文件保持 CRLF。
 
@@ -235,10 +235,10 @@ rand 0.9），九对重复（aead、aes、aes-gcm、cipher、ctr、ghash、polyv
   19998，开一个本地终端跑 `$env:NO_COLOR; $env:CLAUDECODE; $PSStyle.OutputRendering`，前两个空、
   第三个 `Host`。再跑一个 job（任意一个已有的、会打印环境的 action，没有就临时建一个再删），
   输出里没有 `NO_COLOR`。
-- H2：在 19998 的终端页保存一次 Local shell 设置，然后 `Get-Item ~/.mcp-gateway/gateway.config.json`
+- H2：在 19998 的终端页保存一次 Local shell 设置，然后 `Get-Item ~/.swiss/gateway.config.json`
   的 `LastWriteTime` 没变，测试家的变了。`-Stop` 之后 19999 的 `/health` 仍是 200。
 - H3：`target-test\release\swiss.exe --version` 打印 hash；19998 的 `/health` 里有同一个 hash；
-  `swiss status`（带 `MCP_GATEWAY_HOME` 指向测试家、端口 19998）打印 `build:` 行。
+  `swiss status`（带 `SWISS_HOME` 指向测试家、端口 19998）打印 `build:` 行。
 - H4：绿勾的 URL。
 - H5：`cargo tree -d` 前后对比与二进制大小前后对比，贴进提交信息。
 

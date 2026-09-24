@@ -8,7 +8,7 @@
 ## Ten crates, one binary
 
 ```
-local-mcp-gateway-rust/
+swiss/
   Cargo.toml                            # the workspace, and the `swiss` composition package
   build.rs                              # Windows manifest + version resource only
   crates/

@@ -49,7 +49,7 @@
 
 真实数据用截图里的：MCP 名 `mysql shop redis shop-redis web-reader web-search-prime zai-vision colab`；
 分组 `DEFAULT 7 / LEARN 1 / FORTEST 0`；job 名 `env-check claude-hello-0559 claude-hello-1100 claude-hello-1601`；
-内存 `22.6 MB`；client 名 `mcp-gateway 1.0 / w2-drive 1.0 / rh-mcp-client 0.0.1`。不要 lorem ipsum。
+内存 `22.6 MB`；client 名 `legacy-client 1.0 / w2-drive 1.0 / rh-mcp-client 0.0.1`。不要 lorem ipsum。
 
 ## 2. 设计决定（画板必须体现的）
 
