@@ -41,7 +41,11 @@ import { uiOwnedClasses } from "./styles.js";
    same commit deleted ui.css .inline-form > input.grow (its one user, the Secrets value box, no
    longer needs the width), so `grow` is base.css's flex spacer alone and stopped counting as a
    ui.css class: the Data files and views/terminal.ts drop by their spacers (11 in all).
-   P6-1: jobs.ts 68 -> 0 (the list, the run history and both sheets), polling.ts 3 -> 0. */
+   P6-1: jobs.ts 68 -> 0 (the list, the run history and both sheets), polling.ts 3 -> 0.
+   P6-2: views/remote.ts 25 and views/remote-runs.ts 30 -> 0 (Targets on row(), Runs on timeline()).
+   Their going took the legacy .row family out of ui.css (its last users). `.row-act .desc` was
+   one, so data-grid.ts's "desc" - a sort direction compared inside el()'s class expression, which
+   this counter reads as a class token - stopped counting: 15 -> 14. */
 const FROZEN: Record<string, number> = {
   "data-browsers.ts": 10,
   "data-cell.ts": 10,
@@ -49,7 +53,7 @@ const FROZEN: Record<string, number> = {
   "data-ddl.ts": 18,
   "data-filters.ts": 1,
   "data-form.ts": 4,
-  "data-grid.ts": 15,
+  "data-grid.ts": 14,
   "data-sql.ts": 6,
   "data-stream.ts": 5,
   "data-structure.ts": 1,
@@ -57,8 +61,6 @@ const FROZEN: Record<string, number> = {
   "data-value.ts": 5,
   "data-view.ts": 3,
   "views/jobs.ts": 2,
-  "views/remote-runs.ts": 30,
-  "views/remote.ts": 25,
   "views/terminal-settings.ts": 11,
   "views/terminal.ts": 6,
 };

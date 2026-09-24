@@ -39,7 +39,7 @@
 import { h } from "../h.js";
 import { locale, tr } from "../i18n.js";
 import { iconNode } from "./icon.js";
-import { tag } from "./status.js";
+import { dot, tag } from "./status.js";
 
                                
                                                                                   
@@ -51,6 +51,9 @@ import { tag } from "./status.js";
                
               
                                                   
+                                                                                              
+                                                                                            
+                                            
                                                                               
                 
                  
@@ -142,7 +145,8 @@ function itemNode(run                , o              , showWho         )       
       showWho && it.who ? h("span", { class: "tl-who", title: it.who }, it.who) : null,
       run.length > 1 ? h("span", { class: "tl-n", title: tr("ui.runN", { n: run.length }) }, tr("ui.timesN", { n: run.length })) : null,
       it.status ? tag(it.status.text, { tone: it.status.tone }) : null,
-      it.ms != null ? h("span", { class: "tl-ms" + (slow ? " slow" : "") }, fmtMs(it.ms)) : null),
+      it.ms != null ? h("span", { class: "tl-ms" + (slow ? " slow" : "") }, fmtMs(it.ms)) : null,
+      it.live ? h("span", { class: "tl-live" }, dot(it.live.queued ? "idle" : "starting", null), it.live.text) : null),
     open && o.body ? h("div", { class: "tl-body" }, o.body(it, run)) : null);
 }
 

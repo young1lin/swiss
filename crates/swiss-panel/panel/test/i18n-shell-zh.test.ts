@@ -278,8 +278,11 @@ describe("the I5 views in Chinese (remote targets, remote runs)", () => {
     expect(tr("remote.endpointState", { state: "serving" })).toBe("端点 serving");
     expect(tr("remote.tunnelsState", { state: "none" })).toBe("隧道 none · ");
     expect(tr("remoteRuns.exitN", { n: 2 })).toBe("退出码 2");
-    expect(tr("remoteRuns.nMs", { n: 40 })).toBe("40 毫秒");
-    expect(tr("remoteRuns.mMSS", { m: 2, s: 5 })).toBe("2 分 5 秒");
+    // docs/46 P6-2: durations are the timeline's (ui.ms / ui.sec); the Targets column and the
+    // folded-run line frame the host's words the same way.
+    expect(tr("remote.lastRunAt", { when: "2026/9/24 09:12:03", what: "make -j8" })).toBe("上次运行：2026/9/24 09:12:03 · make -j8");
+    expect(tr("remoteRuns.nIdenticalRuns", { n: 3 })).toBe("3 次相同的运行");
+    expect(tr("remoteRuns.cappedAtLast", { cap: "16.0 MB", tail: "15 B" })).toBe("输出在 16.0 MB 处截断；这是最后 15 B");
   });
 
   it("speaks the budget line and the count chips", async () => {
@@ -293,9 +296,8 @@ describe("the I5 views in Chinese (remote targets, remote runs)", () => {
   it("fills the remote sheet's labels and the delete confirm", async () => {
     await loadLocale();
     expect(tr("remote.workspaceRootAbsolutePosix")).toBe("工作区根目录(绝对 POSIX 路径)");
-    expect(tr("remote.aliasNameCommandsCall")).toBe(
-      "别名(命令调用所用的名字:swiss remote exec <alias>)",
-    );
+    expect(tr("remote.alias")).toBe("别名");
+    expect(tr("remote.aliasHint")).toBe("命令调用所用的名字：swiss remote exec <alias>");
     expect(tr("remote.deleteTargetIdTunnels", { id: "dev" })).toBe(
       "删除目标 dev?隧道连接和机器上的文件都不会受影响。",
     );

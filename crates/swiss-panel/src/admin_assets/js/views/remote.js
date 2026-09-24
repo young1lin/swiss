@@ -17,8 +17,8 @@
 /* ================================================================================================
    Remote Targets - the remote plugin page (#remote), docs/34 R6 + R8.
 
-   A hairline card of house rows: dot (endpoint state) + alias + mono root sub-line +
-   monospace chips for endpoint and capabilities + one overflow menu. The CLI
+   Library rows (docs/46 P6-2): the alias, a sub-line saying where it runs (the endpoint, the
+   workspace root in mono, what it may do), when it last ran, and one overflow menu. The CLI
    (swiss remote ...) and this page write the SAME rows through the same routes; the
    page exists so a target never needs a terminal to exist.
 
@@ -30,15 +30,17 @@
    gateway without them answers the single default group the component draws as no
    divider at all.
    ================================================================================================ */
-                                                                                            
+                                                                                                                   
                                                 
-                                                                                             
-import { $, apiJson, iconNode, targetEl, toast } from "../util.js";
+                                                                                                              
+import { $, api, apiJson, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
+                                      
 import { assignMember, groupFieldNode, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
-import { tr, trn } from "../i18n.js";
-import { popupMenu } from "../ui/menu.js";
-import { closeSheet } from "../ui/sheet.js";
+import { locale, tr, trn } from "../i18n.js";
+import { btn, checkField, closeSheet, dot, field, iconBtn, moreBtn, pair, paneBody, paneHead, popupMenu, relTime, row, sheet, showSheet, tag } from "../ui/index.js";
+                                             
+import { commandOf, runOutcome, runTarget } from "./remote-runs.js";
 
 let targets = []                     ;
 let endpoints = []                       ;
@@ -50,6 +52,12 @@ let dragging = null                 ; // in-flight row drag: a poll must not reb
 let draggingGroup = null                 ; // in-flight group drag, same rule
 let painted = ""; // structural signature of the drawn list; a poll that changes nothing repaints nothing
 let collapsed = {}                           ; // the groups fold map, loaded once before the first paint
+/* The last-run column (docs/46 §3.6), read from the run record's own route - no API of its own. */
+let lastRuns = null                                                      ; // target -> its newest run; null: the record did not answer, no column
+let olderLast = {}                                          ; // targets the newest page missed, asked once per visit
+
+const CAPS = ["exec", "sync", "files"];
+const RUNS_PAGE = 100; // the runs route's own ceiling (history.rs clamps the limit there)
 
 async function load() {
   const e = await apiJson                            ("/api/remote/endpoints");
@@ -61,7 +69,48 @@ async function load() {
   // The names arrive with the rows (docs/34 R8); an older gateway answers neither,
   // and the single default group renders as no divider at all.
   groupNames = t.groups && t.groups.length ? t.groups : ["default"];
+  await loadLastRuns();
   return true;
+}
+
+/** A read the page can do without: null on any failure, and no toast - an optional column that
+ *  toasted on every six-second poll would be louder than the list it decorates. */
+async function quietJson   (path        )                    {
+  try {
+    const r = await api(path);
+    return r.ok ? await r.json()      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Each target's newest run. ONE read of the record's newest page, folded by target, the
+ *  coordinator's in-flight runs first (they are newer than anything recorded). A target that page
+ *  missed while older records exist is asked on its own, once per visit: the record answers that
+ *  by walking back from its end, and for a target that never ran it walks all of it - fine once,
+ *  not every poll. A new run on it lands in the newest page anyway. */
+async function loadLastRuns()                {
+  const page = await quietJson                       ("/api/remote/runs?limit=" + RUNS_PAGE);
+  if (!page) { lastRuns = null; return; }
+  const by                                              = {};
+  const put = (r                 )       => {
+    const t = runTarget(r);
+    if (t && !by[t]) by[t] = r;
+  };
+  (page.active                     ).forEach(put);
+  (page.runs                     ).forEach(put);
+  if (page.nextBefore) {
+    for (const t of targets) {
+      if (by[t.id]) continue;
+      if (!(t.id in olderLast)) {
+        const one = await quietJson                       ("/api/remote/runs?limit=1&target=" + encodeURIComponent(t.id));
+        if (one) olderLast[t.id] = one.runs.length ? one.runs[0]                    : null;
+      }
+      const old = olderLast[t.id];
+      if (old) by[t.id] = old;
+    }
+  }
+  lastRuns = by;
 }
 
 /** Full reload after a group-list mutation: refetch, then rebuild the whole page. */
@@ -75,12 +124,14 @@ function endpointLabel(id        )         {
   return hit ? hit.label || hit.id : id;
 }
 
-// The dot mirrors the endpoint's state: filled = connected, hollow = idle (will start
-// on demand), amber = mid-transition. The title always says the state in words.
-function endpointDotNode(id        )              {
+/** The endpoint's state, only when it is not a resting one (docs/46 §3.6, the P5 rule). Connected
+ *  and idle both run a command (idle dials on demand), so they draw nothing; a dial in flight is
+ *  the amber pulse, and a failed or missing endpoint - a command would not get through - is red.
+ *  An `error` used to share the amber of a transition. The title says the state in words. */
+function endpointDotNode(id        )                     {
   const st = (endpoints.find((e) => { return e.id === id; }) || {}                     ).state || "unknown";
-  const cls = st === "connected" || st === "up" ? "up" : st === "idle" ? "idle" : "starting";
-  return h("span", { class: "dot " + cls, title: tr("remote.endpointState", { state: st }) });
+  if (st === "connected" || st === "up" || st === "idle") return null;
+  return dot(st === "connecting" ? "starting" : "down", tr("remote.endpointState", { state: st }));
 }
 
 function signature()         {
@@ -91,26 +142,43 @@ function signature()         {
     }).join("\n");
 }
 
-function chipNode(text        )              {
-  return h("span", { class: "side-type" }, text);
+/** When the target last ran and how it went, from the run record: a run in flight is the pulse and
+ *  its word, a failure the red tag the Runs page gives it, then how long ago. The full moment and
+ *  the command are the title. A target the record holds nothing for says so. */
+function lastCol(t                 )         {
+  const r = lastRuns ? lastRuns[t.id] : null;
+  if (!r) return { v: tr("remote.noRuns"), w: "l" };
+  const what = commandOf(r);
+  if (r.state === "running" || r.state === "queued") {
+    const queued = r.state === "queued";
+    return {
+      v: [dot(queued ? "idle" : "starting", null), " ", tr(queued ? "remote.lastQueued" : "remote.lastRunning")],
+      w: "l", title: what,
+    };
+  }
+  const at = Date.parse(r.endedAt || r.startedAt || r.queuedAt);
+  const bad = runOutcome(r);
+  return {
+    v: bad ? [tag(bad, { tone: "bad" }), " " + relTime(at)] : relTime(at),
+    w: "l",
+    title: tr("remote.lastRunAt", { when: new Date(at).toLocaleString(locale()), what }),
+  };
 }
 
 function rowNode(t                 )              {
   // A label the sheet defaulted to the alias (see save) is not worth saying twice.
-  const label = t.label && t.label !== t.id ? h("span", { class: "text-3" }, " " + t.label) : null;
-  return h("div", { class: "row row-act", data: { rmrow: t.id } },
-    endpointDotNode(t.endpoint),
-    h("div", { class: "row-main" },
-      h("div", { class: "name" },
-        h("a", { href: "#remote", class: "rowname", data: { rmedit: t.id } }, t.id),
-        label),
-      h("div", { class: "rm-sub" }, t.workspaceRoot || "")),
-    h("div", { class: "row-chips" },
-      chipNode(endpointLabel(t.endpoint)),
-      (t.capabilities || []).map(chipNode)),
-    h("button", { class: "btn ghost icon", data: { rmmore: t.id },
-        aria: { label: tr("remote.actionsName", { name: t.id }) }, title: tr("remote.actionsName", { name: t.id }) },
-      iconNode("ellipsis")));
+  const label = t.label && t.label !== t.id ? t.label : null;
+  const caps = (t.capabilities || []).join(", ");
+  const sub           = [label ? label + " · " : null, endpointLabel(t.endpoint), " · ", h("code", null, t.workspaceRoot || ""),
+    caps ? " · " + caps : null];
+  return row({
+    name: [t.id, endpointDotNode(t.endpoint)],
+    sub,
+    cols: lastRuns ? [lastCol(t)] : [],
+    more: moreBtn(tr("remote.actionsName", { name: t.id }), { data: { rmmore: t.id } }),
+    data: { rmrow: t.id },
+    draggable: true,
+  });
 }
 
 /** The groups component's cfg (docs/20): this page's nouns, rows and moves. */
@@ -158,26 +226,24 @@ function paint()       {
 
 function render()       {
   painted = signature();
-  // The body header is the family's (tunnels/secrets): task prose + status line on the
-  // left, actions right-aligned in pane-actions - no location title (the context bar
-  // already says Remote Targets) and no invented classes. One sentence of what, one of
-  // who else writes it; the drag is taught by the list itself, not by prose.
+  // The family's head (docs/46 §3.6): one sentence of what, the status line, and the actions -
+  // the folder-plus glyph and the one primary. No location title (the context bar says Remote
+  // Targets); the drag is taught by the list itself, not by prose.
   // The status line names the presence only when it is NOT the normal one: "serving ·
   // 3 endpoints served by tunnels" said serving twice.
   const status = trn(endpoints.length, "remote.nEndpointsServedTunnels.one", "remote.nEndpointsServedTunnels.other");
   // Hoisted so the comparison literal stays out of the h() children (i18n gate).
   const notServing = presence !== "serving";
   fill($("pane"),
-    h("div", { class: "wide" },
-      h("div", { class: "pane-head" },
-        h("div", null,
-          h("div", { class: "pane-desc" }, tr("remote.machinesGatewayCanRun")),
-          h("div", { class: "pane-sub" },
-            notServing ? h("span", null, tr("remote.tunnelsState", { state: presence })) : null,
-            status)),
-        h("div", { class: "pane-actions" },
-          h("button", { class: "btn primary", id: "rmAdd" }, tr("remote.addTarget")),
-          h("button", { class: "btn", id: "rmNewGroup" }, tr("remote.newGroup")))),
+    paneBody({ wide: true },
+      paneHead({
+        desc: tr("remote.descOneLine"),
+        sub: [notServing ? tr("remote.tunnelsState", { state: presence }) : null, status],
+        actions: [
+          iconBtn("folder-plus", tr("remote.newGroup"), { id: "rmNewGroup" }),
+          btn(tr("remote.addTarget"), { id: "rmAdd", kind: "primary" }),
+        ],
+      }),
       h("div", { id: "rmGroups" })));
   // The grouped list ALWAYS paints, rows or none. A group is a place (docs/20: an empty
   // group is not an empty state - it is a drop target with a +), and the default group is
@@ -222,8 +288,9 @@ async function assign(id        , group               )                {
   paint();
 }
 
-/* The Add/Edit sheet. Same shape as every sheet: #sheet unhidden BEFORE innerHTML,
-   closeSheet from ui/sheet.js, backdrop click closes. */
+/** The Add/Edit sheet on the library (sheet() + ui/form.ts): showSheet makes it visible before
+ *  anything reads it and closes it on a backdrop click. The endpoint and the group sit side by
+ *  side - where the target is reached and where its row lands. */
 function openSheet(target                        )       {
   editing = target ? target.id : null;
   const endpointOptions = endpoints.map((e) => {
@@ -235,39 +302,33 @@ function openSheet(target                        )       {
     ? groupOf(groupNames)(target)
     : pendingGroup || lastGroup("targets") || groupNames[0];
   pendingGroup = null;
-  const caps = ["exec", "sync", "files"];
-  // The house sheet idiom (panel-proof-of-life rule 1): visible BEFORE the body is painted.
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog",
-        aria: { modal: "true", label: editing ? tr("remote.editRemoteTarget") : tr("remote.addRemoteTarget") } },
-      h("div", { class: "sheet-head" },
-        h("h2", null, editing ? tr("remote.editName", { name: editing }) : tr("remote.addRemoteTarget"))),
-      h("div", { class: "sheet-body" },
-        h("label", { class: "field" },
-          h("span", null, tr("remote.aliasNameCommandsCall")),
-          h("input", { id: "rm-id", placeholder: tr("remote.build") })),
-        h("label", { class: "field" },
-          h("span", null, tr("remote.labelOptional")), h("input", { id: "rm-label" })),
-        h("label", { class: "field" },
-          h("span", null, tr("remote.endpointTunnelsConnection")),
-          h("select", { id: "rm-endpoint" }, endpointOptions)),
-        groupFieldNode(groupNames, groupSel),
-        h("label", { class: "field" },
-          h("span", null, tr("remote.workspaceRootAbsolutePosix")),
-          h("input", { id: "rm-root", placeholder: tr("remote.dataWsProj") })),
-        h("div", { class: "field" },
-          h("span", null, tr("remote.capabilities")),
-          h("div", null, caps.map((c) => {
-            return h("label", { class: "check" }, h("input", { type: "checkbox", id: "rmcap-" + c }), " " + c);
-          })))),
-      h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "rm-cancel" }, tr("remote.cancel")),
-        h("button", { class: "btn primary", id: "rm-save" }, editing ? tr("remote.save") : tr("remote.add")))));
+  showSheet(sheet({
+    title: editing ? tr("remote.editName", { name: editing }) : tr("remote.addRemoteTarget"),
+    label: editing ? tr("remote.editRemoteTarget") : tr("remote.addRemoteTarget"),
+    body: [
+      field({ label: tr("remote.alias"), control: h("input", { id: "rm-id", placeholder: tr("remote.build") }), hint: tr("remote.aliasHint") }),
+      field({ label: tr("remote.labelOptional"), control: h("input", { id: "rm-label" }) }),
+      pair(
+        field({ label: tr("remote.endpointTunnelsConnection"), control: h("select", { id: "rm-endpoint" }, endpointOptions) }),
+        groupFieldNode(groupNames, groupSel)),
+      field({ label: tr("remote.workspaceRootAbsolutePosix"), control: h("input", { id: "rm-root", placeholder: tr("remote.dataWsProj") }) }),
+      // Several checks under one caption: a group, so the caption presses none of them.
+      field({
+        group: true, label: tr("remote.capabilities"),
+        control: h("div", null, CAPS.map((c) => {
+          return checkField({ label: c, control: h("input", { type: "checkbox", id: "rmcap-" + c })                     });
+        })),
+      }),
+    ],
+    foot: [
+      btn(tr("remote.cancel"), { id: "rm-cancel" }),
+      btn(editing ? tr("remote.save") : tr("remote.add"), { id: "rm-save", kind: "primary" }),
+    ],
+  }));
   // Prefill programmatically, not via value=" markup": the pane redraws by signature,
   // and programmatic values are the one source of truth an edit and a test can both read.
   $                  ("rm-id").disabled = !!editing; // the alias never edits; state set here, not in markup
-  caps.forEach((c) => {
+  CAPS.forEach((c) => {
     $                  ("rmcap-" + c).checked = target ? (target.capabilities || []).includes(c) : c === "exec";
   });
   if (target) {
@@ -275,16 +336,18 @@ function openSheet(target                        )       {
     $                  ("rm-root").value = target.workspaceRoot || "";
   }
   $("rm-cancel").onclick = closeSheet;
-  $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
   $("rm-save").onclick = save;
   if (!editing) $("rm-id").focus();
 }
 
 async function save()                {
-  const caps = ["exec", "sync", "files"].filter((c) => { return $                  ("rmcap-" + c).checked; });
+  const caps = CAPS.filter((c) => { return $                  ("rmcap-" + c).checked; });
   if (!caps.length) { toast(tr("remote.pickLeastOneCapability"), true); return; }
   const id = editing || $                  ("rm-id").value.trim();
   const body                   = {
+    // The id rides on an edit too: the row route compares it with the path's to refuse a
+    // rename (api.rs write_target), and without it every Edit answered "target.id is required".
+    id,
     // The store refuses an empty label (swiss-remote target.rs), and the field says
     // optional: an alias is a fine label, so a blank one becomes the alias rather than
     // a rejected save the user cannot see the reason for.
@@ -303,9 +366,7 @@ async function save()                {
     toast(tr("remote.workspaceRootMustAbsolute"), true);
     return;
   }
-  let url = "/api/remote/targets";
-  if (editing) url += "/" + encodeURIComponent(editing);
-  else body.id = id;
+  const url = "/api/remote/targets" + (editing ? "/" + encodeURIComponent(editing) : "");
   const j = await apiJson(url, { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
   if (body.group) rememberGroup("targets", body.group);
@@ -322,6 +383,7 @@ async function removeTarget(id        )                {
 
 export async function mount() {
   collapsed = loadCollapsed("targets");
+  olderLast = {}; // a new visit asks the record again
   if (!(await load())) return;
   render();
   $("pane").onclick = (event            )       => {
@@ -329,12 +391,6 @@ export async function mount() {
     if (add) { pendingGroup = null; openSheet(null); return; }
     const newGroup = targetEl(event)?.closest("#rmNewGroup");
     if (newGroup) { void newGroupFlow("targets", groupNames, reload); return; }
-    const edit = targetEl(event)?.closest             ("[data-rmedit]");
-    if (edit) {
-      const hit = targets.find((t) => { return t.id === edit?.dataset.rmedit; });
-      if (hit) openSheet(hit);
-      return;
-    }
     const more = targetEl(event)?.closest             ("[data-rmmore]");
     if (more) {
       // The opening click must not reach document (menu.js closes on outside clicks).
@@ -355,10 +411,28 @@ export async function refresh() {
   // Never rebuild under an in-flight gesture: the groups component finishes the drag
   // on nodes it captured, and afterDrag() runs the catch-up paint (docs/20).
   if (dragging || draggingGroup) return;
-  // A poll that changed nothing repaints nothing: the pane keeps its nodes (and a
-  // sheet the user may be typing into stays put, the same discipline as Tokens).
-  if (signature() === painted) return;
+  // A poll that changed nothing structural repaints nothing: the pane keeps its nodes (and a
+  // sheet the user may be typing into stays put, the same discipline as Tokens). The last-run
+  // column still moves - a run finished, "3 min. ago" became "4 min. ago" - so the columns
+  // are patched in place, the row and its ⋯ staying the same nodes.
+  if (signature() === painted) { patchCols(); return; }
   render();
+}
+
+/** Swap each drawn row's columns for fresh ones where they read differently. A column that
+ *  appeared or went (the record stopped or started answering) is structure: repaint. */
+function patchCols()       {
+  const region = document.getElementById("rmGroups"); // null once another page took the pane
+  if (!region) return;
+  for (const t of targets) {
+    const node = Array.prototype.find.call(region.querySelectorAll             ("[data-rmrow]"),
+      (n             ) => n.dataset.rmrow === t.id)                           ;
+    if (!node) continue;
+    const was = node.querySelectorAll(":scope > .lrow-col");
+    const now = rowNode(t).querySelectorAll(":scope > .lrow-col");
+    if (was.length !== now.length) { render(); return; }
+    was.forEach((c, i) => { if (c.outerHTML !== now[i].outerHTML) c.replaceWith(now[i]); });
+  }
 }
 export async function poll() { await refresh(); }
 export function countText() { return targets.length ? trn(targets.length, "remote.nTargets.one", "remote.nTargets.other") : ""; }

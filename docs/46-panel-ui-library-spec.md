@@ -447,9 +447,33 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
       `.sheet-body` 与 `.tl` 都是隐式 `auto` 列的 grid，auto 列不会窄过子项的 min-content（不换行的摘要行全长）。
       两者都改成 `minmax(0, 1fr)`，任何 sheet、任何页面上的时间线都受益（Logs / Traffic 走查过）。
       schedule 分段的英文标签原来是小写 id（"interval"），改成与其它分段一致的首字母大写。
-- [ ] Remote › Targets：说明一行；New group 变图标；加一列"最近一次运行"（相对时间 + 退出码 tag），数据取现有的
+- [x] Remote › Targets：说明一行；New group 变图标；加一列"最近一次运行"（相对时间 + 退出码 tag），数据取现有的
       runs 接口，**不加 API**；接口给不出时这一列不画。
-- [ ] Remote › Runs：`timeline`（`who` = 目标 · 来源）；非 0 退出码是红色 tag；Clear 进 ⋯。
+      实施：页头是 `paneHead`（说明一行 + 副行"N 个端点由隧道提供服务" + [新建分组图标, Add target]）；行是 `row()`，
+      副行是 标签 · 端点 · mono 根目录 · 能力。行首原来的点是端点状态（实心 = 已连接、空心 = 空闲），可"空闲"就是隧道
+      按需才连的正常状态，每行一个空心点只是在重复"一切正常"——改成与 Settings 同一条规则：只有状态不对时才画，
+      连接中是琥珀点、出错是红点，title 说状态。"最近一次运行"一列（`cols` 的 l 宽）：没有运行 "No runs"；
+      进行中 / 排队是琥珀脉冲点 + "running" / "queued"；结束的是相对时间，失败前面加红 `tag`（"exit 101"、"timed out"），
+      title 是 "Last run: 完整时间 · 命令"。数据：`/api/remote/runs` 一页 + 进行中的运行按目标折叠；一页没覆盖到的目标
+      （`nextBefore` 还有下一页时）再用 `?limit=1&target=` 各问一次，每次进页面只问一次；接口报错时整列不画、不弹 toast。
+      轮询时行结构没变就只替换变了的那一格（行节点、⋯ 菜单、拖拽都不动），列数对不上才整体重画。
+      新建 / 编辑 sheet 迁到 `sheet()` + `ui/form.ts`：第一个字段叫 "Alias"，hint 是 "命令调用所用的名字：
+      swiss remote exec <alias>"；能力是 `field({ group })` 下的三个勾选。
+      走查发现：**编辑目标一保存就报 "target.id is required"**——更新路由要求 body 里带 `id`（它拒绝改名），
+      面板编辑时从来不发 `id`，旧测试把这个 body 钉住了。先写 RED 测试，再改成总是发 `id`；`RemoteTargetBody.id`
+      在类型上改成必填。
+- [x] Remote › Runs：`timeline`（`who` = 目标 · 来源）；非 0 退出码是红色 tag；Clear 进 ⋯。
+      实施：标题是动作（exec / sync / pull / cat / write），参数列是命令（sync 是 "源 → 目标"）；失败类（exit N、
+      canceled、timed out、failed）一律红 tag，与 Jobs 同一规则；相同的连续运行折成 ×N。库里 `timeline` 补了
+      `live: { text, queued }`：进行中的项在耗时列的位置画琥珀脉冲点 + "running" / "queued"（`.tl-live`），gallery 有一条。
+      展开：meta 行（#id · 目标 · 来源 · mono cwd · 状态 · N 次相同的运行）+ Output 值块（`readableBody`，失败时红色；
+      截断时说 "a of b" 并有 Load more）；输出被截断过的再加一个 Tail 值块；进行中的是 Live output 值块，带 Cancel，
+      随拉取刷新。页头是 `paneHead`：副行是保留策略那句（"已记录 N 次运行 · 大小 上限 … · 保留 30 天 …"），
+      动作是 [目标筛选 select, ⋯（Clear，红色）]；翻页用 `pager()`。
+      走查发现：第一版把筛选和 ⋯ 放在列表上方一个没有标题的 section head 里，页头下面又多出一行只装按钮的条——
+      先写 RED 测试（页头里没有 `.sec-head`，actions 就是 [select, ⋯]），再挪进 `paneHead`。
+      CSS：`.call*` 整块、旧 `.row` 家族（`.row-main` / `.row-sel` / `.rowmsg*` / `.row-act*` / `.k` / `.v`）、`.chev`、
+      Remote 两页各自的块随最后的使用者删掉；views.css 从 67801 降到 64049 字节。
 
 ### 3.7 Data（P7）
 

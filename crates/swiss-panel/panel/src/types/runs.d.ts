@@ -79,9 +79,10 @@ export interface RemoteEndpointRow {
  *  (ApiRemoteTargetRow.group is string on the wire). */
 export type RemoteTargetRow = Omit<ApiRemoteTargetRow, "group"> & { group: string | null };
 
-/** The Add/Edit sheet's POST body (save): id only on a create (the URL carries it on edit). */
+/** The Add/Edit sheet's POST body (save). The id rides on an edit as well as a create: the row
+ *  route checks it against the path's (no renames). */
 export interface RemoteTargetBody {
-  id?: string;
+  id: string;
   label: string;
   endpoint: string;
   group: string | null;

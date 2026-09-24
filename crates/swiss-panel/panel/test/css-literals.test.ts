@@ -40,8 +40,8 @@ import { stylesDir } from "./styles.js";
  * fixed widths); ui.css and views.css fall with every migrated page. */
 const FROZEN: Record<string, number> = {
   "base.css": 22,
-  "ui.css": 74, // P5: the inline form's 260px wide-input basis went with its last user
-  "views.css": 240, // P6-1: Jobs off .tun-* (its 42px and 6px); P2-3c: 243, MCP Logs, items, Run, Config (P1b-2: 251, the held-edits dot moved to ui.css on --dot)
+  "ui.css": 72, // P6-2: the legacy .row family (.row .k 152px) and the .call chevron (12px) went with Remote (P5: 74, the inline form's 260px wide-input basis)
+  "views.css": 234, // P6-2: Remote off .call, .rm-* and #rrTarget; P6-1: 240, Jobs off .tun-* (its 42px and 6px); P2-3c: 243, MCP Logs, items, Run, Config (P1b-2: 251, the held-edits dot moved to ui.css on --dot)
 };
 
 const TOKEN_BLOCK = /^:root(\[data-theme="(dark|light)"\])?$/;

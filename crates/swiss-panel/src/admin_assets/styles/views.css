@@ -38,21 +38,6 @@
     .config-revision-intro > span { flex: 1; }
     @media (prefers-reduced-motion: reduce) { .config-chev { transition: none; } }
 
-    /* --- call rows (Traffic activity, Remote runs, a job's runs, the Run tab's history) --------
-       MCP Logs left these for the library's event list (ui/timeline.ts, docs/46 P2-2); each page
-       still drawing .call deletes its share when it moves (P2-3, P3, P5, P6). */
-    .call + .call { border-top: 1px solid var(--sep-soft); }
-    .call-sum { display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left; padding: var(--s2) var(--s4); cursor: pointer; }
-    .call-sum:hover { background: var(--hover); }
-    .call-tool { font-family: var(--mono); font-weight: var(--w-name); font-size: var(--f-label); white-space: nowrap; }
-    /* One line of the arguments in the summary — enough to recognize a query without opening it. */
-    .call-arg { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--f-caption); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .call-meta { font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .call-body { display: none; padding: 0 var(--s4) var(--s3); }
-    .call.open .call-body { display: block; }
-    .call-lbl { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: var(--s2) 0 var(--s1); display: flex; align-items: center; gap: var(--s2); }
-    /* Formatted JSON needs room before it starts scrolling (Remote runs, a job's runs). */
-    .call-body pre.logs { padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: 8px; max-height: 360px; }
     /* The Run tab's reply sits under the form's card, a full step down: a labelled value block
        (ui/json-view.ts valueBlock), the same shape a Logs call opens to. */
     .run-out:not(:empty) { margin-top: var(--s5); }
@@ -64,7 +49,6 @@
     .run-out .vblock > pre { max-height: 60vh; overflow: auto; }
     /* A resource's contents in its sheet: the sheet keeps its head and foot, the body scrolls. */
     .rd-body { max-height: 60vh; overflow: auto; margin-top: var(--s2); }
-    .call-body pre.logs.err { color: var(--red); }
 
     /* Result status beside the Run button — never styled before, so it inherited 13px body text and
        sat at the same weight as the button's own label. */
@@ -159,34 +143,6 @@
     .cli-last { font-size: var(--f-label); color: var(--text-3); white-space: nowrap; }
     .cli-n { font-variant-numeric: tabular-nums; text-align: right; font-size: var(--f-label); color: var(--text-2); }
     .cli-x { width: 25px; } /* the clear button's width, reserved so counts stay aligned */
-
-    /* --- remote targets (docs/34 R6 + R8) ------------------------------------------------------- */
-    /* The row is one visual unit - endpoint dot, alias + path, chips at the end - so it
-       centres, unlike the .k/.v config rows baseline alignment was tuned for (against a
-       two-line main column, baseline drops the chips below the name). */
-    .row[data-rmrow] { align-items: center; }
-    /* The trailing chip cluster: endpoint + capabilities. Without a rule of its own the
-       chips hugged the path text as inline text - the right edge is where they belong. */
-    .row-chips { margin-left: auto; flex: none; display: flex; align-items: center; gap: var(--s1); }
-    /* The workspace path is an address, not a sentence: the tunnels sub-line's exact
-       treatment (label size, secondary colour, mono, one line, ellipsis at the edge). */
-    .rm-sub {
-      font-family: var(--mono); font-size: var(--f-label); color: var(--text-2);
-      line-height: 1.35; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    /* The drag affordances every draggable row carries: the four rules ui.css gives .lrow
-       (the groups component toggles the classes; only the row selector is ours). */
-    .row[data-rmrow][draggable="true"] { cursor: grab; }
-    .row[data-rmrow].dragging { opacity: 0.55; }
-    .row[data-rmrow].drop-before { box-shadow: inset 0 2px 0 var(--accent); }
-    .row[data-rmrow].drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
-
-    /* --- Remote Runs (#remote-runs): the Traffic card of .call rows over the run record.
-       The target filter sits in the section head like the Logs search (#callsQ): a filter,
-       not a form field, so it takes its own width instead of the form's 100%. A live row's
-       body head carries the one action a running run has (Cancel) at its right edge. */
-    .sec-head #rrTarget { margin-left: auto; width: auto; min-width: 140px; padding: 3px var(--s6) 3px var(--s2); font-size: var(--f-caption); }
-    .rr-live-head { justify-content: space-between; }
 
     /* --- data view (the DBeaver-style browser) --------------------------------------------------- */
     .pane > .db-root { max-width: none; }

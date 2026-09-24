@@ -634,6 +634,24 @@ describe("ui/timeline - timeline()", () => {
     expect(it0.querySelector(".tl-body")).toBeNull();
   });
 
+  it("live: a run still in flight is a pulse and its word where its duration will go", () => {
+    // docs/46 P6-2: Remote Runs lists the runs the coordinator still holds above the record.
+    // Such a run has no duration yet; its state (running, or queued behind a busy slot) sits in
+    // that column - the amber pulse for running, the hollow dot for waiting - never a tag, which
+    // is for an outcome.
+    const tl = timeline([
+      item("a", at(23, 9), { live: { text: "running" } }),
+      item("b", at(23, 8), { live: { text: "queued", queued: true } }),
+    ], { now: NOW });
+    const [a, b] = Array.from(tl.querySelectorAll(".tl-sum"));
+    expect(Array.from(a.children).map((c) => c.className)).toEqual(["tl-chev", "tl-time", "tl-title", "tl-arg", "tl-live"]);
+    expect(a.querySelector(".tl-live")?.textContent).toBe("running");
+    expect(a.querySelector(".tl-live > .dot")?.className).toBe("dot starting");
+    expect(b.querySelector(".tl-live > .dot")?.className).toBe("dot idle");
+    expect(a.querySelector(".tag")).toBeNull();
+    expect(sheet("ui.css")).toMatch(/\.tl-live \{[^}]*display: inline-flex;/);
+  });
+
   it("who appears only when the loaded items disagree about it (or when forced)", () => {
     const one = [item("a", at(23, 9), { who: "claude-code" }), item("b", at(23, 8), { who: "claude-code" })];
     expect(timeline(one, { now: NOW }).querySelector(".tl-who")).toBeNull();
