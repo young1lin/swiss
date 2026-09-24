@@ -15,8 +15,8 @@
  */
 
 import { $ } from "../util.js";
-import { dbConnLabel, dbOkToLeave, dbPendingAll, loadDbView } from "../data-view.js";
-import { dbConn, unmountDbView } from "../db-state.js";
+import { dbConnLabel, dbDropAllEdits, dbOkToLeave, dbPendingAll, dbSessionPinned, loadDbView } from "../data-view.js";
+import { dbConn, dbSuspendView } from "../db-state.js";
 export function mount() { return loadDbView(); }
 export function refresh() { return loadDbView(); }
 /* docs/42 D5: the page-leave guards ask the WHOLE strip, not the object in front. A buffer
@@ -25,7 +25,11 @@ export function refresh() { return loadDbView(); }
 export function hasPendingChanges() { return dbPendingAll() > 0; }
 export function canLeave() { return !dbPendingAll() || dbOkToLeave(); }
 export function unmount() {
-  unmountDbView();
+  // docs/47 D3: the leave PARKS the session, so the page comes back on the same connection with
+  // its strip, rows and catalog. The buffered writes go: canLeave() asked about them, and once
+  // the page is gone no guard would count them.
+  dbDropAllEdits();
+  dbSuspendView(dbSessionPinned);
   // Take the workspace framing back off (data-view.js's renderDbView adds it) so the next
   // page — whatever it is — starts from the pane's ordinary padding.
   const pane = $("pane");

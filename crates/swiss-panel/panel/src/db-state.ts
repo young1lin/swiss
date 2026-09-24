@@ -114,6 +114,129 @@ let tabs: DbTab[] = [freshTab("table")];
 let activeIdx = 0;
 let mounted = false;
 
+/* docs/47: one PARKED session per connection. A session is the connection record, its strip
+   and the index in front - the three things the switch used to rebuild from nothing, which
+   is how "MySQL, then Redis, then back" lost every open table. The park swaps whole objects
+   instead of copying fields: a request that captured its record or tab before an await
+   lands in the session it belongs to, never in the one now on screen.
+
+   The Map's insertion order is the LRU order (a park re-inserts), so the oldest session is
+   the first key. `lastConn` is the connection the page left on, which the next mount
+   resumes instead of falling back to the registry's first row. */
+interface DbSession { conn: DbConnState; tabs: DbTab[]; activeIdx: number }
+const parked = new Map<string, DbSession>();
+let lastConn: string | null = null;
+
+/** How many sessions the park holds (docs/47 D7). Connections are a handful; the cap only
+ *  bounds the pathological case, and a session holding buffered writes is never the one to go. */
+export const DB_PARKED_MAX = 8;
+
+/** Park the live session under its connection. `pinned` says which sessions hold work that
+ *  must not be evicted (the caller counts buffered writes; this leaf imports types only). A
+ *  load cut off by the park must not come back as a spinner that never stops, so the busy
+ *  flags reset here: the resume re-reads whatever the cut-off load was for. */
+function park(pinned: (tabs: DbTab[]) => boolean): void {
+  const name = connRec.conn;
+  if (!name) return;
+  for (const t of tabs) {
+    t.loading = false;
+    if (t.kind === "table") t.detailBusy = false;
+  }
+  parked.delete(name);
+  parked.set(name, { conn: connRec, tabs: tabs, activeIdx: activeIdx });
+  for (const [k, v] of parked) {
+    if (parked.size <= DB_PARKED_MAX) break;
+    if (k !== name && !pinned(v.tabs)) parked.delete(k);
+  }
+}
+
+/** Put a parked session back live. The registry list and the per-browser stores (query
+ *  history, favorites) are the PAGE's, not the session's: they carry from the record being
+ *  replaced, so a session parked an hour ago does not bring back an old connection list. */
+function resume(s: DbSession, from: DbConnState): void {
+  connRec = s.conn;
+  connRec.conns = from.conns;
+  connRec.history = from.history;
+  connRec.favorites = from.favorites;
+  tabs = s.tabs;
+  activeIdx = Math.max(0, Math.min(tabs.length - 1, s.activeIdx));
+}
+
+/** Switch the live session to connection `name` (docs/47 D1): park the one on screen, then
+ *  take `name`'s parked session back - or, for a connection not seen yet, start a fresh record
+ *  whose strip the caller seeds (it knows the connection's family). True when a parked session
+ *  came back. */
+export function dbSwapConn(name: string, pinned: (tabs: DbTab[]) => boolean): boolean {
+  park(pinned);
+  return take(name);
+}
+
+/** The live connection left the registry: go to `name` (null = there is no connection at all)
+ *  WITHOUT parking the one on screen - nothing can be read or committed through it any more. */
+export function dbReplaceConn(name: string | null): boolean {
+  return take(name);
+}
+
+function take(name: string | null): boolean {
+  const from = connRec;
+  lastConn = name;
+  const s = name ? parked.get(name) : undefined;
+  if (s && name) {
+    parked.delete(name);
+    resume(s, from);
+    return true;
+  }
+  connRec = freshConnState();
+  connRec.conns = from.conns;
+  connRec.history = from.history;
+  connRec.favorites = from.favorites;
+  connRec.conn = name;
+  tabs = [freshTab("table")];
+  activeIdx = 0;
+  return false;
+}
+
+/** Leaving the page (docs/47 D3): the live session parks and is remembered, and the live
+ *  records go back to the fresh literals so nothing unmounted reads as on screen. */
+export function dbSuspendView(pinned: (tabs: DbTab[]) => boolean): void {
+  lastConn = connRec.conn;
+  park(pinned);
+  connRec = freshConnState();
+  tabs = [freshTab("table")];
+  activeIdx = 0;
+  mounted = false;
+}
+
+/** The mount's half of the page leave: bring the session the page left on back live. False
+ *  when there is none (a first visit, or its connection was forgotten meanwhile). */
+export function dbResumeView(): boolean {
+  const s = lastConn ? parked.get(lastConn) : undefined;
+  if (!s || !lastConn) return false;
+  parked.delete(lastConn);
+  // The session keeps its OWN registry list until /api/db answers: the fresh record it replaces
+  // has none, and an empty list would dress a Redis session as SQL in the skeleton.
+  resume(s, s.conn);
+  return true;
+}
+
+/** Every parked session's strip - what the page-leave and unload guards count alongside the
+ *  live one (docs/47 D4), and what a confirmed leave drops the buffered writes from. */
+export function dbParkedTabs(): DbTab[][] {
+  return Array.from(parked.values(), (s: DbSession): DbTab[] => s.tabs);
+}
+
+/** The parked connections, oldest first. */
+export function dbParkedNames(): string[] {
+  return Array.from(parked.keys());
+}
+
+/** Drop the sessions of connections that left the registry (docs/47 D7): nothing can be read
+ *  or committed through a connection that is gone. */
+export function dbForgetParked(keep: (name: string) => boolean): void {
+  for (const k of Array.from(parked.keys())) if (!keep(k)) parked.delete(k);
+  if (lastConn && !keep(lastConn)) lastConn = null;
+}
+
 /** The connection-scoped record: the sidebar's list, its filters, and what the console
  *  remembers. Shared by every open tab; reset when the connection changes. */
 export function dbConn(): DbConnState { return connRec; }
@@ -161,11 +284,14 @@ export function dbIsMounted(): boolean { return mounted; }
 /** Entering the view. */
 export function mountDbView(): void { mounted = true; }
 
-/** Leaving it: both records go back to the fresh literals, which is what nulling them used
- *  to buy — the rows, the buffered edits and the query results are dropped together. */
+/** The FULL reset: both records back to the fresh literals and the park emptied - the rows,
+ *  the buffered edits and the query results of every session dropped together. The page's own
+ *  leave parks instead (dbSuspendView, docs/47 D9); this is the reset a suite starts from. */
 export function unmountDbView(): void {
   connRec = freshConnState();
   tabs = [freshTab("table")];
   activeIdx = 0;
   mounted = false;
+  parked.clear();
+  lastConn = null;
 }

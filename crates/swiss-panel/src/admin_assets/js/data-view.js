@@ -15,15 +15,15 @@
  */
 
                                                                                                                                                                   
-                                                                              
+                                                                                     
 import { $, apiJson, dbReqGuard, el, iconNode, targetEl, typeTagNode } from "./util.js";
 import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
-import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown } from "./data-browsers.js";
+import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown, dbRefreshRedisValue } from "./data-browsers.js";
 import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbBarClick, dbFavLoad, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
-import { dbActivityClick } from "./data-activity.js";
+import { dbActivityClick, dbActivityPollStop } from "./data-activity.js";
 // The cycle data-view <-> data-structure is the same accepted shape as data-grid <->
 // data-cell — both sides only call across it inside functions, never at module scope.
 import { dbStructureClick } from "./data-structure.js";
@@ -37,11 +37,16 @@ import { loadCollapsed, mountGroup } from "./groups.js";
                                                                      
 import { DB_TREE_SECTIONS, dbSectionOf, dbSectionSlices, redisNamespaceTree } from "./data-tree.js";
                                                                   
-import { dbConn, dbIsMounted, dbSqlTab, dbTab, dbTabs, mountDbView } from "./db-state.js";
+import {
+  dbConn, dbForgetParked, dbIsMounted, dbParkedTabs, dbReplaceConn, dbResumeView, dbSqlTab, dbSwapConn, dbTab, dbTabs, mountDbView,
+} from "./db-state.js";
 // The strip's policy module. The cycle is the same accepted shape as the data-structure edge
 // below: data-tabs reaches back for renderDbTables, and both sides only call across it inside
 // functions, never at module scope.
-import { dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsContext, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
+import {
+  dbAfterTabSwitch, dbLastTableTab, dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsContext,
+  dbTabsPending, dbTabPending, renderDbTabs,
+} from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
 import { btn, moreBtn } from "./ui/button.js";
 import { hint } from "./ui/form.js";
@@ -110,7 +115,26 @@ export function dbConnMenuItems(
  *  dbPending(): before the tabs, a buffer could only exist on the object in front of the
  *  operator, and after them a background tab's edits would have walked out unmentioned. */
 function dbPendingAll()         {
-  return dbTabsPending(dbTabs());
+  // docs/47 D4: every session's strip, the parked ones too - a write parked on the MySQL
+  // session while Redis is in front is exactly what an unguarded tab close would lose.
+  return dbParkedTabs().reduce((n        , strip         )         => n + dbTabsPending(strip), dbTabsPending(dbTabs()));
+}
+
+/** Does a session hold work the park must never evict (docs/47 D7)? */
+function dbSessionPinned(tabs         )          {
+  return dbTabsPending(tabs) > 0;
+}
+
+/** The confirmed page leave (docs/47 D3): every session's buffered writes go and the sessions
+ *  stay. canLeave() has just said the writes would be discarded, and once the page is gone
+ *  nothing would count a parked one - beforeunload asks only the page in front. */
+function dbDropAllEdits()       {
+  for (const strip of [dbTabs(), ...dbParkedTabs()]) {
+    for (const t of strip) {
+      if (t.kind === "table") { t.updates = {}; t.deletes = {}; t.inserts = []; t.sqlPreview = false; }
+      if (t.kind === "key") t.redisEdits = null;
+    }
+  }
 }
 
 /** Ask before an action would drop the ACTIVE tab's buffered edits; false when the user said no. */
@@ -169,38 +193,52 @@ async function loadDbView()                {
   // owns the record now and it is never absent, so all this still marks is that the view is
   // on screen — which the late callbacks below ask about by name.
   mountDbView();
+  // docs/47 D3: a page leave parked the session; the mount takes it back, so the page returns
+  // on the connection it left with everything that connection held.
+  dbResumeView();
   renderDbView();
   const j = await apiJson                                       ("/api/db");
-  if (!j) return;
+  // A leave while the list was on its way: this pane belongs to another page now.
+  if (!j || !dbIsMounted()) return;
   const d = dbConn();
   d.conns = j.connections || [];
-  const stillThere = d.conns.some((c                    )          => { return c.name === d.conn; });
-  if (!stillThere) {
-    d.conn = d.conns.length ? d.conns[0].name : null;
-    d.tables = [];
-    d.redis = null;
-    // Every open object dies with the connection it belonged to (docs/42 T2): the strip is
-    // replaced by one fresh placeholder of the new connection's family, which resets
-    // table/schema/data, redisKey/Value/Edits and any standing query reply in one move.
-    dbResetTabsForConn();
+  const listed = (name        )          => d.conns.some((c                    )          => c.name === name);
+  dbForgetParked(listed); // a connection that left the registry takes its parked session with it
+  if (!d.conn || !listed(d.conn)) {
+    // The connection on screen is gone, or there never was one: go to the registry's first,
+    // resuming its parked session if it has one. The one that left is not parked - nothing
+    // can be read or committed through it any more.
+    if (!dbReplaceConn(d.conns.length ? d.conns[0].name : null)) dbResetTabsForConn();
   }
-  renderDbSide();
-  // The skeleton above was drawn before /api/db answered, i.e. with no connection: its hint said
-  // "No database MCP registered" and its console wore the SQL placeholder. With the connection
-  // known, dress everything that depends on its KIND (redis / SQL) — a redis connection
-  // entered first used to keep the SQL console and that hint until something else redrew them.
+  // The skeleton above was drawn before /api/db answered: dbShowSession dresses everything that
+  // depends on the connection's KIND and repaints the strip, which hides with no connection.
+  dbShowSession();
+}
+
+/** Paint the live session whole, then fetch only what it lacks (docs/47 D5). What the session
+ *  holds is on screen at once; the catalog and the page in front are then re-read QUIETLY - no
+ *  Loading, nothing cleared, a repaint only when the answer moved. A Redis key walk stays as
+ *  paged (a re-walk would drop the pages More fetched) and a console is never re-run (D6). */
+function dbShowSession()       {
+  const d = dbConn();
+  const gb = $                  ("dbGrep");
+  if (gb) gb.value = d.grep;
   dbSyncKind();
-  // ...and the strip, for the same reason: the skeleton painted it with no connection known,
-  // which is the one state it hides in. Without this it stayed hidden for the whole visit.
-  renderDbTabs();
-  renderDbToolbar(); renderDbFilters(); renderDbGrid();
-  // A refresh re-fetches what is MISSING, not what is already on screen — reloading keys would
-  // throw away the pages the user paged in with "More".
-  if (d.conn && dbIsRedis()) { if (!d.redis) void dbLoadKeys(true); else renderDbTables(); }
-  else if (d.conn) { if (!d.tables.length) void dbLoadTables(); else renderDbTables(); }
-  else renderDbTables();
+  renderDbSide();
+  // The strip, the list and the pane - and the page, detail or value the object in front lacks,
+  // plus the Activity poll when a monitor is in front (D8).
+  dbAfterTabSwitch(true);
+  const chip = $("countChip");
+  if (chip) chip.textContent = currentPageCount();
+  if (!d.conn) return;
+  if (dbIsRedis()) { if (!d.redis) void dbLoadKeys(true); }
+  else {
+    void dbLoadTables(d.tables.length > 0);
+    if (!d.databases) void dbLoadDatabases();
+  }
   const t = dbTab();
-  if (t.kind === "table" && t.table && !t.data && !dbIsRedis()) void dbLoadData(true);
+  if (t.kind === "table" && t.table && t.data) void dbLoadData(true, true, true);
+  if (t.kind === "key" && t.redisKey && t.redisValue && !t.redisEdits) void dbRefreshRedisValue(t.redisKey);
 }
 
 function renderDbView()       {
@@ -583,38 +621,23 @@ function dbCurrentDatabase(d             )         {
   return p ? p.name : "";
 }
 
-/** Switch CONNECTIONS (docs/42 D5, now shared by the row menu): every open object closes,
- *  the database catalog of the connection being left is dropped, and the first page loads
- *  for the new connection's CONFIGURED database. */
+/** Switch CONNECTIONS (docs/47 D1, D2): the session on screen parks whole - its strip, its
+ *  buffered writes, its catalog, its search and sort - and the target's parked session comes
+ *  back; a connection seen for the first time starts at its family's placeholder on its
+ *  CONFIGURED database. Nothing is dropped, so nothing is asked. */
 async function dbSwitchConn(name        )                {
   const d = dbConn();
   if (!name || name === d.conn) return;
-  // Every open object, not just the one in front: the switch is a page-wide drop, so it
-  // asks with the whole strip's total.
-  if (!dbOkToLeave()) return;
-  d.conn = name;
-  d.tables = []; d.treeShown = {};
-  d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
-  d.redis = null;
-  d.database = "";  // docs/43 M3: the new connection starts on its CONFIGURED database
-  d.databases = null; // and its catalog is not the one just left behind
-  d.sort = "name"; d.sortDir = "asc"; // the new connection's kind may not have the chosen key
-  d.grep = "";        // a sidebar search is table-list-scoped, never inherited
-  d.redisType = "";   // same reasoning: a type filter belongs to the key list it chose
-  const gb = $                  ("dbGrep");
-  if (gb) gb.value = "";
-  dbResetTabsForConn();
-  const ta0 = $                     ("dbSql");
-  if (ta0) ta0.value = "";
-  dbSqlPaint();
-  dbSyncKind();
-  renderDbSide();
-  renderDbTabs();
-  renderDbTables(); renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
-  const chip = $("countChip");
-  if (chip) chip.textContent = currentPageCount();
-  if (dbIsRedis()) void dbLoadKeys(true);
-  else { void dbLoadTables(); void dbLoadDatabases(); }
+  // The rows-per-page is the operator's word, not the connection's: a fresh session starts at it.
+  const last = dbLastTableTab();
+  const size = last ? last.pageSize : 0;
+  dbActivityPollStop(); // a parked monitor stops asking about sessions nobody is looking at (D8)
+  if (!dbSwapConn(name, dbSessionPinned)) {
+    dbResetTabsForConn();
+    const t = dbTab();
+    if (size && t.kind === "table") t.pageSize = size;
+  }
+  dbShowSession();
 }
 
 /* The owner's drawer ask (post-M5): the connection and database pickers slide open under
@@ -825,11 +848,12 @@ async function dbLoadDatabases()                {
 // dropped, or it would repopulate the sidebar with the stale page (docs/22 closeout audit).
 const dbTablesReq = dbReqGuard();
 
-async function dbLoadTables()                {
+async function dbLoadTables(quiet          )                {
   const d = dbConn();
   if (!d.conn) return;
   const box = $("dbTables");
-  if (box) { box.textContent = ""; box.appendChild(el("div", "db-hint", tr("dataView.loading"))); }
+  // docs/47 D5: a quiet re-read keeps the list on screen until the answer is in.
+  if (box && !quiet) { box.textContent = ""; box.appendChild(el("div", "db-hint", tr("dataView.loading"))); }
   let q = "/api/db/" + encodeURIComponent(d.conn) + "/tables?limit=" + DB_TREE_FETCH_LIMIT;
   if (d.grep) q += "&grep=" + encodeURIComponent(d.grep);
   // docs/43 M3: on MySQL the schema parameter NAMES THE DATABASE — absent keeps the
@@ -841,11 +865,18 @@ async function dbLoadTables()                {
   const token = dbTablesReq.issue();
   const j = await apiJson                     (q);
   if (!dbTablesReq.accepts(token)) return; // superseded: a newer page/filter owns the list
-  if (!j) { if ($("dbTables")) $("dbTables").textContent = ""; return; }
-  d.tables = j.tables || [];
+  // The session may have parked while this was on its way: the answer is still its catalog,
+  // but the list on screen is another connection's and must not be touched.
+  const shown = dbConn() === d;
+  if (!j) { if (shown && !quiet && $("dbTables")) $("dbTables").textContent = ""; return; }
+  const next = j.tables || [];
+  // The same catalog: the tree stays exactly as painted (its scroll, its open bands).
+  if (quiet && d.tablesTotal === (j.total || 0) && d.more === !!j.more &&
+    JSON.stringify(next) === JSON.stringify(d.tables)) return;
+  d.tables = next;
   d.tablesTotal = j.total || 0;
   d.more = !!j.more;
-  renderDbTables();
+  if (shown) renderDbTables();
 }
 
 /** A Postgres connection (many schemas) vs everything else. The schema grouping and the
@@ -1263,6 +1294,6 @@ function dbFkOpen(fk            , value         )       {
   dbOpenTab({ kind: "table", table: j.table, schema: j.schema, filters: j.filters });
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbCurrentDatabase, dbDatabaseMenuItems, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, dbSectionLabel, dbSortDatabases, dbSortMenu, dbSwitchConn, dbSwitchDatabase, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbCurrentDatabase, dbDatabaseMenuItems, dbDialectOf, dbDropAllEdits, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, dbSectionLabel, dbSessionPinned, dbSortDatabases, dbSortMenu, dbSwitchConn, dbSwitchDatabase, loadDbView, renderDbSide, renderDbTables, renderDbView };
 // dbSectionEmpty stays module-private: the acceptance suite reaches it through the band's
 // emptyText hook, which is the only contract it has.

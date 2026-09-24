@@ -136,6 +136,27 @@ async function dbLoadRedisValue(key        )                {
   renderDbGrid();
 }
 
+/** docs/47 D5: a resumed key tab re-reads its value WITHOUT blanking it first, and repaints only
+ *  when the value moved. A tab holding buffered edits is left alone - they are keyed to what is
+ *  on screen. */
+async function dbRefreshRedisValue(key        )                {
+  const conn = dbConn().conn;
+  const d = dbTab();
+  if (!conn || d.kind !== "key" || d.redisKey !== key || !d.redisValue || d.redisEdits) return;
+  const token = dbValueReq.issue();
+  const j = await apiJson                 ("/api/db/" + encodeURIComponent(conn) + "/key?key=" + encodeURIComponent(key));
+  if (!dbValueReq.accepts(token) || !j) return;
+  // Re-read the front AFTER the wait: the operator may have moved on, or started editing.
+  const now = dbTab();
+  if (now !== d || now.kind !== "key" || now.redisKey !== key || now.redisEdits) return;
+  if (JSON.stringify(j) === JSON.stringify(now.redisValue)) return;
+  now.redisValue = j;
+  now.redisStreamRows = null; // the stream caches belong to the value they grew from
+  now.redisStreamMore = null;
+  renderDbToolbar();
+  renderDbGrid();
+}
+
 /* --- the typed value view (docs/22 W3.3) --------------------------------------------------------- */
 
 /* The plan for one container type. `cols` names the columns, `edit` the cells a double-click
@@ -815,7 +836,7 @@ function dbRedisKeydown(t         , ev               )          {
 }
 
 export {
-  DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore,
+  DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore, dbRefreshRedisValue,
   dbRedisClick, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
   dbRedisDisplayText, dbRedisEntries, dbRedisKeydown, dbRedisKeyMenu, dbRedisPendingCount, dbRenderRedisValue,
   dbRedisCellMenu, // docs/45 S2: the stream view reuses the docs/22 W5.3 cell menu
