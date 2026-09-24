@@ -41,7 +41,7 @@ import { stylesDir } from "./styles.js";
 const FROZEN: Record<string, number> = {
   "base.css": 22,
   "ui.css": 74, // P5: the inline form's 260px wide-input basis went with its last user
-  "views.css": 243, // P2-3c: MCP Logs, items, Run, Config (P1b-2: 251, the held-edits dot moved to ui.css on --dot)
+  "views.css": 240, // P6-1: Jobs off .tun-* (its 42px and 6px); P2-3c: 243, MCP Logs, items, Run, Config (P1b-2: 251, the held-edits dot moved to ui.css on --dot)
 };
 
 const TOKEN_BLOCK = /^:root(\[data-theme="(dark|light)"\])?$/;

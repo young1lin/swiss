@@ -47,8 +47,18 @@ function labelText(label        , required          , meta         )            
   return h("span", null, kids);
 }
 
-export function field(o                                                                                                                 )              {
-  const label = h("label", { class: "field" }, labelText(o.label, o.required, o.meta), o.control);
+let groupSeq = 0; // ids for a group field's caption, unique per page load
+
+export function field(o                                                                                                                                  )              {
+  const text = labelText(o.label, o.required, o.meta);
+  // `group`: a control that is several controls (weekday toggles, a set of checks). A <label>
+  // hands a click on its caption to the FIRST labelable element inside it - the job sheet's
+  // "Days" caption toggled Sunday. A group names its members (role=group, aria-labelledby)
+  // and activates none of them; it draws the same as a label field (ui.css .field).
+  if (o.group) text.id = "fld-g" + (++groupSeq);
+  const label = o.group
+    ? h("div", { class: "field", role: "group", aria: { labelledby: text.id } }, text, o.control)
+    : h("label", { class: "field" }, text, o.control);
   return h("div", { class: "fld" },
     // `action`: the control's one button beside it (a key path and Browse), on the control's row.
     o.action ? h("div", { class: "field-row" }, label, o.action) : label,

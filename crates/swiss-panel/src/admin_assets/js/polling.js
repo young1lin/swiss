@@ -14,19 +14,18 @@
  * limitations under the License.
  */
 
-                                                                                                                                                   
-import { $, api, apiJson, dotTitle, iconNode, toast, whenLabel } from "./util.js";
+                                                                                                                                        
+import { $, api, apiJson, dotTitle, toast } from "./util.js";
 import { tr, trn } from "./i18n.js";
-import { frag, h } from "./h.js";
+import { h } from "./h.js";
                                      
 import { currentPageCount, navigatePage, refreshPage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { rowOf } from "./sidebar.js";
-import { triggerSummary } from "./jobs-v2.js";
 import { currentView } from "./ui-state.js";
 import { setTunResponse, tunBusyOf, tunDragging, tunResponse, mountedTunScope } from "./tunnel-state.js";
-import { jobGroupNames, jobIsBusy, jobRows, setJobGroupNames, setJobRows } from "./job-state.js";
+import { jobGroupNames, jobRows, setJobGroupNames, setJobRows } from "./job-state.js";
 import { mcpDetail, mcpRows, memoryInfo, selectedMcp, setMcpDetail, setMcpGroups, setMcpRows, setMemoryInfo, setSelectedMcp } from "./mcp-state.js";
 import { btn, dot, moreBtn, row, tag } from "./ui/index.js";
                                               
@@ -163,55 +162,8 @@ async function loadTunnels(patchOnly          )                {
    header chip and the view footer — the mcpChipText drift taught that lesson once already.
    ================================================================================================ */
 
-// The row schedule text is jobs-v2.js's triggerSummary (imported at the top): the v2
-// trigger object with a v1-field fallback, so the same row renders on any gateway this
-// panel can talk to.
-
-/** The row dot: running beats everything, off is idle, a recorded failure is down, and a job that
- *  never ran yet is idle rather than up — no run has ever succeeded. */
-function jobDotClass(j           )         {
-  if (j.running) return "starting";
-  if (!j.enabled) return "idle";
-  if (j.lastOk === false) return "down";
-  return j.lastRunAt ? "up" : "idle";
-}
-
-/** The job row as a node (docs/37 R5): every label, command and trigger sentence is a text
- *  node — data-last/data-next always render (possibly empty) so patchJobs can fill them in. */
-function jobRowNode(j           )              {
-  const busy = jobIsBusy(j.name);
-  // The v2 identity (docs/11 §7.1): the title is the human name when one is set, the id
-  // stays beside it because every action still addresses the id.
-  const title         = j.title && j.title !== j.name
-    ? frag(j.title, " ", h("span", { class: "via" }, "· " + j.name))
-    : j.name;
-  const labels         = (j.labels || []).length
-    ? frag(" ", h("span", { class: "via" }, (j.labels || []).map((l        )         => { return "#" + l; }).join(" ")))
-    : null;
-  const word = busy ? "starting" : jobDotClass(j);
-  return h("div", { class: "tun-row", data: { job: j.name } },
-    h("span", { class: "dot " + word, data: { dot: "" }, title: dotTitle(word) }),
-    h("div", { class: "tun-main" },
-      h("div", { class: "tun-name" }, title, labels, j.enabled ? null : frag(" ", h("span", { class: "via" }, tr("polling.off")))),
-      h("div", { class: "tun-sub" },
-        h("code", null, j.command),
-        " ",
-        h("span", { class: "via" }, "· " + triggerSummary(j)),
-        " ",
-        h("span", { class: "via", data: { last: "" } }, j.lastRunAt
-          ? (j.lastOk === false
-              ? tr("polling.lastWhenFailed", { when: whenLabel(j.lastRunAt) })
-              : tr("polling.lastWhen", { when: whenLabel(j.lastRunAt) }))
-          : ""),
-        " ",
-        h("span", { class: "via", data: { next: "" } }, j.enabled && j.nextDueAt ? tr("polling.nextWhen", { when: whenLabel(j.nextDueAt) }) : ""))),
-    h("div", { class: "tun-acts" },
-      h("button", { class: "btn", data: { run: "" }, disabled: busy || !!j.running }, busy ? "…" : tr("polling.runNow")),
-      // One primary per row (docs/18 V5): Edit, History and Delete answer from the ellipsis
-      // menu (jobs.js), so Delete is not a red button repeated down the whole list.
-      h("button", { class: "btn ghost icon", data: { more: "" }, aria: { label: tr("polling.rowActions") }, title: tr("polling.rowActions") },
-        iconNode("ellipsis"))));
-}
+// The job row lives with the page that draws it (jobs.ts jobRowNode, docs/46 P6): its schedule
+// column speaks the sheet's cron translator, which is jobs.ts's.
 
 function jobsChipText()         {
   const rows = jobRows();
@@ -231,7 +183,10 @@ async function loadJobs(patchOnly          )                {
   setJobGroupNames(j.groups && j.groups.length ? j.groups : ["default"]);
   if (currentView() === "jobs") {
     const { patchJobs, renderJobs } = await import("./jobs.js");
-    if (patchOnly && $("pane").querySelector("[data-foot]")) patchJobs();
+    // patchJobs owns the patch-or-rebuild call (a structural change, or a pane another page
+    // drew, is a rebuild). This used to look for the page foot first, and once the foot was gone
+    // (docs/46 P6) every poll rebuilt the list - cancelling a drag, dropping the focus.
+    if (patchOnly) patchJobs();
     else renderJobs();
   }
   updateCountChip();
@@ -336,4 +291,4 @@ function connRowNode(c                        )              {
 }
 
 
-export { connRowNode, isTunnelsView, tunDot, jobDotClass, jobGroupsList, jobRowNode, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowNode, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };
+export { connRowNode, isTunnelsView, tunDot, jobGroupsList, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowNode, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };

@@ -36,7 +36,7 @@ import {
   anchoredMenu, btn, card, checkField, closeMenu, closeSheet, decodeStrings, dot, emptyNode, failNote, field,
   filterInput, form, formActions, formCap, formFold, groupNode, hint, iconBtn, iconNode, initSelects, initSheet,
   inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot, pager, pair, pane, paneHead,
-  popupMenu, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow, spinner, sw, tag, timeline,
+  popupMenu, relTime, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow, spinner, sw, tag, timeline,
   timelineMeta, timelineToggle, toTop, valueBlock,
 } from "./ui/index.js";
                                                             
@@ -247,7 +247,15 @@ function catalogue(now        )              {
     entry(["row"], tk("gallery.c.rows"), tk("gallery.c.rowsNote"), [], card(
       row({ lead: dot("up", tr("gallery.dot.up")), name: "orders-db", sub: [h("code", null, "5432 → 127.0.0.1:15432"), " · ", tr("gallery.d.via", { host: "bastion-eu" })] }),
       row({ lead: dot("error", tr("gallery.dot.error")), name: "reports", err: tr("gallery.d.rowErr") }),
-      row({ name: "nightly-backup", cols: [{ v: "0 3 * * *", mono: true, title: tr("gallery.d.schedule") }, tr("gallery.d.lastRun")] }),
+      row({
+        name: "nightly-backup", sub: h("code", null, "pg_dump -Fc shop"),
+        cols: [
+          { v: tr("gallery.d.scheduleWords"), w: "m", title: "cron 0 3 * * *" },
+          { v: relTime(now + 13 * 60 * MIN, now), w: "s", title: tr("gallery.d.schedule") },
+          { v: [tag(tr("gallery.d.failed"), { tone: "bad" }), " ", relTime(now - 11 * 60 * MIN, now)], w: "l" },
+        ],
+        primary: btn(tr("gallery.d.runNow")), more: moreBtn(tr("gallery.d.more")),
+      }),
       row({ lead: dot("up", tr("gallery.dot.up")), name: "grafana", sub: tr("gallery.d.rowSub"), toggle: sw(true, tr("gallery.d.enabled")), primary: btn(tr("gallery.d.copy"), { kind: "ghost", icon: "copy" }), more: moreBtn(tr("gallery.d.more")) }),
       row({ lead: dot("off", tr("gallery.dot.off")), name: "load-test", sub: tr("gallery.d.rowMuted"), muted: true, cols: [tag(tr("gallery.d.revoked"))] }),
       // A record behind the row (a tool): the name and sub open in place; the controls stay out.
@@ -289,6 +297,12 @@ function catalogue(now        )              {
         field({ label: tr("gallery.d.port"), control: h("input", { type: "text", value: PORT_SAMPLE }) })),
       field({ label: SQL_ARG, required: true, meta: SQL_TYPE, control: h("textarea", { placeholder: SQL_SAMPLE }) }),
       checkField({ label: tr("gallery.d.startNow"), control: h("input", { type: "checkbox", checked: true })                    , hint: tr("gallery.d.startNowHint") }),
+      field({
+        group: true, label: tr("gallery.d.retryOn"),
+        control: h("div", null,
+          checkField({ label: tr("gallery.d.onFailure"), control: h("input", { type: "checkbox", checked: true })                     }),
+          checkField({ label: tr("gallery.d.onTimeout"), control: h("input", { type: "checkbox" })                     })),
+      }),
       formFold({ summary: tr("gallery.d.advanced") },
         formCap(tr("gallery.d.sshKey")),
         field({ label: tr("gallery.d.keyPath"), control: h("input", { type: "text", placeholder: KEY_SAMPLE }), action: btn(tr("gallery.d.browse")) })),

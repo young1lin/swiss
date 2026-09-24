@@ -23,7 +23,7 @@
 import { describe, expect, it } from "vitest";
 import { sheet } from "./styles.js";
 
-const FROZEN_VIEWS_BYTES = 69920; // docs/46 P5: Settings (P4: 70223, P3: 70330, P2-3c: 71473, P1b-3: 74519, P1b-2: 76099, P1a-2: 76412)
+const FROZEN_VIEWS_BYTES = 67801; // docs/46 P6-1: Jobs (P5: 69920, P4: 70223, P3: 70330, P2-3c: 71473, P1b-3: 74519, P1b-2: 76099, P1a-2: 76412)
 
 export function lfBytes(css: string): number {
   return Buffer.byteLength(css.replace(/\r\n/g, "\n"), "utf8");

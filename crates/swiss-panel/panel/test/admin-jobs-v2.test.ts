@@ -39,11 +39,10 @@ import {
 /* Visual refresh V5 (docs/18): one primary action per row, the rest behind an ellipsis that
    opens menu.js's popupMenu. No text Edit/History/Delete buttons inline, no red Delete
    repeated down the list — danger lives in the menu, where it is red on exactly one item.
-   The builders live in polling.js, whose import graph (add-sheet.js) assigns to the DOM at
-   module top level — a permissive element stub satisfies that. jobRowNode stays a pure
-   string function (the jobs scope keeps its rowsHtml branch); the tunnel rows are BUILT
-   (docs/37 R5), so those two answer nodes, read back through the serialising micro-DOM
-   below. */
+   The tunnel builders live in polling.js and the job row in jobs.js (docs/46 P6: its schedule
+   column speaks the sheet's cron translator); both import graphs assign to the DOM at module
+   top level - a permissive element stub satisfies that. Every row is BUILT (docs/37 R5), so
+   the builders answer nodes, read back through the serialising micro-DOM below. */
 /* docs/37 R5: the Node identity h()/frag() check children with, and the tree the builders
    return has to read back as markup for the grep-style assertions — a plain-object stub
    can do neither. */
@@ -140,11 +139,11 @@ beforeAll(async () => {
     };
   }
   const polling = await import("../src/polling.js") as unknown as {
-    jobRowNode: (j: Record<string, unknown>) => FakeNode;
     ruleRowNode: (r: Record<string, unknown>) => FakeNode;
     connRowNode: (c: Record<string, unknown>) => FakeNode;
   };
-  ({ jobRowNode, ruleRowNode, connRowNode } = polling);
+  ({ ruleRowNode, connRowNode } = polling);
+  ({ jobRowNode } = await import("../src/jobs.js") as unknown as { jobRowNode: (j: Record<string, unknown>) => FakeNode });
 });
 
 describe("visual refresh V5 — one primary action per row", () => {
@@ -183,16 +182,46 @@ describe("visual refresh V5 — one primary action per row", () => {
    the state words, so the title reuses them via ONE builder (util.js dotTitle): the wording
    can never disagree between first paint and the 6s patch if both call the same function. */
 describe("visual refresh V6 — the status dot carries a title", () => {
-  it("the job dot: idle explains itself, up says up", () => {
-    // docs/37 R5: the dot is a built node - class, flag attribute and title are asserted
-    // each on their own, like the rule row below.
+  it("the job row draws no dot at rest: Off is a tag, a failure a red tag, a run the titled pulse", () => {
+    // docs/46 §3.6: a job has no switch to agree with, and a green "scheduled" dot only repeated
+    // the next-run column - so the lead dot is gone. An off job wears an Off tag after its name
+    // (not a greyed row) and has no next run; the last run's failure is a red tag; the amber
+    // pulse after the name means a run is in flight, and its title says so (docs/18 V6). The
+    // old off dot's title ("idle — starts on first request") was the MCP lazy-start sentence.
+    // Only a job with no outcome at all has never run: a manual Run now settles lastOk without a
+    // lastRunAt (that is the scheduler's anchor), and the column says what it knows.
+    expect(serialize(jobRowNode({ name: "m", command: "c", enabled: true, lastOk: true }))).toContain('<span class="lrow-col w-l">OK</span>');
+    expect(serialize(jobRowNode({ name: "m", command: "c", enabled: true, lastOk: false }))).toContain('<span class="lrow-col w-l"><span class="tag bad">Failed</span></span>');
     const off = serialize(jobRowNode({ name: "off", command: "cargo test", enabled: false }));
-    expect(off).toContain('class="dot idle"');
-    expect(off).toContain("data-dot");
-    expect(off).toContain('title="idle — starts on first request"');
-    const ok = serialize(jobRowNode({ name: "nightly", command: "cargo test", enabled: true, lastRunAt: "2026-09-12T00:00:00Z", lastOk: true }));
-    expect(ok).toContain('class="dot up"');
-    expect(ok).toContain('title="up"');
+    expect(off).not.toContain('class="dot');
+    expect(off).toContain('<span class="tag">Off</span>');
+    expect(off).toContain('<span class="lrow-col w-s">—</span>');
+    expect(off).toContain('<span class="lrow-col w-l">Never run</span>');
+    const bad = serialize(jobRowNode({ name: "nightly", command: "cargo test", enabled: true, lastRunAt: "2026-09-12T00:00:00Z", lastOk: false }));
+    expect(bad).not.toContain('class="dot');
+    expect(bad).toContain('<span class="tag bad">Failed</span>');
+    const running = serialize(jobRowNode({ name: "nightly", command: "cargo test", enabled: true, running: true }));
+    expect(running).toContain('class="dot starting" title="running"');
+  });
+
+  it("the schedule column is the sheet's own sentence, the raw spelling on hover", () => {
+    // docs/46 §3.6: schedFromJob -> schedToBody, the translator the sheet already has. An
+    // interval needs no library; a cron speaks cronstrue once it has loaded, and until then
+    // (and whenever it cannot say it) the column is the raw spelling.
+    const every = serialize(jobRowNode({ name: "sync", command: "git pull", enabled: true, trigger: { kind: "interval", everyMs: 900000, firstRun: "after-interval" } }));
+    expect(every).toContain('<span class="lrow-col w-m" title="every 900 s">Every 15 minutes</span>');
+    const cron = serialize(jobRowNode({ name: "nightly", command: "cargo test", enabled: true, trigger: { kind: "cron", expression: "0 4 * * *" } }));
+    expect(cron).toContain('<span class="lrow-col w-m" title="cron 0 4 * * *">cron 0 4 * * *</span>');
+    // The next and last run read relative ("in 20 hr."); their titles are the whole moment, date
+    // included. whenLabel gave a clock time alone for anything not a day in the past, so a run due
+    // tomorrow at 05:59 hovered as "Next run: 05:59:00" (found on the docs/46 P6 walk).
+    const due = new Date(Date.now() + 20 * 3600 * 1000).toISOString();
+    const next = serialize(jobRowNode({ name: "n", command: "c", enabled: true, nextDueAt: due }));
+    expect(next).toContain('title="Next run: ' + new Date(due).toLocaleString("en") + '"');
+    // A v2 title is the name; the id every action addresses rides the sub-line in mono.
+    const titled = serialize(jobRowNode({ name: "nightly", title: "Nightly build", command: "cargo test", enabled: true }));
+    expect(titled).toContain('<div class="lrow-name">Nightly build</div>');
+    expect(titled).toContain('<div class="lrow-sub"><code>nightly</code> · <code>cargo test</code></div>');
   });
 
   it("the rule dot: error names its reason, a busy row says starting", () => {

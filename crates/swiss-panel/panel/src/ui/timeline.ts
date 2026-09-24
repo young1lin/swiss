@@ -102,6 +102,22 @@ export function fmtMs(ms: number): string {
   return tr("ui.sec", { n: (ms / 1000).toFixed(ms < 9950 ? 1 : 0) });
 }
 
+/** A moment relative to now, in the reader's words: "8 hr. ago", "in 15 hr.", "now",
+ *  "tomorrow", "8小时前". Intl.RelativeTimeFormat (short, numeric auto) owns the words and the
+ *  plurals, so no dictionary key can drift from them. The unit is the largest that fits:
+ *  seconds under a minute, minutes under an hour, hours under a day, then days. For a list
+ *  read at a glance - a job's next and last run, a target's last run (docs/46 §3.6); the exact
+ *  moment belongs in the title beside it. */
+export function relTime(at: number, now: number = Date.now()): string {
+  const d = at - now;
+  const a = Math.abs(d);
+  const f = new Intl.RelativeTimeFormat(locale(), { numeric: "auto", style: "short" });
+  if (a < 60 * 1000) return f.format(Math.round(d / 1000), "second");
+  if (a < 60 * 60 * 1000) return f.format(Math.round(d / (60 * 1000)), "minute");
+  if (a < DAY) return f.format(Math.round(d / (60 * 60 * 1000)), "hour");
+  return f.format(Math.round(d / DAY), "day");
+}
+
 /** Consecutive items with an equal, non-empty `same` fold into one run. Order is kept. */
 export function collapseRuns(items: TimelineItem[]): TimelineItem[][] {
   const runs: TimelineItem[][] = [];

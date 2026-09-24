@@ -38,7 +38,7 @@ export { groupNode } from "./group.js";
 export type { GroupNodeOpts, GroupParts } from "./group.js";
 export { seg } from "./seg.js";
 export type { SegItem } from "./seg.js";
-export { collapseRuns, dayLabel, fmtMs, timeLabel, timeline, timelineMeta, timelineToggle } from "./timeline.js";
+export { collapseRuns, dayLabel, fmtMs, relTime, timeLabel, timeline, timelineMeta, timelineToggle } from "./timeline.js";
 export type { TimelineItem, TimelineOpts } from "./timeline.js";
 export { anchoredMenu, clampMenuPos, closeMenu, menuOpen, popupMenu, setMenuOpen } from "./menu.js";
 export type { MenuItem, MenuItemAction, MenuItemSep } from "./menu.js";

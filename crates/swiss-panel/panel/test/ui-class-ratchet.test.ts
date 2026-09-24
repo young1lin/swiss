@@ -40,7 +40,8 @@ import { uiOwnedClasses } from "./styles.js";
    P5: views/plugins.ts 13, views/secrets.ts 18, views/system.ts 17 -> 0 (Settings on row()). The
    same commit deleted ui.css .inline-form > input.grow (its one user, the Secrets value box, no
    longer needs the width), so `grow` is base.css's flex spacer alone and stopped counting as a
-   ui.css class: the Data files and views/terminal.ts drop by their spacers (11 in all). */
+   ui.css class: the Data files and views/terminal.ts drop by their spacers (11 in all).
+   P6-1: jobs.ts 68 -> 0 (the list, the run history and both sheets), polling.ts 3 -> 0. */
 const FROZEN: Record<string, number> = {
   "data-browsers.ts": 10,
   "data-cell.ts": 10,
@@ -55,8 +56,6 @@ const FROZEN: Record<string, number> = {
   "data-tabs.ts": 1,
   "data-value.ts": 5,
   "data-view.ts": 3,
-  "jobs.ts": 68,
-  "polling.ts": 3,
   "views/jobs.ts": 2,
   "views/remote-runs.ts": 30,
   "views/remote.ts": 25,

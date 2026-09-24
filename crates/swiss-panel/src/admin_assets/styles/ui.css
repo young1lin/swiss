@@ -124,9 +124,9 @@
        cascade tie to the later .menu rule, which is exactly how the dropdown-behind-the-sheet bug
        shipped once already. */
     .dd-menu { min-width: 0; max-height: 280px; overflow-y: auto; }
-    label.field .dd { width: 100%; }
-    label.field { display: block; }
-    label.field > span { display: block; font-size: var(--f-label); color: var(--text-2); margin-bottom: var(--s1); }
+    .field .dd { width: 100%; }
+    .field { display: block; }
+    .field > span:first-child { display: block; font-size: var(--f-label); color: var(--text-2); margin-bottom: var(--s1); }
     /* The one place colour marks something other than state: a required argument in Run. Leaving it
        out is the error the form is about to report, so it is the same red that reports it. */
     .req-star { color: var(--red); font-weight: var(--w-emph); }
@@ -136,7 +136,7 @@
     /* field({ action }): the control and its one button share a row; the button sits on the
        control's baseline, the control takes the rest. */
     .field-row { display: flex; gap: var(--s2); align-items: flex-end; }
-    .field-row > label.field { flex: 1; min-width: 0; }
+    .field-row > .field { flex: 1; min-width: 0; }
     /* ui/form.ts formCap(): a caption over one part of a form, in the section caption's voice. */
     .form-cap { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding-top: var(--s2); }
     label.check { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-body); }
@@ -411,6 +411,12 @@
     /* Value columns line up down a card because each takes the same floor. */
     .lrow-col { flex: none; min-width: calc(var(--s6) * 3); text-align: right; font-size: var(--f-label); color: var(--text-2); white-space: nowrap; }
     .lrow-col.mono { font-family: var(--mono); }
+    /* Fixed widths for a column whose value varies row to row (a job's schedule, next and last
+       run), so it lines up down the card. Off the grid; the text ellipsizes, the title has it all. */
+    .lrow-col.w-s { width: calc(var(--s8) * 2.5); }
+    .lrow-col.w-m { width: calc(var(--s8) * 3.5); }
+    .lrow-col.w-l { width: calc(var(--s8) * 5); }
+    .lrow-col:is(.w-s, .w-m, .w-l) { overflow: hidden; text-overflow: ellipsis; }
     .lrow-acts { flex: none; display: flex; align-items: center; gap: var(--s2); }
     /* row({ detail }): the name and sub are a <summary>; the record opens under them. The row
        tops its columns so an open record does not drag Try and the switch to its middle - they
@@ -438,8 +444,10 @@
        No box and no row lines: rows sit on the page and the hover is the row. A day heading
        sticks under the pinned head (--pane-head-h, measured by the shell from P2 on); the one
        expanded row becomes a card. The time, the count and the duration are tabular so a
-       column of them does not wiggle. */
-    .tl { display: grid; }
+       column of them does not wiggle. The one column has a 0 minimum: an implicit column is
+       `auto`, which never shrinks below its item's min-content - a no-wrap summary line's full
+       width - and a long argument widened the whole timeline past its box (docs/46 P6 walk). */
+    .tl { display: grid; grid-template-columns: minmax(0, 1fr); }
     /* Stuck over an open row (a card), the heading's ground also covers the card's 1px outline
        on either side of it - otherwise two stubs of the card's edge stand beside the words. */
     .tl-day { position: sticky; top: var(--pane-head-h, 0px); z-index: 1; background: var(--bg); box-shadow: -1px 0 0 var(--bg), 1px 0 0 var(--bg); font-size: var(--f-caption); font-weight: var(--w-emph); color: var(--text-3); padding: var(--s3) var(--s2) var(--s1) calc(var(--s2) + var(--ic-s) + var(--s2)); }
@@ -615,7 +623,8 @@
     @media (prefers-reduced-motion: reduce) { .sheet, .menu.float { animation: none; } }
     .sheet-head { display: flex; align-items: center; padding: var(--s4) var(--s5); border-bottom: 1px solid var(--sep-soft); }
     .sheet-head h2 { font-size: var(--f-head); font-weight: var(--w-title); margin: 0; letter-spacing: -0.01em; }
-    .sheet-body { padding: var(--s4) var(--s5); display: grid; gap: var(--s3); max-height: 66vh; overflow-y: auto; }
+    /* One column with a 0 minimum, like .tl: nothing inside a sheet can push it wider than the sheet. */
+    .sheet-body { padding: var(--s4) var(--s5); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); max-height: 66vh; overflow-y: auto; }
     .sheet-foot { display: flex; justify-content: flex-end; gap: var(--s2); padding: var(--s3) var(--s5); border-top: 1px solid var(--sep-soft); background: color-mix(in srgb, var(--bg) 60%, var(--card)); }
     /* The inline create form (docs/35 §3): Tokens and Secrets create in place, not in a sheet.
        ONE row - the fields, the Group select, the one primary - and a full step of air before
@@ -626,6 +635,10 @@
     .inline-form > input { flex: 1 1 200px; min-width: 0; }
     /* In a sheet the body's grid spaces its children; the page form's air below would double it. */
     .sheet-body > .inline-form { margin-bottom: 0; }
+    /* A timeline in a sheet (a job's run history): the day heading sticks to the sheet body, not
+       under a pane head, so it absorbs the body's own top padding (Chromium insets the sticky
+       box by it) and wears the sheet's surface instead of the page's. */
+    .sheet-body .tl-day { top: calc(var(--s4) * -1); background: var(--card); box-shadow: -1px 0 0 var(--card), 1px 0 0 var(--card); }
     /* An input beside its button (the Tokens sheet's "label + Create"): the pair's second column
        shrinks to the button. */
     .sheet-body > .two:has(> .btn) { grid-template-columns: 1fr auto; gap: var(--s2); align-items: center; }
@@ -681,8 +694,3 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
 
-    /* Section captions inside a sheet - the pane's .sec-cap, spaced for the sheet's grid. */
-    .sheet-cap {
-      font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase;
-      letter-spacing: .04em; color: var(--text-3); margin-top: var(--s2);
-    }

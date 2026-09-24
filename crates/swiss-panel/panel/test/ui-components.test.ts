@@ -34,7 +34,7 @@ import {
   anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, failNote, filterInput,
   fmtMs, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
   pager, paneBody, paneHead, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
-  timeLabel, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
+  relTime, timeLabel, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
 } from "../src/ui/index.js";
 import type { TimelineItem } from "../src/ui/index.js";
 import { allClassesOf, parseCss } from "./css-rules.js";
@@ -240,6 +240,24 @@ describe("ui/page", () => {
     expect(refusal.getAttribute("aria-live")).toBe("polite");
   });
 
+  it("field({ group }): several controls under one caption that clicks none of them", () => {
+    const days = h("div", null, btn("Sun"), btn("Mon"));
+    const f = fieldFn({ label: "Days", control: days, group: true });
+    const g = f.querySelector(":scope > .field")!;
+    expect(g.tagName).toBe("DIV"); // not a <label>: its caption must not activate "Sun"
+    expect(g.getAttribute("role")).toBe("group");
+    const cap = g.querySelector(":scope > span")!;
+    expect(cap.textContent).toBe("Days");
+    expect(g.getAttribute("aria-labelledby")).toBe(cap.id);
+    expect(cap.id).toMatch(/^fld-g\d+$/);
+    // Two group fields never share a caption id.
+    expect(fieldFn({ label: "x", control: h("div"), group: true }).querySelector("span")!.id).not.toBe(cap.id);
+    // The caption styles the same either way: ui.css keys on .field, not label.field.
+    const css = sheet("ui.css");
+    expect(css).toContain(".field > span:first-child { display: block;");
+    expect(css).not.toMatch(/label\.field/);
+  });
+
   it("field({ action }), formCap, formFold: a control with its button, a caption, a folded part", () => {
     const f = fieldFn({ label: "Key", control: document.createElement("input"), action: btn("Browse") });
     const rowEl = f.querySelector(":scope > .field-row")!;
@@ -358,6 +376,28 @@ describe("ui/page", () => {
     expect(f.firstElementChild?.textContent).toBe("Saved to gateway.config.json");
     expect(f.querySelector(".page-foot-rev")?.textContent).toBe("rev 42");
     expect(pageFoot({ note: "x" }).querySelector(".page-foot-rev")).toBeNull();
+  });
+
+  it("row({ cols: [{ w }] }): a fixed-width column that ellipsizes, its whole value in the title", () => {
+    const r = row({ name: "backup", cols: [{ v: "At 03:00 AM", w: "m", title: "cron 0 3 * * *" }, { v: "in 13 hr.", w: "s" }, "5 rules"] });
+    const cols = Array.from(r.querySelectorAll(".lrow-col"));
+    expect(cols.map((c) => c.className)).toEqual(["lrow-col w-m", "lrow-col w-s", "lrow-col"]);
+    expect(cols[0].getAttribute("title")).toBe("cron 0 3 * * *");
+    const css = sheet("ui.css");
+    expect(css).toMatch(/\.lrow-col\.w-s \{ width: calc\(var\(--s8\) \* 2\.5\); \}/);
+    expect(css).toMatch(/\.lrow-col:is\(\.w-s, \.w-m, \.w-l\) \{ overflow: hidden; text-overflow: ellipsis; \}/);
+  });
+
+  it("relTime: the largest unit that fits, in the locale's short words, both directions", () => {
+    const now = Date.UTC(2026, 8, 24, 14, 0, 0);
+    const H = 60 * 60 * 1000;
+    expect(relTime(now - 8 * H, now)).toBe("8 hr. ago");
+    expect(relTime(now + 15 * H, now)).toBe("in 15 hr.");
+    expect(relTime(now + 12 * 60 * 1000, now)).toBe("in 12 min.");
+    expect(relTime(now - 40 * 1000, now)).toBe("40 sec. ago");
+    expect(relTime(now, now)).toBe("now");
+    expect(relTime(now - 6 * 24 * H, now)).toBe("6 days ago");
+    expect(relTime(now + 30 * H, now)).toBe("tomorrow");
   });
 
   it("inlineForm is one .inline-form row of the given controls", () => {
@@ -560,6 +600,16 @@ describe("ui/timeline - the helpers", () => {
 });
 
 describe("ui/timeline - timeline()", () => {
+  it("a long argument or output never widens the timeline, nor the sheet around it", () => {
+    // Found on the docs/46 P6 walk (a job's history, a multi-line claude reply): an implicit
+    // grid column is `auto`, and an auto track never shrinks below its item's min-content - the
+    // no-wrap summary line's full width. The row grew to 728 px in a 560 px sheet and was cut at
+    // its edge, ellipsis and Output block with it. Both grids give their one column a 0 minimum.
+    const css = sheet("ui.css");
+    expect(css).toMatch(/\.tl \{ display: grid; grid-template-columns: minmax\(0, 1fr\); \}/);
+    expect(css).toMatch(/\.sheet-body \{[^}]*display: grid; grid-template-columns: minmax\(0, 1fr\);/);
+  });
+
   it("one day heading per local day, rows beneath it, the date never repeated per row", () => {
     const tl = timeline([item("a", at(23, 9)), item("b", at(23, 8)), item("c", at(22, 17))], { now: NOW });
     expect(tl.className).toBe("tl");

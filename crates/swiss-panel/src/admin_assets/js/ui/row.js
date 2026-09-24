@@ -28,7 +28,10 @@
  *            base.css), so "5432 → 127.0.0.1:5432 via bastion" mixes the two honestly.
  *   err      replaces sub: one red line, ellipsized, the whole reason in the tooltip - so a
  *            failing row is as tall as a healthy one.
- *   cols     right-aligned value columns (a port, a rule count, a last run).
+ *   cols     right-aligned value columns (a port, a rule count, a last run). A column whose
+ *            value varies row to row (a schedule, the next and the last run) takes a fixed
+ *            width - `w` s / m / l - so it lines up down the card; its text ellipsizes and
+ *            the whole value belongs in its title.
  *   toggle / primary / more
  *            at most one word button per row (rule 4, by type: `primary` is ONE button).
  *
@@ -47,6 +50,8 @@ import { iconNode } from "./icon.js";
             
                  
                  
+                                                                                   
+                      
  
 
                           
@@ -94,7 +99,7 @@ export function row(o         )              {
     main,
     (o.cols || []).map((c) => {
       return isCol(c)
-        ? h("span", { class: "lrow-col" + (c.mono ? " mono" : ""), title: c.title }, c.v)
+        ? h("span", { class: "lrow-col" + (c.mono ? " mono" : "") + (c.w ? " w-" + c.w : ""), title: c.title }, c.v)
         : h("span", { class: "lrow-col" }, c);
     }),
     acts.length ? h("div", { class: "lrow-acts" }, acts) : null);

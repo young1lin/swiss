@@ -127,34 +127,9 @@
       padding: var(--s4); font-size: var(--f-label); color: var(--text-3); text-align: center;
     }
 
-    /* Expandable rows (a job's run history) stack flush — the sheet's grid gap is for fields, and a
-       12px gutter between every run made a list of forty read as forty separate cards. */
-    .sheet-body > .group > .call { margin: 0; }
-
     /* --- tunnels ------------------------------------------------------------------------------- */
-    /* The list rows reuse .group/.dot/.btn; only the row layout is new. Deliberately not a table:
-       the MCP side already establishes inset grouped lists as this panel's list idiom. */
-    /* 42px rows (docs/18 V4): two lines of text still clear it, and a list of nine stops
-       reading as nine cards. */
-    .tun-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s4); min-height: 42px; }
-    /* Inset separators (docs/46 U7): from the name column - past the 6px dot and its 12px gap
-       when the row leads with one (the groups x-table: row pad 16 + dot 6 + gap 12 -> 34). */
-    .tun-row + .tun-row { position: relative; }
-    .tun-row + .tun-row::before { content: ""; position: absolute; top: 0; right: 0; left: var(--row-inset, var(--s4)); height: 1px; background: var(--sep-soft); pointer-events: none; }
-    .tun-row:has(> .dot:first-child) { --row-inset: calc(var(--s4) + 6px + var(--s3)); }
-    .tun-row:hover { background: var(--hover); }
-    .tun-main { flex: 1; min-width: 0; }
-    .tun-name { font-size: var(--f-body); font-weight: var(--w-name); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tun-sub { font-size: var(--f-label); color: var(--text-2); font-family: var(--mono); line-height: 1.35; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tun-sub .via { font-family: var(--sans); }
-    .tun-acts { display: flex; gap: var(--s2); flex: none; }
-    .tun-foot { font-size: var(--f-label); color: var(--text-3); padding: var(--s3) var(--s1) 0; display: flex; justify-content: space-between; gap: var(--s3); }
-    /* Grouped tunnel lists are the groups component at page density (ui.css .grp--page):
-       the group is the card, a 36px band over the rows. Only the row layout is tunnel-specific. */
-    .tun-row[draggable="true"] { cursor: grab; }
-    .tun-row.dragging { opacity: 0.55; }
-    .tun-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
-    .tun-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+    /* The rows are ui/row.ts since docs/46 P4, and the Jobs rows that still wore .tun-* moved in P6:
+       what is left here is the one thing a forward row draws that the library does not. */
     /* An MCP the tunnel serves, with the MCP's own health dot: a red MCP beside a green tunnel says
        "the tunnel is fine, the database is not". */
     .serves { display: inline-flex; align-items: center; gap: 4px; font-family: var(--sans); }
@@ -199,7 +174,7 @@
       font-family: var(--mono); font-size: var(--f-label); color: var(--text-2);
       line-height: 1.35; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    /* The drag affordances every draggable row carries: the same four rules .tun-row has
+    /* The drag affordances every draggable row carries: the four rules ui.css gives .lrow
        (the groups component toggles the classes; only the row selector is ours). */
     .row[data-rmrow][draggable="true"] { cursor: grab; }
     .row[data-rmrow].dragging { opacity: 0.55; }

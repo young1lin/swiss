@@ -423,11 +423,30 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
 
 ### 3.6 Jobs 与 Remote（P6）
 
-- [ ] Jobs：说明一行；删掉 `SCHEDULED COMMANDS` 标题；三个按钮收成 `New` + ⋯（New (advanced)）+ 新建分组图标；
+- [x] Jobs：说明一行；删掉 `SCHEDULED COMMANDS` 标题；三个按钮收成 `New` + ⋯（New (advanced)）+ 新建分组图标；
       cron 翻成人话（"Daily 03:00"、"Every 15 min"，悬停看原始 cron；翻不了的原样显示）——**复用** sheet 里
       已有的 `describeCron`（`jobs.ts:374`），不写第二个翻译器；下次运行用相对时间（"in 3 h"），上次运行也用
       相对时间，基于 `whenLabel`（`util.ts:123`）扩出未来方向；上次失败才标红（`tag` tone bad）；停用的 job 是一个 `Off` 标签而不是整行变灰。
       运行记录（sheet 里的 `.call`）用 `timeline`。
+      实施：行是 `row()`，行名后面是 `Off` / `#label` 标签；副行是命令（mono，有 v2 title 时前面加 id）；右边三列
+      用库里新加的定宽列 `row({ cols: [{ w }] })`（s / m / l，按网格 token 算宽，超长省略号，完整值在 title），
+      上下对齐：计划（`schedFromJob` → `schedToBody().say`，就是 sheet 里那句话；cronstrue 没加载或说不出时显示原样，
+      title 永远是原样）、下次运行、上次运行（成功 "OK · 8 hr. ago"，失败是红 `tag`，没跑过 "Never run"）。
+      相对时间是库里新加的 `relTime()`（`Intl.RelativeTimeFormat`，short，numeric auto：词和复数由语言自己给，
+      不加词条），不是从 `whenLabel` 扩出来的——`whenLabel` 仍给 title 里的绝对时间。行首不画点：job 没有开关可对照，
+      绿色"已排期"点只是在重复"下次运行"那一列；运行中才在名字后画琥珀脉冲点。原来关掉的 job 的点 title 是
+      "idle — starts on first request"，那是 MCP 懒启动的话。运行记录 sheet 是 `sheet()` + `timeline()`：
+      标题是触发方式，参数列是输出第一行，失败是红 tag（有退出码时就是 "exit 1"），skipped 之类不算运行的是琥珀 tag、
+      不画耗时；相同的连续运行折成 ×N；展开是 meta 行 + Output 值块（`readableBody`，与 Logs / Traffic 同一个）。
+      两个编辑 sheet 顺带迁到 `sheet()` + `ui/form.ts`：库里补了 `field({ group })`——一个标题下有好几个控件时
+      （星期按钮、retry-on 的两个勾选）用 `role=group` 而不是 `<label>`：`<label>` 会把标题上的点击交给里面第一个
+      可标注元素，"Days" 会按下周日。v1 sheet 原来 Environment 标题直接压在 Options 上（空节，环境变量归到了
+      Options 下），现在各标题管各自的字段。v2 sheet 的 "sheet wide" 是一个从没有样式定义过的类，删掉；
+      "first firing" 那一格其实只是一句说明，改成 trigger 字段的 hint。`.sheet-cap` 随最后一个使用者删掉。
+      走查（960 暗色）发现：一次运行的输出很长时，运行记录的行和 Output 块比 sheet 还宽，在 sheet 边上被截断——
+      `.sheet-body` 与 `.tl` 都是隐式 `auto` 列的 grid，auto 列不会窄过子项的 min-content（不换行的摘要行全长）。
+      两者都改成 `minmax(0, 1fr)`，任何 sheet、任何页面上的时间线都受益（Logs / Traffic 走查过）。
+      schedule 分段的英文标签原来是小写 id（"interval"），改成与其它分段一致的首字母大写。
 - [ ] Remote › Targets：说明一行；New group 变图标；加一列"最近一次运行"（相对时间 + 退出码 tag），数据取现有的
       runs 接口，**不加 API**；接口给不出时这一列不画。
 - [ ] Remote › Runs：`timeline`（`who` = 目标 · 来源）；非 0 退出码是红色 tag；Clear 进 ⋯。
