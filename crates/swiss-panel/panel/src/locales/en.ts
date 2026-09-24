@@ -1137,6 +1137,8 @@ const en: Record<string, string> = {
   /* --- traffic --- */
   "terminal.ctrl0Resets": "Ctrl+0 resets",
   "terminal.nNewDown": "{n} new",
+  "terminal.nLive.one": "{n} live",
+  "terminal.nLive.other": "{n} live",
   "terminal.noResults": "no results",
   "terminal.packagesLoadFailed": "could not load the terminal packages: {error}",
   "terminal.pasteLinesConfirm.one": "Paste {n} line into the shell?\n\n{preview}",
@@ -1653,6 +1655,7 @@ const en: Record<string, string> = {
   "gallery.st.kvMono": "Key and a value",
   "gallery.st.counts": "With counts",
   "gallery.st.second": "Two choices",
+  "gallery.st.fill": "Fills its control slot",
   "gallery.st.toTop": "Back to top",
   "gallery.st.spinner": "Working",
   "gallery.st.held": "Held writes",

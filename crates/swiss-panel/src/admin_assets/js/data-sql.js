@@ -128,7 +128,7 @@ function renderDbRedisBar(d          , bar             )       {
   if (u) parts.push(trn(u, "dataSql.nUpdates.one", "dataSql.nUpdates.other"));
   if (del) parts.push(trn(del, "dataSql.nDeletes.one", "dataSql.nDeletes.other"));
   if (ins) parts.push(trn(ins, "dataSql.nInserts.one", "dataSql.nInserts.other"));
-  bar.appendChild(h("span", null, tr("dataSql.partsLocalOnlyRedis", { parts: parts.join(", ") })));
+  bar.appendChild(h("span", { class: "db-bar-sum" }, tr("dataSql.partsLocalOnlyRedis", { parts: parts.join(", ") })));
   // No per-button handlers (docs/37 R5): the buttons carry data-bar addresses and #pane's
   // delegated click answers them from live state.
   bar.appendChild(btn(d.sqlPreview ? tr("dataSql.hideCommands") : tr("dataSql.commands"), { title: tr("dataSql.showExactCommandsCommit"), data: { bar: "preview" } }));
@@ -185,7 +185,7 @@ function renderDbBar()       {
   // Same addressing honesty as the Commit gate (docs/22 W4b follow-up): the bar names the
   // WHERE the server will build, pk or whole-row.
   const pkColsB = (dt.data && dt.data.primaryKey) || [];
-  bar.appendChild(h("span", null, tr("dataSql.partsLocalOnlyDatabase", { parts: parts.join(", "), how: pkColsB.length ? tr("dataSql.primaryKey") : tr("dataSql.allColumnsTablePrimary") })));
+  bar.appendChild(h("span", { class: "db-bar-sum" }, tr("dataSql.partsLocalOnlyDatabase", { parts: parts.join(", "), how: pkColsB.length ? tr("dataSql.primaryKey") : tr("dataSql.allColumnsTablePrimary") })));
   // No per-button handlers (docs/37 R5): data-bar addresses, answered by #pane's delegated
   // click with the counts read from live state at event time.
   bar.appendChild(btn(dt.sqlPreview ? tr("dataSql.hideSql") : tr("dataSql.sql"), { title: tr("dataSql.showExactStatementsCommit"), data: { bar: "preview" } }));

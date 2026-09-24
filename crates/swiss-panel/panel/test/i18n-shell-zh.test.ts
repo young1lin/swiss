@@ -82,7 +82,7 @@ describe("the shell in Chinese (stage I1)", () => {
 
   it("shows the type select's long labels in Chinese", async () => {
     const { TYPE_LABELS } = await import("../src/fields.js");
-    expect(tr(TYPE_LABELS["zai-vision"])).toBe("zai-vision——智谱 GLM 视觉工具,原生内置(取代 Node 子进程)");
+    expect(tr(TYPE_LABELS["zai-vision"])).toBe("zai-vision——智谱 GLM 视觉工具，原生内置(取代 Node 子进程)");
   // run-history splits the adapter label on the separator the LOCALE carries (" — " in
   // en, "——" in zh) to extract the kind tail, so both shapes must stay present in copy.
   const enLabel = en[TYPE_LABELS["zai-vision"]];
@@ -149,7 +149,7 @@ describe("the I2 views in Chinese (plugins, secrets, system)", () => {
   it("fills the secret delete confirm with the name twice (text and reference)", () => {
     const key = "secrets.deleteSecretNameEverything";
     expect(tr(key, { name: "db-pass" })).toBe(
-      "删除密钥“db-pass”吗?所有引用 ${secret://db-pass} 的地方都会开始失败,直到重新存入。",
+      "删除密钥“db-pass”吗?所有引用 ${secret://db-pass} 的地方都会开始失败，直到重新存入。",
     );
   });
 });
@@ -258,7 +258,7 @@ describe("the I4 modules in Chinese (detail, logs, run)", () => {
 
   it("reads the pager and the test-connection outcomes in Chinese", async () => {
     await loadLocale();
-    expect(tr("logs.pageNM", { n: 2, m: 5 })).toBe("第 2 页,共 5 页");
+    expect(tr("logs.pageNM", { n: 2, m: 5 })).toBe("第 2 页，共 5 页");
     expect(tr("detail.connectedTheseValuesWorkMsMs", { ms: 42 })).toBe("✓ 已连接——这些值可用(42 毫秒)");
     expect(tr("logs.showFullResultChars", { chars: "1.5k 字符" })).toBe("显示完整结果(1.5k 字符)");
   });
@@ -341,7 +341,7 @@ describe("the I6 tunnels pages in Chinese", () => {
     await loadLocale();
     expect(trn(2, "tunnels.nRules.one", "tunnels.nRules.other")).toBe("2 条规则");
     expect(trn(3, "tunnels.nConnections.one", "tunnels.nConnections.other")).toBe("3 条连接");
-    expect(trn(2, "tunnels.nRules.one", "tunnels.nRules.other") + tr("tunnels.nActive", { n: 1 })).toBe("2 条规则,1 个活动");
+    expect(trn(2, "tunnels.nRules.one", "tunnels.nRules.other") + tr("tunnels.nActive", { n: 1 })).toBe("2 条规则，1 个活动");
   });
 });
 
@@ -411,7 +411,7 @@ describe("the I8a data machinery in Chinese", () => {
   it("keeps the grid's data frames raw and groups counts the panel's way", async () => {
     await loadLocale();
     expect(tr("dataGrid.note", { note: "server said so" })).toBe(" · server said so");
-    expect(tr("dataGrid.bT", { a: "1", b: "50", t: "1,234" })).toBe("1–50,共 1,234");
+    expect(tr("dataGrid.bT", { a: "1", b: "50", t: "1,234" })).toBe("1–50，共 1,234");
     expect(tr("dataGrid.nRows2", { n: "1,234" })).toBe("1,234 行");
     expect(tr("dataGrid.editableNote", { note: tr("dataGrid.rowsAddressedAllColumns") })).toBe("可编辑——行以所有列定位");
     expect(tr("dataGrid.exportedNRows", { n: "12,345" })).toBe("已导出 12,345 行");
@@ -450,7 +450,7 @@ describe("the I8b data surfaces in Chinese", () => {
     expect(tr("dataFilters.null")).toBe("为 NULL");
     expect(tr("dataFilters.list2")).toBe("不在列表中");
     expect(tr("dataFilters.shownShownTotalKeyspace", { shown: "10", total: "1,024" })).toBe("已显示 10 · 键空间共 1,024");
-    expect(tr("dataForm.rowINPage", { i: 3, n: 50 })).toBe("本页第 3 条,共 50 条");
+    expect(tr("dataForm.rowINPage", { i: 3, n: 50 })).toBe("本页第 3 条，共 50 条");
     expect(tr("dataForm.newRowIN", { i: 1, n: 2 })).toBe("新行 1/2 · 已缓冲");
   });
 
@@ -479,8 +479,13 @@ describe("the I9 terminal surfaces in Chinese", () => {
     expect(tr("terminal.terminalShortcuts")).toBe("终端快捷键");
     expect(tr("terminal.keys")).toBe("键");
     expect(tr("terminal.findSessionsBuffer")).toBe("在此会话的缓冲区中查找");
-    expect(tr("terminal.asksFirstPasteWhole")).toBe("先询问——要么整段粘贴,要么不粘贴");
+    expect(tr("terminal.asksFirstPasteWhole")).toBe("先询问——要么整段粘贴，要么不粘贴");
     expect(tr("terminal.closeEsc")).toBe("关闭(Esc)");
+  });
+
+  it("counts live sessions in the context bar in Chinese (docs/46 P9 walk)", async () => {
+    await loadLocale();
+    expect(trn(2, "terminal.nLive.one", "terminal.nLive.other")).toBe("2 个活动会话");
   });
 
   it("speaks the bar and the empty state", async () => {

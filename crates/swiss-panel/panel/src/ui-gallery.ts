@@ -287,6 +287,8 @@ function catalogue(now: number): HTMLElement {
     entry(["seg"], tk("gallery.c.seg"), tk("gallery.c.segNote"), [
       [tr("gallery.st.counts"), seg([{ id: "tools", label: tr("gallery.d.tools"), n: 4 }, { id: "resources", label: tr("gallery.d.resources"), n: 0 }, { id: "logs", label: tr("gallery.d.logs") }], "tools")],
       [tr("gallery.st.second"), seg([{ id: "all", label: tr("gallery.d.all") }, { id: "errors", label: tr("gallery.d.errors"), n: 1 }], "errors")],
+      [tr("gallery.st.fill"), seg([{ id: "daily", label: tr("jobs.modeDaily") }, { id: "weekly", label: tr("jobs.modeWeekly") },
+        { id: "cron", label: tr("jobs.modeCron") }], "daily", { fill: true })],
     ]),
     entry(["objTab"], tk("gallery.c.tabs"), tk("gallery.c.tabsNote"), [
       [tr("gallery.st.tabOpen"), objTab({ name: "orders", selected: true, icon: "table", data: {}, close: { label: tr("gallery.d.closeTab"), data: {} } })],

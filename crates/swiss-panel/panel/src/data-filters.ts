@@ -139,7 +139,7 @@ function dbFiltersNodes(): HChild[] {
       }),
       // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
       // it, and "" keeps the request byte-identical to the unfiltered one.
-      h("select", { title: tr("dataFilters.keyType"), data: { frtype: "" } },
+      h("select", { class: "db-fsel", title: tr("dataFilters.keyType"), data: { frtype: "" } },
         [""].concat(["string", "hash", "list", "set", "zset", "stream"]).map((t: string): HChild => {
           return h("option", { value: t, selected: (c.redisType || "") === t }, t || tr("dataFilters.allTypes"));
         })),
@@ -155,9 +155,9 @@ function dbFiltersNodes(): HChild[] {
     const ph = f.op === "in" || f.op === "notIn" ? tr("dataFilters.phList")
       : f.op === "between" ? tr("dataFilters.phBetween") : tr("dataFilters.phValue");
     return h("div", { class: "db-filter" },
-      h("select", { title: tr("dataFilters.column"), data: { fi: String(i), fk: "col" } },
+      h("select", { class: "db-fsel", title: tr("dataFilters.column"), data: { fi: String(i), fk: "col" } },
         cols.map((c: string): HChild => { return h("option", { value: c, selected: c === f.column }, c); })),
-      h("select", { title: tr("dataFilters.operator"), data: { fi: String(i), fk: "op" } },
+      h("select", { class: "db-fsel", title: tr("dataFilters.operator"), data: { fi: String(i), fk: "op" } },
         DB_FILTER_OPS.map((op: { op: string; label: string }): HChild => {
           return h("option", { value: op.op, selected: op.op === f.op }, tr(op.label));
         })),

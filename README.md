@@ -97,6 +97,11 @@ paths are all in, and the build is the plugin toolbox `docs/09`–`12` describe:
 over shared Action/Run/process services, configuration-driven Jobs, and nine crates that
 still link into one `swiss` binary.
 
+The panel is drawn by one in-tree component library (`crates/swiss-panel/panel/src/ui/` +
+`ui.css`, docs/46): every plugin page composes the same
+components, a gallery page demos them all, and two vitest gates hold the line — `views.css`
+restyling a library class, or a view hand-writing a library class name, both fail the suite.
+
 The gates: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`
 and the vitest suite in `crates/swiss-panel/panel/test/`. `--workspace` is load-bearing:
 without it cargo selects the root package alone, runs a small minority of the suite, and

@@ -27,9 +27,8 @@
     .config-more > summary, .config-revisions > summary { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s4); cursor: pointer; list-style: none; color: var(--text-2); font-size: var(--f-label); font-weight: var(--w-emph); }
     .config-more > summary::-webkit-details-marker, .config-revisions > summary::-webkit-details-marker { display: none; }
     .config-count { margin-left: auto; color: var(--text-3); font-size: var(--f-caption); font-weight: var(--w-body); font-variant-numeric: tabular-nums; }
-    .config-chev { flex: none; color: var(--text-3); transition: transform .15s ease; }
+    .config-chev { flex: none; color: var(--text-3); transition: transform .15s ease; --ic: var(--s3); }
     .config-revisions > summary > .config-chev { margin-left: auto; }
-    .config-chev .ic { width: var(--s3); height: var(--s3); }
     details[open] > summary > .config-chev { transform: rotate(90deg); }
     .config-rows { border-top: 1px solid var(--sep-soft); }
     .config-revisions { margin-top: var(--s5); background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
@@ -103,7 +102,8 @@
       font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums;
       white-space: nowrap; overflow: hidden;
     }
-    .hist-head .dot { flex: none; }
+    /* .hist-head .dot and .serves .dot deleted at P9: ui.css's .dot already reads flex:none
+       and --dot is 6px - both rules restated library defaults verbatim. */
     .hist-head .hist-ms { margin-left: auto; }
     .hist-note { font-size: var(--f-caption); color: var(--text-3); padding-top: var(--s2); }
     .hist-empty {
@@ -117,12 +117,12 @@
     /* An MCP the tunnel serves, with the MCP's own health dot: a red MCP beside a green tunnel says
        "the tunnel is fine, the database is not". */
     .serves { display: inline-flex; align-items: center; gap: 4px; font-family: var(--sans); }
-    .serves .dot { width: 6px; height: 6px; }
+
     .serves.unknown { color: var(--text-3); text-decoration: line-through; }
     .keylist { display: grid; gap: 2px; max-height: 210px; overflow-y: auto; }
-    .keylist button { text-align: left; font-family: var(--mono); font-size: var(--f-label); padding: 4px var(--s2); border-radius: 6px; }
+    .keylist button { text-align: left; font-family: var(--mono); font-size: var(--f-label); padding: 4px var(--s2); border-radius: 6px;
+      --ic: 14px; --ic-ink: var(--text-3); } /* fix-plan #14: folder/file rows */
     .keylist button:hover { background: var(--hover); }
-    .keylist button .ic { width: 14px; height: 14px; flex: none; color: var(--text-3); } /* fix-plan #14: folder/file rows */
     .mcp-picks { display: grid; gap: var(--s1); max-height: 168px; overflow-y: auto; padding: var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: 8px; }
 
     /* Traffic clients (docs/18 V4): one line per client in a five-column grid — name, token,
@@ -176,15 +176,14 @@
     .db-drawer-head { padding: 5px 10px 2px; font-size: var(--f-caption); color: var(--text-3); white-space: nowrap; }
     .db-drawer hr { border: 0; border-top: 1px solid var(--sep); margin: 3px 6px; }
     .db-drow { display: flex; align-items: center; gap: 7px; margin: 0 4px; width: calc(100% - 8px);
-      padding: 4px 6px; border-radius: 6px; text-align: left; font-size: var(--f-body); color: var(--text-2); }
+      padding: 4px 6px; border-radius: 6px; text-align: left; font-size: var(--f-body); color: var(--text-2);
+      --ic: var(--ic-m); --ic-ink: var(--text-3); }
     .db-drow:hover { background: var(--hover); }
     /* The current pick is a tick in a column every row keeps (docs/46 §3.7, rule 15; the
        menu's .pick idiom), not blue text: the name stays in the row's own ink. */
     .db-drow.on { color: var(--text); font-weight: var(--w-emph); }
     .db-drow:disabled { color: var(--text-3); cursor: default; background: none; }
-    .db-drow .ic { flex: none; width: var(--ic-m); height: var(--ic-m); color: var(--text-3); }
-    .db-drow-tick { flex: none; display: inline-flex; width: var(--ic-m); }
-    .db-drow-tick .ic { color: var(--accent); }
+    .db-drow-tick { flex: none; display: inline-flex; width: var(--ic-m); --ic-ink: var(--accent); }
     .db-drow-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-drow-meta { flex: none; color: var(--text-3); font-size: var(--f-caption); font-variant-numeric: tabular-nums; }
     .db-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
@@ -255,13 +254,11 @@
     .db-tab-rename { flex: 1; min-width: 0; width: 9em; height: 18px; padding: 0 3px;
       font: inherit; font-size: var(--f-caption); color: var(--text); background: var(--bg);
       border: 1px solid var(--accent); border-radius: 4px; outline: none; }
-    .db-tab-add { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 var(--s2); border: none; background: none; color: var(--text-3); font-size: var(--f-label); cursor: pointer; }
-    .db-tab-add .ic { width: 14px; height: 14px; }
+    .db-tab-add { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 var(--s2); border: none; background: none; color: var(--text-3); font-size: var(--f-label); cursor: pointer; --ic: 14px; }
     .db-tab-add:hover { background: var(--hover); color: var(--text); }
     /* The overflow seat (docs/43 M1 D4): one glyph, one job — "the whole set, listed". Same
        height and hover as the "+" it sits beside, icon-only because its title says the rest. */
-    .db-tab-more { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 32px; border: none; background: none; color: var(--text-3); cursor: pointer; }
-    .db-tab-more .ic { width: 14px; height: 14px; }
+    .db-tab-more { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 32px; border: none; background: none; color: var(--text-3); cursor: pointer; --ic: 14px; }
     .db-tab-more:hover { background: var(--hover); color: var(--text); }
     .db-head { display: flex; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
     .db-head-left { min-width: 0; }
@@ -273,7 +270,8 @@
     /* Sizing only — the chrome (background, border, chevron, focus ring) is the panel's global
        dropdown style, so every dropdown reads as one control family. Never restyle selects locally.
        The .dd rules mirror the select ones: the custom trigger carries the select's classes. */
-    .db-filter select, .db-filter .dd { width: auto; min-width: 96px; padding-top: 2px; padding-bottom: 2px; }
+    /* The pick rides the select AND its .dd trigger: ui/select.ts carries ownClasses over. */
+    .db-fsel { width: auto; min-width: 96px; padding-top: 2px; padding-bottom: 2px; }
     .db-filter input { width: 150px; padding-top: 2px; padding-bottom: 2px; }
     .db-filter .db-act { font-size: var(--f-body); }
     .db-filter-hint { font-size: var(--f-caption); color: var(--text-3); margin-left: var(--s2); }
@@ -290,12 +288,10 @@
     .db-ddl-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .db-ddl-grid th { text-align: left; font-size: var(--f-label); font-weight: var(--w-emph); color: var(--text-3); padding: 0 0 var(--s1); }
     .db-ddl-grid td { padding: 0 0 var(--s1); vertical-align: middle; }
-    .db-ddl-grid .btn.icon { width: 26px; height: 26px; padding: 0; color: var(--text-3); }
     .db-ddl-grid input[type="checkbox"] { width: auto; accent-color: var(--accent); }
     /* The index picker's checks wrap beside each other — a wide table should not stack into
        a tower of one-word lines. */
     .db-ddl-colpick { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); }
-    .db-ddl-colpick .check { gap: var(--s1); }
     /* The preview's quiet placeholder is the same block in a whisper, so "nothing yet" and
        the real script read as one surface. */
     .db-ddl.db-ddl-quiet { color: var(--text-3); }
@@ -314,7 +310,6 @@
        (state, not danger), and the row ⋯ matches the rowctl control the grid already uses. */
     .db-headrow { display: flex; align-items: flex-end; gap: var(--s2); }
     .db-headrow .db-head { flex: 1; min-width: 0; }
-    .db-headrow .btn.icon { flex: none; }
     .db-act-own > td:first-child { color: var(--accent); }
     .db-act-blocked { color: var(--amber); }
     .db-act-more { border: 0; background: none; padding: 2px var(--s1); cursor: pointer; color: var(--text-3); border-radius: var(--r-row); }
@@ -329,10 +324,10 @@
     .db-suggest-kind { color: var(--text-3); font-size: var(--f-caption); flex: none; }
     .db-sql-mirror { position: absolute; inset: 0; visibility: hidden; pointer-events: none; overflow: hidden; }
     .db-pagesize { width: auto; }
-    .db-console-row .dd { width: auto; min-width: 110px; }
+    .db-csel { width: auto; min-width: 110px; }   /* the CSV mapping picks, select and trigger alike */
     /* The row-grid controls stay IN LAYOUT on every tab (visibility, not display): removing them
        on the structure tabs let the right-aligned tab segment slide sideways on every switch. */
-    .db-data-ctl { display: inline-flex; align-items: center; gap: var(--s2); flex-wrap: wrap; justify-content: flex-end; }
+    /* .db-data-ctl removed at P9: unreferenced since the P7 data sweep. */
     .db-pageinfo { font-size: var(--f-label); color: var(--text-2); white-space: nowrap; }
     /* SQL highlighting. The console is a transparent textarea over a highlighted <pre> (the
        classic overlay): both wear .db-sql-face so every metric matches character-for-character. */
@@ -350,7 +345,7 @@
     .db-sql-hl .i { color: var(--text-2); }
     .db-console { display: flex; flex-direction: column; gap: var(--s2); }
     .db-console-row { display: flex; align-items: center; gap: var(--s2); }
-    .db-console-row .hint { color: var(--text-3); font-size: var(--f-label); }
+    /* .db-console-row .hint deleted at P9: ui.css's own .hint already reads exactly these values. */
     #dbSql { min-height: 84px; }
     .db-grid-wrap { flex: 1; overflow: auto; min-height: 200px; overflow-anchor: none; }
     .db-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: var(--f-label); }
@@ -375,14 +370,12 @@
     .db-col-main { display: flex; align-items: center; min-width: 0; }
     .db-col-name { overflow: hidden; text-overflow: ellipsis; }
     .db-col-comment { font-size: var(--f-caption); font-weight: var(--w-body); color: var(--text-3); margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
-    .db-key { color: var(--amber); margin-left: 4px; }
-    .db-key .ic { width: 12px; height: 12px; } /* fix-plan #14: the i-key sprite, sized to the marker it replaced */
+    .db-key { color: var(--amber); margin-left: 4px; --ic: 12px; } /* fix-plan #14: the i-key sprite, sized to the marker it replaced */
     .db-col-type { color: var(--text-3); font-size: var(--f-caption); margin-left: 6px; font-family: var(--mono); }
     /* docs/22 W5.2 — the FK column's jump arrow: a quiet straight arrow after the type (the
        chevron shape belongs to pagination), accent only under the pointer. Its click stops
        propagation — the header around it still sorts. */
-    .db-col-fk { border: 0; background: none; padding: 0; margin-left: 5px; color: var(--text-3); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; }
-    .db-col-fk .ic { width: 13px; height: 13px; }
+    .db-col-fk { border: 0; background: none; padding: 0; margin-left: 5px; color: var(--text-3); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; --ic: 13px; }
     .db-col-fk:hover { color: var(--accent); }
     /* The FK tab's referenced-table name: a link in the table's mono face (a name you would
        type), underlined on hover like every link the panel draws. */
@@ -450,7 +443,8 @@
       white-space: pre-wrap; word-break: break-all; resize: none; overflow: hidden;
       outline: none;
     }
-    .db-inline-edit.null-on { border-color: var(--red); box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 15%, transparent); }
+    /* .db-inline-edit.null-on removed at P9: the inline editor never turns the null mark on
+       (the buffered-null chip says it instead) - the class reached no element. */
     .db-grid-wrap { position: relative; }
     #dbCellText { min-height: 180px; white-space: pre-wrap; }
     #dbCellText.json { min-height: 260px; }
@@ -493,12 +487,13 @@
        refused it because the row moved under it. */
     .db-dirty.db-conflict { background: color-mix(in srgb, var(--red) 16%, transparent); }
     tr.db-sel td.db-conflict { background: color-mix(in srgb, var(--red) 26%, transparent); }
-    .db-act { border: none; background: none; cursor: pointer; font-size: var(--f-label); color: var(--text-3); padding: 0 4px; border-radius: 4px; }
+    .db-act { border: none; background: none; cursor: pointer; font-size: var(--f-label); color: var(--text-3); padding: 0 4px; border-radius: 4px;
+      --ic: 13px; } /* fix-plan #14: the row controls' sprites */
     .db-act:hover { color: var(--red); background: var(--hover); }
-    .db-act .ic { width: 13px; height: 13px; } /* fix-plan #14: the row controls' sprites */
 
     .db-bar { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s3); background: color-mix(in srgb, var(--amber) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--sep)); border-radius: var(--r-card); font-size: var(--f-body); }
-    .db-bar .btn { margin-left: auto; }
+    /* The summary takes the slack, so the bar's buttons sit together at its end. */
+    .db-bar-sum { flex: 1; min-width: 0; }
 
     /* --- terminal (docs/14 §2) ----------------------------------------------------------------- */
     /* =====================================================================================
@@ -642,11 +637,7 @@
     .term-dot.warn { background: var(--amber); }
     .term-dot.bad { background: var(--red); }
     .term-zoom { margin-left: auto; }   /* the zoom note sits at the right edge, away from the status */
-    /* --- docs/22 P0: bell dot, rename input, jump chip, overlay pill ------------------- */
-    /* A bell is state, so the tab carries it as a mark beside the label, not a color
-       swap of the whole tab — the active tab must stay identifiable while ringing.
-       Since P8-2 the mark is the library's heldDot (ui.css), a CSS dot with its words,
-       drawn in place of the tab's name node — nothing for the page to style here. */
+    /* --- docs/22 P0: rename input, jump chip, overlay pill (the bell is heldDot, ui.css) --- */
     /* The inline rename input replaces the name span; it wears the surface dark. */
     .term-rename {
       font: inherit; font-size: var(--f-label);
@@ -660,9 +651,9 @@
       position: absolute; right: var(--s3); bottom: var(--s2);
       font-size: var(--f-label); color: var(--text);
       background: var(--bar); border: 1px solid var(--sep); border-radius: var(--r-pill);
-      padding: 3px 10px; cursor: pointer; box-shadow: none;
+      padding: 3px 10px; cursor: pointer; box-shadow: none; --ic: 12px;
+      z-index: 3; /* over xterm's link layer (inline 2) that took its click; under IME (5) */
     }
-    .term-jump .ic { width: 12px; height: 12px; }
     .term-jump:hover { border-color: var(--accent); }
     .term-jump[hidden] { display: none; }
     /* The centered toast pill: resize geometry, the copy scissors, attach states. */
@@ -703,8 +694,9 @@
        cron as a fifth mode for what the presets cannot spell, and the schedule said back in one
        plain sentence - the sentence is the validation. Everything here is the panel's own
        vocabulary: .seg for the modes, .field for the mode's inputs, no new chrome. */
-    .sched .seg { display: flex; width: 100%; margin-bottom: var(--s3); }
-    .sched .seg button { flex: 1; }
+    /* The schedule's mode picker is the library's fill seg (.seg.fill, ui.css) since P9; the
+       spacing it carried moved to the fields row below it. */
+    #jf-sched-fields { margin-top: var(--s3); }
     /* Weekday picks: toggle buttons, quiet until on - where the accent says "picked" the way a
        checked box would, without the box. */
     .days { display: flex; gap: var(--s1); }
@@ -751,15 +743,13 @@
     .pal-row {
       flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s2);
       padding: 7px var(--s2); border-radius: var(--r-row); text-align: left;
-      font-size: var(--f-body); color: var(--text);
+      font-size: var(--f-body); color: var(--text); --ic: 15px; --ic-ink: var(--text-2);
     }
-    .pal-row .ic { width: 15px; height: 15px; color: var(--text-2); }
     .pal-row:hover { background: var(--hover); }
     .pal-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pal-off { color: var(--text-3); }
     .pal-row.off .pal-name { color: var(--text-3); }
-    .pal-pin { flex: none; padding: 6px; border-radius: var(--r-btn); color: var(--text-3); display: inline-flex; }
-    .pal-pin .ic { width: 13px; height: 13px; }
+    .pal-pin { flex: none; padding: 6px; border-radius: var(--r-btn); color: var(--text-3); display: inline-flex; --ic: 13px; }
     .pal-pin:hover { background: var(--hover); color: var(--text-2); }
     /* Pinned is accent, not filled: saturation stays for state (design rule 2). */
     .pal-pin.on { color: var(--accent); }

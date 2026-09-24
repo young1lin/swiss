@@ -34,9 +34,11 @@ export interface SegItem {
   hidden?: boolean;
 }
 
-export function seg(items: SegItem[], selected: string, o: { key?: string; label?: string; id?: string; data?: AttrMap } = {}): HTMLElement {
+export function seg(items: SegItem[], selected: string, o: { key?: string; label?: string; id?: string; data?: AttrMap;
+  /** Fills the control slot (`.seg.fill`): equal pills split the row, as `.field .dd` does. */
+  fill?: boolean } = {}): HTMLElement {
   const key = o.key || "seg";
-  return h("div", { class: "seg", role: "tablist", id: o.id, data: o.data, aria: { label: o.label } },
+  return h("div", { class: "seg" + (o.fill ? " fill" : ""), role: "tablist", id: o.id, data: o.data, aria: { label: o.label } },
     items.map((it) => {
       return h("button", {
         type: "button", role: "tab", title: it.title, hidden: it.hidden,

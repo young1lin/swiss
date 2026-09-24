@@ -114,7 +114,7 @@ function dbOpenImport(): void {
       const row = el("div", "db-console-row");
       row.style.marginBottom = "2px";
       row.appendChild(el("span", "db-filter-hint", CSV_MAP_LABEL + String.fromCharCode(34) + h + String.fromCharCode(34) + CSV_MAP_ARROW));
-      const sel = el("select");
+      const sel = el("select", "db-csel");
       sel.style.width = "auto";
       const skip = el("option", "", tr("dataCsv.skipColumn")) as HTMLOptionElement;
       skip.value = "";

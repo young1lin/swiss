@@ -1167,6 +1167,7 @@ export async function reload() {   // exported for terminal-settings.js (a save 
   const listed = new Set(sessions.map((s) => { return s && s.id; }));
   for (const d of Array.from(dismissed)) if (!listed.has(d)) dismissed.delete(d);
   render();
+  $("countChip").textContent = countText();
 }
 
 /* The shell has no unmount hook; mounting again is the only signal that the last
@@ -1207,10 +1208,11 @@ export async function poll() {
   const listed = new Set(sessions.map((s) => { return s && s.id; }));
   for (const d of Array.from(dismissed)) if (!listed.has(d)) dismissed.delete(d);
   paintTabs();
+  $("countChip").textContent = countText();   // the chip counts this listing; it has no poll of its own
 }
 
 export function countText() {
-  return sessions.length ? sessions.length + " live" : "";
+  return sessions.length ? trn(sessions.length, "terminal.nLive.one", "terminal.nLive.other") : "";
 }
 
 export function unmount() {

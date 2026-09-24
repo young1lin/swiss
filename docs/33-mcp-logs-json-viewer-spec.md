@@ -9,6 +9,10 @@ JSON followed by prose, keep the indented block. (2) Each block has ONE visible 
 the decoded structure as valid JSON); Copy raw moved behind the block's ⋯. What each copy writes
 is unchanged. A call's body is also painted on open only, no longer on every closed row.
 
+**Closed by docs/46 P9 (2026-09-24):** the P2-2 rules above are the final shape. Logs, Traffic and
+run history all paint on the library's one event list (`ui/timeline.ts`), and the P9 ratchet sweep
+left `views.css` with zero rules restyling a library class — nothing in this spec still owns CSS.
+
 The Logs tab (docs/31 search, docs/32 paging) ships tool arguments and replies as flat
 pretty-printed `<pre>` text. Three gaps, reported by the operator on the live panel:
 

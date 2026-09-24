@@ -426,6 +426,21 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
     fileURLToPath(new URL("../src/views/terminal.ts", import.meta.url)), "utf8",
   );
 
+  it("says the context bar's session count in the reader's language (docs/46 P9 walk)", () => {
+    // The chip read "1 live" on the Chinese panel: countText() glued a bare English word to
+    // the number, in a position the docs/38 L10b scanner does not visit (a return value).
+    expect(view).toContain('trn(sessions.length, "terminal.nLive.one", "terminal.nLive.other")');
+    expect(view).not.toMatch(/\+ " live"/);
+  });
+
+  it("republishes the context bar's count wherever the listing is replaced (docs/46 P9 walk)", () => {
+    // Opening a session left the chip blank until another page's poll happened to redraw it:
+    // reload() and poll() replaced `sessions` from the wire and repainted the tabs, never the
+    // chip. Both write it now, the way remote.ts writes its own after a load.
+    const writes = view.match(/\$\("countChip"\)\.textContent = countText\(\);/g) ?? [];
+    expect(writes.length).toBe(2);
+  });
+
   it("resets the paintTabs memo wherever the DOM changed outside paintTabs", () => {
     // B1a: render() rebuilt the pane (fresh empty bar); B1b: done() replaced a node
     // docs/37 M3: the memo moved from the function object (paintTabs.last) to a
@@ -565,5 +580,19 @@ describe("terminal xterm theme (docs/46 P8-2: chrome from tokens, content litera
     applyTermTheme(terms, read({ background: "#17181b", cursor: "#e4e4e7", selection: "" }));
     expect(seen.length).toBe(2);
     expect((seen[0] as { background: string }).background).toBe("#17181b");
+  });
+});
+
+describe("the new-output chip takes its own click (docs/46 P9 walk)", () => {
+  /* xterm's link layer is a transparent canvas the addon stamps with an INLINE z-index: 2
+     across the whole screen. A chip with no z-index of its own paints over the text canvas
+     but sits under that layer for hit-testing - visible, and every click on it landed in
+     the terminal instead. Found on the 19996 walk: elementFromPoint at the chip's centre
+     answered canvas.xterm-link-layer. */
+  it("stacks above the link layer's z-index 2", () => {
+    const css = readFileSync(fileURLToPath(new URL("../../src/admin_assets/styles/views.css", import.meta.url)), "utf8");
+    const rule = /\.term-jump\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    const z = Number(/z-index:\s*(\d+)/.exec(rule)?.[1] ?? "0");
+    expect(z, ".term-jump needs a z-index above xterm's link layer (2)").toBeGreaterThan(2);
   });
 });

@@ -1,6 +1,21 @@
 # 46 — B 方案：面板 UI 库（`panel/src/ui/` + `ui.css`）与全插件页整理
 
-> 状态：**草案**（分支 `panel-ui`，基线 `6d096a0`，2026-09-23）。P0 本文。
+> 状态：**已实施**（分支 `panel-ui`，基线 `6d096a0`，2026-09-23 起草；P0–P9 于同分支逐阶段提交）。P9 收尾数字（§7 口径，2026-09-24 实测）：
+>
+> - `views.css` 60,001 B / 227 类（基线 94,663 B / 349 类，同一计数器：去注释后选择器里出现的不同 `.class`；§0.2 手数 352）；
+>   G7 冻结随降 76,412 → 60,001。`ui.css` 57,516 B / 162 类；`base.css` 26,238 B / 33 类（基线 36,969 B / 80 类）。
+> - `font-weight` 取值 4 种，全部走 `--w-*` token（`--w-body/--w-emph/--w-name/--w-title`；基线 9 种、54 处字面）。
+> - 字面值（G4 口径：px+hex+rgb，token 块外）：`views.css` 247 → **159**；`ui.css` 72、`base.css` 22（地板：滚动条与壳的固定宽度）。
+> - G2（views.css 改库类，P9 起连 `svg`/`use` 元素主语一起算）与 G5（视图里的库类字面值）**双双归零**，表已清空——新命中直接红。
+> - 自有发射 JS（`admin_assets/js` 去掉 vendor）1,442,512 B（基线 1,302,336 B）；vendor（xterm + cronstrue）770,288 B；
+>   `swiss.exe` 10,554,368 B（P9 终局构建，`target-test`）。
+> - 陈列页 2,482 + 28,483 + 11,143 = 42,108 B（P1b 为 32,637 B，差额是此后入库的组件）。
+> - 截图（虚构数据，19996 空 home + 本地 Docker 演示库）：`docs/assets/46/` 下 01 MCP Config、02 Data orders、03 Terminal
+>   各亮/暗一张，04 陈列页（亮 en、暗 zh），05 Data 结构页（暗 zh）。
+>
+> 数字命令：`(Get-Item crates/swiss-panel/src/admin_assets/styles/*.css).Length`；类数用一段 `node` 去注释后收集选择器里的
+> `.class`（基线同一脚本跑在 `git show 6d096a0:…` 上）；G4/G7 各自的 vitest 门（`test/css-literals`、`test/css-size`）；
+> `node` 遍历 `admin_assets/js` 求和（vendor 目录单列）；`(Get-Item target-test/release/swiss.exe).Length`。
 > 前置阅读：`.agents/skills/swiss-ui-design/SKILL.md` 全文（本文 P1c 改写它）；
 > `.agents/rules/panel-proof-of-life.md`；`docs/35-grouped-list-spec.md`（band 与内联表单）；
 > `docs/39-shell-refresh-spec.md`（壳：rail、上方栏，本文一层都不挪）；`docs/37` §7（`h()`/`fill()`）；
@@ -565,6 +580,34 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
       实施（P8-2）：`termTheme()`/`readTermTokens()`/`applyTermTheme()` 移入 terminal-core（reader 注入，单测钉住
       chrome/内容之split与空 token 回退）；terminal.ts 在 render() 里挂 `MutationObserver` 盯 `data-theme`，
       翻转即对每个打开的终端重设 `options.theme`（unmount 断开）；`selectionBackground` 用 `--term-sel`。
+
+### 3.9 收尾（P9）
+
+- [x] 棘轮收到地板：G2 `FROZEN_VIOLATIONS = 0`、G5 表清空、G4 `views.css` 冻结 159、G7 冻结 60,001 B。
+- [x] G2 把 `svg`/`use` 元素主语算作 `.ic`（`iconByElement`，单测钉住）。原因：P9 第一遍把 `.x .ic { … }` 改写成
+      `.x svg { … }`、`.x .btn` 改写成 `.x button`，门绿了，规则一条没少——类名换成元素名就绕开了门。重做：
+      - 图标尺寸与颜色是库的旋钮：`ui.css .ic` 读 `--ic`（尺寸）与 `--ic-ink`（颜色），宿主在**自己的**元素上设，
+        views.css 不再有一条以 `svg` 为主语的规则（config 折叠箭头、keylist、Data 抽屉行与勾、tab 条、主键/外键/行操作标、
+        终端跳底胶囊、命令面板行与钉）。
+      - Data 提交栏：按钮不再各自 `margin-left:auto`，摘要是 `.db-bar-sum { flex: 1 }`，按钮自然聚在栏尾。
+      - DDL 列表格的删行按钮改 `iconBtn({ ghost: true })`，删掉 `.db-ddl-grid tbody button` 的尺寸覆盖。
+      - Jobs 计划 seg 撑满控件位用库的 `seg({ fill: true })`（`.seg.fill`，陈列页有一条），删掉 `.sched .seg button`。
+      - 两个下拉的宽度落在 select 自己的类上（`db-fsel`、`db-csel`，`ui/select.ts` 把 ownClasses 带到触发器）。
+- [x] views.css 残留删除（每条都核过是死规则或与库重复）：`.hist-head .dot`、`.serves .dot`、`.db-console-row .hint`、
+      `.db-data-ctl`、`.db-inline-edit.null-on`、`.db-ddl-colpick label`、`.db-headrow button`、过时的铃注释。
+- [x] Jobs 不可用态改用 `emptyNode({ icon: "clock", … })`（`test/jobs-unavailable.test.ts`，旧实现下红）。
+- [x] zh 文案：57 个值里的半角逗号改全角；新门 `test/i18n-zh-style.test.ts`（逗号挨着汉字或打头即红）。
+- [x] 截图入 `docs/assets/46/`（见文首）。
+- [x] 走查抓到的两个 bug，各带先红后绿的测试：
+      - 终端跳底胶囊点不中：xterm 的链接层（内联 `z-index: 2`）盖在它上面，命中测试落到 xterm。`.term-jump` 提到 `z-index: 3`
+        （仍在 IME 的 5 之下），`test/admin-terminal.test.ts` 读 views.css 钉住 > 2。
+      - 上方栏会话计数：中文面板上读作「1 live」（`countText()` 拼了英文，L10b 扫描器不看返回值），且新开/关闭会话后不刷新
+        （只有别的页的轮询顺手重画它）。改 `trn("terminal.nLive.*")`，`reload()` 与 `poll()` 末尾都写一次。
+- 未验证（照实写）：
+  - 跳底胶囊的出现靠脚本派发的 `WheelEvent`（agent-browser 的滚轮滚不动 xterm）；点击本身是真实指针事件。
+  - Jobs 不可用态在 19996 上到不了（它带 jobs 子系统），只有单测覆盖。
+  - L10b 扫描器不查函数返回值里的裸字面量——跟进项，本阶段没改。
+  - Data 页离开再回来会落回演示缓存态：P9 之前就有，未查。
 
 ## 4. 门禁（全部在 `crates/swiss-panel/panel/test/`，进 `npm run check`）
 
