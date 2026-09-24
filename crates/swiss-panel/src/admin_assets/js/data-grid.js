@@ -17,7 +17,7 @@
                                                                                                                
                                                                                                      
                                                
-import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, lsMigrate, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
 import { DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbRedisKeyMenu, dbRenderRedisValue } from "./data-browsers.js";
 import { dbActivityLoad, dbActivityRender } from "./data-activity.js";
 import { dbCloseAllTabs, dbOpenTab } from "./data-tabs.js";
@@ -44,11 +44,7 @@ import { seg } from "./ui/seg.js";
    the columns they hid. The helpers are pure (or storage-only) so the key format, the parse's
    tolerance of a corrupt entry and the clamp pin without a DOM. The grid reloads the config on
    every page load — a rename or a second tab's change is picked up, never cached stale. */
-/* fix-plan #17: the swiss.dbGrid.* namespace replaced the mcp_gateway_db_grid_* prefix.
-   The suffix after the prefix is unchanged, so dbGridConfigLoad can derive the old key and
-   carry a stored config across on its first read. */
 const DB_GRID_PREFIX = "swiss.dbGrid.";
-const DB_GRID_PREFIX_OLD = "mcp_gateway_db_grid_";
 const DB_COL_MIN = 48;  // narrower than the header's own name line and nothing reads
 const DB_COL_MAX = 1200; // wider than the grid itself — a runaway drag helps nobody
 
@@ -80,15 +76,10 @@ function dbGridConfigParse(raw               )               {
 }
 
 function dbGridConfigLoad(key               )               {
-  // New key first, old key only as the fallback (fix-plan #17); lsMigrate already answers
-  // null for a blocked store, which parses to the fresh config below. A null key (no
-  // object open) reads like the old code did: getItem(null) is just "absent".
+  // A blocked store answers null, which parses to the fresh config below. A null key (no
+  // object open) reads the same way: getItem(null) is just "absent".
   let raw                = null;
-  if (key != null && key.indexOf(DB_GRID_PREFIX) === 0) {
-    raw = lsMigrate(key, DB_GRID_PREFIX_OLD + key.slice(DB_GRID_PREFIX.length));
-  } else {
-    try { raw = key == null ? null : localStorage.getItem(key); } catch (e) { raw = null; }
-  }
+  try { raw = key == null ? null : localStorage.getItem(key); } catch (e) { raw = null; }
   return dbGridConfigParse(raw);
 }
 

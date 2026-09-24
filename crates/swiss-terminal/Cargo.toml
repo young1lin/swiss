@@ -21,7 +21,7 @@ serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 thiserror = "2"
 
 [dev-dependencies]
-# test-utils pins the scratch MCP_GATEWAY_HOME for this crate's test binary, so a recording
+# test-utils pins the scratch SWISS_HOME for this crate's test binary, so a recording
 # test can never write into the real ~/.swiss/terminal.
 swiss-core = { path = "../swiss-core", version = "0.1.0", features = ["test-utils"] }
 # test-util: the pausable clock. A 30-minute idle timeout and a 60-second reconnect grace

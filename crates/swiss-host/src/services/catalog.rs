@@ -84,6 +84,11 @@ pub struct LeaseTracker {
     outstanding: Mutex<usize>,
     withdrawing: Mutex<bool>,
     idle: Condvar,
+    /// The async mirror of `outstanding`: every grant and drop publishes the new count here
+    /// so [wait_idle_async] can park a TASK instead of the runtime thread. Same shape as the
+    /// shell seat's SessionLedger — its module note explains why the condvar alone cannot
+    /// serve a provider stopping on the single-threaded runtime.
+    idle_tx: tokio::sync::watch::Sender<usize>,
 }
 
 impl LeaseTracker {
@@ -92,6 +97,7 @@ impl LeaseTracker {
             outstanding: Mutex::new(0),
             withdrawing: Mutex::new(false),
             idle: Condvar::new(),
+            idle_tx: tokio::sync::watch::channel(0).0,
         })
     }
 
@@ -104,7 +110,12 @@ impl LeaseTracker {
         dialect: &str,
         flavor: BrowserFlavor,
     ) -> ConnectionLease {
-        *self.outstanding.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        let count = {
+            let mut guard = self.outstanding.lock().unwrap_or_else(|e| e.into_inner());
+            *guard += 1;
+            *guard
+        };
+        let _ = self.idle_tx.send(count);
         ConnectionLease {
             tracker: Arc::clone(self),
             id: id.to_string(),
@@ -138,6 +149,30 @@ impl LeaseTracker {
             .unwrap_or_else(|e| e.into_inner());
         *guard
     }
+
+    /// The async half of [wait_idle]: same contract, but the wait parks a task, not the runtime
+    /// thread. On the single-threaded runtime a lease holder's Drop can only run on the very
+    /// thread a condvar wait would block, so a provider stopping from async code must use THIS
+    /// one — the condvar flavour stays for tests and non-runtime drainers.
+    pub async fn wait_idle_async(&self, timeout: Duration) -> usize {
+        // The channel is only a wakeup; the mutex count is the truth. That sidesteps the
+        // watch footgun where a publish made before any subscriber existed never reaches a
+        // later subscriber's current value — every wake re-reads the ledger instead.
+        let mut rx = self.idle_tx.subscribe();
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if self.outstanding() == 0 {
+                return 0;
+            }
+            match tokio::time::timeout_at(deadline, rx.changed()).await {
+                // A grant or a drop moved the count; read it again.
+                Ok(Ok(())) => continue,
+                // The ledger is gone; no holder can still matter.
+                Ok(Err(_)) => return 0,
+                Err(_) => return self.outstanding(),
+            }
+        }
+    }
 }
 
 /// How long a draining provider waits for in-flight leases before closing over them.
@@ -152,7 +187,7 @@ pub const DRAIN_TIMEOUT_MS: u64 = 5_000;
 /// The provider's stop choreography, in order and out loud: wait (logged when there is
 /// something to wait for), then warn with the count when the wait was not clean. Returns
 /// the unreleased count so tests can assert on it without scraping logs.
-pub fn drain_leases(tracker: &LeaseTracker, timeout: Duration, who: &str) -> usize {
+pub async fn drain_leases(tracker: &LeaseTracker, timeout: Duration, who: &str) -> usize {
     let waiting = tracker.outstanding();
     if waiting > 0 {
         swiss_core::log::log(
@@ -161,7 +196,7 @@ pub fn drain_leases(tracker: &LeaseTracker, timeout: Duration, who: &str) -> usi
             Some(serde_json::json!({ "provider": who, "leases": waiting })),
         );
     }
-    let remaining = tracker.wait_idle(timeout);
+    let remaining = tracker.wait_idle_async(timeout).await;
     if remaining > 0 {
         swiss_core::log::warn(
             "closing with unreleased connection leases",
@@ -182,13 +217,17 @@ pub struct ConnectionLease {
 
 impl Drop for ConnectionLease {
     fn drop(&mut self) {
-        let mut count = self
-            .tracker
-            .outstanding
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        *count = count.saturating_sub(1);
+        let now = {
+            let mut count = self
+                .tracker
+                .outstanding
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *count = count.saturating_sub(1);
+            *count
+        };
         self.tracker.idle.notify_all();
+        let _ = self.tracker.idle_tx.send(now);
     }
 }
 
@@ -466,18 +505,49 @@ mod tests {
         .expect("re-registers after clear");
     }
 
-    #[test]
-    fn drain_waits_for_lease_drops_and_reports_the_stragglers() {
+    #[tokio::test]
+    async fn drain_waits_for_lease_drops_and_reports_the_stragglers() {
         let tracker = LeaseTracker::new();
         let held = tracker.grant("db-one", "data", "mysql", BrowserFlavor::None);
-        let remaining = drain_leases(&tracker, Duration::from_millis(50), "mcp");
+        let remaining = drain_leases(&tracker, Duration::from_millis(50), "mcp").await;
         assert_eq!(remaining, 1, "the lease never came back within the window");
         drop(held);
         assert_eq!(
-            drain_leases(&tracker, Duration::from_millis(50), "mcp"),
+            drain_leases(&tracker, Duration::from_millis(50), "mcp").await,
             0,
             "once back, the drain is clean"
         );
+    }
+
+    // The freeze this drain used to be: on the current_thread runtime a lease holder parked on
+    // an .await can only be polled by the one thread a CONDVAR wait blocks, so the sync drain
+    // could never see it come back — it burned the whole window and reported the lease stuck,
+    // which is what McpInstance::stop did to the entire gateway on every disable. The async
+    // drain watches the published count instead, so the holder gets polled and it settles.
+    #[tokio::test]
+    async fn the_async_drain_reaches_leases_parked_on_the_runtime() {
+        let tracker = LeaseTracker::new();
+        let held = tracker.grant("db-one", "data", "mysql", BrowserFlavor::None);
+        let holder = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            drop(held);
+        });
+        // The holder task has not been polled yet. The sync wait blocks the only thread, so
+        // the drop can never run and the wait burns its full window with the lease stuck.
+        let stuck = tracker.wait_idle(Duration::from_millis(120));
+        assert_eq!(stuck, 1, "the condvar drain cannot see a runtime-parked holder");
+        holder.await.expect("holder finished");
+
+        // Now the same lease-held-across-an-await shape through the async drain: the watch
+        // sees the published count, the holder gets polled, and the drain settles at the drop.
+        let held2 = tracker.grant("db-one", "data", "mysql", BrowserFlavor::None);
+        let releaser = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            drop(held2);
+        });
+        let remaining = tracker.wait_idle_async(Duration::from_secs(1)).await;
+        assert_eq!(remaining, 0, "the async drain watched the drop land");
+        releaser.await.expect("releaser finished");
     }
 
     #[test]

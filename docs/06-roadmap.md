@@ -57,8 +57,8 @@ Then prove all four:
    Manager. **Write the number into docs/01.**
 
 Separately, and just as blocking: **a unit test that opens a real sealed envelope.** Seal a fixture
-with the Node build under `MCP_GATEWAY_MASTER_KEY`, decrypt it in Rust, assert the payload matches.
-Then confirm by hand that a Rust binary can DPAPI-unseal the live `~/.mcp-gateway/gateway.config.json`.
+with the Node build under `SWISS_MASTER_KEY`, decrypt it in Rust, assert the payload matches.
+Then confirm by hand that a Rust binary can DPAPI-unseal the live `~/.swiss/gateway.config.json`.
 
 **If (1)–(3) fail**, the port means hand-implementing the MCP protocol on both the server and the
 client side, which is a different project with a different budget — stop and re-decide.
@@ -77,7 +77,7 @@ Order within the phase matters:
 4. axum app + the embedded panel + the golden-response harness (docs/05 §3).
 5. `registry` + `echo` + the `/api` subset the panel needs to render.
 
-**Exit:** the binary boots on `~/.mcp-gateway`, the panel loads and every view renders (empty is
+**Exit:** the binary boots on `~/.swiss`, the panel loads and every view renders (empty is
 fine), `echo` answers a real client, and `/api/memory` gives the first Rust number for docs/01.
 
 This is the moment the project's premise is confirmed or refuted. If the skeleton is already at

@@ -59,9 +59,8 @@ function Phase($message) {
     # Timestamped everywhere, immediately: console (flushed, so a piped consumer sees
     # progress as it happens) and the gateway home's deploy.log (survives wrappers that
     # buffer stdout into silence).
-    # The home is resolved per line, not once: the start below may move a pre-rename
-    # ~\.mcp-gateway to ~\.swiss (deploy.log travels with it), and the lines after that
-    # must land where the log now lives.
+    # The home is resolved per line, not once, so every line lands in the home the
+    # gateway is actually using — including one named by $SWISS_HOME.
     Write-Host "== $message"
     try {
         $log = Join-Path (Get-SwissProdHome) 'deploy.log'

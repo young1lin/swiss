@@ -87,7 +87,7 @@ mod tests {
     fn makes_the_whole_path_not_just_the_last_segment() {
         // The data dir is created on first run, under a home that may not exist yet either.
         let dir = scratch();
-        let nested = dir.join("a").join("b").join(".mcp-gateway");
+        let nested = dir.join("a").join("b").join(".swiss-home");
         mkdir_private(&nested);
         assert!(nested.is_dir());
         // Idempotent: it runs on every boot, over a directory that is usually already there.

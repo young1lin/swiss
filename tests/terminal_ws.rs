@@ -129,7 +129,7 @@ fn pin_home_and_key() {
     let _ = swiss_core::paths::test_home();
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| unsafe {
-        std::env::set_var(swiss_core::secure::key::MASTER_KEY_ENV, "cd".repeat(32))
+        std::env::set_var(swiss_core::secure::key::MASTER_KEY_ENV_SWISS, "cd".repeat(32))
     });
 }
 
@@ -197,7 +197,7 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
         managed.clone(),
         calls,
         Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19997,
     );
     let _ = ctx.catalog.set(services.catalog.clone());
@@ -884,7 +884,7 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
         managed.clone(),
         calls,
         Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19997,
     );
     let _ = ctx.catalog.set(services.catalog.clone());

@@ -46,6 +46,10 @@ import type { TimelineItem } from "../ui/index.js";
 
 const PAGE = 20;
 const LIVE_EVERY_MS = 1500; // how often an OPEN live row pulls its output; the 6 s poll moves the list
+/** What one open live row may hold, in characters — the same 256 KB the gateway itself keeps
+ *  live (runs.rs MAX_LIVE_OUTPUT_BYTES): a runaway stream must not grow the tab's memory while
+ *  someone watches, and the finished record repaints the row from its durable tail. */
+const LIVE_TAIL_MAX = 256 * 1024;
 
 let runs = [] as ApiRemoteRunRow[]; // the recorded page, newest first
 let active = [] as ApiRemoteRunRow[]; // remote runs the coordinator still holds (queued / running)
@@ -156,7 +160,10 @@ function runItem(r: ApiRemoteRunRow, isLive: boolean): TimelineItem {
   const bad = isLive ? null : runOutcome(r);
   return {
     id: String(r.runId),
-    at: Date.parse(r.startedAt || r.queuedAt),
+    // new Date(), not Date.parse(): the wire carries an ISO string, but an epoch NUMBER reads
+    // just as well and a caller passing one (master's live-tail suite does) must not NaN the
+    // timeline's toISOString.
+    at: new Date(r.startedAt || r.queuedAt).getTime(),
     title: kind,
     arg,
     // docs/41 A1: the actor is an identifier, never translated; a row an older gateway
@@ -207,10 +214,14 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
     const l = live[r.runId];
     // Hoisted so the comparison literals stay out of the h() children (i18n gate).
     const cancellable = r.state === "running" || r.state === "queued";
+    // The capped note prefixes the text here too, matching pullLive's surgical update.
+    const liveText = l && l.text
+      ? (l.capped ? tr("remoteRuns.liveCappedTail") + "\n" : "") + l.text
+      : null;
     return [meta, valueBlock(
       { label: tr("remoteRuns.liveOutput"), tools: cancellable ? [btn(tr("remoteRuns.cancel"), { data: { rcancel: r.runId } })] : [] },
-      l && l.text
-        ? textNode(l.text, true, "logs").node
+      liveText != null
+        ? textNode(liveText, true, "logs").node
         : note(r.state === "queued" ? tr("remoteRuns.queuedWaitingFreeSlot") : tr("remoteRuns.output")))];
   }
   const out: HChild[] = [meta];
@@ -278,12 +289,21 @@ async function pullLive(id: number): Promise<void> {
   const had = !!l.text;
   const j = await apiJson<ApiRunOutputChunk>("/api/runs/" + id + "/output?after=" + l.cursor + "&max=131072");
   if (!j) return;
-  if (j.output) l.text += j.output;
+  if (j.output) {
+    l.text += j.output;
+    if (l.text.length > LIVE_TAIL_MAX) {
+      l.text = l.text.slice(l.text.length - LIVE_TAIL_MAX);
+      l.capped = true;
+    }
+  }
   l.cursor = j.nextCursor || l.cursor;
+  // The capped note rides the text in BOTH paint paths - the surgical update below and
+  // bodyNode's first paint - so a row opened after the cap reads the same story as one that
+  // watched the cap happen (master's prefix, kept on the library timeline's own nodes).
   if (l.text && !had) repaintBody(id);
   else if (l.text) {
     const pre = itemEl(id)?.querySelector(":scope > .tl-body .vblock > pre");
-    if (pre) pre.textContent = l.text;
+    if (pre) pre.textContent = (l.capped ? tr("remoteRuns.liveCappedTail") + "\n" : "") + l.text;
   }
   if (j.terminal) void refresh(); // the run moved into the record: repaint from it
 }

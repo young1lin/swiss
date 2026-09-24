@@ -1,7 +1,7 @@
 # 交给实施模型的 Prompt
 
 > 复制下面整段给一个**全新**的实施会话。它假设模型在 `<repo>`
-> 目录下工作，旁边有 `..\local-mcp-gateway`（Node 仓库——只当面板源码的存放处用，它的服务端一行不改）。
+> 目录下工作，旁边有 `..\node-original`（Node 仓库——只当面板源码的存放处用，它的服务端一行不改）。
 > 写 spec 的会话不实施；这是 swiss-spec 的规矩。
 
 ---
@@ -50,7 +50,7 @@ Secrets / Tokens 六个作用域，加 Data 下拉的 optgroup）。先把 spec 
 - 不加 crate 依赖。
 - 代码注释英文，解释「为什么」，风格跟周围一致；文档散文中文；UI 文案英文。
 - 不提交 `gateway.config.json`、`.env`、`managed.json`、`tunnels.json`、`secrets.json`、`master.key`、
-  `*.log`、`~/.mcp-gateway/terminal/*.cast`、`$env:LOCALAPPDATA\swiss-test-home\` 里的任何东西。
+  `*.log`、`~/.swiss/terminal/*.cast`、`$env:LOCALAPPDATA\swiss-test-home\` 里的任何东西。
 - Commit message 末尾按 `AGENTS.md` 的 attribution 规则。
 
 运行与验证的铁律：

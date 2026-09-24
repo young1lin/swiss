@@ -55,8 +55,8 @@ fn sandbox() {
         // Safety: this runs once, before any test has read either variable, and both
         // are read fresh on every use.
         unsafe {
-            std::env::set_var("MCP_GATEWAY_HOME", &home);
-            std::env::set_var("MCP_GATEWAY_MASTER_KEY", "cd".repeat(32));
+            std::env::set_var("SWISS_HOME", &home);
+            std::env::set_var("SWISS_MASTER_KEY", "cd".repeat(32));
         }
     });
 }
@@ -108,7 +108,7 @@ pub(crate) async fn boot(defs: Vec<(&str, Value)>) -> Gateway {
         store.clone(),
         calls.clone(),
         Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         port,
     );
     // The connection catalog the daemon's MCP plugin registers on start (docs/12

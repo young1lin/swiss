@@ -1359,6 +1359,10 @@ const en: Record<string, string> = {
   "remoteRuns.outputProduced": "No output was produced.",
   "remoteRuns.loadMore": "Load more",
   "remoteRuns.b": "{a} of {b}",
+  /* master's live-cap note, taken with its LIVE_TAIL_MAX logic; its cappedAtLast RENAME is not
+     taken - panel-ui's rewritten tail block still calls the original key, and the orphan gate
+     would flag the second name. */
+  "remoteRuns.liveCappedTail": "… earlier output trimmed — the live view keeps the last 256 KB",
   "remoteRuns.cancelRequestedRunId": "Cancel requested for run #{id}",
   "remoteRuns.forgetEveryRecordedRemote": "Forget every recorded remote run and its output? Runs still in flight are not affected.",
   "remoteRuns.runRecordCleared": "Run record cleared",

@@ -59,7 +59,7 @@ async fn app_with_echo() -> axum::Router {
         store,
         calls,
         Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
-        "MCP_GATEWAY_TOKEN",
+        "SWISS_TOKEN",
         19998,
     );
     build_app(ctx, None)
@@ -233,7 +233,7 @@ async fn admin_api_lists_mcps_and_info() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let info = json.unwrap();
-    assert_eq!(info["tokenEnv"], "MCP_GATEWAY_TOKEN");
+    assert_eq!(info["tokenEnv"], "SWISS_TOKEN");
     // The build stamp rides here too (docs/16 H3) — additive to the Node shape; the panel
     // reads named fields only.
     assert_eq!(info["build"]["hash"], json!(env!("SWISS_GIT_HASH")));

@@ -31,11 +31,11 @@
 //!   task outlives the run that started it.
 //! - Platform-safe subtree teardown, the same mechanics the proc adapter uses: a Windows
 //!   kill-on-close Job Object assigned at spawn (one handle owns the whole tree, PID-reuse
-//!   safe) and a Unix private process group killed via kill(-pgid). The Win32 seam moved
-//!   DOWN to `swiss_core::platform::KillOnCloseJob` when the local terminal needed it too
-//!   (docs/14 T3), so this crate now holds no unsafe at all; the proc adapter, the jobs
-//!   runner and the terminal all assign through that one function, and every child of this
-//!   gateway dies with the same guarantee.
+//!   safe) and a Unix private process group killed via kill(-pgid). Both seams live DOWN in
+//!   `swiss_core::platform` — the job guard moved there when the local terminal needed it
+//!   too (docs/14 T3), and the group kill is `kill_process_group` — so this crate holds no
+//!   unsafe at all; the proc adapter, the jobs runner and the terminal all assign through
+//!   those two functions, and every child of this gateway dies with the same guarantee.
 //!
 //! Environment references in typed input are resolved STRICTLY by the action layer: a
 //! missing required env var is an error naming the variable (docs/10 §6), never a silent
@@ -434,11 +434,10 @@ async fn finish_reader(reader: Option<JoinHandle<()>>) {
 async fn kill_tree(child: &mut tokio::process::Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
-        // SAFETY: kill(2) on a process group this run created at spawn; the return value is
-        // ignored because the wait below is the source of truth for the root's death.
-        unsafe {
-            libc::kill(-(pid as i32), libc::SIGKILL);
-        }
+        // The private process group created at spawn — one kill takes descendants at any
+        // depth. The FFI lives in the platform seam (AGENTS.md); the return value is
+        // advisory, the wait below is the source of truth for the root's death.
+        swiss_core::platform::kill_process_group(pid);
     }
     let _ = child.start_kill();
     let _ = tokio::time::timeout(KILL_WAIT, child.wait()).await;

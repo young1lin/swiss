@@ -6,7 +6,7 @@
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/14-terminal-plugin-spec.md`（终端插件的整体设计，
 > 本文是它的补丁，不重述）、`docs/09-toolbox-plugin-architecture.md` §3/§4（插件配置契约）。
 > **本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能手改。** 面板改动先落在
-> `../local-mcp-gateway/src/admin/`，再整目录复制回来，`the_tree_is_byte_for_byte_the_node_builds`
+> `../node-original/src/admin/`，再整目录复制回来，`the_tree_is_byte_for_byte_the_node_builds`
 > 测试是门禁。代码注释一律英文；文档散文中文。
 
 ## 0. 结论先行（2026-09-11 在 19998 上实测）
@@ -172,7 +172,7 @@ npm run typecheck && npx vitest run
 ```powershell
 # 构建到隔离目录，起测试实例
 $env:CARGO_TARGET_DIR = "target-test"; cargo build --release
-$env:MCP_GATEWAY_PORT = "19998"; & target-test\release\swiss.exe serve
+$env:SWISS_PORT = "19998"; & target-test\release\swiss.exe serve
 ```
 
 1. **粘贴**：开一个远端会话（或本地），按 Ctrl+V → 剪贴板内容出现在提示符后，**没有** `^V`。
@@ -183,11 +183,11 @@ $env:MCP_GATEWAY_PORT = "19998"; & target-test\release\swiss.exe serve
    打开 Enabled → 保存 → 下拉出现 `local · PowerShell 7` → Open session → 看到 `PS C:\…>`
    提示符，`$PSVersionTable.PSVersion` 打出 7.x。关掉 Enabled 保存后本地行消失、空态文案可点。
 3. **回归**：`docs/14` §10 的验收项跑一遍（尤其：会话关闭时 `swiss.exe` 的子进程树被回收；
-   `~/.mcp-gateway/terminal/*.cast` 仍在录）。
+   `~/.swiss/terminal/*.cast` 仍在录）。
 
 注意事项（都是这次踩过的坑）：
 
-- 19998 与 19999 共用 `~/.mcp-gateway/gateway.config.json`：在 19998 上保存 terminal 配置**会
+- 19998 与 19999 共用 `~/.swiss/gateway.config.json`：在 19998 上保存 terminal 配置**会
   写进生产配置**，19999 下次重启就生效。验收 §4.2 做完要把 `local.enabled` 改回用户想要的值，
   并在汇报里写明。
 - 19998 起来后 tunnels 插件会尝试绑同一批本地端口，全部因「被 19999 持有」失败，属正常噪音。

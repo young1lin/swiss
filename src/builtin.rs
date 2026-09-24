@@ -206,11 +206,16 @@ impl PluginInstance for McpInstance {
         // to close), drain what is in flight with an honest warning when the wait was not
         // clean, close the pools, and only then free the catalog seat for the next start.
         self.services.catalog.begin_withdraw();
+        // Async, never the condvar: the leases being drained are held by /api/db futures on
+        // THIS runtime's one thread — a blocking wait here would freeze the whole gateway
+        // (health, panel, MCP traffic) for the drain window, with the leases structurally
+        // unable to come back. See LeaseTracker::wait_idle_async.
         swiss_host::services::catalog::drain_leases(
             &self.tracker,
             std::time::Duration::from_millis(swiss_host::services::catalog::DRAIN_TIMEOUT_MS),
             MCP_ID,
-        );
+        )
+        .await;
         // close_all stops the health/idle timer together with every entry (registry.rs).
         self.registry.close_all().await;
         self.services.catalog.clear();

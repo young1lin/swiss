@@ -310,7 +310,7 @@ impl ServerHandler for ProxyServer {
             capabilities.prompts = Some(PromptsCapability::default());
         }
         let mut server_info = Implementation::default();
-        server_info.name = "mcp-gateway-proxy".into();
+        server_info.name = "swiss-proxy".into();
         server_info.version = "1.0".into();
         let mut info = ServerInfo::new(capabilities).with_server_info(server_info);
         if let Some(description) = &self.description {

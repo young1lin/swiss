@@ -198,8 +198,7 @@ fn read_env_key(key: &str) -> Option<String> {
         }
     }
     // An empty stored value counts as missing — token_lookup on the serve side treats it the
-    // same way, so a deliberately-empty entry cannot wedge the pair fallback while serve falls
-    // through and the CLI would print an empty token.
+    // same way, so a deliberately-empty entry cannot make the CLI print an empty token.
     env_store().get(key).filter(|v| !v.is_empty()).cloned()
 }
 
@@ -217,11 +216,7 @@ pub fn read_gateway_token() -> Option<String> {
         .and_then(Value::as_str)
         .unwrap_or(swiss_host::config::TOKEN_ENV)
         .to_string();
-    read_env_key(&name).or_else(|| {
-        // The config and the pin can come from different eras. swiss-host owns the one
-        // resolution rule so the auth check, `swiss creds` and the panel can never disagree.
-        swiss_host::config::token_pair_other(&name).and_then(read_env_key)
-    })
+    read_env_key(&name)
 }
 
 /// Panel URL + bearer token, for `swiss creds`. Never dumps the rest of the env store (DB
@@ -733,8 +728,6 @@ mod tests {
         for key in [
             "SWISS_PORT",
             "SWISS_TOKEN",
-            "MCP_GATEWAY_PORT",
-            "MCP_GATEWAY_TOKEN",
             "SWISS_TEST_TOKEN",
         ] {
             unsafe { std::env::remove_var(key) };
@@ -886,13 +879,13 @@ mod tests {
 
         seal(
             "gateway.config.json",
-            json!({ "port": 18080, "tokenEnv": "MCP_GATEWAY_TOKEN" }),
+            json!({ "port": 18080, "tokenEnv": "SWISS_TOKEN" }),
         );
         assert_eq!(resolve_port(), 18080);
 
-        unsafe { std::env::set_var("MCP_GATEWAY_PORT", "18081") };
+        unsafe { std::env::set_var("SWISS_PORT", "18081") };
         assert_eq!(resolve_port(), 18081); // the env wins over the file
-        unsafe { std::env::set_var("MCP_GATEWAY_PORT", "not-a-port") };
+        unsafe { std::env::set_var("SWISS_PORT", "not-a-port") };
         assert_eq!(resolve_port(), 18080); // an unusable env value is not an override
         clear_state();
     }
@@ -905,7 +898,7 @@ mod tests {
             "gateway.config.json",
             json!({
                 "port": 19999,
-                "tokenEnv": "MCP_GATEWAY_TOKEN",
+                "tokenEnv": "SWISS_TOKEN",
                 "servers": { "keeper": { "type": "echo", "password": "${KEEPER_PASS}" } },
             }),
         );
@@ -917,7 +910,7 @@ mod tests {
         assert_eq!(after["port"], json!(18082));
         // Everything else survives verbatim — the ${ENV} reference above all, which is why this
         // rewrite is surgical rather than a re-serialize of the loaded config.
-        assert_eq!(after["tokenEnv"], json!("MCP_GATEWAY_TOKEN"));
+        assert_eq!(after["tokenEnv"], json!("SWISS_TOKEN"));
         assert_eq!(
             after["servers"]["keeper"],
             json!({ "type": "echo", "password": "${KEEPER_PASS}" })
@@ -963,49 +956,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_well_known_token_names_fall_back_to_each_other() {
-        // A pre-rename config names the legacy variable while the operator pinned the token
-        // under the new one, and the reverse: the config and the pin can come from different
-        // eras, and an existing token must be found either way.
+    async fn the_node_era_token_name_no_longer_pins() {
+        // The pairing window closed: only the name the config carries resolves, on the CLI
+        // exactly as on the serve side.
         let _lock = daemon_state().await;
-        seal(
-            "gateway.config.json",
-            json!({ "tokenEnv": "MCP_GATEWAY_TOKEN" }),
-        );
-        seal_env(&[("SWISS_TOKEN", "new-era-pin")]);
-        assert_eq!(read_gateway_token().as_deref(), Some("new-era-pin"));
-
         seal("gateway.config.json", json!({ "tokenEnv": "SWISS_TOKEN" }));
         seal_env(&[("MCP_GATEWAY_TOKEN", "legacy-pin")]);
-        assert_eq!(read_gateway_token().as_deref(), Some("legacy-pin"));
+        assert_eq!(read_gateway_token(), None);
         clear_state();
     }
 
     #[tokio::test]
-    async fn an_empty_stored_value_falls_through_to_the_pair() {
+    async fn an_empty_stored_value_is_missing_not_a_token() {
         // The store can hold an empty entry under the config's name; the serve side
         // (token_lookup) treats empty as missing, and the CLI must agree — otherwise creds
-        // prints an empty token while serve authenticates the pair partner's value.
+        // prints an empty token while serve refuses it.
         let _lock = daemon_state().await;
         seal(
             "gateway.config.json",
-            json!({ "tokenEnv": "MCP_GATEWAY_TOKEN" }),
+            json!({ "tokenEnv": "SWISS_TOKEN" }),
         );
-        seal_env(&[("MCP_GATEWAY_TOKEN", ""), ("SWISS_TOKEN", "the-real-pin")]);
-        assert_eq!(read_gateway_token().as_deref(), Some("the-real-pin"));
+        seal_env(&[("SWISS_TOKEN", "")]);
+        assert_eq!(read_gateway_token(), None);
         clear_state();
     }
 
     #[tokio::test]
     async fn a_custom_token_env_name_gets_no_fallback() {
-        // Only the two well-known names cross-fallback: a config naming its own variable must
+        // Only the name the config carries resolves: a config naming its own variable must
         // not quietly authenticate with a token pinned under a name its operator never wrote.
         let _lock = daemon_state().await;
         seal("gateway.config.json", json!({ "tokenEnv": "MY_OWN_TOKEN" }));
-        seal_env(&[
-            ("MCP_GATEWAY_TOKEN", "legacy-pin"),
-            ("SWISS_TOKEN", "new-pin"),
-        ]);
+        seal_env(&[("SWISS_TOKEN", "new-pin")]);
         assert_eq!(read_gateway_token(), None);
         clear_state();
     }
@@ -1015,7 +997,7 @@ mod tests {
         // The rest of the env store is DB passwords; `swiss creds` prints what a client needs to
         // connect and stops there. The panel has no login, so there is no password to print.
         let _lock = daemon_state().await;
-        seal_env(&[("MCP_GATEWAY_TOKEN", "tok"), ("DB_PASSWORD", "hunter2")]);
+        seal_env(&[("SWISS_TOKEN", "tok"), ("DB_PASSWORD", "hunter2")]);
 
         let (url, token) = read_creds();
         assert_eq!(url, url_for(DEFAULT_PORT));
@@ -1035,7 +1017,7 @@ mod tests {
             "mcp-oauth.json",
             json!({ "figma": { "client_id": "cid", "access_token": "at" } }),
         );
-        seal_env(&[("MCP_GATEWAY_TOKEN", "tok")]);
+        seal_env(&[("SWISS_TOKEN", "tok")]);
 
         let bundle = export_state();
         assert_eq!(bundle["version"], json!(1));
@@ -1045,7 +1027,7 @@ mod tests {
         // OAuth grants are state like any other (docs/24 D6): without this section a machine
         // move would silently drop every grant the operator consented to.
         assert_eq!(bundle["oauth"]["figma"]["client_id"], json!("cid"));
-        assert_eq!(bundle["env"]["MCP_GATEWAY_TOKEN"], json!("tok"));
+        assert_eq!(bundle["env"]["SWISS_TOKEN"], json!("tok"));
 
         // A machine with nothing on it takes the bundle and ends up with the same state — the
         // point of the export being the one plaintext path out of the sealed files.
@@ -1111,12 +1093,12 @@ mod tests {
         // The env store is shared with the DB adapters, so a bundle carrying only the gateway
         // token must not take a machine's database passwords with it.
         let _lock = daemon_state().await;
-        seal_env(&[("DB_PASSWORD", "hunter2"), ("MCP_GATEWAY_TOKEN", "old")]);
-        import_state(&json!({ "version": 1, "env": { "MCP_GATEWAY_TOKEN": "new" } }))
+        seal_env(&[("DB_PASSWORD", "hunter2"), ("SWISS_TOKEN", "old")]);
+        import_state(&json!({ "version": 1, "env": { "SWISS_TOKEN": "new" } }))
             .expect("the bundle imports");
 
         let env = export_state()["env"].clone();
-        assert_eq!(env["MCP_GATEWAY_TOKEN"], json!("new")); // imported values win
+        assert_eq!(env["SWISS_TOKEN"], json!("new")); // imported values win
         assert_eq!(env["DB_PASSWORD"], json!("hunter2")); // untouched
         clear_state();
     }

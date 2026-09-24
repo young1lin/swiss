@@ -1320,6 +1320,7 @@ const zh                         = {
   "remoteRuns.outputProduced": "没有产生任何输出。",
   "remoteRuns.loadMore": "加载更多",
   "remoteRuns.b": "{a} / {b}",
+  "remoteRuns.liveCappedTail": "……更早的输出已裁剪——实时视图仅保留最后 256 KB",
   "remoteRuns.cancelRequestedRunId": "已请求取消运行 #{id}",
   "remoteRuns.forgetEveryRecordedRemote": "遗忘所有已记录的远端运行及其输出?仍在进行中的运行不受影响。",
   "remoteRuns.runRecordCleared": "运行记录已清除",

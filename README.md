@@ -17,27 +17,43 @@ executable. Memory numbers are records, not gates — [`docs/01`](docs/01-goals-
 
 ## Install
 
-Download the binary for your OS from
-[GitHub Releases](https://github.com/young1lin/swiss/releases) and put it on your PATH:
+Download the archive for your OS and `SHA256SUMS` from
+[GitHub Releases](https://github.com/young1lin/swiss/releases):
 
 | Asset | OS |
 | --- | --- |
-| `swiss-<version>-x86_64-pc-windows-msvc.exe` | Windows x64 |
-| `swiss-<version>-x86_64-unknown-linux-gnu` | Linux x64 |
-| `swiss-<version>-aarch64-unknown-linux-gnu` | Linux arm64 |
-| `swiss-<version>-aarch64-apple-darwin` | macOS (Apple Silicon) — experimental¹ |
-| `swiss-<version>-x86_64-apple-darwin` | macOS (Intel) — experimental¹ |
+| `swiss-<version>-x86_64-pc-windows-msvc.zip` | Windows x64 |
+| `swiss-<version>-x86_64-unknown-linux-gnu.tar.gz` | Linux x64 |
+| `swiss-<version>-aarch64-unknown-linux-gnu.tar.gz` | Linux arm64 |
+| `swiss-<version>-aarch64-apple-darwin.tar.gz` | macOS (Apple Silicon) — experimental¹ |
+| `swiss-<version>-x86_64-apple-darwin.tar.gz` | macOS (Intel) — experimental¹ |
+
+Compare the archive's SHA-256 with its line in `SHA256SUMS`
+(`Get-FileHash <archive> -Algorithm SHA256` on Windows, `sha256sum <archive>`
+on Linux, or `shasum -a 256 <archive>` on macOS). Extract it, then put
+`swiss.exe` or `swiss` on your PATH. Each archive also includes `LICENSE`, `NOTICE`,
+`THIRD_PARTY_NOTICES.md`, and standalone `skills/swiss/SKILL.md` and
+`skills/swiss-remote/SKILL.md` for inspection before installing or running the binary.
 
 ¹ macOS builds have no master-key source yet (no machine-id, no Keychain source), so the
   first state save fails with "no master key available". The assets are published for
   evaluation; a Keychain source is tracked future work.
 
 ```
+swiss --version        # verify the installed binary
+swiss skill install    # install the embedded swiss and swiss-remote AI skills
+swiss status           # check whether a gateway is already running
 swiss start            # start the gateway on 127.0.0.1:19999 and open the panel
 swiss token            # the bearer token an MCP client authenticates with
 swiss creds            # panel URL + token, ready to paste into a client
-swiss skill install    # the shipped skill, for AI agents that drive swiss
 ```
+
+The opt-in [`swiss` skill](src/skill_assets/SKILL.md) covers safe installation, checksum
+verification, and local checks. [`swiss-remote`](src/skill_assets/remote/SKILL.md) covers
+configured remote targets, file transfer, and run history. Both are embedded in the binary
+and installed to `~/.agents/skills`, `~/.claude/skills`, and
+`~/.cursor/skills`; run `swiss skill install` again after upgrading. Neither skill starts
+the gateway or exposes tokens just because an agent loads it.
 
 Or build from source: Rust stable, `cargo build --release` — the same single binary. Linux
 additionally needs `cmake` and a C compiler (the TLS stack builds aws-lc-rs). No Node is
@@ -68,12 +84,12 @@ the opposite of the memory budget this project exists for.
 ```
 swiss update     # "up to date", or the newest release and its download link
 swiss stop
-# replace swiss(.exe) with the downloaded binary
+# replace swiss(.exe) with the binary extracted from the new release archive
 swiss start
 ```
 
 Nothing migrates during an update: all state lives in sealed files under the swiss home
-directory (`%LOCALAPPDATA%\swiss` on Windows, `~/.swiss` elsewhere), never inside the
+directory (`%USERPROFILE%\.swiss` on Windows, `~/.swiss` elsewhere), never inside the
 binary. Moving machines uses `swiss export > bundle.json` and `swiss import bundle.json`.
 On Windows the seal binds to your user (DPAPI); on Linux it binds to the machine via the
 world-readable machine-id, not to your user — treat shared hosts accordingly.

@@ -370,8 +370,8 @@ impl std::fmt::Display for TunnelError {
 impl std::error::Error for TunnelError {}
 
 /// Only `network` is worth retrying — a transient blip may clear on its own. `port` is NOT: a
-/// port held by another process will not free itself, so retrying only thrashes (and runs
-/// netstat + tasklist each attempt); it needs Force free, not a loop. `auth`/`hostkey`/`config`
+/// port held by another process will not free itself, so retrying only thrashes (and walks the
+/// TCP owner table each attempt); it needs Force free, not a loop. `auth`/`hostkey`/`config`
 /// never were.
 pub fn is_retryable(kind: FailureKind) -> bool {
     kind == FailureKind::Network

@@ -219,6 +219,19 @@ pub fn tree_kill(pid: u32) {
     }
 }
 
+/// Kill every process in a private process group the supervisor created at spawn. The
+/// gateway's children start with their own process group, so one negative-pid kill takes the
+/// whole tree — including descendants a snapshot walk could have missed — with no enumeration
+/// race. The group dies with its last member, so a stale signal simply returns ESRCH.
+pub fn kill_process_group(pgid: u32) {
+    // SAFETY: kill(2) on a process group this gateway created at spawn; the caller treats
+    // the return value as advisory and reaps the root through wait(), which is the source of
+    // truth for its death.
+    unsafe {
+        libc::kill(-(pgid as i32), libc::SIGKILL);
+    }
+}
+
 /// DPAPI exists only on Windows; the key source list on other platforms omits it.
 pub fn dpapi_unprotect(_blob: &[u8]) -> Result<Vec<u8>, String> {
     Err("DPAPI is a Windows-only key source".into())

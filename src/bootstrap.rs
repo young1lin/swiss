@@ -51,12 +51,8 @@ fn seed_config() -> Value {
 /// Does this text look like IT BELONGS to a gateway setup? Without this gate, ANY directory's
 /// .env (a random project full of database passwords) would be adopted.
 fn looks_like_gateway_env(text: &str) -> bool {
-    // /^SWISS_TOKEN=/m or /^MCP_GATEWAY_TOKEN=/m — a line starting with either marker; the
-    // legacy name still marks a Node-era .env as ours to adopt.
-    text.lines().any(|l| {
-        let l = l.trim_start();
-        l.starts_with("SWISS_TOKEN=") || l.starts_with("MCP_GATEWAY_TOKEN=")
-    })
+    // /^SWISS_TOKEN=/m — a line starting with the marker.
+    text.lines().any(|l| l.trim_start().starts_with("SWISS_TOKEN="))
 }
 
 /// A gateway config carries tokenEnv + servers; anything else is not ours to adopt.
@@ -175,15 +171,12 @@ fn ensure_first_run_from(repo: &Path) -> FirstRunReport {
 /// The setEnvDefault contract returns "was written"; the token VALUE then comes from the store.
 fn set_env_default_marker() -> Option<String> {
     let store = read_env_store(&env_store_path());
-    // An upgrade from the Node era already carries a token under the legacy name: seeding a
-    // second, differently-named one would hand every configured client a token they never had.
-    // Either well-known name present means a token exists — this run creates nothing.
-    if store.contains_key("SWISS_TOKEN") || store.contains_key("MCP_GATEWAY_TOKEN") {
+    // A token already present means this run creates nothing.
+    if store.contains_key("SWISS_TOKEN") {
         return None;
     }
     set_env_default("SWISS_TOKEN", &random_hex(24), &env_store_path())
 }
-
 /// The panel URL from the config we just wrote or migrated — never a hardcoded 19999.
 fn panel_url() -> String {
     let from_config = read_secure_json(&data_path(&["gateway.config.json"]))
@@ -228,7 +221,7 @@ mod tests {
     /// The shared test home cannot serve here: `ensure_first_run` reports whether it CREATED the
     /// dir and refuses to migrate over state that is already present, so both answers are only
     /// observable on a genuinely new path. The data-dir lock is held throughout, because
-    /// `MCP_GATEWAY_HOME` is process-wide and is put back on the way out.
+    /// `SWISS_HOME` is process-wide and is put back on the way out.
     struct Sandbox {
         _lock: tokio::sync::MutexGuard<'static, ()>,
         base: std::path::PathBuf,
@@ -248,11 +241,10 @@ mod tests {
             let repo = base.join("repo");
             std::fs::create_dir_all(&repo).expect("create the scratch repo");
             let home = base.join("home");
-            unsafe { std::env::set_var("MCP_GATEWAY_HOME", &home) };
-            unsafe { std::env::remove_var("MCP_GATEWAY_PORT") };
-            // data_dir() honours SWISS_HOME first, so one leaked from another test would
-            // defeat the pin above and redirect this sandbox's whole data dir.
-            unsafe { std::env::remove_var("SWISS_HOME") };
+            // data_dir() honours SWISS_HOME, so pin it to the sandbox home; Drop puts the
+            // shared test home back.
+            unsafe { std::env::set_var("SWISS_HOME", &home) };
+            unsafe { std::env::remove_var("SWISS_PORT") };
             unsafe { std::env::remove_var("SWISS_PORT") };
             Self {
                 _lock: lock,
@@ -284,23 +276,21 @@ mod tests {
 
     impl Drop for Sandbox {
         fn drop(&mut self) {
-            unsafe { std::env::set_var("MCP_GATEWAY_HOME", swiss_core::paths::test_home()) };
-            unsafe { std::env::remove_var("MCP_GATEWAY_PORT") };
-            // test_home() pins the legacy name, so the SWISS_* twins must be cleared here too —
-            // a leak would redirect the next test's data dir or steer its seeded port.
-            unsafe { std::env::remove_var("SWISS_HOME") };
+            // test_home()'s OnceLock has already run in new(), so this only returns the dir —
+            // re-point SWISS_HOME at it, or the next test's data dir would leak into ours.
+            unsafe { std::env::set_var("SWISS_HOME", swiss_core::paths::test_home()) };
             unsafe { std::env::remove_var("SWISS_PORT") };
             let _ = std::fs::remove_dir_all(&self.base);
         }
     }
 
     /// A .env that carries the marker the adoption gate looks for.
-    const GATEWAY_ENV: &str = "MCP_GATEWAY_TOKEN=abc123\nDB_PASSWORD=hunter2\n";
+    const GATEWAY_ENV: &str = "SWISS_TOKEN=abc123\nDB_PASSWORD=hunter2\n";
 
     fn user_config() -> String {
         json!({
             "port": 18090,
-            "tokenEnv": "MCP_GATEWAY_TOKEN",
+            "tokenEnv": "SWISS_TOKEN",
             "servers": { "mine": { "type": "echo", "password": "${DB_PASSWORD}" } },
         })
         .to_string()
@@ -337,8 +327,8 @@ mod tests {
         // missing parent instead of seeding a gateway.
         let sb = Sandbox::new();
         let nested = sb.base.join("home").join("a").join("b");
-        // SAFETY: under the Sandbox's data-dir lock, like every other MCP_GATEWAY_HOME write.
-        unsafe { std::env::set_var("MCP_GATEWAY_HOME", &nested) };
+        // SAFETY: under the Sandbox's data-dir lock, like every other SWISS_HOME write.
+        unsafe { std::env::set_var("SWISS_HOME", &nested) };
         let report = sb.boot();
         assert!(
             report.created,
@@ -367,9 +357,9 @@ mod tests {
 
     #[test]
     fn the_seed_honours_the_port_the_operator_asked_for() {
-        // The legacy name still steers the seed — an operator's pre-rename scripts keep working.
+        // The env port steers the seed — the operator's variable beats any default.
         let sb = Sandbox::new();
-        unsafe { std::env::set_var("MCP_GATEWAY_PORT", "18091") };
+        unsafe { std::env::set_var("SWISS_PORT", "18091") };
         sb.boot();
         assert_eq!(sb.config()["port"], json!(18091));
         assert_eq!(panel_url(), "http://127.0.0.1:18091/");
@@ -389,18 +379,20 @@ mod tests {
     fn only_an_env_that_names_the_gateway_token_is_adopted() {
         // Without this gate, ANY directory's .env — a random project full of database passwords —
         // would be pulled into the gateway's store.
-        assert!(looks_like_gateway_env("MCP_GATEWAY_TOKEN=abc\n"));
         assert!(looks_like_gateway_env("SWISS_TOKEN=abc\n"));
         assert!(looks_like_gateway_env(
-            "# header\n  MCP_GATEWAY_TOKEN=abc\n"
+            "# header\n  SWISS_TOKEN=abc\n"
         ));
-        assert!(looks_like_gateway_env("DB_URL=x\nMCP_GATEWAY_TOKEN=abc"));
+        assert!(looks_like_gateway_env("DB_URL=x\nSWISS_TOKEN=abc"));
         assert!(!looks_like_gateway_env(
             "DB_PASSWORD=hunter2\nAWS_SECRET=x\n"
         ));
-        assert!(!looks_like_gateway_env("# MCP_GATEWAY_TOKEN=abc\n"));
-        assert!(!looks_like_gateway_env("XMCP_GATEWAY_TOKEN=abc\n"));
-        assert!(!looks_like_gateway_env("MCP_GATEWAY_TOKENS=abc\n"));
+        // The Node-era marker line is no longer ours: a retired setup's .env left in some
+        // project directory must not be adopted by a build that cannot authenticate it.
+        assert!(!looks_like_gateway_env("MCP_GATEWAY_TOKEN=abc\n"));
+        assert!(!looks_like_gateway_env("# SWISS_TOKEN=abc\n"));
+        assert!(!looks_like_gateway_env("XSWISS_TOKEN=abc\n"));
+        assert!(!looks_like_gateway_env("SWISS_TOKENS=abc\n"));
         assert!(!looks_like_gateway_env(""));
     }
 
@@ -428,15 +420,12 @@ mod tests {
         assert!(report.migrated);
         let env = sb.env();
         assert_eq!(
-            env.get("MCP_GATEWAY_TOKEN").map(String::as_str),
+            env.get("SWISS_TOKEN").map(String::as_str),
             Some("abc123")
         );
         assert_eq!(env.get("DB_PASSWORD").map(String::as_str), Some("hunter2"));
-        // The adopted legacy token means one already exists; the seeder must not plant a
-        // differently-named second one beside it — clients out there still authenticate with
-        // the token that was adopted, not with whatever a fresh seed would generate.
-        assert!(!env.contains_key("SWISS_TOKEN"));
-        // The adopted token is not "new" — this run did not generate it.
+        // The adopted token is not "new" — this run did not generate one beside it, and
+        // the seeder did not overwrite the adopted value above.
         assert_eq!(report.new_token, None);
 
         let sealed = std::fs::read(sb.home.join("env.json")).expect("the store is on disk");
@@ -460,7 +449,7 @@ mod tests {
         assert!(!migrate_env_once(&sb.repo));
         assert!(!migrate_config_once(&sb.repo));
         assert_ne!(
-            sb.env().get("MCP_GATEWAY_TOKEN").map(String::as_str),
+            sb.env().get("SWISS_TOKEN").map(String::as_str),
             Some("abc123")
         );
         assert_eq!(sb.config()["port"], json!(DEFAULT_PORT));
@@ -477,7 +466,7 @@ mod tests {
         let report = sb.boot();
         assert!(report.migrated);
         assert_eq!(
-            sb.env().get("MCP_GATEWAY_TOKEN").map(String::as_str),
+            sb.env().get("SWISS_TOKEN").map(String::as_str),
             Some("abc123")
         );
         assert_eq!(sb.config()["servers"]["mine"]["type"], json!("echo"));
@@ -515,7 +504,7 @@ mod tests {
         // Held for the data dir it installs and puts back, not for anything read off it.
         let _sb = Sandbox::new();
         assert_eq!(panel_url(), format!("http://127.0.0.1:{DEFAULT_PORT}/"));
-        unsafe { std::env::set_var("MCP_GATEWAY_PORT", "18092") };
+        unsafe { std::env::set_var("SWISS_PORT", "18092") };
         assert_eq!(panel_url(), "http://127.0.0.1:18092/");
     }
 }

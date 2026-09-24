@@ -6,7 +6,7 @@
 > §3/§4/§9（插件契约、共享能力、加一个插件要做什么）、`docs/12-remaining-work-spec.md` W3
 > （连接目录 —— 本文的能力契约照它抄）、`docs/07-decisions.md` ADR-004 / ADR-008 / ADR-009 / ADR-010。
 > **本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能改。** 面板改动先落在
-> `../local-mcp-gateway/src/admin/`，再整目录复制回来。
+> `../node-original/src/admin/`，再整目录复制回来。
 > 新写的代码注释一律英文；文档散文中文。
 
 ## 0. 怎么用这份文档
@@ -71,7 +71,7 @@ Wetty、code-server 全都是它；能与它相提并论的替代品不存在。
    当 ES 模块 import，要么就自己写一个十几行的本地 shim 把 UMD 的全局导出成具名导出。选后者时
    shim 归属 `js/vendor/`，并在文件头注明来源包名与**精确版本号**。
 3. **面板是从 Node 仓库复制过来的（ADR-009）。** vendored 的文件也是面板的一部分，所以它们必须先
-   落在 `../local-mcp-gateway/src/admin/js/vendor/`，再整树复制——包括纯 Rust 插件的页面，照样先在
+   落在 `../node-original/src/admin/js/vendor/`，再整树复制——包括纯 Rust 插件的页面，照样先在
    Node 仓库里安家（试金石插件 docs/12 W4 当时就是这么做的）。
 
 ### vendoring 的规矩
@@ -237,7 +237,7 @@ action 用的，交互式会话既不结束也没有上限，塞进去只会把�
 2. **远端目标可以再收窄。** `plugins.terminal.config.allowedTargets: []`（空 = 全部隧道连接）。
 3. **凭据永远不落地在这里。** 终端从头到尾看不到密码或私钥 —— provider 开好 channel 递过来的是
    字节流。配置里若真需要写凭据，规矩不变：`${ENV_VAR}` 引用，绝不写字面量。
-4. **录制：asciicast v2，只录输出。** 路径 `~/.mcp-gateway/terminal/<sessionId>.cast`，一行 JSON
+4. **录制：asciicast v2，只录输出。** 路径 `~/.swiss/terminal/<sessionId>.cast`，一行 JSON
    一个事件，与 `calls.jsonl` 同样的原子写与体积上限。**只录输出不录输入**是有意的：asciicast 本来
    就是输出格式。但注意这不等于「录不到密码」：shell 会回显敲进去的内容，回显出来的密码就在
    输出流里——不回显的输入（如 sudo 提示）才真正不在文件里，所以 `.cast` 要当作可能含敏感内容
@@ -411,7 +411,7 @@ is not running"，恢复后两台主机重新 `connected`；第 5 条 terminal �
 答 503 JSON（含可操作的 re-enable 提示），清单行 `state:disabled`；第 6 条断开 8 秒重连，追赶
 缓冲从断开点 L8 连续补到 L60 无缺无重，断开超过宽限的会话从列表消失；第 7 条 `yes` 洪水
 5.3 MB/10 秒，网关工作集 22.9→23.2→22.9 MB 无持续增长，Ctrl-C 后 3 秒零字节；第 9 条 cast
-文件头合法 asciinema v2（`~/.mcp-gateway/terminal/*.cast`，8.4 MB 正好顶到录制上限）；第 10 条
+文件头合法 asciinema v2（`~/.swiss/terminal/*.cast`，8.4 MB 正好顶到录制上限）；第 10 条
 见 §7 实测列，五行全部在预算内。第 8 条（强杀无孤儿）以 T7 的 scratch-home 验证为准。
 
 ### 8.2 原生终端体验功能点(docs/22 P0+P1,2026-09-12/13 实施)
@@ -491,7 +491,7 @@ loopback 守卫之内**，理由见 `src/app.rs` 那段注释），插件工厂�
 
 ### T6 — 面板页面（**Node 仓库**）
 
-`../local-mcp-gateway/src/admin/js/vendor/xterm/<version>/…` + `js/views/terminal.js`
+`../node-original/src/admin/js/vendor/xterm/<version>/…` + `js/views/terminal.js`
 （+ 需要的 `js/terminal-*.js`）。§2 的三条约束逐条核对。目标列表放侧边栏还是页内，由实现者定，
 但**不要**去改共享 `.sidebar` 的内容归属（那是 `docs/13` §7 明确列为不做的事）。
 Node 网关上这一页不出现：终端插件不在它的 `legacy` 清单里，所以不渲染，也不报错。
@@ -501,7 +501,7 @@ Node 网关上这一页不出现：终端插件不在它的 `legacy` 清单里�
 
 ```powershell
 Remove-Item -Recurse -Force crates\swiss-panel\src\admin_assets
-Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\swiss-panel\src\admin_assets
+Copy-Item -Recurse ..\node-original\src\admin crates\swiss-panel\src\admin_assets
 ```
 
 整棵树，不挑文件（ADR-009）。立刻 `cargo test -p swiss-panel`，
@@ -515,7 +515,7 @@ Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\swiss-panel\src\admin_a
   为什么终端不依赖 `swiss-tunnels`。**把量出来的体积与 RSS 写进去**，ADR-010 的规矩在这儿一样成立：
   没测过的收益不许写。
 - `README.md` 文档表格里 `docs/14` 那行的状态改掉；`AGENTS.md` 的「Never commit」清单加
-  `~/.mcp-gateway/terminal/*.cast`。
+  `~/.swiss/terminal/*.cast`。
 - 本文状态行改成「已实施」+ 完成基线提交号。
 
 ## 10. 验收
@@ -529,7 +529,7 @@ Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\swiss-panel\src\admin_a
 6. 拔网线/断开 WS 60 秒内重连 → 会话还在，缺的输出补上；超过宽限 → 会话已关闭且列表里没有它。
 7. 在会话里跑 `yes` 十秒再 Ctrl-C → 进程 RSS 不持续增长（背压生效），终端显示不错位（没丢字节）。
 8. 强杀 `swiss.exe` → 任务管理器里没有残留的 shell 子进程（ADR-008）。
-9. `asciinema play ~/.mcp-gateway/terminal/<id>.cast` 能回放。
+9. `asciinema play ~/.swiss/terminal/<id>.cast` 能回放。
 10. §7 的每一行都有实测数字，且都在预算内 —— 否则按 §11 处理，不要「先合了再说」。
 
 ## 11. 不做什么，以及退路

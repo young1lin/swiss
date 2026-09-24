@@ -433,6 +433,100 @@ pub fn parent_process() -> Option<ParentProcess> {
     }
 }
 
+/// The image name of an arbitrary pid, from one Toolhelp snapshot pass — the direct
+/// replacement for `tasklist /FI "PID eq n" /FO CSV /NH` (no subprocess, no CSV to
+/// parse). `None` = the pid is gone or the snapshot failed; callers word their diagnostic
+/// for that case rather than guessing.
+pub fn process_name(pid: u32) -> Option<String> {
+    // SAFETY: the snapshot handle is closed on every path; PROCESSENTRY32W is initialized
+    // with its own size as the API requires.
+    unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return None;
+        };
+        let mut name = None;
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                if entry.th32ProcessID == pid {
+                    let end = entry
+                        .szExeFile
+                        .iter()
+                        .position(|c| *c == 0)
+                        .unwrap_or(entry.szExeFile.len());
+                    name = Some(String::from_utf16_lossy(&entry.szExeFile[..end]));
+                    break;
+                }
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = windows::Win32::Foundation::CloseHandle(snapshot);
+        name
+    }
+}
+
+/// The pid that owns a LISTENING socket on `port`, for either IP family —
+/// GetExtendedTcpTable with the listener-only class, the direct replacement for parsing
+/// `netstat -ano` text output. `None` = nothing is listening or the table could not be
+/// read; the caller's diagnostic words cover both.
+pub fn tcp_listener_pid(port: u16) -> Option<u32> {
+    use windows::Win32::NetworkManagement::IpHelper::{
+        GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER,
+    };
+    use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
+    for family in [AF_INET.0 as u32, AF_INET6.0 as u32] {
+        // SAFETY: the size-then-buffer dance is the API's own contract; the buffer is owned
+        // memory of the size the first call asked for, and every row read stays inside the
+        // count the second call reported.
+        unsafe {
+            let mut size = 0u32;
+            let _ = GetExtendedTcpTable(
+                None,
+                &mut size,
+                false,
+                family,
+                TCP_TABLE_OWNER_PID_LISTENER,
+                0,
+            );
+            if size == 0 {
+                continue;
+            }
+            let mut buf = vec![0u8; size as usize];
+            if GetExtendedTcpTable(
+                Some(buf.as_mut_ptr().cast()),
+                &mut size,
+                false,
+                family,
+                TCP_TABLE_OWNER_PID_LISTENER,
+                0,
+            ) != 0
+            {
+                continue;
+            }
+            let count = *(buf.as_ptr() as *const u32);
+            let rows = buf
+                .as_ptr()
+                .add(std::mem::size_of::<u32>())
+                .cast::<MIB_TCPROW_OWNER_PID>();
+            let fit = (buf.len().saturating_sub(4) / std::mem::size_of::<MIB_TCPROW_OWNER_PID>())
+                as u32;
+            for i in 0..count.min(fit) {
+                let row = &*rows.add(i as usize);
+                // dwLocalPort is network byte order; LISTENER rows are all in LISTEN state.
+                if u16::from_be(row.dwLocalPort as u16) == port && row.dwOwningPid > 0 {
+                    return Some(row.dwOwningPid);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// `own_pid` and every descendant (any process type), via the Toolhelp parent->child walk —
 /// the direct replacement for the Node build's PowerShell CIM query. A reaper uses it to refuse
 /// to touch a stale-ledger pid the OS has since handed to one of THIS instance's own children.

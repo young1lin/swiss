@@ -26,7 +26,7 @@
 //! This is a BLACKLIST, deliberately short: a whitelist-style rebuild would one day delete a
 //! variable nobody thought of (a proxy, a locale) on some machine we never saw. Only the
 //! variables whose whole job is to describe the launcher get struck; everything else — PATH,
-//! HOME, TEMP, proxies, MCP_GATEWAY_* — is inherited untouched.
+//! HOME, TEMP, proxies, SWISS_* — is inherited untouched.
 
 use std::process::Command;
 
@@ -184,8 +184,7 @@ mod tests {
     #[test]
     fn the_machines_own_variables_are_not_noise() {
         // The blacklist philosophy: everything that is not listed survives. These are the
-        // ones the spec promised not to touch, plus the gateway's own knobs — under both
-        // their new (SWISS_*) and Node-era (MCP_GATEWAY_*) names.
+        // ones the spec promised not to touch, plus the gateway's own knobs.
         for name in [
             "PATH",
             "HOME",
@@ -198,9 +197,6 @@ mod tests {
             "HTTP_PROXY",
             "HTTPS_PROXY",
             "NO_PROXY",
-            "MCP_GATEWAY_HOME",
-            "MCP_GATEWAY_PORT",
-            "MCP_GATEWAY_TOKEN",
             "SWISS_HOME",
             "SWISS_PORT",
             "SWISS_TOKEN",
