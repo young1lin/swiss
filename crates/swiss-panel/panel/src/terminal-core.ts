@@ -325,3 +325,46 @@ export function readCopyOnSelect(raw: unknown): boolean {
 export function trimSelection(text: unknown): string {
   return String(text == null ? "" : text).replace(/[ \t]+(?=\n)/g, "").replace(/\s+$/, "");
 }
+
+/* --- the xterm theme's chrome (docs/46 P8-2, U12) ----------------------------------------------
+ * The theme splits in two: the CHROME (background, cursor, selection) reads the panel's
+ * --term-* tokens (base.css) through getComputedStyle, so the surface follows a theme
+ * switch like every other surface in the panel; the 16 ANSI colours are CONTENT - what a
+ * program printed is not chrome to re-skin - and stay ttyd's literal set, tuned as a whole
+ * with the foreground (borrowing half of a tuned set is how you get a terminal that looks
+ * almost right). The reader is injected so the split, not the DOM, is what the tests pin. */
+export type TermTokenRead = (name: string) => string;
+
+/** The browser's reader: --term-* off the document element, where base.css defines them
+ *  (light) and :root[data-theme=dark] overrides two of them. A missing or empty token
+ *  falls back to the light block's own value - a blank canvas is never the answer. */
+export function readTermTokens(name: string): string {
+  const cs = getComputedStyle(document.documentElement);
+  const v = cs.getPropertyValue(name);
+  return v == null ? "" : v.trim();
+}
+
+export function termTheme(read: TermTokenRead = readTermTokens) {
+  const token = (name: string, fallback: string): string => {
+    const v = read(name);
+    return v || fallback;
+  };
+  return {
+    foreground: "#d2d2d2", background: token("--term-bg", "#17181b"),
+    cursor: token("--term-cursor", "#e4e4e7"),
+    selectionBackground: token("--term-sel", "rgba(59, 130, 246, 0.35)"),
+    black: "#000000", red: "#d81e00", green: "#5ea702", yellow: "#cfae00",
+    blue: "#427ab3", magenta: "#89658e", cyan: "#00a7aa", white: "#dbded8",
+    brightBlack: "#686a66", brightRed: "#f54235", brightGreen: "#99e343",
+    brightYellow: "#fdeb61", brightBlue: "#84b0d8", brightMagenta: "#bc94b7",
+    brightCyan: "#37e6e8", brightWhite: "#f1f1f0",
+  };
+}
+
+/** The theme-switch hook's body: re-read the tokens and hand every OPEN terminal the new
+ *  chrome. Passed the live models' term objects (anything with an options.theme), so the
+ *  observer in views/terminal.ts stays one line of DOM and this stays testable. */
+export function applyTermTheme(terms: Array<{ options: { theme?: unknown } }>, read: TermTokenRead = readTermTokens): void {
+  const theme = termTheme(read);
+  for (const t of terms) t.options.theme = theme;
+}

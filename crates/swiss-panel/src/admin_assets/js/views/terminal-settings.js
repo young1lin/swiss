@@ -25,11 +25,13 @@
    ================================================================================================ */
                                                                                                 
 import { $, apiJson, toast } from "../util.js";
-import { fill, h } from "../h.js";
+import { h } from "../h.js";
 import { configPutBody, targetRows } from "../terminal-core.js";
 import { reload, sessions, targets } from "./terminal.js";
 import { tr, trn } from "../i18n.js";
-import { closeSheet } from "../ui/sheet.js";
+import { closeSheet, sheet, showSheet } from "../ui/sheet.js";
+import { btn } from "../ui/button.js";
+import { checkField, field } from "../ui/form.js";
 
 /* The Local shell settings sheet (docs/15 §2): the switch docs/14 §6.1 asks for and
    the shell picker. Saving is a plugin-config PUT — the terminal plugin restarts on
@@ -49,35 +51,36 @@ export async function openLocalSheet() {
   const options = shells.map((s) => {
     return h("option", { value: s.program }, s.label + " · " + s.program);
   });
-  // Visible before the paint (panel-proof-of-life rule 1).
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("terminalSettings.localShellSettings") } },
-      h("div", { class: "sheet-head" }, h("h2", null, tr("terminalSettings.localShell"))),
-      h("div", { class: "sheet-body" },
-        h("div", { class: "fld" },
-          h("label", { class: "check" }, h("input", { type: "checkbox", id: "ls-enabled", checked: !!local.enabled }), tr("terminalSettings.enabled")),
-          whyOff ? h("div", { class: "hint" }, whyOff) : null),
-        /* A datalist, not a select: the candidates are suggestions, and any path the
-           gateway can spawn is legal (docs/15 §2.1 — "may be typed by hand"). */
-        h("label", { class: "field" },
-          h("span", null, tr("terminalSettings.shell")),
-          // `list` is a read-only input property, so it rides as an attribute post-build.
-          (() => {
-            const el = h("input", { id: "ls-shell", value: local.shell || "",
-              placeholder: l.shell || tr("terminalSettings.platformDefault"), autocomplete: "off", spellcheck: false });
-            el.setAttribute("list", "ls-shells");
-            return el;
-          })(),
-          h("datalist", { id: "ls-shells" }, options)),
-        h("div", { class: "hint" },
-          tr("terminalSettings.emptyPlatformDefaultWhich", { which: l.shell || "?" }))),
-      h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "ls-cancel" }, tr("terminalSettings.cancel")),
-        h("button", { class: "btn primary", id: "ls-save" }, tr("terminalSettings.save")))));
+  /* A datalist, not a select: the candidates are suggestions, and any path the
+     gateway can spawn is legal (docs/15 §2.1 — "may be typed by hand"). `list` is a
+     read-only input property, so it rides as an attribute post-build; the datalist
+     itself rides beside its field - association is by id, document-wide. */
+  const shellInput = h("input", { id: "ls-shell", value: local.shell || "",
+    placeholder: l.shell || tr("terminalSettings.platformDefault"), autocomplete: "off", spellcheck: false });
+  shellInput.setAttribute("list", "ls-shells");
+  const shellField = field({
+    label: tr("terminalSettings.shell"),
+    control: shellInput,
+    hint: tr("terminalSettings.emptyPlatformDefaultWhich", { which: l.shell || "?" }),
+  });
+  shellField.appendChild(h("datalist", { id: "ls-shells" }, options));
+  /* The library's sheet frame and form pieces (docs/46 P8-2): showSheet unhides the
+     host BEFORE the paint (panel-proof-of-life rule 1) and owns the backdrop click. */
+  showSheet(sheet({
+    title: tr("terminalSettings.localShell"),
+    body: h("div", null,
+      checkField({
+        label: tr("terminalSettings.enabled"),
+        control: h("input", { type: "checkbox", id: "ls-enabled", checked: !!local.enabled }),
+        hint: whyOff || undefined,
+      }),
+      shellField),
+    foot: [h("span", { class: "grow" }),
+      btn(tr("terminalSettings.cancel"), { id: "ls-cancel" }),
+      btn(tr("terminalSettings.save"), { kind: "primary", id: "ls-save" })],
+  }));
   $("ls-cancel").onclick = closeSheet;
   $("ls-save").onclick = () => { void saveLocalSheet(got ); };
-  $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
   $("ls-enabled").focus();
 }
 

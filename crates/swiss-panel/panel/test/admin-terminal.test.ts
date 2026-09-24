@@ -19,10 +19,10 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  FONT_DEFAULT, FONT_MAX, FONT_MIN, clampGeometry, configPutBody, embeddedNewlines, frameStatus,
+  FONT_DEFAULT, FONT_MAX, FONT_MIN, applyTermTheme, clampGeometry, configPutBody, embeddedNewlines, frameStatus,
   isPinned, keyAction, localShellLabel, mouseAction, nextFontSize, nextReconnectDelay,
   readBellMode, readCopyOnSelect, readFontSize, resizeFrame, sessionAlive, sessionLabel,
-  streamUrl, tabLabel, targetRows, ticketUrl, trimSelection, wheelAction, withLocalConfig,
+  streamUrl, tabLabel, targetRows, termTheme, ticketUrl, trimSelection, wheelAction, withLocalConfig,
 } from "../src/terminal-core.js";
 
 /** The pure half of the terminal view (docs/14 §8): everything the page decides without
@@ -507,12 +507,63 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
   });
 
   it("draws the gear from the sprite, not a Unicode glyph", () => {
-    expect(view).toContain('iconNode("gear")');
+    /* Since P8-2 the gear is the library's iconBtn (which draws the sprite itself); the
+       page only names the icon. */
+    expect(view).toContain('iconBtn("gear"');
     expect(view).not.toContain(">\u2699<");
   });
 
   it("nulls m.term after dispose so in-flight write callbacks hit the guard", () => {
     const nullings = view.match(/m\.term = null/g) ?? [];
     expect(nullings.length).toBeGreaterThanOrEqual(4);   // open-fail, close, releaseModels, unmount
+  });
+});
+
+describe("terminal xterm theme (docs/46 P8-2: chrome from tokens, content literal)", () => {
+  /* A fake token reader stands in for getComputedStyle: the unit under test is the SPLIT -
+   * background/cursor/selection follow the panel's --term-* tokens (so a theme switch can
+   * re-read them), the 16 ANSI colours are CONTENT and never move. */
+  const read = (v: { background: string; cursor: string; selection: string }) => {
+    return (name: string): string => {
+      if (name === "--term-bg") return v.background;
+      if (name === "--term-cursor") return v.cursor;
+      if (name === "--term-sel") return v.selection;
+      return "";
+    };
+  };
+
+  it("the chrome keys come from the reader, so a theme switch can re-read them", () => {
+    const t = termTheme(read({ background: "#0b0c0e", cursor: "#e4e4e7", selection: "rgba(59, 130, 246, 0.35)" }));
+    expect(t.background).toBe("#0b0c0e");
+    expect(t.cursor).toBe("#e4e4e7");
+    expect(t.selectionBackground).toBe("rgba(59, 130, 246, 0.35)");
+  });
+
+  it("an empty token falls back to the token block's own value, never to a blank canvas", () => {
+    const t = termTheme(read({ background: "", cursor: "", selection: "" }));
+    expect(t.background).toBe("#17181b");   // base.css :root --term-bg
+    expect(t.cursor).toBe("#e4e4e7");
+  });
+
+  it("the 16 ANSI colours are content and stay ttyd's literal set (docs/46 U12)", () => {
+    const t = termTheme(read({ background: "#0b0c0e", cursor: "#e4e4e7", selection: "rgba(0,0,0,0)" }));
+    expect(t).toMatchObject({
+      black: "#000000", red: "#d81e00", green: "#5ea702", yellow: "#cfae00",
+      blue: "#427ab3", magenta: "#89658e", cyan: "#00a7aa", white: "#dbded8",
+      brightBlack: "#686a66", brightRed: "#f54235", brightGreen: "#99e343",
+      brightYellow: "#fdeb61", brightBlue: "#84b0d8", brightMagenta: "#bc94b7",
+      brightCyan: "#37e6e8", brightWhite: "#f1f1f0",
+    });
+    // The foreground is tuned against the ANSI set (ttyd's own) and is not a theme surface.
+    expect(t.foreground).toBe("#d2d2d2");
+  });
+
+  it("applyTermTheme re-sets options.theme on every open terminal - the switch hook", () => {
+    const seen: unknown[] = [];
+    const terms = [1, 2].map(() => ({ options: {} as { theme?: unknown } }));
+    for (const t of terms) Object.defineProperty(t.options, "theme", { set(v: unknown) { seen.push(v); } });
+    applyTermTheme(terms, read({ background: "#17181b", cursor: "#e4e4e7", selection: "" }));
+    expect(seen.length).toBe(2);
+    expect((seen[0] as { background: string }).background).toBe("#17181b");
   });
 });

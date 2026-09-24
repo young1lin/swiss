@@ -1413,7 +1413,6 @@ const zh                         = {
   "system.swissStopping": "swiss 正在停止",
   "system.localProcessClosingGracefully": "本地进程正在优雅关闭。可以关掉这个标签页,需要时再运行 swiss start。",
   /* --- terminalSettings --- */
-  "terminalSettings.localShellSettings": "本地 shell 设置",
   "terminalSettings.localShell": "本地 shell",
   "terminalSettings.enabled": "启用",
   "terminalSettings.shell": "Shell",

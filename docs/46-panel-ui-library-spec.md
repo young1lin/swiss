@@ -542,18 +542,29 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
 
 ### 3.8 Terminal（P8）
 
-- [ ] `.term-page` 的独立色板删掉，改用 `--term-*` token（U12）：暗色舞台比 `--bg` 深一级（`#0b0c0e`），
+- [x] `.term-page` 的独立色板删掉，改用 `--term-*` token（U12）：暗色舞台比 `--bg` 深一级（`#0b0c0e`），
       亮色主题下舞台 `#17181b`；按钮用面板 accent；状态点用面板的 green / amber / red。
-- [ ] 会话 tab 与 Data 的对象 tab 同一种形状（顶部 2px accent）。
+      实施（P8-2）：views.css 里整套 `--t-*`（9 个定义 + 58 处引用）删掉；`.term-page` 上把面板 token 重指向 `--term-*`
+      （`--bg`/`--bar`/`--card`/`--field`/`--text*`/`--sep*`/`--hover`），`--accent` 与 green/amber/red 保持面板自己的——
+      库控件（objTab、下拉脸、btn、iconBtn）落进 bar/foot 就自动落在舞台上，页面不再自绘深色。术语映射：
+      `--t-accent`→`--accent`、`--t-ok/warn/bad`→`--green/--amber/--red`、其余按同名后缀。
+- [x] 会话 tab 与 Data 的对象 tab 同一种形状（顶部 2px accent）。
       实施（P8-1，Data 那一半）：库里新增 `objTab`（`ui/tab.ts` + `ui.css .otab*`），Data 的对象 tab 条迁上去——选中卡顶部 2px accent、
       与下方表面同底合并；关闭是一个真 `button.otab-close`（角色上不再是 tab 里套一个 span[role=button]），未选中时 hover 才出现；
       过滤计数是 `.otab-n`，暂存写入圆点是 `heldDot()` 带 aria-label；焦点环画在卡内部（棘轮式的 inset box-shadow），滚动条裁不掉。
       旧的 `.db-tab` 一块随迁移删掉（`.db-tab-rename` / `-add` / `-more` 留在 views.css，是页面自己的部分）；`tnum` 成为 base.css 的
       工具类，views.css 里两处写错的 `font-variant-numeric: tnum`（不是合法值，浏览器整条丢弃）改成 `tabular-nums`。
-      Terminal 的会话 tab 待 P8-2 迁移后再勾全。
-- [ ] 目标选择器用面板的 dropdown（`styleSelect`），不再是深色原生 select。
-- [ ] xterm 的 `theme.background` / `cursor` / `selection` 从 `--term-*` 读（挂载时 + 主题切换时），ANSI 16 色不动
+      实施（P8-2，Terminal 这一半）：会话 tab 迁上 `objTab`——button 里套 span 的关闭位、Unicode `×` 与铃 `●` 一并退役，
+      铃是 `heldDot()` 的 CSS 圆点（带 aria-label，选中该页签即应答）；条容器 `.term-tabs` 只做底边对齐，
+      委托事件改答 objTab 的 data 钩子（`data-term` 选页签、`data-termx` 关闭，close 先判）；改名输入替换 `.otab-name`。
+- [x] 目标选择器用面板的 dropdown（`styleSelect`），不再是深色原生 select。
+      实施（P8-2）：picker 就是普通 `h("select")`，`initSelects` 的观察器自动给它 `.dd` 脸；页面重指向的 token 让它
+      直接坐在深色 bar 上，`.term-pick` 一块（含 focus 环）删除。
+- [x] xterm 的 `theme.background` / `cursor` / `selection` 从 `--term-*` 读（挂载时 + 主题切换时），ANSI 16 色不动
       （那是内容，不是 chrome）。
+      实施（P8-2）：`termTheme()`/`readTermTokens()`/`applyTermTheme()` 移入 terminal-core（reader 注入，单测钉住
+      chrome/内容之split与空 token 回退）；terminal.ts 在 render() 里挂 `MutationObserver` 盯 `data-theme`，
+      翻转即对每个打开的终端重设 `options.theme`（unmount 断开）；`selectionBackground` 用 `--term-sel`。
 
 ## 4. 门禁（全部在 `crates/swiss-panel/panel/test/`，进 `npm run check`）
 

@@ -505,10 +505,12 @@
        Terminal — the pane stops being a form here. Every real web terminal (ttyd, wetty,
        VS Code's integrated panel) gives the terminal the whole viewport: one bar of
        session tabs up top, a deep dark surface that IS the terminal, a one-line status
-       foot. The chrome wears its own fixed palette, not the panel tokens — a terminal
-       keeps its colors whatever the app theme is doing around it. Reference designs
-       studied in vendor-refs/ttyd and vendor-refs/wetty (ttyd's xterm palette is used
-       verbatim below, in terminal.js). */
+       foot. docs/46 P8-2: the chrome still reads the PANEL tokens — but on this page they
+       are re-pointed one step darker (--term-*, base.css), dark in BOTH themes, so a
+       library control dropped onto the bar is already sitting on the stage with no
+       page-specific restyling; the xterm canvas follows the same --term-* tokens
+       (termTheme, terminal-core). Reference designs studied in vendor-refs/ttyd and
+       vendor-refs/wetty. */
     .pane > .term-page { max-width: none; }
     /* The pane becomes a definite-height flex column while a terminal page is staged, and the
        page fills EXACTLY what is left — the old calc(100vh - 100px) was a hand-measured
@@ -520,17 +522,25 @@
     .term-page {
       display: flex; flex-direction: column;
       min-height: 340px;
-      --t-bg: #2b2b2b; --t-bar: #232323; --t-edge: #3d3d3d;
-      --t-fg: #d2d2d2; --t-dim: #8f8f8f; --t-accent: #427ab3;
-      --t-ok: #5ea702; --t-warn: #cfae00; --t-bad: #d81e00;
+      /* The page's chrome reads the PANEL tokens like everywhere else — they are just
+         re-pointed here at --term-* (base.css), the darker register a terminal keeps in
+         BOTH themes (docs/46 U12). Every library control on the bar or the foot (objTab,
+         the picker's dropdown face, btn, iconBtn) therefore sits on the stage with no
+         page-specific restyling; --accent and the state colours stay the panel's own —
+         a selection is a selection everywhere. */
+      --bg: var(--term-bg); --bar: var(--term-bar);
+      --card: var(--term-bar); --field: var(--term-bg);
+      --text: var(--term-fg); --text-2: var(--term-dim); --text-3: var(--term-dim);
+      --sep: var(--term-edge); --sep-soft: var(--term-edge);
+      --hover: color-mix(in srgb, var(--term-fg) 7%, transparent);
       /* The global thin scrollbar (base.css), re-pointed at the stage's own ground. */
-      --scroll-thumb: var(--t-edge); --scroll-thumb-hover: var(--t-dim);
+      --scroll-thumb: var(--term-edge); --scroll-thumb-hover: var(--term-dim);
     }
     /* The bar: tabs grow on the left, the picker and Open sit on the right. Same dark
        as the stage so the bar and the surface read as one instrument. */
     .term-bar {
       display: flex; align-items: flex-end; gap: var(--s3);
-      background: var(--t-bar); border: 1px solid var(--t-edge);
+      background: var(--bar); border: 1px solid var(--sep);
       border-radius: var(--r-card) var(--r-card) 0 0;
       padding: 6px 8px 0; flex: none;
     }
@@ -540,29 +550,12 @@
     }
     .term-tabs::-webkit-scrollbar { display: none; }
     .term-tabs[hidden] { display: none; }
-    .term-tabs button {
-      display: inline-flex; align-items: center; gap: 7px;
-      max-width: 220px; white-space: nowrap; overflow: hidden;
-      font-size: var(--f-label); font-weight: var(--w-body); color: var(--t-dim);
-      background: transparent; border: none; box-shadow: none;
-      border-radius: 7px 7px 0 0; padding: 6px 8px 7px 12px; cursor: default;
-    }
-    .term-tabs button:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 6%, transparent); }
-    .term-tabs button[aria-selected="true"] {
-      color: var(--t-fg); background: var(--t-bg);
-      /* Merge into the surface: grow 1px over the bar's border and cover it, so the
-         active tab reads as the top of the terminal, not a pill sitting in front. */
-      position: relative; margin-bottom: -1px; border-bottom: 1px solid var(--t-bg);
-      box-shadow: inset 0 2px 0 var(--t-accent);
-    }
-    .term-tab-label { overflow: hidden; text-overflow: ellipsis; }
-    .term-tab-x {
-      flex: none; width: 17px; height: 17px; line-height: 15px; text-align: center;
-      font-size: var(--f-caption); color: var(--t-dim); border-radius: 4px;
-    }
-    .term-tab-x:hover { color: var(--t-bg); background: var(--t-bad); }
-    /* The picker row. A native select, styled to belong to the dark bar; the panel's
-       dependency-free rule keeps it a select rather than a custom dropdown. */
+    /* The tabs themselves are the library's objTab (docs/46 P8-2, ui.css .otab) — the
+       same card Data's objects wear, selected state merging into the stage under it. The
+       strip only aligns them on the bar's bottom edge; the page adds no shape of its own. */
+    /* The picker row. The target select wears the panel's own dropdown face
+       (initSelects, ui/select.ts) — on this page's re-pointed tokens it already belongs
+       to the dark bar, so the old page-styled native select is gone (docs/46 P8-2). */
     .term-ctl { display: flex; align-items: center; gap: var(--s2); padding: 4px 2px 7px; flex: none; }
     /* Focus docks the shell-owned app zone into this declared slot instead of stacking an
        empty shell row above the terminal. The divider keeps app controls distinct from the
@@ -570,36 +563,19 @@
     .term-shell-slot { display: none; }
     .term-shell-slot:not(:empty) {
       display: inline-flex; align-items: center; flex: none;
-      margin-left: auto; padding: 4px 2px 7px var(--s2); border-left: 1px solid var(--t-edge);
+      margin-left: auto; padding: 4px 2px 7px var(--s2); border-left: 1px solid var(--sep);
     }
     .term-shell-slot .app-zone { gap: var(--s1); }
-    .term-shell-slot .btn.icon { width: 28px; height: 28px; padding: 0; color: var(--t-dim); }
-    .term-shell-slot .btn.icon:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 8%, transparent); }
+    /* The slot's icon buttons need no restyling since P8-2: the page's re-pointed tokens
+       hand ui.css's own .btn.icon the dim-on-dark register it wore here by hand. */
     body.immersive .term-shell-slot #expandBtn {
-      color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 10%, transparent);
-      box-shadow: inset 0 0 0 1px var(--t-edge);
+      color: var(--text); background: color-mix(in srgb, var(--term-fg) 10%, transparent);
+      box-shadow: inset 0 0 0 1px var(--sep);
     }
-    .term-pick {
-      font-size: var(--f-label); color: var(--t-fg);
-      background: var(--t-bg); border: 1px solid var(--t-edge); border-radius: 7px;
-      padding: 4px 8px; max-width: 360px; text-overflow: ellipsis;
-    }
-    .term-pick:focus { outline: none; border-color: var(--t-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 25%, transparent); }
-    .term-new {
-      background: var(--t-accent); color: #fff; font-weight: var(--w-emph); box-shadow: none;
-      border-radius: 7px; padding: 5px 14px;
-    }
-    .term-new:hover { background: color-mix(in srgb, var(--t-accent) 85%, white); }
-    .term-none { font-size: var(--f-label); color: var(--t-dim); }
-/* The Local shell settings entry beside the picker (docs/15 §2.1): a quiet gear, not a
-   second accent button — Open session stays the bar's one loud action. */
-.term-gear {
-  flex: none; width: 28px; height: 28px; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--t-edge); border-radius: 6px;
-  background: transparent; color: var(--t-dim); cursor: pointer;
-}
-.term-gear:hover { color: var(--t-fg); border-color: var(--t-dim); }
+    .term-none { font-size: var(--f-label); color: var(--text-3); }
+/* The Local shell settings gear beside the picker (docs/15 §2.1) is the library's
+   ghost iconBtn (ui/button.ts) since P8-2 - a quiet gear, not a second accent button;
+   the ? reference button is the same. No page shape of their own is left here. */
 /* kbd: a key is a value you would copy - monospace, hairline, no colour of its own
    (design rule 1). Global tokens: the ? sheet renders outside .term-host. */
 .term-key-body kbd, .term-keys-hint kbd {
@@ -618,33 +594,33 @@
   color: var(--text); }
 .term-key-row > span:last-child { color: var(--text-2); }
 /* The empty state's teaching line: quieter than the hint above it. */
-.term-keys-hint { margin-top: var(--s1) !important; color: var(--t-dim); }
-.term-gear:focus-visible { outline: none; border-color: var(--t-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 25%, transparent); }
+.term-keys-hint { margin-top: var(--s1) !important; color: var(--text-3); }
 /* The clickable "Local shell is off" line in the empty bar (docs/15 §2.1): text that
-   acts, not a button that shouts. */
+   acts, not a button that shouts. The page's own quiet link shape - deliberately not a
+   library button, it is a sentence you can click, not a control. */
 .term-off {
-  font: inherit; font-size: var(--f-label); color: var(--t-accent);
+  font: inherit; font-size: var(--f-label); color: var(--accent);
   background: none; border: none; padding: 0; cursor: pointer;
   text-decoration: underline;
 }
-.term-off:hover { color: var(--t-fg); }
+.term-off:hover { color: var(--text); }
     /* The surface. Flush: xterm draws its own padding, a frame of panel padding here
        is what made the old page read as a form with a TV in it. */
     .term-stage {
       position: relative; flex: 1; min-height: 0;
-      background: var(--t-bg); border: 1px solid var(--t-edge);
+      background: var(--term-bg); border: 1px solid var(--sep);
       border-top: none; border-bottom: none; border-radius: 0;
       overflow: hidden;
     }
     .term-holder { position: absolute; inset: 0; padding: 8px 10px; }
     .term-holder[hidden] { display: none; }
     /* The empty state: a ghost prompt, not an apology box. */
-    .term-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--t-dim); }
-    .term-empty h2 { font-size: var(--f-body); font-weight: var(--w-emph); color: var(--t-fg); margin: 0; }
+    .term-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--text-3); }
+    .term-empty h2 { font-size: var(--f-body); font-weight: var(--w-emph); color: var(--text); margin: 0; }
     .term-empty p { margin: 0; font-size: var(--f-label); }
-    .term-ghost { font-family: var(--mono); font-size: 28px; color: var(--t-dim); display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-    .term-ghost-dollar { color: var(--t-ok); }
-    .term-ghost-cursor { width: 15px; height: 30px; background: var(--t-dim); animation: term-blink 1.1s steps(1) infinite; }
+    .term-ghost { font-family: var(--mono); font-size: 28px; color: var(--text-3); display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .term-ghost-dollar { color: var(--green); }
+    .term-ghost-cursor { width: 15px; height: 30px; background: var(--text-3); animation: term-blink 1.1s steps(1) infinite; }
     @keyframes term-blink { 50% { opacity: 0; } }
     /* The status foot: one quiet line INSIDE the instrument — attached / reconnecting /
        the close reason — with a state dot that answers before the words do. */
@@ -655,45 +631,46 @@
        glued to the status line, the exact seam every tmux bar draws a line on. */
     .term-foot {
       flex: none; display: flex; align-items: center; gap: 8px;
-      font-family: var(--mono); font-size: var(--f-caption); color: var(--t-dim);
-      background: var(--t-bar); border: 1px solid var(--t-edge);
+      font-family: var(--mono); font-size: var(--f-caption); color: var(--text-2);
+      background: var(--bar); border: 1px solid var(--sep);
       border-radius: 0 0 var(--r-card) var(--r-card);
       padding: 5px 12px; min-height: 26px;
     }
     .term-foot[hidden] { display: flex; }
-    .term-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--t-dim); }
-    .term-dot.ok { background: var(--t-ok); }
-    .term-dot.warn { background: var(--t-warn); }
-    .term-dot.bad { background: var(--t-bad); }
+    .term-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+    .term-dot.ok { background: var(--green); }
+    .term-dot.warn { background: var(--amber); }
+    .term-dot.bad { background: var(--red); }
     .term-zoom { margin-left: auto; }   /* the zoom note sits at the right edge, away from the status */
     /* --- docs/22 P0: bell dot, rename input, jump chip, overlay pill ------------------- */
     /* A bell is state, so the tab carries it as a mark beside the label, not a color
-       swap of the whole tab — the active tab must stay identifiable while ringing. */
-    .term-tab-bell { flex: none; color: var(--t-warn); font-size: 9px; line-height: 1; }
-    /* The inline rename input replaces the label span; it wears the surface dark. */
+       swap of the whole tab — the active tab must stay identifiable while ringing.
+       Since P8-2 the mark is the library's heldDot (ui.css), a CSS dot with its words,
+       drawn in place of the tab's name node — nothing for the page to style here. */
+    /* The inline rename input replaces the name span; it wears the surface dark. */
     .term-rename {
       font: inherit; font-size: var(--f-label);
-      color: var(--t-fg); background: var(--t-bg);
-      border: 1px solid var(--t-accent); border-radius: 4px;
+      color: var(--text); background: var(--bg);
+      border: 1px solid var(--accent); border-radius: 4px;
       padding: 1px 4px; width: 9em; height: 19px; outline: none;
     }
     /* The "N new" chip rides the holder's bottom-right corner, one hop from the
        scrollbar thumb it answers to; its down affordance is the chevron sprite (fix-plan #14). */
     .term-jump {
       position: absolute; right: var(--s3); bottom: var(--s2);
-      font-size: var(--f-label); color: var(--t-fg);
-      background: var(--t-bar); border: 1px solid var(--t-edge); border-radius: var(--r-pill);
+      font-size: var(--f-label); color: var(--text);
+      background: var(--bar); border: 1px solid var(--sep); border-radius: var(--r-pill);
       padding: 3px 10px; cursor: pointer; box-shadow: none;
     }
     .term-jump .ic { width: 12px; height: 12px; }
-    .term-jump:hover { border-color: var(--t-accent); }
+    .term-jump:hover { border-color: var(--accent); }
     .term-jump[hidden] { display: none; }
     /* The centered toast pill: resize geometry, the copy scissors, attach states. */
     .term-overlay {
       position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      font-size: var(--f-label); color: var(--t-fg);
-      background: color-mix(in srgb, var(--t-bar) 92%, transparent);
-      border: 1px solid var(--t-edge); border-radius: var(--r-pill);
+      font-size: var(--f-label); color: var(--text);
+      background: color-mix(in srgb, var(--term-bar) 92%, transparent);
+      border: 1px solid var(--sep); border-radius: var(--r-pill);
       padding: 4px 12px; opacity: 0; transition: opacity .18s ease;
       pointer-events: none; user-select: none;
     }
@@ -703,22 +680,22 @@
     "the terminal grew a find field" rather than "a dialog appeared". */
     .term-find {
       display: flex; align-items: center; gap: var(--s2);
-      background: var(--t-bar); border: 1px solid var(--t-edge); border-top: none;
+      background: var(--bar); border: 1px solid var(--sep); border-top: none;
       padding: 4px 10px;
     }
     .term-find[hidden] { display: none; }
     .term-find input {
-      font-family: var(--mono); font-size: var(--f-label); color: var(--t-fg);
-      background: var(--t-bg); border: 1px solid var(--t-edge); border-radius: 6px;
+      font-family: var(--mono); font-size: var(--f-label); color: var(--text);
+      background: var(--bg); border: 1px solid var(--sep); border-radius: 6px;
       padding: 3px 8px; width: 22em; outline: none;
     }
-    .term-find input:focus { border-color: var(--t-accent); }
-    .term-find-count { font-size: var(--f-caption); color: var(--t-dim); min-width: 4.5em; }
+    .term-find input:focus { border-color: var(--accent); }
+    .term-find-count { font-size: var(--f-caption); color: var(--text-3); min-width: 4.5em; }
     .term-find button {
-      background: transparent; color: var(--t-dim); border: none; box-shadow: none;
+      background: transparent; color: var(--text-3); border: none; box-shadow: none;
       border-radius: 5px; padding: 2px 8px; cursor: pointer; font-size: var(--f-label);
     }
-    .term-find button:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 8%, transparent); }
+    .term-find button:hover { color: var(--text); background: var(--hover); }
     .db-hint { color: var(--text-3); font-size: var(--f-body); padding: var(--s4); }
 
     /* --- Jobs schedule builder ------------------------------------------------------------------- */

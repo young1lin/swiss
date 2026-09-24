@@ -50,11 +50,12 @@ import { uiOwnedClasses } from "./styles.js";
    P7-2: every data-*.ts row -> 0 (87 tokens: the five sheets on sheet() + ui/form.ts, buttons on
    btn() / iconBtn() / moreBtn(), the held-writes dot on heldDot(), the object head's title on its
    own .db-title). The tree's total fell to 19, so the "not a blind pass" check below stopped
-   summing the tree and counts a fixed source instead: at P9 the tree is meant to reach 0. */
+   summing the tree and counts a fixed source instead: at P9 the tree is meant to reach 0.
+   P8-2: views/terminal.ts 6 -> 0 and views/terminal-settings.ts 11 -> 0 (the session tabs on
+   objTab() - bell on heldDot() - the picker on the panel's own select face, the bar's buttons
+   on btn()/iconBtn(), both sheets on sheet() + ui/form.ts). Only jobs.ts is left for P9. */
 const FROZEN: Record<string, number> = {
   "views/jobs.ts": 2,
-  "views/terminal-settings.ts": 11,
-  "views/terminal.ts": 6,
 };
 
 const srcDir = path.resolve(import.meta.dirname, "../src");
