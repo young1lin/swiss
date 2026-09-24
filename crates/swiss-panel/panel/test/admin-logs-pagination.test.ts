@@ -22,7 +22,10 @@ import { menuOpen, setMenuOpen } from "../src/ui/menu.js";
    (wireTabBody -> callsPageStep -> loadCalls -> renderCallsOnly) under the FakeNode micro-DOM,
    with a fetch queue the test resolves by hand — the only way to make a stale response land
    after a newer one under Node. Assertions never trust a bare logsBody string: they check
-   state, issued requests, painted tabbody HTML and the patched pager chrome. */
+   state, issued requests, painted tabbody HTML and the patched pager chrome.
+   It stays on the micro-DOM on purpose (docs/46 P7-3, where the other three menu suites moved
+   to happy-dom): its assertions count paints, error strips and focus calls on FakeNode, which a
+   real DOM does not record. */
 
 /* h()/frag() branch on the global Node class (docs/37 R5); under this micro-DOM it is this
    stub, so a FakeNode IS a Node to the builder. */
@@ -33,7 +36,15 @@ class FakeNode extends NodeStub {
   dataset: Record<string, string> = {};
   className = "";
   _text = "";
-  get textContent(): string { return this._text; }
+  // Set directly, or read back from the children the way a real DOM does: a text child is
+  // { text } (createTextNode below) and an element child answers for itself. h() builds a menu
+  // row's word as a text child (docs/46 P7-3), so the menu assertions read it through here.
+  get textContent(): string {
+    return this._text || this.children.map((c) => {
+      const t = (c as unknown as { text?: string }).text;
+      return t != null ? t : c.textContent;
+    }).join("");
+  }
   set textContent(v: string) {
     if (v === "") { this.children = []; this._html = ""; this._text = ""; this.paints.push(""); return; }
     this._text = v; this.children = [{ text: v } as unknown as FakeNode];
