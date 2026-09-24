@@ -265,6 +265,8 @@
     .rail-btn:hover { background: var(--hover); color: var(--text); }
     .rail-btn[aria-current="true"] { background: var(--hover); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
     .grow { flex: 1; }
+    /* Rule 1: every number that sits in a column has figures of one width. */
+    .tnum { font-variant-numeric: tabular-nums; }
     /* The bar's readouts are one line of text in one voice (docs/39 S5): the count and the
        memory number share a size and a grey, separated by a middle dot that exists only
        while the count does. The memory value is still mono — a copyable number — but one

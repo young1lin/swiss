@@ -37,6 +37,8 @@ export type { RowCol, RowOpts, SideRowOpts } from "./row.js";
 export { groupNode } from "./group.js";
 export type { GroupNodeOpts, GroupParts } from "./group.js";
 export { seg } from "./seg.js";
+export { objTab } from "./tab.js";
+export type { ObjTabOpts } from "./tab.js";
 export type { SegItem } from "./seg.js";
 export { collapseRuns, dayLabel, fmtMs, relTime, timeLabel, timeline, timelineMeta, timelineToggle } from "./timeline.js";
 export type { TimelineItem, TimelineOpts } from "./timeline.js";

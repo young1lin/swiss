@@ -30,6 +30,7 @@ import { dbIsPg, renderDbTables } from "./data-view.js";
 import { tr, trn } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
 import { heldDot } from "./ui/status.js";
+import { objTab } from "./ui/tab.js";
 
 /* ================================================================================================
    The object tab strip (docs/42 T2).
@@ -258,30 +259,20 @@ function renderDbTabs(): void {
     if (!dbTabVisible(t)) return null;
     const n = dbTabPending(t);
     const filters = t.kind === "table" ? t.filters.length : 0;
-    return h("div", {
-      class: "db-tab" + (i === active ? " sel" : "") + (n ? " dirty" : ""),
-      role: "tab", aria: { selected: i === active ? "true" : "false" },
-      // Roving tabindex, the tablist pattern: one Tab stop for the whole strip, the arrows
-      // move inside it. Without it the only keyboard-reachable control on a tab would be its
-      // own ×, so reaching a tab by keyboard would mean passing the button that closes it.
-      tabIndex: i === active ? 0 : -1,
-      title: dbTabTitle(t), data: { dbtab: String(i) },
-    },
-    iconNode(dbTabGlyph(t)),
-    // The rename (right-click): the name becomes an input for as long as dbTabRenaming
-    // points here (built by dbTabRenameInput — handlers are property-assigned there,
-    // h() strips function-valued props by design).
-    i === dbTabRenaming ? dbTabRenameInput(t, scope) : h("span", { class: "db-tab-name" }, dbTabCardTitle(t, scope)),
-    filters ? h("span", {
-      class: "db-tab-n tnum",
-      title: trn(filters, "dataTabs.nFilters.one", "dataTabs.nFilters.other"),
-    }, String(filters)) : null,
-    n ? heldDot(trn(n, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other")) : null,
-    h("button", {
-      class: "db-tab-close", type: "button",
-      aria: { label: tr("dataTabs.closeTab") }, title: tr("dataTabs.closeTab"),
-      data: { dbtabx: String(i) },
-    }, iconNode("x")));
+    // The library's object tab (docs/46 P8): the shape Terminal's sessions wear too. It carries
+    // the roving tabindex and the close; the rename (right-click) swaps the name for an input
+    // for as long as dbTabRenaming points here (built by dbTabRenameInput - handlers are
+    // property-assigned there, h() strips function-valued props by design).
+    return objTab({
+      name: i === dbTabRenaming ? dbTabRenameInput(t, scope) : dbTabCardTitle(t, scope),
+      selected: i === active,
+      icon: dbTabGlyph(t),
+      title: dbTabTitle(t),
+      data: { dbtab: String(i) },
+      count: filters ? { n: filters, title: trn(filters, "dataTabs.nFilters.one", "dataTabs.nFilters.other") } : null,
+      mark: n ? heldDot(trn(n, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other")) : null,
+      close: { label: tr("dataTabs.closeTab"), data: { dbtabx: String(i) } },
+    });
   });
   // docs/43 M1 D1: the strip is two zones — a scrolling run of cards and a PINNED end.
   // The exits used to sit inside the scroll, so a full strip scrolled its own "+" out of
@@ -325,7 +316,7 @@ function renderDbTabs(): void {
  *  "nearest" never moves a card that is already on screen. */
 function dbScrollActiveTab(): void {
   const strip = $("dbTabStrip");
-  const card = strip ? strip.querySelector<HTMLElement>(".db-tab.sel") : null;
+  const card = strip ? strip.querySelector<HTMLElement>(".otab.sel") : null;
   if (card && typeof card.scrollIntoView === "function") {
     card.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
@@ -534,7 +525,7 @@ document.addEventListener("keydown", (ev: KeyboardEvent): void => {
 function dbFocusActiveTab(): void {
   const strip = $("dbTabStrip");
   if (!strip) return;
-  const card = strip.querySelector<HTMLElement>(".db-tab.sel");
+  const card = strip.querySelector<HTMLElement>(".otab.sel");
   if (card) card.focus();
 }
 

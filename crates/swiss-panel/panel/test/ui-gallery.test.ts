@@ -113,6 +113,7 @@ const SIG: Record<string, string> = {
   sideRow: ".side-row",
   groupNode: ".grp",
   seg: ".seg[role=tablist]",
+  objTab: ".otab[role=tab] > button.otab-close",
   timeline: ".tl .tl-item",
   jsonCodeNode: "pre.jv",
   emptyNode: ".empty",

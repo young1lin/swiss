@@ -545,6 +545,12 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
 - [ ] `.term-page` 的独立色板删掉，改用 `--term-*` token（U12）：暗色舞台比 `--bg` 深一级（`#0b0c0e`），
       亮色主题下舞台 `#17181b`；按钮用面板 accent；状态点用面板的 green / amber / red。
 - [ ] 会话 tab 与 Data 的对象 tab 同一种形状（顶部 2px accent）。
+      实施（P8-1，Data 那一半）：库里新增 `objTab`（`ui/tab.ts` + `ui.css .otab*`），Data 的对象 tab 条迁上去——选中卡顶部 2px accent、
+      与下方表面同底合并；关闭是一个真 `button.otab-close`（角色上不再是 tab 里套一个 span[role=button]），未选中时 hover 才出现；
+      过滤计数是 `.otab-n`，暂存写入圆点是 `heldDot()` 带 aria-label；焦点环画在卡内部（棘轮式的 inset box-shadow），滚动条裁不掉。
+      旧的 `.db-tab` 一块随迁移删掉（`.db-tab-rename` / `-add` / `-more` 留在 views.css，是页面自己的部分）；`tnum` 成为 base.css 的
+      工具类，views.css 里两处写错的 `font-variant-numeric: tnum`（不是合法值，浏览器整条丢弃）改成 `tabular-nums`。
+      Terminal 的会话 tab 待 P8-2 迁移后再勾全。
 - [ ] 目标选择器用面板的 dropdown（`styleSelect`），不再是深色原生 select。
 - [ ] xterm 的 `theme.background` / `cursor` / `selection` 从 `--term-*` 读（挂载时 + 主题切换时），ANSI 16 色不动
       （那是内容，不是 chrome）。

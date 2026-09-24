@@ -335,7 +335,7 @@ describe("opening an object (docs/42 D3, D6)", () => {
     expect(Object.keys(src.updates).length, "the return fetch re-reads rows, it does not re-baseline").toBe(1);
     expect(src.data, "and the page it dropped is back").toBeTruthy();
     expect(
-      document.querySelector("#dbTabStrip .db-tab.sel .db-tab-dot"),
+      document.querySelector("#dbTabStrip .otab.sel .db-tab-dot"),
       "so the card still says this object holds work",
     ).toBeTruthy();
   });
@@ -349,11 +349,11 @@ describe("opening an object (docs/42 D3, D6)", () => {
     tabs.dbOpenTab({ kind: "table", table: "t1", schema: null });
     tabs.dbOpenTab({ kind: "sql" });
     tabs.dbActivateTab(0);
-    document.querySelector<HTMLElement>("#dbTabStrip .db-tab.sel")!.focus();
+    document.querySelector<HTMLElement>("#dbTabStrip .otab.sel")!.focus();
     tabs.dbCycleTab(false); // the arrows / Ctrl+Tab
     expect(dbTab().kind, "the console is in front").toBe("sql");
     expect(
-      document.activeElement && (document.activeElement as HTMLElement).closest(".db-tab.sel"),
+      document.activeElement && (document.activeElement as HTMLElement).closest(".otab.sel"),
       "and the keyboard is still on its card, free to walk on",
     ).toBeTruthy();
     tabs.dbActivateTab(0);
@@ -368,11 +368,11 @@ describe("opening an object (docs/42 D3, D6)", () => {
     tabs.dbOpenTab({ kind: "sql" });
     tabs.renderDbTabs();
     const strip = document.getElementById("dbTabStrip")!;
-    expect(strip.querySelector(".db-tab-name")!.textContent).toBe("Command");
+    expect(strip.querySelector(".otab-name")!.textContent).toBe("Command");
     expect(strip.querySelector("[data-dbtabadd]")!.textContent).toContain("Command");
     Object.assign(dbConnState(), { conns: [dbConn("c", "mysql")], conn: "c" });
     tabs.renderDbTabs();
-    expect(strip.querySelector(".db-tab-name")!.textContent, "and SQL where it is SQL").toBe("SQL");
+    expect(strip.querySelector(".otab-name")!.textContent, "and SQL where it is SQL").toBe("SQL");
   });
 
   it("a repaint keeps the keyboard on the strip, and keeps its hands off everything else", () => {
@@ -381,11 +381,11 @@ describe("opening an object (docs/42 D3, D6)", () => {
     // move, dropped focus to <body> and the NEXT arrow key did nothing.
     tabs.dbOpenTab({ kind: "table", table: "t1", schema: null });
     tabs.dbOpenTab({ kind: "table", table: "t2", schema: null });
-    const card = document.querySelector<HTMLElement>("#dbTabStrip .db-tab.sel");
+    const card = document.querySelector<HTMLElement>("#dbTabStrip .otab.sel");
     card!.focus();
     tabs.renderDbTabs();
     expect(
-      document.activeElement && (document.activeElement as HTMLElement).closest(".db-tab.sel"),
+      document.activeElement && (document.activeElement as HTMLElement).closest(".otab.sel"),
       "the keyboard is back on the active card, not on <body>",
     ).toBeTruthy();
     const box = document.createElement("input");
@@ -476,14 +476,14 @@ describe("the strip's markup (swiss-ui-design §1.3)", () => {
     tabs.renderDbTabs();
     const strip = document.getElementById("dbTabStrip");
     if (!strip) throw new Error("no strip");
-    expect(strip.querySelectorAll(".db-tab").length, "the placeholder is not an object").toBe(0);
+    expect(strip.querySelectorAll(".otab").length, "the placeholder is not an object").toBe(0);
     tabs.dbOpenTab({ kind: "table", table: "orders", schema: null });
     tabs.dbOpenTab({ kind: "sql" });
     tabs.renderDbTabs();
-    const cards = Array.from(strip.querySelectorAll(".db-tab"));
+    const cards = Array.from(strip.querySelectorAll(".otab"));
     expect(cards.length).toBe(2);
     expect(cards[0].querySelector("use")?.getAttribute("href")).toBe("#i-table");
-    expect(cards[0].querySelector(".db-tab-name")?.textContent).toBe("orders");
+    expect(cards[0].querySelector(".otab-name")?.textContent).toBe("orders");
     expect(cards[0].getAttribute("data-dbtab")).toBe("0");
     expect(cards[0].querySelector("[data-dbtabx]"), "every card carries its own close").not.toBeNull();
     expect(cards[1].className, "the active card is the lifted one").toContain("sel");
@@ -500,11 +500,12 @@ describe("the strip's markup (swiss-ui-design §1.3)", () => {
     t.filters = [{ column: "a", op: "=", value: "1" }, { column: "b", op: "=", value: "2" }];
     dirty(t);
     tabs.renderDbTabs();
-    const card = document.querySelector(".db-tab");
+    const card = document.querySelector(".otab");
     if (!card) throw new Error("no card");
-    expect(card.querySelector(".db-tab-n")?.textContent, "this tab shows a subset").toBe("2");
-    expect(card.querySelector(".db-tab-dot"), "and is holding writes").not.toBeNull();
-    expect(card.className).toContain("dirty");
+    expect(card.querySelector(".otab-n")?.textContent, "this tab shows a subset").toBe("2");
+    // The dot is the mark (docs/46 P8: the library tab has no "dirty" class; no rule ever read it),
+    // and it says its count aloud.
+    expect(card.querySelector(".db-tab-dot")?.getAttribute("aria-label"), "and is holding writes").toMatch(/^1 /);
   });
 
   it("the dot and the count are repainted with the readouts they mirror", () => {
@@ -521,7 +522,7 @@ describe("the strip's markup (swiss-ui-design §1.3)", () => {
     expect(document.querySelector(".db-tab-dot"), "and leaves when the bar does").toBeNull();
     t.filters = [{ column: "a", op: "=", value: "1" }];
     filters.renderDbFilters();
-    expect(document.querySelector(".db-tab-n")?.textContent, "the count arrives with the filter row").toBe("1");
+    expect(document.querySelector(".otab-n")?.textContent, "the count arrives with the filter row").toBe("1");
   });
 
   it("no connection, no strip", () => {
@@ -533,7 +534,7 @@ describe("the strip's markup (swiss-ui-design §1.3)", () => {
   it("the delegated click answers close before activate — a × is never an activate", () => {
     for (const t of ["t1", "t2"]) tabs.dbOpenTab({ kind: "table", table: t, schema: null });
     tabs.renderDbTabs();
-    const cards = Array.from(document.querySelectorAll(".db-tab"));
+    const cards = Array.from(document.querySelectorAll(".otab"));
     expect(tabs.dbTabsClick(cards[0])).toBe(true);
     expect(dbActiveIndex(), "the card activates its own index").toBe(0);
     const x = cards[1].querySelector("[data-dbtabx]");
@@ -601,8 +602,8 @@ describe("a full strip still has exits (docs/43 M1)", () => {
     Object.assign(dbConnState(), { tables: [{ schema: "acme_app_dev", name: "orders" }] });
     tabs.dbOpenTab({ kind: "table", table: "orders", schema: "acme_app_dev" });
     tabs.renderDbTabs();
-    const card = document.querySelector<HTMLElement>("#dbTabStrip .db-tab")!;
-    expect(card.querySelector(".db-tab-name")!.textContent).toBe("orders");
+    const card = document.querySelector<HTMLElement>("#dbTabStrip .otab")!;
+    expect(card.querySelector(".otab-name")!.textContent).toBe("orders");
     expect(card.title).toBe("acme_app_dev.orders");
   });
 
@@ -658,7 +659,7 @@ describe("a full strip still has exits (docs/43 M1)", () => {
     const ask = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
     for (const t of ["t1", "t2"]) tabs.dbOpenTab({ kind: "table", table: t, schema: null });
     tabs.renderDbTabs();
-    const cards = Array.from(document.querySelectorAll("#dbTabStrip .db-tab"));
+    const cards = Array.from(document.querySelectorAll("#dbTabStrip .otab"));
     dirty(tableAt(0));
     expect(tabs.dbTabsAuxClick(cards[0])).toBe(true);
     expect(ask, "a dirty card asks before a middle close takes it").toHaveBeenCalled();
@@ -681,7 +682,7 @@ describe("a full strip still has exits (docs/43 M1)", () => {
     tabs.renderDbTabs();
     const end2 = document.querySelector("#dbTabStrip .db-tabstrip-end")!;
     expect((end2.querySelector("[data-dbtabmenu]") as HTMLElement).hidden).toBe(false);
-    expect(strip.querySelector(".db-tabstrip-scroll .db-tab"), "the cards live inside the run").not.toBeNull();
+    expect(strip.querySelector(".db-tabstrip-scroll .otab"), "the cards live inside the run").not.toBeNull();
     expect(end2.querySelector("[data-dbtabadd]"), "the + lives in the pinned end").not.toBeNull();
   });
 });
