@@ -5,6 +5,9 @@
 > "可审计，可以溯源最近七天的内容"、"SKILL.md 关于 swiss 的介绍你自己看看怎么做"。本文先把
 > 代码里的现状说清（§0），再定契约（§1），再列工作项（§2）和验收（§3）。docs/34 是 remote 的
 > 总契约，本文只改它没说的和说错的地方。
+> 后续拆分：本篇 S1 记录的是当时的一份 skill；现有 remote 内容在
+> `src/skill_assets/remote/SKILL.md`（名称 `swiss-remote`），`src/skill_assets/SKILL.md`
+> 是安装与本地检查用的 `swiss`。`swiss skill install` 将两份一起安装。
 
 ## 0. 现状（读代码得出，逐条给 file:line）
 
