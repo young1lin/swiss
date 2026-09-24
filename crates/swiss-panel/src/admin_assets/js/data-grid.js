@@ -389,14 +389,17 @@ function dbCopyChecked()       {
 // closeout audit).
 const dbDataReq = dbReqGuard();
 
-async function dbLoadData(keepOffset          , keepEdits          )                {
+async function dbLoadData(keepOffset          , keepEdits          , quiet          )                {
   const c = dbConn();
   const d = dbTab();
   if (d.kind !== "table") return; // a key tab has no row page to load
   if (!c.conn || !d.table) return;
   if (!keepOffset) d.offset = 0;
-  d.loading = true;
-  renderDbToolbar(); renderDbGrid();
+  // docs/47 D5: a quiet re-read leaves the page it already holds on screen - no spinner.
+  if (!quiet) {
+    d.loading = true;
+    renderDbToolbar(); renderDbGrid();
+  }
   let q = "/api/db/" + encodeURIComponent(c.conn) + "/data?table=" + encodeURIComponent(d.table) +
     "&offset=" + d.offset + "&limit=" + d.pageSize;
   if (d.schema) q += "&schema=" + encodeURIComponent(d.schema);
@@ -405,6 +408,10 @@ async function dbLoadData(keepOffset          , keepEdits          )            
   const token = dbDataReq.issue();
   const j = await apiJson               (q);
   if (!dbDataReq.accepts(token)) return; // superseded: a newer load owns the pane and the flag
+  // The quiet re-read repaints only a page that MOVED: the same rows leave the painted grid -
+  // its scroll, selection and focus - exactly as they are. A tab that left the front meanwhile
+  // re-reads on its return, so its answer is not this pane's to paint.
+  if (quiet && (!j || d !== dbTab() || dbSamePage(d.data, j))) return;
   d.loading = false;
   if (!j) { renderDbToolbar(); renderDbGrid(); return; }
   // A Commit that emptied the last page (or a filter that shrank the set) can leave this
@@ -430,6 +437,13 @@ async function dbLoadData(keepOffset          , keepEdits          )            
   const names = d.data?.columns.map((c             )         => { return c.name; });
   d.filters = d.filters.filter((f              )          => { return names.includes(f.column); });
   renderDbToolbar(); renderDbGrid(); renderDbBar(); renderDbFilters();
+}
+
+/** Would this answer paint the page already held? Rows, columns, count and editability - the
+ *  things the grid draws. Pure. */
+function dbSamePage(a                      , b               )          {
+  return !!a && a.total === b.total && a.editable === b.editable &&
+    JSON.stringify(a.columns) === JSON.stringify(b.columns) && JSON.stringify(a.rows) === JSON.stringify(b.rows);
 }
 
 /** docs/42 D4's return fetch: the page a tab dropped when it went to the background, re-read at
