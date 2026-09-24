@@ -309,9 +309,15 @@ mod tests {
     //
     // env::set_var is unsafe in edition 2024 because it races other threads; each test below
     // uses a variable name unique to this module and tests run on their own threads, so the
-    // mutation is confined and sound.
+    // mutation is confined and sound. TOKEN_ENV is the exception the rename left behind: two
+    // tests must write the well-known name, so they take TOKEN_ENV_LOCK from set_var to
+    // remove_var - otherwise one test's cleanup can drop the other's pin between its set and
+    // its load, and the load resolves the sealed store's real token instead.
+    use std::sync::Mutex;
     use super::*;
     use serde_json::json;
+
+    static TOKEN_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn set_env(key: &str, value: &str) {
         unsafe { std::env::set_var(key, value) };
@@ -463,10 +469,12 @@ mod tests {
         // not quietly authenticate with a token pinned under the well-known one.
         let dir = temp_dir("token-custom");
         let p = write_cfg(&dir, json!({ "tokenEnv": "MINE_TOKEN", "servers": {} }));
+        let _guard = TOKEN_ENV_LOCK.lock().unwrap();
         set_env(TOKEN_ENV, "not-mine");
         let err = load_config(&p).unwrap_err();
         assert!(err.contains("MINE_TOKEN"), "{err}");
         remove_env(TOKEN_ENV);
+        drop(_guard);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -477,8 +485,17 @@ mod tests {
         let dir = temp_dir("token-legacy");
         let p = write_cfg(&dir, json!({ "tokenEnv": TOKEN_ENV, "servers": {} }));
         set_env("MCP_GATEWAY_TOKEN", "legacy-pin");
+        // load_config injects the sealed env store of the REAL home before resolving the token,
+        // and a dev machine's store holds the live SWISS_TOKEN the gateway bootstrapped there.
+        // Pin the name to an EMPTY value: process env wins over the overlay, and token_lookup
+        // counts empty as missing - so the load fails for the reason under test, on any machine.
+        // The lock keeps the sibling token test from removing the pin mid-load.
+        let _guard = TOKEN_ENV_LOCK.lock().unwrap();
+        set_env(TOKEN_ENV, "");
         let err = load_config(&p).unwrap_err();
         assert!(err.contains(TOKEN_ENV), "{err}");
+        remove_env(TOKEN_ENV);
+        drop(_guard);
         remove_env("MCP_GATEWAY_TOKEN");
         std::fs::remove_dir_all(&dir).ok();
     }
