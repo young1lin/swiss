@@ -58,17 +58,23 @@ export interface IconBtnOpts {
   pressed?: boolean;
   ghost?: boolean;
   disabled?: boolean;
+  /** Present but not shown yet, as btn({ hidden }). */
+  hidden?: boolean;
 }
 
 export function iconBtn(icon: string, label: string, o: IconBtnOpts = {}): HTMLButtonElement {
   return h("button", {
     type: "button",
     class: "btn icon" + (o.ghost ? " ghost" : ""),
-    id: o.id, title: o.title ?? label, disabled: o.disabled, data: o.data,
+    id: o.id, title: o.title ?? label, disabled: o.disabled, hidden: o.hidden, data: o.data,
     aria: { label, pressed: o.pressed == null ? null : String(o.pressed) },
   }, iconNode(icon));
 }
 
-export function moreBtn(label: string, o: { id?: string; data?: AttrMap } = {}): HTMLButtonElement {
-  return iconBtn("ellipsis", label, { id: o.id, data: o.data, ghost: true });
+/** A ⋯ always opens a menu, so it says so (aria-haspopup): a screen reader announces the menu
+ *  before the click, and every caller gets it without remembering to. */
+export function moreBtn(label: string, o: { id?: string; data?: AttrMap; hidden?: boolean } = {}): HTMLButtonElement {
+  const b = iconBtn("ellipsis", label, { id: o.id, data: o.data, hidden: o.hidden, ghost: true });
+  b.setAttribute("aria-haspopup", "menu");
+  return b;
 }

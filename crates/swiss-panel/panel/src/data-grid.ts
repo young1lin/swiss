@@ -32,6 +32,7 @@ import { h } from "./h.js";
 import { DB_PAGE_SIZES, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbResultKey } from "./data-view.js";
 import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
+import { btn, iconBtn, moreBtn } from "./ui/button.js";
 import { popupMenu } from "./ui/menu.js";
 import { seg } from "./ui/seg.js";
 
@@ -590,12 +591,9 @@ function dbMoreItemsForActivity(): MenuItem[] {
   ];
 }
 
-/** One ellipsis button whose menu is built at CLICK time from live state. */
+/** One ellipsis button whose menu is built at CLICK time from live state: the library's ⋯. */
 function dbMoreButton(build: (more: HTMLElement) => MenuItem[]): HTMLElement {
-  const b = h("button", {
-    class: "btn icon", type: "button",
-    title: tr("dataView.moreActions"), aria: { haspopup: "menu" },
-  }, iconNode("ellipsis"));
+  const b = moreBtn(tr("dataView.moreActions"));
   b.onclick = (ev: MouseEvent): void => {
     ev.stopPropagation();
     popupMenu(b.getBoundingClientRect(), build(b));
@@ -635,13 +633,10 @@ function renderDbStatus(): void {
     const to = t.offset + t.data.rows.length;
     bar.appendChild(el("span", "db-pageinfo",
       t.data.total ? tr("dataGrid.bT", { a: first.toLocaleString(locale()), b: to.toLocaleString(locale()), t: t.data.total.toLocaleString(locale()) }) : tr("dataGrid.n0Rows")));
-    bar.appendChild(h("button", {
-      class: "btn icon", title: tr("dataGrid.previousPage"), disabled: t.offset === 0, data: { pg: "prev" },
-    }, iconNode("chevron-left")));
-    bar.appendChild(h("button", {
-      class: "btn icon", title: tr("dataGrid.nextPage"),
+    bar.appendChild(iconBtn("chevron-left", tr("dataGrid.previousPage"), { disabled: t.offset === 0, data: { pg: "prev" } }));
+    bar.appendChild(iconBtn("chevron-right", tr("dataGrid.nextPage"), {
       disabled: t.data.nextPage != null ? !t.data.nextPage : to >= t.data.total, data: { pg: "next" },
-    }, iconNode("chevron-right")));
+    }));
     // No editability sentence here (docs/46 §3.7): the head's meta line already says it in the
     // server's own words, and the same sentence twice on one screen read as two facts.
   } else if (t.kind === "sql" && t.sqlResult) {
@@ -667,11 +662,11 @@ function renderDbToolbar(): void {
   const left = el("div", "db-head-left");
   if (t.kind === "activity") {
     const conn0 = d.conns.find((c: ApiDbConnectionRow): boolean => { return c.name === d.conn; });
-    left.appendChild(el("h2", "db-title pane-title", tr("dataActivity.title")));
+    left.appendChild(el("h2", "db-title", tr("dataActivity.title")));
     left.appendChild(el("div", "db-meta", (conn0 ? conn0.label : d.conn || "") + " · " + tr("dataActivity.refreshesWhileOpen")));
   } else if (t.kind === "sql" && t.sqlResult) {
     const res = t.sqlResult;
-    left.appendChild(el("h2", "db-title pane-title", res.explained ? tr("dataGrid.executionPlan") : (dbIsRedis() ? tr("dataGrid.commandReply") : tr("dataGrid.sqlResults"))));
+    left.appendChild(el("h2", "db-title", res.explained ? tr("dataGrid.executionPlan") : (dbIsRedis() ? tr("dataGrid.commandReply") : tr("dataGrid.sqlResults"))));
     left.appendChild(el("div", "db-meta", trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other") +
       (res.note ? tr("dataGrid.note", { note: res.note }) : "") +
       (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
@@ -684,7 +679,7 @@ function renderDbToolbar(): void {
         }), String(t.resultTab), { key: "rtab" })));
     }
   } else if (t.kind === "table" && t.data) {
-    left.appendChild(el("h2", "db-title pane-title", (t.data.schema ? t.data.schema + "." : "") + t.data.table));
+    left.appendChild(el("h2", "db-title", (t.data.schema ? t.data.schema + "." : "") + t.data.table));
     const bits = [tr("dataGrid.nRows2", { n: t.data.total.toLocaleString(locale()) })];
     const pkCols0 = t.data.primaryKey || [];
     bits.push(t.data.editable
@@ -692,11 +687,11 @@ function renderDbToolbar(): void {
       : (t.data.editNote || tr("dataGrid.browsingOnly")));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
   } else if (t.kind === "sql") {
-    left.appendChild(el("h2", "db-title pane-title", dbIsRedis() ? tr("dataGrid.command") : tr("dataSql.sql")));
+    left.appendChild(el("h2", "db-title", dbIsRedis() ? tr("dataGrid.command") : tr("dataSql.sql")));
     left.appendChild(el("div", "db-meta", dbIsRedis() ? tr("dataGrid.commandConsoleTitle") : tr("dataGrid.sqlConsoleTitle")));
   } else if (dbIsRedis()) {
     const kt = t.kind === "key" ? t : null;
-    left.appendChild(el("h2", "db-title pane-title", kt && kt.redisKey ? kt.redisKey : tr("dataGrid.keys")));
+    left.appendChild(el("h2", "db-title", kt && kt.redisKey ? kt.redisKey : tr("dataGrid.keys")));
     const conn2 = d.conns.find((c: ApiDbConnectionRow): boolean => { return c.name === d.conn; });
     left.appendChild(el("div", "db-meta",
       (conn2 ? conn2.label : "") +
@@ -704,7 +699,7 @@ function renderDbToolbar(): void {
       tr("dataGrid.browsingEditValuesPlace")));
   } else {
     const table = t.kind === "table" ? t.table : null;
-    left.appendChild(el("h2", "db-title pane-title", tr("dataGrid.data")));
+    left.appendChild(el("h2", "db-title", tr("dataGrid.data")));
     left.appendChild(el("div", "db-meta", d.conn ? (table ? tr("dataGrid.loading") : tr("dataGrid.selectTableLeft")) : tr("dataGrid.databaseMcpRegistered")));
   }
   head.appendChild(left);
@@ -719,28 +714,22 @@ function renderDbToolbar(): void {
   if (tt && tt.data && !nosql) dbRenderTabs(ctl);
   if (tt && tt.data) {
     if (tt.data.editable) {
-      ctl.appendChild(h("button", {
-        class: "btn", title: tr("dataGrid.bufferNewRowInserted"), data: { tb: "addrow" },
-      }, tr("dataGrid.row")));
+      ctl.appendChild(btn(tr("dataGrid.row"), { title: tr("dataGrid.bufferNewRowInserted"), data: { tb: "addrow" } }));
     }
     ctl.appendChild(dbMoreButton((more: HTMLElement): MenuItem[] => { return dbMoreItemsForTable(more, tt); }));
   } else if (t.kind === "sql") {
-    ctl.appendChild(h("button", {
-      class: "btn", id: "dbSqlRun", title: tr("dataView.statementsSplitCtrlEnter"),
-    }, tr("dataView.run")));
+    ctl.appendChild(btn(tr("dataView.run"), { id: "dbSqlRun", title: tr("dataView.statementsSplitCtrlEnter") }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForSql(); }));
   } else if (t.kind === "key" && t.redisValue) {
     const cfg = DB_REDIS_TYPES[t.redisValue.type];
     if (cfg && cfg.ins.length) {
-      ctl.appendChild(h("button", {
-        class: "btn", type: "button", title: tr("dataBrowsers.bufferNewThingApplied", { thing: tr(REDIS_THING_KEYS[cfg.thing] ?? cfg.thing) }), data: { radd: "" },
-      }, tr(cfg.add)));
+      ctl.appendChild(btn(tr(cfg.add), {
+        title: tr("dataBrowsers.bufferNewThingApplied", { thing: tr(REDIS_THING_KEYS[cfg.thing] ?? cfg.thing) }), data: { radd: "" },
+      }));
     }
     ctl.appendChild(dbMoreButton((more: HTMLElement): MenuItem[] => { return dbMoreItemsForKey(more); }));
   } else if (t.kind === "activity") {
-    ctl.appendChild(h("button", {
-      class: "btn", title: tr("dataActivity.title"), data: { actrefresh: "" },
-    }, tr("dataGrid.refresh")));
+    ctl.appendChild(btn(tr("dataGrid.refresh"), { title: tr("dataActivity.title"), data: { actrefresh: "" } }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForActivity(); }));
   } else objMore = false;
   head.appendChild(ctl);
@@ -995,7 +984,7 @@ function renderDbGrid(): void {
     const tdh = el("td", "db-grid-hiddenall");
     const inner = el("div");
     inner.appendChild(el("span", "", tr("dataGrid.everyColumnTHidden", { t: (d.schema ? d.schema + "." : "") + d.table })));
-    inner.appendChild(h("button", { class: "btn", data: { colsall: "" } }, tr("dataGrid.showAllColumns")));
+    inner.appendChild(btn(tr("dataGrid.showAllColumns"), { data: { colsall: "" } }));
     tdh.appendChild(inner);
     trh.appendChild(tdh);
     tbody.appendChild(trh);

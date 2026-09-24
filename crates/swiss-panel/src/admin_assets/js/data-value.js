@@ -15,10 +15,11 @@
  */
 
 import { $ } from "./util.js";
-import { fill, h } from "./h.js";
+import { h } from "./h.js";
                                      
 import { locale, tr } from "./i18n.js";
-import { closeSheet } from "./ui/sheet.js";
+import { btn } from "./ui/button.js";
+import { closeSheet, sheet, showSheet } from "./ui/sheet.js";
 
 /* --- value viewer sheet (docs/22 W5.3) ----------------------------------------------------------- */
 /* A cell is a 30px row; its content is not. "View value\u2026" opens the full value in a
@@ -128,18 +129,15 @@ function dbOpenValueSheet(column        , value         , where                 
   } else {
     body = h("pre", { class: "db-val-pre" }, String(value));
   }
-  // docs/37 R5: node sheet, painted AFTER the host is unhidden (first paint never lands in
-  // a hidden box); per-open button wiring stays, per the sheet idiom.
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("dataValue.viewValue") } },
-      h("div", { class: "sheet-head" },
-        h("div", { class: "db-cell-head" },
-          h("h2", null, column),
-          h("span", { class: "db-cell-where" }, where || ""))),
-      h("div", { class: "sheet-body" }, body),
-      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn primary", id: "dbValClose" }, tr("dataValue.close")))));
+  // The library's sheet (docs/46 P7): showSheet unhides the host before it paints, the sub
+  // names where the value came from. Per-open button wiring stays, per the sheet idiom.
+  showSheet(sheet({
+    title: column,
+    sub: where || undefined,
+    label: tr("dataValue.viewValue"),
+    body,
+    foot: btn(tr("dataValue.close"), { kind: "primary", id: "dbValClose" }),
+  }));
   const onKey = (e               )       => {
     if (e.key === "Escape") { closeValueSheet(); }
   };

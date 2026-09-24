@@ -43,6 +43,8 @@ import { dbConn, dbIsMounted, dbSqlTab, dbTab, dbTabs, mountDbView } from "./db-
 // functions, never at module scope.
 import { dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsContext, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
+import { btn, moreBtn } from "./ui/button.js";
+import { hint } from "./ui/form.js";
 import { popupMenu } from "./ui/menu.js";
 import { tag } from "./ui/status.js";
 
@@ -242,7 +244,7 @@ function renderDbView(): void {
         // Pane-level actions live behind one ⋯ next to the head (docs/22 W3.2); the Activity
         // monitor is the first. Shown only on a SQL connection (redis has no sessions) and only
         // while the open object has no ⋯ of its own - renderDbToolbar decides (docs/46 P7).
-        h("button", { class: "btn icon", id: "dbMore", type: "button", title: tr("dataView.morePaneActions"), aria: { haspopup: "menu" }, hidden: true }, iconNode("ellipsis"))),
+        moreBtn(tr("dataView.morePaneActions"), { id: "dbMore", hidden: true })),
       h("div", { class: "db-filters", id: "dbFilters" }),
       // The console is the sql tab's BODY now (docs/42 T2), not a block toggled over the
       // pane: renderDbGrid unhides it for a sql tab and hides it for every other kind.
@@ -256,7 +258,7 @@ function renderDbView(): void {
             placeholder: tr("dataView.selectUpdateDeleteStatements"),
           })),
         h("div", { class: "db-console-row" },
-          h("span", { class: "hint", id: "dbSqlHint" }, tr("dataView.statementsSplitCtrlEnter")))),
+          hint(tr("dataView.statementsSplitCtrlEnter"), { id: "dbSqlHint" }))),
       h("div", { class: "db-grid-wrap", id: "dbGridWrap" }),
       // docs/43 M4: the STATUS bar — pager, page size, elapsed, editability, connection —
       // a second line under the pane body, separate from .db-bar (the commit bar, whose
@@ -537,13 +539,13 @@ function dbSyncKind(): void {
   // on every mount and switch, so the pane's ⋯ never showed and a Redis key list's search said
   // "Filter tables" (found on the docs/46 P7 walk). Explain and Format are overflow rows now,
   // and dbMoreItemsForSql leaves them out for a Redis command.
-  const grep = $<HTMLInputElement>("dbGrep"), sql = $<HTMLTextAreaElement>("dbSql"), hint = $("dbSqlHint");
-  if (!grep || !sql || !hint) return;
+  const grep = $<HTMLInputElement>("dbGrep"), sql = $<HTMLTextAreaElement>("dbSql"), sqlHint = $("dbSqlHint");
+  if (!grep || !sql || !sqlHint) return;
   if (dbIsRedis()) {
     grep.placeholder = tr("dataView.filterKeys"); grep.setAttribute("aria-label", tr("dataView.filterKeys"));
     grep.title = tr("dataView.filterKeysScanPattern");
     sql.placeholder = tr("dataView.redisConsolePlaceholder");
-    hint.textContent = tr("dataView.redisConsoleHint");
+    sqlHint.textContent = tr("dataView.redisConsoleHint");
   } else {
     // The placeholder IS the grammar (docs/22 W1.6): comma AND, | OR, * wildcard.
     grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", tr("dataView.filterTables"));
@@ -551,7 +553,7 @@ function dbSyncKind(): void {
     sql.placeholder = tr("dataView.selectUpdateDeleteStatements");
     // docs/22 W4.3: the ; split answers one result tab per statement; the blank-line block
     // rule (W1.8) still decides what a single Run covers.
-    hint.textContent = tr("dataView.blankLineStartsNew");
+    sqlHint.textContent = tr("dataView.blankLineStartsNew");
   }
   // The pane's ⋯ (#dbMore) is renderDbToolbar's to show: it depends on the open object too,
   // and every caller of this repaints the toolbar right after.
@@ -939,10 +941,7 @@ function renderDbTables(): void {
           ? tr("dataView.keysShownOfTotal", { shown: shown.toLocaleString(locale()), total: Number(rr.total).toLocaleString(locale()) })
           : trn(shown, "dataView.nKeys.one", "dataView.nKeys.other", { n: shown.toLocaleString(locale()) })));
       if (rr && !rr.done) {
-        const more = el("button", "btn", tr("dataView.more"));
-        more.title = tr("dataView.continueScan");
-        more.dataset.keysmore = "";
-        foot2.appendChild(more);
+        foot2.appendChild(btn(tr("dataView.more"), { title: tr("dataView.continueScan"), data: { keysmore: "" } }));
       }
     }
     return;

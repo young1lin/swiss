@@ -27,11 +27,12 @@
                                                                                                
                                                       
                                                  
-import { $, apiJson, dbReqGuard, el, iconNode } from "./util.js";
+import { $, apiJson, dbReqGuard, el } from "./util.js";
 import { h } from "./h.js";
 import { renderDbGrid } from "./data-grid.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tr, trn } from "./i18n.js";
+import { btn } from "./ui/button.js";
 // Cycle with data-browsers.js (it renders this view's branch; this module reuses its
 // display decode and cell menu): function declarations, runtime-only use — the same
 // shape as the data-edit.js import over there.
@@ -200,9 +201,9 @@ export function dbRenderStream(wrap             , v                 )       {
   wrap.appendChild(tbl);
   if (t.redisStreamGroupsOpen) dbStreamGroupsTable(wrap, t);
   if (t.redisStreamMore) {
-    const btn = h("button", { class: "btn", type: "button" }, tr("dataStream.loadEarlier"));
-    btn.onclick = ()       => { void dbStreamLoadEarlier(); };
-    wrap.appendChild(btn);
+    const earlier = btn(tr("dataStream.loadEarlier"));
+    earlier.onclick = ()       => { void dbStreamLoadEarlier(); };
+    wrap.appendChild(earlier);
   } else {
     wrap.appendChild(el("div", "db-hint", tr("dataStream.start")));
   }
@@ -397,10 +398,8 @@ async function dbStreamJumpLatest()                {
  *  one row in the value header's own vocabulary, painted above the table. */
 function dbStreamFollowBar(wrap             , t          )       {
   const bar = el("div", "db-detail-meta");
-  const followBtn = h("button", {
-    class: "btn", type: "button",
-    title: t.redisStreamFollow ? tr("dataStream.pause") : tr("dataStream.follow"),
-  }, t.redisStreamFollow ? tr("dataStream.pause") : tr("dataStream.follow"));
+  const followWord = t.redisStreamFollow ? tr("dataStream.pause") : tr("dataStream.follow");
+  const followBtn = btn(followWord, { title: followWord });
   followBtn.onclick = ()       => {
     t.redisStreamFollow = !t.redisStreamFollow;
     if (t.redisStreamFollow) {
@@ -440,7 +439,9 @@ function dbStreamFollowBar(wrap             , t          )       {
       ? tr("dataStream.pendingNewOver", { n: STREAM_ROW_CAP })
       : trn(pendN, "dataStream.pendingNew.one", "dataStream.pendingNew.other"))
     : "");
-  const pill = h("button", { class: "btn db-stream-pill", type: "button" }, iconNode("arrow-up"), " ", pillN);
+  // The count is its own span: the poller rewrites it in place (dbStreamPillN) between renders.
+  const pill = btn("", { icon: "arrow-up", data: { stream: "pill" } });
+  pill.appendChild(pillN);
   pill.hidden = pendN === 0;
   pill.onclick = ()       => {
     const cur = dbTab();
@@ -460,8 +461,7 @@ function dbStreamFollowBar(wrap             , t          )       {
   dbStreamPillN = pillN;
   // The gap bar: a truncated live-edge page skipped a middle chunk; the honest move is
   // reopening the latest window, not splicing two ends into a lie.
-  const gap = h("button", { class: "btn db-stream-gap", type: "button" },
-    tr("dataStream.gapSkipped") + " · " + tr("dataStream.jumpLatest"));
+  const gap = btn(tr("dataStream.gapSkipped") + " · " + tr("dataStream.jumpLatest"), { data: { stream: "gap" } });
   gap.hidden = !t.redisStreamGap;
   gap.onclick = ()       => { void dbStreamJumpLatest(); };
   bar.appendChild(gap);
@@ -473,7 +473,7 @@ function dbStreamFollowBar(wrap             , t          )       {
   bar.appendChild(el("span", "grow"));
   const groupsLabel = tr("dataStream.groups")
     + (t.redisStreamGroups ? " (" + String(t.redisStreamGroups.length) + ")" : "");
-  const groupsBtn = h("button", { class: "btn", type: "button" }, groupsLabel);
+  const groupsBtn = btn(groupsLabel);
   groupsBtn.onclick = ()       => {
     t.redisStreamGroupsOpen = !t.redisStreamGroupsOpen;
     // Opening the fold FETCHES (found on the 2026-09-23 walk): the groups answer used to

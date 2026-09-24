@@ -81,6 +81,7 @@ const SIG: Record<string, string> = {
   moreBtn: ".btn.icon.ghost use[href=\"#i-ellipsis\"]",
   iconNode: "svg.ic > use",
   dot: ".dot",
+  heldDot: ".db-tab-dot",
   tag: ".tag",
   spinner: ".spin",
   note: ".note",

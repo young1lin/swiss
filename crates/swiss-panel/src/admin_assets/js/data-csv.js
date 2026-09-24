@@ -16,7 +16,7 @@
 
                                                                       
 import { $, apiJson, el, errText, targetEl, toast } from "./util.js";
-import { fill, h } from "./h.js";
+import { h } from "./h.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
 import { dbOpenValueSheet } from "./data-value.js";
@@ -25,7 +25,10 @@ import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
                                              
 import { popupMenu } from "./ui/menu.js";
-import { closeSheet } from "./ui/sheet.js";
+import { btn } from "./ui/button.js";
+import { hint } from "./ui/form.js";
+import { seg } from "./ui/seg.js";
+import { closeSheet, sheet, showSheet } from "./ui/sheet.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
 /* Paste or upload CSV, map its columns to table columns, preview the first rows, then commit.
@@ -66,32 +69,28 @@ function dbOpenImport()       {
   if (dbPending() && !dbOkToDrop()) return;
   let header           = [], lines           = [], mapping                    = [];
   let mode = "insert"; // docs/22 W4.5: "insert" | "upsert" — the statement form the commit uses
-  // docs/37 R5: node sheet, painted AFTER the host is unhidden; the per-open wiring below
-  // stays (the sheet idiom — parse/paint/setMode close over the mapping state).
-  $("sheet").hidden = false;
-  // docs/43 M2 fixup: sheet-head/body/foot are SIBLINGS here. A missing paren on the h2
-  // line used to nest body and foot INSIDE the head band, so the whole dialog was laid out
-  // by .sheet-head's rules on every dialect (mysql and pg alike) — the "broken import
-  // styling" report. The sheet idiom (add-sheet.ts) is the reference shape.
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("dataCsv.importCsv") } },
-      h("div", { class: "sheet-head" },
-        h("h2", null, tr("dataCsv.importCsvIntoT", { t: (d.schema ? d.schema + "." : "") + d.table  }))),
-      h("div", { class: "sheet-body" },
-        h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
-          h("div", { class: "seg", role: "tablist", id: "dbImpMode", style: "margin-bottom:0" },
-            h("button", { type: "button", role: "tab", data: { mode: "insert" }, aria: { selected: "true" } }, tr("dataCsv.insert")),
-            h("button", { type: "button", role: "tab", data: { mode: "upsert" }, aria: { selected: "false" } }, tr("dataCsv.upsert"))),
-          h("span", { class: "hint", id: "dbImpModeSay" }, tr("dataCsv.everyRowInsertsDuplicate"))),
-        h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
-          h("input", { type: "file", id: "dbImpFile", accept: ".csv,text/csv", style: "width:auto" }),
-          h("span", { class: "hint" }, tr("dataCsv.pasteBelowFirstRow"))),
-        h("textarea", { id: "dbImpText", placeholder: tr("dataCsv.idNameN1Alice"), style: "min-height:120px" }),
-        h("div", { id: "dbImpMap", style: "margin-top:var(--s3)" }),
-        h("div", { id: "dbImpPreview", style: "margin-top:var(--s3)" })),
-      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "dbImpCancel" }, tr("dataCsv.cancel")),
-        h("button", { class: "btn primary", id: "dbImpRun" }, tr("dataCsv.importOneTransaction")))));
+  // The library's sheet (docs/46 P7): showSheet unhides the host before it paints, and head,
+  // body and foot are siblings by construction - a missing paren once nested body and foot
+  // inside the head band (docs/43 M2 fixup). The mode switch is seg(). The sheet body's grid
+  // spaces its children, so the mapping and preview boxes stay hidden while they are empty
+  // instead of holding two empty gaps. The per-open wiring below stays (parse / paint /
+  // setMode close over the mapping state).
+  showSheet(sheet({
+    title: tr("dataCsv.importCsvIntoT", { t: (d.schema ? d.schema + "." : "") + d.table  }),
+    label: tr("dataCsv.importCsv"),
+    body: [
+      h("div", { class: "db-console-row" },
+        seg([{ id: "insert", label: tr("dataCsv.insert") }, { id: "upsert", label: tr("dataCsv.upsert") }], "insert", { key: "mode", id: "dbImpMode" }),
+        hint(tr("dataCsv.everyRowInsertsDuplicate"), { id: "dbImpModeSay" })),
+      h("div", { class: "db-console-row" },
+        h("input", { type: "file", id: "dbImpFile", accept: ".csv,text/csv", style: "width:auto" }),
+        hint(tr("dataCsv.pasteBelowFirstRow"))),
+      h("textarea", { id: "dbImpText", spellcheck: false, placeholder: tr("dataCsv.idNameN1Alice"), style: "min-height:120px" }),
+      h("div", { id: "dbImpMap", hidden: true }),
+      h("div", { id: "dbImpPreview", hidden: true }),
+    ],
+    foot: [btn(tr("dataCsv.cancel"), { id: "dbImpCancel" }), btn(tr("dataCsv.importOneTransaction"), { kind: "primary", id: "dbImpRun" })],
+  }));
 
   function parse()       {
     const text = $                  ("dbImpText").value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -108,7 +107,8 @@ function dbOpenImport()       {
   function paint()       {
     const mapBox = $("dbImpMap");
     mapBox.textContent = "";
-    if (!header.length) return;
+    mapBox.hidden = !header.length;
+    if (!header.length) { preview(); return; }
     const names = (d.data?.columns.map((c             )         => { return c.name; }) ?? []);
     header.forEach((h        , i        )       => {
       const row = el("div", "db-console-row");
@@ -135,16 +135,17 @@ function dbOpenImport()       {
   function preview()       {
     const box = $("dbImpPreview");
     box.textContent = "";
+    box.hidden = !header.length;
     if (!header.length) return;
     const mapped         = mapping.filter(Boolean).length;
-    if (!mapped) { box.appendChild(el("div", "hint", tr("dataCsv.noColumnsMapped"))); return; }
+    if (!mapped) { box.appendChild(hint(tr("dataCsv.noColumnsMapped"))); return; }
     const sample = lines.slice(0, 3).map((l        )                          => {
       const cells = dbParseCsvLine(l);
       const o                          = {};
       mapping.forEach((m               , i        )       => { if (m) o[m] = cells[i] === "" ? null : cells[i]; });
       return o;
     });
-    box.appendChild(el("div", "hint", trn(lines.length, "dataCsv.previewSummary.one", "dataCsv.previewSummary.other",
+    box.appendChild(hint(trn(lines.length, "dataCsv.previewSummary.one", "dataCsv.previewSummary.other",
       { n: lines.length.toLocaleString(locale()), m: mapped, k: header.length })));
     const pre = el("pre", "db-ddl");
     pre.style.position = "static";

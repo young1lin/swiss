@@ -30,6 +30,7 @@ import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { dbLastTableTab, dbOpenTab, renderDbTabs } from "./data-tabs.js";
 import type { DbKeyTab } from "./types/state.js";
 import { tr, trn } from "./i18n.js";
+import { btn } from "./ui/button.js";
 
 /* --- pending-SQL preview ------------------------------------------------------------------------ */
 /* The exact statements the server will run on Commit, mirrored from buildEditStatements
@@ -130,10 +131,9 @@ function renderDbRedisBar(d: DbKeyTab, bar: HTMLElement): void {
   bar.appendChild(h("span", null, tr("dataSql.partsLocalOnlyRedis", { parts: parts.join(", ") })));
   // No per-button handlers (docs/37 R5): the buttons carry data-bar addresses and #pane's
   // delegated click answers them from live state.
-  bar.appendChild(h("button", { class: "btn", title: tr("dataSql.showExactCommandsCommit"), data: { bar: "preview" } },
-    d.sqlPreview ? tr("dataSql.hideCommands") : tr("dataSql.commands")));
-  bar.appendChild(h("button", { class: "btn", data: { bar: "discard" } }, tr("dataSql.discard")));
-  bar.appendChild(h("button", { class: "btn commit", data: { bar: "commit" } }, tr("dataSql.commitN1Pipeline")));
+  bar.appendChild(btn(d.sqlPreview ? tr("dataSql.hideCommands") : tr("dataSql.commands"), { title: tr("dataSql.showExactCommandsCommit"), data: { bar: "preview" } }));
+  bar.appendChild(btn(tr("dataSql.discard"), { data: { bar: "discard" } }));
+  bar.appendChild(btn(tr("dataSql.commitN1Pipeline"), { kind: "primary", data: { bar: "commit" } }));
   if (d.sqlPreview) {
     // The command list is plain text, not SQL — no highlight pass (unlike the SQL bar below).
     let body: string;
@@ -188,10 +188,9 @@ function renderDbBar(): void {
   bar.appendChild(h("span", null, tr("dataSql.partsLocalOnlyDatabase", { parts: parts.join(", "), how: pkColsB.length ? tr("dataSql.primaryKey") : tr("dataSql.allColumnsTablePrimary") })));
   // No per-button handlers (docs/37 R5): data-bar addresses, answered by #pane's delegated
   // click with the counts read from live state at event time.
-  bar.appendChild(h("button", { class: "btn", title: tr("dataSql.showExactStatementsCommit"), data: { bar: "preview" } },
-    dt.sqlPreview ? tr("dataSql.hideSql") : tr("dataSql.sql")));
-  bar.appendChild(h("button", { class: "btn", data: { bar: "discard" } }, tr("dataSql.discard")));
-  bar.appendChild(h("button", { class: "btn commit", data: { bar: "commit" } }, tr("dataSql.commitN1Transaction")));
+  bar.appendChild(btn(dt.sqlPreview ? tr("dataSql.hideSql") : tr("dataSql.sql"), { title: tr("dataSql.showExactStatementsCommit"), data: { bar: "preview" } }));
+  bar.appendChild(btn(tr("dataSql.discard"), { data: { bar: "discard" } }));
+  bar.appendChild(btn(tr("dataSql.commitN1Transaction"), { kind: "primary", data: { bar: "commit" } }));
   if (dt.sqlPreview) {
     let body: HChild;
     try {

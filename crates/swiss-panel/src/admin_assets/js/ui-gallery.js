@@ -34,7 +34,7 @@ import { install, langPref, tk, tr } from "./i18n.js";
 import { SCENES } from "./ui-scenes.js";
 import {
   anchoredMenu, btn, card, checkField, closeMenu, closeSheet, decodeStrings, dot, emptyNode, failNote, field,
-  filterInput, form, formActions, formCap, formFold, groupNode, hint, iconBtn, iconNode, initSelects, initSheet,
+  filterInput, form, formActions, formCap, formFold, groupNode, heldDot, hint, iconBtn, iconNode, initSelects, initSheet,
   inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot, pager, pair, pane, paneHead,
   popupMenu, relTime, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow, spinner, sw, tag, timeline,
   timelineMeta, timelineToggle, toTop, valueBlock,
@@ -195,6 +195,7 @@ function catalogue(now        )              {
     entry(["btn", "iconBtn", "moreBtn"], tk("gallery.c.buttons"), tk("gallery.c.buttonsNote"), [
       [tr("gallery.st.push"), btn(tr("gallery.d.save"))],
       [tr("gallery.st.primary"), btn(tr("gallery.d.create"), { kind: "primary" })],
+      [tr("gallery.st.primaryDisabled"), btn(tr("gallery.d.create"), { kind: "primary", disabled: true })],
       [tr("gallery.st.ghost"), btn(tr("gallery.d.cancel"), { kind: "ghost" })],
       [tr("gallery.st.danger"), btn(tr("gallery.d.delete"), { kind: "danger" })],
       [tr("gallery.st.withIcon"), btn(tr("gallery.d.run"), { icon: "play" })],
@@ -204,13 +205,14 @@ function catalogue(now        )              {
       [tr("gallery.st.iconPressed"), iconBtn("star", tr("gallery.d.pin"), { ghost: true, pressed: true })],
       [tr("gallery.st.more"), moreBtn(tr("gallery.d.more"))],
     ]),
-    entry(["dot", "tag", "spinner"], tk("gallery.c.status"), tk("gallery.c.statusNote"),
+    entry(["dot", "heldDot", "tag", "spinner"], tk("gallery.c.status"), tk("gallery.c.statusNote"),
       DOTS.map(([s, k])                   => [tr(k), dot(s, tr(k))]).concat([
         [tr("gallery.st.tagWord"), tag(tr("gallery.d.proxy"))],
         [tr("gallery.st.tagMono"), tag("npx", { mono: true })],
         [tr("gallery.st.tagBad"), tag(tr("gallery.d.error"), { tone: "bad" })],
         [tr("gallery.st.tagWarn"), tag(tr("gallery.d.slow"), { tone: "warn" })],
         [tr("gallery.st.spinner"), [spinner(), " ", tr("gallery.d.loading")]],
+        [tr("gallery.st.held"), heldDot(tr("gallery.d.heldTwo"))],
       ])),
     entry(["sw"], tk("gallery.c.switch"), tk("gallery.c.switchNote"), [
       [tr("gallery.st.on"), sw(true, tr("gallery.d.enabled"))],
@@ -367,6 +369,7 @@ function openDemoSheet()       {
   const ok = btn(tr("gallery.d.save"), { kind: "primary" });
   showSheet(sheet({
     title: tr("gallery.d.sheetTitle"),
+    sub: "ci-runner",
     body: card(kvRow(tr("gallery.d.label"), "ci-runner"), kvRow(tr("gallery.d.group"), "default"),
       kvRow(tr("gallery.d.key"), h("code", null, "swk_…3f9a"))),
     // .sheet-foot right-aligns its buttons; a .grow spacer is only for a leading secondary.

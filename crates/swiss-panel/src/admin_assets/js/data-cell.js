@@ -17,12 +17,14 @@
                                                   
                                                    
 import { $, toast } from "./util.js";
-import { fill, h } from "./h.js";
+import { h } from "./h.js";
 import { renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
-import { closeSheet } from "./ui/sheet.js";
+import { btn } from "./ui/button.js";
+import { hint } from "./ui/form.js";
+import { closeSheet, sheet, showSheet } from "./ui/sheet.js";
 
 /* --- cell editor dialog ------------------------------------------------------------------------- */
 /* Editing happens in a sheet, never inline: an inline input grows its row and reshuffles the
@@ -68,7 +70,13 @@ function dbOpenCellEditor(kind                     , key               , i      
     const v = pending ? e?.changes[column] : meta.orig;
     isNull = pending ? v === null : meta.orig === null || meta.orig === undefined;
     text = isNull ? "" : dbCellText(v) ;
-    pkJson = JSON.stringify(meta.pk);
+    // The address carries every original value on purpose (docs/22 W4.2: the other columns
+    // are the optimistic lock), but the head says "PK", so a keyed table shows its key columns
+    // only; a keyless table is addressed by the whole row, and shows it (docs/46 P7-2 walk).
+    const keyCols = d.data.primaryKey;
+    pkJson = JSON.stringify(keyCols.length
+      ? Object.fromEntries(keyCols.map((k        )                    => [k, (meta.pk                           )[k]]))
+      : meta.pk);
     emptyWasNotNull = meta.orig !== "";
   } else {
     const ins = d.inserts[i] ;   // an insert editor is only opened for a buffered row that still exists
@@ -81,26 +89,24 @@ function dbOpenCellEditor(kind                     , key               , i      
   const isBool = /bool/i.test(colMeta.dataType || "");
   dbCellEdit = { kind: kind, key: key, i: i, column: column, meta: meta };
 
-  // docs/37 R5: node sheet, painted AFTER the host is unhidden; per-open wiring below stays
-  // (the sheet idiom — the buttons and their closure state live only while it is open).
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("dataCell.editCell") } },
-      h("div", { class: "sheet-head" },
-        h("div", { class: "db-cell-head" },
-          h("h2", null, column),
-          h("span", { class: "db-cell-where" }, (d.schema ? d.schema + "." : "") + d.table +
-            tr(kind === "update" ? "dataCell.pkPk" : "dataCell.newRow", { pk: pkJson })))),
-      h("div", { class: "sheet-body" },
-        h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
-          isBool ? h("button", { class: "btn", id: "dbCellBool" }) : null,
-          h("button", { class: "btn", id: "dbCellNull" }),
-          pretty ? h("button", { class: "btn", id: "dbCellJson" }, tr("dataCell.formatJson")) : null,
-          h("span", { class: "hint" }, tr("dataCell.savesLocalBufferCommit"))),
-        h("textarea", { id: "dbCellText", spellcheck: false })),
-      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "dbCellCancel" }, tr("dataCell.cancel")),
-        h("button", { class: "btn primary", id: "dbCellSave" }, tr("dataCell.saveBuffer")))));
+  // The library's sheet (docs/46 P7): showSheet unhides the host before it paints. The title is
+  // the column; the sub is where it lives, a value you would copy. The per-open wiring below
+  // stays (the sheet idiom - the buttons and their closure state live only while it is open).
+  // The NULL and boolean buttons are worded by paintNull / paintBool.
+  showSheet(sheet({
+    title: column,
+    sub: (d.schema ? d.schema + "." : "") + d.table + tr(kind === "update" ? "dataCell.pkPk" : "dataCell.newRow", { pk: pkJson }),
+    label: tr("dataCell.editCell"),
+    body: [
+      h("div", { class: "db-console-row" },
+        isBool ? btn("", { id: "dbCellBool" }) : null,
+        btn("", { id: "dbCellNull" }),
+        pretty ? btn(tr("dataCell.formatJson"), { id: "dbCellJson" }) : null,
+        hint(tr("dataCell.savesLocalBufferCommit"))),
+      h("textarea", { id: "dbCellText", spellcheck: false }),
+    ],
+    foot: [btn(tr("dataCell.cancel"), { id: "dbCellCancel" }), btn(tr("dataCell.saveBuffer"), { kind: "primary", id: "dbCellSave" })],
+  }));
   const ta = $                     ("dbCellText");
   ta.value = pretty || text;
   let nullState = isNull;

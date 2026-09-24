@@ -27,6 +27,7 @@ import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tk, tr, trn } from "./i18n.js";
+import { btn } from "./ui/button.js";
 import { seg } from "./ui/seg.js";
 
 /* --- structure tabs (columns / indexes / DDL / foreign keys) ------------------------------------ */
@@ -197,8 +198,7 @@ function renderDbDetailGrid(wrap             )       {
     // data-dadd carries the sheet kind; the click handler resolves the live detail for the
     // sheet's payload (docs/37 R5 — state at event time, not render time).
     const colsTab = d.pane === "columns";
-    meta.appendChild(h("button", { class: "btn", type: "button", data: { dadd: colsTab ? "column" : "index" } },
-      colsTab ? tr("dataStructure.addColumn") : tr("dataStructure.newIndex")));
+    meta.appendChild(btn(colsTab ? tr("dataStructure.addColumn") : tr("dataStructure.newIndex"), { data: { dadd: colsTab ? "column" : "index" } }));
   }
   wrap.appendChild(meta);
   spec.head.forEach((h        )       => { hr.appendChild(el("th", "db-col", h)); });

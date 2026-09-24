@@ -38,6 +38,9 @@ export interface SheetOpts {
   label?: string;
   /** An id for the heading, for a caller that repaints it. */
   titleId?: string;
+  /** The value the sheet acts on, beside the title and in mono because it is a value you
+   *  would copy: a cell's table and key, a viewed value's table and row (docs/46 P7). */
+  sub?: string;
   body: HChild;
   /** The footer, left to right: a leading secondary, a .grow spacer, Cancel, the one primary. */
   foot: HChild;
@@ -47,7 +50,8 @@ export interface SheetOpts {
 export function sheet(o: SheetOpts): HTMLDivElement {
   const label = o.label ?? (typeof o.title === "string" ? o.title : undefined);
   return h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label } },
-    h("div", { class: "sheet-head" }, h("h2", { id: o.titleId }, o.title)),
+    h("div", { class: "sheet-head" }, h("h2", { id: o.titleId }, o.title),
+      o.sub ? h("span", { class: "sheet-sub" }, o.sub) : null),
     h("div", { class: "sheet-body" }, o.body),
     h("div", { class: "sheet-foot" }, o.foot));
 }

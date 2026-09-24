@@ -281,7 +281,7 @@
     .db-tab-more:hover { background: var(--hover); color: var(--text); }
     .db-head { display: flex; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
     .db-head-left { min-width: 0; }
-    .db-title { margin: 0; font-size: var(--f-head); }
+    .db-title { margin: 0; font-size: var(--f-head); font-weight: var(--w-title); }
     .db-meta { font-size: var(--f-label); color: var(--text-2); margin-top: 2px; }
     .db-head-ctl { margin-left: auto; display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; justify-content: flex-end; }
     .db-filters { display: flex; flex-wrap: wrap; gap: var(--s1); align-items: center; }
@@ -292,7 +292,6 @@
     .db-filter select, .db-filter .dd { width: auto; min-width: 96px; padding-top: 2px; padding-bottom: 2px; }
     .db-filter input { width: 150px; padding-top: 2px; padding-bottom: 2px; }
     .db-filter .db-act { font-size: var(--f-body); }
-    .db-filter-add { font-size: var(--f-label); }
     .db-filter-hint { font-size: var(--f-caption); color: var(--text-3); margin-left: var(--s2); }
     /* A script's result tabs (the library's seg) under the head's title: eight fit, a longer
        script's ninth scrolls this strip sideways instead of wrapping the head. */
@@ -306,7 +305,7 @@
        layout keeps the five inputs column-aligned whatever a name carries. */
     .db-ddl-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .db-ddl-grid th { text-align: left; font-size: var(--f-label); font-weight: var(--w-emph); color: var(--text-3); padding: 0 0 var(--s1); }
-    .db-ddl-grid td { padding: 0 0 var(--s1); vertical-align: top; }
+    .db-ddl-grid td { padding: 0 0 var(--s1); vertical-align: middle; }
     .db-ddl-grid .btn.icon { width: 26px; height: 26px; padding: 0; color: var(--text-3); }
     .db-ddl-grid input[type="checkbox"] { width: auto; accent-color: var(--accent); }
     /* The index picker's checks wrap beside each other — a wide table should not stack into
@@ -471,8 +470,6 @@
     .db-grid-wrap { position: relative; }
     #dbCellText { min-height: 180px; white-space: pre-wrap; }
     #dbCellText.json { min-height: 260px; }
-    .db-cell-head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
-    .db-cell-where { font-family: var(--mono); font-size: var(--f-label); color: var(--text-2); }
     /* docs/22 W5.3 — the value sheet's read-only body. The content sits on the quiet inset
        ground (the same surface .db-ddl uses); values are values you would copy, so mono
        (base rule 1), while the tree's keys are identity and keep the text face. Hierarchy is
@@ -514,12 +511,10 @@
     tr.db-sel td.db-conflict { background: color-mix(in srgb, var(--red) 26%, transparent); }
     .db-act { border: none; background: none; cursor: pointer; font-size: var(--f-label); color: var(--text-3); padding: 0 4px; border-radius: 4px; }
     .db-act:hover { color: var(--red); background: var(--hover); }
-    .db-act .ic { width: 13px; height: 13px; } /* fix-plan #14: the remove/undo sprites in the row controls */
-    .db-stream-pill .ic { width: 13px; height: 13px; } /* fix-plan #14: the pending-rows arrow */
+    .db-act .ic { width: 13px; height: 13px; } /* fix-plan #14: the row controls' sprites */
 
     .db-bar { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s3); background: color-mix(in srgb, var(--amber) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--sep)); border-radius: var(--r-card); font-size: var(--f-body); }
     .db-bar .btn { margin-left: auto; }
-    .db-bar .btn.commit { background: var(--accent); color: var(--accent-text); }
 
     /* --- terminal (docs/14 §2) ----------------------------------------------------------------- */
     /* =====================================================================================

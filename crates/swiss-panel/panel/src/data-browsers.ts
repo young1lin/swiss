@@ -17,7 +17,7 @@
 import type { ApiDbConnectionRow, ApiDbRedisKeysResponse, ApiDbRedisValue } from "./types/api.js";
 import type { DbRedisEdits, DbRedisTypeCfg } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
-import { fill, h } from "./h.js";
+import { h } from "./h.js";
 import { renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
@@ -33,8 +33,9 @@ import { dbOpenValueSheet } from "./data-value.js";
 import { renderDbTables } from "./data-view.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tk, tr, trn } from "./i18n.js";
+import { btn } from "./ui/button.js";
 import { popupMenu } from "./ui/menu.js";
-import { closeSheet } from "./ui/sheet.js";
+import { openFieldSheet } from "./ui/sheet.js";
 
 /* --- redis key browser -------------------------------------------------------------------------- */
 /* A redis connection in the picker swaps the table list for a SCAN-paged key list, and the
@@ -604,7 +605,7 @@ function dbRedisStringEditor(wrap: HTMLElement, v: ApiDbRedisValue): void {
   ta.dataset.orig = ta.value;
   ta.setAttribute("data-rstr", "");
   row.appendChild(ta);
-  row.appendChild(h("button", { class: "btn primary", type: "button", data: { rset: "" } }, tr("dataBrowsers.set")));
+  row.appendChild(btn(tr("dataBrowsers.set"), { kind: "primary", data: { rset: "" } }));
   wrap.appendChild(row);
 }
 
@@ -680,53 +681,28 @@ async function dbRedisCommand(line: string): Promise<unknown> {
   });
 }
 
-/** The one-input sheet Rename uses (docs/22 W1.3). `submit(value)` runs after the sheet
- *  closes; it owns its own reload and error handling. */
-function dbRedisKeySheet(cfg: { title: string; label: string; value?: string; placeholder?: string; primary: string; submit: (v: string) => void }): void {
-  // docs/37 R5: the sheet is a node tree (every remote string lands as a TEXT node — no
-  // esc() anywhere), painted AFTER the host is unhidden so the first paint is never into a
-  // hidden box the user's click seemed to ignore.
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: cfg.title } },
-      h("div", { class: "sheet-head" }, h("h2", null, cfg.title)),
-      h("div", { class: "sheet-body" },
-        h("label", { class: "field" }, h("span", null, cfg.label), h("input", { id: "dbKeyIn", autocomplete: "off" }))),
-      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "dbKeyCancel" }, tr("dataBrowsers.cancel")),
-        h("button", { class: "btn primary", id: "dbKeyGo" }, cfg.primary))));
-  const input = $<HTMLInputElement>("dbKeyIn");
-  input.value = cfg.value || "";
-  input.placeholder = cfg.placeholder || "";
-  $("dbKeyCancel").onclick = closeSheet;
-  $("sheet").onclick = (e: MouseEvent): void => { if (e.target === $("sheet")) closeSheet(); };
-  function go(): void { const v: string = input.value.trim(); closeSheet(); cfg.submit(v); }
-  $("dbKeyGo").onclick = go;
-  input.onkeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Enter") { e.preventDefault(); go(); }
-  };
-  input.focus();
-  input.select();
-}
-
+/** Rename a key (docs/22 W1.3) on the library's one-field sheet (docs/46 P7). The sheet owns
+ *  the shared rules: a name is required (inline, not a toast) and an unchanged name is a cancel.
+ *  A refused RENAME returns false - the guarded console already toasted why - so the sheet
+ *  stays with the typed name beside the reason; the old hand-built sheet closed first and lost
+ *  it. On success the key list and the value reload behind the closing sheet. */
 function dbRedisRenameSheet(key: string | null): void {
   // The menu that opens this only exists over a selected key, but the record says the
   // selection is nullable and that is the truth to honour — not an assertion at the call.
   if (!key) return;
-  dbRedisKeySheet({
+  openFieldSheet({
     title: tr("dataBrowsers.renameKey"),
     label: tr("dataBrowsers.newName"),
-    value: key,
-    primary: tr("dataBrowsers.rename2"),
-    submit: async (to: string): Promise<void> => {
-      if (!to || to === key) return;
+    def: key,
+    save: tr("dataBrowsers.rename2"),
+    submit: async (to: string): Promise<boolean> => {
       const j = await dbRedisCommand("RENAME " + key + " " + to);
-      if (!j) return;
+      if (!j) return false;
       toast(tr("dataBrowsers.renamed", { to }));
       const t = dbTab();
       if (t.kind === "key") t.redisKey = to;
-      await dbLoadKeys(true);
-      void dbLoadRedisValue(to);
+      void dbLoadKeys(true).then(() => { void dbLoadRedisValue(to); });
+      return true;
     },
   });
 }

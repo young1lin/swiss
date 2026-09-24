@@ -27,7 +27,7 @@
 export { btn, iconBtn, moreBtn } from "./button.js";
 export type { BtnOpts, IconBtnOpts } from "./button.js";
 export { iconNode } from "./icon.js";
-export { dot, spinner, tag } from "./status.js";
+export { dot, heldDot, spinner, tag } from "./status.js";
 export type { DotState, TagOpts } from "./status.js";
 export { sw } from "./switch.js";
 export { card, emptyNode, failNote, filterInput, inlineForm, note, pageFoot, pager, pane, paneBody, paneHead, resHead, section } from "./page.js";

@@ -130,6 +130,21 @@ describe("fix-plan #14 — the glyph sites render sprite icons, not unicode glyp
     expect(wrap).not.toContain("\u2715");
   });
 
+  it("the Form tab's record action is the same x and undo sprites (docs/46 P7: it still drew the glyphs)", () => {
+    const t = seedTable();
+    t.pane = "form";
+    grid.renderDbGrid();
+    let wrap = htmlOf("dbGridWrap");
+    expect(wrap).toContain('data-fact=""');
+    expect(wrap).toContain('href="#i-x"');
+    expect(wrap).not.toContain("✕");
+    t.deletes = { "[1]": true };
+    grid.renderDbGrid();
+    wrap = htmlOf("dbGridWrap");
+    expect(wrap).toContain('href="#i-undo"');
+    expect(wrap).not.toContain("↩");
+  });
+
   it("the filter row's remove button is the x sprite; the operator dropdown KEEPS its symbols", () => {
     const t = seedTable();
     t.filters = [{ column: "id", op: "eq", value: "1" }];
