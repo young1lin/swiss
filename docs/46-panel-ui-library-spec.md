@@ -509,9 +509,30 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
       实施：去掉的是 `renderDbStatus` 里的可编辑说明——"editable — changes buffer until Commit"，或服务端给的只读
       原因——表头的 meta 行已经说过一遍。状态栏只留分页、每页行数、连接。
       P7-1 数字：G4 views.css 字面值降到 222；G5 `data-browsers.ts` 10 → 8；G7 views.css 64049 → 63479 字节。
-- [ ] （P7-2）Data 的 sheet（data-cell / csv / ddl / value / browsers）迁 `sheet()` + `ui/form.ts`，按钮迁 `btn()` /
-      `iconBtn()`，`pane-title` 换成 views.css 自己的类，`db-tab-dot` / `hint` 走库；G5 的 data-* 各行归零。手写微型
-      DOM 的套件换成 happy-dom 后，`popupMenu` 改用 `h()` 构建（见偏差表 P1b-2 那一行）。
+- [x] （P7-2）Data 的 sheet（data-cell / csv / ddl / value / browsers）迁 `sheet()` + `ui/form.ts`，按钮迁 `btn()` /
+      `iconBtn()`，`pane-title` 换成 views.css 自己的类，`db-tab-dot` / `hint` 走库；G5 的 data-* 各行归零。
+      实施：五个 sheet 全部是 `showSheet(sheet(...))`：单元格编辑与值查看器的头是 列名 + `sub`（所在的表与行）；
+      CSV 导入的模式切换是 `seg()`，映射与预览在空的时候 `hidden`（sheet-body 是 grid，空盒子也占两道间距）；
+      DDL 三个 sheet 用 `field` / `pair` / `checkField` / `field({ group })`；Redis 的重命名换成库里的
+      `openFieldSheet`——名字为空时就地提示，RENAME 被拒时 sheet 留着、输入的名字还在（旧的手画 sheet 先关再发命令，
+      被拒就丢了）。按钮全部是 `btn()` / `iconBtn()` / `moreBtn()`：对象头的 ⋯ 与 pane 的 ⋯ 跟其它页一样是 ghost；
+      提交栏的 Commit 是 primary（`.db-bar .btn.commit` 删掉）；流的 pill 与 gap 用 data 钩子（`data-stream`）代替
+      没有样式的类；"+ 筛选" 与 "+ 行" 同尺寸（`.db-filter-add` 的 12px 删掉）。对象头的标题只用 `.db-title`
+      （补上 `--w-title`）；页签上的暂存圆点是 `heldDot()`。
+      库里新增：`sheet({ sub })`（mono 的值，标题基线上，放不下就换行）、`heldDot(title | null)`、`iconBtn` / `moreBtn`
+      的 `hidden`；`moreBtn` 自带 `aria-haspopup="menu"`（每个 ⋯ 都开菜单）。
+      走查发现：① 禁用的 primary 看不见——`.btn:disabled` 把底色换成 `--card`，primary 的白字落在白底上，DDL sheet
+      在输入名字之前只剩一个 Cancel；库里加 `.btn.primary:disabled`（保留 accent 底色、变淡），陈列页加了一行。
+      ② pair 里的勾选框与左边字段的标题齐平，而不是与输入框齐平（索引的 Unique、Jobs 的 Disabled 都是）；库里让
+      pair 中的 check 字段底对齐、抬起输入框自身的内边距与边框，居中在输入框上。③ 单元格编辑头写 "PK" 却印出整行：
+      缓冲行的地址有意带上每一列的原值（docs/22 W4.2，乐观锁），有主键的表现在只显示主键列。④ Form 页记录动作还是
+      Unicode ✕ / ↩，改成与网格相同的 `i-x` / `i-undo`。⑤ CSV 文本框清空后旧的预览不消失。①–④ 先写 RED 测试。
+      G5 的 data-* 13 行（87 个 token）全部归零；因为树里只剩 19 个，G5 的"不是瞎数"检查改成数一段固定源码，
+      不再要求全树 > 50（P9 时全树应为 0）。G4 views.css 222 → 220；G7 views.css 63479 → 63072 字节。
+- [ ] （P7-3）手写微型 DOM 的四个套件（admin-revisions、admin-row-menu、admin-data-redis-cellmenu、
+      admin-logs-pagination）换成 happy-dom，`popupMenu` 改用 `h()` 构建、`wireMenu` 的 typeof 防护一起删（见偏差表
+      P1b-2 那一行）。P7-2 试过：`h()` 版的菜单只让这四个套件挂（它们的桩不从文本子节点算 `textContent`），
+      happy-dom 的套件全绿。
 
 ### 3.8 Terminal（P8）
 

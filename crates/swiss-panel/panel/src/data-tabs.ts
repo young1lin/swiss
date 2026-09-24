@@ -29,6 +29,7 @@ import { dbLoadDetail } from "./data-structure.js";
 import { dbIsPg, renderDbTables } from "./data-view.js";
 import { tr, trn } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
+import { heldDot } from "./ui/status.js";
 
 /* ================================================================================================
    The object tab strip (docs/42 T2).
@@ -275,10 +276,7 @@ function renderDbTabs(): void {
       class: "db-tab-n tnum",
       title: trn(filters, "dataTabs.nFilters.one", "dataTabs.nFilters.other"),
     }, String(filters)) : null,
-    n ? h("span", {
-      class: "db-tab-dot",
-      title: trn(n, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other"),
-    }) : null,
+    n ? heldDot(trn(n, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other")) : null,
     h("button", {
       class: "db-tab-close", type: "button",
       aria: { label: tr("dataTabs.closeTab") }, title: tr("dataTabs.closeTab"),

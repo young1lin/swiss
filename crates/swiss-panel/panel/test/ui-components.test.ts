@@ -32,7 +32,7 @@ import {
 } from "../src/ui/index.js";
 import {
   anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, failNote, filterInput,
-  fmtMs, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
+  fmtMs, groupNode, heldDot, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
   pager, paneBody, paneHead, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
   relTime, timeLabel, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
 } from "../src/ui/index.js";
@@ -88,6 +88,19 @@ describe("ui/button", () => {
     expect(btn("Cancel", { kind: "ghost" }).className).toBe("btn ghost");
   });
 
+  it("a disabled primary keeps its accent ground, dimmed (ui.css)", () => {
+    // Found on the docs/46 P7-2 walk: .btn:disabled repainted every disabled button's ground to
+    // --card, a primary's too, and its --accent-text word is white - a DDL sheet's "Add column"
+    // was white on white until a name was typed, a foot with Cancel and a hole beside it.
+    const rules = parseCss(sheet("ui.css")).filter((r) => !r.at);
+    const off = rules.find((r) => r.selectors.includes(".btn.primary:disabled"));
+    expect(off, ".btn.primary:disabled has a rule").toBeTruthy();
+    expect(off!.decls.find((d) => d.prop === "background")?.value).toBe("var(--accent)");
+    // It must also outrank the primary's own hover, which sits at the same specificity.
+    const at = (sel: string): number => rules.findIndex((r) => r.selectors.includes(sel));
+    expect(at(".btn.primary:disabled")).toBeGreaterThan(at(".btn.primary:hover"));
+  });
+
   it("iconBtn: the word is the aria-label and, by default, the tooltip", () => {
     const b = iconBtn("copy", "Copy");
     expect(b.className).toBe("btn icon");
@@ -105,6 +118,9 @@ describe("ui/button", () => {
     expect(off.title).toBe("Focus mode (F)");
     expect(off.getAttribute("aria-label")).toBe("Focus");
     expect(iconBtn("maximize", "Focus", { pressed: true }).getAttribute("aria-pressed")).toBe("true");
+    // Present but not shown yet, like btn({ hidden }): Data's pane ⋯ waits for a SQL connection.
+    expect(iconBtn("copy", "Copy", { hidden: true }).hidden).toBe(true);
+    expect(moreBtn("More", { id: "m", hidden: true }).hidden).toBe(true);
   });
 
   it("moreBtn is the ghost ellipsis with the caller's hook", () => {
@@ -113,6 +129,8 @@ describe("ui/button", () => {
     expect(useHref(b)).toBe("#i-ellipsis");
     expect(b.getAttribute("aria-label")).toBe("More actions");
     expect(b.dataset.more).toBe("fs");
+    // Every ⋯ opens a menu, and says so to assistive tech (docs/46 P7: Data's said it by hand).
+    expect(b.getAttribute("aria-haspopup")).toBe("menu");
   });
 });
 
@@ -132,6 +150,40 @@ describe("ui/status", () => {
     expect(tag("exit 2", { mono: true, tone: "bad", title: "non-zero exit" }).className).toBe("tag mono bad");
     expect(tag("slow", { tone: "warn" }).className).toBe("tag warn");
     expect(tag("exit 2", { title: "non-zero exit" }).title).toBe("non-zero exit");
+  });
+
+  it("heldDot: the amber mark of buffered writes, its count said aloud (docs/46 P7)", () => {
+    const d = heldDot("2 buffered changes");
+    expect(d.className).toBe("db-tab-dot");
+    expect(d.title).toBe("2 buffered changes");
+    expect(d.getAttribute("role")).toBe("img");
+    expect(d.getAttribute("aria-label")).toBe("2 buffered changes");
+    // null: the row that holds it already says so (a menu row standing in for the tab).
+    const quiet = heldDot(null);
+    expect(quiet.getAttribute("title")).toBeNull();
+    expect(quiet.getAttribute("aria-hidden")).toBe("true");
+  });
+});
+
+describe("ui/sheet - sheet()", () => {
+  it("the frame: a titled dialog, its body, its foot", () => {
+    const s = sheetFrame({ title: "Rename key", body: "b", foot: "f" });
+    expect(s.getAttribute("role")).toBe("dialog");
+    expect(s.getAttribute("aria-label")).toBe("Rename key");
+    expect(s.querySelector(".sheet-head h2")!.textContent).toBe("Rename key");
+    expect(s.querySelector(".sheet-sub")).toBeNull();
+  });
+
+  it("sub: the value the sheet acts on, mono, after the title and not inside it (docs/46 P7)", () => {
+    const s = sheetFrame({ title: "note", sub: "demo_shop.orders · pk {\"id\":4}", label: "Edit cell", body: "b", foot: "f" });
+    const head = s.querySelector(".sheet-head")!;
+    expect(Array.from(head.children).map((c) => c.tagName + "." + c.className)).toEqual(["H2.", "SPAN.sheet-sub"]);
+    expect(head.querySelector("h2")!.textContent).toBe("note");
+    expect(head.querySelector(".sheet-sub")!.textContent).toBe("demo_shop.orders · pk {\"id\":4}");
+    expect(s.getAttribute("aria-label")).toBe("Edit cell");
+    const css = sheet("ui.css");
+    expect(css).toMatch(/\.sheet-sub \{[^}]*font-family: var\(--mono\);[^}]*color: var\(--text-2\);/);
+    expect(css).toMatch(/\.sheet-head \{[^}]*align-items: baseline;/);
   });
 });
 
@@ -298,6 +350,15 @@ describe("ui/page", () => {
     const css = sheet("ui.css");
     expect(css).toMatch(/:is\(\.fld, \.two\) \+ :is\(\.fld, \.two\) \{ margin-top: var\(--s3\); \}/);
     expect(css).toMatch(/:is\(\.form, \.sheet-body, \.fold-body\) > :is\(\.fld, \.two\) \+ :is\(\.fld, \.two\) \{ margin-top: 0; \}/);
+  });
+
+  it("a check beside a field in a pair sits on the control's row, not the caption's (ui.css)", () => {
+    // Found on the docs/46 P7-2 walk: the index sheet's Unique sat level with the "Index name"
+    // caption, 18px above the input it qualifies (Jobs' timeout + Disabled pair did the same).
+    // End-aligned, lifted by the input's own padding and border, it centres on the input.
+    const rule = parseCss(sheet("ui.css")).find((r) => !r.at && r.selectors.includes(".two > .fld:has(> label.check)"));
+    expect(rule?.decls.find((d) => d.prop === "align-self")?.value).toBe("end");
+    expect(rule?.decls.find((d) => d.prop === "padding-bottom")?.value).toBe("calc(var(--s1) + 2px)");
   });
 
   it("dot(state, null): a dot that defers its hover to what holds it - no title, out of AT", () => {
@@ -882,7 +943,8 @@ describe("docs/46 - every class the library draws is styled by base.css or ui.cs
       groupNode({ name: "g", count: 1, density: "page", addTitle: "a", moreTitle: "m", collapsed: true }).root,
       groupNode({ name: "g", count: 0, density: "side", emptyText: "e" }).root,
       seg([{ id: "a", label: "A", n: 1 }], "a"), tl,
-      sheetFrame({ title: "t", body: "b", foot: [h("span", { class: "grow" }), btn("x", { kind: "primary" })] }),
+      sheetFrame({ title: "t", sub: "s", body: "b", foot: [h("span", { class: "grow" }), btn("x", { kind: "primary" })] }),
+      heldDot("held"),
       jsonCodeNode(decodeStrings({ k: "s", n: 1, l: null, d: "{\"a\":[true]}" }), true).node,
       ...mechanisms(),
     ];

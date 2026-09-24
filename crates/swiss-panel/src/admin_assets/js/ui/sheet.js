@@ -38,6 +38,9 @@ import { tr } from "../i18n.js";
                  
                                                               
                    
+                                                                                         
+                                                                                         
+               
                
                                                                                                  
                
@@ -47,7 +50,8 @@ import { tr } from "../i18n.js";
 export function sheet(o           )                 {
   const label = o.label ?? (typeof o.title === "string" ? o.title : undefined);
   return h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label } },
-    h("div", { class: "sheet-head" }, h("h2", { id: o.titleId }, o.title)),
+    h("div", { class: "sheet-head" }, h("h2", { id: o.titleId }, o.title),
+      o.sub ? h("span", { class: "sheet-sub" }, o.sub) : null),
     h("div", { class: "sheet-body" }, o.body),
     h("div", { class: "sheet-foot" }, o.foot));
 }

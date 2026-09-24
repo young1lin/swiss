@@ -362,6 +362,77 @@ describe("a Redis value's table speaks the row grid's words (found on the P7 wal
   });
 });
 
+/* Found on the docs/46 P7-2 walk: the cell editor's head said "PK" and printed the whole row.
+   The buffered row's address carries every original value on purpose (docs/22 W4.2: the other
+   columns are the optimistic lock), but on a keyed table the key is its key columns. */
+describe("the cell editor's head names the row by its key (found on the P7-2 walk)", () => {
+  it("title is the column, the sub is table · PK with the key columns only", async () => {
+    const cell = await import("../src/data-cell.js");
+    openTable(true);
+    cell.dbOpenCellEditor("update", "[1]", -1, "name", { pk: { id: 1, name: "Ada Example" }, orig: "Ada Example" });
+    const head = document.querySelector("#sheet .sheet-head")!;
+    expect(document.getElementById("sheet")!.hidden).toBe(false);
+    expect(head.querySelector("h2")!.textContent).toBe("name");
+    expect(head.querySelector(".sheet-sub")!.textContent).toBe("demo_shop.customers" + tr("dataCell.pkPk", { pk: "{\"id\":1}" }));
+  });
+});
+
+/* docs/46 P7-2: renaming a key is the library's one-field sheet. The hand-built one closed
+   before RENAME ran, so a refusal lost what was typed, and an empty name was a silent cancel. */
+describe("a Redis key's rename is the library's one-field sheet (docs/46 P7-2)", () => {
+  const menuItem = (label: string): HTMLButtonElement =>
+    Array.from(document.querySelectorAll<HTMLButtonElement>("#menu button")).find((b) => b.textContent === label)!;
+  const flush = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });
+
+  it("opens on the key, refuses an empty name inline, keeps the typed name when redis refuses", async () => {
+    Object.assign(dbConnState(), { conns: [dbConn("demo-cache", "redis")], conn: "demo-cache" });
+    const t = freshTab("key");
+    t.redisKey = "user:1";
+    t.redisValue = { key: "user:1", type: "hash", ttl: -1, value: { name: "Ada Example" }, length: 1 };
+    dbTabs().length = 0;
+    dbTabs().push(t);
+    grid.renderDbToolbar();
+    document.querySelector<HTMLButtonElement>("#dbHead [aria-haspopup='menu']")!.click();
+    menuItem(tr("dataBrowsers.renameDeleteKey")).click();
+    menuItem(tr("dataBrowsers.rename")).click();
+
+    const host = document.getElementById("sheet")!;
+    expect(host.hidden, "the sheet is on screen").toBe(false);
+    expect(host.querySelector(".sheet-head h2")!.textContent).toBe(tr("dataBrowsers.renameKey"));
+    const input = document.getElementById("g-name") as HTMLInputElement;
+    expect(input.value).toBe("user:1");
+    const save = document.getElementById("g-save") as HTMLButtonElement;
+    expect(save.textContent).toBe(tr("dataBrowsers.rename2"));
+
+    input.value = "  ";
+    save.click();
+    await flush();
+    expect(host.hidden).toBe(false);
+    expect(document.getElementById("g-err")!.hidden).toBe(false);
+    expect(document.getElementById("g-err")!.textContent).toBe(tr("ui.nameRequired"));
+
+    const ok = globalThis.fetch;
+    let sent = "";
+    Object.assign(globalThis, {
+      fetch: (_u: string, init?: { body?: string }) => {
+        sent = init?.body ?? "";
+        return Promise.resolve({ ok: false, status: 400, json: () => Promise.resolve({ error: "ERR no such key" }) });
+      },
+    });
+    try {
+      input.value = "user:2";
+      save.click();
+      await flush();
+      await flush();
+      expect(JSON.parse(sent)).toEqual({ command: "RENAME user:1 user:2" });
+      expect(host.hidden, "a refused rename keeps the sheet").toBe(false);
+      expect(input.value).toBe("user:2");
+    } finally {
+      Object.assign(globalThis, { fetch: ok });
+    }
+  });
+});
+
 describe("the grid's look in views.css (docs/46 §3.7, U7)", () => {
   const css = sheet("views.css");
   const rule = (sel: string): string => {

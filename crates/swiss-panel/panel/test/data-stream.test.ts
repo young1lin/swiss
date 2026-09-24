@@ -423,8 +423,9 @@ describe("the stream value view's Load-earlier walk (docs/45 S2 fix)", () => {
 
 const followBtn = (): Stub =>
   find(byId.dbGridWrap, (n) => n.tag === "button" && (text(n) === "Follow" || text(n) === "Pause"))[0];
-const pill = (): Stub => find(byId.dbGridWrap, (n) => String(n.className).indexOf("db-stream-pill") >= 0)[0];
-const gapBar = (): Stub => find(byId.dbGridWrap, (n) => String(n.className).indexOf("db-stream-gap") >= 0)[0];
+// docs/46 P7: library buttons, addressed by their data hook (the classes had no rule of their own).
+const pill = (): Stub => find(byId.dbGridWrap, (n) => n.dataset && n.dataset.stream === "pill")[0];
+const gapBar = (): Stub => find(byId.dbGridWrap, (n) => n.dataset && n.dataset.stream === "gap")[0];
 const barText = (): string => {
   const bars = find(byId.dbGridWrap, (n) => (n.className || "").toString().split(" ").indexOf("db-detail-meta") >= 0);
   return bars.map(text).join("");

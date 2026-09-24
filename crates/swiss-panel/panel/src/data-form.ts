@@ -25,6 +25,7 @@ import { renderDbBar } from "./data-sql.js";
 import { dbPkKey } from "./data-view.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
+import { btn, iconBtn } from "./ui/button.js";
 
 /* --- single-record form view (docs/22 W5.1) ------------------------------------------------------ */
 /* dbgate's SqlFormView precedent: one record, one field per line, a stepper for the adjacent
@@ -97,10 +98,9 @@ function dbFormField(val: HTMLElement, f: DbFormField, ctx: { kind: "update" | "
   if (isBool) {
     const on = f.value === true || f.value === 1 ||
       String(f.value).toLowerCase() === "true" || f.value === "1";
-    val.appendChild(h("button", {
-      class: "btn", type: "button", title: tr("dataForm.toggleBooleanBufferedLike"),
-      data: { ff: "bool", col: f.name, on: on ? "1" : "" },
-    }, on ? tr("dataForm.true") : tr("dataForm.false")));
+    val.appendChild(btn(on ? tr("dataForm.true") : tr("dataForm.false"), {
+      title: tr("dataForm.toggleBooleanBufferedLike"), data: { ff: "bool", col: f.name, on: on ? "1" : "" },
+    }));
   } else {
     const text = f.value === null || f.value === undefined ? null : dbCellText(f.value);
     const long = text != null && (text.length > DB_INLINE_MAX || text.includes("\n"));
@@ -116,10 +116,9 @@ function dbFormField(val: HTMLElement, f: DbFormField, ctx: { kind: "update" | "
     }
   }
 
-  val.appendChild(h("button", {
-    class: "btn", type: "button", title: tr("dataForm.bufferNullColumn"),
-    data: { ff: "null", col: f.name, has: f.value === null ? "1" : "" },
-  }, f.value === null ? tr("dataForm.nullSet") : tr("dataForm.setNull")));
+  val.appendChild(btn(f.value === null ? tr("dataForm.nullSet") : tr("dataForm.setNull"), {
+    title: tr("dataForm.bufferNullColumn"), data: { ff: "null", col: f.name, has: f.value === null ? "1" : "" },
+  }));
 }
 
 /** The Form tab's body. Same entry guards and row order as the grid (buffered inserts in
@@ -147,10 +146,7 @@ function renderDbFormView(wrap: HTMLElement): void {
 
   // The stepper answers through #pane's delegated click via data-fpg (docs/37 R5).
   const head = el("div", "db-form-head");
-  head.appendChild(h("button", {
-    class: "btn icon", type: "button", title: tr("dataForm.previousRecord"), disabled: idx === 0,
-    aria: { label: tr("dataForm.previousRecord") }, data: { fpg: "prev" },
-  }, iconNode("chevron-left")));
+  head.appendChild(iconBtn("chevron-left", tr("dataForm.previousRecord"), { disabled: idx === 0, data: { fpg: "prev" } }));
   const isIns = idx < nIns;
 
   const pkCols = d.data?.primaryKey || [];
@@ -165,10 +161,7 @@ function renderDbFormView(wrap: HTMLElement): void {
   head.appendChild(el("span", "db-form-pos", isIns
     ? tr("dataForm.newRowIN", { i: idx + 1, n: nIns })
     : tr("dataForm.rowINPage", { i: idx - nIns + 1, n: d.data?.rows.length ?? 0 })));
-  head.appendChild(h("button", {
-    class: "btn icon", type: "button", title: tr("dataForm.nextRecord"), disabled: idx === total - 1,
-    aria: { label: tr("dataForm.nextRecord") }, data: { fpg: "next" },
-  }, iconNode("chevron-right")));
+  head.appendChild(iconBtn("chevron-right", tr("dataForm.nextRecord"), { disabled: idx === total - 1, data: { fpg: "next" } }));
 
   // The record's own action rides the head's right end — the grid rowctl vocabulary. The
   // data-fact click re-derives insert/delete from live state (docs/37 R5).
@@ -179,7 +172,9 @@ function renderDbFormView(wrap: HTMLElement): void {
       title: isIns ? tr("dataGrid.removeBufferedInsert")
         : deleted ? tr("dataGrid.undoBufferedDelete") : tr("dataGrid.bufferDeleteAppliedOnly"),
       data: { fact: "" },
-    }, isIns ? "\u2715" : deleted ? "\u21a9" : "\u2715"));
+      // The grid's row-control sprites (fix-plan #14); this head still drew the unicode glyphs
+      // until docs/46 P7.
+    }, iconNode(deleted ? "undo" : "x")));
   }
   wrap.appendChild(head);
 

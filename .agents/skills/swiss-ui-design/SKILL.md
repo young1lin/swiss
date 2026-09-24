@@ -425,12 +425,12 @@ Use these words in specs and class names; if a design needs a word not here, add
 | **filter** | `filterInput({ placeholder, label })` — in a section's tools | `input.filter` |
 | **pager** | `pager({ label, status, prev, next })` | `.pager`, `.pager-status` |
 | **note** | `note(body, { busy, err })`, `failNote({ text, why, action })` | `.note`, `.fail-note` |
-| **status** | `dot(state, words)`, `tag(text, { mono, tone })`, `spinner()` | `.dot`, `.tag`, `.spin` |
+| **status** | `dot(state, words)`, `heldDot(words)` (writes held until Commit), `tag(text, { mono, tone })`, `spinner()` | `.dot`, `.db-tab-dot`, `.tag`, `.spin` |
 | **switch** | `sw(on, label)` | `.sw` |
 | **buttons** | `btn(label, { kind, icon })`, `iconBtn(icon, label)`, `moreBtn(label)` | `.btn` |
 | **select** | a native `<select>` styled by `styleSelect` / `initSelects` | `.dd*` |
 | **popup menu** | `popupMenu(anchor, items)` (floating), `anchoredMenu(host, items)` (hung in a head's actions) | `.menu` |
-| **sheet** | `sheet({ title, body, foot })` + `showSheet`, `openFieldSheet(spec)` | `.sheet*`, `.backdrop` |
+| **sheet** | `sheet({ title, sub, body, foot })` + `showSheet` (`sub`: the mono value it acts on), `openFieldSheet(spec)` | `.sheet*`, `.backdrop` |
 | **empty state** | `emptyNode({ icon, title, hint, action })` | `.empty` |
 | **page foot** | `pageFoot({ note, rev })` | `.page-foot` |
 | **back to top** | `toTop(scroller)` — mounted once by the shell | `.btn.to-top` |

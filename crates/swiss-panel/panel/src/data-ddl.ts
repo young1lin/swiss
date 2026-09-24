@@ -16,7 +16,7 @@
 
 import type { ApiDbColumn } from "./types/api.js";
 import type { DbDdlPayload, DdlRow, DdlSheetState } from "./types/state.js";
-import { $, api, apiJson, el, iconNode, toast } from "./util.js";
+import { $, api, apiJson, el, toast } from "./util.js";
 import { fill, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { dbHighlightNodes } from "./data-filters.js";
@@ -25,6 +25,9 @@ import { dbLoadTables } from "./data-view.js";
 import { dbOpenTab } from "./data-tabs.js";
 import { dbLoadDetail } from "./data-structure.js";
 import { tk, tr } from "./i18n.js";
+import { btn, iconBtn } from "./ui/button.js";
+import { checkField, field, hint, pair } from "./ui/form.js";
+import { closeSheet, sheet, showSheet } from "./ui/sheet.js";
 
 /* ================================================================================================
    docs/22 W4.6 — the minimal DDL set: CREATE TABLE, ADD COLUMN, CREATE INDEX, one sheet per
@@ -183,14 +186,13 @@ function openDbDdlSheet(kind: "table" | "column" | "index", ctx: { dialect: stri
 function closeDbDdlSheet() {
   if (S && S.timer) clearTimeout(S.timer);
   S = null;
-  const host = $("sheet");
-  if (host) { host.hidden = true; host.textContent = ""; }
+  closeSheet();
 }
 
 /** Rebuild the whole sheet DOM from S. Called on open and on row add/remove only — keystrokes
  *  write straight into S (and schedule a preview) so an input never loses focus to a re-render.
- *  docs/37 R5: the sheet is a node tree painted AFTER the host is unhidden; per-open wiring
- *  (wireDbDdlSheet) stays, per the sheet idiom. */
+ *  The library's sheet and form (docs/46 P7): showSheet unhides the host before it paints; the
+ *  per-open wiring (wireDbDdlSheet) stays, per the sheet idiom. */
 function paintDbDdlSheet(): void {
   const S_ = S!;
   const kind = S_.kind;
@@ -201,29 +203,28 @@ function paintDbDdlSheet(): void {
     // (swiss-ui-design rule 6) — a select, prefilled from the list's active schema filter.
     const schemas = S_.schemas.slice();
     if (!schemas.includes(S_.schema)) schemas.unshift(S_.schema);
-    body.push(h("label", { class: "field" }, h("span", null, tr("dataDdl.schema")),
-      h("select", { id: "ddl-schema" }, schemas.map((s: string): HChild => {
+    body.push(field({
+      label: tr("dataDdl.schema"),
+      control: h("select", { id: "ddl-schema" }, schemas.map((s: string): HChild => {
         return h("option", { value: s, selected: s === S_.schema }, s);
-      }))));
+      })),
+    }));
   }
   if (kind === "table") {
-    body.push(h("div", { class: "two" },
-      h("label", { class: "field" }, h("span", null, tr("dataDdl.tableName")),
-        h("input", { id: "ddl-table", autocomplete: "off", spellcheck: false, placeholder: tr("dataDdl.events") })),
-      h("label", { class: "field" }, h("span", null, tr("dataDdl.commentOptional")),
-        h("input", { id: "ddl-comment", autocomplete: "off", placeholder: tr("dataDdl.whatTableHolds") }))));
+    body.push(pair(
+      field({ label: tr("dataDdl.tableName"), control: h("input", { id: "ddl-table", autocomplete: "off", spellcheck: false, placeholder: tr("dataDdl.events") }) }),
+      field({ label: tr("dataDdl.commentOptional"), control: h("input", { id: "ddl-comment", autocomplete: "off", placeholder: tr("dataDdl.whatTableHolds") }) })));
   }
   if (kind === "index") {
-    body.push(h("div", { class: "two" },
-      h("label", { class: "field" }, h("span", null, tr("dataDdl.indexName")),
-        h("input", { id: "ddl-index", autocomplete: "off", spellcheck: false, value: S_.indexName })),
-      h("label", { class: "check", style: "align-self:end;padding-bottom:6px" },
-        h("input", { type: "checkbox", id: "ddl-unique" }), tr("dataDdl.unique"))),
-      h("div", { class: "field" }, h("span", null, tr("dataDdl.columns")),
-        h("div", { id: "ddl-cols", class: "db-ddl-colpick" })));
+    body.push(
+      pair(
+        field({ label: tr("dataDdl.indexName"), control: h("input", { id: "ddl-index", autocomplete: "off", spellcheck: false, value: S_.indexName }) }),
+        checkField({ label: tr("dataDdl.unique"), control: h("input", { type: "checkbox", id: "ddl-unique" }) as HTMLInputElement })),
+      // A group: the caption names the checks and clicks none of them.
+      field({ group: true, label: tr("dataDdl.columns"), control: h("div", { id: "ddl-cols", class: "db-ddl-colpick" }) }));
   }
   if (kind !== "index") {
-    body.push(h("div", { class: "field" }, h("span", null, tr("dataDdl.columns")),
+    body.push(field({ group: true, label: tr("dataDdl.columns"), control: h("div", null,
       h("table", { class: "db-ddl-grid", id: "ddl-grid" },
         h("colgroup",
           h("col", { style: "width:22%" }), h("col", { style: "width:24%" }), h("col", { style: "width:56px" }),
@@ -233,24 +234,24 @@ function paintDbDdlSheet(): void {
             return h("th", null, hd ? tr(hd) : hd);
           }))),
         h("tbody")),
-      h("button", { class: "btn ghost", id: "ddl-add-row", type: "button" }, tr("dataDdl.addColumn2")),
+      btn(tr("dataDdl.addColumn2"), { kind: "ghost", id: "ddl-add-row" }),
       h("datalist", { id: "ddl-types" }, dbDdlTypeOptions(S_.dialect).map((t: string): HChild => {
         return h("option", { value: t });
-      }))));
+      }))) }));
   }
   body.push(
-    h("div", { class: "hint", id: "ddl-hint" }, tr("dataDdl.sqlPreviewCommitRuns")),
+    hint(tr("dataDdl.sqlPreviewCommitRuns"), { id: "ddl-hint" }),
     h("pre", { class: "db-ddl", id: "ddl-pre" }));
-  const host = $("sheet");
-  host.hidden = false;
-  fill(host,
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr(DDL_TITLE[kind]) } },
-      h("div", { class: "sheet-head" }, h("h2", { id: "ddl-title" }, title)),
-      h("div", { class: "sheet-body" }, body),
-      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "ddl-cancel", type: "button" }, tr("dataDdl.cancel")),
-        h("button", { class: "btn primary", id: "ddl-commit", type: "button", disabled: true },
-          tr(kind === "table" ? "dataDdl.createTable" : kind === "column" ? "dataDdl.addColumn2" : "dataDdl.createIndex")))));
+  showSheet(sheet({
+    title,
+    titleId: "ddl-title",
+    label: tr(DDL_TITLE[kind]),
+    body,
+    foot: [
+      btn(tr("dataDdl.cancel"), { id: "ddl-cancel" }),
+      btn(tr(kind === "table" ? "dataDdl.createTable" : kind === "column" ? "dataDdl.addColumn2" : "dataDdl.createIndex"), { kind: "primary", id: "ddl-commit", disabled: true }),
+    ],
+  }));
   wireDbDdlSheet();
   // The mini-grid belongs to the table and column kinds only — the index sheet has no
   // #ddl-grid, and rendering rows into it would throw before the picker and the quiet
@@ -353,11 +354,9 @@ function renderDbDdlRows(): void {
     tri.appendChild(mk("default", r.default, "0"));
     tri.appendChild(mk("comment", r.comment, ""));
     const tdx = el("td");
-    const rm = el("button", "btn icon") as HTMLButtonElement;
-    rm.type = "button";
-    rm.appendChild(iconNode("x", tr("dataDdl.removeColumn")));
-    rm.dataset.i = String(i);
-    if (!r.isNew) { rm.disabled = true; rm.title = tr("dataDdl.onlyNewColumnsCan"); }
+    const rm = iconBtn("x", tr("dataDdl.removeColumn"), {
+      data: { i: String(i) }, disabled: !r.isNew, title: r.isNew ? undefined : tr("dataDdl.onlyNewColumnsCan"),
+    });
     rm.onclick = (): void => {
       S?.rows.splice(i, 1);
       renderDbDdlRows();

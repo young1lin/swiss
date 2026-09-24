@@ -26,6 +26,7 @@ import { dbDropEdits, dbOkToDrop } from "./data-view.js";
 import { renderDbTabs } from "./data-tabs.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { locale, tk, tr } from "./i18n.js";
+import { btn } from "./ui/button.js";
 
 /* --- SQL syntax highlighting -------------------------------------------------------------------- */
 /* A tiny tokenizer, not a parser: keywords, strings, numbers, comments, functions, identifiers.
@@ -169,9 +170,7 @@ function dbFiltersNodes(): HChild[] {
         : null,
       h("button", { class: "db-act", title: tr("dataFilters.removeFilter"), data: { frm: String(i) } }, iconNode("x")));
   });
-  rows.push(h("button", {
-    class: "btn db-filter-add", title: tr("dataFilters.filterRowsColumnValue"), data: { fadd: "" },
-  }, tr("dataFilters.filter")));
+  rows.push(btn(tr("dataFilters.filter"), { title: tr("dataFilters.filterRowsColumnValue"), data: { fadd: "" } }));
   if (d.filters.length) {
     rows.push(h("span", { class: "db-filter-hint" }, tr("dataFilters.enterAppliesTermsStack")));
   }

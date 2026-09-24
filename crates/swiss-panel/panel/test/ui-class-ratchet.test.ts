@@ -46,21 +46,12 @@ import { uiOwnedClasses } from "./styles.js";
    Their going took the legacy .row family out of ui.css (its last users). `.row-act .desc` was
    one, so data-grid.ts's "desc" - a sort direction compared inside el()'s class expression, which
    this counter reads as a class token - stopped counting: 15 -> 14.
-   P7-1: data-browsers.ts 10 -> 8 (the Redis value view's second + and ⋯ went; the head has them). */
+   P7-1: data-browsers.ts 10 -> 8 (the Redis value view's second + and ⋯ went; the head has them).
+   P7-2: every data-*.ts row -> 0 (87 tokens: the five sheets on sheet() + ui/form.ts, buttons on
+   btn() / iconBtn() / moreBtn(), the held-writes dot on heldDot(), the object head's title on its
+   own .db-title). The tree's total fell to 19, so the "not a blind pass" check below stopped
+   summing the tree and counts a fixed source instead: at P9 the tree is meant to reach 0. */
 const FROZEN: Record<string, number> = {
-  "data-browsers.ts": 8,
-  "data-cell.ts": 10,
-  "data-csv.ts": 11,
-  "data-ddl.ts": 18,
-  "data-filters.ts": 1,
-  "data-form.ts": 4,
-  "data-grid.ts": 14,
-  "data-sql.ts": 6,
-  "data-stream.ts": 5,
-  "data-structure.ts": 1,
-  "data-tabs.ts": 1,
-  "data-value.ts": 5,
-  "data-view.ts": 3,
   "views/jobs.ts": 2,
   "views/terminal-settings.ts": 11,
   "views/terminal.ts": 6,
@@ -94,8 +85,7 @@ function literalsIn(n: ts.Node, out: string[]): void {
   ts.forEachChild(n, (c) => { literalsIn(c, out); });
 }
 
-export function uiClassTokens(rel: string, owned: Set<string>): string[] {
-  const text = fs.readFileSync(path.join(srcDir, rel), "utf8");
+export function uiClassTokens(rel: string, owned: Set<string>, text = fs.readFileSync(path.join(srcDir, rel), "utf8")): string[] {
   const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true);
   const hits: string[] = [];
   const count = (expr: ts.Node): void => {
@@ -128,10 +118,17 @@ describe("docs/46 G5 - ui.css classes are drawn by src/ui/ only", () => {
   const owned = uiOwnedClasses();
 
   it("the counter sees what it must (a clean pass must not be a blind pass)", () => {
-    // Known markup in the tree today: the MCP pane builds its own .btn words.
     expect(owned.has("btn") && owned.has("lrow") && owned.has("pane")).toBe(true);
-    const total = srcFiles().reduce((n, f) => n + uiClassTokens(f, owned).length, 0);
-    expect(total).toBeGreaterThan(50);
+    // A fixed positive control, not the tree's total: the tree is meant to reach 0 (docs/46 P9),
+    // and a counter that found nothing there would pass for the wrong reason. Every counted
+    // position - an h() class literal, both arms of a conditional, el()'s class argument - must
+    // find its token; the data hook and the plain text must not.
+    const probe = [
+      'h("div", { class: "lrow", data: { btn: "x" } }, "pane");',
+      'h("span", { class: on ? "sheet-sub" : "tag" });',
+      'el("button", "btn icon");',
+    ].join("\n");
+    expect(uiClassTokens("probe.ts", owned, probe).sort()).toEqual(["btn", "lrow", "sheet-sub", "tag"]);
   });
 
   it("every file is at its frozen count - lower only, and lower the row with it", () => {

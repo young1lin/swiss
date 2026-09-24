@@ -43,6 +43,9 @@
     .btn.ghost { background: none; box-shadow: none; color: var(--text-2); }
     .btn.ghost:hover { background: var(--hover); color: var(--text); }
     .btn:disabled, .btn.disabled { opacity: .4; cursor: default; background: var(--card); }
+    /* A disabled primary stays a primary, dimmed: the card ground above left its white word on
+       white (a DDL sheet's "Add column" until a name is typed - docs/46 P7-2 walk). */
+    .btn.primary:disabled { background: var(--accent); box-shadow: none; }
     /* A word with a leading glyph (btn({ icon })): the glyph is a hint, the word the meaning. */
     .btn.with-ic { display: inline-flex; align-items: center; gap: var(--s1); }
     .btn.with-ic .ic { width: var(--ic-m); height: var(--ic-m); }
@@ -597,8 +600,11 @@
     @keyframes pop-in { from { opacity: 0; transform: translateY(4px); } }
     .sheet, .menu.float { animation: pop-in .12s ease-out; }
     @media (prefers-reduced-motion: reduce) { .sheet, .menu.float { animation: none; } }
-    .sheet-head { display: flex; align-items: center; padding: var(--s4) var(--s5); border-bottom: 1px solid var(--sep-soft); }
+    /* The title, and the value it acts on (sheet({ sub })) on the title's baseline, wrapping under it
+       when the pair does not fit. */
+    .sheet-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 var(--s2); padding: var(--s4) var(--s5); border-bottom: 1px solid var(--sep-soft); }
     .sheet-head h2 { font-size: var(--f-head); font-weight: var(--w-title); margin: 0; letter-spacing: -0.01em; }
+    .sheet-sub { min-width: 0; font-family: var(--mono); font-size: var(--f-label); color: var(--text-2); overflow-wrap: anywhere; }
     /* One column with a 0 minimum, like .tl: nothing inside a sheet can push it wider than the sheet. */
     .sheet-body { padding: var(--s4) var(--s5); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); max-height: 66vh; overflow-y: auto; }
     .sheet-foot { display: flex; justify-content: flex-end; gap: var(--s2); padding: var(--s3) var(--s5); border-top: 1px solid var(--sep-soft); background: color-mix(in srgb, var(--bg) 60%, var(--card)); }
@@ -627,6 +633,10 @@
     /* The two halves of a pair (ui/form.ts pair) are side by side: the stacking margin never
        applies between them - in a sheet it pushed the second label a grid step below the first. */
     .two > .fld + .fld { margin-top: 0; }
+    /* A check beside a field (an index's Unique, a job's Disabled) qualifies that field's control,
+       so it sits on the control's row: end-aligned and lifted by the input's own padding and
+       border (5px + 1px), it centres on the input instead of the caption above it. */
+    .two > .fld:has(> label.check) { align-self: end; padding-bottom: calc(var(--s1) + 2px); }
     .fld .hint { margin-top: var(--s1); }
     /* The nested card a sheet shows a list in (tokens, a job's runs) is inset, not lifted: it sits
        on the sheet's own colour, so it keeps a hairline and gives up the drop shadow. */
