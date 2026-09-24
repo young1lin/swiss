@@ -154,6 +154,8 @@ const MANY = ["* * * * *", "*/5 * * * *", "*/15 * * * *", "0 * * * *", "0 3 * * 
 
 function sampleCalls(now: number): TimelineItem[] {
   return [
+    // Still in flight: no duration yet, its state where the duration will go (live).
+    { id: "g0", at: now - MIN, title: "export_frame", arg: '{"frame":"cover"}', live: { text: tr("gallery.d.running") } },
     { id: "g1", at: now - 3 * MIN, title: "query_orders", arg: '{"status":"open"}', ms: 42, same: "open" },
     { id: "g2", at: now - 4 * MIN, title: "query_orders", arg: '{"status":"open"}', ms: 40, same: "open" },
     { id: "g3", at: now - 12 * MIN, title: "list_tables", arg: "{}", ms: 1650 },

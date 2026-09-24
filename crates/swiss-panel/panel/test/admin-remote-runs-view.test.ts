@@ -14,427 +14,316 @@
  * limitations under the License.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { existsSync } from "node:fs";
+// @vitest-environment happy-dom
+
+/* The Remote Runs page (#remote-runs, the remote plugin's second page): the run record
+   (crates/swiss-remote/src/history.rs) as the event list Logs and Traffic are (docs/46 P6-2) -
+   live runs first, the output fetched when a row opens, a run that did not succeed a red tag.
+   A real DOM (happy-dom) since P6-2: the timeline, the menu and the pager are the library's
+   nodes, read the way a user sees them. */
+
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/* The Remote Runs page (#remote-runs, the remote plugin's second page): the run record
-   (crates/swiss-remote/src/history.rs) as a Traffic-shaped card of .call rows, live runs
-   first, with the output fetched when a row opens. The suite pins the view contract under
-   the same hand-rolled DOM the Remote Targets suite uses; document.querySelector answers
-   the two selectors the view paints into (a row's body, a live row's <pre>). */
-
-/* docs/37 R5: the view paints with h()/fill(), so the fake DOM is a Node-extending
-   class whose innerHTML READS serialise the built tree, and document.querySelector
-   answers the view's "#pane ..." descendant selectors against that tree. */
-class NodeStub {}
-(globalThis as unknown as { Node: unknown }).Node = NodeStub;
-
-interface FakeEl {
-  innerHTML: string;
-  textContent: string;
-  className: string;
-  value: string;
-  disabled: boolean;
-  onclick: unknown;
-  onchange: unknown;
-  dataset: Record<string, string>;
-  closest: (sel: string) => FakeEl | null;
-}
-
-class FakeNode extends NodeStub implements FakeEl {
-  tag: string;
-  attrs: Record<string, string> = {};
-  dataset: Record<string, string> = {};
-  className = "";
-  _text = "";
-  get textContent(): string { return this._text; }
-  set textContent(v: string) { if (v === "") { this.children = []; this._html = ""; } this._text = v; }
-  id = "";
-  type = "button";
-  value = "";
-  hidden = false;
-  checked = false;
-  disabled = false;
-  title = "";
-  style: Record<string, string> = {};
-  children: FakeNode[] = [];
-  onclick: ((ev?: unknown) => void) | null = null;
-  onchange: ((ev?: unknown) => void) | null = null;
-  private _html = "";
-  constructor(tag: string) { super(); this.tag = tag.toUpperCase(); }
-  static fragment(): FakeNode { return new FakeNode("#document-fragment"); }
-  get innerHTML(): string { return this._html || serialize(this); }
-  set innerHTML(v: string) { this._html = v; this.children = []; }
-  querySelector(): FakeEl | null { return null; }
-  querySelectorAll(): FakeEl[] { return []; }
-  appendChild(n: FakeNode): FakeNode {
-    if (n.tag === "#DOCUMENT-FRAGMENT") { n.children.forEach((c) => { this.children.push(c); }); this._html = ""; return n; }
-    this.children.push(n);
-    this._html = "";
-    return n;
-  }
-  append(...nodes: FakeNode[]): void { nodes.forEach((n) => { this.appendChild(n); }); }
-  addEventListener(): void {}
-  removeEventListener(): void {}
-  setAttribute(k: string, v: string): void {
-    this.attrs[k] = v;
-    if (k === "id") this.id = v;
-    if (k.startsWith("data-")) this.dataset[k.slice(5)] = v;
-  }
-  removeAttribute(k: string): void { delete this.attrs[k]; }
-  focus(): void {}
-  click(): void { if (this.onclick) this.onclick({ detail: 1 }); }
-  getBoundingClientRect(): { top: number; left: number; right: number; bottom: number; width: number; height: number } {
-    return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
-  }
-  closest(sel: string): FakeEl | null { return sel.charAt(0) === "#" && this.id === sel.slice(1) ? this : null; }
-}
-
-function serialize(node: FakeNode): string {
-  if (!node.tag || node.tag === "#TEXT") return String(node._text ?? "");
-  const attrs = Object.keys(node.attrs).map((k) => { return " " + k + "=\"" + node.attrs[k] + "\""; }).join("");
-  const id = node.id ? " id=\"" + node.id + "\"" : "";
-  const cls = node.className ? " class=\"" + node.className + "\"" : "";
-  const ttl = node.title ? " title=\"" + node.title + "\"" : "";
-  const dis = node.disabled ? " disabled" : "";
-  const hid = node.hidden ? " hidden" : "";
-  const val = node.value ? " value=\"" + node.value + "\"" : "";
-  const sel = (node as unknown as { selected?: boolean }).selected ? " selected" : "";
-  const kids = node.children.map((c) => { return serialize(c); }).join("");
-  const tag = node.tag.toLowerCase();
-  return "<" + tag + id + cls + ttl + attrs + dis + hid + val + sel + ">" + (kids || node._text) + "</" + tag + ">";
-}
-
-function fakeEl(): FakeEl {
-  return new FakeNode("div");
-}
-
-const els = new Map<string, FakeEl>();
-/* The real DOM resolves ids from anywhere; the ids the view reads back after a paint
-   (rrList, rrClear, countChip outside it) must find the node the TREE built, not a
-   fresh stub - paintList fills $({"rrList"}) and the tree must receive it. */
-function findId(root: FakeNode, id: string): FakeNode | null {
-  if (root.id === id) return root;
-  for (const c of root.children) {
-    const hit = findId(c, id);
-    if (hit) return hit;
-  }
-  return null;
-}
-const byId = (id: string): FakeEl => {
-  const pane = els.get("pane") as unknown as FakeNode | undefined;
-  const paintedHit = pane ? findId(pane, id) : null;
-  if (paintedHit) return paintedHit;
-  let e = els.get(id);
-  if (!e) { e = fakeEl(); (e as unknown as FakeNode).id = id; els.set(id, e); }
-  return e;
-};
-// The nodes the view paints into after mount: resolved against the built tree first
-// (the view's own document.querySelector answer), with a persistent stub as fallback.
-const painted = new Map<string, FakeEl>();
-const node = (sel: string): FakeEl => {
-  const hit = querySel(sel);
-  if (hit) return hit;
-  let e = painted.get(sel);
-  if (!e) { e = fakeEl(); painted.set(sel, e); }
-  return e;
-};
-
-/* Match one selector unit like `div`, `.call[data-rrun="17"]`, `pre[data-rlivepre="18"]`. */
-function unitMatches(n: FakeNode, unit: string): boolean {
-  const m = unit.match(/^([a-z]+)?(?:\.([a-z][\w-]*))?(?:\[data-([\w-]+)="([^"]*)"\])?$/);
-  if (!m) return false;
-  if (m[1] && n.tag.toLowerCase() !== m[1]) return false;
-  if (m[2] && !(" " + n.className + " ").includes(" " + m[2] + " ")) return false;
-  if (m[3]) return n.dataset[m[3]] === m[4];
-  return true;
-}
-/* Every node under `root` matching the unit, at any depth. */
-function descendants(root: FakeNode, unit: string): FakeNode[] {
-  const out: FakeNode[] = [];
-  const walk = (n: FakeNode): void => {
-    for (const c of n.children) {
-      if (unitMatches(c, unit)) out.push(c);
-      walk(c);
-    }
-  };
-  walk(root);
-  return out;
-}
-/* The view's selectors are "#pane <unit> <unit> ..." - resolve the descendant chain
-   against the pane the paint built; anything else keeps the persistent-stub map. */
-function querySel(sel: string): FakeEl | null {
-  if (sel.charAt(0) !== "#" || !sel.startsWith("#pane ")) return node(sel);
-  let layer: FakeNode[] = [byId("pane") as unknown as FakeNode];
-  for (const unit of sel.slice("#pane ".length).trim().split(/\s+/)) {
-    const next: FakeNode[] = [];
-    for (const n of layer) next.push(...descendants(n, unit));
-    layer = next;
-    if (!layer.length) return null;
-  }
-  return layer[0] || null;
-}
-
-let bodyByPath: Record<string, unknown> = {};
-const requests: { path: string; method: string }[] = [];
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view is driven by its
+   page-registry surface (mount / refresh / poll / unmount), so a typed import would add nothing. */
 let view: any;
+let replies: Record<string, unknown> = {};
+let requests: { path: string; method: string }[] = [];
+
+const here = dirname(fileURLToPath(import.meta.url));
+const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
+const settle = async (): Promise<void> => { for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+function shellSkeleton(): string {
+  const html = readFileSync(join(here, "..", "..", "src", "admin_assets", "index.html"), "utf8");
+  const ids = Array.from(html.matchAll(/id="([a-zA-Z0-9_-]+)"/g)).map((m) => m[1]);
+  return Array.from(new Set(ids)).map((id) => '<div id="' + id + '"></div>').join("");
+}
 
 beforeAll(async () => {
-  const prevDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
-  const prevFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
   Object.assign(globalThis, {
-    document: {
-      getElementById: byId,
-      createElement: (tag: string) => new FakeNode(tag || "div"),
-      createElementNS: (_ns: string, tag: string) => new FakeNode(tag || "div"),
-      createDocumentFragment: () => FakeNode.fragment(),
-      createTextNode: (text: string) => { const n = new FakeNode("#text"); n.textContent = text; return n; },
-      querySelector: (sel: string) => querySel(sel),
-      querySelectorAll: () => [],
-      addEventListener() {},
-      removeEventListener() {},
-      body: fakeEl(),
-      head: fakeEl(),
-      visibilityState: "visible",
-      activeElement: null,
+    fetch: (url: string, init?: RequestInit): Promise<Response> => {
+      const u = String(url);
+      const method = init?.method || "GET";
+      requests.push({ path: u, method });
+      const reply = replies[(method !== "GET" ? method + " " : "") + u] ?? replies[u];
+      const ok = reply !== undefined;
+      return Promise.resolve({ status: ok ? 200 : 404, ok, json: () => Promise.resolve(reply ?? { error: "no stub for " + u }) } as Response);
     },
-    fetch: (path: unknown, init: unknown) => {
-      const p = String(path);
-      requests.push({ path: p, method: ((init && (init as { method?: string }).method) || "GET") as string });
-      const body = bodyByPath[p];
-      return Promise.resolve({ status: body === undefined ? 404 : 200, ok: body !== undefined, json: async () => body ?? { error: "no such route in this test: " + p } });
-    },
-    window: { innerWidth: 1440, innerHeight: 900, addEventListener() {} },
-    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     confirm: () => true,
-    location: { origin: "http://127.0.0.1:19998" },
   });
-  afterAll(() => {
-    if (prevDocument) Object.defineProperty(globalThis, "document", prevDocument);
-    else delete (globalThis as Record<string, unknown>).document;
-    if (prevFetch) Object.defineProperty(globalThis, "fetch", prevFetch);
-    else delete (globalThis as Record<string, unknown>).fetch;
-  });
+  document.body.innerHTML = shellSkeleton();
   view = await import("../src/views/remote-runs.js");
 });
 
 beforeEach(() => {
-  requests.length = 0;
-  painted.clear();
+  requests = [];
   view.unmount();
+  document.body.innerHTML = shellSkeleton();
 });
 
-/* Fire the pane's delegated click at a stub the selector would have caught. */
-function click(dataset: Record<string, string>, id?: string) {
-  const stub = fakeEl();
-  stub.dataset = dataset;
-  stub.closest = (sel: string) => {
-    if (sel.startsWith("#")) return id === sel.slice(1) ? stub : null;
-    const key = sel.slice(1, -1); // "[data-rtog]" -> "data-rtog"
-    const prop = key.replace(/^data-/, "");
-    return prop in dataset ? stub : null;
-  };
-  (byId("pane").onclick as (e: { target: FakeEl }) => void)({ target: stub });
-}
-
+const now = new Date().toISOString();
 const finished = {
   runId: 17, owner: "remote", label: "exec build", action: "remote.exec", state: "failed",
-  queuedAt: new Date().toISOString(), startedAt: new Date().toISOString(), endedAt: new Date().toISOString(),
+  queuedAt: now, startedAt: now, endedAt: now,
   ms: 12345, exitCode: 2, chars: 24, meta: { target: "build", endpoint: "conn-1" },
   input: { target: "build", argv: ["make", "-j8"], cwd: "src", envKeys: ["CC"] }, outputBytes: 24,
 };
 const running = {
   runId: 18, owner: "remote", label: "exec build", action: "remote.exec", state: "running",
-  queuedAt: new Date().toISOString(), startedAt: new Date().toISOString(),
+  queuedAt: now, startedAt: now,
   input: { target: "build", argv: ["./test.sh"] },
 };
+const LIMITS = { maxAgeMs: 30 * 86400000, maxTotalBytes: 500 * 1024 * 1024, maxRuns: 5000, maxOutputBytes: 16 * 1024 * 1024 };
 
 function serve(runs: unknown[], active: unknown[], extra: Record<string, unknown> = {}) {
-  bodyByPath = {
+  replies = {
     "/api/remote/targets": { targets: [{ id: "build", endpoint: "conn-1" }, { id: "dev", endpoint: "conn-1" }], groups: ["default"] },
-    "/api/remote/runs?limit=20": {
-      runs, active,
-      limits: { maxAgeMs: 30 * 86400000, maxTotalBytes: 500 * 1024 * 1024, maxRuns: 5000, maxOutputBytes: 16 * 1024 * 1024 },
-      usage: { bytes: 1536, runs: runs.length },
-      ...extra,
-    },
+    "/api/remote/runs?limit=20": { runs, active, limits: LIMITS, usage: { bytes: 1536, runs: runs.length }, ...extra },
   };
 }
 
-async function settle() {
-  // Let the fetch -> json -> repaint chain drain: a macrotask turn, twice, is past every await.
-  for (let i = 0; i < 2; i++) await new Promise((r) => setTimeout(r, 0));
+function item(id: number): HTMLElement {
+  return Array.from(document.querySelectorAll<HTMLElement>("#pane .tl-item")).find((n) => n.dataset.rrun === String(id)) as HTMLElement;
+}
+function open(id: number): void {
+  (item(id).querySelector(".tl-sum") as HTMLElement).click();
 }
 
 describe("the Remote Runs page (remote plugin, the run record)", () => {
   it("the view module exists at the entry the page descriptor points at", () => {
-    const entry = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "views", "remote-runs.ts");
-    expect(existsSync(entry), entry).toBe(true);
+    expect(existsSync(join(here, "..", "src", "views", "remote-runs.ts"))).toBe(true);
   });
 
-  it("mount paints the budget line, the live row first, the recorded row with its command and exit, and the chip", async () => {
+  it("the head is one sentence, what the record keeps, the target filter and a ⋯ - no caption, no standing Clear", async () => {
+    // One list is the whole page, so its filter and its ⋯ are the head's (the Jobs and Tunnels
+    // head ⋯ hold page-wide verbs too). In a captionless section head they stood on a row of
+    // their own over the note (found on the docs/46 P6-2 walk).
     serve([finished], [running]);
     await view.mount();
-    const pane = byId("pane").innerHTML;
-    expect(pane).toContain("1 run recorded");
-    expect(pane).toContain("1.5 KB of 500.0 MB");
-    expect(pane).toContain("kept 30 days");
-    const list = byId("rrList").innerHTML;
-    // Live first: the running row precedes the recorded one.
-    expect(list.indexOf('data-rrun="18"')).toBeLessThan(list.indexOf('data-rrun="17"'));
-    expect(list).toContain("./test.sh");
-    expect(list).toContain("#18 · running");
-    // The recorded row: argv as a command line, target and cwd, exit code and duration.
-    expect(list).toContain("make -j8");
-    expect(list).toContain("build · src");
-    expect(list).toContain("#17 · exit 2 · 12.3s");
-    expect(list).toContain('class="dot down" title="failed"');
-    expect(list).toContain('class="dot starting" title="running"');
-    // The filter lists the targets table; Clear is enabled once something is recorded.
-    expect(pane).toContain('<option value="build">build</option>');
-    expect(pane).toContain('id="rrClear"');
-    expect(pane).toContain(">Clear</button>");
-    expect(byId("countChip").textContent).toBe("1 run");
-    // The i18n sweep (docs/38 I5) pluralized the chip: 1 run, 2 runs.
-  expect(view.countText()).toBe("1 run");
+    const pane = $("pane");
+    expect(pane.querySelector(".pane-desc")?.textContent).toBe("Every command, sync and pull run on a remote target, with its output.");
+    expect(pane.querySelector(".pane-sub")?.textContent).toBe("1 run recorded · 1.5 KB of 500.0 MB · kept 30 days");
+    const acts = Array.from(pane.querySelectorAll(".pane-actions > select, .pane-actions > button")).map((n) => n.id);
+    expect(acts).toEqual(["rrTarget", "rrMore"]);
+    expect(pane.querySelector(".sec-head, .sec-cap, .sec-note")).toBeNull();
+    expect(Array.from(($("rrTarget") as HTMLSelectElement).options).map((o) => o.value)).toEqual(["", "build", "dev"]);
+    expect($("rrClear")).toBeNull();
+    expect($("countChip").textContent).toBe("1 run");
+    expect(view.countText()).toBe("1 run");
   });
 
-  it("a row carries its actor in the meta, verbatim, between the id and the exit (docs/41 A1)", async () => {
+  it("a run is a timeline row: live first with its pulse, then the record - the kind, the command, a failure's red tag, the duration", async () => {
+    serve([finished], [running]);
+    await view.mount();
+    const rows = Array.from(document.querySelectorAll<HTMLElement>("#pane .tl-item")).map((n) => n.dataset.rrun);
+    expect(rows).toEqual(["18", "17"]);
+    const live = item(18);
+    expect(live.querySelector(".tl-title")?.textContent).toBe("exec");
+    expect(live.querySelector(".tl-arg")?.textContent).toBe("./test.sh");
+    expect(live.querySelector(".tl-live")?.textContent).toBe("running");
+    expect(live.querySelector(".tl-live .dot")?.className).toBe("dot starting");
+    expect(live.querySelector(".tl-ms")).toBeNull();
+    const done = item(17);
+    expect(done.querySelector(".tl-arg")?.textContent).toBe("make -j8");
+    expect(done.querySelector(".tag.bad")?.textContent).toBe("exit 2");
+    expect(done.querySelector(".tl-ms")?.textContent).toBe("12 s");
+    // One target, no actor anywhere: the who column is left out (it would say the same on every row).
+    expect(done.querySelector(".tl-who")).toBeNull();
+  });
+
+  it("who is the target and the actor, verbatim (docs/41 A1) - a column once the rows disagree", async () => {
     const byCli = { ...finished, runId: 19, actor: "cli:jdoe@box" };
     const byMcp = { ...running, runId: 20, actor: "mcp:claude-code" };
-    // A file action has no exit code: its state is the (translated) word, not raw JSON.
-    const synced = { ...finished, runId: 21, actor: "panel", action: "remote.sync", state: "succeeded", exitCode: undefined, input: { target: "build", source: "." } };
+    // A file action has no exit code: success is no tag, its kind and shape say what ran.
+    const synced = { ...finished, runId: 21, actor: "panel", action: "remote.sync", state: "succeeded", exitCode: undefined, input: { target: "dev", source: ".", to: "/srv" }, meta: { target: "dev" } };
     serve([byCli, finished, synced], [byMcp]);
     await view.mount();
-    const list = byId("rrList").innerHTML;
-    expect(list).toContain("#19 · cli:jdoe@box · exit 2 · 12.3s");
-    expect(list).toContain("#20 · mcp:claude-code · running");
-    expect(list).toContain("#21 · panel · succeeded · 12.3s");
-    // A row an older gateway recorded has no actor and shows none - no empty seat.
-    expect(list).toContain("#17 · exit 2 · 12.3s");
+    expect(item(19).querySelector(".tl-who")?.textContent).toBe("build · cli:jdoe@box");
+    expect(item(20).querySelector(".tl-who")?.textContent).toBe("build · mcp:claude-code");
+    // A row an older gateway recorded has no actor: the target alone, no empty seat.
+    expect(item(17).querySelector(".tl-who")?.textContent).toBe("build");
+    expect(item(21).querySelector(".tl-title")?.textContent).toBe("sync");
+    expect(item(21).querySelector(".tl-arg")?.textContent).toBe(". → /srv");
+    expect(item(21).querySelector(".tag")).toBeNull();
   });
 
-  it("an empty record draws the empty state and a disabled Clear", async () => {
+  it("every run that did not succeed is red and says how: exit code, timed out, canceled, failed", async () => {
+    const t = (runId: number, o: Record<string, unknown>) => ({ ...finished, runId, exitCode: undefined, ...o });
+    serve([
+      t(31, { state: "timeout", timedOut: true }),
+      t(32, { state: "canceled", canceled: true }),
+      t(33, { state: "failed", action: "remote.pull", input: { target: "build", remote: "/var/log/x" } }),
+      t(34, { state: "succeeded", exitCode: 0 }),
+    ], []);
+    await view.mount();
+    const tagOf = (id: number) => item(id).querySelector(".tag.bad")?.textContent ?? null;
+    expect([tagOf(31), tagOf(32), tagOf(33), tagOf(34)]).toEqual(["timed out", "canceled", "failed", null]);
+  });
+
+  it("identical consecutive runs fold into ×N - a run in flight never does", async () => {
+    const same = (runId: number) => ({ ...finished, runId, state: "succeeded", exitCode: 0 });
+    serve([same(41), same(40), same(39)], [running, { ...running, runId: 19 }]);
+    await view.mount();
+    expect(Array.from(document.querySelectorAll<HTMLElement>("#pane .tl-item")).map((n) => n.dataset.rrun)).toEqual(["18", "19", "41"]);
+    expect(item(41).querySelector(".tl-n")?.textContent).toBe("×3");
+  });
+
+  it("an empty record draws the empty state, and the ⋯'s Clear is off", async () => {
     serve([], []);
     await view.mount();
-    expect(byId("rrList").innerHTML).toContain("No runs yet");
-    expect((byId("rrClear") as unknown as FakeNode).disabled).toBe(true);
-    expect(byId("countChip").textContent).toBe("");
+    expect($("rrList").querySelector(".empty")?.textContent).toContain("No runs yet");
+    $("rrMore").click();
+    const clear = Array.from(document.querySelectorAll<HTMLButtonElement>("#menu button")).find((b) => b.textContent === "Clear")!;
+    expect(clear.disabled).toBe(true);
+    expect($("countChip").textContent).toBe("");
   });
 
-  it("opening a recorded row fetches its output from the record and paints it into the body", async () => {
+  it("opening a recorded row fetches its output and paints the meta and the Output block", async () => {
     serve([finished], []);
-    bodyByPath["/api/remote/runs/17/output?after=0&max=131072"] = {
+    replies["/api/remote/runs/17/output?after=0&max=131072"] = {
       runId: 17, cursor: 0, nextCursor: 24, output: "compiling...\nok\nwarn: x\n", total: 24, truncated: false, terminal: true,
     };
     await view.mount();
-    click({ rtog: "17" });
+    open(17);
     await settle();
     expect(requests.some((r) => r.path === "/api/remote/runs/17/output?after=0&max=131072")).toBe(true);
-    const body = node('#pane .call[data-rrun="17"] .call-body').innerHTML;
-    expect(body).toContain("Output · 24 B");
-    expect(body).toContain("compiling...\nok\nwarn: x\n");
-    expect(body).not.toContain("Load more");
-    expect(node('#pane .call[data-rrun="17"]').className).toBe("call open");
+    const it17 = item(17);
+    expect(it17.classList.contains("open")).toBe(true);
+    expect(it17.querySelector(".tl-meta")?.textContent).toBe("#17 · build · src · exit 2");
+    expect(it17.querySelector(".vblock-cap")?.textContent).toBe("Output");
+    expect(it17.querySelector(".vblock-note")?.textContent).toBe("24 B");
+    expect(it17.querySelector(".vblock pre")?.textContent).toBe("compiling...\nok\nwarn: x\n");
+    expect(it17.querySelector("[data-rmore]")).toBeNull();
+    // A click inside the open body is someone reading it: the row stays open.
+    (it17.querySelector(".vblock pre") as HTMLElement).click();
+    expect(it17.classList.contains("open")).toBe(true);
+    open(17);
+    expect(it17.classList.contains("open")).toBe(false);
+    expect(it17.querySelector(".tl-body")).toBeNull();
   });
 
-  it("a long output pages through Load more and a capped one shows its tail", async () => {
+  it("a long output pages through Load more, and a capped one shows its tail", async () => {
     const capped = { ...finished, runId: 21, outputBytes: 131072 * 2, outputCapped: true, tail: "the last lines\n" };
     serve([capped], []);
-    bodyByPath["/api/remote/runs/21/output?after=0&max=131072"] = { runId: 21, cursor: 0, nextCursor: 131072, output: "head", total: 262144, terminal: true };
-    bodyByPath["/api/remote/runs/21/output?after=131072&max=131072"] = { runId: 21, cursor: 131072, nextCursor: 262144, output: "+rest", total: 262144, terminal: true };
+    replies["/api/remote/runs/21/output?after=0&max=131072"] = { runId: 21, cursor: 0, nextCursor: 131072, output: "head", total: 262144, terminal: true };
+    replies["/api/remote/runs/21/output?after=131072&max=131072"] = { runId: 21, cursor: 131072, nextCursor: 262144, output: "+rest", total: 262144, terminal: true };
     await view.mount();
-    click({ rtog: "21" });
+    open(21);
     await settle();
-    let body = node('#pane .call[data-rrun="21"] .call-body').innerHTML;
-    expect(body).toContain('data-rmore="21">Load more');
-    expect(body).toContain("128.0 KB of 256.0 KB");
-    expect(body).toContain("Output capped at 16.0 MB");
-    expect(body).toContain("the last lines");
-    click({ rmore: "21" });
+    let body = item(21).querySelector(".tl-body") as HTMLElement;
+    expect(body.querySelector(".vblock-note")?.textContent).toBe("128.0 KB of 256.0 KB");
+    expect(body.querySelector("[data-rmore]")?.textContent).toBe("Load more");
+    const blocks = Array.from(body.querySelectorAll(".vblock"));
+    expect(blocks[1].querySelector(".vblock-cap")?.textContent).toBe("Tail");
+    expect(blocks[1].querySelector(".vblock-note")?.textContent).toBe("output capped at 16.0 MB; its last 15 B");
+    expect(blocks[1].querySelector("pre")?.textContent).toBe("the last lines\n");
+    (body.querySelector("[data-rmore]") as HTMLElement).click();
     await settle();
-    body = node('#pane .call[data-rrun="21"] .call-body').innerHTML;
-    expect(body).toContain("head+rest");
-    expect(body).not.toContain("Load more");
+    body = item(21).querySelector(".tl-body") as HTMLElement;
+    expect(body.querySelector(".vblock pre")?.textContent).toBe("head+rest");
+    expect(body.querySelector("[data-rmore]")).toBeNull();
   });
 
-  it("an evicted output says so in place of the stream, keeps a capped run's tail, and the budget line names the window (docs/41 A2)", async () => {
+  it("an evicted output says so in place of the stream, keeps a capped run's tail, and the note names the window (docs/41 A2)", async () => {
     const evicted = { ...finished, runId: 22, outputBytes: 3072, outputEvicted: true, outputCapped: true, tail: "the last lines\n" };
-    serve([evicted], [], { limits: { maxAgeMs: 30 * 86400000, maxTotalBytes: 500 * 1024 * 1024, maxRuns: 5000, maxOutputBytes: 16 * 1024 * 1024, auditWindowMs: 7 * 86400000 } });
-    // The file is gone: the output route answers the empty chunk a silent run gets.
-    bodyByPath["/api/remote/runs/22/output?after=0&max=131072"] = { runId: 22, cursor: 0, nextCursor: 0, output: "", total: 0, truncated: false, terminal: true };
+    serve([evicted], [], { limits: { ...LIMITS, auditWindowMs: 7 * 86400000 } });
+    replies["/api/remote/runs/22/output?after=0&max=131072"] = { runId: 22, cursor: 0, nextCursor: 0, output: "", total: 0, truncated: false, terminal: true };
     await view.mount();
-    expect(byId("pane").innerHTML).toContain("kept 30 days · the last 7 days always traceable");
-    click({ rtog: "22" });
+    expect($("pane").querySelector(".pane-sub")?.textContent).toContain("kept 30 days · the last 7 days always traceable");
+    open(22);
     await settle();
-    const body = node('#pane .call[data-rrun="22"] .call-body').innerHTML;
-    expect(body).toContain("The output (3.0 KB) was evicted by the size budget; the record itself stays for 30 days.");
-    expect(body).not.toContain("No output was produced.");
-    expect(body).toContain("the last lines");
+    const body = item(22).querySelector(".tl-body") as HTMLElement;
+    expect(body.textContent).toContain("The output (3.0 KB) was evicted by the size budget; the record itself stays for 30 days.");
+    expect(body.textContent).not.toContain("No output was produced.");
+    expect(body.textContent).toContain("the last lines");
+  });
+
+  it("a run with no output says so in its Output block", async () => {
+    serve([{ ...finished, state: "succeeded", exitCode: 0, outputBytes: 0 }], []);
+    replies["/api/remote/runs/17/output?after=0&max=131072"] = { runId: 17, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };
+    await view.mount();
+    open(17);
+    await settle();
+    expect(item(17).querySelector(".vblock-text")?.textContent).toBe("No output was produced.");
   });
 
   it("opening a live row follows /api/runs output and offers Cancel, which posts the cancel", async () => {
     serve([], [running]);
-    bodyByPath["/api/runs/18/output?after=0&max=131072"] = { runId: 18, state: "running", cursor: 0, nextCursor: 5, output: "tick\n", truncated: false, terminal: false };
-    bodyByPath["/api/runs/18/cancel"] = { runId: 18, state: "canceled" };
+    replies["/api/runs/18/output?after=0&max=131072"] = { runId: 18, state: "running", cursor: 0, nextCursor: 5, output: "tick\n", truncated: false, terminal: false };
+    replies["POST /api/runs/18/cancel"] = { runId: 18, state: "canceled" };
     await view.mount();
-    click({ rtog: "18" });
+    open(18);
+    // Before the first bytes: the waiting line, and Cancel in the block's tools.
+    expect(item(18).querySelector(".vblock-cap")?.textContent).toBe("Live output");
     await settle();
     expect(requests.some((r) => r.path === "/api/runs/18/output?after=0&max=131072")).toBe(true);
-    expect(node('#pane .call[data-rrun="18"] .call-body').innerHTML).toContain('data-rcancel="18">Cancel');
-    expect(node('#pane pre[data-rlivepre="18"]').textContent).toBe("tick\n");
-    click({ rcancel: "18" });
+    const body = item(18).querySelector(".tl-body") as HTMLElement;
+    expect(body.querySelector(".vblock pre")?.textContent).toBe("tick\n");
+    const cancel = body.querySelector("[data-rcancel]") as HTMLElement;
+    expect(cancel.textContent).toBe("Cancel");
+    cancel.click();
     await settle();
     expect(requests.some((r) => r.path === "/api/runs/18/cancel" && r.method === "POST")).toBe(true);
+    view.unmount(); // stop the live timer
   });
 
   it("Older asks for the page before the cursor, Newer comes back, and the filter narrows by target", async () => {
     serve([finished], [], { nextBefore: 17 });
-    bodyByPath["/api/remote/runs?limit=20&before=17"] = { runs: [{ ...finished, runId: 9 }], active: [], usage: { bytes: 1536, runs: 2 } };
-    bodyByPath["/api/remote/runs?limit=20&target=dev"] = { runs: [], active: [], usage: { bytes: 1536, runs: 2 } };
+    replies["/api/remote/runs?limit=20&before=17"] = { runs: [{ ...finished, runId: 9 }], active: [], usage: { bytes: 1536, runs: 2 } };
+    replies["/api/remote/runs?limit=20&target=dev"] = { runs: [], active: [], usage: { bytes: 1536, runs: 2 } };
     await view.mount();
-    expect(byId("rrList").innerHTML).toContain('id="rrNext"');
-    expect(byId("rrList").innerHTML).toContain(">Older</button>");
-    click({}, "rrNext");
+    expect($("rrNext").textContent).toBe("Older");
+    expect(($("rrPrev") as HTMLButtonElement).disabled).toBe(true);
+    expect($("pane").querySelector(".pager")?.getAttribute("aria-label")).toBe("Run pages");
+    $("rrNext").click();
     await settle();
     expect(requests.some((r) => r.path === "/api/remote/runs?limit=20&before=17")).toBe(true);
-    expect(byId("rrList").innerHTML).toContain('data-rrun="9"');
-    expect(byId("rrList").innerHTML).toContain("Page 2");
-    click({}, "rrPrev");
+    expect(item(9)).toBeTruthy();
+    expect($("pane").querySelector(".pager-status")?.textContent).toBe("Page 2");
+    $("rrPrev").click();
     await settle();
-    expect(byId("rrList").innerHTML).toContain('data-rrun="17"');
-    const sel = byId("rrTarget");
+    expect(item(17)).toBeTruthy();
+    const sel = $("rrTarget") as HTMLSelectElement;
     sel.value = "dev";
-    // docs/37 R5: the select carries no per-render handler - #pane's delegated change
-    // listener answers it, so the test fires the pane's dispatcher like a real event.
-    (byId("pane").onchange as (e: { target: FakeEl }) => void)({ target: sel });
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
     await settle();
     expect(requests.some((r) => r.path === "/api/remote/runs?limit=20&target=dev")).toBe(true);
-    expect(byId("rrList").innerHTML).toContain("No runs on this target yet");
+    expect($("rrList").textContent).toBe("No runs on this target yet.");
   });
 
-  it("Clear confirms, deletes the record and repaints", async () => {
+  it("Clear lives behind the section's ⋯: it confirms, deletes the record and repaints", async () => {
     serve([finished], []);
-    bodyByPath["/api/remote/runs"] = { ok: true };
+    replies["DELETE /api/remote/runs"] = { ok: true };
     await view.mount();
-    click({}, "rrClear");
+    $("rrMore").click();
+    const clear = Array.from(document.querySelectorAll<HTMLButtonElement>("#menu button")).find((b) => b.textContent === "Clear")!;
+    expect(clear.disabled).toBe(false);
+    expect(clear.className).toContain("danger");
+    clear.click();
     await settle();
     expect(requests.some((r) => r.path === "/api/remote/runs" && r.method === "DELETE")).toBe(true);
   });
 
-  it("a poll that changes nothing leaves the pane's nodes alone", async () => {
+  it("a poll that changes nothing leaves the rows alone - an open row stays open", async () => {
     serve([finished], []);
+    replies["/api/remote/runs/17/output?after=0&max=131072"] = { runId: 17, cursor: 0, nextCursor: 2, output: "ok", total: 2, terminal: true };
     await view.mount();
-    byId("pane").innerHTML = "untouched";
+    open(17);
+    await settle();
+    const it17 = item(17);
     await view.poll();
-    expect(byId("pane").innerHTML).toBe("untouched");
-    // A new run arriving does repaint.
-    serve([{ ...finished, runId: 30 }, finished], []);
+    expect(item(17)).toBe(it17);
+    expect(it17.classList.contains("open")).toBe(true);
+    // A new run arriving does repaint - and the open row comes back open.
+    serve([{ ...finished, runId: 30, exitCode: 1 }, finished], []);
+    replies["/api/remote/runs/17/output?after=0&max=131072"] = { runId: 17, cursor: 0, nextCursor: 2, output: "ok", total: 2, terminal: true };
     await view.poll();
-    expect(byId("pane").innerHTML).not.toBe("untouched");
-    expect(byId("rrList").innerHTML).toContain('data-rrun="30"');
+    expect(item(30)).toBeTruthy();
+    expect(item(17).classList.contains("open")).toBe(true);
+    expect(item(17).querySelector(".vblock pre")?.textContent).toBe("ok");
   });
 });

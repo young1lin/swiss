@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 young1lin
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,387 +14,352 @@
  * limitations under the License.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { existsSync } from "node:fs";
+// @vitest-environment happy-dom
+
+/* The Remote Targets page (docs/34 R6 + R8, on the library since docs/46 P6-2): a grouped list
+   of alias rows plus an Add/Edit sheet. The page carries the docs/20 family wiring - the group
+   names from the same response become headers, the sheet's Group select rides the POST body,
+   the New-group glyph exists - and the docs/46 row: the endpoint's state only when it is not a
+   resting one, where the target runs as the sub-line, and when it last ran from the run record.
+
+   A real DOM (happy-dom) since P6-2: the library's rows, sheet and menu are real nodes, so the
+   suite reads them the way a user sees them instead of a hand-rolled stub's serialisation. */
+
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/* The Remote Targets page (docs/34 R6 + R8): a grouped table of alias rows plus an
-   Add/Edit sheet. The suite pins the view module contract under the same hand-rolled
-   DOM the Token page suite uses — the groups component draws real nodes, so the fake
-   element grows appendChild/dataset and the row assertions read the GROUP CARDS'
-   markup (the recursive walk below) instead of the pane's. The page must also carry
-   the docs/20 family wiring: the group names from the same response become headers,
-   the sheet's Group select rides the POST body, and the New-group button exists. */
-
-/* docs/37 R5: the view paints with h()/fill() now, so the fake DOM must be a real class
-   extending a Node stub (frag() type-checks with instanceof Node) and innerHTML READS
-   serialise the built tree — the assertions that used to read parsed markup keep their
-   meaning on the tree the paint constructed. */
-class NodeStub {}
-(globalThis as unknown as { Node: unknown }).Node = NodeStub;
-
-class FakeNode extends NodeStub implements FakeEl {
-  tag: string;
-  attrs: Record<string, string> = {};
-  dataset: Record<string, string> = {};
-  className = "";
-  _text = "";
-  get textContent(): string { return this._text; }
-  set textContent(v: string) { if (v === "") { this.children = []; this._html = ""; } this._text = v; }
-  id = "";
-  type = "button";
-  value = "";
-  hidden = false;
-  checked = false;
-  disabled = false;
-  draggable = false;
-  title = "";
-  style: Record<string, string> = {};
-  children: FakeEl[] = [];
-  onclick: ((ev?: unknown) => void) | null = null;
-  classList = { add(): void {}, remove(): void {}, contains: () => false };
-  private _html = "";
-  constructor(tag: string) { super(); this.tag = tag.toUpperCase(); }
-  static fragment(): FakeNode { return new FakeNode("#document-fragment"); }
-  get innerHTML(): string { return this._html || serialize(this); }
-  set innerHTML(v: string) { this._html = v; this.children = []; }
-  querySelector(): FakeEl | null { return null; }
-  querySelectorAll(): FakeEl[] { return []; }
-  appendChild(n: FakeEl): FakeEl { this.children.push(n); this._html = ""; return n; }
-  append(...nodes: FakeEl[]): void { nodes.forEach((n) => { this.appendChild(n); }); }
-  addEventListener(): void {}
-  removeEventListener(): void {}
-  setAttribute(k: string, v: string): void { this.attrs[k] = v; if (k === "id") this.id = v; }
-  removeAttribute(k: string): void { delete this.attrs[k]; }
-  focus(): void {}
-  click(): void { if (this.onclick) this.onclick({ detail: 1 }); }
-  getBoundingClientRect(): { top: number; left: number; right: number; bottom: number; width: number; height: number } {
-    return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
-  }
-  closest(sel: string): FakeEl | null { return sel.charAt(0) === "#" && this.id === sel.slice(1) ? this : null; }
-}
-
-function serialize(node: FakeEl): string {
-  const n = node as unknown as FakeNode;
-  if (!n.tag) return String(n._text ?? "");
-  const attrs = Object.keys(n.attrs).map((k) => { return " " + k + "=\"" + n.attrs[k] + "\""; }).join("");
-  const id = n.id ? " id=\"" + n.id + "\"" : "";
-  const cls = n.className ? " class=\"" + n.className + "\"" : "";
-  const dis = n.disabled ? " disabled" : "";
-  const hid = n.hidden ? " hidden" : "";
-  const val = n.value ? " value=\"" + n.value + "\"" : "";
-  const sel = (n as unknown as { selected?: boolean }).selected ? " selected" : "";
-  const kids = n.children.map((c) => { return serialize(c); }).join("");
-  const tag = n.tag.toLowerCase();
-  return "<" + tag + id + attrs + cls + dis + hid + val + sel + ">" + (kids || n._text) + "</" + tag + ">";
-}
-
-interface FakeEl {
-  innerHTML: string;
-  textContent: string;
-  hidden: boolean;
-  onclick: unknown;
-  className: string;
-  title: string;
-  type: string;
-  value: string;
-  checked: boolean;
-  disabled: boolean;
-  draggable: boolean;
-  style: Record<string, string>;
-  dataset: Record<string, string>;
-  children: FakeEl[];
-  classList: { add(): void; remove(): void; contains(): boolean };
-  querySelector: (sel: string) => FakeEl | null;
-  querySelectorAll: () => FakeEl[];
-  appendChild: (n: FakeEl) => FakeEl;
-  addEventListener(): void;
-  setAttribute(k?: string, v?: string): void;
-  focus(): void;
-  getBoundingClientRect(): { top: number; left: number; right: number; bottom: number; width: number; height: number };
-  closest(sel?: string): FakeEl | null;
-}
-
-function fakeEl(): FakeEl {
-  return new FakeNode("div");
-}
-
-const els = new Map<string, FakeEl>();
-const groupsEl = fakeEl();
-// The region repaints by id, not query, so the tracked element IS the region.
-els.set("rmGroups", groupsEl);
-const paneEl: FakeEl = fakeEl();
-paneEl.querySelector = () => null;
-els.set("pane", paneEl);
-
-let responder: (path: string) => Promise<{ status: number; ok: boolean; json: () => Promise<unknown> }>;
-let bodyByPath: Record<string, unknown> = {};
-let lastPost: { path: string; init: { method?: string; body?: string } } | null = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view is driven by its
+   page-registry surface (mount / refresh / countText), so a typed import would add nothing. */
 let view: any;
+let replies: Record<string, unknown> = {};
+let requests: { path: string; method: string; body?: string }[] = [];
+
+const here = dirname(fileURLToPath(import.meta.url));
+const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
+const MIN = 60 * 1000;
+
+/* The shell skeleton from the SERVED index.html (the house idiom): modules in this graph wire
+ * shell controls at evaluation time, so the ids exist before the import. */
+function shellSkeleton(): string {
+  const html = readFileSync(join(here, "..", "..", "src", "admin_assets", "index.html"), "utf8");
+  const ids = Array.from(html.matchAll(/id="([a-zA-Z0-9_-]+)"/g)).map((m) => m[1]);
+  return Array.from(new Set(ids)).map((id) => '<div id="' + id + '"></div>').join("");
+}
 
 beforeAll(async () => {
-  const prevDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
-  const prevFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
   Object.assign(globalThis, {
-    document: {
-      getElementById: (id: string) => {
-        if (id === "rmGroups") return groupsEl;
-        let e = els.get(id);
-        if (!e) { e = fakeEl(); (e as unknown as FakeNode).id = id; els.set(id, e); }
-        return e;
-      },
-      createElement: (tag: string) => new FakeNode(tag || "div"),
-      createElementNS: (_ns: string, tag: string) => new FakeNode(tag || "div"),
-      createDocumentFragment: () => FakeNode.fragment(),
-      createTextNode: (text: string) => { const n = new FakeNode("#text"); n.textContent = text; return n; },
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      addEventListener() {},
-      removeEventListener() {},
-      documentElement: fakeEl(),
-      body: fakeEl(),
-      head: fakeEl(),
-      visibilityState: "visible",
-      activeElement: null,
+    fetch: (url: string, init?: RequestInit): Promise<Response> => {
+      const u = String(url);
+      const method = init?.method || "GET";
+      requests.push({ path: u, method, body: init?.body as string | undefined });
+      const reply = replies[(method !== "GET" ? method + " " : "") + u] ?? replies[u];
+      const ok = reply !== undefined;
+      return Promise.resolve({ status: ok ? 200 : 500, ok, json: () => Promise.resolve(reply ?? { error: "no stub for " + u }) } as Response);
     },
-    fetch: (path: unknown, init: unknown) => {
-      const p = String(path);
-      if (init && (init as { method?: string }).method) {
-        lastPost = { path: p, init: init as { method?: string; body?: string } };
-      }
-      return responder(p);
-    },
-    // The groups component reads window.CSS for CSS.escape and window.localStorage for
-    // fold state; both are guarded, but the global must exist.
-    window: { innerWidth: 1440, innerHeight: 900, addEventListener() {}, localStorage: { getItem: () => null, setItem() {}, removeItem() {} } },
-    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     confirm: () => true,
-    location: { origin: "http://127.0.0.1:19998" },
   });
-  afterAll(() => {
-    if (prevDocument) Object.defineProperty(globalThis, "document", prevDocument);
-    else delete (globalThis as Record<string, unknown>).document;
-    if (prevFetch) Object.defineProperty(globalThis, "fetch", prevFetch);
-    else delete (globalThis as Record<string, unknown>).fetch;
-  });
-  responder = (p: string) => Promise.resolve({ status: 200, ok: true, json: async () => bodyByPath[p] ?? {} });
+  document.body.innerHTML = shellSkeleton();
   view = await import("../src/views/remote.js");
 });
 
-const byId = (id: string): FakeEl => {
-  let e = els.get(id);
-  if (!e) { e = fakeEl(); els.set(id, e); }
-  return e;
-};
+beforeEach(() => {
+  requests = [];
+  document.body.innerHTML = shellSkeleton();
+  localStorage.clear();
+});
 
-/** Everything the groups region drew, flattened: markup plus every node below it — the
- *  fake DOM keeps children as elements, not markup, so the walk is recursive. Group
- *  headers set textContent (not innerHTML), so both join the walk. */
-function flatten(e: FakeEl): string {
-  return e.innerHTML + e.textContent + e.children.map(flatten).join("");
-}
-function drawn(): string {
-  return flatten(groupsEl);
-}
+const BUILD = { id: "build", label: "Build", endpoint: "conn-1", workspaceRoot: "/data/ws/proj", capabilities: ["exec", "sync"] };
 
-/* Fire the pane delegated click at a stub the selector would have caught. */
-function click(stub: FakeEl) {
-  const handler = paneEl.onclick as (e: { target: FakeEl }) => void;
-  handler({ target: stub });
-}
-
-function serve(targets: unknown[], groups?: string[]) {
-  bodyByPath = {
-    "/api/remote/endpoints": { presence: "serving", endpoints: [{ id: "conn-1", label: "Build box", state: "idle" }] },
+function serve(targets: unknown[], groups?: string[], o: { state?: string; runs?: unknown[]; active?: unknown[]; nextBefore?: number; noRuns?: boolean } = {}) {
+  replies = {
+    "/api/remote/endpoints": { presence: "serving", endpoints: [{ id: "conn-1", label: "Build box", state: o.state || "idle" }] },
     "/api/remote/targets": groups ? { targets, groups } : { targets },
   };
-  // The fake DOM's innerHTML = "" does not clear children; the view's paint() relies
-  // on that clearing, so serve() models it before each scenario.
-  groupsEl.children.length = 0;
-  groupsEl.innerHTML = "";
+  if (!o.noRuns) {
+    replies["/api/remote/runs?limit=100"] = {
+      runs: o.runs || [], active: o.active || [], usage: { bytes: 0, runs: (o.runs || []).length },
+      limits: { maxAgeMs: 30 * 86400000, maxTotalBytes: 1, maxRuns: 1, maxOutputBytes: 1 },
+      ...(o.nextBefore ? { nextBefore: o.nextBefore } : {}),
+    };
+  }
+}
+
+function rowOf(id: string): HTMLElement {
+  return Array.from(document.querySelectorAll<HTMLElement>("#rmGroups [data-rmrow]")).find((n) => n.dataset.rmrow === id) as HTMLElement;
+}
+
+function menuItem(label: string): HTMLElement {
+  return Array.from(document.querySelectorAll<HTMLElement>("#menu button")).find((b) => b.textContent === label) as HTMLElement;
+}
+
+function ago(ms: number): string {
+  return new Date(Date.now() - ms).toISOString();
 }
 
 describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
   it("the view module exists at the entry the page descriptor points at", () => {
-    const entry = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "views", "remote.ts");
-    expect(existsSync(entry), entry).toBe(true);
+    expect(existsSync(join(here, "..", "src", "views", "remote.ts"))).toBe(true);
   });
 
-  it("mount paints the transport line, the rows with endpoint labels and the count chip", async () => {
-    serve([{ id: "build", label: "Build", endpoint: "conn-1", workspaceRoot: "/data/ws/proj", capabilities: ["exec", "sync"] }]);
+  it("the head is one sentence, the transport line, the folder-plus glyph and the one primary", async () => {
+    serve([BUILD]);
     await view.mount();
-    expect(paneEl.innerHTML).toContain("served by tunnels");
-    expect(drawn()).toContain(">build<");
-    expect(drawn()).toContain("Build box");
-    expect(drawn()).toContain("/data/ws/proj");
-    expect(byId("countChip").textContent).toBe("1 target");
+    const pane = $("pane");
+    expect(pane.querySelector(".pane-desc")?.textContent).toBe("Machines the gateway runs commands on, over Tunnels SSH connections.");
+    expect(pane.querySelector(".pane-sub")?.textContent).toBe("1 endpoint served by tunnels");
+    const acts = Array.from(pane.querySelectorAll(".pane-actions > *"));
+    expect(acts.map((b) => b.id)).toEqual(["rmNewGroup", "rmAdd"]);
+    expect($("rmNewGroup").querySelector("use")?.getAttribute("href")).toBe("#i-folder-plus");
+    expect($("rmNewGroup").getAttribute("aria-label")).toBe("New group");
+    expect($("rmAdd").className).toBe("btn primary");
+    expect($("countChip").textContent).toBe("1 target");
+  });
+
+  it("a row is the alias, where it runs as the sub-line, and one ⋯ - no lead dot, no chips", async () => {
+    serve([BUILD]);
+    await view.mount();
+    const r = rowOf("build");
+    expect(r.classList.contains("lrow")).toBe(true);
+    expect(r.getAttribute("draggable")).toBe("true");
+    expect(r.querySelector(".lrow-lead")).toBeNull();
+    expect(r.querySelector(".lrow-name")?.textContent).toBe("build");
+    // The label leads the sub-line when it says more than the alias; the root is mono.
+    expect(r.querySelector(".lrow-sub")?.textContent).toBe("Build · Build box · /data/ws/proj · exec, sync");
+    expect(r.querySelector(".lrow-sub code")?.textContent).toBe("/data/ws/proj");
+    expect(r.querySelector(".lrow-acts [data-rmmore]")?.getAttribute("aria-label")).toBe("Actions for build");
+    // A label the sheet defaulted to the alias is not said twice.
+    serve([{ ...BUILD, label: "build" }]);
+    await view.mount();
+    expect(rowOf("build").querySelector(".lrow-sub")?.textContent).toBe("Build box · /data/ws/proj · exec, sync");
+  });
+
+  it("the endpoint's state shows only when it is not a resting one: a dial is amber, an error red", async () => {
+    // Connected and idle both run a command (idle dials on demand): no dot. The old row gave
+    // an `error` the amber of a transition.
+    for (const [state, cls] of [["connected", null], ["idle", null], ["connecting", "dot starting"], ["error", "dot down"]] as const) {
+      serve([BUILD], undefined, { state });
+      await view.mount();
+      const d = rowOf("build").querySelector(".lrow-name .dot");
+      expect(d ? d.className : null, state).toBe(cls);
+      if (d) expect(d.getAttribute("title")).toBe("endpoint " + state);
+    }
+    // A target whose endpoint is gone (the Tunnels connection was deleted) cannot run either.
+    serve([{ ...BUILD, endpoint: "conn-gone" }]);
+    await view.mount();
+    expect(rowOf("build").querySelector(".lrow-name .dot")?.className).toBe("dot down");
+  });
+
+  it("the last-run column: the newest run per target from one read, a failure a red tag, a run in flight its pulse", async () => {
+    const other = { ...BUILD, id: "dev", label: "dev" };
+    const idle = { ...BUILD, id: "lab", label: "lab" };
+    serve([BUILD, other, idle], undefined, {
+      active: [{ runId: 9, action: "remote.exec", state: "running", queuedAt: ago(MIN), input: { target: "dev", argv: ["./test.sh"] } }],
+      runs: [
+        { runId: 8, action: "remote.exec", state: "failed", exitCode: 2, queuedAt: ago(4 * MIN), endedAt: ago(3 * MIN), meta: { target: "build" }, input: { target: "build", argv: ["make", "-j8"] } },
+        { runId: 7, action: "remote.exec", state: "succeeded", exitCode: 0, queuedAt: ago(90 * MIN), endedAt: ago(90 * MIN), meta: { target: "build" }, input: { target: "build", argv: ["make"] } },
+        { runId: 6, action: "remote.sync", state: "succeeded", queuedAt: ago(2 * 60 * MIN), endedAt: ago(2 * 60 * MIN), meta: { target: "dev" }, input: { target: "dev", source: "." } },
+      ],
+    });
+    await view.mount();
+    expect(requests.filter((r) => r.path.startsWith("/api/remote/runs")).map((r) => r.path)).toEqual(["/api/remote/runs?limit=100"]);
+    const col = (id: string): HTMLElement => rowOf(id).querySelector(".lrow-col") as HTMLElement;
+    // build: its newest run (8, not 7) failed - the red tag the Runs page gives it, then when.
+    expect(col("build").className).toBe("lrow-col w-l");
+    expect(col("build").querySelector(".tag.bad")?.textContent).toBe("exit 2");
+    expect(col("build").textContent).toBe("exit 2 3 min. ago");
+    expect(col("build").title).toMatch(/^Last run: .+ · make -j8$/);
+    // dev: the in-flight run is newer than anything recorded.
+    expect(col("dev").querySelector(".dot")?.className).toBe("dot starting");
+    expect(col("dev").textContent).toBe(" running");
+    expect(col("dev").title).toBe("./test.sh");
+    // lab: nothing on record, and the newest page was the whole record (no nextBefore).
+    expect(col("lab").textContent).toBe("No runs");
+  });
+
+  it("a target the newest page missed is asked on its own - once per visit, not every poll", async () => {
+    serve([BUILD], undefined, {
+      nextBefore: 50,
+      runs: [{ runId: 60, action: "remote.exec", state: "succeeded", exitCode: 0, queuedAt: ago(MIN), endedAt: ago(MIN), meta: { target: "dev" }, input: { target: "dev", argv: ["ls"] } }],
+    });
+    replies["/api/remote/runs?limit=1&target=build"] = {
+      runs: [{ runId: 3, action: "remote.exec", state: "succeeded", exitCode: 0, queuedAt: ago(3 * 86400000), endedAt: ago(3 * 86400000), meta: { target: "build" }, input: { target: "build", argv: ["make"] } }],
+      active: [], usage: { bytes: 0, runs: 1 },
+    };
+    await view.mount();
+    expect(rowOf("build").querySelector(".lrow-col")?.textContent).toBe("3 days ago");
+    await view.refresh();
+    await view.refresh();
+    expect(requests.filter((r) => r.path === "/api/remote/runs?limit=1&target=build").length).toBe(1);
+  });
+
+  it("when the run record does not answer, the column is not drawn - and nothing is toasted", async () => {
+    serve([BUILD], undefined, { noRuns: true });
+    await view.mount();
+    expect(rowOf("build").querySelector(".lrow-col")).toBeNull();
+    expect($("toast").textContent).toBe("");
+  });
+
+  it("a poll patches the column in place: the row and its ⋯ stay the same nodes", async () => {
+    serve([BUILD], undefined, { runs: [] });
+    await view.mount();
+    const r = rowOf("build");
+    const more = r.querySelector("[data-rmmore]");
+    expect(r.querySelector(".lrow-col")?.textContent).toBe("No runs");
+    serve([BUILD], undefined, {
+      runs: [{ runId: 5, action: "remote.exec", state: "succeeded", exitCode: 0, queuedAt: ago(2 * MIN), endedAt: ago(2 * MIN), meta: { target: "build" }, input: { target: "build", argv: ["ls"] } }],
+    });
+    await view.refresh();
+    expect(rowOf("build")).toBe(r);
+    expect(r.querySelector("[data-rmmore]")).toBe(more);
+    expect(r.querySelector(".lrow-col")?.textContent).toBe("2 min. ago");
   });
 
   it("an empty table still draws the default group - a place with a +, under the standing header", async () => {
     serve([]);
     await view.mount();
-    // The header and its actions stay (Add target one click away); the groups slot holds
-    // the default group as an empty container, never the "No targets yet" empty state -
-    // that state used to take the slot whenever only the default group was left, so a
-    // fresh page showed no group at all and deleting the last user-made group appeared
-    // to delete the default one with it (2026-09-20).
-    expect(drawn()).toContain("default");
-    expect(groupsEl.children.length).toBe(1);
-    expect(drawn()).not.toContain("No targets yet");
-    expect(paneEl.innerHTML).toContain('id="rmAdd"');
-    expect(paneEl.innerHTML).toContain('id="rmNewGroup"');
-    expect(byId("countChip").textContent).toBe("");
+    // The groups slot holds the default group as an empty container, never the "No targets
+    // yet" empty state - that state used to take the slot whenever only the default group was
+    // left, so a fresh page showed no group at all (2026-09-20).
+    expect($("rmGroups").children.length).toBe(1);
+    expect($("rmGroups").textContent).toContain("default");
+    expect($("rmGroups").textContent).not.toContain("No targets yet");
+    expect($("rmAdd")).not.toBeNull();
+    expect($("countChip").textContent).toBe("");
   });
 
   it("deleting the last user-made group leaves the default group on the page", async () => {
-    // The reported flow: default + a new group show as two containers; the new one is
-    // deleted; the page must still show the default container, not swap to an empty state.
     serve([], ["default", "test"]);
     await view.mount();
-    expect(groupsEl.children.length).toBe(2);
+    expect($("rmGroups").children.length).toBe(2);
     serve([], ["default"]);
     await view.refresh();
-    expect(groupsEl.children.length).toBe(1);
-    expect(drawn()).toContain("default");
-    expect(drawn()).not.toContain("test");
-    expect(drawn()).not.toContain("No targets yet");
+    expect($("rmGroups").children.length).toBe(1);
+    expect($("rmGroups").textContent).toContain("default");
+    expect($("rmGroups").textContent).not.toContain("test");
   });
 
-  it("a group the user created stays visible with no rows yet - a place, not an empty state", async () => {
-    // The production bug this pins: create a group on an empty table and the page
-    // answered the full empty state, so the new group vanished (docs/20: an empty
-    // group is not an empty state - it is a drop target with a +).
-    serve([], ["default", "test"]);
-    await view.mount();
-    expect(drawn()).toContain("default");
-    expect(drawn()).toContain("test");
-    expect(groupsEl.children.length).toBe(2);
-    expect(drawn()).not.toContain("No targets yet");
-    expect(byId("countChip").textContent).toBe("");
-  });
-
-  it("the rows render through the groups component: headers, one card per group, the family's page chrome", async () => {
+  it("the rows render through the groups component: one container per group, a stale group sinks to the first", async () => {
     serve(
       [
-        { id: "build", label: "Build", endpoint: "conn-1", workspaceRoot: "/data/ws", capabilities: ["exec"], group: "prod" },
-        { id: "flash", label: "Flash", endpoint: "conn-1", workspaceRoot: "/opt", capabilities: ["exec"], group: null },
+        { ...BUILD, group: "prod" },
+        { ...BUILD, id: "flash", label: "flash", group: null },
+        { ...BUILD, id: "old", label: "old", group: "deleted-group" },
       ],
       ["default", "prod"],
     );
     await view.mount();
-    // The names from the same response became headers (textContent of grp-name).
-    expect(drawn()).toContain("default");
-    expect(drawn()).toContain("prod");
-    // Both headers mounted, not one merged card.
-    expect(groupsEl.children.length).toBe(2);
-    // Rows are addressable by the drag selector's key: data-rmrow on each row.
-    expect(drawn()).toContain('data-rmrow="build"');
-    expect(drawn()).toContain('data-rmrow="flash"');
-    // The New-group button exists beside Add target (docs/20: the family's page chrome).
-    expect(paneEl.innerHTML).toContain('id="rmNewGroup"');
-    expect(paneEl.innerHTML).toContain('id="rmAdd"');
+    const [first, second] = Array.from($("rmGroups").children);
+    expect(first.textContent).toContain("default");
+    expect(first.querySelector('[data-rmrow="flash"]')).not.toBeNull();
+    expect(first.querySelector('[data-rmrow="old"]')).not.toBeNull(); // the sink rule the family shares
+    expect(second.textContent).toContain("prod");
+    expect(second.querySelector('[data-rmrow="build"]')).not.toBeNull();
   });
 
-  it("a stale row group falls back to the first group - the sink rule the family shares", async () => {
-    serve(
-      [{ id: "build", endpoint: "conn-1", workspaceRoot: "/data/ws", capabilities: ["exec"], group: "deleted-group" }],
-      ["default", "prod"],
-    );
+  it("⋯ holds Edit and Delete; Edit reopens the sheet prefilled and posts to the row route with the group", async () => {
+    serve([{ ...BUILD, capabilities: ["exec"], group: "prod" }], ["default", "prod"]);
+    replies["POST /api/remote/targets/build"] = { ok: true };
     await view.mount();
-    const first = groupsEl.children[0];
-    // The first card is "default" and carries the stranded row (flatten includes names).
-    expect(flatten(first)).toContain("build");
-    expect(flatten(groupsEl.children[1])).not.toContain("build");
-  });
-
-  it("Edit reopens the sheet prefilled and posts to the row route with the group", async () => {
-    serve([{ id: "build", label: "Build", endpoint: "conn-1", workspaceRoot: "/data/ws/proj", capabilities: ["exec"], group: "prod" }], ["default", "prod"]);
-    await view.mount();
-    const rowBtn = fakeEl();
-    rowBtn.dataset.rmedit = "build";
-    rowBtn.closest = (sel: string) => (sel === "[data-rmedit]" ? rowBtn : null);
-    click(rowBtn);
-    const sheet = byId("sheet");
+    (rowOf("build").querySelector("[data-rmmore]") as HTMLElement).click();
+    expect(Array.from(document.querySelectorAll("#menu button")).map((b) => b.textContent)).toEqual(["Edit", "Delete"]);
+    menuItem("Edit").click();
+    const sheet = $("sheet");
     expect(sheet.hidden).toBe(false);
-    expect(sheet.innerHTML).toContain("Edit build");
-    expect(byId("rm-id").disabled).toBe(true);
-    expect(byId("rm-label").value).toBe("Build");
-    expect(byId("rm-root").value).toBe("/data/ws/proj");
-    // The Group select is part of the sheet (docs/20's #g-sel), prefilled by markup.
-    expect(sheet.innerHTML).toContain('id="g-sel"');
-    expect(sheet.innerHTML).toContain('<option value="prod" selected>');
-    byId("rm-label").value = "Renamed";
-    byId("g-sel").value = "default";
-    const save = byId("rm-save").onclick as () => Promise<void>;
-    await save();
-    expect(lastPost?.path).toBe("/api/remote/targets/build");
-    const sent = JSON.parse(String(lastPost?.init.body));
-    expect(sent.id).toBeUndefined();
+    expect(sheet.querySelector(".sheet[role=dialog] h2")?.textContent).toBe("Edit build");
+    expect(($("rm-id") as HTMLInputElement).disabled).toBe(true);
+    expect(($("rm-label") as HTMLInputElement).value).toBe("Build");
+    expect(($("rm-root") as HTMLInputElement).value).toBe("/data/ws/proj");
+    expect(($("g-sel") as HTMLSelectElement).value).toBe("prod");
+    expect(($("rmcap-exec") as HTMLInputElement).checked).toBe(true);
+    expect(($("rmcap-sync") as HTMLInputElement).checked).toBe(false);
+    ($("rm-label") as HTMLInputElement).value = "Renamed";
+    ($("g-sel") as HTMLSelectElement).value = "default";
+    await ($("rm-save").onclick as () => Promise<void>)();
+    const post = requests.find((r) => r.method === "POST")!;
+    expect(post.path).toBe("/api/remote/targets/build");
+    const sent = JSON.parse(String(post.body));
+    // The row route still wants the id in the body - the store compares it with the path's to
+    // refuse a rename (api.rs write_target). The panel left it out, so every Edit from this page
+    // answered "target.id is required" (found on the docs/46 P6-2 walk; the old suite pinned
+    // the missing id as the contract).
+    expect(sent.id).toBe("build");
     expect(sent.label).toBe("Renamed");
     expect(sent.shell).toBe("posix");
     expect(sent.group).toBe("default");
+    expect(sheet.hidden).toBe(true);
   });
 
-  it("Add opens the sheet and Save posts the typed row - group included - to the same route the CLI uses", async () => {
+  it("the sheet is the library's: alias with its hint, endpoint beside group, capabilities a group whose caption presses nothing", async () => {
     serve([], ["default", "prod"]);
     await view.mount();
-    const addBtn = fakeEl();
-    addBtn.closest = (sel: string) => (sel === "#rmAdd" ? addBtn : null);
-    click(addBtn);
-    expect(byId("sheet").hidden).toBe(false);
-    expect(byId("sheet").innerHTML).toContain("Add a remote target");
-    byId("rm-id").value = "build";
-    byId("rm-label").value = "Build";
-    byId("rm-endpoint").value = "conn-1";
-    byId("g-sel").value = "prod";
-    byId("rm-root").value = "/data/ws/proj";
-    byId("rmcap-exec").checked = true;
-    byId("rmcap-sync").checked = true;
-    const save = byId("rm-save").onclick as () => Promise<void>;
-    await save();
-    expect(lastPost?.path).toBe("/api/remote/targets");
-    expect(lastPost?.init.method).toBe("POST");
-    const sent = JSON.parse(String(lastPost?.init.body));
-    expect(sent.id).toBe("build");
-    expect(sent.endpoint).toBe("conn-1");
-    expect(sent.workspaceRoot).toBe("/data/ws/proj");
-    expect(sent.shell).toBe("posix");
-    expect(sent.capabilities).toEqual(["exec", "sync"]);
-    expect(sent.group).toBe("prod");
+    $("rmAdd").click();
+    const dlg = $("sheet").querySelector(".sheet[role=dialog]") as HTMLElement;
+    expect(dlg.querySelector("h2")?.textContent).toBe("Add a remote target");
+    expect(dlg.querySelector(".sheet-body .hint")?.textContent).toBe("The name commands call: swiss remote exec <alias>");
+    const two = dlg.querySelector(".sheet-body > .two") as HTMLElement;
+    expect(two.querySelector("#rm-endpoint")).not.toBeNull();
+    expect(two.querySelector("#g-sel")).not.toBeNull();
+    const caps = dlg.querySelector('.field[role="group"]') as HTMLElement;
+    expect(caps.querySelector(":scope > span")?.textContent).toBe("Capabilities");
+    (caps.querySelector(":scope > span") as HTMLElement).click();
+    expect(["exec", "sync", "files"].map((c) => ($("rmcap-" + c) as HTMLInputElement).checked)).toEqual([true, false, false]);
+    expect(Array.from(dlg.querySelectorAll(".sheet-foot button")).map((b) => b.textContent)).toEqual(["Cancel", "Add"]);
+    $("rm-cancel").click();
+    expect($("sheet").hidden).toBe(true);
+  });
+
+  it("Add posts the typed row - group included - to the same route the CLI uses", async () => {
+    serve([], ["default", "prod"]);
+    replies["POST /api/remote/targets"] = { ok: true };
+    await view.mount();
+    $("rmAdd").click();
+    ($("rm-id") as HTMLInputElement).value = "build";
+    ($("rm-label") as HTMLInputElement).value = "Build";
+    ($("rm-endpoint") as HTMLSelectElement).value = "conn-1";
+    ($("g-sel") as HTMLSelectElement).value = "prod";
+    ($("rm-root") as HTMLInputElement).value = "/data/ws/proj";
+    ($("rmcap-sync") as HTMLInputElement).checked = true;
+    await ($("rm-save").onclick as () => Promise<void>)();
+    const post = requests.find((r) => r.method === "POST")!;
+    expect(post.path).toBe("/api/remote/targets");
+    const sent = JSON.parse(String(post.body));
+    expect(sent).toMatchObject({ id: "build", endpoint: "conn-1", workspaceRoot: "/data/ws/proj", shell: "posix", capabilities: ["exec", "sync"], group: "prod" });
   });
 
   it("a blank label posts the alias - the store refuses an empty one and the field says optional", async () => {
     serve([], ["default"]);
+    replies["POST /api/remote/targets"] = { ok: true };
     await view.mount();
-    const addBtn = fakeEl();
-    addBtn.closest = (sel: string) => (sel === "#rmAdd" ? addBtn : null);
-    click(addBtn);
-    byId("rm-id").value = "flash";
-    byId("rm-label").value = "";
-    byId("rm-endpoint").value = "conn-1";
-    byId("rm-root").value = "/opt/flash";
-    byId("rmcap-exec").checked = true;
-    const save = byId("rm-save").onclick as () => Promise<void>;
-    await save();
-    const sent = JSON.parse(String(lastPost?.init.body));
+    $("rmAdd").click();
+    ($("rm-id") as HTMLInputElement).value = "flash";
+    ($("rm-endpoint") as HTMLSelectElement).value = "conn-1";
+    ($("rm-root") as HTMLInputElement).value = "/opt/flash";
+    await ($("rm-save").onclick as () => Promise<void>)();
+    const sent = JSON.parse(String(requests.find((r) => r.method === "POST")!.body));
     expect(sent.id).toBe("flash");
     expect(sent.label).toBe("flash");
-    // ...and a label that only repeats the alias is not drawn twice in the row.
-    serve([{ id: "flash", label: "flash", endpoint: "conn-1", workspaceRoot: "/opt/flash", capabilities: ["exec"] }]);
+  });
+
+  it("Delete confirms and deletes through the row route", async () => {
+    serve([BUILD]);
+    replies["DELETE /api/remote/targets/build"] = { ok: true };
     await view.mount();
-    expect(drawn()).toContain(">flash<");
-    expect(drawn()).not.toContain('<span class="text-3">flash</span>');
+    (rowOf("build").querySelector("[data-rmmore]") as HTMLElement).click();
+    menuItem("Delete").click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(requests.some((r) => r.method === "DELETE" && r.path === "/api/remote/targets/build")).toBe(true);
   });
 
   it("a poll that changes nothing repaints nothing - the sheet the user types into stays put", async () => {
-    serve([{ id: "build", endpoint: "conn-1", workspaceRoot: "/data/ws", capabilities: ["exec"] }]);
+    serve([BUILD]);
     await view.mount();
-    const before = paneEl.innerHTML;
-    const sheetStamp = byId("sheet").innerHTML;
+    const r = rowOf("build");
+    $("rmAdd").click();
+    const dlg = $("sheet").querySelector(".sheet");
     await view.refresh();
-    expect(paneEl.innerHTML).toBe(before);
-    expect(byId("sheet").innerHTML).toBe(sheetStamp);
+    expect(rowOf("build")).toBe(r);
+    expect($("sheet").querySelector(".sheet")).toBe(dlg);
   });
 });

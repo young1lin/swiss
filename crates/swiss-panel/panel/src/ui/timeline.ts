@@ -39,7 +39,7 @@ import type { AttrMap, HChild } from "../h.js";
 import { h } from "../h.js";
 import { locale, tr } from "../i18n.js";
 import { iconNode } from "./icon.js";
-import { tag } from "./status.js";
+import { dot, tag } from "./status.js";
 
 export interface TimelineItem {
   /** Stable key: the open state and the delegated hooks address the row by it. */
@@ -51,6 +51,9 @@ export interface TimelineItem {
   who?: string;
   ms?: number;
   status?: { text: string; tone: "bad" | "warn" };
+  /** A run still in flight: no duration yet, so its state stands where the duration will go -
+   *  the amber pulse while it runs, the hollow dot while it waits for a slot (`queued`). */
+  live?: { text: string; queued?: boolean };
   /** Collapse signature: consecutive items with the same one fold into ×N. */
   same?: string;
   data?: AttrMap;
@@ -142,7 +145,8 @@ function itemNode(run: TimelineItem[], o: TimelineOpts, showWho: boolean): HTMLE
       showWho && it.who ? h("span", { class: "tl-who", title: it.who }, it.who) : null,
       run.length > 1 ? h("span", { class: "tl-n", title: tr("ui.runN", { n: run.length }) }, tr("ui.timesN", { n: run.length })) : null,
       it.status ? tag(it.status.text, { tone: it.status.tone }) : null,
-      it.ms != null ? h("span", { class: "tl-ms" + (slow ? " slow" : "") }, fmtMs(it.ms)) : null),
+      it.ms != null ? h("span", { class: "tl-ms" + (slow ? " slow" : "") }, fmtMs(it.ms)) : null,
+      it.live ? h("span", { class: "tl-live" }, dot(it.live.queued ? "idle" : "starting", null), it.live.text) : null),
     open && o.body ? h("div", { class: "tl-body" }, o.body(it, run)) : null);
 }
 

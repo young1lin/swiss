@@ -68,7 +68,6 @@
     .sw[aria-checked="true"]::after { transform: translateX(16px); }
     .sw:disabled { opacity: .4; cursor: default; }
     @media (prefers-reduced-motion: reduce) { .sw, .sw::after { transition: none; } }
-    .row.muted .name { color: var(--text-3); }
     .btn.icon { padding: 4px 8px; font-size: 14px; line-height: 1; color: var(--text-2); display: inline-flex; align-items: center; justify-content: center; }
     /* A toggle that is on (iconBtn's `pressed`, aria-pressed="true"): the glyph takes the accent and
        the seat a tint of it - the selected-seat treatment, not a new colour. Without it "pressed"
@@ -77,7 +76,7 @@
     /* Inline icons (docs/18 V2): one sprite in the shell, stroke=currentColor, sized here. */
     .ic { width: 16px; height: 16px; flex: none; }
     /* Disclosure chevrons read better a step smaller than action icons. */
-    .chev .ic, .grp-chev .ic { width: var(--ic-s); height: var(--ic-s); }
+    .grp-chev .ic { width: var(--ic-s); height: var(--ic-s); }
 
     /* Fields sit on --field, not --card: inside a white card or a white sheet a white input has no
        edge but its hairline, and on the dark side a field one step darker than its card is what
@@ -352,32 +351,11 @@
     .group { background: var(--card); border: 0; box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
     .group + .cap { margin-top: var(--s5); }
     .cap { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: 0 var(--s1) var(--s2); }
-    .row { display: flex; gap: var(--s3); padding: var(--s3) var(--s4); align-items: baseline; }
     /* Separators start at the text column, not the card's edge (docs/46 U7, the System Settings
        inset): a line that runs under the leading dot or chevron cuts the row's own lead off from
        its name. --row-inset is the text column's x; a row with no lead keeps the padding's 16. */
-    .row + .row, .lrow + .lrow, .kv + .kv { position: relative; }
-    .row + .row::before, .lrow + .lrow::before, .kv + .kv::before { content: ""; position: absolute; top: 0; right: 0; left: var(--row-inset, var(--s4)); height: 1px; background: var(--sep-soft); pointer-events: none; }
-    /* A row's main column grows; the trailing .row-act stays its natural width. Without this the
-       Tokens sheet's buttons hugged the label instead of sitting at the row's end. */
-    .row > .row-main { flex: 1; min-width: 0; }
-    /* A selected client row in the Traffic summary — narrows the activity log below to it. */
-    .row.row-sel { background: color-mix(in srgb, var(--accent) 9%, transparent); }
-    .row .k { flex: none; width: 152px; color: var(--text-2); font-size: var(--f-label); }
-    .row .v { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--f-label); word-break: break-word; }
-    .row .v.wrap { white-space: pre-wrap; }
-    /* An empty-state or error sentence filling a group row. It is prose, so it is set in the sans
-       face — .v above is monospace because it holds a configured value. Every one of these used to
-       reuse .v, which is why "No calls yet…" read like a config dump. */
-    .rowmsg { flex: 1; min-width: 0; font-size: var(--f-body); color: var(--text-3); }
-    .rowmsg.warn { color: var(--text-2); }
-    .row-act { display: flex; align-items: flex-start; gap: var(--s3); }
-    .row-act .row-main { flex: 1; min-width: 0; }
-    .row-act .name { font-family: var(--mono); font-weight: var(--w-name); word-break: break-all; }
-    /* .row-act was missing from this rule, so a tool's description came out at full body size in full
-       body colour — the same weight as the monospace name above it. Nine rows of two equally loud
-       lines is why the list read as nine cards instead of nine rows. */
-    .row-act .desc { color: var(--text-2); font-size: var(--f-label); margin-top: 2px; }
+    .lrow + .lrow, .kv + .kv { position: relative; }
+    .lrow + .lrow::before, .kv + .kv::before { content: ""; position: absolute; top: 0; right: 0; left: var(--row-inset, var(--s4)); height: 1px; background: var(--sep-soft); pointer-events: none; }
 
     /* A tag (ui/status.ts): a word on a chip. Sans and monochrome by default - "proxy", a
        launch type, "copies use this" are words, not values (rule 1) and not states (rule 2).
@@ -465,6 +443,8 @@
     .tl-n { flex: none; font-size: var(--f-caption); color: var(--text-2); background: var(--sep-soft); padding: 0 var(--s1); border-radius: var(--s1); font-variant-numeric: tabular-nums; }
     .tl-ms { flex: none; min-width: calc(var(--s6) + var(--s8)); text-align: right; font-size: var(--f-label); color: var(--text-3); font-variant-numeric: tabular-nums; }
     .tl-ms.slow { color: var(--amber); }
+    /* A run in flight, in the duration's column: the state dot and its word (TimelineItem.live). */
+    .tl-live { flex: none; display: inline-flex; align-items: center; gap: var(--s1); min-width: calc(var(--s6) + var(--s8)); justify-content: flex-end; font-size: var(--f-label); color: var(--text-3); }
     .tl-item.open { background: var(--card); box-shadow: 0 0 0 1px var(--sep-soft); margin: var(--s1) 0; }
     .tl-item.open > .tl-sum:hover { background: none; }
     /* A column, a grid step between blocks: a call's body is its arguments and its reply, and as
@@ -550,10 +530,6 @@
     .vblock > pre.logs.err { color: var(--red); }
     .vblock > pre + pre { margin-top: var(--s1); }
     .vblock > .btn { margin-top: var(--s2); }
-
-    .chev { color: var(--text-3); width: 12px; flex: none; transition: transform .15s ease; }
-    .call.open .chev { transform: rotate(90deg); }
-    @media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
 
     .form { padding: var(--s4); display: grid; gap: var(--s3); }
     /* ui/form.ts pair(): two fields side by side, wherever the pair sits. It used to be a grid only

@@ -24,17 +24,25 @@
    (the coordinator's view, output followed live through /api/runs/{id}/output), the
    recorded ones under them, newest first, paged by an older-than cursor.
 
-   The Traffic idiom throughout: a card of .call rows, the summary line is the toggle, the
-   body is fetched when the row opens and a poll never rebuilds what is open. A running
-   row's body follows its output on a short timer while it is open; when the run ends the
-   next poll moves the row from the live list into the record with the same run id.
+   The event list (docs/46 §3.6, the Logs and Traffic list): the time, with the date as the
+   day heading; what ran (the kind, then its command); who - the target and the actor, a
+   column only while they vary; a run that did not succeed as a red tag saying how; the
+   duration. Identical consecutive runs fold into ×N. A row's body is fetched when it opens
+   and a poll never rebuilds what is open. A running row's body follows its output on a
+   short timer while it is open; when the run ends the next poll moves the row from the
+   live list into the record with the same run id.
    ================================================================================================ */
 import type { ApiRemoteRunOutput, ApiRemoteRunsResponse, ApiRemoteTargetsResponse, ApiRunOutputChunk } from "../types/api.js";
 import type { ApiRemoteRunRow, RemoteLiveBody, RemoteRunBody, RemoteRunInput } from "../types/runs.js";
-import { $, apiJson, emptyNode, iconNode, targetEl, toast, whenLabel } from "../util.js";
-import { fill, frag, h } from "../h.js";
-import { tr, trn } from "../i18n.js";
+import { $, apiJson, targetEl, toast } from "../util.js";
+import { fill, h } from "../h.js";
 import type { HChild } from "../h.js";
+import { tr, trn } from "../i18n.js";
+import { readableBody } from "../logs.js";
+import {
+  btn, closeMenu, collapseRuns, emptyNode, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, textNode, timeline, timelineMeta, timelineToggle, valueBlock,
+} from "../ui/index.js";
+import type { TimelineItem } from "../ui/index.js";
 
 const PAGE = 20;
 const LIVE_EVERY_MS = 1500; // how often an OPEN live row pulls its output; the 6 s poll moves the list
@@ -48,7 +56,7 @@ let usage = { bytes: 0, runs: 0 };
 let limits = null as ApiRemoteRunsResponse["limits"] | null;
 let target = ""; // the target filter, "" for all
 let targetIds = [] as string[]; // for the filter select, from the targets table
-let open = {} as Record<number, boolean>; // runId -> true while a row is expanded
+let open = {} as Record<number, boolean>; // runId -> true while its row is expanded
 let bodies = {} as Record<number, RemoteRunBody>; // runId -> { text, next, total, done, capped, tail } for opened recorded rows
 let live = {} as Record<number, RemoteLiveBody>; // runId -> { text, cursor } for opened active rows
 let liveTimer = null as ReturnType<typeof setInterval> | null;
@@ -86,137 +94,165 @@ function fmtBytes(n: number): string {
   return (n / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-function fmtMs(ms: number | null | undefined): string {
-  if (ms == null) return "";
-  if (ms < 1000) return tr("remoteRuns.nMs", { n: ms });
-  if (ms < 60000) return tr("remoteRuns.nS", { n: (ms / 1000).toFixed(1) });
-  const m = Math.floor(ms / 60000);
-  return tr("remoteRuns.mMSS", { m, s: Math.round((ms - m * 60000) / 1000) });
+/* --- what a run was and how it ended (the Targets page's last-run column reads these too) ---- */
+
+/** The capability that ran: exec, sync, pull, cat, write. */
+function kindOf(r: ApiRemoteRunRow): string {
+  return (r.action || "").replace(/^remote\./, "") || "run";
 }
 
-/** The dot says the state in shape and colour; the title says it in words. */
-function stateDotNode(r: ApiRemoteRunRow): HTMLElement {
-  const cls = r.state === "succeeded" ? "up"
-    : r.state === "running" ? "starting"
-    : r.state === "queued" || r.state === "canceled" ? "idle"
-    : "down";
-  return h("span", { class: "dot " + cls, title: r.state });
-}
-
-/** What ran, as a command line: the argv for an exec, the shape for a sync / pull. An
- *  active row that predates the record (an older gateway) falls back to its label. */
-function commandOf(r: ApiRemoteRunRow): string {
+/** What ran, without the kind: the argv for an exec, the shape for a file action. An active row
+ *  that predates the record (an older gateway) falls back to its label. */
+function argOf(r: ApiRemoteRunRow): string {
   const input = r.input || {} as RemoteRunInput;
-  const kind = (r.action || "").replace(/^remote\./, "");
+  const kind = kindOf(r);
   if (kind === "exec" && input.argv) return input.argv.join(" ");
-  if (kind === "sync") return "sync " + (input.source || ".") + (input.to ? " \u2192 " + input.to : "");
-  if (kind === "pull") return "pull " + (input.remote || "") + (input.to ? " \u2192 " + input.to : "");
-  if (kind === "cat" || kind === "write") return kind + " " + (input.remote || "");
-  return input.argv ? String(input.argv) : (r.label || kind || "run");
+  if (kind === "sync") return (input.source || ".") + (input.to ? " → " + input.to : "");
+  if (kind === "pull") return (input.remote || "") + (input.to ? " → " + input.to : "");
+  if (kind === "cat" || kind === "write") return input.remote || "";
+  return input.argv ? String(input.argv) : r.label || "";
 }
 
-function targetOf(r: ApiRemoteRunRow): string {
+/** What ran, as one command line: the argv for an exec, "sync . → /to" for a file action. */
+export function commandOf(r: ApiRemoteRunRow): string {
+  const kind = kindOf(r);
+  return kind === "exec" && r.input && r.input.argv ? argOf(r) : (kind + " " + argOf(r)).trim();
+}
+
+export function runTarget(r: ApiRemoteRunRow): string {
   return (r.meta && r.meta.target) || (r.input && r.input.target) || "";
 }
 
-/** The row's meta: id, who (docs/41 A1 - the actor is an identifier, never translated;
- *  a row an older gateway recorded has none and skips it), how it ended, how long, when. */
-function metaOf(r: ApiRemoteRunRow): string {
-  const parts = ["#" + r.runId];
-  if (r.actor) parts.push(r.actor);
-  if (r.state === "running") parts.push(tr("remoteRuns.stateRunning"));
-  else if (r.state === "queued") parts.push(tr("remoteRuns.stateQueued"));
-  else if (r.exitCode != null) parts.push(tr("remoteRuns.exitN", { n: r.exitCode }));
-  else if (r.state === "canceled") parts.push(tr("remoteRuns.canceled"));
-  else if (r.state === "timeout") parts.push(tr("remoteRuns.timed"));
-  // A file action (sync / pull / cat / write) has no exit code: its state is the word.
-  else if (r.state === "succeeded") parts.push(tr("remoteRuns.stateSucceeded"));
-  else if (r.state === "failed") parts.push(tr("remoteRuns.stateFailed"));
-  else parts.push(r.state);
-  if (r.ms != null) parts.push(fmtMs(r.ms));
-  parts.push(whenLabel(r.startedAt || r.queuedAt));
-  return parts.join(" \u00b7 ");
+/** How a finished run failed, in the words its red tag says - null for one that succeeded.
+ *  Every run that did not succeed is red, the Jobs history's rule: a non-zero exit says its
+ *  code; a file action has none, so its state says it (failed, timed out, canceled). */
+export function runOutcome(r: ApiRemoteRunRow): string | null {
+  if (r.exitCode != null && r.exitCode !== 0) return tr("remoteRuns.exitN", { n: r.exitCode });
+  if (r.state === "canceled" || r.canceled) return tr("remoteRuns.canceled");
+  if (r.state === "timeout" || r.timedOut) return tr("remoteRuns.timed");
+  if (r.state === "failed") return tr("remoteRuns.stateFailed");
+  return null;
 }
 
-function rowNode(r: ApiRemoteRunRow, isLive: boolean): HTMLElement {
-  const cwd = r.input && r.input.cwd ? " \u00b7 " + r.input.cwd : "";
-  const data: Record<string, string | number> = { rrun: r.runId };
-  if (isLive) data.rlive = "1";
-  return h("div", { class: "call" + (open[r.runId] ? " open" : ""), data: data },
-    h("div", { class: "call-sum", data: { rtog: r.runId }, role: "button", tabIndex: 0 },
-      h("span", { class: "chev", aria: { hidden: "true" } }, iconNode("chevron-right")),
-      stateDotNode(r),
-      h("span", { class: "call-tool" }, commandOf(r)),
-      h("span", { class: "call-arg" }, targetOf(r) + cwd),
-      h("span", { class: "call-meta" }, metaOf(r))),
-    // The body stays empty until the row opens (the Traffic rule: nothing hidden is
-    // built); bodyNode paints whatever the fetch brought.
-    h("div", { class: "call-body" }, open[r.runId] ? bodyNode(r, isLive) : null));
+/** The state in words for the open row's meta: the exit code when there is one, else the state. */
+function stateWord(r: ApiRemoteRunRow): string {
+  if (r.state === "running") return tr("remoteRuns.stateRunning");
+  if (r.state === "queued") return tr("remoteRuns.stateQueued");
+  if (r.exitCode != null) return tr("remoteRuns.exitN", { n: r.exitCode });
+  return runOutcome(r) || (r.state === "succeeded" ? tr("remoteRuns.stateSucceeded") : r.state);
 }
 
-function bodyNode(r: ApiRemoteRunRow, isLive: boolean): HChild {
-  if (isLive) {
-    const l = live[r.runId];
-    // Hoisted so the comparison literals stay out of the h() children (i18n gate).
-    const cancellable = r.state === "running" || r.state === "queued";
-    return frag(
-      h("div", { class: "call-lbl rr-live-head" },
-        h("span", null, tr("remoteRuns.liveOutput")),
-        cancellable
-          ? h("button", { class: "btn", data: { rcancel: r.runId } }, tr("remoteRuns.cancel"))
-          : null),
-      h("pre", { class: "logs", data: { rlivepre: r.runId } },
-        l ? l.text : null,
-        l && l.text ? null
-          : h("span", { style: "color:var(--text-3)" },
-            tr(r.state === "queued" ? "remoteRuns.queuedWaitingFreeSlot" : "remoteRuns.output"))));
-  }
-  const b = bodies[r.runId];
-  const head: HChild[] = [];
-  if (r.error) {
-    head.push(h("div", { class: "call-lbl" }, tr("remoteRuns.error")), h("pre", { class: "logs err" }, r.error));
-  }
-  if (!b) return frag(head, h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("remoteRuns.loading")));
-  // The body union's two states: the gone marker (the record rolled past the run) or the
-  // output read so far - "gone" in b is the discriminant.
-  if ("gone" in b) return frag(head, h("div", { class: "note" }, tr("remoteRuns.runRolledRecord")));
-  head.push(h("div", { class: "call-lbl" }, tr("remoteRuns.output2"), b.total ? [" \u00b7 ", fmtBytes(b.total)] : ""));
-  if (r.outputEvicted) {
-    // The size budget took the file (docs/41 A2); the line - and its tail, below, when
-    // the run was capped - is what is left.
-    head.push(h("div", { class: "note" },
-      tr("remoteRuns.outputEvicted", { size: fmtBytes(r.outputBytes || 0), d: Math.round((limits ? limits.maxAgeMs : 0) / 86400000) })));
-  } else if (!b.total) {
-    head.push(h("pre", { class: "logs" }, h("span", { style: "color:var(--text-3)" }, tr("remoteRuns.outputProduced"))));
-  } else {
-    head.push(h("pre", { class: "logs" }, b.text));
-    if (b.next < b.total) {
-      head.push(h("div", { class: "pager" },
-        h("button", { class: "btn", data: { rmore: r.runId } }, tr("remoteRuns.loadMore")),
-        h("span", null, tr("remoteRuns.b", { a: fmtBytes(b.next), b: fmtBytes(b.total) }))));
-    }
-  }
-  if (r.outputCapped && r.tail) {
-    head.push(
-      h("div", { class: "note" },
-        tr("remoteRuns.outputCappedCapLast", { cap: fmtBytes(limits ? limits.maxOutputBytes : 0), tail: fmtBytes(r.tail.length) })),
-      h("pre", { class: "logs" }, r.tail));
-  }
-  return frag(head);
+/* --- the list ------------------------------------------------------------------------------ */
+
+function isLiveRun(id: number): boolean {
+  return active.some((r) => { return r.runId === id; });
+}
+
+/** A run as a timeline row; `rrun` addresses it for the delegated listener. */
+function runItem(r: ApiRemoteRunRow, isLive: boolean): TimelineItem {
+  const kind = kindOf(r);
+  const arg = argOf(r);
+  const tgt = runTarget(r);
+  const bad = isLive ? null : runOutcome(r);
+  return {
+    id: String(r.runId),
+    at: Date.parse(r.startedAt || r.queuedAt),
+    title: kind,
+    arg,
+    // docs/41 A1: the actor is an identifier, never translated; a row an older gateway
+    // recorded has none and says only its target.
+    who: [tgt, r.actor].filter(Boolean).join(" · "),
+    ms: isLive ? undefined : r.ms,
+    status: bad ? { text: bad, tone: "bad" } : undefined,
+    live: isLive
+      ? { text: r.state === "queued" ? tr("remoteRuns.stateQueued") : tr("remoteRuns.stateRunning"), queued: r.state === "queued" }
+      : undefined,
+    // Identical consecutive runs fold (an agent's `git status` loop). A run in flight never
+    // folds, and a different amount of output keeps two runs apart - the row cannot show it.
+    same: isLive ? undefined : [kind, arg, tgt, r.actor || "", r.input?.cwd || "", bad || "ok", r.outputBytes ?? ""].join("\u0000"),
+    data: { rrun: r.runId },
+  };
+}
+
+function allItems(): TimelineItem[] {
+  return active.map((r) => { return runItem(r, true); }).concat(runs.map((r) => { return runItem(r, false); }));
 }
 
 function findRun(id: number): ApiRemoteRunRow | null {
   return active.find((r) => { return r.runId === id; }) || runs.find((r) => { return r.runId === id; }) || null;
 }
 
-function isLiveRun(id: number): boolean {
-  return active.some((r) => { return r.runId === id; });
+/** The runs a row stands for, newest first: its own and, for ×N, every identical one under it. */
+function runOf(id: number): ApiRemoteRunRow[] {
+  for (const run of collapseRuns(allItems())) {
+    if (run.some((it) => { return it.id === String(id); })) {
+      return run.map((it) => { return findRun(Number(it.id)); }).filter((r): r is ApiRemoteRunRow => !!r);
+    }
+  }
+  return [];
+}
+
+/** An open row: what its columns left out (the id, the target, who, the directory, the state),
+ *  then the output as the value block Logs and Traffic open to. */
+function bodyNode(run: ApiRemoteRunRow[]): HChild {
+  const r = run[0];
+  const isLive = isLiveRun(r.runId);
+  const meta = timelineMeta([
+    "#" + r.runId, runTarget(r) || null, r.actor || null,
+    r.input && r.input.cwd ? h("code", null, r.input.cwd) : null,
+    stateWord(r),
+    run.length > 1 ? tr("remoteRuns.nIdenticalRuns", { n: run.length }) : null,
+  ]);
+  if (isLive) {
+    const l = live[r.runId];
+    // Hoisted so the comparison literals stay out of the h() children (i18n gate).
+    const cancellable = r.state === "running" || r.state === "queued";
+    return [meta, valueBlock(
+      { label: tr("remoteRuns.liveOutput"), tools: cancellable ? [btn(tr("remoteRuns.cancel"), { data: { rcancel: r.runId } })] : [] },
+      l && l.text
+        ? textNode(l.text, true, "logs").node
+        : note(r.state === "queued" ? tr("remoteRuns.queuedWaitingFreeSlot") : tr("remoteRuns.output")))];
+  }
+  const out: HChild[] = [meta];
+  if (r.error) out.push(valueBlock({ label: tr("remoteRuns.error") }, ...readableBody(r.error, true)));
+  const b = bodies[r.runId];
+  if (!b) return out.concat(note(tr("remoteRuns.loading"), { busy: true }));
+  // The body union's two states: the gone marker (the record rolled past the run) or the
+  // output read so far - "gone" in b is the discriminant.
+  if ("gone" in b) return out.concat(note(tr("remoteRuns.runRolledRecord")));
+  if (r.outputEvicted) {
+    // The size budget took the file (docs/41 A2); the line - and its tail, below, when
+    // the run was capped - is what is left.
+    out.push(note(tr("remoteRuns.outputEvicted", { size: fmtBytes(r.outputBytes || 0), d: Math.round((limits ? limits.maxAgeMs : 0) / 86400000) })));
+  } else if (!b.total) {
+    out.push(valueBlock({ label: tr("remoteRuns.output2"), text: tr("remoteRuns.outputProduced") }));
+  } else {
+    const partial = b.next < b.total;
+    out.push(valueBlock(
+      { label: tr("remoteRuns.output2"), notes: [partial ? tr("remoteRuns.b", { a: fmtBytes(b.next), b: fmtBytes(b.total) }) : fmtBytes(b.total)] },
+      ...readableBody(b.text, !!runOutcome(r))));
+    if (partial) out.push(btn(tr("remoteRuns.loadMore"), { data: { rmore: r.runId } }));
+  }
+  if (r.outputCapped && r.tail) {
+    out.push(valueBlock(
+      { label: tr("remoteRuns.tail"), notes: [tr("remoteRuns.cappedAtLast", { cap: fmtBytes(limits ? limits.maxOutputBytes : 0), tail: fmtBytes(r.tail.length) })] },
+      textNode(r.tail, true, "logs").node));
+  }
+  return out;
+}
+
+/** The drawn row a run id heads, or null. */
+function itemEl(id: number): HTMLElement | null {
+  const root = document.querySelector<HTMLElement>("#pane .tl");
+  if (!root) return null;
+  return Array.prototype.find.call(root.querySelectorAll<HTMLElement>(".tl-item"),
+    (n: HTMLElement) => n.dataset.tlId === String(id)) as HTMLElement | undefined || null;
 }
 
 function repaintBody(id: number): void {
-  const r = findRun(id);
-  const node = document.querySelector('#pane .call[data-rrun="' + id + '"] .call-body');
-  if (r && node) fill(node as HTMLElement, bodyNode(r, isLiveRun(id)));
+  const body = itemEl(id)?.querySelector<HTMLElement>(":scope > .tl-body");
+  const run = runOf(id);
+  if (body && run.length) fill(body, bodyNode(run));
 }
 
 /** One recorded run's output, from the cursor the previous read ended on (128 KB a read). */
@@ -234,15 +270,21 @@ async function loadBody(id: number, more: boolean): Promise<void> {
   repaintBody(id);
 }
 
-/** Pull what an open live row has not shown yet; a terminal answer ends the following. */
+/** Pull what an open live row has not shown yet; a terminal answer ends the following. The
+ *  first bytes repaint the body (the "No output yet" note becomes the output); after that only
+ *  the text moves, so a reader's selection in it survives. */
 async function pullLive(id: number): Promise<void> {
   const l = live[id] || (live[id] = { text: "", cursor: 0 });
+  const had = !!l.text;
   const j = await apiJson<ApiRunOutputChunk>("/api/runs/" + id + "/output?after=" + l.cursor + "&max=131072");
   if (!j) return;
   if (j.output) l.text += j.output;
   l.cursor = j.nextCursor || l.cursor;
-  const pre = document.querySelector('#pane pre[data-rlivepre="' + id + '"]');
-  if (pre) pre.textContent = l.text;
+  if (l.text && !had) repaintBody(id);
+  else if (l.text) {
+    const pre = itemEl(id)?.querySelector(":scope > .tl-body .vblock > pre");
+    if (pre) pre.textContent = l.text;
+  }
   if (j.terminal) void refresh(); // the run moved into the record: repaint from it
 }
 
@@ -258,12 +300,16 @@ function armLive(): void {
   }
 }
 
+/** Expand or collapse one row in place - a poll must not close what was just opened. A folded
+ *  row is open when any run in it is; closing it forgets them all. */
 function toggle(id: number): void {
-  open[id] = !open[id];
-  const node = document.querySelector('#pane .call[data-rrun="' + id + '"]');
-  if (node) node.className = "call" + (open[id] ? " open" : "");
+  const run = runOf(id);
+  const wasOpen = run.some((r) => { return !!open[r.runId]; });
+  run.forEach((r) => { open[r.runId] = false; });
+  open[id] = !wasOpen;
+  const root = document.querySelector<HTMLElement>("#pane .tl");
+  if (root && run.length) timelineToggle(root, String(id), open[id] ? bodyNode(run) : undefined);
   if (open[id]) {
-    repaintBody(id);
     if (isLiveRun(id)) void pullLive(id); else void loadBody(id, false);
   }
   armLive();
@@ -296,17 +342,21 @@ function render(): void {
   const options = [h("option", { value: "" }, tr("remoteRuns.allTargets"))].concat(targetIds.map((id) => {
     return h("option", { value: id, selected: id === target }, id);
   }));
+  // One list is the whole page, so the head carries it: one sentence, what the record keeps,
+  // and the list's filter and ⋯ (Clear - a destructive verb gets no standing button; the Jobs
+  // and Tunnels head ⋯ hold page-wide verbs too). No section caption: "Runs" would name the
+  // page the context bar already names, and a captionless section head was a row holding only
+  // the tools, over the note (docs/46 P6-2 walk).
   fill($("pane"),
-    h("div", { class: "wide" },
-      h("div", { class: "pane-head" },
-        h("div", null,
-          h("div", { class: "pane-desc" }, tr("remoteRuns.everyCommandSyncPull")),
-          h("div", { class: "pane-sub" }, kept)),
-        h("div", { class: "pane-actions" },
-          h("button", { class: "btn", id: "rrClear", disabled: !usage.runs }, tr("remoteRuns.clear")))),
-      h("div", { class: "sec-head" },
-        h("span", { class: "sec-cap" }, tr("remoteRuns.runs")),
-        h("select", { id: "rrTarget", aria: { label: tr("remoteRuns.filterTarget") } }, options)),
+    paneBody({ wide: true },
+      paneHead({
+        desc: tr("remoteRuns.descOneLine"),
+        sub: kept,
+        actions: [
+          h("select", { id: "rrTarget", aria: { label: tr("remoteRuns.filterTarget") } }, options),
+          moreBtn(tr("remoteRuns.moreActions"), { id: "rrMore" }),
+        ],
+      }),
       h("div", { id: "rrList" })));
   paintList();
   $("countChip").textContent = usage.runs ? trn(usage.runs, "remoteRuns.nRuns.one", "remoteRuns.nRuns.other") : "";
@@ -318,16 +368,21 @@ function paintList(): void {
   if (!active.length && !runs.length) {
     fill(region,
       page || target
-        ? h("div", { class: "group" }, h("div", { class: "row" },
-            h("span", { class: "rowmsg" }, page ? tr("remoteRuns.nothingPage") : tr("remoteRuns.runsTarget"))))
+        ? note(page ? tr("remoteRuns.nothingPage") : tr("remoteRuns.runsTarget"))
         : emptyNode({ icon: "history", title: tr("remoteRuns.runs2"), hint: tr("remoteRuns.runSomethingTargetSwiss") }),
       page ? pagerNode() : null);
     return;
   }
+  const items = allItems();
+  const openIds = new Set<string>();
+  for (const run of collapseRuns(items)) {
+    if (run.some((it) => { return !!open[Number(it.id)]; })) openIds.add(run[0].id);
+  }
   fill(region,
-    h("div", { class: "group" },
-      active.map((r) => { return rowNode(r, true); }),
-      runs.map((r) => { return rowNode(r, false); })),
+    timeline(items, {
+      open: openIds,
+      body: (it) => { return bodyNode(runOf(Number(it.id))); },
+    }),
     pagerNode());
 }
 
@@ -335,10 +390,11 @@ function paintList(): void {
 // newest-first list.
 function pagerNode(): HChild {
   if (!page && !nextBefore) return null;
-  return h("div", { class: "pager" },
-    h("button", { class: "btn", id: "rrPrev", disabled: page <= 0 }, tr("remoteRuns.newer")),
-    h("span", null, tr("remoteRuns.pageN", { n: page + 1 })),
-    h("button", { class: "btn", id: "rrNext", disabled: !nextBefore }, tr("remoteRuns.older")));
+  return pager({
+    label: tr("remoteRuns.runPages"), status: tr("remoteRuns.pageN", { n: page + 1 }),
+    prev: btn(tr("remoteRuns.newer"), { id: "rrPrev", disabled: page <= 0 }),
+    next: btn(tr("remoteRuns.older"), { id: "rrNext", disabled: !nextBefore }),
+  });
 }
 
 async function step(delta: number): Promise<void> {
@@ -358,15 +414,30 @@ export async function mount() {
   if (!(await load())) return;
   render();
   $("pane").onclick = (event: MouseEvent): void => {
-    const tog = targetEl(event)?.closest<HTMLElement>("[data-rtog]");
-    if (tog) { toggle(Number(tog.dataset.rtog)); return; }
-    const more = targetEl(event)?.closest<HTMLElement>("[data-rmore]");
+    const t = targetEl(event);
+    if (!t) return;
+    const more = t.closest<HTMLElement>("[data-rmore]");
     if (more) { void loadBody(Number(more.dataset.rmore), true); return; }
-    const cancel = targetEl(event)?.closest<HTMLElement>("[data-rcancel]");
+    const cancel = t.closest<HTMLElement>("[data-rcancel]");
     if (cancel) { void cancelRun(Number(cancel.dataset.rcancel)); return; }
-    if (targetEl(event)?.closest("#rrClear")) { void clearAll(); return; }
-    if (targetEl(event)?.closest("#rrPrev")) { void step(-1); return; }
-    if (targetEl(event)?.closest("#rrNext")) { void step(1); }
+    if (t.closest("#rrPrev")) { void step(-1); return; }
+    if (t.closest("#rrNext")) { void step(1); return; }
+    const menu = t.closest<HTMLElement>("#rrMore");
+    if (menu) {
+      // The opening click must not reach document (menu.js closes on outside clicks).
+      event.stopPropagation();
+      if (menuOpen()) { closeMenu(); return; }
+      popupMenu(menu.getBoundingClientRect(), [{
+        label: tr("remoteRuns.clear"), danger: true, disabled: !usage.runs,
+        fn: (): void => { void clearAll(); },
+      }]);
+      return;
+    }
+    // A row's summary is a real <button> (ui/timeline.ts): Enter and Space arrive as this click.
+    // Only the summary toggles - a click inside the open body is someone reading it.
+    const sum = t.closest<HTMLElement>(".tl-sum");
+    const item = sum ? sum.closest<HTMLElement>("[data-rrun]") : null;
+    if (item) toggle(Number(item.dataset.rrun));
   };
   // The target filter select - ONE delegated change listener instead of a per-render
   // assignment (docs/37 R5); the value is read at event time.
