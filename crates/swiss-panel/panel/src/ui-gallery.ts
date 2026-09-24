@@ -34,10 +34,10 @@ import { install, langPref, tk, tr } from "./i18n.js";
 import { SCENES } from "./ui-scenes.js";
 import {
   anchoredMenu, btn, card, checkField, closeMenu, closeSheet, decodeStrings, dot, emptyNode, failNote, field,
-  filterInput, form, formActions, formCap, formFold, groupNode, heldDot, hint, iconBtn, iconNode, initSelects, initSheet,
-  inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot, pager, pair, pane, paneHead,
-  popupMenu, relTime, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow, spinner, sw, tag, timeline,
-  timelineMeta, timelineToggle, toTop, valueBlock,
+  filterInput, form, formActions, formCap, formFold, groupNode, heldDot, hint, iconBtn, iconNode, initSelects,
+  initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, objTab, openFieldSheet, pageFoot, pager,
+  pair, pane, paneHead, popupMenu, relTime, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow,
+  spinner, sw, tag, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
 } from "./ui/index.js";
 import type { DotState, TimelineItem } from "./ui/index.js";
 
@@ -287,6 +287,11 @@ function catalogue(now: number): HTMLElement {
     entry(["seg"], tk("gallery.c.seg"), tk("gallery.c.segNote"), [
       [tr("gallery.st.counts"), seg([{ id: "tools", label: tr("gallery.d.tools"), n: 4 }, { id: "resources", label: tr("gallery.d.resources"), n: 0 }, { id: "logs", label: tr("gallery.d.logs") }], "tools")],
       [tr("gallery.st.second"), seg([{ id: "all", label: tr("gallery.d.all") }, { id: "errors", label: tr("gallery.d.errors"), n: 1 }], "errors")],
+    ]),
+    entry(["objTab"], tk("gallery.c.tabs"), tk("gallery.c.tabsNote"), [
+      [tr("gallery.st.tabOpen"), objTab({ name: "orders", selected: true, icon: "table", data: {}, close: { label: tr("gallery.d.closeTab"), data: {} } })],
+      [tr("gallery.st.tabHeld"), objTab({ name: "customers", selected: false, icon: "table", data: {}, mark: heldDot(tr("gallery.d.heldTwo")), close: { label: tr("gallery.d.closeTab"), data: {} } })],
+      [tr("gallery.st.tabCount"), objTab({ name: "audit_log", selected: false, icon: "table", data: {}, count: { n: 2, title: tr("gallery.d.twoFilters") }, close: { label: tr("gallery.d.closeTab"), data: {} } })],
     ]),
     entry(["timeline", "timelineMeta"], tk("gallery.c.timeline"), tk("gallery.c.timelineNote"), [], timeline(sampleCalls(now), { now, open: new Set(["g3"]), body: callBody })),
     entry(["jsonCodeNode", "valueBlock"], tk("gallery.c.code"), tk("gallery.c.codeNote"), [

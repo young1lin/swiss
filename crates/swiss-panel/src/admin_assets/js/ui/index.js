@@ -37,6 +37,8 @@ export { kvRow, row, sideRow } from "./row.js";
 export { groupNode } from "./group.js";
                                                             
 export { seg } from "./seg.js";
+export { objTab } from "./tab.js";
+                                           
                                         
 export { collapseRuns, dayLabel, fmtMs, relTime, timeLabel, timeline, timelineMeta, timelineToggle } from "./timeline.js";
                                                                 

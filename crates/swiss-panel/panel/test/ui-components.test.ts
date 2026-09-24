@@ -33,7 +33,7 @@ import {
 import {
   anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, failNote, filterInput,
   fmtMs, groupNode, heldDot, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
-  pager, paneBody, paneHead, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
+  objTab, pager, paneBody, paneHead, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
   relTime, timeLabel, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
 } from "../src/ui/index.js";
 import type { TimelineItem } from "../src/ui/index.js";
@@ -581,6 +581,59 @@ describe("ui/group - groupNode", () => {
   });
 });
 
+describe("ui/tab - objTab (docs/46 P8)", () => {
+  it("a role=tab with its glyph, name, count and mark, and a real close button beside them", () => {
+    const t = objTab({
+      name: "orders", selected: true, icon: "table", title: "demo_shop.orders", data: { dbtab: "0" },
+      count: { n: 2, title: "2 filters" }, mark: heldDot("1 buffered change"),
+      close: { label: "Close tab", data: { dbtabx: "0" } },
+    });
+    expect(t.tagName).toBe("DIV");
+    expect(t.className).toBe("otab sel");
+    expect(t.getAttribute("role")).toBe("tab");
+    expect(t.getAttribute("aria-selected")).toBe("true");
+    expect(t.tabIndex, "the open tab is the strip's one Tab stop").toBe(0);
+    expect(t.title).toBe("demo_shop.orders");
+    expect(t.dataset.dbtab).toBe("0");
+    expect(Array.from(t.children).map((c) => c.getAttribute("class"))).toEqual(["ic", "otab-name", "otab-n tnum", "db-tab-dot", "otab-close"]);
+    expect(t.querySelector(".otab-n")!.textContent).toBe("2");
+    expect(t.querySelector(".otab-n")!.getAttribute("title")).toBe("2 filters");
+    const x = t.querySelector<HTMLButtonElement>("button.otab-close")!;
+    expect(x.type).toBe("button");
+    expect(x.getAttribute("aria-label")).toBe("Close tab");
+    expect(x.dataset.dbtabx).toBe("0");
+    expect(useHref(x), "the close is the sprite, never a glyph").toBe("#i-x");
+  });
+
+  it("a tab that is not open leaves the Tab order; a name that is a node goes in as it is", () => {
+    const input = h("input", { class: "x-rename" });
+    const t = objTab({ name: input, selected: false, data: {}, close: { label: "Close", data: {} } });
+    expect(t.className).toBe("otab");
+    expect(t.tabIndex).toBe(-1);
+    expect(t.getAttribute("aria-selected")).toBe("false");
+    expect(t.querySelector(".otab-name")).toBeNull();
+    expect(t.firstElementChild).toBe(input);
+  });
+
+  it("tnum is base.css's tabular-figures utility, and no sheet spells the OpenType tag as a value", () => {
+    // Found in docs/46 P8: rule 1's `tnum` was a class with no rule (Data's activity pid and
+    // duration cells, the tab count), and two views.css rules wrote `font-variant-numeric: tnum`,
+    // which is not a value - the browser drops the declaration.
+    const rule = parseCss(sheet("base.css")).find((r) => !r.at && r.selectors.includes(".tnum"));
+    expect(rule?.decls.find((d) => d.prop === "font-variant-numeric")?.value).toBe("tabular-nums");
+    for (const name of ["base.css", "ui.css", "views.css"] as const) {
+      expect(sheet(name), name).not.toMatch(/font-variant-numeric:\s*tnum/);
+    }
+  });
+
+  it("the open tab merges into the surface below it, a 2px accent on its top edge (ui.css)", () => {
+    const rules = parseCss(sheet("ui.css")).filter((r) => !r.at);
+    const sel = rules.find((r) => r.selectors.includes(".otab.sel"));
+    expect(sel?.decls.find((d) => d.prop === "background")?.value).toBe("var(--bg)");
+    expect(sel?.decls.find((d) => d.prop === "box-shadow")?.value).toBe("inset 0 2px 0 var(--accent)");
+  });
+});
+
 describe("ui/seg", () => {
   it("a tablist whose buttons carry the page's own data hook and the selection", () => {
     const s = seg([
@@ -945,6 +998,7 @@ describe("docs/46 - every class the library draws is styled by base.css or ui.cs
       seg([{ id: "a", label: "A", n: 1 }], "a"), tl,
       sheetFrame({ title: "t", sub: "s", body: "b", foot: [h("span", { class: "grow" }), btn("x", { kind: "primary" })] }),
       heldDot("held"),
+      objTab({ name: "t", selected: true, icon: "table", data: {}, count: { n: 1, title: "1" }, close: { label: "x", data: {} } }),
       jsonCodeNode(decodeStrings({ k: "s", n: 1, l: null, d: "{\"a\":[true]}" }), true).node,
       ...mechanisms(),
     ];
