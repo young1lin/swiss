@@ -36,7 +36,7 @@
    for their frames, pageFoot() for the revision.
    ================================================================================================ */
 import type { ApiPluginRow, ApiPluginsResponse } from "../types/api.js";
-import { $, api, apiJson, targetEl, toast } from "../util.js";
+import { $, api, apiJson, refocusIfIdle, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import type { HChild } from "../h.js";
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
@@ -198,17 +198,6 @@ function patch(): void {
   if (startup && fresh) patchRow(startup, fresh);
 }
 
-/** Give focus back to the switch a hand (or Space) pressed, once its write has answered. The
- *  switch is disabled while the write is out, so a double click cannot send the opposite write
- *  behind the first - and a browser blurs a focused control the moment it is disabled, which
- *  left the focus on <body> after every toggle and the next Tab starting over (found on the
- *  docs/46 P5 walk). Only when nothing else took the focus meanwhile, and only while the switch
- *  is still on the page (a rebuild replaced it). */
-function refocus(pressed: Element | null): void {
-  const idle = !document.activeElement || document.activeElement === document.body;
-  if (pressed instanceof HTMLElement && pressed.isConnected && idle) pressed.focus();
-}
-
 function wire(): void {
   const pane = $("pane");
   pane.onclick = (event: MouseEvent): void => {
@@ -231,7 +220,7 @@ async function loadAutostart(): Promise<void> {
 
 /** Flip the OS registration, then redraw from the host's own read-back - never from our
  *  guess of what the click should have done. The switch is disabled while the write is out
- *  (see refocus). */
+ *  (see util.ts refocusIfIdle). */
 async function toggleAutostart(): Promise<void> {
   if (!autostart || autostartBusy) return;
   const pressed = document.activeElement;
@@ -244,7 +233,7 @@ async function toggleAutostart(): Promise<void> {
   autostartBusy = false;
   if (j) autostart = j; // else apiJson already toasted the refusal
   patch();
-  refocus(pressed);
+  refocusIfIdle(pressed);
 }
 
 /** Enable or disable one plugin, then redraw from the host's answer - never from our guess of
@@ -266,8 +255,8 @@ async function toggle(id: string | null): Promise<void> {
   // the page list the tab strip is drawn from.
   try { await reloadPluginInventory(); }
   catch (error) { /* reloadPluginInventory already toasted; keep the old rows on screen */ }
-  patch(); // in place: the pressed switch is the same node, so refocus can hand it back
-  refocus(pressed);
+  patch(); // in place: the pressed switch is the same node, so its focus can come back
+  refocusIfIdle(pressed);
   $("countChip").textContent = chipText();
   // The enable stood and the START failed: a 200 whose row carries a lastError. The row already
   // shows it, but the click deserves an answer of its own - otherwise pressing Enable on a

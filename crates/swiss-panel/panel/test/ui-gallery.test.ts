@@ -46,6 +46,7 @@ const HELPERS: Record<string, string> = {
   dayLabel: "the timeline's day heading words - drawn by timeline()",
   timeLabel: "the timeline's clock words - drawn by timeline()",
   fmtMs: "the timeline's duration words - drawn by timeline()",
+  relTime: "a relative moment's words - drawn inside the rows section's scheduled row",
   collapseRuns: "the timeline's ×N folding - drawn by timeline()",
   timelineToggle: "opens a timeline row in place - driven by the gallery's click (tested below)",
   clampMenuPos: "the menu's placement arithmetic - exercised by every popupMenu()",

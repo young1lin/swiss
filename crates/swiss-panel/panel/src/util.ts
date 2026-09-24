@@ -97,6 +97,16 @@ function whenLabel(iso: string | number): string {
     : d.toLocaleTimeString(locale());
 }
 
+/** Give focus back to the control a hand (or a key) pressed, once its write has answered. Such a
+ *  control is disabled while the write is out (no double send), and a browser blurs a focused
+ *  control the moment it is disabled - the focus fell to <body> and the next Tab started over
+ *  (found on the docs/46 P5 / P6 walks). Only when nothing else took the focus meanwhile, and
+ *  only while the control is still on the page (a rebuild replaced it). */
+function refocusIfIdle(pressed: Element | null): void {
+  const idle = !document.activeElement || document.activeElement === document.body;
+  if (pressed instanceof HTMLElement && pressed.isConnected && idle) pressed.focus();
+}
+
 // Fold state for every scope lives in groups.js now — keyed swiss.groups.<scope>.collapsed, one
 // key per scope, because a group named "prod" in two lists folding together would be a
 // coincidence, not a feature.
@@ -198,4 +208,4 @@ function lsMigrate(newKey: string, oldKey: string): string | null {
 
 /* esc() survives for the few string contexts that remain (sheet titles via textContent
  * builds are nodes now; the callers left are attribute values and pure-string suites). */
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyNode, errText, esc, iconNode, isMcpKind, isTyping, lsMigrate, now, targetEl, toast, typeTagNode, TYPE_ICONS, whenLabel };
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyNode, errText, esc, iconNode, isMcpKind, isTyping, lsMigrate, now, refocusIfIdle, targetEl, toast, typeTagNode, TYPE_ICONS, whenLabel };
