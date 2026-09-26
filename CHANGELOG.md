@@ -4,7 +4,7 @@ All notable changes to swiss are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.0] - 2026-09-25
 
 ### Added
 - First public release candidate: the gateway (`/mcp/<name>` for every MCP an AI client
@@ -27,4 +27,4 @@ All notable changes to swiss are recorded here. The format follows
 - The connection-test gate accepts `mariadb` like the panel's Test button always offered it:
   a mariadb Test click answered 400 "no connection test" before.
 
-[Unreleased]: https://github.com/young1lin/swiss/commits/master
+[0.1.0]: https://github.com/young1lin/swiss/releases/tag/v0.1.0
