@@ -808,7 +808,7 @@ own seeds, with L1 browser tests, L2 adapter tests through a real rmcp client on
 listener, and an L3 proc group over the repo's own stdio MCP server. The decision is (c).
 The reasoning: (a) is the status quo the spec opens by rejecting — the exact-string BIGINT,
 the completion upper-casing and the DESCRIBE udt_name gap were all invisible to mocks;
-(b) makes "the suite passed" mean "passed on Jdoe's machine, this week", and a missing engine
+(b) makes "the suite passed" mean "passed on the owner's machine, this week", and a missing engine
 would have to skip, which is a silent green — the one thing the harness may never produce.
 
 The costs, paid and accepted: the dev graph grows testcontainers/bollard (MIT/Apache-2.0)
