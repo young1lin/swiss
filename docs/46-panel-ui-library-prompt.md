@@ -6,7 +6,7 @@ so this file doubles as the resume note after a context compaction.
 
 ## Where
 
-- Worktree `.agents/worktrees/panel-ui`, branch `panel-ui` (from master `6d096a0`). Never work in
+- Worktree `.agents/worktrees/panel-ui`, branch `panel-ui` (from master `69b2460`). Never work in
   the main checkout; never touch the `mcp` or `review-fixes` worktrees.
 - Panel sources `crates/swiss-panel/panel/src/*.ts`; emit `crates/swiss-panel/src/admin_assets/js`
   (committed, produced by `npm run build`, never hand-edited); CSS `admin_assets/styles/*.css`.
