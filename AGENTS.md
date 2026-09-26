@@ -212,7 +212,7 @@ working tree, on every platform — CRLF never enters a commit.
 - **A panel change ships with its vitest case** in `crates/swiss-panel/panel/test/` — that
   suite is the panel's acceptance spec; see `docs/08-testing.md`.
 - **Every visible panel string goes through `tr()`/`trn()`** (docs/38, normalized
-  2026-10-30): keys are symbolic `<module>.<semanticId>` (e.g. `terminal.bar.open`),
+  2026-09-20): keys are symbolic `<module>.<semanticId>` (e.g. `terminal.bar.open`),
   English copy lives in `panel/src/locales/en.ts`, and each locale — currently `zh.ts` —
   is its own table over the same keys; both entries are part of the change. The two machine
   gates in `npm run check` (dictionary completeness across every locale + the bare-literal

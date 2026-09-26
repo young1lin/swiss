@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The English dictionary (docs/38, normalized 2026-10-30): symbolic keys, module-sectioned.
+/* The English dictionary (docs/38, normalized 2026-09-20): symbolic keys, module-sectioned.
    English copy is editable here without touching call sites or any other locale. */
 
 const en                         = {

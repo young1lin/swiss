@@ -698,7 +698,7 @@ under one name, and a rename that loses the name loses the rollback).
 
 ## ADR-024 — The panel is authored in TypeScript, erased to the same JS (docs/36)
 
-**Status: Accepted (2026-10-24).** The panel's source of truth moved from
+**Status: Accepted (2026-09-20).** The panel's source of truth moved from
 `crates/swiss-panel/src/admin_assets/js` (hand-written JS, served as-is) to
 `crates/swiss-panel/panel/src/*.ts`. The emit pipeline is ts-blank-space: type-only syntax is
 blanked out line-by-line, so each emitted `.js` line keeps the number of its `.ts` source
@@ -714,7 +714,7 @@ the code carried 1,041 non-null assertions and types bent to fit it).
 
 ## ADR-025 — D9 revoked: the panel's gate is the check suite, not byte-equality (docs/37)
 
-**Status: Accepted (2026-10-24).** D9 accepted the modern-TypeScript port on one condition:
+**Status: Accepted (2026-09-20).** D9 accepted the modern-TypeScript port on one condition:
 the emitted JS must stay byte-identical to the pre-port JS, so behavior change could be
 proved by diff. That condition is what made the port write BAD TypeScript — var kept
 because const emits longer, catch (e) untyped because errText(e) changes tokens, five
