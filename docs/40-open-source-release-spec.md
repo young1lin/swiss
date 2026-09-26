@@ -9,12 +9,24 @@
 > （76 文件 682 用例）绿、`cargo deny check` 四项 ok。重写前的完整备份：
 > `../swiss-pre-oss.bundle`（所有分支、旧 hash）。GitHub 建仓、push、CI 首跑、
 > tag 不在本 spec 内——owner 另行决定何时做。
+>
+> 增补（2026-09-26，第二遍清场）：O2 的替换表只管身份（邮箱、路径、四张截图），漏了**真实环境
+> 指纹**——真实开发库的库名、表名、DDL 注释与订单号（docs/assets/42 mockup、面板与 Rust 测试
+> fixture、docs/43），真实 Redis 的一个 key、一条读自其上的文案和一个会话 key 前缀，真实隧道
+> 布局（主机、用户、连接名，docs/assets/46 mockup，9/23 在重写之后才进库），owner 的英文名
+> （测试 fixture、一处 Windows 路径、commit message），以及 docs/43 M3/M4 四张截图的首版
+> （拍到了真实库列表和数据行，后来的 fixture 重拍只是盖在上面）。处理同 O2/O7：工作树换成中性
+> fixture（`acme_app_*`、`shop_*`、`jdoe`，替换与原词等长的地方保持等长，宽度与 ratchet 不动），
+> `docs/assets/43/redis-utf8-decode.png` 退出 tracking 并 ignore；再一遍 `git filter-repo`
+> （同一张表过全部 blob 与 commit message，按 id 剥离四个首版截图 blob，删掉那张 Redis 截图的
+> 路径），之后一个 commit 重映射文档里的旧短 hash。替换表只在本机，不入库（理由同 O2）。
+> 重写前的完整备份：`../swiss-pre-scrub-2026-09-26.bundle`。
 
 ## 0. 审计结论（动手前的事实）
 
 - 树和全历史里**没有** secret 形态的 token（sk-/ghp_/AKIA/PEM/JWT 都扫了），`.env`/config/key
   文件从未进过历史，`tests/fixtures` 用的是文档化的固定测试 key，IP 全是私网/文档段。
-- 514 个 commit（含所有分支）全部署名 owner 的**旧邮箱**（`jdoe@<域名>`）。154 条
+- 514 个 commit（含所有分支）全部署名 owner 的**旧邮箱**（`<英文名>@<域名>`）。154 条
   `Co-Authored-By:` trailer 署给五个模型账号。
 - 四张截图带真实环境数据：`docs/assets/20/03-tunnels-groups-{light,dark}.png`（内网 IP、
   SSH 连接名、端口布局）、`docs/assets/20/06-data-dropdown-{light,dark}.png`（真实系统的
@@ -39,7 +51,7 @@
 
 | # | 决定 | 落地 |
 |---|---|---|
-| D1 | 作者名 `young1lin`（owner 2026-09-21 追加：名字不用 Jdoe；2026-09-23 追加：**任何文件不写邮箱**，签名一律裸名） | 历史重写 mailmap + replace-text 连邮箱一并剥离；Cargo `authors`、头注、NOTICE 均为裸名；联系方式走 GitHub 私有渠道 |
+| D1 | 作者名 `young1lin`（owner 2026-09-21 追加：名字不用英文名；2026-09-23 追加：**任何文件不写邮箱**，签名一律裸名） | 历史重写 mailmap + replace-text 连邮箱一并剥离；Cargo `authors`、头注、NOTICE 均为裸名；联系方式走 GitHub 私有渠道 |
 | D2 | 真实环境数据 git ignore 掉 | 四张截图退出 tracking + `.gitignore` + 从历史清除；不重拍 |
 | D3 | 全局 Apache-2.0，**作者只能是 owner** | 头注改 `Copyright 2026 young1lin`；`Co-Authored-By` trailer 从历史剥离，新 commit 不再加；第三方归属**保留**（那是 license 义务，不是作者署名，见 D7） |
 | D4 | 绝对路径剔除 | 工作树 + 全历史 `--replace-text` |

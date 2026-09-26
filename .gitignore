@@ -52,6 +52,8 @@ master.key
 # the docs/20 record lists them as not shipped.
 /docs/assets/20/03-tunnels-groups-*.png
 /docs/assets/20/06-data-dropdown-*.png
+# Same rule, docs/40 second pass: a value read off a live Redis, with the keyspace around it.
+/docs/assets/43/redis-utf8-decode.png
 # The rest of the credential-shaped strays the seals never cover.
 .env.*
 *.cast
