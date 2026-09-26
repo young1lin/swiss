@@ -73,7 +73,7 @@ export default tseslint.config(
       /* R3 (warn until the inventory is gone): dead branches surfaced with M9's
        * reconciliation - 550 sites, each a micro-audit (redundant guard vs a type that
        * over-promises a wire field). The original plan flipped this to error with R4's
-       * state split; R4 landed and 496 sites survive (2026-10-24 count) - the split
+       * state split; R4 landed and 496 sites survive (2026-09-20 count) - the split
        * touched the state bag, not the wire-field over-promises. The warning inventory
        * IS the burn-down list; the rule flips to error the day it reaches zero. */
       "@typescript-eslint/no-unnecessary-condition": "warn",

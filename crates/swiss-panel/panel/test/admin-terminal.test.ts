@@ -491,7 +491,7 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
   });
 
   it("term-page owns [bar, find, stage, foot] - the bar CLOSES at the shell slot", () => {
-    // Regression (2026-10-24, live on 19998): the R5 conversion left term-bar's h() call
+    // Regression (2026-09-20, live on 19998): the R5 conversion left term-bar's h() call
     // open past the shell slot, so term-find and term-stage became the BAR's children; the
     // bar is flex:0 0 auto, the stage collapsed to 0px and xterm rendered nothing (Open
     // session "worked", the tab appeared, the screen stayed black). The shell-slot line
@@ -508,7 +508,7 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
   });
 
   it("the Open session button is a SIBLING of the target select, never its child", () => {
-    // Regression (2026-10-24, live on 19998): the R5 conversion once passed the gear and
+    // Regression (2026-09-20, live on 19998): the R5 conversion once passed the gear and
     // Open session buttons as children of the h("select") call - invalid DOM (<select>
     // takes options only), and the browser dropped both buttons, so the page had no way
     // to open a session. The select's call must CLOSE (})) + comma) before the buttons:

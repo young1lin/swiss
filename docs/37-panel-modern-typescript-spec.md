@@ -1,6 +1,6 @@
 # 37 — 面板成为真正的现代 TypeScript：撤销 D9，写法与类型一起归位
 
-> 状态：**已实施（R0–R6 全部落地，2026-10-24）**。基线 `fddd33b`（2026-09-19）——docs/36 的 T0–T4 已落地
+> 状态：**已实施（R0–R6 全部落地，2026-09-20）**。基线 `fddd33b`（2026-09-19）——docs/36 的 T0–T4 已落地
 > （`tsc` 两份 tsconfig 零错误、63 个测试文件 553 用例绿、发射树新鲜），T5（门禁与文档）未做，
 > 本文把它接管过来。
 > 前置阅读：`docs/36-panel-typescript-spec.md` §1.2（十三条决定——本文推翻其中的 D9，并改写
@@ -271,7 +271,7 @@ PR 上跑绿一次；`panel-tests` 这个词在 AGENTS.md / docs / .agents 下�
 | `no-var`、`prefer-const` | R2 | M6 |
 | `@typescript-eslint/no-non-null-assertion` | R2 末（带白名单） | M7 |
 | `@typescript-eslint/consistent-type-imports` | R3 | M8 |
-| `@typescript-eslint/no-unnecessary-condition` | R3 起 warn（未转 error） | 索引签名补齐后，死分支现形；原计划随 R4 转 error，R4 落地后仍余 496 处（2026-10-24 计数），存量即燃尽清单，清零当日转 error |
+| `@typescript-eslint/no-unnecessary-condition` | R3 起 warn（未转 error） | 索引签名补齐后，死分支现形；原计划随 R4 转 error，R4 落地后仍余 496 处（2026-09-20 计数），存量即燃尽清单，清零当日转 error |
 | `no-restricted-imports`：禁止从 `util.js` 导入可变 state | R4 | M11 |
 | `no-restricted-syntax`：选中任意 `.innerHTML =` 赋值（零豁免，收尾后全库无命中） | R5 | M12 |
 | `@typescript-eslint/no-floating-promises` | R0 起 warn，R3 转 error | 面板里大量 `apiJson()` 不 await 的位置 |
@@ -313,7 +313,7 @@ R0 → R1 → R2 → R3 → R4 → R5 → R6，不许跳。每个提交：
 每阶段记：发射字节与基线的比、上面六个计数的剩余数、`npm run check` 耗时。R6 另记 release exe 的
 字节差（与 `69853b7` 比）——**Ruthlessly small** 的账要算到最后。
 
-**R6 收账（`86c64f0` + 并行审查修复批，2026-10-24）**：发射自有 JS **953,763 字节**（+9.7% 对基线，
+**R6 收账（`86c64f0` + 并行审查修复批，2026-09-20）**：发射自有 JS **953,763 字节**（+9.7% 对基线，
 类型标注与注释随行——ts-blank-space 保列输出，注释留在发射里）；`var` 0，`!.` 186（逐文件冻结），
 `innerHTML` 写 0（lint error，零豁免），内联 handler 赋值 184（-35%，其余是 R5 认可的直接接线：
 非冒泡事件、每渲染一控件的 sheet 流），索引签名 36（其中 §0.2 点名的两个洞——`state.d.ts` 的

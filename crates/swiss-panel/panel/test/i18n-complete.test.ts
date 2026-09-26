@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The docs/38 L10a dictionary-completeness gate, normalized (2026-10-30): keys are
+/* The docs/38 L10a dictionary-completeness gate, normalized (2026-09-20): keys are
  * symbolic ("<module>.<semanticId>"), English copy lives in en.ts, every locale is its
  * own table over the same keys, and the wire vocabulary (labels the gateway serves as
  * English text on /api/plugins) is mapped at runtime by wireLabel(). Four directions

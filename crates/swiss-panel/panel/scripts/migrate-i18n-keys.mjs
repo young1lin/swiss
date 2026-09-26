@@ -15,7 +15,7 @@
  */
 
 /*
- * The docs/38 key-normalization codemod (2026-10-30 decision): rewrites every
+ * The docs/38 key-normalization codemod (2026-09-20 decision): rewrites every
  * tr()/trn()/tk() English-string literal in panel/src and panel/test to a symbolic
  * key "<module>.<semanticId>", and regenerates locales/en.ts (key -> English) and
  * locales/zh.ts (key -> Chinese, values carried over from the English-keyed table).
@@ -231,7 +231,7 @@ function renderTable(varName, entries) {
 }
 
 fs.writeFileSync(path.join(srcDir, "locales/en.ts"),
-  HEADER("en", "The English dictionary (docs/38, normalized 2026-10-30): symbolic keys, module-sectioned.\n   English copy is editable here without touching call sites or any other locale.")
+  HEADER("en", "The English dictionary (docs/38, normalized 2026-09-20): symbolic keys, module-sectioned.\n   English copy is editable here without touching call sites or any other locale.")
   + renderTable("en", enEntries), "utf8");
 
 fs.writeFileSync(path.join(srcDir, "locales/zh.ts"),

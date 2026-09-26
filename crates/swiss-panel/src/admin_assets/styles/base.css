@@ -209,7 +209,7 @@
     /* The adaptive shell (docs/13 D5, redrawn): a left plugin RAIL for global navigation and
        the plugin's workspace to its right. A plugin is a destination, not a label competing
        with its pages, so the rail stays narrow (docs/39 S1; the icon-only form was
-       reversed by owner decision 2026-10-30) - a seat is its glyph plus an in-scale
+       reversed by owner decision 2026-09-21) - a seat is its glyph plus an in-scale
        caption, never a row of pills; the plugin's full name is the context bar's title
        once landed. Seats are borderless until pointed at (the macOS toolbar
        vocabulary); readouts stay plain text. */
@@ -236,7 +236,7 @@
       padding: 0 var(--s1); min-height: 0; overflow-y: auto;
     }
     /* One seat per plugin: an 18px glyph over its caption. docs/39 S1 shipped the rail
-       icon-only after a 9px caption proved illegible; the owner reversed that (2026-10-30)
+       icon-only after a 9px caption proved illegible; the owner reversed that (2026-09-21)
        and the caption is back - at 10px, ONE size for the whole rail, fitted by
        page-registry's fitRailLabels: the rail steps down as one (to a 9px floor) only when
        a gateway-served name is longer than the caption box, and a name that fits nowhere

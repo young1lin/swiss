@@ -97,7 +97,7 @@ function railSeat(g           )              {
   const title = allOff && offPlugin
     ? tr("pageRegistry.labelError", { label: tr(wireLabel(g.label)), error: offPlugin.lastError || tr("pageRegistry.pluginDisabled") })
     : tr(wireLabel(g.label));
-  /* docs/39 S1 shipped the rail icon-only; reversed by owner decision (2026-10-30) for
+  /* docs/39 S1 shipped the rail icon-only; reversed by owner decision (2026-09-21) for
    * clarity - the seat wears its glyph AND the plugin's translated name, sized for the
    * whole rail by fitRailLabels after each paint. The tooltip still carries the richer
    * error text when the plugin is down; the label stays the plain name. The More seat

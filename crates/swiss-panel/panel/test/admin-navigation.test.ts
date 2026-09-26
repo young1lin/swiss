@@ -219,7 +219,7 @@ describe("the plugin rail (global navigation)", () => {
     // The workspace plugin rides the rail like any peer.
     expect(rail).toContain('data-group="terminal" data-view="terminal"');
     // The synthesized management page has no inventory row: GROUP_LABELS names its group.
-    // Seats carry their caption again (docs/39 S1 icon-only reversed by owner, 2026-10-30):
+    // Seats carry their caption again (docs/39 S1 icon-only reversed by owner, 2026-09-21):
     // the group's translated name sits under the glyph at --f-caption, and the title
     // tooltip still carries it (plus the error text when the plugin is down).
     expect(rail).toContain('title="Settings" data-group="host" data-view="plugins"');
