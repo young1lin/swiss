@@ -1,6 +1,6 @@
 # 32 — MCP Logs 分页与浏览连续性 — spec
 
-**状态：Draft for operator review（2026-09-17），基线 `e50525b`。** 由 swiss-spec
+**状态：已实施（B1–B4，2026-09-17 同日落地；起草时为 Draft for operator review），基线 `e50525b`。** 由 swiss-spec
 会话产出；实施会话从 `docs/32-mcp-logs-browsing-prompt.md` 起跑。本文只定行为、测试与
 交付顺序，不含实现。
 
