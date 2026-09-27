@@ -34,6 +34,14 @@ All notable changes to swiss are recorded here. The format follows
   rename or delete it by. The groups always paint now, as Remote Targets already did (docs/20).
 - The Terminal page's target picker names a remote by its connection name alone; it showed
   `user@host`, which put the server's address into every screenshot of a terminal.
+- A run being canceled stays visible until it has stopped: cancel took it out of the active
+  set before its clean stop finished, so `/api/runs/<id>` answered 404 meanwhile (the CLI
+  follower printed `404 no run N` and exited 1) and the next run could start beside a child
+  still alive.
+- `swiss remote write` no longer records the file's content in the run log
+  (`logs/remote/runs.jsonl`); the audit line keeps its size as `contentBytes`.
+- A wrong Redis password fails at once as an authentication failure; the connection
+  manager's retries hid it behind "redis connect timed out after 5s".
 - `/api/tunnels` connection rows now carry `keyPath`: the panel's edit sheet prefills from the
   row, and a custom private-key path is no longer silently rewritten to the default on save.
 - Jumping a Redis stream view back to the latest window now voids the follow tick already in
