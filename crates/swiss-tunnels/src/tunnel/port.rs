@@ -28,9 +28,11 @@
 
 use std::time::Duration;
 
+#[cfg(windows)]
 use serde_json::json;
 
 use super::types::PortOwner;
+#[cfg(windows)]
 use swiss_core::log;
 
 /// True when nothing holds the port, tested by actually binding it.
@@ -67,7 +69,7 @@ pub async fn port_owner(port: u16) -> Option<PortOwner> {
     #[cfg(not(windows))]
     {
         let _ = port;
-        return None;
+        None
     }
     #[cfg(windows)]
     {
@@ -96,7 +98,7 @@ pub async fn force_free(pid: u32) -> Result<(), String> {
         // The Node build had a process.kill() path for POSIX; without a libc dependency (and
         // with the owner lookup being Windows-only anyway), refuse instead of pretending.
         let _ = pid;
-        return Err("force-free is only supported on Windows".into());
+        Err("force-free is only supported on Windows".into())
     }
     #[cfg(windows)]
     {
