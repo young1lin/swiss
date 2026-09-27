@@ -511,6 +511,73 @@ async fn add_managed(
     Ok(lifecycle_of(ctx, name))
 }
 
+/// Whether one def value carries `secret`: the `${secret://name}` envelope anywhere inside a
+/// string (a header reads `Bearer ${secret://name}`), or the legacy bare whole value
+/// `secret://name` older files still hold (docs/25 E2).
+fn mentions_secret(v: &Value, envelope: &str, bare: &str) -> bool {
+    match v {
+        Value::String(s) => s.contains(envelope) || s == bare,
+        Value::Array(items) => items.iter().any(|x| mentions_secret(x, envelope, bare)),
+        Value::Object(map) => map.values().any(|x| mentions_secret(x, envelope, bare)),
+        _ => false,
+    }
+}
+
+/// Rebuild every MCP whose definition references `secret` (docs/19, 2026-09-27 addendum).
+/// make_adapter resolves references into the adapter it builds, so a stored value is read
+/// once per build: before this, replacing a secret reached nothing until the gateway
+/// restarted. The swap is the edit route's - the def is untouched, only re-resolved. A
+/// running MCP comes back up on the new value; a lazy one returns to idle and its next
+/// request wakes it; one whose start failed is retried, since the old value was the likely
+/// cause. A stopped one stays stopped and reads the new value when it is next started.
+async fn refresh_secret_users(ctx: &AppContext, secret: &str) -> (Vec<String>, Vec<Value>) {
+    let envelope = format!("${{secret://{secret}}}");
+    let bare = format!("secret://{secret}");
+    let mut refreshed = Vec::new();
+    let mut failed = Vec::new();
+    for entry in ctx.registry.all() {
+        let Some((name, def, running, errored)) = entry.data.read().ok().map(|d| {
+            (
+                d.name.clone(),
+                d.def.clone(),
+                d.server.is_some(),
+                d.lifecycle == Lifecycle::Error,
+            )
+        }) else {
+            continue;
+        };
+        if !def.0.values().any(|v| mentions_secret(v, &envelope, &bare)) {
+            continue;
+        }
+        let adapter = match make_adapter(&def, &name, &ctx.calls) {
+            Ok(adapter) => adapter,
+            Err(err) => {
+                failed.push(json!({ "name": name, "error": err }));
+                continue;
+            }
+        };
+        let lazy = swiss_mcp::registry::is_lazy(&def);
+        let start = (running || errored) && !lazy;
+        match ctx.registry.update_def(&name, def, adapter, start).await {
+            Ok(()) => {
+                // Only an idle lazy entry is woken by a request, so a lazy one whose start
+                // failed would stay parked on the old error without this.
+                if lazy && errored {
+                    if let Ok(mut d) = entry.data.write() {
+                        if d.server.is_none() && d.lifecycle == Lifecycle::Error {
+                            d.lifecycle = Lifecycle::Idle;
+                            d.error = None;
+                        }
+                    }
+                }
+                refreshed.push(name);
+            }
+            Err(err) => failed.push(json!({ "name": name, "error": err })),
+        }
+    }
+    (refreshed, failed)
+}
+
 // --- mounting -----------------------------------------------------------------------------------
 
 pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
@@ -681,7 +748,9 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     r = r.route(
         "/api/secrets/{name}",
         put(
-            |Path(name): Path<String>, body: crate::reply::NodeBody| async move {
+            |State(ctx): State<Arc<AppContext>>,
+             Path(name): Path<String>,
+             body: crate::reply::NodeBody| async move {
                 let body = body.0;
                 // Both fields are required and honest about it: a missing rev is a malformed
                 // request (400), not a phony mismatch (409); an empty value is always a
@@ -710,7 +779,13 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 ) {
                     Ok(new_rev) => {
                         log::log("info", "secret stored", Some(json!({ "name": name })));
-                        admin_json(StatusCode::OK, json!({ "rev": new_rev }))
+                        // Every MCP built on this secret holds its resolved value; the new
+                        // one reaches them only through a rebuild.
+                        let (refreshed, failed) = refresh_secret_users(&ctx, &name).await;
+                        admin_json(
+                            StatusCode::OK,
+                            json!({ "rev": new_rev, "refreshed": refreshed, "failed": failed }),
+                        )
                     }
                     Err(e) => vault_error(&e),
                 }

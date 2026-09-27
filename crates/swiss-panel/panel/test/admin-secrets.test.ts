@@ -279,8 +279,84 @@ describe("the Secrets page (docs/19 D6)", () => {
     expect(after.value).toBe("default");
   });
 
+  /* Replacing a value (docs/19, 2026-09-27 addendum). The API always overwrote, but nothing on
+     the page said so: the ⋯ held only Delete, and a replace typed into the form moved the
+     row to whatever group the select held. */
+
+  it("the ⋯ offers Replace value…, which points the form at the row and its group", async () => {
+    body = { secrets: ["stripe-key"], rev: 7, groups: ["default", "ci"], secretGroups: { "stripe-key": "ci" } };
+    await view.mount();
+    expect($("skStore").textContent).toBe("Store");
+    ($("pane").querySelector('[data-skmore="stripe-key"]') as HTMLElement).click();
+    const menu = document.querySelector(".menu.float") as HTMLElement;
+    const items = Array.from(menu.querySelectorAll("button"));
+    expect(items.map((b) => b.textContent)).toEqual(["Replace value…", "Delete"]);
+    expect(items[0].className).not.toContain("danger");
+    items[0].click();
+    expect(($("skName") as HTMLInputElement).value).toBe("stripe-key");
+    expect(($("skGroup") as HTMLSelectElement).value).toBe("ci");
+    expect($("skStore").textContent).toBe("Replace");
+    expect(document.activeElement).toBe($("skValue"));
+  });
+
+  it("the primary reads Replace exactly while the typed name is already stored", async () => {
+    body = { secrets: ["stripe-key"], rev: 1 };
+    await view.mount();
+    const nameBox = $("skName") as HTMLInputElement;
+    nameBox.value = "stripe";
+    nameBox.dispatchEvent(new Event("input"));
+    expect($("skStore").textContent).toBe("Store");
+    nameBox.value = " stripe-key ";
+    nameBox.dispatchEvent(new Event("input"));
+    expect($("skStore").textContent).toBe("Replace");
+  });
+
+  it("a replace asks first, keeps the row's group, and names the MCPs the gateway reloaded", async () => {
+    body = { secrets: ["stripe-key"], rev: 7, groups: ["default", "ci"], secretGroups: { "stripe-key": "default" } };
+    await view.mount();
+    ($("skName") as HTMLInputElement).value = "stripe-key";
+    ($("skValue") as HTMLInputElement).value = "sk_live_rotated";
+    ($("skGroup") as HTMLSelectElement).value = "ci"; // left over from some other store
+
+    confirmAnswer = false;
+    await view.storeSecret();
+    expect(calls.filter((c) => c.method === "PUT").length).toBe(0);
+    expect(($("skValue") as HTMLInputElement).value).toBe("sk_live_rotated");
+
+    confirmAnswer = true;
+    replies["PUT /api/secrets/stripe-key"] = { rev: 8, refreshed: ["billing", "stripe-mcp"], failed: [] };
+    await view.storeSecret();
+    const put = calls.find((c) => c.method === "PUT" && c.url === "/api/secrets/stripe-key");
+    expect(put && JSON.parse(put.body as string)).toEqual({ value: "sk_live_rotated", rev: 7 });
+    // A replace never moves the row: no member write, whatever the select says.
+    expect(calls.some((c) => c.url.startsWith("/api/groups/secrets/members/"))).toBe(false);
+    expect(($("skValue") as HTMLInputElement).value).toBe("");
+    expect($("toast").textContent).toBe("saved stripe-key — reloaded billing, stripe-mcp");
+  });
+
+  it("a rebuild that failed is an error toast naming the MCP", async () => {
+    body = { secrets: ["stripe-key"], rev: 2 };
+    await view.mount();
+    ($("skName") as HTMLInputElement).value = "stripe-key";
+    ($("skValue") as HTMLInputElement).value = "v2";
+    replies["PUT /api/secrets/stripe-key"] = { rev: 3, refreshed: [], failed: [{ name: "billing", error: "401" }] };
+    await view.storeSecret();
+    expect($("toast").textContent).toBe("saved stripe-key, but billing did not reload — see its Logs");
+    expect($("toast").className).toContain("err");
+  });
+
+  it("a replace nothing references says just that", async () => {
+    body = { secrets: ["stripe-key"], rev: 2 };
+    await view.mount();
+    ($("skName") as HTMLInputElement).value = "stripe-key";
+    ($("skValue") as HTMLInputElement).value = "v2";
+    replies["PUT /api/secrets/stripe-key"] = { rev: 3, refreshed: [], failed: [] };
+    await view.storeSecret();
+    expect($("toast").textContent).toBe("replaced stripe-key");
+  });
+
   it("still exports the mutation helpers the suite drives", () => {
-    for (const name of ["storeSecret", "removeSecret", "moveSecretRow"]) {
+    for (const name of ["storeSecret", "removeSecret", "moveSecretRow", "beginReplace"]) {
       expect(typeof view[name], name).toBe("function");
     }
   });

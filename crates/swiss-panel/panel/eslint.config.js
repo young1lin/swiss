@@ -142,7 +142,6 @@ export default tseslint.config(
       "src/menu.ts",
       "src/sidebar.ts",
       "src/views/plugins.ts",
-      "src/views/secrets.ts",
       "src/views/tokens.ts",
       "src/detail.ts",
       "src/main.ts",

@@ -352,9 +352,13 @@ export interface ApiSecretsResponse {
   secretGroups: Record<string, string>;
 }
 
-/** PUT/DELETE /api/secrets/{name} - adminapi.rs:716: the new rev after the write. */
+/** PUT/DELETE /api/secrets/{name} - adminapi.rs: the new rev after the write. A PUT also
+ *  names the MCPs it rebuilt on the stored value and those whose rebuild failed (docs/19,
+ *  2026-09-27 addendum); a DELETE answers the rev alone. */
 export interface ApiSecretWriteResponse {
   rev: number;
+  refreshed?: string[];
+  failed?: { name: string; error: string }[];
 }
 
 /* --- the group-scope family (src/adminapi.rs:817+, swiss-host/src/groups.rs) --------------------- */
