@@ -237,7 +237,8 @@ pub fn query_encode(raw: &str) -> String {
     out
 }
 
-/// One gateway client: base URL plus the bearer token the admin API wants.
+/// One gateway client: base URL, the CLI key the admin API wants (docs/48, attached per
+/// request) and the bearer token the MCP side knows this user by.
 struct Gateway {
     client: reqwest::Client,
     base: String,
@@ -271,7 +272,9 @@ impl Gateway {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, String> {
-        let mut request = self.client.request(method, format!("{}{path}", self.base));
+        let mut request = crate::daemon::with_cli_key(
+            self.client.request(method, format!("{}{path}", self.base)),
+        );
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }
@@ -827,7 +830,7 @@ async fn cmd_exec(gw: Gateway, a: &RemoteArgs) -> i32 {
     .await
 }
 /// Who this CLI is, for the run record (docs/41 A1): `cli:<os user>@<hostname>`. The
-/// admin API has no credential - loopback is its boundary - so this is self-declared,
+/// admin API's CLI key (docs/48) proves "this machine's CLI", not who, so this is self-declared,
 /// which on a single-user machine is the truth and in the audit trail is the difference
 /// between "the operator ran make" and "an agent's MCP token ran make".
 fn cli_actor() -> String {
@@ -1166,6 +1169,48 @@ async fn cmd_pull(gw: Gateway, a: &RemoteArgs) -> i32 {
 // --- `swiss run`: the run surface, shared with every submit --------------------------------
 
 /// The entry for `swiss run ...` (argv is everything after `swiss run`).
+/// `swiss api <METHOD> </api/...> [json-body]` (docs/48): one admin API call with the CLI key
+/// attached - how a script reaches /api/* now that it needs a credential, without the key ever
+/// being printed or passed on a command line. The answer's JSON goes to stdout; an HTTP error
+/// goes to stderr with exit 1.
+pub async fn api_main(argv: Vec<String>) -> i32 {
+    const USAGE: &str = "usage: swiss api <GET|POST|PUT|PATCH|DELETE> </api/...> [json-body]";
+    let (method, path, body) = match argv.as_slice() {
+        [m, p] => (m, p, None),
+        [m, p, b] => (m, p, Some(b)),
+        _ => {
+            eprintln!("{USAGE}");
+            return 2;
+        }
+    };
+    let Ok(method) = reqwest::Method::from_bytes(method.to_ascii_uppercase().as_bytes()) else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
+    if !path.starts_with("/api/") {
+        eprintln!("the path must start with /api/ - {USAGE}");
+        return 2;
+    }
+    let body = match body.map(|b| serde_json::from_str::<Value>(b)) {
+        None => None,
+        Some(Ok(v)) => Some(v),
+        Some(Err(err)) => {
+            eprintln!("the body is not JSON: {err}");
+            return 2;
+        }
+    };
+    match Gateway::at(resolve_port()).send(method, path, body).await {
+        Ok(value) => {
+            println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
+            0
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            1
+        }
+    }
+}
+
 pub async fn run_main(argv: Vec<String>) -> i32 {
     let (head, _) = split_passthrough(&argv);
     let a = parse(head);

@@ -16,10 +16,11 @@
 
 //! The management API under /api — port of `adminapi.ts`.
 //!
-//! The gate: there is none. The panel has no login — the router's loopback guard ahead of every
-//! route is the real boundary: a request that did not come from this machine never reaches /api
-//! at all, and on this machine there is exactly one operator. (The MCP endpoints stay
-//! token-gated — that token is what AI clients authenticate with, and it is not a panel login.)
+//! The gate: two layers ahead of every route. The loopback guard keeps anything that did not come
+//! from this machine out; the admin session (docs/48) then wants the CLI key or a browser session
+//! cookie, so another process on this machine cannot use /api by knowing the port. (The MCP
+//! endpoints stay token-gated — that token is what AI clients authenticate with, and /api never
+//! accepts it.)
 //!
 //! Every response is shape-identical to the Node build's (camelCase, absent-not-null): the panel
 //! JS is the spec (ADR-009).

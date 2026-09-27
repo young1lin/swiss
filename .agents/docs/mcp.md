@@ -55,7 +55,7 @@
 
 ### Admin surface (/api/*, src/adminapi.rs; the panel JS is the spec for response shapes)
 
-- **No login gate**: `/api/*` carries no auth — the loopback guard is the boundary, and there is exactly one operator on this machine; the token on the MCP endpoints is for AI clients, not a panel login (src/adminapi.rs:3-9).
+- **Admin session gate** (docs/48): `/api/*` needs the CLI key or a browser session cookie on top of the loopback guard; the token on the MCP endpoints is for AI clients and is never accepted on /api (src/session.rs, src/app.rs session_gate).
 - `GET /api/info`: tokenEnv, panelVersion, build stamp (src/adminapi.rs:389-398).
 - `GET/POST /api/tokens`, `GET /api/tokens/{id}/secret`, `POST /api/tokens/{id}/rotate`, `DELETE /api/tokens/{id}` (src/adminapi.rs:400-482): the full named-token CRUD; secrets appear only on create/rotate/explicit query.
 - `GET/DELETE /api/traffic` (src/adminapi.rs:563-594): query parameters page/pageSize/mcp/client/method/actions; a DELETE with `?client=` clears only that client.

@@ -127,8 +127,8 @@ async fn submit_run(State(services): State<Arc<RuntimeServices>>, body: NodeBody
             }
         },
     };
-    // Who is asking (docs/41 A1). /api has no credential - loopback is its boundary - so
-    // this is the caller's own word: the CLI sends cli:<user>@<host>, the panel sends
+    // Who is asking (docs/41 A1). /api's credential (docs/48) says "this machine's CLI or a
+    // signed-in browser", not which person, so this is the caller's own word: the CLI sends cli:<user>@<host>, the panel sends
     // panel; anything else that omits it is recorded as api.
     let actor = body
         .0

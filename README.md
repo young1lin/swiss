@@ -89,13 +89,15 @@ remotely by forwarding the port over SSH, never by widening the bind.
 
 ## Security model
 
-The loopback boundary is the entire model. Every request — panel page or `/api/*` — must
-arrive from a loopback peer with a loopback `Host`/`Origin`; the check exists because DNS
-rebinding can make a remote page send same-origin-looking requests at a loopback listener.
-There is deliberately no login and no session on the panel or the admin API: the person at
-the machine is the authentication. A bearer token gates only the MCP endpoints (`/mcp/*`,
-verified before the body is read), so other tools on the machine cannot use your MCP
-servers unchallenged; the terminal WebSocket adds a single-use ticket that burns in 10
+Two layers. Every request — panel page or `/api/*` — must arrive from a loopback peer with a
+loopback `Host`/`Origin`; the check exists because DNS rebinding can make a remote page send
+same-origin-looking requests at a loopback listener. On top of that the panel and `/api/*`
+need the admin session (docs/48): `swiss start` and `swiss open` open a single-use sign-in link
+that expires in two minutes and trades itself for an `HttpOnly`, `SameSite=Strict` cookie, and
+the CLI signs its calls with a key rotated on every start and sealed like the rest of the state
+(`swiss api` is the scripted way in). So another local user or a process that only knows the
+port gets 401. A bearer token gates the MCP endpoints (`/mcp/*`, verified before the body is
+read), so other tools on the machine cannot use your MCP servers unchallenged; the terminal WebSocket adds a single-use ticket that burns in 10
 seconds. Run records mask resolved credential values before anything is stored. If you
 forward the port over SSH, the far side gains the token boundary — not the loopback one.
 

@@ -16,6 +16,11 @@ All notable changes to swiss are recorded here. The format follows
   `export` / `import` / `remote` / `run`).
 - Redis Streams on the Data page: newest-first windows with entry-id cursor paging, a Follow
   toggle polling `XREVRANGE` into a 500-row ring, and read-only consumer groups (docs/45).
+- The panel and `/api/*` need a sign-in (docs/48): `swiss start` and `swiss open` open a
+  single-use sign-in link that expires in two minutes and sets a 30-day `HttpOnly`,
+  `SameSite=Strict` session cookie; the CLI signs its calls with a key rotated on every start
+  and sealed in `session.json`. `swiss api <METHOD> <path> [json]` is the scripted way to call
+  the admin API. Another process that only knows the port gets 401.
 - Remote addresses are masked in the panel until their eye is pressed: an SSH connection's
   host, a forward's non-loopback target, and a database MCP's host (an endpoint URL's host when
   it is an IP literal) draw as `••••••`, with no tooltip carrying the value, so a screenshot

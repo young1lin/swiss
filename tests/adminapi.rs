@@ -258,9 +258,10 @@ fn rest_def(base: &str) -> Value {
 // --- the boundary --------------------------------------------------------------------------
 
 #[tokio::test]
-async fn serves_reads_and_mutations_without_any_credentials() {
-    // The panel has no login: the loopback guard ahead of every route IS the boundary, so /api
-    // answers any caller that got this far (i.e. this machine). The MCP endpoints stay gated.
+async fn serves_reads_and_mutations_in_process_without_a_credential() {
+    // An in-process call (no socket, no ConnectInfo) passes the admin session gate the way it
+    // passes the loopback guard - which is what lets this suite drive the router directly. The
+    // socket side of the gate is pinned in tests/admin_session.rs (docs/48).
     let h = setup();
     assert_eq!(h.get("/api/mcps").await.0, StatusCode::OK);
     let (status, _) = h
@@ -270,8 +271,9 @@ async fn serves_reads_and_mutations_without_any_credentials() {
 }
 
 #[tokio::test]
-async fn has_no_login_route_to_answer() {
-    // The credential check is gone, not bypassed — there is nothing there to post to.
+async fn has_no_password_route_to_answer() {
+    // A browser signs in with a one-time link on GET /?token= (docs/48) - there is no password
+    // login to post to.
     let h = setup();
     let (status, _) = h
         .post(

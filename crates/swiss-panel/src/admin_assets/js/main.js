@@ -77,8 +77,8 @@ function maybeReloadPanel(newVersion        )       {
 }
 
 /* --- boot -------------------------------------------------------------------------------------- */
-/** The panel has no login: the gateway only ever accepts loopback requests, so reaching this page
- *  at all already means you are on the machine it serves. Nothing to sign in to — just start. */
+/** The server serves this shell only to a signed-in browser (docs/48: a one-time link from
+ *  `swiss open` sets the session cookie), so reaching it means the sign-in is done — just start. */
 function showApp()       {
   void initPages();
   void loadInfo();

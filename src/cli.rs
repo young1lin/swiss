@@ -85,6 +85,8 @@ pub trait Ops {
     async fn status(&self, port: u16) -> StatusResult;
     async fn logs(&self, port: u16, lines: u64, follow: bool, io: &dyn Io);
     fn open(&self, url: &str);
+    /// A one-time sign-in link for the panel on `port` (docs/48).
+    async fn login_url(&self, port: u16) -> Result<String, String>;
     fn token(&self) -> Option<String>;
     fn creds(&self) -> (String, Option<String>);
     fn export_state(&self) -> Value;
@@ -116,7 +118,7 @@ usage: swiss <command> [options]
   logs             show what the background gateway has been printing
   token            print the token clients authenticate with
   creds            print the panel url and the gateway token (for asking an AI)
-  open             open the panel in a browser
+  open             open the panel in a browser, signed in with a one-time link (docs/48)
   export           dump every state file as plaintext JSON to stdout — the recovery /
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
@@ -129,6 +131,9 @@ usage: swiss <command> [options]
   remote …         run commands and move files on SSH targets (swiss remote help)
   run …            a run's status / logs / cancel; `run audit` lists the last 7 days of
                    remote runs - who ran what, where, with what result
+  api <METHOD> <path> [json]
+                   one admin API call, signed with this machine's CLI key (docs/48) -
+                   what a script uses instead of curl; prints the JSON answer
 
 options
   -p, --port <n>   listen on this port (saved as the new default)
@@ -407,6 +412,19 @@ fn report_stop(r: StopResult, io: &dyn Io) -> i32 {
 
 /// Decide and report. Returns the process exit code: 0 done, 1 refused or failed, 3 nothing
 /// running — the third one so `swiss status` is usable in a script without parsing text.
+/// Open the panel signed in (docs/48): with a one-time link when the daemon mints one - the
+/// token "injected" into the start - and on the bare URL, whose page says how to sign in, when
+/// it cannot.
+async fn open_signed_in(ops: &dyn Ops, port: u16, fallback: &str, io: &dyn Io) {
+    match ops.login_url(port).await {
+        Ok(url) => ops.open(&url),
+        Err(err) => {
+            io.err(&format!("could not mint a sign-in link ({err}); opening the sign-in page"));
+            ops.open(fallback);
+        }
+    }
+}
+
 pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
     let p = parse_argv(argv);
 
@@ -470,7 +488,9 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
             };
             let code = report_start(r, io);
             if started_ok && !p.no_open {
-                ops.open(&url);
+                open_signed_in(ops, port, &url, io).await;
+            } else if started_ok {
+                io.out(&row("sign in", "swiss open (a one-time link)"));
             }
             code
         }
@@ -516,7 +536,9 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
             };
             let code = report_start(r, io);
             if started_ok && !p.no_open {
-                ops.open(&url);
+                open_signed_in(ops, port, &url, io).await;
+            } else if started_ok {
+                io.out(&row("sign in", "swiss open (a one-time link)"));
             }
             code
         }
@@ -552,7 +574,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
         "creds" => {
             let (url, token) = ops.creds();
             io.out(&row("url", &url));
-            io.out(&row("login", "(none — the panel is loopback-only)"));
+            io.out(&row("login", "swiss open (a one-time sign-in link, docs/48)"));
             match token {
                 Some(token) => {
                     io.out(&row("token", &token));
@@ -565,7 +587,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
             }
         }
         "open" => {
-            ops.open(&url_for(port));
+            open_signed_in(ops, port, &url_for(port), io).await;
             0
         }
         "export" => {
@@ -827,6 +849,9 @@ impl Ops for RealOps {
     fn open(&self, url: &str) {
         open_in_browser(url);
     }
+    async fn login_url(&self, port: u16) -> Result<String, String> {
+        daemon::login_url(port).await
+    }
     fn token(&self) -> Option<String> {
         read_gateway_token()
     }
@@ -877,6 +902,8 @@ pub async fn main(argv: Vec<String>) -> i32 {
     match argv.first().map(String::as_str) {
         Some("remote") => return crate::remote_cli::main(argv[1..].to_vec()).await,
         Some("run") => return crate::remote_cli::run_main(argv[1..].to_vec()).await,
+        // A body is free-form JSON the generic parser must not touch.
+        Some("api") => return crate::remote_cli::api_main(argv[1..].to_vec()).await,
         _ => {}
     }
     run(&argv, &PrintIo, &RealOps).await

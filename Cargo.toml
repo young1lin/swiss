@@ -85,6 +85,10 @@ rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 # The CLI's self-declared actor on a remote run, `cli:<user>@<host>` (docs/41 A1). Already
 # in the tree through sqlx (same version resolves), so the direct edge costs no code.
 whoami = { version = "1", default-features = false }
+# The admin session cookie's HMAC-SHA256 (docs/48). Both are already in the tree through
+# swiss-core's hkdf (same versions resolve), so the direct edges cost no code.
+hmac = { version = "0.13", default-features = false }
+sha2 = { version = "0.11", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # reqwest on Windows: native-tls = schannel — pure Rust, the OS trust store; rustls would pull

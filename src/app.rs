@@ -116,6 +116,12 @@ pub struct AppContext {
     /// MCP (delete) or its rename.
     pub oauth_flows:
         std::sync::RwLock<HashMap<String, std::sync::Arc<swiss_mcp::oauth::FlowHandle>>>,
+    /// The admin session (docs/48): the browser cookie and the CLI key that open /api/*. Set
+    /// once by the boot sequence before the listener accepts requests. Unset, a request that
+    /// came through a socket is refused - the gate fails closed; in-process requests (tests
+    /// driving the router with oneshot) carry no ConnectInfo and pass, as they pass the
+    /// loopback guard.
+    pub session: std::sync::OnceLock<Arc<crate::session::AdminSession>>,
     handlers: Mutex<HashMap<String, CachedHandler>>,
 }
 
@@ -144,6 +150,7 @@ impl AppContext {
             catalog: std::sync::OnceLock::new(),
             group_scopes: swiss_host::groups::GroupScopes::new(),
             oauth_flows: std::sync::RwLock::new(HashMap::new()),
+            session: std::sync::OnceLock::new(),
             handlers: Mutex::new(HashMap::new()),
         });
         // The scopes this context owns natively (docs/20 §2.2): the managed store holds the
@@ -295,8 +302,68 @@ async fn loopback_guard(State(ctx): State<Arc<AppContext>>, req: Request, next: 
     }
 }
 
+/// Whether a request came through a socket. The real listener always records the peer
+/// (`into_make_service_with_connect_info`); a request without it was driven in-process.
+fn via_socket(req: &Request) -> bool {
+    req.extensions()
+        .get::<ConnectInfo<std::net::SocketAddr>>()
+        .is_some()
+}
+
+/// The admin session gate (docs/48), inside the loopback guard: every /api/* request needs
+/// the CLI key or a signed session cookie. Everything else passes - the panel shell answers
+/// its own sign-in (panel_root), /admin/* is code without data, /health is liveness, and
+/// /mcp/* has its own bearer gate.
+async fn session_gate(State(ctx): State<Arc<AppContext>>, req: Request, next: Next) -> Response {
+    if !req.uri().path().starts_with("/api/") || !via_socket(&req) {
+        return next.run(req).await;
+    }
+    match ctx.session.get() {
+        Some(session) if session.authorized(req.headers()) => next.run(req).await,
+        _ => admin_error(
+            StatusCode::UNAUTHORIZED,
+            "not signed in - run `swiss open` to sign this browser in",
+        ),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct RootQuery {
+    token: Option<String>,
+}
+
 /// The dashboard shell. no-store: always serve the latest, so a rebuilt panel needs no restart.
-async fn panel_root() -> Response {
+///
+/// Also the one place a browser signs in (docs/48): `/?token=<login token>` spends the token,
+/// sets the session cookie and redirects to a clean `/` - the token never stays in the address
+/// bar or reaches an API path. Without a valid session the shell is not served; the lock page
+/// says how to get one.
+async fn panel_root(State(ctx): State<Arc<AppContext>>, req: Request) -> Response {
+    let token = axum::extract::Query::<RootQuery>::try_from_uri(req.uri())
+        .ok()
+        .and_then(|q| q.0.token);
+    if via_socket(&req) {
+        let Some(session) = ctx.session.get() else {
+            return lock_page(false);
+        };
+        if let Some(token) = token {
+            if !session.redeem_ticket(&token) {
+                return lock_page(true);
+            }
+            return (
+                StatusCode::SEE_OTHER,
+                [
+                    (header::LOCATION, "/".to_string()),
+                    (header::SET_COOKIE, session.issue_cookie()),
+                    (header::CACHE_CONTROL, "no-store".to_string()),
+                ],
+            )
+                .into_response();
+        }
+        if !session.authorized(req.headers()) {
+            return lock_page(false);
+        }
+    }
     match admin::admin_html() {
         Some(html) => (
             [(header::CACHE_CONTROL, "no-store")],
@@ -306,6 +373,60 @@ async fn panel_root() -> Response {
             .into_response(),
         None => admin_error(StatusCode::NOT_FOUND, "panel not embedded"),
     }
+}
+
+/// What a browser without a session sees: one instruction, in both languages the panel
+/// speaks. Server-rendered and self-contained - it must work before any panel code loads.
+fn lock_page(spent_link: bool) -> Response {
+    let (en, zh) = if spent_link {
+        (
+            "This sign-in link has already been used or has expired.",
+            "这个登录链接已经用过或已过期。",
+        )
+    } else {
+        ("This swiss panel needs a sign-in.", "这个 swiss 面板需要登录。")
+    };
+    let html = format!(
+        concat!(
+            "<!doctype html><html><head><meta charset=\"utf-8\">",
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+            "<title>swiss - sign in</title><style>",
+            "body{{font:15px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;",
+            "min-height:100vh;background:#f7f7f8;color:#1f2328}}",
+            "main{{max-width:34rem;padding:2rem}}p{{margin:.4rem 0}}",
+            "code{{background:#eaeef2;padding:.15rem .4rem;border-radius:6px;font-size:14px}}",
+            "@media (prefers-color-scheme:dark){{body{{background:#101114;color:#e6e6e6}}",
+            "code{{background:#26282e}}}}</style></head><body><main>",
+            "<p><strong>{en}</strong></p>",
+            "<p>Run <code>swiss open</code> in a terminal - it opens a one-time sign-in link.</p>",
+            "<p lang=\"zh\"><strong>{zh}</strong></p>",
+            "<p lang=\"zh\">在终端运行 <code>swiss open</code>，它会打开一次性的登录链接。</p>",
+            "</main></body></html>"
+        ),
+        en = en,
+        zh = zh
+    );
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::CACHE_CONTROL, "no-store")],
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response()
+}
+
+/// POST /api/session/ticket - a fresh single-use login token and the URL that spends it. Behind
+/// the session gate like every /api/* route: the CLI mints with its key (`swiss open`, `swiss
+/// start`), a signed-in browser with its cookie.
+async fn session_ticket(State(ctx): State<Arc<AppContext>>) -> Response {
+    let Some(session) = ctx.session.get() else {
+        return admin_error(StatusCode::SERVICE_UNAVAILABLE, "sessions are not set up");
+    };
+    let token = session.mint_ticket();
+    admin_json(
+        StatusCode::OK,
+        json!({ "token": token, "url": format!("http://127.0.0.1:{}/?token={token}", ctx.port) }),
+    )
 }
 
 /// The panel's assets (styles/js ES modules), served from the same tree with the same freshness
@@ -554,6 +675,7 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
     };
     let app = Router::new()
         .route("/", get(panel_root))
+        .route("/api/session/ticket", post(session_ticket))
         .route("/admin/{*path}", get(panel_asset))
         .route("/health", get(health))
         .route("/health/check", get(health_check))
@@ -604,6 +726,7 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         None => app,
     };
     let app = app
+        .layer(middleware::from_fn_with_state(guard_ctx.clone(), session_gate))
         .layer(middleware::from_fn_with_state(
             guard_ctx.clone(),
             loopback_guard,
@@ -614,11 +737,13 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         (Some(extra), Some(layer)) => app.merge(
             extra
                 .layer(layer)
+                .layer(middleware::from_fn_with_state(guard_ctx.clone(), session_gate))
                 .layer(middleware::from_fn_with_state(guard_ctx, loopback_guard))
                 .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT)),
         ),
         (Some(extra), None) => app.merge(
             extra
+                .layer(middleware::from_fn_with_state(guard_ctx.clone(), session_gate))
                 .layer(middleware::from_fn_with_state(guard_ctx, loopback_guard))
                 .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT)),
         ),

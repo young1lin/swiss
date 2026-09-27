@@ -18,7 +18,8 @@
 //!
 //! The MCP endpoints (`POST /<name>`) stay bearer-token-gated: that token is what AI clients
 //! authenticate with and is managed per client from the panel. The management API under /api has
-//! no credential check — the loopback guard is its boundary.
+//! its own credential - the admin session (docs/48, `src/session.rs`) - and never accepts this
+//! token.
 
 /// Pull the `<token>` out of `Authorization: Bearer <token>`, or `""` when the header is absent.
 ///

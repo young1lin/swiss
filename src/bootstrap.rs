@@ -143,8 +143,8 @@ fn ensure_first_run_from(repo: &Path) -> FirstRunReport {
 
     // Guarantee the token exists, in the sealed env store (the plaintext .env replacement). A
     // generated token means clients configured against it keep working only if it is durable —
-    // hence the data dir, not a package cache. (The panel has no login: the loopback guard is
-    // its boundary, so no password is generated.)
+    // hence the data dir, not a package cache. (The panel's sign-in is a one-time link, docs/48,
+    // so no password is generated.)
     let new_token = set_env_default_marker();
 
     chmod_private(&dir, PRIVATE_DIR_MODE);
@@ -204,7 +204,7 @@ fn print_report(r: &FirstRunReport) {
         println!("  (imported your existing .env / gateway.config.json from this directory — now encrypted at rest)");
     }
     if r.new_token.is_some() {
-        println!("  token:              swiss creds (the panel itself has no login)");
+        println!("  token:              swiss creds (the panel signs in with `swiss open`)");
     }
     println!("  panel:              {}", panel_url());
     println!();
