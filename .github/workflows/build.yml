@@ -143,7 +143,9 @@ jobs:
       # minority of the suite, and a green run without it would never build the member crates.
       - name: Test
         if: matrix.cross != true
-        run: cargo test --workspace --locked
+        # --no-fail-fast: cargo otherwise stops at the first failing test binary, so a red
+        # run names one crate's failures and hides the rest behind it. The step still fails.
+        run: cargo test --workspace --locked --no-fail-fast
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}

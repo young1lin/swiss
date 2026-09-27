@@ -535,15 +535,22 @@ mod tests {
         use swiss_terminal::terminal::{LocalShell, TerminalConfig, TerminalSessions};
         use tower::util::ServiceExt;
 
+        // Absolute on whichever OS runs the test: the route hands the provider's path through
+        // as is, and the assertion below checks exactly that.
+        #[cfg(windows)]
+        const PWSH: &str = r"C:\shells\pwsh.exe";
+        #[cfg(not(windows))]
+        const PWSH: &str = "/opt/shells/pwsh";
+
         struct FixedLocal;
         impl LocalShell for FixedLocal {
             fn program(&self) -> String {
-                r"C:\shells\pwsh.exe".to_string()
+                PWSH.to_string()
             }
             fn candidates(&self) -> Vec<swiss_core::platform::pty::ShellCandidate> {
                 vec![
                     swiss_core::platform::pty::ShellCandidate {
-                        program: r"C:\shells\pwsh.exe".to_string(),
+                        program: PWSH.to_string(),
                         label: "PowerShell 7".to_string(),
                     },
                     swiss_core::platform::pty::ShellCandidate {
@@ -597,7 +604,7 @@ mod tests {
         let shell = body["local"]["shell"]
             .as_str()
             .expect("local.shell is a string");
-        assert_eq!(shell, r"C:\shells\pwsh.exe");
+        assert_eq!(shell, PWSH);
         assert!(
             std::path::Path::new(shell).is_absolute(),
             "resolved to an absolute path, got {shell}"
