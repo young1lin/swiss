@@ -422,7 +422,10 @@ struct ActiveRun {
     queued_at_ms: u64,
     started_at_ms: u64,
     cancel: Arc<CancelSource>,
-    join: JoinHandle<RunView>,
+    /// Taken by the first cancel that waits on it. The entry itself stays in `active` until the
+    /// run's own finish() moves it to the ring: a stopping run is still a run, visible to get()
+    /// and output(), and still holds its slot while its child is alive.
+    join: Option<JoinHandle<RunView>>,
 }
 
 struct QueuedRun {
@@ -695,7 +698,7 @@ impl RunCoordinator {
                 queued_at_ms,
                 started_at_ms: started_at,
                 cancel,
-                join,
+                join: Some(join),
             },
         );
     }
@@ -825,6 +828,29 @@ impl RunCoordinator {
         self.dispatch_queue();
     }
 
+    /// Waits until a run another caller is already stopping has left the active set.
+    async fn wait_finished(&self, run_id: u64) {
+        while self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .active
+            .contains_key(&run_id)
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    fn finished_view(&self, run_id: u64) -> Option<RunView> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .finished
+            .iter()
+            .find(|v| v.run_id == run_id)
+            .cloned()
+    }
+
     /// Enter the finished ring without touching the active set (queued runs canceled in
     /// place).
     fn push_finished(&self, run_id: u64, view: RunView) {
@@ -863,26 +889,32 @@ impl RunCoordinator {
     /// Cancel one run and WAIT for it to actually finish (child reaped, readers joined).
     /// Idempotent under first-wins: a finished run returns its finished view unchanged.
     pub async fn cancel(&self, run_id: u64) -> Option<RunView> {
+        // The entry is NOT removed here: the run's own finish() does that once it has
+        // stopped. Removing it first left a window - as long as the action's clean stop, a
+        // remote channel's close - in which get() and output() found the run nowhere (the
+        // CLI's follower printed `404 no run N`, 2026-09-28) and its slot was free for the
+        // next run while its child still ran.
         let active = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            inner.active.remove(&run_id)
+            inner
+                .active
+                .get_mut(&run_id)
+                .map(|a| (a.cancel.clone(), a.join.take()))
         };
-        if let Some(active) = active {
-            active.cancel.cancel();
-            return match active.join.await {
-                Ok(view) => Some(view),
-                Err(_) => {
+        if let Some((source, join)) = active {
+            source.cancel();
+            match join {
+                Some(join) => {
+                    if let Ok(view) = join.await {
+                        return Some(view);
+                    }
                     // The task itself died abnormally (runtime shutdown); the ring may
                     // still hold what it recorded before that.
-                    self.inner
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .finished
-                        .iter()
-                        .find(|v| v.run_id == run_id)
-                        .cloned()
                 }
-            };
+                // Another cancel holds the join: wait for the same finish.
+                None => self.wait_finished(run_id).await,
+            }
+            return self.finished_view(run_id);
         }
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(pos) = inner.queued.iter().position(|q| q.run_id == run_id) {
@@ -926,23 +958,28 @@ impl RunCoordinator {
     }
 
     async fn cancel_some(self: &Arc<Self>, matches: impl Fn(&str, &str) -> bool) -> usize {
-        let targets: Vec<(Arc<CancelSource>, JoinHandle<RunView>)> = {
+        // As cancel(): the entries stay in `active` until each run's finish() moves it.
+        let targets: Vec<(u64, Arc<CancelSource>, Option<JoinHandle<RunView>>)> = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            let ids: Vec<u64> = inner
+            inner
                 .active
-                .iter()
+                .iter_mut()
                 .filter(|(_, a)| matches(&a.owner, &a.action_type))
-                .map(|(id, _)| *id)
-                .collect();
-            ids.iter()
-                .filter_map(|id| inner.active.remove(id).map(|a| (a.cancel, a.join)))
+                .map(|(id, a)| (*id, a.cancel.clone(), a.join.take()))
                 .collect()
         };
         let mut count = targets.len();
-        // Await each: when this returns, every child is reaped and every reader joined.
-        for (cancel, join) in targets {
+        for (_, cancel, _) in &targets {
             cancel.cancel();
-            let _ = join.await;
+        }
+        // Await each: when this returns, every child is reaped and every reader joined.
+        for (run_id, _, join) in targets {
+            match join {
+                Some(join) => {
+                    let _ = join.await;
+                }
+                None => self.wait_finished(run_id).await,
+            }
         }
         // Drop matching queued runs as canceled.
         let mut canceled_queued: Vec<RunView> = Vec::new();
@@ -1820,6 +1857,84 @@ mod tests {
             .expect("buffer retired, not dropped");
         assert!(state.is_terminal());
         assert_eq!(chunk.text, "partial\n");
+    }
+
+    #[tokio::test]
+    async fn a_run_that_is_stopping_stays_visible_and_keeps_its_slot() {
+        // A remote command's clean stop waits for its SSH channel to close. While it did,
+        // cancel() had already taken the run out of the active set, so get() and output()
+        // found it nowhere: the CLI's follower printed `404 no run 4` and exited 1 mid-stop
+        // (2026-09-28), and the freed slot let the next run start beside a child still alive.
+        let (runs, _) = coordinator(RunCapacity {
+            max_concurrent: 1,
+            max_queued: 0,
+        });
+        struct SlowStop(Arc<tokio::sync::Notify>);
+        #[async_trait]
+        impl Action for SlowStop {
+            fn type_name(&self) -> &'static str {
+                "test.slowstop"
+            }
+            fn schema(&self) -> Value {
+                json!({ "type": "object" })
+            }
+            async fn execute(
+                &self,
+                _input: &Value,
+                cancel: CancelHandle,
+            ) -> Result<ActionOutcome, ActionError> {
+                cancel.cancelled().await;
+                // Canceled: the stop itself takes as long as the test says.
+                self.0.notified().await;
+                Ok(ActionOutcome {
+                    ok: false,
+                    canceled: true,
+                    ..ActionOutcome::ok()
+                })
+            }
+        }
+        let gate = Arc::new(tokio::sync::Notify::new());
+        runs.actions()
+            .register(Arc::new(SlowStop(gate.clone())))
+            .expect("register");
+        let mut r = request("manual", "slow", 1);
+        r.action_type = "test.slowstop".into();
+        let id = runs.submit(r).expect("submitted").run_id;
+        settle().await;
+
+        let canceling = {
+            let runs = runs.clone();
+            tokio::spawn(async move { runs.cancel(id).await })
+        };
+        settle().await;
+        assert!(!canceling.is_finished(), "the stop is still in progress");
+        let view = runs.get(id).expect("a stopping run is still a run");
+        assert!(!view.state.is_terminal(), "not terminal until it has stopped: {:?}", view.state);
+        let (state, _) = runs.output(id, 0, usize::MAX).expect("its output still answers");
+        assert!(!state.is_terminal());
+        assert!(
+            matches!(runs.submit(request("manual", "next", 1)), Err(SubmitError::Capacity(_))),
+            "the slot is held until the child is gone"
+        );
+
+        gate.notify_one();
+        let view = canceling.await.expect("joined").expect("canceled view");
+        assert_eq!(view.state, RunState::Canceled);
+        assert_eq!(runs.get(id).expect("in the ring").state, RunState::Canceled);
+        assert!(runs.output(id, 0, usize::MAX).expect("retired, not dropped").0.is_terminal());
+    }
+
+    #[tokio::test]
+    async fn a_second_cancel_of_a_stopping_run_waits_for_the_same_finish() {
+        let (runs, _) = coordinator(RunCapacity {
+            max_concurrent: 2,
+            max_queued: 0,
+        });
+        let id = runs.submit(request("manual", "long", 30_000)).expect("submitted").run_id;
+        settle().await;
+        let (a, b) = tokio::join!(runs.cancel(id), runs.cancel(id));
+        assert_eq!(a.expect("first").state, RunState::Canceled);
+        assert_eq!(b.expect("second").state, RunState::Canceled);
     }
 
     /// A sink that keys on run ids and already holds some (a record from an earlier
