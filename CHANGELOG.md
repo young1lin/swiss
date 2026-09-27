@@ -16,6 +16,10 @@ All notable changes to swiss are recorded here. The format follows
   `export` / `import` / `remote` / `run`).
 - Redis Streams on the Data page: newest-first windows with entry-id cursor paging, a Follow
   toggle polling `XREVRANGE` into a 500-row ring, and read-only consumer groups (docs/45).
+- Remote addresses are masked in the panel until their eye is pressed: an SSH connection's
+  host, a forward's non-loopback target, and a database MCP's host (an endpoint URL's host when
+  it is an IP literal) draw as `••••••`, with no tooltip carrying the value, so a screenshot
+  shares none. The reveal lasts until the page reloads; loopback draws plain.
 - The `swiss-it` integration harness behind feature `it`: real MySQL/PostgreSQL/Redis engines
   through testcontainers, a CI integration job, and gate 2 in `scripts/deploy.ps1` (docs/44).
 

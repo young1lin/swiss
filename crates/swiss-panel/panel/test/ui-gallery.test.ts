@@ -71,6 +71,7 @@ const HELPERS: Record<string, string> = {
   JV_LINES: "jsonCodeNode()'s line cap - a number",
   JV_INLINE: "jsonCodeNode()'s one-line limit - a number",
   fitsOneLine: "the test jsonCodeNode({ oneLine }) applies - a predicate",
+  isLocalAddress: "the loopback predicate redacted() applies - a predicate",
   stackSheet: "a second layer over the open sheet - its dialog is sheet(), its backdrop showSheet's; the tunnel key picker drives it",
 };
 
@@ -80,6 +81,7 @@ const SIG: Record<string, string> = {
   iconBtn: ".btn.icon",
   moreBtn: ".btn.icon.ghost use[href=\"#i-ellipsis\"]",
   iconNode: "svg.ic > use",
+  redacted: ".redact > code + button.redact-eye",
   dot: ".dot",
   heldDot: ".db-tab-dot",
   tag: ".tag",

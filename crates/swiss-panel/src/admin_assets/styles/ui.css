@@ -75,6 +75,13 @@
     /* A toggle that is on (iconBtn's `pressed`, aria-pressed="true"): the glyph takes the accent and
        the seat a tint of it - the selected-seat treatment, not a new colour. Without it "pressed"
        drew exactly like "not pressed" (found by the gallery, docs/46 P1b-3). */
+    /* redacted() (2026-09-28): a masked address and the eye that reveals it. The eye is a bare
+       glyph a step smaller than an action icon: it sits inside a 12px sub-line, not a toolbar. */
+    .redact { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; vertical-align: bottom; }
+    .redact > code { overflow: hidden; text-overflow: ellipsis; }
+    .redact-eye { display: inline-flex; align-items: center; justify-content: center; padding: 1px var(--s1); border: 0; background: none; border-radius: var(--r-btn); color: var(--text-3); cursor: pointer; }
+    .redact-eye .ic { width: var(--ic-m); height: var(--ic-m); }
+    .redact-eye:hover, .redact-eye[aria-pressed="true"] { color: var(--text); background: var(--hover); }
     .btn.icon[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
     /* Inline icons (docs/18 V2): one sprite in the shell, stroke=currentColor, sized here.
        Size and ink are knobs the HOST sets on its own element (--ic, --ic-ink): a page's row

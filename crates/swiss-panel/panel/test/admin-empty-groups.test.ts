@@ -99,6 +99,28 @@ describe("an empty list still paints its groups", () => {
     expect($("tunGroups").textContent).toContain("default");
   });
 
+  it("a connection's host is masked in its row; a forward's loopback target is not", () => {
+    // redacted() (2026-09-28): the SSH Connections page was screenshotted with the server's
+    // public address in the row's sub-line.
+    tunState.setMountedTunScope("conns");
+    tunState.setTunResponse({
+      connections: [{ id: "c1", name: "cloud", host: "203.0.113.7", port: 22, username: "ubuntu", authType: "key", state: "connected", ruleCount: 1, group: "default" }],
+      rules: [], connGroups: ["default"], ruleGroups: ["default"], mcps: [],
+    });
+    tunnels.renderTunnels();
+    expect($("tunGroups").textContent).toContain("••••••:22");
+    expect($("pane").innerHTML).not.toContain("203.0.113.7");
+    tunState.setMountedTunScope("rules");
+    tunState.setTunResponse({
+      connections: [{ id: "c1", name: "cloud", host: "203.0.113.7", port: 22, username: "ubuntu", authType: "key", state: "connected", ruleCount: 1 }],
+      rules: [{ id: "r1", name: "pg", connectionId: "c1", connectionName: "cloud", localPort: 15432, targetHost: "127.0.0.1", targetPort: 5432, state: "up", group: "default" }],
+      connGroups: ["default"], ruleGroups: ["default"], mcps: [],
+    });
+    tunnels.renderTunnels();
+    expect($("tunGroups").textContent).toContain("127.0.0.1:5432");
+    expect($("tunGroups").querySelector(".redact-eye")).toBeNull();
+  });
+
   it("Jobs: a group made before the first job has its header", () => {
     jobState.setJobRows([]);
     jobState.setJobGroupNames(["default", "nightly"]);

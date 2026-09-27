@@ -27,7 +27,7 @@ import { currentView } from "./ui-state.js";
 import { setTunResponse, tunBusyOf, tunDragging, tunResponse, mountedTunScope } from "./tunnel-state.js";
 import { jobGroupNames, jobRows, setJobGroupNames, setJobRows } from "./job-state.js";
 import { mcpDetail, mcpRows, memoryInfo, selectedMcp, setMcpDetail, setMcpGroups, setMcpRows, setMemoryInfo, setSelectedMcp } from "./mcp-state.js";
-import { btn, dot, moreBtn, row, tag } from "./ui/index.js";
+import { btn, dot, moreBtn, redacted, row, tag } from "./ui/index.js";
 import type { DotState } from "./ui/index.js";
 
 
@@ -214,7 +214,7 @@ function tunDot(state: string): DotState {
  *  row's own column now (docs/46 §3.4), so the line starts at the target; the target is a value
  *  you would type, so mono. */
 function ruleSubNode(r: ApiTunnelRuleRow): HChild[] {
-  const out: HChild[] = ["→ ", h("code", null, r.targetHost + ":" + r.targetPort), " · ", tr("polling.conn", { conn: r.connectionName })];
+  const out: HChild[] = ["→ ", redacted(r.targetHost, { suffix: ":" + r.targetPort }), " · ", tr("polling.conn", { conn: r.connectionName })];
   if (r.mcpRows && r.mcpRows.length) {
     out.push(" · ", tr("polling.serves"), " ");
     r.mcpRows.forEach((m, i) => {
@@ -278,7 +278,8 @@ function connBadgeNodes(c: ApiTunnelConnectionRow): HChild[] {
   return out;
 }
 
-/** One connection row: the library row (docs/46 §3.4). The host (a value, mono), who it signs in
+/** One connection row: the library row (docs/46 §3.4). The host (a value, mono, masked until its
+ *  eye is pressed - redacted(), 2026-09-28), who it signs in
  *  as and how, the transport tags; how many rules ride it is the row's column now, not a clause
  *  in the sub-line; a failure is the one red line. Test is the row's one word button. */
 function connRowNode(c: ApiTunnelConnectionRow): HTMLElement {
@@ -287,7 +288,7 @@ function connRowNode(c: ApiTunnelConnectionRow): HTMLElement {
   return row({
     lead: dot(tunDot(word), dotTitle(word === "connected" ? "up" : word, null, c.reason)),
     name: c.name,
-    sub: [h("code", null, c.host + ":" + c.port), " · ", tr("polling.userAuth", { user: c.username, auth: c.authType }), connBadgeNodes(c)],
+    sub: [redacted(c.host, { suffix: ":" + c.port }), " · ", tr("polling.userAuth", { user: c.username, auth: c.authType }), connBadgeNodes(c)],
     err: c.reason || undefined,
     cols: [trn(c.ruleCount || 0, "tunnels.nRules.one", "tunnels.nRules.other")],
     primary: btn(busy ? "…" : tr("polling.test"), { data: { test: "" }, disabled: !!busy }),

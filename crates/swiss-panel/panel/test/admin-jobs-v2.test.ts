@@ -170,7 +170,9 @@ describe("visual refresh V5 — one primary action per row", () => {
 
   it("the connection row keeps Test plus the ellipsis", () => {
     const html = serialize(connRowNode({ id: "c1", name: "bastion", host: "10.0.0.4", port: 22, username: "jdoe", authType: "key", state: "down" }));
-    expect((html.match(/<button/g) || []).length).toBe(2);
+    // Test, the ellipsis - and the host's eye, which reveals rather than acts (redacted()).
+    expect((html.match(/<button/g) || []).length).toBe(3);
+    expect((html.match(/<button[^>]*class="redact-eye"/g) || []).length).toBe(1);
     expect(html).toContain("data-test");
     expect(html).not.toContain(">Delete<");
     expect(html).not.toContain(">Edit<");
