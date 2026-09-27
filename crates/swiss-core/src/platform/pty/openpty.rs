@@ -176,8 +176,9 @@ pub fn resolve_program(program: &str) -> String {
 /// Open a pty and start `command` on the far side of it.
 pub fn open_pty(command: &PtyCommand, size: PtyGeometry) -> io::Result<(PtyHandle, PtyPump)> {
     // `mut` for the call below only: glibc declares openpty's termios and winsize as *const,
-    // Apple's libc as *mut. A `&mut` and a `null_mut` coerce to either, so one call compiles
-    // on both; openpty only reads them.
+    // Apple's libc as *mut. Raw *mut pointers coerce to either, so one call compiles on both
+    // (a `&mut` would too, but clippy's unnecessary_mut_passed rejects it against glibc's
+    // *const); openpty only reads them.
     let mut ws = winsize(size);
     let mut master_fd: RawFd = -1;
     let mut slave_fd: RawFd = -1;
@@ -189,7 +190,7 @@ pub fn open_pty(command: &PtyCommand, size: PtyGeometry) -> io::Result<(PtyHandl
             &mut slave_fd,
             std::ptr::null_mut(),
             std::ptr::null_mut::<libc::termios>(),
-            &mut ws,
+            &raw mut ws,
         )
     };
     if rc != 0 {

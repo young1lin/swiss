@@ -399,7 +399,9 @@ mod tests {
     }
 
     /// Read events until `needle` has been seen in the output (as printed, so it must be
-    /// something the shell echoes verbatim) or the deadline passes.
+    /// something the shell echoes verbatim) or the deadline passes. Windows-only like its one
+    /// caller: elsewhere it is dead code, which clippy -D warnings refuses.
+    #[cfg(windows)]
     async fn read_until(session: &mut PtySession, needle: &str, deadline: Duration) -> String {
         let mut text = Vec::new();
         let _ = tokio::time::timeout(deadline, async {
