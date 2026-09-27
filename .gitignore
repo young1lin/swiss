@@ -20,6 +20,8 @@ jobs.json
 .env
 *.log
 master.key
+# The admin session's signing and CLI keys (docs/48), sealed but still this machine's secret.
+session.json
 
 # Stray dev binaries at the repo root (lmg-* are the pre-rename builds still on disk)
 /swiss-dev.exe
@@ -59,3 +61,7 @@ master.key
 *.cast
 *.pem
 *.kdbx
+
+# Scratch files - commit-message drafts included: four *.tmp drafts were committed on
+# 2026-09-20 and carried trailers docs/40 D3 forbids.
+*.tmp
