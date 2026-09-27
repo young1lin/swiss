@@ -165,6 +165,30 @@ describe("MCP detail progressive disclosure", () => {
     }
   });
 
+  it("a database's host is masked in the summary and the settings, with no title to hover it out", () => {
+    // redacted() (2026-09-28): the page gets screenshotted. The address is nowhere in the
+    // markup - not text, not a title - until its eye is pressed; loopback and a public API's
+    // domain stay plain.
+    const cases = [
+      [{ type: "mysql", host: "203.0.113.7", port: 3306, database: "app" }, "203.0.113.7", "••••••:3306 / app"],
+      [{ type: "redis", host: "db.internal.test", port: 6379 }, "db.internal.test", "••••••:6379"],
+      [{ type: "pg", url: "postgresql://app:***@198.51.100.4:5432/app" }, "198.51.100.4", "postgresql://app:***@••••••:5432/app"],
+      [{ type: "http", url: "http://192.0.2.10:8080/mcp" }, "192.0.2.10", "http://••••••:8080/mcp"],
+    ] as const;
+    for (const [config, addr, shown] of cases) {
+      const host = document.createElement("div");
+      host.append(...[history.configBodyNode({ source: "managed", editing: false, config, revisions: [], tunnels: [] })].flat().filter((n): n is Node => n != null));
+      expect(host.querySelector(".config-target")!.textContent, config.type).toBe(shown);
+      expect(host.innerHTML, config.type).not.toContain(addr);
+      expect(host.querySelector(".config-rows .redact-eye"), config.type).not.toBeNull();
+    }
+    for (const config of [{ type: "http", url: "https://api.example.test/mcp" }, { type: "mysql", host: "127.0.0.1", port: 3306 }]) {
+      const host = document.createElement("div");
+      host.append(...[history.configBodyNode({ source: "managed", editing: false, config, revisions: [], tunnels: [] })].flat().filter((n): n is Node => n != null));
+      expect(host.querySelector(".redact-eye"), config.type).toBeNull();
+    }
+  });
+
   it("pins the one-line teaser and expanded readability in the shipped stylesheet", () => {
     const panel = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets");
     const css = readFileSync(join(panel, "styles", "views.css"), "utf8");

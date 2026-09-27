@@ -34,7 +34,7 @@ import { install, langPref, tk, tr } from "./i18n.js";
 import { SCENES } from "./ui-scenes.js";
 import {
   anchoredMenu, btn, card, checkField, closeMenu, closeSheet, decodeStrings, dot, emptyNode, failNote, field,
-  filterInput, form, formActions, formCap, formFold, groupNode, heldDot, hint, iconBtn, iconNode, initSelects,
+  filterInput, form, formActions, formCap, formFold, groupNode, heldDot, hint, iconBtn, iconNode, initSelects, redacted,
   initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, objTab, openFieldSheet, pageFoot, pager,
   pair, pane, paneHead, popupMenu, relTime, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow,
   spinner, sw, tag, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
@@ -186,12 +186,18 @@ const SQL_SAMPLE = "SELECT 1";
 const HOST_SAMPLE = "127.0.0.1";
 const PORT_SAMPLE = "5432";
 const KEY_SAMPLE = "~/.ssh/id_ed25519";
+/** A documentation address (RFC 5737 TEST-NET-3): a remote host that is nobody's. */
+const REMOTE_SAMPLE = "203.0.113.7";
 
 /** A status line's words that are the same in every language: an HTTP status is a value. */
 const HTTP_502 = "HTTP 502";
 
 function catalogue(now        )              {
   const sections = [
+    entry(["redacted"], tk("gallery.c.redact"), tk("gallery.c.redactNote"), [
+      [tr("gallery.st.redactRemote"), redacted(REMOTE_SAMPLE, { suffix: ":22" })],
+      [tr("gallery.st.redactLocal"), redacted(HOST_SAMPLE, { suffix: ":" + PORT_SAMPLE })],
+    ]),
     entry(["btn", "iconBtn", "moreBtn"], tk("gallery.c.buttons"), tk("gallery.c.buttonsNote"), [
       [tr("gallery.st.push"), btn(tr("gallery.d.save"))],
       [tr("gallery.st.primary"), btn(tr("gallery.d.create"), { kind: "primary" })],

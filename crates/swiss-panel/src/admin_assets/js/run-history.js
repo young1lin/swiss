@@ -32,7 +32,8 @@ import { locale, tr, trn } from "./i18n.js";
 import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
 import { closeSheet } from "./ui/sheet.js";
 import {
-  btn, card, dot, field, form, formActions, hint, iconBtn, kvRow, note, row, section, sheet, showSheet, spinner, tag, valueBlock,
+  btn, card, dot, field, form, formActions, hint, iconBtn, isLocalAddress, kvRow, note, redacted, row, section, sheet, showSheet, spinner, tag,
+  valueBlock,
 } from "./ui/index.js";
                                               
 
@@ -411,6 +412,32 @@ function configValue(key        , value         )         {
   return String(value);
 }
 
+/** The host inside a URL (`scheme://[user[:pass]@]host[:port]...`), brackets kept on IPv6. */
+function urlHost(url        )         {
+  const m = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/?#]*@)?(\[[^\]]+\]|[^:/?#]+)/i.exec(url);
+  return m ? m[1] : "";
+}
+
+/** The host a setting would put on screen, or "" when it draws plain. A database's host is
+ *  masked wherever it shows (redacted(), 2026-09-28); an endpoint URL only when its host is an IP
+ *  literal - a public API's domain says nothing about the user's own machines. */
+function maskedHostOf(type        , key        , text        )         {
+  let host = "";
+  if (key === "host") host = text;
+  else if (key === "url" || key === "baseUrl" || key === "proxy") {
+    const inUrl = urlHost(text);
+    if (inUrl && (type === "pg" || /^\[.*\]$|^\d{1,3}(\.\d{1,3}){3}$/.test(inUrl))) host = inUrl;
+  }
+  return host && !isLocalAddress(host) && text.includes(host) ? host : "";
+}
+
+/** A setting's text with its host masked: the parts around the host stay as they are. */
+function maskedText(text        , host        )         {
+  if (!host) return text;
+  const at = text.indexOf(host);
+  return redacted(host, { prefix: text.slice(0, at), suffix: text.slice(at + host.length) });
+}
+
 function configTarget(c               )         {
   const type = c.type || "proc";
   if (type === "mysql" || type === "mariadb" || type === "redis") {
@@ -491,7 +518,8 @@ function configBodyNode(d           )         {
   }, []                                                                 );
   // Every stored setting as a label / value pair.
   const rows = settings.map((setting) => {
-    return kvRow(setting.label, setting.text, { mono: setting.mono, title: setting.text.replace(/\r?\n/g, " · ") });
+    const host = maskedHostOf(type, setting.key, setting.text);
+    return kvRow(setting.label, maskedText(setting.text, host), { mono: setting.mono, title: host ? undefined : setting.text.replace(/\r?\n/g, " · ") });
   });
   /* The adapter descriptors are "kind — detail" in English and "kind——detail" in Chinese;
    * split on whichever separator this locale's copy carries, so the detail tail reads
@@ -503,6 +531,9 @@ function configBodyNode(d           )         {
     : zhDash >= 0 ? label.slice(zhDash + 2)
     : tr("runHistory.mcpAdapter");
   const target = configTarget(c                 );
+  const targetHost = type === "mysql" || type === "mariadb" || type === "redis"
+    ? maskedHostOf(type, "host", String(c.host || ""))
+    : maskedHostOf(type, "url", target);
   const badges           = [];
   if (c.lazy !== undefined) badges.push(c.lazy ? tr("runHistory.startsDemand") : tr("runHistory.startsBoot"));
   if (c.exposeResources !== undefined) badges.push(c.exposeResources ? tr("runHistory.resources") : tr("runHistory.resourcesOff"));
@@ -515,7 +546,8 @@ function configBodyNode(d           )         {
         h("div", { class: "config-kind" },
           tag(type, { mono: true }),
           h("span", null, kind)),
-        h("div", { class: "config-target", title: target }, target)),
+        // A masked target carries no title: a hover would show what the mask hides.
+        h("div", { class: "config-target", title: targetHost ? undefined : target }, maskedText(target, targetHost))),
       btn(tr("runHistory.editConfiguration"), { id: "c-edit" })),
     badges.length ? h("div", { class: "config-badges" }, badges.map((badge) => { return tag(badge); })) : null,
     h("details", { class: "config-more" },
@@ -572,7 +604,7 @@ function tunnelDepsNode(d           )         {
       lead: dot(state, x.state),
       name: x.name,
       // The forward is a value you would type; the state and its reason are words.
-      sub: [h("code", null, String(x.localPort) + " → " + x.targetHost + ":" + x.targetPort), " · " + x.state + (x.reason ? " — " + x.reason : "")],
+      sub: [redacted(x.targetHost, { prefix: String(x.localPort) + " → ", suffix: ":" + x.targetPort }), " · " + x.state + (x.reason ? " — " + x.reason : "")],
       // A pool that may hold sockets of the old SSH session is the one thing to act on here.
       err: x.stalePool ? tr("runHistory.reconnectedAfterMcpStarted") + tr("runHistory.useRestartAbove") : undefined,
     });

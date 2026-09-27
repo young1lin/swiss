@@ -27,6 +27,8 @@
 export { btn, iconBtn, moreBtn } from "./button.js";
                                                         
 export { iconNode } from "./icon.js";
+export { isLocalAddress, redacted } from "./redact.js";
+                                              
 export { dot, heldDot, spinner, tag } from "./status.js";
                                                      
 export { sw } from "./switch.js";
