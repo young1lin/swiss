@@ -103,6 +103,6 @@ describe("redacted()", () => {
     expect(isLocalAddress("127.0.0.1.evil.test")).toBe(false);
     expect(isLocalAddress("localhost.evil.test")).toBe(false);
     expect(isLocalAddress("10.0.0.1")).toBe(false);
-    expect(isLocalAddress("2402:4e00::1")).toBe(false);
+    expect(isLocalAddress("2001:db8::1")).toBe(false);
   });
 });
