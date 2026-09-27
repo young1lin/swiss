@@ -65,7 +65,7 @@ swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-
 
 1. **Composition-table philosophy**: adding a capability = data declarations (descriptor/pages/routes/requires) + one register line; zero match arms in the host; route/page id conflicts are loudly rejected at registration.
 2. **Routes stay mounted; dispatch consults live state**: one cheap is_active question per request; disabling really releases — route slots out first → instance.stop() → scope.shutdown (withdraw→drain→close, cancel→grace→forced teardown).
-3. **Loopback is the boundary**: /api/* has no auth and no login page; the bearer belongs to MCP endpoints only, and it is checked before the body is read.
+3. **Loopback, then the admin session**: /api/* and the panel shell need the CLI key or a session cookie set by a one-time `/?token=` link (docs/48, src/session.rs); the bearer belongs to MCP endpoints only, and it is checked before the body is read.
 4. **Credentials are references only**: ${ENV_VAR} / secret:// hit the disk; the expansion moment is globally unique (adapter build time); sentinel masks round-trip; resolved values never enter error messages.
 5. **Errors are values, not panics**: the {error} envelope, absent-not-null, dot-path error pointers, 409 + structured confirmation; a single point of failure is isolated into one log line; no unwrap on config/network/db/fs.
 6. **Memory discipline is a constant, not a config**: a 64KB catch-up buffer, 8MB recordings, a 32-entry history ring, proc lazy by default + 10 min reaping, RawValue pass-through on forwarding paths, direct Win32 calls with zero powershell, exports capped at 100k rows.

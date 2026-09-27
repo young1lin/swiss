@@ -32,6 +32,7 @@ pub mod plugins;
 pub mod port;
 pub mod remote_cli;
 pub mod server;
+pub mod session;
 pub mod skill_install;
 pub mod subsystems;
 pub mod update_check;

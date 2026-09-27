@@ -71,6 +71,12 @@ correctness boundary.
   `Host`/origin is not a loopback address. Never weaken it or change the bind host to "reach it
   remotely" — forward the port over SSH instead. A non-loopback `host` in config is refused at
   load, not warned about.
+- **`/api/*` and the panel shell need the admin session (docs/48).** A socket request needs the
+  CLI key (`X-Swiss-Key`, rotated each start, sealed in `session.json`) or a session cookie a
+  one-time `/?token=` link set. The gate is layered on BOTH routing trees inside the loopback
+  guard and fails closed when no session is installed. Never add an exemption for an `/api`
+  path, never accept the MCP bearer there, and never print the CLI key - scripts use
+  `swiss api`. In-process requests (oneshot, no ConnectInfo) pass, as they pass the guard.
 - **Credentials are `${ENV_VAR}` or `${secret://name}` references, never literals.** They expand
   only at use time — one `${...}` envelope, two families; a bare `secret://` outside the envelope
   is literal text (docs/25) — so `gateway.config.json`, `managed.json`, `tunnels.json` and the
@@ -219,7 +225,7 @@ working tree, on every platform — CRLF never enters a commit.
   zero gate) enforce both. A new literal that skips `tr()` fails the suite, not review. A
   nav label the gateway SERVES as text goes through `wireLabel()` (i18n.ts) instead.
 - **Write all code comments in English**, including in docs code samples.
-- **Never commit** `gateway.config.json`, `.env`, `managed.json`, `tunnels.json`, `master.key` or
-  `*.log` — all gitignored, all carry real secrets locally. The same goes for
+- **Never commit** `gateway.config.json`, `.env`, `managed.json`, `tunnels.json`, `master.key`,
+  `session.json` or `*.log` — all gitignored, all carry real secrets locally. The same goes for
   `~/.swiss/terminal/*.cast`: a terminal recording is output-only by design, but shells echo
   what was typed, so a recording can still hold a password that was entered.

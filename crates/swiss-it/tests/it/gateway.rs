@@ -145,9 +145,9 @@ impl Gateway {
         format!("http://127.0.0.1:{}", self.port)
     }
 
-    /// One admin-API call over real HTTP. The loopback boundary is the auth here
-    /// (the panel has no login); the Host header reqwest sends is the loopback one
-    /// the guard requires.
+    /// One admin-API call over real HTTP. The harness serves without ConnectInfo, so the
+    /// admin session gate (docs/48) treats these calls as in-process, as the loopback guard
+    /// does; the Host header reqwest sends is the loopback one the guard requires.
     pub(crate) async fn api(
         &self,
         method: reqwest::Method,

@@ -258,6 +258,15 @@ pub async fn run_gateway() -> Result<(), String> {
         cfg.token_env.clone(),
         cfg.port,
     );
+    // The admin session (docs/48), before anything can accept a request: the signing key is
+    // carried over (signed-in browsers stay signed in), the CLI key is fresh for this process.
+    // A home whose session file cannot be sealed cannot authenticate anyone, and a gateway that
+    // cannot authenticate must not serve its admin surface - so this is fatal, not a warning.
+    let session = crate::session::AdminSession::load_or_create(
+        &swiss_core::paths::data_path(&[crate::session::SESSION_FILE]),
+        cfg.port,
+    )?;
+    let _ = ctx.session.set(session);
     if let Ok(mut links) = ctx.tunnel_links.write() {
         *links = Some(tunnel_manager.clone());
     }

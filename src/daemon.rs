@@ -220,8 +220,8 @@ pub fn read_gateway_token() -> Option<String> {
 }
 
 /// Panel URL + bearer token, for `swiss creds`. Never dumps the rest of the env store (DB
-/// passwords live there). The panel itself has no login — the loopback guard is its boundary —
-/// so there is no username or password to print.
+/// passwords live there). The panel signs in with a one-time link (`swiss open`, docs/48), so
+/// there is no username or password to print.
 pub fn read_creds() -> (String, Option<String>) {
     (url_for(resolve_port()), read_gateway_token())
 }
@@ -532,12 +532,55 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
     }
 }
 
+/// The CLI key the running daemon accepts on /api/* (docs/48), unsealed from `session.json`
+/// under this home. None before the first start, or when the file cannot be opened.
+pub fn read_cli_key() -> Option<String> {
+    crate::session::read_cli_key(&data_path(&[crate::session::SESSION_FILE]))
+}
+
+/// Attach the CLI key to an admin request - every /api/* call the CLI makes goes through here.
+pub fn with_cli_key(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match read_cli_key() {
+        Some(key) => req.header(crate::session::CLI_KEY_HEADER, key),
+        None => req,
+    }
+}
+
+/// A one-time sign-in link for the panel (docs/48): the daemon mints a login token, good for
+/// one use within two minutes, behind the CLI key. What `swiss start` and `swiss open` open.
+pub async fn login_url(port: u16) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let res = with_cli_key(
+        client
+            .post(format!("http://127.0.0.1:{port}/api/session/ticket"))
+            .timeout(Duration::from_secs(5)),
+    )
+    .send()
+    .await
+    .map_err(|e| format!("cannot reach the gateway on port {port}: {e}"))?;
+    let status = res.status();
+    let body: Value = res.json().await.unwrap_or(Value::Null);
+    if !status.is_success() {
+        return Err(format!(
+            "{} {}",
+            status.as_u16(),
+            body["error"].as_str().unwrap_or("no detail")
+        ));
+    }
+    body["url"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "the gateway answered without a sign-in link".to_string())
+}
+
 /// Ask the gateway to shut itself down. Failure is fine — the caller falls back to a tree-kill.
 async fn post_shutdown(client: &reqwest::Client, port: u16) {
     let token = read_gateway_token();
-    let mut req = client
-        .post(format!("http://127.0.0.1:{port}/api/shutdown"))
-        .timeout(Duration::from_secs(5));
+    let mut req = with_cli_key(
+        client
+            .post(format!("http://127.0.0.1:{port}/api/shutdown"))
+            .timeout(Duration::from_secs(5)),
+    );
     if let Some(token) = token {
         req = req.header("Authorization", format!("Bearer {token}"));
     }
@@ -599,9 +642,11 @@ async fn get_json(
     path: &str,
     token: Option<&str>,
 ) -> Option<Value> {
-    let mut req = client
-        .get(format!("http://127.0.0.1:{port}{path}"))
-        .timeout(Duration::from_secs(5));
+    let mut req = with_cli_key(
+        client
+            .get(format!("http://127.0.0.1:{port}{path}"))
+            .timeout(Duration::from_secs(5)),
+    );
     if let Some(token) = token {
         req = req.header("Authorization", format!("Bearer {token}"));
     }
@@ -995,7 +1040,8 @@ mod tests {
     #[tokio::test]
     async fn creds_report_the_panel_url_and_the_token_and_nothing_else() {
         // The rest of the env store is DB passwords; `swiss creds` prints what a client needs to
-        // connect and stops there. The panel has no login, so there is no password to print.
+        // connect and stops there. The panel signs in with a one-time link, so there is no
+        // password to print.
         let _lock = daemon_state().await;
         seal_env(&[("SWISS_TOKEN", "tok"), ("DB_PASSWORD", "hunter2")]);
 

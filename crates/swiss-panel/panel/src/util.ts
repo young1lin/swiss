@@ -150,7 +150,13 @@ function targetEl(e: Event): Element | null {
 async function api(path: string, opts?: RequestInit): Promise<Response> {
   opts = opts || {};
   opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
-  return fetch(path, opts);
+  const r = await fetch(path, opts);
+  // docs/48: a 401 from /api is the session gate - this browser's sign-in is gone (expired,
+  // or the session file was reset). The shell's own address answers with the sign-in page.
+  if (r.status === 401 && typeof location !== "undefined" && path.startsWith("/api/")) {
+    location.assign("/");
+  }
+  return r;
 }
 
 /** A response-race guard for the db loaders (the DDL sheet's S.seq pattern, factored out):

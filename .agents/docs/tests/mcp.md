@@ -23,7 +23,7 @@
 
 ### tests/adminapi.rs (111 tests: the full admin-plane tree)
 
-- Boundary: `serves_reads_and_mutations_without_any_credentials`, `has_no_login_route_to_answer` → L9/L55 (/api/* has no login gate; loopback is the boundary).
+- Boundary: `serves_reads_and_mutations_in_process_without_a_credential`, `has_no_password_route_to_answer` → L9/L55 (in-process calls pass the admin session gate; the socket side lives in tests/admin_session.rs, docs/48).
 - Listing: `tags_each_mcp_row_with_how_it_is_launched` (the tag column), six sorting tests including `sorts_by_name_until_the_user_arranges_the_list`, `adds_an_mcp_and_starts_it_while_the_list_stays_status_only`, `reports_a_started_mcp_as_up_once_its_probe_answers` → L20/L30/L34.
 - Proxy: `stores_and_returns_a_per_mcp_proxy_on_http_and_rest_mcps`, `rejects_a_proxy_that_is_not_an_http_url` → L13/L14 (the proxy field; ${ENV} references preserved).
 - Lifecycle: `stop_frees_the_server_and_start_brings_it_back` (restart included), `answers_a_listing_for_an_mcp_that_was_never_started` (503/404/wide-route kind whitelist) → L21/L19.
