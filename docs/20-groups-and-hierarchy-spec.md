@@ -13,6 +13,13 @@
 > `.grp` 自身就是 `.group` 卡，行直接铺在色带下、通栏。组头整条可拖（没有 grip，`i-grip`、`i-folder`
 > 已删），`+`/`⋯` 在 dragstart 取消拖拽以保住点击；组的 before/after 落点是整块 `.grp`（头和成员都算），
 > 行的 drop-into 落点是组头或空行。本文 §4.1 的图与「抓手」「folder」「引导线」条目以 docs/35 为准。**
+> **补记（2026-09-27）：「空组是个位置，不是空态」对默认组、对零行的列表同样成立。** 五个分组列表
+> （SSH Connections、Port Forwards、Jobs、Secrets、Tokens）在一行都没有时，把整个分组区换成页面级
+> 空态（"No SSH connections yet" 之类）；于是空页面上新建的组只出现在 New 弹层的 Group 下拉里，
+> 页面上没有组头可以改名、删除或按 `+`（实测：SSH Connections 建了个 "defaul"，删不掉）。Remote
+> Targets 在 2026-09-20（`707a472`）已因同一原因改成无条件画组，但没推广到其余页面。现在六个页面
+> 一律无条件画组；组名列表为空时退回 `["default"]`；那五个页面级空态文案随之删除。MCP 侧栏没有这个
+> 分支，不受影响。测试：`test/admin-empty-groups.test.ts`（tunnels、jobs），secrets 与 tokens 各自的套件。
 > 设计语言的总纲从本文起由 `.claude/skills/swiss-design/SKILL.md` 承载：本文 §4 是那份语言在「分组列表」
 > 上的展开，两者冲突时以 skill 为准（skill 改了要回来改这里）。
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/18-panel-visual-refresh-spec.md`（本文沿用它的 token、

@@ -41,7 +41,7 @@ import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, remem
 import { mcpRows } from "../mcp-state.js";
 import { locale, tr, trn } from "../i18n.js";
 import {
-  btn, card, emptyNode, field, form, formActions, iconBtn, inlineForm, moreBtn, paneBody, paneHead, popupMenu, row, section, tag,
+  btn, card, field, form, formActions, iconBtn, inlineForm, moreBtn, paneBody, paneHead, popupMenu, row, section, tag,
 } from "../ui/index.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
@@ -202,11 +202,10 @@ function paintGroups()       {
   if (!host) return;
   painted = signature();
   const list = tokenRows();
-  if (!list.length) {
-    fill(host, emptyNode({ icon: "key", title: tr("tokens.tokens"), hint: tr("tokens.oneTokenClientCreate") }));
-    refreshGroupSelect();
-    return;
-  }
+  // The groups ALWAYS paint, tokens or none (the Remote Targets rule, 2026-09-20): an empty
+  // group is a drop target with a +, not an empty state. The page used to swap in "No tokens"
+  // whenever the list was bare, so a group made then was listed in the form's Group select and
+  // nowhere else - no header to rename or delete it by.
   const names = tokenGroupNames().length ? tokenGroupNames() : ["default"];
   fill(host, slice(list, names, groupOfToken).map((g                         )              => {
     return mountGroup(tkCfg(), g);

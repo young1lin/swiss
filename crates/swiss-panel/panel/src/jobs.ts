@@ -49,7 +49,7 @@ import { appendJobRuns, clearJobBusy, jobDragging, jobDraggingGroup, jobFolds, j
 import { locale, tk, tr } from "./i18n.js";
 import { readableBody } from "./logs.js";
 import {
-  btn, checkField, closeSheet, collapseRuns, dot, emptyNode, field, formCap, hint, iconBtn, moreBtn, note, pair, paneBody, paneHead,
+  btn, checkField, closeSheet, collapseRuns, dot, field, formCap, hint, iconBtn, moreBtn, note, pair, paneBody, paneHead,
   popupMenu, relTime, row, section, seg, sheet, showSheet, tag, timeline, timelineMeta, timelineToggle, valueBlock,
 } from "./ui/index.js";
 import type { RowCol, TimelineItem } from "./ui/index.js";
@@ -204,20 +204,19 @@ function renderJobs(): void {
         btn(tr("jobs.new"), { kind: "primary", id: "jobNew" }),
       ],
     }),
-    rows.length
-      ? section({}, h("div", { id: "jobGroups" }))
-      : emptyNode({ icon: "clock", title: tr("jobs.jobs"), hint: tr("jobs.scheduledCommandsGatewayRuns") })));
+    section({}, h("div", { id: "jobGroups" }))));
   // The schedule column speaks cronstrue, which loads on first use: until it lands a cron row
   // shows its raw spelling, and the landing patches the words in.
   if (!cronstrueLib) ensureCronstrue((): void => { if (currentView() === "jobs") patchJobs(); });
-  if (rows.length) {
-    // One group per slice — the component owns the header band and the empty line (docs/20
-    // G4). Empty groups keep their place: that is how you drag the first job into one.
-    const host = $("jobGroups");
-    slice(rows, jobGroupsList(), jobGroupOfRow).forEach((g: GroupSlice<ApiJobRow>): void => {
-      host.appendChild(mountGroup(jobCfg(), g));
-    });
-  }
+  // One group per slice — the component owns the header band and the empty line (docs/20
+  // G4). The groups ALWAYS paint, jobs or none (the Remote Targets rule, 2026-09-20): an
+  // empty group is a place - a drop target with a + - not an empty state. The page used to
+  // swap in "No jobs" whenever it had no rows, so a group made before the first job was
+  // listed in the sheet's Group select and nowhere else: no header to rename or delete it by.
+  const host = $("jobGroups");
+  slice(rows, jobGroupsList(), jobGroupOfRow).forEach((g: GroupSlice<ApiJobRow>): void => {
+    host.appendChild(mountGroup(jobCfg(), g));
+  });
   wireJobs();
 }
 

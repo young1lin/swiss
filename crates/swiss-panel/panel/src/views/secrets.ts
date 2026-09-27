@@ -42,7 +42,7 @@ import { fill, h } from "../h.js";
 import { copyText } from "../connect.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
 import { tr, trn } from "../i18n.js";
-import { btn, emptyNode, iconBtn, inlineForm, moreBtn, paneBody, paneHead, popupMenu, row, section } from "../ui/index.js";
+import { btn, iconBtn, inlineForm, moreBtn, paneBody, paneHead, popupMenu, row, section } from "../ui/index.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed: Record<string, boolean> = {}; // the secrets fold map, loaded once before the first paint
@@ -186,10 +186,10 @@ function paintGroups(): void {
   const host = $("skGroups");
   if (!host) return;
   painted = signature();
-  if (!secrets.list.length) {
-    fill(host, emptyNode({ icon: "key", title: tr("secrets.secrets"), hint: tr("secrets.storeCredentialOnceReference") }));
-    return;
-  }
+  // The groups ALWAYS paint, secrets or none (the Remote Targets rule, 2026-09-20): an empty
+  // group is a drop target with a +, not an empty state. The page used to swap in "No secrets
+  // yet" whenever the vault was bare, so a group made then was listed in the form's Group
+  // select and nowhere else - no header to rename or delete it by.
   fill(host, slice(secrets.list, secrets.groups || ["default"], groupOfName).map((g: GroupSlice<string>): HTMLElement => {
     return mountGroup(skCfg(), g);
   }));

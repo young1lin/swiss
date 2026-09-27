@@ -115,12 +115,19 @@ function isTunnelsView(v: string | null): boolean { return v === "tunnels" || v 
  *  stay ruleGroups/connGroups (docs/20 §3); this maps the mounted page to its scope. */
 function tunScope(): "conns" | "rules" { return mountedTunScope() === "conns" ? "conns" : "rules"; }
 function tunRows(): ApiTunnelConnectionRow[] | ApiTunnelRuleRow[] { return mountedTunScope() === "conns" ? tunData().connections : tunData().rules; }
+/* Both fall back to the default group on an empty or missing list, as the Remote, Tokens and
+ * Secrets pages do: the groups are the whole list region now (no empty state takes it over),
+ * so an answer without groups must still paint the one group every scope has. */
 function tunGroupsList(): string[] {
-  return mountedTunScope() === "conns" ? tunData().connGroups || [] : tunData().ruleGroups || [];
+  const names = mountedTunScope() === "conns" ? tunData().connGroups : tunData().ruleGroups;
+  return names && names.length ? names : ["default"];
 }
 
 /** The jobs scope's group names (docs/20 G4) — /api/jobs carries them at its top level. */
-function jobGroupsList(): string[] { return jobGroupNames() || ["default"]; }
+function jobGroupsList(): string[] {
+  const names = jobGroupNames();
+  return names && names.length ? names : ["default"];
+}
 
 function setView(v: string): Promise<void> { return navigatePage(v); }
 
