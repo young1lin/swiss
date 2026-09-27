@@ -29,7 +29,13 @@
    The store form carries a Group select; the header + preselects it. Group labels are
    folder names, not credentials — they are the one thing about a secret a listing may say
    beyond its name.
+
+   Replacing a value (docs/19, 2026-09-27 addendum): the vault never shows a value, so a
+   replace is a store under the same name. The row's ⋯ → Replace value… points the one form
+   at the row, the primary reads Replace whenever the typed name is already stored, and the
+   gateway rebuilds every MCP that references the name - the toast names them.
    ================================================================================================ */
+import type { ApiSecretWriteResponse } from "../types/api.js";
 import type { GroupCfg, GroupSlice } from "../types/dom.js";
 import { $, apiJson, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
@@ -188,8 +194,30 @@ function paintGroups(): void {
     return mountGroup(skCfg(), g);
   }));
   refreshGroupSelect();
+  syncStoreLabel();
   const chip = $("countChip");
   if (chip) chip.textContent = countText();
+}
+
+/** The primary names what the form will do: a name already in the vault reads Replace. It
+ *  is the one sign the form overwrites - a value is never shown, so there is nothing else
+ *  on the page to say a stored one can be changed. */
+function syncStoreLabel(): void {
+  const store = $("skStore");
+  const nameBox = $<HTMLInputElement>("skName");
+  if (!store || !nameBox) return;
+  const stored = secrets.list.includes((nameBox.value || "").trim());
+  store.textContent = stored ? tr("secrets.replace") : tr("secrets.store");
+}
+
+/** Row ⋯ → Replace value…: point the store form at this secret - its name, the group it
+ *  already lists under, so storing never moves it - and put the cursor in the value box. */
+function beginReplace(name: string): void {
+  $<HTMLInputElement>("skName").value = name;
+  const sel = $<HTMLSelectElement>("skGroup");
+  if (sel) sel.value = groupOfName(name);
+  syncStoreLabel();
+  $<HTMLInputElement>("skValue").focus();
 }
 
 /** Poll-safe update: the groups region only, and only when the structure changed. */
@@ -253,6 +281,9 @@ function render(): void {
 }
 
 function wire(): void {
+  // On the box itself, not #pane: the pane outlives this page, and an input handler left on
+  // it would fire under whichever view mounts next.
+  $<HTMLInputElement>("skName").oninput = syncStoreLabel;
   $("pane").onclick = async (event: MouseEvent): Promise<void> => {
     const hit = targetEl(event)?.closest<HTMLElement>("[data-skcopy],[data-skmore],#skStore,#skNewGroup");
     if (!hit) return;
@@ -264,12 +295,13 @@ function wire(): void {
       return;
     }
     if (hit.dataset.skcopy) { void copyText("${secret://" + hit.dataset.skcopy + "}", tr("secrets.reference")); return; }
-    if (hit.dataset.skmore) {
+    const name = hit.dataset.skmore;
+    if (name) {
       // The opening click must not reach document (menu.js closes on outside clicks).
       event.stopPropagation();
-      const name = hit.dataset.skmore;
       popupMenu(hit.getBoundingClientRect(), [
-        { label: tr("secrets.delete"), danger: true, fn: (): void => { void removeSecret(name!); } },
+        { label: tr("secrets.replaceValue"), fn: (): void => { beginReplace(name); } },
+        { label: tr("secrets.delete"), danger: true, fn: (): void => { void removeSecret(name); } },
       ]);
     }
   };
@@ -277,27 +309,49 @@ function wire(): void {
 
 /** Store one secret, then redraw from the vault's own answer. The rev goes with the write;
  *  a second panel that changed the vault in between loses the race with a visible 409.
- *  The selected group follows the name in one family write — an older gateway without the
- *  family keeps the first-group default, which is where the select's only option lands. */
+ *  The selected group follows a NEW name in one family write — an older gateway without the
+ *  family keeps the first-group default, which is where the select's only option lands.
+ *  A name already stored is a replace: it asks first (the old value is gone for good and was
+ *  never visible), and it keeps its group - moving a row is the drag's job, and the select
+ *  may still hold wherever the last new secret went. */
 async function storeSecret(): Promise<void> {
   const name = ($<HTMLInputElement>("skName").value || "").trim();
   const value = $<HTMLInputElement>("skValue").value || "";
   if (!name || !value) { toast(tr("secrets.secretNeedsBothName"), true); return; }
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) { toast(tr("secrets.namesLowercaseKebabZ"), true); return; }
+  const replacing = secrets.list.includes(name);
+  if (replacing && !confirm(tr("secrets.replaceSecretNameConfirm", { name }))) return;
   const picked = $("skGroup") ? $<HTMLSelectElement>("skGroup").value : null;
-  const j = await apiJson<unknown>("/api/secrets/" + encodeURIComponent(name), {
+  const j = await apiJson<ApiSecretWriteResponse>("/api/secrets/" + encodeURIComponent(name), {
     method: "PUT",
     body: JSON.stringify({ value: value, rev: secrets.rev }),
   });
   if (!j) return; // the toast said why; keep the form exactly as typed
-  if (picked) {
+  if (picked && !replacing) {
     rememberGroup("secrets", picked);
     await assignMember("secrets", name, picked);
   }
   $<HTMLInputElement>("skValue").value = "";
   await loadSecrets();
   paintGroups();
-  toast(tr("secrets.storedReferenceSecretName", { name }));
+  storedToast(name, replacing, j);
+}
+
+/** What the store changed, in one toast. The gateway rebuilds every MCP that references the
+ *  name (the adapters held the old value resolved), and says which - so a replace reports
+ *  what now runs on it, and a rebuild that failed is an error the user has to go and read. */
+function storedToast(name: string, replacing: boolean, j: ApiSecretWriteResponse): void {
+  const failed = (j.failed || []).map((f: { name: string }): string => { return f.name; });
+  if (failed.length) {
+    toast(tr("secrets.reloadFailedNameList", { name, list: failed.join(", ") }), true);
+    return;
+  }
+  const refreshed = j.refreshed || [];
+  if (refreshed.length) {
+    toast(tr("secrets.reloadedNameList", { name, list: refreshed.join(", ") }));
+    return;
+  }
+  toast(replacing ? tr("secrets.replacedName", { name }) : tr("secrets.storedReferenceSecretName", { name }));
 }
 
 /** Delete one secret after an explicit confirm: everything referencing it starts failing
@@ -326,4 +380,4 @@ export function unmount() { painted = ""; }
 
 /* Exported for the suite (the requiresBadge precedent): the two mutations and the order move,
  * driven under a fetch stub against the real DOM the view builds. */
-export { storeSecret, removeSecret, moveSecretRow };
+export { storeSecret, removeSecret, moveSecretRow, beginReplace };

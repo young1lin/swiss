@@ -218,3 +218,89 @@ async fn a_vault_header_reference_authenticates_the_proxy() {
     let _ = endpoint;
     remote.stop().await;
 }
+
+#[tokio::test]
+async fn replacing_a_secret_rebuilds_the_mcps_that_reference_it() {
+    // docs/19, 2026-09-27 addendum. make_adapter resolves a reference into the adapter it
+    // builds, so a replaced value used to reach nothing until the gateway restarted - the
+    // vault looked like it could not be overwritten. The remote's auth is the proof here: it
+    // accepts only its real token, so the retried start succeeding means the rebuilt header
+    // carries the replaced value.
+    use axum::body::Body;
+    use axum::http::{header, Request, StatusCode};
+    use swiss_mcp::registry::{Registry, Source};
+    use tower::ServiceExt as _;
+
+    let _guard = swiss_core::paths::DATA_DIR_LOCK.lock().await;
+    let path = swiss_core::paths::test_home().join("secrets.json");
+    swiss_core::secure::secretstore::inject_vault(&path);
+    let rev = swiss_core::secure::secretstore::vault_rev();
+    swiss_core::secure::secretstore::put_secret(&path, "http-rotate-token", "stale-token", rev)
+        .expect("plant a stale token");
+
+    let remote = remote_echo().await;
+    let calls = swiss_mcp::calls::test_log();
+    let registry = Registry::new(3_600_000, calls.clone());
+    let up = def(json!({
+        "type": "http",
+        "url": remote.url,
+        "headers": { "Authorization": "Bearer ${secret://http-rotate-token}" },
+    }));
+    let adapter = swiss_mcp::adapters::make_adapter(&up, "up", &calls).expect("builds");
+    registry
+        .register("up", Source::Config, up, adapter)
+        .expect("register");
+    assert!(
+        registry.start("up").await.is_err(),
+        "the stale token does not authenticate"
+    );
+    // A bystander that names no secret keeps the adapter it has.
+    let echo = def(json!({ "type": "echo" }));
+    let kept = swiss_mcp::adapters::make_adapter(&echo, "bystander", &calls).expect("echo");
+    registry
+        .register("bystander", Source::Config, echo, kept.clone())
+        .expect("register");
+
+    let store = Arc::new(swiss_host::managed::ManagedStore::open_at(
+        std::env::temp_dir()
+            .join(format!("swiss-rotate-{}", swiss_core::util::random_hex(8)))
+            .join("managed.json"),
+    ));
+    let ctx = swiss::app::AppContext::new(
+        registry.clone(),
+        Arc::new(swiss_host::token::single_token_manager(TOKEN)),
+        store,
+        calls,
+        Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
+        "SWISS_TOKEN",
+        19999,
+    );
+    let app = swiss::app::build_app(ctx, None);
+    let rev = swiss_core::secure::secretstore::vault_rev();
+    let req = Request::put("/api/secrets/http-rotate-token")
+        .header(header::HOST, "127.0.0.1:19999")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "value": TOKEN, "rev": rev }).to_string()))
+        .expect("request");
+    let res = app.oneshot(req).await.expect("router answers");
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024)
+        .await
+        .expect("body");
+    let body: Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(body["refreshed"], json!(["up"]), "{body}");
+    assert_eq!(body["failed"], json!([]), "{body}");
+
+    let running = registry
+        .get("up")
+        .and_then(|e| e.data.read().ok().map(|d| d.server.is_some()))
+        .unwrap_or(false);
+    assert!(running, "the failed start was retried on the new value");
+    let now = registry
+        .get("bystander")
+        .and_then(|e| e.data.read().ok().map(|d| d.adapter.clone()))
+        .expect("bystander");
+    assert!(Arc::ptr_eq(&now, &kept), "an MCP naming no secret is left alone");
+    registry.close_all().await;
+    remote.stop().await;
+}
