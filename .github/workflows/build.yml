@@ -67,6 +67,10 @@ jobs:
   build:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # A clean run takes ~21 min on the slowest target (Windows). The ceiling is there for a
+    # test that hangs instead of failing: GitHub's own default is six hours, which on a
+    # macOS runner is a very expensive way to learn that.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -142,7 +146,11 @@ jobs:
       # `--workspace` for the same reason as the lint step: the root package holds only a small
       # minority of the suite, and a green run without it would never build the member crates.
       - name: Test
-        if: matrix.cross != true
+        # Not on macOS yet (README, Install, footnote 1): it has no master-key source, so
+        # every sealing test fails there, and a killed local shell's pty never reaches EOF,
+        # which hangs the suite. Both macOS targets still lint and build, which is what
+        # catches a call that only compiles against glibc.
+        if: matrix.cross != true && runner.os != 'macOS'
         # --no-fail-fast: cargo otherwise stops at the first failing test binary, so a red
         # run names one crate's failures and hides the rest behind it. The step still fails.
         run: cargo test --workspace --locked --no-fail-fast
@@ -215,6 +223,7 @@ jobs:
   # Windows runners skip it (the local Windows machine runs the same gate on deploys).
   integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
