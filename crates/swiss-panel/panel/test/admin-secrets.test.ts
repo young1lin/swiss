@@ -172,14 +172,25 @@ describe("the Secrets page (docs/19 D6)", () => {
     expect(names).toEqual(["bb", "aa", "cc"]);
   });
 
-  it("the empty page says what a secret is for", async () => {
-    body = { secrets: [], rev: 0 };
+  it("an empty vault still paints its groups - a group made first has its header", async () => {
+    // The Remote Targets rule (2026-09-20), applied here on 2026-09-27: the page used to swap
+    // in "No secrets yet" whenever the vault was bare, so a group made then was listed in the
+    // Group select and nowhere else - no header to rename or delete it by.
+    body = { secrets: [], rev: 0, groups: ["default", "ci"], secretGroups: {} };
     await view.mount();
-    // The empty state renders into the groups container (docs/20 G6).
-    expect($("skGroups").querySelector(".empty h2")?.textContent).toBe("No secrets yet");
-    expect($("skGroups").textContent).toContain("${secret://name}");
-    // The store form carries the Group select - the one option is the default group.
-    expect($("skGroup")).not.toBeNull();
+    expect($("skGroups").children.length).toBe(2);
+    expect($("skGroups").textContent).toContain("ci");
+    expect($("skGroups").querySelector(".empty")).toBeNull();
+    expect($("pane").textContent).not.toContain("No secrets yet");
+    // The page description still says what a secret is for.
+    expect($("pane").querySelector(".pane-desc")?.textContent).toContain("${secret://name}");
+    expect(Array.from(($("skGroup") as HTMLSelectElement).options).map((o) => o.value)).toEqual(["default", "ci"]);
+
+    // Bare and single-grouped: the default group itself is the place a first secret goes.
+    body = { secrets: [], rev: 0 };
+    await view.refresh();
+    expect($("skGroups").children.length).toBe(1);
+    expect($("skGroups").textContent).toContain("default");
   });
 
   it("storing PUTs name+value+rev, then reloads the names and clears the value box", async () => {

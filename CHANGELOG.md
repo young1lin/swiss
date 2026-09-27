@@ -24,6 +24,10 @@ All notable changes to swiss are recorded here. The format follows
   references it, which kept the old value resolved in its adapter until the gateway
   restarted. The Secrets page gains Replace value… on each row's ⋯ menu, a Replace label
   when the typed name is already stored, and a toast naming the MCPs that reloaded (docs/19).
+- A group made on an empty list now shows up: SSH Connections, Port Forwards, Jobs, Secrets
+  and Tokens replaced their whole groups region with a page-level empty state while they had
+  no rows, so a new group appeared only in the New sheet's Group select, with no header to
+  rename or delete it by. The groups always paint now, as Remote Targets already did (docs/20).
 - `/api/tunnels` connection rows now carry `keyPath`: the panel's edit sheet prefills from the
   row, and a custom private-key path is no longer silently rewritten to the default on save.
 - Jumping a Redis stream view back to the latest window now voids the follow tick already in

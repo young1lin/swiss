@@ -16,7 +16,7 @@
 
                                                                                
                                                                      
-import { $, api, apiJson, dotTitle, emptyNode, targetEl, toast } from "./util.js";
+import { $, api, apiJson, dotTitle, targetEl, toast } from "./util.js";
 import { fill, h } from "./h.js";
                                      
 import { copyText } from "./connect.js";
@@ -106,7 +106,6 @@ function tunnelsCountText(scope        )         {
 }
 
 function renderTunnels()       {
-  const d = tunData();
   const isConns = mountedTunScope() === "conns";
   // The page's actions, right-aligned in the body header (pane-actions is the panel's own
   // vocabulary for exactly this slot). Rules carry the bulk start/stop pair; connections
@@ -119,10 +118,12 @@ function renderTunnels()       {
 
   // One group per slice — the component owns the header band, the indent and the empty line
   // now (docs/20 §4.1). Empty groups keep their place: that is how you drag the first row into
-  // one (or use its +).
+  // one (or use its +). They ALWAYS paint, rows or none (the Remote Targets rule, 2026-09-20):
+  // both tabs used to swap in "No SSH connections" / "No forwarding rules" whenever the list
+  // was bare, so a group made before the first row was listed in the sheet's Group select
+  // and nowhere else - no header to rename or delete it by.
   const cfg = tunCfg();
   const grouped = slice(tunRows(), tunGroupsList(), tunGroupOfRow);
-  const list = isConns ? d.connections : d.rules;
 
   // .wide: a rule row is name + route + who it serves + its port column + its buttons. No foot:
   // the count it carried is the context bar's chip (rule 25), and tunnels have no revision.
@@ -131,10 +132,7 @@ function renderTunnels()       {
       paneHead({ desc: tunDesc(isConns), actions: acts }),
       h("div", { id: "tunGroups" })));
   const host = $("tunGroups");
-  if (list.length) grouped.forEach((g                                                       )       => { host.appendChild(mountGroup(cfg, g)); });
-  else fill(host, emptyNode(isConns
-    ? { icon: "plug", title: tr("tunnels.sshConnections"), hint: tr("tunnels.addOneNewThen") }
-    : { icon: "plug", title: tr("tunnels.forwardingRules"), hint: tr("tunnels.addOneNewEach") }));
+  grouped.forEach((g                                                       )       => { host.appendChild(mountGroup(cfg, g)); });
   wireTunnels();
 }
 

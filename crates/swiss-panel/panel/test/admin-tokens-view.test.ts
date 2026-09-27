@@ -168,7 +168,18 @@ describe("the Token page (MCP group)", () => {
     body = { tokens: [] };
     await view.refresh();
     expect(view.countText()).toBe("0 tokens");
-    expect($("pane").querySelector(".empty h2")?.textContent).toBe("No tokens");
+    // No rows is not an empty state (the Remote Targets rule, applied 2026-09-27): the default
+    // group still paints, the place a first token lands.
+    expect($("pane").querySelector(".empty")).toBeNull();
+    expect($("tkGroups").children.length).toBe(1);
+    expect($("tkGroups").textContent).toContain("default");
+  });
+
+  it("a group made before the first token has its header", async () => {
+    body = { tokens: [], groups: ["default", "ci"] };
+    await view.mount();
+    expect($("tkGroups").children.length).toBe(2);
+    expect($("tkGroups").textContent).toContain("ci");
   });
 
   it("poll patches the groups region only - a half-typed label survives it", async () => {
