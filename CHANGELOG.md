@@ -28,6 +28,8 @@ All notable changes to swiss are recorded here. The format follows
   and Tokens replaced their whole groups region with a page-level empty state while they had
   no rows, so a new group appeared only in the New sheet's Group select, with no header to
   rename or delete it by. The groups always paint now, as Remote Targets already did (docs/20).
+- The Terminal page's target picker names a remote by its connection name alone; it showed
+  `user@host`, which put the server's address into every screenshot of a terminal.
 - `/api/tunnels` connection rows now carry `keyPath`: the panel's edit sheet prefills from the
   row, and a custom private-key path is no longer silently rewritten to the default on save.
 - Jumping a Redis stream view back to the latest window now voids the follow tick already in
