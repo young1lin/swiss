@@ -1187,10 +1187,14 @@ pub async fn api_main(argv: Vec<String>) -> i32 {
         eprintln!("{USAGE}");
         return 2;
     };
-    if !path.starts_with("/api/") {
-        eprintln!("the path must start with /api/ - {USAGE}");
+    let Some(path) = api_path(path) else {
+        eprintln!(
+            "the path must start with /api/ (or api/ - Git Bash rewrites a leading slash into a \
+             Windows path unless MSYS_NO_PATHCONV=1) - {USAGE}"
+        );
         return 2;
-    }
+    };
+    let path = path.as_str();
     let body = match body.map(|b| serde_json::from_str::<Value>(b)) {
         None => None,
         Some(Ok(v)) => Some(v),
@@ -1208,6 +1212,19 @@ pub async fn api_main(argv: Vec<String>) -> i32 {
             eprintln!("{err}");
             1
         }
+    }
+}
+
+/// The admin path `swiss api` was given, as the gateway routes it: `/api/...`, or `api/...` with
+/// the slash put back - the spelling Git Bash leaves alone (it rewrites a leading `/api/x` into
+/// `C:/Program Files/Git/api/x`). Anything else is not an admin path.
+fn api_path(arg: &str) -> Option<String> {
+    if arg.starts_with("/api/") {
+        Some(arg.to_string())
+    } else if arg.starts_with("api/") {
+        Some(format!("/{arg}"))
+    } else {
+        None
     }
 }
 
@@ -1541,6 +1558,17 @@ mod tests {
 
     fn argv(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn swiss_api_takes_the_admin_path_with_or_without_its_slash() {
+        assert_eq!(api_path("/api/mcps").as_deref(), Some("/api/mcps"));
+        // What Git Bash leaves alone: the slash comes back.
+        assert_eq!(api_path("api/mcps?x=1").as_deref(), Some("/api/mcps?x=1"));
+        // What Git Bash made of "/api/mcps", and anything outside /api: refused.
+        assert_eq!(api_path("C:/Program Files/Git/api/mcps"), None);
+        assert_eq!(api_path("/health"), None);
+        assert_eq!(api_path("/apix/mcps"), None);
     }
 
     #[test]
