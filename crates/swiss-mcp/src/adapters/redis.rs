@@ -1034,6 +1034,15 @@ impl RedisEngine {
             };
             Box::pin(async move {
                 let client = redis::Client::open(info).map_err(|e| e.to_string())?;
+                // One plain connection first. The manager retries every failure of its first
+                // connect - a refused AUTH included - so a wrong password surfaced only as the
+                // timeout below, 5s later ("redis connect timed out"), never as what Redis
+                // said (2026-09-28). The probe fails at once with the refusal itself; only a
+                // server that accepted us gets the reconnecting manager.
+                tokio::time::timeout(Duration::from_secs(5), client.get_multiplexed_async_connection())
+                    .await
+                    .map_err(|_| "redis connect timed out after 5s".to_string())?
+                    .map_err(|e| e.to_string())?;
                 // connectTimeout 5000 (the eager first connect) over the manager, which then
                 // keeps reconnecting on its own — ioredis's retryStrategy, capped.
                 let manager =
@@ -1265,6 +1274,48 @@ impl Engine for RedisEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_refused_password_answers_as_an_auth_failure_not_a_timeout() {
+        // A server that refuses every command the way Redis refuses a wrong AUTH.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 1024];
+                    while let Ok(n) = sock.read(&mut buf).await {
+                        if n == 0 {
+                            break;
+                        }
+                        // One refusal per command: the client pipelines its setup (AUTH, the
+                        // CLIENT SETINFO pair) and reads a reply for each, as Redis sends.
+                        let got = &buf[..n];
+                        let commands = got
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, b)| **b == b'*' && (*i == 0 || got[i - 1] == b'\n'))
+                            .count()
+                            .max(1);
+                        let refusal = b"-WRONGPASS invalid username-password pair or user is disabled.\r\n";
+                        if sock.write_all(&refusal.repeat(commands)).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        let Value::Object(def) = json!({ "type": "redis", "host": "127.0.0.1", "port": port, "password": "wrong" }) else {
+            unreachable!()
+        };
+        let engine = RedisEngine::new(&ServerDef(def), "r");
+        let t0 = std::time::Instant::now();
+        let err = engine.ping().await.expect("redis pings").expect_err("refused");
+        // redis-rs names a refused AUTH itself ("Password authentication failed").
+        assert!(err.to_lowercase().contains("authentication failed"), "{err}");
+        assert!(t0.elapsed() < Duration::from_secs(3), "answered at once, not at the timeout: {:?}", t0.elapsed());
+    }
 
     #[test]
     fn policy_rejects_the_named_harms() {
