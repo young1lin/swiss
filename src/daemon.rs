@@ -1225,10 +1225,14 @@ mod tests {
     /// Command::new works on the script path); a shell script elsewhere.
     fn env_probe_entry(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
         let dump = dir.join("env-dump.txt");
+        // The dump sits beside the script and cmd finds it through %~dp0, never through a path
+        // spelled in the script: cmd reads a .cmd in the ANSI code page, so a non-ASCII home
+        // (a CJK user name under C:\Users) written into it as UTF-8 named a directory that
+        // does not exist.
         #[cfg(windows)]
         let (script, text) = (
             dir.join("env-probe.cmd"),
-            format!("@set > \"{}\"\r\n", dump.display()),
+            "@set > \"%~dp0env-dump.txt\"\r\n".to_string(),
         );
         #[cfg(not(windows))]
         let (script, text) = (
@@ -1270,7 +1274,10 @@ mod tests {
         // The probe is not a gateway — health never answers, so the start fails. The dump it
         // left behind is the point.
         assert!(matches!(result, StartResult::Failed { .. }));
-        let text = std::fs::read_to_string(&dump).expect("the probe dumped its environment");
+        // Lossy: cmd's `set` writes in the ANSI code page, and a non-ASCII value (the user's
+        // own home path) is not UTF-8. The names asserted on below are ASCII either way.
+        let text = String::from_utf8_lossy(&std::fs::read(&dump).expect("the probe dumped its environment"))
+            .into_owned();
         assert!(
             !text
                 .lines()

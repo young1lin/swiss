@@ -385,13 +385,15 @@ mod tests {
         let mut session = opened.expect("pwsh opens");
         // Typed at the prompt, not before it: bytes that land while PSReadLine is still
         // initialising are re-read as a multi-line paste and never run.
-        let banner = read_until(&mut session, "> ", Duration::from_secs(30)).await;
-        assert!(banner.contains("> "), "no prompt: {banner:?}");
+        // Any prompt: pwsh's own ends "> ", and a user profile may set its own ("$ ") - the
+        // test runs on developers' machines with whatever $PROFILE they have.
+        let banner = read_until(&mut session, &["> ", "$ "], Duration::from_secs(30)).await;
+        assert!(banner.contains("> ") || banner.contains("$ "), "no prompt: {banner:?}");
         session
             .write(b"Write-Host ('render=' + $PSStyle.OutputRendering + ' nocolor=[' + $env:NO_COLOR + ']')\r".to_vec())
             .await
             .expect("writes");
-        let text = read_until(&mut session, "render=", Duration::from_secs(30)).await;
+        let text = read_until(&mut session, &["render="], Duration::from_secs(30)).await;
         session.write(b"exit\r".to_vec()).await.expect("writes");
         let (tail, _) = drain(&mut session, Duration::from_secs(20)).await;
         let all = format!("{text}{tail}");
@@ -402,14 +404,15 @@ mod tests {
     /// something the shell echoes verbatim) or the deadline passes. Windows-only like its one
     /// caller: elsewhere it is dead code, which clippy -D warnings refuses.
     #[cfg(windows)]
-    async fn read_until(session: &mut PtySession, needle: &str, deadline: Duration) -> String {
+    async fn read_until(session: &mut PtySession, needles: &[&str], deadline: Duration) -> String {
         let mut text = Vec::new();
         let _ = tokio::time::timeout(deadline, async {
             while let Some(event) = session.next_event().await {
                 match event {
                     PtyEvent::Data(bytes) => {
                         text.extend_from_slice(&bytes);
-                        if String::from_utf8_lossy(&text).contains(needle) {
+                        let so_far = String::from_utf8_lossy(&text);
+                        if needles.iter().any(|n| so_far.contains(n)) {
                             break;
                         }
                     }
