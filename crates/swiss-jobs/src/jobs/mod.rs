@@ -1416,6 +1416,22 @@ mod tests {
     use super::*;
     use clock::Clock as _;
 
+    // Job commands per OS. process.legacy-command spawns the program itself, not a shell, so
+    // the builtins these tests lean on (echo, exit) need their shell spelled out: cmd on
+    // Windows, sh elsewhere, where there is no cmd to spawn at all.
+    #[cfg(windows)]
+    const ECHO_HI: &str = "cmd /c echo hi";
+    #[cfg(not(windows))]
+    const ECHO_HI: &str = "sh -c 'echo hi'";
+    #[cfg(windows)]
+    const ECHO_HOG: &str = "cmd /c echo hog";
+    #[cfg(not(windows))]
+    const ECHO_HOG: &str = "sh -c 'echo hog'";
+    #[cfg(windows)]
+    const EXIT_3: &str = "cmd /c exit 3";
+    #[cfg(not(windows))]
+    const EXIT_3: &str = "sh -c 'exit 3'";
+
     fn scratch_path(name: &str) -> PathBuf {
         swiss_core::secure::key::use_test_master_key();
         let dir = std::env::temp_dir().join(format!(
@@ -1430,11 +1446,7 @@ mod tests {
     fn interval_job(name: &str, every_sec: u64) -> JobDef {
         JobDef {
             name: name.into(),
-            command: if cfg!(windows) {
-                "cmd /c echo hi".into()
-            } else {
-                "sh -c 'echo hi'".into()
-            },
+            command: ECHO_HI.into(),
             every_sec: Some(every_sec),
             cron: None,
             enabled: true,
@@ -2279,7 +2291,7 @@ mod tests {
             json!({ "definitions": {
                 "hourly": {
                     "trigger": { "kind": "interval", "everyMs": 3600000 },
-                    "action": { "type": "process.legacy-command", "input": { "command": "cmd /c echo hi" } },
+                    "action": { "type": "process.legacy-command", "input": { "command": ECHO_HI } },
                     "timeoutMs": 30000,
                     "misfire": misfire
                 }
@@ -2396,7 +2408,7 @@ mod tests {
                 "definitions": {
                     "queued": {
                         "trigger": { "kind": "interval", "everyMs": 3600000 },
-                        "action": { "type": "process.legacy-command", "input": { "command": "cmd /c echo hi" } },
+                        "action": { "type": "process.legacy-command", "input": { "command": ECHO_HI } },
                         "timeoutMs": 30000,
                         "overlap": "queue-one"
                     }
@@ -2457,7 +2469,7 @@ mod tests {
                 owner: "manual".into(),
                 label: "hog3".into(),
                 action_type: JOBS_ACTION.into(),
-                input: json!({ "command": "cmd /c echo hog" }),
+                input: json!({ "command": ECHO_HOG }),
                 timeout_ms: 30_000,
                 queue_if_busy: false,
                 actor: JOBS_OWNER.to_string(),
@@ -2496,7 +2508,7 @@ mod tests {
             json!({ "definitions": {
                 "flaky": {
                     "trigger": { "kind": "interval", "everyMs": 3600000 },
-                    "action": { "type": "process.legacy-command", "input": { "command": "cmd /c exit 3" } },
+                    "action": { "type": "process.legacy-command", "input": { "command": EXIT_3 } },
                     "timeoutMs": 30000,
                     "retry": { "maxAttempts": 3, "delayMs": 20 }
                 }
@@ -2606,7 +2618,7 @@ mod tests {
             json!({ "definitions": {
                 "flaky": {
                     "trigger": { "kind": "interval", "everyMs": 3600000 },
-                    "action": { "type": "process.legacy-command", "input": { "command": "cmd /c exit 3" } },
+                    "action": { "type": "process.legacy-command", "input": { "command": EXIT_3 } },
                     "timeoutMs": 30000,
                     "retry": { "maxAttempts": 2, "delayMs": 120_000 }
                 }

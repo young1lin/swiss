@@ -212,6 +212,12 @@ mod tests {
         // EOF, not a timeout: the pump has to notice the child left of its own accord, or a
         // finished session would sit there holding a blocking thread for ever.
         assert_eq!(pump.read(&mut [0u8; 16]).ok(), Some(0), "the pump ended");
+        // EOF comes first on Linux: the kernel closes the child's pty before the child is
+        // reapable, so the status is polled like every other "it left" check here.
+        assert!(
+            wait_for_exit(&handle, Duration::from_secs(10)),
+            "the child left"
+        );
         assert_eq!(
             handle.exit_code(),
             Some(0),
