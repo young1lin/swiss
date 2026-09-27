@@ -21,7 +21,8 @@
 //! [RunHistorySink] the remote plugin registers at start and removes at stop: one JSON
 //! line per finished run in `logs/remote/runs.jsonl` — the run view exactly as
 //! `/api/runs` showed it, plus what was asked (target, argv, cwd; env KEYS only, values
-//! may be secrets) — and the full output stream in `logs/remote/out/<runId>.txt`, teed
+//! may be secrets; a remote.write's content as its SIZE only, since the file written may
+//! be a credential) — and the full output stream in `logs/remote/out/<runId>.txt`, teed
 //! as it flows. The live buffer keeps a 256 KiB window; the file keeps the head up to
 //! [Limits::max_output_bytes], and past that the line keeps the last 64 KiB as `tail`, so
 //! a capped build log still shows both ends — the error is usually at the end.
@@ -792,6 +793,11 @@ fn sanitized_input(input: &Value) -> Value {
                 _ => Vec::new(),
             };
             out.insert("envKeys".into(), json!(keys));
+        } else if k == "content" {
+            // remote.write's file body: the audit keeps that a file was written and how
+            // big, never what (a .env, a key, a password file) - 2026-09-28.
+            let bytes = v.as_str().map(str::len).unwrap_or(0);
+            out.insert("contentBytes".into(), json!(bytes));
         } else {
             out.insert(k.clone(), v.clone());
         }
@@ -862,6 +868,25 @@ mod tests {
             tee.write(output);
         }
         history.finish(&view(run_id, ended_at_ms), &req);
+    }
+
+    #[test]
+    fn a_remote_write_is_recorded_by_its_size_never_its_content() {
+        let dir = scratch();
+        let history = RunHistory::open(dir.clone());
+        let req = request(
+            "remote.write",
+            json!({ "target": "build", "remote": ".env", "content": "DB_PASSWORD=s3cret
+" }),
+        );
+        let _tee = history.begin(9, &req).expect("recorded");
+        history.finish(&view(9, now_ms()), &req);
+        let (page, _) = history.page(None, 20, None);
+        assert_eq!(page[0]["input"]["remote"], ".env");
+        assert_eq!(page[0]["input"]["contentBytes"], 19);
+        assert!(page[0]["input"].get("content").is_none());
+        let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).unwrap();
+        assert!(!raw.contains("s3cret"), "{raw}");
     }
 
     #[test]
