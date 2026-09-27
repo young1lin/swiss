@@ -122,17 +122,20 @@ describe("terminal target picker rows", () => {
     const withLocal = targetRows({ local: { enabled: true, shell: "pwsh.exe" }, remote: { presence: "serving", targets: [] } } as unknown as ApiTerminalTargets);
     expect(withLocal.rows).toEqual([{ id: "local", label: "local · pwsh.exe" }]);
   });
-  it("labels remote targets user@host, port only when it is not the default", () => {
+  it("labels remote targets by the connection's own name - never user@host", () => {
+    // The picker sits on the page people screenshot; an address in it leaked the server's
+    // public IP into one (2026-09-28). The name is the user's own label for the machine; the
+    // address stays on the Tunnels page, where the connection is edited.
     const { rows } = targetRows({
       remote: { presence: "serving", targets: [
-        { id: "box", label: "the box", host: "box.example", port: 22, username: "dev", state: "connected" },
-        { id: "alt", label: "alt", host: "alt.example", port: 2222, username: "", state: "connected" },
+        { id: "box", label: "the box", host: "203.0.113.7", port: 22, username: "dev", state: "connected" },
+        { id: "alt", label: "", host: "alt.example", port: 2222, username: "", state: "connected" },
       ] },
     } as ApiTerminalTargets);
-    expect(rows.map((r: { label: string }) => r.label)).toEqual([
-      "the box · dev@box.example",
-      "alt · alt.example:2222",
-    ]);
+    expect(rows.map((r: { label: string }) => r.label)).toEqual(["the box", "alt"]);
+    for (const r of rows) {
+      expect(r.label).not.toMatch(/203\.0\.113\.7|alt\.example|dev@|2222/);
+    }
   });
   it("carries the gateway's own reason when the remote side is absent", () => {
     const { rows, note } = targetRows({ remote: { presence: "absent", reason: "the tunnels plugin is disabled — enable it to reach remote hosts", targets: [] } } as unknown as ApiTerminalTargets);

@@ -105,13 +105,14 @@ export function targetRows(reply                                       )        
   }
   const remote = r.remote || {}                                ;
   const targets = Array.isArray(remote.targets) ? remote.targets : [];
+  /* A remote row is the connection's own name, never user@host: this picker is on screen
+     whenever a terminal is, so it is in every screenshot of one, and an address there leaks
+     the server (2026-09-28). The address lives on the Tunnels page, where it is edited. */
   targets.forEach((t) => {
     if (!t || !t.id) return;
-    const where = t.host ? t.host + (t.port && t.port !== 22 ? ":" + t.port : "") : t.id;
-    const who = t.username ? t.username + "@" : "";
     rows.push({
       id: String(t.id),
-      label: (t.label || t.id) + " · " + who + where,
+      label: String(t.label || t.id),
       state: t.state || "",
     });
   });
