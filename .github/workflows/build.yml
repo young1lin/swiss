@@ -128,7 +128,10 @@ jobs:
           cargo tree -d -e normal,build --locked || true
           # Only the column-0 lines are the duplicated crates themselves; everything indented
           # under them is a parent that merely depends on one, and must not count.
-          heavy=$(cargo tree -d -e normal,build --locked             | grep -E '^(tokio|rustls|native-tls|openssl|openssl-sys|hyper|aws-lc-rs) v'             | sort -u)
+          # `|| true` on the grep alone: the step runs under `-e -o pipefail`, and a clean tree
+          # is exactly the case where grep matches nothing and exits 1 - without it the gate
+          # failed on success. A failing `cargo tree` still fails the pipeline, as it should.
+          heavy=$(cargo tree -d -e normal,build --locked             | { grep -E '^(tokio|rustls|native-tls|openssl|openssl-sys|hyper|aws-lc-rs) v' || true; }             | sort -u)
           if [ -n "$heavy" ]; then
             echo "::error::a runtime or TLS stack is linked twice:"
             echo "$heavy"
