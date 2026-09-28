@@ -38,9 +38,9 @@ import { $, apiJson, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import type { HChild } from "../h.js";
 import { tr, trn } from "../i18n.js";
-import { readableBody } from "../logs.js";
+import { copyLogText, readableBody } from "../logs.js";
 import {
-  btn, closeMenu, collapseRuns, emptyNode, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, textNode, timeline, timelineMeta, timelineToggle, valueBlock,
+  btn, closeMenu, collapseRuns, emptyNode, iconBtn, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, textNode, timeline, timelineMeta, timelineToggle, valueBlock,
 } from "../ui/index.js";
 import type { TimelineItem } from "../ui/index.js";
 
@@ -124,6 +124,22 @@ export function commandOf(r: ApiRemoteRunRow): string {
   return kind === "exec" && r.input && r.input.argv ? argOf(r) : (kind + " " + argOf(r)).trim();
 }
 
+/** One argv word as a POSIX shell reads it back: bare when every character is in the gateway's
+ *  safe set, else single-quoted with the '\'' splice - quote_posix in the tunnels crate, the
+ *  quoting the exec was actually sent with. */
+function shellWord(w: string): string {
+  if (w && /^[A-Za-z0-9_.:=/@%+,-]+$/.test(w)) return w;
+  return "'" + w.replace(/'/g, "'\\''") + "'";
+}
+
+/** The whole command, exactly: an exec's argv quoted word by word (a pasted copy runs as the
+ *  record says - the row's own line joins with plain spaces and is cut to fit), a file action
+ *  as its kind and path. */
+export function commandLine(r: ApiRemoteRunRow): string {
+  const argv = r.input && r.input.argv;
+  return kindOf(r) === "exec" && argv ? argv.map(shellWord).join(" ") : commandOf(r);
+}
+
 export function runTarget(r: ApiRemoteRunRow): string {
   return (r.meta && r.meta.target) || (r.input && r.input.target) || "";
 }
@@ -200,8 +216,16 @@ function runOf(id: number): ApiRemoteRunRow[] {
   return [];
 }
 
+/** The Command block (2026-09-28): the row's line is cut with an ellipsis, so the open row
+ *  states the command whole, with a Copy. */
+function commandNode(r: ApiRemoteRunRow): HTMLElement {
+  return valueBlock(
+    { label: tr("remoteRuns.command"), tools: [iconBtn("copy", tr("remoteRuns.copyCommand"), { ghost: true, data: { rcopy: r.runId } })] },
+    textNode(commandLine(r), true, "logs").node);
+}
+
 /** An open row: what its columns left out (the id, the target, who, the directory, the state),
- *  then the output as the value block Logs and Traffic open to. */
+ *  the whole command, then the output as the value block Logs and Traffic open to. */
 function bodyNode(run: ApiRemoteRunRow[]): HChild {
   const r = run[0];
   const isLive = isLiveRun(r.runId);
@@ -219,13 +243,13 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
     const liveText = l && l.text
       ? (l.capped ? tr("remoteRuns.liveCappedTail") + "\n" : "") + l.text
       : null;
-    return [meta, valueBlock(
-      { label: tr("remoteRuns.liveOutput"), tools: cancellable ? [btn(tr("remoteRuns.cancel"), { data: { rcancel: r.runId } })] : [] },
+    return [meta, commandNode(r), valueBlock(
+      { label: tr("remoteRuns.liveOutput"), data: { rlive: r.runId }, tools: cancellable ? [btn(tr("remoteRuns.cancel"), { data: { rcancel: r.runId } })] : [] },
       liveText != null
         ? textNode(liveText, true, "logs").node
         : note(r.state === "queued" ? tr("remoteRuns.queuedWaitingFreeSlot") : tr("remoteRuns.output")))];
   }
-  const out: HChild[] = [meta];
+  const out: HChild[] = [meta, commandNode(r)];
   if (r.error) out.push(valueBlock({ label: tr("remoteRuns.error") }, ...readableBody(r.error, true)));
   const b = bodies[r.runId];
   if (!b) return out.concat(note(tr("remoteRuns.loading"), { busy: true }));
@@ -327,7 +351,8 @@ async function pullLive(id: number): Promise<void> {
   // watched the cap happen (master's prefix, kept on the library timeline's own nodes).
   if (l.text && !had) repaintBody(id);
   else if (l.text) {
-    const pre = itemEl(id)?.querySelector(":scope > .tl-body .vblock > pre");
+    // The live block by its mark: the body's first block is the Command.
+    const pre = itemEl(id)?.querySelector(":scope > .tl-body [data-rlive] > pre");
     if (pre) pre.textContent = (l.capped ? tr("remoteRuns.liveCappedTail") + "\n" : "") + l.text;
   }
   if (j.terminal) void refresh(); // the run moved into the record: repaint from it
@@ -466,6 +491,13 @@ export async function mount() {
     if (more) { void loadBody(Number(more.dataset.rmore), true); return; }
     const cancel = t.closest<HTMLElement>("[data-rcancel]");
     if (cancel) { void cancelRun(Number(cancel.dataset.rcancel)); return; }
+    const copy = t.closest<HTMLElement>("[data-rcopy]");
+    if (copy) {
+      const id = Number(copy.dataset.rcopy);
+      const r = active.concat(runs).find((x) => { return x.runId === id; });
+      if (r) void copyLogText(commandLine(r));
+      return;
+    }
     const show = t.closest<HTMLElement>("[data-rcontent]");
     if (show) { void loadContent(Number(show.dataset.rcontent)); return; }
     const hide = t.closest<HTMLElement>("[data-rcontenthide]");

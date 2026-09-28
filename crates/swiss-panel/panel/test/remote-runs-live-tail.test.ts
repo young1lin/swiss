@@ -89,7 +89,10 @@ describe("Remote Runs / live tail", () => {
        button (.tl-sum) - master's own data-rtog hook went with its hand-built rows. */
     document.querySelector('[data-rrun="7"] .tl-sum')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await vi.advanceTimersByTimeAsync(0);
-    const pre = document.querySelector('[data-rrun="7"] .tl-body pre')!;
+    // The live output's pre - the body's first block is the Command (2026-09-28).
+    const pre = Array.from(document.querySelectorAll('[data-rrun="7"] .tl-body .vblock'))
+      .find((b) => b.querySelector(".vblock-cap")?.textContent === "Live output")!
+      .querySelector("pre")!;
     expect(pre.textContent).toBe("a".repeat(200000));
 
     // The interval pull brings 200 KB more: 400 KB total against a 256 KB floor. The held
@@ -101,6 +104,10 @@ describe("Remote Runs / live tail", () => {
     expect(marker.length).toBeGreaterThan(0);
     expect(marker.length).toBeLessThan(200);
     expect(text.slice(marker.length + 1)).toBe("a".repeat(TAIL - 200000) + "b".repeat(200000));
+    // The pull writes the live block only - the Command block above it keeps the command.
+    const cmd = Array.from(document.querySelectorAll('[data-rrun="7"] .tl-body .vblock'))
+      .find((b) => b.querySelector(".vblock-cap")?.textContent === "Command")!;
+    expect(cmd.querySelector("pre")?.textContent).toBe("make");
 
     // Capped or not, the cursor advanced with the truth: the next pull continues from 400000.
     await vi.advanceTimersByTimeAsync(1500);

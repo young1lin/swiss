@@ -44,6 +44,9 @@ All notable changes to swiss are recorded here. The format follows
   and a document longer than 200 lines paints its first 200 with a Show all button.
 - A Redis key row and its open tab lead with a glyph for the key's type (string, hash, list,
   set, zset, stream), so `string` and `stream` no longer read alike; the type word stays.
+- An open row on the Runs page starts with a Command block holding the whole command, quoted
+  word by word the way it was sent, with a Copy: the row's own line is cut to fit, so a long
+  command could be neither read nor copied (docs/34 R13).
 
 ### Fixed
 - With Follow on, a Redis stream's new rows replace only the table: the Follow bar was rebuilt

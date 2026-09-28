@@ -1321,6 +1321,8 @@ const zh                         = {
   "remoteRuns.capKeptDDays": " 上限 {cap} · 保留 {d} 天",
   "remoteRuns.traceableWDays": " · 最近 {w} 天必可溯源",
   "remoteRuns.outputEvicted": "输出({size})已被容量预算清出;记录本身保留 {d} 天。",
+  "remoteRuns.command": "命令",
+  "remoteRuns.copyCommand": "复制命令",
   "remoteRuns.contentWritten": "写入的内容",
   "remoteRuns.showContent": "显示",
   "remoteRuns.hideContent": "隐藏",

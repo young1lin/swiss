@@ -22,7 +22,7 @@
    A real DOM (happy-dom) since P6-2: the timeline, the menu and the pager are the library's
    nodes, read the way a user sees them. */
 
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,6 +88,11 @@ function serve(runs: unknown[], active: unknown[], extra: Record<string, unknown
 
 function item(id: number): HTMLElement {
   return Array.from(document.querySelectorAll<HTMLElement>("#pane .tl-item")).find((n) => n.dataset.rrun === String(id)) as HTMLElement;
+}
+/** An open row's value block, by its caption. */
+function block(id: number, cap: string): HTMLElement | undefined {
+  return Array.from(item(id).querySelectorAll<HTMLElement>(".vblock"))
+    .find((b) => b.querySelector(".vblock-cap")?.textContent === cap);
 }
 function open(id: number): void {
   (item(id).querySelector(".tl-sum") as HTMLElement).click();
@@ -194,12 +199,12 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     const it17 = item(17);
     expect(it17.classList.contains("open")).toBe(true);
     expect(it17.querySelector(".tl-meta")?.textContent).toBe("#17 · build · src · exit 2");
-    expect(it17.querySelector(".vblock-cap")?.textContent).toBe("Output");
-    expect(it17.querySelector(".vblock-note")?.textContent).toBe("24 B");
-    expect(it17.querySelector(".vblock pre")?.textContent).toBe("compiling...\nok\nwarn: x\n");
+    expect(block(17, "Command")?.querySelector("pre")?.textContent).toBe("make -j8");
+    expect(block(17, "Output")?.querySelector(".vblock-note")?.textContent).toBe("24 B");
+    expect(block(17, "Output")?.querySelector("pre")?.textContent).toBe("compiling...\nok\nwarn: x\n");
     expect(it17.querySelector("[data-rmore]")).toBeNull();
     // A click inside the open body is someone reading it: the row stays open.
-    (it17.querySelector(".vblock pre") as HTMLElement).click();
+    (block(17, "Output")!.querySelector("pre") as HTMLElement).click();
     expect(it17.classList.contains("open")).toBe(true);
     open(17);
     expect(it17.classList.contains("open")).toBe(false);
@@ -215,16 +220,15 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     open(21);
     await settle();
     let body = item(21).querySelector(".tl-body") as HTMLElement;
-    expect(body.querySelector(".vblock-note")?.textContent).toBe("128.0 KB of 256.0 KB");
+    expect(block(21, "Output")?.querySelector(".vblock-note")?.textContent).toBe("128.0 KB of 256.0 KB");
     expect(body.querySelector("[data-rmore]")?.textContent).toBe("Load more");
-    const blocks = Array.from(body.querySelectorAll(".vblock"));
-    expect(blocks[1].querySelector(".vblock-cap")?.textContent).toBe("Tail");
-    expect(blocks[1].querySelector(".vblock-note")?.textContent).toBe("output capped at 16.0 MB; its last 15 B");
-    expect(blocks[1].querySelector("pre")?.textContent).toBe("the last lines\n");
+    const tail = block(21, "Tail")!;
+    expect(tail.querySelector(".vblock-note")?.textContent).toBe("output capped at 16.0 MB; its last 15 B");
+    expect(tail.querySelector("pre")?.textContent).toBe("the last lines\n");
     (body.querySelector("[data-rmore]") as HTMLElement).click();
     await settle();
     body = item(21).querySelector(".tl-body") as HTMLElement;
-    expect(body.querySelector(".vblock pre")?.textContent).toBe("head+rest");
+    expect(block(21, "Output")?.querySelector("pre")?.textContent).toBe("head+rest");
     expect(body.querySelector("[data-rmore]")).toBeNull();
   });
 
@@ -284,6 +288,44 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(item(32).querySelector("[data-rcontent]")).toBeNull();
   });
 
+  /* The owner's report (2026-09-28): a long command's row is cut with an ellipsis, and an open
+     row showed its output but never the command whole - it could be neither read nor copied. */
+  it("an open row states its whole command, quoted the way the gateway sent it, with a Copy", async () => {
+    const script = {
+      ...finished, runId: 33,
+      input: { target: "build", argv: ["sh", "-c", "for i in $(seq 1 3); do echo \"$i\"; done", "it's", ""] },
+    };
+    serve([script], []);
+    replies["/api/remote/runs/33/output?after=0&max=131072"] = { runId: 33, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };
+    await view.mount();
+    open(33);
+    await settle();
+    const line = "sh -c 'for i in $(seq 1 3); do echo \"$i\"; done' 'it'\\''s' ''";
+    expect(block(33, "Command")?.querySelector("pre")?.textContent).toBe(line);
+    const wrote: string[] = [];
+    vi.stubGlobal("navigator", { clipboard: { writeText: (t: string) => { wrote.push(t); return Promise.resolve(); } } });
+    try {
+      (block(33, "Command")!.querySelector("[data-rcopy]") as HTMLElement).click();
+      await settle();
+      expect(wrote).toEqual([line]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("a file action's Command block names the action and its path", async () => {
+    const wrote = {
+      ...finished, runId: 34, action: "remote.write", state: "failed", exitCode: undefined,
+      input: { target: "build", remote: "C:/Users/me/seed.sql", contentBytes: 10 }, outputBytes: 0,
+    };
+    serve([wrote], []);
+    replies["/api/remote/runs/34/output?after=0&max=131072"] = { runId: 34, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };
+    await view.mount();
+    open(34);
+    await settle();
+    expect(block(34, "Command")?.querySelector("pre")?.textContent).toBe("write C:/Users/me/seed.sql");
+  });
+
   it("a run with no output says so in its Output block", async () => {
     serve([{ ...finished, state: "succeeded", exitCode: 0, outputBytes: 0 }], []);
     replies["/api/remote/runs/17/output?after=0&max=131072"] = { runId: 17, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };
@@ -300,11 +342,12 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     await view.mount();
     open(18);
     // Before the first bytes: the waiting line, and Cancel in the block's tools.
-    expect(item(18).querySelector(".vblock-cap")?.textContent).toBe("Live output");
+    expect(block(18, "Live output"), "the live block").toBeTruthy();
+    expect(block(18, "Command")?.querySelector("pre")?.textContent).toBe("./test.sh");
     await settle();
     expect(requests.some((r) => r.path === "/api/runs/18/output?after=0&max=131072")).toBe(true);
     const body = item(18).querySelector(".tl-body") as HTMLElement;
-    expect(body.querySelector(".vblock pre")?.textContent).toBe("tick\n");
+    expect(block(18, "Live output")?.querySelector("pre")?.textContent).toBe("tick\n");
     const cancel = body.querySelector("[data-rcancel]") as HTMLElement;
     expect(cancel.textContent).toBe("Cancel");
     cancel.click();
@@ -366,6 +409,6 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     await view.poll();
     expect(item(30)).toBeTruthy();
     expect(item(17).classList.contains("open")).toBe(true);
-    expect(item(17).querySelector(".vblock pre")?.textContent).toBe("ok");
+    expect(block(17, "Output")?.querySelector("pre")?.textContent).toBe("ok");
   });
 });
