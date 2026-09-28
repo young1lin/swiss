@@ -829,14 +829,17 @@ async fn cmd_exec(gw: Gateway, a: &RemoteArgs) -> i32 {
     )
     .await
 }
-/// Who this CLI is, for the run record (docs/41 A1): `cli:<os user>@<hostname>`. The
-/// admin API's CLI key (docs/48) proves "this machine's CLI", not who, so this is self-declared,
-/// which on a single-user machine is the truth and in the audit trail is the difference
-/// between "the operator ran make" and "an agent's MCP token ran make".
+/// Which surface submitted the run, for the record (docs/41 A1): `cli`, as against `panel` or
+/// an MCP client's own actor. The admin API's CLI key (docs/48) proves "this machine's CLI", not
+/// who, so this is self-declared either way, and the distinction that matters in the audit trail
+/// is "the operator ran make" vs "an agent's MCP token ran make" — which the word alone carries.
+///
+/// It used to be `cli:<os user>@<hostname>` (2026-09-28: "页面上把我名称都暴露出来了"). The
+/// machine's login name and hostname are the operator's own name on most machines, and the Runs
+/// page puts that on screen in every row — shoulder, screenshot, shared export. A surface that
+/// needs to say more can still pass `--actor`.
 fn cli_actor() -> String {
-    let user = whoami::username();
-    let host = whoami::fallible::hostname().unwrap_or_else(|_| "?".to_string());
-    format!("cli:{user}@{host}")
+    "cli".to_string()
 }
 
 /// Submit one remote run and, unless --detach, stream its live output through the
@@ -1591,13 +1594,21 @@ mod tests {
     }
 
     #[test]
-    fn the_cli_declares_itself_as_user_at_host() {
-        // docs/41 A1: the shape the audit trail keys on; the parts are whatever the OS
-        // says, never empty.
+    fn the_cli_declares_the_surface_and_not_the_person() {
+        // docs/41 A1 keys the audit trail on WHICH surface submitted the run. It used to
+        // spell `cli:<user>@<host>`, which on this machine is the operator's own name, and
+        // the Runs page shows the actor in every row (2026-09-28). The word alone answers
+        // the question the record is for; --actor still exists for anyone who wants more.
         let actor = cli_actor();
-        let rest = actor.strip_prefix("cli:").expect("the cli: prefix");
-        let (user, host) = rest.split_once('@').expect("user@host");
-        assert!(!user.is_empty() && !host.is_empty(), "{actor}");
+        assert_eq!(actor, "cli");
+        assert!(
+            !actor.contains('@'),
+            "no machine identity in the record: {actor}"
+        );
+        assert!(
+            !actor.contains(&whoami::username()),
+            "the login name must not ride along"
+        );
     }
 
     #[test]
