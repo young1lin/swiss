@@ -852,3 +852,248 @@ const newer = (a: string, b: string): boolean => {
   if (ams !== bms) return Number(ams) > Number(bms);
   return Number(aseq) > Number(bseq);
 };
+
+/* --- reading a fast stream (docs/49) ------------------------------------------------------------ */
+
+/* The feed that made this necessary: 9 symbols x 10 entries a second is 90 rows a second,
+   and a 500-row table turns over in under six seconds. Filtering, the summary strip and
+   the hold are the three things that make that readable. */
+const streamSummary = (stream as unknown as {
+  streamSummary: (rows: StreamEntry[], field: string) => { value: string; n: number; rate: string }[];
+}).streamSummary;
+const streamAutoField = (stream as unknown as {
+  streamAutoField: (rows: StreamEntry[], cols: string[]) => string | null;
+}).streamAutoField;
+const dbStreamQuote = (stream as unknown as { dbStreamQuote: (v: string) => string }).dbStreamQuote;
+
+describe("docs/49 S2.3 - the summary strip's folds", () => {
+  const tickRows = (n: number, syms: string[]): StreamEntry[] =>
+    Array.from({ length: n }, (_v: unknown, i: number) =>
+      entry(String(1000000 - i * 100) + "-0", { symbol: syms[i % syms.length], price: String(100 + i) }));
+
+  it("counts each value of the field and rates it over the held window's own span", () => {
+    // Ten rows one tenth of a second apart: 0.9 s of span, so a value seen 5 times
+    // reads 5.6/s. One denominator for every value, so the rates add up to the stream's.
+    const rows = tickRows(10, ["A", "B"]);
+    expect(streamSummary(rows, "symbol")).toEqual([
+      { value: "A", n: 5, rate: "5.6" },
+      { value: "B", n: 5, rate: "5.6" },
+    ]);
+  });
+
+  it("puts the busiest first and breaks a tie by value, so the strip does not reshuffle per tick", () => {
+    const rows = [
+      entry("9-0", { symbol: "B" }), entry("8-0", { symbol: "A" }),
+      entry("7-0", { symbol: "C" }), entry("6-0", { symbol: "C" }),
+    ];
+    expect(streamSummary(rows, "symbol").map((r) => r.value)).toEqual(["C", "A", "B"]);
+  });
+
+  it("reports no rate when there is no span, and skips rows without the field", () => {
+    // One row has no span; a count over zero seconds is infinity, and infinity is
+    // not a readout. A row missing the field is not a row with an empty value.
+    expect(streamSummary([entry("9-0", { symbol: "A" })], "symbol")).toEqual([{ value: "A", n: 1, rate: "" }]);
+    const mixed = [entry("9-0", { symbol: "A" }), entry("8-0", { other: "x" })];
+    expect(streamSummary(mixed, "symbol")).toEqual([{ value: "A", n: 1, rate: "1000" }]);
+    expect(streamSummary([], "symbol")).toEqual([]);
+  });
+
+  it("opens on the first column that repeats itself, never on one value per row", () => {
+    const rows = tickRows(20, ["A", "B", "C"]);
+    // `price` is one value per row - grouping by it would draw 20 chips nobody reads.
+    expect(streamAutoField(rows, ["price", "symbol"])).toBe("symbol");
+    expect(streamAutoField(rows, ["price"])).toBe(null);
+    expect(streamAutoField(rows.slice(0, 3), ["symbol"]), "too few rows to tell").toBe(null);
+    const oneValue = Array.from({ length: 8 }, (_v, i) => entry(String(9 - i) + "-0", { symbol: "A" }));
+    expect(streamAutoField(oneValue, ["symbol"]), "one value is not a grouping").toBe(null);
+  });
+
+  it("quotes a chip's value only when the filter line would otherwise split it", () => {
+    expect(dbStreamQuote("NVDA")).toBe("NVDA");
+    expect(dbStreamQuote("600519.SH")).toBe("600519.SH");
+    expect(dbStreamQuote("two words")).toBe("\"two words\"");
+    expect(dbStreamQuote("say \"hi\"")).toBe("\"say \\\"hi\\\"\"");
+  });
+});
+
+describe("docs/49 - the reading bar on a fast stream", () => {
+  const filterBox = (): Stub => find(byId.dbGridWrap, (n) => n.tag === "input")[0];
+  const chips = (): Stub[] => find(byId.dbGridWrap, (n) => n.dataset && n.dataset.schip !== undefined);
+  const groupSel = (): Stub => find(byId.dbGridWrap, (n) => n.tag === "select" && n.className === "db-stream-by")[0];
+  const theTab = (): Stub & Record<string, unknown> => {
+    const tab = dbTabs()[0];
+    if (tab.kind !== "key") throw new Error("expected the key tab");
+    return tab as unknown as Stub & Record<string, unknown>;
+  };
+  const typeFilter = (line: string): Promise<void> => {
+    const box = filterBox();
+    box.value = line;
+    box.onkeydown({ key: "Enter", preventDefault: () => {} }); // Enter applies now, no debounce
+    return tick() as Promise<void>;
+  };
+  const fast = (): StreamEntry[] =>
+    Array.from({ length: 9 }, (_v: unknown, i: number) =>
+      entry(String(1000000 - i * 10) + "-0", { symbol: i % 3 === 0 ? "NVDA" : "AAPL", price: String(100 + i) }));
+  const mountFast = (): Stub => mountStream({
+    key: "s", type: "stream", ttl: -1, length: 90000,
+    entries: fast(), columns: ["symbol", "price"], more: true,
+    firstId: "1-0", lastId: "1000000-0",
+  });
+
+  it("sends the filter with the window, replaces the rows, and says what the walk cost", async () => {
+    mountFast();
+    expect(chips().length, "the strip opens on the repeating column").toBe(2);
+    const p = typeFilter("symbol=NVDA");
+    await tick();
+    expect(requests[requests.length - 1].url).toContain("match=" + encodeURIComponent("symbol=NVDA"));
+    await answer({
+      entries: [entry("1000000-0", { symbol: "NVDA", price: "100" })],
+      columns: ["symbol", "price"], more: true, firstId: null, lastId: null, length: 90000,
+      scanned: 20000, scannedFrom: "1000000-0", scannedTo: "500000-0",
+    });
+    await p;
+    expect(rowIds(), "the rows that answered the OLD question are gone").toEqual(["1000000-0"]);
+    expect(barText()).toContain("1 kept of the newest 20000 examined");
+    expect(theTab().redisStreamScanTo).toBe("500000-0");
+  });
+
+  it("the follow tick under a filter polls from the newest id EXAMINED, not the newest kept", async () => {
+    mountFast();
+    const p0 = typeFilter("symbol=NVDA");
+    await tick();
+    await answer({
+      entries: [entry("900000-0", { symbol: "NVDA" })], columns: ["symbol"], more: false,
+      firstId: null, lastId: null, length: 90000,
+      scanned: 500, scannedFrom: "1000000-0", scannedTo: "900000-0",
+    });
+    await p0;
+    followOn();
+    const p = stream.dbStreamTick();
+    await answer({
+      entries: [], columns: [], more: false, firstId: null, lastId: null, length: 90100,
+      scanned: 90, scannedFrom: "1000100-0", scannedTo: "1000010-0",
+    });
+    await p;
+    const url = requests[requests.length - 1].url;
+    expect(url, "the cursor is the examined edge - not the kept row, which would re-read every tick")
+      .toContain("after=" + encodeURIComponent("1000000-0"));
+    expect(url).toContain("match=");
+    // A tick that matched nothing still moves the cursor on: that is the whole point.
+    const p2 = stream.dbStreamTick();
+    await answer({ entries: [], columns: [], more: false, firstId: null, lastId: null, length: 90200 });
+    await p2;
+    expect(requests[requests.length - 1].url).toContain("after=" + encodeURIComponent("1000100-0"));
+  });
+
+  it("Load earlier under a filter resumes where the walk STOPPED looking", async () => {
+    mountFast();
+    const p0 = typeFilter("symbol=NVDA");
+    await tick();
+    await answer({
+      entries: [entry("900000-0", { symbol: "NVDA" })], columns: ["symbol"], more: true,
+      firstId: null, lastId: null, length: 90000,
+      scanned: 20000, scannedFrom: "1000000-0", scannedTo: "800000-0",
+    });
+    await p0;
+    loadEarlierBtn().onclick();
+    await tick();
+    expect(requests[requests.length - 1].url).toContain("before=" + encodeURIComponent("800000-0"));
+    await answer({
+      entries: [entry("700000-0", { symbol: "NVDA" })], columns: ["symbol"], more: true,
+      firstId: null, lastId: null, scanned: 20000, scannedFrom: "800000-0", scannedTo: "600000-0",
+    });
+    expect(barText(), "the hits line counts the WHOLE walk back, not this page")
+      .toContain("2 kept of the newest 40000 examined");
+    expect(theTab().redisStreamScanTo).toBe("600000-0");
+  });
+
+  it("a chip filters to its own value, and a filter that matches nothing keeps its box", async () => {
+    mountFast();
+    const aapl = chips().find((c: Stub) => c.dataset.schip === "AAPL");
+    expect(aapl, "the strip drew a chip for the value this test clicks").toBeDefined();
+    const p = (aapl as Stub).onclick();
+    await tick();
+    expect(requests[requests.length - 1].url).toContain("match=" + encodeURIComponent("symbol=AAPL"));
+    await answer({
+      entries: [], columns: [], more: false, firstId: null, lastId: null, length: 90000,
+      scanned: 20000, scannedFrom: "1000000-0", scannedTo: "500000-0",
+    });
+    await p;
+    expect(rowIds()).toEqual([]);
+    expect(text(byId.dbGridWrap)).toContain("Nothing in the entries examined matches");
+    expect(filterBox(), "the one control that can undo the emptiness stays").toBeDefined();
+    expect(filterBox().value, "and it keeps the line, so it can be corrected").toBe("symbol=AAPL");
+  });
+
+  it("an automatic pick stays picked while its column is still there", async () => {
+    // Found on the 19998 walk: filtering to one symbol leaves that column ONE value,
+    // which stops looking like a dimension, and the strip jumped to `price` - a
+    // different question answered by the same strip, exactly when the operator had
+    // just narrowed the first one.
+    mountFast();
+    expect(chips().map((c: Stub) => c.dataset.schip)).toEqual(["AAPL", "NVDA"]);
+    const p = typeFilter("symbol=NVDA");
+    await tick();
+    await answer({
+      entries: fast().filter((e: StreamEntry) => e.fields.symbol === "NVDA"),
+      columns: ["symbol", "price"], more: true, firstId: null, lastId: null, length: 90000,
+      scanned: 500, scannedFrom: "1000000-0", scannedTo: "900000-0",
+    });
+    await p;
+    expect(chips().map((c: Stub) => c.dataset.schip), "still symbol, now one value")
+      .toEqual(["NVDA"]);
+  });
+
+  it("the group-by picker overrides the automatic choice, and off means off", () => {
+    mountFast();
+    expect(chips().map((c: Stub) => c.dataset.schip)).toEqual(["AAPL", "NVDA"]);
+    const sel = groupSel();
+    sel.value = "";
+    sel.onchange();
+    expect(chips().length, "off is a deliberate choice and outlasts the auto pick").toBe(0);
+    sel.value = "price";
+    sel.onchange();
+    expect(chips().length, "grouping by a measurement is the operator's call to make").toBe(9);
+  });
+
+  it("the strip is bounded: the busiest dozen, then a count of the rest", () => {
+    // A field with two dozen values would push the table off the screen the strip is
+    // there to summarise. The chips are already sorted busiest-first, so the tail is
+    // the part worth counting rather than drawing.
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 40,
+      entries: Array.from({ length: 40 }, (_v: unknown, i: number) =>
+        entry(String(1000000 - i * 10) + "-0", { box: "v" + String(i % 20) })),
+      columns: ["box"], more: false, firstId: null, lastId: null,
+    });
+    const painted = chips();
+    expect(painted.length).toBe(12);
+    expect(text(byId.dbGridWrap)).toContain("+8 more");
+  });
+
+  it("the pointer resting on the table holds the live edge, and moving away resumes it", async () => {
+    mountFast();
+    followOn();
+    setScroll(0, 22); // pinned at the edge: without the hold these rows would insert
+    const table = find(byId.dbGridWrap, (n: Stub) => n.tag === "table")[0];
+    table.onpointerenter();
+    const p = stream.dbStreamTick();
+    await answer({
+      entries: [entry("1000010-0", { symbol: "NVDA" })], columns: ["symbol"], more: false,
+      firstId: null, lastId: null, length: 90001,
+    });
+    await p;
+    expect(rowIds()[0], "the row under the reader's eyes did not move").toBe("1000000-0");
+    expect(barText()).toContain("held while you read");
+    expect(text(pill())).toContain("1 new entry");
+    table.onpointerleave();
+    const p2 = stream.dbStreamTick();
+    await answer({
+      entries: [entry("1000020-0", { symbol: "AAPL" })], columns: ["symbol"], more: false,
+      firstId: null, lastId: null, length: 90002,
+    });
+    await p2;
+    expect(rowIds()[0], "the pooled page rides the edge with the next tick").toBe("1000020-0");
+    expect(rowIds()[1]).toBe("1000010-0");
+  });
+});

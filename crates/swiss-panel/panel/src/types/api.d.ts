@@ -792,6 +792,14 @@ export interface ApiDbStreamWindow extends ApiDbRedisValue {
   more: boolean;
   firstId: string | null;
   lastId: string | null;
+  /* docs/49 §2.2: present only on a FILTERED window, because only a filter walks.
+   *  scanned is how many entries the server examined to answer; scannedFrom is the
+   *  newest id it reached (the follow tick's next cursor, so a quiet filter does not
+   *  re-read the same thousands every second) and scannedTo the oldest (where Load
+   *  earlier resumes). Absent means no walk happened, which is not the same as zero. */
+  scanned?: number;
+  scannedFrom?: string | null;
+  scannedTo?: string | null;
 }
 
 /** One row of the read-only consumer-group fold (docs/45 §2.4): pending is the group's

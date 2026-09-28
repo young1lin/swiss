@@ -714,6 +714,167 @@ async fn read_stream_refuses_non_stream_keys_and_both_cursors() {
 }
 
 #[tokio::test]
+async fn read_stream_filters_through_a_bounded_backward_walk() {
+    // docs/49 §2.2: redis indexes nothing inside an entry, so a filter is a walk —
+    // read backwards, keep what matches, stop at the count or the budget, and SAY
+    // how far you got. The seed's 10,000 ticks cycle five symbols, so `sym=AAA` is
+    // every fifth entry: a 500-entry scan page holds exactly the 100 the window
+    // wants, and the answer's two cursors are the two directions it can be resumed in.
+    let (_f, b) = browser("r49_filter").await;
+    let v = b
+        .read_stream("stream:ticks", &json!({ "match": "sym=AAA" }))
+        .await
+        .expect("the filtered window");
+    let entries = v["entries"].as_array().expect("entries").clone();
+    assert_eq!(
+        entries.len(),
+        100,
+        "the window still caps at the default 100"
+    );
+    assert!(
+        entries.iter().all(|e| e["fields"]["sym"] == json!("AAA")),
+        "every kept entry matches the filter"
+    );
+    assert_eq!(
+        entries[0]["id"],
+        json!("1700000999500-0"),
+        "newest match leads"
+    );
+    assert_eq!(entries[99]["id"], json!("1700000950000-0"));
+    assert_eq!(
+        v["scanned"],
+        json!(500),
+        "one scan page held all 100 matches"
+    );
+    assert_eq!(
+        v["scannedFrom"],
+        json!("1700000999900-0"),
+        "the newest id examined"
+    );
+    assert_eq!(v["scannedTo"], json!("1700000950000-0"), "and the oldest");
+    assert_eq!(
+        v["more"],
+        json!(true),
+        "the stream did not run out, the count did"
+    );
+    assert_eq!(
+        v["length"],
+        json!(10_000),
+        "the stream's own length is unfiltered"
+    );
+    assert_eq!(v["columns"], json!(["sym", "px", "qty", "side"]));
+
+    // Two terms is an AND, and a rarer match makes the walk PAGE: `side=b` halves
+    // the matches again, so a hundred of them span a thousand entries — two scan
+    // pages, not one, and the budget is nowhere near spent.
+    let two = b
+        .read_stream("stream:ticks", &json!({ "match": "sym=AAA side=b" }))
+        .await
+        .expect("the two-term window");
+    assert_eq!(two["entries"].as_array().expect("entries").len(), 100);
+    assert_eq!(two["entries"][0]["id"], json!("1700000999000-0"));
+    assert_eq!(
+        two["scanned"],
+        json!(1_000),
+        "a second page was read for the rest"
+    );
+    assert_eq!(two["scannedTo"], json!("1700000900000-0"));
+
+    // A bare word looks at every value, `~` is the substring form, and a count rides
+    // along unchanged — the filter narrows what is kept, never what was asked for.
+    let bare = b
+        .read_stream("stream:ticks", &json!({ "match": "EEE", "count": 5 }))
+        .await
+        .expect("the bare-word window");
+    let bare_rows = bare["entries"].as_array().expect("entries").clone();
+    assert_eq!(bare_rows.len(), 5);
+    assert!(bare_rows.iter().all(|e| e["fields"]["sym"] == json!("EEE")));
+    let sub = b
+        .read_stream("stream:ticks", &json!({ "match": "side~b", "count": 3 }))
+        .await
+        .expect("the substring window");
+    assert!(sub["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .all(|e| e["fields"]["side"] == json!("b")));
+
+    // The filter rides the follow tick too, and the tick's own low end is kept: the
+    // walk pages DOWN from the newest, never back past the cursor it was given.
+    let after = b
+        .read_stream(
+            "stream:ticks",
+            &json!({ "after": "1700000999000-0", "match": "sym=AAA" }),
+        )
+        .await
+        .expect("the filtered tick");
+    assert_eq!(
+        after["entries"].as_array().expect("entries").len(),
+        1,
+        "one AAA among the nine entries newer than the cursor"
+    );
+    assert_eq!(after["entries"][0]["id"], json!("1700000999500-0"));
+    assert_eq!(
+        after["scanned"],
+        json!(9),
+        "nine examined — the range, not the budget"
+    );
+    assert_eq!(after["scannedFrom"], json!("1700000999900-0"));
+    assert_eq!(after["scannedTo"], json!("1700000999100-0"));
+    assert_eq!(
+        after["more"],
+        json!(false),
+        "the range ran out: nothing was skipped"
+    );
+
+    // An unfiltered window says nothing about scanning, because none happened —
+    // absent, not zero, so the panel can tell "no walk" from "a walk that found none".
+    let plain = b
+        .read_stream("stream:ticks", &json!({}))
+        .await
+        .expect("plain");
+    assert!(plain.get("scanned").is_none(), "{plain}");
+    assert!(plain.get("scannedTo").is_none());
+}
+
+#[tokio::test]
+async fn a_filter_that_matches_nothing_says_how_far_it_looked() {
+    // docs/49 §2.2: the honest empty answer. The walk reads the whole stream (10,000
+    // entries, well inside the 20,000 budget), keeps nothing, and reports both the
+    // count it examined and the oldest id it reached — so the panel can say "nothing
+    // in the newest 10,000" instead of implying the stream holds nothing else.
+    // `more` is false here precisely because the RANGE ran out rather than the budget:
+    // there is genuinely nothing older to walk to.
+    let (_f, b) = browser("r49_nomatch").await;
+    let v = b
+        .read_stream("stream:ticks", &json!({ "match": "sym=ZZZ" }))
+        .await
+        .expect("the empty filtered window");
+    assert_eq!(v["entries"], json!([]));
+    assert_eq!(v["columns"], json!([]), "no rows, no column union");
+    assert_eq!(v["scanned"], json!(10_000), "the whole stream was examined");
+    assert_eq!(
+        v["scannedTo"],
+        json!("1700000000000-0"),
+        "as far back as there is"
+    );
+    assert_eq!(
+        v["more"],
+        json!(false),
+        "the stream ran out, not the budget"
+    );
+    assert_eq!(v["length"], json!(10_000));
+    // A filter line that cannot be split is refused before any of that happens.
+    let bad = b
+        .read_stream("stream:ticks", &json!({ "match": "sym=\"AAA" }))
+        .await;
+    assert!(
+        bad.expect_err("an unbalanced quote")
+            .contains("unbalanced quote"),
+        "the refusal names what is wrong with the line"
+    );
+}
+#[tokio::test]
 async fn stream_groups_reports_pending_and_lag() {
     // docs/45 §2.4: the read-only consumer table over the seed's feed group —
     // seven read-never-ACKed entries, one consumer, and the lag that follows; a
