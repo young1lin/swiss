@@ -26,6 +26,11 @@
 //!   hold, and silently sending an empty credential would turn a configuration error into a
 //!   mysterious 401 on someone else's server. The scheme inside the envelope keeps the
 //!   reference self-describing; the envelope gives it a boundary.
+//! - `${secret://kebab-name:default}` — the same ref with an operator-declared fallback: the
+//!   text after the first `:` (up to the closing brace, so it cannot hold a `}`) stands in
+//!   when the vault does not hold the name. The default is the operator's own literal, so it
+//!   is never collected for masking; the failure stays hard for a ref without one. A name
+//!   cannot contain `:`, so the form was an invalid reference before it meant anything.
 //!
 //! Outside the envelope there are NO references. A bare `secret://` is literal text —
 //! `https://x/secret://aaa/y` passes through byte-identical whatever the vault holds,
@@ -54,6 +59,48 @@ pub fn resolve(input: &str) -> Result<String, String> {
 /// (the actions' run paths) mask exactly these values, the same discipline env refs already
 /// have there: what a ref produced is a credential; what the user typed as a literal is config.
 pub fn resolve_collect(input: &str) -> Result<(String, Vec<String>), String> {
+    resolve_families(input, true, &vault_lookup)
+}
+
+/// The vault half alone: `${secret://...}` resolves, `${UPPER}` stays text. For a command
+/// that runs on ANOTHER machine (a remote exec), whose `${HOME}` is that machine's shell's
+/// to expand - substituting this machine's value there would be a silent wrong answer.
+pub fn resolve_secrets_collect(input: &str) -> Result<(String, Vec<String>), String> {
+    resolve_families(input, false, &vault_lookup)
+}
+
+/// Is every vault reference in the string well-formed? The question validation asks - a job
+/// saved, a job loaded at boot - where "is it stored" is the wrong one: the vault may gain the
+/// name later, and the run is where a missing one fails. Never reads the vault.
+pub fn check_secret_refs(input: &str) -> Result<(), String> {
+    resolve_families(input, false, &|_| Some(String::new())).map(|_| ())
+}
+
+/// Split what follows `secret://` into the name and its optional default, and validate the
+/// name. None when the name is malformed - the caller refuses rather than guessing.
+pub fn secret_ref_parts(rest: &str) -> Option<(&str, Option<&str>)> {
+    let (name, default) = match rest.split_once(':') {
+        Some((name, default)) => (name, Some(default)),
+        None => (rest, None),
+    };
+    valid_name(name).then_some((name, default))
+}
+
+/// Does one string reference the vault secret `name` - `${secret://name}`, the defaulted
+/// `${secret://name:...}` anywhere inside it, or the legacy bare whole value `secret://name`
+/// (docs/25 E2)? The question a secret replace asks of every definition string it may have
+/// to rebuild.
+pub fn names_secret(s: &str, name: &str) -> bool {
+    s == format!("{SECRET_SCHEME}{name}")
+        || s.contains(&format!("${{{SECRET_SCHEME}{name}}}"))
+        || s.contains(&format!("${{{SECRET_SCHEME}{name}:"))
+}
+
+fn resolve_families(
+    input: &str,
+    env_refs: bool,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<(String, Vec<String>), String> {
     let mut out = String::with_capacity(input.len());
     let mut resolved: Vec<String> = Vec::new();
     let chars: Vec<char> = input.chars().collect();
@@ -66,25 +113,32 @@ pub fn resolve_collect(input: &str) -> Result<(String, Vec<String>), String> {
                 // Vault refs: the scheme inside the envelope is a declared intent. A
                 // well-formed name resolves or fails hard; a malformed one refuses rather
                 // than shipping a credential-shaped literal to a third party.
-                if let Some(name) = content.strip_prefix(SECRET_SCHEME) {
-                    if valid_name(name) {
-                        let Some(value) = vault_lookup(name) else {
-                            return Err(format!(
-                                "references secret://{name} which is not in the vault"
-                            ));
-                        };
-                        resolved.push(value.clone());
-                        out.push_str(&value);
+                if let Some(rest) = content.strip_prefix(SECRET_SCHEME) {
+                    if let Some((name, default)) = secret_ref_parts(rest) {
+                        match (lookup(name), default) {
+                            (Some(value), _) => {
+                                resolved.push(value.clone());
+                                out.push_str(&value);
+                            }
+                            (None, Some(default)) => out.push_str(default),
+                            (None, None) => {
+                                return Err(format!(
+                                    "references secret://{name} which is not in the vault"
+                                ))
+                            }
+                        }
                         i = close + 1;
                         continue;
                     }
                     let shown: String = content.chars().take(24).collect();
                     return Err(format!(
-                        "invalid reference '${{{shown}}}' — secret names are lowercase kebab ([a-z][a-z0-9-]{{0,63}})"
+                        "invalid reference '${{{shown}}}' — secret names are lowercase kebab ([a-z][a-z0-9-]{{0,63}}), optionally followed by :default"
                     ));
                 }
-                // Env refs: the pre-vault grammar, unchanged and lenient (docs/19 D4).
-                let is_env_name = !content.is_empty()
+                // Env refs: the pre-vault grammar, unchanged and lenient (docs/19 D4). The
+                // vault-only pass leaves them as text for the far side's shell.
+                let is_env_name = env_refs
+                    && !content.is_empty()
                     && content
                         .chars()
                         .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
@@ -344,5 +398,93 @@ mod tests {
         assert_eq!(v["shaped"], "secret://Bad-Name");
         // Idempotent: a second pass over the same tree finds nothing.
         assert_eq!(migrate_legacy(&mut v), 0);
+    }
+
+    #[test]
+    fn a_default_stands_in_only_when_the_secret_is_missing() {
+        plant("refs-default-held", "held-value-123");
+        let (out, got) = resolve_collect("a=${secret://refs-default-held:fallback}").expect("held");
+        assert_eq!(
+            out, "a=held-value-123",
+            "a held secret wins over its default"
+        );
+        assert_eq!(got, ["held-value-123"]);
+
+        let (out, got) =
+            resolve_collect("a=${secret://refs-default-absent:fallback} b").expect("defaulted");
+        assert_eq!(out, "a=fallback b");
+        assert!(
+            got.is_empty(),
+            "a default is the operator's own literal, not a credential"
+        );
+        assert_eq!(
+            resolve("${secret://refs-default-absent:}").unwrap(),
+            "",
+            "an empty default"
+        );
+        // The default runs to the closing brace, colons and slashes included.
+        assert_eq!(
+            resolve("${secret://refs-default-absent:redis://h:6379/0}").unwrap(),
+            "redis://h:6379/0"
+        );
+        // Without a default a missing secret still fails hard (docs/19 D4).
+        let err = resolve("${secret://refs-default-absent}").unwrap_err();
+        assert!(err.contains("not in the vault"), "{err}");
+    }
+
+    #[test]
+    fn a_default_never_makes_a_malformed_name_valid() {
+        for bad in [
+            "${secret://Bad_Name:x}",
+            "${secret://:x}",
+            "${secret://9lives:x}",
+        ] {
+            assert!(resolve(bad).is_err(), "{bad} must be refused");
+        }
+    }
+
+    #[test]
+    fn a_syntax_check_never_consults_the_vault() {
+        // Validation (a job saved or loaded) asks "is this a reference" - not "is it stored".
+        // A name the vault does not hold yet passes: the run is where a missing one fails.
+        assert!(check_secret_refs("echo ${secret://refs-check-absent}").is_ok());
+        assert!(check_secret_refs("${secret://refs-check-absent:fallback}").is_ok());
+        assert!(check_secret_refs("plain ${HOME} text").is_ok());
+        for bad in [
+            "${secret://Bad}",
+            "${secret://Bad_Name:x}",
+            "x ${secret://}",
+        ] {
+            assert!(check_secret_refs(bad).is_err(), "{bad} must be refused");
+        }
+    }
+
+    #[test]
+    fn the_vault_only_pass_leaves_env_refs_for_the_far_side() {
+        // A remote command's ${HOME} is the REMOTE shell's to expand; only vault refs are ours.
+        plant("refs-vault-only", "vault-only-value");
+        unsafe { std::env::set_var("SWISS_REFS_FAR", "local") };
+        let (out, got) =
+            resolve_secrets_collect("echo ${SWISS_REFS_FAR} $HOME ${secret://refs-vault-only}")
+                .expect("resolves");
+        assert_eq!(out, "echo ${SWISS_REFS_FAR} $HOME vault-only-value");
+        assert_eq!(got, ["vault-only-value"]);
+        assert!(resolve_secrets_collect("${secret://refs-vault-absent}").is_err());
+    }
+
+    #[test]
+    fn a_reference_names_its_secret_with_or_without_a_default() {
+        assert!(names_secret("Bearer ${secret://api-key}", "api-key"));
+        assert!(names_secret("${secret://api-key:dev-key}", "api-key"));
+        assert!(
+            names_secret("secret://api-key", "api-key"),
+            "the legacy whole value"
+        );
+        assert!(!names_secret("${secret://api-key-2}", "api-key"));
+        assert!(!names_secret("${secret://api-key-2:x}", "api-key"));
+        assert!(
+            !names_secret("Bearer secret://api-key", "api-key"),
+            "a bare mid-string scheme is text"
+        );
     }
 }

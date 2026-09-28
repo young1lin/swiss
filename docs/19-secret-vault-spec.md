@@ -20,6 +20,16 @@
 > 已知未做：删除密钥同样不会让已加载的 MCP 立刻失去旧值，要到下次重建才失败。测试：
 > `tests/http_adapter.rs` 的 `replacing_a_secret_rebuilds_the_mcps_that_reference_it`（远端只认
 > 真 token，重试启动成功即证明重建后的 header 带的是新值），`admin-secrets.test.ts` 五例。
+>
+> 增补（2026-09-28，默认值）：用户原话"执行命令可以使用 `${secret://sss:test}`，`:` 后面表示默认值，sss
+> 表示密钥的 Key……页面上展示的，还是只是这个密钥的 key"。语法 `${secret://name:default}`：第一个 `:` 之后、
+> 右花括号之前的文本（所以不能含 `}`）在库里**没有**这个名字时顶替；库里有就用库里的值。名字本身不允许 `:`
+> （`[a-z][a-z0-9-]{0,63}`），所以这个形式以前是非法引用，不会改变任何已有字符串的含义。默认值是 operator
+> 自己写下的字面量，不收集进输出掩码；不带默认值的引用缺失时照旧硬失败；名字非法时有默认值也不救。改在唯一的
+> 解析器 `swiss_core::secure::refs::resolve_families`，因此**所有**引用面（MCP 配置、header、SSH、任务、
+> 远程执行）同时获得；配置校验 `is_env_ref` 与"替换值后重建哪些 MCP"的判定 `refs::names_secret` 认同一个
+> 形式。远程执行（docs/34 R10）第一次把引用带进 argv / env / cwd。测试：`refs.rs` 四例
+> （`a_default_stands_in_only_when_the_secret_is_missing` 等）、`config.rs` 的 `is_env_ref` 用例。
 
 ## 0. 现状与缺口（为什么是它、为什么是现在）
 

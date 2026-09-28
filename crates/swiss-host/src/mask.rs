@@ -483,6 +483,90 @@ pub fn unmask_body(body: &Map<String, Value>, current: Option<&ServerDef>) -> Ma
     out
 }
 
+/// Masks known values in a byte stream that arrives in arbitrary chunks - a remote exec's
+/// output, where a secret the command echoes can be cut across two SSH packets and a
+/// per-chunk replace would let both halves through. Every full occurrence becomes MASK; a
+/// chunk's tail that could still be the START of a value is held back until the next chunk
+/// (or finish) settles it, so only text that can begin a secret is ever delayed. Values
+/// shorter than 8 bytes are not masked, the same floor process output uses.
+pub struct StreamMask {
+    values: Vec<Vec<u8>>,
+    held: Vec<u8>,
+}
+
+impl StreamMask {
+    pub fn new(values: &[String]) -> Self {
+        let mut v: Vec<Vec<u8>> = values
+            .iter()
+            .filter(|s| s.len() >= 8)
+            .map(|s| s.as_bytes().to_vec())
+            .collect();
+        // Longest first: a value that contains another is masked whole.
+        v.sort_by_key(|b| std::cmp::Reverse(b.len()));
+        v.dedup();
+        StreamMask {
+            values: v,
+            held: Vec::new(),
+        }
+    }
+
+    /// Nothing to mask: the stream passes through untouched and nothing is ever held.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// The masked bytes that are safe to emit now.
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<u8> {
+        if self.values.is_empty() {
+            return bytes.to_vec();
+        }
+        let mut buf = std::mem::take(&mut self.held);
+        buf.extend_from_slice(bytes);
+        let mut masked = self.replace_all(&buf);
+        let keep = self.partial_tail(&masked);
+        self.held = masked.split_off(masked.len() - keep);
+        masked
+    }
+
+    /// The stream ended: whatever was held is not a secret after all.
+    pub fn finish(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.held)
+    }
+
+    fn replace_all(&self, buf: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(buf.len());
+        let mut i = 0;
+        'scan: while i < buf.len() {
+            for v in &self.values {
+                if buf[i..].starts_with(v) {
+                    out.extend_from_slice(MASK.as_bytes());
+                    i += v.len();
+                    continue 'scan;
+                }
+            }
+            out.push(buf[i]);
+            i += 1;
+        }
+        out
+    }
+
+    /// The length of the longest tail of `buf` that is a proper prefix of some value.
+    fn partial_tail(&self, buf: &[u8]) -> usize {
+        let longest = self.values.iter().map(|v| v.len() - 1).max().unwrap_or(0);
+        for n in (1..=longest.min(buf.len())).rev() {
+            let tail = &buf[buf.len() - n..];
+            if self
+                .values
+                .iter()
+                .any(|v| v.len() > n && v.starts_with(tail))
+            {
+                return n;
+            }
+        }
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // Ported from test/mask.test.ts.
@@ -617,5 +701,52 @@ mod tests {
             "`key` alone must not over-redact"
         );
         assert!(!is_secret_arg_key("rows"));
+    }
+
+    fn run_stream(mask: &mut StreamMask, chunks: &[&[u8]]) -> String {
+        let mut out = Vec::new();
+        for c in chunks {
+            out.extend(mask.feed(c));
+        }
+        out.extend(mask.finish());
+        String::from_utf8(out).expect("utf-8 in, utf-8 out")
+    }
+
+    #[test]
+    fn a_stream_mask_catches_a_secret_split_across_chunks() {
+        let mut m = StreamMask::new(&["abcdefgh12".to_string()]);
+        let out = run_stream(&mut m, &[b"x=abc", b"defgh", b"12 y=ab", b"cq"]);
+        // The second "abc" looked like the secret's start and was held; "q" proved it was not.
+        assert_eq!(out, format!("x={MASK} y=abcq"));
+    }
+
+    #[test]
+    fn a_stream_mask_releases_only_what_cannot_start_a_secret() {
+        let mut m = StreamMask::new(&["abcdefgh12".to_string()]);
+        assert_eq!(
+            m.feed(b"line one\n"),
+            b"line one\n",
+            "no secret-like tail: nothing held"
+        );
+        assert_eq!(
+            m.feed(b"tail abcd"),
+            b"tail ",
+            "a possible start is held back"
+        );
+        assert_eq!(m.finish(), b"abcd", "and handed out at the end");
+    }
+
+    #[test]
+    fn a_stream_mask_masks_every_value_and_skips_short_ones() {
+        let mut m = StreamMask::new(&[
+            "first-secret".to_string(),
+            "other-secret-2".to_string(),
+            "short".to_string(),
+        ]);
+        let out = run_stream(&mut m, &[b"first-secret, other-", b"secret-2, short"]);
+        assert_eq!(out, format!("{MASK}, {MASK}, short"));
+        let mut none = StreamMask::new(&[]);
+        assert_eq!(none.feed(b"passes through"), b"passes through");
+        assert!(none.is_empty());
     }
 }

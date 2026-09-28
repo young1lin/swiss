@@ -27,6 +27,12 @@ All notable changes to swiss are recorded here. The format follows
   shares none. The reveal lasts until the page reloads; loopback draws plain.
 - The `swiss-it` integration harness behind feature `it`: real MySQL/PostgreSQL/Redis engines
   through testcontainers, a CI integration job, and gate 2 in `scripts/deploy.ps1` (docs/44).
+- `swiss remote exec` resolves vault references: `${secret://name}` in an argv word, an
+  `--env` value or `--cwd` is replaced by the stored value on the way out, while the run list,
+  the audit and the panel keep the reference as typed, and output that echoes the value comes
+  back as `••••••••`. A missing name fails the run before anything is sent (docs/34 R10).
+- A vault reference can carry a default: `${secret://name:default}` uses `default` when the
+  vault has no such name, everywhere references resolve (docs/19, 2026-09-28).
 
 ### Fixed
 - The Data page's Redis sidebar follows the keyspace: the `r` refresh, a return to the page or

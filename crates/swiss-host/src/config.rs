@@ -94,17 +94,17 @@ pub struct GatewayConfig {
 /// files do.
 ///
 /// True for a value that is exactly one credential reference — `${ENV_VAR}` (held in the
-/// sealed env store) or `${secret://name}` (held in the vault, docs/25 E1) — i.e. a secret
-/// held outside the file, not inline. The masking stack keys off this to show the reference
-/// instead of ever holding the value.
+/// sealed env store) or `${secret://name}` / `${secret://name:default}` (held in the vault,
+/// docs/25 E1) — i.e. a secret held outside the file, not inline. The masking stack keys off
+/// this to show the reference instead of ever holding the value.
 pub fn is_env_ref(v: &Value) -> bool {
     let Some(s) = v.as_str() else { return false };
-    if let Some(name) = s
+    if let Some(rest) = s
         .strip_prefix("${")
         .and_then(|inner| inner.strip_suffix("}"))
         .and_then(|inner| inner.strip_prefix("secret://"))
     {
-        return swiss_core::secure::secretstore::valid_name(name);
+        return !rest.contains('}') && swiss_core::secure::refs::secret_ref_parts(rest).is_some();
     }
     // A legacy whole-value bare ref (docs/19 D1) still reads as a reference: loaders
     // migrate these to the envelope in memory (docs/25 E2), so this branch serves the
@@ -392,6 +392,12 @@ mod tests {
     #[test]
     fn env_ref_detection_only() {
         assert!(is_env_ref(&json!("${SWISS_TEST_SECRET}")));
+        assert!(is_env_ref(&json!("${secret://db-pass}")));
+        assert!(
+            is_env_ref(&json!("${secret://db-pass:dev-default}")),
+            "a default keeps it a reference"
+        );
+        assert!(!is_env_ref(&json!("${secret://Bad:x}")));
         assert!(!is_env_ref(&json!("plain")));
         assert!(!is_env_ref(&json!("${a-b}")));
         assert!(!is_env_ref(&json!("${}")));
