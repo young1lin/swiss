@@ -54,3 +54,24 @@
   - "先显示旧值、再换成新值"的过程没观察到——本地库太快，切换后第一次读状态时校验已经回来了（单测覆盖了不变不重画 / 变了替换）。
   - 离页确认后丢弃暂存写入：单测覆盖，真机没走（原生确认框会卡住 agent-browser）。
   - 无新文案，未做中文复走。
+
+## 4. 补记（2026-09-28）：D6 改为"安静重扫"
+
+主人报告：连一个空的 Redis，数据库行不出现；控制台里 `SET test 1` 之后，点刷新、离开再回来，key 列表都还是空的。
+两个根因：
+
+1. **服务端**：Redis 的 `list_databases` 只按 `INFO keyspace` 列库，而这一节只列**有 key 的库**。空实例上这一节只有
+   标题，连当前库 db0 都不在，目录回 `[]`，面板按 docs/43 M3 就把数据库行藏起来了。改为：当前库不在里面时补一行
+   （0 个 key），见 `redis_browser.rs` 的 `keyspace_databases`。
+2. **面板**：D6 规定 key 列表恢复后"不重扫"，理由是 SCAN 重扫会丢掉 More 进来的页，并说"它们都有自己的显式刷新"。
+   但 key 列表其实没有这样一个刷新：`r` 键刷新走 `loadDbView` → `dbShowSession`，而后者在 `d.redis` 非空时什么也不做；控制台
+   命令也不碰侧栏。结果列表停在第一次的回答上，只有改过滤条件或重载浏览器才会重扫。
+
+D6 改为：恢复、`r` 键刷新、切回连接、以及每条控制台命令之后，都**安静地重扫** key 列表（`dbRewalkKeys`）——从游标 0 开始，
+扫到与屏幕上相同的页数（`redis.pages`，首页加每次 More），所以 More 进来的页是被重读而不是丢掉；不清空、不出 Loading、
+不取消已打开的 key，回来的结果和手上的一致就不重画。同一时刻也安静重读数据库目录（各库的 key 数随写入变化），
+`dbLoadDatabases(quiet)` 只有在回答变了时才重画侧栏。控制台结果仍然不重跑。
+
+单测（先红后绿）：`test/data-session-cache.test.ts` 的 "a Redis key list is re-read, never frozen" 三条——刷新后别处
+SET 的 key 出现且列表全程没被清空；离页再回来按 More 的深度重扫两页、打开的 key 仍开着；控制台 SET 之后 key 列表
+与数据库目录的 key 数都跟上。服务端：`an_empty_keyspace_still_lists_the_database_the_connection_sits_on`。
