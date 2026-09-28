@@ -102,6 +102,7 @@ async fn list_runs(State(services): State<Arc<RuntimeServices>>) -> Response {
             "capacity": {
                 "maxConcurrentRuns": capacity.max_concurrent,
                 "maxQueuedRuns": capacity.max_queued,
+                "maxRemoteRunsPerTarget": services.runs.remote_per_target(),
             },
         }),
     )

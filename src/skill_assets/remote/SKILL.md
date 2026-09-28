@@ -78,6 +78,11 @@ swiss run logs 17 -f
 swiss run cancel 17
 ```
 
+Several commands may run against one target at once - from parallel terminals or agents -
+each on its own channel of the one SSH connection: up to 8 per target, a detached run
+counting until it ends. The next is refused with a message naming the target; retry when
+one finishes rather than looping on it.
+
 Exec streams stdout/stderr and exits with the remote exit code. Timeout precedence is CLI > project
 action > target default > 2 hours, capped at 24 hours. There is no PTY and no shell aliases or
 functions: `sudo` needs NOPASSWD or `-n`, an interactive-only shorthand like `ll` must be
