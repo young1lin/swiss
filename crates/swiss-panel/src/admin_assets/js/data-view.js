@@ -19,7 +19,7 @@
 import { $, apiJson, dbReqGuard, el, iconNode, targetEl, typeTagNode } from "./util.js";
 import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
-import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown, dbRefreshRedisValue } from "./data-browsers.js";
+import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown, dbRefreshKeyspace, dbRefreshRedisValue } from "./data-browsers.js";
 import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbBarClick, dbFavLoad, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
@@ -217,8 +217,8 @@ async function loadDbView()                {
 
 /** Paint the live session whole, then fetch only what it lacks (docs/47 D5). What the session
  *  holds is on screen at once; the catalog and the page in front are then re-read QUIETLY - no
- *  Loading, nothing cleared, a repaint only when the answer moved. A Redis key walk stays as
- *  paged (a re-walk would drop the pages More fetched) and a console is never re-run (D6). */
+ *  Loading, nothing cleared, a repaint only when the answer moved. A Redis key walk is re-walked
+ *  as deep as More took it, so no page is lost (D6, revised); a console is never re-run. */
 function dbShowSession()       {
   const d = dbConn();
   const gb = $                  ("dbGrep");
@@ -231,7 +231,7 @@ function dbShowSession()       {
   const chip = $("countChip");
   if (chip) chip.textContent = currentPageCount();
   if (!d.conn) return;
-  if (dbIsRedis()) { if (!d.redis) void dbLoadKeys(true); }
+  if (dbIsRedis()) dbRefreshKeyspace();
   else {
     void dbLoadTables(d.tables.length > 0);
     if (!d.databases) void dbLoadDatabases();
@@ -827,15 +827,19 @@ function dbSwitchDatabase(name        )       {
 /** docs/43 M3: fetch the connection's database catalog once — null means not asked yet,
  *  and an EMPTY array is a real answer (the dialect has no database axis; the row stays
  *  hidden). The lazy fetch rides the first renderDbSide after a connection switch; the
- *  selector itself then reads the cache. */
-async function dbLoadDatabases()                {
+ *  selector itself then reads the cache. `quiet` re-reads a catalog already held (a redis
+ *  keyspace's per-database key counts move with every write): a failure keeps it, and the
+ *  sidebar repaints only when the answer moved. */
+async function dbLoadDatabases(quiet          )                {
   const d = dbConn();
-  if (!d.conn || d.databases) return;
+  if (!d.conn || (d.databases && !quiet) || dbDatabasesInFlight) return;
   dbDatabasesInFlight = true;
   try {
     const j = await apiJson                        ("/api/db/" + encodeURIComponent(d.conn) + "/databases");
-    if (!j) { d.databases = []; return; } // the toast already spoke; an empty axis hides the row
-    d.databases = j.databases || [];
+    if (!j) { if (!d.databases) d.databases = []; return; } // the toast already spoke; an empty axis hides the row
+    const next = j.databases || [];
+    if (d.databases && JSON.stringify(next) === JSON.stringify(d.databases)) return;
+    d.databases = next;
   } finally {
     dbDatabasesInFlight = false;
   }
@@ -1294,6 +1298,6 @@ function dbFkOpen(fk            , value         )       {
   dbOpenTab({ kind: "table", table: j.table, schema: j.schema, filters: j.filters });
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbCurrentDatabase, dbDatabaseMenuItems, dbDialectOf, dbDropAllEdits, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, dbSectionLabel, dbSessionPinned, dbSortDatabases, dbSortMenu, dbSwitchConn, dbSwitchDatabase, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbCurrentDatabase, dbDatabaseMenuItems, dbDialectOf, dbDropAllEdits, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadDatabases, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, dbSectionLabel, dbSessionPinned, dbSortDatabases, dbSortMenu, dbSwitchConn, dbSwitchDatabase, loadDbView, renderDbSide, renderDbTables, renderDbView };
 // dbSectionEmpty stays module-private: the acceptance suite reaches it through the band's
 // emptyText hook, which is the only contract it has.

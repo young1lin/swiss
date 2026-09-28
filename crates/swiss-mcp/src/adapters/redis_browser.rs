@@ -379,39 +379,53 @@ impl RedisBrowser for RedisDataBrowser {
                 .unwrap_or_else(|| "0".to_string()),
             Err(_) => "0".to_string(),
         };
-        // Keyspace lines look like "db2:keys=170,expires=4,avg_ttl=1200" — name is the
-        // number after db, tables carries the key count (the redis twin of a table count).
-        let mut databases: Vec<Value> = Vec::new();
-        for line in ks.lines() {
-            let line = line.trim();
-            let Some((db, rest)) = line.split_once(':') else {
-                continue;
-            };
-            let Some(name) = db.strip_prefix("db") else {
-                continue;
-            };
-            let keys = rest
-                .split(',')
-                .find_map(|f| f.strip_prefix("keys=").and_then(|n| n.parse::<i64>().ok()))
-                .unwrap_or(0);
-            let is_current = name == current;
-            databases.push(json!({
-                "name": name,
-                "primary": is_current,
-                "browsable": is_current,
-                "system": false,
-                "tables": keys,
-                "reason": if is_current { Value::Null } else {
-                    json!("SELECT would break the shared connection; opening another database needs its own connection.")
-                },
-            }));
-        }
         Ok(json!({
             "primary": current,
             "current": current,
-            "databases": databases,
+            "databases": keyspace_databases(&ks, &current),
         }))
     }
+}
+
+/// The catalog rows of one INFO keyspace section. Keyspace lines look like
+/// "db2:keys=170,expires=4,avg_ttl=1200" — name is the number after db, tables carries the
+/// key count (the redis twin of a table count). INFO keyspace names only the databases that
+/// HOLD keys, so the one this connection sits on is added at 0 keys when it is empty: on an
+/// empty instance the section is bare, and a catalog without the current database hid the
+/// panel's database row until the first write.
+fn keyspace_databases(ks: &str, current: &str) -> Vec<Value> {
+    let row = |name: &str, keys: i64| {
+        let is_current = name == current;
+        json!({
+            "name": name,
+            "primary": is_current,
+            "browsable": is_current,
+            "system": false,
+            "tables": keys,
+            "reason": if is_current { Value::Null } else {
+                json!("SELECT would break the shared connection; opening another database needs its own connection.")
+            },
+        })
+    };
+    let mut databases: Vec<Value> = Vec::new();
+    for line in ks.lines() {
+        let line = line.trim();
+        let Some((db, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let Some(name) = db.strip_prefix("db") else {
+            continue;
+        };
+        let keys = rest
+            .split(',')
+            .find_map(|f| f.strip_prefix("keys=").and_then(|n| n.parse::<i64>().ok()))
+            .unwrap_or(0);
+        databases.push(row(name, keys));
+    }
+    if !databases.iter().any(|d| d["name"] == current) {
+        databases.push(row(current, 0));
+    }
+    databases
 }
 
 #[cfg(test)]
@@ -427,6 +441,29 @@ mod tests {
             .position(|a| a == flag)
             .and_then(|i| args.get(i + 1))
             .cloned()
+    }
+
+    #[test]
+    fn an_empty_keyspace_still_lists_the_database_the_connection_sits_on() {
+        // What INFO keyspace answers on an empty instance: the header and nothing else.
+        let rows = keyspace_databases("# Keyspace\r\n", "0");
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["name"], "0");
+        assert_eq!(rows[0]["primary"], true);
+        assert_eq!(rows[0]["browsable"], true);
+        assert_eq!(rows[0]["tables"], 0);
+
+        // Keys elsewhere only: the current db is added empty beside the listed one.
+        let rows = keyspace_databases("# Keyspace\r\ndb3:keys=5,expires=0,avg_ttl=0\r\n", "0");
+        let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
+        assert_eq!(names, ["3", "0"]);
+        assert_eq!(rows[0]["browsable"], false);
+        assert_eq!(rows[1]["tables"], 0);
+
+        // Listed already: never twice.
+        let rows = keyspace_databases("db0:keys=1,expires=0,avg_ttl=0\n", "0");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["tables"], 1);
     }
 
     #[test]

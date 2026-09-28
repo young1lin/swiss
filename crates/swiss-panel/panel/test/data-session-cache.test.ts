@@ -42,8 +42,12 @@ function shellSkeleton(): string {
    holds it right now. */
 let conns = [dbConn("shop", "mysql"), dbConn("cache", "redis"), dbConn("audit", "mysql")];
 let rows: Record<string, unknown>[] = [{ id: 1, total: 10 }, { id: 2, total: 20 }];
+/* The redis keyspace of "cache", as SCAN pages (the cursor is the page index), and whether the
+   walk on screen had been dropped whenever the server was asked for keys. */
+let keyPages: string[][] = [["k1"]];
+const walkDropped: boolean[] = [];
 const urls: string[] = [];
-function answer(url: string): unknown {
+function answer(url: string, init?: { body?: unknown }): unknown {
   const u = new URL(url, "http://x");
   const p = u.pathname;
   if (p === "/api/db") return { connections: conns };
@@ -51,7 +55,16 @@ function answer(url: string): unknown {
     const tables = [{ schema: "demo", name: "orders" }, { schema: "demo", name: "customers" }];
     return { tables, total: tables.length, page: 0, limit: 5000, more: false };
   }
-  if (p.endsWith("/databases")) return { primary: null, current: null, databases: [] };
+  if (p.endsWith("/databases")) {
+    if (!p.includes("/cache/")) return { primary: null, current: null, databases: [] };
+    const tables = keyPages.flat().length;
+    return { primary: "0", current: "0", databases: [{ name: "0", primary: true, browsable: true, system: false, tables, reason: null }] };
+  }
+  if (p.endsWith("/command")) {
+    const cmd = String(JSON.parse(String(init?.body || "{}")).command || "").split(/\s+/);
+    if (cmd[0].toUpperCase() === "SET") keyPages[keyPages.length - 1].push(cmd[1]);
+    return { reply: "OK", elapsedMs: 0 };
+  }
   if (p.endsWith("/data")) {
     return dbPage({
       schema: "demo", table: u.searchParams.get("table") || "t",
@@ -60,15 +73,23 @@ function answer(url: string): unknown {
     });
   }
   if (p.endsWith("/schema")) return { schema: "demo", table: u.searchParams.get("table"), columns: [], indexes: [], foreignKeys: [] };
-  if (p.endsWith("/keys")) return { keys: [{ key: "k1", type: "string", ttl: -1 }], cursor: "0", done: true, total: 1 };
+  if (p.endsWith("/keys")) {
+    walkDropped.push(rec().redis === null);
+    const at = Number(u.searchParams.get("cursor") || "0");
+    const last = at >= keyPages.length - 1;
+    return {
+      keys: (keyPages[at] || []).map((key) => ({ key, type: "string", ttl: -1 })),
+      cursor: last ? "0" : String(at + 1), done: last, total: keyPages.flat().length,
+    };
+  }
   if (p.endsWith("/key")) return { key: u.searchParams.get("key"), type: "string", ttl: -1, value: "v" };
   return {};
 }
 const prevFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
 Object.assign(globalThis, {
-  fetch: (url: unknown) => {
+  fetch: (url: unknown, init?: { body?: unknown }) => {
     urls.push(String(url));
-    const body = answer(String(url));
+    const body = answer(String(url), init);
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   },
 });
@@ -84,6 +105,8 @@ const page = await import("../src/views/data.js");
 const view = await import("../src/data-view.js");
 const tabs = await import("../src/data-tabs.js");
 const state = await import("../src/db-state.js") as Record<string, unknown>;
+const browsers = await import("../src/data-browsers.js");
+const sql = await import("../src/data-sql.js");
 
 const flush = async (): Promise<void> => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); };
 const front = (): DbTableTab => { const t = dbTab(); if (t.kind !== "table") throw new Error("not a table tab"); return t; };
@@ -94,6 +117,8 @@ beforeEach(async () => {
   unmountDbView(); // the full reset: the park goes too, so every case starts from nothing
   conns = [dbConn("shop", "mysql"), dbConn("cache", "redis"), dbConn("audit", "mysql")];
   rows = [{ id: 1, total: 10 }, { id: 2, total: 20 }];
+  keyPages = [["k1"]];
+  walkDropped.length = 0;
   urls.length = 0;
   vi.restoreAllMocks();
   await page.mount();
@@ -225,5 +250,57 @@ describe("the return is quiet and incremental (docs/47 D5)", () => {
     await view.dbSwitchConn("shop");
     await flush();
     expect(front().data?.rows[0].total, "the moved row came back from the server").toBe(11);
+  });
+});
+
+/* The owner's report: on an empty Redis, "SET test 1" never showed up - not after the refresh
+   button, not after leaving the page and coming back. D6 had kept the key walk as paged so More's
+   pages would not be lost, and nothing else re-walked it: the list froze at its first answer. */
+describe("a Redis key list is re-read, never frozen (docs/47 D6, revised)", () => {
+  const keys = (): string[] => (rec().redis?.keys || []).map((k) => k.key);
+
+  it("the refresh re-walks quietly: a key SET elsewhere shows up, and the walk is never dropped", async () => {
+    await view.dbSwitchConn("cache");
+    await flush();
+    expect(keys()).toEqual(["k1"]);
+    keyPages = [["k1", "test"]];
+    walkDropped.length = 0;
+    await page.refresh();
+    await flush();
+    expect(keys(), "the key SET since the last walk").toEqual(["k1", "test"]);
+    expect(document.getElementById("dbTables")?.textContent).toContain("test");
+    expect(walkDropped, "the list on screen stayed while the re-walk was out").toEqual([false]);
+  });
+
+  it("a return to the page re-walks as deep as More went, and the open key stays open", async () => {
+    keyPages = [["a"], ["b"]];
+    await view.dbSwitchConn("cache");
+    await flush();
+    expect(keys()).toEqual(["a"]);
+    await browsers.dbLoadKeys(false); // More
+    expect(keys()).toEqual(["a", "b"]);
+    await browsers.dbLoadRedisValue("a");
+    keyPages = [["a"], ["b", "c"]];
+    page.unmount();
+    await page.mount();
+    await flush();
+    expect(keys(), "both pages were re-read, not just the first").toEqual(["a", "b", "c"]);
+    const t = dbTab();
+    expect(t.kind === "key" ? t.redisKey : null).toBe("a");
+  });
+
+  it("a console command re-walks the keys and re-reads the database catalog", async () => {
+    await view.dbSwitchConn("cache");
+    await flush();
+    expect(rec().databases?.[0]?.tables).toBe(1);
+    tabs.dbOpenTab({ kind: "sql" });
+    await flush();
+    const st = dbTab();
+    if (st.kind !== "sql") throw new Error("not a console tab");
+    st.sqlText = "SET test 1";
+    await sql.dbRunSql();
+    await flush();
+    expect(keys()).toEqual(["k1", "test"]);
+    expect(rec().databases?.[0]?.tables, "the key count in the database drawer moved too").toBe(2);
   });
 });

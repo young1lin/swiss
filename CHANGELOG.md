@@ -29,6 +29,12 @@ All notable changes to swiss are recorded here. The format follows
   through testcontainers, a CI integration job, and gate 2 in `scripts/deploy.ps1` (docs/44).
 
 ### Fixed
+- The Data page's Redis sidebar follows the keyspace: the `r` refresh, a return to the page or
+  the connection, and every console command re-walk the key list quietly, as deep as More
+  went, with the open key kept. It used to freeze at its first answer, so `SET test 1` on an
+  empty Redis never showed up. An empty Redis also lists the database the connection sits on
+  (INFO keyspace names only databases holding keys), so the database row is there from the
+  first visit (docs/47 D6).
 - Replacing a secret now takes effect at once: the vault write rebuilds every MCP that
   references it, which kept the old value resolved in its adapter until the gateway
   restarted. The Secrets page gains Replace value… on each row's ⋯ menu, a Replace label

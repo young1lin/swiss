@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import type { ApiDbConnectionRow, ApiDbRedisKeysResponse, ApiDbRedisValue } from "./types/api.js";
-import type { DbRedisEdits, DbRedisTypeCfg } from "./types/state.js";
+import type { ApiDbConnectionRow, ApiDbRedisKeyRow, ApiDbRedisKeysResponse, ApiDbRedisValue } from "./types/api.js";
+import type { DbConnState, DbRedisEdits, DbRedisTypeCfg } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
 import { h } from "./h.js";
 import { renderDbFilters } from "./data-filters.js";
@@ -30,7 +30,7 @@ import { dbTypedConfirm } from "./data-edit.js";
 import { dbRenderStream } from "./data-stream.js";
 import { dbCopyText } from "./data-csv.js";
 import { dbOpenValueSheet } from "./data-value.js";
-import { renderDbTables } from "./data-view.js";
+import { dbLoadDatabases, renderDbTables } from "./data-view.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tk, tr, trn } from "./i18n.js";
 import { btn } from "./ui/button.js";
@@ -71,15 +71,7 @@ async function dbLoadKeys(reset: boolean | undefined): Promise<void> {
     const t0 = dbTab();
     if (t0.kind === "key") t0.redisKey = null; // a reset walk deselects the open key
   }
-  let q = "/api/db/" + encodeURIComponent(d.conn) + "/keys?count=200";
-  // The redis SCAN MATCH is exact-shape, while the SQL side greps as a substring - a bare
-  // word finding every table but no key read as "the key does not exist". Wrap the grep as
-  // a substring unless the user typed their own wildcard; docs/43 M2 walk caught this live.
-  if (d.grep) {
-    const pat = d.grep.includes("*") ? d.grep : "*" + d.grep + "*";
-    q += "&pattern=" + encodeURIComponent(pat);
-  }
-  if (d.redisType) q += "&type=" + encodeURIComponent(d.redisType);
+  let q = dbKeysQuery(d);
   if (d.redis && d.redis.cursor && d.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d.redis.cursor);
   const token = dbKeysReq.issue();
   let j: ApiDbRedisKeysResponse | null;
@@ -104,9 +96,73 @@ async function dbLoadKeys(reset: boolean | undefined): Promise<void> {
     cursor: j.cursor,
     done: !!j.done,
     total: j.total,
+    pages: (d.redis && !reset ? d.redis.pages || 1 : 0) + 1,
   };
   renderDbTables();
   renderDbFilters(); // the shown/keyspace readout rides on the pattern bar
+}
+
+/** The first-page /keys request of the walk the record describes - its pattern and type
+ *  filter, no cursor. */
+function dbKeysQuery(d: DbConnState): string {
+  let q = "/api/db/" + encodeURIComponent(d.conn!) + "/keys?count=200";
+  // The redis SCAN MATCH is exact-shape, while the SQL side greps as a substring - a bare
+  // word finding every table but no key read as "the key does not exist". Wrap the grep as
+  // a substring unless the user typed their own wildcard; docs/43 M2 walk caught this live.
+  if (d.grep) {
+    const pat = d.grep.includes("*") ? d.grep : "*" + d.grep + "*";
+    q += "&pattern=" + encodeURIComponent(pat);
+  }
+  if (d.redisType) q += "&type=" + encodeURIComponent(d.redisType);
+  return q;
+}
+
+/** docs/47 D6 (revised): walk the key list again QUIETLY - from cursor 0, as many pages deep
+ *  as the walk on screen went, so the pages More fetched are re-read rather than lost. Nothing
+ *  is cleared, the open key stays open, and the tree repaints only when the answer moved. A
+ *  key list that is never re-walked freezes at its first answer: "SET test 1" on an empty
+ *  Redis never showed up, whatever the operator clicked. */
+async function dbRewalkKeys(): Promise<void> {
+  const d = dbConn();
+  const was = d.redis;
+  if (!d.conn) return;
+  if (!was) { void dbLoadKeys(true); return; } // nothing walked yet: the ordinary first walk
+  if (dbKeysLoading) return; // a walk is already on its way; its answer is the fresh one
+  const q = dbKeysQuery(d);
+  const depth = was.pages || 1;
+  const token = dbKeysReq.issue();
+  let keys: ApiDbRedisKeyRow[] = [];
+  let pages = 0;
+  let j: ApiDbRedisKeysResponse | null = null;
+  dbKeysLoading = true;
+  try {
+    do {
+      const at: string = j && j.cursor ? "&cursor=" + encodeURIComponent(j.cursor) : "";
+      j = await apiJson<ApiDbRedisKeysResponse>(q + at);
+      // A failure keeps the walk on screen (apiJson has toasted); a newer walk owns the list.
+      if (!j || !dbKeysReq.accepts(token)) return;
+      keys = keys.concat(j.keys || []);
+      pages++;
+    } while (!j.done && pages < depth);
+  } finally {
+    dbKeysLoading = false;
+  }
+  const next = { keys: keys, cursor: j.cursor, done: !!j.done, total: j.total, pages: pages };
+  if (!d.redisError && JSON.stringify(next) === JSON.stringify(was)) return;
+  d.redisError = false;
+  d.redis = next;
+  // The session may have parked while the walk was out: the answer is still its keyspace, but
+  // the tree on screen is another connection's.
+  if (dbConn() !== d) return;
+  renderDbTables();
+  renderDbFilters();
+}
+
+/** A redis connection's sidebar, re-read quietly: the key walk and the database catalog
+ *  (its per-database key counts). The refresh, a return to the page and a console command. */
+function dbRefreshKeyspace(): void {
+  void dbRewalkKeys();
+  void dbLoadDatabases(true);
 }
 
 // One /key request chain: a slow answer for the key the user just left must be dropped,
@@ -836,7 +892,7 @@ function dbRedisKeydown(t: Element, ev: KeyboardEvent): boolean {
 }
 
 export {
-  DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore, dbRefreshRedisValue,
+  DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore, dbRefreshKeyspace, dbRefreshRedisValue, dbRewalkKeys,
   dbRedisClick, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
   dbRedisDisplayText, dbRedisEntries, dbRedisKeydown, dbRedisKeyMenu, dbRedisPendingCount, dbRenderRedisValue,
   dbRedisCellMenu, // docs/45 S2: the stream view reuses the docs/22 W5.3 cell menu

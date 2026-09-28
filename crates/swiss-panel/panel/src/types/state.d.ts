@@ -500,8 +500,9 @@ export interface DbConnState {
   history: string[];
   favorites: string[];
   /* The SCAN cursor is the wire's string (redis cursors are big unsigned numbers the
-     panel compares against "0" — never a JS number). */
-  redis: { keys: ApiDbRedisKeyRow[]; cursor: string; done: boolean; total: number } | null;
+     panel compares against "0" — never a JS number). `pages` is how many SCAN pages the walk
+     holds (the first plus every More; absent reads as 1): a re-walk goes that deep. */
+  redis: { keys: ApiDbRedisKeyRow[]; cursor: string; done: boolean; total: number; pages?: number } | null;
   redisType: string;
   redisError: boolean;
   /* docs/43 M3: the database axis. database is the SELECTED one ("" = the connection's

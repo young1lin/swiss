@@ -21,7 +21,7 @@ import { fill, h } from "./h.js";
 import type { HChild } from "./h.js";
 import {
   dbIsRedis, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
-  dbRedisPendingCount,
+  dbRedisPendingCount, dbRefreshKeyspace,
 } from "./data-browsers.js";
 import { SQL_TOKEN_RE, dbHighlightNodes, dbSqlPaint } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -648,6 +648,9 @@ async function dbRunSql(explain?: string | false): Promise<void> { // falsy runs
     dbHistoryPush(block);
     renderDbToolbar();
     renderDbGrid();
+    // The command may have written (SET, DEL, RENAME…): the sidebar re-reads the keyspace
+    // quietly, so a key the console just made is in the tree without a refresh.
+    dbRefreshKeyspace();
     return;
   }
   // docs/22 W4.3: the block is split on statement-level semicolons and sent ONE STATEMENT PER
