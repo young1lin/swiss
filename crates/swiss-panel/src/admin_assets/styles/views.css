@@ -219,6 +219,10 @@
        Blue text said "link" as loudly as it said "open". */
     .db-table.sel { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
     .db-table.sel .db-table-name { color: var(--text); font-weight: var(--w-emph); }
+    /* A redis key row's type glyph (2026-09-28): quiet grey, brightening with the row - the
+       connection rows' .db-row-mark behaviour. (.db-key is the grid's amber PK marker.) */
+    .db-key-row { --ic: var(--ic-m); --ic-ink: var(--text-3); }
+    .db-key-row:hover, .db-key-row.sel { --ic-ink: var(--text-2); }
     /* A long key ("wsproxy:console:token:session:…") or table name is cut with an ellipsis, not
        sliced at the card's edge; the full name is the row's title, one hover away. */
     .db-table-name { flex: 1; min-width: 0; font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -415,6 +415,9 @@ export interface DbSqlTab extends DbTabBase {
 export interface DbKeyTab extends DbTabBase {
   kind: "key";
   redisKey: string | null;
+  /* The type the sidebar row knew when it opened this tab: the card's glyph until the value
+   * lands and says the type itself (dbTabGlyph). */
+  redisKeyType?: string | null;
   redisValue: ApiDbRedisValue | null;
   redisEdits: DbRedisEdits | null;
   /* docs/45 S2: the stream view's grown row cache — the newest window plus every Load-
@@ -466,7 +469,7 @@ export type DbTab = DbTableTab | DbSqlTab | DbKeyTab | DbActivityTab;
  *  activity monitor per connection, so a second open activates the first. */
 export type DbTabSpec =
   | { kind: "table"; table: string; schema: string | null; filters?: DbFilterTerm[] }
-  | { kind: "key"; key: string }
+  | { kind: "key"; key: string; type?: string }
   | { kind: "sql" }
   | { kind: "activity" };
 

@@ -91,6 +91,18 @@ export function redisNamespaceTree(
   return [bare].concat(tops);
 }
 
+/** The sprite glyph for a redis type (2026-09-28): a key row and its open card lead with it, so
+ *  the six core types differ at a glance - "string" and "stream" side by side in the meta read
+ *  alike. Monochrome like every descriptive mark (design rule 2); the word stays in the meta. A
+ *  module type (ReJSON-RL, vectorset) or "none" is the plain key mark. Pure. */
+const REDIS_TYPE_GLYPH                         = {
+  string: "type", hash: "hash", list: "list", set: "braces", zset: "sort", stream: "activity",
+};
+
+export function redisTypeGlyph(type        )         {
+  return Object.prototype.hasOwnProperty.call(REDIS_TYPE_GLYPH, type) ? REDIS_TYPE_GLYPH[type] : "key";
+}
+
 /** One node: keys whose text ends at this prefix sit on it; the rest recurse by their next
  *  segment. A node with no keys of its own and exactly one child segment is a pass-through
  *  and folds into that child (the label carries the whole chain). */

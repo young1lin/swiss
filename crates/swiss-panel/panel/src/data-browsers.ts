@@ -31,6 +31,7 @@ import { dbRenderStream } from "./data-stream.js";
 import { dbCopyText } from "./data-csv.js";
 import { dbOpenValueSheet } from "./data-value.js";
 import { dbLoadDatabases, renderDbTables } from "./data-view.js";
+import { dbTabGlyph, renderDbTabs } from "./data-tabs.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tk, tr, trn } from "./i18n.js";
 import { btn } from "./ui/button.js";
@@ -185,11 +186,15 @@ async function dbLoadRedisValue(key: string): Promise<void> {
   const j = await apiJson<ApiDbRedisValue>("/api/db/" + encodeURIComponent(c.conn!) + "/key?key=" + encodeURIComponent(key));
   if (!dbValueReq.accepts(token)) return; // superseded: a newer key owns the pane
   if (!j) { d.redisKey = null; renderDbGrid(); return; }
+  const glyph = dbTabGlyph(d);
   d.redisValue = j;
   // docs/43 M4: the toolbar's primary action follows the value's TYPE — it paints only when
   // the value is here, so the toolbar repainted with the grid (the status line rides along).
   renderDbToolbar();
   renderDbGrid();
+  // The card wears the type's glyph: repaint the strip when the landed type is not the one
+  // it was painted with (opened without a row, or the key was recreated as another type).
+  if (dbTabGlyph(d) !== glyph) renderDbTabs();
 }
 
 /** docs/47 D5: a resumed key tab re-reads its value WITHOUT blanking it first, and repaints only
@@ -206,11 +211,13 @@ async function dbRefreshRedisValue(key: string): Promise<void> {
   const now = dbTab();
   if (now !== d || now.kind !== "key" || now.redisKey !== key || now.redisEdits) return;
   if (JSON.stringify(j) === JSON.stringify(now.redisValue)) return;
+  const glyph = dbTabGlyph(now);
   now.redisValue = j;
   now.redisStreamRows = null; // the stream caches belong to the value they grew from
   now.redisStreamMore = null;
   renderDbToolbar();
   renderDbGrid();
+  if (dbTabGlyph(now) !== glyph) renderDbTabs();
 }
 
 /* --- the typed value view (docs/22 W3.3) --------------------------------------------------------- */

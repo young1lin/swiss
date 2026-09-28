@@ -27,6 +27,7 @@ import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbLoadDetail } from "./data-structure.js";
 import { dbIsPg, renderDbTables } from "./data-view.js";
+import { redisTypeGlyph } from "./data-tree.js";
 import { tr, trn } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
 import { heldDot } from "./ui/status.js";
@@ -171,10 +172,15 @@ function dbTabTitle(t: DbTab): string {
 }
 
 /** The leading type glyph (swiss-ui-design §1.3): one per kind, so the strip is readable before
- *  a single name is. Pure. */
+ *  a single name is. A key's card wears its type's glyph - the one its sidebar row leads with:
+ *  the type the row handed over at open, then the landed value's (the truth, should the key
+ *  have been recreated as another type); the redis mark when neither is known. Pure. */
 function dbTabGlyph(t: DbTab): string {
   if (t.kind === "table") return "table";
-  if (t.kind === "key") return "redis";
+  if (t.kind === "key") {
+    const type = t.redisValue ? t.redisValue.type : t.redisKeyType;
+    return type ? redisTypeGlyph(type) : "redis";
+  }
   if (t.kind === "sql") return "terminal";
   return "clock";
 }
@@ -558,6 +564,7 @@ function dbBuildTab(spec: DbTabSpec): DbTab {
   if (spec.kind === "key") {
     const t = freshTab("key");
     t.redisKey = spec.key;
+    t.redisKeyType = spec.type || null;
     return t;
   }
   if (spec.kind === "sql") return freshTab("sql");
