@@ -311,9 +311,9 @@ impl RedisBrowser for RedisDataBrowser {
         if key.is_empty() {
             return Err("key is required".into());
         }
-        let (bound, count) = redis_stream_opts(o)?;
+        let q = redis_stream_opts(o)?;
         let handle = self.conn.get().await?;
-        read_stream_window(handle.as_ref(), key, &bound, count).await
+        read_stream_window(handle.as_ref(), key, &q).await
     }
 
     async fn stream_groups(&self, key: &str) -> Result<Value, String> {

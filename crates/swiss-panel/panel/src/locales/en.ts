@@ -144,6 +144,17 @@ const en: Record<string, string> = {
 "dataStream.gapSkipped": "more arrived than one page — a middle chunk was skipped",
 "dataStream.jumpLatest": "Jump to latest",
 "dataStream.followStopped": "Follow stopped — the last poll failed",
+/* docs/49: reading a fast stream — the filter line, what the walk cost, the summary
+   strip's chips, and why the table is holding still while someone reads it. */
+"dataStream.filter": "Filter entries",
+"dataStream.filterHint": "field=value, or any text",
+"dataStream.filterHits": "{n} kept of the newest {s} examined",
+"dataStream.noMatch": "Nothing in the entries examined matches this filter.",
+"dataStream.groupBy": "Group by",
+"dataStream.groupOff": "nothing",
+"dataStream.chipTitle": "Show only {f}={v}",
+"dataStream.moreValues": "+{n} more",
+"dataStream.held": "held while you read — move away to resume",
 
   /* --- dataCell --- */
   "dataBrowsers.undoBufferedDelete": "Undo this buffered delete",

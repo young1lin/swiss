@@ -26,7 +26,7 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::StreamBound;
+use swiss_host::dbbrowser::{StreamBound, StreamQuery, STREAM_SCAN_BUDGET, STREAM_SCAN_PAGE};
 
 use super::direct::{def_bool, BoxFut, Lazy};
 use super::redis_resources::RedisResources;
@@ -382,11 +382,7 @@ pub fn stream_id_to_ts(id: &str) -> Option<String> {
 /// page. Newest-first is XREVRANGE's native order, so nothing between redis and
 /// the DOM ever reverses a page.
 pub fn stream_window_args(key: &str, bound: &StreamBound, count: i64) -> Vec<String> {
-    let (start, end) = match bound {
-        StreamBound::Newest => ("+".to_string(), "-".to_string()),
-        StreamBound::Before(id) => (format!("({id}"), "-".to_string()),
-        StreamBound::After(id) => ("+".to_string(), format!("({id}")),
-    };
+    let (start, end) = stream_range_ends(bound);
     vec![
         key.to_string(),
         start,
@@ -394,6 +390,18 @@ pub fn stream_window_args(key: &str, bound: &StreamBound, count: i64) -> Vec<Str
         "COUNT".into(),
         count.to_string(),
     ]
+}
+
+/// The XREVRANGE (start, end) pair one bound names — start is the NEWER end,
+/// because XREVRANGE walks downwards. Split out for docs/49's filtered walk,
+/// which keeps the bound's own low end fixed and moves only the start as it
+/// pages: a follow tick that filtered must never walk back past its cursor.
+pub fn stream_range_ends(bound: &StreamBound) -> (String, String) {
+    match bound {
+        StreamBound::Newest => ("+".to_string(), "-".to_string()),
+        StreamBound::Before(id) => (format!("({id}"), "-".to_string()),
+        StreamBound::After(id) => ("+".to_string(), format!("({id}")),
+    }
 }
 
 /// The union of field names across a window, in first-seen order scanning
@@ -501,31 +509,75 @@ pub fn stream_window_shape(
     info_reply: &Value,
     count: i64,
 ) -> Value {
+    let entries = stream_decode(entries_reply);
+    let more = (entries.len() as i64) == count;
+    stream_window_of(key, entries, len_reply, info_reply, more, None)
+}
+
+/// One XREVRANGE reply into the panel's entry objects: `{ id, ts, fields }`,
+/// newest first, with the timestamp derived from the id server-side so no two
+/// clients disagree about when an entry happened. Split out of
+/// [`stream_window_shape`] for docs/49: a filtered walk decodes every page it
+/// examines and keeps only the rows that match.
+pub fn stream_decode(entries_reply: &Value) -> Vec<Value> {
     let raw = entries_reply.as_array().cloned().unwrap_or_default();
-    let entries: Vec<Value> = stream_entries(&raw)
+    stream_entries(&raw)
         .into_iter()
         .map(|e| {
             let id = e.get("id").map(value_string).unwrap_or_default();
-            let ts = stream_id_to_ts(&id).map(Value::String).unwrap_or(Value::Null);
+            let ts = stream_id_to_ts(&id)
+                .map(Value::String)
+                .unwrap_or(Value::Null);
             let mut obj = e.as_object().cloned().unwrap_or_default();
             obj.insert("ts".into(), ts);
             Value::Object(obj)
         })
-        .collect();
-    let more = (entries.len() as i64) == count;
+        .collect()
+}
+
+/// What a filtered walk has to admit to (docs/49 §2.2). Redis indexes nothing
+/// inside a stream entry, so a filter is a bounded backward read: this says how
+/// many entries it examined and which ids it got as far as, and the panel prints
+/// that instead of implying the stream holds nothing else. `from` is the NEWEST
+/// id examined — the follow tick's next cursor, so a quiet filter does not
+/// re-read the same thousands of non-matching entries every second — and `to`
+/// is the OLDEST, which is where Load-earlier resumes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamScan {
+    pub scanned: i64,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// The window reply itself, given entries that are already decoded and a `more`
+/// somebody else decided: docs/45's plain window computes it from a full page,
+/// docs/49's filtered walk from whether the range ran out.
+pub fn stream_window_of(
+    key: &str,
+    entries: Vec<Value>,
+    len_reply: &Value,
+    info_reply: &Value,
+    more: bool,
+    scan: Option<StreamScan>,
+) -> Value {
     let (first, last) = stream_ends(info_reply);
-    json!({
+    let mut out = json!({
         "key": key,
         "type": "stream",
         "length": value_i64(len_reply),
         "firstId": first,
         "lastId": last,
-        "entries": entries,
         "columns": stream_columns(&entries),
+        "entries": entries,
         "more": more,
-    })
+    });
+    if let Some(s) = scan {
+        out["scanned"] = json!(s.scanned);
+        out["scannedFrom"] = s.from.map(Value::String).unwrap_or(Value::Null);
+        out["scannedTo"] = s.to.map(Value::String).unwrap_or(Value::Null);
+    }
+    out
 }
-
 /// The stream window over the shared handle (docs/45 §2.1): XREVRANGE (the
 /// window) + XLEN (the length the panel's rate readout differences between
 /// ticks) + XINFO STREAM (first/last ids for the header), ONE pipeline — one
@@ -539,12 +591,21 @@ pub fn stream_window_shape(
 pub async fn read_stream_window(
     handle: &RedisHandle,
     key: &str,
-    bound: &StreamBound,
-    count: i64,
+    q: &StreamQuery,
 ) -> Result<Value, String> {
-    let args = stream_window_args(key, bound, count);
+    // The first round trip is the same three commands with or without a filter:
+    // an unfiltered window asks for exactly the page it will return, a filtered
+    // one asks for a scan page and keeps what matches.
+    let page = if q.filter.is_some() {
+        STREAM_SCAN_PAGE.min(STREAM_SCAN_BUDGET)
+    } else {
+        q.count
+    };
     let commands = vec![
-        ("XREVRANGE".to_string(), args),
+        (
+            "XREVRANGE".to_string(),
+            stream_window_args(key, &q.bound, page),
+        ),
         ("XLEN".to_string(), vec![key.to_string()]),
         (
             "XINFO".to_string(),
@@ -568,15 +629,78 @@ pub async fn read_stream_window(
             return Err(e);
         }
     };
-    Ok(stream_window_shape(
+    let first = replies.first().unwrap_or(&Value::Null).clone();
+    let len = replies.get(1).unwrap_or(&Value::Null).clone();
+    let info = replies.get(2).unwrap_or(&Value::Null).clone();
+    let Some(filter) = q.filter.as_ref() else {
+        let entries = stream_decode(&first);
+        let more = (entries.len() as i64) == q.count;
+        return Ok(stream_window_of(key, entries, &len, &info, more, None));
+    };
+    // docs/49 §2.2: the filtered walk. Redis has no index inside an entry, so the
+    // only honest answer is to read backwards and keep what matches — bounded by
+    // STREAM_SCAN_BUDGET, and the answer says how far it got. Each further page is
+    // one more XREVRANGE from the last id examined, with the BOUND'S OWN low end
+    // kept: a follow tick that pages must not walk back past its cursor.
+    let (_, end) = stream_range_ends(&q.bound);
+    let mut kept: Vec<Value> = Vec::new();
+    let mut scanned: i64 = 0;
+    let mut newest: Option<String> = None;
+    let mut oldest: Option<String> = None;
+    let mut exhausted = false;
+    let mut reply = first;
+    let mut want = page; // what THIS page asked for: a short answer means the range ended
+    loop {
+        let rows = stream_decode(&reply);
+        let got = rows.len() as i64;
+        scanned += got;
+        for row in rows {
+            let id = row.get("id").map(value_string).unwrap_or_default();
+            if newest.is_none() {
+                newest = Some(id.clone());
+            }
+            oldest = Some(id);
+            if kept.len() < q.count as usize && filter.matches(&row) {
+                kept.push(row);
+            }
+        }
+        if got < want {
+            exhausted = true; // the range itself ran out, not the budget
+            break;
+        }
+        if kept.len() >= q.count as usize || scanned >= STREAM_SCAN_BUDGET {
+            break;
+        }
+        let Some(cursor) = oldest.as_ref() else { break };
+        want = page.min(STREAM_SCAN_BUDGET - scanned);
+        let args = vec![
+            key.to_string(),
+            format!("({cursor}"),
+            end.clone(),
+            "COUNT".into(),
+            want.to_string(),
+        ];
+        reply = handle
+            .pipeline(&[("XREVRANGE".to_string(), args)])
+            .await?
+            .into_iter()
+            .next()
+            .unwrap_or(Value::Null);
+    }
+    let scan = StreamScan {
+        scanned,
+        from: newest,
+        to: oldest,
+    };
+    Ok(stream_window_of(
         key,
-        replies.first().unwrap_or(&Value::Null),
-        replies.get(1).unwrap_or(&Value::Null),
-        replies.get(2).unwrap_or(&Value::Null),
-        count,
+        kept,
+        &len,
+        &info,
+        !exhausted,
+        Some(scan),
     ))
 }
-
 /// XINFO GROUPS, read-only (docs/45 §2.4): the consumer-group table behind the
 /// groups fold. A key that vanished mid-view answers an empty table rather than
 /// an error — the stream view above it owns that story — while a non-stream
@@ -1540,8 +1664,55 @@ mod tests {
         let full = json!([["1-0", ["a", "1"]]]);
         let v = stream_window_shape("k", &full, &json!(1), &info, 1);
         assert_eq!(v["more"], json!(true), "a full page probably has more");
+        // docs/49 §2.2: an unfiltered window says nothing about scanning — there was
+        // none. Absent, not zero: zero would claim a walk that examined nothing.
+        assert_eq!(v.get("scanned"), None);
     }
 
+    #[test]
+fn a_filtered_window_reports_how_far_it_walked() {
+    // docs/49 §2.2: the filter's answer carries its own bound — how many entries
+    // were examined and the newest/oldest ids reached — so the panel can say "3 of
+    // the newest 20,000" instead of implying the stream holds nothing else. The
+    // two cursors are the two directions: `scannedFrom` is the follow tick's next
+    // `after`, `scannedTo` is where Load-earlier resumes.
+    let info = json!(["length", 9, "first-entry", null, "last-entry", null]);
+    let kept = stream_decode(&json!([["9-0", ["sym", "AAA"]]]));
+    let v = stream_window_of(
+        "k",
+        kept,
+        &json!(9),
+        &info,
+        true,
+        Some(StreamScan {
+            scanned: 20_000,
+            from: Some("9-0".into()),
+            to: Some("1-0".into()),
+        }),
+    );
+    assert_eq!(v["scanned"], json!(20_000));
+    assert_eq!(v["scannedFrom"], json!("9-0"));
+    assert_eq!(v["scannedTo"], json!("1-0"));
+    assert_eq!(v["more"], json!(true), "the budget ran out, not the stream");
+    assert_eq!(v["entries"][0]["id"], json!("9-0"));
+    assert_eq!(v["columns"], json!(["sym"]));
+    // A walk that examined nothing at all still answers both cursors as null
+    // rather than leaving the panel to guess at a missing key.
+    let empty = stream_window_of(
+        "k",
+        vec![],
+        &json!(0),
+        &info,
+        false,
+        Some(StreamScan {
+            scanned: 0,
+            from: None,
+            to: None,
+        }),
+    );
+    assert_eq!(empty["scannedFrom"], Value::Null);
+    assert_eq!(empty["scannedTo"], Value::Null);
+}
     #[test]
     fn read_windows_clamp() {
         assert_eq!(read_window(&json!({})), (0, 100));

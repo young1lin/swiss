@@ -776,8 +776,9 @@ pub trait RedisBrowser: Send + Sync {
     }
     /// docs/45 §2.1: a newest-first window of one stream key — the opening page,
     /// the page strictly older than a cursor (“load earlier”), or the page strictly
-    /// newer than one (the Follow tick). `o` is { before?: id, after?: id, count?: n },
-    /// validated by [`redis_stream_opts`]. Defaulted exactly like list_databases above
+    /// newer than one (the Follow tick). `o` is { before?: id, after?: id, count?: n,
+    /// match?: line } — the filter is docs/49's, a bounded backward walk because redis
+    /// indexes nothing inside an entry — validated by [`redis_stream_opts`]. Defaulted exactly like list_databases above
     /// (docs/43 M3): the capability is redis-only, and a defaulted method means every
     /// stub and any future flavor keeps compiling and answering an honest “not
     /// supported” instead of the host growing a match arm per capability.
@@ -836,13 +837,145 @@ pub fn clamp_count(v: Option<&Value>) -> Result<i64, String> {
     Ok(n.min(STREAM_WINDOW_MAX))
 }
 
+/// One term of a stream filter (docs/49 §2.1). `symbol=NVDA` is an exact field
+/// match, `data~"last": 1` is a substring of ONE field, and a bare word is a
+/// substring of anything the row carries — its id or any of its values. Case is
+/// ignored on the value side of all three: a feed writes `NVDA`, an operator
+/// types `nvda`, and refusing that is pedantry rather than precision. The FIELD
+/// NAME is compared exactly, because it is wire data the stream chose, not copy
+/// anyone types twice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamTerm {
+    Field { name: String, value: String },
+    FieldContains { name: String, value: String },
+    Text(String),
+}
+
+/// A parsed stream filter (docs/49 §2.1): every term must match, so
+/// `symbol=NVDA seq~99` narrows twice. AND and not OR because narrowing is what
+/// a reader of a fast feed is doing — 90 entries a second is already the OR of
+/// everything, and the one move that helps is taking things away.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamFilter {
+    pub terms: Vec<StreamTerm>,
+}
+
+/// The value side of one entry field as text: a stream's values are strings on
+/// the wire, but a shaped entry can carry a number or null, and a filter that
+/// silently skipped those would answer “no match” about a row that matches.
+fn stream_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+impl StreamFilter {
+    /// True when every term matches one shaped entry — `{ id, ts, fields }`, the
+    /// same object the window answers with, so the host filters exactly what the
+    /// panel would have seen.
+    pub fn matches(&self, entry: &Value) -> bool {
+        let fields = entry.get("fields").and_then(Value::as_object);
+        let field = |name: &str| -> Option<String> { fields?.get(name).map(stream_text) };
+        self.terms.iter().all(|term| match term {
+            StreamTerm::Field { name, value } => field(name)
+                .map(|v| v.to_lowercase() == *value)
+                .unwrap_or(false),
+            StreamTerm::FieldContains { name, value } => field(name)
+                .map(|v| v.to_lowercase().contains(value.as_str()))
+                .unwrap_or(false),
+            StreamTerm::Text(needle) => {
+                // The id and the timestamp are where a bare word looks first: an
+                // operator pastes an id out of a log, or types the minute they are
+                // hunting for, and neither is a field of the entry.
+                if ["id", "ts"].iter().any(|k| {
+                    entry
+                        .get(*k)
+                        .map(|v| stream_text(v).to_lowercase().contains(needle.as_str()))
+                        .unwrap_or(false)
+                }) {
+                    return true;
+                }
+                fields
+                    .map(|f| {
+                        f.values()
+                            .any(|v| stream_text(v).to_lowercase().contains(needle.as_str()))
+                    })
+                    .unwrap_or(false)
+            }
+        })
+    }
+}
+
+/// docs/49 §2.1: the `match` option into a filter. Splitting is shlex's job, not
+/// a hand-rolled whitespace split — `data~"last": 12` is one term with a space
+/// in it, and the redis console already learned this lesson the hard way
+/// (2026-09-28). An unbalanced quote is the caller's mistake and says so; an
+/// empty or blank filter is no filter at all, which is how the panel clears it.
+pub fn parse_stream_filter(line: &str) -> Result<Option<StreamFilter>, String> {
+    if line.trim().is_empty() {
+        return Ok(None);
+    }
+    let tokens = shlex::split(line).ok_or_else(|| {
+        "unbalanced quote in the filter — close it, or write a literal quote as \\\" inside the term"
+            .to_string()
+    })?;
+    let mut terms: Vec<StreamTerm> = Vec::new();
+    for token in tokens {
+        if token.is_empty() {
+            continue;
+        }
+        // The separator is the FIRST = or ~ in the token, and one at position 0
+        // names no field: `=42` is a reader typing a value, and reading it as a
+        // term over the empty field name would silently match nothing forever.
+        let cut = token
+            .char_indices()
+            .find(|(i, c)| *i > 0 && (*c == '=' || *c == '~'));
+        match cut {
+            Some((i, sep)) => {
+                let name = token[..i].to_string();
+                let value = token[i + sep.len_utf8()..].to_lowercase();
+                terms.push(if sep == '=' {
+                    StreamTerm::Field { name, value }
+                } else {
+                    StreamTerm::FieldContains { name, value }
+                });
+            }
+            None => terms.push(StreamTerm::Text(token.to_lowercase())),
+        }
+    }
+    if terms.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(StreamFilter { terms }))
+}
+
+/// How far back a filtered window may walk (docs/49 §2.2). Redis has no index
+/// over a stream's fields: the only honest answer to “show me NVDA” is to read
+/// entries backwards and keep the ones that match, so the walk is bounded and
+/// the answer REPORTS its bound — `scanned` entries examined, `scannedTo` the
+/// oldest id reached — rather than pretending the stream ends where the budget
+/// did. 500 is one XREVRANGE page (the same order as the panel's row cap) and
+/// 20,000 entries is ~3 MB of stream, a few hundred milliseconds on loopback.
+pub const STREAM_SCAN_PAGE: i64 = 500;
+pub const STREAM_SCAN_BUDGET: i64 = 20_000;
+
+/// One validated stream request (docs/45 §2.1, docs/49 §2.2): which window, how
+/// many entries, and — since docs/49 — what to keep.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamQuery {
+    pub bound: StreamBound,
+    pub count: i64,
+    pub filter: Option<StreamFilter>,
+}
 /// docs/45 §2.1: one option object into one bound + count. This is the single
 /// validation both the route (whose stub tests pin the 400s without a redis) and
 /// the real browser impl run — trait callers cannot bypass it and the rule
 /// cannot drift between transport and model. `before` and `after` together are
 /// refused outright: the two cursors page in OPPOSITE directions, and silently
 /// picking one would answer a question the caller did not ask.
-pub fn redis_stream_opts(o: &Value) -> Result<(StreamBound, i64), String> {
+pub fn redis_stream_opts(o: &Value) -> Result<StreamQuery, String> {
     let cursor = |name: &str| -> Result<Option<String>, String> {
         match o.get(name) {
             None | Some(Value::Null) => Ok(None),
@@ -868,9 +1001,17 @@ pub fn redis_stream_opts(o: &Value) -> Result<(StreamBound, i64), String> {
         (None, Some(id)) => StreamBound::After(id),
         (None, None) => StreamBound::Newest,
     };
-    Ok((bound, count))
+    let filter = match o.get("match") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => parse_stream_filter(s)?,
+        Some(other) => return Err(format!("match must be a filter line — got {other}")),
+    };
+    Ok(StreamQuery {
+        bound,
+        count,
+        filter,
+    })
 }
-
 /// Cap on one buffered redis commit (docs/22 W3.3): one pipeline is one bounded round trip,
 /// the redis twin of the edit route's MAX_EDITS.
 pub const REDIS_PIPELINE_MAX: usize = 1000;
@@ -3868,21 +4009,114 @@ mod tests {
     }
 
     #[test]
-    fn stream_opts_pick_one_direction() {
-        // docs/45 §2.1: before and after page in opposite directions — both at
-        // once is refused rather than silently resolved; neither is the opening page.
-        assert_eq!(redis_stream_opts(&json!({})).unwrap(), (StreamBound::Newest, 100));
-        assert_eq!(
-            redis_stream_opts(&json!({ "after": "5-0", "count": "40" })).unwrap(),
-            (StreamBound::After("5-0".into()), 40)
-        );
-        assert_eq!(
-            redis_stream_opts(&json!({ "before": "5-0" })).unwrap(),
-            (StreamBound::Before("5-0".into()), 100)
-        );
-        let both = redis_stream_opts(&json!({ "before": "1-0", "after": "2-0" })).unwrap_err();
-        assert!(both.contains("opposite directions"), "{both}");
-        assert!(redis_stream_opts(&json!({ "before": 7 })).unwrap_err().contains("entry id"));
+fn stream_opts_pick_one_direction() {
+    // docs/45 §2.1: before and after page in opposite directions — both at
+    // once is refused rather than silently resolved; neither is the opening page.
+    let q = |v: Value| redis_stream_opts(&v).unwrap();
+    assert_eq!(q(json!({})).bound, StreamBound::Newest);
+    assert_eq!(q(json!({})).count, 100);
+    assert_eq!(q(json!({})).filter, None);
+    let after = q(json!({ "after": "5-0", "count": "40" }));
+    assert_eq!(after.bound, StreamBound::After("5-0".into()));
+    assert_eq!(after.count, 40);
+    let before = q(json!({ "before": "5-0" }));
+    assert_eq!(before.bound, StreamBound::Before("5-0".into()));
+    assert_eq!(before.count, 100);
+    let both = redis_stream_opts(&json!({ "before": "1-0", "after": "2-0" })).unwrap_err();
+    assert!(both.contains("opposite directions"), "{both}");
+    assert!(redis_stream_opts(&json!({ "before": 7 }))
+        .unwrap_err()
+        .contains("entry id"));
+    // docs/49 §2.1: the filter rides the same option object, and a filter that
+    // is not a line at all is the caller's mistake — not a silently dropped one.
+    assert_eq!(
+        q(json!({ "match": "symbol=NVDA" })).filter,
+        Some(StreamFilter {
+            terms: vec![StreamTerm::Field {
+                name: "symbol".into(),
+                value: "nvda".into()
+            }],
+        })
+    );
+    assert_eq!(q(json!({ "match": "   " })).filter, None);
+    let bad = redis_stream_opts(&json!({ "match": 7 })).unwrap_err();
+    assert!(bad.contains("filter line"), "{bad}");
+}
+
+#[test]
+fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
+    // docs/49 §2.1: three forms — exact field, field substring, and a bare word
+    // that looks everywhere. Quoting is shlex's, so a term may carry spaces, and
+    // an unbalanced quote is refused instead of being split down the middle.
+    let f = parse_stream_filter("symbol=NVDA").unwrap().unwrap();
+    assert_eq!(
+        f.terms,
+        vec![StreamTerm::Field {
+            name: "symbol".into(),
+            value: "nvda".into()
+        }]
+    );
+    let two = parse_stream_filter("symbol=NVDA seq~99").unwrap().unwrap();
+    assert_eq!(
+        two.terms,
+        vec![
+            StreamTerm::Field {
+                name: "symbol".into(),
+                value: "nvda".into()
+            },
+            StreamTerm::FieldContains {
+                name: "seq".into(),
+                value: "99".into()
+            },
+        ]
+    );
+    // Quoting is what makes a term with a space in it ONE term — the whole term
+    // is quoted, exactly as a shell would take it, and the quotes come off.
+    let quoted = parse_stream_filter("data~'\"last\": 12'").unwrap().unwrap();
+    assert_eq!(
+        quoted.terms,
+        vec![StreamTerm::FieldContains {
+            name: "data".into(),
+            value: "\"last\": 12".into(),
+        }]
+    );
+    let bare = parse_stream_filter("\"600519.SH\"").unwrap().unwrap();
+    assert_eq!(bare.terms, vec![StreamTerm::Text("600519.sh".into())]);
+    // A separator at position 0 names no field: it is a value someone typed, and
+    // a term over the empty field name would match nothing for ever, silently.
+    assert_eq!(
+        parse_stream_filter("=42").unwrap().unwrap().terms,
+        vec![StreamTerm::Text("=42".into())]
+    );
+    assert_eq!(parse_stream_filter("").unwrap(), None);
+    assert_eq!(parse_stream_filter("  \t ").unwrap(), None);
+    let unbalanced = parse_stream_filter("symbol=\"NVDA").unwrap_err();
+    assert!(unbalanced.contains("unbalanced quote"), "{unbalanced}");
+}
+    #[test]
+    fn a_filter_keeps_the_rows_that_match_every_term() {
+        // docs/49 §2.1: AND across terms, case ignored on the value side, and a row
+        // missing the field never matches a term about it (rather than matching the
+        // empty string). The bare word looks at the id too — that is how an operator
+        // pastes an entry id from a log back into the filter box.
+        let row = json!({
+            "id": "1759100000000-0",
+            "ts": "2026-09-29T00:40:00.000Z",
+            "fields": { "symbol": "NVDA", "price": "121.90", "seq": 4499 },
+        });
+        let m = |line: &str| parse_stream_filter(line).unwrap().unwrap().matches(&row);
+        assert!(m("symbol=NVDA"));
+        assert!(m("symbol=nvda"), "case is ignored on the value side");
+        assert!(!m("symbol=NVD"), "= is exact, not a prefix");
+        assert!(m("symbol~vd"), "~ is the substring form");
+        assert!(m("nvda"), "a bare word looks at every value");
+        assert!(m("4499"), "a numeric value is text to the filter");
+        assert!(m("1759100000000"), "and the id is one of the places it looks");
+        assert!(m("00:40"), "so is the timestamp — the minute someone is hunting for");
+        assert!(m("symbol=NVDA price~121"), "every term must match");
+        assert!(!m("symbol=NVDA price~999"));
+        assert!(!m("side=buy"), "a field this row has not got matches nothing");
+        assert!(!m("ETH"));
     }
 
     #[tokio::test]

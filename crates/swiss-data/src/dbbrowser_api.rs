@@ -944,7 +944,9 @@ async fn key(
 
 /// GET /api/db/{name}/stream — one newest-first window of one stream key (docs/45
 /// §2.1): the opening page by default, `before` pages strictly older (“load
-/// earlier”), `after` catches up strictly newer (the Follow tick). Query params
+/// earlier”), `after` catches up strictly newer (the Follow tick). `match` keeps
+/// only the entries a filter line names (docs/49 §2.2) — a bounded backward walk,
+/// because redis indexes nothing inside an entry. Query params
 /// become the option object and are validated by the host helper BEFORE the lease
 /// — a caller's mistake is reported as such and costs no socket, the house rule
 /// every browser route follows.
@@ -985,7 +987,7 @@ async fn stream_groups(
 /// in).
 fn stream_opts_of(q: &HashMap<String, String>) -> Value {
     let mut o = serde_json::Map::new();
-    for p in ["before", "after", "count"] {
+    for p in ["before", "after", "count", "match"] {
         if let Some(v) = q.get(p).map(|s| s.trim()).filter(|v| !v.is_empty()) {
             o.insert(p.into(), json!(v));
         }
@@ -3168,6 +3170,43 @@ mod tests {
             seen.lock().expect("seen").stream_opts.clone().expect("forwarded"),
             json!({ "after": "1700000999900-0", "count": "40" })
         );
+
+        // docs/49 §2.2: the filter rides the same option object, and a filter line
+        // that cannot be split is the caller's mistake — refused before the lease,
+        // like every other bad parameter on this route.
+        let seen = SeenRef::default();
+        let app = router_of(vec![redis_entry_with("rdb", seen.clone())]);
+        let (status, _, _, _) = call(
+            app,
+            "GET",
+            "/api/db/rdb/stream?key=stream:ticks&match=symbol%3DNVDA",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            seen.lock()
+                .expect("seen")
+                .stream_opts
+                .clone()
+                .expect("forwarded"),
+            json!({ "match": "symbol=NVDA" })
+        );
+
+        let app = router_of(vec![redis_entry("rdb")]);
+        let (status, _, body, _) = call(
+            app,
+            "GET",
+            "/api/db/rdb/stream?key=s&match=symbol%3D%22NVDA",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"]
+            .as_str()
+            .expect("text")
+            .to_string();
+        assert!(err.contains("unbalanced quote"), "{err}");
 
         let seen = SeenRef::default();
         let app = router_of(vec![redis_entry_with("rdb", seen.clone())]);

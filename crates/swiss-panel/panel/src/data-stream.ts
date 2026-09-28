@@ -29,7 +29,7 @@ import type { ApiDbRedisValue } from "./types/api.js";
 import type { DbKeyTab } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el } from "./util.js";
 import { h } from "./h.js";
-import { sw } from "./ui/index.js";
+import { filterInput, sw } from "./ui/index.js";
 import { renderDbGrid } from "./data-grid.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tr, trn } from "./i18n.js";
@@ -119,6 +119,80 @@ export function isTopPinned(scrollTop: number, rowHeight: number): boolean {
   return scrollTop <= rowHeight;
 }
 
+/** One id's millisecond half as a number, or NaN when the id is not one. Pure. */
+export function streamIdMs(id: string): number {
+  return Number((id || "").split("-")[0]);
+}
+
+/** One row of the summary strip (docs/49 §2.3): a value of the grouped field, how
+ *  many of the held rows carry it, and that value's own rate. */
+export interface StreamSummaryRow {
+  value: string;
+  n: number;
+  rate: string;
+}
+
+/** The summary strip over the rows the table holds (docs/49 §2.3). Ninety rows a
+ *  second is not readable; nine numbers are, and this is those nine — count and
+ *  rate per value of one field, busiest first. The denominator is the whole held
+ *  window's own time span, so the rates add up to the stream's rate instead of
+ *  each being measured over a different stretch. Pure: the strip is a reading of
+ *  what is already on screen, not another request. */
+export function streamSummary(rows: ApiDbStreamEntry[], field: string): StreamSummaryRow[] {
+  const n = new Map<string, number>();
+  rows.forEach((e: ApiDbStreamEntry): void => {
+    const raw = e.fields[field];
+    if (raw == null) return;
+    const v = String(raw);
+    n.set(v, (n.get(v) || 0) + 1);
+  });
+  // Newest-first rows: the span is the first id's ms minus the last's. One sample
+  // (or a stream whose ids share a millisecond) has no span and reports no rate —
+  // a count over zero seconds is infinity, and infinity is not a readout.
+  const span = rows.length > 1
+    ? (streamIdMs(rows[0].id) - streamIdMs(rows[rows.length - 1].id)) / 1000
+    : 0;
+  const out: StreamSummaryRow[] = [];
+  n.forEach((count: number, value: string): void => {
+    out.push({
+      value: value,
+      n: count,
+      rate: span > 0 && isFinite(span) ? String(Math.round((count / span) * 10) / 10) : "",
+    });
+  });
+  // Busiest first, then by value so two equal counts keep a stable order between ticks.
+  return out.sort((a: StreamSummaryRow, b: StreamSummaryRow): number => {
+    return b.n - a.n || (a.value < b.value ? -1 : a.value > b.value ? 1 : 0);
+  });
+}
+
+/* What counts as a dimension rather than a measurement (docs/49 §2.3): a column
+   worth grouping by has a handful of repeated values, not one per row. A feed's
+   `symbol` has nine; its `price` and `seq` have one each per entry, and grouping
+   by those would draw 500 chips nobody can read. */
+const STREAM_GROUP_MAX_VALUES = 24;
+
+/** The field the summary strip opens on, or null when no column looks like a
+ *  dimension (docs/49 §2.3). First column that repeats itself wins — column order
+ *  is the stream's own, so the first repeating field is the one its author put
+ *  first. Pure. */
+export function streamAutoField(rows: ApiDbStreamEntry[], cols: string[]): string | null {
+  if (rows.length < 4) return null; // too few rows to tell a dimension from an id
+  for (const c of cols) {
+    const seen = new Set<string>();
+    let have = 0;
+    for (const e of rows) {
+      const raw = e.fields[c];
+      if (raw == null) continue;
+      have++;
+      seen.add(String(raw));
+      if (seen.size > STREAM_GROUP_MAX_VALUES) break;
+    }
+    if (seen.size >= 2 && seen.size <= STREAM_GROUP_MAX_VALUES && seen.size * 2 <= have) return c;
+  }
+  return null;
+}
+
 /** The field columns of the merged view: first-seen scanning newest-first — the same
  *  derivation the server runs per window (docs/45 §2.1), re-run here over the whole
  *  grown cache so an older page's new field lands at the table's tail. Pure. */
@@ -154,11 +228,16 @@ export function dbRenderStream(wrap: HTMLElement, v: ApiDbRedisValue): void {
   if (!rows.length) {
     // An empty stream is still a followable one (docs/45 §2.3): the bar mounts, the
     // first tick polls after=0-0, and the first append ever lands without a re-key.
+    // A FILTER that matched nothing keeps its box too (docs/49) — the one control
+    // that can undo the emptiness must not vanish with the rows it hid.
     dbStreamFollowBar(wrap, t);
-    wrap.appendChild(el("div", "db-hint", tr("dataStream.empty")));
+    dbStreamReadBar(wrap, t);
+    wrap.appendChild(el("div", "db-hint",
+      t.redisStreamMatch ? tr("dataStream.noMatch") : tr("dataStream.empty")));
     return;
   }
   dbStreamFollowBar(wrap, t);
+  dbStreamReadBar(wrap, t);
   const tbl = dbStreamTableNode(rows, v.key);
   wrap.appendChild(tbl);
   const groups = t.redisStreamGroupsOpen ? dbStreamGroupsNode(t) : null;
@@ -190,6 +269,14 @@ let dbStreamPainted: { tab: DbKeyTab; table: HTMLElement; groups: HTMLElement | 
 function dbStreamTableNode(rows: ApiDbStreamEntry[], key: string): HTMLElement {
   const cols = streamColumns(rows);
   const tbl = el("table", "db-grid");
+  // docs/49 §2.4: the pointer resting on the table means someone is reading it. A
+  // fast stream replaces every row on screen in a few seconds, so Follow holds
+  // while the pointer is there — the tick still fetches, the page pools behind the
+  // pill it already has, and moving away resumes at the live edge. Scrolling into
+  // history does the same thing; this is the same rule for a reader who has not
+  // scrolled anywhere, and it needs no control of its own.
+  tbl.onpointerenter = (): void => { dbStreamHold(true); };
+  tbl.onpointerleave = (): void => { dbStreamHold(false); };
   const thead = el("thead");
   const hr = el("tr");
   const head = (label: string): HTMLElement => {
@@ -285,7 +372,28 @@ function dbStreamFollowStart(): void {
 
 function dbStreamUrl(path: string, key: string, extra: string): string {
   const c = dbConn();
-  return "/api/db/" + encodeURIComponent(c.conn || "") + path + "?key=" + encodeURIComponent(key) + extra;
+  const t = dbTab();
+  // docs/49 §2.2: every window request carries the filter, so the tick, the opening
+  // page and Load-earlier all ask the same question. The groups fold does not: it is
+  // about the stream, not about which of its entries someone is reading.
+  const line = t.kind === "key" && t.redisStreamMatch ? t.redisStreamMatch.trim() : "";
+  const match = line && path === "/stream" ? "&match=" + encodeURIComponent(line) : "";
+  return "/api/db/" + encodeURIComponent(c.conn || "") + path + "?key=" + encodeURIComponent(key) + extra + match;
+}
+
+/** Take a whole window as the view's new truth (docs/45 §2.3, docs/49 §2.2): the
+ *  rows replace what was held, the holdback and the gap are reset because the
+ *  answer they described is gone, and the filter's own cursors come along — a
+ *  window that walked says how far it walked, one that did not answers null. */
+function dbStreamTake(t: DbKeyTab, j: ApiDbStreamWindow): void {
+  t.redisStreamRows = streamCap((j.entries || []).slice(), STREAM_ROW_CAP, "newest");
+  t.redisStreamPending = [];
+  t.redisStreamPendingDropped = false;
+  t.redisStreamGap = false;
+  t.redisStreamMore = !!j.more;
+  t.redisStreamScanned = j.scanned == null ? null : j.scanned;
+  t.redisStreamSeen = j.scannedFrom == null ? null : j.scannedFrom;
+  t.redisStreamScanTo = j.scannedTo == null ? null : j.scannedTo;
 }
 
 /** One Follow tick (docs/45 S3): one After page for the live edge. A hidden tab
@@ -303,7 +411,10 @@ export async function dbStreamTick(): Promise<void> {
   const rows = t.redisStreamRows;
   // An empty stream still gets its edge: the poll starts at the stream's very
   // beginning (after=0-0), so the first append ever lands without a re-key.
-  const newest = rows && rows.length ? rows[0].id : "0-0";
+  // Under a filter the cursor is the newest id the server EXAMINED, not the newest
+  // it returned (docs/49 §2.2): a filter matching one entry a minute would otherwise
+  // re-read every non-matching entry since that match, every single tick.
+  const newest = t.redisStreamSeen || (rows && rows.length ? rows[0].id : "0-0");
   dbFollowTicks++;
   const token = dbFollowReq.issue();
   const j = await apiJson<ApiDbStreamWindow>(dbStreamUrl("/stream", t.redisKey, "&after=" + encodeURIComponent(newest)));
@@ -330,6 +441,10 @@ export async function dbStreamTick(): Promise<void> {
   // untruncated tick heals nothing (the hole is still between the rows) — until the
   // operator jumps to the latest window, the one move that reopens the truth.
   if (j.more) t.redisStreamGap = true;
+  // The filter's live cursor moves whether or not anything matched — that is the
+  // whole point of it (docs/49 §2.2). It only ever moves FORWARD: a tick that
+  // examined nothing answers null and leaves the last one standing.
+  if (typeof j.scannedFrom === "string" && j.scannedFrom) t.redisStreamSeen = j.scannedFrom;
   let pinned = true;
   if (j.entries && j.entries.length) {
     // The live edge is the TOP of a newest-first table. A view at the top rides the
@@ -344,7 +459,8 @@ export async function dbStreamTick(): Promise<void> {
       const r0 = (wrap as HTMLElement).querySelector("tbody tr") as HTMLElement | null;
       rowH = r0 ? r0.offsetHeight : 0;
     }
-    pinned = isTopPinned(top, rowH);
+    // Reading holds the edge exactly as scrolling away does (docs/49 §2.4).
+    pinned = isTopPinned(top, rowH) && !t.redisStreamHold;
     if (pinned) {
       t.redisStreamRows = streamCap(
         streamMerge(streamMerge(t.redisStreamRows || [], t.redisStreamPending || []), j.entries),
@@ -390,6 +506,9 @@ export async function dbStreamTick(): Promise<void> {
    every pinned repaint, so these refs are re-taken per paint; a not-pinned tick
    updates them in place — the pill count, the rate readout, the gap bar's
    visibility — without touching the table the operator is reading. */
+let dbStreamHeldEl: HTMLElement | null = null;
+let dbStreamHitsEl: HTMLElement | null = null;
+let dbStreamReadBarEl: HTMLElement | null = null;
 let dbStreamPill: HTMLElement | null = null;
 let dbStreamPillN: HTMLElement | null = null; // the count text; the arrow icon sits beside it, painted once (fix-plan #14)
 let dbStreamRateEl: HTMLElement | null = null;
@@ -417,6 +536,100 @@ function dbStreamBarDyn(t: DbKeyTab): void {
   }
   if (dbStreamGapEl) dbStreamGapEl.hidden = !t.redisStreamGap;
   if (dbStreamGroupsBtn) dbStreamGroupsBtn.textContent = dbStreamGroupsLabel(t);
+  if (dbStreamHeldEl) dbStreamHeldEl.hidden = !t.redisStreamHold || !t.redisStreamFollow;
+  if (dbStreamHitsEl) {
+    const hits = dbStreamHitsText(t);
+    dbStreamHitsEl.hidden = !hits;
+    dbStreamHitsEl.textContent = hits;
+  }
+  dbStreamChipsPaint(t);
+}
+
+/** What a filtered window admits to (docs/49 §2.2): how many of the entries it
+ *  examined matched. Empty when nothing is filtered, or when the answer carried no
+ *  scan report — redis cannot count matches it never read, and a filter box with no
+ *  number beside it beats one with a number nobody can trust. Pure. */
+export function dbStreamHitsText(t: DbKeyTab): string {
+  if (!t.redisStreamMatch || t.redisStreamScanned == null) return "";
+  return tr("dataStream.filterHits", {
+    n: (t.redisStreamRows || []).length,
+    s: t.redisStreamScanned,
+  });
+}
+
+/** The pointer resting on the table, or leaving it (docs/49 §2.4). Nothing is
+ *  fetched or repainted here: the flag is read by the next tick, which is where
+ *  holding the edge actually happens. */
+function dbStreamHold(on: boolean): void {
+  const t = dbTab();
+  if (t.kind !== "key" || !!t.redisStreamHold === on) return;
+  t.redisStreamHold = on;
+  dbStreamBarDyn(t);
+}
+
+/** The summary strip's chips, rebuilt in place (docs/49 §2.3). They live at the end
+ *  of the read bar and are addressed by their data hook, so a tick replaces the
+ *  counts without touching the filter box the operator may be typing in. */
+function dbStreamChipsPaint(t: DbKeyTab): void {
+  const bar = dbStreamReadBarEl;
+  if (!bar || bar.isConnected === false) return;
+  // The chips are held by reference rather than found by selector: they are the only
+  // part of this bar a tick rewrites, and a query would also be a way to pick up
+  // something else's node.
+  dbStreamChipNodes.forEach((n: HTMLElement): void => { n.remove(); });
+  dbStreamChipNodes = [];
+  const by = dbStreamGroupField(t);
+  if (!by) return;
+  const all = streamSummary(t.redisStreamRows || [], by);
+  // The strip is a summary, so it is bounded: nine chips wrap to two rows on the 19998
+  // walk, and a field with two dozen values would push the table off the screen it is
+  // summarising. The busiest are kept (they are sorted that way) and the rest are counted.
+  all.slice(0, STREAM_CHIP_CAP).forEach((r: StreamSummaryRow): void => {
+    const label = r.value + " " + String(r.n) + (r.rate ? " · " + tr("dataStream.rate", { r: r.rate }) : "");
+    const chip = btn(label, {
+      title: tr("dataStream.chipTitle", { f: by, v: r.value }),
+      data: { schip: r.value },
+    });
+    chip.onclick = (): void => { void dbStreamApplyFilter(by + "=" + dbStreamQuote(r.value)); };
+    bar.appendChild(chip);
+    dbStreamChipNodes.push(chip);
+  });
+  if (all.length > STREAM_CHIP_CAP) {
+    const rest = el("span", "db-hint", tr("dataStream.moreValues", { n: all.length - STREAM_CHIP_CAP }));
+    bar.appendChild(rest);
+    dbStreamChipNodes.push(rest); // it is part of the strip, and goes with it
+  }
+}
+
+/* The chips painted last, so the next paint can take them out again. */
+let dbStreamChipNodes: HTMLElement[] = [];
+/* How many values the strip draws before it starts counting the rest. */
+const STREAM_CHIP_CAP = 12;
+
+/** A value on its way into a filter line: quoted when it carries a space or a quote,
+ *  because the line is split the way a shell splits it (docs/49 §2.1). Pure. */
+export function dbStreamQuote(v: string): string {
+  if (!/[\s"']/.test(v)) return v;
+  return "\"" + v.replace(/(["\\])/g, "\\$1") + "\"";
+}
+
+/** Which field the summary strip groups by (docs/49 §2.3): the operator's choice
+ *  when they made one — "" is a deliberate off — and otherwise the first column
+ *  that looks like a dimension. Choosing for them is the point: a strip nobody
+ *  opened is a strip nobody sees, and 90 rows a second is unreadable by default. */
+function dbStreamGroupField(t: DbKeyTab): string {
+  const rows = t.redisStreamRows || [];
+  if (t.redisStreamBy != null) return t.redisStreamBy;
+  const cols = streamColumns(rows);
+  // An automatic pick STAYS picked while its column is still there (found on the
+  // 19998 walk): filtering to symbol=NVDA leaves that column one value, which stops
+  // looking like a dimension, and the strip jumped to `price` — a different question
+  // answered by the same strip, at the moment the operator narrowed the first one.
+  const last = t.redisStreamByAuto;
+  if (last && cols.indexOf(last) >= 0) return last;
+  const pick = streamAutoField(rows, cols) || "";
+  t.redisStreamByAuto = pick || null;
+  return pick;
 }
 
 /** The gap bar's action (docs/45 §2.3): reopen the LATEST window — no cursor, the
@@ -436,13 +649,111 @@ async function dbStreamJumpLatest(): Promise<void> {
   if (!dbFollowReq.accepts(token)) return; // a newer tick or jump won the race
   if (!j) return; // apiJson toasted it; the gap bar stays and says the same thing
   if (dbTab() !== t) return; // the tab moved on mid-flight; the answer belongs to nobody
-  t.redisStreamRows = streamCap((j.entries || []).slice(), STREAM_ROW_CAP, "newest");
-  t.redisStreamPending = [];
-  t.redisStreamPendingDropped = false; // the pool it described is gone
-  t.redisStreamGap = false;
-  t.redisStreamMore = !!j.more;
+  dbStreamTake(t, j);
   renderDbGrid();
 }
+/** The reading bar (docs/49): the filter line, what it cost, and the summary strip.
+ *  Its own row under Follow's, because the two answer different questions — Follow is
+ *  about the live edge, this is about which of the entries are worth looking at. The
+ *  input is built ONCE per paint and never rewritten by a tick: a box that rebuilt
+ *  itself every second could not be typed in. */
+function dbStreamReadBar(wrap: HTMLElement, t: DbKeyTab): void {
+  const bar = el("div", "db-detail-meta");
+  // The box the operator is typing in is KEPT across the repaint, not rebuilt: a
+  // filter applies 400 ms after the last keystroke and repaints the pane, and a
+  // rebuilt input is a new node — focus, caret and IME state gone, the next
+  // keystroke landing nowhere. (The MCP logs search learned this at docs/31.)
+  // Moving a node still blurs it, so the focus is put back once the bar is in.
+  const live = dbStreamBox && typeof document !== "undefined" && document.activeElement === dbStreamBox
+    ? dbStreamBox
+    : null;
+  const caret = live ? live.selectionStart : null;
+  const box = live || filterInput({
+    placeholder: tr("dataStream.filterHint"),
+    label: tr("dataStream.filter"),
+    value: t.redisStreamMatch || "",
+  });
+  dbStreamBox = box;
+  box.oninput = (): void => {
+    // The same debounce the key-pattern box uses: a filter is a server walk, and
+    // one walk per keystroke would spend the budget on words half typed.
+    if (dbStreamFilterTimer != null) clearTimeout(dbStreamFilterTimer);
+    dbStreamFilterTimer = setTimeout((): void => {
+      dbStreamFilterTimer = null;
+      void dbStreamApplyFilter(box.value);
+    }, STREAM_FILTER_DEBOUNCE_MS);
+  };
+  box.onkeydown = (ev: KeyboardEvent): void => {
+    if (ev.key !== "Enter") return;
+    ev.preventDefault();
+    if (dbStreamFilterTimer != null) clearTimeout(dbStreamFilterTimer);
+    dbStreamFilterTimer = null;
+    void dbStreamApplyFilter(box.value);
+  };
+  bar.appendChild(box);
+  const hits = el("span", "db-hint", dbStreamHitsText(t));
+  hits.hidden = !dbStreamHitsText(t);
+  bar.appendChild(hits);
+  dbStreamHitsEl = hits;
+  const cols = streamColumns(t.redisStreamRows || []);
+  if (cols.length) {
+    bar.appendChild(h("span", null, tr("dataStream.groupBy")));
+    const by = dbStreamGroupField(t);
+    const sel = el("select", "db-stream-by") as HTMLSelectElement;
+    const add = (value: string, label: string): void => {
+      const opt = el("option", "", label) as HTMLOptionElement;
+      opt.value = value;
+      if (value === by) opt.selected = true;
+      sel.appendChild(opt);
+    };
+    add("", tr("dataStream.groupOff"));
+    cols.forEach((c: string): void => { add(c, c); }); // a field name is wire data, not copy
+    sel.onchange = (): void => {
+      const cur = dbTab();
+      if (cur.kind !== "key") return;
+      cur.redisStreamBy = sel.value; // "" is a deliberate off, and outlasts the auto pick
+      dbStreamChipsPaint(cur);
+    };
+    bar.appendChild(sel);
+  }
+  wrap.appendChild(bar);
+  dbStreamReadBarEl = bar;
+  if (live) {
+    live.focus();
+    // type=search supports the range; a stub or an exotic input might not, and a
+    // caret that could not be restored is not worth failing a paint over.
+    try { live.setSelectionRange(caret, caret); } catch { /* nothing to restore */ }
+  }
+  dbStreamChipsPaint(t);
+}
+
+/* One debounce for the filter box, module-scoped like the poller's own timer: the
+   box is rebuilt on every full paint, so the timer cannot live on the element.
+   dbStreamBox is the live node the paint above hands forward. */
+let dbStreamFilterTimer: ReturnType<typeof setTimeout> | null = null;
+let dbStreamBox: HTMLInputElement | null = null;
+const STREAM_FILTER_DEBOUNCE_MS = 400;
+
+/** Apply a filter line (docs/49 §2.2): a new filter is a NEW window, so the rows on
+ *  screen go — they answered the old question, and splicing the two would present a
+ *  table that never existed. Exported for the acceptance suite, which drives it the
+ *  way the box's debounce would. */
+export async function dbStreamApplyFilter(line: string): Promise<void> {
+  const t = dbTab();
+  if (t.kind !== "key" || !t.redisKey) return;
+  if ((t.redisStreamMatch || "") === line) return;
+  t.redisStreamMatch = line;
+  // Issued on the follow guard: a tick in flight speaks for the window this is
+  // about to replace, exactly as at a jump to latest.
+  const token = dbFollowReq.issue();
+  const j = await apiJson<ApiDbStreamWindow>(dbStreamUrl("/stream", t.redisKey, ""));
+  if (!dbFollowReq.accepts(token)) return;
+  if (!j) return; // apiJson toasted it; the box keeps the line so it can be corrected
+  if (dbTab() !== t) return; // the tab moved on mid-flight
+  dbStreamTake(t, j);
+  renderDbGrid();
+}
+
 /** The Follow bar: on/off, the interval, the rate readout, and the groups fold's toggle —
  *  one row in the value header's own vocabulary, painted above the table. */
 function dbStreamFollowBar(wrap: HTMLElement, t: DbKeyTab): void {
@@ -514,6 +825,12 @@ function dbStreamFollowBar(wrap: HTMLElement, t: DbKeyTab): void {
   bar.appendChild(pill);
   dbStreamPill = pill;
   dbStreamPillN = pillN;
+  // docs/49 §2.4: why the table stopped moving. Without this the hold reads as a
+  // stall — the one thing a live view must never look like.
+  const held = el("span", "db-hint", tr("dataStream.held"));
+  held.hidden = !t.redisStreamHold || !t.redisStreamFollow;
+  bar.appendChild(held);
+  dbStreamHeldEl = held;
   // The gap bar: a truncated live-edge page skipped a middle chunk; the honest move is
   // reopening the latest window, not splicing two ends into a lie.
   const gap = btn(tr("dataStream.gapSkipped") + " · " + tr("dataStream.jumpLatest"), { data: { stream: "gap" } });
@@ -613,7 +930,10 @@ export async function dbStreamLoadEarlier(): Promise<void> {
   if (!c.conn || t.kind !== "key" || !t.redisKey) return;
   const rows = t.redisStreamRows;
   if (dbStreamLoading || !rows || !rows.length || !t.redisStreamMore) return;
-  const oldest = rows[rows.length - 1].id;
+  // Under a filter the walk resumes where the last one STOPPED looking, not at the
+  // oldest row it kept (docs/49 §2.2): a filter that found three matches in twenty
+  // thousand entries would otherwise re-read the same twenty thousand on every click.
+  const oldest = t.redisStreamScanTo || rows[rows.length - 1].id;
   dbStreamLoading = true;
   const token = dbStreamReq.issue();
   let j: ApiDbStreamWindow | null = null;
@@ -629,5 +949,9 @@ export async function dbStreamLoadEarlier(): Promise<void> {
     streamMerge(t.redisStreamRows || [], j.entries || []), STREAM_ROW_CAP, "oldest",
   );
   t.redisStreamMore = !!j.more;
+  if (typeof j.scannedTo === "string" && j.scannedTo) t.redisStreamScanTo = j.scannedTo;
+  // The hits line counts the whole walk backwards, not this page: "3 in the newest
+  // 40,000" is the fact an operator needs before deciding to keep clicking.
+  if (j.scanned != null) t.redisStreamScanned = (t.redisStreamScanned || 0) + j.scanned;
   renderDbGrid();
 }

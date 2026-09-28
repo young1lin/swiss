@@ -453,6 +453,24 @@ export interface DbKeyTab extends DbTabBase {
   redisStreamGap?: boolean;
   redisStreamPendingDropped?: boolean;
   redisStreamErr?: string | null;
+  /* docs/49: reading a fast stream. redisStreamMatch is the filter line as typed
+   *  (empty is no filter); redisStreamScanned/redisStreamSeen/redisStreamScanTo are
+   *  the last filtered answer's own report — how many entries the server examined,
+   *  the newest id it reached (the follow tick's cursor, so a filter that matches
+   *  nothing does not re-read the same entries every second) and the oldest (where
+   *  Load earlier resumes, so a walk that found nothing still moves). redisStreamBy
+   *  is the summary strip's field the OPERATOR chose ("" is a deliberate off) and
+   *  redisStreamByAuto the last one the panel chose for them — kept so the strip does
+   *  not jump to another field the moment a filter narrows the first one;
+   *  redisStreamHold is the pointer resting on the table — rows pool behind the pill
+   *  while someone reads, instead of scrolling out from under them. */
+  redisStreamMatch?: string;
+  redisStreamScanned?: number | null;
+  redisStreamSeen?: string | null;
+  redisStreamScanTo?: string | null;
+  redisStreamBy?: string | null;
+  redisStreamByAuto?: string | null;
+  redisStreamHold?: boolean;
 }
 
 /** The activity monitor as an open object (docs/22 W3.2, docs/42 T2): the last

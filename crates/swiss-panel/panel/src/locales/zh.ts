@@ -140,6 +140,16 @@ const zh: Record<string, string> = {
 "dataStream.gapSkipped": "有更多，已跳过中间部分",
 "dataStream.jumpLatest": "跳到最新",
 "dataStream.followStopped": "已停止跟随——上次轮询失败",
+/* docs/49：快速流的阅读——过滤条件、扫描代价、分组概览，以及表格为何暂停。*/
+"dataStream.filter": "过滤条目",
+"dataStream.filterHint": "字段=值，或任意文本",
+"dataStream.filterHits": "最近扫描 {s} 条，命中 {n} 条",
+"dataStream.noMatch": "已扫描的条目中没有符合此过滤的。",
+"dataStream.groupBy": "分组",
+"dataStream.groupOff": "不分组",
+"dataStream.chipTitle": "只看 {f}={v}",
+"dataStream.moreValues": "另有 {n} 个",
+"dataStream.held": "阅读中已暂停——移开即恢复",
 
   /* --- dataCell --- */
   "dataBrowsers.undoBufferedDelete": "撤销此缓冲的删除",
