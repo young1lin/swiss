@@ -240,10 +240,56 @@ async fn run_command_reads_writes_and_refuses_the_dangerous() {
     let back = b.read_key("it:console:key").await.expect("read back");
     assert_eq!(back["value"], json!("console-value"));
 
-    // UTF-8 keys and values cross the whitespace-split console intact.
+    // UTF-8 keys and values cross the console intact.
     b.run_command("SET 名前:鍵 日本語の値").await.expect("utf8 set");
     let utf8 = b.read_key("名前:鍵").await.expect("utf8 read");
     assert_eq!(utf8["value"], json!("日本語の値"));
+
+    // The owner's line, against a real server (2026-09-28): a quoted JSON value with escaped
+    // quotes inside it, and the options that follow it. Split on whitespace, this reached redis
+    // as five broken words; split as a shell splits, the value is the JSON typed and NX/EX are
+    // options — the TTL below proves EX arrived as an option rather than as part of the value.
+    let json_set = b
+        .run_command(r#"SET it:json "{\"test\": \"123\"}" NX EX 100"#)
+        .await
+        .expect("quoted json set");
+    assert_eq!(json_set, json!("OK"), "NX on a fresh key sets it");
+    let stored = b.read_key("it:json").await.expect("read back the json");
+    assert_eq!(stored["value"], json!(r#"{"test": "123"}"#));
+    let ttl = stored["ttl"].as_i64().expect("a ttl");
+    assert!(
+        (1..=100).contains(&ttl),
+        "EX 100 must be the TTL, got {ttl}"
+    );
+
+    // NX means "only if absent": the second run answers nil and leaves the first value alone.
+    let again = b
+        .run_command(r#"SET it:json "{\"test\": \"changed\"}" NX EX 100"#)
+        .await
+        .expect("the second NX runs");
+    assert_eq!(again, Value::Null, "NX on an existing key sets nothing");
+    let same = b.read_key("it:json").await.expect("still the first value");
+    assert_eq!(same["value"], json!(r#"{"test": "123"}"#));
+
+    // A value with spaces, and one with an apostrophe inside double quotes.
+    b.run_command(r#"SET it:spaced "two words here""#)
+        .await
+        .expect("spaced set");
+    assert_eq!(
+        b.read_key("it:spaced").await.expect("spaced read")["value"],
+        json!("two words here")
+    );
+
+    // Half a quote is refused by name, and nothing is sent.
+    let unbalanced = b.run_command(r#"SET it:broken "half"#).await;
+    assert!(
+        unbalanced.is_err_and(|e| e.contains("unbalanced quote")),
+        "an unbalanced quote names itself"
+    );
+    assert_eq!(
+        b.read_key("it:broken").await.expect("nothing was written")["type"],
+        "none"
+    );
 
     // KEYS would block the server: refused before the socket, always.
     let refused = b.run_command("KEYS *").await;
