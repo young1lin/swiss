@@ -556,8 +556,15 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
         };
     }
     // Never leave a pid file for something that never came up: the next start would report
-    // already-running and the operator would have nothing to act on.
-    remove_pid_file(port);
+    // already-running and the operator would have nothing to act on. A child that is STILL
+    // ALIVE is the other case, and the 2026-09-28 deploy is why it is one: the health poll
+    // ran out while the daemon was still starting its plugins, this removed the record, and
+    // the daemon that came up a moment later could no longer be found by `swiss stop` - the
+    // next deploy would have failed at the copy with the exe still held. The record stays with
+    // whatever is running; the caller still hears that the wait ran out.
+    if !is_pid_alive(pid) {
+        remove_pid_file(port);
+    }
     StartResult::Failed {
         port,
         log_tail: tail_log(&log),
@@ -1344,6 +1351,52 @@ mod tests {
         .await;
         assert!(matches!(result, StartResult::Failed { .. }));
         assert_eq!(read_pid_file(port), None);
+        let _ = std::fs::remove_file(log_file_path(port));
+    }
+
+    /// A fake entry that only STAYS ALIVE, serving nothing: the daemon still starting when the
+    /// health wait runs out. A .cmd on Windows for the same reason env_probe_entry is one.
+    fn slow_entry(dir: &Path) -> std::path::PathBuf {
+        #[cfg(windows)]
+        let (script, text) = (
+            dir.join("slow-entry.cmd"),
+            "@ping -n 6 127.0.0.1 >nul\r\n".to_string(),
+        );
+        #[cfg(not(windows))]
+        let (script, text) = (
+            dir.join("slow-entry.sh"),
+            "#!/bin/sh\nsleep 5\n".to_string(),
+        );
+        std::fs::write(&script, text).expect("write the slow entry");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .expect("exec bit for the slow entry");
+        }
+        script
+    }
+
+    #[tokio::test]
+    async fn a_start_that_runs_out_of_patience_keeps_the_record_of_what_is_still_running() {
+        // 2026-09-28, production: the health wait ran out while the daemon was still starting
+        // its plugins, this deleted the record, and the daemon that came up two seconds later
+        // could no longer be found by `swiss stop` — the next deploy would have failed at the
+        // copy with the exe still held. A wait that runs out is not proof that nothing runs.
+        let _lock = daemon_state().await;
+        let port = free_port();
+        let result = start_daemon(StartOptions {
+            port: Some(port),
+            entry: Some(slow_entry(&data_dir())),
+            timeout_ms: Some(300),
+            ..Default::default()
+        })
+        .await;
+        assert!(matches!(result, StartResult::Failed { .. }));
+        let rec = read_pid_file(port).expect("the record of a process still running stays");
+        assert!(is_pid_alive(rec.pid), "the entry outlives the wait");
+        tree_kill(rec.pid);
+        remove_pid_file(port);
         let _ = std::fs::remove_file(log_file_path(port));
     }
 

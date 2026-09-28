@@ -342,7 +342,6 @@ pub async fn run_gateway() -> Result<(), String> {
         })
     });
     let host = Arc::new(host);
-    host.start_enabled().await;
     let _ = ctx.plugin_host.set(host.clone());
 
     // The subsystem routers, folded in one piece. Mounted INSIDE build_app's loopback guard:
@@ -383,6 +382,27 @@ pub async fn run_gateway() -> Result<(), String> {
         "gateway listening",
         Some(json!({ "host": cfg.host, "port": cfg.port, "paths": registry.names() })),
     );
+
+    // The plugins start BEHIND the open port (2026-09-28). They used to start FIRST and the
+    // port came up only once the last of them had, so one slow plugin was the whole gateway's
+    // outage: the 11:14 boot spent 32 s refusing connections on 19999 while the mcp plugin ran
+    // into its own 30 s start timeout, and a redeploy's downtime is exactly that window (the
+    // owner: "每次重新部署的时候，应该尽量少让 19999 端口不可用"). Serving first costs no honesty -
+    // a route whose plugin is not serving yet already answers build_app's structured 503, which
+    // says more than a refused connection - and /health, the panel and the admin API answer
+    // while the MCPs warm up. The start keeps its own order (reverse registration) inside.
+    tokio::spawn({
+        let host = host.clone();
+        let started = std::time::Instant::now();
+        async move {
+            host.start_enabled().await;
+            log::log(
+                "info",
+                "plugins started",
+                Some(json!({ "ms": started.elapsed().as_millis() as u64 })),
+            );
+        }
+    });
 
     // Retention runs on a boot sweep plus an hourly timer: the per-append check inside
     // record_call only ever fires for an MCP still being called, which is the opposite of the
