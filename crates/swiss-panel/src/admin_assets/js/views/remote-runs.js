@@ -33,7 +33,7 @@
    live list into the record with the same run id.
    ================================================================================================ */
                                                                                                                               
-                                                                                                       
+                                                                                                                         
 import { $, apiJson, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
                                       
@@ -63,6 +63,7 @@ let targetIds = []            ; // for the filter select, from the targets table
 let open = {}                           ; // runId -> true while its row is expanded
 let bodies = {}                                 ; // runId -> { text, next, total, done, capped, tail } for opened recorded rows
 let live = {}                                  ; // runId -> { text, cursor } for opened active rows
+let contents = {}                                    ; // runId -> a write's unsealed body while Show is on
 let liveTimer = null                                         ;
 let painted = "";
 
@@ -249,7 +250,31 @@ function bodyNode(run                   )         {
       { label: tr("remoteRuns.tail"), notes: [tr("remoteRuns.cappedAtLast", { cap: fmtBytes(limits ? limits.maxOutputBytes : 0), tail: fmtBytes(r.tail.length) })] },
       textNode(r.tail, true, "logs").node));
   }
+  out.push(writtenNode(r));
   return out;
+}
+
+/** What a remote.write wrote (docs/34 R12): the body is kept sealed beside the record and
+ *  unsealed only on Show - an opened row in a screenshot shares no file until asked. */
+function writtenNode(r                 )         {
+  const size = fmtBytes(r.input && r.input.contentBytes || 0);
+  if (r.contentEvicted) return note(tr("remoteRuns.contentEvicted", { size }));
+  if (!r.contentStored) return null;
+  const label = tr("remoteRuns.contentWritten");
+  const c = contents[r.runId];
+  if (!c) {
+    return valueBlock({ label, notes: [size], tools: [btn(tr("remoteRuns.showContent"), { data: { rcontent: r.runId } })] });
+  }
+  if ("error" in c) return valueBlock({ label, notes: [size] }, note(c.error));
+  const notes = c.truncated ? [size, tr("remoteRuns.contentHead", { cap: fmtBytes(256 * 1024) })] : [size];
+  return valueBlock({ label, notes, tools: [btn(tr("remoteRuns.hideContent"), { data: { rcontenthide: r.runId } })] },
+    textNode(c.text, true, "logs").node);
+}
+
+async function loadContent(id        )                {
+  const j = await apiJson                                         ("/api/remote/runs/" + id + "/content");
+  contents[id] = j ? { text: j.content, truncated: !!j.truncated } : { error: tr("remoteRuns.contentUnavailable") };
+  repaintBody(id);
 }
 
 /** The drawn row a run id heads, or null. */
@@ -347,6 +372,7 @@ async function clearAll()                {
   const j = await apiJson("/api/remote/runs", { method: "DELETE" });
   if (!j) return;
   bodies = {};
+  contents = {};
   open = {};
   cursors = [null];
   page = 0;
@@ -440,6 +466,10 @@ export async function mount() {
     if (more) { void loadBody(Number(more.dataset.rmore), true); return; }
     const cancel = t.closest             ("[data-rcancel]");
     if (cancel) { void cancelRun(Number(cancel.dataset.rcancel)); return; }
+    const show = t.closest             ("[data-rcontent]");
+    if (show) { void loadContent(Number(show.dataset.rcontent)); return; }
+    const hide = t.closest             ("[data-rcontenthide]");
+    if (hide) { delete contents[Number(hide.dataset.rcontenthide)]; repaintBody(Number(hide.dataset.rcontenthide)); return; }
     if (t.closest("#rrPrev")) { void step(-1); return; }
     if (t.closest("#rrNext")) { void step(1); return; }
     const menu = t.closest             ("#rrMore");
@@ -487,6 +517,7 @@ export function unmount() {
   // was away, so a stale cursor or filter would show a stale slice of it.
   open = {};
   bodies = {};
+  contents = {}; // an unsealed body lives only while its page is on screen
   live = {};
   painted = "";
   page = 0;

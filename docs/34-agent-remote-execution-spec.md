@@ -305,6 +305,33 @@ Tests: `runs.rs` `remote_runs_take_their_targets_lane_not_the_local_pool`,
 `a_queued_run_waits_for_its_own_lane_only`; `actions.rs`
 `every_remote_action_runs_in_its_targets_lane`.
 
+## R12 - what a write wrote, kept sealed (2026-09-28)
+
+The owner, on a `write stream-demo.py` row that showed only `Output 34 B`: "I don't know what
+was written, only a result." That morning the record had stopped keeping a write's body
+(e5bc766) because `runs.jsonl` held it in clear - writing a `.env` put its password in the
+audit log for 30 days. Asked to choose, the owner picked: keep the body, encrypted.
+
+- `history.rs` seals a remote.write's `content` into `out/<runId>.content` with
+  `write_secure_json` - the AES-256-GCM envelope under the machine key that every state file
+  uses - capped at `CONTENT_MAX_BYTES` (256 KiB, cut on a character boundary, the line says
+  `contentTruncated`). Kept whatever the outcome: a failed write's body is what failed to
+  land. The index line keeps `input.contentBytes` and gains `contentStored` /
+  `contentFileBytes`; the body never enters `runs.jsonl`.
+- The sealed file is an evictable file like the output: it counts in the byte budget, goes
+  with its record (age, count, Clear), and under byte pressure inside the seven-day window it
+  goes with the output file, the line then saying `contentEvicted`.
+- `GET /api/remote/runs/{id}/content` unseals it for the signed-in panel (404 when the record
+  kept none). The Runs page shows a "Content written" block with the size and a Show button;
+  nothing is fetched until it is pressed, and the unsealed text lives in the page's memory
+  only while the page is on screen (Hide, Clear and leaving the page drop it).
+
+Tests: `history.rs` `a_remote_write_keeps_its_content_sealed_beside_the_record`,
+`a_long_write_keeps_its_head_cut_on_a_character_boundary`,
+`the_sealed_body_counts_against_the_budget_and_leaves_with_its_record`; `lib.rs`
+`a_finished_remote_run_is_readable_from_the_record` (a write through the real routes, then
+`/content`); vitest `admin-remote-runs-view.test.ts` (Show / Hide, the evicted note).
+
 ## Where the tests live
 
 - `swiss-host`: registry/contract fakes + run output buffer cursor semantics (runs.rs).

@@ -822,6 +822,48 @@ mod recorded {
         assert_eq!(out["nextCursor"], 24);
         assert_eq!(out["terminal"], true);
 
+        // An exec kept no written content.
+        let (status, _) = call(
+            &app,
+            "GET",
+            &format!("/api/remote/runs/{run_id}/content"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // A write keeps its body, sealed, and the route hands it back (docs/34 R12).
+        let (status, submitted) = call(
+            &app,
+            "POST",
+            "/api/runs",
+            json!({
+                "action": "remote.write",
+                "input": { "target": "dev", "remote": "conf/app.toml", "content": "port = 8080\n" },
+                "timeoutMs": 30000,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{submitted}");
+        let write_id = submitted["runId"].as_u64().unwrap();
+        let mut body = Value::Null;
+        for _ in 0..500 {
+            let (status, got) = call(
+                &app,
+                "GET",
+                &format!("/api/remote/runs/{write_id}/content"),
+                Value::Null,
+            )
+            .await;
+            if status == StatusCode::OK {
+                body = got;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        assert_eq!(body["content"], "port = 8080\n", "{body}");
+        assert_eq!(body["truncated"], false);
+
         // Unknown ids are 404, not empty.
         let (status, _) = call(&app, "GET", "/api/remote/runs/424242", Value::Null).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
