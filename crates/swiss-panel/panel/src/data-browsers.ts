@@ -23,7 +23,6 @@ import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 // Cycle with data-edit.js (it reads dbIsRedis/dbLoadKeys from here): function declarations,
 // runtime-only use — the same shape as the data-sql import above.
-import { dbTypedConfirm } from "./data-edit.js";
 // Cycle with data-stream.js (it renders this module's stream branch and needs the display
 // decode + cell menu): function declarations, runtime-only use — the same shape as the
 // data-edit.js import above.
@@ -742,14 +741,42 @@ function dbRedisDiscard(): void {
   renderDbBar();
 }
 
-function dbRedisKeyMenu(anchorEl: HTMLElement): void {
+/** The key the open tab is on, or null - every act below asks the live tab, never a captured
+ *  one (docs/37 §10.1: a menu built at click time still fires after a tab change). */
+function dbOpenKey(): string | null {
   const t = dbTab();
-  const key = t.kind === "key" ? t.redisKey : null;
-  popupMenu(anchorEl.getBoundingClientRect(), [
-    { label: tr("dataBrowsers.rename"), fn: (): void => { dbRedisRenameSheet(key); } },
-    { sep: true },
-    { label: tr("dataBrowsers.delete"), danger: true, fn: dbRedisDeleteKey },
-  ]);
+  return t.kind === "key" ? t.redisKey : null;
+}
+
+function dbRedisRenameKey(): void {
+  dbRedisRenameSheet(dbOpenKey());
+}
+
+/** Set or lift the key's expiry (docs/22 W1.3) on the same one-field sheet the rename uses:
+ *  seconds applies EXPIRE, an empty field PERSIST. The TTL readout in the meta line edits in
+ *  place too - this is the door that says so. */
+function dbRedisTtlSheet(): void {
+  const t = dbTab();
+  if (t.kind !== "key") return;
+  const key = t.redisKey;
+  const v = t.redisValue;
+  if (!key) return;
+  openFieldSheet({
+    title: tr("dataBrowsers.setTtl"),
+    sub: key,
+    label: tr("dataBrowsers.secondsEmptyPersists"),
+    def: v && v.ttl != null && v.ttl >= 0 ? String(v.ttl) : "",
+    allowEmpty: true,
+    save: tr("dataBrowsers.apply"),
+    submit: async (secs: string): Promise<boolean | string> => {
+      if (secs && !/^\d+$/.test(secs)) return tr("dataBrowsers.ttlMustWholeNumber");
+      const j = await dbRedisCommand(secs ? "EXPIRE " + key + " " + secs : "PERSIST " + key);
+      if (!j) return false;
+      toast(tr(secs ? "dataBrowsers.ttlSetSeconds" : "dataBrowsers.ttlRemoved", { s: secs }));
+      await dbLoadRedisValue(key);
+      return true;
+    },
+  });
 }
 
 /** One guarded console command; null means the toast already said why. */
@@ -791,25 +818,26 @@ function dbRedisRenameSheet(key: string | null): void {
   });
 }
 
-/* Deleting a key is the one destructive act the redis side has — the same typed-name confirm
-   the table DROP/TRUNCATE use (a W1 audit follow-up), with the key's own words. */
+/* Deleting a key is the one destructive act the redis side has. It asks once, in words: the
+   typed-name confirm it used to share with the table DROP/TRUNCATE made the operator retype
+   the name they had just clicked (the owner, 2026-09-28: "太蠢了"). A key is not a table -
+   one DEL, named in the question, is the weight this carries. */
 function dbRedisDeleteKey(): void {
   const d = dbTab();
   if (d.kind !== "key") return;
   const key = d.redisKey!;
-  dbTypedConfirm({ what: tr("dataEdit.whatDelete"), name: key, kind: "key" }, (): void => {
-    void dbRedisCommand("DEL " + key).then(async (j: unknown): Promise<void> => {
-      if (!j) return;
-      toast(tr("dataBrowsers.deletedKey", { key }));
-      const t = dbTab();
-      if (t.kind === "key") {
-        t.redisKey = null;
-        t.redisValue = null;
-        t.redisEdits = null;
-      }
-      await dbLoadKeys(true);
-      renderDbGrid();
-    });
+  if (!confirm(tr("dataBrowsers.deleteKeyConfirm", { key }))) return;
+  void dbRedisCommand("DEL " + key).then(async (j: unknown): Promise<void> => {
+    if (!j) return;
+    toast(tr("dataBrowsers.deletedKey", { key }));
+    const t = dbTab();
+    if (t.kind === "key") {
+      t.redisKey = null;
+      t.redisValue = null;
+      t.redisEdits = null;
+    }
+    await dbLoadKeys(true);
+    renderDbGrid();
   });
 }
 
@@ -901,6 +929,7 @@ function dbRedisKeydown(t: Element, ev: KeyboardEvent): boolean {
 export {
   DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore, dbRefreshKeyspace, dbRefreshRedisValue, dbRewalkKeys,
   dbRedisClick, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
-  dbRedisDisplayText, dbRedisEntries, dbRedisKeydown, dbRedisKeyMenu, dbRedisPendingCount, dbRenderRedisValue,
+  dbRedisDeleteKey, dbRedisDisplayText, dbRedisEntries, dbRedisKeydown, dbRedisPendingCount, dbRedisRenameKey,
+  dbRedisTtlSheet, dbRenderRedisValue,
   dbRedisCellMenu, // docs/45 S2: the stream view reuses the docs/22 W5.3 cell menu
 };

@@ -126,6 +126,11 @@ export function sheetOpen(): boolean {
 
 export interface FieldSheetSpec {
   title: string;
+  /** A second line under the title: what the ask is ABOUT (the key a TTL belongs to). */
+  sub?: string;
+  /** Let an empty field through to submit. Off by default - a name is required; on for the
+   *  asks where empty MEANS something (an emptied TTL is PERSIST, not a missing answer). */
+  allowEmpty?: boolean;
   /** The current value when renaming; null or absent when creating. */
   def?: string | null;
   label?: string;
@@ -152,6 +157,7 @@ export function openFieldSheet(spec: FieldSheetSpec): void {
   const ok = h("button", { type: "button", class: "btn primary", id: "g-save" }, spec.save || (editing ? tr("ui.rename") : tr("ui.create")));
   showSheet(sheet({
     title: spec.title,
+    sub: spec.sub,
     body: [
       h("label", { class: "field" }, h("span", null, spec.label || tr("ui.name")), input),
       err,
@@ -164,7 +170,7 @@ export function openFieldSheet(spec: FieldSheetSpec): void {
   };
   const save = async (): Promise<void> => {
     const value = input.value.trim();
-    if (!value) { fail(tr("ui.nameRequired")); return; }
+    if (!value && !spec.allowEmpty) { fail(tr("ui.nameRequired")); return; }
     if (value === def) { closeSheet(); return; } // a rename that changed nothing is a cancel
     const out = await spec.submit(value);
     if (out === true) closeSheet();

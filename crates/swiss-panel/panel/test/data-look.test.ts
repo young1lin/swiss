@@ -393,8 +393,7 @@ describe("a Redis key's rename is the library's one-field sheet (docs/46 P7-2)",
     dbTabs().push(t);
     grid.renderDbToolbar();
     document.querySelector<HTMLButtonElement>("#dbHead [aria-haspopup='menu']")!.click();
-    menuItem(tr("dataBrowsers.renameDeleteKey")).click();
-    menuItem(tr("dataBrowsers.rename")).click();
+    menuItem(tr("dataBrowsers.renameEllipsis")).click();
 
     const host = document.getElementById("sheet")!;
     expect(host.hidden, "the sheet is on screen").toBe(false);
@@ -463,6 +462,43 @@ describe("a column header stacks its name, its type and its comment", () => {
   });
 });
 
+/* The owner, on the key head's ⋯ (2026-09-28): "there should be somewhere to set the TTL
+   here, this is nowhere near complete." It offered one nested item (Rename or delete this
+   key) and the console. The acts a key has now sit in it directly, TTL among them. */
+describe("a Redis key's ⋯ offers every act on the key, one press away", () => {
+  function openKeyHead(): void {
+    Object.assign(dbConnState(), { conns: [dbConn("demo-cache", "redis")], conn: "demo-cache" });
+    const t = freshTab("key");
+    t.redisKey = "user:1";
+    t.redisValue = { key: "user:1", type: "hash", ttl: -1, value: { name: "Ada Example" }, length: 1 };
+    dbTabs().length = 0;
+    dbTabs().push(t);
+    grid.renderDbToolbar();
+    grid.renderDbGrid();
+    const more = document.querySelector<HTMLElement>("#dbHead [aria-haspopup='menu']")!;
+    more.click();
+  }
+  const labels = (): string[] =>
+    Array.from(document.querySelectorAll("#menu button")).map((b) => b.textContent || "");
+
+  it("names the TTL, the rename and the delete without a submenu", () => {
+    openKeyHead();
+    expect(labels()).toEqual(["Set the TTL…", "Rename…", "Delete…", "Command"]);
+    expect(labels().some((l) => /Rename or delete/.test(l)), "no nested door").toBe(false);
+  });
+
+  it("the TTL item opens the sheet on the key's own expiry", () => {
+    openKeyHead();
+    Array.from(document.querySelectorAll<HTMLElement>("#menu button")).find((b) => /Set the TTL/.test(b.textContent || ""))!.click();
+    const head = document.querySelector("#sheet .sheet-head")!;
+    expect(document.getElementById("sheet")!.hidden).toBe(false);
+    expect(head.querySelector("h2")!.textContent).toBe("Set the TTL");
+    expect(head.textContent).toContain("user:1");
+    const input = document.querySelector<HTMLInputElement>("#sheet input")!;
+    expect(input.value, "no expiry seeds an empty field").toBe("");
+  });
+});
+
 describe("the grid's look in views.css (docs/46 §3.7, U7)", () => {
   const css = sheet("views.css");
   const rule = (sel: string): string => {
@@ -471,8 +507,15 @@ describe("the grid's look in views.css (docs/46 §3.7, U7)", () => {
     return css.slice(i, css.indexOf("}", i));
   };
 
-  it("a column comment is grey everywhere it shows", () => {
-    expect(rule(".db-col-comment")).toContain("color: var(--text-3)");
+  /* The header's comment used to be --text-3, a step lighter than prose, on the reasoning that
+     small print under a header should recede. Once the type took a line of its own - also
+     --text-3 - the two greys stacked and read as one block (the owner, 2026-09-28: "this
+     Comment colour is not right"). The comment is prose, so it takes prose's --text-2 and the
+     type keeps the lighter grey; the two lines are told apart by weight of colour, not only
+     by typeface. */
+  it("a column comment is prose grey, a step darker than the type above it", () => {
+    expect(rule(".db-col-comment")).toContain("color: var(--text-2)");
+    expect(rule(".db-col-type")).toContain("color: var(--text-3)");
     expect(rule(".db-tip .t-comment")).toContain("color: var(--text-2)");
     expect(rule(".db-cell.db-det-comment")).toContain("color: var(--text-2)");
     expect(css).not.toMatch(/deliberate exception/);

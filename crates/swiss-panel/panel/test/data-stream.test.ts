@@ -28,7 +28,7 @@ class NodeStub {}
 type Stub = Record<string, any> & { children: Stub[] };
 const el = (tag = "div"): Stub => {
   const n: any = {
-    tag, children: [], style: {}, dataset: {}, hidden: false, disabled: false,
+    tag, children: [], style: {}, dataset: {}, attrs: {} as Record<string, string>, hidden: false, disabled: false,
     value: "", textContent: "", className: "", id: "", title: "", rows: 0, type: "",
     classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
     appendChild(c: Stub) {
@@ -38,8 +38,8 @@ const el = (tag = "div"): Stub => {
     removeChild(c: Stub) { n.children = n.children.filter((x: Stub) => x !== c); return c; },
     remove() { const p = n.parentNode as Stub | undefined; if (p) p.children = p.children.filter((x: Stub) => x !== n); },
     contains: () => false, closest: () => null,
-    setAttribute(k: string, v: string) { if (k === "id") n.id = v; if (k.startsWith("data-")) n.dataset[k.slice(5)] = v; },
-    getAttribute: () => "", removeAttribute() {},
+    setAttribute(k: string, v: string) { n.attrs[k] = v; if (k === "id") n.id = v; if (k.startsWith("data-")) n.dataset[k.slice(5)] = v; },
+    getAttribute: (k: string) => n.attrs[k] ?? "", removeAttribute(k: string) { delete n.attrs[k]; },
     addEventListener() {}, removeEventListener() {},
     dispatchEvent: () => true, focus() {}, blur() {}, select() {}, click() {},
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 40, height: 22, right: 40, bottom: 22 }),
@@ -345,7 +345,7 @@ beforeEach(() => {
   parked.length = 0;
   const w = byId.dbGridWrap;
   if (!w) return; // nothing mounted yet - nothing to stop
-  const running = find(w, (n: Stub) => n.tag === "button" && text(n) === "Pause")[0];
+  const running = find(w, (n: Stub) => n.dataset && n.dataset.stream === "follow" && n.attrs["aria-checked"] === "true")[0];
   if (running) running.onclick(); // a Follow left on stops HERE, not in the next test
 });
 
@@ -429,8 +429,11 @@ describe("the stream value view's Load-earlier walk (docs/45 S2 fix)", () => {
 
 /* --- the Follow edge (docs/45 S3) ------------------------------------------------------------- */
 
+/* 2026-09-28: Follow is an on/off switch, not a button whose word flips between Follow and
+   Pause - the owner asked for the state to be the control ("用 UI 来替换文字"). */
 const followBtn = (): Stub =>
-  find(byId.dbGridWrap, (n) => n.tag === "button" && (text(n) === "Follow" || text(n) === "Pause"))[0];
+  find(byId.dbGridWrap, (n) => n.dataset && n.dataset.stream === "follow")[0];
+const following = (): boolean => followBtn().attrs["aria-checked"] === "true";
 // docs/46 P7: library buttons, addressed by their data hook (the classes had no rule of their own).
 const pill = (): Stub => find(byId.dbGridWrap, (n) => n.dataset && n.dataset.stream === "pill")[0];
 const gapBar = (): Stub => find(byId.dbGridWrap, (n) => n.dataset && n.dataset.stream === "gap")[0];
@@ -473,13 +476,14 @@ describe("the stream Follow edge (docs/45 S3)", () => {
       key: "s", type: "stream", ttl: -1, length: 2,
       entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: true, firstId: "8-0", lastId: "9-0",
     });
+    expect(following(), "off until it is switched on").toBe(false);
     followOn();
-    expect(text(followBtn())).toBe("Pause");
+    expect(following(), "the switch itself is the state").toBe(true);
     const n0 = requests.length;
     const p = stream.dbStreamTick();
     await answerErr();
     await p;
-    expect(text(followBtn())).toBe("Follow"); // the toggle reset - no zombie polling
+    expect(following()).toBe(false); // the switch reset - no zombie polling
     expect(barText()).toContain("Follow stopped");
     expect(requests.length).toBe(n0 + 1); // its one poll, nothing retried after the stop
   });
@@ -626,7 +630,7 @@ describe("the stream Follow edge (docs/45 S3)", () => {
     expect((tab.redisStreamPending || []).length).toBe(0);
     expect(rowIds()).toEqual(["13-0", "12-0"]); // and the table never heard of it
     expect(gapBar().hidden).toBe(true);
-    expect(text(followBtn())).toBe("Pause"); // the voided tick stopped nothing
+    expect(following()).toBe(true); // the voided tick stopped nothing
   });
 
   it("hidden: the tick fetches nothing; the next visible tick catches up", async () => {
@@ -672,7 +676,7 @@ describe("the stream Follow edge (docs/45 S3)", () => {
     });
     followOn();
     expect(requests.length, "turning Follow on issues nothing by itself").toBe(0);
-    expect(text(followBtn())).toBe("Pause");
+    expect(following()).toBe(true);
   });
 
   /* The owner's report: with Follow on, the interval picker snapped shut every second - each

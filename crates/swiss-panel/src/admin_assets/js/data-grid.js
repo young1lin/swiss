@@ -18,7 +18,10 @@
                                                                                                      
                                                
 import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
-import { DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbRedisKeyMenu, dbRenderRedisValue } from "./data-browsers.js";
+import {
+  DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbRedisDeleteKey, dbRedisRenameKey, dbRedisTtlSheet, dbRenderRedisValue,
+} from "./data-browsers.js";
+import { REDIS_TEMPLATES } from "./data-suggest.js";
 import { dbActivityLoad, dbActivityRender } from "./data-activity.js";
 import { dbCloseAllTabs, dbOpenTab } from "./data-tabs.js";
 import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
@@ -554,7 +557,6 @@ function dbMoreItemsForSql()             {
     { label: tr("dataView.explainAnalyze"), fn: ()       => { void dbRunSql("analyze"); } },
     { label: tr("dataView.format"), fn: ()       => { dbSqlFormatNow(); } },
   ];
-  items.push({ label: tr("dataView.saveFavorites"), title: tr("dataView.saveConsoleTextFavorites"), fn: ()       => { if (st) dbFavPush(st.sqlText); } });
   const loadSql = (q        )       => {
     const s2 = dbSqlTab();
     if (!s2) return;
@@ -562,6 +564,20 @@ function dbMoreItemsForSql()             {
     const ta = $                     ("dbSql");
     if (ta) { ta.value = q; dbSqlPaint(); }
   };
+  items.push({ label: tr("dataView.saveFavorites"), title: tr("dataView.saveConsoleTextFavorites"), fn: ()       => { if (st) dbFavPush(st.sqlText); } });
+  // The templates (2026-09-28): the owner had no way to find out how to write a command for
+  // the thing in front of them. The line IS the label - a template is loaded, then edited.
+  if (dbIsRedis()) {
+    let group = "";
+    REDIS_TEMPLATES.forEach((t                                 )       => {
+      if (t.group !== group) {
+        group = t.group;
+        items.push({ sep: true });
+        items.push({ heading: true, label: group, fn: ()       => {} });
+      }
+      items.push({ label: t.line, title: t.line, fn: ()       => { loadSql(t.line); } });
+    });
+  }
   if (d.favorites && d.favorites.length) {
     items.push({ sep: true });
     items.push({ heading: true, label: tr("dataView.favoritesTitle"), fn: ()       => {} });
@@ -579,10 +595,14 @@ function dbMoreItemsForSql()             {
   return dbWithActivity(items);
 }
 
-/** The overflow items for a redis KEY tab: the key's own guarded menu plus the console. */
-function dbMoreItemsForKey(more             )             {
+/** The overflow items for a redis KEY tab: every act the key has, then the console. The owner
+ *  (2026-09-28) found only "Rename or delete this key" here and no TTL: the expiry was editable
+ *  by clicking the readout in the meta line and nowhere else, which nothing announced. */
+function dbMoreItemsForKey()             {
   return [
-    { label: tr("dataBrowsers.renameDeleteKey"), fn: ()       => { dbRedisKeyMenu(more); } },
+    { label: tr("dataBrowsers.setTtlEllipsis"), fn: dbRedisTtlSheet },
+    { label: tr("dataBrowsers.renameEllipsis"), fn: dbRedisRenameKey },
+    { label: tr("dataBrowsers.delete"), danger: true, fn: dbRedisDeleteKey },
     { label: dbIsRedis() ? tr("dataGrid.command") : tr("dataSql.sql"), fn: ()       => { dbOpenTab({ kind: "sql" }); } },
   ];
 }
@@ -732,7 +752,7 @@ function renderDbToolbar()       {
         title: tr("dataBrowsers.bufferNewThingApplied", { thing: tr(REDIS_THING_KEYS[cfg.thing] ?? cfg.thing) }), data: { radd: "" },
       }));
     }
-    ctl.appendChild(dbMoreButton((more             )             => { return dbMoreItemsForKey(more); }));
+    ctl.appendChild(dbMoreButton(()             => { return dbMoreItemsForKey(); }));
   } else if (t.kind === "activity") {
     ctl.appendChild(btn(tr("dataGrid.refresh"), { title: tr("dataActivity.title"), data: { actrefresh: "" } }));
     ctl.appendChild(dbMoreButton(()             => { return dbMoreItemsForActivity(); }));

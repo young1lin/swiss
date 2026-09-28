@@ -503,6 +503,14 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
       高度为 0，表头居中后名字比邻列低半行；`.db-col-comment:empty::before` 放一个不换行空格，空行也占一行，
       各列名字对齐（走查量得名字 / 类型 / 注释三行在每列都是同一高度）。测试：`data-look.test.ts` 的
       "a column header stacks its name, its type and its comment"。
+- [x] 2026-09-28 的一批（负责人走查）：Redis 键头部的 ⋯ 原先只有一个"重命名或删除此键"的二级
+      门和 Command，TTL 没有入口（只能点 meta 行里的过期时间就地改，没人告诉过你）。现在 ⋯ 直接
+      列出「设置 TTL…／重命名…／删除…」三件事加 Command；删除改成一次确认（问句里带键名），
+      不再要求把刚点过的名字再打一遍——那套打名字的确认留给表的 DROP/TRUNCATE。Stream 的
+      Follow 从"Follow/Pause 两个词轮换的按钮"换成开关（`sw()`），状态本身就是控件。
+      `openFieldSheet` 增加 `sub`（标题下一行说这次改的是谁）与 `allowEmpty`（清空有含义的场合，
+      如 TTL 清空即 PERSIST）。测试：`data-look.test.ts` 的 "a Redis key's ⋯ offers every act on
+      the key, one press away"、`data-stream.test.ts` 的 Follow 开关断言。
 - [x] 表列表选中：竖条 + 浅底 + `--w-emph`，不变蓝（规则 15）；抽屉里的当前库 / 连接同样处理（勾号列代替蓝字）。
       实施：`.db-table.sel` 是 8% accent 浅底 + 2px inset accent 竖条，名字 `--text` / `--w-emph`。连接与库的抽屉每行
       最前一列是勾号（`.db-drow-tick`，当前项放 accent 的 `i-check`，其余行留同宽的空位，名字对齐），当前行加粗。
