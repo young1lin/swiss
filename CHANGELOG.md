@@ -36,6 +36,11 @@ All notable changes to swiss are recorded here. The format follows
   command that takes a key offers the keys already in the sidebar, and the console's overflow
   lists a ready line per thing an operator does, grouped by what it acts on. Neither asks the
   server: the command set is fixed and the keys are already here.
+- The Remote page runs its targets from the browser: a target's ⋯ offers Run a command… and
+  Write a file… for the capabilities it holds, each submitting the same recorded run the CLI
+  does, then opening Runs - where an open run already streams its output and offers Cancel. A
+  typed command goes to the target's own shell, so pipes and redirects mean what they say and
+  the record shows exactly what was sent (docs/34 R14).
 - A vault reference can carry a default: `${secret://name:default}` uses `default` when the
   vault has no such name, everywhere references resolve (docs/19, 2026-09-28).
 

@@ -216,6 +216,97 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect(r.querySelector(".lrow-col")?.textContent).toBe("2 min. ago");
   });
 
+  /* The owner (2026-09-28): "the Remote page should let me run write and exec straight from the
+     web, and Runs should show what is running so I can cancel it." Runs already streams an open
+     run and offers Cancel, so this half is only the door: a recorded run submitted through the
+     same POST /api/runs the CLI uses, then the Runs page. The typed line goes to the target's
+     own shell rather than through a shell parser written here - pipes, quotes and redirects
+     then mean what the operator expects, and the record shows exactly what was sent. */
+  const menu = (): string[] =>
+    Array.from(document.querySelectorAll("#menu button")).map((b) => b.textContent || "");
+  const openMore = async (id: string): Promise<void> => {
+    await view.mount();
+    (rowOf(id).querySelector("[data-rmmore]") as HTMLElement).click();
+  };
+  const pick = (label: string): void => {
+    (Array.from(document.querySelectorAll<HTMLElement>("#menu button"))
+      .find((b) => b.textContent === label) as HTMLElement).click();
+  };
+  const submitted = (): { path: string; method: string; body?: string } | undefined =>
+    requests.find((r) => r.method === "POST" && r.path === "/api/runs");
+
+  it("a target's ⋯ opens the run and the write it is allowed, and only those", async () => {
+    serve([BUILD]); // exec, sync - no files
+    await openMore("build");
+    expect(menu()).toEqual(["Run a command…", "Edit", "Delete"]);
+
+    serve([{ ...BUILD, capabilities: ["files"] }]);
+    await openMore("build");
+    expect(menu(), "no exec, no run door").toEqual(["Write a file…", "Edit", "Delete"]);
+
+    serve([{ ...BUILD, capabilities: ["sync"] }]);
+    await openMore("build");
+    expect(menu()).toEqual(["Edit", "Delete"]);
+  });
+
+  it("Run a command records the run through the target's own shell and goes to Runs", async () => {
+    serve([BUILD]);
+    replies["POST /api/runs"] = { runId: 77, state: "queued" };
+    await openMore("build");
+    pick("Run a command…");
+    expect($("sheet").hidden).toBe(false);
+    ($("rmx-cmd") as HTMLInputElement).value = "make -j8 | tee build.log";
+    ($("rmx-cwd") as HTMLInputElement).value = "/data/ws/proj/sub";
+    $("rmx-run").click();
+    await new Promise((r) => setTimeout(r, 0));
+    const post = submitted();
+    expect(post, "one submit").toBeTruthy();
+    expect(JSON.parse(post!.body as string)).toEqual({
+      action: "remote.exec",
+      input: { target: "build", argv: ["sh", "-c", "make -j8 | tee build.log"], cwd: "/data/ws/proj/sub" },
+      timeoutMs: 15 * MIN,
+      actor: "panel",
+    });
+    expect($("sheet").hidden, "the sheet closes on the run it started").toBe(true);
+    expect(location.hash, "the run is watched where runs are watched").toBe("#remote-runs");
+  });
+
+  it("an empty command is refused before anything is sent, and the cwd is optional", async () => {
+    serve([BUILD]);
+    replies["POST /api/runs"] = { runId: 78, state: "queued" };
+    await openMore("build");
+    pick("Run a command…");
+    $("rmx-run").click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(submitted(), "nothing sent for an empty line").toBeUndefined();
+    expect($("sheet").hidden, "the sheet stays with what was typed").toBe(false);
+
+    ($("rmx-cmd") as HTMLInputElement).value = "uptime";
+    $("rmx-run").click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(JSON.parse(submitted()!.body as string).input).toEqual({
+      target: "build", argv: ["sh", "-c", "uptime"],
+    });
+  });
+
+  it("Write a file sends the path and the body as one recorded write", async () => {
+    serve([{ ...BUILD, capabilities: ["exec", "files"] }]);
+    replies["POST /api/runs"] = { runId: 79, state: "queued" };
+    await openMore("build");
+    pick("Write a file…");
+    ($("rmw-path") as HTMLInputElement).value = "conf/app.toml";
+    ($("rmw-body") as HTMLTextAreaElement).value = "port = 8080\n";
+    $("rmw-save").click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(JSON.parse(submitted()!.body as string)).toEqual({
+      action: "remote.write",
+      input: { target: "build", remote: "conf/app.toml", content: "port = 8080\n" },
+      timeoutMs: 15 * MIN,
+      actor: "panel",
+    });
+    expect(location.hash).toBe("#remote-runs");
+  });
+
   it("an empty table still draws the default group - a place with a +, under the standing header", async () => {
     serve([]);
     await view.mount();
@@ -258,12 +349,12 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect(second.querySelector('[data-rmrow="build"]')).not.toBeNull();
   });
 
-  it("⋯ holds Edit and Delete; Edit reopens the sheet prefilled and posts to the row route with the group", async () => {
+  it("⋯ holds the run door, Edit and Delete; Edit reopens the sheet prefilled and posts to the row route with the group", async () => {
     serve([{ ...BUILD, capabilities: ["exec"], group: "prod" }], ["default", "prod"]);
     replies["POST /api/remote/targets/build"] = { ok: true };
     await view.mount();
     (rowOf("build").querySelector("[data-rmmore]") as HTMLElement).click();
-    expect(Array.from(document.querySelectorAll("#menu button")).map((b) => b.textContent)).toEqual(["Edit", "Delete"]);
+    expect(Array.from(document.querySelectorAll("#menu button")).map((b) => b.textContent)).toEqual(["Run a command…", "Edit", "Delete"]);
     menuItem("Edit").click();
     const sheet = $("sheet");
     expect(sheet.hidden).toBe(false);
