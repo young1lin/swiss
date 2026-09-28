@@ -1364,6 +1364,8 @@ const en                         = {
   "remoteRuns.capKeptDDays": " of {cap} · kept {d} days",
   "remoteRuns.traceableWDays": " · the last {w} days always traceable",
   "remoteRuns.outputEvicted": "The output ({size}) was evicted by the size budget; the record itself stays for {d} days.",
+  "remoteRuns.command": "Command",
+  "remoteRuns.copyCommand": "Copy the command",
   "remoteRuns.contentWritten": "Content written",
   "remoteRuns.showContent": "Show",
   "remoteRuns.hideContent": "Hide",

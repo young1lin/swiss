@@ -332,6 +332,24 @@ Tests: `history.rs` `a_remote_write_keeps_its_content_sealed_beside_the_record`,
 `a_finished_remote_run_is_readable_from_the_record` (a write through the real routes, then
 `/content`); vitest `admin-remote-runs-view.test.ts` (Show / Hide, the evicted note).
 
+## R13 - the whole command, copyable (2026-09-28)
+
+The owner, on a Runs row: "this command can only be looked at - not copied, and I can't see
+what is actually in it." The row's line joins the argv with plain spaces and is cut with an
+ellipsis to fit, so a long `sh -c '…'` was never readable whole.
+
+- An open row's body now starts with a Command block, above the output: an exec's argv quoted
+  word by word the way `quote_posix` (swiss-tunnels `tunnel/remote.rs`) sent it - the same
+  safe set, the same `'\''` splice - so a pasted copy runs as the record says; a file action
+  reads as its kind and path (`write C:/Users/me/seed.sql`). Its Copy puts that line on the
+  clipboard. A reference stays as typed (`${secret://name}`), as everywhere in the record.
+- The live output's in-place update finds its block by a `data-rlive` mark: it took the
+  body's first `pre`, which is now the Command.
+
+Tests: vitest `admin-remote-runs-view.test.ts` (the quoted line and its Copy, a write's
+Command), `remote-runs-live-tail.test.ts` (a pull writes the live block and leaves the
+Command alone).
+
 ## Where the tests live
 
 - `swiss-host`: registry/contract fakes + run output buffer cursor semantics (runs.rs).
