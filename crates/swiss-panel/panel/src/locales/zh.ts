@@ -1318,6 +1318,7 @@ const zh: Record<string, string> = {
   "remoteRuns.stateFailed": "失败",
   "remoteRuns.liveOutput": "实时输出",
   "remoteRuns.cancel": "取消",
+  "remoteRuns.canceling": "正在取消…",
   "remoteRuns.queuedWaitingFreeSlot": "排队中——等待空闲槽位。",
   "remoteRuns.output": "还没有输出。",
   "remoteRuns.error": "错误",

@@ -1358,6 +1358,7 @@ const en                         = {
   "remoteRuns.stateFailed": "failed",
   "remoteRuns.liveOutput": "Live output",
   "remoteRuns.cancel": "Cancel",
+  "remoteRuns.canceling": "Canceling…",
   "remoteRuns.queuedWaitingFreeSlot": "Queued - waiting for a free slot.",
   "remoteRuns.output": "No output yet.",
   "remoteRuns.error": "Error",
