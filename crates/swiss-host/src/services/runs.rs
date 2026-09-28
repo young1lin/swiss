@@ -23,9 +23,9 @@
 //! "manual"), a future plugin's work — is registered HERE with its owner, its provider
 //! action and its cancellation source. Three properties are load-bearing:
 //!
-//! - BOUNDED: at most max_concurrent runs execute and at most max_queued runs wait; a
-//!   submission past either bound is a VISIBLE capacity error, never a silently growing
-//!   task set.
+//! - BOUNDED: at most max_concurrent LOCAL runs execute, at most remote_per_target runs
+//!   drive each remote target ([RunLane]), and at most max_queued runs wait; a submission
+//!   past a bound is a VISIBLE capacity error, never a silently growing task set.
 //! - OWNER-SCOPED: cancellation and shutdown name an owner. Stopping Jobs cancels the runs
 //!   Jobs started; a manual run someone else submitted keeps running. Detached work nobody
 //!   owns does not exist here — every run's task is tracked until it completes.
@@ -52,8 +52,8 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::services::action::{
-    ActionContext, ActionError, ActionOutcome, ActionRegistry, CancelSource, RunOutputSink,
-    RunOutputTee,
+    ActionContext, ActionError, ActionOutcome, ActionRegistry, CancelSource, RunLane,
+    RunOutputSink, RunOutputTee,
 };
 use serde_json::Map;
 use swiss_core::util::now_ms;
@@ -227,6 +227,10 @@ pub struct RunOutputChunk {
 /// with the plugin's maxConcurrentRuns / maxQueuedRuns when Jobs is configured.
 pub const DEFAULT_MAX_CONCURRENT_RUNS: usize = 2;
 pub const DEFAULT_MAX_QUEUED_RUNS: usize = 32;
+/// Runs one remote target may have going at once ([RunLane::Remote]). Each is a session
+/// channel on the target's one SSH connection, and OpenSSH's MaxSessions allows 10 per
+/// connection by default: 8 leaves room for a terminal tab and a file transfer beside them.
+pub const DEFAULT_MAX_REMOTE_RUNS_PER_TARGET: usize = 8;
 
 /// The shared pool's shape. Bounds are strict: a run past either bound is refused.
 #[derive(Debug, Clone, Copy)]
@@ -417,6 +421,7 @@ pub struct SubmittedRun {
 struct ActiveRun {
     owner: String,
     label: String,
+    lane: RunLane,
     actor: String,
     action_type: String,
     queued_at_ms: u64,
@@ -431,6 +436,7 @@ struct ActiveRun {
 struct QueuedRun {
     run_id: u64,
     request: SubmitRequest,
+    lane: RunLane,
     queued_at_ms: u64,
     done: oneshot::Sender<RunView>,
 }
@@ -438,6 +444,9 @@ struct QueuedRun {
 #[derive(Default)]
 struct Inner {
     capacity: RunCapacity,
+    /// The per-target bound of the remote lanes. Beside [RunCapacity], not in it: the jobs
+    /// reconciler re-aims that struct on every config apply.
+    remote_per_target: usize,
     next_id: u64,
     /// Where `next_id` is kept across restarts (see [RunCoordinator::persist_sequence]);
     /// None in the bare services and in tests, where numbering starts at 0 each process.
@@ -450,6 +459,24 @@ struct Inner {
     /// The buffers of finished runs, retired alongside the finished ring (same bound;
     /// each already compacted to KEEP_FINISHED_OUTPUT_BYTES).
     finished_outputs: VecDeque<(u64, Arc<RunOutputBuffer>)>,
+}
+
+impl Inner {
+    /// Why `lane` has no room for one more run, as the refusal the caller shows - or None.
+    fn lane_full(&self, lane: &RunLane) -> Option<String> {
+        let running = self.active.values().filter(|a| &a.lane == lane).count();
+        match lane {
+            RunLane::Local if running >= self.capacity.max_concurrent => Some(format!(
+                "run capacity is full ({running}/{} running); retry later or raise maxConcurrentRuns",
+                self.capacity.max_concurrent
+            )),
+            RunLane::Remote(target) if running >= self.remote_per_target => Some(format!(
+                "remote target {target} already has {running}/{} runs going; retry later",
+                self.remote_per_target
+            )),
+            _ => None,
+        }
+    }
 }
 
 /// The coordinator. Shared as one Arc between RuntimeServices, the jobs scheduler and the
@@ -475,6 +502,7 @@ impl RunCoordinator {
             registry,
             inner: Mutex::new(Inner {
                 capacity: RunCapacity::default(),
+                remote_per_target: DEFAULT_MAX_REMOTE_RUNS_PER_TARGET,
                 ..Inner::default()
             }),
             history: Mutex::new(Vec::new()),
@@ -571,6 +599,24 @@ impl RunCoordinator {
         self.dispatch_queue();
     }
 
+    /// The per-target bound of the remote lanes.
+    pub fn remote_per_target(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remote_per_target
+    }
+
+    /// Re-aim the remote lanes' per-target bound; like [RunCoordinator::set_capacity], it
+    /// gates new submissions only and dispatches anything a raised bound now admits.
+    pub fn set_remote_per_target(self: &Arc<Self>, bound: usize) {
+        {
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            inner.remote_per_target = bound;
+        }
+        self.dispatch_queue();
+    }
+
     /// How many runs are active or queued under one label (any owner) — the overlap gate
     /// the scheduler checks for skip / queue-one.
     pub fn count_for_label(&self, label: &str) -> usize {
@@ -600,6 +646,7 @@ impl RunCoordinator {
                 request.action_type
             )));
         }
+        let lane = action.lane(&request.input);
         let (done_tx, done_rx) = oneshot::channel();
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let run_id = inner.next_id;
@@ -609,21 +656,22 @@ impl RunCoordinator {
         }
         let output = RunOutputBuffer::new();
         let queued_at = now_ms();
-        if inner.active.len() < inner.capacity.max_concurrent {
+        let full = inner.lane_full(&lane);
+        if full.is_none() {
             // The output buffer exists from the moment the run id is committed, so the
             // output route can follow a QUEUED run too (it simply has nothing yet). It is
             // registered only on the paths that commit the run: nothing ever retires a buffer
             // for a run that was refused, so registering before the capacity checks leaked one
             // map entry per refusal, forever.
             inner.outputs.insert(run_id, output.clone());
-            self.start_locked(
-                &mut inner,
+            let run = QueuedRun {
                 run_id,
-                request.clone(),
-                queued_at,
-                done_tx,
-                output,
-            );
+                request: request.clone(),
+                lane,
+                queued_at_ms: queued_at,
+                done: done_tx,
+            };
+            self.start_locked(&mut inner, run, output);
         } else if request.queue_if_busy {
             if inner.queued.len() >= inner.capacity.max_queued {
                 return Err(SubmitError::Capacity(format!(
@@ -636,15 +684,12 @@ impl RunCoordinator {
             inner.queued.push_back(QueuedRun {
                 run_id,
                 request,
+                lane,
                 queued_at_ms: queued_at,
                 done: done_tx,
             });
         } else {
-            return Err(SubmitError::Capacity(format!(
-                "run capacity is full ({}/{} running); retry later or raise maxConcurrentRuns",
-                inner.active.len(),
-                inner.capacity.max_concurrent
-            )));
+            return Err(SubmitError::Capacity(full.unwrap_or_default()));
         }
         Ok(SubmittedRun {
             run_id,
@@ -654,15 +699,20 @@ impl RunCoordinator {
 
     /// Spawn the tracked execution task. Caller holds the inner lock. The receiver is
     /// &Arc<Self> because the task needs an owned handle back to self for its bookkeeping.
+    /// `run` is what a queued run holds - a submission that starts at once is shaped the same.
     fn start_locked(
         self: &Arc<Self>,
         inner: &mut Inner,
-        run_id: u64,
-        request: SubmitRequest,
-        queued_at_ms: u64,
-        done: oneshot::Sender<RunView>,
+        run: QueuedRun,
         output: Arc<RunOutputBuffer>,
     ) {
+        let QueuedRun {
+            run_id,
+            request,
+            lane,
+            queued_at_ms,
+            done,
+        } = run;
         let cancel = Arc::new(CancelSource::new());
         let started_at = now_ms();
         let owner = request.owner.clone();
@@ -693,6 +743,7 @@ impl RunCoordinator {
             ActiveRun {
                 owner,
                 label,
+                lane,
                 actor,
                 action_type,
                 queued_at_ms,
@@ -864,25 +915,26 @@ impl RunCoordinator {
     fn dispatch_queue(self: &Arc<Self>) {
         loop {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if inner.active.len() >= inner.capacity.max_concurrent {
-                return;
-            }
-            let Some(QueuedRun {
-                run_id,
-                request,
-                queued_at_ms,
-                done,
-            }) = inner.queued.pop_front()
+            // The oldest waiting run whose lane has room: a run queued for a busy remote
+            // target does not hold back a local one behind it, and within one lane the order
+            // stays first-in, first-out (a lane with no room has none for any of its runs).
+            let Some(next) = inner
+                .queued
+                .iter()
+                .position(|q| inner.lane_full(&q.lane).is_none())
             else {
+                return;
+            };
+            let Some(run) = inner.queued.remove(next) else {
                 return;
             };
             // The queued run's buffer was created at submit; hand it over to the task.
             let output = inner
                 .outputs
-                .get(&run_id)
+                .get(&run.run_id)
                 .cloned()
                 .unwrap_or_else(RunOutputBuffer::new);
-            self.start_locked(&mut inner, run_id, request, queued_at_ms, done, output);
+            self.start_locked(&mut inner, run, output);
         }
     }
 
@@ -923,6 +975,7 @@ impl RunCoordinator {
                 request,
                 queued_at_ms,
                 done,
+                ..
             } = inner.queued.remove(pos).expect("position just checked");
             let view = queued_canceled_view(run_id, &request, queued_at_ms);
             drop(inner);
@@ -1254,6 +1307,31 @@ mod tests {
         }
     }
 
+    /// The sleep, run against a remote target: its lane is the input's `target`.
+    struct RemoteSleepAction {
+        inner: SleepAction,
+    }
+
+    #[async_trait]
+    impl Action for RemoteSleepAction {
+        fn type_name(&self) -> &'static str {
+            "test.remote-sleep"
+        }
+        fn schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        fn lane(&self, input: &Value) -> RunLane {
+            RunLane::Remote(input["target"].as_str().unwrap_or_default().to_string())
+        }
+        async fn execute(
+            &self,
+            input: &Value,
+            cancel: CancelHandle,
+        ) -> Result<ActionOutcome, ActionError> {
+            self.inner.execute(input, cancel).await
+        }
+    }
+
     /// A capability that admits it cannot stop early.
     struct StubbornAction;
 
@@ -1305,6 +1383,13 @@ mod tests {
                 starts: starts.clone(),
             }))
             .expect("register sleep");
+        registry
+            .register(Arc::new(RemoteSleepAction {
+                inner: SleepAction {
+                    starts: starts.clone(),
+                },
+            }))
+            .expect("register remote sleep");
         registry
             .register(Arc::new(StubbornAction))
             .expect("register stubborn");
@@ -1385,6 +1470,70 @@ mod tests {
             "only the first ever started"
         );
         runs.shutdown_all().await;
+    }
+
+    fn remote(target: &str, ms: u64) -> SubmitRequest {
+        SubmitRequest {
+            action_type: "test.remote-sleep".into(),
+            input: json!({ "ms": ms, "target": target }),
+            ..request("manual", target, ms)
+        }
+    }
+
+    // The owner's report (2026-09-28): several terminals running `swiss remote exec` against
+    // one server - the third was refused with "run capacity is full (2/2 running)", though
+    // the SSH connection multiplexes channels. A remote run counts against its target's lane.
+    #[tokio::test]
+    async fn remote_runs_take_their_targets_lane_not_the_local_pool() {
+        let (runs, starts) = coordinator(RunCapacity {
+            max_concurrent: 1,
+            max_queued: 0,
+        });
+        runs.set_remote_per_target(2);
+        runs.submit(request("manual", "build", 30_000))
+            .expect("the local slot");
+        assert!(
+            runs.submit(request("manual", "other", 30_000)).is_err(),
+            "the local pool is full"
+        );
+        runs.submit(remote("web", 30_000)).expect("web 1");
+        runs.submit(remote("web", 30_000))
+            .expect("web 2, beside a full local pool");
+        let err = runs.submit(remote("web", 30_000)).expect_err("web is full");
+        assert!(matches!(err, SubmitError::Capacity(_)), "{err}");
+        assert!(err.to_string().contains("web already has 2/2"), "{err}");
+        runs.submit(remote("db", 30_000))
+            .expect("another target has its own lane");
+        settle().await;
+        assert_eq!(starts.load(Ordering::SeqCst), 4);
+        runs.shutdown_all().await;
+    }
+
+    #[tokio::test]
+    async fn a_queued_run_waits_for_its_own_lane_only() {
+        let (runs, _starts) = coordinator(RunCapacity {
+            max_concurrent: 1,
+            max_queued: 4,
+        });
+        runs.set_remote_per_target(1);
+        let first = runs.submit(remote("web", 30_000)).expect("web runs");
+        let mut waiting = remote("web", 1);
+        waiting.queue_if_busy = true;
+        let waiting = runs.submit(waiting).expect("queued behind web");
+        settle().await;
+        assert_eq!(
+            runs.get(waiting.run_id).map(|v| v.state),
+            Some(RunState::Queued)
+        );
+        // A local run is not held back by the remote one queued ahead of it.
+        let local = runs
+            .submit(request("manual", "quick", 1))
+            .expect("local has room");
+        assert_eq!(local.done.await.expect("view").state, RunState::Succeeded);
+        // Freeing web's slot starts the queued web run.
+        runs.cancel(first.run_id).await;
+        let view = waiting.done.await.expect("the queued run ran");
+        assert_eq!(view.state, RunState::Succeeded);
     }
 
     // A refused submission must not park an output buffer for a run id that will never run:

@@ -280,6 +280,31 @@ Tests (`actions.rs`): `a_vault_reference_reaches_the_far_side_resolved_and_comes
 `the_live_buffer_is_masked_too`; `refs.rs`: `a_syntax_check_never_consults_the_vault`;
 `mask.rs`: three `StreamMask` cases (a split secret, the held-back tail, short values skipped).
 
+## R11 - remote runs in parallel (2026-09-28)
+
+The owner's question: can several terminals drive one server at once through a reused SSH
+connection? The connection was never the limit - every exec opens its own session channel
+on the target's one connection (`ssh.rs` `exec`), and SSH multiplexes them. The limit was the
+run coordinator: one pool for every run, `maxConcurrentRuns` = 2, and a submission past it is
+refused. Measured on the test server: two `sleep 4` in parallel took 5.0 s in all, the third
+got `429 run capacity is full (2/2 running)`. A detached run holds its slot until it ends,
+so one long feed left a single slot for everything else.
+
+That pool protects THIS machine (a local process costs its CPU); a remote run costs a channel
+there and a buffer here. So the coordinator now has lanes (`RunLane`, `services/action.rs`):
+`Action::lane(input)` defaults to Local - the shared pool, unchanged - and all five remote
+actions answer `Remote(<target>)`. Each target's lane holds
+`DEFAULT_MAX_REMOTE_RUNS_PER_TARGET` = 8 runs: OpenSSH's `MaxSessions` allows 10 channels
+per connection by default, which leaves room for a terminal tab and a file transfer beside
+them. The ninth is refused naming the target (`remote target test already has 8/8 runs
+going`); another target has its own 8. A queued run (a job's queue-one) waits for its own
+lane only, so a remote run waiting on a busy target never holds back a local one.
+`GET /api/runs` reports the bound as `capacity.maxRemoteRunsPerTarget`.
+
+Tests: `runs.rs` `remote_runs_take_their_targets_lane_not_the_local_pool`,
+`a_queued_run_waits_for_its_own_lane_only`; `actions.rs`
+`every_remote_action_runs_in_its_targets_lane`.
+
 ## Where the tests live
 
 - `swiss-host`: registry/contract fakes + run output buffer cursor semantics (runs.rs).

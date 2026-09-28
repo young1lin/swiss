@@ -245,6 +245,19 @@ pub struct ActionContext {
     pub output: RunOutputSink,
 }
 
+/// Where a run's work happens - which of the coordinator's bounds it counts against
+/// (2026-09-28). The shared pool (maxConcurrentRuns, 2 by default) exists to protect THIS
+/// machine: a local process costs its CPU. A remote action's work runs on another machine
+/// and costs one channel on that target's SSH connection here, so it takes a slot in the
+/// target's own lane instead - several terminals driving one server in parallel must not
+/// queue behind two local slots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunLane {
+    Local,
+    /// The remote target's name, as the run's input names it.
+    Remote(String),
+}
+
 /// One callable capability. Implementations are shared as Arc<dyn Action> through the
 /// registry; they must therefore be stateless or internally synchronized.
 #[async_trait]
@@ -266,6 +279,11 @@ pub trait Action: Send + Sync {
     /// that cannot honour the handle must say false here — cancelling must not lie.
     fn cancelable(&self) -> bool {
         true
+    }
+
+    /// Which bound a run of this input counts against ([RunLane]). Default: local.
+    fn lane(&self, _input: &Value) -> RunLane {
+        RunLane::Local
     }
 
     /// The input schema, as a JSON-schema-ish object the config editor and GET /api/actions

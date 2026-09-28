@@ -32,7 +32,7 @@ use serde_json::{json, Map, Value};
 
 use swiss_host::mask::StreamMask;
 use swiss_host::services::action::{
-    Action, ActionContext, ActionError, ActionOutcome, CancelHandle, RunOutputSink,
+    Action, ActionContext, ActionError, ActionOutcome, CancelHandle, RunLane, RunOutputSink,
 };
 use swiss_host::services::remote::{
     RemoteError, RemoteExecEvent, RemoteExecRequest, RemoteTransportRegistry,
@@ -450,6 +450,10 @@ impl Action for RemoteExecAction {
         "remote"
     }
 
+    fn lane(&self, input: &Value) -> RunLane {
+        target_lane(input)
+    }
+
     fn schema(&self) -> Value {
         json!({
             "type": "object",
@@ -686,6 +690,10 @@ impl Action for RemoteSyncAction {
         "remote"
     }
 
+    fn lane(&self, input: &Value) -> RunLane {
+        target_lane(input)
+    }
+
     fn cancelable(&self) -> bool {
         true
     }
@@ -870,6 +878,10 @@ impl Action for RemotePullAction {
         "remote"
     }
 
+    fn lane(&self, input: &Value) -> RunLane {
+        target_lane(input)
+    }
+
     fn schema(&self) -> Value {
         json!({
             "type": "object",
@@ -1019,6 +1031,10 @@ impl Action for RemoteCatAction {
         "remote"
     }
 
+    fn lane(&self, input: &Value) -> RunLane {
+        target_lane(input)
+    }
+
     fn schema(&self) -> Value {
         json!({
             "type": "object",
@@ -1155,6 +1171,10 @@ impl Action for RemoteWriteAction {
         "remote"
     }
 
+    fn lane(&self, input: &Value) -> RunLane {
+        target_lane(input)
+    }
+
     fn schema(&self) -> Value {
         json!({
             "type": "object",
@@ -1186,6 +1206,15 @@ impl Action for RemoteWriteAction {
         ctx: ActionContext,
     ) -> Result<ActionOutcome, ActionError> {
         self.run(input, ctx.cancel.clone(), Some(&ctx.output)).await
+    }
+}
+
+/// Every remote capability runs in its target's lane (docs/34 R11): the work happens on the
+/// far machine, one session channel on the target's connection here - not a local slot.
+fn target_lane(input: &Value) -> RunLane {
+    match input.get("target").and_then(Value::as_str) {
+        Some(target) => RunLane::Remote(target.to_string()),
+        None => RunLane::Local, // no target: the run fails its parse at once
     }
 }
 
@@ -1898,6 +1927,24 @@ mod tests {
             "{}",
             out.output
         );
+    }
+
+    #[test]
+    fn every_remote_action_runs_in_its_targets_lane() {
+        let (system, _fake) = system_with_fake();
+        let registry = Arc::new(swiss_host::services::action::ActionRegistry::new());
+        register_all(system, &registry).expect("registered");
+        let input = json!({ "target": "dev", "argv": ["true"] });
+        for name in [
+            "remote.exec",
+            "remote.sync",
+            "remote.pull",
+            "remote.cat",
+            "remote.write",
+        ] {
+            let action = registry.get(name).expect(name);
+            assert_eq!(action.lane(&input), RunLane::Remote("dev".into()), "{name}");
+        }
     }
 
     #[tokio::test]

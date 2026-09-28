@@ -35,6 +35,10 @@ All notable changes to swiss are recorded here. The format follows
   vault has no such name, everywhere references resolve (docs/19, 2026-09-28).
 
 ### Changed
+- Remote runs no longer share the two-slot run pool that protects this machine: each remote
+  target has its own lane of 8 runs at once (each its own channel on the one SSH connection),
+  so parallel terminals driving one server stop getting `429 run capacity is full (2/2
+  running)`; local jobs keep `maxConcurrentRuns` (docs/34 R11).
 - The Data page's value viewer shows JSON as the panel's highlighted code block, the one Logs,
   Runs and Traffic use, instead of a folding tree; a string that holds JSON is shown decoded,
   and a document longer than 200 lines paints its first 200 with a Show all button.
