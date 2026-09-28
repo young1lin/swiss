@@ -701,6 +701,280 @@ pub async fn read_stream_window(
         Some(scan),
     ))
 }
+/* --- docs/50: the command catalog the CONNECTED server describes ------------------------------- */
+
+/// One flat RESP2 map ([k, v, k, v, ...]) as pairs. Redis answers COMMAND DOCS this way on
+/// RESP2, and every level of it — the command, an argument, a nested argument — is the same
+/// shape. Pure; a ragged array (odd length, a non-string key) contributes what it can rather
+/// than failing the whole catalog.
+fn resp_map(v: &Value) -> Vec<(String, Value)> {
+    let Some(items) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(items.len() / 2);
+    let mut i = 0;
+    while i + 1 < items.len() {
+        out.push((value_string(&items[i]), items[i + 1].clone()));
+        i += 2;
+    }
+    out
+}
+
+fn map_get<'a>(map: &'a [(String, Value)], key: &str) -> Option<&'a Value> {
+    map.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+}
+
+/// One argument of a command as the syntax line spells it (docs/50 §2.1). The shapes come
+/// straight from COMMAND DOCS' own vocabulary: a `pure-token` IS its token (NX), a `oneof`
+/// is its children separated by |, a `block` is its children in order, and anything else is
+/// its token (if it has one) followed by its name. `optional` wraps in brackets and
+/// `multiple` says so once — `key [key ...]`, the way redis' own documentation writes it.
+/// Pure, and depth-bounded: a malformed nested spec cannot recurse for ever.
+fn arg_syntax(arg: &Value, depth: usize) -> String {
+    if depth > 6 {
+        return String::new();
+    }
+    let map = resp_map(arg);
+    let name = map_get(&map, "name").map(value_string).unwrap_or_default();
+    let token = map_get(&map, "token").map(value_string);
+    let kind = map_get(&map, "type").map(value_string).unwrap_or_default();
+    let flags = map_get(&map, "flags")
+        .map(value_string_array)
+        .unwrap_or_default();
+    let optional = flags.iter().any(|f| f == "optional");
+    let multiple = flags.iter().any(|f| f == "multiple");
+    let children: Vec<String> = map_get(&map, "arguments")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|a| arg_syntax(a, depth + 1))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let body = match kind.as_str() {
+        "pure-token" => token.clone().unwrap_or(name),
+        "oneof" => children.join("|"),
+        "block" => children.join(" "),
+        _ => match token {
+            Some(t) if !t.is_empty() => format!("{t} {name}"),
+            _ => name,
+        },
+    };
+    if body.is_empty() {
+        return String::new();
+    }
+    let body = if multiple {
+        format!("{body} [{body} ...]")
+    } else {
+        body
+    };
+    if optional {
+        format!("[{body}]")
+    } else {
+        body
+    }
+}
+
+/// Every literal token in one argument tree (`NX`, `EX`, `MATCH`, `WITHSCORES`): what the
+/// console completes once the command and its keys are typed. Pure.
+fn arg_tokens(arg: &Value, out: &mut Vec<String>, depth: usize) {
+    if depth > 6 {
+        return;
+    }
+    let map = resp_map(arg);
+    if let Some(t) = map_get(&map, "token").map(value_string) {
+        if !t.is_empty() && !out.contains(&t) {
+            out.push(t);
+        }
+    }
+    if let Some(items) = map_get(&map, "arguments").and_then(Value::as_array) {
+        for a in items {
+            arg_tokens(a, out, depth + 1);
+        }
+    }
+}
+
+/// COMMAND DOCS into the catalog rows the console codes against (docs/50 §2.1). The reply is
+/// a flat [name, spec, name, spec, ...] array; a container's subcommands are nested under it
+/// and are flattened here as "XINFO STREAM" rows of their own, because that is what somebody
+/// types. Pure, so the shape is pinned without a server.
+pub fn parse_command_docs(reply: &Value) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for (name, spec) in resp_map(reply) {
+        push_command_doc(&name.to_uppercase(), &spec, &mut out, 0);
+    }
+    out.sort_by(|a, b| value_string(&a["name"]).cmp(&value_string(&b["name"])));
+    out
+}
+
+fn push_command_doc(name: &str, spec: &Value, out: &mut Vec<Value>, depth: usize) {
+    if depth > 2 {
+        return;
+    }
+    let map = resp_map(spec);
+    let args: Vec<String> = map_get(&map, "arguments")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|a| arg_syntax(a, 0))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut tokens: Vec<String> = Vec::new();
+    if let Some(items) = map_get(&map, "arguments").and_then(Value::as_array) {
+        for a in items {
+            arg_tokens(a, &mut tokens, 0);
+        }
+    }
+    let subs = map_get(&map, "subcommands").cloned().unwrap_or(Value::Null);
+    // A container (CONFIG, XINFO, CLIENT) has no syntax of its own worth printing: what it
+    // takes is one of its subcommands, and those are rows in their own right.
+    let has_subs = subs.as_array().map(|a| !a.is_empty()).unwrap_or(false);
+    out.push(json!({
+        "name": name,
+        "syntax": args.join(" "),
+        "summary": map_get(&map, "summary").map(value_string).unwrap_or_default(),
+        "since": map_get(&map, "since").map(value_string).unwrap_or_default(),
+        "group": map_get(&map, "group").map(value_string).unwrap_or_default(),
+        "tokens": tokens,
+        "container": has_subs,
+    }));
+    for (sub, sub_spec) in resp_map(&subs) {
+        // COMMAND DOCS spells a subcommand "config|get"; a console types "CONFIG GET".
+        let leaf = sub.rsplit('|').next().unwrap_or(&sub).to_uppercase();
+        push_command_doc(&format!("{name} {leaf}"), &sub_spec, out, depth + 1);
+    }
+}
+
+/// COMMAND INFO into the key positions the console needs (docs/50 §2.1): first key, last key
+/// and step, the same three numbers redis-cli reads to know which words are key names. The
+/// reply is one row per command — [name, arity, flags, first, last, step, …] — and a row that
+/// is not that shape is skipped rather than guessed at. Redis 7 carries a container's
+/// subcommands as a tenth cell of full rows of the same shape (named "xinfo|stream"), and a
+/// container's OWN numbers are zeros: the key positions of `XINFO STREAM` are only in there,
+/// so the nesting is walked rather than read as the end of the row. Pure.
+pub fn parse_command_info(reply: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    push_command_info(reply, "", &mut out, 0);
+    out
+}
+
+fn push_command_info(reply: &Value, parent: &str, out: &mut Vec<Value>, depth: usize) {
+    if depth > 2 {
+        return;
+    }
+    let Some(rows) = reply.as_array() else {
+        return;
+    };
+    for row in rows {
+        let Some(cells) = row.as_array() else { continue };
+        if cells.len() < 6 {
+            continue;
+        }
+        // "xinfo|stream" is what redis calls the row; "XINFO STREAM" is what a person types.
+        let leaf = value_string(&cells[0]);
+        let leaf = leaf.rsplit('|').next().unwrap_or(&leaf).to_uppercase();
+        let name = if parent.is_empty() {
+            leaf
+        } else {
+            format!("{parent} {leaf}")
+        };
+        out.push(json!({
+            "name": name.clone(),
+            "arity": value_i64(&cells[1]),
+            "firstKey": value_i64(&cells[3]),
+            "lastKey": value_i64(&cells[4]),
+            "step": value_i64(&cells[5]),
+        }));
+        if let Some(subs) = cells.get(9) {
+            push_command_info(subs, &name, out, depth + 1);
+        }
+    }
+}
+
+/// Merge the two answers into one catalog (docs/50 §2.1). DOCS carries the words (summary,
+/// syntax, group), INFO the numbers (arity, key positions); a command either side missed
+/// still ships with what the other knew, because half a row is what makes the difference
+/// between completing a command and not offering it at all. Pure.
+pub fn merge_command_catalog(docs: Vec<Value>, info: Vec<Value>) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for mut d in docs {
+        let name = value_string(&d["name"]);
+        if let Some(i) = info.iter().find(|i| value_string(&i["name"]) == name) {
+            d["arity"] = i["arity"].clone();
+            d["firstKey"] = i["firstKey"].clone();
+            d["lastKey"] = i["lastKey"].clone();
+            d["step"] = i["step"].clone();
+        } else if name.contains(' ') {
+            // A subcommand inherits its container's key positions: COMMAND INFO reports the
+            // container alone, and "XINFO STREAM key" takes its key exactly where XINFO does.
+            let head = name.split(' ').next().unwrap_or("").to_string();
+            if let Some(i) = info.iter().find(|i| value_string(&i["name"]) == head) {
+                d["firstKey"] = i["firstKey"].clone();
+                d["lastKey"] = i["lastKey"].clone();
+                d["step"] = i["step"].clone();
+            }
+        }
+        out.push(d);
+    }
+    // A server old enough to have no COMMAND DOCS (redis 6) still answers COMMAND INFO: its
+    // rows become name-and-key-positions entries, so the console completes names and keys
+    // even where it has nothing to say about arguments.
+    for i in info {
+        let name = value_string(&i["name"]);
+        if out.iter().any(|d| value_string(&d["name"]) == name) {
+            continue;
+        }
+        out.push(json!({
+            "name": name,
+            "syntax": "",
+            "summary": "",
+            "since": "",
+            "group": "",
+            "tokens": [],
+            "container": false,
+            "arity": i["arity"].clone(),
+            "firstKey": i["firstKey"].clone(),
+            "lastKey": i["lastKey"].clone(),
+            "step": i["step"].clone(),
+        }));
+    }
+    out.sort_by(|a, b| value_string(&a["name"]).cmp(&value_string(&b["name"])));
+    out
+}
+
+/// The console's command catalog, read from the server that will run the commands (docs/50).
+/// One pipeline, two introspection commands: COMMAND DOCS for the words and COMMAND INFO for
+/// the key positions. A server without DOCS (redis < 7, or a proxy) answers an error or an
+/// empty array and the catalog is INFO's alone — names and key positions, which is still a
+/// working console. Read-only, and nothing here is cached on the gateway: the panel asks once
+/// per connection and keeps the answer for as long as it keeps the connection.
+pub async fn read_command_catalog(handle: &RedisHandle) -> Result<Value, String> {
+    // Two sends, not one pipeline: a server that does not know DOCS fails that command, and
+    // redis answers a pipeline's failures together - taking the whole batch down with it.
+    let docs_cmd = [("COMMAND".to_string(), vec!["DOCS".to_string()])];
+    let info_cmd = [("COMMAND".to_string(), vec!["INFO".to_string()])];
+    let docs = match handle.pipeline(&docs_cmd).await {
+        Ok(r) => r.into_iter().next().unwrap_or(Value::Null),
+        Err(_) => Value::Null, // pre-7.0, or a proxy: INFO alone still makes a console
+    };
+    let info = handle
+        .pipeline(&info_cmd)
+        .await?
+        .into_iter()
+        .next()
+        .unwrap_or(Value::Null);
+    let catalog = merge_command_catalog(parse_command_docs(&docs), parse_command_info(&info));
+    Ok(json!({
+        "commands": catalog,
+        "documented": !docs.is_null(),
+    }))
+}
+
 /// XINFO GROUPS, read-only (docs/45 §2.4): the consumer-group table behind the
 /// groups fold. A key that vanished mid-view answers an empty table rather than
 /// an error — the stream view above it owns that story — while a non-stream
@@ -1713,6 +1987,162 @@ fn a_filtered_window_reports_how_far_it_walked() {
     assert_eq!(empty["scannedFrom"], Value::Null);
     assert_eq!(empty["scannedTo"], Value::Null);
 }
+    #[test]
+    fn command_docs_become_syntax_lines_and_tokens() {
+        // docs/50 §2.1: the syntax a console prints is BUILT from the server's own argument
+        // spec, in redis' own notation - optional in brackets, a choice with |, a repeat
+        // saying so once. This is SET as redis 7 describes it, trimmed to the shapes that
+        // matter: a key, a value, a one-of of pure tokens, and a token with an argument.
+        let docs = json!([
+            "set", [
+                "summary", "Set the string value of a key",
+                "since", "1.0.0",
+                "group", "string",
+                "arguments", [
+                    ["name", "key", "type", "key"],
+                    ["name", "value", "type", "string"],
+                    ["name", "condition", "type", "oneof", "flags", ["optional"], "arguments", [
+                        ["name", "nx", "type", "pure-token", "token", "NX"],
+                        ["name", "xx", "type", "pure-token", "token", "XX"],
+                    ]],
+                    ["name", "expiration", "type", "oneof", "flags", ["optional"], "arguments", [
+                        ["name", "seconds", "type", "integer", "token", "EX"],
+                        ["name", "keepttl", "type", "pure-token", "token", "KEEPTTL"],
+                    ]],
+                ],
+            ],
+            "del", [
+                "summary", "Delete a key",
+                "group", "generic",
+                "arguments", [["name", "key", "type", "key", "flags", ["multiple"]]],
+            ],
+        ]);
+        let rows = parse_command_docs(&docs);
+        let set = rows.iter().find(|r| r["name"] == json!("SET")).expect("SET");
+        assert_eq!(set["syntax"], json!("key value [NX|XX] [EX seconds|KEEPTTL]"));
+        assert_eq!(set["summary"], json!("Set the string value of a key"));
+        assert_eq!(set["group"], json!("string"));
+        assert_eq!(set["since"], json!("1.0.0"));
+        assert_eq!(
+            set["tokens"],
+            json!(["NX", "XX", "EX", "KEEPTTL"]),
+            "the tokens are what the console completes once the key is typed"
+        );
+        let del = rows.iter().find(|r| r["name"] == json!("DEL")).expect("DEL");
+        assert_eq!(del["syntax"], json!("key [key ...]"), "multiple says so once");
+    }
+
+    #[test]
+    fn a_container_command_contributes_its_subcommands_as_rows() {
+        // docs/50 §2.1: nobody types "XINFO"; they type "XINFO STREAM". A container keeps its
+        // own row (marked as one, so the console can say it needs a subcommand) and every
+        // subcommand becomes a row under the name a person would write.
+        let docs = json!([
+            "xinfo", [
+                "summary", "A container for stream introspection commands",
+                "group", "stream",
+                "subcommands", [
+                    "xinfo|stream", [
+                        "summary", "Get information about a stream",
+                        "group", "stream",
+                        "arguments", [["name", "key", "type", "key"]],
+                    ],
+                    "xinfo|groups", [
+                        "summary", "List the consumer groups of a stream",
+                        "group", "stream",
+                        "arguments", [["name", "key", "type", "key"]],
+                    ],
+                ],
+            ],
+        ]);
+        let rows = parse_command_docs(&docs);
+        let names: Vec<String> = rows.iter().map(|r| value_string(&r["name"])).collect();
+        assert_eq!(names, vec!["XINFO", "XINFO GROUPS", "XINFO STREAM"]);
+        let container = rows.iter().find(|r| r["name"] == json!("XINFO")).expect("XINFO");
+        assert_eq!(container["container"], json!(true));
+        let stream = rows
+            .iter()
+            .find(|r| r["name"] == json!("XINFO STREAM"))
+            .expect("XINFO STREAM");
+        assert_eq!(stream["syntax"], json!("key"));
+        assert_eq!(stream["container"], json!(false));
+    }
+
+    #[test]
+    fn command_info_gives_the_key_positions_and_merges_with_the_words() {
+        // docs/50 §2.1: DOCS has the words, INFO has the numbers - which ARGUMENT is a key.
+        // A redis 7 row carries a container's subcommands in its tenth cell, each a full row
+        // of the same shape, because the container's own numbers are zeros: `XINFO STREAM`'s
+        // key position exists nowhere else.
+        let info = json!([
+            ["set", 3, ["write", "denyoom"], 1, 1, 1],
+            ["mset", -3, ["write"], 1, -1, 2],
+            ["xinfo", -2, ["readonly"], 0, 0, 0, ["@slow"], [], [], [
+                ["xinfo|stream", -3, ["readonly"], 2, 2, 1],
+            ]],
+            ["ping", -1, ["fast"], 0, 0, 0],
+            ["ragged"],
+        ]);
+        let parsed = parse_command_info(&info);
+        assert_eq!(parsed.len(), 5, "a row that is not the shape is skipped, not guessed");
+        let mset = parsed.iter().find(|r| r["name"] == json!("MSET")).expect("MSET");
+        assert_eq!((mset["firstKey"].clone(), mset["lastKey"].clone(), mset["step"].clone()),
+                   (json!(1), json!(-1), json!(2)));
+        let nested = parsed
+            .iter()
+            .find(|r| r["name"] == json!("XINFO STREAM"))
+            .expect("the subcommand is a row of its own, under the name a person types");
+        assert_eq!(nested["firstKey"], json!(2), "the container itself says 0");
+
+        let docs = parse_command_docs(&json!([
+            "set", ["summary", "Set a key", "group", "string",
+                    "arguments", [["name", "key", "type", "key"]]],
+            "xinfo", ["summary", "A container", "group", "stream", "subcommands", [
+                "xinfo|stream", ["summary", "Info", "group", "stream",
+                                 "arguments", [["name", "key", "type", "key"]]],
+            ]],
+        ]));
+        let merged = merge_command_catalog(docs.clone(), parsed);
+        let names: Vec<String> = merged.iter().map(|r| value_string(&r["name"])).collect();
+        assert!(names.contains(&"PING".to_string()), "INFO-only commands still ship: {names:?}");
+        let set = merged.iter().find(|r| r["name"] == json!("SET")).expect("SET");
+        assert_eq!(set["firstKey"], json!(1));
+        assert_eq!(set["summary"], json!("Set a key"), "both halves survive the merge");
+        let sub = merged
+            .iter()
+            .find(|r| r["name"] == json!("XINFO STREAM"))
+            .expect("XINFO STREAM");
+        assert_eq!(sub["firstKey"], json!(2));
+        assert_eq!(sub["summary"], json!("Info"), "the words come from DOCS, the numbers from INFO");
+        let ping = merged.iter().find(|r| r["name"] == json!("PING")).expect("PING");
+        assert_eq!(ping["summary"], json!(""), "no words for it, but it is offered");
+        assert_eq!(ping["firstKey"], json!(0));
+
+        // Redis 6 nests nothing: there the container's own numbers ARE the subcommand's, and
+        // the merge falls back to inheriting them rather than leaving the key uncompletable.
+        let old = parse_command_info(&json!([["xinfo", -2, ["readonly"], 2, 2, 1]]));
+        let merged = merge_command_catalog(docs, old);
+        let sub = merged
+            .iter()
+            .find(|r| r["name"] == json!("XINFO STREAM"))
+            .expect("XINFO STREAM");
+        assert_eq!(sub["firstKey"], json!(2), "inherited from the container");
+    }
+
+    #[test]
+    fn a_catalog_survives_a_server_that_documents_nothing() {
+        // docs/50 §2.1: redis 6 has no COMMAND DOCS, and some proxies answer neither in the
+        // shape the spec promises. Junk in is an empty catalog, never a panic.
+        assert_eq!(parse_command_docs(&json!("nonsense")), Vec::<Value>::new());
+        assert_eq!(parse_command_docs(&json!([])), Vec::<Value>::new());
+        assert_eq!(parse_command_info(&json!(null)), Vec::<Value>::new());
+        assert_eq!(merge_command_catalog(vec![], vec![]), Vec::<Value>::new());
+        // A name with no spec at all still names a command.
+        let only_names = parse_command_docs(&json!(["get", []]));
+        assert_eq!(only_names[0]["name"], json!("GET"));
+        assert_eq!(only_names[0]["syntax"], json!(""));
+    }
+
     #[test]
     fn read_windows_clamp() {
         assert_eq!(read_window(&json!({})), (0, 100));

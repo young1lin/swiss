@@ -19,8 +19,8 @@
 
 use super::direct::Lazy;
 use super::redis::{
-    assert_command_allowed, read_stream_groups, read_stream_window, type_aware_read, value_i64,
-    value_string, RedisHandle, RedisReadClient, SCAN_TYPES,
+    assert_command_allowed, read_command_catalog, read_stream_groups, read_stream_window,
+    type_aware_read, value_i64, value_string, RedisHandle, RedisReadClient, SCAN_TYPES,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -314,6 +314,13 @@ impl RedisBrowser for RedisDataBrowser {
         let q = redis_stream_opts(o)?;
         let handle = self.conn.get().await?;
         read_stream_window(handle.as_ref(), key, &q).await
+    }
+
+    async fn command_catalog(&self) -> Result<Value, String> {
+        // docs/50: read-only introspection over the leased shared handle, exactly like the
+        // stream reads. Two commands, no cache here — the panel asks once per connection.
+        let handle = self.conn.get().await?;
+        read_command_catalog(handle.as_ref()).await
     }
 
     async fn stream_groups(&self, key: &str) -> Result<Value, String> {

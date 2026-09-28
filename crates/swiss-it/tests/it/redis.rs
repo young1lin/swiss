@@ -875,6 +875,67 @@ async fn a_filter_that_matches_nothing_says_how_far_it_looked() {
     );
 }
 #[tokio::test]
+async fn the_command_catalog_comes_from_the_server_itself() {
+    // docs/50: the console's completion is built from COMMAND DOCS + COMMAND INFO, so it
+    // knows the commands THIS server has - its version, its modules - instead of a table
+    // kept by hand in the panel. Against a real redis 7 that means summaries, syntax built
+    // from redis' own argument spec, the key positions, and the container commands flattened
+    // into the names a person types.
+    let (_f, b) = browser("r50_catalog").await;
+    let v = b.command_catalog().await.expect("the catalog");
+    assert_eq!(v["documented"], json!(true), "redis 7 answers COMMAND DOCS");
+    let rows = v["commands"].as_array().expect("commands").clone();
+    assert!(
+        rows.len() > 150,
+        "a real redis has hundreds of commands, got {}",
+        rows.len()
+    );
+    let by = |name: &str| -> Value {
+        rows.iter()
+            .find(|r| r["name"] == json!(name))
+            .unwrap_or_else(|| panic!("{name} is missing from the catalog"))
+            .clone()
+    };
+
+    let set = by("SET");
+    assert!(
+        set["summary"].as_str().unwrap_or("").to_lowercase().contains("set"),
+        "redis' own one-line summary rides along: {}",
+        set["summary"]
+    );
+    let syntax = set["syntax"].as_str().unwrap_or("");
+    assert!(syntax.starts_with("key value"), "SET's syntax: {syntax}");
+    assert!(syntax.contains("[NX|XX]"), "a one-of of pure tokens: {syntax}");
+    assert_eq!(set["firstKey"], json!(1), "COMMAND INFO's key position");
+    assert_eq!(set["group"], json!("string"));
+    let tokens = set["tokens"].as_array().expect("tokens");
+    for t in ["NX", "XX", "EX", "PX"] {
+        assert!(tokens.contains(&json!(t)), "SET accepts {t}: {tokens:?}");
+    }
+
+    // A key that is not the first argument, and one that runs to the end of the line.
+    assert_eq!(by("GET")["firstKey"], json!(1));
+    assert_eq!(by("DEL")["lastKey"], json!(-1), "DEL takes keys to the end");
+    assert_eq!(by("MSET")["step"], json!(2), "MSET's values are not keys");
+
+    // Containers: the row a person types is "XINFO STREAM", and it inherits XINFO's key
+    // position - the console completes a key there because of this line.
+    assert_eq!(by("XINFO")["container"], json!(true));
+    let xs = by("XINFO STREAM");
+    assert_eq!(xs["container"], json!(false));
+    assert_eq!(xs["firstKey"], json!(2), "one word later than a plain command's key");
+    assert!(xs["syntax"].as_str().unwrap_or("").starts_with("key"), "{}", xs["syntax"]);
+    assert!(rows.iter().any(|r| r["name"] == json!("CONFIG GET")), "CONFIG's subcommands too");
+
+    // Nothing here is a write, and nothing here needs allowDestructive: it is introspection.
+    let shouty = |r: &Value| -> bool {
+        let n = r["name"].as_str().unwrap_or("");
+        n == n.to_uppercase()
+    };
+    assert!(rows.iter().all(shouty), "every name is upper case, the way a console prints it");
+}
+
+#[tokio::test]
 async fn stream_groups_reports_pending_and_lag() {
     // docs/45 §2.4: the read-only consumer table over the seed's feed group —
     // seven read-never-ACKed entries, one consumer, and the lag that follows; a
