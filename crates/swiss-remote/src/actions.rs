@@ -30,6 +30,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 
+use swiss_host::mask::StreamMask;
 use swiss_host::services::action::{
     Action, ActionContext, ActionError, ActionOutcome, CancelHandle, RunOutputSink,
 };
@@ -53,6 +54,9 @@ struct Tap<'a> {
     sink: Option<&'a RunOutputSink>,
     tail: Vec<u8>,
     chars: usize,
+    /// The values vault references resolved to: masked before a byte reaches the live
+    /// buffer, the record or the outcome (docs/34, 2026-09-28 addendum).
+    mask: StreamMask,
 }
 
 impl<'a> Tap<'a> {
@@ -61,6 +65,7 @@ impl<'a> Tap<'a> {
             sink: Some(sink),
             tail: Vec::new(),
             chars: 0,
+            mask: StreamMask::new(&[]),
         }
     }
 
@@ -69,10 +74,34 @@ impl<'a> Tap<'a> {
             sink: None,
             tail: Vec::new(),
             chars: 0,
+            mask: StreamMask::new(&[]),
         }
     }
 
+    fn masking(mut self, secrets: &[String]) -> Self {
+        self.mask = StreamMask::new(secrets);
+        self
+    }
+
     fn push(&mut self, bytes: &[u8]) {
+        if self.mask.is_empty() {
+            self.emit(bytes);
+        } else {
+            let safe = self.mask.feed(bytes);
+            self.emit(&safe);
+        }
+    }
+
+    /// The stream ended: release what the mask held back as a possible secret start.
+    fn finish(&mut self) {
+        let rest = self.mask.finish();
+        self.emit(&rest);
+    }
+
+    fn emit(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
         self.chars += bytes.len();
         if let Some(sink) = self.sink {
             sink.append_bytes(bytes);
@@ -273,6 +302,68 @@ struct ParsedExec {
     cwd: Option<String>,
 }
 
+/// Resolve the vault references in an exec's argv, env values and cwd (docs/34 R10):
+/// `${secret://name}` becomes the stored value, `${secret://name:default}` the default when
+/// the vault does not hold the name, and a missing name without a default refuses the run
+/// before anything is sent. `${UPPER}` stays text - the far side's shell owns it. This runs
+/// INSIDE the action, after the run was recorded, so the run list, the audit and the panel
+/// keep the reference as typed; the values come back for the output mask.
+fn resolve_exec_refs(parsed: ParsedExec) -> Result<(ParsedExec, Vec<String>), ActionError> {
+    let mut secrets: Vec<String> = Vec::new();
+    let mut one = |text: &str, field: &str| -> Result<String, ActionError> {
+        let (out, got) = swiss_core::secure::refs::resolve_secrets_collect(text)
+            .map_err(|err| ActionError::InvalidInput(format!("{field} {err}")))?;
+        for v in got {
+            if !secrets.contains(&v) {
+                secrets.push(v);
+            }
+        }
+        Ok(out)
+    };
+    let mut argv = Vec::with_capacity(parsed.argv.len());
+    for (i, word) in parsed.argv.iter().enumerate() {
+        argv.push(one(word, &format!("argv[{i}]"))?);
+    }
+    let mut env = Vec::with_capacity(parsed.env.len());
+    for (name, value) in &parsed.env {
+        env.push((name.clone(), one(value, &format!("env.{name}"))?));
+    }
+    let cwd = match &parsed.cwd {
+        Some(c) => Some(one(c, "cwd")?),
+        None => None,
+    };
+    Ok((
+        ParsedExec {
+            target: parsed.target,
+            argv,
+            env,
+            cwd,
+        },
+        secrets,
+    ))
+}
+
+/// The validation half of [resolve_exec_refs]: every reference well-formed, named by its
+/// field - and the vault never read. validate_input also runs when jobs.json is saved and at
+/// boot, where a failing definition is DROPPED; a job naming a secret stored later must
+/// survive both, and fails at its run if the name is still missing.
+fn check_exec_refs(parsed: &ParsedExec) -> Result<(), ActionError> {
+    let check = |text: &str, field: String| {
+        swiss_core::secure::refs::check_secret_refs(text)
+            .map_err(|err| ActionError::InvalidInput(format!("{field} {err}")))
+    };
+    for (i, word) in parsed.argv.iter().enumerate() {
+        check(word, format!("argv[{i}]"))?;
+    }
+    for (name, value) in &parsed.env {
+        check(value, format!("env.{name}"))?;
+    }
+    if let Some(cwd) = &parsed.cwd {
+        check(cwd, "cwd".to_string())?;
+    }
+    Ok(())
+}
+
 const EXEC_FIELDS: [&str; 5] = ["target", "argv", "env", "cwd", "timeoutMs"];
 
 /// The parsed, validated sync input (also the validate_input surface).
@@ -306,6 +397,7 @@ async fn drive_exec<'a>(
             RemoteExecEvent::Stderr(bytes) => tap.push(&bytes),
         }
     }
+    tap.finish();
     let result = exec
         .await
         .map_err(|err| ActionError::Failed(format!("the transport task ended: {err}")))?;
@@ -383,7 +475,9 @@ impl Action for RemoteExecAction {
     }
 
     fn validate_input(&self, input: &Value) -> Result<(), String> {
-        self.parse(input).map(|_| ()).map_err(|err| err.to_string())
+        self.parse(input)
+            .and_then(|parsed| check_exec_refs(&parsed))
+            .map_err(|err| err.to_string())
     }
 
     async fn execute(
@@ -392,7 +486,7 @@ impl Action for RemoteExecAction {
         cancel: CancelHandle,
     ) -> Result<ActionOutcome, ActionError> {
         let started = std::time::Instant::now();
-        let parsed = self.parse(input)?;
+        let (parsed, secrets) = resolve_exec_refs(self.parse(input)?)?;
         let target = self
             .system
             .resolve(&parsed.target)
@@ -408,7 +502,14 @@ impl Action for RemoteExecAction {
             env: parsed.env,
             cwd,
         };
-        let (end, tap) = drive_exec(&self.registry, &target, request, cancel, Tap::quiet()).await?;
+        let (end, tap) = drive_exec(
+            &self.registry,
+            &target,
+            request,
+            cancel,
+            Tap::quiet().masking(&secrets),
+        )
+        .await?;
         Ok(exec_outcome(
             &target,
             end,
@@ -423,7 +524,7 @@ impl Action for RemoteExecAction {
         ctx: ActionContext,
     ) -> Result<ActionOutcome, ActionError> {
         let started = std::time::Instant::now();
-        let parsed = self.parse(input)?;
+        let (parsed, secrets) = resolve_exec_refs(self.parse(input)?)?;
         let target = self
             .system
             .resolve(&parsed.target)
@@ -444,7 +545,7 @@ impl Action for RemoteExecAction {
             &target,
             request,
             ctx.cancel.clone(),
-            Tap::live(&ctx.output),
+            Tap::live(&ctx.output).masking(&secrets),
         )
         .await?;
         Ok(exec_outcome(
@@ -1719,5 +1820,166 @@ mod tests {
                 "{name} missing: {names:?}"
             );
         }
+    }
+
+    // --- vault references in an exec (docs/34, 2026-09-28 addendum) ----------------------
+
+    /// Plant a vault value under a test-unique name. The vault is process-wide and its
+    /// scratch home is locked by a blocking mutex, so the write leaves the async runtime.
+    async fn plant_secret(name: &'static str, value: &'static str) {
+        tokio::task::spawn_blocking(move || {
+            let _guard = swiss_core::paths::DATA_DIR_LOCK.blocking_lock();
+            let path = swiss_core::paths::test_home().join("secrets.json");
+            swiss_core::secure::secretstore::inject_vault(&path);
+            let rev = swiss_core::secure::secretstore::vault_rev();
+            swiss_core::secure::secretstore::put_secret(&path, name, value, rev).expect("plant");
+        })
+        .await
+        .expect("the plant task");
+    }
+
+    #[tokio::test]
+    async fn a_vault_reference_reaches_the_far_side_resolved_and_comes_back_masked() {
+        plant_secret("remote-exec-token", "s3cr3t-token-value").await;
+        let (system, fake) = system_with_fake();
+        fake.program(
+            "show",
+            FakeProgram {
+                argv0: "show".into(),
+                stdout: b"token=s3cr3t-token-value done\n".to_vec(),
+                stderr: b"echoed s3cr3t-token-value\n".to_vec(),
+                exit: 0,
+                delay_ms: 0,
+            },
+        );
+        let action = RemoteExecAction::new(system);
+        let input = json!({
+            "target": "dev",
+            "argv": ["show", "--token=${secret://remote-exec-token}",
+                     "${secret://remote-exec-absent:plain-default}", "${HOME}"],
+            "env": { "REDISCLI_AUTH": "${secret://remote-exec-token}" },
+        });
+        action
+            .validate_input(&input)
+            .expect("a held reference and a defaulted one both validate");
+        let out = action
+            .execute(&input, CancelSource::new().handle())
+            .await
+            .expect("the exec runs");
+        {
+            let calls = fake.exec_calls.lock().unwrap();
+            // The far side gets values; ${HOME} is the remote shell's to expand, untouched.
+            assert_eq!(
+                calls[0].argv,
+                [
+                    "show",
+                    "--token=s3cr3t-token-value",
+                    "plain-default",
+                    "${HOME}"
+                ]
+            );
+            assert!(calls[0].env.contains(&(
+                "REDISCLI_AUTH".to_string(),
+                "s3cr3t-token-value".to_string()
+            )));
+        }
+        // The value never comes back: the fake streams 3-byte chunks, so the secret is
+        // split across chunks on both streams and is masked anyway.
+        assert!(!out.output.contains("s3cr3t-token-value"), "{}", out.output);
+        assert!(
+            out.output
+                .contains(&format!("token={} done", swiss_host::mask::MASK)),
+            "{}",
+            out.output
+        );
+        assert!(
+            out.output
+                .contains(&format!("echoed {}", swiss_host::mask::MASK)),
+            "{}",
+            out.output
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_vault_reference_is_refused_before_anything_runs() {
+        let (system, fake) = system_with_fake();
+        let action = RemoteExecAction::new(system);
+        let input = json!({ "target": "dev", "env": { "PASS": "${secret://remote-exec-nowhere}" }, "argv": ["true"] });
+        // Validation is syntax only: jobs.json validates at save AND drops a failing
+        // definition at boot, so a job naming a secret stored later must survive both.
+        assert!(action.validate_input(&input).is_ok());
+        let err = action
+            .execute(&input, CancelSource::new().handle())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("env.PASS") && err.contains("secret://remote-exec-nowhere"),
+            "{err}"
+        );
+        assert!(
+            fake.exec_calls.lock().unwrap().is_empty(),
+            "nothing reached the transport"
+        );
+    }
+
+    #[test]
+    fn a_malformed_reference_is_refused_by_validation_naming_its_field() {
+        let (system, _fake) = system_with_fake();
+        let action = RemoteExecAction::new(system);
+        let err = action
+            .validate_input(&json!({ "target": "dev", "argv": ["echo", "${secret://Bad_Name}"] }))
+            .unwrap_err();
+        assert!(err.contains("argv[1]"), "{err}");
+        assert!(action
+            .validate_input(
+                &json!({ "target": "dev", "cwd": "${secret://x:/srv/app}", "argv": ["ls"] })
+            )
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_live_buffer_is_masked_too() {
+        // What /api/runs/{id}/output streams to the panel and the CLI while the run is live.
+        plant_secret("remote-exec-live", "live-secret-value").await;
+        let (system, fake) = system_with_fake();
+        fake.program(
+            "leak",
+            FakeProgram {
+                argv0: "leak".into(),
+                stdout: b"a live-secret-value b\nend\n".to_vec(),
+                stderr: Vec::new(),
+                exit: 0,
+                delay_ms: 0,
+            },
+        );
+        crate::actions::register_all(system.clone(), &system.services().actions).unwrap();
+        let submitted = match system.services().runs.submit(SubmitRequest {
+            owner: REMOTE_OWNER.into(),
+            label: "test".into(),
+            action_type: "remote.exec".into(),
+            input: json!({ "target": "dev", "argv": ["leak", "${secret://remote-exec-live}"] }),
+            timeout_ms: 30_000,
+            queue_if_busy: false,
+            actor: "test".to_string(),
+        }) {
+            Ok(s) => s,
+            Err(err) => panic!("submit refused: {err:?}"),
+        };
+        let run_id = submitted.run_id;
+        let _ = submitted.done.await;
+        let (_, chunk) = system
+            .services()
+            .runs
+            .output(run_id, 0, u32::MAX as usize)
+            .expect("the run's output");
+        assert!(!chunk.text.contains("live-secret-value"), "{}", chunk.text);
+        assert!(
+            chunk
+                .text
+                .contains(&format!("a {} b", swiss_host::mask::MASK)),
+            "{}",
+            chunk.text
+        );
     }
 }

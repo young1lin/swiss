@@ -84,6 +84,22 @@ functions: `sudo` needs NOPASSWD or `-n`, an interactive-only shorthand like `ll
 spelled out (`ls -alF`), and tools that assume a terminal print plain output - `ls` lists bare
 names one per line, so sizes and permissions need `ls -la`. Never wait for an interactive prompt.
 
+Credentials never go into a command as text. Store the value once in the vault (the panel's
+Secrets page) and reference it: `${secret://name}` in an argv word, an `--env` value or
+`--cwd` is replaced by the stored value on the way out, and `${secret://name:default}` uses
+`default` when the vault has no such name. Records, `swiss run status` and the panel keep the
+reference as typed; output that echoes the value comes back as `••••••••`. A missing name
+without a default fails the run before anything is sent. Prefer `--env` (argv is visible in the
+remote `ps`), and single-quote the reference in PowerShell and bash alike:
+
+```text
+swiss remote exec test --env 'REDISCLI_AUTH=${secret://redis-password}' -- redis-cli ping
+swiss remote exec test --env 'DB_USER=${secret://db-user:readonly}' -- ./report.sh
+```
+
+`${UPPER}` is not expanded here and argv is not run through a shell: wrap the command in
+`sh -c '...'` when the remote shell should expand its own variables.
+
 Relative remote paths resolve under `workspaceRoot`. Absolute remote paths pass through unchanged.
 Any `..` segment is refused. This is a guardrail, not a sandbox: the SSH login user and remote OS
 remain the actual security boundary.

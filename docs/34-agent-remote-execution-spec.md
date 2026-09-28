@@ -244,6 +244,42 @@ record under them; a row opens to its output (128 KiB a read, Load more), the ca
 the error; a target filter and Clear. `views/remote-runs.js`; vitest
 `admin-remote-runs-view.test.ts`.
 
+## R10 - vault references in exec (2026-09-28)
+
+The owner's ask: a remote command should be able to say `${secret://name}` (or
+`${secret://name:default}`, docs/19's 2026-09-28 grammar) and have it replaced by the stored
+value on the way out, while every page keeps showing the reference. Before this, `remote.exec`
+expanded nothing: a reference reached the far side as its own literal text (the market-feed demo
+authenticated with the 31-byte string `${secret://test-redis-password}` and got WRONGPASS).
+
+- **Where**: `resolve_exec_refs` in `crates/swiss-remote/src/actions.rs` resolves argv words,
+  env VALUES and cwd with `refs::resolve_secrets_collect` - the vault family only. `${UPPER}`
+  stays text: the gateway's own environment is not the far side's, and argv is single-quoted
+  by `quote_posix`, so `sh -c` is the way to let the remote shell expand a variable.
+- **When**: inside the action, after the coordinator recorded the run. The run list, the audit
+  line (`envKeys` only, as ever), the panel's Runs page and `swiss run status` keep the input
+  as typed; the resolved values exist only in the request that leaves for the SSH channel.
+- **Refused before anything is sent**: a reference to a name the vault lacks (and no default)
+  fails the run before the SSH channel opens, naming the field
+  (`env.REDISCLI_AUTH references secret://x which is not in the vault`). `validate_input`
+  checks the SYNTAX only (`refs::check_secret_refs`, which never reads the vault): it also runs
+  when jobs.json is saved and at boot, where a failing definition is dropped, and a job that
+  names a secret stored later must survive both.
+- **Masked output**: the resolved values (8 bytes or longer - a shorter one would mask common
+  words) are replaced with `••••••••` before a byte reaches the live buffer, the record or the
+  outcome. `swiss_host::mask::StreamMask` holds back a chunk tail that could be the start of a
+  value, so a secret split across two SSH reads is still caught; the stream's end releases
+  what was held. A default is the operator's own literal and is not masked.
+- **Prefer env over argv**: an argv word is visible to every user of the remote machine in
+  `ps`; `--env NAME='${secret://x}'` is not. Quote the reference with single quotes in both
+  PowerShell and bash - in double quotes each shell reads `${...}` as its own variable.
+
+Tests (`actions.rs`): `a_vault_reference_reaches_the_far_side_resolved_and_comes_back_masked`,
+`a_missing_vault_reference_is_refused_before_anything_runs`,
+`a_malformed_reference_is_refused_by_validation_naming_its_field`,
+`the_live_buffer_is_masked_too`; `refs.rs`: `a_syntax_check_never_consults_the_vault`;
+`mask.rs`: three `StreamMask` cases (a split secret, the held-back tail, short values skipped).
+
 ## Where the tests live
 
 - `swiss-host`: registry/contract fakes + run output buffer cursor semantics (runs.rs).

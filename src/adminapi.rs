@@ -512,14 +512,15 @@ async fn add_managed(
     Ok(lifecycle_of(ctx, name))
 }
 
-/// Whether one def value carries `secret`: the `${secret://name}` envelope anywhere inside a
-/// string (a header reads `Bearer ${secret://name}`), or the legacy bare whole value
-/// `secret://name` older files still hold (docs/25 E2).
-fn mentions_secret(v: &Value, envelope: &str, bare: &str) -> bool {
+/// Whether one def value carries `secret`: the `${secret://name}` envelope (or its defaulted
+/// `${secret://name:...}` form) anywhere inside a string - a header reads
+/// `Bearer ${secret://name}` - or the legacy bare whole value `secret://name` older files
+/// still hold (docs/25 E2). The grammar is refs.rs's; this only walks the tree.
+fn mentions_secret(v: &Value, secret: &str) -> bool {
     match v {
-        Value::String(s) => s.contains(envelope) || s == bare,
-        Value::Array(items) => items.iter().any(|x| mentions_secret(x, envelope, bare)),
-        Value::Object(map) => map.values().any(|x| mentions_secret(x, envelope, bare)),
+        Value::String(s) => swiss_core::secure::refs::names_secret(s, secret),
+        Value::Array(items) => items.iter().any(|x| mentions_secret(x, secret)),
+        Value::Object(map) => map.values().any(|x| mentions_secret(x, secret)),
         _ => false,
     }
 }
@@ -532,8 +533,6 @@ fn mentions_secret(v: &Value, envelope: &str, bare: &str) -> bool {
 /// request wakes it; one whose start failed is retried, since the old value was the likely
 /// cause. A stopped one stays stopped and reads the new value when it is next started.
 async fn refresh_secret_users(ctx: &AppContext, secret: &str) -> (Vec<String>, Vec<Value>) {
-    let envelope = format!("${{secret://{secret}}}");
-    let bare = format!("secret://{secret}");
     let mut refreshed = Vec::new();
     let mut failed = Vec::new();
     for entry in ctx.registry.all() {
@@ -547,7 +546,7 @@ async fn refresh_secret_users(ctx: &AppContext, secret: &str) -> (Vec<String>, V
         }) else {
             continue;
         };
-        if !def.0.values().any(|v| mentions_secret(v, &envelope, &bare)) {
+        if !def.0.values().any(|v| mentions_secret(v, secret)) {
             continue;
         }
         let adapter = match make_adapter(&def, &name, &ctx.calls) {
