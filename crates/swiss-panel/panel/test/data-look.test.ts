@@ -433,6 +433,36 @@ describe("a Redis key's rename is the library's one-field sheet (docs/46 P7-2)",
   });
 });
 
+/* The owner's report (2026-09-28), on a grid whose `id` header read `id 🔑 bigint`: "my id is
+   short - the type should go on its own line, and a comment on one more." A column was as wide
+   as its name and its type side by side; stacked, it is as wide as the longer of the two. */
+describe("a column header stacks its name, its type and its comment", () => {
+  const lines = (th: Element): string[] => Array.from(th.querySelectorAll(":scope > div")).map((d) => d.className);
+
+  it("the name line keeps the name and its marks; the type and the comment each take a line under it", () => {
+    openTable(true);
+    grid.renderDbGrid();
+    const [id, name] = Array.from(document.querySelectorAll("#dbGridWrap thead th.db-col"));
+    expect(lines(id)).toEqual(["db-col-main", "db-col-type", "db-col-comment"]);
+    expect(id.querySelector(".db-col-main .db-key"), "the PK mark rides the name").not.toBeNull();
+    expect(id.querySelector(".db-col-main .db-col-type"), "no type beside the name").toBeNull();
+    expect(id.querySelector(":scope > .db-col-type")!.textContent).toBe("int");
+    // The comment-less column keeps an empty line, so the header row stays one height.
+    expect(id.querySelector(":scope > .db-col-comment")!.textContent).toBe("");
+    expect(lines(name)).toEqual(["db-col-main", "db-col-type", "db-col-comment"]);
+    expect(name.querySelector(":scope > .db-col-type")!.textContent).toBe("text");
+    expect(name.querySelector(":scope > .db-col-comment")!.textContent).toBe("Display name");
+  });
+
+  it("a table with no comments draws two lines, name and type", () => {
+    const t = openTable(true);
+    t.data!.columns.forEach((c) => { c.comment = null; });
+    grid.renderDbGrid();
+    const ths = Array.from(document.querySelectorAll("#dbGridWrap thead th.db-col"));
+    expect(ths.map(lines)).toEqual([["db-col-main", "db-col-type"], ["db-col-main", "db-col-type"]]);
+  });
+});
+
 describe("the grid's look in views.css (docs/46 §3.7, U7)", () => {
   const css = sheet("views.css");
   const rule = (sel: string): string => {
@@ -446,6 +476,16 @@ describe("the grid's look in views.css (docs/46 §3.7, U7)", () => {
     expect(rule(".db-tip .t-comment")).toContain("color: var(--text-2)");
     expect(rule(".db-cell.db-det-comment")).toContain("color: var(--text-2)");
     expect(css).not.toMatch(/deliberate exception/);
+  });
+
+  it("a header's type line is a caption under the name, not an inset beside it", () => {
+    const type = rule(".db-col-type");
+    expect(type).not.toContain("margin-left");
+    expect(type).toContain("font-weight: var(--w-body)");
+    expect(type).toContain("text-overflow: ellipsis");
+    // An empty div has no height, so a comment-less header was a line shorter and, centred,
+    // drew its name half a line below its neighbours' (found on the 2026-09-28 walk).
+    expect(rule(".db-col-comment:empty::before")).toContain('content: "\\a0"');
   });
 
   it("the grid draws no vertical lines and its rows are 4px taller", () => {

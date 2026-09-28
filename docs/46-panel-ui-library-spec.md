@@ -496,6 +496,13 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
       删掉 CSS 里自称例外的注释。
       实施：表头第二行 `.db-col-comment` 用 `--text-3`；悬停卡的 `.t-comment` 与 Columns tab 的 Comment 列用 `--text-2`
       （正文里的说明比表头下的小字深一级）。
+      2026-09-28 补记：类型也另起一行（负责人："我 id 其实很短，这个类型应该换行展示，如果有注释，还要再换行"）。
+      表头现在是三行：名字（带 PK / FK / 排序标记）、`.db-col-type` 类型、`.db-col-comment` 注释；列宽取最长的
+      一行，不再是名字和类型并排的宽度。`.db-col-type` 去掉 6px 左缩进，用正文字重，320px 封顶加省略号（MySQL
+      的长 enum）；行表单的类型行是同一个类，一并贴齐名字。真浏览器走查又发现：没有注释的列那一行是空 div，
+      高度为 0，表头居中后名字比邻列低半行；`.db-col-comment:empty::before` 放一个不换行空格，空行也占一行，
+      各列名字对齐（走查量得名字 / 类型 / 注释三行在每列都是同一高度）。测试：`data-look.test.ts` 的
+      "a column header stacks its name, its type and its comment"。
 - [x] 表列表选中：竖条 + 浅底 + `--w-emph`，不变蓝（规则 15）；抽屉里的当前库 / 连接同样处理（勾号列代替蓝字）。
       实施：`.db-table.sel` 是 8% accent 浅底 + 2px inset accent 竖条，名字 `--text` / `--w-emph`。连接与库的抽屉每行
       最前一列是勾号（`.db-drow-tick`，当前项放 accent 的 `i-check`，其余行留同宽的空位，名字对齐），当前行加粗。

@@ -888,9 +888,10 @@ function renderDbGrid()       {
     title: tr("dataGrid.selectEveryRowPage"), data: { selall: "" },
   }));
   hr.appendChild(thAll);
-  // One caption line under every column name when ANY column carries a comment: the meaning is
-  // then ON the grid instead of hidden behind a hover, and giving every header the line (empty
-  // where there is nothing to say) keeps the header row one even height.
+  // Under every column name its type, on a line of its own (2026-09-28: side by side, a short
+  // `id` was as wide as `id bigint`), then one caption line when ANY column carries a comment:
+  // the meaning is then ON the grid instead of hidden behind a hover, and giving every header
+  // the line (empty where there is nothing to say) keeps the header row one even height.
   const hasComments = cols.some((c             )          => { return !!c.comment; });
   cols.forEach((c             )       => {
     const sorted = c.name === d.order;
@@ -909,7 +910,6 @@ function renderDbGrid()       {
       keyMark.appendChild(iconNode("key"));
       main.appendChild(keyMark);
     }
-    main.appendChild(el("span", "db-col-type", c.dataType));
     // docs/22 W5.2: the FK column's jump — one small straight arrow (the chevron belongs to
     // pagination) that opens the referenced table with the FOCUSED row's value as an eq
     // filter, the same channel a typed filter or W1.5's cell menu uses. The detail (and its
@@ -928,6 +928,7 @@ function renderDbGrid()       {
     }
     if (sorted) main.appendChild(el("span", "db-sort"));
     th.appendChild(main);
+    th.appendChild(el("div", "db-col-type", c.dataType));
     if (hasComments) th.appendChild(el("div", "db-col-comment", c.comment || ""));
     // docs/22 W2.1: the resize grip hugs the header's right edge. It owns mousedown and click
     // so a drag neither sorts the column nor fights the hover card for the pointer.
