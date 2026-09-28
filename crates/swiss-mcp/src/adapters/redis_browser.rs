@@ -27,6 +27,25 @@ use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
 use swiss_host::dbbrowser::{redis_stream_opts, RedisBrowser};
 
+/// One console line into the arguments redis will receive — quotes, escapes and all.
+///
+/// The splitting is shlex's (2026-09-28), not ours: the console used to `split_whitespace()`,
+/// so `SET k "{\"a\": \"b\"}" NX EX 100` reached redis as five broken words and the value was
+/// never the JSON the operator typed. The owner asked for a mature library rather than a second
+/// hand-written parser here, and shlex is one the build already carries; its rules are the ones
+/// the operator knows from a shell and from redis-cli — a double-quoted argument keeps its
+/// spaces, `\"` is a quote inside it, a single-quoted one is literal, and everything else is a
+/// bare word, `#` and `:` and `*` included (shlex has no comment syntax).
+///
+/// An unbalanced quote is the one refusal: shlex answers None, and the operator hears which
+/// mistake it was instead of watching redis receive half a value.
+pub fn split_command_line(line: &str) -> Result<Vec<String>, String> {
+    shlex::split(line).ok_or_else(|| {
+        "unbalanced quote — close it, or write a literal quote as \\\" inside the argument"
+            .to_string()
+    })
+}
+
 pub struct RedisDataBrowser {
     label: String,
     allow_destructive: bool,
@@ -308,19 +327,16 @@ impl RedisBrowser for RedisDataBrowser {
     }
 
     async fn run_command(&self, line: &str) -> Result<Value, String> {
-        // Split on whitespace (quoted args not offered — redis args are rarely spaced; the MCP
-        // redis_command tool remains the full-featured path). The adapter's own guard still
-        // refuses KEYS, blocking and server-breaking commands before anything reaches the
-        // socket; writes run.
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.is_empty() {
+        // The adapter's own guard still refuses KEYS, blocking and server-breaking commands
+        // before anything reaches the socket; writes run.
+        let parts = split_command_line(line)?;
+        let Some((command, rest)) = parts.split_first() else {
             return Err("type a command, e.g. GET mykey".into());
-        }
-        let command = parts[0];
-        let args = &parts[1..];
-        assert_command_allowed(command, args, self.allow_destructive, self.allow_eval)?;
+        };
+        let args: Vec<&str> = rest.iter().map(String::as_str).collect();
+        assert_command_allowed(command, &args, self.allow_destructive, self.allow_eval)?;
         let handle = self.conn.get().await?;
-        let reply = handle.call(command, args).await?;
+        let reply = handle.call(command, &args).await?;
         if let Value::Array(items) = &reply {
             if items.len() > REPLY_CAP {
                 return Ok(json!({
@@ -664,5 +680,80 @@ redis_mode:standalone
         let cmds = batch(&[&["FLUSHALL"] as &[&str]]);
         assert!(vet_pipeline(&cmds, false, false).is_err());
         assert!(vet_pipeline(&cmds, true, false).is_ok());
+    }
+
+    /* --- the console's argument splitting (2026-09-28) -----------------------------------------
+    The owner typed `SET test11 "{\"test\": \"123\"}" NX EX 100` and the console sent redis
+    five broken words, because the line was split on whitespace. The rules below are shlex's;
+    the cases are the ones a redis console actually meets — JSON values, spaces, apostrophes,
+    binary-ish escapes, glob patterns and the half-typed quote. */
+
+    fn split(line: &str) -> Vec<String> {
+        split_command_line(line).expect("splits")
+    }
+
+    #[test]
+    fn a_quoted_json_value_reaches_redis_as_one_argument() {
+        assert_eq!(
+            split(r#"SET test11 "{\"test\": \"123\"}" NX EX 100"#),
+            vec!["SET", "test11", r#"{"test": "123"}"#, "NX", "EX", "100"]
+        );
+    }
+
+    #[test]
+    fn the_shapes_a_console_line_comes_in() {
+        // A bare word, the plainest line there is.
+        assert_eq!(split("GET mykey"), vec!["GET", "mykey"]);
+        // Runs of whitespace, tabs and a trailing newline are separators, not arguments.
+        assert_eq!(split("  GET \t mykey \n"), vec!["GET", "mykey"]);
+        // A double-quoted argument keeps its spaces and its punctuation.
+        assert_eq!(
+            split(r#"HSET h field "a value with spaces""#),
+            vec!["HSET", "h", "field", "a value with spaces"]
+        );
+        // A single-quoted one is literal: the apostrophe problem in reverse.
+        assert_eq!(
+            split(r#"SET note 'it is Ada"s'"#),
+            vec!["SET", "note", r#"it is Ada"s"#]
+        );
+        // An empty argument is an argument — SET k "" is a real command.
+        assert_eq!(split(r#"SET k """#), vec!["SET", "k", ""]);
+        // Quotes glued to a word join it: redis sees one key, not two arguments.
+        assert_eq!(split(r#"GET "user":"1""#), vec!["GET", "user:1"]);
+        // A backslash outside quotes escapes the next character, space included.
+        assert_eq!(split(r"GET my\ key"), vec!["GET", "my key"]);
+        // Nothing in a key's own vocabulary is magic: #, :, *, {} and - are bare characters.
+        assert_eq!(
+            split("SCAN 0 MATCH user:*:#tag{1}-x"),
+            vec!["SCAN", "0", "MATCH", "user:*:#tag{1}-x"]
+        );
+        // The empty line and a line of spaces split to nothing — the caller says what to type.
+        assert!(split("").is_empty());
+        assert!(split("   ").is_empty());
+    }
+
+    #[test]
+    fn an_unbalanced_quote_is_named_instead_of_half_sent() {
+        for line in [
+            r#"SET k "half"#,
+            r#"SET k 'half"#,
+            r#"SET k "a\""#,
+            r"SET k tail\",
+        ] {
+            let err = split_command_line(line).expect_err("refused");
+            assert!(err.contains("unbalanced quote"), "{line}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_line_that_is_only_a_command_still_carries_no_arguments() {
+        assert_eq!(split("DBSIZE"), vec!["DBSIZE"]);
+        assert_eq!(split("  PING  "), vec!["PING"]);
+    }
+
+    #[test]
+    fn utf8_survives_the_split_whole() {
+        // A CJK value in quotes, and one bare: both reach redis as typed.
+        assert_eq!(split("SET 城市 \"上 海\""), vec!["SET", "城市", "上 海"]);
     }
 }
