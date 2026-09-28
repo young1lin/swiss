@@ -35,7 +35,7 @@ import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { loadCollapsed, mountGroup } from "./groups.js";
                                                                      
-import { DB_TREE_SECTIONS, dbSectionOf, dbSectionSlices, redisNamespaceTree } from "./data-tree.js";
+import { DB_TREE_SECTIONS, dbSectionOf, dbSectionSlices, redisNamespaceTree, redisTypeGlyph } from "./data-tree.js";
                                                                   
 import {
   dbConn, dbForgetParked, dbIsMounted, dbParkedTabs, dbReplaceConn, dbResumeView, dbSqlTab, dbSwapConn, dbTab, dbTabs, mountDbView,
@@ -471,7 +471,7 @@ function dbChromeClick(t         , ev            )          {
   if (keyRow) {
     // A key is an object: it opens its own tab (docs/42 T2), so a second key no longer eats
     // the first one's typed-value buffer and no guard has to ask about it.
-    dbOpenTab({ kind: "key", key: keyRow.dataset.rkey || "" });
+    dbOpenTab({ kind: "key", key: keyRow.dataset.rkey || "", type: keyRow.dataset.rtype });
     return true;
   }
   // A table row: re-find the row in the live list by name+schema and open it.
@@ -1068,15 +1068,17 @@ function dbTableRow(t               , scope               )              {
   return b;
 }
 
-/** One redis key row, one line (docs/43 M2): the name left (the REMAINDER under its band's
- *  prefix - the band already said the prefix; a leaf row says the whole key), its type and
- *  expiry right. The full key stays the row's title and its address ([data-rkey]). */
+/** One redis key row, one line (docs/43 M2): the type's glyph, the name (the REMAINDER under its
+ *  band's prefix - the band already said the prefix; a leaf row says the whole key), its type
+ *  and expiry right. The full key stays the row's title and its address ([data-rkey]). */
 function dbKeyRow(k                  , label        , selKey               )              {
-  const b = el("button", "db-table" + (k.key === selKey ? " sel" : ""));
+  const b = el("button", "db-table db-key-row" + (k.key === selKey ? " sel" : ""));
+  b.appendChild(iconNode(redisTypeGlyph(k.type)));
   let meta = k.type;
   if (k.ttl  >= 0) meta += " · ttl " + k.ttl + "s";
   b.title = k.key + " · " + meta;
   b.dataset.rkey = k.key;
+  b.dataset.rtype = k.type; // handed to the tab it opens, so its card wears the same glyph
   b.appendChild(el("span", "db-table-name", label));
   b.appendChild(el("span", "db-table-meta", k.type + (k.ttl  >= 0 ? " · " + k.ttl + "s" : "")));
   return b;

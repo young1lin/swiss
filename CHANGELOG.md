@@ -38,6 +38,8 @@ All notable changes to swiss are recorded here. The format follows
 - The Data page's value viewer shows JSON as the panel's highlighted code block, the one Logs,
   Runs and Traffic use, instead of a folding tree; a string that holds JSON is shown decoded,
   and a document longer than 200 lines paints its first 200 with a Show all button.
+- A Redis key row and its open tab lead with a glyph for the key's type (string, hash, list,
+  set, zset, stream), so `string` and `stream` no longer read alike; the type word stays.
 
 ### Fixed
 - With Follow on, a Redis stream's new rows replace only the table: the Follow bar was rebuilt

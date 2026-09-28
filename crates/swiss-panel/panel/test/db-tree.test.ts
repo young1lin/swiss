@@ -17,9 +17,10 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
 import { dbConn as dbConnState } from "../src/db-state.js";
 import { dbConn } from "./db-fixtures.js";
-import { dbSectionOf, dbSectionSlices, redisNamespaceTree } from "../src/data-tree.js";
+import { dbSectionOf, dbSectionSlices, redisNamespaceTree, redisTypeGlyph } from "../src/data-tree.js";
 
 /* The Data sidebar's tree (docs/43 M2). The pure half (data-tree.ts) runs directly; the
  *  rendering half runs over the same DOM-stub technique as every panel suite, because the
@@ -39,7 +40,7 @@ const el = (tag = "div"): Stub => {
     removeChild(c: Stub) { n.children = n.children.filter((x: Stub) => x !== c); return c; },
     remove() {}, contains: () => false,
     closest(sel: string) { return sel.charAt(0) === "#" && n.id === sel.slice(1) ? n : null; },
-    setAttribute(k: string, v: string) { if (k === "id") n.id = v; if (k.startsWith("data-")) n.dataset[k.slice(5)] = v; },
+    setAttribute(k: string, v: string) { (n.attrs ||= {})[k] = v; if (k === "id") n.id = v; if (k.startsWith("data-")) n.dataset[k.slice(5)] = v; },
     getAttribute: () => "", removeAttribute() {},
     addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true,
     focus() {}, blur() {}, click() {},
@@ -134,6 +135,24 @@ describe("the SQL sections cut by type (docs/43 M2 #1)", () => {
     expect(slices[0].rows).toHaveLength(1);
     expect(slices[1].rows).toHaveLength(0);
     expect(slices[2].rows).toHaveLength(0);
+  });
+});
+
+describe("the redis type glyphs (2026-09-28)", () => {
+  const shell = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "index.html"), "utf8");
+  const TYPES = ["string", "hash", "list", "set", "zset", "stream"];
+
+  it("gives each of the six core types its own glyph, and every glyph is in the sprite", () => {
+    const glyphs = TYPES.map(redisTypeGlyph);
+    expect(new Set(glyphs).size, glyphs.join(", ")).toBe(TYPES.length);
+    for (const g of glyphs) expect(shell, `symbol i-${g}`).toContain(`<symbol id="i-${g}"`);
+  });
+
+  it("a module type (ReJSON-RL, vectorset) or none falls back to the plain key mark", () => {
+    expect(redisTypeGlyph("ReJSON-RL")).toBe("key");
+    expect(redisTypeGlyph("vectorset")).toBe("key");
+    expect(redisTypeGlyph("none")).toBe("key");
+    expect(shell).toContain('<symbol id="i-key"');
   });
 });
 
@@ -313,6 +332,33 @@ describe("the rendered tree (docs/43 M2, DOM stubs)", () => {
     expect(all, "a one-key namespace renders as its whole key, no folder").toContain("lonely:only");
     // The leaf and the bare key are plain rows (.db-table), the namespace is a band.
     expect(tops.some((b: Stub) => text(b).startsWith("sess")), "sess is a band with its count").toBe(true);
+  });
+
+  /* The owner's report (2026-09-28): "string" and "stream" side by side in the meta read alike.
+     Each row now LEADS with its type's glyph - monochrome, like every descriptive mark (design
+     rule 2) - and the word stays in the meta. */
+  it("redis: a key row leads with its type's glyph, and string and stream differ at a glance", () => {
+    mount("redis");
+    const d = dbConnState();
+    d.redis = {
+      keys: [{ key: "test", type: "string", ttl: -1 }, { key: "ticks", type: "stream", ttl: -1 }],
+      cursor: "0", done: true, total: 2,
+    };
+    view.renderDbTables();
+    const rows = btn(byId.dbTables, "db-table").filter((b) => b.dataset.rkey);
+    const glyph = (b: Stub): string => {
+      const svg = b.children[0];
+      expect(svg.tag, "the glyph comes first").toBe("svg");
+      return svg.children[0].attrs.href;
+    };
+    const byKey = Object.fromEntries(rows.map((b) => [b.dataset.rkey, b]));
+    expect(glyph(byKey.test)).toBe("#i-" + redisTypeGlyph("string"));
+    expect(glyph(byKey.ticks)).toBe("#i-" + redisTypeGlyph("stream"));
+    expect(glyph(byKey.test)).not.toBe(glyph(byKey.ticks));
+    expect(text(byKey.ticks), "the type word stays in the meta").toContain("stream");
+    expect(byKey.ticks.dataset.rtype, "the row hands its type to the tab it opens").toBe("stream");
+    // .db-key is the grid's amber primary-key marker: the row must not wear it.
+    expect(byKey.test.className.split(" ")).not.toContain("db-key");
   });
 
   it("a grep makes every band expand - filtered results must not hide inside collapsed bands", () => {

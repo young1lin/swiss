@@ -178,7 +178,15 @@ describe("what a tab is worth (docs/42 D3)", () => {
     const k = freshTab("key"); k.redisKey = "session:1";
     expect(tabs.dbTabTitle(k)).toBe("session:1");
     expect(tabs.dbTabGlyph(tableTab("t"))).toBe("table");
-    expect(tabs.dbTabGlyph(k)).toBe("redis");
+    expect(tabs.dbTabGlyph(k), "a key whose value has not landed is a redis key").toBe("redis");
+    // Once the value lands the card wears the key's type glyph - the same one its sidebar row does.
+    k.redisValue = { key: "session:1", type: "stream", ttl: -1 };
+    expect(tabs.dbTabGlyph(k)).toBe("activity");
+    // The type the sidebar knew at open stands in until then; the landed value is the truth.
+    const opened = freshTab("key"); opened.redisKey = "q"; opened.redisKeyType = "list";
+    expect(tabs.dbTabGlyph(opened)).toBe("list");
+    opened.redisValue = { key: "q", type: "hash", ttl: -1 };
+    expect(tabs.dbTabGlyph(opened), "recreated as a hash since the row was painted").toBe("hash");
     expect(tabs.dbTabGlyph(freshTab("sql"))).toBe("terminal");
     expect(tabs.dbTabGlyph(freshTab("activity"))).toBe("clock");
   });
@@ -187,6 +195,13 @@ describe("what a tab is worth (docs/42 D3)", () => {
 /* --- open, close, activate -------------------------------------------------------------------- */
 
 describe("opening an object (docs/42 D3, D6)", () => {
+  it("a key opened from the sidebar carries its type, so the card wears the right glyph at once", () => {
+    tabs.dbOpenTab({ kind: "key", key: "ticks", type: "stream" });
+    const k = dbTab();
+    expect(k.kind).toBe("key");
+    expect(tabs.dbTabGlyph(k)).toBe("activity");
+  });
+
   it("the same table twice is one tab, activated the second time", () => {
     tabs.dbOpenTab({ kind: "table", table: "t1", schema: null });
     tabs.dbOpenTab({ kind: "sql" });
