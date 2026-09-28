@@ -14,90 +14,66 @@
  * limitations under the License.
  */
 
-import type { ApiDbCompletionItem, ApiDbCompletionReply } from "./types/api.js";
+import type { ApiDbCompletionItem, ApiDbCompletionReply, ApiRedisCommand, ApiRedisCommandsResponse } from "./types/api.js";
 import { $, apiJson, el } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbSqlPaint } from "./data-filters.js";
 import { dbConn, dbSqlTab } from "./db-state.js";
 
 
-/* --- redis completion (2026-09-28) ------------------------------------------------------------ */
+/* --- redis completion (2026-09-28; rebuilt on the server's own catalog, docs/50) --------------- */
 /* The owner, on the redis console: "I need completion, and templates - otherwise there is no way
-   to know how to set a key, or delete one." Redis needs no round trip for either: the command set
-   is fixed, and the key names are already in the sidebar. So this half is a table and two pure
-   functions, and the SQL path above keeps the server to itself. */
+   to know how to set a key, or delete one." Then, on what that first cut became: "Redis 命令自动
+   补全的功能，做得也很烂，没有 template，反正做得我不太满意，需要你来重构下."
 
-/** One redis command as the console offers it: what to type, what it takes, and what it acts on
- *  (the word the sidebar already labels the key with, so the two agree). `key` says the first
- *  argument is a key name - that is what makes the second word completable. */
-interface RedisCmd { name: string; args: string; group: string; key: boolean }
+   What was wrong with the table this file used to carry: forty commands written out by hand, no
+   summaries, nothing past the first argument, and a Templates menu buried in the tab's ⋯. The
+   catalog now comes from the SERVER — COMMAND DOCS plus COMMAND INFO (docs/50) — so it is that
+   server's commands, its modules, its version, with redis' own one-line summaries and its own
+   argument spelling; completion works at every word, not just the first; and the console's hint
+   line under the box shows the syntax of the command being typed. */
 
-const REDIS_COMMANDS: RedisCmd[] = [
-  { name: "GET", args: "key", group: "string", key: true },
-  { name: "SET", args: "key value [EX seconds]", group: "string", key: true },
-  { name: "SETEX", args: "key seconds value", group: "string", key: true },
-  { name: "INCR", args: "key", group: "string", key: true },
-  { name: "APPEND", args: "key value", group: "string", key: true },
-  { name: "STRLEN", args: "key", group: "string", key: true },
-  { name: "DEL", args: "key [key ...]", group: "key", key: true },
-  { name: "EXISTS", args: "key", group: "key", key: true },
-  { name: "RENAME", args: "key newkey", group: "key", key: true },
-  { name: "TYPE", args: "key", group: "key", key: true },
-  { name: "TTL", args: "key", group: "key", key: true },
-  { name: "EXPIRE", args: "key seconds", group: "key", key: true },
-  { name: "PERSIST", args: "key", group: "key", key: true },
-  { name: "KEYS", args: "pattern", group: "key", key: true },
-  { name: "SCAN", args: "cursor [MATCH pattern] [COUNT n]", group: "key", key: false },
-  { name: "HGET", args: "key field", group: "hash", key: true },
-  { name: "HSET", args: "key field value", group: "hash", key: true },
-  { name: "HDEL", args: "key field", group: "hash", key: true },
-  { name: "HGETALL", args: "key", group: "hash", key: true },
-  { name: "HKEYS", args: "key", group: "hash", key: true },
-  { name: "LPUSH", args: "key value", group: "list", key: true },
-  { name: "RPUSH", args: "key value", group: "list", key: true },
-  { name: "LPOP", args: "key", group: "list", key: true },
-  { name: "LRANGE", args: "key start stop", group: "list", key: true },
-  { name: "LLEN", args: "key", group: "list", key: true },
-  { name: "SADD", args: "key member", group: "set", key: true },
-  { name: "SREM", args: "key member", group: "set", key: true },
-  { name: "SMEMBERS", args: "key", group: "set", key: true },
-  { name: "SCARD", args: "key", group: "set", key: true },
-  { name: "ZADD", args: "key score member", group: "zset", key: true },
-  { name: "ZREM", args: "key member", group: "zset", key: true },
-  { name: "ZRANGE", args: "key start stop [WITHSCORES]", group: "zset", key: true },
-  { name: "ZCARD", args: "key", group: "zset", key: true },
-  { name: "XADD", args: "key * field value", group: "stream", key: true },
-  { name: "XLEN", args: "key", group: "stream", key: true },
-  { name: "XRANGE", args: "key start end [COUNT n]", group: "stream", key: true },
-  { name: "XREVRANGE", args: "key end start [COUNT n]", group: "stream", key: true },
-  { name: "DBSIZE", args: "", group: "server", key: false },
-  { name: "INFO", args: "[section]", group: "server", key: false },
-];
+/* The catalog row the console codes against is the wire shape itself (types/api.d.ts):
+   one type, written once, for what the server says and what this file reads. */
+export type RedisCmd = ApiRedisCommand;
 
 /** The lines the Templates menu offers: one ready command per thing an operator does, the words
- *  themselves standing in for the arguments (no <braces> to delete before it runs). */
+ *  themselves standing in for the arguments (no <braces> to delete before it runs). The catalog
+ *  says what a command TAKES; a template says what somebody came here to DO, which is why this
+ *  list is written rather than derived. */
 const REDIS_TEMPLATES: { group: string; line: string }[] = [
   { group: "string", line: "SET key value" },
   { group: "string", line: "SET key value EX 60" },
+  { group: "string", line: "SET key value NX" },
   { group: "string", line: "GET key" },
+  { group: "string", line: "MGET key1 key2" },
   { group: "key", line: "DEL key" },
   { group: "key", line: "EXPIRE key 60" },
   { group: "key", line: "PERSIST key" },
   { group: "key", line: "TTL key" },
   { group: "key", line: "RENAME key newkey" },
   { group: "key", line: "SCAN 0 MATCH prefix:* COUNT 100" },
+  { group: "key", line: "TYPE key" },
   { group: "hash", line: "HSET key field value" },
   { group: "hash", line: "HGETALL key" },
   { group: "hash", line: "HDEL key field" },
+  { group: "hash", line: "HSCAN key 0 MATCH f* COUNT 100" },
   { group: "list", line: "RPUSH key value" },
   { group: "list", line: "LRANGE key 0 -1" },
+  { group: "list", line: "LLEN key" },
   { group: "set", line: "SADD key member" },
   { group: "set", line: "SMEMBERS key" },
+  { group: "set", line: "SSCAN key 0 COUNT 100" },
   { group: "zset", line: "ZADD key 1 member" },
   { group: "zset", line: "ZRANGE key 0 -1 WITHSCORES" },
+  { group: "zset", line: "ZRANGEBYSCORE key -inf +inf LIMIT 0 20" },
   { group: "stream", line: "XADD key * field value" },
   { group: "stream", line: "XREVRANGE key + - COUNT 20" },
+  { group: "stream", line: "XLEN key" },
+  { group: "stream", line: "XINFO STREAM key" },
   { group: "server", line: "INFO keyspace" },
+  { group: "server", line: "MEMORY USAGE key" },
+  { group: "server", line: "DBSIZE" },
 ];
 
 /** The word the redis console would complete: a key is a byte string, so its run takes the
@@ -109,37 +85,145 @@ function dbRedisWordAt(text: unknown, caret: number): string {
   return m ? m[0] : "";
 }
 
-/** What to offer for the caret in a redis console line: the first word completes from the
- *  command table (with its arguments as the detail), and the word after a command that reads a
- *  key completes from the keys already walked into the sidebar. A value is never guessed - it is
- *  the operator's to type, and a list of other keys' names there would be noise. Pure. */
-function dbRedisCandidates(text: string, caret: number, keys: string[]): ApiDbCompletionItem[] {
-  const prefix = dbRedisWordAt(text, caret);
-  if (!prefix) return [];
-  const before = text.slice(0, caret - prefix.length);
-  const words = before.split(/\s+/).filter((w: string): boolean => { return !!w; });
-  if (!words.length) {
-    const up = prefix.toUpperCase();
-    return REDIS_COMMANDS
-      .filter((c: RedisCmd): boolean => { return c.name.startsWith(up); })
-      .slice(0, SUGGEST_MAX_ITEMS)
-      .map((c: RedisCmd): ApiDbCompletionItem => {
-        return { label: c.name, kind: c.group, detail: (c.name + " " + c.args).trim() };
-      });
-  }
-  if (words.length > 1) return []; // past the key: an argument is the operator's own
-  const cmd = REDIS_COMMANDS.find((c: RedisCmd): boolean => { return c.name === words[0].toUpperCase(); });
-  if (!cmd || !cmd.key) return [];
-  return keys
-    .filter((k: string): boolean => { return k.startsWith(prefix); })
-    .slice(0, SUGGEST_MAX_ITEMS)
-    .map((k: string): ApiDbCompletionItem => { return { label: k, kind: "key" }; });
+/** The words of the line the caret sits on, and which of them the caret is in. A console holds
+ *  several lines; a command is one of them, and completing against the whole box would read the
+ *  line above as part of this command. Pure. */
+export function dbRedisLineAt(text: string, caret: number): { words: string[]; index: number } {
+  const upto = text.slice(0, caret);
+  const line = upto.slice(upto.lastIndexOf("\n") + 1);
+  const words = line.split(/\s+/);
+  // A line ending in a space puts the caret on a new, empty word - which is exactly where a
+  // token or the next key should be offered.
+  return { words: words.filter((w: string, i: number): boolean => { return !!w || i === words.length - 1; }), index: Math.max(0, words.length - 1) };
 }
 
-/** The keys the sidebar has walked so far - the completion's whole key source. */
+/** The catalog row for the command a line names, subcommands included: `XINFO STREAM` is one
+ *  name in the catalog, so the two-word form is tried before the one-word one. Pure. */
+export function dbRedisCmdOf(words: string[], cmds: RedisCmd[]): RedisCmd | null {
+  if (!words.length || !words[0]) return null;
+  const two = words.length > 1 && words[1]
+    ? (words[0] + " " + words[1]).toUpperCase()
+    : "";
+  const byName = (n: string): RedisCmd | undefined => {
+    return cmds.find((c: RedisCmd): boolean => { return c.name === n; });
+  };
+  return (two ? byName(two) : undefined) || byName(words[0].toUpperCase()) || null;
+}
+
+/** Whether the word at `index` of a command's line is a KEY argument, by the three numbers
+ *  redis-cli reads for the same purpose: first key, last key (negative counts back from the
+ *  end) and step. Word 0 is the command itself, so the positions are 1-based over the line.
+ *  Pure. */
+export function dbRedisKeyAt(cmd: RedisCmd, index: number, words: number): boolean {
+  const first = cmd.firstKey || 0;
+  if (first <= 0 || index < first) return false;
+  // A subcommand spends one more word on its name before its arguments start.
+  const last = cmd.lastKey == null ? first : cmd.lastKey;
+  const step = cmd.step && cmd.step > 0 ? cmd.step : 1;
+  // A negative last key counts from the END of the line, redis' own way: -1 is the last
+  // word (DEL takes keys all the way there), -2 the one before it.
+  const end = last < 0 ? words + last : last;
+  if (index > end) return false;
+  return (index - first) % step === 0;
+}
+
+/** What to offer for the caret in a redis console line (docs/50 §2.2). Word 0 completes from the
+ *  catalog; the word after a container completes from its subcommands; a key position completes
+ *  from the keys the sidebar has walked; anything else completes the command's own tokens (NX,
+ *  MATCH, WITHSCORES). A value is never guessed - it is the operator's to type, and a list of
+ *  other keys' names there would be noise. Pure. */
+export function dbRedisCandidates(
+  text: string, caret: number, keys: string[], cmds: RedisCmd[],
+): ApiDbCompletionItem[] {
+  const prefix = dbRedisWordAt(text, caret);
+  const line = dbRedisLineAt(text, caret);
+  const item = (c: RedisCmd, label: string): ApiDbCompletionItem => {
+    return {
+      label: label,
+      kind: c.group || "command",
+      // The syntax first (it is what gets typed next), the summary after it.
+      detail: (c.syntax ? label + " " + c.syntax : label) + (c.summary ? " — " + c.summary : ""),
+    };
+  };
+  const up = prefix.toUpperCase();
+  if (line.index === 0) {
+    // An empty first word offers nothing: a list of every command the server has is not a
+    // suggestion, it is a manual. Past the command, an empty word is exactly where the next
+    // key or token belongs, so there the blank prefix is a question worth answering.
+    if (!prefix) return [];
+    return cmds
+      .filter((c: RedisCmd): boolean => { return c.name.indexOf(" ") < 0 && c.name.startsWith(up); })
+      .slice(0, SUGGEST_MAX_ITEMS)
+      .map((c: RedisCmd): ApiDbCompletionItem => { return item(c, c.name); });
+  }
+  const head = (line.words[0] || "").toUpperCase();
+  if (line.index === 1) {
+    // A container's subcommands, offered under the leaf name that gets typed.
+    const subs = cmds.filter((c: RedisCmd): boolean => {
+      return c.name.startsWith(head + " ") && c.name.slice(head.length + 1).startsWith(up);
+    });
+    if (subs.length) {
+      return subs.slice(0, SUGGEST_MAX_ITEMS).map((c: RedisCmd): ApiDbCompletionItem => {
+        return item(c, c.name.slice(head.length + 1));
+      });
+    }
+  }
+  const cmd = dbRedisCmdOf(line.words, cmds);
+  if (!cmd) return [];
+  // A key position is measured over the line as the SERVER sees it, so a subcommand's own
+  // word counts exactly as the catalog's key positions already assume.
+  if (dbRedisKeyAt(cmd, line.index, line.words.length)) {
+    return keys
+      .filter((k: string): boolean => { return k.startsWith(prefix); })
+      .slice(0, SUGGEST_MAX_ITEMS)
+      .map((k: string): ApiDbCompletionItem => { return { label: k, kind: "key" }; });
+  }
+  const typed = line.words.map((w: string): string => { return w.toUpperCase(); });
+  return (cmd.tokens || [])
+    .filter((t: string): boolean => { return t.startsWith(up) && typed.indexOf(t) < 0; })
+    .slice(0, SUGGEST_MAX_ITEMS)
+    .map((t: string): ApiDbCompletionItem => { return { label: t, kind: "token", detail: cmd.name + " " + cmd.syntax }; });
+}
+
+/** The console's hint line while a redis command is being typed (docs/50 §2.3): the command's
+ *  own syntax and summary, from the server that will run it. Empty when the line names nothing
+ *  known, so the standing hint stays. Pure. */
+export function dbRedisSignature(text: string, caret: number, cmds: RedisCmd[]): string {
+  const line = dbRedisLineAt(text, caret);
+  const cmd = dbRedisCmdOf(line.words, cmds);
+  if (!cmd) return "";
+  const head = (cmd.name + " " + cmd.syntax).trim();
+  return cmd.summary ? head + " — " + cmd.summary : head;
+}
+
+/** The keys the sidebar has walked so far - one half of the completion's sources. */
 function dbLoadedKeys(): string[] {
   const r = dbConn().redis;
   return r && r.keys ? r.keys.map((k: { key: string }): string => { return k.key; }) : [];
+}
+
+/** The catalog this connection answered with, or an empty one until it has. */
+function dbRedisCommands(): RedisCmd[] {
+  return dbConn().redisCommands || [];
+}
+
+/* One catalog read per connection, in flight or done: the answer is the SERVER's, it does not
+   change while the connection lives, and asking again per keystroke would be absurd. */
+let dbRedisCatalogFor = "";
+
+/** Read the command catalog for the open connection, once (docs/50). A failure is quiet: the
+ *  console still runs commands, the completion simply has nothing to offer, and the next
+ *  connection switch tries again. */
+export async function dbRedisLoadCommands(): Promise<void> {
+  const d = dbConn();
+  if (!d.conn || !dbIsRedis()) return;
+  if (dbRedisCatalogFor === d.conn) return;
+  dbRedisCatalogFor = d.conn;
+  const j = await apiJson<ApiRedisCommandsResponse>(
+    "/api/db/" + encodeURIComponent(d.conn) + "/redis-commands");
+  const cur = dbConn();
+  if (!j || cur.conn !== d.conn) return; // the switch moved on; its own load will run
+  cur.redisCommands = j.commands || [];
 }
 
 /* --- SQL completion (docs/22 W3.1) ------------------------------------------------------------------ */
@@ -187,7 +271,7 @@ function dbSuggestOnInput(this: HTMLTextAreaElement): void {
   // Redis answers from the table above, with no server and no debounce: the candidates are
   // already here, and a 150ms wait on a local list only makes the console feel slow.
   if (dbIsRedis()) {
-    const items = dbRedisCandidates(this.value, this.selectionStart || 0, dbLoadedKeys());
+    const items = dbRedisCandidates(this.value, this.selectionStart || 0, dbLoadedKeys(), dbRedisCommands());
     if (!items.length) { dbSuggestHide(); return; }
     dbSuggestItems = items;
     dbSuggestPrefix = dbRedisWordAt(this.value, this.selectionStart || 0);
@@ -314,6 +398,6 @@ function dbSuggestKeys(e: KeyboardEvent): void {
 }
 
 export {
-  REDIS_TEMPLATES, dbRedisCandidates, dbRedisWordAt, dbSuggestByteOffset, dbSuggestHide, dbSuggestKeys,
-  dbSuggestOnInput, dbSuggestPrefixAt,
+  REDIS_TEMPLATES, dbRedisCommands, dbRedisWordAt, dbSuggestByteOffset,
+  dbSuggestHide, dbSuggestKeys, dbSuggestOnInput, dbSuggestPrefixAt,
 };

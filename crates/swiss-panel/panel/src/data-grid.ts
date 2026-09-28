@@ -557,27 +557,10 @@ function dbMoreItemsForSql(): MenuItem[] {
     { label: tr("dataView.explainAnalyze"), fn: (): void => { void dbRunSql("analyze"); } },
     { label: tr("dataView.format"), fn: (): void => { dbSqlFormatNow(); } },
   ];
-  const loadSql = (q: string): void => {
-    const s2 = dbSqlTab();
-    if (!s2) return;
-    s2.sqlText = q;
-    const ta = $<HTMLTextAreaElement>("dbSql");
-    if (ta) { ta.value = q; dbSqlPaint(); }
-  };
+  const loadSql = dbLoadConsoleLine;
   items.push({ label: tr("dataView.saveFavorites"), title: tr("dataView.saveConsoleTextFavorites"), fn: (): void => { if (st) dbFavPush(st.sqlText); } });
-  // The templates (2026-09-28): the owner had no way to find out how to write a command for
-  // the thing in front of them. The line IS the label - a template is loaded, then edited.
-  if (dbIsRedis()) {
-    let group = "";
-    REDIS_TEMPLATES.forEach((t: { group: string; line: string }): void => {
-      if (t.group !== group) {
-        group = t.group;
-        items.push({ sep: true });
-        items.push({ heading: true, label: group, fn: (): void => {} });
-      }
-      items.push({ label: t.line, title: t.line, fn: (): void => { loadSql(t.line); } });
-    });
-  }
+  // The templates moved OUT of here (docs/50): they are their own button beside Run now, so
+  // this menu is favorites and history - the two lists that are the operator's own.
   if (d.favorites && d.favorites.length) {
     items.push({ sep: true });
     items.push({ heading: true, label: tr("dataView.favoritesTitle"), fn: (): void => {} });
@@ -624,6 +607,42 @@ function dbMoreButton(build: (more: HTMLElement) => MenuItem[]): HTMLElement {
     popupMenu(b.getBoundingClientRect(), build(b));
   };
   return b;
+}
+
+/** A named button that opens a menu - the ⋯'s twin for a list that deserves its own word. */
+function dbMoreButton2(label: string, build: () => MenuItem[]): HTMLElement {
+  const b = btn(label);
+  b.onclick = (ev: MouseEvent): void => {
+    ev.stopPropagation();
+    popupMenu(b.getBoundingClientRect(), build());
+  };
+  return b;
+}
+
+/** The redis console's templates, grouped by what they act on (docs/50 §2.4). The line IS
+ *  the label - a template is loaded into the box, then edited. */
+function dbRedisTemplateItems(): MenuItem[] {
+  const items: MenuItem[] = [];
+  let group = "";
+  REDIS_TEMPLATES.forEach((t: { group: string; line: string }): void => {
+    if (t.group !== group) {
+      group = t.group;
+      if (items.length) items.push({ sep: true });
+      items.push({ heading: true, label: group, fn: (): void => {} });
+    }
+    items.push({ label: t.line, title: t.line, fn: (): void => { dbLoadConsoleLine(t.line); } });
+  });
+  return items;
+}
+
+/** Put one line in the console box and repaint it - what a template, a favorite and a history
+ *  row all do. */
+function dbLoadConsoleLine(line: string): void {
+  const st = dbSqlTab();
+  if (!st) return;
+  st.sqlText = line;
+  const ta = $<HTMLTextAreaElement>("dbSql");
+  if (ta) { ta.value = line; dbSqlPaint(); ta.focus(); }
 }
 
 /** docs/43 M4: format the console's text in place — the old #dbSqlFormat button's body. */
@@ -744,6 +763,12 @@ function renderDbToolbar(): void {
     }
     ctl.appendChild(dbMoreButton((more: HTMLElement): MenuItem[] => { return dbMoreItemsForTable(more, tt); }));
   } else if (t.kind === "sql") {
+    // docs/50: Templates stands on its own for a redis console. It was a section inside the
+    // ⋯, under favorites and history, and the owner never found it ("没有 template") - the
+    // one affordance that says what a command LOOKS like has to be visible to be that.
+    if (nosql) {
+      ctl.appendChild(dbMoreButton2(tr("dataView.templates"), (): MenuItem[] => { return dbRedisTemplateItems(); }));
+    }
     ctl.appendChild(btn(tr("dataView.run"), { id: "dbSqlRun", title: tr("dataView.statementsSplitCtrlEnter") }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForSql(); }));
   } else if (t.kind === "key" && t.redisValue) {

@@ -25,7 +25,7 @@
    Renaming the file to types/domain.ts is R6's, not a slice's — it touches every importer
    and would bury the state split in import churn. */
 
-import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbStreamGroupRow, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, DbQueryReply } from "./api.js";
+import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbStreamGroupRow, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, ApiRedisCommand, DbQueryReply } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -529,6 +529,11 @@ export interface DbConnState {
   redis: { keys: ApiDbRedisKeyRow[]; cursor: string; done: boolean; total: number; pages?: number } | null;
   redisType: string;
   redisError: boolean;
+  /* docs/50: the command catalog the CONNECTED redis described (COMMAND DOCS + COMMAND INFO),
+     read once per connection and kept for as long as it is open. Null until it answers; the
+     console's completion and its syntax hint are built from it, so they know that server's
+     commands — its modules and its version — rather than a table written here by hand. */
+  redisCommands?: ApiRedisCommand[] | null;
   /* docs/43 M3: the database axis. database is the SELECTED one ("" = the connection's
      configured default — the byte-identical path); databases is the lazy catalog, null
      until the selector is first opened ([] = the dialect has no axis → no database row). */

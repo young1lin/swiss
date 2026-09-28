@@ -16,7 +16,7 @@
 
                                                                                                                                                                   
                                                                                      
-import { $, apiJson, dbReqGuard, el, iconNode, targetEl, typeTagNode } from "./util.js";
+import { $, apiJson, dbReqGuard, el, iconNode, targetEl, toast, typeTagNode } from "./util.js";
 import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown, dbRefreshKeyspace, dbRefreshRedisValue } from "./data-browsers.js";
@@ -32,7 +32,7 @@ import { dbStructureClick } from "./data-structure.js";
 // data-structure edge above: both sides only call across it inside functions.
 import { dbFormChange, dbFormClick, dbFormKeydown } from "./data-form.js";
 import { openDbDdlSheet } from "./data-ddl.js";
-import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
+import { dbRedisCommands, dbRedisLoadCommands, dbRedisSignature, dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { loadCollapsed, mountGroup } from "./groups.js";
                                                                      
 import { DB_TREE_SECTIONS, dbSectionOf, dbSectionSlices, redisNamespaceTree, redisTypeGlyph } from "./data-tree.js";
@@ -528,6 +528,7 @@ function dbChromeInput(t         )          {
     if (st) st.sqlText = ta.value;
     dbSqlPaint();
     dbSuggestOnInput.call(ta);
+    dbRedisHint(ta); // docs/50: the line under the box follows the command being typed
     return true;
   }
   return false;
@@ -571,6 +572,17 @@ function dbRedisCompare(a                  , b                  )         {
    redis command has no plan). Called on mount once the connections are known, and again on every
    switch — it used to run once, at mount, before /api/db had even answered, so it never saw a
    redis connection. */
+/** The console's hint line while a redis command is typed (docs/50 §2.3): the syntax and the
+ *  one-line summary the SERVER gave for it, in place of the standing hint. An unknown word -
+ *  or a SQL console - leaves the standing hint alone, because a line that flickered between a
+ *  signature and a general instruction would be harder to read than either. */
+function dbRedisHint(ta                     )       {
+  const el2 = $("dbSqlHint");
+  if (!el2 || !dbIsRedis()) return;
+  const sig = dbRedisSignature(ta.value, ta.selectionStart || 0, dbRedisCommands());
+  el2.textContent = sig || tr("dataView.redisConsoleHint");
+}
+
 function dbSyncKind()       {
   // Only the skeleton's own ids. This used to demand #dbSqlExplain too, and docs/43 M4 took the
   // console's flat row (Explain, Format) into the toolbar's overflow: the early return then fired
@@ -584,6 +596,9 @@ function dbSyncKind()       {
     grep.title = tr("dataView.filterKeysScanPattern");
     sql.placeholder = tr("dataView.redisConsolePlaceholder");
     sqlHint.textContent = tr("dataView.redisConsoleHint");
+    // docs/50: the console's completion is this server's own command list. One read per
+    // connection, here - where every mount and every switch already passes.
+    void dbRedisLoadCommands();
   } else {
     // The placeholder IS the grammar (docs/22 W1.6): comma AND, | OR, * wildcard.
     grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", tr("dataView.filterTables"));
@@ -1084,7 +1099,11 @@ function dbKeyRow(k                  , label        , selKey               )    
   b.dataset.rkey = k.key;
   b.dataset.rtype = k.type; // handed to the tab it opens, so its card wears the same glyph
   b.appendChild(el("span", "db-table-name", label));
-  b.appendChild(el("span", "db-table-meta", k.type));
+  // The right slot carries the FULL key wherever the name is only a segment of it (the owner,
+  // 2026-09-29: “它们的子层级不应该是 fast 和 ticks 吗？完整的 key 在旁边显示不行？”). At the root
+  // the name IS the key and the slot says the type instead. The type is lost neither way: it
+  // leads the row as its glyph and stands in the row's title beside the key.
+  b.appendChild(el("span", "db-table-meta", label === k.key ? k.type : k.key));
   return b;
 }
 
@@ -1221,28 +1240,103 @@ function dbRedisBand(g              , parentNs        , selKey               ,
   nsCollapsed                         , filtered         )              {
                                              
   const isGroup = (r     )                    => { return (r                ).ns !== undefined; };
-  const prefix = parentNs ? parentNs + ":" : "";
+  // A row under this band is named by what it adds to THIS band's namespace, not to its
+  // parent's: inside `market`, `market:fast` is `fast` (the owner, 2026-09-29 — the band
+  // said `market` and every row under it repeated it). The band itself is named the same
+  // way, by what it adds to its parent, while its collapse key stays the full path.
+  const prefix = g.ns ? g.ns + ":" : "";
+  const under = (full        )         => {
+    return parentNs && full.length > parentNs.length ? full.slice(parentNs.length + 1) : full;
+  };
   const rows        = ([]         ).concat(g.children, g.keys);
   const cfg                = {
     scope: "dbtree.ns", density: "side",
     names: [], collapsed: nsCollapsed, noun: "key",
+    label: under,
     draggable: false, filtered,
     // The one-key leaf never reaches a band of its own (its parent renders it as the row),
-    // so every band that exists holds at least two things worth sorting.
-    moreItems: ()                    => { return dbSortMenu(); },
+    // so every band that exists holds at least two things worth sorting - and, since
+    // 2026-09-29, worth deleting together ("你这个折叠的，也没有批量删除功能").
+    moreItems: ()                    => {
+      const under = keysUnder(g);
+      return dbSortMenu().concat([
+        { sep: true },
+        {
+          label: tr("dataView.deleteNKeys", { n: under.length }),
+          danger: true,
+          fn: ()       => { void dbRedisDeleteKeys(g.ns, under); },
+        },
+      ]);
+    },
     moreTitle: ()         => { return tr("dataView.sort"); },
     reload: renderDbTables, render: renderDbTables,
     rowsById: ()        => { return []; },
     groupOfRow: (r     )         => { return isGroup(r) ? r.ns : r.key; },
     rowNode: (r     )              => {
       if (isGroup(r)) {
-        if (!r.children.length && r.keys.length === 1) return dbKeyRow(r.keys[0], r.keys[0].key, selKey);
+        // The leaf promise, relative like everything else in this band: a namespace holding
+        // one key and nothing else IS that row, named by what it adds here.
+        if (!r.children.length && r.keys.length === 1) {
+          return dbKeyRow(r.keys[0], r.keys[0].key.slice(prefix.length), selKey);
+        }
         return dbRedisBand(r, g.ns, selKey, nsCollapsed, filtered);
       }
       return dbKeyRow(r, r.key.slice(prefix.length), selKey);
     },
   };
   return mountGroup(cfg, { name: g.ns, rows: rows });
+}
+
+/** Every key under a namespace node, its own and its descendants', in the order the tree
+ *  holds them. Pure. */
+export function keysUnder(g              )           {
+  const out           = g.keys.map((k                  )         => { return k.key; });
+  g.children.forEach((c              )       => { out.push(...keysUnder(c)); });
+  return out;
+}
+
+/* How many keys one DEL carries. A single DEL is ONE redis command, so it is atomic - the
+   namespace goes in one step or not at all - and that is why the batch is not a pipeline of
+   one-key deletes. Past this many keys it is split, and then the guarantee is one round trip
+   rather than one command; the confirm says so, because a claim of atomicity that the size
+   quietly withdrew would be worse than no claim. */
+const REDIS_DEL_CHUNK = 1000;
+
+/** Delete every key under one namespace band (2026-09-29). The keys are the ones the walk
+ *  has actually loaded - a SCAN that has not finished cannot promise more, and the question
+ *  says which it is. */
+export async function dbRedisDeleteKeys(ns        , keys          )                {
+  const c = dbConn();
+  if (!c.conn || !keys.length) return;
+  const partial = !!(c.redis && !c.redis.done);
+  const ask = partial
+    ? tr("dataView.deleteKeysPartialConfirm", { n: keys.length, ns: ns })
+    : tr("dataView.deleteKeysConfirm", { n: keys.length, ns: ns });
+  if (!confirm(ask)) return;
+  const commands             = [];
+  for (let i = 0; i < keys.length; i += REDIS_DEL_CHUNK) {
+    commands.push(["DEL"].concat(keys.slice(i, i + REDIS_DEL_CHUNK)));
+  }
+  const j = await apiJson         ("/api/db/" + encodeURIComponent(c.conn) + "/redis-pipeline", {
+    method: "POST",
+    body: JSON.stringify({ commands: commands }),
+  });
+  if (!j) return; // apiJson toasted; nothing was removed from the tree on a guess
+  toast(tr("dataView.deletedNKeys", { n: keys.length, ns: ns }));
+  // A tab open on a key that just went is a tab on nothing: it closes with the key rather
+  // than sitting on a value the server no longer has.
+  const gone                          = {};
+  keys.forEach((k        )       => { gone[k] = true; });
+  dbTabs().forEach((t       )       => {
+    if (t.kind === "key" && t.redisKey && gone[t.redisKey]) {
+      t.redisKey = null;
+      t.redisValue = null;
+      t.redisEdits = null;
+      t.redisStreamRows = null;
+    }
+  });
+  await dbLoadKeys(true);
+  renderDbGrid();
 }
 
 /** The selected connection's dialect word ("mysql" | "pg") — the DDL sheets build their

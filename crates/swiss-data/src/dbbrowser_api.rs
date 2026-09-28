@@ -965,6 +965,15 @@ async fn stream(
     rb.read_stream(&key, &o).await.map_err(Fail::bad)
 }
 
+/// GET /api/db/{name}/redis-commands — the command catalog of the redis this connection
+/// speaks to (docs/50): COMMAND DOCS for the words, COMMAND INFO for the key positions. The
+/// console's completion is built from it, so it offers the commands that server actually has
+/// — its modules and its version included — instead of a table kept by hand in the panel.
+async fn redis_commands(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> {
+    let (_lease, rb) = lease_redis(catalog, name)?;
+    rb.command_catalog().await.map_err(Fail::bad)
+}
+
 /// GET /api/db/{name}/stream/groups — the read-only consumer-group table of one
 /// stream key (docs/45 §2.4): name / consumers / pending / lag / last-delivered-id,
 /// nothing writable.
@@ -1111,6 +1120,13 @@ async fn redis_pipeline_route(
     reply(redis_pipeline(&catalog, &name, &body.0).await)
 }
 
+async fn redis_commands_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+) -> Response {
+    reply(redis_commands(&catalog, &name).await)
+}
+
 async fn stream_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -1197,6 +1213,8 @@ where
         .route("/api/db/{name}/command", post(command_route))
         // The buffered structured-edit commit (docs/22 W3.3): one pipeline, one round trip.
         .route("/api/db/{name}/redis-pipeline", post(redis_pipeline_route))
+        // docs/50: the console's completion source, read from the server itself.
+        .route("/api/db/{name}/redis-commands", get(redis_commands_route))
         // Live sessions and the cancel/terminate pair (docs/22 W3.2).
         .route("/api/db/{name}/activity", get(activity_route))
         .route("/api/db/{name}/activity-kill", post(activity_kill_route))

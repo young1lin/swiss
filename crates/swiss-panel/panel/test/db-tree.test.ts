@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
@@ -71,11 +71,37 @@ Object.assign(globalThis, {
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
   location: { reload: () => {} },
   matchMedia: () => ({ matches: false, addEventListener: () => {}, addListener: () => {} }),
-  confirm: () => true, alert: () => {}, prompt: () => "",
+  confirm: (m: string) => { confirms.asked.push(String(m)); return confirms.answer; },
+  alert: () => {}, prompt: () => "",
   setInterval: () => 0, clearInterval: () => {},
   addEventListener: () => {}, removeEventListener: () => {},
-  fetch: () => new Promise(() => {}),
+  // Recording and PARKED, the admin-data-loaders technique: a test that wants an answer
+  // hands one over with answer(); everything else waits for ever, as before.
+  fetch: (url: any, init?: any) => recordingFetch(url, init),
 });
+
+/** The suite's fetch. Named, because a test that swaps in its own must put THIS one back -
+    restoring the bare parked-forever lambda instead cost an afternoon: every later test saw
+    its requests vanish, while passing in isolation. */
+function recordingFetch(url: unknown, init?: { body?: string }): Promise<unknown> {
+  requests.push({ url: String(url), body: init && init.body });
+  return new Promise((res) => {
+    parked.push((j: unknown) => res({ ok: true, status: 200, json: async () => j }));
+  });
+}
+
+/* What the panel asked for, and what has not answered yet. Module-level, so a test that
+   parks a request it never answers would hand the next one a ghost: both are cleared per
+   test in the suites that use them. */
+const requests: { url: string; body?: string }[] = [];
+const parked: ((j: unknown) => void)[] = [];
+const confirms = { answer: true, asked: [] as string[] };
+const tick = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });
+const answer = async (body: unknown): Promise<void> => {
+  const next = parked.shift();
+  if (next) next(body);
+  await tick();
+};
 
 const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const view = await import(pathToFileURL(join(here, "data-view.js")).href) as {
@@ -83,6 +109,8 @@ const view = await import(pathToFileURL(join(here, "data-view.js")).href) as {
   dbLoadTables: () => Promise<void>;
   dbSectionLabel: (sec: string) => string;
   dbSortMenu: () => Array<{ label?: string; pick?: boolean; on?: boolean; sep?: boolean }>;
+  keysUnder: (g: { ns: string; keys: { key: string }[]; children: unknown[] }) => string[];
+  dbRedisDeleteKeys: (ns: string, keys: string[]) => Promise<void>;
 };
 
 /** The whole text under a stub node, depth-first — the cheap walker every band assertion
@@ -334,6 +362,66 @@ describe("the rendered tree (docs/43 M2, DOM stubs)", () => {
     expect(tops.some((b: Stub) => text(b).startsWith("sess")), "sess is a band with its count").toBe(true);
   });
 
+
+  /* The owner's report (2026-09-29), looking at a band named `market` whose every row read
+     `market:fast`, `market:ticks`: "它们的子层级不应该是 fast 和 ticks 吗？怎么还要显示全部信息，
+     完整的key在旁边显示不行？" The band already said the prefix; the row says what it adds. */
+  it("redis: a row under a band is named by what it ADDS to that band, with the full key beside it", () => {
+    mount("redis");
+    const d = dbConnState();
+    d.redis = {
+      keys: [
+        { key: "market:fast", type: "stream", ttl: -1 },
+        { key: "market:ticks", type: "stream", ttl: -1 },
+        { key: "demo:events", type: "stream", ttl: -1 },
+      ],
+      cursor: "0", done: true, total: 3,
+    };
+    view.renderDbTables();
+    const rows = btn(byId.dbTables, "db-table").filter((b) => b.dataset.rkey);
+    const byKey = Object.fromEntries(rows.map((b) => [b.dataset.rkey, b]));
+    const nameOf = (b: Stub): string =>
+      b.children.find((c: Stub) => (c.className || "").indexOf("db-table-name") >= 0)!.textContent;
+    const metaOf = (b: Stub): string =>
+      b.children.find((c: Stub) => (c.className || "").indexOf("db-table-meta") >= 0)!.textContent;
+    expect(nameOf(byKey["market:fast"]), "under the market band, the row is `fast`").toBe("fast");
+    expect(nameOf(byKey["market:ticks"])).toBe("ticks");
+    expect(metaOf(byKey["market:fast"]), "the whole key is beside it").toBe("market:fast");
+    // A one-key namespace is its own row at the ROOT, so there the name IS the whole key and
+    // the meta goes back to saying the type - nothing would be gained by printing it twice.
+    expect(nameOf(byKey["demo:events"])).toBe("demo:events");
+    expect(metaOf(byKey["demo:events"])).toBe("stream");
+    // Either way the title carries both, and the row still opens the full key.
+    expect(String(byKey["market:fast"].title)).toContain("market:fast");
+    expect(String(byKey["market:fast"].title)).toContain("stream");
+  });
+
+  it("redis: a nested band is named by what IT adds, while its collapse key stays the full path", () => {
+    mount("redis");
+    const d = dbConnState();
+    d.redis = {
+      keys: [
+        { key: "app:cache:users", type: "hash", ttl: -1 },
+        { key: "app:cache:posts", type: "hash", ttl: -1 },
+        { key: "app:queue:in", type: "list", ttl: -1 },
+        { key: "app:queue:out", type: "list", ttl: -1 },
+      ],
+      cursor: "0", done: true, total: 4,
+    };
+    view.renderDbTables();
+    const heads = btn(byId.dbTables, "grp-toggle").map((h: Stub) => text(h));
+    expect(heads.some((t: string) => t.indexOf("app") >= 0), "the outer band is app").toBe(true);
+    // The inner bands say `cache` and `queue`, not `app:cache` and `app:queue`.
+    expect(heads.some((t: string) => t.indexOf("cache") >= 0 && t.indexOf("app:cache") < 0)).toBe(true);
+    expect(heads.some((t: string) => t.indexOf("queue") >= 0 && t.indexOf("app:queue") < 0)).toBe(true);
+    const rows = btn(byId.dbTables, "db-table").filter((b) => b.dataset.rkey);
+    const byKey = Object.fromEntries(rows.map((b) => [b.dataset.rkey, b]));
+    const nameOf = (b: Stub): string =>
+      b.children.find((c: Stub) => (c.className || "").indexOf("db-table-name") >= 0)!.textContent;
+    expect(nameOf(byKey["app:cache:users"]), "two levels down, the row is one segment").toBe("users");
+    expect(nameOf(byKey["app:queue:in"])).toBe("in");
+  });
+
   /* The owner's report (2026-09-28): "string" and "stream" side by side in the meta read alike.
      Each row now LEADS with its type's glyph - monochrome, like every descriptive mark (design
      rule 2) - and the word stays in the meta. */
@@ -499,8 +587,65 @@ describe("the thousand-table catalog (docs/43 addendum)", () => {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ tables: [], total: 0, more: false }) });
     };
     await view.dbLoadTables();
-    (globalThis as unknown as { fetch: unknown }).fetch = () => new Promise(() => {});
+    (globalThis as unknown as { fetch: unknown }).fetch = recordingFetch;
     expect(urls[0]).toContain("/tables?limit=2000");
     expect(urls[0], "browsing is not paging anymore").not.toContain("page=");
+  });
+});
+
+/* The owner (2026-09-29): "你这个折叠的，也没有批量删除功能". A namespace band is the one place
+   where "these keys" is already a set the operator pointed at. */
+describe("a namespace band deletes its keys together (2026-09-29)", () => {
+  beforeEach(() => { requests.length = 0; parked.length = 0; confirms.asked.length = 0; confirms.answer = true; });
+
+  const keysFor = (): { key: string; type: string; ttl: number }[] => [
+    { key: "market:fast", type: "stream", ttl: -1 },
+    { key: "market:ticks", type: "stream", ttl: -1 },
+    { key: "market:deep:one", type: "string", ttl: -1 },
+    { key: "other:x", type: "string", ttl: -1 },
+  ];
+
+  it("counts every key under the band, its descendants included", () => {
+    const tree = redisNamespaceTree(keysFor());
+    const market = tree.find((g) => g.ns === "market")!;
+    expect(view.keysUnder(market)).toEqual(["market:fast", "market:ticks", "market:deep:one"]);
+  });
+
+  it("sends ONE DEL with every key - one command is what makes it atomic", async () => {
+    mount("redis");
+    const d = dbConnState();
+    d.redis = { keys: keysFor(), cursor: "0", done: true, total: 4 };
+    view.renderDbTables();
+    const p = view.dbRedisDeleteKeys("market", ["market:fast", "market:ticks", "market:deep:one"]);
+    await tick();
+    await tick(); // the confirm is synchronous; the request is a microtask behind it
+    expect(requests.map((r) => r.url)).toEqual(["/api/db/c1/redis-pipeline"]);
+    expect(JSON.parse(String(requests[0].body)).commands)
+      .toEqual([["DEL", "market:fast", "market:ticks", "market:deep:one"]]);
+    // The delete answers, and the keyspace re-walk it kicks off is answered too - a promise
+    // left parked here would be the next test's ghost.
+    for (let i = 0; i < 4; i++) await answer({ keys: [], cursor: "0", done: true, total: 0 });
+    await p;
+    expect(parked, "nothing left in flight").toHaveLength(0);
+  });
+
+  it("asks before it deletes, and a refusal sends nothing", async () => {
+    mount("redis");
+    dbConnState().redis = { keys: keysFor(), cursor: "0", done: true, total: 4 };
+    confirms.answer = false;
+    await view.dbRedisDeleteKeys("market", ["market:fast"]);
+    expect(requests, "a no is a no - nothing left the panel").toHaveLength(0);
+    expect(confirms.asked[0], "the question names the namespace and the count").toContain("market");
+    expect(confirms.asked[0]).toContain("1");
+    confirms.answer = true;
+  });
+
+  it("says the walk is unfinished when it is, because then the count is not the namespace", async () => {
+    mount("redis");
+    dbConnState().redis = { keys: keysFor(), cursor: "17", done: false, total: 4 };
+    confirms.answer = false;
+    await view.dbRedisDeleteKeys("market", ["market:fast", "market:ticks"]);
+    expect(confirms.asked[0]).toContain("has not finished");
+    confirms.answer = true;
   });
 });

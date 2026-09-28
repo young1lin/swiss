@@ -794,6 +794,13 @@ pub trait RedisBrowser: Send + Sync {
         let _ = key;
         Err("stream groups are not supported by this connection".into())
     }
+    /// docs/50: the command catalog of the server this connection speaks to — COMMAND DOCS
+    /// plus COMMAND INFO, merged. The console's completion is built from it rather than from
+    /// a table in the panel, so it knows exactly the commands (and modules, and versions)
+    /// that are actually there. Defaulted like the two above.
+    async fn command_catalog(&self) -> Result<Value, String> {
+        Err("command catalogs are not supported by this connection".into())
+    }
 }
 
 /// The three window shapes one XREVRANGE serves (docs/45 §2.1). `Newest` is the

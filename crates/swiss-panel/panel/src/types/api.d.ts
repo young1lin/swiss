@@ -802,6 +802,32 @@ export interface ApiDbStreamWindow extends ApiDbRedisValue {
   scannedTo?: string | null;
 }
 
+/** One command as the CONNECTED redis describes it (docs/50): COMMAND DOCS for the words
+ *  (syntax built from its own argument spec, summary, since, group, the literal tokens it
+ *  accepts) and COMMAND INFO for the numbers (arity and the key positions - first, last and
+ *  step - that say which words of a line are key names). `container` marks a command that
+ *  takes a subcommand rather than arguments; its subcommands are rows of their own, named
+ *  the way somebody types them ("XINFO STREAM"). */
+export interface ApiRedisCommand {
+  name: string;
+  syntax: string;
+  summary: string;
+  since: string;
+  group: string;
+  tokens: string[];
+  container: boolean;
+  arity?: number;
+  firstKey?: number;
+  lastKey?: number;
+  step?: number;
+}
+
+export interface ApiRedisCommandsResponse {
+  commands: ApiRedisCommand[];
+  /** False when the server has no COMMAND DOCS (redis < 7): names and key positions only. */
+  documented: boolean;
+}
+
 /** One row of the read-only consumer-group fold (docs/45 §2.4): pending is the group's
  *  PEL size, lag the entries-append gap (null on a redis older than 7.0, where XINFO
  *  GROUPS does not report it), last-delivered-id the group's own cursor. */

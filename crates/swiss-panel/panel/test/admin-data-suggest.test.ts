@@ -53,13 +53,23 @@ Object.assign(globalThis, {
   addEventListener: () => {}, removeEventListener: () => {},
 });
 
+interface RedisCmdFixture {
+  name: string; syntax: string; summary: string; since: string; group: string;
+  tokens: string[]; container: boolean;
+  arity?: number; firstKey?: number; lastKey?: number; step?: number;
+}
+
 const sug = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-suggest.ts")).href
 ) as {
   dbSuggestPrefixAt: (text: string, caret: number) => string;
   dbSuggestByteOffset: (text: string, caret: number) => number;
   dbRedisWordAt: (text: string, caret: number) => string;
-  dbRedisCandidates: (text: string, caret: number, keys: string[]) => { label: string; kind: string; detail?: string }[];
+  dbRedisCandidates: (text: string, caret: number, keys: string[], cmds: RedisCmdFixture[]) => { label: string; kind: string; detail?: string }[];
+  dbRedisLineAt: (text: string, caret: number) => { words: string[]; index: number };
+  dbRedisCmdOf: (words: string[], cmds: RedisCmdFixture[]) => RedisCmdFixture | null;
+  dbRedisKeyAt: (cmd: RedisCmdFixture, index: number, words: number) => boolean;
+  dbRedisSignature: (text: string, caret: number, cmds: RedisCmdFixture[]) => string;
   REDIS_TEMPLATES: { group: string; line: string }[];
 };
 
@@ -104,42 +114,116 @@ describe("dbRedisWordAt", () => {
   });
 });
 
-describe("dbRedisCandidates", () => {
+/* docs/50: the completion is built from the catalog the SERVER answered with, so these
+   fixtures are what COMMAND DOCS + COMMAND INFO produce for a handful of commands - the
+   same rows redis_commands returns over the wire. */
+const CAT = [
+  { name: "SET", syntax: "key value [NX|XX] [EX seconds]", summary: "Set the string value of a key",
+    since: "1.0.0", group: "string", tokens: ["NX", "XX", "EX"], container: false,
+    arity: -3, firstKey: 1, lastKey: 1, step: 1 },
+  { name: "GET", syntax: "key", summary: "Get the value of a key", since: "1.0.0",
+    group: "string", tokens: [], container: false, arity: 2, firstKey: 1, lastKey: 1, step: 1 },
+  { name: "DEL", syntax: "key [key ...]", summary: "Delete a key", since: "1.0.0",
+    group: "generic", tokens: [], container: false, arity: -2, firstKey: 1, lastKey: -1, step: 1 },
+  { name: "MSET", syntax: "key value [key value ...]", summary: "Set several keys", since: "1.0.1",
+    group: "string", tokens: [], container: false, arity: -3, firstKey: 1, lastKey: -1, step: 2 },
+  { name: "SCAN", syntax: "cursor [MATCH pattern] [COUNT count]", summary: "Iterate the keyspace",
+    since: "2.8.0", group: "generic", tokens: ["MATCH", "COUNT"], container: false,
+    arity: -2, firstKey: 0, lastKey: 0, step: 0 },
+  // A container's OWN key positions are zeros - redis 7 puts the real ones on each
+  // subcommand's row, which is what the panel reads (docs/50 §2.3).
+  { name: "XINFO", syntax: "", summary: "A container for stream introspection", since: "5.0.0",
+    group: "stream", tokens: [], container: true, arity: -2, firstKey: 0, lastKey: 0, step: 0 },
+  { name: "XINFO GROUPS", syntax: "key", summary: "List the consumer groups", since: "5.0.0",
+    group: "stream", tokens: [], container: false, firstKey: 2, lastKey: 2, step: 1 },
+  { name: "XINFO STREAM", syntax: "key [FULL]", summary: "Get information about a stream",
+    since: "5.0.0", group: "stream", tokens: ["FULL"], container: false, firstKey: 2, lastKey: 2, step: 1 },
+  { name: "INFO", syntax: "[section]", summary: "Server information", since: "1.0.0",
+    group: "server", tokens: [], container: false, arity: -1, firstKey: 0, lastKey: 0, step: 0 },
+];
+
+describe("dbRedisCandidates (docs/50 - from the server's own catalog)", () => {
   const keys = ["user:1", "user:2", "market:ticks", "htest"];
   const labels = (text: string, caret = text.length): string[] =>
-    sug.dbRedisCandidates(text, caret, keys).map((c) => c.label);
+    sug.dbRedisCandidates(text, caret, keys, CAT).map((c) => c.label);
 
-  it("completes the command word, and says what arguments it takes", () => {
+  it("completes the command word, and says what it takes AND what it does", () => {
     expect(labels("SE")).toContain("SET");
     expect(labels("se"), "typed lower case, offered upper").toContain("SET");
-    const set = sug.dbRedisCandidates("SE", 2, keys).find((c) => c.label === "SET")!;
-    expect(set.detail).toBe("SET key value [EX seconds]");
+    const set = sug.dbRedisCandidates("SE", 2, keys, CAT).find((c) => c.label === "SET")!;
+    expect(set.detail, "the syntax first - it is what gets typed next - then the summary")
+      .toBe("SET key value [NX|XX] [EX seconds] — Set the string value of a key");
     expect(set.kind).toBe("string");
-    // The two the owner could not find a way to write.
     expect(labels("DE")).toContain("DEL");
-    expect(labels("EXP")).toContain("EXPIRE");
   });
 
-  it("completes a key once the command is one that takes a key", () => {
+  it("completes a key at every position the server says is a key", () => {
     expect(labels("GET user:")).toEqual(["user:1", "user:2"]);
     expect(labels("DEL market")).toEqual(["market:ticks"]);
-    expect(sug.dbRedisCandidates("GET user:", 9, keys)[0].kind).toBe("key");
+    // DEL takes keys to the end of the line: the third word is a key too.
+    expect(labels("DEL user:1 user:")).toEqual(["user:1", "user:2"]);
+    // MSET steps by two - word 1 and word 3 are keys, word 2 is a value nobody guesses.
+    expect(labels("MSET user:1 v user:")).toEqual(["user:1", "user:2"]);
+    expect(labels("MSET user:1 user:"), "the VALUE slot offers no keys").toEqual([]);
+    expect(sug.dbRedisCandidates("GET user:", 9, keys, CAT)[0].kind).toBe("key");
+  });
+
+  it("completes a container's subcommands, and then the subcommand's own key", () => {
+    expect(labels("XINFO "), "in the catalog's own order, which the server sorted").toEqual(["GROUPS", "STREAM"]);
+    expect(labels("XINFO STR")).toEqual(["STREAM"]);
+    expect(labels("XINFO STREAM market"), "the key sits one word later here").toEqual(["market:ticks"]);
+  });
+
+  it("completes the tokens a command accepts, once, where a key does not belong", () => {
+    expect(labels("SET user:1 v ")).toEqual(["NX", "XX", "EX"]);
+    expect(labels("SET user:1 v N")).toEqual(["NX"]);
+    expect(labels("SET user:1 v NX "), "a token already typed is not offered again")
+      .toEqual(["XX", "EX"]);
+    expect(labels("SCAN 0 MA")).toEqual(["MATCH"]);
+    expect(sug.dbRedisCandidates("SCAN 0 MA", 9, keys, CAT)[0].kind).toBe("token");
   });
 
   it("offers nothing where nothing can be completed", () => {
-    expect(labels("GET user:1 ")).toEqual([]);      // past the key, over whitespace
-    expect(labels("SET user:1 val")).toEqual([]);   // a VALUE is the operator's, never guessed
-    expect(labels("INFO keysp")).toEqual([]);       // INFO takes no key
-    expect(labels("")).toEqual([]);
+    expect(labels("GET user:1 "), "GET takes one key and no tokens").toEqual([]);
+    expect(labels("INFO keysp"), "INFO takes no key and no tokens").toEqual([]);
+    expect(labels("NOSUCHCOMMAND arg")).toEqual([]);
+    expect(labels("", 0)).toEqual([]);
+    expect(sug.dbRedisCandidates("GET u", 5, keys, []), "no catalog, no guesses").toEqual([]);
   });
 
-  it("is a closed set: every template's command is one the completion knows", () => {
-    const names = sug.dbRedisCandidates("", 0, []).length;
-    expect(names, "an empty prefix offers no list").toBe(0);
-    const known = new Set(sug.REDIS_TEMPLATES.map((t) => t.line.split(" ")[0]));
-    for (const name of known) {
-      expect(labels(name.slice(0, 2)), name + " completes").toContain(name);
-    }
+  it("reads the LINE the caret is on, not the whole box", () => {
+    const text = "GET user:1\nDEL mark";
+    expect(labels(text)).toEqual(["market:ticks"]);
+    expect(sug.dbRedisLineAt(text, text.length).words).toEqual(["DEL", "mark"]);
+    expect(sug.dbRedisLineAt(text, text.length).index).toBe(1);
+  });
+});
+
+describe("dbRedisKeyAt (docs/50 - the three numbers redis-cli reads)", () => {
+  const of = (name: string) => CAT.find((c) => c.name === name)!;
+  it("says which words of a line are key names", () => {
+    expect(sug.dbRedisKeyAt(of("GET"), 1, 2)).toBe(true);
+    expect(sug.dbRedisKeyAt(of("GET"), 2, 3), "one key, and it is word 1").toBe(false);
+    expect(sug.dbRedisKeyAt(of("DEL"), 3, 4), "lastKey -1: to the end of the line").toBe(true);
+    expect(sug.dbRedisKeyAt(of("MSET"), 1, 5)).toBe(true);
+    expect(sug.dbRedisKeyAt(of("MSET"), 2, 5), "step 2: the values are not keys").toBe(false);
+    expect(sug.dbRedisKeyAt(of("MSET"), 3, 5)).toBe(true);
+    expect(sug.dbRedisKeyAt(of("SCAN"), 1, 2), "firstKey 0: no key anywhere").toBe(false);
+  });
+});
+
+describe("dbRedisSignature (docs/50 - the line under the box)", () => {
+  it("shows the command being typed, its arguments and what it does", () => {
+    expect(sug.dbRedisSignature("SET user:1 ", 11, CAT))
+      .toBe("SET key value [NX|XX] [EX seconds] — Set the string value of a key");
+    expect(sug.dbRedisSignature("XINFO STREAM market:ticks", 25, CAT))
+      .toBe("XINFO STREAM key [FULL] — Get information about a stream");
+  });
+
+  it("says nothing about a line it does not recognise, so the standing hint stays", () => {
+    expect(sug.dbRedisSignature("", 0, CAT)).toBe("");
+    expect(sug.dbRedisSignature("NOSUCH ", 7, CAT)).toBe("");
+    expect(sug.dbRedisSignature("SET k v", 7, [])).toBe("");
   });
 });
 
