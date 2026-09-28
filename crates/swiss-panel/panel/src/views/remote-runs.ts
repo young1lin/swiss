@@ -257,7 +257,17 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
       ? (l.capped ? tr("remoteRuns.liveCappedTail") + "\n" : "") + l.text
       : null;
     return [meta, commandNode(r), valueBlock(
-      { label: tr("remoteRuns.liveOutput"), data: { rlive: r.runId }, tools: cancellable ? [btn(tr("remoteRuns.cancel"), { data: { rcancel: r.runId } })] : [] },
+      {
+        label: tr("remoteRuns.liveOutput"),
+        data: { rlive: r.runId },
+        // A cancel in flight IS the button: disabled, and saying so. The request behind it
+        // does not return until the run has actually stopped.
+        tools: cancellable
+          ? [canceling[r.runId]
+            ? btn(tr("remoteRuns.canceling"), { data: { rcancel: r.runId }, disabled: true })
+            : btn(tr("remoteRuns.cancel"), { data: { rcancel: r.runId } })]
+          : [],
+      },
       liveText != null
         ? textNode(liveText, true, "logs").node
         : note(r.state === "queued" ? tr("remoteRuns.queuedWaitingFreeSlot") : tr("remoteRuns.output")))];
@@ -403,11 +413,47 @@ function toggle(id: number): void {
   armLive();
 }
 
+/* Runs whose cancel is in flight. The gateway's cancel AWAITS the run's stop (runs.rs: "so
+   when it returns the child is reaped and the pipe readers are joined"), which for a remote
+   channel is seconds, not milliseconds — and until 2026-09-29 the button said nothing at all
+   for that whole time. The owner clicked it twice and asked where the state was. */
+let canceling = {} as Record<number, boolean>;
+
 async function cancelRun(id: number): Promise<void> {
-  const j = await apiJson("/api/runs/" + id + "/cancel", { method: "POST" });
-  if (!j) return;
+  if (canceling[id]) return; // a second click would be a second wait for the same stop
+  canceling[id] = true;
+  repaintBody(id); // the button says what it is doing, before the request that takes the time
+  let j: unknown = null;
+  try {
+    j = await apiJson("/api/runs/" + id + "/cancel", { method: "POST" });
+  } finally {
+    delete canceling[id];
+  }
+  if (!j) { repaintBody(id); return; } // apiJson toasted; the button comes back
   toast(tr("remoteRuns.cancelRequestedRunId", { id }));
-  void refresh();
+  await refresh();
+  // The answer means the run has STOPPED, so this row is a recorded one now: its output has
+  // to come from the record, or the open body sits on the loading spinner until the page is
+  // reloaded by hand ("确实取消了，但是还得转圈，我刷新才有").
+  adoptFinished();
+}
+
+/* Bodies being fetched for rows that finished while open — so the 6 s poll does not
+   re-request the same output every time it runs. */
+let adopting = {} as Record<number, boolean>;
+
+/** A row that was opened while its run was live, and whose run has since finished: the live
+ *  body it was showing is gone from `active`, and bodyNode's recorded branch has nothing to
+ *  draw but the loading note. Nobody asks for the recorded output in that transition — toggle
+ *  only asks when a row is OPENED — so the row span forever. This asks, once. */
+function adoptFinished(): void {
+  Object.keys(open).forEach((k: string): void => {
+    const id = Number(k);
+    if (!open[id] || isLiveRun(id) || bodies[id] || adopting[id]) return;
+    if (!runOf(id).length) return; // not on this page any more; nothing to fill
+    adopting[id] = true;
+    void loadBody(id, false).finally((): void => { delete adopting[id]; });
+  });
 }
 
 async function clearAll(): Promise<void> {
@@ -558,6 +604,9 @@ export async function refresh() {
   if (signature() === painted) return;
   render();
   armLive();
+  // A run that ended between two polls - cancelled, or simply finished - takes its live
+  // body with it; an open row then has nothing to show until its recorded output is read.
+  adoptFinished();
 }
 export async function poll() { await refresh(); }
 export function countText() { return usage.runs ? trn(usage.runs, "remoteRuns.nRuns.one", "remoteRuns.nRuns.other") : ""; }
@@ -569,6 +618,8 @@ export function unmount() {
   bodies = {};
   contents = {}; // an unsealed body lives only while its page is on screen
   live = {};
+  canceling = {};
+  adopting = {};
   painted = "";
   page = 0;
   cursors = [null];
