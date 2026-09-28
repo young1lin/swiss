@@ -140,6 +140,45 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(done.querySelector(".tl-who")).toBeNull();
   });
 
+  it("who is the target and the SURFACE - never the machine's login name (2026-09-28)", async () => {
+    /* The actor rode into every row as `cli:<user>@<host>`, and on a personal machine that
+       login name is the operator's own ("页面上把我名称都暴露出来了"). The CLI records the bare
+       surface now; a record written before that still carries the identity in the file, and the
+       page is where it stops. */
+    const byCli = { ...finished, runId: 19, actor: "cli:小明@build-box" };
+    const byMcp = { ...running, runId: 20, actor: "mcp:claude-code" };
+    // A file action has no exit code: success is no tag, its kind and shape say what ran.
+    const synced = { ...finished, runId: 21, actor: "panel", action: "remote.sync", state: "succeeded", exitCode: undefined, input: { target: "dev", source: ".", to: "/srv" }, meta: { target: "dev" } };
+    serve([byCli, finished, synced], [byMcp]);
+    await view.mount();
+    const who19 = item(19).querySelector(".tl-who")?.textContent || "";
+    expect(who19).toBe("build · cli");
+    expect(who19, "no login name, no hostname").not.toMatch(/@|小/);
+    expect(item(20).querySelector(".tl-who")?.textContent).toBe("build · mcp");
+    expect(item(21).querySelector(".tl-who")?.textContent).toBe("dev · panel");
+    // And the open row's meta line says the same, not the record's raw string.
+    open(19);
+    await settle();
+    const meta = item(19).querySelector(".tl-meta")?.textContent || "";
+    expect(meta).toContain("cli");
+    expect(meta, "the identity is not hiding in the body either").not.toContain("@build-box");
+  });
+
+  it("the actor label keeps the surface and drops whatever follows it", () => {
+    const label = view.actorLabel as (a: string | null | undefined) => string;
+    expect(label("cli:jdoe@box")).toBe("cli");
+    expect(label("cli")).toBe("cli");
+    expect(label("panel")).toBe("panel");
+    expect(label("mcp:claude-code")).toBe("mcp");
+    expect(label("mcp:a:b:c")).toBe("mcp");
+    // Nothing to keep: an empty or absent actor stays empty, and a row then shows the target alone.
+    expect(label("")).toBe("");
+    expect(label(null)).toBe("");
+    expect(label(undefined)).toBe("");
+    // A leading colon has no surface before it - the string stands as it is rather than vanishing.
+    expect(label(":odd")).toBe(":odd");
+  });
+
   it("who is the target and the actor, verbatim (docs/41 A1) - a column once the rows disagree", async () => {
     const byCli = { ...finished, runId: 19, actor: "cli:jdoe@box" };
     const byMcp = { ...running, runId: 20, actor: "mcp:claude-code" };
@@ -147,8 +186,8 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     const synced = { ...finished, runId: 21, actor: "panel", action: "remote.sync", state: "succeeded", exitCode: undefined, input: { target: "dev", source: ".", to: "/srv" }, meta: { target: "dev" } };
     serve([byCli, finished, synced], [byMcp]);
     await view.mount();
-    expect(item(19).querySelector(".tl-who")?.textContent).toBe("build · cli:jdoe@box");
-    expect(item(20).querySelector(".tl-who")?.textContent).toBe("build · mcp:claude-code");
+    expect(item(19).querySelector(".tl-who")?.textContent).toBe("build · cli");
+    expect(item(20).querySelector(".tl-who")?.textContent).toBe("build · mcp");
     // A row an older gateway recorded has no actor: the target alone, no empty seat.
     expect(item(17).querySelector(".tl-who")?.textContent).toBe("build");
     expect(item(21).querySelector(".tl-title")?.textContent).toBe("sync");

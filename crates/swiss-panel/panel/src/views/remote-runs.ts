@@ -185,7 +185,7 @@ function runItem(r: ApiRemoteRunRow, isLive: boolean): TimelineItem {
     arg,
     // docs/41 A1: the actor is an identifier, never translated; a row an older gateway
     // recorded has none and says only its target.
-    who: [tgt, r.actor].filter(Boolean).join(" · "),
+    who: [tgt, actorLabel(r.actor)].filter(Boolean).join(" · "),
     ms: isLive ? undefined : r.ms,
     status: bad ? { text: bad, tone: "bad" } : undefined,
     live: isLive
@@ -193,7 +193,7 @@ function runItem(r: ApiRemoteRunRow, isLive: boolean): TimelineItem {
       : undefined,
     // Identical consecutive runs fold (an agent's `git status` loop). A run in flight never
     // folds, and a different amount of output keeps two runs apart - the row cannot show it.
-    same: isLive ? undefined : [kind, arg, tgt, r.actor || "", r.input?.cwd || "", bad || "ok", r.outputBytes ?? ""].join("\u0000"),
+    same: isLive ? undefined : [kind, arg, tgt, actorLabel(r.actor), r.input?.cwd || "", bad || "ok", r.outputBytes ?? ""].join("\u0000"),
     data: { rrun: r.runId },
   };
 }
@@ -224,13 +224,26 @@ function commandNode(r: ApiRemoteRunRow): HTMLElement {
     textNode(commandLine(r), true, "logs").node);
 }
 
+/** The actor as a row may show it: the surface, never the machine's identity.
+ *
+ *  The CLI recorded `cli:<user>@<host>` until 2026-09-28, and on a personal machine that login
+ *  name is the operator's own name — on screen in every row of this page, and in every
+ *  screenshot of it ("页面上把我名称都暴露出来了"). The CLI records the bare surface now; a
+ *  record written before that still carries the identity in the file, and this is where it
+ *  stops being shown. What the row was ever saying is which surface submitted the run. */
+export function actorLabel(actor: string | null | undefined): string {
+  if (!actor) return "";
+  const cut = actor.indexOf(":");
+  return cut > 0 ? actor.slice(0, cut) : actor;
+}
+
 /** An open row: what its columns left out (the id, the target, who, the directory, the state),
  *  the whole command, then the output as the value block Logs and Traffic open to. */
 function bodyNode(run: ApiRemoteRunRow[]): HChild {
   const r = run[0];
   const isLive = isLiveRun(r.runId);
   const meta = timelineMeta([
-    "#" + r.runId, runTarget(r) || null, r.actor || null,
+    "#" + r.runId, runTarget(r) || null, actorLabel(r.actor) || null,
     r.input && r.input.cwd ? h("code", null, r.input.cwd) : null,
     stateWord(r),
     run.length > 1 ? tr("remoteRuns.nIdenticalRuns", { n: run.length }) : null,
