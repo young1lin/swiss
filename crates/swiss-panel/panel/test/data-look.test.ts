@@ -627,4 +627,55 @@ describe("a key's TTL is one live countdown, top-right (2026-09-28)", () => {
     expect(browsers.dbTtlLabel(7500)).toBe("2:05:00");
     expect(browsers.dbTtlLabel(0)).toBe(tr("dataBrowsers.ttlExpired"));
   });
+
+  it("the edges of the label: the minute, the hour, the day, and past zero", () => {
+    expect(browsers.dbTtlLabel(1)).toBe("1s");
+    expect(browsers.dbTtlLabel(59), "the last second before the clock").toBe("59s");
+    expect(browsers.dbTtlLabel(60), "the first minute reads as one").toBe("1:00");
+    expect(browsers.dbTtlLabel(61)).toBe("1:01");
+    expect(browsers.dbTtlLabel(599)).toBe("9:59");
+    expect(browsers.dbTtlLabel(3599), "the last second before the hour").toBe("59:59");
+    expect(browsers.dbTtlLabel(3600)).toBe("1:00:00");
+    expect(browsers.dbTtlLabel(3661)).toBe("1:01:01");
+    expect(browsers.dbTtlLabel(86400), "a day, which redis will happily hold").toBe("24:00:00");
+    expect(browsers.dbTtlLabel(1000000)).toBe("277:46:40");
+    // Zero and anything below it is one word - a key past its expiry is not "-3s".
+    expect(browsers.dbTtlLabel(0)).toBe(tr("dataBrowsers.ttlExpired"));
+    expect(browsers.dbTtlLabel(-1)).toBe(tr("dataBrowsers.ttlExpired"));
+    expect(browsers.dbTtlLabel(-9999)).toBe(tr("dataBrowsers.ttlExpired"));
+  });
+
+  it("a countdown that runs out says so, and the ticker stops when nothing is counting", () => {
+    vi.useFakeTimers();
+    try {
+      openKey(3, Date.now());
+      expect(document.querySelector("#dbHead [data-rttl]")!.textContent).toBe("3s");
+      vi.advanceTimersByTime(3000);
+      expect(document.querySelector("#dbHead [data-rttl]")!.textContent).toBe(tr("dataBrowsers.ttlExpired"));
+      vi.advanceTimersByTime(10000);
+      expect(document.querySelector("#dbHead [data-rttl]")!.textContent, "it stays expired, never negative")
+        .toBe(tr("dataBrowsers.ttlExpired"));
+      // The key tab goes: with no countdown on screen the ticker has nothing to do, and the
+      // next tick is its last. A timer per opened key for the rest of the session is a leak.
+      const t = freshTab("sql") as DbSqlTab;
+      dbTabs().length = 0;
+      dbTabs().push(t);
+      grid.renderDbToolbar();
+      grid.renderDbGrid();
+      vi.advanceTimersByTime(1000);
+      expect(vi.getTimerCount(), "one tick to notice, then none").toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a key read long ago is already expired, and one read in the future is not negative", () => {
+    // A tab resumed from a background page: the read is older than the TTL it carried.
+    openKey(30, Date.now() - 120_000);
+    expect(document.querySelector("#dbHead [data-rttl]")!.textContent).toBe(tr("dataBrowsers.ttlExpired"));
+    // A clock that jumped backwards (a laptop waking, an NTP step) must not print a bigger
+    // number than the key ever had: the readout is capped by what was read.
+    openKey(30, Date.now() + 5_000);
+    expect(document.querySelector("#dbHead [data-rttl]")!.textContent, "capped by what was read").toBe("30s");
+  });
 });

@@ -465,7 +465,9 @@ export function dbRedisTtl(v                 , readAt        )              {
   if (v.ttl == null || v.ttl < 0) {
     return h("button", { class: "db-ttl", type: "button", title, data: { rttl: "" } }, tr("dataBrowsers.noExpiry"));
   }
-  const ends = readAt + v.ttl * 1000;
+  // A read cannot be in the future: a clock that stepped backwards between the read and this
+  // paint would otherwise show more life than the key was ever given.
+  const ends = Math.min(readAt, Date.now()) + v.ttl * 1000;
   // The repaint owns the clock: one ticker, re-armed by whichever render last put a countdown
   // on screen, so the seconds start at THIS render's boundary and two countdowns never mean
   // two timers. dbTtlPaint stops it once nothing is left to count.
