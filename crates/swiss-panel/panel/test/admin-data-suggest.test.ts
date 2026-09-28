@@ -58,6 +58,9 @@ const sug = await import(
 ) as {
   dbSuggestPrefixAt: (text: string, caret: number) => string;
   dbSuggestByteOffset: (text: string, caret: number) => number;
+  dbRedisWordAt: (text: string, caret: number) => string;
+  dbRedisCandidates: (text: string, caret: number, keys: string[]) => { label: string; kind: string; detail?: string }[];
+  REDIS_TEMPLATES: { group: string; line: string }[];
 };
 
 // docs/22 W3.1: the panel's half of the completion contract — the word class matches the
@@ -84,5 +87,78 @@ describe("dbSuggestByteOffset", () => {
   it("counts bytes once the statement holds multi-byte characters", () => {
     // 6 UTF-16 units before the caret, 10 UTF-8 bytes: each 注/释 is 3 bytes.
     expect(sug.dbSuggestByteOffset("-- 注释\nSEL", 7)).toBe(11);
+  });
+});
+
+/* The owner (2026-09-28): "when I type a Redis command I need completion, and templates -
+   otherwise there is no way to know how to set a key, or delete one." The SQL console asks the
+   server for its candidates and skips redis entirely; redis needs no round trip, because the
+   command set is fixed and the key names are already in the sidebar. */
+describe("dbRedisWordAt", () => {
+  it("takes the key characters a redis word is made of, not the SQL ones", () => {
+    // A key is a byte string: colons group it, dashes and dots are ordinary, * is a pattern.
+    expect(sug.dbRedisWordAt("GET user:1", 10)).toBe("user:1");
+    expect(sug.dbRedisWordAt("SCAN 0 MATCH sess-", 18)).toBe("sess-");
+    expect(sug.dbRedisWordAt("KEYS market:*", 13)).toBe("market:*");
+    expect(sug.dbRedisWordAt("HGETALL ", 8)).toBe("");
+  });
+});
+
+describe("dbRedisCandidates", () => {
+  const keys = ["user:1", "user:2", "market:ticks", "htest"];
+  const labels = (text: string, caret = text.length): string[] =>
+    sug.dbRedisCandidates(text, caret, keys).map((c) => c.label);
+
+  it("completes the command word, and says what arguments it takes", () => {
+    expect(labels("SE")).toContain("SET");
+    expect(labels("se"), "typed lower case, offered upper").toContain("SET");
+    const set = sug.dbRedisCandidates("SE", 2, keys).find((c) => c.label === "SET")!;
+    expect(set.detail).toBe("SET key value [EX seconds]");
+    expect(set.kind).toBe("string");
+    // The two the owner could not find a way to write.
+    expect(labels("DE")).toContain("DEL");
+    expect(labels("EXP")).toContain("EXPIRE");
+  });
+
+  it("completes a key once the command is one that takes a key", () => {
+    expect(labels("GET user:")).toEqual(["user:1", "user:2"]);
+    expect(labels("DEL market")).toEqual(["market:ticks"]);
+    expect(sug.dbRedisCandidates("GET user:", 9, keys)[0].kind).toBe("key");
+  });
+
+  it("offers nothing where nothing can be completed", () => {
+    expect(labels("GET user:1 ")).toEqual([]);      // past the key, over whitespace
+    expect(labels("SET user:1 val")).toEqual([]);   // a VALUE is the operator's, never guessed
+    expect(labels("INFO keysp")).toEqual([]);       // INFO takes no key
+    expect(labels("")).toEqual([]);
+  });
+
+  it("is a closed set: every template's command is one the completion knows", () => {
+    const names = sug.dbRedisCandidates("", 0, []).length;
+    expect(names, "an empty prefix offers no list").toBe(0);
+    const known = new Set(sug.REDIS_TEMPLATES.map((t) => t.line.split(" ")[0]));
+    for (const name of known) {
+      expect(labels(name.slice(0, 2)), name + " completes").toContain(name);
+    }
+  });
+});
+
+describe("REDIS_TEMPLATES", () => {
+  it("covers writing, reading, expiring and deleting a key of every type", () => {
+    const lines = sug.REDIS_TEMPLATES.map((t) => t.line);
+    expect(lines).toContain("SET key value");
+    expect(lines).toContain("DEL key");
+    expect(lines).toContain("EXPIRE key 60");
+    expect(lines).toContain("HSET key field value");
+    expect(lines).toContain("XADD key * field value");
+    expect(new Set(sug.REDIS_TEMPLATES.map((t) => t.group)).size, "grouped by what they act on")
+      .toBeGreaterThan(3);
+  });
+
+  it("every template is a line the console can run as it stands", () => {
+    for (const t of sug.REDIS_TEMPLATES) {
+      expect(t.line, "no placeholder braces - the words ARE the placeholders").not.toMatch(/[<>{}]/);
+      expect(t.line.trim()).toBe(t.line);
+    }
   });
 });

@@ -119,7 +119,7 @@ usage: swiss <command> [options]
   token            print the token clients authenticate with
   creds            print the panel url and the gateway token (for asking an AI)
   open             open the panel in a browser, signed in with a one-time link (docs/48)
-  export           dump every state file as plaintext JSON to stdout — the recovery /
+  export           dump every state file as JSON to stdout (vault values masked) — the recovery /
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
   skill install    install swiss and swiss-remote in each AI client's skills directory
@@ -592,7 +592,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
         }
         "export" => {
             io.err(
-                "warning: everything below is plaintext secrets — redirect to a file, protect it, delete it when done",
+                "warning: config passwords, the gateway token and OAuth grants are in the clear below (vault secrets are masked) — redirect to a file, protect it, delete it when done",
             );
             io.out(&serde_json::to_string_pretty(&ops.export_state()).unwrap_or_default());
             0

@@ -126,6 +126,11 @@ export function sheetOpen()          {
 
 ;                                
                 
+                                                                                         
+               
+                                                                                           
+                                                                                            
+                       
                                                                        
                       
                  
@@ -152,6 +157,7 @@ export function openFieldSheet(spec                )       {
   const ok = h("button", { type: "button", class: "btn primary", id: "g-save" }, spec.save || (editing ? tr("ui.rename") : tr("ui.create")));
   showSheet(sheet({
     title: spec.title,
+    sub: spec.sub,
     body: [
       h("label", { class: "field" }, h("span", null, spec.label || tr("ui.name")), input),
       err,
@@ -164,7 +170,7 @@ export function openFieldSheet(spec                )       {
   };
   const save = async ()                => {
     const value = input.value.trim();
-    if (!value) { fail(tr("ui.nameRequired")); return; }
+    if (!value && !spec.allowEmpty) { fail(tr("ui.nameRequired")); return; }
     if (value === def) { closeSheet(); return; } // a rename that changed nothing is a cancel
     const out = await spec.submit(value);
     if (out === true) closeSheet();

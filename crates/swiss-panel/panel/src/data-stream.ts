@@ -29,6 +29,7 @@ import type { ApiDbRedisValue } from "./types/api.js";
 import type { DbKeyTab } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el } from "./util.js";
 import { h } from "./h.js";
+import { sw } from "./ui/index.js";
 import { renderDbGrid } from "./data-grid.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tr, trn } from "./i18n.js";
@@ -446,8 +447,14 @@ async function dbStreamJumpLatest(): Promise<void> {
  *  one row in the value header's own vocabulary, painted above the table. */
 function dbStreamFollowBar(wrap: HTMLElement, t: DbKeyTab): void {
   const bar = el("div", "db-detail-meta");
-  const followWord = t.redisStreamFollow ? tr("dataStream.pause") : tr("dataStream.follow");
-  const followBtn = btn(followWord, { title: followWord });
+  // The state IS the control (2026-09-28): a word that flipped Follow/Pause made the reader
+  // work out which one the button reported and which one it would do. A switch says both.
+  const on = !!t.redisStreamFollow;
+  bar.appendChild(h("span", null, tr("dataStream.follow")));
+  const followBtn = sw(on, tr("dataStream.follow"), {
+    title: tr(on ? "dataStream.followOnTitle" : "dataStream.followOffTitle"),
+    data: { stream: "follow" },
+  });
   followBtn.onclick = (): void => {
     t.redisStreamFollow = !t.redisStreamFollow;
     if (t.redisStreamFollow) {

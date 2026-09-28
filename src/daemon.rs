@@ -226,10 +226,17 @@ pub fn read_creds() -> (String, Option<String>) {
     (url_for(resolve_port()), read_gateway_token())
 }
 
+/// What a vault value exports as (the owner's call, 2026-09-28): a secret is known to the
+/// person who typed it and to the machine that sealed it, and to nobody holding the file. The
+/// bundle carries the NAMES so a restore says what to re-enter, never the values.
+pub const SECRET_MASK: &str = "******";
+
 /// One decrypted bundle of every state file — what 'swiss export' writes and 'swiss import' reads.
-/// The ONLY plaintext export path: machine binding cuts both ways, so moving to a new machine
-/// (or recovering from a lost OS credential) needs an operator-initiated export on a machine
-/// that can still read the files.
+/// Machine binding cuts both ways, so moving to a new machine (or recovering from a lost OS
+/// credential) needs an operator-initiated export on a machine that can still read the files.
+/// The vault is the exception: its values leave as [SECRET_MASK] and are typed in again on the
+/// far side. Everything else rides whole - config passwords, the gateway token, OAuth grants -
+/// so the bundle is still a file to protect.
 pub fn export_state() -> Value {
     json!({
         "version": 1,
@@ -245,13 +252,29 @@ pub fn export_state() -> Value {
             .into_iter()
             .map(|(k, v)| (k, Value::String(v)))
             .collect()),
-        // The vault rides the bundle whole: values included, because the bundle is already the
-        // one plaintext escape (docs/19 D7) — the CLI warns before writing it to a terminal.
-        "secrets": read_secure_json(&swiss_core::secure::secretstore::secret_store_path())
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| serde_json::json!({ "rev": 0, "secrets": {} })),
+        // The vault rides by NAME only (docs/19 D7, revised 2026-09-28): every value is
+        // SECRET_MASK, so a bundle read by anyone - a backup, a terminal scrollback, a
+        // support attachment - hands over no key. An import re-enters them by hand.
+        "secrets": masked_vault(),
     })
+}
+
+/// The vault section of the bundle: the stored shape with every value replaced by the mask.
+fn masked_vault() -> Value {
+    let stored = read_secure_json(&swiss_core::secure::secretstore::secret_store_path())
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| json!({ "rev": 0, "secrets": {} }));
+    let names = stored
+        .get("secrets")
+        .and_then(Value::as_object)
+        .map(|m| {
+            m.keys()
+                .map(|k| (k.clone(), Value::String(SECRET_MASK.to_string())))
+                .collect::<serde_json::Map<String, Value>>()
+        })
+        .unwrap_or_default();
+    json!({ "rev": stored.get("rev").cloned().unwrap_or_else(|| json!(0)), "secrets": names })
 }
 
 /// Restore a bundle: every section is re-sealed under THIS machine's key as it lands. Returns
@@ -305,12 +328,21 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
             Some(inner) => inner.as_object().cloned().unwrap_or_default(),
             None => vault.as_object().cloned().unwrap_or_default(),
         };
-        swiss_core::secure::secretstore::import_secrets(
-            &swiss_core::secure::secretstore::secret_store_path(),
-            &entries,
-        )
-        .map_err(|e| e.message())?;
-        restored.push("secrets.json".into());
+        // A masked entry carries no value, so it must not become one: writing SECRET_MASK
+        // would replace a good local secret with six asterisks. Those names are skipped and
+        // whatever this machine holds for them stays (2026-09-28).
+        let entries: serde_json::Map<String, Value> = entries
+            .into_iter()
+            .filter(|(_, v)| v.as_str() != Some(SECRET_MASK))
+            .collect();
+        if !entries.is_empty() {
+            swiss_core::secure::secretstore::import_secrets(
+                &swiss_core::secure::secretstore::secret_store_path(),
+                &entries,
+            )
+            .map_err(|e| e.message())?;
+            restored.push("secrets.json".into());
+        }
     }
     Ok(restored)
 }
@@ -1087,8 +1119,8 @@ mod tests {
                 "tunnels.json",
                 "mcp-oauth.json",
                 "env.json",
-                "secrets.json"
-            ]
+            ],
+            "the vault exports as masks, so an import restores no secrets file"
         );
         assert_eq!(export_state()["config"]["port"], json!(18084));
         assert_eq!(read_gateway_token().as_deref(), Some("tok"));
@@ -1104,7 +1136,11 @@ mod tests {
             json!({ "rev": 4, "secrets": { "stripe-key": "sk_old", "keep-me": "v" } }),
         );
         let bundle = export_state();
-        assert_eq!(bundle["secrets"]["secrets"]["stripe-key"], json!("sk_old"));
+        assert_eq!(
+            bundle["secrets"]["secrets"]["stripe-key"],
+            json!(SECRET_MASK),
+            "the name rides, the key does not"
+        );
 
         // The target machine already holds the other name: a restore keeps it, and the
         // imported value wins on the name both have (docs/19 D7).
@@ -1118,7 +1154,7 @@ mod tests {
         }))
         .expect("the bundle imports");
 
-        let vault = export_state()["secrets"]["secrets"].clone();
+        let vault = stored_vault();
         assert_eq!(vault["stripe-key"], json!("sk_new")); // imported
         assert_eq!(vault["keep-me"], json!("source-value")); // imported wins
         assert_eq!(vault["local-only"], json!("x")); // nothing is deleted
@@ -1128,9 +1164,57 @@ mod tests {
             "secrets": { "secrets": { "not_a_name": "y", "fresh-one": "z" } }
         }))
         .expect("the bundle imports");
-        let vault = export_state()["secrets"]["secrets"].clone();
+        let vault = stored_vault();
         assert_eq!(vault.get("not_a_name"), None);
         assert_eq!(vault["fresh-one"], json!("z"));
+        clear_state();
+    }
+
+    /// The vault as it sits on disk - what export no longer shows.
+    fn stored_vault() -> Value {
+        read_secure_json(&swiss_core::secure::secretstore::secret_store_path())
+            .ok()
+            .flatten()
+            .map(|v| v["secrets"].clone())
+            .unwrap_or_else(|| json!({}))
+    }
+
+    #[tokio::test]
+    async fn a_masked_value_never_lands_on_the_secret_it_names() {
+        // The bundle a second machine reads says WHICH secrets existed and nothing about what
+        // they were. Importing it must leave that machine's own vault alone - the failure this
+        // guards is an import quietly setting every secret to "******".
+        let _lock = daemon_state().await;
+        seal(
+            "secrets.json",
+            json!({ "rev": 2, "secrets": { "zhipu-key": "real-value", "other": "v2" } }),
+        );
+        let bundle = export_state();
+        let out = serde_json::to_string(&bundle).expect("serialises");
+        assert!(!out.contains("real-value"), "no value in the bundle: {out}");
+        assert_eq!(
+            bundle["secrets"]["secrets"]["zhipu-key"],
+            json!(SECRET_MASK)
+        );
+        assert_eq!(bundle["secrets"]["secrets"]["other"], json!(SECRET_MASK));
+
+        let restored = import_state(&bundle).expect("the bundle imports");
+        assert!(
+            !restored.contains(&"secrets.json".to_string()),
+            "nothing to restore from masks: {restored:?}"
+        );
+        assert_eq!(stored_vault()["zhipu-key"], json!("real-value"));
+        assert_eq!(stored_vault()["other"], json!("v2"));
+
+        // A bundle that mixes a real value in (an operator filling one back by hand) takes
+        // that one and leaves the masked names alone.
+        import_state(&json!({
+            "version": 1,
+            "secrets": { "secrets": { "zhipu-key": SECRET_MASK, "other": "typed-again" } }
+        }))
+        .expect("the bundle imports");
+        assert_eq!(stored_vault()["zhipu-key"], json!("real-value"));
+        assert_eq!(stored_vault()["other"], json!("typed-again"));
         clear_state();
     }
 

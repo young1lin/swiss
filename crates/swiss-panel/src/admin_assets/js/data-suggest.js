@@ -20,6 +20,128 @@ import { dbIsRedis } from "./data-browsers.js";
 import { dbSqlPaint } from "./data-filters.js";
 import { dbConn, dbSqlTab } from "./db-state.js";
 
+
+/* --- redis completion (2026-09-28) ------------------------------------------------------------ */
+/* The owner, on the redis console: "I need completion, and templates - otherwise there is no way
+   to know how to set a key, or delete one." Redis needs no round trip for either: the command set
+   is fixed, and the key names are already in the sidebar. So this half is a table and two pure
+   functions, and the SQL path above keeps the server to itself. */
+
+/** One redis command as the console offers it: what to type, what it takes, and what it acts on
+ *  (the word the sidebar already labels the key with, so the two agree). `key` says the first
+ *  argument is a key name - that is what makes the second word completable. */
+                                                                              
+
+const REDIS_COMMANDS             = [
+  { name: "GET", args: "key", group: "string", key: true },
+  { name: "SET", args: "key value [EX seconds]", group: "string", key: true },
+  { name: "SETEX", args: "key seconds value", group: "string", key: true },
+  { name: "INCR", args: "key", group: "string", key: true },
+  { name: "APPEND", args: "key value", group: "string", key: true },
+  { name: "STRLEN", args: "key", group: "string", key: true },
+  { name: "DEL", args: "key [key ...]", group: "key", key: true },
+  { name: "EXISTS", args: "key", group: "key", key: true },
+  { name: "RENAME", args: "key newkey", group: "key", key: true },
+  { name: "TYPE", args: "key", group: "key", key: true },
+  { name: "TTL", args: "key", group: "key", key: true },
+  { name: "EXPIRE", args: "key seconds", group: "key", key: true },
+  { name: "PERSIST", args: "key", group: "key", key: true },
+  { name: "KEYS", args: "pattern", group: "key", key: true },
+  { name: "SCAN", args: "cursor [MATCH pattern] [COUNT n]", group: "key", key: false },
+  { name: "HGET", args: "key field", group: "hash", key: true },
+  { name: "HSET", args: "key field value", group: "hash", key: true },
+  { name: "HDEL", args: "key field", group: "hash", key: true },
+  { name: "HGETALL", args: "key", group: "hash", key: true },
+  { name: "HKEYS", args: "key", group: "hash", key: true },
+  { name: "LPUSH", args: "key value", group: "list", key: true },
+  { name: "RPUSH", args: "key value", group: "list", key: true },
+  { name: "LPOP", args: "key", group: "list", key: true },
+  { name: "LRANGE", args: "key start stop", group: "list", key: true },
+  { name: "LLEN", args: "key", group: "list", key: true },
+  { name: "SADD", args: "key member", group: "set", key: true },
+  { name: "SREM", args: "key member", group: "set", key: true },
+  { name: "SMEMBERS", args: "key", group: "set", key: true },
+  { name: "SCARD", args: "key", group: "set", key: true },
+  { name: "ZADD", args: "key score member", group: "zset", key: true },
+  { name: "ZREM", args: "key member", group: "zset", key: true },
+  { name: "ZRANGE", args: "key start stop [WITHSCORES]", group: "zset", key: true },
+  { name: "ZCARD", args: "key", group: "zset", key: true },
+  { name: "XADD", args: "key * field value", group: "stream", key: true },
+  { name: "XLEN", args: "key", group: "stream", key: true },
+  { name: "XRANGE", args: "key start end [COUNT n]", group: "stream", key: true },
+  { name: "XREVRANGE", args: "key end start [COUNT n]", group: "stream", key: true },
+  { name: "DBSIZE", args: "", group: "server", key: false },
+  { name: "INFO", args: "[section]", group: "server", key: false },
+];
+
+/** The lines the Templates menu offers: one ready command per thing an operator does, the words
+ *  themselves standing in for the arguments (no <braces> to delete before it runs). */
+const REDIS_TEMPLATES                                    = [
+  { group: "string", line: "SET key value" },
+  { group: "string", line: "SET key value EX 60" },
+  { group: "string", line: "GET key" },
+  { group: "key", line: "DEL key" },
+  { group: "key", line: "EXPIRE key 60" },
+  { group: "key", line: "PERSIST key" },
+  { group: "key", line: "TTL key" },
+  { group: "key", line: "RENAME key newkey" },
+  { group: "key", line: "SCAN 0 MATCH prefix:* COUNT 100" },
+  { group: "hash", line: "HSET key field value" },
+  { group: "hash", line: "HGETALL key" },
+  { group: "hash", line: "HDEL key field" },
+  { group: "list", line: "RPUSH key value" },
+  { group: "list", line: "LRANGE key 0 -1" },
+  { group: "set", line: "SADD key member" },
+  { group: "set", line: "SMEMBERS key" },
+  { group: "zset", line: "ZADD key 1 member" },
+  { group: "zset", line: "ZRANGE key 0 -1 WITHSCORES" },
+  { group: "stream", line: "XADD key * field value" },
+  { group: "stream", line: "XREVRANGE key + - COUNT 20" },
+  { group: "server", line: "INFO keyspace" },
+];
+
+/** The word the redis console would complete: a key is a byte string, so its run takes the
+ *  characters a key name is made of - colon groups, dashes, dots, and * for a pattern - where
+ *  the SQL class takes identifier characters. Pure. */
+function dbRedisWordAt(text         , caret        )         {
+  const s = String(text).slice(0, caret);
+  const m = s.match(/[A-Za-z0-9_.:*?[\]{}@$#+-]+$/);
+  return m ? m[0] : "";
+}
+
+/** What to offer for the caret in a redis console line: the first word completes from the
+ *  command table (with its arguments as the detail), and the word after a command that reads a
+ *  key completes from the keys already walked into the sidebar. A value is never guessed - it is
+ *  the operator's to type, and a list of other keys' names there would be noise. Pure. */
+function dbRedisCandidates(text        , caret        , keys          )                        {
+  const prefix = dbRedisWordAt(text, caret);
+  if (!prefix) return [];
+  const before = text.slice(0, caret - prefix.length);
+  const words = before.split(/\s+/).filter((w        )          => { return !!w; });
+  if (!words.length) {
+    const up = prefix.toUpperCase();
+    return REDIS_COMMANDS
+      .filter((c          )          => { return c.name.startsWith(up); })
+      .slice(0, SUGGEST_MAX_ITEMS)
+      .map((c          )                      => {
+        return { label: c.name, kind: c.group, detail: (c.name + " " + c.args).trim() };
+      });
+  }
+  if (words.length > 1) return []; // past the key: an argument is the operator's own
+  const cmd = REDIS_COMMANDS.find((c          )          => { return c.name === words[0].toUpperCase(); });
+  if (!cmd || !cmd.key) return [];
+  return keys
+    .filter((k        )          => { return k.startsWith(prefix); })
+    .slice(0, SUGGEST_MAX_ITEMS)
+    .map((k        )                      => { return { label: k, kind: "key" }; });
+}
+
+/** The keys the sidebar has walked so far - the completion's whole key source. */
+function dbLoadedKeys()           {
+  const r = dbConn().redis;
+  return r && r.keys ? r.keys.map((k                 )         => { return k.key; }) : [];
+}
+
 /* --- SQL completion (docs/22 W3.1) ------------------------------------------------------------------ */
 /* The console's suggestion list. The SERVER builds the candidate set (dialect keywords + table
    names + the FROM-nearest table's columns, cached per connection); this side only decides
@@ -61,7 +183,18 @@ function dbSuggestHide()       {
 function dbSuggestOnInput(                         )       {
   clearTimeout(dbSuggestTimer );
   const d = dbConn();
-  if (!d.conn || dbIsRedis()) { dbSuggestHide(); return; }
+  if (!d.conn) { dbSuggestHide(); return; }
+  // Redis answers from the table above, with no server and no debounce: the candidates are
+  // already here, and a 150ms wait on a local list only makes the console feel slow.
+  if (dbIsRedis()) {
+    const items = dbRedisCandidates(this.value, this.selectionStart || 0, dbLoadedKeys());
+    if (!items.length) { dbSuggestHide(); return; }
+    dbSuggestItems = items;
+    dbSuggestPrefix = dbRedisWordAt(this.value, this.selectionStart || 0);
+    dbSuggestSel = -1;
+    dbSuggestRender(this);
+    return;
+  }
   if (!dbSuggestPrefixAt(this.value, this.selectionStart)) { dbSuggestHide(); return; }
   const ta = this;
   dbSuggestTimer = setTimeout(() => { void dbSuggestFetch(ta); }, SUGGEST_DEBOUNCE_MS);
@@ -180,4 +313,7 @@ function dbSuggestKeys(e               )       {
   }
 }
 
-export { dbSuggestByteOffset, dbSuggestHide, dbSuggestKeys, dbSuggestOnInput, dbSuggestPrefixAt };
+export {
+  REDIS_TEMPLATES, dbRedisCandidates, dbRedisWordAt, dbSuggestByteOffset, dbSuggestHide, dbSuggestKeys,
+  dbSuggestOnInput, dbSuggestPrefixAt,
+};

@@ -182,6 +182,11 @@ Infisical `infisical://…`——新一代密钥平台清一色 **URI scheme 型
 - `export_state()`（src/daemon.rs）的 bundle 增加 `"secrets"` 段；版本号保持 1（加法不破格），
   `import_state` 视缺段为空。export 本就是唯一明文离机通道（daemon.rs 模块注释），密钥缺席
   会让"换机"半身不遂。
+- **2026-09-28 推翻上一条的取舍**：负责人定的是"导出只留名字，不留值"——"密钥只有输入的时候
+  用户自己才知道是什么"。`SECRET_MASK`（`******`）替换每个值，名字照旧，换机时按名字重新输入；
+  `import_state` 跳过值等于掩码的条目，绝不把 `******` 写成真值盖掉目标机已有的密钥。bundle
+  其余部分（config 里的库密码、网关 token、OAuth 授权）仍是明文，CLI 的告警改成这么说。
+  测试：daemon.rs `a_masked_value_never_lands_on_the_secret_it_names`。
 
 ### D8 子进程隔离（本 spec 的核心安全断言）
 

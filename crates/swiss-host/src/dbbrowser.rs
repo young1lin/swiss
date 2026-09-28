@@ -2367,11 +2367,26 @@ pub fn build_pg_ddl(
     } else {
         format!("\n{}\n", lines.join(",\n"))
     };
-    Ok(format!(
-        "CREATE TABLE {}.{} ({body});",
+    let qualified = format!(
+        "{}.{}",
         quote_ident(DbDialect::Pg, schema)?,
         quote_ident(DbDialect::Pg, table)?
-    ))
+    );
+    let mut out = format!("CREATE TABLE {qualified} ({body});");
+    // Postgres has no COMMENT clause inside CREATE TABLE the way MySQL does - a comment is its
+    // own statement afterwards. A sketch that stopped at the paren silently dropped every
+    // comment the catalog holds (the owner, 2026-09-28), and a dump replaying it lost them.
+    for c in columns {
+        let Some(text) = c.comment.as_ref().filter(|t| !t.is_empty()) else {
+            continue;
+        };
+        out.push_str(&format!(
+            "\nCOMMENT ON COLUMN {qualified}.{} IS {};",
+            quote_ident(DbDialect::Pg, &c.name)?,
+            sql_dump_literal(DbDialect::Pg, Some(&Value::String(text.clone())))?
+        ));
+    }
+    Ok(out)
 }
 
 /// The statement behind a structure operation. Every identifier passes assert_ident + dialect
@@ -5257,10 +5272,47 @@ mod tests {
     }
 
     #[test]
+    fn build_pg_ddl_states_the_comments_postgres_keeps_apart() {
+        // The owner (2026-09-28): "the PG DDL has no COMMENT in it - postgres adds them
+        // afterwards, so the PG DDL needs its own handling." MySQL's SHOW CREATE TABLE carries
+        // a column's COMMENT inline; postgres has no such clause, so a sketch without the
+        // COMMENT ON statements silently drops what the catalog holds.
+        let cols = vec![
+            BrowseColumn {
+                comment: Some("Who placed it".into()),
+                ..col("id", "bigint", false, true)
+            },
+            BrowseColumn {
+                comment: Some("today's price, not the order's".into()),
+                ..col("price", "numeric", false, false)
+            },
+            col("plain", "text", true, false),
+        ];
+        let ddl = build_pg_ddl("shop", "orders", &cols, &["id".to_string()], &[]).unwrap();
+        let (create, comments) = ddl
+            .split_once(";\n")
+            .expect("the create, then the comments");
+        assert!(create.starts_with("CREATE TABLE \"shop\".\"orders\""));
+        assert!(!create.contains("COMMENT"), "never inline: {create}");
+        assert_eq!(
+            comments.lines().collect::<Vec<_>>(),
+            vec![
+                "COMMENT ON COLUMN \"shop\".\"orders\".\"id\" IS 'Who placed it';",
+                "COMMENT ON COLUMN \"shop\".\"orders\".\"price\" IS 'today''s price, not the order''s';",
+            ],
+            "one statement per commented column, quotes doubled, the bare column skipped"
+        );
+    }
+
+    #[test]
     fn build_pg_ddl_omits_empty_pk_and_fk_clauses() {
         let ddl = build_pg_ddl("s", "t", &[col("x", "int", true, false)], &[], &[]).unwrap();
         assert!(!ddl.contains("PRIMARY KEY"));
         assert!(!ddl.contains("FOREIGN KEY"));
+        assert!(
+            !ddl.contains("COMMENT"),
+            "no comments, no trailing statements: {ddl}"
+        );
     }
 
     #[test]

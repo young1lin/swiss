@@ -31,10 +31,27 @@ All notable changes to swiss are recorded here. The format follows
   `--env` value or `--cwd` is replaced by the stored value on the way out, while the run list,
   the audit and the panel keep the reference as typed, and output that echoes the value comes
   back as `••••••••`. A missing name fails the run before anything is sent (docs/34 R10).
+- The Data page's Redis console completes as you type and carries templates: the command word
+  offers the commands with their arguments (`SET key value [EX seconds]`), the word after a
+  command that takes a key offers the keys already in the sidebar, and the console's overflow
+  lists a ready line per thing an operator does, grouped by what it acts on. Neither asks the
+  server: the command set is fixed and the keys are already here.
 - A vault reference can carry a default: `${secret://name:default}` uses `default` when the
   vault has no such name, everywhere references resolve (docs/19, 2026-09-28).
 
 ### Changed
+- A Redis key's overflow menu names every act on the key directly - Set the TTL…, Rename…,
+  Delete… - instead of one nested "Rename or delete this key". The TTL had no door there at
+  all: it was editable only by clicking the readout in the meta line, which nothing announced.
+- Deleting a Redis key asks once, naming the key, instead of demanding the name be typed back.
+  That confirm is what a table DROP or TRUNCATE still uses; one `DEL` is not that.
+- A Redis stream's Follow is an on/off switch instead of a button whose word flipped between
+  Follow and Pause, which left the reader working out which of the two it was reporting.
+- A Data grid column header's comment takes prose grey (`--text-2`); with the type on its own
+  line in the same `--text-3`, the two lines read as one block.
+- A PostgreSQL table's DDL states its comments. Postgres has no COMMENT clause inside CREATE
+  TABLE the way MySQL does, so the sketch now ends with one `COMMENT ON COLUMN` statement per
+  commented column - a dump replaying it used to drop every comment the catalog holds.
 - Remote runs no longer share the two-slot run pool that protects this machine: each remote
   target has its own lane of 8 runs at once (each its own channel on the one SSH connection),
   so parallel terminals driving one server stop getting `429 run capacity is full (2/2
@@ -51,6 +68,11 @@ All notable changes to swiss are recorded here. The format follows
   a short column such as `id` is as wide as its longest line rather than its name and type side
   by side; a column without a comment keeps its empty line's height, so every name lines up
   (docs/46 §3.7).
+
+- `swiss export` no longer writes vault secrets in the clear: every value leaves as `******`
+  and the names ride so a restore says what to re-enter. An import skips a masked entry rather
+  than writing the mask over a good local value. The bundle still carries config passwords, the
+  gateway token and OAuth grants, so it is still a file to protect.
 
 ### Fixed
 - With Follow on, a Redis stream's new rows replace only the table: the Follow bar was rebuilt
