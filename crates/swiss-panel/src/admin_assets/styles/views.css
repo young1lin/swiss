@@ -374,9 +374,10 @@
     .db-col-main { display: flex; align-items: center; min-width: 0; }
     .db-col-name { overflow: hidden; text-overflow: ellipsis; }
     .db-col-comment { font-size: var(--f-caption); font-weight: var(--w-body); color: var(--text-3); margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+    .db-col-comment:empty::before { content: "\a0"; } /* holds its line: names align */
     .db-key { color: var(--amber); margin-left: 4px; --ic: 12px; } /* fix-plan #14: the i-key sprite, sized to the marker it replaced */
-    .db-col-type { color: var(--text-3); font-size: var(--f-caption); margin-left: 6px; font-family: var(--mono); }
-    /* docs/22 W5.2 — the FK column's jump arrow: a quiet straight arrow after the type (the
+    .db-col-type { color: var(--text-3); font-size: var(--f-caption); font-weight: var(--w-body); font-family: var(--mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+    /* docs/22 W5.2 — the FK column's jump arrow: a quiet straight arrow after the name (the
        chevron shape belongs to pagination), accent only under the pointer. Its click stops
        propagation — the header around it still sorts. */
     .db-col-fk { border: 0; background: none; padding: 0; margin-left: 5px; color: var(--text-3); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; --ic: 13px; }

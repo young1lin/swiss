@@ -47,6 +47,10 @@ All notable changes to swiss are recorded here. The format follows
 - An open row on the Runs page starts with a Command block holding the whole command, quoted
   word by word the way it was sent, with a Copy: the row's own line is cut to fit, so a long
   command could be neither read nor copied (docs/34 R13).
+- A Data grid column header stacks its name, its type and its comment on lines of their own, so
+  a short column such as `id` is as wide as its longest line rather than its name and type side
+  by side; a column without a comment keeps its empty line's height, so every name lines up
+  (docs/46 §3.7).
 
 ### Fixed
 - With Follow on, a Redis stream's new rows replace only the table: the Follow bar was rebuilt
