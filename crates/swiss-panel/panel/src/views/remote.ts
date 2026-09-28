@@ -38,6 +38,7 @@ import { fill, h } from "../h.js";
 import type { HChild } from "../h.js";
 import { assignMember, groupFieldNode, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
 import { locale, tr, trn } from "../i18n.js";
+import type { MenuItem } from "../ui/menu.js";
 import { btn, checkField, closeSheet, dot, field, iconBtn, moreBtn, pair, paneBody, paneHead, popupMenu, relTime, row, sheet, showSheet, tag } from "../ui/index.js";
 import type { RowCol } from "../ui/index.js";
 import { commandOf, runOutcome, runTarget } from "./remote-runs.js";
@@ -179,6 +180,95 @@ function rowNode(t: RemoteTargetRow): HTMLElement {
     data: { rmrow: t.id },
     draggable: true,
   });
+}
+
+
+/* --- running a command from the page (2026-09-28) --------------------------------------------- */
+/* The owner: "the Remote page should let me run write and exec straight from the web, and Runs
+   should show what is running so I can cancel it." Runs already streams an open run and offers
+   Cancel, and POST /api/runs is the same door the CLI knocks on - so this is only the door, and
+   the run it starts is watched where every other run is.
+
+   The typed line goes to the target's own shell (`sh -c <line>`) rather than through a shell
+   parser written here: pipes, quotes and redirects then mean what the operator meant, and the
+   Runs page shows exactly what was sent. A remote note for the target says the same. */
+
+const RUN_TIMEOUT_MS = 15 * 60 * 1000;
+
+/** Submit one recorded run and go watch it. The page never holds the answer: the Runs page is
+ *  where an open run streams, cancels and ends up in the record. */
+async function submitRun(action: string, input: Record<string, unknown>): Promise<void> {
+  const j = await apiJson<{ runId: number }>("/api/runs", {
+    method: "POST",
+    body: JSON.stringify({ action, input, timeoutMs: RUN_TIMEOUT_MS, actor: "panel" }),
+  });
+  if (!j) return; // apiJson already said why
+  closeSheet();
+  location.hash = "#remote-runs";
+}
+
+/** Run a command on the target: the line, and the directory to run it in (its workspace root
+ *  when left empty - the gateway's own default). */
+function openRunSheet(t: RemoteTargetRow): void {
+  showSheet(sheet({
+    title: tr("remote.runOn", { name: t.id }),
+    body: [
+      field({
+        label: tr("remote.command"),
+        control: h("input", { id: "rmx-cmd", placeholder: tr("remote.commandPlaceholder"), autocomplete: "off" }),
+        hint: tr("remote.commandHint"),
+      }),
+      field({
+        label: tr("remote.directoryOptional"),
+        control: h("input", { id: "rmx-cwd", placeholder: t.workspaceRoot || "", autocomplete: "off" }),
+      }),
+    ],
+    foot: [
+      btn(tr("remote.cancel"), { id: "rmx-cancel" }),
+      btn(tr("remote.run"), { id: "rmx-run", kind: "primary" }),
+    ],
+  }));
+  $("rmx-cancel").onclick = closeSheet;
+  $("rmx-run").onclick = (): void => {
+    const line = $<HTMLInputElement>("rmx-cmd").value.trim();
+    if (!line) { toast(tr("remote.commandRequired"), true); return; }
+    const cwd = $<HTMLInputElement>("rmx-cwd").value.trim();
+    const input: Record<string, unknown> = { target: t.id, argv: ["sh", "-c", line] };
+    if (cwd) input.cwd = cwd;
+    void submitRun("remote.exec", input);
+  };
+  $("rmx-cmd").focus();
+}
+
+/** Write a file on the target: the path (relative to the workspace root, as the CLI takes it)
+ *  and the body. The body is sealed beside the record, so the Runs row can show it back. */
+function openWriteSheet(t: RemoteTargetRow): void {
+  showSheet(sheet({
+    title: tr("remote.writeOn", { name: t.id }),
+    body: [
+      field({
+        label: tr("remote.path"),
+        control: h("input", { id: "rmw-path", placeholder: tr("remote.pathPlaceholder"), autocomplete: "off" }),
+        hint: t.workspaceRoot ? tr("remote.pathHint", { root: t.workspaceRoot }) : undefined,
+      }),
+      field({ label: tr("remote.contents"), control: h("textarea", { id: "rmw-body", spellcheck: false, style: "min-height:180px" }) }),
+    ],
+    foot: [
+      btn(tr("remote.cancel"), { id: "rmw-cancel" }),
+      btn(tr("remote.write"), { id: "rmw-save", kind: "primary" }),
+    ],
+  }));
+  $("rmw-cancel").onclick = closeSheet;
+  $("rmw-save").onclick = (): void => {
+    const remote = $<HTMLInputElement>("rmw-path").value.trim();
+    if (!remote) { toast(tr("remote.pathRequired"), true); return; }
+    void submitRun("remote.write", {
+      target: t.id,
+      remote,
+      content: $<HTMLTextAreaElement>("rmw-body").value,
+    });
+  };
+  $("rmw-path").focus();
 }
 
 /** The groups component's cfg (docs/20): this page's nouns, rows and moves. */
@@ -397,11 +487,17 @@ export async function mount() {
       event.stopPropagation();
       const t = targets.find((x) => { return x.id === more?.dataset.rmmore; });
       if (!t) return;
-      popupMenu(more.getBoundingClientRect(), [
-        { label: tr("remote.edit"), fn: () => { openSheet(t!); } },
-        { sep: true },
-        { label: tr("remote.delete"), danger: true, fn: () => { void removeTarget(t?.id); } },
-      ]);
+      const caps = t.capabilities || [];
+      const items: MenuItem[] = [];
+      // Only what the target is allowed to do: a run door on a target with no exec would be a
+      // button whose only answer is the gateway's refusal.
+      if (caps.includes("exec")) items.push({ label: tr("remote.runCommand"), fn: () => { openRunSheet(t); } });
+      if (caps.includes("files")) items.push({ label: tr("remote.writeFile"), fn: () => { openWriteSheet(t); } });
+      if (items.length) items.push({ sep: true });
+      items.push({ label: tr("remote.edit"), fn: () => { openSheet(t!); } });
+      items.push({ sep: true });
+      items.push({ label: tr("remote.delete"), danger: true, fn: () => { void removeTarget(t?.id); } });
+      popupMenu(more.getBoundingClientRect(), items);
     }
   };
 }

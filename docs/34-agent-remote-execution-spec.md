@@ -368,6 +368,27 @@ Tests: vitest `admin-remote-runs-view.test.ts` (the quoted line and its Copy, a 
 Command), `remote-runs-live-tail.test.ts` (a pull writes the live block and leaves the
 Command alone).
 
+## R14 - running a target from the page (2026-09-28)
+
+The owner, on the Remote page: "it should let me run write and exec straight from the web, and
+Runs should show what is running so I can cancel it." The second half already held - an open run
+streams its tail and carries Cancel - so this is the door, and nothing new on the server.
+
+- A target's `⋯` offers `Run a command…` when it holds `exec` and `Write a file…` when it holds
+  `files`, and neither otherwise: a door whose only answer is the gateway's refusal is not a
+  door. Each sheet submits `POST /api/runs` with `actor: "panel"` - the same route the CLI
+  knocks on - and then goes to `#remote-runs`, where the run is watched, cancelled and recorded
+  like every other.
+- A typed command is sent as `sh -c <line>`, not split here. A shell parser written in the panel
+  would be a second opinion about quoting, and the operator's pipes, quotes and redirects would
+  mean whatever it decided; the target's own shell is the one that matters, and the Runs page's
+  Command block (R13) shows exactly what was sent.
+- The write sheet takes a path (relative to the workspace root, as the CLI takes it) and a body.
+  The body is sealed beside the record (R12), so the row can show it back.
+
+Tests: vitest `admin-remote-view.test.ts` - the capability gating, the submitted exec (argv,
+optional cwd, timeout, actor), the refusal of an empty line, and the submitted write.
+
 ## Where the tests live
 
 - `swiss-host`: registry/contract fakes + run output buffer cursor semantics (runs.rs).
