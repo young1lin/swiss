@@ -254,6 +254,8 @@ impl RunHistory {
             ledger: Mutex::new(Ledger::default()),
             open: Mutex::new(HashMap::new()),
         };
+        // Before the ledger is built, so it counts what the pass sealed.
+        history.seal_legacy_content();
         let mut known = HashSet::new();
         let ledger = history.scan(|line| {
             known.insert(line.run_id);
@@ -264,7 +266,10 @@ impl RunHistory {
                 let orphan = entry
                     .file_name()
                     .to_str()
-                    .and_then(|n| n.strip_suffix(".txt"))
+                    .and_then(|n| {
+                        n.strip_suffix(".txt")
+                            .or_else(|| n.strip_suffix(".content"))
+                    })
                     .and_then(|n| n.parse::<u64>().ok())
                     .is_some_and(|id| !known.contains(&id));
                 if orphan {
@@ -335,6 +340,12 @@ impl RunHistory {
         let Some(content) = request.input.get("content").and_then(Value::as_str) else {
             return (0, false);
         };
+        self.seal_body(run_id, content)
+    }
+
+    /// Seal one body beside its record: the write half of [RunHistory::content], shared by
+    /// a finishing run and by the pass that moves a legacy record's clear body across.
+    fn seal_body(&self, run_id: u64, content: &str) -> (u64, bool) {
         let mut end = content.len().min(CONTENT_MAX_BYTES);
         while !content.is_char_boundary(end) {
             end -= 1;
@@ -349,6 +360,74 @@ impl RunHistory {
         chmod_private(&path, private_file_mode());
         let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         (bytes, truncated)
+    }
+
+    /// Records written before 2026-09-28 carry a remote.write's body in CLEAR under
+    /// `input.content` - the shape e5bc766 stopped writing and R12 replaced with a sealed
+    /// file. The owner, on such a row: "this still isn't solved" - the panel shows a sealed
+    /// body only, so those writes looked empty while their bodies sat in the index. One pass
+    /// at open moves each across: the body is sealed beside its record and the line is
+    /// rewritten the way [RunHistory::record] writes one today. A line whose seal fails (no
+    /// machine key yet) is left exactly as it is - the next open tries again rather than
+    /// dropping what it could not keep. Nothing to move costs one streaming walk and no
+    /// rewrite, which is every start after the first.
+    fn seal_legacy_content(&self) {
+        let mut found = false;
+        {
+            let Ok(file) = File::open(self.index_path()) else {
+                return;
+            };
+            for line in BufReader::new(file).split(b'\n').map_while(Result::ok) {
+                if matches!(parse_line(&line), Some(Value::Object(m)) if legacy_body(&m).is_some())
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            return;
+        }
+        let tmp = self.dir.join(format!("{INDEX_FILE}.tmp"));
+        let rewrite = (|| -> std::io::Result<()> {
+            let src = File::open(self.index_path())?;
+            let mut out = BufWriter::new(File::create(&tmp)?);
+            for line in BufReader::new(src).split(b'\n').map_while(Result::ok) {
+                // A torn line (a kill mid-append) is dropped by a rewrite, as in evict.
+                let Some(Value::Object(mut m)) = parse_line(&line) else {
+                    continue;
+                };
+                let moved = match (m.get("runId").and_then(Value::as_u64), legacy_body(&m)) {
+                    (Some(run_id), Some(body)) => {
+                        let body = body.to_string();
+                        let (bytes, truncated) = self.seal_body(run_id, &body);
+                        (bytes > 0).then_some((body.len(), bytes, truncated))
+                    }
+                    _ => None,
+                };
+                if let Some((clear_bytes, file_bytes, truncated)) = moved {
+                    if let Some(Value::Object(input)) = m.get_mut("input") {
+                        input.remove("content");
+                        input.insert("contentBytes".into(), json!(clear_bytes));
+                    }
+                    m.insert("contentStored".into(), json!(true));
+                    m.insert("contentFileBytes".into(), json!(file_bytes));
+                    if truncated {
+                        m.insert("contentTruncated".into(), json!(true));
+                    }
+                }
+                out.write_all(serde_json::to_string(&Value::Object(m))?.as_bytes())?;
+                out.write_all(b"\n")?;
+            }
+            out.flush()?;
+            drop(out);
+            std::fs::rename(&tmp, self.index_path())
+        })();
+        if rewrite.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return;
+        }
+        chmod_private(&self.index_path(), private_file_mode());
     }
 
     /// A page of records, newest first, strictly before `before` when given, filtered by
@@ -857,6 +936,12 @@ fn record_target(v: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
+/// The clear body a pre-2026-09-28 line carries, when it has one. A line written since
+/// keeps `input.contentBytes` and never `input.content`, so the field is the whole marker.
+fn legacy_body(line: &Map<String, Value>) -> Option<&str> {
+    line.get("input")?.get("content")?.as_str()
+}
+
 /// The submission's input with every `env` object reduced to its key list: an exec's
 /// env pairs are user-provided and may carry a token; the record says WHICH variables
 /// were set, never what to.
@@ -958,6 +1043,34 @@ mod tests {
         history.finish(&view(run_id, now_ms()), &req);
     }
 
+    /// One record put back the way the log wrote it BEFORE 2026-09-28: the body in clear
+    /// under `input.content`, no `contentBytes`, no sealed file beside it.
+    fn make_legacy(dir: &std::path::Path, run_id: u64, content: &str) {
+        let path = dir.join(INDEX_FILE);
+        let raw = std::fs::read_to_string(&path).expect("the index");
+        let lines: Vec<String> = raw
+            .lines()
+            .map(|line| {
+                let Some(Value::Object(mut m)) = parse_line(line.as_bytes()) else {
+                    return line.to_string();
+                };
+                if m.get("runId").and_then(Value::as_u64) != Some(run_id) {
+                    return line.to_string();
+                }
+                m.remove("contentStored");
+                m.remove("contentFileBytes");
+                m.remove("contentTruncated");
+                if let Some(Value::Object(input)) = m.get_mut("input") {
+                    input.remove("contentBytes");
+                    input.insert("content".into(), json!(content));
+                }
+                serde_json::to_string(&Value::Object(m)).expect("a line")
+            })
+            .collect();
+        std::fs::write(&path, lines.join("\n") + "\n").expect("rewrite");
+        let _ = std::fs::remove_file(dir.join(OUT_DIR).join(format!("{run_id}.content")));
+    }
+
     #[test]
     fn a_remote_write_keeps_its_content_sealed_beside_the_record() {
         // The owner's two asks, both kept: see what a write wrote (2026-09-28, "I don't
@@ -1021,6 +1134,84 @@ mod tests {
         history.clear();
         assert!(!dir.join(OUT_DIR).join("1.content").exists());
         assert_eq!(history.content(1), Ok(None));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_legacy_records_clear_body_is_sealed_when_the_log_opens() {
+        // The owner, on a write recorded before the sealing landed: "this still isn't
+        // solved." Its body was never lost - it sat in the index in CLEAR, which is what
+        // e5bc766 set out to stop, and the panel shows a sealed body only. Opening the log
+        // moves it across: the panel can read it, runs.jsonl no longer holds it.
+        let dir = scratch();
+        {
+            let history = RunHistory::open(dir.clone());
+            write(&history, 10, "DB_PASSWORD=s3cret\n");
+            run(&history, 11, b"ok", now_ms());
+        }
+        make_legacy(&dir, 10, "DB_PASSWORD=s3cret\n");
+        let before = std::fs::read_to_string(dir.join(INDEX_FILE)).unwrap();
+        assert!(
+            before.contains("s3cret"),
+            "the fixture is the old shape: {before}"
+        );
+
+        let history = RunHistory::open(dir.clone());
+        let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).unwrap();
+        assert!(
+            !raw.contains("s3cret"),
+            "the clear body left the index: {raw}"
+        );
+        let kept = history.content(10).expect("opens").expect("sealed at open");
+        assert_eq!(kept.text, "DB_PASSWORD=s3cret\n");
+        assert!(!kept.truncated);
+        let (page, _) = history.page(None, 20, None);
+        let line = page.iter().find(|v| v["runId"] == 10).expect("the record");
+        assert_eq!(line["contentStored"], true);
+        assert_eq!(line["input"]["contentBytes"], 19);
+        assert!(line["input"].get("content").is_none());
+        assert_eq!(
+            line["input"]["remote"], ".env",
+            "the record is otherwise untouched"
+        );
+        // And the sealed file is in the budget, like one written today.
+        let sealed = std::fs::metadata(dir.join(OUT_DIR).join("10.content"))
+            .unwrap()
+            .len();
+        let index = std::fs::metadata(dir.join(INDEX_FILE)).unwrap().len();
+        let out11 = std::fs::metadata(dir.join(OUT_DIR).join("11.txt"))
+            .unwrap()
+            .len();
+        assert_eq!(history.usage(), (index + sealed + out11, 2));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_seal_at_open_leaves_a_record_it_has_already_moved_alone() {
+        // Every seal draws a fresh nonce, so a second pass would rewrite both files. A
+        // restart is not a rewrite: the pass is for lines carrying a clear body, only.
+        let dir = scratch();
+        {
+            let history = RunHistory::open(dir.clone());
+            write(&history, 4, "a=1\n");
+        }
+        make_legacy(&dir, 4, "a=1\n");
+        let _ = RunHistory::open(dir.clone());
+        let sealed = std::fs::read(dir.join(OUT_DIR).join("4.content")).unwrap();
+        let index = std::fs::read(dir.join(INDEX_FILE)).unwrap();
+
+        let history = RunHistory::open(dir.clone());
+        assert_eq!(
+            std::fs::read(dir.join(OUT_DIR).join("4.content")).unwrap(),
+            sealed,
+            "the body was not sealed a second time"
+        );
+        assert_eq!(
+            std::fs::read(dir.join(INDEX_FILE)).unwrap(),
+            index,
+            "and the index was not rewritten"
+        );
+        assert_eq!(history.content(4).unwrap().unwrap().text, "a=1\n");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1557,12 +1748,16 @@ mod tests {
         {
             let history = RunHistory::open(dir.clone());
             run(&history, 1, b"kept\n", now_ms());
-            // A crash mid-run: a file the index never learned about.
+            write(&history, 2, "kept=1\n");
+            // A crash mid-run: files the index never learned about, of both kinds.
             std::fs::write(dir.join(OUT_DIR).join("99.txt"), b"orphan").unwrap();
+            std::fs::write(dir.join(OUT_DIR).join("98.content"), b"orphan").unwrap();
         }
         let history = RunHistory::open(dir.clone());
         assert!(!dir.join(OUT_DIR).join("99.txt").exists());
+        assert!(!dir.join(OUT_DIR).join("98.content").exists());
         assert!(dir.join(OUT_DIR).join("1.txt").exists());
+        assert!(dir.join(OUT_DIR).join("2.content").exists());
         history.clear();
         assert_eq!(history.usage(), (0, 0));
         assert!(history.page(None, 20, None).0.is_empty());
