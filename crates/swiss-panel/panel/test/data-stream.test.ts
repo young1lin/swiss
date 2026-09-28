@@ -44,14 +44,22 @@ const el = (tag = "div"): Stub => {
     dispatchEvent: () => true, focus() {}, blur() {}, select() {}, click() {},
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 40, height: 22, right: 40, bottom: 22 }),
     querySelector: () => null, querySelectorAll: () => [],
-    replaceWith() {}, insertAdjacentHTML() {},
+    replaceWith(x: Stub) {
+      const p = n.parentNode as Stub | undefined;
+      if (!p) return;
+      const i = p.children.indexOf(n);
+      if (i >= 0) { p.children[i] = x; x.parentNode = p; n.parentNode = undefined; }
+    },
+    insertAdjacentHTML() {},
   };
   // renderDbGrid wipes the pane with `wrap.textContent = ""` (a real DOM clear); the
   // stub honors it the same way, or every repaint APPENDS and the walk reads a stale table.
+  // Any assignment replaces the children, as the DOM does - a label rewritten in place
+  // (the groups button's count) must not read as old text plus new.
   let tc = "";
   Object.defineProperty(n, "textContent", {
     get: () => { return tc; },
-    set: (v: string) => { tc = v == null ? "" : v; if (tc === "") n.children = []; },
+    set: (v: string) => { tc = v == null ? "" : v; n.children = []; },
   });
   Object.setPrototypeOf(n, NodeStub.prototype);
   return n;
@@ -665,6 +673,37 @@ describe("the stream Follow edge (docs/45 S3)", () => {
     followOn();
     expect(requests.length, "turning Follow on issues nothing by itself").toBe(0);
     expect(text(followBtn())).toBe("Pause");
+  });
+
+  /* The owner's report: with Follow on, the interval picker snapped shut every second - each
+     pinned tick ran renderDbGrid, which rebuilt the whole pane, bar and picker included. A
+     tick is new ROWS: it replaces the table and nothing else. */
+  it("a pinned tick replaces the table only - the Follow bar and its interval picker stay the same nodes", async () => {
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 2,
+      entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: true, firstId: "8-0", lastId: "9-0",
+    });
+    setScroll(0, 24);
+    followOn();
+    const bar = (): Stub => find(byId.dbGridWrap, (n) => (n.className || "").toString().split(" ").indexOf("db-detail-meta") >= 0)[0];
+    const picker = (): Stub => find(byId.dbGridWrap, (n) => n.tag === "select")[0];
+    const table = (): Stub => find(byId.dbGridWrap, (n) => n.tag === "table")[0];
+    const bar0 = bar();
+    const picker0 = picker();
+    const p = stream.dbStreamTick();
+    await answer({ entries: [entry("10-0", { a: "0" })], columns: ["a"], more: false, firstId: null, lastId: null, length: 3 });
+    await p;
+    expect(rowIds(), "the new row is on screen").toEqual(["10-0", "9-0", "8-0"]);
+    expect(bar(), "the bar was not rebuilt").toBe(bar0);
+    expect(picker(), "the interval picker was not rebuilt").toBe(picker0);
+
+    // A tick with nothing new touches no node at all.
+    const table0 = table();
+    const p2 = stream.dbStreamTick();
+    await answer({ entries: [], columns: [], more: false, firstId: null, lastId: null, length: 3 });
+    await p2;
+    expect(table(), "an empty tick leaves the table alone").toBe(table0);
+    expect(bar()).toBe(bar0);
   });
 });
 

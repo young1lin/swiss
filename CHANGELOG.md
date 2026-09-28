@@ -35,6 +35,8 @@ All notable changes to swiss are recorded here. The format follows
   vault has no such name, everywhere references resolve (docs/19, 2026-09-28).
 
 ### Fixed
+- With Follow on, a Redis stream's new rows replace only the table: the Follow bar was rebuilt
+  on every tick, so its interval picker closed itself each second (docs/45 §2.3).
 - The Data page's Redis sidebar follows the keyspace: the `r` refresh, a return to the page or
   the connection, and every console command re-walk the key list quietly, as deep as More
   went, with the open key kept. It used to freeze at its first answer, so `SET test 1` on an

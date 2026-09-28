@@ -220,6 +220,13 @@ JSON 墙的问题不是大小而是没有列。**为什么不虚拟滚动**：D1
 - **错误**：一次 tick 失败（连接断、键被删、类型变了）→ 停 Follow、头部显示原因、开关复位；不重试风暴。
 - **内存**：Follow 开着 60 s、每秒 50 条推送后，DOM 行数 ≤ 500、JS 堆增量 < 10 MB（§2.5 真浏览器走查里
   用 CDP `Performance.getMetrics` 的 `JSHeapUsedSize` 采两点）。
+- **一 tick 只换表格**（增补 2026-09-28）：owner 反馈 Follow 开着时"1s / 2s 的间隔下拉每秒缩回去"——钉住
+  时每个带新行的 tick 都走 `renderDbGrid()`，整个 pane 重建，Follow 条和它打开着的下拉一起被换掉。现在
+  `dbRenderStream` 记下它画的表格与消费组折叠（`dbStreamPainted`），tick 用 `dbStreamRepaint` 只把**表格**
+  换成新行的那张（折叠开着时连它一起换）；Follow 条从不重建，药丸 / 速率 / 缺口 / 消费组计数都由
+  `dbStreamBarDyn` 原地改字。没有新行的 tick 一个节点都不动。只有空流的第一批行（此时还没有表格可换）
+  才走整页重画。vitest `data-stream.test.ts` 的 "a pinned tick replaces the table only"：tick 前后 Follow
+  条与下拉是同一个节点。
 
 ### 2.4 消费组（只读）
 

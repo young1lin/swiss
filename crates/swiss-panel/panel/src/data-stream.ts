@@ -149,6 +149,7 @@ export function dbRenderStream(wrap: HTMLElement, v: ApiDbRedisValue): void {
     t.redisStreamMore = !!win.more;
   }
   const rows = t.redisStreamRows;
+  dbStreamPainted = null;
   if (!rows.length) {
     // An empty stream is still a followable one (docs/45 §2.3): the bar mounts, the
     // first tick polls after=0-0, and the first append ever lands without a re-key.
@@ -157,6 +158,35 @@ export function dbRenderStream(wrap: HTMLElement, v: ApiDbRedisValue): void {
     return;
   }
   dbStreamFollowBar(wrap, t);
+  const tbl = dbStreamTableNode(rows, v.key);
+  wrap.appendChild(tbl);
+  const groups = t.redisStreamGroupsOpen ? dbStreamGroupsNode(t) : null;
+  if (groups) wrap.appendChild(groups);
+  dbStreamPainted = { tab: t, table: tbl, groups: groups };
+  if (t.redisStreamMore) {
+    const earlier = btn(tr("dataStream.loadEarlier"));
+    earlier.onclick = (): void => { void dbStreamLoadEarlier(); };
+    wrap.appendChild(earlier);
+  } else {
+    wrap.appendChild(el("div", "db-hint", tr("dataStream.start")));
+  }
+  // The poller runs exactly while a followed stream view is on screen; every other
+  // path (tab left, key closed, follow off) is caught by the tick's own guard.
+  if (t.redisStreamFollow) {
+    if (dbFollowTimer == null) dbStreamFollowStart();
+  } else {
+    dbStreamFollowStop();
+  }
+}
+
+/* What the last paint put on screen for the stream in front: a Follow tick replaces the TABLE
+   (and the groups fold) through these, never the pane. A full renderDbGrid per tick rebuilt
+   the Follow bar too, and an interval picker the operator had open snapped shut every
+   second (2026-09-28). Re-taken by every paint; null when the view has no table yet. */
+let dbStreamPainted: { tab: DbKeyTab; table: HTMLElement; groups: HTMLElement | null } | null = null;
+
+/** The stream table for a window of rows, newest first. */
+function dbStreamTableNode(rows: ApiDbStreamEntry[], key: string): HTMLElement {
   const cols = streamColumns(rows);
   const tbl = el("table", "db-grid");
   const thead = el("thead");
@@ -175,7 +205,7 @@ export function dbRenderStream(wrap: HTMLElement, v: ApiDbRedisValue): void {
   const tbody = el("tbody");
   rows.forEach((e: ApiDbStreamEntry): void => {
     const trNode = el("tr");
-    const where = v.key + " · stream";
+    const where = key + " · stream";
     const tdId = el("td", "db-cell", e.id);
     tdId.oncontextmenu = (ev: MouseEvent): void => {
       dbRedisCellMenu(ev, tr("dataStream.colId"), e.id, where);
@@ -198,22 +228,28 @@ export function dbRenderStream(wrap: HTMLElement, v: ApiDbRedisValue): void {
     tbody.appendChild(trNode);
   });
   tbl.appendChild(tbody);
-  wrap.appendChild(tbl);
-  if (t.redisStreamGroupsOpen) dbStreamGroupsTable(wrap, t);
-  if (t.redisStreamMore) {
-    const earlier = btn(tr("dataStream.loadEarlier"));
-    earlier.onclick = (): void => { void dbStreamLoadEarlier(); };
-    wrap.appendChild(earlier);
-  } else {
-    wrap.appendChild(el("div", "db-hint", tr("dataStream.start")));
+  return tbl;
+}
+
+/** A tick's paint (see dbStreamPainted): swap in a fresh table for the rows held now, and the
+ *  groups fold when it is open. False when there is no painted table of THIS tab to replace -
+ *  the first rows of an empty stream, or a paint of something else since - and the caller
+ *  falls back to the full paint. */
+function dbStreamRepaint(t: DbKeyTab, rowsMoved: boolean): boolean {
+  const p = dbStreamPainted;
+  const rows = t.redisStreamRows || [];
+  if (!p || p.tab !== t || !t.redisKey || !rows.length || p.table.isConnected === false) return false;
+  if (rowsMoved) {
+    const next = dbStreamTableNode(rows, t.redisKey);
+    p.table.replaceWith(next);
+    p.table = next;
   }
-  // The poller runs exactly while a followed stream view is on screen; every other
-  // path (tab left, key closed, follow off) is caught by the tick's own guard.
-  if (t.redisStreamFollow) {
-    if (dbFollowTimer == null) dbStreamFollowStart();
-  } else {
-    dbStreamFollowStop();
+  if (p.groups && t.redisStreamGroupsOpen) {
+    const next = dbStreamGroupsNode(t);
+    p.groups.replaceWith(next);
+    p.groups = next;
   }
+  return true;
 }
 
 /* --- Follow (docs/45 S3) ------------------------------------------------------------------------ */
@@ -337,11 +373,16 @@ export async function dbStreamTick(): Promise<void> {
     const g = await apiJson<{ groups: ApiDbStreamGroupRow[] }>(dbStreamUrl("/stream/groups", t.redisKey, ""));
     if (g) t.redisStreamGroups = g.groups || [];
   }
-  if (pinned) {
-    renderDbGrid(); // at the edge a rebuild is the paint, and the top stays the top
+  // At the edge the new rows are the paint - the TABLE is replaced and the top stays the top;
+  // off the edge the table never moves. Either way the bar is not rebuilt: its live texts
+  // update in place, so a picker the operator has open stays open. The first rows of an
+  // empty stream have no table to replace yet and take the full paint.
+  const arrived = pinned && !!(j.entries && j.entries.length);
+  if (!dbStreamRepaint(t, arrived) && arrived) {
+    renderDbGrid();
     return;
   }
-  dbStreamBarDyn(t); // pill count / rate / gap in place — the table never moves
+  dbStreamBarDyn(t); // pill count / rate / gap / groups count in place
 }
 
 /* The Follow bar's live texts (docs/45 §2.3). renderDbGrid rebuilds the bar with
@@ -352,6 +393,12 @@ let dbStreamPill: HTMLElement | null = null;
 let dbStreamPillN: HTMLElement | null = null; // the count text; the arrow icon sits beside it, painted once (fix-plan #14)
 let dbStreamRateEl: HTMLElement | null = null;
 let dbStreamGapEl: HTMLElement | null = null;
+let dbStreamGroupsBtn: HTMLElement | null = null;
+
+/** The groups button's label: the count once an answer has landed. */
+function dbStreamGroupsLabel(t: DbKeyTab): string {
+  return tr("dataStream.groups") + (t.redisStreamGroups ? " (" + String(t.redisStreamGroups.length) + ")" : "");
+}
 
 function dbStreamBarDyn(t: DbKeyTab): void {
   const n = (t.redisStreamPending || []).length;
@@ -368,6 +415,7 @@ function dbStreamBarDyn(t: DbKeyTab): void {
     dbStreamRateEl.textContent = t.redisStreamRate ? tr("dataStream.rate", { r: t.redisStreamRate }) : "";
   }
   if (dbStreamGapEl) dbStreamGapEl.hidden = !t.redisStreamGap;
+  if (dbStreamGroupsBtn) dbStreamGroupsBtn.textContent = dbStreamGroupsLabel(t);
 }
 
 /** The gap bar's action (docs/45 §2.3): reopen the LATEST window — no cursor, the
@@ -471,9 +519,8 @@ function dbStreamFollowBar(wrap: HTMLElement, t: DbKeyTab): void {
   bar.appendChild(rateEl);
   dbStreamRateEl = rateEl;
   bar.appendChild(el("span", "grow"));
-  const groupsLabel = tr("dataStream.groups")
-    + (t.redisStreamGroups ? " (" + String(t.redisStreamGroups.length) + ")" : "");
-  const groupsBtn = btn(groupsLabel);
+  const groupsBtn = btn(dbStreamGroupsLabel(t));
+  dbStreamGroupsBtn = groupsBtn;
   groupsBtn.onclick = (): void => {
     t.redisStreamGroupsOpen = !t.redisStreamGroupsOpen;
     // Opening the fold FETCHES (found on the 2026-09-23 walk): the groups answer used to
@@ -503,8 +550,10 @@ async function dbStreamGroupsLoad(t: DbKeyTab): Promise<void> {
 
 /** The consumer-group fold (docs/45 §2.4): a read-only table under the stream, fed by the
  *  fold's own open and then by every fifth Follow tick — pending, lag (null is the honest
- *  pre-7.0 answer), and the group's own delivered cursor. */
-function dbStreamGroupsTable(wrap: HTMLElement, t: DbKeyTab): void {
+ *  pre-7.0 answer), and the group's own delivered cursor. One node, table and hint together,
+ *  so a tick replaces it whole. */
+function dbStreamGroupsNode(t: DbKeyTab): HTMLElement {
+  const wrap = el("div");
   const tbl = el("table", "db-grid");
   const thead = el("thead");
   const hr = el("tr");
@@ -523,7 +572,7 @@ function dbStreamGroupsTable(wrap: HTMLElement, t: DbKeyTab): void {
     // saying "none" for the first is how the fold lied before the fetch existed.
     wrap.appendChild(el("div", "db-hint",
       t.redisStreamGroups == null ? tr("dataStream.groupsLoading") : tr("dataStream.groupsNone")));
-    return;
+    return wrap;
   }
   groups.forEach((g: ApiDbStreamGroupRow): void => {
     const r = el("tr");
@@ -535,6 +584,7 @@ function dbStreamGroupsTable(wrap: HTMLElement, t: DbKeyTab): void {
   });
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
+  return wrap;
 }
 
 /* One Load-earlier in flight: re-entry while a page loads would re-send the same Before
