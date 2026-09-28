@@ -1328,6 +1328,7 @@ const zh                         = {
   "remoteRuns.hideContent": "隐藏",
   "remoteRuns.contentHead": "只保留了前 {cap}",
   "remoteRuns.contentEvicted": "写入的内容({size})已被容量预算清出。",
+  "remoteRuns.contentNotKept": "这次写入({size})发生在开始保存写入内容之前，内容没有保存。",
   "remoteRuns.contentUnavailable": "无法读取写入的内容。",
   "remoteRuns.allTargets": "所有目标",
   "remoteRuns.clear": "清除",

@@ -326,11 +326,29 @@ audit log for 30 days. Asked to choose, the owner picked: keep the body, encrypt
   nothing is fetched until it is pressed, and the unsealed text lives in the page's memory
   only while the page is on screen (Hide, Clear and leaving the page drop it).
 
+- 2026-09-28, the same day: the owner, on a `write seed.sql` row from the night before —
+  "this still isn't solved". Its body was never missing. Records written before e5bc766 carry
+  it in CLEAR under `input.content` (the very thing e5bc766 stopped), and the panel shows a
+  sealed body only, so those rows looked empty while the file sat in `runs.jsonl`. Opening the
+  log now moves them: `seal_legacy_content` walks the index once, seals each clear body beside
+  its record and rewrites the line the way `record` writes one today (tmp + rename, as evict
+  does). A line whose seal fails — no machine key yet — is left exactly as it is, so the next
+  open retries rather than dropping what it could not keep; a torn line goes, as in evict.
+  Nothing to move is one streaming walk and no rewrite, which is every start after the first.
+  The open-time orphan sweep now takes `out/<id>.content` as well as `out/<id>.txt`.
+- The window between e5bc766 and R12 keeps its size and nothing else — those bodies are gone.
+  Such a row used to draw no content block at all, which reads exactly like one whose Show has
+  not been pressed; it now says the write was recorded before content was kept.
+
 Tests: `history.rs` `a_remote_write_keeps_its_content_sealed_beside_the_record`,
 `a_long_write_keeps_its_head_cut_on_a_character_boundary`,
 `the_sealed_body_counts_against_the_budget_and_leaves_with_its_record`; `lib.rs`
 `a_finished_remote_run_is_readable_from_the_record` (a write through the real routes, then
-`/content`); vitest `admin-remote-runs-view.test.ts` (Show / Hide, the evicted note).
+`/content`); vitest `admin-remote-runs-view.test.ts` (Show / Hide, the evicted note). The
+migration: `a_legacy_records_clear_body_is_sealed_when_the_log_opens`,
+`the_seal_at_open_leaves_a_record_it_has_already_moved_alone`,
+`orphaned_output_files_are_removed_at_open_and_clear_forgets_everything` (both file kinds),
+and vitest "a write recorded while no body was kept says that, rather than drawing nothing".
 
 ## R13 - the whole command, copyable (2026-09-28)
 

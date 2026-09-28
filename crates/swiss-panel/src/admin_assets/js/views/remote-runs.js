@@ -281,9 +281,14 @@ function bodyNode(run                   )         {
 /** What a remote.write wrote (docs/34 R12): the body is kept sealed beside the record and
  *  unsealed only on Show - an opened row in a screenshot shares no file until asked. */
 function writtenNode(r                 )         {
-  const size = fmtBytes(r.input && r.input.contentBytes || 0);
+  const bytes = r.input && r.input.contentBytes || 0;
+  const size = fmtBytes(bytes);
   if (r.contentEvicted) return note(tr("remoteRuns.contentEvicted", { size }));
-  if (!r.contentStored) return null;
+  if (!r.contentStored) {
+    // Between e5bc766 and R12 a write kept its size and nothing else. Such a row drew no
+    // block at all, which reads exactly like one whose Show has not been pressed yet.
+    return kindOf(r) === "write" && bytes > 0 ? note(tr("remoteRuns.contentNotKept", { size })) : null;
+  }
   const label = tr("remoteRuns.contentWritten");
   const c = contents[r.runId];
   if (!c) {

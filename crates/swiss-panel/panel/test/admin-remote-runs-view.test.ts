@@ -288,6 +288,33 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(item(32).querySelector("[data-rcontent]")).toBeNull();
   });
 
+  /* Between e5bc766 (the clear body stopped being recorded) and R12 (it started being sealed)
+     a write kept its size and nothing else. Those rows drew NO content block at all, so they
+     read exactly like a row whose Show had not been pressed. They say what happened instead. */
+  it("a write recorded while no body was kept says that, rather than drawing nothing", async () => {
+    const wrote = {
+      ...finished, runId: 35, action: "remote.write", state: "succeeded", exitCode: 0,
+      input: { target: "build", remote: "seed.sql", contentBytes: 5587 }, outputBytes: 0,
+    };
+    serve([wrote], []);
+    replies["/api/remote/runs/35/output?after=0&max=131072"] = { runId: 35, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };
+    await view.mount();
+    open(35);
+    await settle();
+    expect(item(35).querySelector(".tl-body")?.textContent)
+      .toContain("This write (5.5 KB) was recorded before written content was kept.");
+    expect(item(35).querySelector("[data-rcontent]"), "nothing to unseal").toBeNull();
+  });
+
+  it("a run that wrote no file keeps its body free of content notes", async () => {
+    serve([{ ...finished, runId: 36 }], []);
+    replies["/api/remote/runs/36/output?after=0&max=131072"] = { runId: 36, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };
+    await view.mount();
+    open(36);
+    await settle();
+    expect(item(36).querySelector(".tl-body")?.textContent).not.toContain("written content");
+  });
+
   /* The owner's report (2026-09-28): a long command's row is cut with an ellipsis, and an open
      row showed its output but never the command whole - it could be neither read nor copied. */
   it("an open row states its whole command, quoted the way the gateway sent it, with a Copy", async () => {

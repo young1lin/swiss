@@ -78,7 +78,10 @@ All notable changes to swiss are recorded here. The format follows
 - `swiss remote write` no longer records the file's content in clear in the run log
   (`logs/remote/runs.jsonl`): the audit line keeps its size as `contentBytes`, and the body is
   sealed beside the record under the machine key (capped at 256 KiB), shown on the Runs page
-  when its Show is pressed (docs/34 R12).
+  when its Show is pressed (docs/34 R12). Records written before that carried the body in
+  clear in `runs.jsonl`: the gateway now seals each one beside its record the first time it
+  opens the log, so those writes can be read in the panel and their bodies leave the log. A
+  write recorded in between, which kept its size only, says so instead of showing nothing.
 - A wrong Redis password fails at once as an authentication failure; the connection
   manager's retries hid it behind "redis connect timed out after 5s".
 - `/api/tunnels` connection rows now carry `keyPath`: the panel's edit sheet prefills from the
