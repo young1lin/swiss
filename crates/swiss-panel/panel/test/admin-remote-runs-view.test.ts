@@ -144,7 +144,8 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     /* The actor rode into every row as `cli:<user>@<host>`, and on a personal machine that
        login name is the operator's own ("页面上把我名称都暴露出来了"). The CLI records the bare
        surface now; a record written before that still carries the identity in the file, and the
-       page is where it stops. */
+       page is where it stops. The fixture is a placeholder identity on purpose - this file is
+       tracked, and a test about not printing a login name is no reason to commit a real one. */
     const byCli = { ...finished, runId: 19, actor: "cli:小明@build-box" };
     const byMcp = { ...running, runId: 20, actor: "mcp:claude-code" };
     // A file action has no exit code: success is no tag, its kind and shape say what ran.
