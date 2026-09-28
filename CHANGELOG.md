@@ -34,6 +34,11 @@ All notable changes to swiss are recorded here. The format follows
 - A vault reference can carry a default: `${secret://name:default}` uses `default` when the
   vault has no such name, everywhere references resolve (docs/19, 2026-09-28).
 
+### Changed
+- The Data page's value viewer shows JSON as the panel's highlighted code block, the one Logs,
+  Runs and Traffic use, instead of a folding tree; a string that holds JSON is shown decoded,
+  and a document longer than 200 lines paints its first 200 with a Show all button.
+
 ### Fixed
 - With Follow on, a Redis stream's new rows replace only the table: the Follow bar was rebuilt
   on every tick, so its interval picker closed itself each second (docs/45 §2.3).

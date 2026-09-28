@@ -19,6 +19,7 @@ import { h } from "./h.js";
 import type { HChild } from "./h.js";
 import { locale, tr } from "./i18n.js";
 import { btn } from "./ui/button.js";
+import { JV_LINES, decodeStrings, jsonCodeNode } from "./ui/json-view.js";
 import { closeSheet, sheet, showSheet } from "./ui/sheet.js";
 
 /* --- value viewer sheet (docs/22 W5.3) ----------------------------------------------------------- */
@@ -73,37 +74,27 @@ function dbHexPreview(value: string, maxBytes: number): { text: string; bytes: n
   return { text: lines.join("\n"), bytes: bytes, truncated: truncated };
 }
 
-/** One JSON node as a node tree (docs/37 R5). Containers fold behind <details> — the root
- *  open, everything nested closed — so a deep document opens to its top level and expands on
- *  demand. Object keys are identity (text face); values are values you would copy (mono).
- *  Every remote string lands as a TEXT node: a document full of tags stays inert text with
- *  no esc() anywhere. Pure in its inputs (builds nodes only, touches nothing live). */
-/* The node builder takes unknown (a parsed JSON value is exactly that) and narrows by
-   runtime check; the one Record downcast sits behind typeof-object + not-an-array, the
-   narrowest honest shape an indexable object has. */
-function dbJsonNode(v: unknown, isOpen: boolean): HChild {
-  if (v === null || v === undefined) return h("span", { class: "db-val-v db-null" }, tr("dataValue.null"));
-  if (typeof v !== "object") return h("span", { class: "db-val-v" }, JSON.stringify(v));
-  if (Array.isArray(v)) {
-    return h("details", { class: "db-val-node", open: isOpen },
-      h("summary", null, v.length ? "[ " + v.length + " ]" : "[ ]"),
-      ...v.map((x: unknown): HChild => { return h("div", { class: "db-val-row" }, dbJsonNode(x, false)); }));
+/** A JSON value as the panel's code block (ui/json-view.ts) - the one every other page shows
+ *  JSON in: standard JSON, two-space indent, coloured by token, a string that holds JSON shown
+ *  as the JSON it holds. It replaced a folding tree (docs/37 R5) whose sans-serif keys and click
+ *  per level read unlike the rest of the panel (2026-09-28). Past JV_LINES the first lines are
+ *  painted and Show all swaps in the rest: a large document builds its DOM on request. Every
+ *  string lands as a TEXT node, so a document full of tags stays inert. */
+function dbJsonValueNode(v: unknown): HTMLElement {
+  const value = decodeStrings(v);
+  const code = jsonCodeNode(value, false);
+  const wrap = h("div", { class: "db-val-json" }, code.node);
+  if (code.lines > JV_LINES) {
+    const showAll = btn(tr("logs.showAllLines", { n: code.lines }));
+    const more = h("div", { class: "db-val-more" }, showAll);
+    showAll.onclick = (): void => {
+      code.node.replaceWith(jsonCodeNode(value, true).node);
+      more.remove();
+    };
+    wrap.appendChild(more);
   }
-  const obj = v as Record<string, unknown>;
-  const keys = Object.keys(obj);
-  const summary = keys.length ? "{ " + keys.length + " }" : "{ }";
-  const inner: HChild[] = [];
-  keys.forEach((k: string): void => {
-    inner.push(h("div", { class: "db-val-row" },
-      h("span", { class: "db-val-k" }, k),
-      dbJsonNode(obj[k], false)));
-  });
-  return h("details", { class: "db-val-node", open: isOpen },
-    h("summary", null, summary),
-    ...inner);
+  return wrap;
 }
-
-function dbJsonTreeNodes(v: unknown): HChild { return dbJsonNode(v, true); }
 
 /** Open the read-only viewer. One primary action (Close); Escape and the backdrop close
  *  too. `where` is the caption the caller knows (table for grid cells, "SQL result" for
@@ -113,7 +104,7 @@ function dbOpenValueSheet(column: string, value: unknown, where: string | null |
   let body: HChild;
   if (kind === "json") {
     const parsed = typeof value === "object" ? value : JSON.parse(value as string);
-    body = h("div", { class: "db-val-tree" }, dbJsonTreeNodes(parsed));
+    body = dbJsonValueNode(parsed);
   } else if (kind === "hex") {
     const p = dbHexPreview(value as string, DB_VALUE_HEX_MAX);
     body = h("div", null,
@@ -150,4 +141,4 @@ function dbOpenValueSheet(column: string, value: unknown, where: string | null |
   $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeValueSheet(); };
 }
 
-export { DB_VALUE_HEX_MAX, dbHexPreview, dbJsonNode, dbJsonTreeNodes, dbOpenValueSheet, dbValueKind };
+export { DB_VALUE_HEX_MAX, dbHexPreview, dbJsonValueNode, dbOpenValueSheet, dbValueKind };

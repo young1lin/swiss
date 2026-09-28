@@ -456,7 +456,6 @@ const zh: Record<string, string> = {
   /* --- dataValue --- */
   "dataValue.nBytes": "{n} 字节",
   "dataValue.nBytesTruncated": "{n} 字节 · 已截断",
-  "dataValue.null": "null",
   "dataValue.viewValue": "查看值",
   "dataValue.close": "关闭",
   /* --- dataView --- */

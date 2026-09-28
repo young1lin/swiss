@@ -20,9 +20,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Same DOM-stub technique as admin-data-cellview.test.ts: the panel ships browser ES modules,
 // so the module graph needs the globals stubbed before it will evaluate under Node.
-// docs/37 R5: dbJsonNode builds with h(), so nodes extend a Node stub (h() instanceof-checks
-// children) and the tree cases serialize the built tree with the same escapes the old string
-// builder produced — the assertions stay about INERT TEXT, not about innerHTML.
+// The JSON body builds with h(), so nodes extend a Node stub (h() instanceof-checks children)
+// and the cases serialize the built nodes with the escapes a browser's innerHTML would show -
+// the assertions stay about INERT TEXT, not about innerHTML.
 class NodeStub {}
 (globalThis as unknown as { Node: unknown }).Node = NodeStub;
 
@@ -32,6 +32,8 @@ interface FakeNode {
   open: boolean;
   textContent: string;
   children: FakeNode[];
+  parentNode?: FakeNode;
+  onclick?: () => void;
   appendChild(c: FakeNode): FakeNode;
 }
 const el = (tag = "div"): FakeNode & Record<string, unknown> => {
@@ -43,8 +45,20 @@ const el = (tag = "div"): FakeNode & Record<string, unknown> => {
     setAttribute(k: string, v: string) { if (k === "class") node.className = v; },
     getAttribute: () => "", removeAttribute: () => {},
     addEventListener: () => {}, removeEventListener: () => {},
-    appendChild(c: FakeNode) { (node.children as FakeNode[]).push(c); return c; },
-    removeChild: (c: unknown) => c, remove: () => {},
+    appendChild(c: FakeNode) { (node.children as FakeNode[]).push(c); c.parentNode = node as unknown as FakeNode; return c; },
+    removeChild: (c: unknown) => c,
+    remove() {
+      const p = node.parentNode as FakeNode | undefined;
+      if (p) p.children = p.children.filter((c) => { return c !== (node as unknown); });
+      node.parentNode = undefined;
+    },
+    replaceWith(x: FakeNode) {
+      const p = node.parentNode as FakeNode | undefined;
+      if (!p) return;
+      p.children = p.children.map((c) => { return c === (node as unknown) ? x : c; });
+      x.parentNode = p;
+      node.parentNode = undefined;
+    },
     querySelector: () => null, querySelectorAll: () => [],
     focus: () => {}, blur: () => {}, click: () => {},
     getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
@@ -54,17 +68,15 @@ const el = (tag = "div"): FakeNode & Record<string, unknown> => {
   Object.setPrototypeOf(node, NodeStub.prototype);
   return node as FakeNode & Record<string, unknown>;
 };
-/* Serialize like the old string builder did: text escaped, class and the details fold's
-   open flag as attributes — what the assertions below still speak. */
+/* Serialize the way innerHTML would read: text escaped, the class as an attribute. */
 const escapeHtml = (s: string): string => {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 };
 const serialize = (n: FakeNode): string => {
   if (n.tag === "#text") return escapeHtml(String(n.textContent));
   const cls = n.className ? ' class="' + n.className + '"' : "";
-  const open = n.open ? " open" : "";
   const kids = (n.children || []).map((c) => { return serialize(c); }).join("");
-  return "<" + n.tag + cls + open + ">" + kids + "</" + n.tag + ">";
+  return "<" + n.tag + cls + ">" + kids + "</" + n.tag + ">";
 };
 const doc = {
   documentElement: el(), body: el(), head: el(),
@@ -90,12 +102,12 @@ const value = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-value.ts")).href
 ) as {
   dbValueKind: (v: unknown, colType: string | null | undefined) => string;
-  dbJsonTreeNodes: (v: unknown) => unknown;
+  dbJsonValueNode: (v: unknown) => unknown;
   dbHexPreview: (v: string, maxBytes: number) => { text: string; bytes: number; truncated: boolean };
 };
-/** docs/37 R5: the tree builder returns nodes; the cases serialize them back to the words
- *  the sheet's markup has always been asserted in. */
-const html = (v: unknown): string => { return serialize(value.dbJsonTreeNodes(v) as FakeNode); };
+const html = (v: unknown): string => { return serialize(value.dbJsonValueNode(v) as FakeNode); };
+/** Every node of a tree, depth first. */
+const walk = (n: FakeNode): FakeNode[] => { return [n].concat(...(n.children || []).map(walk)); };
 
 /* docs/22 W5.3 — the value sheet. The presenter choice, the hex cap and the JSON tree are
    pure: every rule is value- and column-type-driven, never DOM-dependent, so the intents
@@ -168,21 +180,26 @@ describe("dbHexPreview — first N bytes, the real byte count, the truncated fla
   });
 });
 
-describe("dbJsonTreeNodes — the details-folded tree", () => {
-  it("renders the root open and nested containers closed", () => {
+/* The owner's report (2026-09-28): the JSON value read as a folding tree - sans-serif keys, a
+   click per level - unlike every other JSON on the panel. The sheet now draws the library's code
+   block (ui/json-view.ts): standard JSON, two-space indent, coloured by token. */
+describe("dbJsonValueNode — the panel's JSON code block", () => {
+  it("prints the whole document as one highlighted code block, no folds", () => {
     var out = html({ a: 1, b: { c: "x" } });
-    expect(out).toContain('<details class="db-val-node" open>');
-    expect(out.match(/<details/g)!.length).toBe(2);
-    expect(out.match(/<details class="db-val-node" open>/g)!.length).toBe(1); // the root only
-    expect(out).toContain('<summary>{ 2 }</summary>');
-    expect(out).toContain('<summary>{ 1 }</summary>');
+    expect(out.startsWith('<div class="db-val-json"><pre class="jv">')).toBe(true);
+    expect(out).not.toContain("<details");
+    expect(out).toContain('<span class="jv-k">&quot;a&quot;</span>');
+    expect(out).toContain('<span class="jv-n">1</span>');
+    expect(out).toContain('<span class="jv-k">&quot;c&quot;</span>');
+    expect(out).toContain('<span class="jv-s">&quot;x&quot;</span>');
   });
 
-  it("words arrays as [ n ] and empty containers without a count", () => {
-    var out = html({ list: [1, 2, 3], none: {}, empty: [] });
-    expect(out).toContain("<summary>[ 3 ]</summary>");
-    expect(out).toContain("<summary>{ }</summary>");
-    expect(out).toContain("<summary>[ ]</summary>");
+  it("colours null and booleans as literals and keeps an empty container as its brackets", () => {
+    var out = html({ a: null, c: true, none: {}, empty: [] });
+    expect(out).toContain('<span class="jv-l">null</span>');
+    expect(out).toContain('<span class="jv-l">true</span>');
+    expect(out).toContain('<span class="jv-p">{}</span>');
+    expect(out).toContain('<span class="jv-p">[]</span>');
   });
 
   it("keeps keys and string values inert — a document full of tags stays text nodes", () => {
@@ -193,18 +210,23 @@ describe("dbJsonTreeNodes — the details-folded tree", () => {
     expect(out).toContain("&lt;script&gt;");
   });
 
-  it("renders null with the panel's NULL styling, numbers and booleans plain, strings quoted", () => {
-    var out = html({ a: null, b: 1.5, c: true, d: "hi" });
-    expect(out).toContain('<span class="db-val-v db-null">null</span>');
-    expect(out).toContain('<span class="db-val-v">1.5</span>');
-    expect(out).toContain('<span class="db-val-v">true</span>');
-    expect(out).toContain('<span class="db-val-v">&quot;hi&quot;</span>');
+  it("shows a string that holds JSON as the JSON it holds, behind the decoded marker", () => {
+    var out = html({ data: '{"px":1.5}' });
+    expect(out).toContain('<span class="jv-dec">');
+    expect(out).toContain('<span class="jv-k">&quot;px&quot;</span>');
+    expect(out).toContain('<span class="jv-n">1.5</span>');
   });
 
-  it("array children carry no key row — the indent is the position", () => {
-    var out = html([1, "two"]);
-    expect(out).not.toContain("db-val-k");
-    expect(out).toContain('<span class="db-val-v">1</span>');
-    expect(out).toContain("&quot;two&quot;");
+  it("paints the first lines of a long document and swaps in the rest on Show all", () => {
+    var big = Array.from({ length: 300 }, (_, i) => { return i; });
+    var node = value.dbJsonValueNode(big) as FakeNode;
+    var numbers = (): number => { return walk(node).filter((n) => { return n.className === "jv-n"; }).length; };
+    var button = walk(node).find((c) => { return c.tag === "button"; });
+    expect(numbers(), "the first JV_LINES lines only").toBeLessThan(300);
+    expect(button, "a Show all button").toBeTruthy();
+    expect(serialize(button!)).toContain("302");
+    button!.onclick!();
+    expect(numbers(), "every line after Show all").toBe(300);
+    expect(walk(node).some((c) => { return c.tag === "button"; }), "the button leaves with its job done").toBe(false);
   });
 });
