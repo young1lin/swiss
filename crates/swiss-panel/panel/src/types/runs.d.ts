@@ -113,6 +113,8 @@ export interface RemoteRunInput {
   to?: string;
   remote?: string;
   content?: string;
+  /** A remote.write's body size - the record keeps the size, the body sits sealed beside it. */
+  contentBytes?: number;
 }
 
 /** A remote run's meta as actions.rs stamps it: target/endpoint on every kind, the sync
@@ -142,6 +144,11 @@ export interface ApiRemoteRunRow extends ApiRunRow {
   outputCapped?: boolean;
   /** docs/41 A2: the size budget took this run's output file; the line stays. */
   outputEvicted?: boolean;
+  /** docs/34 R12: a remote.write's body is kept sealed (GET .../content unseals it), cut at
+   *  256 KiB when truncated; evicted when the size budget took it. */
+  contentStored?: boolean;
+  contentTruncated?: boolean;
+  contentEvicted?: boolean;
   tail?: string;
   meta?: RemoteRunMeta;
 }
@@ -150,6 +157,9 @@ export interface ApiRemoteRunRow extends ApiRunRow {
  *  (growing text, next read's cursor, whole-run total) or the gone marker a failed read
  *  leaves when the record rolled past the run - never a mix of the two. */
 export type RemoteRunBody = { text: string; next: number; total: number } | { gone: true };
+
+/** One write's unsealed body while its Show is on (contents[runId]), or why it could not be read. */
+export type RemoteRunContent = { text: string; truncated: boolean } | { error: string };
 
 /** One opened live row's followed output (live[runId]): what has been shown, and where the
  *  next pull continues from; capped once the held tail exceeded the live view's floor. */

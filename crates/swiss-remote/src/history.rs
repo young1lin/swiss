@@ -23,7 +23,9 @@
 //! `/api/runs` showed it, plus what was asked (target, argv, cwd; env KEYS only, values
 //! may be secrets; a remote.write's content as its SIZE only, since the file written may
 //! be a credential) — and the full output stream in `logs/remote/out/<runId>.txt`, teed
-//! as it flows. The live buffer keeps a 256 KiB window; the file keeps the head up to
+//! as it flows. A remote.write's body is kept too, but SEALED, beside the output as
+//! `out/<runId>.content` (docs/34 R12): the owner wants to see what a write wrote, and a
+//! written .env must not sit on disk in clear. The live buffer keeps a 256 KiB window; the file keeps the head up to
 //! [Limits::max_output_bytes], and past that the line keeps the last 64 KiB as `tail`, so
 //! a capped build log still shows both ends — the error is usually at the end.
 //!
@@ -51,6 +53,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Map, Value};
 use swiss_core::platform::{chmod_private, mkdir_private, private_file_mode};
+use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
 use swiss_core::util::{now_ms, parse_iso_ms};
 use swiss_host::services::action::RunOutputTee;
 use swiss_host::services::runs::{RunHistorySink, RunView, SubmitRequest};
@@ -72,6 +75,9 @@ pub const TAIL_BYTES: usize = 64 * 1024;
 /// One output read never materialises more than this — the live route's own ceiling.
 pub const MAX_READ_BYTES: usize = 128 * 1024;
 pub const PAGE_SIZE: usize = 20;
+/// What a remote.write's sealed body keeps at most (the owner's choice, 2026-09-28); a
+/// longer file keeps its head and says so.
+pub const CONTENT_MAX_BYTES: usize = 256 * 1024;
 
 const INDEX_FILE: &str = "runs.jsonl";
 const OUT_DIR: &str = "out";
@@ -216,6 +222,13 @@ pub fn parse_instant(raw: &str) -> Option<u64> {
     parse_iso_ms(raw).and_then(|ms| u64::try_from(ms).ok())
 }
 
+/// A remote.write's kept body ([RunHistory::content]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredContent {
+    pub text: String,
+    pub truncated: bool,
+}
+
 /// One bounded read of a recorded run's output file.
 #[derive(Debug, Clone)]
 pub struct OutputChunk {
@@ -293,6 +306,49 @@ impl RunHistory {
 
     fn output_path(&self, run_id: u64) -> PathBuf {
         self.dir.join(OUT_DIR).join(format!("{run_id}.txt"))
+    }
+
+    fn content_path(&self, run_id: u64) -> PathBuf {
+        self.dir.join(OUT_DIR).join(format!("{run_id}.content"))
+    }
+
+    /// A remote.write's body as the run sent it (its first [CONTENT_MAX_BYTES]), when the
+    /// record kept one. Err when the file is there but this machine's key cannot open it.
+    pub fn content(&self, run_id: u64) -> Result<Option<StoredContent>, String> {
+        let Some(v) = read_secure_json(&self.content_path(run_id))? else {
+            return Ok(None);
+        };
+        Ok(Some(StoredContent {
+            text: v["content"].as_str().unwrap_or_default().to_string(),
+            truncated: v["truncated"].as_bool().unwrap_or(false),
+        }))
+    }
+
+    /// Seal a remote.write's body beside its record, under the machine key every state
+    /// file uses. Returns the file's size on disk (0 when there is none) and whether the
+    /// body was cut at [CONTENT_MAX_BYTES]. Kept whatever the outcome: a failed write's
+    /// body is what failed to land.
+    fn seal_content(&self, run_id: u64, request: &SubmitRequest) -> (u64, bool) {
+        if request.action_type != "remote.write" {
+            return (0, false);
+        }
+        let Some(content) = request.input.get("content").and_then(Value::as_str) else {
+            return (0, false);
+        };
+        let mut end = content.len().min(CONTENT_MAX_BYTES);
+        while !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        let truncated = end < content.len();
+        let path = self.content_path(run_id);
+        mkdir_private(&self.dir.join(OUT_DIR));
+        let body = json!({ "content": &content[..end], "truncated": truncated });
+        if write_secure_json(&path, &body).is_err() {
+            return (0, false);
+        }
+        chmod_private(&path, private_file_mode());
+        let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        (bytes, truncated)
     }
 
     /// A page of records, newest first, strictly before `before` when given, filtered by
@@ -590,6 +646,11 @@ impl RunHistory {
                     Some(f) if stripped.contains(&f.run_id) => {
                         if let Some(Value::Object(mut m)) = parse_line(&line) {
                             m.insert("outputEvicted".into(), json!(true));
+                            // The sealed write body is an evictable file like the output.
+                            if m.get("contentStored") == Some(&json!(true)) {
+                                m.insert("contentStored".into(), json!(false));
+                                m.insert("contentEvicted".into(), json!(true));
+                            }
                             out.write_all(serde_json::to_string(&Value::Object(m))?.as_bytes())?;
                             out.write_all(b"\n")?;
                         }
@@ -612,6 +673,7 @@ impl RunHistory {
         chmod_private(&self.index_path(), private_file_mode());
         for id in dropped.iter().chain(stripped.iter()) {
             let _ = std::fs::remove_file(self.output_path(*id));
+            let _ = std::fs::remove_file(self.content_path(*id));
         }
         // Rebuild rather than trust the arithmetic: the rewrite is the truth now.
         drop(_guard);
@@ -626,6 +688,7 @@ impl RunHistory {
         if output_bytes == 0 {
             let _ = std::fs::remove_file(self.output_path(view.run_id));
         }
+        let (content_bytes, content_truncated) = self.seal_content(view.run_id, request);
         let mut line = match view.to_json(false) {
             Value::Object(m) => m,
             _ => Map::new(),
@@ -635,6 +698,13 @@ impl RunHistory {
         if let Some(tail) = tail {
             line.insert("outputCapped".into(), json!(true));
             line.insert("tail".into(), json!(tail));
+        }
+        if content_bytes > 0 {
+            line.insert("contentStored".into(), json!(true));
+            line.insert("contentFileBytes".into(), json!(content_bytes));
+            if content_truncated {
+                line.insert("contentTruncated".into(), json!(true));
+            }
         }
         let Ok(mut text) = serde_json::to_string(&Value::Object(line)) else {
             return;
@@ -651,12 +721,12 @@ impl RunHistory {
             return;
         }
         chmod_private(&self.index_path(), private_file_mode());
-        ledger.total_bytes += text.len() as u64 + output_bytes;
+        ledger.total_bytes += text.len() as u64 + output_bytes + content_bytes;
         ledger.runs += 1;
         if ledger.oldest_ended_ms.is_none() {
             ledger.oldest_ended_ms = view.ended_at_ms;
         }
-        if output_bytes > 0 && ledger.total_bytes > self.limits.max_total_bytes {
+        if output_bytes + content_bytes > 0 && ledger.total_bytes > self.limits.max_total_bytes {
             // The file just written is something a pass can evict: let it look.
             ledger.hold_until_ms = None;
         }
@@ -722,8 +792,9 @@ impl RunHistorySink for RunHistory {
 struct LineFacts {
     run_id: u64,
     ended_ms: u64,
-    /// What the output file holds on disk: zero once a pass evicted it, whatever the
-    /// line's `outputBytes` (the size the run produced) still says.
+    /// What the run's evictable files hold on disk - the output file, plus a write's sealed
+    /// body: zero for each once a pass evicted it, whatever the line's `outputBytes` (the
+    /// size the run produced) still says.
     output_bytes: u64,
     line_bytes: u64,
 }
@@ -742,6 +813,14 @@ impl LineFacts {
         } else {
             v.get("outputBytes").and_then(Value::as_u64).unwrap_or(0)
         };
+        let content_bytes = if v.get("contentStored").and_then(Value::as_bool) == Some(true) {
+            v.get("contentFileBytes")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let output_bytes = output_bytes + content_bytes;
         Some(LineFacts {
             run_id,
             ended_ms,
@@ -870,23 +949,79 @@ mod tests {
         history.finish(&view(run_id, ended_at_ms), &req);
     }
 
-    #[test]
-    fn a_remote_write_is_recorded_by_its_size_never_its_content() {
-        let dir = scratch();
-        let history = RunHistory::open(dir.clone());
+    fn write(history: &RunHistory, run_id: u64, content: &str) {
         let req = request(
             "remote.write",
-            json!({ "target": "build", "remote": ".env", "content": "DB_PASSWORD=s3cret
-" }),
+            json!({ "target": "build", "remote": ".env", "content": content }),
         );
-        let _tee = history.begin(9, &req).expect("recorded");
-        history.finish(&view(9, now_ms()), &req);
+        let _tee = history.begin(run_id, &req).expect("recorded");
+        history.finish(&view(run_id, now_ms()), &req);
+    }
+
+    #[test]
+    fn a_remote_write_keeps_its_content_sealed_beside_the_record() {
+        // The owner's two asks, both kept: see what a write wrote (2026-09-28, "I don't
+        // know what was written"), and never a written password on disk in clear.
+        let dir = scratch();
+        let history = RunHistory::open(dir.clone());
+        write(&history, 9, "DB_PASSWORD=s3cret\n");
         let (page, _) = history.page(None, 20, None);
         assert_eq!(page[0]["input"]["remote"], ".env");
         assert_eq!(page[0]["input"]["contentBytes"], 19);
         assert!(page[0]["input"].get("content").is_none());
+        assert_eq!(page[0]["contentStored"], true);
         let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).unwrap();
         assert!(!raw.contains("s3cret"), "{raw}");
+        let sealed = std::fs::read_to_string(dir.join(OUT_DIR).join("9.content")).unwrap();
+        assert!(!sealed.contains("s3cret"), "the body is sealed: {sealed}");
+        let kept = history.content(9).expect("opens").expect("kept");
+        assert_eq!(kept.text, "DB_PASSWORD=s3cret\n");
+        assert!(!kept.truncated);
+        // Not a write, no body.
+        run(&history, 10, b"ok", now_ms());
+        assert_eq!(history.content(10), Ok(None));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_long_write_keeps_its_head_cut_on_a_character_boundary() {
+        let dir = scratch();
+        let history = RunHistory::open(dir.clone());
+        // Two-byte characters straddle the cap: the cut lands on a boundary, below it.
+        let body = "\u{e9}".repeat(CONTENT_MAX_BYTES / 2 + 10);
+        write(&history, 3, &body);
+        let kept = history.content(3).expect("opens").expect("kept");
+        assert!(kept.truncated);
+        assert!(kept.text.len() <= CONTENT_MAX_BYTES);
+        assert!(body.starts_with(&kept.text));
+        let (page, _) = history.page(None, 20, None);
+        assert_eq!(page[0]["contentTruncated"], true);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_sealed_body_counts_against_the_budget_and_leaves_with_its_record() {
+        let dir = scratch();
+        let history = RunHistory::open(dir.clone());
+        write(&history, 1, "a=1\n");
+        let on_disk = std::fs::metadata(dir.join(OUT_DIR).join("1.content"))
+            .unwrap()
+            .len();
+        let index = std::fs::metadata(dir.join(INDEX_FILE)).unwrap().len();
+        assert_eq!(
+            history.usage(),
+            (index + on_disk, 1),
+            "the body is in the budget"
+        );
+        assert_eq!(
+            RunHistory::open(dir.clone()).usage(),
+            (index + on_disk, 1),
+            "and a reopen counts it the same"
+        );
+        history.clear();
+        assert!(!dir.join(OUT_DIR).join("1.content").exists());
+        assert_eq!(history.content(1), Ok(None));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

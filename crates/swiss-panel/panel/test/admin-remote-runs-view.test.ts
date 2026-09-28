@@ -242,6 +242,48 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(body.textContent).toContain("the last lines");
   });
 
+  /* The owner's report (2026-09-28): a write's row showed "Output 34 B" and nothing of what
+     was written. The body is kept sealed beside the record (docs/34 R12) and unsealed only
+     when asked - a screenshot of an opened row shares no file until Show is pressed. */
+  it("a write keeps what it wrote: Show unseals and paints it, Hide puts it away", async () => {
+    const wrote = {
+      ...finished, runId: 31, action: "remote.write", label: "write stream-demo.py", state: "succeeded", exitCode: 0,
+      input: { target: "build", remote: "stream-demo.py", contentBytes: 12 }, outputBytes: 42, contentStored: true,
+    };
+    serve([wrote], []);
+    replies["/api/remote/runs/31/output?after=0&max=131072"] = { runId: 31, cursor: 0, nextCursor: 42, output: "wrote /tmp/swiss/stream-demo.py (12 bytes)", total: 42, terminal: true };
+    replies["/api/remote/runs/31/content"] = { runId: 31, content: "print('hi')\n", truncated: false };
+    await view.mount();
+    open(31);
+    await settle();
+    const block = (): HTMLElement | undefined => Array.from(item(31).querySelectorAll<HTMLElement>(".vblock"))
+      .find((b) => b.querySelector(".vblock-cap")?.textContent === "Content written");
+    expect(block(), "the block is there").toBeTruthy();
+    expect(block()!.querySelector(".vblock-note")?.textContent).toBe("12 B");
+    expect(block()!.querySelector("pre")).toBeNull();
+    expect(requests.some((r) => r.path === "/api/remote/runs/31/content"), "nothing is unsealed until asked").toBe(false);
+    (block()!.querySelector("[data-rcontent]") as HTMLElement).click();
+    await settle();
+    expect(block()!.querySelector("pre")?.textContent).toBe("print('hi')\n");
+    (block()!.querySelector("[data-rcontenthide]") as HTMLElement).click();
+    expect(block()!.querySelector("pre")).toBeNull();
+    expect(block()!.querySelector("[data-rcontent]")).toBeTruthy();
+  });
+
+  it("a write whose body the size budget took says so", async () => {
+    const wrote = {
+      ...finished, runId: 32, action: "remote.write", state: "succeeded", exitCode: 0,
+      input: { target: "build", remote: ".env", contentBytes: 2048 }, outputBytes: 0, contentEvicted: true,
+    };
+    serve([wrote], []);
+    replies["/api/remote/runs/32/output?after=0&max=131072"] = { runId: 32, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };
+    await view.mount();
+    open(32);
+    await settle();
+    expect(item(32).querySelector(".tl-body")?.textContent).toContain("The written content (2.0 KB) was evicted by the size budget.");
+    expect(item(32).querySelector("[data-rcontent]")).toBeNull();
+  });
+
   it("a run with no output says so in its Output block", async () => {
     serve([{ ...finished, state: "succeeded", exitCode: 0, outputBytes: 0 }], []);
     replies["/api/remote/runs/17/output?after=0&max=131072"] = { runId: 17, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };

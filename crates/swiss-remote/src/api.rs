@@ -100,6 +100,7 @@ pub fn mount(state: Arc<RemoteState>) -> Router<()> {
         .route("/api/remote/runs", get(list_runs).delete(clear_runs))
         .route("/api/remote/runs/{id}", get(get_run))
         .route("/api/remote/runs/{id}/output", get(run_output))
+        .route("/api/remote/runs/{id}/content", get(run_content))
         .with_state(state)
 }
 
@@ -287,6 +288,33 @@ async fn clear_runs(State(state): State<Arc<RemoteState>>) -> Response {
     };
     system.history().clear();
     admin_json(StatusCode::OK, json!({ "ok": true }))
+}
+
+/// GET /api/remote/runs/{id}/content: a remote.write's body, unsealed for the signed-in
+/// panel (docs/34 R12). 404 when the record kept none - not a write, or the size budget
+/// evicted it.
+async fn run_content(State(state): State<Arc<RemoteState>>, Path(id): Path<String>) -> Response {
+    let Some(system) = state.live() else {
+        return not_running();
+    };
+    let Some(run_id) = id.parse::<u64>().ok() else {
+        return unknown_run(&id);
+    };
+    match system.history().content(run_id) {
+        Ok(Some(kept)) => admin_json(
+            StatusCode::OK,
+            json!({
+                "runId": run_id,
+                "content": kept.text,
+                "truncated": kept.truncated,
+            }),
+        ),
+        Ok(None) => admin_error(
+            StatusCode::NOT_FOUND,
+            &format!("remote run {id} kept no written content"),
+        ),
+        Err(err) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
+    }
 }
 
 fn unknown_run(id: &str) -> Response {
