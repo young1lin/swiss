@@ -419,6 +419,9 @@ export interface DbKeyTab extends DbTabBase {
    * lands and says the type itself (dbTabGlyph). */
   redisKeyType?: string | null;
   redisValue: ApiDbRedisValue | null;
+  /* When that value was read (Date.now()) — the origin the head's TTL counts down from, so a
+   * repaint carrying no new read resumes the count instead of restarting it. */
+  redisValueAt?: number;
   redisEdits: DbRedisEdits | null;
   /* docs/45 S2: the stream view's grown row cache — the newest window plus every Load-
    * earlier page prepended, newest-first throughout. Null until the first window paints

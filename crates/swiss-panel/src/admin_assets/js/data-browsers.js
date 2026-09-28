@@ -187,6 +187,7 @@ async function dbLoadRedisValue(key        )                {
   if (!j) { d.redisKey = null; renderDbGrid(); return; }
   const glyph = dbTabGlyph(d);
   d.redisValue = j;
+  d.redisValueAt = Date.now(); // the countdown's origin: this read, not the next repaint
   // docs/43 M4: the toolbar's primary action follows the value's TYPE — it paints only when
   // the value is here, so the toolbar repainted with the grid (the status line rides along).
   renderDbToolbar();
@@ -212,6 +213,7 @@ async function dbRefreshRedisValue(key        )                {
   if (JSON.stringify(j) === JSON.stringify(now.redisValue)) return;
   const glyph = dbTabGlyph(now);
   now.redisValue = j;
+  now.redisValueAt = Date.now();
   now.redisStreamRows = null; // the stream caches belong to the value they grew from
   now.redisStreamMore = null;
   renderDbToolbar();
@@ -383,8 +385,8 @@ function dbRenderRedisValue(wrap             )       {
   const v = d.redisValue;
   if (!v) { wrap.appendChild(el("div", "db-hint", tr("dataBrowsers.loadingK", { k: d.redisKey }))); return; }
   const meta = el("div", "db-detail-meta");
-  meta.appendChild(document.createTextNode(v.key + " · " + v.type + " · "));
-  meta.appendChild(dbRedisTtl(v));
+  // The TTL is NOT here any more (2026-09-28): one live countdown, in the head's top-right.
+  meta.appendChild(document.createTextNode(v.key + " · " + v.type));
   if (v.length != null) meta.appendChild(document.createTextNode(" · " + trn(v.length, "dataBrowsers.nEntries.one", "dataBrowsers.nEntries.other")));
   if (v.truncated) meta.appendChild(document.createTextNode(" · " + tr("dataBrowsers.truncated")));
   // The facts only. The key's add action and its ⋯ (Rename / Delete, docs/22 W1.3) are the
@@ -417,16 +419,61 @@ function dbRenderRedisValue(wrap             )       {
   wrap.appendChild(pre);
 }
 
+/* --- the TTL countdown (2026-09-28) ------------------------------------------------------------
+   The owner: "实时（获取一次时间就行了，页面上计算）显示这个 Key 剩余时间是多少". The server is asked
+   ONCE — the TTL rides with the value — and the page does the arithmetic from there: the readout
+   carries the moment it expires, and ONE shared second-ticker rewrites whatever readouts are on
+   screen. Every TTL on the page used to be the number the last fetch happened to see, printed in
+   three places (the sidebar row, the detail meta line, the status bar) and frozen there until
+   something else caused a poll — a key that said 95s said it a minute later too. Now one readout
+   lives, in the head's top-right corner beside the key's ⋯, and the others say nothing. */
+
+let dbTtlTick                                        = null;
+
+/** Seconds left, as a clock once it is a minute or more: 45s · 1:31 · 2:05:00. Pure. */
+export function dbTtlLabel(secs        )         {
+  if (secs <= 0) return tr("dataBrowsers.ttlExpired");
+  if (secs < 60) return tr("dataBrowsers.ttlSeconds", { n: secs });
+  const two = (n        )         => { return n < 10 ? "0" + String(n) : String(n); };
+  const h3 = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const tail = two(m) + ":" + two(secs % 60);
+  return h3 > 0 ? String(h3) + ":" + tail : String(m) + ":" + two(secs % 60);
+}
+
+/** Rewrite every countdown on screen, and stop the ticker once none is left — a key tab that
+ *  closed must not leave a timer running for the rest of the session. */
+function dbTtlPaint()       {
+  const now = Date.now();
+  const live = document.querySelectorAll             ("[data-ttlend]");
+  live.forEach((e             )       => {
+    e.textContent = dbTtlLabel(Math.ceil((Number(e.dataset.ttlend) - now) / 1000));
+  });
+  if (!live.length && dbTtlTick != null) { clearInterval(dbTtlTick); dbTtlTick = null; }
+}
+
 /** The TTL readout is itself the control (docs/22 W3.3): click to edit in place, Enter runs
  *  EXPIRE — or PERSIST when emptied — through the guarded console, then the key re-reads.
  *  The button carries data-rttl; #pane's delegated click (dbRedisClick) builds the in-place
  *  input from the LIVE value, so a poll that moved the TTL between render and click seeds
- *  the editor with what the key says now (docs/37 §10.1). */
-function dbRedisTtl(v                 )              {
+ *  the editor with what the key says now (docs/37 §10.1).
+ *  `readAt` is when the value was read — the countdown's origin, so a repaint that carries no
+ *  new read (the toolbar redraws for its own reasons) resumes the count instead of restarting
+ *  it at the number the fetch saw. */
+export function dbRedisTtl(v                 , readAt        )              {
+  const title = tr("dataBrowsers.changeTtlEnterApplies");
+  if (v.ttl == null || v.ttl < 0) {
+    return h("button", { class: "db-ttl", type: "button", title, data: { rttl: "" } }, tr("dataBrowsers.noExpiry"));
+  }
+  const ends = readAt + v.ttl * 1000;
+  // The repaint owns the clock: one ticker, re-armed by whichever render last put a countdown
+  // on screen, so the seconds start at THIS render's boundary and two countdowns never mean
+  // two timers. dbTtlPaint stops it once nothing is left to count.
+  if (dbTtlTick != null) clearInterval(dbTtlTick);
+  dbTtlTick = setInterval(dbTtlPaint, 1000);
   return h("button", {
-    class: "db-ttl", type: "button",
-    title: tr("dataBrowsers.changeTtlEnterApplies"), data: { rttl: "" },
-  }, tr(v.ttl  < 0 ? "dataBrowsers.noExpiry" : "dataBrowsers.ttlSeconds", { n: v.ttl  }));
+    class: "db-ttl", type: "button", title, data: { rttl: "", ttlend: String(ends) },
+  }, dbTtlLabel(Math.ceil((ends - Date.now()) / 1000)));
 }
 
 /** The typed table — the row grid's own vocabulary (inserts first, db-dirty cells, db-del
