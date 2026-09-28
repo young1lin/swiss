@@ -477,7 +477,6 @@ const en                         = {
   /* --- dataValue --- */
   "dataValue.nBytes": "{n} bytes",
   "dataValue.nBytesTruncated": "{n} bytes · truncated",
-  "dataValue.null": "null",
   "dataValue.viewValue": "View value",
   "dataValue.close": "Close",
   /* --- dataView --- */
