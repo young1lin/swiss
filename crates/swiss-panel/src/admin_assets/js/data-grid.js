@@ -19,7 +19,7 @@
                                                
 import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
 import {
-  DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbRedisDeleteKey, dbRedisRenameKey, dbRedisTtlSheet, dbRenderRedisValue,
+  DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbRedisDeleteKey, dbRedisRenameKey, dbRedisTtl, dbRedisTtlSheet, dbRenderRedisValue,
 } from "./data-browsers.js";
 import { REDIS_TEMPLATES } from "./data-suggest.js";
 import { dbActivityLoad, dbActivityRender } from "./data-activity.js";
@@ -670,8 +670,9 @@ function renderDbStatus()       {
       trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other") +
       (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
   } else if (t.kind === "key" && t.redisValue) {
-    bar.appendChild(el("span", "db-status-note",
-      t.redisValue.type + (t.redisValue.ttl != null && t.redisValue.ttl >= 0 ? tr("dataGrid.ttlSecs", { n: t.redisValue.ttl }) : "")));
+    // The type only: the TTL printed here was the number the last read saw, and it sat there
+    // while the key actually expired. The live one is the head's, top-right (2026-09-28).
+    bar.appendChild(el("span", "db-status-note", t.redisValue.type));
   }
   bar.appendChild(el("span", "grow"));
   const conn0 = c.conns.find((x                    )          => { return x.name === c.conn; });
@@ -752,6 +753,10 @@ function renderDbToolbar()       {
         title: tr("dataBrowsers.bufferNewThingApplied", { thing: tr(REDIS_THING_KEYS[cfg.thing] ?? cfg.thing) }), data: { radd: "" },
       }));
     }
+    // Top-right, beside the ⋯ (2026-09-28, the owner's "应该在右上角，并且实时"): one live
+    // countdown for the key on screen, computed in the page from the TTL this value was read
+    // with. Click still edits it in place - it is the same data-rttl control it always was.
+    ctl.appendChild(dbRedisTtl(t.redisValue, t.redisValueAt || Date.now()));
     ctl.appendChild(dbMoreButton(()             => { return dbMoreItemsForKey(); }));
   } else if (t.kind === "activity") {
     ctl.appendChild(btn(tr("dataGrid.refresh"), { title: tr("dataActivity.title"), data: { actrefresh: "" } }));

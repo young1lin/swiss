@@ -22,7 +22,7 @@
    seg(), every context menu is the library's floating menu, and the grid's CSS draws no
    vertical lines, grey comments and row controls that wait for the row. */
 
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,7 +30,7 @@ import { dbConn as dbConnState, dbTabs, freshTab, mountDbView, unmountDbView } f
 import { tr } from "../src/i18n.js";
 import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 import { sheet } from "./styles.js";
-import type { DbSqlTab, DbTableTab } from "../src/types/state.js";
+import type { DbKeyTab, DbSqlTab, DbTableTab } from "../src/types/state.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -552,5 +552,79 @@ describe("the grid's look in views.css (docs/46 §3.7, U7)", () => {
     for (const cls of [".db-tabs", ".ctx-menu", ".db-chip", ".db-keytype"]) {
       expect(css.includes(cls + " ") || css.includes(cls + "{") || css.includes(cls + ":") || css.includes(cls + ","), cls).toBe(false);
     }
+  });
+});
+/* The owner, 2026-09-28: "不要在这里显示刷新时间，而是应该在右上角，并且实时（获取一次时间就行了，页面上计算）显示这个 Key
+   剩余时间是多少". A TTL printed where a fetch left it is the age of the fetch, not the life
+   of the key: the sidebar row said "95s" for as long as the list stood, and so did the meta line
+   and the status bar. One readout now - top-right in the head, beside the key's ⋯ - counting down
+   in the page from the moment its value was read. */
+describe("a key's TTL is one live countdown, top-right (2026-09-28)", () => {
+  function openKey(ttl: number, readAt: number): void {
+    Object.assign(dbConnState(), { conns: [dbConn("demo-cache", "redis")], conn: "demo-cache" });
+    const t = freshTab("key") as DbKeyTab;
+    t.redisKey = "test223";
+    t.redisValue = { key: "test223", type: "string", ttl, value: "11" };
+    t.redisValueAt = readAt;
+    dbTabs().length = 0;
+    dbTabs().push(t);
+    grid.renderDbToolbar();
+    grid.renderDbGrid();
+  }
+
+  it("the head ends with the countdown and the ⋯, and the countdown still edits in place", () => {
+    openKey(91, Date.now());
+    const ctl = Array.from(document.querySelectorAll<HTMLElement>("#dbHead .db-head-ctl > *"));
+    const ttl = ctl[ctl.length - 2];
+    expect(ttl.dataset.rttl, "the same data-rttl control it always was").toBe("");
+    expect(ttl.textContent).toBe("1:31");
+    expect(ctl[ctl.length - 1].getAttribute("aria-haspopup"), "the ⋯ stays last").toBe("menu");
+  });
+
+  it("a repaint counts from the read, not from the number the read saw", () => {
+    openKey(91, Date.now() - 60_000);
+    expect(document.querySelector("#dbHead [data-rttl]")!.textContent).toBe("31s");
+  });
+
+  it("the second hand is the page's own: no fetch, no repaint", () => {
+    vi.useFakeTimers();
+    try {
+      openKey(91, Date.now());
+      const before = document.querySelector("#dbHead [data-rttl]")!;
+      vi.advanceTimersByTime(3000);
+      const after = document.querySelector("#dbHead [data-rttl]")!;
+      expect(after, "the same node, rewritten").toBe(before);
+      expect(after.textContent).toBe("1:28");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a key with no expiry says so and starts no clock", () => {
+    openKey(-1, Date.now());
+    const b = document.querySelector("#dbHead [data-rttl]")!;
+    expect(b.textContent).toBe(tr("dataBrowsers.noExpiry"));
+    expect(b.getAttribute("data-ttlend"), "nothing to count down").toBeNull();
+  });
+
+  it("nowhere else prints a TTL that cannot move", () => {
+    openKey(91, Date.now());
+    expect(document.querySelector("#dbGridWrap .db-detail-meta")!.textContent).toBe("test223 · string");
+    expect(document.getElementById("dbStatus")!.textContent).not.toContain("ttl");
+    Object.assign(dbConnState(), {
+      conns: [dbConn("demo-cache", "redis")], conn: "demo-cache",
+      redis: { keys: [{ key: "test223", type: "string", ttl: 95 }], cursor: "0", done: true, total: 1 },
+    });
+    view.renderDbTables();
+    const row = document.querySelector("#dbTables .db-key-row")!;
+    expect(row.querySelector(".db-table-meta")!.textContent, "the type alone").toBe("string");
+    expect((row as HTMLElement).title).toBe("test223 · string");
+  });
+
+  it("the label is seconds under a minute and a clock above it", () => {
+    expect(browsers.dbTtlLabel(45)).toBe("45s");
+    expect(browsers.dbTtlLabel(91)).toBe("1:31");
+    expect(browsers.dbTtlLabel(7500)).toBe("2:05:00");
+    expect(browsers.dbTtlLabel(0)).toBe(tr("dataBrowsers.ttlExpired"));
   });
 });

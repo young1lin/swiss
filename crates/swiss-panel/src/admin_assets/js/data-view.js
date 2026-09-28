@@ -1070,17 +1070,21 @@ function dbTableRow(t               , scope               )              {
 
 /** One redis key row, one line (docs/43 M2): the type's glyph, the name (the REMAINDER under its
  *  band's prefix - the band already said the prefix; a leaf row says the whole key), its type
- *  and expiry right. The full key stays the row's title and its address ([data-rkey]). */
+ *  right. The full key stays the row's title and its address ([data-rkey]).
+ *
+ *  No TTL here since 2026-09-28. The row printed the seconds the LAST keyspace fetch saw, and a
+ *  key listed at "95s" still said 95s a minute later - the list is not re-fetched on a timer, so
+ *  the number was the age of the load, not the life of the key. The key on screen counts down
+ *  live in the head's top-right instead (dbRedisTtl); a list of them would be a list of
+ *  stopped clocks. */
 function dbKeyRow(k                  , label        , selKey               )              {
   const b = el("button", "db-table db-key-row" + (k.key === selKey ? " sel" : ""));
   b.appendChild(iconNode(redisTypeGlyph(k.type)));
-  let meta = k.type;
-  if (k.ttl  >= 0) meta += " · ttl " + k.ttl + "s";
-  b.title = k.key + " · " + meta;
+  b.title = k.key + " · " + k.type;
   b.dataset.rkey = k.key;
   b.dataset.rtype = k.type; // handed to the tab it opens, so its card wears the same glyph
   b.appendChild(el("span", "db-table-name", label));
-  b.appendChild(el("span", "db-table-meta", k.type + (k.ttl  >= 0 ? " · " + k.ttl + "s" : "")));
+  b.appendChild(el("span", "db-table-meta", k.type));
   return b;
 }
 
