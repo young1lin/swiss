@@ -78,6 +78,8 @@ The panel assets are edited directly in this repo (crates/swiss-panel/panel/src,
 - **Copying**: right-click a cell to copy its value; whole rows copy as JSON/CSV/INSERT (dialect-aware quoting, buffered values win); checked rows bulk-copy as CSV/TSV/Markdown/JSON; the query-result grid works the same way.
 - **Structure tabs and DDL** (data-structure.js): Columns/Indexes/Foreign Keys tables + a monospace DDL block (`dbAlignDdl` re-lays-out CREATE TABLE into an aligned layout); Table ▾ menu (the rename prompt validates `[A-Za-z0-9_$]{1,64}`, truncate/drop require typing the table name verbatim).
 
+- **A key's TTL** (2026-09-28, data-browsers.js `dbRedisTtl`/`dbTtlLabel`): ONE readout, in the head's top-right beside the key's ⋯, and nowhere else — the sidebar key row, the value view's meta line and the status bar print the type alone. The seconds are computed in the page: the TTL is read once with the value (`redisValueAt` stamps the read), the button carries `data-ttlend` (the instant it expires), and one shared 1 s ticker rewrites every countdown on screen and stops itself when none is left. Under a minute it reads `10s`; above it, a clock (`1:31`, `2:05:00`); no expiry says so and arms nothing. Clicking it is still the in-place `data-rttl` editor (Enter = EXPIRE, empty = PERSIST). The sidebar's TTL **sort** stays — ordering by a fetched number is honest; printing it as a clock was not, because nothing re-reads the keyspace on a timer and a row listed at 95s said 95s a minute later.
+
 ## Redis Stream Browsing (docs/45)
 
 The stream view is the one value type with a view of its own (data-stream.ts); everything else about it is the /stream routes above.
