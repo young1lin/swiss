@@ -23,7 +23,10 @@
 # Production runs from bin\swiss.exe, a copy of the build output, never from target\ itself
 # (docs/16 §3.3): the linker and the daemon no longer share a file, so the build happens
 # while the old daemon is still serving and the outage is stop + copy + start - seconds, not
-# the four minutes a release build takes. bin\ is a stable path for PATH and for
+# the four minutes a release build takes. Since 2026-09-28 the new daemon also binds the port
+# BEFORE starting its plugins (src/server.rs), so "start" is a second rather than however long
+# the slowest MCP takes to wake; the last line of a deploy states the measured outage. bin\ is
+# a stable path for PATH and for
 # `swiss autostart on`, and git ignores it. A daemon still running out of target\ (the
 # pre-bin layout) is stopped BEFORE the build, once, so the linker can write.
 #
@@ -130,11 +133,24 @@ if ($LASTEXITCODE -ne 0) {
     if ($holdsBuildOutput) { Fail "build failed - start the old daemon again by hand: & $stopper start --no-open" }
     Fail "build failed - production left untouched"
 }
-# From here the outage clock runs: stop, copy, start.
+# From here the outage clock runs: stop, copy, start. It is measured and reported (2026-09-28),
+# because "how long was 19999 down" is the number this whole ordering exists to keep small and
+# nothing used to state it.
+$outage = [System.Diagnostics.Stopwatch]::StartNew()
 if (-not $holdsBuildOutput) {
     Phase 'stopping the daemon'
     & $stopper stop
     if ($LASTEXITCODE -eq 1) { Fail "stop was refused - resolve it by hand (see above), then re-run" }
+}
+# A `stop` that found no pid record says "not running" and exits 0 - which is also what it says
+# when a daemon IS serving whose record was lost (the 2026-09-28 start-timeout bug). Copying
+# over an exe that process still holds fails with "Access is denied", eight words away from the
+# cause. Ask the port instead: it answers for whatever is actually there.
+$stillUp = $null
+try { $stillUp = Invoke-WebRequest -Uri 'http://127.0.0.1:19999/health' -UseBasicParsing -TimeoutSec 2 } catch { }
+if ($stillUp) {
+    $owner = (Get-NetTCPConnection -LocalPort 19999 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess
+    Fail "something is still serving 19999 (pid $owner) after the stop - its pid record is probably gone; stop it by hand (POST http://127.0.0.1:19999/api/shutdown, or Stop-Process -Id $owner), then re-run"
 }
 Phase "installing $Exe"
 if (-not (Test-Path $BinDir)) { [void](New-Item -ItemType Directory -Path $BinDir) }
@@ -160,7 +176,8 @@ $running = ($health.Content | ConvertFrom-Json).build.hash
 if ($running -ne $built) {
     Fail "deploy did not take: running daemon is $running, freshly built is $built"
 }
-Phase "deployed: $running is serving on 19999 from $Exe"
+$outage.Stop()
+Phase ("deployed: $running is serving on 19999 from $Exe (19999 was down {0:N1} s)" -f $outage.Elapsed.TotalSeconds)
 # Other programs reach `swiss remote ...` through PATH; the script only says when bin\ is
 # missing from it - changing a user's PATH is their call.
 $binAbs = (Resolve-Path $BinDir).Path
