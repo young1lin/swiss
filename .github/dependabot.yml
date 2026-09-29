@@ -31,6 +31,15 @@ updates:
     groups:
       panel-dev-tooling:
         update-types: [minor, patch]
+    ignore:
+      # The linter and the type-stripper bound the compiler: typescript-eslint 8 peers on
+      # typescript <6.1 and ts-blank-space 0.9 depends on 5.1.6 - 6.0.x. Lift this when both move.
+      - dependency-name: typescript
+        versions: [">=6.1.0"]
+      # The types describe the Node the panel runs on (engines >=24, CI node-version 24), not
+      # the newest Node; a major here moves with engines, by hand.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
