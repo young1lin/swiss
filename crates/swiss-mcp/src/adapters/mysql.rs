@@ -23,7 +23,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow};
-use sqlx::{Column, Either, Executor, Row};
+// sqlx 0.9 accepts only `&'static str` as a statement unless the caller asserts otherwise.
+// Every statement this module runs is either the operator's own SQL in their own client (the
+// console, the grid's query) or one the Data view built with quoted identifiers and bound
+// values, so each call site says `AssertSqlSafe`; the guards live upstream, not in sqlx.
+use sqlx::{AssertSqlSafe, Column, Either, Executor, Row};
 
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{
@@ -459,9 +463,9 @@ pub async fn run_query(
     params: &[Value],
 ) -> Result<QueryOutcome, String> {
     if params.is_empty() {
-        collect_outcome(sqlx::raw_sql(sql).fetch_many(pool), sql).await
+        collect_outcome(sqlx::raw_sql(AssertSqlSafe(sql)).fetch_many(pool), sql).await
     } else {
-        let mut query = sqlx::query(sql);
+        let mut query = sqlx::query(AssertSqlSafe(sql));
         for p in params {
             query = bind_value(query, p);
         }
@@ -563,7 +567,7 @@ pub async fn run_query_tx(
     sql: &str,
     params: &[Value],
 ) -> Result<u64, String> {
-    let mut query = sqlx::query(sql);
+    let mut query = sqlx::query(AssertSqlSafe(sql));
     for p in params {
         query = bind_value(query, p);
     }
@@ -579,7 +583,7 @@ pub async fn run_query_tx_rows(
     sql: &str,
     params: &[Value],
 ) -> Result<Vec<Map<String, Value>>, String> {
-    let mut query = sqlx::query(sql);
+    let mut query = sqlx::query(AssertSqlSafe(sql));
     for p in params {
         query = bind_value(query, p);
     }

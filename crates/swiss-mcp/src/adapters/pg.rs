@@ -25,7 +25,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column, Either, Row};
+// sqlx 0.9 accepts only `&'static str` as a statement unless the caller asserts otherwise.
+// Every statement this module runs is either the operator's own SQL in their own client (the
+// console, the grid's query) or one the Data view built with quoted identifiers and bound
+// values, so each call site says `AssertSqlSafe`; the guards live upstream, not in sqlx.
+use sqlx::{AssertSqlSafe, Column, Either, Row};
 
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{
@@ -602,7 +606,7 @@ pub async fn run_pg_statements(pool: &PgPool, sql: &str) -> Result<Vec<PgGroup>,
     use std::task::Poll;
 
     let labels = split_statement_labels(sql);
-    let mut stream = pin!(sqlx::raw_sql(sql).fetch_many(pool));
+    let mut stream = pin!(sqlx::raw_sql(AssertSqlSafe(sql)).fetch_many(pool));
     let mut groups: Vec<PgGroup> = vec![PgGroup {
         command: String::new(),
         rows: Vec::new(),
@@ -697,7 +701,7 @@ pub async fn run_pg_tx(
     sql: &str,
     params: &[Value],
 ) -> Result<u64, String> {
-    let mut query = sqlx::query(sql);
+    let mut query = sqlx::query(AssertSqlSafe(sql));
     for p in params {
         query = bind_value(query, p);
     }
@@ -712,7 +716,7 @@ pub async fn run_pg_tx_rows(
     sql: &str,
     params: &[Value],
 ) -> Result<Vec<Map<String, Value>>, String> {
-    let mut query = sqlx::query(sql);
+    let mut query = sqlx::query(AssertSqlSafe(sql));
     for p in params {
         query = bind_value(query, p);
     }
@@ -737,7 +741,7 @@ pub async fn pg_query_rows(
     sql: &str,
     params: &[Value],
 ) -> Result<Vec<Map<String, Value>>, String> {
-    let mut query = sqlx::query(sql);
+    let mut query = sqlx::query(AssertSqlSafe(sql));
     for p in params {
         query = bind_value(query, p);
     }
