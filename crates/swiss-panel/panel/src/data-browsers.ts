@@ -857,7 +857,7 @@ function dbRedisTtlSaid(key: string, secs: string, reply: unknown): void {
 
 /** One redis command as its exact arguments, through the structured pipeline route: every
  *  byte of a key is an argument byte. The console route splits a LINE the way a shell does
- *  (7017a51) - right for what a person types, wrong for a key the panel already holds:
+ *  (5be034a) - right for what a person types, wrong for a key the panel already holds:
  *  `"DEL " + key` on a key named `my key` deleted the keys `my` and `key`, and a backslash in
  *  a name deleted a different key (2026-09-29). Same guards as the console (vet_pipeline).
  *  The reply comes back wrapped, so a nil reply is not mistaken for a refusal; null means
