@@ -26,7 +26,7 @@
 > 把 commit message 草稿（根目录四个 `.tmp`，各带一条模型署名 trailer，违反 D3）一起提交了，
 > 后一个 commit 才删——按路径从历史剥离。② 本文 §0 与上一条增补、docs/20 §9、docs/43 T2 对测试
 > 环境来历写得过细，改成中性说法（「真实环境」「旧邮箱」）。③ 一个还没 push 的 commit
-> （`22097b8`）在面板测试 fixture 里写进了本机登录名与主机名，`d1c4aae` 才在树上换成占位身份——
+> （`04e2be4`）在面板测试 fixture 里写进了本机登录名与主机名，`11d8cc2` 才在树上换成占位身份——
 > 占位身份回填进前者，后者只剩一段注释，message 随之改写。一遍 `git filter-repo`（按路径剥离、
 > replace-text、一条 message 改写），之后一个 commit 把 15 个文件里 22 处旧短 hash 等长换成新值
 > （含三处代码注释的 ts/js 对与 vendored shlex 的头注）。替换表由环境变量现场生成、跑完即删。

@@ -328,7 +328,7 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(item(32).querySelector("[data-rcontent]")).toBeNull();
   });
 
-  /* Between f862dd0 (the clear body stopped being recorded) and R12 (it started being sealed)
+  /* Between c720f0c (the clear body stopped being recorded) and R12 (it started being sealed)
      a write kept its size and nothing else. Those rows drew NO content block at all, so they
      read exactly like a row whose Show had not been pressed. They say what happened instead. */
   it("a write recorded while no body was kept says that, rather than drawing nothing", async () => {
