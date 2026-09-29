@@ -17,7 +17,7 @@
 //! Small shared helpers. Kept dependency-free: hex and random strings by hand rather than
 //! pulling `hex`/`rand` extras the binary does not otherwise need.
 
-use rand::TryRngCore;
+use rand::TryRng;
 
 /// `Date.now()` — epoch milliseconds, the timestamp currency of the ported code.
 pub fn now_ms() -> u64 {
@@ -39,7 +39,7 @@ pub fn parse_iso_ms(iso: &str) -> Option<i64> {
 /// fixture keys (`randomBytes(n).toString("hex")` in the Node build).
 pub fn random_hex(n: usize) -> String {
     let mut bytes = vec![0u8; n];
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut bytes)
         .expect("the OS CSPRNG answered an error");
     bytes.iter().map(|b| format!("{b:02x}")).collect()

@@ -135,7 +135,7 @@ fn now_unix() -> u64 {
 
 /// One PKCE pair (RFC 7636): a verifier of unreserved characters and its S256 challenge,
 /// base64url without padding. The verifier is 48 random bytes as hex — 96 chars, inside the
-/// 43–128 the RFC allows, from `OsRng` through the same helper the rest of the gateway uses.
+/// 43–128 the RFC allows, from `SysRng` through the same helper the rest of the gateway uses.
 pub fn pkce_pair() -> (String, String) {
     let verifier = swiss_core::util::random_hex(48);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));

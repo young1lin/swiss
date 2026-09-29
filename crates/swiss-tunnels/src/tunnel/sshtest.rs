@@ -181,9 +181,8 @@ impl russh::server::Handler for TestHandler {
 }
 
 /// A fresh server config with a fresh random host key: the client under test runs TOFU
-/// with no expected fingerprint, so any key verifies. Built from a random seed rather
-/// than PrivateKey::random because russh's rng traits live on rand 0.10 and the workspace
-/// carries rand 0.9 — from_seed needs no rng crate at all.
+/// with no expected fingerprint, so any key verifies. Built from a random seed:
+/// from_seed needs no rng handle threaded through ssh-key's API.
 fn test_server_config() -> Arc<russh::server::Config> {
     let seed = rand::random::<[u8; 32]>();
     let keypair = russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed);

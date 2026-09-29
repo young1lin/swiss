@@ -35,9 +35,9 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use hkdf::Hkdf;
-// rand 0.9: the OS RNG speaks the fallible TryRngCore (rand_core 0.9 split the trait). An OS
-// CSPRNG that answers Err is a broken machine, not a case to handle - expect it away.
-use rand::TryRngCore;
+// rand 0.10: the OS RNG is getrandom's SysRng, which speaks the fallible TryRng. An OS CSPRNG
+// that answers Err is a broken machine, not a case to handle - expect it away.
+use rand::TryRng;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
@@ -119,10 +119,10 @@ fn file_key(master: &[u8], salt: &[u8]) -> Result<[u8; 32], EnvelopeError> {
 pub fn seal(master: &[u8], key_source: &str, plaintext: &str) -> Sealed {
     let mut salt = [0u8; 16];
     let mut iv = [0u8; 12];
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut salt)
         .expect("the OS CSPRNG answered an error");
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut iv)
         .expect("the OS CSPRNG answered an error");
 
