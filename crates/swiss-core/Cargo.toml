@@ -32,7 +32,7 @@ aes-gcm = "0.11"
 base64 = "0.23"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",           # DPAPI, replacing the powershell spawn
     "Win32_System_Registry",                 # MachineGuid, direct registry read

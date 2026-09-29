@@ -94,7 +94,7 @@ pub fn dpapi_unprotect(blob: &[u8]) -> WinResult<Vec<u8>> {
     // scope guarantees no leak and no use-after-free.
     let plain = unsafe {
         let slice = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
-        LocalFree(HLOCAL(output.pbData as *mut core::ffi::c_void));
+        LocalFree(Some(HLOCAL(output.pbData as *mut core::ffi::c_void)));
         slice
     };
     Ok(plain)
@@ -122,7 +122,7 @@ pub fn dpapi_protect(blob: &[u8]) -> WinResult<Vec<u8>> {
 
     let plain = unsafe {
         let slice = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
-        LocalFree(HLOCAL(output.pbData as *mut core::ffi::c_void));
+        LocalFree(Some(HLOCAL(output.pbData as *mut core::ffi::c_void)));
         slice
     };
     Ok(plain)
@@ -138,7 +138,7 @@ pub fn machine_id() -> Option<String> {
         if RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
             w!("SOFTWARE\\Microsoft\\Cryptography"),
-            0,
+            None,
             REG_SAM_FLAGS(KEY_READ.0),
             &mut hkey,
         ) != ERROR_SUCCESS
@@ -192,7 +192,7 @@ pub fn run_entry_read() -> Option<String> {
         if RegOpenKeyExW(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
-            0,
+            None,
             REG_SAM_FLAGS(KEY_READ.0),
             &mut hkey,
         ) != ERROR_SUCCESS
@@ -239,7 +239,7 @@ pub fn run_entry_write(cmd: &str) -> Result<(), String> {
         if RegCreateKeyExW(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
-            0,
+            None,
             PCWSTR::null(),
             REG_OPEN_CREATE_OPTIONS(0), // REG_OPTION_NON_VOLATILE — persist across sessions
             REG_SAM_FLAGS(KEY_WRITE.0),
@@ -257,7 +257,7 @@ pub fn run_entry_write(cmd: &str) -> Result<(), String> {
         for unit in &wide {
             data.extend_from_slice(&unit.to_le_bytes());
         }
-        let written = RegSetValueExW(hkey, w!("swiss"), 0, REG_SZ, Some(&data));
+        let written = RegSetValueExW(hkey, w!("swiss"), None, REG_SZ, Some(&data));
         let _ = RegCloseKey(hkey);
         if written != ERROR_SUCCESS {
             return Err(format!("could not write the Run value ({written:?})"));
@@ -274,7 +274,7 @@ pub fn run_entry_remove() -> Result<(), String> {
         if RegOpenKeyExW(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
-            0,
+            None,
             REG_SAM_FLAGS(KEY_WRITE.0),
             &mut hkey,
         ) != ERROR_SUCCESS

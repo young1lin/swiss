@@ -554,12 +554,7 @@ fn attribute_list(console: &PseudoConsole) -> io::Result<AttrList> {
     // SAFETY: the sizing call is documented to fail with ERROR_INSUFFICIENT_BUFFER and write the
     // required size; a null list pointer is what that form takes.
     unsafe {
-        let _ = InitializeProcThreadAttributeList(
-            LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()),
-            1,
-            0,
-            &mut needed,
-        );
+        let _ = InitializeProcThreadAttributeList(None, 1, None, &mut needed);
     }
     if needed == 0 {
         return Err(io::Error::other("attribute list size came back as zero"));
@@ -568,7 +563,7 @@ fn attribute_list(console: &PseudoConsole) -> io::Result<AttrList> {
     let list = LPPROC_THREAD_ATTRIBUTE_LIST(buf.as_mut_ptr().cast());
     // SAFETY: the buffer is the size the call above asked for and outlives the list (it moves
     // into the guard below, which moves the Vec, not its heap allocation).
-    unsafe { InitializeProcThreadAttributeList(list, 1, 0, &mut needed) }
+    unsafe { InitializeProcThreadAttributeList(Some(list), 1, None, &mut needed) }
         .map_err(|err| io::Error::other(format!("init attribute list: {err}")))?;
     let mut guard = AttrList { buf };
     // SAFETY: the HPCON is passed BY VALUE as the attribute (that is the documented form for
@@ -631,7 +626,7 @@ fn spawn_attached(
     unsafe {
         CreateProcessW(
             PCWSTR::null(),
-            PWSTR(command_line.as_mut_ptr()),
+            Some(PWSTR(command_line.as_mut_ptr())),
             None,
             None,
             false,
