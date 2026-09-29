@@ -49,7 +49,9 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sqlx::Connection;
+// The harness formats its own DDL (per-test database names, the def role, from constants and
+// test tags); DDL takes no bind parameters, so those statements say `AssertSqlSafe` (sqlx 0.9).
+use sqlx::{AssertSqlSafe, Connection};
 
 use serde_json::{json, Value};
 use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore};
@@ -97,7 +99,7 @@ impl Drop for Fresh {
                 let e = engine(kind).await;
                 let outcome = match kind {
                     Kind::Mysql => match sqlx::MySqlConnection::connect(&e.root_url).await {
-                        Ok(mut c) => sqlx::query(&format!("DROP DATABASE `{name}`"))
+                        Ok(mut c) => sqlx::query(AssertSqlSafe(format!("DROP DATABASE `{name}`")))
                             .execute(&mut c)
                             .await
                             .map(|_| ())
@@ -107,7 +109,7 @@ impl Drop for Fresh {
                     Kind::Postgres => match sqlx::PgConnection::connect(&e.root_url).await {
                         // WITH (FORCE) detaches stray sessions first; the pool the
                         // adapter held may still have one open when the Fresh drops.
-                        Ok(mut c) => sqlx::query(&format!("DROP DATABASE \"{name}\" WITH (FORCE)"))
+                        Ok(mut c) => sqlx::query(AssertSqlSafe(format!("DROP DATABASE \"{name}\" WITH (FORCE)")))
                             .execute(&mut c)
                             .await
                             .map(|_| ())
@@ -279,13 +281,13 @@ async fn fresh_mysql(tag: &str) -> Fresh {
     let mut root = sqlx::MySqlConnection::connect(&e.root_url)
         .await
         .expect("connect the mysql engine's root URL");
-    sqlx::query(&format!(
+    sqlx::query(AssertSqlSafe(format!(
         "CREATE DATABASE `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
-    ))
+    )))
     .execute(&mut root)
     .await
     .expect("create the per-test mysql database");
-    sqlx::query(&format!("GRANT ALL PRIVILEGES ON `{name}`.* TO '{DEF_USER}'@'%'"))
+    sqlx::query(AssertSqlSafe(format!("GRANT ALL PRIVILEGES ON `{name}`.* TO '{DEF_USER}'@'%'")))
         .execute(&mut root)
         .await
         .expect("grant the def account its per-test database");
@@ -323,9 +325,9 @@ async fn ensure_mysql_user(e: &'static Engine) {
             let mut root = sqlx::MySqlConnection::connect(&e.root_url)
                 .await
                 .expect("connect the mysql engine's root URL");
-            sqlx::query(&format!(
+            sqlx::query(AssertSqlSafe(format!(
                 "CREATE USER IF NOT EXISTS '{DEF_USER}'@'%' IDENTIFIED BY '{DEF_PASSWORD}'"
-            ))
+            )))
             .execute(&mut root)
             .await
             .expect("create the def account");
@@ -344,9 +346,9 @@ async fn fresh_postgres(tag: &str) -> Fresh {
     let mut admin = sqlx::PgConnection::connect(&e.root_url)
         .await
         .expect("connect the postgres engine's admin URL");
-    sqlx::query(&format!(
+    sqlx::query(AssertSqlSafe(format!(
         "CREATE DATABASE \"{name}\" TEMPLATE it_seed OWNER {DEF_USER}"
-    ))
+    )))
     .execute(&mut admin)
     .await
     .expect("clone the per-test database from the seed template");
@@ -380,9 +382,9 @@ async fn ensure_pg_template(e: &'static Engine) {
                     .await
                     .expect("look up the def role");
             if has_role == 0 {
-                sqlx::query(&format!(
+                sqlx::query(AssertSqlSafe(format!(
                     "CREATE ROLE {DEF_USER} LOGIN PASSWORD '{DEF_PASSWORD}'"
-                ))
+                )))
                 .execute(&mut admin)
                 .await
                 .expect("create the def role");
@@ -404,9 +406,9 @@ async fn ensure_pg_template(e: &'static Engine) {
                     .expect("drop the stale seed template");
             }
             if exists == 0 || stale {
-                sqlx::query(&format!(
+                sqlx::query(AssertSqlSafe(format!(
                     "CREATE DATABASE it_seed OWNER {DEF_USER}"
-                ))
+                )))
                 .execute(&mut admin)
                 .await
                 .expect("create the seed template database");

@@ -29,8 +29,11 @@ thiserror = "2"
 futures-core = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # The direct DB adapters. No TLS features on purpose: connections are loopback or
-# tunnel-forwarded, so DB TLS would add a second crypto stack for nothing.
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "mysql", "postgres", "json", "chrono", "bigdecimal"] }
+# tunnel-forwarded, so DB TLS would add a second crypto stack for nothing. Without TLS, MySQL
+# 8's caching_sha2_password sends the password encrypted to the server's RSA key whenever the
+# server has not cached the login, so `mysql-rsa` stays on: sqlx 0.9 made it opt-in, and
+# without it every such login fails with "RSA auth backend disabled".
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "mysql", "mysql-rsa", "postgres", "json", "chrono", "bigdecimal"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 bigdecimal = { version = "0.4", default-features = false }
 redis = { version = "1.7", default-features = false, features = ["tokio-comp", "aio", "connection-manager"] }

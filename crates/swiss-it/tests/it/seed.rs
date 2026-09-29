@@ -83,7 +83,7 @@ async fn mysql_seed_tables_types_and_values() {
         // The view: users with status = 'active' are ids 1, 3, 5, 7.
         ("active_users", 4),
     ] {
-        let got: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM `{table}`"))
+        let got: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM `{table}`")))
             .fetch_one(&mut c)
             .await
             .unwrap_or_else(|e| panic!("count {table}: {e}"));
@@ -175,7 +175,7 @@ async fn postgres_seed_tables_types_and_values() {
         ("audit.log_entries", 5),
         ("active_users", 4),
     ] {
-        let got: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        let got: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
             .fetch_one(&mut c)
             .await
             .unwrap_or_else(|e| panic!("count {table}: {e}"));

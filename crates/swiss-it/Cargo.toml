@@ -47,11 +47,13 @@ testcontainers-modules = { version = "0.15", default-features = false, features 
     "postgres",
     "redis",
 ], optional = true }
-# Same 0.8 / same drivers swiss-mcp builds; the harness seeds databases and counts
-# connections with the very code shapes the adapters use.
-sqlx = { version = "0.8", default-features = false, features = [
+# Same 0.9 / same drivers swiss-mcp builds (mysql-rsa included, for the reason given
+# there); the harness seeds databases and counts connections with the very code shapes the
+# adapters use.
+sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",
     "mysql",
+    "mysql-rsa",
     "postgres",
 ], optional = true }
 redis = { version = "1.7", default-features = false, features = [
