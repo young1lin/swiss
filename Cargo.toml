@@ -82,9 +82,6 @@ encoding_rs = { version = "0.8", default-features = false }
 base64 = "0.23"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }
-# The CLI's self-declared actor on a remote run, `cli:<user>@<host>` (docs/41 A1). Already
-# in the tree through sqlx (same version resolves), so the direct edge costs no code.
-whoami = { version = "1", default-features = false }
 # The admin session cookie's HMAC-SHA256 (docs/48). Both are already in the tree through
 # swiss-core's hkdf (same versions resolve), so the direct edges cost no code.
 hmac = { version = "0.13", default-features = false }

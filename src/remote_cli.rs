@@ -1605,8 +1605,11 @@ mod tests {
             !actor.contains('@'),
             "no machine identity in the record: {actor}"
         );
+        let login = std::env::var("USERNAME")
+            .or_else(|_| std::env::var("USER"))
+            .unwrap_or_default();
         assert!(
-            !actor.contains(&whoami::username()),
+            login.is_empty() || !actor.contains(&login),
             "the login name must not ride along"
         );
     }
