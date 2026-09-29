@@ -72,8 +72,19 @@ import { field } from "./ui/form.js";
  *  here rather than in any store. */
 function collapseKey(scope: string): string { return "swiss.groups." + scope + ".collapsed"; }
 
+/** The fold map of one scope. Prototype-free: its keys are names people and keyspaces choose,
+ *  and on a plain object `collapsed["constructor"]` answered Object's constructor - a group or
+ *  a redis namespace called `constructor`, `toString` or `__proto__` read as folded and could
+ *  never be opened (2026-09-29). */
 function loadCollapsed(scope: string): Record<string, boolean> {
-  try { return JSON.parse(localStorage.getItem(collapseKey(scope)) as string) || {}; } catch (e) { return {}; }
+  const map = Object.create(null) as Record<string, boolean>;
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(collapseKey(scope)) as string);
+    if (saved && typeof saved === "object") {
+      Object.keys(saved).forEach((k: string): void => { map[k] = !!(saved as Record<string, unknown>)[k]; });
+    }
+  } catch (e) { /* unreadable: nothing folded */ }
+  return map;
 }
 function saveCollapsed(scope: string, map: Record<string, boolean>): void {
   try { localStorage.setItem(collapseKey(scope), JSON.stringify(map)); } catch (e) { /* full or blocked */ }

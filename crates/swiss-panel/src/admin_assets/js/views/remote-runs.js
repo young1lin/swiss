@@ -66,13 +66,21 @@ let live = {}                                  ; // runId -> { text, cursor } fo
 let contents = {}                                    ; // runId -> a write's unsealed body while Show is on
 let liveTimer = null                                         ;
 let painted = "";
+/* Which visit of this page is on screen (2026-09-29). Every await below can outlive the visit
+   that started it - a cancel waits for the run to STOP, which is seconds - and render() fills
+   #pane, which by then may belong to another page: Cancel, then a click to Logs, and the Runs
+   list painted itself over Logs when the stop came back. mount and unmount both move the
+   number; an answer carrying an older one writes nothing and paints nothing. */
+let visit = 0;
+let onScreen = false;
 
-async function load() {
+async function load(v        ) {
   const q = "/api/remote/runs?limit=" + PAGE +
     (cursors[page] ? "&before=" + cursors[page] : "") +
     (target ? "&target=" + encodeURIComponent(target) : "");
   const j = await apiJson                       (q);
   if (!j) return false; // apiJson toasted; keep the last paint
+  if (v !== visit) return false; // a visit that has ended: its answer is nobody's
   runs = j.runs                      || [];
   active = j.active                      || [];
   nextBefore = j.nextBefore || null;
@@ -348,7 +356,9 @@ async function loadBody(id        , more         )                {
   const b = bodies[id];
   if (b && !more) return;
   const after = b && !("gone" in b) ? b.next : 0;
+  const v = visit;
   const j = await apiJson                    ("/api/remote/runs/" + id + "/output?after=" + after + "&max=131072");
+  if (v !== visit) return;
   if (!j) { bodies[id] = { gone: true }; repaintBody(id); return; }
   bodies[id] = {
     text: (b && !("gone" in b) ? b.text : "") + (j.output || ""),
@@ -364,8 +374,9 @@ async function loadBody(id        , more         )                {
 async function pullLive(id        )                {
   const l = live[id] || (live[id] = { text: "", cursor: 0 });
   const had = !!l.text;
+  const v = visit;
   const j = await apiJson                   ("/api/runs/" + id + "/output?after=" + l.cursor + "&max=131072");
-  if (!j) return;
+  if (!j || v !== visit) return;
   if (j.output) {
     l.text += j.output;
     if (l.text.length > LIVE_TAIL_MAX) {
@@ -423,14 +434,17 @@ async function cancelRun(id        )                {
   if (canceling[id]) return; // a second click would be a second wait for the same stop
   canceling[id] = true;
   repaintBody(id); // the button says what it is doing, before the request that takes the time
+  const v = visit;
   let j          = null;
   try {
     j = await apiJson("/api/runs/" + id + "/cancel", { method: "POST" });
   } finally {
     delete canceling[id];
   }
-  if (!j) { repaintBody(id); return; } // apiJson toasted; the button comes back
+  if (!j) { if (v === visit) repaintBody(id); return; } // apiJson toasted; the button comes back
+  // The toast is the panel's, not the page's: it is said wherever the operator is now.
   toast(tr("remoteRuns.cancelRequestedRunId", { id }));
+  if (v !== visit) return;
   await refresh();
   // The answer means the run has STOPPED, so this row is a recorded one now: its output has
   // to come from the record, or the open body sits on the loading spinner until the page is
@@ -545,8 +559,11 @@ async function step(delta        )                {
 }
 
 export async function mount() {
+  onScreen = true;
+  const v = ++visit;
   await loadTargets();
-  if (!(await load())) return;
+  if (v !== visit) return;
+  if (!(await load(v))) return;
   render();
   $("pane").onclick = (event            )       => {
     const t = targetEl(event);
@@ -598,7 +615,9 @@ export async function mount() {
 }
 
 export async function refresh() {
-  if (!(await load())) return;
+  if (!onScreen) return; // a late continuation of a visit that has ended
+  const v = visit;
+  if (!(await load(v))) return;
   // A poll that changed nothing repaints nothing: open rows keep their nodes and the
   // output someone is reading stays where it is (the Traffic discipline).
   if (signature() === painted) return;
@@ -611,6 +630,8 @@ export async function refresh() {
 export async function poll() { await refresh(); }
 export function countText() { return usage.runs ? trn(usage.runs, "remoteRuns.nRuns.one", "remoteRuns.nRuns.other") : ""; }
 export function unmount() {
+  onScreen = false;
+  visit++;
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   // A return visit starts on page 0 with no filter: the record moved on while the page
   // was away, so a stale cursor or filter would show a stale slice of it.

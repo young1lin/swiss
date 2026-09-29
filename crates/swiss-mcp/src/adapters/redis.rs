@@ -727,8 +727,11 @@ fn map_get<'a>(map: &'a [(String, Value)], key: &str) -> Option<&'a Value> {
 /// One argument of a command as the syntax line spells it (docs/50 §2.1). The shapes come
 /// straight from COMMAND DOCS' own vocabulary: a `pure-token` IS its token (NX), a `oneof`
 /// is its children separated by |, a `block` is its children in order, and anything else is
-/// its token (if it has one) followed by its name. `optional` wraps in brackets and
-/// `multiple` says so once — `key [key ...]`, the way redis' own documentation writes it.
+/// its name. Any of the last three may carry a token, which leads it: `[LIMIT offset count]`
+/// is a block, `STREAMS key [key ...] id [id ...]` too, and dropping the token there printed
+/// `[offset count]`. `optional` wraps in brackets; `multiple` repeats the part after the
+/// token (`[WEIGHTS weight [weight ...]]`), and `multiple_token` repeats the token with it
+/// (`[GET pattern [GET pattern ...]]`) — the way redis' own documentation writes each.
 /// Pure, and depth-bounded: a malformed nested spec cannot recurse for ever.
 fn arg_syntax(arg: &Value, depth: usize) -> String {
     if depth > 6 {
@@ -743,6 +746,7 @@ fn arg_syntax(arg: &Value, depth: usize) -> String {
         .unwrap_or_default();
     let optional = flags.iter().any(|f| f == "optional");
     let multiple = flags.iter().any(|f| f == "multiple");
+    let multiple_token = flags.iter().any(|f| f == "multiple_token");
     let children: Vec<String> = map_get(&map, "arguments")
         .and_then(Value::as_array)
         .map(|items| {
@@ -753,23 +757,35 @@ fn arg_syntax(arg: &Value, depth: usize) -> String {
                 .collect()
         })
         .unwrap_or_default();
-    let body = match kind.as_str() {
-        "pure-token" => token.clone().unwrap_or(name),
-        "oneof" => children.join("|"),
-        "block" => children.join(" "),
-        _ => match token {
-            Some(t) if !t.is_empty() => format!("{t} {name}"),
+    let token = token.filter(|t| !t.is_empty());
+    let body = if kind == "pure-token" {
+        let t = token.unwrap_or(name);
+        if multiple {
+            format!("{t} [{t} ...]")
+        } else {
+            t
+        }
+    } else {
+        let inner = match kind.as_str() {
+            "oneof" => children.join("|"),
+            "block" => children.join(" "),
             _ => name,
-        },
+        };
+        match token {
+            _ if inner.is_empty() => token.unwrap_or_default(),
+            Some(t) if multiple && multiple_token => {
+                let unit = format!("{t} {inner}");
+                format!("{unit} [{unit} ...]")
+            }
+            Some(t) if multiple => format!("{t} {inner} [{inner} ...]"),
+            Some(t) => format!("{t} {inner}"),
+            None if multiple => format!("{inner} [{inner} ...]"),
+            None => inner,
+        }
     };
     if body.is_empty() {
         return String::new();
     }
-    let body = if multiple {
-        format!("{body} [{body} ...]")
-    } else {
-        body
-    };
     if optional {
         format!("[{body}]")
     } else {
@@ -883,17 +899,68 @@ fn push_command_info(reply: &Value, parent: &str, out: &mut Vec<Value>, depth: u
         } else {
             format!("{parent} {leaf}")
         };
+        let specs: Vec<Value> = cells
+            .get(8)
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(parse_key_spec).collect())
+            .unwrap_or_default();
         out.push(json!({
             "name": name.clone(),
             "arity": value_i64(&cells[1]),
             "firstKey": value_i64(&cells[3]),
             "lastKey": value_i64(&cells[4]),
             "step": value_i64(&cells[5]),
+            "keySpecs": specs,
         }));
         if let Some(subs) = cells.get(9) {
             push_command_info(subs, &name, out, depth + 1);
         }
     }
+}
+
+/// One key specification (redis 7, the ninth cell of a COMMAND INFO row) in the compact form
+/// the console evaluates: where the key search BEGINS - at a fixed argument (`index`) or after
+/// a keyword (`keyword`, e.g. XREAD's STREAMS) - and how the keys are FOUND from there - a
+/// `range` (last key, step, and for a key list that runs to the end a `limit` that keeps only
+/// its first 1/limit, which is how XREAD's keys stop where its ids start) or a `keynum`
+/// (ZUNION's and EVAL's count argument). These are what make the keys of XREAD, ZUNION,
+/// EVAL, LMPOP and friends completable: their legacy first/last/step say "no key" because
+/// the keys move. A spec of a kind redis calls `unknown` is dropped - no guess is offered
+/// where the server itself does not know. Pure.
+fn parse_key_spec(spec: &Value) -> Option<Value> {
+    let map = resp_map(spec);
+    let begin = resp_map(map_get(&map, "begin_search")?);
+    let find = resp_map(map_get(&map, "find_keys")?);
+    let begin_type = map_get(&begin, "type").map(value_string)?;
+    let find_type = map_get(&find, "type").map(value_string)?;
+    let bspec = resp_map(map_get(&begin, "spec").unwrap_or(&Value::Null));
+    let fspec = resp_map(map_get(&find, "spec").unwrap_or(&Value::Null));
+    let num = |m: &[(String, Value)], k: &str| map_get(m, k).map(value_i64).unwrap_or(0);
+    let begin = match begin_type.as_str() {
+        "index" => json!({ "type": "index", "index": num(&bspec, "index") }),
+        "keyword" => json!({
+            "type": "keyword",
+            "keyword": map_get(&bspec, "keyword").map(value_string).unwrap_or_default(),
+            "startfrom": num(&bspec, "startfrom"),
+        }),
+        _ => return None,
+    };
+    let find = match find_type.as_str() {
+        "range" => json!({
+            "type": "range",
+            "lastkey": num(&fspec, "lastkey"),
+            "keystep": num(&fspec, "keystep"),
+            "limit": num(&fspec, "limit"),
+        }),
+        "keynum" => json!({
+            "type": "keynum",
+            "keynumidx": num(&fspec, "keynumidx"),
+            "firstkey": num(&fspec, "firstkey"),
+            "keystep": num(&fspec, "keystep"),
+        }),
+        _ => return None,
+    };
+    Some(json!({ "begin": begin, "find": find }))
 }
 
 /// Merge the two answers into one catalog (docs/50 §2.1). DOCS carries the words (summary,
@@ -909,6 +976,7 @@ pub fn merge_command_catalog(docs: Vec<Value>, info: Vec<Value>) -> Vec<Value> {
             d["firstKey"] = i["firstKey"].clone();
             d["lastKey"] = i["lastKey"].clone();
             d["step"] = i["step"].clone();
+            d["keySpecs"] = i["keySpecs"].clone();
         } else if name.contains(' ') {
             // A subcommand inherits its container's key positions: COMMAND INFO reports the
             // container alone, and "XINFO STREAM key" takes its key exactly where XINFO does.
@@ -941,6 +1009,7 @@ pub fn merge_command_catalog(docs: Vec<Value>, info: Vec<Value>) -> Vec<Value> {
             "firstKey": i["firstKey"].clone(),
             "lastKey": i["lastKey"].clone(),
             "step": i["step"].clone(),
+            "keySpecs": i["keySpecs"].clone(),
         }));
     }
     out.sort_by(|a, b| value_string(&a["name"]).cmp(&value_string(&b["name"])));
@@ -962,16 +1031,20 @@ pub async fn read_command_catalog(handle: &RedisHandle) -> Result<Value, String>
         Ok(r) => r.into_iter().next().unwrap_or(Value::Null),
         Err(_) => Value::Null, // pre-7.0, or a proxy: INFO alone still makes a console
     };
-    let info = handle
-        .pipeline(&info_cmd)
-        .await?
-        .into_iter()
-        .next()
-        .unwrap_or(Value::Null);
-    let catalog = merge_command_catalog(parse_command_docs(&docs), parse_command_info(&info));
+    // An ACL can grant one introspection command and not the other: DOCS alone is still a
+    // catalog of names and syntax, so INFO failing only fails the call when DOCS did too.
+    let info = match handle.pipeline(&info_cmd).await {
+        Ok(r) => r.into_iter().next().unwrap_or(Value::Null),
+        Err(e) if docs.is_null() => return Err(e),
+        Err(_) => Value::Null,
+    };
+    let documented = parse_command_docs(&docs);
+    let has_docs = !documented.is_empty();
+    let catalog = merge_command_catalog(documented, parse_command_info(&info));
     Ok(json!({
         "commands": catalog,
-        "documented": !docs.is_null(),
+        // True only when DOCS gave rows: an answer that parsed to nothing documents nothing.
+        "documented": has_docs,
     }))
 }
 
@@ -1317,6 +1390,13 @@ pub struct RedisHandle {
 
 impl RedisHandle {
     pub async fn call(&self, command: &str, args: &[&str]) -> Result<Value, String> {
+        self.call_raw(command, args).await.map(redis_value_to_json)
+    }
+
+    /// The reply as redis sent it: bytes stay bytes. A key's name is binary-safe in redis and
+    /// not necessarily UTF-8 - Spring's JDK serializer writes `\xac\xed\x00\x05...` - and the
+    /// JSON form turns such a name into U+FFFD, a name no command can address (2026-09-29).
+    pub async fn call_raw(&self, command: &str, args: &[&str]) -> Result<redis::Value, String> {
         let mut conn = self.manager.clone();
         let mut cmd = redis::cmd(command);
         for arg in args {
@@ -1330,7 +1410,6 @@ impl RedisHandle {
         )
         .await
         .map_err(|_| format!("{command} timed out after 10s"))?
-        .map(redis_value_to_json)
         .map_err(|e| e.to_string())
     }
 
@@ -1338,12 +1417,21 @@ impl RedisHandle {
     /// in order — ioredis's `pipeline()`, which cut a 200-key Data-view page from ~880 ms to
     /// tens of ms versus serialized TYPE/TTL calls. The same 10s commandTimeout bounds it.
     pub async fn pipeline(&self, commands: &[(String, Vec<String>)]) -> Result<Vec<Value>, String> {
+        self.pipeline_args(commands).await
+    }
+
+    /// `pipeline` over any byte-like arguments: the key walk asks TYPE and TTL of the exact
+    /// bytes SCAN named, UTF-8 or not.
+    pub async fn pipeline_args<A: AsRef<[u8]> + Sync>(
+        &self,
+        commands: &[(String, Vec<A>)],
+    ) -> Result<Vec<Value>, String> {
         let mut conn = self.manager.clone();
         let mut pipe = redis::pipe();
         for (command, args) in commands {
             let mut cmd = pipe.cmd(command.as_str());
             for arg in args {
-                cmd = cmd.arg(arg.as_str());
+                cmd = cmd.arg(arg.as_ref());
             }
         }
         tokio::time::timeout(
@@ -1355,6 +1443,29 @@ impl RedisHandle {
         .map_err(|e| e.to_string())
         .map(|replies| replies.into_iter().map(redis_value_to_json).collect())
     }
+}
+
+/// A key name that is not UTF-8, printed the way redis-cli prints it (sdscatrepr): quoted,
+/// printable ASCII as itself, `\\` and `\"` escaped, the usual control escapes, every other
+/// byte as `\xHH`. Display only - the panel cannot address such a key by this text.
+pub fn redis_cli_repr(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() + 2);
+    out.push('"');
+    for &b in bytes {
+        match b {
+            b'\\' => out.push_str("\\\\"),
+            b'"' => out.push_str("\\\""),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            0x07 => out.push_str("\\a"),
+            0x08 => out.push_str("\\b"),
+            0x20..=0x7e => out.push(b as char),
+            _ => out.push_str(&format!("\\x{b:02x}")),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn int_of(v: &Value) -> Result<i64, String> {
@@ -2130,6 +2241,105 @@ fn a_filtered_window_reports_how_far_it_walked() {
     }
 
     #[test]
+    fn a_token_leads_its_block_and_its_oneof_and_repeats_only_when_redis_says_so() {
+        // 2026-09-29: the first version dropped the token of a block, so ZRANGEBYSCORE read
+        // `[offset count]` and XREAD lost STREAMS. The four shapes below are redis 7's own
+        // COMMAND DOCS for ZRANGEBYSCORE's LIMIT, XREAD's STREAMS, ZINTER's WEIGHTS and
+        // AGGREGATE, and SORT's GET - one per rule.
+        let docs = json!([
+            "zrangebyscore", ["summary", "s", "group", "sorted-set", "arguments", [
+                ["name", "key", "type", "key"],
+                ["name", "min", "type", "double"],
+                ["name", "max", "type", "double"],
+                ["name", "withscores", "type", "pure-token", "token", "WITHSCORES", "flags", ["optional"]],
+                ["name", "limit", "type", "block", "token", "LIMIT", "flags", ["optional"], "arguments", [
+                    ["name", "offset", "type", "integer"],
+                    ["name", "count", "type", "integer"],
+                ]],
+            ]],
+            "xread", ["summary", "s", "group", "stream", "arguments", [
+                ["name", "count", "type", "integer", "token", "COUNT", "flags", ["optional"]],
+                ["name", "streams", "type", "block", "token", "STREAMS", "arguments", [
+                    ["name", "key", "type", "key", "flags", ["multiple"]],
+                    ["name", "id", "type", "string", "flags", ["multiple"]],
+                ]],
+            ]],
+            "zinter", ["summary", "s", "group", "sorted-set", "arguments", [
+                ["name", "numkeys", "type", "integer"],
+                ["name", "key", "type", "key", "flags", ["multiple"]],
+                ["name", "weight", "type", "integer", "token", "WEIGHTS", "flags", ["optional", "multiple"]],
+                ["name", "aggregate", "type", "oneof", "token", "AGGREGATE", "flags", ["optional"], "arguments", [
+                    ["name", "sum", "type", "pure-token", "token", "SUM"],
+                    ["name", "min", "type", "pure-token", "token", "MIN"],
+                    ["name", "max", "type", "pure-token", "token", "MAX"],
+                ]],
+            ]],
+            "sort", ["summary", "s", "group", "generic", "arguments", [
+                ["name", "key", "type", "key"],
+                ["name", "pattern", "type", "pattern", "token", "GET", "flags", ["optional", "multiple", "multiple_token"]],
+            ]],
+        ]);
+        let rows = parse_command_docs(&docs);
+        let syntax = |n: &str| {
+            value_string(&rows.iter().find(|r| r["name"] == json!(n)).expect(n)["syntax"])
+        };
+        assert_eq!(syntax("ZRANGEBYSCORE"), "key min max [WITHSCORES] [LIMIT offset count]");
+        assert_eq!(syntax("XREAD"), "[COUNT count] STREAMS key [key ...] id [id ...]");
+        assert_eq!(
+            syntax("ZINTER"),
+            "numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]",
+            "multiple repeats the value, not the token"
+        );
+        assert_eq!(syntax("SORT"), "key [GET pattern [GET pattern ...]]", "multiple_token repeats both");
+    }
+
+    #[test]
+    fn key_specs_say_where_moving_keys_are_and_an_unknown_spec_is_dropped() {
+        // 2026-09-29: XREAD's keys follow STREAMS, ZUNION's follow a count - their legacy
+        // first/last/step say nothing. These are the specs redis 7 answers, verbatim in shape.
+        let info = json!([
+            ["xread", -4, ["readonly"], 0, 0, 0, ["@read"], [], [
+                ["flags", ["RO", "access"],
+                 "begin_search", ["type", "keyword", "spec", ["keyword", "STREAMS", "startfrom", 1]],
+                 "find_keys", ["type", "range", "spec", ["lastkey", -1, "keystep", 1, "limit", 2]]],
+            ]],
+            ["zunion", -3, ["readonly"], 0, 0, 0, ["@read"], [], [
+                ["flags", ["RO", "access"],
+                 "begin_search", ["type", "index", "spec", ["index", 1]],
+                 "find_keys", ["type", "keynum", "spec", ["keynumidx", 0, "firstkey", 1, "keystep", 1]]],
+            ]],
+            ["odd", -2, [], 0, 0, 0, [], [], [
+                ["flags", [], "begin_search", ["type", "unknown", "spec", []],
+                 "find_keys", ["type", "range", "spec", ["lastkey", 0, "keystep", 1, "limit", 0]]],
+                ["flags", []], // no begin, no find: not a spec at all
+            ]],
+            ["get", 2, ["readonly"], 1, 1, 1],
+        ]);
+        let parsed = parse_command_info(&info);
+        let by = |n: &str| parsed.iter().find(|r| r["name"] == json!(n)).expect(n).clone();
+        assert_eq!(
+            by("XREAD")["keySpecs"],
+            json!([{ "begin": { "type": "keyword", "keyword": "STREAMS", "startfrom": 1 },
+                     "find": { "type": "range", "lastkey": -1, "keystep": 1, "limit": 2 } }])
+        );
+        assert_eq!(
+            by("ZUNION")["keySpecs"],
+            json!([{ "begin": { "type": "index", "index": 1 },
+                     "find": { "type": "keynum", "keynumidx": 0, "firstkey": 1, "keystep": 1 } }])
+        );
+        assert_eq!(by("ODD")["keySpecs"], json!([]), "unknown and shapeless specs are not guessed");
+        assert_eq!(by("GET")["keySpecs"], json!([]), "a redis 6 row has none");
+        // And the merge carries them onto the catalog row the console reads.
+        let merged = merge_command_catalog(
+            parse_command_docs(&json!(["xread", ["summary", "Read", "group", "stream"]])),
+            parsed,
+        );
+        let xread = merged.iter().find(|r| r["name"] == json!("XREAD")).expect("XREAD");
+        assert_eq!(xread["keySpecs"][0]["begin"]["keyword"], json!("STREAMS"));
+        assert_eq!(xread["summary"], json!("Read"));
+    }
+
+    #[test]
     fn a_catalog_survives_a_server_that_documents_nothing() {
         // docs/50 §2.1: redis 6 has no COMMAND DOCS, and some proxies answer neither in the
         // shape the spec promises. Junk in is an empty catalog, never a panic.
@@ -2154,5 +2364,16 @@ fn a_filtered_window_reports_how_far_it_walked() {
             read_window(&json!({ "offset": "40", "limit": "10" })),
             (40, 10)
         );
+    }
+
+    #[test]
+    fn a_name_that_is_not_utf8_prints_as_redis_cli_prints_it() {
+        // Spring Data Redis' JDK serializer: AC ED 00 05, `t`, a two-byte length, the text.
+        assert_eq!(
+            redis_cli_repr(b"\xac\xed\x00\x05t\x00\x04user"),
+            r#""\xac\xed\x00\x05t\x00\x04user""#
+        );
+        assert_eq!(redis_cli_repr(b"a\"b\\c\n\r\t\x07\x08\x7f"), r#""a\"b\\c\n\r\t\a\b\x7f""#);
+        assert_eq!(redis_cli_repr(b""), r#""""#);
     }
 }

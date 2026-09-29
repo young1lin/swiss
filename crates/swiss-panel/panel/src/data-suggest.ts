@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 
-import type { ApiDbCompletionItem, ApiDbCompletionReply, ApiRedisCommand, ApiRedisCommandsResponse } from "./types/api.js";
+import type { ApiDbCompletionItem, ApiDbCompletionReply, ApiRedisCommand, ApiRedisCommandsResponse, ApiRedisKeySpec } from "./types/api.js";
 import { $, apiJson, el } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbSqlPaint } from "./data-filters.js";
 import { dbConn, dbSqlTab } from "./db-state.js";
+import { dbKeyShown } from "./data-tree.js";
+// docs/50: the same lexer the gateway splits a console line with (vendored, MIT).
+import { split } from "./vendor/shlex/3.0.0/index.js";
 
 
 /* --- redis completion (2026-09-28; rebuilt on the server's own catalog, docs/50) --------------- */
@@ -76,25 +79,81 @@ const REDIS_TEMPLATES: { group: string; line: string }[] = [
   { group: "server", line: "DBSIZE" },
 ];
 
-/** The word the redis console would complete: a key is a byte string, so its run takes the
- *  characters a key name is made of - colon groups, dashes, dots, and * for a pattern - where
- *  the SQL class takes identifier characters. Pure. */
-function dbRedisWordAt(text: unknown, caret: number): string {
-  const s = String(text).slice(0, caret);
-  const m = s.match(/[A-Za-z0-9_.:*?[\]{}@$#+-]+$/);
-  return m ? m[0] : "";
+/** Past this many characters a console line is data being pasted, not a command being typed:
+ *  it is counted by blanks, not shlex, and nothing is offered on it (2026-09-29 - see
+ *  dbRedisWordSpan for what a long quoted value used to cost per keystroke). */
+const REDIS_LINE_MAX = 65536;
+
+/** How far back from the caret a word's raw start is looked for. A word longer than this is a
+ *  pasted value; nothing completes it, so its span need not be exact. */
+const REDIS_SPAN_LOOKBACK = 4096;
+
+/** shlex's split of a half-typed piece of line: an open quote is closed for the count (the
+ *  caret is then inside that quoted word). null when no closing quote makes it readable - a
+ *  trailing backslash. Pure. */
+function dbRedisSplitOpen(s: string): { words: string[]; open: boolean } | null {
+  for (const close of ["", "\"", "'"]) {
+    try {
+      return { words: split(s + close), open: close !== "" };
+    } catch (e) { /* not closed by this quote; try the next */ }
+  }
+  return null;
 }
 
-/** The words of the line the caret sits on, and which of them the caret is in. A console holds
- *  several lines; a command is one of them, and completing against the whole box would read the
- *  line above as part of this command. Pure. */
+/** The words of the line the caret sits on, and which of them the caret is in, split the way
+ *  the SERVER will split that line when it runs: shlex on both sides (the console route since
+ *  27087bb, the vendored JS port here), so `MSET "a b" 1 user:` is four words and the key
+ *  positions count exactly the words redis will see. A console line is usually half-typed: an
+ *  open quote is closed for the count (the caret is then inside that quoted word), and a line
+ *  shlex cannot read at all - a trailing backslash - falls back to whitespace. Leading blanks
+ *  are not a word. Pure. */
 export function dbRedisLineAt(text: string, caret: number): { words: string[]; index: number } {
   const upto = text.slice(0, caret);
   const line = upto.slice(upto.lastIndexOf("\n") + 1);
-  const words = line.split(/\s+/);
-  // A line ending in a space puts the caret on a new, empty word - which is exactly where a
-  // token or the next key should be offered.
-  return { words: words.filter((w: string, i: number): boolean => { return !!w || i === words.length - 1; }), index: Math.max(0, words.length - 1) };
+  const read = line.length > REDIS_LINE_MAX ? null : dbRedisSplitOpen(line);
+  const words = read ? read.words : line.trim() ? line.trim().split(/\s+/) : [];
+  const open = !!read && read.open;
+  // A caret after whitespace stands on a new, empty word - exactly where the next key or
+  // token is offered - unless that whitespace is inside an open quote or escaped (`my\ `).
+  const blankEnd = /\s$/.test(line) && !/(^|[^\\])(\\\\)*\\\s$/.test(line);
+  if (!words.length || (!open && blankEnd)) words.push("");
+  return { words: words, index: words.length - 1 };
+}
+
+/** The word the caret is completing, as the server will read it, and where its RAW text
+ *  starts - the span a pick replaces. A key's name is whatever bytes it holds (用户:1, a
+ *  space, a quote), so the word is the shlex word the line splits into, not a run of
+ *  key-looking characters: that run made `GET 用户` offer every key and paste the pick after
+ *  用户 (2026-09-29). The raw start is the nearest blank-led point before the caret from which
+ *  the rest splits into exactly that one word - a blank inside an open quote or after a
+ *  backslash starts no such run. Only that tail is split, never the line before it: splitting
+ *  the whole prefix once per blank inside a long quoted value (a pasted JSON) stalled the
+ *  console for minutes a keystroke. A tail that no split reads, or none within
+ *  REDIS_SPAN_LOOKBACK, falls back to the blank-bounded run, as dbRedisLineAt does. Pure. */
+export function dbRedisWordSpan(text: string, caret: number): { start: number; word: string } {
+  const from = text.lastIndexOf("\n", caret - 1) + 1;
+  const line = dbRedisLineAt(text, caret);
+  const word = line.words[line.index] || "";
+  const floor = Math.max(from, caret - REDIS_SPAN_LOOKBACK);
+  for (let p = caret; p >= floor; p--) {
+    if (p > from && !/\s/.test(text.charAt(p - 1))) continue;
+    if (p === caret) {
+      if (word === "") return { start: p, word: word };
+      continue;
+    }
+    const tail = dbRedisSplitOpen(text.slice(p, caret));
+    if (tail && tail.words.length === 1 && tail.words[0] === word) return { start: p, word: word };
+  }
+  const run = text.slice(from, caret).match(/\S*$/);
+  return { start: caret - (run ? run[0].length : 0), word: word };
+}
+
+/** A key as the console must type it: bare when a split reads it back unchanged, else in
+ *  double quotes with its `"` and `\` escaped - the one form the panel's splitter, the
+ *  server's and redis-cli all read back as the same bytes. The empty name is `""`. Pure. */
+export function dbRedisQuoteArg(s: string): string {
+  if (s && !/[\s"'\\]/.test(s)) return s;
+  return "\"" + s.replace(/[\\"]/g, "\\$&") + "\"";
 }
 
 /** The catalog row for the command a line names, subcommands included: `XINFO STREAM` is one
@@ -110,19 +169,89 @@ export function dbRedisCmdOf(words: string[], cmds: RedisCmd[]): RedisCmd | null
   return (two ? byName(two) : undefined) || byName(words[0].toUpperCase()) || null;
 }
 
-/** Whether the word at `index` of a command's line is a KEY argument, by the three numbers
- *  redis-cli reads for the same purpose: first key, last key (negative counts back from the
- *  end) and step. Word 0 is the command itself, so the positions are 1-based over the line.
+/** Whether one key specification (redis 7) makes word `index` of a line a key. The line is
+ *  usually half-typed, so "the end of the arguments" is the end of what is typed so far - a
+ *  range that runs to the end grows as the operator types, and XREAD's `limit 2` keeps the
+ *  first half of what follows STREAMS as keys (the rest are ids), rounding up so the one word
+ *  being typed after STREAMS is a key. Pure. */
+function dbRedisSpecKeyAt(spec: ApiRedisKeySpec, words: string[], index: number): boolean {
+  const argc = words.length;
+  let start = -1;
+  const b = spec.begin;
+  if (b.type === "index") {
+    start = b.index;
+  } else {
+    const kw = b.keyword.toUpperCase();
+    // A keyword found only BEFORE the caret's word counts: the word being typed is not yet the
+    // keyword it may become.
+    if (b.startfrom >= 0) {
+      for (let j = b.startfrom; j < index; j++) { if (words[j].toUpperCase() === kw) { start = j + 1; break; } }
+    } else {
+      for (let j = Math.min(index - 1, argc + b.startfrom); j >= 1; j--) { if (words[j].toUpperCase() === kw) { start = j + 1; break; } }
+    }
+  }
+  if (start < 1 || index < start) return false;
+  const f = spec.find;
+  const step = f.keystep > 0 ? f.keystep : 1;
+  if (f.type === "range") {
+    let last: number;
+    if (f.lastkey >= 0) last = start + f.lastkey;
+    else if (f.lastkey === -1 && f.limit > 1) last = start + Math.ceil((argc - start) / f.limit) - 1;
+    else last = argc + f.lastkey;
+    return index <= last && (index - start) % step === 0;
+  }
+  // keynum: the count sits at start + keynumidx and must already be typed, as a number.
+  const at = start + f.keynumidx;
+  if (at >= index) return false;
+  const n = Number(words[at]);
+  if (!Number.isInteger(n) || n < 1) return false;
+  const first = start + f.firstkey;
+  const last = first + (n - 1) * step;
+  return index >= first && index <= last && (index - first) % step === 0;
+}
+
+/** Whether word `index` lies past a keyword that opens a list running to the END of the line
+ *  (XREAD's STREAMS, MIGRATE's KEYS): a key spec that begins at a keyword and whose range has
+ *  lastkey -1. Past it only keys and their values follow - no option token is valid any more,
+ *  so none is offered. With `split`, only the lists that are keys-then-values (`limit` > 1),
+ *  where a word may be either while the line is unfinished. Pure. */
+function dbRedisPastTail(cmd: RedisCmd, index: number, words: string[], split: boolean): boolean {
+  return (cmd.keySpecs || []).some((sp: ApiRedisKeySpec): boolean => {
+    const f = sp.find;
+    if (f.type !== "range" || f.lastkey !== -1 || sp.begin.type !== "keyword") return false;
+    if (split && f.limit <= 1) return false;
+    const kw = sp.begin.keyword.toUpperCase();
+    for (let j = Math.max(1, sp.begin.startfrom); j < index; j++) {
+      if (words[j].toUpperCase() === kw) return true;
+    }
+    return false;
+  });
+}
+
+/** Whether word `index` MIGHT be a key where nobody can know yet: XREAD's `STREAMS a b` could
+ *  be two keys still to be followed by two ids, or one key and its id. The caller offers keys
+ *  there only when the typed prefix already matches one - an id (`0`, `$`, `>`) never does,
+ *  a key name being typed does. Pure. */
+export function dbRedisKeyMaybe(cmd: RedisCmd, index: number, words: string[]): boolean {
+  return dbRedisPastTail(cmd, index, words, true);
+}
+
+/** Whether word `index` of a command's line is a KEY argument (word 0 is the command, so the
+ *  positions count over the whole line - a subcommand's own word included, exactly as the
+ *  server's numbers assume). redis 7's key specs decide when the catalog has them: they are
+ *  exact, including the commands whose keys move. Otherwise the three legacy numbers redis-cli
+ *  reads: first key, last key (negative counts back from the end of the line) and step.
  *  Pure. */
-export function dbRedisKeyAt(cmd: RedisCmd, index: number, words: number): boolean {
+export function dbRedisKeyAt(cmd: RedisCmd, index: number, words: string[]): boolean {
+  if (index < 1) return false;
+  if (cmd.keySpecs && cmd.keySpecs.length) {
+    return cmd.keySpecs.some((sp: ApiRedisKeySpec): boolean => { return dbRedisSpecKeyAt(sp, words, index); });
+  }
   const first = cmd.firstKey || 0;
   if (first <= 0 || index < first) return false;
-  // A subcommand spends one more word on its name before its arguments start.
   const last = cmd.lastKey == null ? first : cmd.lastKey;
   const step = cmd.step && cmd.step > 0 ? cmd.step : 1;
-  // A negative last key counts from the END of the line, redis' own way: -1 is the last
-  // word (DEL takes keys all the way there), -2 the one before it.
-  const end = last < 0 ? words + last : last;
+  const end = last < 0 ? words.length + last : last;
   if (index > end) return false;
   return (index - first) % step === 0;
 }
@@ -134,9 +263,11 @@ export function dbRedisKeyAt(cmd: RedisCmd, index: number, words: number): boole
  *  other keys' names there would be noise. Pure. */
 export function dbRedisCandidates(
   text: string, caret: number, keys: string[], cmds: RedisCmd[],
-): ApiDbCompletionItem[] {
-  const prefix = dbRedisWordAt(text, caret);
+): DbSuggestItem[] {
+  const lineStart = text.lastIndexOf("\n", caret - 1) + 1;
+  if (caret - lineStart > REDIS_LINE_MAX) return [];
   const line = dbRedisLineAt(text, caret);
+  const prefix = line.words[line.index] || "";
   const item = (c: RedisCmd, label: string): ApiDbCompletionItem => {
     return {
       label: label,
@@ -172,12 +303,20 @@ export function dbRedisCandidates(
   if (!cmd) return [];
   // A key position is measured over the line as the SERVER sees it, so a subcommand's own
   // word counts exactly as the catalog's key positions already assume.
-  if (dbRedisKeyAt(cmd, line.index, line.words.length)) {
+  if (dbRedisKeyAt(cmd, line.index, line.words) ||
+      (prefix && dbRedisKeyMaybe(cmd, line.index, line.words) && keys.some((k: string): boolean => { return k.startsWith(prefix); }))) {
+    // A name holding a line break cannot be typed on one console line, so it is not offered
+    // (the line would run as two commands); every other name goes in as the server reads it.
     return keys
-      .filter((k: string): boolean => { return k.startsWith(prefix); })
+      .filter((k: string): boolean => { return k.startsWith(prefix) && !/[\r\n]/.test(k); })
       .slice(0, SUGGEST_MAX_ITEMS)
-      .map((k: string): ApiDbCompletionItem => { return { label: k, kind: "key" }; });
+      .map((k: string): DbSuggestItem => {
+        return { label: dbKeyShown(k), kind: "key", insert: dbRedisQuoteArg(k) };
+      });
   }
+  // Past STREAMS (or any keyword that opens a to-the-end key list) only keys and values
+  // follow: COUNT and BLOCK there would be offers redis refuses.
+  if (dbRedisPastTail(cmd, line.index, line.words, false)) return [];
   const typed = line.words.map((w: string): string => { return w.toUpperCase(); });
   return (cmd.tokens || [])
     .filter((t: string): boolean => { return t.startsWith(up) && typed.indexOf(t) < 0; })
@@ -199,7 +338,10 @@ export function dbRedisSignature(text: string, caret: number, cmds: RedisCmd[]):
 /** The keys the sidebar has walked so far - one half of the completion's sources. */
 function dbLoadedKeys(): string[] {
   const r = dbConn().redis;
-  return r && r.keys ? r.keys.map((k: { key: string }): string => { return k.key; }) : [];
+  // A name that is not UTF-8 cannot be typed as its printed text, so it is not offered.
+  return r
+    ? r.keys.filter((k: { binary?: boolean }): boolean => { return !k.binary; }).map((k: { key: string }): string => { return k.key; })
+    : [];
 }
 
 /** The catalog this connection answered with, or an empty one until it has. */
@@ -236,7 +378,10 @@ export async function dbRedisLoadCommands(): Promise<void> {
 const SUGGEST_DEBOUNCE_MS = 150;
 const SUGGEST_MAX_ITEMS = 8;
 let dbSuggestTimer: ReturnType<typeof setTimeout> | null = null;
-let dbSuggestItems: ApiDbCompletionItem[] = [];
+/** A completion row: what it shows, and - when that is not what gets typed - what does (a
+ *  key named `my key` goes in as `"my key"`, or the line would hand redis two words). */
+type DbSuggestItem = ApiDbCompletionItem & { insert?: string };
+let dbSuggestItems: DbSuggestItem[] = [];
 let dbSuggestSel = -1;
 let dbSuggestPrefix = "";
 
@@ -274,7 +419,8 @@ function dbSuggestOnInput(this: HTMLTextAreaElement): void {
     const items = dbRedisCandidates(this.value, this.selectionStart || 0, dbLoadedKeys(), dbRedisCommands());
     if (!items.length) { dbSuggestHide(); return; }
     dbSuggestItems = items;
-    dbSuggestPrefix = dbRedisWordAt(this.value, this.selectionStart || 0);
+    const caret = this.selectionStart || 0;
+    dbSuggestPrefix = this.value.slice(dbRedisWordSpan(this.value, caret).start, caret);
     dbSuggestSel = -1;
     dbSuggestRender(this);
     return;
@@ -366,7 +512,7 @@ function dbSuggestPaintSel(): void {
 function dbSuggestAccept(i: number): void {
   const ta = $<HTMLTextAreaElement>("dbSql");
   if (!ta || !dbSuggestItems[i]) { dbSuggestHide(); return; }
-  const label = String(dbSuggestItems[i].label);
+  const label = String(dbSuggestItems[i].insert ?? dbSuggestItems[i].label);
   const caret = ta.selectionStart!;
   const start = caret - dbSuggestPrefix.length;
   ta.setRangeText(label, start, caret, "end");
@@ -398,6 +544,6 @@ function dbSuggestKeys(e: KeyboardEvent): void {
 }
 
 export {
-  REDIS_TEMPLATES, dbRedisCommands, dbRedisWordAt, dbSuggestByteOffset,
+  REDIS_TEMPLATES, dbRedisCommands, dbSuggestByteOffset,
   dbSuggestHide, dbSuggestKeys, dbSuggestOnInput, dbSuggestPrefixAt,
 };

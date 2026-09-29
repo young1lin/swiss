@@ -177,6 +177,11 @@ describe("what a tab is worth (docs/42 D3)", () => {
     expect(tabs.dbTabTitle(tableTab("orders"))).toBe("orders");
     const k = freshTab("key"); k.redisKey = "session:1";
     expect(tabs.dbTabTitle(k)).toBe("session:1");
+    // The key "" is a key, not an untitled tab; a name with edge blanks shows them.
+    const empty = freshTab("key"); empty.redisKey = "";
+    expect(tabs.dbTabTitle(empty)).toBe('""');
+    const blank = freshTab("key"); blank.redisKey = " x";
+    expect(tabs.dbTabTitle(blank)).toBe('" x"');
     expect(tabs.dbTabGlyph(tableTab("t"))).toBe("table");
     expect(tabs.dbTabGlyph(k), "a key whose value has not landed is a redis key").toBe("redis");
     // Once the value lands the card wears the key's type glyph - the same one its sidebar row does.

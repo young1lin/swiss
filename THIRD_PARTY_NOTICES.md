@@ -11,7 +11,7 @@ their respective owners.
 
 ## 1. Vendored into the panel (served by the binary)
 
-The admin panel is plain ES modules embedded in the executable. Two upstream projects are
+The admin panel is plain ES modules embedded in the executable. Three upstream projects are
 vendored byte-identical under `crates/swiss-panel/src/admin_assets/js/vendor/`; each directory
 carries the upstream license text, which is embedded and shipped with the copies.
 
@@ -31,6 +31,13 @@ https://github.com/xtermjs/xterm.js — license text: `js/vendor/xterm/LICENSE`.
 license text: `js/vendor/cronstrue/LICENSE`.
 
     Copyright (c) 2017 Brady Holt
+
+### shlex 3.0.0 — MIT
+
+`shlex` 3.0.0 (`shlex.js`), the Redis console's command-line splitter.
+https://github.com/rgov/node-shlex — license text: `js/vendor/shlex/LICENSE`.
+
+    Copyright (c) 2018 Ryan Govostes
 
 ## 2. Reproduced in source
 

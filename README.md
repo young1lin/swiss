@@ -189,7 +189,7 @@ privately — swiss holds credentials, so please use it rather than a public iss
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party material and its
 terms are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md): the panel vendors xterm.js
-and its addons (MIT) and cronstrue (MIT) under `crates/swiss-panel/src/admin_assets/js/vendor/`,
+and its addons (MIT), cronstrue (MIT) and shlex (MIT) under `crates/swiss-panel/src/admin_assets/js/vendor/`,
 each directory carrying the upstream license text; the zai-vision adapter reproduces prompts
 from `@z_ai/mcp-server` (Apache-2.0, Z.AI); the binary statically links the crates the file
 tabulates.

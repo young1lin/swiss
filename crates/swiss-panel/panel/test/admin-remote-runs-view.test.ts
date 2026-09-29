@@ -479,3 +479,123 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(block(17, "Output")?.querySelector("pre")?.textContent).toBe("ok");
   });
 });
+
+/* The owner (2026-09-29): "我在 Runs 里面点取消，会有BUG，1. 点了后，没有 loading 状态内容，2. 点了两下
+   后，确实取消了，但是还得转圈，我刷新才有". The gateway's cancel waits for the run to STOP, so the POST
+   takes seconds; these park it to look at every moment of that wait - and at what happens when
+   the operator has walked away from the page before it answers. */
+describe("Cancel, while the run is stopping and after (2026-09-29)", () => {
+  let release: ((ok: boolean) => void) | null = null;
+  // The suite's own stub, read when a test runs: beforeAll installs it after this block is defined.
+  let stub: typeof fetch = globalThis.fetch;
+  const parkCancel = (): void => {
+    stub = globalThis.fetch;
+    Object.assign(globalThis, {
+      fetch: (url: string, init?: RequestInit): Promise<Response> => {
+        const u = String(url);
+        if (u === "/api/runs/18/cancel") {
+          requests.push({ path: u, method: init?.method || "GET" });
+          return new Promise((res) => {
+            release = (ok: boolean) => res({ ok, status: ok ? 200 : 409, json: () => Promise.resolve(ok ? { runId: 18, state: "canceled" } : { error: "run 18 is not running" }) } as Response);
+          });
+        }
+        return stub(url, init);
+      },
+    });
+  };
+  const cancelBtn = (): HTMLButtonElement => item(18).querySelector("[data-rcancel]") as HTMLButtonElement;
+  const liveOut = { runId: 18, state: "running", cursor: 0, nextCursor: 5, output: "tick\n", truncated: false, terminal: false };
+
+  it("says Canceling… and is disabled while the stop is on its way; a second click sends nothing", async () => {
+    serve([], [running]);
+    replies["/api/runs/18/output?after=0&max=131072"] = liveOut;
+    parkCancel();
+    try {
+      await view.mount();
+      open(18);
+      await settle();
+      cancelBtn().click();
+      await settle();
+      expect(cancelBtn().textContent).toBe("Canceling…");
+      expect(cancelBtn().disabled).toBe(true);
+      cancelBtn().click();
+      await settle();
+      expect(requests.filter((r) => r.path === "/api/runs/18/cancel"), "one POST").toHaveLength(1);
+      release!(true);
+      await settle();
+    } finally {
+      Object.assign(globalThis, { fetch: stub });
+      view.unmount();
+    }
+  });
+
+  it("a refused cancel gives the button back", async () => {
+    serve([], [running]);
+    replies["/api/runs/18/output?after=0&max=131072"] = liveOut;
+    parkCancel();
+    try {
+      await view.mount();
+      open(18);
+      await settle();
+      cancelBtn().click();
+      await settle();
+      release!(false);
+      await settle();
+      expect(cancelBtn().textContent).toBe("Cancel");
+      expect(cancelBtn().disabled).toBe(false);
+    } finally {
+      Object.assign(globalThis, { fetch: stub });
+      view.unmount();
+    }
+  });
+
+  it("once stopped, the open row reads the RECORDED output by itself - no spinner, no reload", async () => {
+    serve([], [running]);
+    replies["/api/runs/18/output?after=0&max=131072"] = liveOut;
+    parkCancel();
+    try {
+      await view.mount();
+      open(18);
+      await settle();
+      cancelBtn().click();
+      await settle();
+      // The run leaves the active set and lands in the record.
+      serve([{ ...running, state: "canceled", canceled: true, endedAt: now, ms: 900 }], []);
+      replies["/api/remote/runs/18/output?after=0&max=131072"] = { runId: 18, cursor: 0, nextCursor: 5, output: "tick\n", total: 5, terminal: true };
+      release!(true);
+      await settle();
+      await settle();
+      expect(requests.some((r) => r.path === "/api/remote/runs/18/output?after=0&max=131072"), "the record was asked").toBe(true);
+      expect(block(18, "Live output"), "the live block is gone with the live run").toBeUndefined();
+      expect(block(18, "Output")?.querySelector("pre")?.textContent, "the recorded output, not a spinner").toBe("tick\n");
+    } finally {
+      Object.assign(globalThis, { fetch: stub });
+      view.unmount();
+    }
+  });
+
+  it("walked away before the stop came back: the answer paints nothing over the page now on screen", async () => {
+    serve([], [running]);
+    replies["/api/runs/18/output?after=0&max=131072"] = liveOut;
+    parkCancel();
+    try {
+      await view.mount();
+      open(18);
+      await settle();
+      cancelBtn().click();
+      await settle();
+      view.unmount();
+      $("pane").innerHTML = '<div id="someOtherPage">Logs</div>';
+      const before = requests.length;
+      release!(true);
+      await settle();
+      await settle();
+      expect($("pane").innerHTML, "the other page is untouched").toBe('<div id="someOtherPage">Logs</div>');
+      expect(requests.slice(before).some((r) => r.path.startsWith("/api/remote/runs?")), "no reload of a page that is gone").toBe(false);
+      expect($("toast").textContent, "the panel still says the cancel went through").toBe("Cancel requested for run #18");
+    } finally {
+      Object.assign(globalThis, { fetch: stub });
+      view.unmount();
+    }
+  });
+});
