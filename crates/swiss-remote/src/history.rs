@@ -363,7 +363,7 @@ impl RunHistory {
     }
 
     /// Records written before 2026-09-28 carry a remote.write's body in CLEAR under
-    /// `input.content` - the shape e5bc766 stopped writing and R12 replaced with a sealed
+    /// `input.content` - the shape f862dd0 stopped writing and R12 replaced with a sealed
     /// file. The owner, on such a row: "this still isn't solved" - the panel shows a sealed
     /// body only, so those writes looked empty while their bodies sat in the index. One pass
     /// at open moves each across: the body is sealed beside its record and the line is
@@ -1141,7 +1141,7 @@ mod tests {
     fn a_legacy_records_clear_body_is_sealed_when_the_log_opens() {
         // The owner, on a write recorded before the sealing landed: "this still isn't
         // solved." Its body was never lost - it sat in the index in CLEAR, which is what
-        // e5bc766 set out to stop, and the panel shows a sealed body only. Opening the log
+        // f862dd0 set out to stop, and the panel shows a sealed body only. Opening the log
         // moves it across: the panel can read it, runs.jsonl no longer holds it.
         let dir = scratch();
         {

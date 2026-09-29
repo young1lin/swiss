@@ -1,6 +1,6 @@
 # 46 — B 方案：面板 UI 库（`panel/src/ui/` + `ui.css`）与全插件页整理
 
-> 状态：**已实施**（分支 `panel-ui`，基线 `69b2460`，2026-09-23 起草；P0–P9 于同分支逐阶段提交）。P9 收尾数字（§7 口径，2026-09-24 实测）：
+> 状态：**已实施**（分支 `panel-ui`，基线 `03d49ce`，2026-09-23 起草；P0–P9 于同分支逐阶段提交）。P9 收尾数字（§7 口径，2026-09-24 实测）：
 >
 > - `views.css` 60,001 B / 227 类（基线 94,663 B / 349 类，同一计数器：去注释后选择器里出现的不同 `.class`；§0.2 手数 352）；
 >   G7 冻结随降 76,412 → 60,001。`ui.css` 57,516 B / 162 类；`base.css` 26,238 B / 33 类（基线 36,969 B / 80 类）。
@@ -14,7 +14,7 @@
 >   各亮/暗一张，04 陈列页（亮 en、暗 zh），05 Data 结构页（暗 zh）。
 >
 > 数字命令：`(Get-Item crates/swiss-panel/src/admin_assets/styles/*.css).Length`；类数用一段 `node` 去注释后收集选择器里的
-> `.class`（基线同一脚本跑在 `git show 69b2460:…` 上）；G4/G7 各自的 vitest 门（`test/css-literals`、`test/css-size`）；
+> `.class`（基线同一脚本跑在 `git show 03d49ce:…` 上）；G4/G7 各自的 vitest 门（`test/css-literals`、`test/css-size`）；
 > `node` 遍历 `admin_assets/js` 求和（vendor 目录单列）；`(Get-Item target-test/release/swiss.exe).Length`。
 > 前置阅读：`.agents/skills/swiss-ui-design/SKILL.md` 全文（本文 P1c 改写它）；
 > `.agents/rules/panel-proof-of-life.md`；`docs/35-grouped-list-spec.md`（band 与内联表单）；
@@ -52,7 +52,7 @@
 
 第 2 条是本文的主题：把规则变成**唯一的写法**——一个树内 UI 库，加上几道机器门禁。
 
-### 0.2 代码里的数字（基线 `69b2460`）
+### 0.2 代码里的数字（基线 `03d49ce`）
 
 | 量 | 值 | 说明 |
 | --- | --- | --- |

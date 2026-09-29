@@ -17,7 +17,7 @@
 > （SSH Connections、Port Forwards、Jobs、Secrets、Tokens）在一行都没有时，把整个分组区换成页面级
 > 空态（"No SSH connections yet" 之类）；于是空页面上新建的组只出现在 New 弹层的 Group 下拉里，
 > 页面上没有组头可以改名、删除或按 `+`（实测：SSH Connections 建了个 "defaul"，删不掉）。Remote
-> Targets 在 2026-09-20（`707a472`）已因同一原因改成无条件画组，但没推广到其余页面。现在六个页面
+> Targets 在 2026-09-20（`7869517`）已因同一原因改成无条件画组，但没推广到其余页面。现在六个页面
 > 一律无条件画组；组名列表为空时退回 `["default"]`；那五个页面级空态文案随之删除。MCP 侧栏没有这个
 > 分支，不受影响。测试：`test/admin-empty-groups.test.ts`（tunnels、jobs），secrets 与 tokens 各自的套件。
 > 设计语言的总纲从本文起由 `.claude/skills/swiss-design/SKILL.md` 承载：本文 §4 是那份语言在「分组列表」

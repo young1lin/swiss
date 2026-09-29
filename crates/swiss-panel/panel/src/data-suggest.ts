@@ -102,7 +102,7 @@ function dbRedisSplitOpen(s: string): { words: string[]; open: boolean } | null 
 
 /** The words of the line the caret sits on, and which of them the caret is in, split the way
  *  the SERVER will split that line when it runs: shlex on both sides (the console route since
- *  27087bb, the vendored JS port here), so `MSET "a b" 1 user:` is four words and the key
+ *  7017a51, the vendored JS port here), so `MSET "a b" 1 user:` is four words and the key
  *  positions count exactly the words redis will see. A console line is usually half-typed: an
  *  open quote is closed for the count (the caret is then inside that quoted word), and a line
  *  shlex cannot read at all - a trailing backslash - falls back to whitespace. Leading blanks
