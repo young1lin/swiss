@@ -33,7 +33,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "mysql", "postgres", "json", "chrono", "bigdecimal"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 bigdecimal = { version = "0.4", default-features = false }
-redis = { version = "0.27", default-features = false, features = ["tokio-comp", "aio", "connection-manager"] }
+redis = { version = "1.7", default-features = false, features = ["tokio-comp", "aio", "connection-manager"] }
 encoding_rs = { version = "0.8", default-features = false }
 base64 = "0.23"
 # PKCE S256 challenges for MCP OAuth (docs/24) — the same sha2 the graph already carries

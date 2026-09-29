@@ -565,7 +565,7 @@ fn parse_endpoint(kind: Kind, url: &str) -> Result<(String, u16), String> {
         }
         Kind::Redis => {
             let c = redis::Client::open(url).map_err(|e| e.to_string())?;
-            match c.get_connection_info().addr.clone() {
+            match c.get_connection_info().addr().clone() {
                 redis::ConnectionAddr::Tcp(h, p) => Ok((h, p)),
                 other => Err(format!("not a TCP redis endpoint: {other:?}")),
             }
