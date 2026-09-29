@@ -210,7 +210,8 @@ describe("admin panel assets", () => {
       // The node builders reach these on paint (docs/37 R5): every module must still
       // evaluate with them present.
       createElementNS: () => el(), createDocumentFragment: () => el(),
-      querySelector: () => null, querySelectorAll: () => [],
+      // The boot's first navigation sets the shell's .sidebar (see the wait below).
+      querySelector: () => el(), querySelectorAll: () => [],
       addEventListener: () => {}, removeEventListener: () => {},
     };
     const prevWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -221,6 +222,7 @@ describe("admin panel assets", () => {
       Node: class {},
       localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
       location: { reload: () => {} },
+      history: { replaceState: () => {}, pushState: () => {} },
       matchMedia: () => ({ matches: false, addEventListener: () => {}, addListener: () => {} }),
       confirm: () => true, alert: () => {},
       Blob: class {}, setInterval: () => 0, clearInterval: () => {},
@@ -233,6 +235,12 @@ describe("admin panel assets", () => {
       for (const f of files) {
         await import(pathToFileURL(join(dir, f)).href); // a broken module rejects here
       }
+      // Evaluating main.js starts the boot, and the boot navigates to the landing page. Under
+      // vitest 2 that page's /admin/js/ import from the served tree never resolved, so the
+      // navigation stopped early; vitest 5 applies the alias there too and the page mounts.
+      // Waiting for the boot keeps a fault in it inside this test, not a stray rejection later.
+      const registry = await import(pathToFileURL(join(dir, "page-registry.js")).href);
+      await registry.initPages();
     } finally {
       // Leave the worker as we found it, as far as we can.
       if (prevWindow) Object.defineProperty(globalThis, "window", prevWindow);
