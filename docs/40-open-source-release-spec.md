@@ -21,6 +21,18 @@
 > （同一张表过全部 blob 与 commit message，按 id 剥离四个首版截图 blob，删掉那张 Redis 截图的
 > 路径），之后一个 commit 重映射文档里的旧短 hash。替换表只在本机，不入库（理由同 O2）。
 > 重写前的完整备份：`../swiss-pre-scrub-2026-09-26.bundle`。
+>
+> 增补（2026-09-29，第三遍清场，owner：「改历史，push」）：审计又找到三处。① 9/20 的四个 commit
+> 把 commit message 草稿（根目录四个 `.tmp`，各带一条模型署名 trailer，违反 D3）一起提交了，
+> 后一个 commit 才删——按路径从历史剥离。② 本文 §0 与上一条增补、docs/20 §9、docs/43 T2 对测试
+> 环境来历写得过细，改成中性说法（「真实环境」「旧邮箱」）。③ 一个还没 push 的 commit
+> （`22097b8`）在面板测试 fixture 里写进了本机登录名与主机名，`d1c4aae` 才在树上换成占位身份——
+> 占位身份回填进前者，后者只剩一段注释，message 随之改写。一遍 `git filter-repo`（按路径剥离、
+> replace-text、一条 message 改写），之后一个 commit 把 15 个文件里 22 处旧短 hash 等长换成新值
+> （含三处代码注释的 ts/js 对与 vendored shlex 的头注）。替换表由环境变量现场生成、跑完即删。
+> 验收：全部对象里登录名与四个草稿路径 0 命中、0 条 trailer、master 强推覆盖旧 master。GitHub 上
+> Dependabot 的分支与 `refs/pull/*` 仍连着旧历史，直到删仓重建——那一步由 owner 决定。
+> 重写前的完整备份：`../swiss-pre-scrub-2026-09-29.bundle`。
 
 ## 0. 审计结论（动手前的事实）
 

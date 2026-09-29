@@ -309,7 +309,7 @@ Tests: `runs.rs` `remote_runs_take_their_targets_lane_not_the_local_pool`,
 
 The owner, on a `write stream-demo.py` row that showed only `Output 34 B`: "I don't know what
 was written, only a result." That morning the record had stopped keeping a write's body
-(e5bc766) because `runs.jsonl` held it in clear - writing a `.env` put its password in the
+(f862dd0) because `runs.jsonl` held it in clear - writing a `.env` put its password in the
 audit log for 30 days. Asked to choose, the owner picked: keep the body, encrypted.
 
 - `history.rs` seals a remote.write's `content` into `out/<runId>.content` with
@@ -327,8 +327,8 @@ audit log for 30 days. Asked to choose, the owner picked: keep the body, encrypt
   only while the page is on screen (Hide, Clear and leaving the page drop it).
 
 - 2026-09-28, the same day: the owner, on a `write seed.sql` row from the night before —
-  "this still isn't solved". Its body was never missing. Records written before e5bc766 carry
-  it in CLEAR under `input.content` (the very thing e5bc766 stopped), and the panel shows a
+  "this still isn't solved". Its body was never missing. Records written before f862dd0 carry
+  it in CLEAR under `input.content` (the very thing f862dd0 stopped), and the panel shows a
   sealed body only, so those rows looked empty while the file sat in `runs.jsonl`. Opening the
   log now moves them: `seal_legacy_content` walks the index once, seals each clear body beside
   its record and rewrites the line the way `record` writes one today (tmp + rename, as evict
@@ -336,7 +336,7 @@ audit log for 30 days. Asked to choose, the owner picked: keep the body, encrypt
   open retries rather than dropping what it could not keep; a torn line goes, as in evict.
   Nothing to move is one streaming walk and no rewrite, which is every start after the first.
   The open-time orphan sweep now takes `out/<id>.content` as well as `out/<id>.txt`.
-- The window between e5bc766 and R12 keeps its size and nothing else — those bodies are gone.
+- The window between f862dd0 and R12 keeps its size and nothing else — those bodies are gone.
   Such a row used to draw no content block at all, which reads exactly like one whose Show has
   not been pressed; it now says the write was recorded before content was kept.
 
