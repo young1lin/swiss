@@ -1532,16 +1532,17 @@ impl RedisEngine {
             .filter(|p| !p.is_empty())
             .map(str::to_string);
         let conn = Lazy::new(move || {
-            let info = redis::ConnectionInfo {
-                addr: redis::ConnectionAddr::Tcp(host.clone(), port),
-                redis: redis::RedisConnectionInfo {
-                    db,
-                    username: None,
-                    password: password.clone(),
-                    protocol: redis::ProtocolVersion::RESP2,
-                },
-            };
+            let mut settings = redis::RedisConnectionInfo::default()
+                .set_db(db)
+                .set_protocol(redis::ProtocolVersion::RESP2);
+            if let Some(password) = &password {
+                settings = settings.set_password(password);
+            }
+            let addr = redis::ConnectionAddr::Tcp(host.clone(), port);
             Box::pin(async move {
+                let info = redis::IntoConnectionInfo::into_connection_info(addr)
+                    .map_err(|e| e.to_string())?
+                    .set_redis_settings(settings);
                 let client = redis::Client::open(info).map_err(|e| e.to_string())?;
                 // One plain connection first. The manager retries every failure of its first
                 // connect - a refused AUTH included - so a wrong password surfaced only as the
