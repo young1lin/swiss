@@ -28,7 +28,8 @@ russh = { version = "0.63.2", default-features = false, features = ["ring", "rsa
 russh-sftp = { version = "3.0.0", default-features = false }
 # TCP keepalive on forwarded sockets; already in the graph via tokio and hyper-util.
 socket2 = "0.6"
-rand = "0.9"
+# thread_rng for rand::random (reconnect jitter); the generator is already in the graph via russh.
+rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
 base64 = "0.23"
 sha2 = "0.11"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
@@ -50,5 +51,5 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 base64 = "0.23"
 sha2 = "0.11"
 socket2 = "0.6"
-rand = "0.9"
+rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

@@ -43,7 +43,6 @@ base64 = "0.23"
 # through swiss-core's HKDF, same version, so this adds zero new code units (cargo tree -d clean).
 sha2 = "0.11"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
-rand = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
