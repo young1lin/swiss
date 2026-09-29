@@ -24,7 +24,7 @@ use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
     Implementation, JsonObject, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
     PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult, Resource,
-    ResourceContents, ResourceTemplate, ResourcesCapability, ServerCapabilities, ServerInfo, Tool,
+    ResourceContents, ResourceTemplate, ResourcesCapability, ServerCapabilities, ServerConfig, Tool,
     ToolsCapability,
 };
 use rmcp::service::{MaybeSendFuture, RequestContext};
@@ -338,7 +338,7 @@ impl ToolServer {
 }
 
 impl ServerHandler for ToolServer {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let meta = self.engine.meta();
         let mut capabilities = ServerCapabilities::default();
         // `tools.listChanged` and `resources.listChanged` are both announced because either can
@@ -355,7 +355,7 @@ impl ServerHandler for ToolServer {
         let mut server_info = Implementation::default();
         server_info.name = "swiss-direct".into();
         server_info.version = "1.0".into();
-        let mut info = ServerInfo::new(capabilities).with_server_info(server_info);
+        let mut info = ServerConfig::new(capabilities).with_server_info(server_info);
         if let Some(instructions) = build_instructions(&meta) {
             info = info.with_instructions(instructions);
         }

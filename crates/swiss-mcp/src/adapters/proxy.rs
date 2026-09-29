@@ -35,7 +35,7 @@ use rmcp::model::{
     ListPromptsRequestMethod, ListPromptsResult, ListResourceTemplatesRequestMethod,
     ListResourcesRequestMethod, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
     PromptsCapability, ReadResourceRequestMethod, ReadResourceRequestParams, ReadResourceResponse,
-    ReadResourceResult, ResourcesCapability, ServerCapabilities, ServerInfo, ToolsCapability,
+    ReadResourceResult, ResourcesCapability, ServerCapabilities, ServerConfig, ToolsCapability,
 };
 use rmcp::service::{MaybeSendFuture, RequestContext};
 use rmcp::{RoleServer, ServerHandler};
@@ -297,7 +297,7 @@ where
 }
 
 impl ServerHandler for ProxyServer {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let mut capabilities = ServerCapabilities::default();
         // Plain `tools: {}` — unlike the direct adapters there is no toggleable tool list here,
         // so no `listChanged` is announced. Resource/prompt capabilities appear only when the
@@ -312,7 +312,7 @@ impl ServerHandler for ProxyServer {
         let mut server_info = Implementation::default();
         server_info.name = "swiss-proxy".into();
         server_info.version = "1.0".into();
-        let mut info = ServerInfo::new(capabilities).with_server_info(server_info);
+        let mut info = ServerConfig::new(capabilities).with_server_info(server_info);
         if let Some(description) = &self.description {
             info = info.with_instructions(description.clone());
         }
