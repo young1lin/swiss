@@ -21,6 +21,7 @@ import { h } from "./h.js";
 import { renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
+import { dbKeyShown } from "./data-tree.js";
 // Cycle with data-edit.js (it reads dbIsRedis/dbLoadKeys from here): function declarations,
 // runtime-only use — the same shape as the data-sql import above.
 // Cycle with data-stream.js (it renders this module's stream branch and needs the display
@@ -62,6 +63,18 @@ let dbKeysLoading = false;
 // only while their token is still the newest request.
 const dbKeysReq = dbReqGuard();
 
+/** A keyspace listing with each key once, first sighting kept. SCAN promises every key AT
+ *  LEAST once: a rehash in the middle of a walk hands some back again, and a repeated key was
+ *  a repeated row in the tree, a repeated completion and a repeated DEL argument. Pure. */
+function dbUniqueKeys(rows                    )                     {
+  const seen = new Set        ();
+  return rows.filter((k                  )          => {
+    if (seen.has(k.key)) return false;
+    seen.add(k.key);
+    return true;
+  });
+}
+
 async function dbLoadKeys(reset                     )                {
   const d = dbConn();
   if (!d.conn) return;
@@ -92,7 +105,7 @@ async function dbLoadKeys(reset                     )                {
   }
   d.redisError = false;
   d.redis = {
-    keys: (d.redis && !reset ? d.redis?.keys : []).concat(j.keys || []),
+    keys: dbUniqueKeys((d.redis && !reset ? d.redis?.keys : []).concat(j.keys || [])),
     cursor: j.cursor,
     done: !!j.done,
     total: j.total,
@@ -147,7 +160,7 @@ async function dbRewalkKeys()                {
   } finally {
     dbKeysLoading = false;
   }
-  const next = { keys: keys, cursor: j.cursor, done: !!j.done, total: j.total, pages: pages };
+  const next = { keys: dbUniqueKeys(keys), cursor: j.cursor, done: !!j.done, total: j.total, pages: pages };
   if (!d.redisError && JSON.stringify(next) === JSON.stringify(was)) return;
   d.redisError = false;
   d.redis = next;
@@ -330,10 +343,12 @@ function dbRedisCommands(key        , type        , buf                         
 }
 
 /** One command as the preview shows it — dbgate's convertRedisCallListToScript shape: verb,
- *  then args with STRINGS double-quoted (inner quotes escaped) and numbers plain. Pure. */
+ *  then args with STRINGS double-quoted and numbers plain. Quotes AND backslashes are escaped,
+ *  so the line reads back as the same bytes wherever it is pasted - the console included: a
+ *  value ending in `\` used to show as `"x\"`, an unclosed quote there. Pure. */
 function dbRedisCommandText(cmd                                   )         {
   return cmd.verb + " " + cmd.args.map((a         )         => {
-    return typeof a === "number" ? String(a) : '"' + String(a).replace(/"/g, '\\"') + '"';
+    return typeof a === "number" ? String(a) : '"' + String(a).replace(/[\\"]/g, "\\$&") + '"';
   }).join(" ");
 }
 
@@ -383,10 +398,10 @@ function dbRenderRedisValue(wrap             )       {
     return;
   }
   const v = d.redisValue;
-  if (!v) { wrap.appendChild(el("div", "db-hint", tr("dataBrowsers.loadingK", { k: d.redisKey }))); return; }
+  if (!v) { wrap.appendChild(el("div", "db-hint", tr("dataBrowsers.loadingK", { k: dbKeyShown(d.redisKey) }))); return; }
   const meta = el("div", "db-detail-meta");
   // The TTL is NOT here any more (2026-09-28): one live countdown, in the head's top-right.
-  meta.appendChild(document.createTextNode(v.key + " · " + v.type));
+  meta.appendChild(document.createTextNode(dbKeyShown(v.key) + " · " + v.type));
   if (v.length != null) meta.appendChild(document.createTextNode(" · " + trn(v.length, "dataBrowsers.nEntries.one", "dataBrowsers.nEntries.other")));
   if (v.truncated) meta.appendChild(document.createTextNode(" · " + tr("dataBrowsers.truncated")));
   // The facts only. The key's add action and its ⋯ (Rename / Delete, docs/22 W1.3) are the
@@ -414,7 +429,7 @@ function dbRenderRedisValue(wrap             )       {
   const valueText = typeof v.value === "string" ? v.value : JSON.stringify(v.value, null, 2);
   pre.textContent = valueText;
   pre.oncontextmenu = (ev            )       => {
-    dbRedisCellMenu(ev, v.type, valueText, v.key);
+    dbRedisCellMenu(ev, v.type, valueText, dbKeyShown(v.key));
   };
   wrap.appendChild(pre);
 }
@@ -516,7 +531,7 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
         };
       }
       td.oncontextmenu = (ev            )       => {
-        dbRedisCellMenu(ev, tr(REDIS_COL_KEYS[c] ?? c), td.textContent || "", v.key + " · " + v.type);
+        dbRedisCellMenu(ev, tr(REDIS_COL_KEYS[c] ?? c), td.textContent || "", dbKeyShown(v.key) + " · " + v.type);
       };
       tri.appendChild(td);
     });
@@ -539,7 +554,7 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
         };
       }
       td.oncontextmenu = (ev            )       => {
-        dbRedisCellMenu(ev, tr(REDIS_COL_KEYS[c] ?? c), td.textContent || "", v.key + " · " + v.type);
+        dbRedisCellMenu(ev, tr(REDIS_COL_KEYS[c] ?? c), td.textContent || "", dbKeyShown(v.key) + " · " + v.type);
       };
       tri.appendChild(td);
     });
@@ -717,7 +732,7 @@ async function dbRedisSetString(ta                     )                {
     body: JSON.stringify({ commands: [["SET", d.redisKey, value]] }),
   });
   if (!j) return;
-  toast(tr("dataBrowsers.setKey", { key: d.redisKey ?? "" }));
+  toast(tr("dataBrowsers.setKey", { key: dbKeyShown(d.redisKey ?? "") }));
   void dbLoadRedisValue(d.redisKey);
 }
 
@@ -758,7 +773,7 @@ async function dbRedisCommit()                {
     return;
   }
   if (!cmds.length) return;
-  if (!confirm(tr("dataBrowsers.commitNKOne", { n: trn(cmds.length, "dataBrowsers.nCommands.one", "dataBrowsers.nCommands.other"), k: d.redisKey ?? "" }))) return;
+  if (!confirm(tr("dataBrowsers.commitNKOne", { n: trn(cmds.length, "dataBrowsers.nCommands.one", "dataBrowsers.nCommands.other"), k: dbKeyShown(d.redisKey ?? "") }))) return;
   const j = await apiJson("/api/db/" + encodeURIComponent(c.conn ) + "/redis-pipeline", {
     method: "POST",
     body: JSON.stringify({ commands: cmds.map((x                                   )            => { return [x.verb           ].concat(x.args); }) }),
@@ -819,26 +834,43 @@ function dbRedisTtlSheet()       {
     save: tr("dataBrowsers.apply"),
     submit: async (secs        )                            => {
       if (secs && !/^\d+$/.test(secs)) return tr("dataBrowsers.ttlMustWholeNumber");
-      const j = await dbRedisCommand(secs ? "EXPIRE " + key + " " + secs : "PERSIST " + key);
+      // EXPIRE key 0 deletes the key on the spot - a delete that skipped the delete's own
+      // question. Zero is refused here and pointed at Delete.
+      if (secs && Number(secs) === 0) return tr("dataBrowsers.ttlZeroDeletes");
+      const j = await dbRedisExec(secs ? ["EXPIRE", key, secs] : ["PERSIST", key]);
       if (!j) return false;
-      toast(tr(secs ? "dataBrowsers.ttlSetSeconds" : "dataBrowsers.ttlRemoved", { s: secs }));
+      dbRedisTtlSaid(key, secs, j.reply);
       await dbLoadRedisValue(key);
       return true;
     },
   });
 }
 
-/** One guarded console command; null means the toast already said why. */
-async function dbRedisCommand(line        )                   {
-  // No connection is not an error worth a toast — it is the console being asked to run
-  // against nothing, which the null return already says (docs/37 R4: the assertion this
-  // replaced claimed a selection the record's type never promised).
+/** What an EXPIRE or PERSIST answered, said: EXPIRE's 0 is a key that is no longer there
+ *  (another client deleted it, or it expired while the field was open) - "TTL set" would be
+ *  a claim about a key that does not exist. PERSIST's 0 is also "had no TTL", so it stays
+ *  "removed". */
+function dbRedisTtlSaid(key        , secs        , reply         )       {
+  if (secs && Number(reply) === 0) toast(tr("dataBrowsers.keyAlreadyGone", { key: dbKeyShown(key) }), true);
+  else toast(tr(secs ? "dataBrowsers.ttlSetSeconds" : "dataBrowsers.ttlRemoved", { s: secs }));
+}
+
+/** One redis command as its exact arguments, through the structured pipeline route: every
+ *  byte of a key is an argument byte. The console route splits a LINE the way a shell does
+ *  (27087bb) - right for what a person types, wrong for a key the panel already holds:
+ *  `"DEL " + key` on a key named `my key` deleted the keys `my` and `key`, and a backslash in
+ *  a name deleted a different key (2026-09-29). Same guards as the console (vet_pipeline).
+ *  The reply comes back wrapped, so a nil reply is not mistaken for a refusal; null means
+ *  the route refused and apiJson has toasted why. */
+async function dbRedisExec(argv          )                                     {
   const conn = dbConn().conn;
   if (!conn) return null;
-  return apiJson("/api/db/" + encodeURIComponent(conn) + "/command", {
+  const j = await apiJson                         ("/api/db/" + encodeURIComponent(conn) + "/redis-pipeline", {
     method: "POST",
-    body: JSON.stringify({ command: line }),
+    body: JSON.stringify({ commands: [argv] }),
   });
+  if (!j) return null;
+  return { reply: j.replies && j.replies.length ? j.replies[0] : null };
 }
 
 /** Rename a key (docs/22 W1.3) on the library's one-field sheet (docs/46 P7). The sheet owns
@@ -855,10 +887,14 @@ function dbRedisRenameSheet(key               )       {
     label: tr("dataBrowsers.newName"),
     def: key,
     save: tr("dataBrowsers.rename2"),
-    submit: async (to        )                   => {
-      const j = await dbRedisCommand("RENAME " + key + " " + to);
+    exact: true,
+    submit: async (to        )                            => {
+      // RENAMENX, not RENAME: RENAME onto a name that exists throws that key's value away
+      // without a word. A taken name is said inline, beside the typed name.
+      const j = await dbRedisExec(["RENAMENX", key, to]);
       if (!j) return false;
-      toast(tr("dataBrowsers.renamed", { to }));
+      if (Number(j.reply) === 0) return tr("dataBrowsers.renameTargetExists", { to: dbKeyShown(to) });
+      toast(tr("dataBrowsers.renamed", { to: dbKeyShown(to) }));
       const t = dbTab();
       if (t.kind === "key") t.redisKey = to;
       void dbLoadKeys(true).then(() => { void dbLoadRedisValue(to); });
@@ -875,10 +911,11 @@ function dbRedisDeleteKey()       {
   const d = dbTab();
   if (d.kind !== "key") return;
   const key = d.redisKey ;
-  if (!confirm(tr("dataBrowsers.deleteKeyConfirm", { key }))) return;
-  void dbRedisCommand("DEL " + key).then(async (j         )                => {
+  if (!confirm(tr("dataBrowsers.deleteKeyConfirm", { key: dbKeyShown(key) }))) return;
+  void dbRedisExec(["DEL", key]).then(async (j                           )                => {
     if (!j) return;
-    toast(tr("dataBrowsers.deletedKey", { key }));
+    // DEL answers how many it removed: 0 is a key someone else deleted first, said as such.
+    toast(tr(Number(j.reply) ? "dataBrowsers.deletedKey" : "dataBrowsers.keyAlreadyGone", { key: dbKeyShown(key) }));
     const t = dbTab();
     if (t.kind === "key") {
       t.redisKey = null;
@@ -926,12 +963,17 @@ function dbRedisClick(t         )          {
     const apply = ()       => {
       if (ran) return;
       ran = true;
+      const key = d.redisKey;
+      if (key == null) return;
       const secs         = input.value.trim();
-      if (secs && !/^\d+$/.test(secs)) { toast(tr("dataBrowsers.ttlMustWholeNumber"), true); void dbLoadRedisValue(d.redisKey ); return; }
-      const line = secs ? "EXPIRE " + d.redisKey + " " + secs : "PERSIST " + d.redisKey;
-      void dbRedisCommand(line).then((j         )       => {
-        if (j) toast(tr(secs ? "dataBrowsers.ttlSetSeconds" : "dataBrowsers.ttlRemoved", { s: secs }));
-        void dbLoadRedisValue(d.redisKey );
+      if (secs && !/^\d+$/.test(secs)) { toast(tr("dataBrowsers.ttlMustWholeNumber"), true); void dbLoadRedisValue(key); return; }
+      // The same two rules as the sheet (2026-09-29): 0 would delete the key with no question
+      // asked, and the key goes as ONE argument - this line used to be "EXPIRE " + key, which
+      // the console split at every blank in the name.
+      if (secs && Number(secs) === 0) { toast(tr("dataBrowsers.ttlZeroDeletes"), true); void dbLoadRedisValue(key); return; }
+      void dbRedisExec(secs ? ["EXPIRE", key, secs] : ["PERSIST", key]).then((j)       => {
+        if (j) dbRedisTtlSaid(key, secs, j.reply);
+        void dbLoadRedisValue(key);
       });
     };
     // Transient in-place overlay, the sheet idiom (docs/37 R5 keeps per-open wiring): the

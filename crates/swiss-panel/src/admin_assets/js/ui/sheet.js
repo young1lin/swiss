@@ -137,7 +137,12 @@ export function sheetOpen()          {
                        
                                                          
                 
-                                                                                           
+                                                                                          
+                                                                                             
+                                                                                            
+                                                                                      
+                  
+                                                                                                                        
                                                                                               
                                                                                                
                                                                           
@@ -169,8 +174,8 @@ export function openFieldSheet(spec                )       {
     err.hidden = false;
   };
   const save = async ()                => {
-    const value = input.value.trim();
-    if (!value && !spec.allowEmpty) { fail(tr("ui.nameRequired")); return; }
+    const value = spec.exact ? input.value : input.value.trim();
+    if (!input.value.trim() && !spec.allowEmpty) { fail(tr("ui.nameRequired")); return; }
     if (value === def) { closeSheet(); return; } // a rename that changed nothing is a cancel
     const out = await spec.submit(value);
     if (out === true) closeSheet();

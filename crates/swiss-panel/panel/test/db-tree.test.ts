@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 import { dbConn as dbConnState } from "../src/db-state.js";
 import { dbConn } from "./db-fixtures.js";
-import { dbSectionOf, dbSectionSlices, redisNamespaceTree, redisTypeGlyph } from "../src/data-tree.js";
+import { REDIS_NS_MAX_DEPTH, dbSectionOf, dbSectionSlices, redisNamespaceTree, redisTypeGlyph } from "../src/data-tree.js";
 
 /* The Data sidebar's tree (docs/43 M2). The pure half (data-tree.ts) runs directly; the
  *  rendering half runs over the same DOM-stub technique as every panel suite, because the
@@ -86,7 +86,7 @@ Object.assign(globalThis, {
 function recordingFetch(url: unknown, init?: { body?: string }): Promise<unknown> {
   requests.push({ url: String(url), body: init && init.body });
   return new Promise((res) => {
-    parked.push((j: unknown) => res({ ok: true, status: 200, json: async () => j }));
+    parked.push((j: unknown, ok = true) => res({ ok, status: ok ? 200 : 400, json: async () => j }));
   });
 }
 
@@ -94,12 +94,12 @@ function recordingFetch(url: unknown, init?: { body?: string }): Promise<unknown
    parks a request it never answers would hand the next one a ghost: both are cleared per
    test in the suites that use them. */
 const requests: { url: string; body?: string }[] = [];
-const parked: ((j: unknown) => void)[] = [];
+const parked: ((j: unknown, ok?: boolean) => void)[] = [];
 const confirms = { answer: true, asked: [] as string[] };
 const tick = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });
-const answer = async (body: unknown): Promise<void> => {
+const answer = async (body: unknown, ok = true): Promise<void> => {
   const next = parked.shift();
-  if (next) next(body);
+  if (next) next(body, ok);
   await tick();
 };
 
@@ -111,6 +111,7 @@ const view = await import(pathToFileURL(join(here, "data-view.js")).href) as {
   dbSortMenu: () => Array<{ label?: string; pick?: boolean; on?: boolean; sep?: boolean }>;
   keysUnder: (g: { ns: string; keys: { key: string }[]; children: unknown[] }) => string[];
   dbRedisDeleteKeys: (ns: string, keys: string[]) => Promise<void>;
+  dbRedisDelBatches: (keys: string[]) => string[][][];
 };
 
 /** The whole text under a stub node, depth-first — the cheap walker every band assertion
@@ -647,5 +648,368 @@ describe("a namespace band deletes its keys together (2026-09-29)", () => {
     await view.dbRedisDeleteKeys("market", ["market:fast", "market:ticks"]);
     expect(confirms.asked[0]).toContain("has not finished");
     confirms.answer = true;
+  });
+});
+
+/* The owner (2026-09-29): "每个极端情况，你都考虑到了吗？例如很多 key 都是同样的前缀的，还有其他
+   的" - and then "各个极端情况，你都需要考虑清楚". A key name is whatever bytes somebody chose, so
+   the tree meets names no fixture of ours would: a leading ":", "::" runs, a trailing ":", the
+   names JavaScript's own objects answer to, an empty name, thousands under one prefix. Each
+   case below is one of those, run through the builder AND the rendered rows. */
+describe("the extreme keyspaces (2026-09-29)", () => {
+  beforeEach(() => { requests.length = 0; parked.length = 0; confirms.asked.length = 0; confirms.answer = true; });
+
+  const row = (key: string, type = "string"): { key: string; type: string; ttl: number } => ({ key, type, ttl: -1 });
+  const nameOf = (b: Stub): string =>
+    b.children.find((c: Stub) => (c.className || "").indexOf("db-table-name") >= 0)!.textContent;
+  const metaOf = (b: Stub): string =>
+    b.children.find((c: Stub) => (c.className || "").indexOf("db-table-meta") >= 0)!.textContent;
+  const paint = (keys: { key: string; type: string; ttl: number }[]): Record<string, Stub> => {
+    mount("redis");
+    dbConnState().redis = { keys, cursor: "0", done: true, total: keys.length };
+    view.renderDbTables();
+    const rows = btn(byId.dbTables, "db-table").filter((b) => b.dataset.rkey !== undefined);
+    return Object.fromEntries(rows.map((b) => [b.dataset.rkey, b]));
+  };
+  const heads = (): string[] => btn(byId.dbTables, "grp-toggle").map((h: Stub) => text(h));
+
+  it("keys that START with ':' fold under a band of their own - the builder used to recurse for ever on them", () => {
+    const keys = [row(":lead"), row(":lead:x"), row("::deep"), row("::deep2"), row("plain")];
+    // The old builder took ns "" for the root AND for the empty first segment: a stack
+    // overflow, and the whole Data page with it.
+    const tree = redisNamespaceTree(keys);
+    expect(tree[0].prefix, "the root's own keys come first").toBe("");
+    expect(tree[0].keys.map((k) => k.key)).toEqual(["plain"]);
+    const colon = tree.find((g) => g.prefix === ":")!;
+    expect(colon, "one band for everything under ':'").toBeTruthy();
+    expect(view.keysUnder(colon).sort()).toEqual([":lead", ":lead:x", "::deep", "::deep2"].sort());
+    const byKey = paint(keys);
+    expect(nameOf(byKey["plain"])).toBe("plain");
+    // `:lead:x` is the only key under `:lead`, so the leaf promise makes it the row itself,
+    // named by what it adds to the ':' band - the same rule that shows `b:c:d` under `a`.
+    expect(nameOf(byKey[":lead:x"])).toBe("lead:x");
+    expect(nameOf(byKey[":lead"])).toBe("lead");
+    expect(nameOf(byKey["::deep"]), "inside the '::' band").toBe("deep");
+    // Every row has a visible name - an empty segment never paints as a blank line.
+    for (const k of keys) expect(nameOf(byKey[k.key]), k.key).not.toBe("");
+    expect(heads().every((h) => h.trim() !== "" && !/^\d+$/.test(h.trim())), "no band head without words: " + heads().join(" | ")).toBe(true);
+  });
+
+  it("a ':' run ('a::b') makes a band whose segment is empty - it shows its whole prefix instead of nothing", () => {
+    const byKey = paint([row("a::b"), row("a::c"), row("a:x")]);
+    expect(heads().some((h) => h.indexOf("a::") >= 0), "the empty segment's band: " + heads().join(" | ")).toBe(true);
+    expect(nameOf(byKey["a::b"])).toBe("b");
+    expect(nameOf(byKey["a:x"])).toBe("x");
+  });
+
+  it("a key ending in ':' beside keys under that namespace is named by the whole key, not by nothing", () => {
+    const byKey = paint([row("foo:"), row("foo:bar"), row("foo:baz")]);
+    expect(nameOf(byKey["foo:"])).toBe("foo:");
+    expect(metaOf(byKey["foo:"]), "the name is the whole key, so the slot says the type").toBe("string");
+    expect(nameOf(byKey["foo:bar"])).toBe("bar");
+  });
+
+  it("a key that is ALSO a namespace sits beside that namespace's band, told apart by its full key", () => {
+    const byKey = paint([row("a:b", "hash"), row("a:b:c"), row("a:b:d"), row("a:z")]);
+    expect(nameOf(byKey["a:b"])).toBe("b");
+    expect(metaOf(byKey["a:b"]), "the slot says which b").toBe("a:b");
+    expect(nameOf(byKey["a:b:c"])).toBe("c");
+    const a = redisNamespaceTree([row("a:b"), row("a:b:c"), row("a:b:d"), row("a:z")]).find((g) => g.ns === "a")!;
+    expect(view.keysUnder(a).sort(), "deleting `a` takes the key a:b and everything under it").toEqual(["a:b", "a:b:c", "a:b:d", "a:z"]);
+  });
+
+  it("names JavaScript objects answer to - constructor, __proto__, toString - are plain namespaces", () => {
+    const keys = [row("constructor:a"), row("constructor:b"), row("__proto__:x"), row("__proto__:y"),
+      row("toString:1"), row("hasOwnProperty:1"), row("hasOwnProperty:2"), row("valueOf")];
+    // A plain object answered bySeg["constructor"] with Object's constructor: `.push` is not
+    // a function, and the sidebar threw.
+    const tree = redisNamespaceTree(keys);
+    expect(tree.map((g) => g.ns).sort()).toEqual(["", "__proto__", "constructor", "hasOwnProperty", "toString"].sort());
+    const byKey = paint(keys);
+    expect(nameOf(byKey["constructor:a"])).toBe("a");
+    expect(nameOf(byKey["__proto__:y"])).toBe("y");
+    expect(nameOf(byKey["valueOf"])).toBe("valueOf");
+  });
+
+  it("a band named constructor or __proto__ folds and unfolds like any other (the fold map has no prototype)", async () => {
+    const { loadCollapsed } = await import("../src/groups.js");
+    const m = loadCollapsed("extreme-test");
+    expect(m["constructor"], "nothing inherited reads as folded").toBeUndefined();
+    expect(m["toString"]).toBeUndefined();
+    m["__proto__"] = true;
+    m["constructor"] = true;
+    expect(Object.keys(m).sort(), "both are ordinary entries").toEqual(["__proto__", "constructor"]);
+    delete m["constructor"];
+    expect(m["constructor"]).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(m))).toEqual(JSON.parse('{"__proto__": true}'));
+  });
+
+  it("an empty key name (SET \"\" v is legal) still paints as a row with something on it", () => {
+    const byKey = paint([row(""), row("x")]);
+    expect(nameOf(byKey[""]), "the empty string's own spelling").toBe('""');
+    expect(metaOf(byKey[""])).toBe("string");
+  });
+
+  it("names a page would fold or hide print quoted and escaped - ' x' and 'x ' are two rows, not two x's", () => {
+    // Seen live on 19998 (2026-09-29): HTML folds blanks, so ` x` and `x ` both painted as `x`,
+    // and `line\nbreak` read as a key named `line break`.
+    const names = [" x", "x ", "x", "line\nbreak", "line break", "tab\there", "a\u200bb", "ab", "rtl\u202eevil", "my key", "用户"];
+    const byKey = paint(names.map((n) => row(n)));
+    const shown = names.map((n) => nameOf(byKey[n]));
+    expect(shown).toEqual(['" x"', '"x "', "x", '"line\\nbreak"', "line break", '"tab\\there"',
+      '"a\\u200bb"', "ab", '"rtl\\u202eevil"', "my key", "用户"]);
+    expect(new Set(shown).size, "every name tells itself apart").toBe(names.length);
+    // Only the painting changes: the row still opens the key's own bytes.
+    expect(byKey[" x"].dataset.rkey).toBe(" x");
+  });
+
+  it("a segment with edge blanks is shown quoted in its band and in its row", () => {
+    const byKey = paint([row("ns: lead:a"), row("ns: lead:b"), row("ns:tail :c")]);
+    expect(heads().some((h) => h.indexOf('" lead"') >= 0), heads().join(" | ")).toBe(true);
+    expect(metaOf(byKey["ns:tail :c"]), "the whole key in the right slot").toBe("ns:tail :c");
+  });
+
+  it("5,000 keys under ONE prefix: one band, 5,000 rows each named by its own segment, one count to delete", () => {
+    const keys = Array.from({ length: 5000 }, (_, i) => row("session:" + i));
+    const t0 = Date.now();
+    const byKey = paint(keys);
+    const ms = Date.now() - t0;
+    expect(Object.keys(byKey)).toHaveLength(5000);
+    expect(nameOf(byKey["session:4999"])).toBe("4999");
+    expect(metaOf(byKey["session:4999"])).toBe("session:4999");
+    expect(heads(), "one band, not 5,000").toHaveLength(1);
+    expect(ms, "the tree builds and paints in well under a second").toBeLessThan(1500);
+    const g = redisNamespaceTree(keys)[0];
+    expect(view.keysUnder(g)).toHaveLength(5000);
+    // Numeric order within the band: session:2 before session:10, as a person counts.
+    const order = g.keys.map((k) => k.key);
+    expect(order.indexOf("session:2")).toBeLessThan(order.indexOf("session:10"));
+  });
+
+  it("a twelve-deep chain folds into one band named by the whole run it adds", () => {
+    const chain = "d1:d2:d3:d4:d5:d6:d7:d8:d9:d10:d11:d12";
+    const byKey = paint([row("d1:x"), row(chain + ":leaf"), row(chain + ":leaf2")]);
+    expect(heads().some((h) => h.indexOf("d2:d3:d4:d5:d6:d7:d8:d9:d10:d11:d12") >= 0), heads().join(" | ")).toBe(true);
+    expect(nameOf(byKey[chain + ":leaf"])).toBe("leaf");
+    expect(nameOf(byKey["d1:x"])).toBe("x");
+  });
+
+  // How deep the tree goes, counting every band - a fold is one band however long its run.
+  const depthOf = (gs: { children: unknown[] }[]): number => {
+    let deepest = 0;
+    let level: { children: unknown[] }[] = gs;
+    while (level.length) {
+      deepest++;
+      level = level.flatMap((g) => g.children as { children: unknown[] }[]);
+    }
+    return deepest;
+  };
+
+  it("a staircase 5,000 levels deep builds, paints and deletes - it overflowed the stack", () => {
+    // `a:x`, `a:a:x`, `a:a:a:x` ... every level holds a key, so nothing folds and the builder
+    // went one call deeper per level until the stack ran out, taking the Data page with it.
+    const keys = Array.from({ length: 5000 }, (_, i) => row("a:".repeat(i + 1) + "x"));
+    const tree = redisNamespaceTree(keys);
+    expect(depthOf(tree)).toBeLessThanOrEqual(REDIS_NS_MAX_DEPTH + 1);
+    const a = tree.find((g) => g.prefix === "a:")!;
+    expect(view.keysUnder(a).length, "every key is still in the tree, once").toBe(5000);
+    expect(new Set(view.keysUnder(a)).size).toBe(5000);
+    const byKey = paint(keys);
+    // The deepest band keeps the rest of each key as its row's name.
+    const deep = "a:".repeat(4000) + "x";
+    expect(nameOf(byKey[deep])).toBe(deep.slice(REDIS_NS_MAX_DEPTH * 2));
+    expect(nameOf(byKey["a:x"])).toBe("x");
+  });
+
+  it("two keys sharing a run of 100,000 colons fold into bands and paint", () => {
+    const run = "b:".repeat(100000);
+    const byKey = paint([row(run + "x"), row(run + "y"), row("plain")]);
+    expect(nameOf(byKey[run + "x"]).endsWith("b:x")).toBe(true);
+    expect(nameOf(byKey[run + "y"]).endsWith("b:y")).toBe(true);
+    expect(nameOf(byKey["plain"])).toBe("plain");
+  });
+
+  it("a band over 200,000 walked keys lists them all - a spread of that many arguments overflowed", () => {
+    // `app:config` keeps `app` a band of its own, so its count gathers a 200,000-key child.
+    const keys = Array.from({ length: 200000 }, (_, i) => row("app:session:" + i)).concat([row("app:config")]);
+    const tree = redisNamespaceTree(keys);
+    const app = tree.find((g) => g.prefix === "app:")!;
+    expect(app.children.length, "the child band is there to gather").toBe(1);
+    const under = view.keysUnder(app);
+    expect(under.length).toBe(200001);
+    expect(under).toContain("app:session:199999");
+    expect(view.dbRedisDelBatches(under).flat().length, "and the delete chunks them all").toBe(201);
+  });
+
+  it("a name that is not UTF-8 is never folded into a band - its ':' belongs to redis-cli's printing", () => {
+    // Seen live on 19998 (2026-09-29): two Spring-serialized names folded into a band at the
+    // ':' inside their printing, and a row read `one"`. Such a name stays at the root, whole.
+    const bin = { ...row('"\\xac\\xed\\x00\\x05t\\x00\\x0bsession:one"'), binary: true };
+    const tree = redisNamespaceTree([bin, row("session:two"), row("session:three")]);
+    expect(tree[0].prefix, "the root's own rows").toBe("");
+    expect(tree[0].keys.map((k) => k.key)).toEqual([bin.key]);
+    const byKey = paint([bin, row("session:two"), row("session:three")]);
+    expect(nameOf(byKey[bin.key])).toBe(bin.key);
+    expect(metaOf(byKey[bin.key])).toContain("UTF-8");
+    expect(byKey[bin.key].dataset.rbinary, "marked for the click to refuse").toBe("");
+  });
+
+  it("and a band never hands one to its DEL, whatever puts it there", () => {
+    const band = { ns: "ns", prefix: "ns:", children: [], keys: [row("ns:a"), { ...row("ns:b"), binary: true }, row("ns:c")] };
+    expect(view.keysUnder(band)).toEqual(["ns:a", "ns:c"]);
+  });
+
+  it("unicode, emoji, spaces and backslashes in names slice cleanly at the ':'", () => {
+    const byKey = paint([row("用户:1"), row("用户:2"), row("emoji:😀"), row("emoji:🎉"),
+      row("with space:a b"), row("with space:c"), row("back\\slash:a"), row("back\\slash:b")]);
+    expect(nameOf(byKey["用户:2"])).toBe("2");
+    expect(nameOf(byKey["emoji:🎉"])).toBe("🎉");
+    expect(nameOf(byKey["with space:a b"])).toBe("a b");
+    expect(nameOf(byKey["back\\slash:b"])).toBe("b");
+  });
+
+  it("SCAN handing a key back twice (it promises each key AT LEAST once) lists it once", async () => {
+    const browsers = await import("../src/data-browsers.js");
+    mount("redis");
+    const p = browsers.dbLoadKeys(true);
+    await tick();
+    await answer({ keys: [row("dup:a"), row("dup:a"), row("dup:b")], cursor: "9", done: false, total: 3 });
+    await p;
+    const p2 = browsers.dbLoadKeys(false);
+    await tick();
+    // The next page repeats a key from the first - a rehash mid-walk does exactly this.
+    await answer({ keys: [row("dup:b"), row("dup:c")], cursor: "0", done: true, total: 3 });
+    await p2;
+    expect(dbConnState().redis!.keys.map((k) => k.key)).toEqual(["dup:a", "dup:b", "dup:c"]);
+  });
+});
+
+describe("a batch delete at the edges (2026-09-29)", () => {
+  beforeEach(() => { requests.length = 0; parked.length = 0; confirms.asked.length = 0; confirms.answer = true; });
+  const row = (key: string): { key: string; type: string; ttl: number } => ({ key, type: "string", ttl: -1 });
+  const bodies = (): string[][][] => requests
+    .filter((r) => r.url.endsWith("/redis-pipeline"))
+    .map((r) => JSON.parse(String(r.body)).commands);
+
+  it("cuts DEL at 1,000 keys a command, exactly at the boundary", () => {
+    const keys = (n: number): string[] => Array.from({ length: n }, (_, i) => "k:" + i);
+    expect(view.dbRedisDelBatches([])).toEqual([]);
+    const one = view.dbRedisDelBatches(keys(1000));
+    expect(one).toHaveLength(1);
+    expect(one[0].map((c) => c.length - 1), "1,000 keys: one DEL").toEqual([1000]);
+    expect(view.dbRedisDelBatches(keys(1001))[0].map((c) => c.length - 1), "1,001: two").toEqual([1000, 1]);
+    const five = view.dbRedisDelBatches(keys(5000));
+    expect(five, "5,000 short keys still fit ONE request").toHaveLength(1);
+    expect(five[0].map((c) => c.length - 1)).toEqual([1000, 1000, 1000, 1000, 1000]);
+    expect(five[0].every((c) => c[0] === "DEL")).toBe(true);
+  });
+
+  it("keeps each request under the gateway's 2 MiB body limit when the names are long", () => {
+    const long = Array.from({ length: 3000 }, (_, i) => "k:" + i + ":" + "x".repeat(1000));
+    const batches = view.dbRedisDelBatches(long);
+    expect(batches.length, "3 MB of names cannot be one request").toBeGreaterThan(1);
+    for (const req of batches) {
+      const bytes = new TextEncoder().encode(JSON.stringify({ commands: req })).length;
+      expect(bytes, "every request under the 2 MiB BODY_LIMIT").toBeLessThan(2 * 1024 * 1024);
+    }
+    expect(batches.flat().flatMap((c) => c.slice(1)), "every key once, in order").toEqual(long);
+    // One key bigger than any budget still goes - alone - rather than being silently kept.
+    const huge = "h:" + "y".repeat(1600000);
+    const lone = view.dbRedisDelBatches(["a:1", huge, "a:2"]);
+    expect(lone.flat().flatMap((c) => c.slice(1))).toEqual(["a:1", huge, "a:2"]);
+    expect(lone.flat().find((c) => c.includes(huge))!.length, "the giant rides alone").toBe(2);
+  });
+
+  it("5,000 keys: one confirm naming the count and the five DEL commands, one request, a toast from redis' own count", async () => {
+    mount("redis");
+    const keys = Array.from({ length: 5000 }, (_, i) => "session:" + i);
+    dbConnState().redis = { keys: keys.map(row), cursor: "0", done: true, total: 5000 };
+    const p = view.dbRedisDeleteKeys("session", keys);
+    await tick(); await tick();
+    expect(confirms.asked[0]).toContain("5,000");
+    expect(confirms.asked[0], "it says the delete is not one step").toContain("5 DEL commands");
+    expect(bodies()).toHaveLength(1);
+    expect(bodies()[0]).toHaveLength(5);
+    await answer({ replies: [1000, 1000, 1000, 1000, 1000] });
+    for (let i = 0; i < 3; i++) await answer({ keys: [], cursor: "0", done: true, total: 0 });
+    await p;
+    expect(byId.toast.textContent).toBe("Deleted 5,000 keys under session");
+  });
+
+  it("reports what REDIS deleted: keys someone else removed first are not claimed", async () => {
+    mount("redis");
+    dbConnState().redis = { keys: [row("m:a"), row("m:b"), row("m:c")], cursor: "0", done: true, total: 3 };
+    const p = view.dbRedisDeleteKeys("m", ["m:a", "m:b", "m:c"]);
+    await tick(); await tick();
+    await answer({ replies: [2] });
+    for (let i = 0; i < 3; i++) await answer({ keys: [], cursor: "0", done: true, total: 0 });
+    await p;
+    expect(byId.toast.textContent).toBe("Deleted 2 keys under m - 1 were already gone");
+  });
+
+  it("the same key twice (SCAN duplicates) is sent once and counted once", async () => {
+    mount("redis");
+    dbConnState().redis = { keys: [row("m:a"), row("m:b")], cursor: "0", done: true, total: 2 };
+    const p = view.dbRedisDeleteKeys("m", ["m:a", "m:b", "m:a"]);
+    await tick(); await tick();
+    expect(confirms.asked[0]).toContain("all 2 keys");
+    expect(bodies()[0]).toEqual([["DEL", "m:a", "m:b"]]);
+    await answer({ replies: [2] });
+    for (let i = 0; i < 3; i++) await answer({ keys: [], cursor: "0", done: true, total: 0 });
+    await p;
+  });
+
+  it("under a filter the question says only the SHOWN keys go - the namespace may hold more", async () => {
+    mount("redis");
+    const d = dbConnState();
+    d.grep = "*error*";
+    d.redis = { keys: [row("log:error:1"), row("log:error:2")], cursor: "0", done: true, total: 2 };
+    confirms.answer = false;
+    await view.dbRedisDeleteKeys("log", ["log:error:1", "log:error:2"]);
+    expect(confirms.asked[0]).toContain("Only the keys the filter shows are deleted");
+    expect(confirms.asked[0]).not.toContain("all 2");
+    expect(requests).toHaveLength(0);
+    d.grep = "";
+  });
+
+  it("a request that fails midway: what went is reported with the server's reason, and the tree is walked again", async () => {
+    mount("redis");
+    const long = Array.from({ length: 2000 }, (_, i) => "big:" + i + ":" + "z".repeat(1000));
+    dbConnState().redis = { keys: long.map(row), cursor: "0", done: true, total: 2000 };
+    // A tab open on a key of the FIRST request, and one on a key of the second.
+    const tabs = (await import("../src/db-state.js")).dbTabs();
+    const first = { kind: "key", redisKey: long[0], redisValue: { type: "string" }, redisEdits: null, redisStreamRows: null };
+    const second = { kind: "key", redisKey: long[1999], redisValue: { type: "string" }, redisEdits: null, redisStreamRows: null };
+    tabs.push(first as never, second as never);
+    const batches = view.dbRedisDelBatches(long);
+    expect(batches.length).toBeGreaterThan(1);
+    const p = view.dbRedisDeleteKeys("big", long);
+    await tick(); await tick();
+    const firstCount = batches[0].reduce((a, c) => a + c.length - 1, 0);
+    await answer({ replies: batches[0].map((c) => c.length - 1) });
+    await tick();
+    await answer({ error: "ERR the server went away" }, false);
+    for (let i = 0; i < 3; i++) await answer({ keys: [], cursor: "0", done: true, total: 0 });
+    await p;
+    expect(byId.toast.textContent).toContain("Deleted " + firstCount.toLocaleString("en") + " of 2,000 keys under big");
+    expect(byId.toast.textContent, "the reason survives").toContain("ERR the server went away");
+    expect(first.redisKey, "its key went: the tab lets go").toBeNull();
+    expect(second.redisKey, "its key did not: the tab stays").toBe(long[1999]);
+    expect(requests.some((r) => r.url.includes("/keys?")), "the tree is walked again").toBe(true);
+    tabs.splice(tabs.indexOf(first as never), 1);
+    tabs.splice(tabs.indexOf(second as never), 1);
+  });
+
+  it("a second Delete while the first is still in flight sends nothing more", async () => {
+    mount("redis");
+    dbConnState().redis = { keys: [row("q:a"), row("q:b")], cursor: "0", done: true, total: 2 };
+    const p = view.dbRedisDeleteKeys("q", ["q:a", "q:b"]);
+    await tick(); await tick();
+    await view.dbRedisDeleteKeys("q", ["q:a", "q:b"]);
+    expect(confirms.asked, "one question").toHaveLength(1);
+    expect(bodies(), "one request").toHaveLength(1);
+    await answer({ replies: [2] });
+    for (let i = 0; i < 3; i++) await answer({ keys: [], cursor: "0", done: true, total: 0 });
+    await p;
   });
 });

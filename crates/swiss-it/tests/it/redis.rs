@@ -27,7 +27,7 @@ use std::collections::BTreeSet;
 use serde_json::{json, Value};
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{BrowserFlavor, RedisBrowser};
-use swiss_it::engine::Kind;
+use swiss_it::engine::{engine, Kind};
 use swiss_it::seed::{fresh, fresh_redis_exclusive, fresh_redis_with_neighbor, Fresh, REDIS_SEED_KEYS};
 use swiss_mcp::adapters::redis::RedisEngine;
 use swiss_mcp::adapters::tool_server::Engine;
@@ -953,3 +953,233 @@ async fn stream_groups_reports_pending_and_lag() {
     assert_eq!(gone["groups"], json!([]));
 }
 
+
+#[tokio::test]
+async fn the_catalog_spells_tokened_blocks_and_carries_the_key_specs_of_moving_keys() {
+    // 2026-09-29: against a real redis 7 - the token leads its block (ZRANGEBYSCORE's LIMIT,
+    // XREAD's STREAMS), a repeated value does not repeat its token (ZINTER's WEIGHTS) unless
+    // redis says multiple_token (SORT's GET), and the commands whose keys move carry the key
+    // specs the console completes them by.
+    let (_f, b) = browser("r50_specs").await;
+    let v = b.command_catalog().await.expect("the catalog");
+    let rows = v["commands"].as_array().expect("commands").clone();
+    let by = |name: &str| -> Value {
+        rows.iter()
+            .find(|r| r["name"] == json!(name))
+            .unwrap_or_else(|| panic!("{name} is missing from the catalog"))
+            .clone()
+    };
+    let syntax = |name: &str| by(name)["syntax"].as_str().unwrap_or("").to_string();
+    assert!(syntax("ZRANGEBYSCORE").contains("[LIMIT offset count]"), "{}", syntax("ZRANGEBYSCORE"));
+    assert!(syntax("XREAD").contains("STREAMS key [key ...] id [id ...]"), "{}", syntax("XREAD"));
+    assert!(syntax("ZINTER").contains("[WEIGHTS weight [weight ...]]"), "{}", syntax("ZINTER"));
+    // Redis 7 names SORT's argument get-pattern; the shape is what matters.
+    assert!(syntax("SORT").contains("[GET get-pattern [GET get-pattern ...]]"), "{}", syntax("SORT"));
+
+    let xread = by("XREAD");
+    let spec = &xread["keySpecs"][0];
+    assert_eq!(spec["begin"]["type"], json!("keyword"), "{xread}");
+    assert_eq!(spec["begin"]["keyword"], json!("STREAMS"));
+    assert_eq!(spec["find"]["lastkey"], json!(-1));
+    assert_eq!(spec["find"]["limit"], json!(2), "keys are the first half of what follows");
+    let zunion = by("ZUNION");
+    assert_eq!(zunion["keySpecs"][0]["find"]["type"], json!("keynum"), "{zunion}");
+    let store = by("ZUNIONSTORE");
+    assert_eq!(store["keySpecs"].as_array().map(Vec::len), Some(2), "destination + sources: {store}");
+    // A subcommand's specs come from its own nested row.
+    assert_eq!(by("XINFO STREAM")["keySpecs"][0]["begin"]["index"], json!(2));
+    // Every spec the gateway ships is one the console can evaluate.
+    for r in &rows {
+        for sp in r["keySpecs"].as_array().into_iter().flatten() {
+            let bt = sp["begin"]["type"].as_str().unwrap_or("");
+            let ft = sp["find"]["type"].as_str().unwrap_or("");
+            assert!(["index", "keyword"].contains(&bt), "{}: {sp}", r["name"]);
+            assert!(["range", "keynum"].contains(&ft), "{}: {sp}", r["name"]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_key_named_with_a_space_is_one_argument_end_to_end() {
+    // 2026-09-29: the panel's Delete built "DEL " + key and the console route split it like a
+    // shell - `DEL my key` removed `my` and `key` and left `my key`. The panel now sends the
+    // key through the pipeline as ONE argument; this is that path against a real server, with
+    // the two innocent neighbours present to prove they survive.
+    let (_f, b) = browser("r50_spaced").await;
+    b.run_pipeline(&[
+        vec!["SET".into(), "my key".into(), "target".into()],
+        vec!["SET".into(), "my".into(), "neighbour 1".into()],
+        vec!["SET".into(), "key".into(), "neighbour 2".into()],
+        vec!["SET".into(), "taken key".into(), "precious".into()],
+        vec!["SET".into(), "".into(), "the empty name".into()],
+    ])
+    .await
+    .expect("seed");
+
+    // Rename onto a name that exists is RENAMENX's 0 - and nothing is overwritten.
+    let r = b
+        .run_pipeline(&[vec!["RENAMENX".into(), "my key".into(), "taken key".into()]])
+        .await
+        .expect("renamenx");
+    assert_eq!(r["replies"][0], json!(0), "the destination exists");
+    assert_eq!(b.read_key("taken key").await.expect("read")["value"], json!("precious"));
+
+    // EXPIRE and DEL, one argument each.
+    let r = b
+        .run_pipeline(&[vec!["EXPIRE".into(), "my key".into(), "600".into()]])
+        .await
+        .expect("expire");
+    assert_eq!(r["replies"][0], json!(1));
+    let r = b
+        .run_pipeline(&[vec!["DEL".into(), "my key".into()]])
+        .await
+        .expect("del");
+    assert_eq!(r["replies"][0], json!(1), "exactly one key went");
+    assert_eq!(b.read_key("my key").await.expect("read")["type"], json!("none"));
+    assert_eq!(b.read_key("my").await.expect("read")["value"], json!("neighbour 1"), "untouched");
+    assert_eq!(b.read_key("key").await.expect("read")["value"], json!("neighbour 2"), "untouched");
+
+    // A second DEL of the same key answers 0 - the panel says "already gone" on that.
+    let r = b
+        .run_pipeline(&[vec!["DEL".into(), "my key".into()]])
+        .await
+        .expect("del again");
+    assert_eq!(r["replies"][0], json!(0));
+
+    // The walk hands every one of these names back exactly - the empty one included - so the
+    // tree gets the real bytes to lay out.
+    let names = walk_matching(b.as_ref(), None).await;
+    for n in ["my", "key", "taken key", ""] {
+        assert!(names.contains(n), "{n:?} is walked back as itself: {names:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_namespace_of_thousands_goes_in_chunked_dels_and_the_count_is_redis_own() {
+    // 2026-09-29: "很多 key 都是同样的前缀的". 2,500 keys under one prefix, deleted the way the
+    // panel sends a band: DEL commands of at most 1,000 keys in one pipeline. The replies add
+    // up to what redis removed - and a key deleted by someone else first is not counted. The
+    // fixture's own 3,000 bulk:keyNNNNN share the leading `bulk:` and must all survive.
+    let (_f, b) = browser("r50_bulk").await;
+    let keys: Vec<String> = (0..2500).map(|i| format!("bulk:session:{i}")).collect();
+    let mut seed: Vec<Vec<String>> = Vec::new();
+    for chunk in keys.chunks(500) {
+        let mut cmd = vec!["MSET".to_string()];
+        for k in chunk {
+            cmd.push(k.clone());
+            cmd.push("v".into());
+        }
+        seed.push(cmd);
+    }
+    b.run_pipeline(&seed).await.expect("seed 2,500 keys");
+    // Someone else deletes one in the meantime.
+    b.run_pipeline(&[vec!["DEL".into(), "bulk:session:7".into()]])
+        .await
+        .expect("the other client");
+
+    let dels: Vec<Vec<String>> = keys
+        .chunks(1000)
+        .map(|c| std::iter::once("DEL".to_string()).chain(c.iter().cloned()).collect())
+        .collect();
+    assert_eq!(dels.len(), 3, "1,000 + 1,000 + 500");
+    let r = b.run_pipeline(&dels).await.expect("the band's delete");
+    let sum: i64 = r["replies"]
+        .as_array()
+        .expect("replies")
+        .iter()
+        .map(|x| x.as_i64().unwrap_or(0))
+        .sum();
+    assert_eq!(sum, 2499, "redis counts what IT removed: the one already gone is not claimed");
+    let left = walk_matching(b.as_ref(), Some("bulk:session:*")).await;
+    assert!(left.is_empty(), "nothing under the band survives: {} left", left.len());
+    let siblings = walk_matching(b.as_ref(), Some("bulk:*")).await;
+    assert_eq!(siblings.len(), 3000, "the sibling band under the same prefix is untouched");
+    assert!(siblings.iter().all(|k| k.starts_with("bulk:key")), "only the seed's keys remain");
+}
+
+/// Every key the walk hands back, all pages, optionally under a MATCH pattern - SCAN's COUNT
+/// is a hint, so one page of a 3,000-key fixture is never the whole answer.
+async fn walk_matching(b: &dyn RedisBrowser, pattern: Option<&str>) -> BTreeSet<String> {
+    let mut cursor = String::from("0");
+    let mut seen = BTreeSet::new();
+    loop {
+        let mut q = json!({ "cursor": cursor, "count": 1000 });
+        if let Some(p) = pattern {
+            q["pattern"] = json!(p);
+        }
+        let page = b.list_keys(&q).await.expect("scan page");
+        for k in page["keys"].as_array().expect("keys") {
+            seen.insert(k["key"].as_str().expect("key text").to_string());
+        }
+        if page["done"] == json!(true) {
+            return seen;
+        }
+        cursor = page["cursor"].as_str().expect("cursor text").to_string();
+    }
+}
+
+#[tokio::test]
+async fn a_word_leading_hash_reaches_redis_as_itself() {
+    // 2026-09-29: the console's shlex read a word-leading `#` as a comment. `SET color #ff0000`
+    // reached redis as `SET color` (wrong number of arguments), and `DEL k1 #k2 k3` deleted k1
+    // alone and answered 1 - the other two keys silently kept. Against a real server now.
+    let (_f, b) = browser("r50_hash").await;
+    b.run_command("SET it:color #ff0000").await.expect("a # value");
+    assert_eq!(b.read_key("it:color").await.expect("read")["value"], json!("#ff0000"));
+    for k in ["k1", "#k2", "k3"] {
+        b.run_command(&format!("SET it:{k} v")).await.expect("seed");
+    }
+    // `#k2` inside a key name is only a character, and so is one leading a word.
+    b.run_command("SET #it:lead v").await.expect("a # key");
+    let n = b
+        .run_command("DEL it:k1 it:#k2 it:k3 #it:lead")
+        .await
+        .expect("the delete");
+    assert_eq!(n, json!(4), "every word was a key");
+}
+
+#[tokio::test]
+async fn a_key_name_that_is_not_utf8_is_walked_as_its_bytes_and_marked() {
+    // 2026-09-29: Spring's JDK serializer writes key names that are not UTF-8. The walk read
+    // SCAN's names as text (U+FFFD), asked TYPE of that other name and answered "none", and
+    // the panel offered to open and delete a key that does not exist.
+    let (f, b) = browser("r50_binary").await;
+    let url = format!("{}/{}", engine(Kind::Redis).await.root_url, f.def["db"]);
+    let client = redis::Client::open(url.as_str()).expect("open the leased db");
+    let mut conn = client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("connect the leased db");
+    let name: &[u8] = b"\xac\xed\x00\x05t\x00\x04user";
+    redis::cmd("SET")
+        .arg(name)
+        .arg("v")
+        .arg("EX")
+        .arg(600)
+        .query_async::<()>(&mut conn)
+        .await
+        .expect("seed a name that is not UTF-8");
+    let mut cursor = String::from("0");
+    let mut marked = Vec::new();
+    loop {
+        let page = b
+            .list_keys(&json!({ "cursor": cursor, "count": 1000 }))
+            .await
+            .expect("scan page");
+        for k in page["keys"].as_array().expect("keys") {
+            if k["binary"] == json!(true) {
+                marked.push(k.clone());
+            }
+        }
+        if page["done"] == json!(true) {
+            break;
+        }
+        cursor = page["cursor"].as_str().expect("cursor text").to_string();
+    }
+    assert_eq!(marked.len(), 1, "exactly the one name is marked: {marked:?}");
+    let row = &marked[0];
+    assert_eq!(row["key"], json!(r#""\xac\xed\x00\x05t\x00\x04user""#), "printed as redis-cli prints it");
+    assert_eq!(row["type"], json!("string"), "TYPE was asked of the real bytes: {row}");
+    let ttl = row["ttl"].as_i64().expect("a ttl");
+    assert!((1..=600).contains(&ttl), "and so was TTL: {row}");
+}

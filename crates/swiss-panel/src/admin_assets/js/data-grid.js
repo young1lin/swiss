@@ -22,6 +22,7 @@ import {
   DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbRedisDeleteKey, dbRedisRenameKey, dbRedisTtl, dbRedisTtlSheet, dbRenderRedisValue,
 } from "./data-browsers.js";
 import { REDIS_TEMPLATES } from "./data-suggest.js";
+import { dbKeyShown } from "./data-tree.js";
 import { dbActivityLoad, dbActivityRender } from "./data-activity.js";
 import { dbCloseAllTabs, dbOpenTab } from "./data-tabs.js";
 import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
@@ -630,9 +631,20 @@ function dbRedisTemplateItems()             {
       if (items.length) items.push({ sep: true });
       items.push({ heading: true, label: group, fn: ()       => {} });
     }
-    items.push({ label: t.line, title: t.line, fn: ()       => { dbLoadConsoleLine(t.line); } });
+    items.push({ label: t.line, title: t.line, fn: ()       => { dbInsertConsoleLine(t.line); } });
   });
   return items;
+}
+
+/** A template goes INTO the console without taking what is there: an empty box gets the
+ *  line, a box holding a draft gets it on a new line after the draft, caret at its end. A
+ *  template is a starting point, and the operator's unsent script is not scratch to replace
+ *  (2026-09-29 - a Templates click used to overwrite it). */
+function dbInsertConsoleLine(line        )       {
+  const st = dbSqlTab();
+  if (!st) return;
+  const cur = st.sqlText || "";
+  dbLoadConsoleLine(cur.trim() ? cur.replace(/\s+$/, "") + "\n" + line : line);
 }
 
 /** Put one line in the console box and repaint it - what a template, a favorite and a history
@@ -642,7 +654,12 @@ function dbLoadConsoleLine(line        )       {
   if (!st) return;
   st.sqlText = line;
   const ta = $                     ("dbSql");
-  if (ta) { ta.value = line; dbSqlPaint(); ta.focus(); }
+  if (ta) {
+    ta.value = line;
+    dbSqlPaint();
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = line.length; // the caret where typing continues
+  }
 }
 
 /** docs/43 M4: format the console's text in place — the old #dbSqlFormat button's body. */
@@ -736,7 +753,8 @@ function renderDbToolbar()       {
     left.appendChild(el("div", "db-meta", dbIsRedis() ? tr("dataGrid.commandConsoleTitle") : tr("dataGrid.sqlConsoleTitle")));
   } else if (dbIsRedis()) {
     const kt = t.kind === "key" ? t : null;
-    left.appendChild(el("h2", "db-title", kt && kt.redisKey ? kt.redisKey : tr("dataGrid.keys")));
+    // `kt.redisKey != null`, not truthiness: the key "" is a key, and its head read "Keys".
+    left.appendChild(el("h2", "db-title", kt && kt.redisKey != null ? dbKeyShown(kt.redisKey) : tr("dataGrid.keys")));
     const conn2 = d.conns.find((c                    )          => { return c.name === d.conn; });
     left.appendChild(el("div", "db-meta",
       (conn2 ? conn2.label : "") +

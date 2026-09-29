@@ -20,12 +20,13 @@
 use super::direct::Lazy;
 use super::redis::{
     assert_command_allowed, read_command_catalog, read_stream_groups, read_stream_window,
-    type_aware_read, value_i64, value_string, RedisHandle, RedisReadClient, SCAN_TYPES,
+    redis_cli_repr, type_aware_read, value_i64, value_string, RedisHandle, RedisReadClient,
+    SCAN_TYPES,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
-use swiss_host::dbbrowser::{redis_stream_opts, RedisBrowser};
+use swiss_host::dbbrowser::{redis_stream_opts, split_words, RedisBrowser};
 
 /// One console line into the arguments redis will receive — quotes, escapes and all.
 ///
@@ -35,12 +36,13 @@ use swiss_host::dbbrowser::{redis_stream_opts, RedisBrowser};
 /// hand-written parser here, and shlex is one the build already carries; its rules are the ones
 /// the operator knows from a shell and from redis-cli — a double-quoted argument keeps its
 /// spaces, `\"` is a quote inside it, a single-quoted one is literal, and everything else is a
-/// bare word, `#` and `:` and `*` included (shlex has no comment syntax).
+/// bare word, `#` and `:` and `*` included. shlex itself reads a word-leading `#` as a comment;
+/// `split_words` takes that one rule back out (2026-09-29), since `SET color #ff0000` is a value.
 ///
 /// An unbalanced quote is the one refusal: shlex answers None, and the operator hears which
 /// mistake it was instead of watching redis receive half a value.
 pub fn split_command_line(line: &str) -> Result<Vec<String>, String> {
-    shlex::split(line).ok_or_else(|| {
+    split_words(line).ok_or_else(|| {
         "unbalanced quote — close it, or write a literal quote as \\\" inside the argument"
             .to_string()
     })
@@ -223,15 +225,27 @@ impl RedisBrowser for RedisDataBrowser {
         let supported = self.supports_scan_type(handle.as_ref()).await;
         let (scan_args, local_type) = scan_args(o, supported)?;
         let arg_refs: Vec<&str> = scan_args.iter().map(String::as_str).collect();
-        let reply = handle.call("SCAN", &arg_refs).await?;
-        // SCAN answers [cursor, keys]; anything else cannot be paged.
-        let (next, keys) = match &reply {
-            Value::Array(pair) if pair.len() == 2 => {
-                let next = value_string(&pair[0]);
-                let keys = pair[1]
-                    .as_array()
-                    .map(|a| a.iter().map(value_string).collect::<Vec<_>>())
-                    .unwrap_or_default();
+        let reply = handle.call_raw("SCAN", &arg_refs).await?;
+        // SCAN answers [cursor, keys]; anything else cannot be paged. The names are kept as
+        // the BYTES redis sent (2026-09-29): read as text, a name that is not UTF-8 came back
+        // as U+FFFD, its TYPE was asked of that other name ("none"), and the panel offered to
+        // open and delete a key that does not exist.
+        let (next, keys) = match reply {
+            redis::Value::Array(pair) if pair.len() == 2 => {
+                let mut pair = pair.into_iter();
+                let cursor = pair.next().map(super::redis::redis_value_to_json);
+                let next = cursor.as_ref().map(value_string).unwrap_or_default();
+                let keys: Vec<Vec<u8>> = match pair.next() {
+                    Some(redis::Value::Array(names)) => names
+                        .into_iter()
+                        .filter_map(|n| match n {
+                            redis::Value::BulkString(b) => Some(b),
+                            redis::Value::SimpleString(s) => Some(s.into_bytes()),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
                 (next, keys)
             }
             _ => return Err("unexpected SCAN reply shape".into()),
@@ -251,7 +265,7 @@ impl RedisBrowser for RedisDataBrowser {
             let start = *start;
             let end = (start + PIPE_CHUNK).min(keys.len());
             let chunk = &keys[start..end];
-            let mut commands: Vec<(String, Vec<String>)> = Vec::with_capacity(chunk.len() * 2 + 1);
+            let mut commands: Vec<(String, Vec<Vec<u8>>)> = Vec::with_capacity(chunk.len() * 2 + 1);
             for k in chunk {
                 commands.push(("TYPE".into(), vec![k.clone()]));
                 commands.push(("TTL".into(), vec![k.clone()]));
@@ -259,14 +273,21 @@ impl RedisBrowser for RedisDataBrowser {
             if n == 0 {
                 commands.push(("DBSIZE".into(), Vec::new()));
             }
-            let results = handle.pipeline(&commands).await?;
+            let results = handle.pipeline_args(&commands).await?;
             for (j, k) in chunk.iter().enumerate() {
                 let type_ = results
                     .get(j * 2)
                     .map(value_string)
                     .unwrap_or_else(|| "none".into());
                 let ttl = results.get(j * 2 + 1).map(value_i64).unwrap_or(-2);
-                infos.push(json!({"key": k, "type": type_, "ttl": ttl}));
+                // A UTF-8 name is itself. Any other is printed as redis-cli prints it and
+                // marked, so the panel shows it truthfully and refuses to address it by text.
+                match std::str::from_utf8(k) {
+                    Ok(name) => infos.push(json!({"key": name, "type": type_, "ttl": ttl})),
+                    Err(_) => infos.push(json!({
+                        "key": redis_cli_repr(k), "type": type_, "ttl": ttl, "binary": true
+                    })),
+                }
             }
             if n == 0 {
                 if let Some(dbsize) = results.get(chunk.len() * 2) {

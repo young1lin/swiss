@@ -41,10 +41,6 @@ base64 = "0.23"
 sha2 = "0.11"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
 rand = "0.9"
-# The redis console's argument splitting (quotes and escapes, redis_browser.rs). A shell-style
-# splitter is a solved problem and a poor thing to hand-write; shlex is already in the tree
-# through cc's build graph (same version resolves) and has no dependencies of its own.
-shlex = "2"
 
 [target.'cfg(windows)'.dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }

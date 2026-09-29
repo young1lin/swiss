@@ -144,6 +144,11 @@ describe("dbRedisCommandText", () => {
     expect(edits.dbRedisCommandText({ verb: "ZADD", args: ["z:1", 1.5, "alice"] }))
       .toBe('ZADD "z:1" 1.5 "alice"');
   });
+  it("escapes backslashes too, so the preview reads back as the same bytes (2026-09-29)", () => {
+    // `"ends in \"` was an unclosed quote: the backslash ate the closing one.
+    expect(edits.dbRedisCommandText({ verb: "HSET", args: ["my key", "f", "ends in \\", "a\\b"] }))
+      .toBe('HSET "my key" "f" "ends in \\\\" "a\\\\b"');
+  });
 });
 
 describe("dbRedisEntries", () => {

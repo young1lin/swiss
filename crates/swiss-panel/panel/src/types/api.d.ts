@@ -820,6 +820,18 @@ export interface ApiRedisCommand {
   firstKey?: number;
   lastKey?: number;
   step?: number;
+  /** redis 7's key specifications (docs/50 §2.4) - present where the keys MOVE (XREAD's come
+   *  after STREAMS, ZUNION's after a count), where first/last/step alone say "no key". */
+  keySpecs?: ApiRedisKeySpec[];
+}
+
+/** One key specification, compacted by the gateway from COMMAND INFO's ninth cell: where the
+ *  key search begins and how the keys are found from there. Argument 0 is the command. */
+export interface ApiRedisKeySpec {
+  begin: { type: "index"; index: number } | { type: "keyword"; keyword: string; startfrom: number };
+  find:
+    | { type: "range"; lastkey: number; keystep: number; limit: number }
+    | { type: "keynum"; keynumidx: number; firstkey: number; keystep: number };
 }
 
 export interface ApiRedisCommandsResponse {
@@ -853,6 +865,9 @@ export interface ApiDbRedisKeyRow {
   key: string;
   type: string;
   ttl: number;
+  /** The name is not UTF-8 (2026-09-29): `key` is redis-cli's printing of its bytes, which
+   *  addresses nothing - the panel shows the row and acts on none of it. */
+  binary?: boolean;
 }
 
 /** GET /api/db/{name}/activity - the 5s Activity poll while the pane is open. */

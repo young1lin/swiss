@@ -1,0 +1,385 @@
+{
+  "about": [
+    "One console line -> the words redis receives (docs/50). The server splits with",
+    "swiss_host::dbbrowser::split_words (shlex, less its '#'-comment rule); the panel counts",
+    "words for completion with the vendored JS shlex port. Both suites read this file: a",
+    "line's `words` is the server's answer (null = refused), `panel` is where the JS port",
+    "differs and `why` says why that is harmless. `keys` are names the console completion",
+    "types for the operator (`typed`, from dbRedisQuoteArg) - `GET <typed>` must hand redis",
+    "exactly that name on both sides."
+  ],
+  "lines": [
+    {
+      "line": "SET color #ff0000",
+      "words": [
+        "SET",
+        "color",
+        "#ff0000"
+      ]
+    },
+    {
+      "line": "DEL k1 #k2 k3",
+      "words": [
+        "DEL",
+        "k1",
+        "#k2",
+        "k3"
+      ]
+    },
+    {
+      "line": "#",
+      "words": [
+        "#"
+      ]
+    },
+    {
+      "line": "SET #a #b",
+      "words": [
+        "SET",
+        "#a",
+        "#b"
+      ]
+    },
+    {
+      "line": "SET k v # not a comment",
+      "words": [
+        "SET",
+        "k",
+        "v",
+        "#",
+        "not",
+        "a",
+        "comment"
+      ]
+    },
+    {
+      "line": "GET a#b",
+      "words": [
+        "GET",
+        "a#b"
+      ]
+    },
+    {
+      "line": "SET k \"#quoted\"",
+      "words": [
+        "SET",
+        "k",
+        "#quoted"
+      ]
+    },
+    {
+      "line": "SET k \\#x",
+      "words": [
+        "SET",
+        "k",
+        "#x"
+      ]
+    },
+    {
+      "line": "SET k \"a\\#b\"",
+      "words": [
+        "SET",
+        "k",
+        "a\\#b"
+      ]
+    },
+    {
+      "line": "SET k \"\"#\"\"",
+      "words": [
+        "SET",
+        "k",
+        "#"
+      ]
+    },
+    {
+      "line": "SET k 'it''s'",
+      "words": [
+        "SET",
+        "k",
+        "its"
+      ]
+    },
+    {
+      "line": "SET k \"it's\"",
+      "words": [
+        "SET",
+        "k",
+        "it's"
+      ]
+    },
+    {
+      "line": "SET k 'say \"hi\"'",
+      "words": [
+        "SET",
+        "k",
+        "say \"hi\""
+      ]
+    },
+    {
+      "line": "SET k \"a\\\"b\"",
+      "words": [
+        "SET",
+        "k",
+        "a\"b"
+      ]
+    },
+    {
+      "line": "SET k \"a\\\\b\"",
+      "words": [
+        "SET",
+        "k",
+        "a\\b"
+      ]
+    },
+    {
+      "line": "SET k 'a\\b'",
+      "words": [
+        "SET",
+        "k",
+        "a\\b"
+      ]
+    },
+    {
+      "line": "SET k \"a\\nb\"",
+      "words": [
+        "SET",
+        "k",
+        "a\\nb"
+      ]
+    },
+    {
+      "line": "SET k a\"b c\"d",
+      "words": [
+        "SET",
+        "k",
+        "ab cd"
+      ]
+    },
+    {
+      "line": "SET k \"a\"\"b\"",
+      "words": [
+        "SET",
+        "k",
+        "ab"
+      ]
+    },
+    {
+      "line": "SET k \"\"",
+      "words": [
+        "SET",
+        "k",
+        ""
+      ]
+    },
+    {
+      "line": "SET k ''",
+      "words": [
+        "SET",
+        "k",
+        ""
+      ]
+    },
+    {
+      "line": "SET k \"{\\\"a\\\": 1}\" NX",
+      "words": [
+        "SET",
+        "k",
+        "{\"a\": 1}",
+        "NX"
+      ]
+    },
+    {
+      "line": "SET k a\\ b",
+      "words": [
+        "SET",
+        "k",
+        "a b"
+      ]
+    },
+    {
+      "line": "\\#",
+      "words": [
+        "#"
+      ]
+    },
+    {
+      "line": "  GET   spaced  ",
+      "words": [
+        "GET",
+        "spaced"
+      ]
+    },
+    {
+      "line": "GET\tk",
+      "words": [
+        "GET",
+        "k"
+      ]
+    },
+    {
+      "line": "",
+      "words": []
+    },
+    {
+      "line": "   ",
+      "words": []
+    },
+    {
+      "line": "SET 用户:1 值",
+      "words": [
+        "SET",
+        "用户:1",
+        "值"
+      ]
+    },
+    {
+      "line": "SET 🔑:x ok",
+      "words": [
+        "SET",
+        "🔑:x",
+        "ok"
+      ]
+    },
+    {
+      "line": "SET ÿ:key v",
+      "words": [
+        "SET",
+        "ÿ:key",
+        "v"
+      ]
+    },
+    {
+      "line": "SET k $HOME ~ * ? [a] {b}",
+      "words": [
+        "SET",
+        "k",
+        "$HOME",
+        "~",
+        "*",
+        "?",
+        "[a]",
+        "{b}"
+      ]
+    },
+    {
+      "line": "SCAN 0 MATCH user:*:#tag{1}-x",
+      "words": [
+        "SCAN",
+        "0",
+        "MATCH",
+        "user:*:#tag{1}-x"
+      ]
+    },
+    {
+      "line": "SET k \"unclosed",
+      "words": null
+    },
+    {
+      "line": "SET k 'unclosed",
+      "words": null
+    },
+    {
+      "line": "SET k trailing\\",
+      "words": null
+    },
+    {
+      "line": "SET k \"\\$5\"",
+      "words": [
+        "SET",
+        "k",
+        "$5"
+      ],
+      "panel": [
+        "SET",
+        "k",
+        "\\$5"
+      ],
+      "why": "in double quotes the server's shlex also unescapes \\$ and \\`; the JS port keeps them - the value's text, never a boundary"
+    },
+    {
+      "line": "SET k $'a\\tb'",
+      "words": [
+        "SET",
+        "k",
+        "$a\\tb"
+      ],
+      "panel": [
+        "SET",
+        "k",
+        "a\tb"
+      ],
+      "why": "the JS port reads bash's $'...' quotes; the server reads a literal $ - the value's text, never a boundary"
+    },
+    {
+      "line": "GET k\rx",
+      "words": [
+        "GET",
+        "k\rx"
+      ],
+      "panel": [
+        "GET",
+        "k",
+        "x"
+      ],
+      "why": "the JS port splits at a carriage return; a textarea's value never holds one (browsers normalise line breaks), an API caller's line can"
+    }
+  ],
+  "keys": [
+    {
+      "key": "user:1",
+      "typed": "user:1"
+    },
+    {
+      "key": "用户:1",
+      "typed": "用户:1"
+    },
+    {
+      "key": "#tag:1",
+      "typed": "#tag:1"
+    },
+    {
+      "key": "$HOME",
+      "typed": "$HOME"
+    },
+    {
+      "key": "-dash-first",
+      "typed": "-dash-first"
+    },
+    {
+      "key": "my key",
+      "typed": "\"my key\""
+    },
+    {
+      "key": "tab\there",
+      "typed": "\"tab\there\""
+    },
+    {
+      "key": "",
+      "typed": "\"\""
+    },
+    {
+      "key": "say \"hi\"",
+      "typed": "\"say \\\"hi\\\"\""
+    },
+    {
+      "key": "it's",
+      "typed": "\"it's\""
+    },
+    {
+      "key": "a\\b",
+      "typed": "\"a\\\\b\""
+    },
+    {
+      "key": "a\\$b",
+      "typed": "\"a\\\\$b\""
+    },
+    {
+      "key": "$'x'",
+      "typed": "\"$'x'\""
+    },
+    {
+      "key": " lead and trail ",
+      "typed": "\" lead and trail \""
+    }
+  ]
+}

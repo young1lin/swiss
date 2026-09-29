@@ -19,7 +19,7 @@ import type { DbConnState, DbFilterTerm, DbTab, DbTableTab } from "./types/state
 import { $, apiJson, dbReqGuard, el, iconNode, targetEl, toast, typeTagNode } from "./util.js";
 import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
-import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown, dbRefreshKeyspace, dbRefreshRedisValue } from "./data-browsers.js";
+import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown, dbRefreshKeyspace, dbRefreshRedisValue, dbRewalkKeys } from "./data-browsers.js";
 import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbBarClick, dbFavLoad, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
@@ -35,7 +35,7 @@ import { openDbDdlSheet } from "./data-ddl.js";
 import { dbRedisCommands, dbRedisLoadCommands, dbRedisSignature, dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { loadCollapsed, mountGroup } from "./groups.js";
 import type { GroupCfg, GroupSlice, MenuItem } from "./types/dom.js";
-import { DB_TREE_SECTIONS, dbSectionOf, dbSectionSlices, redisNamespaceTree, redisTypeGlyph } from "./data-tree.js";
+import { DB_TREE_SECTIONS, dbKeyShown, dbSectionOf, dbSectionSlices, redisNamespaceTree, redisTypeGlyph } from "./data-tree.js";
 import type { DbTreeSection, RedisNsGroup } from "./data-tree.js";
 import {
   dbConn, dbForgetParked, dbIsMounted, dbParkedTabs, dbReplaceConn, dbResumeView, dbSqlTab, dbSwapConn, dbTab, dbTabs, mountDbView,
@@ -469,6 +469,7 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
   // The redis key list: the row carries the key; the live selection decides the guard.
   const keyRow = t.closest<HTMLElement>("[data-rkey]");
   if (keyRow) {
+    if (keyRow.dataset.rbinary !== undefined) { toast(tr("dataView.binaryKeyTitle"), true); return true; }
     // A key is an object: it opens its own tab (docs/42 T2), so a second key no longer eats
     // the first one's typed-value buffer and no guard has to ask about it.
     dbOpenTab({ kind: "key", key: keyRow.dataset.rkey || "", type: keyRow.dataset.rtype });
@@ -968,9 +969,10 @@ function renderDbTables(): void {
     const nsCollapsed = loadCollapsed("dbtree.ns");
     const tree = redisNamespaceTree(rr ? rr.keys : [], dbRedisCompare);
     tree.forEach((g: RedisNsGroup): void => {
-      if (!g.ns) {
+      if (!g.prefix) {
         // Keys with no ":" are the keyspace's own rows (docs/43 M2 acceptance): they sit at
-        // the root, not under a band that pretends a namespace exists.
+        // the root, not under a band that pretends a namespace exists. Told apart by the
+        // PREFIX: keys starting with ":" make a band whose name is "" as well.
         g.keys.forEach((k: ApiDbRedisKeyRow): void => { box.appendChild(dbKeyRow(k, k.key, selKey)); });
         return;
       }
@@ -1095,15 +1097,23 @@ function dbTableRow(t: ApiDbTableRow, scope: string | null): HTMLElement {
 function dbKeyRow(k: ApiDbRedisKeyRow, label: string, selKey: string | null): HTMLElement {
   const b = el("button", "db-table db-key-row" + (k.key === selKey ? " sel" : ""));
   b.appendChild(iconNode(redisTypeGlyph(k.type)));
-  b.title = k.key + " · " + k.type;
+  b.title = dbKeyShown(k.key) + " · " + (k.binary ? tr("dataView.binaryKeyTitle") : k.type);
+  // A name that is not UTF-8 is shown, never addressed: its text is redis-cli's printing of
+  // the bytes, and a command built from that text would name some other key.
+  if (k.binary) b.dataset.rbinary = "";
   b.dataset.rkey = k.key;
   b.dataset.rtype = k.type; // handed to the tab it opens, so its card wears the same glyph
-  b.appendChild(el("span", "db-table-name", label));
+  // A segment can be empty - `foo:` beside `foo:bar` adds nothing to its band - and so can a
+  // key (`SET "" v` is legal). The name falls back to the whole key, and an empty key shows
+  // as the empty string's own spelling, so no row is a blank line; a name with edge blanks or
+  // characters that draw as nothing shows quoted (dbKeyShown).
+  const rel = !!label && label !== k.key;
+  b.appendChild(el("span", "db-table-name", dbKeyShown(label || k.key)));
   // The right slot carries the FULL key wherever the name is only a segment of it (the owner,
   // 2026-09-29: “它们的子层级不应该是 fast 和 ticks 吗？完整的 key 在旁边显示不行？”). At the root
   // the name IS the key and the slot says the type instead. The type is lost neither way: it
   // leads the row as its glyph and stands in the row's title beside the key.
-  b.appendChild(el("span", "db-table-meta", label === k.key ? k.type : k.key));
+  b.appendChild(el("span", "db-table-meta", k.binary ? tr("dataView.binaryKeyMeta") : rel ? dbKeyShown(k.key) : k.type));
   return b;
 }
 
@@ -1236,35 +1246,35 @@ function dbSetSort(key: string | null, dir: string | null): void {
  *  and its direct keys (as rows), children first. A namespace holding exactly one key and
  *  nothing else IS that row — no folder around a single file (the tree compressed the chain
  *  on the way in; this is the rendering half of that promise). */
-function dbRedisBand(g: RedisNsGroup, parentNs: string, selKey: string | null,
+function dbRedisBand(g: RedisNsGroup, parentPrefix: string, selKey: string | null,
   nsCollapsed: Record<string, boolean>, filtered: boolean): HTMLElement {
   type Row = RedisNsGroup | ApiDbRedisKeyRow;
-  const isGroup = (r: Row): r is RedisNsGroup => { return (r as RedisNsGroup).ns !== undefined; };
-  // A row under this band is named by what it adds to THIS band's namespace, not to its
+  const isGroup = (r: Row): r is RedisNsGroup => { return (r as RedisNsGroup).prefix !== undefined; };
+  // A row under this band is named by what it adds to THIS band's prefix, not to its
   // parent's: inside `market`, `market:fast` is `fast` (the owner, 2026-09-29 — the band
   // said `market` and every row under it repeated it). The band itself is named the same
-  // way, by what it adds to its parent, while its collapse key stays the full path.
-  const prefix = g.ns ? g.ns + ":" : "";
-  const under = (full: string): string => {
-    return parentNs && full.length > parentNs.length ? full.slice(parentNs.length + 1) : full;
-  };
+  // way, by what it adds to its parent, while its collapse key stays the full path. A band
+  // that adds an EMPTY segment (`a::b` under `a`, or `:lead` at the root) shows its whole
+  // prefix instead - a band head with no words on it cannot be told from a gap.
+  const label = dbKeyShown(g.prefix.slice(parentPrefix.length, -1) || g.prefix);
   const rows: Row[] = ([] as Row[]).concat(g.children, g.keys);
   const cfg: GroupCfg<Row> = {
     scope: "dbtree.ns", density: "side",
     names: [], collapsed: nsCollapsed, noun: "key",
-    label: under,
+    label: (): string => { return label; },
     draggable: false, filtered,
     // The one-key leaf never reaches a band of its own (its parent renders it as the row),
     // so every band that exists holds at least two things worth sorting - and, since
     // 2026-09-29, worth deleting together ("你这个折叠的，也没有批量删除功能").
     moreItems: (): MenuItem[] | null => {
       const under = keysUnder(g);
+      if (!under.length) return dbSortMenu();
       return dbSortMenu().concat([
         { sep: true },
         {
-          label: tr("dataView.deleteNKeys", { n: under.length }),
+          label: tr("dataView.deleteNKeys", { n: under.length.toLocaleString(locale()) }),
           danger: true,
-          fn: (): void => { void dbRedisDeleteKeys(g.ns, under); },
+          fn: (): void => { void dbRedisDeleteKeys(g.ns === "" ? g.prefix : g.ns, under); },
         },
       ]);
     },
@@ -1277,11 +1287,11 @@ function dbRedisBand(g: RedisNsGroup, parentNs: string, selKey: string | null,
         // The leaf promise, relative like everything else in this band: a namespace holding
         // one key and nothing else IS that row, named by what it adds here.
         if (!r.children.length && r.keys.length === 1) {
-          return dbKeyRow(r.keys[0], r.keys[0].key.slice(prefix.length), selKey);
+          return dbKeyRow(r.keys[0], r.keys[0].key.slice(g.prefix.length), selKey);
         }
-        return dbRedisBand(r, g.ns, selKey, nsCollapsed, filtered);
+        return dbRedisBand(r, g.prefix, selKey, nsCollapsed, filtered);
       }
-      return dbKeyRow(r, r.key.slice(prefix.length), selKey);
+      return dbKeyRow(r, r.key.slice(g.prefix.length), selKey);
     },
   };
   return mountGroup(cfg, { name: g.ns, rows: rows });
@@ -1290,9 +1300,19 @@ function dbRedisBand(g: RedisNsGroup, parentNs: string, selKey: string | null,
 /** Every key under a namespace node, its own and its descendants', in the order the tree
  *  holds them. Pure. */
 export function keysUnder(g: RedisNsGroup): string[] {
-  const out: string[] = g.keys.map((k: ApiDbRedisKeyRow): string => { return k.key; });
-  g.children.forEach((c: RedisNsGroup): void => { out.push(...keysUnder(c)); });
+  const out: string[] = [];
+  gatherKeys(g, out);
   return out;
+}
+
+/* Into one list, key by key: `out.push(...keysUnder(child))` passed a child's whole list as
+   call arguments, and past ~120,000 of them V8 answers RangeError - a band over a big walked
+   namespace could not even paint its count (2026-09-29). */
+function gatherKeys(g: RedisNsGroup, out: string[]): void {
+  // A name that is not UTF-8 is not addressable by its printed text: never in a DEL. (The tree
+  // keeps such names at the root, so this is the guard behind that rule, not the rule.)
+  g.keys.forEach((k: ApiDbRedisKeyRow): void => { if (!k.binary) out.push(k.key); });
+  g.children.forEach((c: RedisNsGroup): void => { gatherKeys(c, out); });
 }
 
 /* How many keys one DEL carries. A single DEL is ONE redis command, so it is atomic - the
@@ -1302,40 +1322,111 @@ export function keysUnder(g: RedisNsGroup): string[] {
    quietly withdrew would be worse than no claim. */
 const REDIS_DEL_CHUNK = 1000;
 
-/** Delete every key under one namespace band (2026-09-29). The keys are the ones the walk
- *  has actually loaded - a SCAN that has not finished cannot promise more, and the question
- *  says which it is. */
+/* The most JSON one request carries. The gateway refuses a body over 2 MiB (reply.rs
+   BODY_LIMIT), and a band of long key names gets there long before REDIS_DEL_CHUNK does:
+   a batch past this budget goes as several requests, one after another. */
+const REDIS_DEL_REQUEST_BYTES = 1500000;
+
+/** The requests that delete a set of keys, each a list of DEL commands: at most
+ *  REDIS_DEL_CHUNK keys a command and REDIS_DEL_REQUEST_BYTES of JSON a request. A key too
+ *  long for either budget still goes, alone in its command - refusing to send it would keep
+ *  exactly the key the operator pointed at. Pure. */
+export function dbRedisDelBatches(keys: string[]): string[][][] {
+  const enc = new TextEncoder();
+  const bytes = (x: string): number => { return enc.encode(JSON.stringify(x)).length + 1; };
+  const requests: string[][][] = [];
+  let req: string[][] = [];
+  let reqBytes = 0;
+  let cmd: string[] = [];
+  let cmdBytes = 0;
+  const endCmd = (): void => {
+    if (!cmd.length) return;
+    if (req.length && reqBytes + cmdBytes > REDIS_DEL_REQUEST_BYTES) { requests.push(req); req = []; reqBytes = 0; }
+    req.push(["DEL"].concat(cmd));
+    reqBytes += cmdBytes;
+    cmd = [];
+    cmdBytes = 0;
+  };
+  keys.forEach((k: string): void => {
+    const b = bytes(k);
+    if (cmd.length >= REDIS_DEL_CHUNK || (cmd.length && cmdBytes + b > REDIS_DEL_REQUEST_BYTES)) endCmd();
+    cmd.push(k);
+    cmdBytes += b;
+  });
+  endCmd();
+  if (req.length) requests.push(req);
+  return requests;
+}
+
+/* One batch at a time: a second Delete while the first is still walking its requests would
+   send the same keys again and report two sets of numbers for one act. */
+let dbRedisDeleting = false;
+
+/** Delete every key under one namespace band (2026-09-29). The keys are the ones the walk has
+ *  actually loaded - a SCAN that has not finished, or a filter that hides some, cannot promise
+ *  more - and the question says which it is. The toast reports what REDIS deleted (the sum of
+ *  the DEL replies), not what was asked: a key someone else removed meanwhile is not claimed.
+ *  A request that fails stops the batch; what already went is reported with the server's
+ *  reason, and the tree is walked again either way so it shows what is really there. */
 export async function dbRedisDeleteKeys(ns: string, keys: string[]): Promise<void> {
   const c = dbConn();
-  if (!c.conn || !keys.length) return;
+  const conn = c.conn;
+  // SCAN may hand the same key back twice (redis promises each key AT LEAST once).
+  const unique = Array.from(new Set(keys));
+  if (!conn || !unique.length || dbRedisDeleting) return;
+  const fmt = (n: number): string => { return n.toLocaleString(locale()); };
+  const shownNs = dbKeyShown(ns);
+  const filtered = !!(c.grep || c.redisType);
   const partial = !!(c.redis && !c.redis.done);
-  const ask = partial
-    ? tr("dataView.deleteKeysPartialConfirm", { n: keys.length, ns: ns })
-    : tr("dataView.deleteKeysConfirm", { n: keys.length, ns: ns });
-  if (!confirm(ask)) return;
-  const commands: string[][] = [];
-  for (let i = 0; i < keys.length; i += REDIS_DEL_CHUNK) {
-    commands.push(["DEL"].concat(keys.slice(i, i + REDIS_DEL_CHUNK)));
+  const batches = dbRedisDelBatches(unique);
+  const commands = batches.reduce((a: number, r: string[][]): number => { return a + r.length; }, 0);
+  const ask = [tr(filtered || partial ? "dataView.deleteKeysAsk" : "dataView.deleteKeysAskAll", { n: fmt(unique.length), ns: shownNs })];
+  if (filtered) ask.push(tr("dataView.deleteKeysFilteredNote"));
+  if (partial) ask.push(tr("dataView.deleteKeysPartialNote", { ns: shownNs }));
+  if (commands > 1) ask.push(tr("dataView.deleteKeysChunkNote", { c: fmt(commands) }));
+  ask.push(tr("dataView.deleteKeysUndoNote"));
+  if (!confirm(ask.join("\n"))) return;
+  dbRedisDeleting = true;
+  let deleted = 0;
+  let why: string | null = null;
+  const sent: string[] = [];
+  try {
+    for (const req of batches) {
+      const j = await apiJson<{ replies?: unknown[] }>("/api/db/" + encodeURIComponent(conn) + "/redis-pipeline", {
+        method: "POST",
+        body: JSON.stringify({ commands: req }),
+      });
+      // apiJson has just put the server's reason in the toast; it is read back so the report
+      // below can carry it instead of covering it.
+      if (!j) { const said = $("toast"); why = said ? said.textContent || "" : ""; break; }
+      (j.replies || []).forEach((r: unknown): void => { deleted += Number(r) || 0; });
+      req.forEach((cmd: string[]): void => { sent.push(...cmd.slice(1)); });
+    }
+  } finally {
+    dbRedisDeleting = false;
   }
-  const j = await apiJson<unknown>("/api/db/" + encodeURIComponent(c.conn) + "/redis-pipeline", {
-    method: "POST",
-    body: JSON.stringify({ commands: commands }),
-  });
-  if (!j) return; // apiJson toasted; nothing was removed from the tree on a guess
-  toast(tr("dataView.deletedNKeys", { n: keys.length, ns: ns }));
+  if (why === null) {
+    toast(deleted < unique.length
+      ? tr("dataView.deletedNKeysGone", { n: fmt(deleted), ns: shownNs, gone: fmt(unique.length - deleted) })
+      : tr("dataView.deletedNKeys", { n: fmt(deleted), ns: shownNs }));
+  } else if (sent.length) {
+    toast(tr("dataView.deletedSomeKeysFailed", { n: fmt(deleted), of: fmt(unique.length), ns: shownNs, why: why }), true);
+  }
   // A tab open on a key that just went is a tab on nothing: it closes with the key rather
-  // than sitting on a value the server no longer has.
-  const gone: Record<string, boolean> = {};
-  keys.forEach((k: string): void => { gone[k] = true; });
+  // than sitting on a value the server no longer has. Only the keys whose request went.
+  const gone = new Set(sent);
   dbTabs().forEach((t: DbTab): void => {
-    if (t.kind === "key" && t.redisKey && gone[t.redisKey]) {
+    if (t.kind === "key" && t.redisKey && gone.has(t.redisKey)) {
       t.redisKey = null;
       t.redisValue = null;
       t.redisEdits = null;
       t.redisStreamRows = null;
     }
   });
-  await dbLoadKeys(true);
+  if (!sent.length && why !== null) return; // nothing left the panel's hands; nothing moved
+  // The quiet walk (docs/47 D6): as many pages deep as the operator had gone, so a band
+  // deleted out of a 5,000-key listing does not drop them back to the first 200.
+  if (dbConn() === c) await dbRewalkKeys();
   renderDbGrid();
 }
 

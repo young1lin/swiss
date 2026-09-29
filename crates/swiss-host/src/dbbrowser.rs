@@ -915,6 +915,27 @@ impl StreamFilter {
     }
 }
 
+/// A console or filter line into its words, the way a shell quotes them - through shlex, less
+/// the one shell-ism a data console must not have. shlex 2 reads a `#` that STARTS a word as a
+/// comment and drops the rest of the line, so `SET color #ff0000` reached redis as `SET color`
+/// and `DEL a #b c` deleted `a` alone and answered 1 (2026-09-29). redis-cli, the panel's own
+/// splitter and the operator all read that `#` as a character. `#` means nothing else to shlex,
+/// so every `#` rides through the split as 0xFF - a byte UTF-8 never contains, which shlex
+/// keeps as an ordinary character - and comes back as itself. None is an unbalanced quote or a
+/// trailing backslash, exactly as shlex says it.
+pub fn split_words(line: &str) -> Option<Vec<String>> {
+    let carried: Vec<u8> = line
+        .bytes()
+        .map(|b| if b == b'#' { 0xFF } else { b })
+        .collect();
+    shlex::bytes::split(&carried)?
+        .into_iter()
+        .map(|w| {
+            String::from_utf8(w.into_iter().map(|b| if b == 0xFF { b'#' } else { b }).collect()).ok()
+        })
+        .collect()
+}
+
 /// docs/49 §2.1: the `match` option into a filter. Splitting is shlex's job, not
 /// a hand-rolled whitespace split — `data~"last": 12` is one term with a space
 /// in it, and the redis console already learned this lesson the hard way
@@ -924,7 +945,7 @@ pub fn parse_stream_filter(line: &str) -> Result<Option<StreamFilter>, String> {
     if line.trim().is_empty() {
         return Ok(None);
     }
-    let tokens = shlex::split(line).ok_or_else(|| {
+    let tokens = split_words(line).ok_or_else(|| {
         "unbalanced quote in the filter — close it, or write a literal quote as \\\" inside the term"
             .to_string()
     })?;
@@ -6666,5 +6687,43 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
         assert!(cache.is_degraded());
         assert!(!cache.needs_tables(t0 + Duration::from_secs(1)));
         assert!(cache.needs_tables(t0 + COMPLETION_TTL + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn a_word_leading_hash_is_a_character_not_a_comment() {
+        // 2026-09-29: shlex 2 read `#k2` as a comment, so `DEL k1 #k2 k3` deleted k1 alone and
+        // `SET color #ff0000` reached redis one argument short.
+        assert_eq!(
+            split_words("DEL k1 #k2 k3"),
+            Some(vec!["DEL".into(), "k1".into(), "#k2".into(), "k3".into()])
+        );
+        assert_eq!(shlex::split("DEL k1 #k2 k3"), Some(vec!["DEL".into(), "k1".into()]), "the crate's own rule");
+        // The stream filter splits the same way: a term may start with '#'.
+        let f = parse_stream_filter("#tag=1 x").unwrap().unwrap();
+        assert_eq!(f.terms.len(), 2, "{f:?}");
+    }
+
+    #[test]
+    fn the_console_splits_as_the_shared_corpus_says() {
+        // tests/fixtures/console-split.json is read by the panel's suite too: the words the
+        // server hands redis, and the names the console's completion types for the operator.
+        let corpus: Value =
+            serde_json::from_str(include_str!("../../../tests/fixtures/console-split.json")).expect("corpus");
+        let lines = corpus["lines"].as_array().expect("lines");
+        assert!(lines.len() >= 30, "the corpus is the edge list, not a sample");
+        for case in lines {
+            let line = case["line"].as_str().expect("line");
+            let want: Option<Vec<String>> = serde_json::from_value(case["words"].clone()).expect("words");
+            assert_eq!(split_words(line), want, "{line:?}");
+        }
+        for case in corpus["keys"].as_array().expect("keys") {
+            let key = case["key"].as_str().expect("key");
+            let typed = case["typed"].as_str().expect("typed");
+            assert_eq!(
+                split_words(&format!("GET {typed}")),
+                Some(vec!["GET".to_string(), key.to_string()]),
+                "{typed} must reach redis as {key:?}"
+            );
+        }
     }
 }

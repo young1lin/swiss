@@ -27,7 +27,7 @@ import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbLoadDetail } from "./data-structure.js";
 import { dbIsPg, renderDbTables } from "./data-view.js";
-import { redisTypeGlyph } from "./data-tree.js";
+import { dbKeyShown, redisTypeGlyph } from "./data-tree.js";
 import { tr, trn } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
 import { heldDot } from "./ui/status.js";
@@ -163,7 +163,7 @@ function dbTabTitle(t       )         {
   // (card, overflow, confirms) but addresses nothing — identity lives on the fields below.
   if (t.custom) return t.custom;
   if (t.kind === "table") return (t.schema ? t.schema + "." : "") + (t.table || tr("dataTabs.untitled"));
-  if (t.kind === "key") return t.redisKey || tr("dataTabs.untitled");
+  if (t.kind === "key") return t.redisKey != null ? dbKeyShown(t.redisKey) : tr("dataTabs.untitled");
   // A console opened on a redis connection runs redis commands, not SQL — the box's own
   // placeholder has always said so (SET k v · GET k …), and a card reading "SQL" over it was the
   // one label on the strip that named something the tab cannot do.

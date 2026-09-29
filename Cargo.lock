@@ -4382,7 +4382,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "shlex",
  "sqlx",
  "swiss-core",
  "swiss-host",

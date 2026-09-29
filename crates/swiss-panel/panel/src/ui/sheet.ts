@@ -137,7 +137,12 @@ export interface FieldSheetSpec {
   placeholder?: string;
   /** The primary's word; Rename or Create by default. */
   save?: string;
-  /** Gets the TRIMMED value. true: done, the sheet closes. false: a failure the caller has
+  /** Hand submit the value exactly as typed. Off by default - a group or MCP name's stray
+   *  blank is a typo; on where blanks ARE the name: a redis key ` x` is not the key `x`, and
+   *  a trim turned an unchanged Rename into a rename onto another key (2026-09-29). A value
+   *  of blanks alone is still "required": that is a slip, not a name anyone means. */
+  exact?: boolean;
+  /** Gets the TRIMMED value (the typed one when `exact`). true: done, the sheet closes. false: a failure the caller has
    *  already reported (the sheet stays, so what was typed sits next to the reason). A string:
    *  an inline validation error, painted under the field instead of dismissed into a toast. */
   submit: (value: string) => Promise<boolean | string> | boolean | string;
@@ -169,8 +174,8 @@ export function openFieldSheet(spec: FieldSheetSpec): void {
     err.hidden = false;
   };
   const save = async (): Promise<void> => {
-    const value = input.value.trim();
-    if (!value && !spec.allowEmpty) { fail(tr("ui.nameRequired")); return; }
+    const value = spec.exact ? input.value : input.value.trim();
+    if (!input.value.trim() && !spec.allowEmpty) { fail(tr("ui.nameRequired")); return; }
     if (value === def) { closeSheet(); return; } // a rename that changed nothing is a cancel
     const out = await spec.submit(value);
     if (out === true) closeSheet();

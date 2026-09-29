@@ -1,6 +1,7 @@
 # 50 — Redis 键空间与控制台：相对层级、批量删除、来自服务端的补全
 
-> 状态：**已实施**（2026-09-29）。基线 master `e622ab9`（docs/49 上线之后）。
+> 状态：**已实施**（2026-09-29）。基线 master `e622ab9`（docs/49 上线之后）。同日第二轮按 owner 的
+> 「每个极端情况」把一个敌意键空间在真机上走了一遍，坏掉的都修了——见 §6。
 >
 > 需求原文（owner，2026-09-29，在 docs/49 的流过滤上线之后连着提的三条）：
 >
@@ -148,3 +149,78 @@ owner 那句「也没有事务什么的」，落到批量删除上，正确的�
 - **不做参数级校验**（"这里应该是整数"）：redis 自己会报错，且报得比面板准。
 - **不做模板参数占位符**（`<key>`）：要删的尖括号比要填的值还多，`SET key value` 直接改就是。
 - **不做 `MULTI/EXEC`**：理由见 §3。
+
+## 6. 极端情况（2026-09-29，第二轮）
+
+> 需求原文（owner）：「每个极端情况，你都考虑到了吗？例如很多 key 都是同样的前缀的，还有其他的，反正有很多
+> 极端的情况，希望你在这里测试下」「各个极端情况，你都需要考虑清楚」
+
+做法：先写一个**敌意键空间**（5,110 个键，见下），在 19998 上用无头 Edge 从头走一遍，再把每个坏掉的地方
+钉成单测。下表每一行都是**真的坏过**的，不是推演出来的。
+
+敌意键空间：同一前缀下 5,000 个键（`hot:session:user:N`）加一个必须活下来的兄弟 `hot:config`；
+`:lead`、`::deep`、`a::b`、`foo:` 这类开头/连续/结尾的冒号；`constructor:x`、`__proto__:x`、
+`toString:1`；空名 `""`、` x`、`x `、`my key` 与它的两半 `my`、`key`；引号、反斜杠、换行、制表符；
+`用户:1`、`🔑:a`、`#tag:1`；一个 5,000 字符的名字；60 层的台阶 `deep:deep:…:x`；
+以及三个**不是 UTF-8** 的名字（Spring JDK 序列化器写出来的 `\xac\xed\x00\x05t…session:one`、同前缀的
+`…session:two`、单独的 `\xff\xfe`）。
+
+### 6.1 树
+
+| 情况 | 坏成什么样 | 现在 |
+| --- | --- | --- |
+| 一条带下 20 万个键 | `out.push(...keysUnder(child))` 把整个列表当调用参数，过了约 12 万个 V8 就 `RangeError`，带头连数都画不出来 | `gatherKeys` 一个一个推（`data-view.ts:1311`） |
+| 5,000 层的台阶、两个键共享 10 万个冒号 | `nsNode` 递归爆栈，之后每次走树都爆，整个 Data 页挂掉 | 深度封顶 `REDIS_NS_MAX_DEPTH = 32`（`data-tree.ts:130`），折叠也算一层；再往下的键都是最深那条带的行，名字是键的剩余部分 |
+| 名字叫 `constructor` / `toString` / `__proto__` | 折叠表是普通对象，`collapsed["constructor"]` 回的是 Object 的构造函数——这条带永远是"已折叠"，打不开 | 折叠表无原型（`groups.ts` `loadCollapsed`）；分段本来就用 `Map` |
+| ` x` 与 `x `、`line\nbreak`、零宽字符、U+202E | HTML 折叠空白，两个不同的键画成同一个 `x`；换行的名字读起来像 `line break`；U+202E 把名字后半段倒着画 | `dbKeyShown`（`data-tree.ts:121`）：会被页面或对话框悄悄改掉的名字按 redis-cli 的样子加引号转义，空名是 `""`。**只管显示**：每个动作发的都是键自己的字节。树、tab 标题、网格标题、确认框、toast 都走它 |
+| 不是 UTF-8 的名字 | 网关把回复转成 JSON 时它变成 U+FFFD——一个任何命令都找不到的名字；点它打开的是空值，删它删的是另一个键（或者什么都不删） | 见 §6.4 |
+
+### 6.2 批量删除
+
+| 情况 | 现在 |
+| --- | --- |
+| 5,000 个同前缀的键 | 按 1,000 个一条切成 5 条 `DEL`，确认框说明这时保证的是一个往返；兄弟 `hot:config` 不在这条带里，活下来（真机走过：删完剩 0，`hot:config` 在） |
+| 很长的名字 | 网关拒绝超过 2 MiB 的请求体（`reply.rs` `BODY_LIMIT`），长名字的带比 1,000 个键先撞上它：`dbRedisDelBatches` 另有每请求 1.5 MB 的 JSON 预算，超了就分成几个请求依次发；一个单独就超预算的键仍然发（独占一条命令）——拒发等于留下的恰好是操作者指着的那个 |
+| SCAN 把同一个键给了两次（rehash 时 redis 只保证"至少一次"） | 键列表进来就去重（`dbUniqueKeys`），树、补全、`DEL` 参数都不会重复 |
+| 连点两下删除 | `dbRedisDeleting` 挡住第二次——否则同一批键发两遍，报两组数字 |
+| 删到一半别人先删了 | toast 报的是 **redis 回的** `DEL` 之和，不是请求的个数；差额单独说（`deletedNKeysGone`） |
+| 第 3 个请求失败 | 停下，已经删掉的照实报，带上服务端给的原因；无论如何都重走一遍树 |
+
+### 6.3 控制台与补全
+
+| 情况 | 坏成什么样 | 现在 |
+| --- | --- | --- |
+| `DEL #tag:1` | Rust 的 shlex 2.0.1 把**词首的 `#`** 当注释，整行后半截被吞掉——服务端执行的是 `DEL`，redis 回参数个数不对 | `dbbrowser::split_words`（`dbbrowser.rs:926`）：切之前 `#`→0xFF，切完换回来。控制台和流过滤共用这一个函数（swiss-mcp 不再单独依赖 shlex） |
+| 面板和服务端切词不一致 | 补全数的"第几个词"和 redis 实际看到的对不上 | 共用语料 `tests/fixtures/console-split.json`（39 行 + 14 个"键 → 应该怎么打"）：Rust 和 vitest 各读一遍、断言同样的结果。两个库有 3 处已知分歧（`"\$5"`、`$'a\tb'`、`\r`），语料里逐条写了 `why` |
+| `GET 用户` 补全 | 旧的"光标前一串像键的字符"在 CJK 处断开，列出所有键，选中的键贴在 `用户` **后面** | `dbRedisWordSpan`（`data-suggest.ts:133`）：要替换的就是 shlex 切出来的那个词，起点是"从这儿往后恰好切成这一个词"的最近空白处 |
+| 键名带空格 / 引号 / 反斜杠 | 补进去的是裸的 `my key`，服务端切成两个键 | `dbRedisQuoteArg`：切回来不变就裸写，否则双引号包起来、`"` 和 `\` 转义——面板、服务端、redis-cli 三方读回来都是同样的字节。带 `\r` / `\n` 的键不出现在补全里 |
+| 贴进一个 100 KB 的 JSON 值 | 找词起点时对每个空白都把整行前缀重切一遍，O(n²)，**一次按键卡了 10 分钟以上** | 只切光标前的尾巴；回看最多 `REDIS_SPAN_LOOKBACK = 4096` 个字符；超过 `REDIS_LINE_MAX = 65536` 的行按空白数词、什么都不补 |
+| `XREAD … STREAMS a b 0 0`、`ZUNION 2 a b`、`EVAL s 1 k` | 旧的 first/last/step 对这些命令说"没有键"（键的位置会动） | redis 7 的 key specs（`COMMAND INFO` 第 9 格，`parse_key_spec`）：从固定位置或关键字开始，按范围或按计数参数找键；`unknown` 类的 spec 丢掉，不替服务端猜 |
+| 语法行里的 token | `[LIMIT offset count]` 印成 `[offset count]`；`SORT` 的 `GET` 不重复 | token 领头印在块、oneof 前面；`multiple_token` 时 token 跟着重复：`[GET pattern [GET pattern ...]]`（redis 7 真机上叫 `get-pattern`，集成测试按它断言） |
+
+### 6.4 单个键上的动作
+
+| 情况 | 坏成什么样 | 现在 |
+| --- | --- | --- |
+| 删 / 设 TTL / 改名 `my key` | 动作拼成一行字 `"DEL " + key` 走控制台路由，控制台按 shell 切词：删掉的是 `my` 和 `key`；名字里的反斜杠删的是另一个键 | `dbRedisExec(argv)` 走结构化的 `/redis-pipeline`，键是**一个参数**的原样字节（与控制台同一套守卫 `vet_pipeline`） |
+| TTL 填 0 | `EXPIRE key 0` 当场删键——一次跳过了删除确认的删除 | sheet 和行内编辑器都拒绝 0，指向删除 |
+| `EXPIRE` 回 0 | 仍然 toast "TTL 已设置"，对一个已经不存在的键 | `dbRedisTtlSaid`：0 就说键已经不在了 |
+| 改名成已存在的名字 | `RENAME` 静默覆盖目标键的值 | `RENAMENX`，被占用就在输入框旁边说 |
+| 改名 ` x`（首尾空白） | sheet 把值 trim 掉，改成了 `x` | sheet 新增 `exact`（`ui/sheet.ts:144`）：原样提交；只有空白仍算"必填" |
+| 命令预览里以 `\` 结尾的值 | 印成 `"x\"`——一个没闭合的引号，贴进控制台就是另一条命令 | `dbRedisCommandText` 同时转义 `\` 和 `"` |
+| 不是 UTF-8 的名字 | 见 §6.1 | SCAN 的名字保持**字节**（`call_raw` + `pipeline_args`，TYPE / TTL 问的是原样字节）；是 UTF-8 就照常，不是就按 redis-cli 的 `sdscatrepr` 印出来（`redis_cli_repr`，`redis.rs:1451`）并标 `binary: true`。面板上：它**永远留在根层**（印出来的文字里的 `:` 不是命名空间），右槽写"非 UTF-8"，点击只 toast "请用 redis-cli"，不开 tab；带删除、补全都跳过它。**不做**按字节寻址——那要给每个动作加一条二进制通道，而这种键在面板里只需要"看得见、不误伤" |
+
+### 6.5 Runs 的取消
+
+取消要等 run **真的停下**，这要几秒。这几秒里点去 Logs，停下的回复回来时 `render()` 把 Runs 列表画进了
+`#pane`——盖在 Logs 上。`remote-runs.ts` 加了**访问号**：`mount` / `unmount` 都让它 +1，每个 `await`
+之后号不对就什么都不写、什么都不画；取消的 toast 照样说（它是面板的，不是这一页的）。
+
+### 6.6 测试
+
+| 层 | 新增 |
+| --- | --- |
+| Rust 单测 | `a_word_leading_hash_is_a_character_not_a_comment`、`the_console_splits_as_the_shared_corpus_says`（swiss-host）；`a_name_that_is_not_utf8_prints_as_redis_cli_prints_it`、`a_token_leads_its_block_and_its_oneof_and_repeats_only_when_redis_says_so`、`key_specs_say_where_moving_keys_are_and_an_unknown_spec_is_dropped`（swiss-mcp） |
+| 集成（真 redis 7，27 条全过） | `a_word_leading_hash_reaches_redis_as_itself`（`DEL` 4 个 `#` 开头的键回 4）、`a_key_name_that_is_not_utf8_is_walked_as_its_bytes_and_marked`（原始客户端写 `\xac\xed…user`，走出来恰好一行、标 binary、类型和 TTL 是这个键的） |
+| 面板 vitest | `db-tree`：台阶、10 万个冒号、20 万键的带、原型名、首尾空白段、非 UTF-8 留在根层、`keysUnder` 跳过它、分请求的 `DEL`；`admin-data-suggest`：词的跨度、带空格的键补进去带引号、长行、共用语料；`data-look`：TTL 读数、`EXPIRE 0`、改名空白、空键名、点非 UTF-8 行；`db-tabs`：`""` 和 ` x` 的标题；`admin-remote-runs-view`：取消途中离开 |
+| 真机（19998，无头 Edge） | 上面那个键空间：所有名字都画得出来；`用户` / `my key` 的补全；`#ff0000` 整个存进去；5,000 键的带删成 5 条 `DEL`、`hot:config` 留下；删 `my key` 后 `my`、`key` 都在；` x` 原样改名是空操作；TTL 0 被拒；非 UTF-8 名字有标记、点击被拒、redis 里原封未动；页面错误 0 |

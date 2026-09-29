@@ -423,12 +423,185 @@ describe("a Redis key's rename is the library's one-field sheet (docs/46 P7-2)",
       save.click();
       await flush();
       await flush();
-      expect(JSON.parse(sent)).toEqual({ command: "RENAME user:1 user:2" });
+      // The exact arguments through the pipeline route, and RENAMENX - never a line to split.
+      expect(JSON.parse(sent)).toEqual({ commands: [["RENAMENX", "user:1", "user:2"]] });
       expect(host.hidden, "a refused rename keeps the sheet").toBe(false);
       expect(input.value).toBe("user:2");
     } finally {
       Object.assign(globalThis, { fetch: ok });
     }
+  });
+});
+
+/* 2026-09-29, "各个极端情况，你都需要考虑清楚": a key's own acts - Delete, Rename, the TTL - built
+   a console LINE ("DEL " + key) that the gateway splits like a shell. A key named `my key` was
+   two arguments: Delete removed the keys `my` and `key` and left `my key` standing. Every act
+   below sends the key as ONE argument, and each case names a key that line-building broke. */
+describe("a key's own acts send the key's exact bytes (2026-09-29)", () => {
+  const menuItem = (label: string): HTMLButtonElement =>
+    Array.from(document.querySelectorAll<HTMLButtonElement>("#menu button")).find((b) => b.textContent === label)!;
+  const flush = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });
+  const sent: { url: string; body: unknown }[] = [];
+  let reply: (url: string) => { ok: boolean; body: unknown } = () => ({ ok: true, body: { replies: [1] } });
+  const realFetch = globalThis.fetch;
+  const realConfirm = globalThis.confirm;
+
+  beforeEach(() => {
+    sent.length = 0;
+    reply = () => ({ ok: true, body: { replies: [1] } });
+    Object.assign(globalThis, {
+      fetch: (url: string, init?: { body?: string }) => {
+        sent.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+        const r = reply(String(url));
+        return Promise.resolve({ ok: r.ok, status: r.ok ? 200 : 400, json: () => Promise.resolve(r.body) });
+      },
+      confirm: () => true,
+    });
+  });
+  afterAll(() => { Object.assign(globalThis, { fetch: realFetch, confirm: realConfirm }); });
+
+  const openKey = (key: string): void => {
+    Object.assign(dbConnState(), { conns: [dbConn("demo-cache", "redis")], conn: "demo-cache" });
+    const t = freshTab("key");
+    t.redisKey = key;
+    t.redisValue = { key, type: "string", ttl: -1, value: "v", length: 1 };
+    dbTabs().length = 0;
+    dbTabs().push(t);
+    grid.renderDbToolbar();
+    document.querySelector<HTMLButtonElement>("#dbHead [aria-haspopup='menu']")!.click();
+  };
+  const pipelined = (): unknown[] => sent.filter((x) => x.url.endsWith("/redis-pipeline")).map((x) => (x.body as { commands: unknown }).commands);
+
+  const NAMES = ["my key", "back\\slash", "it's", 'say "hi"', "tab\there", "用户 1", "-dash-first", "$HOME"];
+
+  for (const name of NAMES) {
+    it("Delete removes exactly " + JSON.stringify(name) + " - one argument, never a line", async () => {
+      openKey(name);
+      menuItem(tr("dataBrowsers.delete")).click();
+      await flush(); await flush();
+      expect(pipelined()[0]).toEqual([["DEL", name]]);
+      expect(sent.some((x) => x.url.endsWith("/command")), "nothing went through the line splitter").toBe(false);
+    });
+  }
+
+  it("the key \"\" heads its own view - its head read \"Keys\", as if nothing were open", () => {
+    openKey("");
+    expect(document.querySelector("#dbHead .db-title")!.textContent).toBe('""');
+    openKey(" x");
+    expect(document.querySelector("#dbHead .db-title")!.textContent, "edge blanks show").toBe('" x"');
+  });
+
+  it("a key whose name is not UTF-8 shows as redis-cli prints it, and a click opens nothing", () => {
+    // Spring's JDK serializer writes names like this. The walk sends redis-cli's printing of
+    // the bytes and marks it; that text is not the key, so nothing may be built from it.
+    const bin = '"\\xac\\xed\\x00\\x05t\\x00\\x04user"';
+    Object.assign(dbConnState(), {
+      conns: [dbConn("demo-cache", "redis")], conn: "demo-cache",
+      redis: { keys: [{ key: bin, type: "string", ttl: -1, binary: true }, { key: "plain", type: "string", ttl: -1 }], cursor: "0", done: true, total: 2 },
+    });
+    dbTabs().length = 0;
+    dbTabs().push(freshTab("sql"));
+    const keyTabs = (): number => dbTabs().filter((t) => t.kind === "key").length;
+    view.renderDbTables();
+    const rows = Array.from(document.querySelectorAll<HTMLElement>("#dbTables .db-key-row"));
+    const b = rows.find((r) => r.dataset.rkey === bin)!;
+    expect(b.querySelector(".db-table-name")!.textContent).toBe(bin);
+    expect(b.querySelector(".db-table-meta")!.textContent).toBe(tr("dataView.binaryKeyMeta"));
+    b.click();
+    expect(keyTabs(), "no tab over a name that addresses nothing").toBe(0);
+    expect(document.getElementById("toast")!.textContent).toBe(tr("dataView.binaryKeyTitle"));
+    rows.find((r) => r.dataset.rkey === "plain")!.click();
+    expect(keyTabs(), "while a UTF-8 row still opens its tab").toBe(1);
+  });
+
+  it("Delete says so when the key was already gone (DEL answered 0)", async () => {
+    reply = (url) => url.endsWith("/redis-pipeline") ? { ok: true, body: { replies: [0] } } : { ok: true, body: { keys: [], cursor: "0", done: true } };
+    openKey("gone:1");
+    menuItem(tr("dataBrowsers.delete")).click();
+    await flush(); await flush();
+    expect(document.getElementById("toast")!.textContent).toBe(tr("dataBrowsers.keyAlreadyGone", { key: "gone:1" }));
+  });
+
+  it("Rename onto a name that EXISTS is refused inline - RENAMENX answered 0, and no RENAME follows", async () => {
+    reply = () => ({ ok: true, body: { replies: [0] } });
+    openKey("my key");
+    menuItem(tr("dataBrowsers.renameEllipsis")).click();
+    const input = document.getElementById("g-name") as HTMLInputElement;
+    input.value = "taken key";
+    (document.getElementById("g-save") as HTMLButtonElement).click();
+    await flush(); await flush();
+    expect(pipelined()).toEqual([[["RENAMENX", "my key", "taken key"]]]);
+    expect(document.getElementById("sheet")!.hidden, "the sheet stays, with the typed name").toBe(false);
+    expect(document.getElementById("g-err")!.textContent).toBe(tr("dataBrowsers.renameTargetExists", { to: "taken key" }));
+  });
+
+  it("the TTL goes as its own argument on a spaced key, and 0 - which would delete the key - is refused inline", async () => {
+    openKey("my key");
+    menuItem(tr("dataBrowsers.setTtlEllipsis")).click();
+    const input = document.getElementById("g-name") as HTMLInputElement;
+    input.value = "0";
+    (document.getElementById("g-save") as HTMLButtonElement).click();
+    await flush();
+    expect(sent, "0 never leaves the panel").toHaveLength(0);
+    expect(document.getElementById("g-err")!.textContent).toBe(tr("dataBrowsers.ttlZeroDeletes"));
+    input.value = "60";
+    (document.getElementById("g-save") as HTMLButtonElement).click();
+    await flush(); await flush();
+    expect(pipelined()[0]).toEqual([["EXPIRE", "my key", "60"]]);
+  });
+
+  // The TTL readout edits in place through its own little input - a second door to the same
+  // act, and it had neither rule: it built "EXPIRE " + key as a console line, and 0 went.
+  const editTtlInPlace = (typed: string): void => {
+    const b = document.querySelector<HTMLElement>("#dbHead [data-rttl]")!;
+    browsers.dbRedisClick(b);
+    const input = document.querySelector<HTMLInputElement>("input.db-ttl-in")!;
+    input.value = typed;
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  };
+
+  it("the TTL readout's own editor refuses 0 too - it used to delete the key on the spot", async () => {
+    openKey("my key");
+    editTtlInPlace("0");
+    await flush(); await flush();
+    expect(pipelined(), "0 never leaves the panel").toEqual([]);
+    expect(sent.some((x) => x.url.endsWith("/command")), "and nothing through the line splitter").toBe(false);
+    expect(document.getElementById("toast")!.textContent).toBe(tr("dataBrowsers.ttlZeroDeletes"));
+  });
+
+  it("the TTL readout's own editor sends a spaced key as ONE argument", async () => {
+    openKey("my key");
+    editTtlInPlace("60");
+    await flush(); await flush();
+    expect(pipelined()[0]).toEqual([["EXPIRE", "my key", "60"]]);
+    expect(sent.some((x) => x.url.endsWith("/command")), "nothing through the line splitter").toBe(false);
+  });
+
+  it("an EXPIRE that answers 0 says the key is gone - not that a TTL was set on it", async () => {
+    reply = (url) => url.endsWith("/redis-pipeline") ? { ok: true, body: { replies: [0] } } : { ok: true, body: {} };
+    openKey("gone:ttl");
+    menuItem(tr("dataBrowsers.setTtlEllipsis")).click();
+    (document.getElementById("g-name") as HTMLInputElement).value = "60";
+    (document.getElementById("g-save") as HTMLButtonElement).click();
+    await flush(); await flush();
+    expect(pipelined()[0]).toEqual([["EXPIRE", "gone:ttl", "60"]]);
+    expect(document.getElementById("toast")!.textContent).toBe(tr("dataBrowsers.keyAlreadyGone", { key: "gone:ttl" }));
+  });
+
+  it("Rename keeps a name's blanks: an unchanged ' x' is a cancel, and ' y ' goes exactly as typed", async () => {
+    openKey(" x");
+    menuItem(tr("dataBrowsers.renameEllipsis")).click();
+    expect((document.getElementById("g-name") as HTMLInputElement).value).toBe(" x");
+    (document.getElementById("g-save") as HTMLButtonElement).click();
+    await flush(); await flush();
+    expect(pipelined(), "a trim made this RENAMENX ' x' 'x' - a rename nobody asked for").toEqual([]);
+    expect(document.getElementById("sheet")!.hidden, "unchanged is a cancel").toBe(true);
+    openKey(" x");
+    menuItem(tr("dataBrowsers.renameEllipsis")).click();
+    (document.getElementById("g-name") as HTMLInputElement).value = " y ";
+    (document.getElementById("g-save") as HTMLButtonElement).click();
+    await flush(); await flush();
+    expect(pipelined()[0]).toEqual([["RENAMENX", " x", " y "]]);
   });
 });
 

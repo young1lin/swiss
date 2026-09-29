@@ -8,7 +8,7 @@
 > mcp.md, tunnels.md, jobs.md, host.md) and the authoritative docs/. Re-verify a detail
 > against the code before relying on it.
 
-> swiss-panel carries no Rust business logic: the Rust side is just `crates/swiss-panel/src/admin.rs` (263 lines — rust-embed embedding, asset serving, the version stamp, SHA-1). The panel is **authored in TypeScript** in `crates/swiss-panel/panel/src/*.ts` since ADR-024 (docs/36): ts-blank-space erases the types line-for-line and the emit is COMMITTED under `src/admin_assets/js/` — no bundler, no minify, `cargo build` needs no node. That tree carries 1 index.html + 2 CSS + 68 own modules (52 root + 14 views + 2 locale tables) + vendored xterm.js/cronstrue. The panel's code is the spec for the admin API: every `/api/*` response shape must match what the panel reads field for field, and a shape change ships on both sides in one commit. Gate: `npm run check` in `crates/swiss-panel/panel/` — typecheck ×2 + eslint + emit-freshness + the vitest suite in `panel/test/`.
+> swiss-panel carries no Rust business logic: the Rust side is just `crates/swiss-panel/src/admin.rs` (263 lines — rust-embed embedding, asset serving, the version stamp, SHA-1). The panel is **authored in TypeScript** in `crates/swiss-panel/panel/src/*.ts` since ADR-024 (docs/36): ts-blank-space erases the types line-for-line and the emit is COMMITTED under `src/admin_assets/js/` — no bundler, no minify, `cargo build` needs no node. That tree carries 1 index.html + 2 CSS + 68 own modules (52 root + 14 views + 2 locale tables) + vendored xterm.js/cronstrue/shlex. The panel's code is the spec for the admin API: every `/api/*` response shape must match what the panel reads field for field, and a shape change ships on both sides in one commit. Gate: `npm run check` in `crates/swiss-panel/panel/` — typecheck ×2 + eslint + emit-freshness + the vitest suite in `panel/test/`.
 
 ## Asset inventory (counts re-verified against the tree)
 
@@ -91,7 +91,7 @@ and `js/vendor/**` have no TypeScript twin and are still edited in place.
 | `js/views/terminal-settings.js` | 105 | The terminal settings sheet |
 | `styles/base.css` | 568 | Shell, rail/context bar/sidebar, tokens, buttons, chips, Focus and docked-full-page rules |
 | `styles/views.css` | 1175 | Per-view styles (data grid, Terminal toolbar/dock, jobs, ...) |
-| `js/vendor/*` | — | Vendored xterm.js (+ addons) and cronstrue; pinned, never npm |
+| `js/vendor/*` | — | Vendored xterm.js (+ addons), cronstrue and shlex; pinned, never npm |
 | `panel/src/types/*.d.ts` | — | Declaration-only (no emit): `api.d.ts` (1019) the wire shapes, `state.d.ts` (509), `dom.d.ts` (249), `runs.d.ts` (166), `terminal-view.d.ts` (110), `vendor.d.ts` (114) |
 
 ## Per-view notes
