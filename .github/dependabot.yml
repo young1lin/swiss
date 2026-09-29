@@ -26,6 +26,11 @@ updates:
     groups:
       cargo-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # The terminal tests' WebSocket client is the tungstenite axum's ws feature already
+      # compiles in (root Cargo.toml); a newer one is a second copy. Lift this when axum moves.
+      - dependency-name: tokio-tungstenite
+        versions: [">=0.30.0"]
   - package-ecosystem: npm
     directory: /crates/swiss-panel/panel
     schedule:
