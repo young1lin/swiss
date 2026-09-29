@@ -36,7 +36,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use rmcp::model::{
-    CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo,
+    CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig,
     ClientRequest, GetPromptRequestParams, GetPromptResponse, GetPromptResult, Implementation,
     ListPromptsResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams, PingRequest,
     ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, ServerResult,
@@ -292,11 +292,11 @@ impl SpawnedChild {
 struct ProcClientHandler;
 
 impl ClientHandler for ProcClientHandler {
-    fn get_info(&self) -> ClientInfo {
+    fn get_info(&self) -> ClientConfig {
         let mut client_info = Implementation::default();
         client_info.name = "swiss".into();
         client_info.version = "1.0".into();
-        ClientInfo::new(ClientCapabilities::default(), client_info)
+        ClientConfig::new(ClientCapabilities::default(), client_info)
     }
 }
 

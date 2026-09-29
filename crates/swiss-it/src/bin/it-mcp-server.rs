@@ -38,7 +38,7 @@ use std::future::Future;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
     Implementation, JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities,
-    ServerInfo, Tool, ToolsCapability,
+    ServerConfig, Tool, ToolsCapability,
 };
 use rmcp::service::{MaybeSendFuture, RequestContext};
 use rmcp::transport::async_rw::AsyncRwTransport;
@@ -127,13 +127,13 @@ fn tools() -> Vec<Tool> {
 }
 
 impl ServerHandler for L3Server {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let mut capabilities = ServerCapabilities::default();
         capabilities.tools = Some(ToolsCapability::default());
         let mut info = Implementation::default();
         info.name = "it-mcp-server".into();
         info.version = "1.0".into();
-        ServerInfo::new(capabilities).with_server_info(info)
+        ServerConfig::new(capabilities).with_server_info(info)
     }
 
     fn list_tools(

@@ -30,7 +30,7 @@ use async_trait::async_trait;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
     Implementation, JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities,
-    ServerInfo, Tool, ToolsCapability,
+    ServerConfig, Tool, ToolsCapability,
 };
 use rmcp::service::{MaybeSendFuture, RequestContext};
 use rmcp::{RoleServer, ServerHandler};
@@ -85,13 +85,13 @@ fn echo_tool() -> Tool {
 }
 
 impl ServerHandler for EchoServer {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let mut capabilities = ServerCapabilities::default();
         capabilities.tools = Some(ToolsCapability::default());
         let mut server_info = Implementation::default();
         server_info.name = "echo".into();
         server_info.version = "1.0".into();
-        ServerInfo::new(capabilities).with_server_info(server_info)
+        ServerConfig::new(capabilities).with_server_info(server_info)
     }
 
     fn list_tools(
