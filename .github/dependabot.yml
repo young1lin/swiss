@@ -12,22 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Weekly dependency PRs. Cargo updates are grouped so one PR carries the week's patch/minor
+# Monthly dependency PRs. Cargo updates are grouped so one PR carries the month's patch/minor
 # bumps (every manifest change still goes through swiss-dependency-review before merge);
-# the panel's npm tree is dev-only tooling; the actions are the CI workflow's pins.
+# the panel's npm tree is dev-only tooling; the actions are the CI workflow's pins. Monthly,
+# not weekly: while the repository is private each PR's CI run bills against the Actions
+# quota, and every push to master makes Dependabot rebase - and re-run - the open ones.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
       cargo-minor-and-patch:
         update-types: [minor, patch]
   - package-ecosystem: npm
     directory: /crates/swiss-panel/panel
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
       panel-dev-tooling:
         update-types: [minor, patch]
@@ -43,4 +45,4 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly

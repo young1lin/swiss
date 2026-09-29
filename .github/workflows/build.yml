@@ -12,19 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Build swiss for every platform and publish archives on version tags.
+# Check swiss on every change, build every platform's archive on version tags.
 #
-# - push to a branch / PR: build + test every target, upload the archives as workflow artifacts
-# - push of a v* tag (e.g. v0.1.0): verify the manifest version, then publish
-#   one archive per target plus SHA256SUMS in a GitHub Release
+# The repository is private, so every runner minute is billed against a monthly quota - Windows
+# at 2x, macOS at 10x - and the jobs are sized to what each event has to prove:
+# - pull request: the Linux gate (clippy, the heavy-duplicate check, the tests) plus panel, deny
+#   and the real-database suite. A bump that only breaks Windows is caught by the local gates
+#   before merge and by the master push after it.
+# - push to master: the same gate on Linux and Windows, and clippy on the arm Mac - the cheapest
+#   check that catches a call that only compiles against glibc. No release build.
+# - v* tag (e.g. v0.1.0) or a manual run: all of that plus the release build of all five targets;
+#   a tag also verifies the manifest version and publishes one archive per target plus
+#   SHA256SUMS in a GitHub Release.
+# - a change under docs/ alone runs nothing.
 #
 # TLS note (Cargo.toml): Windows builds link schannel, unix builds link rustls — so the unix
 # binaries carry no system-OpenSSL dependency. aws-lc-rs (rustls's provider) needs cmake + a C
 # compiler on Linux; both are installed below. macOS runners ship Xcode toolchains.
-#
-# The linux-arm64 entry runs on the free arm runner fleet — free for PUBLIC repos. On a private
-# repo that runner is billed by the minute: delete the entry if that is a concern, or build it
-# with https://github.com/cross-rs/cross instead.
 
 name: build
 
@@ -32,7 +36,17 @@ on:
   push:
     branches: [main, master]
     tags: ["v*"]
+    # Not evaluated for tag pushes: a tag always runs everything.
+    paths-ignore: ["docs/**"]
   pull_request:
+    paths-ignore: ["docs/**"]
+  workflow_dispatch:
+
+# A newer push to the same branch or pull request supersedes the run still in flight - its
+# result would describe a commit nobody is looking at any more. A tag's run always finishes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 # Read-only by default; only the release job, which attaches binaries to a GitHub Release,
 # is granted write on contents (least privilege for the build/test/deny jobs).
@@ -64,46 +78,29 @@ jobs:
           print(f"release tag {tag} matches Cargo.toml")
           PY
 
-  build:
-    name: ${{ matrix.target }}
+  # The gate every change passes, on the runner's own target. macos-latest is the arm Mac.
+  check:
+    name: check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # A clean run takes ~21 min on the slowest target (Windows). The ceiling is there for a
-    # test that hangs instead of failing: GitHub's own default is six hours, which on a
-    # macOS runner is a very expensive way to learn that.
-    timeout-minutes: 60
+    # A warm run takes ~8 min on the slowest runner (Windows), a cold cache about twice that.
+    # The ceiling is for a test that hangs instead of failing, and for a degraded runner (one
+    # took 27 min to restore the cache and 65 min in all): GitHub's own default is six hours.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            exe: swiss.exe
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            exe: swiss
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
-            exe: swiss
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            exe: swiss
-          # Intel macs build as a cross target from the arm runner — Apple clang links both
-          # architectures out of the box, no extra toolchain needed.
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            exe: swiss
-            cross: true
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Pull requests run the Linux gate alone (see the header).
+        exclude: ${{ github.event_name == 'pull_request' && fromJSON('[{"os":"windows-latest"},{"os":"macos-latest"}]') || fromJSON('[]') }}
 
     steps:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.os }}
 
       - name: Install build tools (Linux)
         if: runner.os == 'Linux'
@@ -112,7 +109,6 @@ jobs:
       # `--workspace` is load-bearing since the crate split: without it cargo selects the root
       # package alone, and the member crates — most of the code — go unchecked.
       - name: Lint
-        if: matrix.cross != true
         run: |
           cargo clippy --workspace --all-targets --locked -- -D warnings
 
@@ -122,7 +118,6 @@ jobs:
       # aes-gcm). So print the whole picture, then fail only on the crates whose duplication
       # actually costs megabytes.
       - name: Check for duplicate dependencies
-        if: matrix.cross != true
         shell: bash
         run: |
           # -e normal,build: this gate owns the SHIPPING graph. Dev-dependencies - the
@@ -142,18 +137,63 @@ jobs:
             exit 1
           fi
 
-      # Tests run on the native target only — a cross-compiled binary cannot execute.
       # `--workspace` for the same reason as the lint step: the root package holds only a small
       # minority of the suite, and a green run without it would never build the member crates.
       - name: Test
         # Not on macOS yet (README, Install, footnote 1): it has no master-key source, so
         # every sealing test fails there, and a killed local shell's pty never reaches EOF,
-        # which hangs the suite. Both macOS targets still lint and build, which is what
-        # catches a call that only compiles against glibc.
-        if: matrix.cross != true && runner.os != 'macOS'
+        # which hangs the suite. The Mac still lints, which is what catches a call that only
+        # compiles against glibc.
+        if: runner.os != 'macOS'
         # --no-fail-fast: cargo otherwise stops at the first failing test binary, so a red
         # run names one crate's failures and hides the rest behind it. The step still fails.
         run: cargo test --workspace --locked --no-fail-fast
+
+  # The release archives: every target, only when something will ship them (a tag) or someone
+  # asked for them (a manual run). The check job above proves the code; this one only builds.
+  dist:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    name: dist ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            exe: swiss.exe
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            exe: swiss
+          # The arm runner fleet is free for PUBLIC repos only; on a private one it bills by
+          # the minute like any Linux runner - one release build per tag.
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            exe: swiss
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            exe: swiss
+          # Intel macs build as a cross target from the arm runner — Apple clang links both
+          # architectures out of the box, no extra toolchain needed.
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            exe: swiss
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: dist-${{ matrix.target }}
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake clang
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
@@ -185,12 +225,13 @@ jobs:
           path: dist-bin/*
           if-no-files-found: error
 
-  # The panel's own gate (docs/37 R6): the five Rust builds above do not need node —
+  # The panel's own gate (docs/37 R6): the Rust jobs above do not need node —
   # the committed emit is what ships — so the TypeScript side is proved here, standalone,
   # on the platform npm is fastest on. Kept independent: no Rust job depends on it and it
   # depends on none of them.
   panel:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -206,9 +247,10 @@ jobs:
         working-directory: crates/swiss-panel/panel
 
   # Licenses, advisories and registry sources against deny.toml (docs/40 O5). Independent of
-  # the matrix like the panel job: one cheap ubuntu run, no Rust build.
+  # the Rust jobs like the panel job: one cheap ubuntu run, no Rust build.
   deny:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -240,7 +282,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [tag-version, build, panel, deny, integration]
+    needs: [tag-version, check, dist, panel, deny, integration]
     runs-on: ubuntu-latest
     permissions:
       contents: write
