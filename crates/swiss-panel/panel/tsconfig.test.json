@@ -15,11 +15,17 @@
  */
 
 /* The acceptance suite and the config: same rules as src, plus node's types - the tests read
-   files, spawn the build script and fake timers, none of which a browser module may see. */
+   files, spawn the build script and fake timers, none of which a browser module may see.
+   skipLibCheck: vitest 5's config types import happy-dom's, and happy-dom 20.14 declares
+   itself against a newer @types/node than the Node 24 the tests run on (it names
+   stream/web's UnderlyingDefaultSource, which 24's types lack). Our own .d.ts files (the
+   vendor mirrors under src) are still checked in full by the first tsc pass, which does not
+   set this. */
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node"],
+    "skipLibCheck": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }

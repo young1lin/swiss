@@ -59,6 +59,9 @@ afterAll(() => {
   if (prevFetch) Object.defineProperty(globalThis, "fetch", prevFetch);
   else delete (globalThis as Record<string, unknown>).fetch;
 });
+/* The close and leave guards ask through confirm(). happy-dom has none, and vitest 5 no longer
+   puts one on the global for it, so the suite lends one that each test's spy then answers. */
+vi.stubGlobal("confirm", () => true);
 
 /* The shell BEFORE the import: several modules in the Data view's graph wire a shell control
    at evaluation time (add-sheet.ts's $("addBtn").onclick), so an empty body kills the import. */

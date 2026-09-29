@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,7 +48,9 @@ beforeAll(async () => {
   const g = globalThis as unknown as Record<string, unknown>;
   g.window = { addEventListener() {}, innerWidth: 1440, innerHeight: 900 };
   g.location = { origin: "http://127.0.0.1:19999" };
-  g.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+  // happy-dom's localStorage is a getter: vitest 5 writes a global assignment through to
+  // the window, where it throws, so the stub goes in the documented way.
+  vi.stubGlobal("localStorage", { getItem: () => null, setItem() {}, removeItem() {} });
   g.fetch = async (url: string, opts: { method?: string; body?: string } = {}) => {
     calls.push({ url: String(url), method: opts.method || "GET", body: opts.body || "" });
     return { ok: true, status: 200, json: async () => ({}) };
