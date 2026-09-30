@@ -34,8 +34,8 @@ repro becomes the regression test.
 ## Phase 3 — hypothesise, ranked
 
 Write 3–5 falsifiable hypotheses before testing any ("if X is the cause, changing Y makes it
-disappear"). For ported shapes, check the owning SPEC section and the module's comments for the intended
-behavior before ranking (AGENTS.md: that is where the ported reasons live).
+disappear"). Check the owning SPEC section and the module's comments for the intended behavior
+before ranking — a comment often records the bug that was paid for once already.
 Present the list to the user — cheap checkpoint, frequent re-ranks — but don't block: proceed with
 your ranking if they are away, and re-rank when they answer.
 
@@ -45,9 +45,8 @@ your ranking if they are away, and re-rank when they answer.
 - Check recent changes (`git log`, `git diff`) before blaming the platform.
 - Tag every temporary log with a unique prefix (`[DEBUG-a4f2]`) so cleanup is one grep.
 - Performance problems: measure first (baseline, then bisect) — logs are usually the wrong tool.
-  For build/startup speed specifically, read the measured-and-REJECTED record in AGENTS.md's
-  Commands section (incremental release; thin-LTO/CGU-16 fast-lane — both tried, with numbers)
-  before proposing profile changes; settled decisions are not re-litigated without new numbers.
+  For build speed, SPEC §arch.deps records what was measured and rejected (incremental
+  release, a thin-LTO fast lane); a settled decision is not re-litigated without new numbers.
 - Windows traps that masquerade as bugs: `os error 4551` (Smart App Control blocked the binary —
   it never ran; rerun), `os error 1455` (paging file exhausted by link debuginfo), asynchronous
   file-handle release making an immediate rename fail.

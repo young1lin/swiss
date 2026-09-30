@@ -39,7 +39,7 @@ one moved.
 ## 3. Amend the section in place
 
 - Find the owner. A new facet of an area is a new `### §area.sub — Title` under it; a new plugin
-  is a new `## §name — Title` plus a row in the §about contents table and in `docs/README.md`.
+  is a new `## §name — Title` plus a row in the §about contents table.
   Never open a parallel document.
 - Write the behaviour as it will be, in the present tense: routes, fields, files, limits, errors,
   what the panel shows. English, like every code comment.

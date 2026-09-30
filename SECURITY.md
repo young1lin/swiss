@@ -27,7 +27,7 @@ In scope — anything that lets:
 - a non-loopback peer reach the gateway or the panel (bind, `Host`/`Origin` checks, tunnels);
 - a caller read a stored secret back out (the vault is write-only by design), or read another
   client's traffic or token;
-- a `secret://` reference, an env reference or a masked field leak its value through a log,
+- a `${secret://…}` reference, an env reference or a masked field leak its value through a log,
   an API answer, an error message or a run record;
 - a proc/HTTP MCP definition, a job command or a remote target escape the process boundary the
   definition declares;

@@ -5,16 +5,15 @@ description: Use when a swiss change needs a real running gateway to be believed
 
 # Live verification on the isolated 19998 instance
 
-**Port 19999 is production for the human on this machine.** Never stop, restart, or redeploy it
-as a step of iterating on a change, and never send iteration traffic to it either — no probe, no
-POST, no panel click against production while developing; the only sanctioned 19999 request is a
-read-only `GET /health`, exactly what `acceptance-16.ps1` allows itself. The full port
-discipline lives in AGENTS.md's "Live testing ports" section; this skill owns the procedure.
+**Port 19999 is production for the human on this machine.** Never stop, restart or redeploy it
+while iterating, and never send it iteration traffic — no probe, no POST, no panel click. The
+only sanctioned 19999 request is a read-only `GET /health`. The port discipline is AGENTS.md's
+"Live testing ports"; this skill owns the procedure.
 
 ## The loop
 
-`scripts/live-check.ps1` (Windows) and `scripts/live-check.sh` (macOS/Linux) in this skill run
-steps 1-4 and prove the served build — pick your platform's variant:
+`scripts/live-check.ps1` (Windows) and `scripts/live-check.sh` (macOS/Linux) in this skill
+build, boot and prove the served build:
 
 ```powershell
 & .agents\skills\swiss-live-verify\scripts\live-check.ps1            # build + boot + prove
@@ -30,51 +29,42 @@ bash .agents/skills/swiss-live-verify/scripts/live-check.sh --fresh      # clean
 bash .agents/skills/swiss-live-verify/scripts/live-check.sh --stop       # stop by port-owning PID
 ```
 
-On Windows the helper wraps the repo's `scripts/test-instance.ps1` (which owns boot + state
-isolation); on macOS/Linux `live-check.sh` implements the same procedure directly — the repo's
-own instance script is Windows-only. The POSIX test home is `$HOME/.swiss-test-home` (override
-with `SWISS_TEST_HOME`); stopping finds its victim only through the port's owning pid
-(`lsof`/`ss`), never by process name.
+On Windows the helper wraps the repo's `scripts/test-instance.ps1` (boot and state isolation);
+on macOS/Linux `live-check.sh` does the same directly, with the test home at
+`$HOME/.swiss-test-home` (`SWISS_TEST_HOME` overrides) and the victim found only through the
+port's owning pid (`lsof`/`ss`).
 
-Manually, the pieces:
+What it does, for when you need the pieces by hand:
 
-1. **Build the test exe into its own target tree** (a release build in `target/` is what the
-   next `scripts/deploy.ps1` copies to `bin/` for 19999 — iteration must not overwrite it
-   with a test build): `$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`.
-2. **Pin the token before starting.** A boot's one-shot rename points the snapshot's
-   `tokenEnv` at `SWISS_TOKEN`, so pin the name the config carries and the whole live session
-   has a known bearer: `$env:SWISS_TOKEN = "acceptance-token-for-1998"`
-   (the literal acceptance-16.ps1 pins; arbitrary, not a typo).
-3. **Start the instance** — snapshot of real state by default, clean home when the change needs a
-   first-run or bootstrap scenario. If the port is already held, a stale instance from an earlier
-   session is serving the WRONG build — `-Stop` it first, never layer on top.
-
-   ```powershell
-   scripts/test-instance.ps1            # snapshot sealed state, serve on 19998
-   scripts/test-instance.ps1 -Fresh     # wipe the test home first
-   ```
-
-   Never pass `--port`/`-p` to `swiss` yourself: both `start` and `serve` write the port
-   into the config.
-4. **Verify.** `/health` needs no auth; every `/api/*` route wants the pinned bearer. The
-   `/health` `build.hash` must match the exe this run built — a mismatch means a stale
-   instance answered. `swiss creds` (with `SWISS_HOME`/`SWISS_PORT` pointed at the test home)
-   prints the panel URL and token for browser work.
-
-   - The panel's JavaScript is the spec for the admin API: every `/api/*` response must stay
-     shape-identical to what the panel reads (`crates/swiss-panel/src/admin_assets/`).
-   - For the full boot/health/env-scrub sweep, `scripts/acceptance-16.ps1` drives H1/H2/H3
-     against 19998 and never touches 19999 beyond a read-only health check.
-5. **Stop by the port's owning PID, never by process name** — `Get-Process swiss` kills the
-   user's 19999 daemon too: `scripts/test-instance.ps1 -Stop`.
+1. **Build into `target-test`**: `$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`.
+   `target\` is what the next `scripts/deploy.ps1` copies to production.
+2. **Pin the MCP bearer** before the start, so `/mcp/*` calls have a known value:
+   `$env:SWISS_TOKEN = "acceptance-token-for-1998"` (the literal `scripts/acceptance-16.ps1`
+   pins; arbitrary, not a typo).
+3. **Start** — `scripts/test-instance.ps1` snapshots the sealed state into
+   `%LOCALAPPDATA%\swiss-test-home`; `-Fresh` wipes it first for a first-run scenario. A port
+   already held means a stale instance is serving the WRONG build: `-Stop` it, never layer on
+   top. Never pass `--port`/`-p`: `start` and `serve` write the port into the config.
+4. **Verify.**
+   - `/health` needs no auth, and its `build.hash` must equal the exe's `--version` hash — a
+     mismatch means a stale instance answered.
+   - `/api/*` needs the admin session (SPEC §host.session), never the bearer. With
+     `SWISS_HOME` = the test home and `SWISS_PORT=19998`: `swiss api GET /api/info` for
+     scripted calls, and `swiss api POST /api/session/ticket` for the single-use `url` that
+     signs a browser in.
+   - Every `/api/*` response keeps the shape the panel reads
+     (`crates/swiss-panel/panel/src/`).
+   - `scripts/acceptance-16.ps1` is the full boot / health / env-scrub sweep against 19998.
+5. **Stop by the port's owning PID**: `scripts/test-instance.ps1 -Stop`. `Get-Process swiss`
+   kills the user's 19999 daemon too.
 
 ## Discipline
 
-- A save performed on 19998 writes the test home; if a scenario claims isolation, prove it —
-  acceptance-16 checks the production config's mtime is unchanged (steps [1] and [6]).
-- State-file behavior (`gateway.config.json`, `managed.json`, tunnels, jobs) that must survive a
-  restart is verified by stopping and re-starting the instance, not by assuming.
-- Transcript hygiene: raw HTTP scrollback and browser dumps are noise to every later phase —
-  carry the evidence (commands, responses, build hash) forward, not the scrollback.
-- Report: which exe (build hash) served, what was checked, the exact responses, and that 19999 was
+- A save on 19998 writes the test home. If a scenario claims isolation, prove it —
+  acceptance-16 checks the production config's mtime is unchanged.
+- State that must survive a restart is verified by stopping and starting the instance, not by
+  assuming.
+- Carry the evidence forward (commands, responses, build hash), not raw HTTP scrollback or
+  browser dumps.
+- Report which build hash served, what was checked, the exact responses, and that 19999 was
   untouched.

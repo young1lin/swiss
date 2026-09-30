@@ -19,11 +19,10 @@ cargo clippy --workspace --all-targets -- -D warnings  # must be clean
 cargo tree -d -e normal,build                          # duplicated TLS/runtime fails review (shipping graph)
 ```
 
-**`--workspace` is not optional.** Without it cargo selects the root package alone — about a
-fifth of the suite — and none of the eight member crates' tests (the large majority; see the
-workspace members in the root Cargo.toml) are ever compiled or run, yet the run still reports ok.
-The same applies to clippy. Any full-suite claim made without `--workspace` is false by
-construction. (AGENTS.md states this by shape, not counts — counts rot, the shape doesn't.)
+**`--workspace` is not optional.** Without it cargo selects the root package alone, and none of
+the member crates' tests — the large majority — are compiled or run, yet the run still reports
+ok. The same applies to clippy. A full-suite claim made without `--workspace` is false by
+construction.
 
 ## Select the narrowest honest evidence
 
@@ -52,12 +51,10 @@ Do not reflexively run the full suite. Pick the smallest command that can go red
 ## Know the environment rules
 
 - **Sealing tests never spawn an OS keystore helper.** Unit tests inject key material directly;
-  any test that boots the real key path pins the env override instead — `SWISS_MASTER_KEY` (new
-  name, checked first) or `SWISS_MASTER_KEY` — which bypasses every OS key source
-  (`crates/swiss-core/src/secure/key.rs`).
+  a test that boots the real key path pins `SWISS_MASTER_KEY`, which bypasses every OS key
+  source (`crates/swiss-core/src/secure/key.rs`).
 - **Real-engine DB tests live behind gate 2** (`swiss-it`, feature `it`): they fail — never
-  self-skip — when no engine is reachable (SPEC §testing.it). The Node-era self-skipping suites were never
-  ported; the unit tests those names used to cover are plain `#[cfg(test)]` code now.
+  self-skip — when no engine is reachable (SPEC §testing.it).
 - **Windows traps that look like test bugs but are not** (full list in AGENTS.md):
   `os error 4551` (Smart App Control blocked the binary — it never ran; re-running usually gets
   past it) and `os error 1455` (paging file exhausted by link debuginfo — a build-environment
@@ -79,7 +76,7 @@ Do not reflexively run the full suite. Pick the smallest command that can go red
 Phases: understand → change → verify → live-verify → review → commit → deploy. At each boundary
 pick the cheapest move that keeps the reasoning the next phase needs:
 
-- **Understand → change → verify: continue.** The Node reasoning and the witnessed RED test
+- **Understand → change → verify: continue.** The reasoning and the witnessed RED test
   belong to the window that writes the fix; don't compact between them.
 - **Verify → live-verify: subagent when it fits, else continue.** The raw HTTP/browser transcript
   is noise to everything after it — carry the evidence (commands, responses, build hash), not the

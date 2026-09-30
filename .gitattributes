@@ -1,5 +1,5 @@
 # One line-ending policy for the whole repo: LF in the index AND in the working tree,
-# on every platform (see AGENTS.md "Line endings"). CRLF never enters a commit.
+# on every platform (SPEC §arch.rules). CRLF never enters a commit.
 * text=auto eol=lf
 
 # The emitted panel tree (SPEC §panel.toolchain): committed product, regenerated from

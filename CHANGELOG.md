@@ -4,118 +4,32 @@ All notable changes to swiss are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] - 2026-09-25
+## [Unreleased]
+
+The first release, 0.1.0.
 
 ### Added
-- First public release candidate: the gateway (`/mcp/<name>` for every MCP an AI client
-  needs — proc, HTTP/OAuth, REST, MySQL, PostgreSQL, Redis, zai-vision), the admin panel in
-  English and 简体中文, SSH tunnels with proxy and jump, configuration-driven jobs, the web
-  terminal (local PTY and remote SSH), the data browser, the device-bound secret vault,
-  agent-friendly remote execution, groups everywhere, and the `swiss` CLI
-  (`start` / `stop` / `token` / `creds` / `skill install` / `autostart` / `update` /
-  `export` / `import` / `remote` / `run`).
-- Redis Streams on the Data page: newest-first windows with entry-id cursor paging, a Follow
-  toggle polling `XREVRANGE` into a 500-row ring, and read-only consumer groups (SPEC §data.streams).
-- The panel and `/api/*` need a sign-in (SPEC §host.session): `swiss start` and `swiss open` open a
-  single-use sign-in link that expires in two minutes and sets a 30-day `HttpOnly`,
-  `SameSite=Strict` session cookie; the CLI signs its calls with a key rotated on every start
-  and sealed in `session.json`. `swiss api <METHOD> <path> [json]` is the scripted way to call
-  the admin API. Another process that only knows the port gets 401.
-- Remote addresses are masked in the panel until their eye is pressed: an SSH connection's
-  host, a forward's non-loopback target, and a database MCP's host (an endpoint URL's host when
-  it is an IP literal) draw as `••••••`, with no tooltip carrying the value, so a screenshot
-  shares none. The reveal lasts until the page reloads; loopback draws plain.
-- The `swiss-it` integration harness behind feature `it`: real MySQL/PostgreSQL/Redis engines
-  through testcontainers, a CI integration job, and gate 2 in `scripts/deploy.ps1` (SPEC §testing.it).
-- `swiss remote exec` resolves vault references: `${secret://name}` in an argv word, an
-  `--env` value or `--cwd` is replaced by the stored value on the way out, while the run list,
-  the audit and the panel keep the reference as typed, and output that echoes the value comes
-  back as `••••••••`. A missing name fails the run before anything is sent (SPEC §remote.security).
-- The Data page's Redis console completes as you type and carries templates: the command word
-  offers the commands with their arguments (`SET key value [EX seconds]`), the word after a
-  command that takes a key offers the keys already in the sidebar, and the console's overflow
-  lists a ready line per thing an operator does, grouped by what it acts on. Neither asks the
-  server: the command set is fixed and the keys are already here.
-- The Remote page runs its targets from the browser: a target's ⋯ offers Run a command… and
-  Write a file… for the capabilities it holds, each submitting the same recorded run the CLI
-  does, then opening Runs - where an open run already streams its output and offers Cancel. A
-  typed command goes to the target's own shell, so pipes and redirects mean what they say and
-  the record shows exactly what was sent (SPEC §remote.panel).
-- A vault reference can carry a default: `${secret://name:default}` uses `default` when the
-  vault has no such name, everywhere references resolve (SPEC §host.vault, 2026-09-28).
-
-### Changed
-- A Redis key's overflow menu names every act on the key directly - Set the TTL…, Rename…,
-  Delete… - instead of one nested "Rename or delete this key". The TTL had no door there at
-  all: it was editable only by clicking the readout in the meta line, which nothing announced.
-- Deleting a Redis key asks once, naming the key, instead of demanding the name be typed back.
-  That confirm is what a table DROP or TRUNCATE still uses; one `DEL` is not that.
-- A Redis stream's Follow is an on/off switch instead of a button whose word flipped between
-  Follow and Pause, which left the reader working out which of the two it was reporting.
-- A Data grid column header's comment takes prose grey (`--text-2`); with the type on its own
-  line in the same `--text-3`, the two lines read as one block.
-- A PostgreSQL table's DDL states its comments. Postgres has no COMMENT clause inside CREATE
-  TABLE the way MySQL does, so the sketch now ends with one `COMMENT ON COLUMN` statement per
-  commented column - a dump replaying it used to drop every comment the catalog holds.
-- Remote runs no longer share the two-slot run pool that protects this machine: each remote
-  target has its own lane of 8 runs at once (each its own channel on the one SSH connection),
-  so parallel terminals driving one server stop getting `429 run capacity is full (2/2
-  running)`; local jobs keep `maxConcurrentRuns` (SPEC §remote.actions).
-- The Data page's value viewer shows JSON as the panel's highlighted code block, the one Logs,
-  Runs and Traffic use, instead of a folding tree; a string that holds JSON is shown decoded,
-  and a document longer than 200 lines paints its first 200 with a Show all button.
-- A Redis key row and its open tab lead with a glyph for the key's type (string, hash, list,
-  set, zset, stream), so `string` and `stream` no longer read alike; the type word stays.
-- An open row on the Runs page starts with a Command block holding the whole command, quoted
-  word by word the way it was sent, with a Copy: the row's own line is cut to fit, so a long
-  command could be neither read nor copied (SPEC §remote.panel).
-- A Data grid column header stacks its name, its type and its comment on lines of their own, so
-  a short column such as `id` is as wide as its longest line rather than its name and type side
-  by side; a column without a comment keeps its empty line's height, so every name lines up
-  (SPEC §panel.pages).
-
-- `swiss export` no longer writes vault secrets in the clear: every value leaves as `******`
-  and the names ride so a restore says what to re-enter. An import skips a masked entry rather
-  than writing the mask over a good local value. The bundle still carries config passwords, the
-  gateway token and OAuth grants, so it is still a file to protect.
-
-### Fixed
-- With Follow on, a Redis stream's new rows replace only the table: the Follow bar was rebuilt
-  on every tick, so its interval picker closed itself each second (SPEC §data.streams).
-- The Data page's Redis sidebar follows the keyspace: the `r` refresh, a return to the page or
-  the connection, and every console command re-walk the key list quietly, as deep as More
-  went, with the open key kept. It used to freeze at its first answer, so `SET test 1` on an
-  empty Redis never showed up. An empty Redis also lists the database the connection sits on
-  (INFO keyspace names only databases holding keys), so the database row is there from the
-  first visit (SPEC §data.sessions).
-- Replacing a secret now takes effect at once: the vault write rebuilds every MCP that
-  references it, which kept the old value resolved in its adapter until the gateway
-  restarted. The Secrets page gains Replace value… on each row's ⋯ menu, a Replace label
-  when the typed name is already stored, and a toast naming the MCPs that reloaded (SPEC §host.vault).
-- A group made on an empty list now shows up: SSH Connections, Port Forwards, Jobs, Secrets
-  and Tokens replaced their whole groups region with a page-level empty state while they had
-  no rows, so a new group appeared only in the New sheet's Group select, with no header to
-  rename or delete it by. The groups always paint now, as Remote Targets already did (SPEC §host.groups).
-- The Terminal page's target picker names a remote by its connection name alone; it showed
-  `user@host`, which put the server's address into every screenshot of a terminal.
-- A run being canceled stays visible until it has stopped: cancel took it out of the active
-  set before its clean stop finished, so `/api/runs/<id>` answered 404 meanwhile (the CLI
-  follower printed `404 no run N` and exited 1) and the next run could start beside a child
-  still alive.
-- `swiss remote write` no longer records the file's content in clear in the run log
-  (`logs/remote/runs.jsonl`): the audit line keeps its size as `contentBytes`, and the body is
-  sealed beside the record under the machine key (capped at 256 KiB), shown on the Runs page
-  when its Show is pressed (SPEC §remote.history). Records written before that carried the body in
-  clear in `runs.jsonl`: the gateway now seals each one beside its record the first time it
-  opens the log, so those writes can be read in the panel and their bodies leave the log. A
-  write recorded in between, which kept its size only, says so instead of showing nothing.
-- A wrong Redis password fails at once as an authentication failure; the connection
-  manager's retries hid it behind "redis connect timed out after 5s".
-- `/api/tunnels` connection rows now carry `keyPath`: the panel's edit sheet prefills from the
-  row, and a custom private-key path is no longer silently rewritten to the default on save.
-- Jumping a Redis stream view back to the latest window now voids the follow tick already in
-  flight, so a late poll can no longer pool stale rows behind the jump (SPEC §data.streams).
-- The connection-test gate accepts `mariadb` like the panel's Test button always offered it:
-  a mariadb Test click answered 400 "no connection test" before.
-
-[0.1.0]: https://github.com/young1lin/swiss/releases/tag/v0.1.0
+- The gateway: every MCP an AI client needs on `/mcp/<name>` behind a bearer token — stdio
+  children (idle until their first request, reaped after idling), remote HTTP with OAuth, REST
+  APIs declared in config, MySQL, PostgreSQL, Redis and zai-vision. **Import .mcp.json** brings
+  an existing client config across, and each MCP copies a ready client command.
+- The admin panel, embedded in the binary, in English and 简体中文. It needs a sign-in: a
+  single-use link from `swiss start` / `swiss open` sets a session cookie, and the CLI signs its
+  calls with a key rotated on every start (`swiss api` for scripts).
+- Data: tables and rows with buffered edits, a SQL console with server-side completion, export
+  and import, structural operations, live sessions; Redis keys, streams with Follow and
+  read-only consumer groups, and a console that completes commands and keys.
+- Tunnels: SSH connections, forward rules, proxy dialling and jump hosts, and MCPs that ride a
+  tunnel.
+- Jobs: configuration-driven scheduled jobs with overlap, misfire and capture modes and a run
+  history.
+- Terminal: local PTY and remote SSH shells in the browser, with recording.
+- Remote execution: targets with declared capabilities, `swiss remote exec / sync / push / cat
+  / write / pull` and `swiss run`, a run log with an audit, `/mcp/remote`, and the Targets and
+  Runs pages; each target runs in its own lane.
+- The secret vault: `${secret://name}` (with an optional `:default`) and `${ENV_VAR}` references
+  resolved only at use time; stored values are write-only and masked wherever they could come
+  back out, `swiss export` included. Remote addresses stay masked in the panel until revealed.
+- Groups on every list, start at sign-in (`swiss autostart`), `swiss update` to check for a new
+  release, `swiss export` / `import` to move machines, and the embedded `swiss` and
+  `swiss-remote` AI skills (`swiss skill install`).

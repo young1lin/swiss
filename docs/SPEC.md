@@ -45,7 +45,7 @@ context and a real trade-off gets an `ADR-NNN` entry in §decisions.
 | §process | The process plugin and the supervisor |
 | §panel | The admin panel: navigation, design system, UI library, TypeScript, i18n |
 | §security | The security model in one place |
-| §testing | The gates, the suites, the integration harness |
+| §testing | The gates, the suites, the integration harness, live verification |
 | §release | CI, release artefacts, open-source hygiene |
 | §decisions | ADR-001 … the decision log |
 
@@ -57,9 +57,9 @@ scheduled jobs, terminals, remote execution, and whatever the next one turns out
 behind one loopback port (`127.0.0.1:19999` by default) and one panel. It ships as one
 self-contained binary.
 
-It began as the Rust port of a Node gateway, and memory was the reason: Node's practical floor
-for the same program was 45–60 MB. The Node build is retired (ADR-016); this repository owns
-every layer, the panel included. When a piece of behaviour looks odd, the module's comment
+Memory is why it is Rust: the same program's practical floor on Node was 45–60 MB, and the
+Node build it replaced is retired (ADR-016). This repository owns every layer, the panel
+included. When a piece of behaviour looks odd, the module's comment
 usually records the bug that was paid for once already.
 
 ### §product.properties — The four properties
@@ -170,9 +170,8 @@ swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-
 | `swiss` (root `src/`) | Composition and nothing else: argv, the axum app, `/api/*` assembly, plugin descriptors, boot, the daemon and CLI, the admin session, autostart, the update check, skill install |
 | `swiss-it` | The dev-only integration harness (§testing.it). A leaf nothing depends on; every dependency hides behind its `it` feature, so without it the crate compiles to empty targets |
 
-**No subsystem crate depends on another.** Data used to reach into MCP for its connections;
-the connection catalog (`swiss-host/src/services/catalog.rs`) exists so that edge could be
-deleted. If a change seems to need an edge between two subsystem crates, the host contract is
+**No subsystem crate depends on another.** Data reaches its connections through the connection
+catalog (`swiss-host/src/services/catalog.rs`), not through MCP. If a change seems to need an edge between two subsystem crates, the host contract is
 missing something — add it there instead. The same holds for terminal ↔ tunnels (ADR-011): SSH
 shells arrive through a capability seat in the host.
 
@@ -280,8 +279,7 @@ a comment at its site; anything that departs from a rule and is not listed is a 
 `~/.swiss`, or `$SWISS_HOME` when set (`swiss_core::paths::data_dir`, read fresh on every call
 so a test's override is honoured). The binary can run from any directory; a fixed home is what
 makes the token and the state global. The pre-rename home (`~/.mcp-gateway`) and its
-`MCP_GATEWAY_*` fallbacks were removed before the first public release; a straggler directory
-is moved by hand (sealed files are path-independent). A leftover `tokenEnv:
+`MCP_GATEWAY_*` variables are never read; a straggler directory is moved by hand (sealed files are path-independent). A leftover `tokenEnv:
 "MCP_GATEWAY_TOKEN"` in an old config is inert data, not a fallback.
 
 ```
@@ -1541,7 +1539,9 @@ behind the pending-edits confirm.
   `swiss.dbGrid.<conn>_<schema.table>`; widths are clamped to 48–1200 px.
 - **Keyboard.** Arrow navigation, TSV paste into a range, Ctrl+C copies rows. Right-click copies
   a cell, or a row as JSON/CSV/INSERT (dialect-aware quoting, buffered values win); checked rows
-  copy as CSV/TSV/Markdown/JSON.
+  copy as CSV/TSV/Markdown/JSON. The focus ring moves between the live cells without rebuilding
+  the grid, and a cell mousedown keeps focus on the keyboard layer, so the click and double-click
+  that follow still land on the cell they edit.
 - **Cells** are type-aware (`dbCellView`): JSON longer than 100 characters folds, a URL is a
   link, numbers use tabular figures, booleans read `TRUE`/`FALSE`, binary is marked.
 - **The value sheet** shows a value as a JSON tree, text, a link, or hex (the first 512 bytes).
@@ -3310,8 +3310,8 @@ and app-level responsiveness. A page owns only its body.
   name.
 - **The caption is one size for the whole rail**: 10 px, stepped down together in half-pixel
   steps to a 9 px floor by `fitRailLabels` only when a served name is longer than the seat; a
-  name that fits nowhere ellipsizes and keeps its full text in the seat's `title`. (An
-  icon-only rail shipped once and was reversed by the owner for clarity.)
+  name that fits nowhere ellipsizes and keeps its full text in the seat's `title`. The rail
+  is never icon-only.
 - **Active seat**: the `--hover` ground plus a 2 px `--accent` notch on the leading edge — the
   chrome's one accent.
 - **An unavailable plugin keeps its seat**, `aria-disabled`, the reason in its title; its page
@@ -3533,7 +3533,7 @@ the same moves into the open row's meta line.
 | G4 | `css-literals` | a sheet gains a px / hex / rgb literal outside its token block (`0`, `1px`, `2px`, `-1px` and `%` exempt) | base 22, ui 72, views 159 |
 | G5 | `ui-class-ratchet` | a file outside `ui/` draws a `ui.css` class (a file with no row is held at 0) | the table is empty |
 | G6 | `ui-gallery` | an export of `ui/index.ts` is claimed by no gallery section or scene (or by `HELPERS` with a reason), a claimed shape is missing from the DOM, or a class the gallery draws is unstyled | zero |
-| G7 | `css-size` | `views.css` grows past its byte ceiling | `FROZEN_VIEWS_BYTES = 60001` |
+| G7 | `css-size` | `views.css` grows past its byte ceiling | `FROZEN_VIEWS_BYTES = 59932` |
 
 **The ratchet convention** (every frozen table in the panel, and §panel.lint's): the table
 lives in the test, its numbers only go down, and a change that lowers a count lowers the row
@@ -3641,8 +3641,8 @@ plain styled select; `.term-jump` sits at z 3; the count is "N live" through `tr
 
 The one grouped-list component for all seven scopes (§host.groups): `groups.ts` (the DOM and
 the API calls), `group-logic.ts` (the pure half the tests pin), `ui/group.ts groupNode` (the
-drawing). Before it the sidebar and the Tunnels page each carried a private copy and had
-already forked; everything a grouped list does lives here once. The caller keeps what is
+drawing). Everything a grouped list does lives here once; no page carries a private copy. The
+caller keeps what is
 genuinely its own: the row markup, what opening a row does, the flat order it stores and the
 noun the delete confirm names.
 

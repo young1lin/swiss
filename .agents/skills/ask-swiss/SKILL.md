@@ -37,9 +37,8 @@ The route most work travels:
   amendment of `docs/SPEC.md` with acceptance tests and a delivery order before any code.
   Straight to swiss-add-plugin only when it fits one sitting and one commit.
 - **Something's broken** — a failing test, a flake, a regression → **swiss-debug** (tight feedback
-  loop first; for ported shapes, SPEC and the module comments are the ground truth). A "why is it
-  built like that" question with nothing broken is SPEC territory (AGENTS.md; SPEC §arch and
-  SPEC §decisions), not debug.
+  loop first; SPEC and the module comments are the ground truth). A "why is it built like that"
+  question with nothing broken is SPEC territory (SPEC §arch and SPEC §decisions), not debug.
 - **A dependency question** — "should we pull in crate X", any `Cargo.toml` edit →
   **swiss-dependency-review** (`default-features = false`, no second TLS/runtime, `cargo tree -d`).
 - **"How much memory does swiss use" / could this change move idle cost** → **swiss-memory-record**
@@ -49,8 +48,8 @@ The route most work travels:
   the component vocabulary and the done checklist. The panel change itself still ships through
   swiss-live-verify on 19998.
 - **"Make it smaller / faster"** → **swiss-debug**'s measure-first discipline (baseline, then
-  bisect) with SPEC §product.memory as the scoreboard — and AGENTS.md's measured-and-rejected record is
-  standing law: no change ships a number it didn't measure.
+  bisect) with SPEC §product.memory as the scoreboard; SPEC §arch.deps records what was measured
+  and rejected. No change ships a number it didn't measure.
 
 ## Vocabulary underneath
 
