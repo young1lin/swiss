@@ -6,7 +6,7 @@ description: Use when adding a new capability, tool, page, or route to swiss —
 # Adding a capability the toolbox way
 
 A new tool reaches the panel by contributing a **descriptor, actions, pages and resources** through
-the host contract (docs/09) — never by editing a match arm in the host or the composition root
+the host contract (SPEC §host.plugins) — never by editing a match arm in the host or the composition root
 beyond registration. If it seems to need an edge between two subsystem crates, the host contract is
 missing something: add it to `swiss-host` instead.
 
@@ -14,8 +14,8 @@ missing something: add it to `swiss-host` instead.
 
 Name the plan in three lines: which crate owns it, what it contributes (descriptor / action /
 page), what it costs at idle, and which host-contract seam it uses. If it won't fit one sitting
-and one commit, sharpen it into a docs/ spec first (the repo's spec-first convention —
-docs/15 through 19). An explicit nod from the operator is required before anything that adds a
+and one commit, amend its section of `docs/SPEC.md` first through **swiss-spec** (the repo's
+spec-first convention). An explicit nod from the operator is required before anything that adds a
 dependency, a child process, or a new crate.
 
 ## The shape to follow
@@ -33,13 +33,13 @@ dependency, a child process, or a new crate.
   is created on demand and released when idle.
 - **One action, many entries.** Generic actions are callable from pages, CLI, and jobs; do not copy
   business logic per entry point. Jobs-specific contracts (definitions, triggers, recovery) are in
-  docs/10.
-- **A plugin owns at most 5 pages** (docs/39 S3): its pages sit in the context bar as underline
+  SPEC §jobs.
+- **A plugin owns at most 5 pages** (SPEC §panel.nav): its pages sit in the context bar as underline
   tabs, and more than ~5 means L3 content is being spent on L2 — restructure the pages instead of
   overflowing into the bar's `⋯` seat.
 - **Give the plugin a sprite glyph:** one line in the `GLYPHS` table in
   `crates/swiss-panel/panel/src/plugin-palette.ts` maps the group id to an existing `i-*` symbol
-  (the rail is icon-only, docs/39 S1 — without a glyph the seat falls back to the puzzle piece,
+  (the rail is icon-only, SPEC §panel.nav — without a glyph the seat falls back to the puzzle piece,
   which cannot tell two such plugins apart).
 
 ## Non-negotiables for anything new

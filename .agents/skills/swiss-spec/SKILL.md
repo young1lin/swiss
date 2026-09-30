@@ -1,56 +1,85 @@
 ---
 name: swiss-spec
-description: Sharpen an idea into a numbered docs/ spec for swiss — verbatim requirement, decisions, per-section acceptance tests, delivery order, and a hand-off prompt for the implementing session.
+description: Turn an idea into an amendment of docs/SPEC.md, the one living swiss specification — interview, amend the owning section in place, acceptance tests, delivery order; a decision worth recording becomes an ADR entry in SPEC §decisions.
 disable-model-invocation: true
 ---
 
-# From idea to docs/NN spec
+# From idea to a SPEC amendment
 
-New capability in this repo is spec-first: docs/15 through docs/19 were each written, argued, and
-revised before implementation started, and 15/16 shipped with a companion hand-off prompt
-(docs/16-operations-hardening-prompt.md). This skill runs that flow. Skip it when the change fits
-one sitting and one commit — go straight to swiss-add-plugin.
+swiss has exactly one specification, `docs/SPEC.md`: what the system does **now**, organised by
+area, with the decision log as its last section (SPEC §about). There are no numbered spec files
+and no hand-off prompts. A new capability or a behaviour change is argued and written into the
+section it touches first; the code then lands against that text, and each commit carries the
+slice of the amendment it makes true.
+
+Skip this skill when the change fits one sitting and moves no documented behaviour — go straight
+to swiss-add-plugin (or just fix it), and still amend the sentence in SPEC in the same commit if
+one moved.
 
 ## 1. Interview before writing
 
 - Work in rounds: ask every frontier question (each one whose prerequisites are settled) in one
   numbered round, each with your recommended answer; wait; recompute the frontier. Don't block on
   an absent user — proceed with your recommendations and re-rank when they answer.
-- Facts are your job, decisions are the user's: read AGENTS.md, docs/07 (ADRs already made in this
-  territory), docs/04 (the porting inventory — what has a Node-era counterpart), and the owning
-  crate before asking anything you could look up yourself.
-- Record the user's requirement verbatim in the spec header, with date and follow-up
-  confirmations — the docs/19 header pattern.
+- Facts are your job, decisions are the user's. Before asking anything you could look up, read
+  AGENTS.md, the owning SPEC section (`grep -n '^##' docs/SPEC.md` is the map), SPEC §decisions
+  for ADRs already made in this territory, SPEC §arch.crates for where the code lives, and the
+  owning crate itself.
+- The user's requirement, verbatim with its date and follow-up confirmations, goes into the
+  commit message that lands the amendment — SPEC states the resulting rule, not who asked when.
 
-## 2. Check the idea against the constitution before writing
+## 2. Check the idea against the constitution
 
-- The four product properties (AGENTS.md): a change that trades one away for convenience is the
-  wrong change. Say which properties this idea pulls on; stop here if one breaks.
-- Load-bearing rules that touch the area; docs/05 if anything on disk or on the wire moves.
+- The four product properties (SPEC §product.properties, AGENTS.md): a change that trades one
+  away for convenience is the wrong change. Say which properties the idea pulls on; stop here if
+  one breaks.
+- The load-bearing rules of the area; SPEC §formats if anything on disk or on the wire moves;
+  SPEC §security if the boundary moves; SPEC §product.memory if idle cost can move.
 
-## 3. Write docs/NN-<slug>-spec.md in the house shape
+## 3. Amend the section in place
 
-Match neighboring specs' prose language; code comments and UI copy stay English.
+- Find the owner. A new facet of an area is a new `### §area.sub — Title` under it; a new plugin
+  is a new `## §name — Title` plus a row in the §about contents table and in `docs/README.md`.
+  Never open a parallel document.
+- Write the behaviour as it will be, in the present tense: routes, fields, files, limits, errors,
+  what the panel shows. English, like every code comment.
+- Replace what the change contradicts; delete the old wording rather than striking it through.
+  No status headers, no "phase"/"stage"/"rev" labels, no dates except in records — history is
+  git's job.
+- *Must*, *never* and *always* need an enforcing test; name it in the text or in §4's list.
+- An anchor is a contract: renaming one rewrites every citation in the same commit
+  (`git grep 'SPEC §old'`). Cite neighbours as `§area.sub` inside SPEC and as `SPEC §area.sub`
+  from code, tests and skills.
+- Say what is out of scope only where the boundary would surprise a reader.
 
-- Status header: state + baseline commit (the docs/09 line-3 pattern).
-- The verbatim requirement quote.
-- §0 current state and gap — why this, why now, with evidence.
-- One section per piece, each carrying its own acceptance tests (test-first per item, as docs/16
-  did per H-item); a behavior change ships with a test that fails before and passes after.
-- Gate commands block (cargo test --workspace / clippy -D warnings / cargo tree -d) and delivery
-  order: one commit per item, dependencies stated.
-- Out of scope, explicit. Add the row to README's docs table.
+## 4. Acceptance tests
 
-## 4. Offer an ADR when the test is met
+- Acceptance tests are code, not prose. For each amended subsection list them up front: the test
+  name, its file, and what fails before the change and passes after. Write each test first.
+- Each test cites its rule in a comment (`// SPEC §area.sub: …`).
+- What only a live walk can prove (a real browser, a real remote host) goes into the owning
+  section's verification list — §terminal.verify is the shape — and is walked on 19998.
 
-Hard to reverse + surprising without context + a real trade-off → an entry in docs/07 (options
-table, recommendation, what shipped, cost). ADR-013 is the recent precedent. Skip if any of the
-three is missing.
+## 5. Delivery order
 
-## 5. Write the hand-off prompt, then stop
+- Present the SPEC diff, the acceptance list and the delivery order together: one commit per
+  item, dependencies stated, each commit carrying its code, its tests and its slice of the SPEC
+  amendment. SPEC never describes behaviour the tree at that commit does not have.
+- Gates for every item: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D
+  warnings`, `cargo tree -d` when dependencies move, `npm run check` when the panel moves.
+- If a fresh session will implement it, the SPEC diff plus this delivery order is the brief —
+  no prompt file.
 
-- docs/NN-prompt.md (the docs/16 pattern): a self-contained prompt for a FRESH implementing
-  session — working dir, task summary, files to read first, delivery order, gates, commit rules.
-- The session that wrote the spec does not implement it. Implementation starts fresh from the
-  prompt + spec via swiss-add-plugin, then the swiss-verify → swiss-live-verify → swiss-review
-  flow.
+## 6. Record a decision when the test is met
+
+Hard to reverse + surprising without context + a real trade-off → a new `### ADR-NNN — Title`
+at the end of SPEC §decisions, numbered after the last one (`grep '^### ADR-' docs/SPEC.md |
+tail -1`). The entry states the decision in force, what it cost and what was rejected. Replacing
+an earlier decision shrinks that entry to one paragraph naming its successor; numbers are never
+reused. Skip the ADR if any of the three is missing — the section text is enough.
+
+## 7. Then build it
+
+The implementation runs through swiss-add-plugin (a new plugin or tool) or directly, then the
+swiss-verify → swiss-live-verify → swiss-review flow. A review that finds code and SPEC
+disagreeing fixes whichever side is wrong in the same change.

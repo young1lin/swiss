@@ -51,7 +51,7 @@ check() { # $1=file  $2=added-line
     if case "$file" in *secure*|*adapters*) true;; *) false;; esac; then
         case "$line" in *".unwrap()"*) case "$line" in *"cfg(test)"*|*"mod tests"*) ;; *) hit 'no .unwrap() on config/network/db/filesystem paths - one failing MCP must not take down the others';; esac;; esac
     fi
-    case "$file" in *swiss-core/src/secure/envelope*) hit 'the sealed envelope format is FROZEN (docs/05) - envelope construction changes are stop-and-discuss';; esac
+    case "$file" in *swiss-core/src/secure/envelope*) hit 'the sealed envelope format is FROZEN (SPEC §formats) - envelope construction changes are stop-and-discuss';; esac
     if case "$file" in *Cargo.toml) true;; *) false;; esac; then
         if printf '%s' "$line" | grep -Eq '^[a-zA-Z0-9_-]+[[:space:]]*=[[:space:]]*"[^"]*"[[:space:]]*$'; then
             hit 'new dependency? default-features = false first, justify weight in the commit message (swiss-dependency-review)'

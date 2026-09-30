@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Memory measurement loop for docs/01 - records, not gates (user call 2026-09-11).
+# Memory measurement loop for SPEC §product.memory - records, not gates (user call 2026-09-11).
 #
 # Builds into target-test, boots the isolated 19998 instance on a REAL-state snapshot
 # (the workload is the point; never 19999), reads /health + /api/memory + swiss status,
-# prints a ready-to-append docs/01 row next to the previous recorded row, then stops the
+# prints a ready-to-append row for the SPEC §product.memory table next to its last row, then stops the
 # instance. The skill body owns what the numbers mean and the append rule.
 
 [CmdletBinding()]
@@ -30,7 +30,7 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path
 $Boot = Join-Path $Root '.agents\skills\swiss-live-verify\scripts\live-check.ps1'
 $TestInstance = Join-Path $Root 'scripts\test-instance.ps1'
 $Exe = Join-Path $Root 'target-test\release\swiss.exe'
-$Docs01 = Join-Path $Root 'docs\01-goals-and-memory-budget.md'
+$Spec = Join-Path $Root 'docs\SPEC.md'
 $Port = 19998
 
 # Boot via the live-verify helper (it owns build, stale-port guard, token pin, hash proof).
@@ -54,13 +54,19 @@ Remove-Item Env:\SWISS_PORT -ErrorAction SilentlyContinue
 $date = Get-Date -Format 'yyyy-MM-dd'
 $hash = $health.build.hash
 $private = "$($mem.heapUsedMb)/$($mem.heapTotalMb)"
-$row = "| $date | $hash | gatewayMb=$($mem.gatewayMb) privateCommit~=$private childrenMb=$($mem.childrenMb) (proc children: $($mem.processCount)) | working set per /api/memory; workload: real-state snapshot on 19998 |"
+$row = "| $date | Rust $hash | real-state snapshot on 19998 | $($mem.gatewayMb) MB | private ~$private MB; children $($mem.childrenMb) MB ($($mem.processCount) proc) |"
 
 Write-Host ''
-Write-Host '=== ready-to-append docs/01 row (Measured result section; never overwrite a dated row) ==='
+Write-Host '=== ready-to-append row for the SPEC product.memory table (docs/SPEC.md; never overwrite a dated row) ==='
 Write-Host $row
-$prev = Select-String -Path $Docs01 -Pattern '\bMB\b' | Select-Object -Last 1
-if ($prev) { Write-Host "previous record (docs/01 line $($prev.LineNumber)): $($prev.Line.Trim())" }
+# the last dated row of the table under the section heading, nothing else in the spec
+$inSection = $false; $prev = $null
+foreach ($l in Get-Content -LiteralPath $Spec -Encoding utf8) {
+    if ($l -match '^### \S*product\.memory') { $inSection = $true; continue }
+    if ($inSection -and $l -match '^#') { break }
+    if ($inSection -and $l -match '^\| 20') { $prev = $l }
+}
+if ($prev) { Write-Host "previous record: $prev" }
 Write-Host ''
 Write-Host '--- swiss status (memory rows) ---'
 $lines = $status -split "\r?\n"

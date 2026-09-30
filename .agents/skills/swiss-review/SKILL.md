@@ -39,10 +39,10 @@ Each rule is a security or correctness boundary, not style. Verify by reading, n
 | Rule | What to check |
 | --- | --- |
 | Loopback-only is security | New routes bind/refuse correctly; non-loopback `host` still refused at config load, not warned about; no "reach it remotely" weakening |
-| Credentials are references, never literals | Values enter as `${ENV_VAR}` or `secret://name` (vault, docs/19) refs; no literal secrets in `gateway.config.json`/`managed.json`/`tunnels.json` paths or code; panel still masks them back out |
+| Credentials are references, never literals | Values enter as `${ENV_VAR}` or `secret://name` (vault, SPEC §host.vault) refs; no literal secrets in `gateway.config.json`/`managed.json`/`tunnels.json` paths or code; panel still masks them back out |
 | No health ping on `http`/`rest` adapters | Registry reports them "unknown" on purpose; no ping added "for completeness" |
 | `proc` MCP stays lazy | Idle at boot, wake on first request, reap when idle — nothing new starts eagerly |
-| Sealed envelope frozen | Any diff under `crates/swiss-core/src/secure/` altering envelope construction is a stop-and-discuss (docs/05; the committed fixture under `tests/`) |
+| Sealed envelope frozen | Any diff under `crates/swiss-core/src/secure/` altering envelope construction is a stop-and-discuss (SPEC §formats; the committed fixture under `tests/`) |
 | `&RawValue` on forwarding paths | `proc`/`http`/`rest` adapters parse only envelope fields; no `serde_json::Value` materialisation of payloads |
 | Runtime stays `current_thread` | No `multi_thread` without a measured reason in the commit message |
 | No `unsafe` for memory numbers | `unsafe` belongs at the Windows FFI boundary (`platform/`), nowhere else |
@@ -66,9 +66,9 @@ justifications this repo requires in them (dependency weight; any measured reaso
   `crates/swiss-core/src/secure/`, or the panel, make it the default. Apply its findings back in
   the original context, where the change's reasoning still lives.
 - Facts this repo memorizes must not be left stale: if the diff adds/removes tests or modules,
-  moves files, or changes behavior that docs/NN or AGENTS.md describe, update those lines in the
-  same change or say explicitly they were left stale. (AGENTS.md's test counts and docs/08's test
-  ledger both rotted this way once already.)
+  moves files, or changes behavior that `docs/SPEC.md` or AGENTS.md describe, update those lines in the
+  same change or say explicitly they were left stale. (Test counts copied into prose, and a test
+  ledger kept beside the specs, both rotted this way once already.)
 
 ## Evidence and reporting
 

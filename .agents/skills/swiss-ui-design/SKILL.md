@@ -13,11 +13,11 @@ The core rule is:
 
 Before changing UI, read the repository `AGENTS.md` and the relevant existing panel code. Do not design from screenshots alone when source is available.
 
-This skill also absorbs the former `swiss-design` skill: the design language, the token names, the rules and the component vocabulary live in §15–§19. Historical references elsewhere to "swiss-design rule N" mean §16 below. docs/46 is the spec that built the library this skill describes.
+This skill also absorbs the former `swiss-design` skill: the design language, the token names, the rules and the component vocabulary live in §15–§19. Historical references elsewhere to "swiss-design rule N" mean §16 below. SPEC §panel is normative for the panel and this skill is its working manual: when they disagree, fix both in one change.
 
 ## 0. The UI library is the only way to draw
 
-The panel has one component library, in the tree (docs/46, ADR-029):
+The panel has one component library, in the tree (SPEC §panel.ui, ADR-029):
 
 - **`crates/swiss-panel/panel/src/ui/*.ts`**, exported whole by `ui/index.ts`: every shape a page draws — buttons, status marks, the switch, the styled select, page scaffolding, the list row, the group band, the segmented control, the event list, the code block, forms, menus, sheets, the empty state, back to top. §17 maps each word to its function.
 - **`crates/swiss-panel/src/admin_assets/styles/ui.css`**: the classes those functions draw, and only those.
@@ -105,7 +105,7 @@ Never let a page replace or recreate app chrome.
 
 ## 3. Plugin Rail rules
 
-The left rail is the only L1 navigation: 56px wide, one 42px seat per pinned plugin — its 18px glyph over its name. The caption is one size for the whole rail: 10px, stepped down together (to a 9px floor) by `page-registry.ts fitRailLabels` only when a gateway-served name is longer than the seat; a name that fits nowhere ellipsizes and keeps its whole text in the seat's `title`. (docs/39 S1 once shipped it icon-only; the owner reversed that for clarity.)
+The left rail is the only L1 navigation: 56px wide, one 42px seat per pinned plugin — its 18px glyph over its name. The caption is one size for the whole rail: 10px, stepped down together (to a 9px floor) by `page-registry.ts fitRailLabels` only when a gateway-served name is longer than the seat; a name that fits nowhere ellipsizes and keeps its whole text in the seat's `title`. (SPEC §panel.nav once shipped it icon-only; the owner reversed that for clarity.)
 
 - `More` (`⋯`, glyph only — an affordance, not a domain) opens the complete/searchable plugin list.
 - The active seat is the chrome's one accent: a 2px notch on the seat's leading edge over the hover ground.
@@ -164,7 +164,7 @@ Do **not** implement these as page-local segmented tabs.
 Use page-local tabs only for L3 sections of the current resource, e.g.:
 
 ```text
-shop
+shop-search
 [Tools] [Resources] [Prompts] [Run] [Config] [Logs]
 ```
 
@@ -238,12 +238,13 @@ Actions follow a stable hierarchy:
 
 Do not move equivalent actions to different corners on different pages.
 
-One page's navigation is a special case worth naming (docs/42, docs/43): Data's resource
+One page's navigation is a special case worth naming (SPEC §data.tabs): Data's resource
 navigation is OBJECT TABS — each open table/key/console is a tab on the strip, and the
 per-object header carries exactly one primary action plus an overflow (rule 4 as a machine
 gate: at most one non-icon .btn per toolbar). The tab strip is the L3 half made visible,
 not a new layer: same pill vocabulary as a section segment, card-shaped, closable, capped
-(eight; all-dirty refuses new tabs rather than dropping edits silently).
+(twelve, `DB_TAB_MAX`: the least recently used clean, inactive tab makes room; when every
+tab is busy a new one is refused rather than dropping edits silently).
 
 ## 8. Focus Mode
 
@@ -352,7 +353,7 @@ Do not preserve an old visual decision merely because it already exists if it vi
 
 ## 15. The design language
 
-One process, one loopback port, one panel. The panel is the product's face and it is held to the same four properties as the binary (AGENTS.md): small, plugin-shaped, hot-pluggable, honest about where a tool came from. Pixels are as accountable as bytes. This skill is the constitution for them; docs/17 (direction), docs/18 (the refresh that set the tokens), docs/20 (groups and hierarchy), docs/35 (the grouped page) and docs/46 (the library and direction B) are its case law, and `.agents/docs/style-design.md` is the audited inventory of what the CSS actually says today. When this file and a docs/NN disagree, this file wins — and the docs/NN gets fixed.
+One process, one loopback port, one panel. The panel is the product's face and it is held to the same four properties as the binary (AGENTS.md): small, plugin-shaped, hot-pluggable, honest about where a tool came from. Pixels are as accountable as bytes. This skill is the working manual for them. The normative text is SPEC §panel — §panel.design (the direction and the tokens), §panel.groups (the grouped page), §panel.ui (the library and direction B) — with SPEC §host.groups for groups and hierarchy; `styles/base.css` (the tokens), `styles/ui.css` and the vitest gates are what the CSS actually says today. When this file and SPEC disagree, the code decides which one is right (SPEC §about) and both are fixed in the same change.
 
 ### Where it lives, how it changes
 
@@ -367,7 +368,7 @@ One process, one loopback port, one panel. The panel is the product's face and i
 
 The idiom is a management UI in the Apple System Settings / Linear lineage: a source list beside a detail pane for the thing with many instances (MCP), a left-aligned page under a measure for the rest, grouped inset lists, one primary action per view with the rest behind `⋯`, a five-step type ramp, four weights, a 4pt grid, hairlines instead of shadows. Restraint is the style. Not glass, not gradients, not large radii, not a second accent.
 
-The taste behind it, in one paragraph (docs/35 is the worked example): **a thing on screen is one surface with one edge.** A container is a band over its rows, not a label plus a line plus a card; a page is header, form, list with a full step of air between them, never a stack of blocks touching; the controls of one kind sit in one column so the eye finds them once. Whatever the user does most — click `+`, pick up a group, read a row — is reachable without hovering to discover it, and whatever they do rarely or destructively waits behind `⋯`. The page teaches by its structure; prose that explains a gesture is a sign the structure failed.
+The taste behind it, in one paragraph (SPEC §panel.groups is the worked example): **a thing on screen is one surface with one edge.** A container is a band over its rows, not a label plus a line plus a card; a page is header, form, list with a full step of air between them, never a stack of blocks touching; the controls of one kind sit in one column so the eye finds them once. Whatever the user does most — click `+`, pick up a group, read a row — is reachable without hovering to discover it, and whatever they do rarely or destructively waits behind `⋯`. The page teaches by its structure; prose that explains a gesture is a sign the structure failed.
 
 **Tokens, by name (never by literal):** type `--f-title 22 / --f-head 15 / --f-body 13 / --f-label 12 / --f-caption 11`; weights `--w-body 400 / --w-name 450 / --w-emph 500 / --w-title 600`; spacing `--s1..--s8` (4/8/12/16/20/24/32); radii `--r-card 8 / --r-row 6 / --r-btn 6 / --r-pill`; component sizes `--ic-s 12` (a chevron) `/ --ic-m 14` (a glyph in a button) `/ --dot 6 / --row-h 42`; surfaces `--bg --sidebar --bar --card --field`; text `--text --text-2 --text-3`; lines `--sep --sep-soft`; `--hover`; `--accent`; state `--green --red --amber`; syntax `--syn-*` (code blocks only, rule 2); terminal `--term-*` (derived from the panel's colours, U12); measures `--measure 920 / --measure-wide 1180`. Dark is the same names under `:root[data-theme="dark"]` — write a rule once, in tokens, and it is themed.
 
@@ -377,19 +378,19 @@ The taste behind it, in one paragraph (docs/35 is the worked example): **a thing
 2. **Saturation is for state.** Dots, the one accent, error red, amber. Type chips, launch-method tags, group names and everything descriptive are monochrome, and a column's annotation (a count, a unit, a time) is grey `--text-3`. A colour that carries no information is noise; `mysql` and `redis` both being red taught that. The one exception is syntax colour inside a code block (the JSON view; the SQL highlighter): there the hue says which token a character belongs to, which IS information. It uses only the five muted `--syn-*` tokens, never on chrome, labels or rows.
 3. **Text needs a measure.** Nothing is full-bleed except a workspace. `--measure` by default, `--measure-wide` for genuinely wide rows (logs, traffic). Content hugs the left edge; it is never centred a second time inside the pane.
 4. **One primary action per view; the rest go behind `⋯`.** A row holds at most one non-icon `.btn` (`row({ primary })` takes one). Red never appears on a row — destructive items live in the overflow menu, last, after a separator, in `--red` text, or as the row's trailing icon glyph.
-5. **Hierarchy is drawn with surface and indent, not with size and caps.** A user-named container is a header **band** over its members — one shape everywhere (docs/35, §19): a `--sep-soft` band, `--r-row` corners, chevron + name (`--f-body`, `--w-emph`, mixed case) + count (`--text-3` tnum), `+` and `⋯` at its end. No folder glyph, no guide line, no second surface under the head: the band *is* the container marker. In the **sidebar** the band is 28px and the members sit one grid step (`--s4`) in beneath it; on a **page** the group *is* the card, the band is 36px across its top and the rows run edge to edge under it. Uppercase 11px captions are for *section* titles the product wrote ("Scheduled commands"), never for containers the user named. `ui/group.ts groupNode` is the only implementation of it (mounted by `groups.ts`).
+5. **Hierarchy is drawn with surface and indent, not with size and caps.** A user-named container is a header **band** over its members — one shape everywhere (SPEC §panel.groups, §19): a `--sep-soft` band, `--r-row` corners, chevron + name (`--f-body`, `--w-emph`, mixed case) + count (`--text-3` tnum), `+` and `⋯` at its end. No folder glyph, no guide line, no second surface under the head: the band *is* the container marker. In the **sidebar** the band is 28px and the members sit one grid step (`--s4`) in beneath it; on a **page** the group *is* the card, the band is 36px across its top and the rows run edge to edge under it. Uppercase 11px captions are for *section* titles the product wrote ("Scheduled commands"), never for containers the user named. `ui/group.ts groupNode` is the only implementation of it (mounted by `groups.ts`).
 6. **Every "new" says where it goes.** A create sheet or inline form has a Group field — a select over the scope's groups plus "New group…" — prefilled from the header `+` that opened it or from the last group used; the sheet title carries the group ("New job in *learn*"). Nothing lands in a group silently.
 7. **One glyph, one meaning per page.** Two `plus` icons on one screen must do the same thing. A different act gets a different icon (`folder-plus` for a new group, `plus` for a new item).
-8. **One persistent glyph per container header, and the whole header drags.** `+` stays visible (dimmed) because adding is frequent; `⋯` appears on hover/focus. The header itself is the drag surface for reordering groups (docs/35) — pick it up by the name, the count or the empty band; there is no grip to find. The buttons on it cancel the drag at `dragstart` (`groups.ts wireHeadDrag`), so a twitch while clicking `+` or `⋯` still lands the click. Any new draggable container follows the same two rules: draggable whole, buttons opt out.
+8. **One persistent glyph per container header, and the whole header drags.** `+` stays visible (dimmed) because adding is frequent; `⋯` appears on hover/focus. The header itself is the drag surface for reordering groups (SPEC §panel.groups) — pick it up by the name, the count or the empty band; there is no grip to find. The buttons on it cancel the drag at `dragstart` (`groups.ts wireHeadDrag`), so a twitch while clicking `+` or `⋯` still lands the click. Any new draggable container follows the same two rules: draggable whole, buttons opt out.
 9. **Icons are the sprite.** Lucide-style, 24 viewBox, 1.5 stroke, `currentColor`, hand-written paths in `index.html`, used through `iconNode(name)` (`ui/icon.ts`; an `HChild`, built with `h()`/`fill()`). No Unicode glyphs as icons, no icon packages. Adding one icon means adding one `<symbol>`; the gallery's icon section shows every symbol.
 10. **Status is a dot plus neutral text.** `dot(state, words)`: 6px; filled green up, filled red down/error, hollow ring for "not running, will start on demand" — the shape says idle, not a colour. Every dot carries a `title` that says the state in words. A failure in a list is a red `tag()`, not a red row.
 11. **Empty states use one template** — `emptyNode({icon, title, hint, action})` (`ui/page.ts`): an icon in `--text-3`, an `--f-head` title, an `--f-label` hint under 44ch, an optional ghost action (`[data-empty-action]`). An empty *container* is not an empty state: it shows one quiet row ("No items — drop here or press +") the height of a real row, so it still reads as a place and a drop target. A list filtered to nothing, or a page past the end, is one `note()` line.
 12. **Surfaces are a grey ladder, not a shadow stack.** Cards are lifted by a hairline ring only; shadows belong to floating layers (sheet, popup menu, back to top). Dark mode is a warm near-black that reads as paper, with brightness as the ladder.
 13. **Motion is 150ms ease or nothing**, and nothing under `prefers-reduced-motion`. Chevrons rotate; back to top glides; nothing slides, bounces or fades in.
-14. **Copy is short and declarative, in both languages.** Titles name the thing ("Tunnels"), descriptions say what it does, hints say what to do next. No exclamation marks, no "please", no emoji. Confirmations state consequences and what is *not* destroyed: "Its 3 jobs move to 'default'. Nothing is removed." Every visible string goes through `tr()` (docs/38); a value the same in every language (a port, a table name) is a named constant.
+14. **Copy is short and declarative, in both languages.** Titles name the thing ("Tunnels"), descriptions say what it does, hints say what to do next. No exclamation marks, no "please", no emoji. Confirmations state consequences and what is *not* destroyed: "Its 3 jobs move to 'default'. Nothing is removed." Every visible string goes through `tr()` (SPEC §panel.i18n); a value the same in every language (a port, a table name) is a named constant.
 15. **Selection is a bar and a tint**, not a floating card: 2px `--accent` on the leading edge over an 8% accent tint; the selected name goes `--w-emph`, not blue.
 16. **One surface, one edge.** A container is drawn once — a band over its members, a ring around a card — never as a label *and* a rail *and* a box that the reader must reassemble into one thing. If a group needs a folder glyph or a guide line to be recognised as a group, its surface is wrong; fix the surface, do not add a hint.
-17. **Air is a token step, never zero.** Between the page header and what follows, and between a form and the list it feeds, `--s5`; between sections `--s6`; between two cards in one section `--s3`; between stacked fields and pairs `--s3`; between a band and its first member `--s1`. Two blocks touching means one of them has no rule — the Add sheet's pairs one div deeper than `.sheet-body` stacked with no gap until `.two` became a grid everywhere (docs/46 P2-3c) — so find the missing rule rather than nudge a margin.
+17. **Air is a token step, never zero.** Between the page header and what follows, and between a form and the list it feeds, `--s5`; between sections `--s6`; between two cards in one section `--s3`; between stacked fields and pairs `--s3`; between a band and its first member `--s1`. Two blocks touching means one of them has no rule — the Add sheet's pairs one div deeper than `.sheet-body` stacked with no gap until `.two` became a grid everywhere (SPEC §panel.pages) — so find the missing rule rather than nudge a margin.
 18. **Trailing controls share one column.** A row's last glyph and its band's last glyph sit at the same x, so every `⋯` on a page is found once. Actions gather at the right edge; nothing trails halfway across a row.
 19. **The frequent gesture needs no discovery.** Anything done often — add, collapse, pick up and move — is reachable from the visible surface the user is already looking at, at the size a hand hits: the whole band drags, `+` is always shown. Hover-only affordances are for the rare (`⋯`), never for the primary way to do something. A control that must be hunted for is a control the user will report as missing.
 20. **Structure teaches; prose confirms.** A page description is **one sentence, one line** at `--measure` (U11) saying what the page is. It never explains an interaction ("drag a row to reorder") — if the list does not make that obvious, the list is the bug. Placeholders are sentence case and name the value ("Label, e.g. claude-code"), and a form must never say *optional* about a field the store will refuse.
@@ -455,7 +456,7 @@ Use these words in specs and class names; if a design needs a word not here, add
 - The CSS comment beside a changed rule still states the *reason*; if the reason changed, the comment changed.
 - And §13 above — hierarchy and ownership first, polish second.
 
-## 19. Reference anatomy: the grouped list page (docs/35, 2026-09-18; docs/46)
+## 19. Reference anatomy: the grouped list page (SPEC §panel.groups, 2026-09-18; SPEC §panel.ui)
 
 The one shape every grouped page is built from; rules 16.16–16.20 are what it obeys. Build it from the library (the gallery's content scene is this page); do not reinterpret it.
 
@@ -495,4 +496,4 @@ Sidebar (source list) — the same band, smaller, no card
 - **Where things go.** Page-level actions (New group as the `folder-plus` icon button, then the sheet-opening primary) in `pane-actions` at the header's right; the in-place primary (Create / Store) at the end of the inline form; per-row: at most one `.btn` plus `⋯`; per-group: `+` (always) and `⋯` (hover) on the band.
 - **Drag.** The band moves the group: grab cursor on it, buttons opt out at dragstart. A group lands before/after the *whole* group under the pointer; a row lands on another row (reorder + re-home), on a band or on an empty line (append). Feedback: `.grp.drop-before/after` edge on the block, `.drop-into` ring on the band or the empty line, `.grp.dragging` dims the whole group.
 - **Alignment contract** (the groups section of `ui.css` states the numbers): the band's chevron sits in the rows' dot column and its name over their names on the card; in the sidebar a member's dot sits under the band's name.
-- **What was tried and rejected.** A transparent tree head with a folder glyph and a guide line (docs/20 §4.1 first revision): three visual things for one container, and at page width the `+` a screen from its name. A hover-only grip as the drag handle: the user could not find it. A red `Delete`/`Revoke` on every row: noise on a page whose rows are read far more often than deleted. A hand-written HTML mock with its own `.m-*` style sheet as "the design" (docs/46 directions): a second style system to reconcile; designs are gallery scenes now.
+- **What was tried and rejected.** A transparent tree head with a folder glyph and a guide line (SPEC §panel.groups first revision): three visual things for one container, and at page width the `+` a screen from its name. A hover-only grip as the drag handle: the user could not find it. A red `Delete`/`Revoke` on every row: noise on a page whose rows are read far more often than deleted. A hand-written HTML mock with its own `.m-*` style sheet as "the design" (SPEC §panel.ui directions): a second style system to reconcile; designs are gallery scenes now.

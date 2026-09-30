@@ -14,7 +14,7 @@ what its output actually said.
 ```powershell
 cargo build --release                                  # the shipping exe
 cargo test --workspace                                 # gate 1: the one feature combination there is
-cargo test -p swiss-it --features it                   # gate 2: real DBs (docs/44); needs Docker
+cargo test -p swiss-it --features it                   # gate 2: real DBs (SPEC §testing.it); needs Docker
 cargo clippy --workspace --all-targets -- -D warnings  # must be clean
 cargo tree -d -e normal,build                          # duplicated TLS/runtime fails review (shipping graph)
 ```
@@ -40,7 +40,7 @@ Do not reflexively run the full suite. Pick the smallest command that can go red
   evidence.
 - **Cross-cutting changes** (host contract, config, secure store, panel wiring, workspace
   manifests): that is what the full `cargo test --workspace` rehearsal is for.
-- **A diff that touches a database path owes gate 2** (docs/44):
+- **A diff that touches a database path owes gate 2** (SPEC §testing.it):
   `crates/swiss-mcp/src/adapters/{mysql,pg,redis}*.rs`, `sql.rs`, `resources.rs`,
   `proc.rs`, `crates/swiss-host/src/dbbrowser.rs`, `crates/swiss-data/src/dbbrowser_api.rs`,
   `crates/swiss-core/src/secure/`, `src/app.rs`, `src/mcp_link.rs`, or anything under
@@ -56,7 +56,7 @@ Do not reflexively run the full suite. Pick the smallest command that can go red
   name, checked first) or `SWISS_MASTER_KEY` — which bypasses every OS key source
   (`crates/swiss-core/src/secure/key.rs`).
 - **Real-engine DB tests live behind gate 2** (`swiss-it`, feature `it`): they fail — never
-  self-skip — when no engine is reachable (docs/44). The Node-era self-skipping suites were never
+  self-skip — when no engine is reachable (SPEC §testing.it). The Node-era self-skipping suites were never
   ported; the unit tests those names used to cover are plain `#[cfg(test)]` code now.
 - **Windows traps that look like test bugs but are not** (full list in AGENTS.md):
   `os error 4551` (Smart App Control blocked the binary — it never ran; re-running usually gets

@@ -40,7 +40,7 @@ $Rules = @(
     @{ Pat = 'unsafe';                         Path = '^(?!.*platform).*.(rs|toml)$';     Msg = 'unsafe belongs at the Windows FFI boundary (platform/), nowhere else' },
     @{ Pat = 'serde_json::Value';                  Path = 'adapters|proc|http|rest';           Msg = 'forwarding paths pass payloads as &RawValue - no serde_json::Value materialisation' },
     @{ Pat = '.unwrap()';                       Path = 'secure|adapters';                    Msg = 'no .unwrap() on config/network/db/filesystem paths - one failing MCP must not take down the others' },
-    @{ Pat = 'swiss-core/src/secure/envelope';     Path = '';                                   Msg = 'the sealed envelope format is FROZEN (docs/05) - envelope construction changes are stop-and-discuss' },
+    @{ Pat = 'swiss-core/src/secure/envelope';     Path = '';                                   Msg = 'the sealed envelope format is FROZEN (SPEC §formats) - envelope construction changes are stop-and-discuss' },
     @{ Pat = '^[a-zA-Z0-9_-]+\s*=\s*"[^"]*"\s*$'; Path = 'Cargo.toml$';                    Msg = 'new dependency? default-features = false first, justify weight in the commit message (swiss-dependency-review)' },
     @{ Pat = '.';                                  Path = '(^|/)(master.key|gateway.config.json|managed.json|tunnels.json|jobs.json|.env|.log|.cast)$'; Msg = 'never-commit file in the diff - state files and recordings carry real secrets' }
 )

@@ -14,9 +14,10 @@ router exists for the human who wants to steer deliberately.
 
 The route most work travels:
 
-1. **Make the change** — work from the capability's docs/NN spec when one exists. New capability?
-   If none exists and it won't fit one sitting, **swiss-spec** first (interview it into a spec with
-   acceptance tests and a hand-off prompt); the implementation itself is **swiss-add-plugin**
+1. **Make the change** — work from the owning section of `docs/SPEC.md`. New capability, or a
+   behaviour change that won't fit one sitting? **swiss-spec** first (interview it into an
+   amendment of that section with acceptance tests and a delivery order); the implementation
+   itself is **swiss-add-plugin**
    (descriptor/action/page through the host contract, never a host match arm — and a plan named
    before any code).
 2. **swiss-verify** — select and run the narrowest honest cargo evidence. `--workspace` when the
@@ -32,29 +33,30 @@ The route most work travels:
 
 ## On-ramps
 
-- **An idea, not yet a change** — "what if swiss could …" → **swiss-spec**: interview it into a
-  numbered docs/ spec with acceptance tests and a hand-off prompt before any code. Straight to
-  swiss-add-plugin only when it fits one sitting and one commit.
+- **An idea, not yet a change** — "what if swiss could …" → **swiss-spec**: interview it into an
+  amendment of `docs/SPEC.md` with acceptance tests and a delivery order before any code.
+  Straight to swiss-add-plugin only when it fits one sitting and one commit.
 - **Something's broken** — a failing test, a flake, a regression → **swiss-debug** (tight feedback
-  loop first; for ported shapes, docs/ and the module comments are the ground truth). A "why is it
-  built like that" question with nothing broken is docs/ territory (AGENTS.md; docs/02's
-  architecture map), not debug.
+  loop first; for ported shapes, SPEC and the module comments are the ground truth). A "why is it
+  built like that" question with nothing broken is SPEC territory (AGENTS.md; SPEC §arch and
+  SPEC §decisions), not debug.
 - **A dependency question** — "should we pull in crate X", any `Cargo.toml` edit →
   **swiss-dependency-review** (`default-features = false`, no second TLS/runtime, `cargo tree -d`).
 - **"How much memory does swiss use" / could this change move idle cost** → **swiss-memory-record**
-  (measure on 19998, append a dated row to docs/01 — records, not gates).
+  (measure on 19998, append a dated row to SPEC §product.memory — records, not gates).
 - **Anything the panel shows** — a new page, list, sheet, row, icon, colour, spacing, or a spec
   with a visual side → **swiss-ui-design** first: the information hierarchy, the design language,
   the component vocabulary and the done checklist. The panel change itself still ships through
   swiss-live-verify on 19998.
 - **"Make it smaller / faster"** → **swiss-debug**'s measure-first discipline (baseline, then
-  bisect) with docs/01 as the scoreboard — and AGENTS.md's measured-and-rejected record is
+  bisect) with SPEC §product.memory as the scoreboard — and AGENTS.md's measured-and-rejected record is
   standing law: no change ships a number it didn't measure.
 
 ## Vocabulary underneath
 
 AGENTS.md — the four product properties and every load-bearing rule — outranks everything here and
-is present in every session; the docs/ tree owns the contracts (09 plugins, 10 jobs, 05 wire).
+is present in every session; `docs/SPEC.md` owns the contracts (SPEC §host.plugins, SPEC §jobs,
+SPEC §formats).
 No generic craft layer is installed in this environment — the disciplines ride inside the project
 skills: evidence and RED-before-green in **swiss-verify**, root-cause method in **swiss-debug**,
 audit posture in **swiss-review**. When a discipline feels missing, strengthen those skills; do
