@@ -13,9 +13,9 @@ from the binary with no bundler and no build step.
 
 **Why it exists:** memory. The old build measured 113.8 MB RSS on a typical workload; the same
 workload here reads **22.4 MB** (private bytes 8.6 MB), shipped as a single self-contained
-executable. Memory numbers are records, not gates — [`docs/01`](docs/01-goals-and-memory-budget.md) holds them.
+executable. Memory numbers are records, not gates — [SPEC §product.memory](docs/SPEC.md) holds them.
 
-![The swiss panel's Data page browsing a demo MySQL table](docs/assets/46/02-data-orders-light.png)
+![The swiss panel's Data page browsing a demo MySQL table](docs/assets/data-page.png)
 
 ## Install
 
@@ -92,7 +92,7 @@ remotely by forwarding the port over SSH, never by widening the bind.
 Two layers. Every request — panel page or `/api/*` — must arrive from a loopback peer with a
 loopback `Host`/`Origin`; the check exists because DNS rebinding can make a remote page send
 same-origin-looking requests at a loopback listener. On top of that the panel and `/api/*`
-need the admin session (docs/48): `swiss start` and `swiss open` open a single-use sign-in link
+need the admin session (SPEC §host.session): `swiss start` and `swiss open` open a single-use sign-in link
 that expires in two minutes and trades itself for an `HttpOnly`, `SameSite=Strict` cookie, and
 the CLI signs its calls with a key rotated on every start and sealed like the rest of the state
 (`swiss api` is the scripted way in). So another local user or a process that only knows the
@@ -135,12 +135,12 @@ swiss autostart off
 **Implementation complete.** Every planned adapter family is wired into the factory: echo,
 MySQL, PostgreSQL, Redis, proc, HTTP, REST, zai-vision, and SSH tunnels. The admin API, the
 embedded panel, sealed-envelope compatibility, the lazy proc lifecycle and loopback security
-paths are all in, and the build is the plugin toolbox `docs/09`–`12` describe: a plugin host
+paths are all in, and the build is the plugin toolbox SPEC §host describes: a plugin host
 over shared Action/Run/process services, configuration-driven Jobs, and nine crates that
 still link into one `swiss` binary.
 
 The panel is drawn by one in-tree component library (`crates/swiss-panel/panel/src/ui/` +
-`ui.css`, docs/46): every plugin page composes the same
+`ui.css`, SPEC §panel.ui): every plugin page composes the same
 components, a gallery page demos them all, and two vitest gates hold the line — `views.css`
 restyling a library class, or a view hand-writing a library class name, both fail the suite.
 
@@ -151,16 +151,11 @@ still reports ok.
 
 ## Documentation
 
-The design record lives in [`docs/`](docs/README.md): one numbered spec per change, each with a
-status header. Start with:
-
-- [`docs/01`](docs/01-goals-and-memory-budget.md) — why memory is the product, and what thrift actually buys, measured
-- [`docs/02`](docs/02-architecture.md) — crate layout, runtime model, module map
-- [`docs/05`](docs/05-wire-compatibility.md) — the on-disk and on-HTTP formats that must stay byte-identical
-- [`docs/07`](docs/07-decisions.md) — the decision log (ADRs)
-- [`docs/09`](docs/09-toolbox-plugin-architecture.md) — the plugin, page and action contracts every tool is built on
-
-[`docs/README.md`](docs/README.md) indexes every spec with its status.
+The design record is one living document, [`docs/SPEC.md`](docs/SPEC.md): what swiss does now,
+organised by area (product and memory, architecture, formats, the host, each plugin, the panel,
+security, testing, release), with the decision log (ADR-001 …) as its last section. Code and
+tests cite it as `SPEC §area.sub`; a change to behaviour amends the section it touches in the
+same commit. [`docs/README.md`](docs/README.md) lists the areas.
 
 ## Development
 

@@ -14,7 +14,7 @@ that consumes the loop.
 1. **A targeted cargo test filter** at the seam that reaches the bug:
    `cargo test -p swiss-mcp <name>`. Most seams already have tests; a failing one is the loop.
 2. **A one-shot integration test** through `tower::ServiceExt::oneshot` — the axum app with no
-   real listen and no real sleep (docs/08). This is where new seams get created.
+   real listen and no real sleep (SPEC §testing). This is where new seams get created.
 3. **A curl/Invoke-RestMethod script against the 19998 instance** for anything that needs a real
    running gateway ([swiss-live-verify](../swiss-live-verify/SKILL.md) for the boot procedure).
 4. **Replay a captured artifact** — a line from `logs/traffic.jsonl` or a
@@ -34,7 +34,7 @@ repro becomes the regression test.
 ## Phase 3 — hypothesise, ranked
 
 Write 3–5 falsifiable hypotheses before testing any ("if X is the cause, changing Y makes it
-disappear"). For ported shapes, check docs/ and the owning module's comments for the intended
+disappear"). For ported shapes, check the owning SPEC section and the module's comments for the intended
 behavior before ranking (AGENTS.md: that is where the ported reasons live).
 Present the list to the user — cheap checkpoint, frequent re-ranks — but don't block: proceed with
 your ranking if they are away, and re-rank when they answer.

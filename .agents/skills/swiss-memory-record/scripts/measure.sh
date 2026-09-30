@@ -13,17 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Cross-platform sibling of measure.ps1 - the docs/01 memory loop (records, not gates).
+# Cross-platform sibling of measure.ps1 - the memory loop of SPEC §product.memory (records, not gates).
 #
 # Boots the isolated 19998 instance via live-check.sh, reads /health + /api/memory +
-# swiss status, prints a ready-to-append docs/01 row next to the previous recorded row,
+# swiss status, prints a ready-to-append row for the SPEC §product.memory table next to its last row,
 # then stops the instance. The skill body owns what the numbers mean and the append rule.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 BOOT="$ROOT/.agents/skills/swiss-live-verify/scripts/live-check.sh"
-DOCS01="$ROOT/docs/01-goals-and-memory-budget.md"
+SPEC="$ROOT/docs/SPEC.md"
 PORT=19998
 TEST_HOME="${SWISS_TEST_HOME:-$HOME/.swiss-test-home}"
 EXE="$ROOT/target-test/release/swiss"
@@ -46,16 +46,17 @@ mem="$(curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/api/mem
 field() { printf '%s' "$mem" | sed -n "s/.*\"$1\":\([0-9.]*\).*/\1/p"; }
 date_str="$(date +%F)"
 hash="$(printf '%s' "$health" | sed -n 's/.*"hash":"\([0-9a-f]*\)".*/\1/p')"
-row="| $date_str | $hash | gatewayMb=$(field gatewayMb) privateCommit~=$(field heapUsedMb)/$(field heapTotalMb) childrenMb=$(field childrenMb) (proc children: $(field processCount)) | working set per /api/memory; workload: real-state snapshot on 19998 |"
+row="| $date_str | Rust $hash | real-state snapshot on 19998 | $(field gatewayMb) MB | private ~$(field heapUsedMb)/$(field heapTotalMb) MB; children $(field childrenMb) MB ($(field processCount) proc) |"
 
 # swiss status against the test home (env scoped to this invocation only).
 SWISS_HOME="$TEST_HOME" SWISS_PORT="$PORT" "$EXE" status 2>&1 | grep -Ei 'memory|build|running|MB' >"$TEST_HOME/status.rows" || true
 
 echo ''
-echo '=== ready-to-append docs/01 row (Measured result section; never overwrite a dated row) ==='
+echo '=== ready-to-append row for the SPEC §product.memory table (docs/SPEC.md; never overwrite a dated row) ==='
 echo "$row"
-prev="$(grep -n 'MB' "$DOCS01" | tail -1 || true)"
-if [ -n "$prev" ]; then echo "previous record (docs/01 $prev)"; fi
+# the last dated row of the table under the section heading, nothing else in the spec
+prev="$(awk '/^### [^ ]*product\.memory/ {f=1; next} f && /^#/ {exit} f && /^\| 20/ {l=$0} END {print l}' "$SPEC")"
+if [ -n "$prev" ]; then echo "previous record: $prev"; fi
 echo ''
 echo '--- swiss status (memory rows) ---'
 cat "$TEST_HOME/status.rows" 2>/dev/null || true

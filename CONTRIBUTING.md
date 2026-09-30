@@ -21,7 +21,7 @@ Every change passes all four before it is proposed:
 
 ```
 cargo test --workspace
-cargo test -p swiss-it --features it   # real-database changes; needs Docker (docs/44)
+cargo test -p swiss-it --features it   # real-database changes; needs Docker (SPEC §testing.it)
 cargo clippy --workspace --all-targets -- -D warnings
 cd crates/swiss-panel/panel && npm ci && npm run check   # panel changes
 ```
@@ -29,7 +29,7 @@ cd crates/swiss-panel/panel && npm ci && npm run check   # panel changes
 `--workspace` is load-bearing: without it cargo builds the root package alone, runs a small
 minority of the suite and still reports ok.
 
-The second `cargo test` is gate 2 (docs/44): it starts real MySQL, PostgreSQL and Redis
+The second `cargo test` is gate 2 (SPEC §testing.it): it starts real MySQL, PostgreSQL and Redis
 through Docker (`DOCKER_HOST`) or the `SWISS_IT_*_URL` overrides, and a diff touching the
 database adapters, browsers or `crates/swiss-it` itself is not done without it. A machine
 without Docker runs the other gates and says so in the PR.
@@ -40,7 +40,7 @@ without Docker runs the other gates and says so in the PR.
   to reach the gateway from another machine. Forward the port over SSH instead.
 - **Secrets never come back out.** A value stored in the vault is write-only; masked fields
   stay masked in every API answer, log line and error.
-- **Sealed formats are frozen.** `docs/05` names the on-disk and on-wire shapes that must stay
+- **Sealed formats are frozen.** `SPEC §formats` names the on-disk and on-wire shapes that must stay
   byte-compatible; `tests/fixtures` proves it.
 - **Panel edits go to `panel/src/*.ts`, never to the emitted `js/`.** Rebuild, and walk the
   change in a real browser (see `.agents/rules/panel-proof-of-life.md`). Both languages: the
@@ -51,8 +51,9 @@ without Docker runs the other gates and says so in the PR.
 
 ## Proposing a change
 
-1. Open an issue first for anything larger than a fix; the `docs/NN-*-spec.md` files show the
-   level at which design decisions are written down here.
+1. Open an issue first for anything larger than a fix. [`docs/SPEC.md`](docs/SPEC.md) is the one
+   specification: a change to behaviour amends the section it touches, in the same pull request
+   as the code, and a decision worth recording becomes an ADR entry in its §decisions.
 2. Branch from `master`. Keep commits self-contained; the message says what changed and why,
    in the voice of the existing log.
 3. Open a pull request against `master` with the gates green. A panel change includes what the

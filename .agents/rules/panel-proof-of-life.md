@@ -26,7 +26,7 @@ visible control was clicked with real pointer events and answered. vitest green 
 1. **Edit `panel/src/*.ts`, never hand-edit `js/`** — the served tree is emitted
    (`npm run build` in `crates/swiss-panel/panel`). Read the house idiom before writing
    wiring: one existing view that already does the thing is the spec, and the shapes and
-   mechanisms live in the library `panel/src/ui/` (docs/46) — sheets -> `ui/sheet.ts`:
+   mechanisms live in the library `panel/src/ui/` (SPEC §panel.ui) — sheets -> `ui/sheet.ts`:
    `showSheet(sheet({ title, body, foot }))` unhides #sheet BEFORE it fills the body and
    closes on a backdrop click (`add-sheet.ts openSheet` is the worked example; an
    innerHTML write is an eslint error now); `closeSheet` and `openFieldSheet` come from
@@ -40,7 +40,7 @@ visible control was clicked with real pointer events and answered. vitest green 
    regressions.
 3. **Rebuild and restart 19998** (`scripts/test-instance.ps1 -Stop`, build with
    `CARGO_TARGET_DIR=target-test`, then `-Fresh`). Never verify against a stale binary.
-   The panel is now authored in TypeScript (`crates/swiss-panel/panel/src`, docs/36): run
+   The panel is now authored in TypeScript (`crates/swiss-panel/panel/src`, SPEC §panel.toolchain): run
    `npm run build` there first so the committed emit in `admin_assets/js` is fresh, THEN
    `touch crates/swiss-panel/src/lib.rs` before the release build — the rust_embed
    fingerprint trap below is unchanged by the port.
@@ -60,7 +60,7 @@ visible control was clicked with real pointer events and answered. vitest green 
    test runner.
 6. **The second-language pass.** A change that touches visible copy is walked a SECOND
    time in Chinese: click 文/A, confirm `document.documentElement.lang === "zh-CN"`, and
-   re-check the words (docs/38).
+   re-check the words (SPEC §panel.i18n).
 
 ## Mechanical traps that shipped broken code (do not repeat)
 
@@ -73,7 +73,7 @@ visible control was clicked with real pointer events and answered. vitest green 
   instance scripts from the repo root in their own call.
 - `rust_embed` fingerprints do not include asset content: editing `admin_assets` does NOT
   recompile swiss-panel, so a release build says "Finished" while the binary still embeds
-  the OLD panel (found live during docs/27 C4, 2026-09-15). Before every release rebuild on
+  the OLD panel (found live on a Tunnels page walk, 2026-09-15). Before every release rebuild on
   19998, `touch crates/swiss-panel/src/lib.rs` — then verify the served bytes, not just the
   build status.
 - A "successful" UI assertion that only checks existence is worse than no assertion: it

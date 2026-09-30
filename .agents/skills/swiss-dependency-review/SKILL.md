@@ -48,4 +48,4 @@ exactly what rule 4 inspects).
 4. Record the weight decision where the next reader will find it: the manifest comment beside the
    dependency (like the existing `rmcp`/`swiss-terminal` notes) and/or the commit message. A
    decision that moves a forbidden-class boundary (TLS, crypto, runtime, thread pool) also gets an
-   ADR in docs/07 — ADR-013 is the precedent.
+   ADR in SPEC §decisions — ADR-013 is the precedent.

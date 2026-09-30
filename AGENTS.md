@@ -7,14 +7,15 @@ Guidance for AI coding agents working in this repo. Single source of truth for a
 
 The project is named **swiss** — the developer's pocket multitool. It began as the Rust
 port of a Node original that has since been retired as the reference (2026-09-13, see
-docs/07; the sibling checkout is no longer needed or consulted). One local process, every MCP
-server on an HTTP path under the `/mcp/` prefix on `127.0.0.1:19999` (docs/24, ADR-018 —
+ADR-016; the sibling checkout is no longer needed or consulted). One local process, every MCP
+server on an HTTP path under the `/mcp/` prefix on `127.0.0.1:19999` (SPEC §mcp.endpoint, ADR-018 —
 the prefix is the MCP plugin's domain; the root belongs to host chrome and future plugins),
 shipped as a single static `.exe`. The port exists for one reason: memory. See
-`docs/01-goals-and-memory-budget.md`.
+`SPEC §product.memory`.
 
 The port is complete and is the product itself: this repository owns every layer, the panel
-included. The reasons behind ported shapes live in `docs/` and in the code comments — when a
+included. What the system does, and why, lives in one document, `docs/SPEC.md` (cited as
+`SPEC §area.sub`; the decision log is its §decisions), and in the code comments — when a
 piece of behavior looks odd, the module's comment usually records the bug that was paid for
 once already.
 
@@ -44,7 +45,7 @@ change, however much shorter it makes the diff:
 MCP is the most important plugin, not the trunk everything else hangs off. Data, Tunnels, Jobs
 and Process are peers of it, and a new tool should reach the panel by contributing a descriptor,
 an action and a page — never by editing a match arm in the host. See
-`docs/09-toolbox-plugin-architecture.md` for the contracts and `docs/10-config-driven-jobs.md`
+`SPEC §host.plugins` for the contracts and `SPEC §jobs`
 for how configuration drives them.
 
 ## Where the code lives
@@ -60,7 +61,7 @@ swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-
 supervisor, config, the security boundary. The seven subsystem crates are peers that never depend
 on each other; `swiss` (the root `src/`) is composition and nothing else. If a change seems to need
 an edge between two subsystem crates, the host contract is missing something — add it there
-instead. Full map in `docs/02-architecture.md`.
+instead. Full map in `SPEC §arch`.
 
 ## Load-bearing rules — do not break these
 
@@ -71,7 +72,7 @@ correctness boundary.
   `Host`/origin is not a loopback address. Never weaken it or change the bind host to "reach it
   remotely" — forward the port over SSH instead. A non-loopback `host` in config is refused at
   load, not warned about.
-- **`/api/*` and the panel shell need the admin session (docs/48).** A socket request needs the
+- **`/api/*` and the panel shell need the admin session (SPEC §host.session).** A socket request needs the
   CLI key (`X-Swiss-Key`, rotated each start, sealed in `session.json`) or a session cookie a
   one-time `/?token=` link set. The gate is layered on BOTH routing trees inside the loopback
   guard and fails closed when no session is installed. Never add an exemption for an `/api`
@@ -79,7 +80,7 @@ correctness boundary.
   `swiss api`. In-process requests (oneshot, no ConnectInfo) pass, as they pass the guard.
 - **Credentials are `${ENV_VAR}` or `${secret://name}` references, never literals.** They expand
   only at use time — one `${...}` envelope, two families; a bare `secret://` outside the envelope
-  is literal text (docs/25) — so `gateway.config.json`, `managed.json`, `tunnels.json` and the
+  is literal text (SPEC §host.refs) — so `gateway.config.json`, `managed.json`, `tunnels.json` and the
   jobs config hold the reference, not the secret. The panel masks them back out. Keep it that way.
 - **`http` / `rest` adapters have no health `ping` on purpose.** They are metered third-party
   endpoints; the registry deliberately reports them "unknown" rather than spending real requests
@@ -89,12 +90,12 @@ correctness boundary.
   memory feature in the product — do not make anything start eagerly "for simplicity".
 - **The sealed-envelope format is frozen.** State files are AES-256-GCM under an HKDF-derived
   per-file key. A Rust build that cannot open a file the Node build sealed has lost the user's
-  configuration. See `docs/05-wire-compatibility.md` before touching `secure/`.
+  configuration. See `SPEC §formats` before touching `secure/`.
 
 ## Rust-specific rules
 
 - **The panel is edited here, directly.** The panel's source of truth is
-  `crates/swiss-panel/panel/src/*.ts` (docs/36, ADR-024): TypeScript, erased to JS by
+  `crates/swiss-panel/panel/src/*.ts` (SPEC §panel.toolchain, ADR-024): TypeScript, erased to JS by
   ts-blank-space line-for-line, with the emit COMMITTED under `crates/swiss-panel/src/admin_assets/js`
   — still no bundler, no minify, no source map, and `cargo build` needs no node. The gate is
   `npm run check` in `crates/swiss-panel/panel/` (typecheck + eslint + emit-freshness + the
@@ -125,7 +126,7 @@ correctness boundary.
 cargo build --release             # the shipping exe (target/release/swiss.exe) - ADR-012;
                                   # 19999 runs a COPY of it, bin/swiss.exe (scripts/deploy.ps1)
 cargo test --workspace            # gate 1: the one feature combination there is; any machine
-cargo test -p swiss-it --features it  # gate 2: real MySQL/PG/Redis (docs/44) - needs Docker
+cargo test -p swiss-it --features it  # gate 2: real MySQL/PG/Redis (SPEC §testing.it) - needs Docker
                                   # (DOCKER_HOST) or SWISS_IT_*_URL; mandatory when the diff
                                   # touches the DB adapters/browsers or swiss-it itself
 cargo clippy --workspace --all-targets -- -D warnings                  # must be clean
@@ -146,7 +147,7 @@ cold `cargo test --workspace` on this machine; drop it only with new numbers in 
 
 The release profile is deliberately the slowest thing here (opt-level z, fat LTO,
 codegen-units 1 - the memory budget pays for it). Two speedups were measured and
-REJECTED, with numbers, at docs/16 follow-up time: incremental release (incompatible
+REJECTED, with numbers (SPEC §host.daemon): incremental release (incompatible
 with fat LTO by construction) and a thin-LTO/CGU-16 fast-lane profile (full build
 236 s vs 246 s, touch rebuild 160 s, exe +27% - the floor is dependency codegen at
 opt-level z, not linking). Keep `target` warm; a 4-minute full build
@@ -160,7 +161,7 @@ are the CLI; `swiss token` manages the bearer token; `SWISS_TOKEN` pins it — t
 well-known name. A leftover Node-era `MCP_GATEWAY_TOKEN` pin is inert (pinned by tests),
 so a pre-rename shell must switch names to keep authenticating.
 
-The sealed-envelope format is frozen (docs/05) and its fixture is committed under `tests/`.
+The sealed-envelope format is frozen (SPEC §formats) and its fixture is committed under `tests/`.
 The Node-era regeneration script `scripts/seal-fixture.mts` needs the retired sibling checkout
 and is kept only as a record: the format must not change, so it must never need to run.
 
@@ -176,9 +177,9 @@ scripts/test-instance.ps1 -Fresh     # wipe the test home first — a clean inst
 scripts/test-instance.ps1 -Stop      # kill by the port's owning PID, never by process name
 ```
 
-- The script (`scripts/test-instance.ps1`, docs/16 H2) copies the sealed state files into
+- The script (`scripts/test-instance.ps1`, SPEC §host.ops) copies the sealed state files into
   `%LOCALAPPDATA%\swiss-test-home` (DPAPI opens a copied `master.key` on the same machine under
-  the same user — docs/05) and points `SWISS_HOME` there, so a save on 19998 writes the
+  the same user — SPEC §formats) and points `SWISS_HOME` there, so a save on 19998 writes the
   **test home**, never the user's config — the script sets `SWISS_HOME`. No read-only
   discipline needed any more — the snapshot is the isolation.
 - It serves from `target-test\release\swiss.exe`: the 19999 daemon holds `target\release\swiss.exe`,
@@ -216,8 +217,8 @@ working tree, on every platform — CRLF never enters a commit.
 - **A behaviour change ships with a test** that fails before it and passes after. Integration
   tests drive the axum app through `tower::ServiceExt::oneshot` — no real port, no real sleep.
 - **A panel change ships with its vitest case** in `crates/swiss-panel/panel/test/` — that
-  suite is the panel's acceptance spec; see `docs/08-testing.md`.
-- **Every visible panel string goes through `tr()`/`trn()`** (docs/38, normalized
+  suite is the panel's acceptance spec; see `SPEC §testing`.
+- **Every visible panel string goes through `tr()`/`trn()`** (SPEC §panel.i18n, normalized
   2026-09-20): keys are symbolic `<module>.<semanticId>` (e.g. `terminal.bar.open`),
   English copy lives in `panel/src/locales/en.ts`, and each locale — currently `zh.ts` —
   is its own table over the same keys; both entries are part of the change. The two machine
