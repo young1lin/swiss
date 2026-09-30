@@ -1,6 +1,6 @@
 # Cargo build trees, wherever a `cargo build` was run from: the root ones, and any nested
 # copy a misplaced CARGO_TARGET_DIR produces (a whole build tree reached a commit twice
-# through a root-anchored pattern - docs/40 §0 and 2026-09-21).
+# through a root-anchored pattern - SPEC §release.hygiene and 2026-09-21).
 target/
 # The 19998 iteration build dir (AGENTS.md live-testing rule) — a whole second cargo
 # target tree, thousands of files the Git GUI would otherwise list as pending.
@@ -9,7 +9,7 @@ target-test/
 *.pdb
 # Where production 19999 runs from: scripts/deploy.ps1 copies target/release/swiss.exe here
 # so the linker and the daemon never share a file, and the path is stable for PATH and
-# autostart (docs/16 §3.3). A build product, never source.
+# autostart (SPEC §host.ops). A build product, never source.
 /bin/
 
 # Local gateway state — same set the Node build never commits. All carry real secrets.
@@ -20,7 +20,7 @@ jobs.json
 .env
 *.log
 master.key
-# The admin session's signing and CLI keys (docs/48), sealed but still this machine's secret.
+# The admin session's signing and CLI keys (SPEC §host.session), sealed but still this machine's secret.
 session.json
 
 # Stray dev binaries at the repo root (lmg-* are the pre-rename builds still on disk)
@@ -35,7 +35,7 @@ session.json
 /.claude/
 
 # Dev-only npm tooling for the panel home (crates/swiss-panel/panel — sources, emit script
-# and the vitest suite; docs/36) — node is a dev dependency, never a cargo build step; its
+# and the vitest suite; SPEC §panel.toolchain) — node is a dev dependency, never a cargo build step; its
 # install tree stays untracked.
 /crates/swiss-panel/panel/node_modules/
 
@@ -49,13 +49,10 @@ session.json
 /term-*.png
 /job-*.png
 
-# Panel screenshots taken against the operator's real 19999 instance (docs/20 §9 items 3 and
-# 6): they show internal hosts, tunnel layouts and live Redis keys. They stay on this machine;
-# the docs/20 record lists them as not shipped.
-/docs/assets/20/03-tunnels-groups-*.png
-/docs/assets/20/06-data-dropdown-*.png
-# Same rule, docs/40 second pass: a value read off a live Redis, with the keyspace around it.
-/docs/assets/43/redis-utf8-decode.png
+# Panel screenshots taken against a real instance: they show internal hosts, tunnel layouts and
+# live Redis keys, so they stay on this machine and are never committed (SPEC §release.hygiene).
+# docs/assets holds only the images the README shows; a working folder under it is local.
+/docs/assets/*/
 # The rest of the credential-shaped strays the seals never cover.
 .env.*
 *.cast
@@ -63,5 +60,5 @@ session.json
 *.kdbx
 
 # Scratch files - commit-message drafts included: four *.tmp drafts were committed on
-# 2026-09-20 and carried trailers docs/40 D3 forbids.
+# 2026-09-20 and carried trailers SPEC §release.hygiene forbids.
 *.tmp
