@@ -15,7 +15,7 @@
  */
 
 //! Shared runtime services — the capabilities the plugins execute THROUGH, owned by no
-//! plugin (docs/09 §3 "lazy shared capabilities", docs/10 §2).
+//! plugin (SPEC §host.plugins "lazy shared capabilities", SPEC §jobs).
 //!
 //! Three layers, deliberately stacked so that each one is usable without the one above it:
 //!
@@ -65,15 +65,15 @@ pub struct RuntimeServices {
     pub runs: Arc<RunCoordinator>,
     /// The one owner of child-process spawning, capture and subtree teardown.
     pub supervisor: Arc<Supervisor>,
-    /// The typed connection catalog (docs/12 W3): the provider (MCP) registers on start;
+    /// The typed connection catalog (SPEC §host.seats): the provider (MCP) registers on start;
     /// consumers (Data) take request-scoped leases. Constructed here so it OUTLIVES every
     /// plugin instance — a provider stopping and starting again finds the same seat.
     pub catalog: Arc<CatalogRegistry>,
-    /// The interactive shell capability (docs/14 §4): the provider (Tunnels) registers on
+    /// The interactive shell capability (SPEC §terminal.remote): the provider (Tunnels) registers on
     /// start; the consumer (Terminal) takes a session-scoped lease per open PTY. Same
     /// reason for living here as the catalog — the seat outlives both plugins.
     pub shells: Arc<ShellRegistry>,
-    /// The remote-execution transport capability (docs/34): the provider (Tunnels)
+    /// The remote-execution transport capability (SPEC §remote): the provider (Tunnels)
     /// registers on start; the consumer (Remote) takes run-scoped leases per exec or
     /// file operation. Same seat-outlives-plugins reason as the two above.
     pub remote: Arc<RemoteTransportRegistry>,

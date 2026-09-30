@@ -17,7 +17,7 @@ for remote commands, file transfer, and run history.
   Do not install or start swiss just because this skill was loaded or a project mentions it.
 - Bind and connect on loopback only. Never change the host to `0.0.0.0`, expose the panel
   through a public proxy, or create an SSH tunnel without a separate, explicit request.
-- The panel and `/api/*` are loopback-only and need the admin session (docs/48): a browser
+- The panel and `/api/*` are loopback-only and need the admin session (SPEC §host.session): a browser
   signs in with the one-time link `swiss open` opens; the CLI signs its calls with a key only
   this OS user can unseal. Use `swiss api <METHOD> </api/...>` for an admin call, never `curl`.
   `/mcp/*` requires a bearer token. Any process running as this user can unseal the key, so do

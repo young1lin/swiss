@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Statically-linked plugins that are NOT part of the boot built-ins (docs/12 W4).
+//! Statically-linked plugins that are NOT part of the boot built-ins (SPEC §host.plugins).
 //!
 //! The host and the boot built-ins live in the swiss-host crate and src/builtin.rs
 //! (register_all); everything here proves the other half of the plugin story: a tool

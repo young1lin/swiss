@@ -16,7 +16,7 @@
 
 // @vitest-environment happy-dom
 
-/* An empty list still paints its groups (docs/20: an empty group is a place - a drop target
+/* An empty list still paints its groups (SPEC §host.groups: an empty group is a place - a drop target
    with a + - not an empty state). The Remote Targets page learned this on 2026-09-20; the
    other grouped pages kept swapping in a page-level empty state whenever they had no rows.
    Found live on 2026-09-27: a group made on an empty SSH Connections page ("defaul") showed

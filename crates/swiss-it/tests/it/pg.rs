@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! L1, the Postgres group (docs/44 SS2.5): PgBrowser against a real PostgreSQL 17,
+//! L1, the Postgres group (SPEC §testing.it): PgBrowser against a real PostgreSQL 17,
 //! over the template-cloned per-test database. The pg-only shapes the seed pins:
 //! schemas app/audit with a cross-schema FK, TEXT[] arrays, UUID keys, an enum
 //! column type, a partial index, NUMERIC scale, INT8 exactness, TIMESTAMPTZ in
@@ -85,7 +85,7 @@ async fn list_tables_walks_schemas_with_the_schema_filter() {
     };
     assert_eq!(by_name("users")["type"], "table");
     assert_eq!(by_name("users")["schema"], "public");
-    // docs/22 W1.1: the panel's schema picker narrows the walk server-side.
+    // SPEC §data.browse: the panel's schema picker narrows the walk server-side.
     assert_eq!(by_name("active_users")["type"], "view");
 
     let app = b
@@ -128,7 +128,7 @@ async fn read_table_pages_sorts_and_filters() {
         .await
         .expect("sorted page");
     let first = desc["rows"].as_array().expect("rows").first().expect("a row");
-    // INT8 cells are exact strings end to end (docs/22 W2.4).
+    // INT8 cells are exact strings end to end (SPEC §data.browse).
     assert_eq!(first["id"], json!("8"), "{}", first);
 
     for (filters, expected) in [
@@ -439,7 +439,7 @@ async fn apply_edits_composite_pk_keyless_and_jsonb_address() {
     // The JSONB column addresses by its JSON value; LIMIT semantics are the
     // adapter's - one twin goes, its byte-identical sibling stays.
     // Postgres has no DELETE ... LIMIT, so an every-column address that matches
-    // two byte-identical rows refuses the whole batch (docs/22 W4.1) - the honest
+    // two byte-identical rows refuses the whole batch (SPEC §data.edits) - the honest
     // answer, where mysql clips with LIMIT 1 and reports one.
     let one_twin = b
         .apply_edits(&json!({
@@ -652,7 +652,7 @@ async fn list_databases_primary_system_and_the_foreign_reason() {
         .find(|d| d["name"] == "postgres")
         .expect("the postgres database");
     assert_eq!(sys["system"], true);
-    // docs/43 M3 / ADR-027 option b: every other database is listed but not
+    // SPEC §data.databases / ADR-027 option b: every other database is listed but not
     // browsable, with the reason the panel shows - a PgPool is bound to one db.
     assert_eq!(sys["browsable"], false);
     let reason = sys["reason"].as_str().expect("the reason text");

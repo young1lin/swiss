@@ -64,7 +64,7 @@ const edits = await import(
   dbRedisPendingCount: () => number;
 };
 
-// docs/22 W3.3: the buffered typed-value edits fold into the exact command list Commit posts
+// SPEC §data.redis: the buffered typed-value edits fold into the exact command list Commit posts
 // (dbgate's ChangeSetRedis order — updates, inserts, deletes), scores and list indexes as
 // numbers, and the preview renders the very same list, so what the operator reads is what runs.
 describe("dbRedisCommands", () => {
@@ -176,7 +176,7 @@ describe("dbRedisPendingCount", () => {
       pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "util.ts")).href
     ) as { state: { db: Record<string, unknown> } };
     expect(edits.dbRedisPendingCount()).toBe(0);
-    // The buffer lives on the open key tab (docs/42 T1), not on the connection record.
+    // The buffer lives on the open key tab (SPEC §data.tabs), not on the connection record.
     const k = freshTab("key");
     dbTabs()[0] = k;
     k.redisEdits = { key: "k", type: "set", updates: {}, deletes: { a: 1 }, inserts: [{ member: "x" }, { member: "y" }] };

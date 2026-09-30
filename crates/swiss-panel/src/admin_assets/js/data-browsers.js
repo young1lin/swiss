@@ -40,7 +40,7 @@ import { openFieldSheet } from "./ui/sheet.js";
 
 /* --- redis key browser -------------------------------------------------------------------------- */
 /* A redis connection in the picker swaps the table list for a SCAN-paged key list, and the
-   right pane for a type-aware value view (docs/22 W3.3): a string edits in place (one SET)
+   right pane for a type-aware value view (SPEC §data.redis): a string edits in place (one SET)
    and the container types render as typed tables whose edits buffer locally and Commit as
    ONE guarded pipeline round trip — HSET/HDEL for hashes, ZADD/ZREM for zsets, LSET/RPUSH
    for lists, SADD/SREM for sets. Every buffered command is field-addressed, so no MULTI: a
@@ -52,12 +52,12 @@ function dbIsRedis()          {
   return !!c && c.dialect === "redis";
 }
 
-// One SCAN page in flight (docs/22 closeout audit): More re-entering while a page loads
+// One SCAN page in flight (SPEC §data): More re-entering while a page loads
 // re-sent the SAME cursor and appended that page twice. A reset (grep, type filter, refresh)
 // still goes through — it restarts the walk from cursor 0 and supersedes.
 let dbKeysLoading = false;
 
-// One /keys request chain (docs/22 closeout B3): a slow More answer landing after a reset
+// One /keys request chain (SPEC §data): a slow More answer landing after a reset
 // spliced its old-cursor page into the FRESH walk and dragged the cursor backward, so later
 // pages shifted under the user (a key quietly went missing from the list). Responses apply
 // only while their token is still the newest request.
@@ -96,7 +96,7 @@ async function dbLoadKeys(reset                     )                {
   }
   if (!dbKeysReq.accepts(token)) return; // superseded: a newer walk owns the list
   if (!j) {
-    // docs/22 closeout B1: apiJson already toasted the server's own text, but a transient
+    // SPEC §data: apiJson already toasted the server's own text, but a transient
     // toast over a list that still says "no keys" reads as an empty keyspace. Mark the
     // failure so the list paints it (renderDbTables), keeping the last good page.
     d.redisError = true;
@@ -121,7 +121,7 @@ function dbKeysQuery(d             )         {
   let q = "/api/db/" + encodeURIComponent(d.conn ) + "/keys?count=200";
   // The redis SCAN MATCH is exact-shape, while the SQL side greps as a substring - a bare
   // word finding every table but no key read as "the key does not exist". Wrap the grep as
-  // a substring unless the user typed their own wildcard; docs/43 M2 walk caught this live.
+  // a substring unless the user typed their own wildcard; a walk of SPEC §data.tabs caught this live.
   if (d.grep) {
     const pat = d.grep.includes("*") ? d.grep : "*" + d.grep + "*";
     q += "&pattern=" + encodeURIComponent(pat);
@@ -130,7 +130,7 @@ function dbKeysQuery(d             )         {
   return q;
 }
 
-/** docs/47 D6 (revised): walk the key list again QUIETLY - from cursor 0, as many pages deep
+/** SPEC §data.sessions (revised): walk the key list again QUIETLY - from cursor 0, as many pages deep
  *  as the walk on screen went, so the pages More fetched are re-read rather than lost. Nothing
  *  is cleared, the open key stays open, and the tree repaints only when the answer moved. A
  *  key list that is never re-walked freezes at its first answer: "SET test 1" on an empty
@@ -179,19 +179,19 @@ function dbRefreshKeyspace()       {
 }
 
 // One /key request chain: a slow answer for the key the user just left must be dropped,
-// or it would flash the PREVIOUS key's value into the pane (docs/22 closeout audit).
+// or it would flash the PREVIOUS key's value into the pane (SPEC §data).
 const dbValueReq = dbReqGuard();
 
 async function dbLoadRedisValue(key        )                {
   const c = dbConn();
   const d = dbTab();
-  if (d.kind !== "key") return; // the value view belongs to a key tab (docs/42 T2)
+  if (d.kind !== "key") return; // the value view belongs to a key tab (SPEC §data.tabs)
   // No result to clear any more: a command reply lives on the console's own tab, so opening a
-  // key can no longer be standing on top of one (docs/42 T2 retired the shared overlay).
+  // key can no longer be standing on top of one (SPEC §data.tabs retired the shared overlay).
   d.redisKey = key;
   d.redisValue = null; // drop the previous key's value — never flash stale data
   d.redisEdits = null; // and its buffered edits — a different key cannot adopt them
-  d.redisStreamRows = null; // docs/45 S2: the grown stream cache belongs to ONE window — a
+  d.redisStreamRows = null; // SPEC §data.streams: the grown stream cache belongs to ONE window — a
   d.redisStreamMore = null; // fresh newest window is the truth; history re-walks from it
   renderDbGrid();
   const token = dbValueReq.issue();
@@ -201,7 +201,7 @@ async function dbLoadRedisValue(key        )                {
   const glyph = dbTabGlyph(d);
   d.redisValue = j;
   d.redisValueAt = Date.now(); // the countdown's origin: this read, not the next repaint
-  // docs/43 M4: the toolbar's primary action follows the value's TYPE — it paints only when
+  // SPEC §data.tabs: the toolbar's primary action follows the value's TYPE — it paints only when
   // the value is here, so the toolbar repainted with the grid (the status line rides along).
   renderDbToolbar();
   renderDbGrid();
@@ -210,7 +210,7 @@ async function dbLoadRedisValue(key        )                {
   if (dbTabGlyph(d) !== glyph) renderDbTabs();
 }
 
-/** docs/47 D5: a resumed key tab re-reads its value WITHOUT blanking it first, and repaints only
+/** SPEC §data.sessions: a resumed key tab re-reads its value WITHOUT blanking it first, and repaints only
  *  when the value moved. A tab holding buffered edits is left alone - they are keyed to what is
  *  on screen. */
 async function dbRefreshRedisValue(key        )                {
@@ -234,18 +234,18 @@ async function dbRefreshRedisValue(key        )                {
   if (dbTabGlyph(now) !== glyph) renderDbTabs();
 }
 
-/* --- the typed value view (docs/22 W3.3) --------------------------------------------------------- */
+/* --- the typed value view (SPEC §data.redis) --------------------------------------------------------- */
 
 /* The plan for one container type. `cols` names the columns, `edit` the cells a double-click
    edits on an existing row, `ins` the cells a buffered insert carries, `thing` the word the
    add button and the refusals use. `deletable` is false only for list: redis has no command
    that removes one item by index without rewriting the tail, so the buffer offers nothing it
    cannot honor (dbgate's list changeset stops at LSET/RPUSH for the same reason).
-   `add` holds a tk()-marked key (docs/38 L7): the button paints it through tr() at render
+   `add` holds a tk()-marked key (SPEC §panel.i18n): the button paints it through tr() at render
    time, so a language flip is honored — a module-eval tr() would freeze English.
    `cols` and `thing` themselves stay WIRE words (cell addressing compares them), so their
    display forms go through the tk()-marked label maps below at paint time. */
-/* Display labels for the wire vocabulary above (docs/38 L7 tk idiom): the th heads and the
+/* Display labels for the wire vocabulary above (SPEC §panel.i18n tk idiom): the th heads and the
  * add-button's {thing} noun are copy; the underlying strings are cell keys, not copy. */
 const REDIS_COL_KEYS                         = {
   field: tk("dataBrowsers.colField"), value: tk("dataBrowsers.colValue"),
@@ -387,13 +387,13 @@ function dbRedisEntries(v                 , buf              )                  
 function dbRenderRedisValue(wrap             )       {
   const d = dbTab();
   if (d.kind !== "key") {
-    // The shared empty state (docs/18 V7) — a non-key tab on a redis connection is the
+    // The shared empty state (SPEC §panel.design) — a non-key tab on a redis connection is the
     // "no key opened yet" state.
     wrap.appendChild(emptyNode({ icon: "database", title: tr("dataBrowsers.selectKey"), hint: tr("dataBrowsers.pickKeyLeftView") }));
     return;
   }
   if (!d.redisKey) {
-    // The shared empty state (docs/18 V7).
+    // The shared empty state (SPEC §panel.design).
     wrap.appendChild(emptyNode({ icon: "database", title: tr("dataBrowsers.selectKey"), hint: tr("dataBrowsers.pickKeyLeftView") }));
     return;
   }
@@ -404,9 +404,9 @@ function dbRenderRedisValue(wrap             )       {
   meta.appendChild(document.createTextNode(dbKeyShown(v.key) + " · " + v.type));
   if (v.length != null) meta.appendChild(document.createTextNode(" · " + trn(v.length, "dataBrowsers.nEntries.one", "dataBrowsers.nEntries.other")));
   if (v.truncated) meta.appendChild(document.createTextNode(" · " + tr("dataBrowsers.truncated")));
-  // The facts only. The key's add action and its ⋯ (Rename / Delete, docs/22 W1.3) are the
-  // head's since docs/43 M4 (renderDbToolbar: one primary + one overflow). This line kept a
-  // second copy of both until docs/46 P7, and its "+ Field" had lost its data-radd address, so
+  // The facts only. The key's add action and its ⋯ (Rename / Delete, SPEC §data.redis) are the
+  // head's since SPEC §data.tabs (renderDbToolbar: one primary + one overflow). This line kept a
+  // second copy of both until SPEC §panel.pages, and its "+ Field" had lost its data-radd address, so
   // a real click on it did nothing.
   wrap.appendChild(meta);
   const cfg = DB_REDIS_TYPES[v.type];
@@ -417,10 +417,10 @@ function dbRenderRedisValue(wrap             )       {
   if (v.note) wrap.appendChild(el("div", "db-hint", v.note));
   if (cfg) { dbRedisTypedTable(wrap, v, cfg); return; }
   if (v.type === "string") { dbRedisStringEditor(wrap, v); return; }
-  if (v.type === "stream") { dbRenderStream(wrap, v); return; } // docs/45 S2: the stream window view
-  // Module types stay read-only — their commands have no field grid (docs/22 W3.3).
+  if (v.type === "stream") { dbRenderStream(wrap, v); return; } // SPEC §data.streams: the stream window view
+  // Module types stay read-only — their commands have no field grid (SPEC §data.redis).
   // A stream key never reaches this line: it dispatches above into its own window view
-  // (docs/45), which is read-only too — browsing a stream never mutates it.
+  // (SPEC §data.streams), which is read-only too — browsing a stream never mutates it.
   const pre = el("pre", "db-ddl");
   pre.style.position = "static";
   pre.style.margin = "var(--s2)";
@@ -467,11 +467,11 @@ function dbTtlPaint()       {
   if (!live.length && dbTtlTick != null) { clearInterval(dbTtlTick); dbTtlTick = null; }
 }
 
-/** The TTL readout is itself the control (docs/22 W3.3): click to edit in place, Enter runs
+/** The TTL readout is itself the control (SPEC §data.redis): click to edit in place, Enter runs
  *  EXPIRE — or PERSIST when emptied — through the guarded console, then the key re-reads.
  *  The button carries data-rttl; #pane's delegated click (dbRedisClick) builds the in-place
  *  input from the LIVE value, so a poll that moved the TTL between render and click seeds
- *  the editor with what the key says now (docs/37 §10.1).
+ *  the editor with what the key says now (SPEC §panel.toolchain).
  *  `readAt` is when the value was read — the countdown's origin, so a repaint that carries no
  *  new read (the toolbar redraws for its own reasons) resumes the count instead of restarting
  *  it at the number the fetch saw. */
@@ -504,7 +504,7 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
   const hr = el("tr");
   hr.appendChild(el("th", "db-rowctl", ""));
   cfg.cols.forEach((c        )       => {
-    // db-nosort: a typed value table does not sort. It wore db-rowctl for that until docs/46 P7,
+    // db-nosort: a typed value table does not sort. It wore db-rowctl for that until SPEC §panel.pages,
     // which also handed every column the control column's width and stretched the control
     // column to a third of the table.
     hr.appendChild(el("th", "db-col db-nosort", tr(REDIS_COL_KEYS[c] ?? c)));
@@ -515,7 +515,7 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
 
   // Buffered inserts first, so they read as "the row you are about to add". The row control
   // carries its address (data-rins / data-raddr) — #pane's delegated click owns the behavior
-  // (docs/37 R5), resolving the buffer live at event time.
+  // (SPEC §panel.toolchain), resolving the buffer live at event time.
   b.inserts.forEach((ins                         , i        )       => {
     const tri = el("tr", "db-ins");
     tri.appendChild(dbRedisRowCtl(false, false, null, i));
@@ -565,7 +565,7 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
   wrap.appendChild(tbl);
 }
 
-/** Decode a redis value for DISPLAY (docs/43 M2 fixup): upstream Java services persist
+/** Decode a redis value for DISPLAY (SPEC §data.tabs): upstream Java services persist
  *  their strings JSON-encoded, and their serializers escape astral characters as literal
  *  surrogate-pair text — a title arrives from the wire as
  *  "\"\uD83D\uDCC8\u23EB\uD83D\uDC46{0} rose {2} within {1} hr\"" and the panel used to
@@ -592,7 +592,7 @@ function dbRedisDisplayText(raw        )         {
   return s;
 }
 
-/** The typed table's right-click — the docs/22 W5.3 cell-menu vocabulary on the redis
+/** The typed table's right-click — the SPEC §data.grid cell-menu vocabulary on the redis
  *  side. A zset member is regularly a long JSON blob the cell truncates to ellipsis; before
  *  this menu the only way to see one whole was the title hover, and stream values (a plain
  *  read-only pre) had nothing at all. Copy and View use the same words the SQL grid's cell
@@ -607,10 +607,10 @@ function dbRedisCellMenu(e            , colLabel        , text        , where   
 
 /** The narrow remove/undo column the row grid uses, in the value view's words: remove
  *  buffers a delete (HDEL / ZREM / SREM on Commit) or removes a buffered insert, undo
- *  undoes a delete (fix-plan #14: the glyphs are i-x / i-undo now). A stored entry of a type
+ *  undoes a delete (SPEC §panel.design: the glyphs are i-x / i-undo now). A stored entry of a type
  *  with no honest delete command (list) gets no control at all; a buffered insert always has
  *  one, because dropping it is local (the SQL grid's data-irm). The insert rows passed "not
- *  deletable" until docs/46 P7 and drew an empty cell, so Discard-all was their only way back.
+ *  deletable" until SPEC §panel.pages and drew an empty cell, so Discard-all was their only way back.
  *  The button's address is data-raddr (a stored entry) or data-rins (a buffered insert's index). */
 function dbRedisRowCtl(deletable         , deleted         , addr               , insIdx        )              {
   const td = el("td", "db-rowctl");
@@ -702,8 +702,7 @@ function dbRedisCellEdit(td             , insertIdx        , addr        , col  
 /* The outside-click half, named at module level so close() can unhook it — the same shape as
    data-edit.js's dbInlineDismiss. Enter/Esc close the editor through dbRedisEditorClose; a
    dismiss left registered after that ran a STALE save() on the next mousedown anywhere, and
-   the cancelled text came back as a buffered change Commit would have written (docs/22
-   closeout audit). */
+   the cancelled text came back as a buffered change Commit would have written (SPEC §data). */
 function dbRedisDismiss(ev            )       {
   if (!dbRedisEditor) return;
   const ta = dbRedisEditor.ta;
@@ -720,7 +719,7 @@ function dbRedisEditorClose()       {
 }
 
 /** The Set action, shared by the button and the textarea's Ctrl+Enter — state at event
- *  time (docs/37 R5): the value read is whatever the textarea holds when the click lands. */
+ *  time (SPEC §panel.toolchain): the value read is whatever the textarea holds when the click lands. */
 async function dbRedisSetString(ta                     )                {
   const c = dbConn();
   const d = dbTab();
@@ -736,7 +735,7 @@ async function dbRedisSetString(ta                     )                {
   void dbLoadRedisValue(d.redisKey);
 }
 
-/** docs/22 W3.3: a string edits in place — one textarea, one Set, one SET through the
+/** SPEC §data.redis: a string edits in place — one textarea, one Set, one SET through the
  *  pipeline (a value keeps its spaces: pipeline args bind as separate strings, which the
  *  whitespace-splitting /command console can never promise). The textarea carries
  *  data-rstr and the button data-rset; #pane's delegated click/keydown answer both. */
@@ -785,8 +784,7 @@ async function dbRedisCommit()                {
   const key = d.redisKey;
   // Awaited: deleting a hash's last field (or a set's last member) deletes the KEY, and the
   // re-read's "type none" answer IS the signal — checking before it answered read null and
-  // the list refresh never ran, so the sidebar kept offering a key that is gone (docs/22
-  // closeout audit).
+  // the list refresh never ran, so the sidebar kept offering a key that is gone (SPEC §data).
   await dbLoadRedisValue(key );
   const t2 = dbTab();
   if (t2.kind === "key" && t2.redisKey === key && t2.redisValue && t2.redisValue.type === "none") void dbLoadKeys(true);
@@ -806,7 +804,7 @@ function dbRedisDiscard()       {
 }
 
 /** The key the open tab is on, or null - every act below asks the live tab, never a captured
- *  one (docs/37 §10.1: a menu built at click time still fires after a tab change). */
+ *  one (SPEC §panel.toolchain: a menu built at click time still fires after a tab change). */
 function dbOpenKey()                {
   const t = dbTab();
   return t.kind === "key" ? t.redisKey : null;
@@ -816,7 +814,7 @@ function dbRedisRenameKey()       {
   dbRedisRenameSheet(dbOpenKey());
 }
 
-/** Set or lift the key's expiry (docs/22 W1.3) on the same one-field sheet the rename uses:
+/** Set or lift the key's expiry (SPEC §data.redis) on the same one-field sheet the rename uses:
  *  seconds applies EXPIRE, an empty field PERSIST. The TTL readout in the meta line edits in
  *  place too - this is the door that says so. */
 function dbRedisTtlSheet()       {
@@ -873,7 +871,7 @@ async function dbRedisExec(argv          )                                     {
   return { reply: j.replies && j.replies.length ? j.replies[0] : null };
 }
 
-/** Rename a key (docs/22 W1.3) on the library's one-field sheet (docs/46 P7). The sheet owns
+/** Rename a key (SPEC §data.redis) on the library's one-field sheet (SPEC §panel.pages). The sheet owns
  *  the shared rules: a name is required (inline, not a toast) and an unchanged name is a cancel.
  *  A refused RENAME returns false - the guarded console already toasted why - so the sheet
  *  stays with the typed name beside the reason; the old hand-built sheet closed first and lost
@@ -927,8 +925,8 @@ function dbRedisDeleteKey()       {
   });
 }
 
-/* --- #pane's delegated listeners for the redis value view (docs/37 R5) ----------------------------
-   Behavior notes (docs/37 §10.1): every action resolves its key, buffer and type config
+/* --- #pane's delegated listeners for the redis value view (SPEC §panel.toolchain) ----------------------------
+   Behavior notes (SPEC §panel.toolchain): every action resolves its key, buffer and type config
    from LIVE state at event time — the add-row shape, the TTL editor's seed value and the
    row-control addresses all re-read dbTab(), so a re-read or a key switch between render
    and click acts on what is on screen now, never on the painted snapshot. */
@@ -976,7 +974,7 @@ function dbRedisClick(t         )          {
         void dbLoadRedisValue(key);
       });
     };
-    // Transient in-place overlay, the sheet idiom (docs/37 R5 keeps per-open wiring): the
+    // Transient in-place overlay, the sheet idiom (SPEC §panel.toolchain keeps per-open wiring): the
     // input lives until Enter/Esc/blur, so it owns its handlers for that lifetime only.
     input.onkeydown = (e               )       => {
       e.stopPropagation();
@@ -1022,5 +1020,5 @@ export {
   dbRedisClick, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
   dbRedisDeleteKey, dbRedisDisplayText, dbRedisEntries, dbRedisKeydown, dbRedisPendingCount, dbRedisRenameKey,
   dbRedisTtlSheet, dbRenderRedisValue,
-  dbRedisCellMenu, // docs/45 S2: the stream view reuses the docs/22 W5.3 cell menu
+  dbRedisCellMenu, // SPEC §data.streams: the stream view reuses the SPEC §data.grid cell menu
 };

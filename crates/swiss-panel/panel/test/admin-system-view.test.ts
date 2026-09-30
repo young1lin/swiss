@@ -22,7 +22,7 @@
    POST /api/shutdown must not paint its stopping state over a page the user navigated
    to while the sheet was open.
 
-   REWRITTEN FOR R5 (docs/37 §7): the view used to build its body and sheet as strings
+   REWRITTEN FOR R5 (SPEC §panel.toolchain): the view used to build its body and sheet as strings
    against a hand-rolled element stub with a string innerHTML, and every assertion was a
    substring test against markup nobody parsed. Now the suite runs on a real DOM
    (happy-dom, per file) and CLICKS the real buttons through the delegated pane listener
@@ -71,7 +71,7 @@ beforeEach(async () => {
 describe("Settings / System", () => {
   it("places the low-frequency destructive action in a dedicated Runtime section", async () => {
     await view.mount();
-    // docs/46 §3.5: one sentence (U11), and the one row is the library's row().
+    // SPEC §panel.settings: one sentence (U11), and the one row is the library's row().
     expect($("pane").querySelector(".pane-desc")?.textContent).toBe("Control this running swiss process; configuration and logs stay on disk.");
     const cap = $("pane").querySelector(".sec-cap");
     expect(cap?.textContent).toBe("Runtime");

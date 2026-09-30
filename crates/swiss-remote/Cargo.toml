@@ -11,7 +11,7 @@ publish.workspace = true
 
 [dependencies]
 # Peer of swiss-mcp/swiss-tunnels: the agent-facing remote-execution plugin. Depends on
-# the host contracts ONLY (docs/34 §4) - never on swiss-tunnels: the endpoint is an id
+# the host contracts ONLY (SPEC §remote) - never on swiss-tunnels: the endpoint is an id
 # and a lease through the RemoteTransportRegistry, so this crate builds and tests with
 # no SSH client linked at all.
 swiss-core = { path = "../swiss-core" }

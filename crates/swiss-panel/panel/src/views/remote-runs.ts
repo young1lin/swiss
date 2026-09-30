@@ -24,7 +24,7 @@
    (the coordinator's view, output followed live through /api/runs/{id}/output), the
    recorded ones under them, newest first, paged by an older-than cursor.
 
-   The event list (docs/46 §3.6, the Logs and Traffic list): the time, with the date as the
+   The event list (SPEC §panel.pages, the Logs and Traffic list): the time, with the date as the
    day heading; what ran (the kind, then its command); who - the target and the actor, a
    column only while they vary; a run that did not succeed as a red tag saying how; the
    duration. Identical consecutive runs fold into ×N. A row's body is fetched when it opens
@@ -191,7 +191,7 @@ function runItem(r: ApiRemoteRunRow, isLive: boolean): TimelineItem {
     at: new Date(r.startedAt || r.queuedAt).getTime(),
     title: kind,
     arg,
-    // docs/41 A1: the actor is an identifier, never translated; a row an older gateway
+    // SPEC §remote.history: the actor is an identifier, never translated; a row an older gateway
     // recorded has none and says only its target.
     who: [tgt, actorLabel(r.actor)].filter(Boolean).join(" · "),
     ms: isLive ? undefined : r.ms,
@@ -288,7 +288,7 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
   // output read so far - "gone" in b is the discriminant.
   if ("gone" in b) return out.concat(note(tr("remoteRuns.runRolledRecord")));
   if (r.outputEvicted) {
-    // The size budget took the file (docs/41 A2); the line - and its tail, below, when
+    // The size budget took the file (SPEC §remote.history); the line - and its tail, below, when
     // the run was capped - is what is left.
     out.push(note(tr("remoteRuns.outputEvicted", { size: fmtBytes(r.outputBytes || 0), d: Math.round((limits ? limits.maxAgeMs : 0) / 86400000) })));
   } else if (!b.total) {
@@ -309,7 +309,7 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
   return out;
 }
 
-/** What a remote.write wrote (docs/34 R12): the body is kept sealed beside the record and
+/** What a remote.write wrote (SPEC §remote.history): the body is kept sealed beside the record and
  *  unsealed only on Show - an opened row in a screenshot shares no file until asked. */
 function writtenNode(r: ApiRemoteRunRow): HChild {
   const bytes = r.input && r.input.contentBytes || 0;
@@ -495,7 +495,7 @@ function render(): void {
   // and the list's filter and ⋯ (Clear - a destructive verb gets no standing button; the Jobs
   // and Tunnels head ⋯ hold page-wide verbs too). No section caption: "Runs" would name the
   // page the context bar already names, and a captionless section head was a row holding only
-  // the tools, over the note (docs/46 P6-2 walk).
+  // the tools, over the note (SPEC §panel.pages, found on a walk).
   fill($("pane"),
     paneBody({ wide: true },
       paneHead({
@@ -603,7 +603,7 @@ export async function mount() {
     if (item) toggle(Number(item.dataset.rrun));
   };
   // The target filter select - ONE delegated change listener instead of a per-render
-  // assignment (docs/37 R5); the value is read at event time.
+  // assignment (SPEC §panel.toolchain); the value is read at event time.
   $("pane").onchange = (event: Event): void => {
     const sel = targetEl(event)?.closest<HTMLSelectElement>("#rrTarget");
     if (!sel) return;

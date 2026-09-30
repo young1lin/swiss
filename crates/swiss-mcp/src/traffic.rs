@@ -29,7 +29,7 @@
 //! file is a recovery tail, bounded by a byte budget like calls.rs.
 //!
 //! [TrafficLog] is an INSTANCE, shared as an `Arc` between the app context and the proxy layer
-//! that records — the S2 instantiation calls.rs finished and docs/11 §9 gave RunLog: no
+//! that records — the S2 instantiation calls.rs finished and SPEC §jobs.migrate gave RunLog: no
 //! process-global ring, so two apps in one process (or two tests in one binary) each hold
 //! their own and never see each other's rows.
 
@@ -100,7 +100,7 @@ struct TrafficState {
 /// file, plus everything mutable about writing it. Shared as an `Arc<TrafficLog>` between the
 /// app context and the proxy layer that records, so what the proxy writes is exactly what the
 /// panel reads — and two logs in one process never see each other's rows (the S2
-/// instantiation calls.rs finished; docs/11 §9 gave RunLog the same shape).
+/// instantiation calls.rs finished; SPEC §jobs.migrate gave RunLog the same shape).
 pub struct TrafficLog {
     /// Behind an Arc so the spawned writers can update `bytes` without borrowing the log.
     state: Arc<Mutex<TrafficState>>,

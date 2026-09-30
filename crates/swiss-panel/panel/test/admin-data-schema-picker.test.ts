@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn as dbConnState } from "../src/db-state.js";
 import { dbConn } from "./db-fixtures.js";
 
-/* docs/22 closeout B7 kept a pg-only schema PICKER above the grep box; docs/43 M2 kills it
+/* SPEC §data kept a pg-only schema PICKER above the grep box; SPEC §data.tabs kills it
  *  for every kind: a schema is a VISIBLE band in the tree now, and a dropdown beside it
  *  would be two mechanisms saying one thing. The suite keeps the B7 concern (nothing
  *  schema-shaped may linger for a non-pg connection, where it read as a redis page offering
@@ -100,7 +100,7 @@ function sidebar(): void {
   byId.dbTablesPager = el("div");
 }
 
-describe("no connection kind carries a schema select (docs/22 closeout B7, superseded by docs/43 M2)", () => {
+describe("no connection kind carries a schema select (SPEC §data, superseded by SPEC §data.tabs)", () => {
   it("a redis connection renders no schema select — hidden-with-options reads as a dropdown", () => {
     sidebar();
     dbConnState().conn = "rc";

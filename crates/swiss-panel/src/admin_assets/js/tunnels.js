@@ -29,7 +29,7 @@ import { tr, trn } from "./i18n.js";
 import { btn, closeMenu, dot, iconBtn, menuOpen, moreBtn, paneBody, paneHead, popupMenu } from "./ui/index.js";
 
 /* --- tunnels: groups and drag-to-reorder --------------------------------------------------------
-   The sidebar's model, shared through the groups component (docs/20 §4): one flat order per
+   The sidebar's model, shared through the groups component (SPEC §panel.groups): one flat order per
    list (array order in tunnels.json), a group name on each row, and a stored list of group
    names — default included, as an ordinary name now. Dragging onto a row re-orders and re-homes
    in one gesture; dropping on a header appends to that group — the only way into an empty one. */
@@ -77,7 +77,7 @@ async function assignTunScoped(scope        , id        , group               ) 
 }
 
 /* --- the page -----------------------------------------------------------------------------------
-   The tunnels plugin contributes TWO L2 pages (docs/13 D5, as revised): the Context Bar's
+   The tunnels plugin contributes TWO L2 pages (SPEC §panel.nav, as revised): the Context Bar's
    "Tunnels / SSH Connections ▾" and "Tunnels / Port Forwards ▾" switch between them, and the
    mounted page decides which scope this module renders (mountedTunScope(), set by the page's
    mount). The body header is the page's TASK, not its location: one line of scope prose and
@@ -86,7 +86,7 @@ async function assignTunScoped(scope        , id        , group               ) 
 
 /** The scope sentence under the bar: what THIS page operates on, never where we are (the
  *  context bar owns location). Plain prose — it lands in the built tree as a text node
- *  (docs/37 R5), so the Html suffix it carried as a string builder is gone. */
+ *  (SPEC §panel.toolchain), so the Html suffix it carried as a string builder is gone. */
 function tunDesc(isConns         )         {
   return isConns
     ? tr("tunnels.sshHostsGatewayCan")
@@ -110,14 +110,14 @@ function renderTunnels()       {
   // The page's actions, right-aligned in the body header (pane-actions is the panel's own
   // vocabulary for exactly this slot). Rules carry the bulk start/stop pair; connections
   // carry only New — Test lives on each row.
-  // docs/46 §3.4: New group is the folder-plus glyph (the sidebar's, rule 7), the rules' bulk
+  // SPEC §panel.pages: New group is the folder-plus glyph (the sidebar's, rule 7), the rules' bulk
   // Start all / Stop all wait behind the head's ⋯, and New is the page's one primary.
   const acts           = [iconBtn("folder-plus", tr("tunnels.newGroup"), { id: "tNewGroup" })];
   if (!isConns) acts.push(moreBtn(tr("tunnels.moreForwardActions"), { id: "tMore" }));
   acts.push(btn(tr("tunnels.new"), { kind: "primary", id: isConns ? "tNewConn" : "tNewRule" }));
 
   // One group per slice — the component owns the header band, the indent and the empty line
-  // now (docs/20 §4.1). Empty groups keep their place: that is how you drag the first row into
+  // now (SPEC §panel.groups). Empty groups keep their place: that is how you drag the first row into
   // one (or use its +). They ALWAYS paint, rows or none (the Remote Targets rule, 2026-09-20):
   // both tabs used to swap in "No SSH connections" / "No forwarding rules" whenever the list
   // was bare, so a group made before the first row was listed in the sheet's Group select
@@ -166,7 +166,7 @@ function tunCfg()                                                      {
     rowId: (r                                           )         => { return r.id; },
     rowsById: tunRows,
     groupOfRow: tunGroupOfRow,
-    // docs/37 R5: the rows are built, not parsed — the component wires drag on the node each
+    // SPEC §panel.toolchain: the rows are built, not parsed — the component wires drag on the node each
     // builder returns, so this scope no longer round-trips through rowsHtml + rowSel.
     rowNode: (r                                           )              => {
       return mountedTunScope() === "conns" ? connRowNode(r                          ) : ruleRowNode(r                    );
@@ -202,7 +202,7 @@ function patchTunnels() {
     if (wantErr !== hasErr) { if (!tunDragging() && !tunDraggingGroup()) renderTunnels(); return; }
     const mark = node.querySelector(".lrow-lead .dot");
     const live = busy ? "starting" : row.state;
-    // A fresh dot, not a patched class: its class, title and label move together (docs/18 V6),
+    // A fresh dot, not a patched class: its class, title and label move together (SPEC §panel.design),
     // and a dot whose class moved but whose title stayed would explain the previous state.
     if (mark) mark.replaceWith(dot(tunDot(live), dotTitle(live === "connected" ? "up" : live, null, row.reason)));
     const act = node.querySelector("[data-act]")                            ;
@@ -225,14 +225,14 @@ function patchTunnels() {
   });
 }
 
-/* --- wiring: ONE delegated click on #pane (docs/37 R5) --------------------------------------------
+/* --- wiring: ONE delegated click on #pane (SPEC §panel.toolchain) --------------------------------------------
    The page used to re-query every row after each render and assign onclick per button; a
    repaint destroyed the handlers and the wiring pass rebuilt them. The rows are nodes now
    and fill() rebuilds the pane, so one delegated listener answers every click this page
    owns — assigned as a property, so a repaint re-assigns the same slot instead of stacking
    listeners. Buttons are matched with closest("#id"), never t.id: a real pointer click on
    an icon button lands on its svg glyph, and the glyph carries no id. Row menus read the
-   LIVE row at click time (docs/37 §10.1) — a 6s poll may have replaced tunData() between
+   LIVE row at click time (SPEC §panel.toolchain) — a 6s poll may have replaced tunData() between
    the render and the click, and the menu must not offer a Force free the row no longer
    needs. */
 function wireTunnels() {
@@ -271,7 +271,7 @@ function wireTunnels() {
     }
     const more = t.closest             ("[data-more]");
     if (!more) return;
-    // The overflow half of the row (docs/18 V5). stopPropagation first: connect.js closes
+    // The overflow half of the row (SPEC §panel.design). stopPropagation first: connect.js closes
     // open menus on clicks that reach document, so the very click that opens this one must
     // not also tear it down.
     ev.stopPropagation();

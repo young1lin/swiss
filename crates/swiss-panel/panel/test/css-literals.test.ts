@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* docs/46 G4 - values come from tokens. docs/46 §0.2 counted 247 px literals in views.css
+/* SPEC §panel.ui - values come from tokens. SPEC §panel.ui counted 247 px literals in views.css
    alone: every one is a size somebody picked by eye instead of reading the scale, and two
    pages that picked 5px and 6px for the same gap drift apart for good. This gate counts,
    per sheet, the literals a declaration writes OUTSIDE the token blocks (:root and
@@ -36,7 +36,7 @@ import { describe, expect, it } from "vitest";
 import { parseCss } from "./css-rules.js";
 import { stylesDir } from "./styles.js";
 
-/* Frozen at docs/46 P1a-2. base.css keeps a floor (the scrollbar's 10px, the shell's
+/* Frozen at SPEC §panel.design. base.css keeps a floor (the scrollbar's 10px, the shell's
  * fixed widths); ui.css and views.css fall with every migrated page. */
 const FROZEN: Record<string, number> = {
   "base.css": 22,
@@ -68,7 +68,7 @@ function sheetNames(): string[] {
   return readdirSync(stylesDir).filter((f) => f.endsWith(".css")).sort();
 }
 
-describe("docs/46 G4 - px, hex and rgb literals live in the token block", () => {
+describe("SPEC §panel.ui - px, hex and rgb literals live in the token block", () => {
   it("the counter reads what the gate means", () => {
     const css = ":root { --x: 13px; --c: #fff; } :root[data-theme=\"dark\"] { --c: rgba(0,0,0,.5); }"
       + " .a { padding: 0 1px 2px 5px; margin: -1px; width: 100%; color: #abc; }"

@@ -57,7 +57,7 @@ const view = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-view.ts")).href
 ) as { dbFilterMatches: (tokens: string, name: string) => boolean };
 
-// docs/22 W1.6: the sidebar grep grammar — comma terms AND, | inside a term OR, * wildcard,
+// SPEC §data.browse: the sidebar grep grammar — comma terms AND, | inside a term OR, * wildcard,
 // case-insensitive, and a bare term keeps the substring behaviour the list always had.
 describe("dbFilterMatches", () => {
   it("empty tokens match everything", () => {

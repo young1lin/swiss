@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The one-time v1 → v2 migration (docs/11 §5): jobs.json's rows become definitions in
+//! The one-time v1 → v2 migration (SPEC §jobs.migrate): jobs.json's rows become definitions in
 //! the plugins.jobs.config row, and their run facts seed jobs-state.json.
 //!
 //! Three properties are the whole design:
@@ -31,7 +31,7 @@
 //!   was dropped and where the backup is. This is NOT a transaction (two files are
 //!   involved) and nothing here pretends otherwise. Rollback is a documented manual
 //!   step: restore jobs.json.v1.bak by hand; the definitions already in config are
-//!   NOT cleaned up automatically (docs/11 §5.3).
+//!   NOT cleaned up automatically (SPEC §jobs.migrate).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -44,8 +44,8 @@ use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
 use swiss_host::config_store::ConfigStoreError;
 
 /// What the migration did. Carried to the boot log and to the tests; `conflicts` are
-/// the ids where the config row already held a definition and kept it (docs/11 §5.1
-/// step 3), `dropped` the v1 rows that no longer parsed (the managed-store rule: one
+/// the ids where the config row already held a definition and kept it (SPEC §jobs.migrate),
+/// `dropped` the v1 rows that no longer parsed (the managed-store rule: one
 /// hand-mangled row must not cost the table).
 #[derive(Debug)]
 pub struct MigrationReport {
@@ -59,14 +59,14 @@ pub struct MigrationReport {
 }
 
 /// One v1 row's worth of everything the migration moves: the definition it becomes and
-/// the run facts it carries (which deliberately do NOT go into config, docs/11 §5.2).
+/// the run facts it carries (which deliberately do NOT go into config, SPEC §jobs.migrate).
 struct Incoming {
     definition: Value,
     last_run_at: Option<i64>,
     last_ok: Option<bool>,
 }
 
-/// Run the migration against a system's tree (docs/11 §5.1). Called from the jobs
+/// Run the migration against a system's tree (SPEC §jobs.migrate). Called from the jobs
 /// plugin's create - before any apply and long before the tick task exists - which is
 /// also why a failure here surfaces as a failed plugin rather than a half-migrated
 /// scheduler.
@@ -178,7 +178,7 @@ pub fn run(system: &JobSystem) -> Result<MigrationReport, String> {
             }
             Err(ConfigStoreError::Conflict) if attempt == 0 => {
                 // Someone else saved config between our read and write. Re-read and
-                // re-merge ONCE (docs/11 §5.1 step 4); a second conflict means the
+                // re-merge ONCE (SPEC §jobs.migrate); a second conflict means the
                 // config is under active editing and must not be fought over.
                 continue;
             }
@@ -198,7 +198,7 @@ pub fn run(system: &JobSystem) -> Result<MigrationReport, String> {
 
     // Step 6: empty the v1 rows and leave the marker. The emptied `jobs` array is the
     // one real safeguard against an old binary booting the same data directory and
-    // scheduling the table a second time (docs/10 §9 step 6).
+    // scheduling the table a second time (SPEC §jobs.migrate).
     let marker = json!({
         "jobs": [],
         "migratedAt": log::iso_now(),
@@ -293,7 +293,7 @@ mod tests {
         })
     }
 
-    /// docs/11 §9 S4: a fresh data directory is a no-op, never an error.
+    /// SPEC §jobs.migrate: a fresh data directory is a no-op, never an error.
     #[test]
     fn a_fresh_tree_is_a_no_op() {
         let (_path, sys, store) = tree("fresh");
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(store.snapshot().revision, before, "the row never moved");
     }
 
-    /// docs/11 §9 S4: the full happy path - equivalent definitions in config, run facts
+    /// SPEC §jobs.migrate: the full happy path - equivalent definitions in config, run facts
     /// in the state file, jobs.json emptied with its marker, and a backup that decrypts
     /// back to exactly what was there.
     #[test]
@@ -353,7 +353,7 @@ mod tests {
             "enabled: false flips, not drops"
         );
 
-        // Run facts moved to the state file, not into config (docs/11 §5.2).
+        // Run facts moved to the state file, not into config (SPEC §jobs.migrate).
         assert!(row["definitions"]["daily"].get("lastRunAt").is_none());
         let st = sys.run_state("daily");
         assert_eq!(
@@ -387,7 +387,7 @@ mod tests {
         );
     }
 
-    /// docs/11 §9 S4: idempotency - three runs converge to the same single-copy result.
+    /// SPEC §jobs.migrate: idempotency - three runs converge to the same single-copy result.
     #[test]
     fn running_three_times_converges_without_duplicates() {
         let (path, sys, store) = tree("idempotent");
@@ -413,7 +413,7 @@ mod tests {
         );
     }
 
-    /// docs/11 §9 S4: crash recovery. Steps 3-5 happened (config written, facts seeded),
+    /// SPEC §jobs.migrate: crash recovery. Steps 3-5 happened (config written, facts seeded),
     /// step 6 never did - the file still holds its rows and no marker. The next run
     /// converges: no duplicates, the marker lands, nothing is executed twice.
     #[test]
@@ -460,7 +460,7 @@ mod tests {
         );
     }
 
-    /// docs/11 §9 S4: same id in config and in the v1 file - the config definition wins
+    /// SPEC §jobs.migrate: same id in config and in the v1 file - the config definition wins
     /// and the loss is recorded, not silent.
     #[test]
     fn the_config_definition_wins_a_same_id_conflict() {
@@ -499,7 +499,7 @@ mod tests {
         assert_eq!(backup["jobs"][0]["command"], json!("cmd /c echo hi"));
     }
 
-    /// docs/11 §9 S4: an unparseable row is dropped and recorded, not fatal - the
+    /// SPEC §jobs.migrate: an unparseable row is dropped and recorded, not fatal - the
     /// managed-store rule, applied to the migration too.
     #[test]
     fn an_invalid_row_is_dropped_and_recorded() {
@@ -521,7 +521,7 @@ mod tests {
         assert_eq!(after["count"], json!(1), "only what actually moved counts");
     }
 
-    /// docs/11 §9 S4: a write that cannot persist fails the migration IN PLACE - no
+    /// SPEC §jobs.migrate: a write that cannot persist fails the migration IN PLACE - no
     /// marker, the v1 file untouched - so the next boot can try again.
     #[test]
     fn an_unwritable_config_file_fails_without_touching_the_v1_file() {

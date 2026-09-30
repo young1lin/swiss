@@ -15,7 +15,7 @@
  */
 
 /* ================================================================================================
-   The Data sidebar's tree shape (docs/43 M2) - the pure half.
+   The Data sidebar's tree shape (SPEC §data.tabs) - the pure half.
 
    renderDbTables turns the flat lists the API answers (/tables pages, redis SCAN pages) into
    the mockup-B tree: SQL connections cut into Tables / Views / Routines sections, a Postgres
@@ -76,7 +76,7 @@ function cmpName(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
-/** Fold a flat keyspace along ":" (docs/43 M2), compressing single-child chains: with only
+/** Fold a flat keyspace along ":" (SPEC §data.tabs), compressing single-child chains: with only
  *  stream:orders under stream, the tree shows ONE node stream:orders, not a stream folder
  *  around one child. Children sort before keys, both by name - a file listing's order, and
  *  a stable one at any size. Keys without a ":" are the keyspace's own rows: they come back

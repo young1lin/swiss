@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Per-plugin supervised resources — the PluginScope of docs/09 §4. A plugin may own any
+//! Per-plugin supervised resources — the PluginScope of SPEC §host.lifecycle. A plugin may own any
 //! number of tokio tasks, but never a DETACHED one: every task spawned through the scope is
 //! tracked, hears the cancel signal, and is joined (then aborted) on shutdown. A stopped
 //! plugin provably leaves nothing running, which is what "disable must really release" means

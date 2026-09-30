@@ -19,7 +19,7 @@
  *
  * Runs the REFERENCE implementation's own `seal()` (../local-mcp-gateway/src/secure/envelope.ts)
  * under a fixed test key, so the Rust test proves it opens bytes the Node build produced — the
- * blocking Phase 0 check in docs/05 §1. CI never needs the Node repo afterwards: the output is
+ * blocking Phase 0 check in SPEC §formats.sealed. CI never needs the Node repo afterwards: the output is
  * committed under tests/fixtures/.
  *
  *   cd ../local-mcp-gateway && npx tsx ../local-mcp-gateway-rust/scripts/seal-fixture.mts

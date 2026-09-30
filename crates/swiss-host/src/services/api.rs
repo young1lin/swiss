@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The generic execution surface: `/api/actions` and `/api/runs` (docs/10 §7).
+//! The generic execution surface: `/api/actions` and `/api/runs` (SPEC §host.actions).
 //!
 //! Host-owned, not plugin-owned. The capability LIST changes as providers come and go — a
 //! stopped process plugin withdraws its actions and they leave the listing — but the routes
@@ -128,7 +128,7 @@ async fn submit_run(State(services): State<Arc<RuntimeServices>>, body: NodeBody
             }
         },
     };
-    // Who is asking (docs/41 A1). /api's credential (docs/48) says "this machine's CLI or a
+    // Who is asking (SPEC §remote.history). /api's credential (SPEC §host.session) says "this machine's CLI or a
     // signed-in browser", not which person, so this is the caller's own word: the CLI sends cli:<user>@<host>, the panel sends
     // panel; anything else that omits it is recorded as api.
     let actor = body
@@ -224,7 +224,7 @@ struct OutputQuery {
     max: Option<String>,
 }
 
-/// One bounded slice of a run's LIVE output (docs/34 §17): while the run is executing,
+/// One bounded slice of a run's LIVE output (SPEC §host.actions): while the run is executing,
 /// what it appended so far; once finished, the retained tail. The response carries a
 /// monotonic cursor — poll again with it as `?after`. A cursor older than the retained
 /// window reads the oldest kept bytes with `truncated: true`, never a silent gap.

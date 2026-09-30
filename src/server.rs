@@ -68,7 +68,7 @@ pub async fn run_gateway() -> Result<(), String> {
     // load_config reads that token. A no-op on every boot after the first.
     ensure_first_run();
     // Load the sealed env store into the in-process overlay (the .env replacement), then read
-    // the config through it. The vault (docs/19) loads the same way — into its own lookup
+    // the config through it. The vault (SPEC §host.vault) loads the same way — into its own lookup
     // path, never into the env overlay: nothing merges vault values into a child environment.
     inject_env_store(&env_store_path());
     inject_vault(&secret_store_path());
@@ -196,24 +196,24 @@ pub async fn run_gateway() -> Result<(), String> {
         .await;
     }
 
-    // The terminal routes' state slot (docs/14 T5): built before the host so the router
+    // The terminal routes' state slot (SPEC §terminal.api): built before the host so the router
     // mounted below and the plugin instance that fills the slot share ONE seat, the
     // ctx.tunnel_links pattern — an empty slot is a live state (the plugin is not
     // serving), not a different router.
     let terminal_state = crate::plugins::terminal_api::TerminalState::new();
 
-    // The /api/remote routes' state slot (docs/34): the same one-slot pattern as the
+    // The /api/remote routes' state slot (SPEC §remote): the same one-slot pattern as the
     // terminal state above - built before the host so the router mounted below and the
     // plugin instance that fills the slot share ONE seat.
     let remote_state = swiss_remote::api::RemoteState::new();
 
-    // The shared runtime services (docs/09 §3, docs/10 §2): the action registry every
+    // The shared runtime services (SPEC §host.plugins, SPEC §jobs): the action registry every
     // capability provider registers into, the bounded run pool both the scheduler and the
     // panel submit to, and the one child-process supervisor. Constructed here, owned by no
     // plugin — the /api/actions and /api/runs surface reads them even while every provider
     // is disabled.
     let services = swiss_host::services::RuntimeServices::new();
-    // Run numbering continues across restarts (docs/41 postscript): the remote record is
+    // Run numbering continues across restarts (SPEC §remote.history): the remote record is
     // keyed by run id, and a counter that restarted at 0 every boot filed two runs under
     // one number.
     services
@@ -258,7 +258,7 @@ pub async fn run_gateway() -> Result<(), String> {
         cfg.token_env.clone(),
         cfg.port,
     );
-    // The admin session (docs/48), before anything can accept a request: the signing key is
+    // The admin session (SPEC §host.session), before anything can accept a request: the signing key is
     // carried over (signed-in browsers stay signed in), the CLI key is fresh for this process.
     // A home whose session file cannot be sealed cannot authenticate anyone, and a gateway that
     // cannot authenticate must not serve its admin surface - so this is fatal, not a warning.
@@ -270,20 +270,20 @@ pub async fn run_gateway() -> Result<(), String> {
     if let Ok(mut links) = ctx.tunnel_links.write() {
         *links = Some(tunnel_manager.clone());
     }
-    // The two tunnel scopes join the family table (docs/20 §2.2): conns and rules over the
+    // The two tunnel scopes join the family table (SPEC §host.groups): conns and rules over the
     // one tunnels.json, siblings of the mcps scope AppContext registers natively. Registered
     // here - the composition point - because the host carries no per-scope arm, and a
     // disabled tunnels plugin must not take the family's other scopes down with it.
     swiss_tunnels::tunnel::register_tunnel_scopes(&ctx.group_scopes, &tunnels.store);
-    // Jobs join the same table (docs/20 G4): one scope over the plugins.jobs.config row.
+    // Jobs join the same table (SPEC §host.groups): one scope over the plugins.jobs.config row.
     // Every mutation lands through apply-in-place like any other config edit - never a
     // restart - which is what keeps moving a job between groups side-effect free.
     swiss_jobs::jobs::groups::register_job_scopes(&ctx.group_scopes, &jobs);
     // The /api/db routes lease through the SAME catalog instance the MCP plugin will
-    // register into — set before build_app mounts the router (docs/12 W3).
+    // register into — set before build_app mounts the router (SPEC §host.seats).
     let _ = ctx.catalog.set(services.catalog.clone());
 
-    // The plugin host (docs/09 §10, P1). The four built-ins register in inventory/page order
+    // The plugin host (SPEC §host.plugins). The four built-ins register in inventory/page order
     // (MCP+Traffic, Tunnels, Data, Jobs) and boot in the REVERSE, so tunnels come up before
     // the MCPs that may ride them — the old boot order, now expressed as data. A plugin whose
     // start fails is recorded on its inventory row and the boot continues: one plugin's
@@ -304,7 +304,7 @@ pub async fn run_gateway() -> Result<(), String> {
         terminal_state.clone(),
     )))
     .expect("the terminal plugin registers");
-    // The remote plugin (docs/34): the #remote targets page, the /api/remote routes,
+    // The remote plugin (SPEC §remote): the #remote targets page, the /api/remote routes,
     // the actions and the builtin remote MCP (R7) - and deliberately no capability
     // requirement, so the target table stays editable while tunnels is off. The
     // registry + call log ride along so the plugin can mount /mcp/remote on the
@@ -315,12 +315,12 @@ pub async fn run_gateway() -> Result<(), String> {
         registry.clone(),
         call_log.clone(),
     ));
-    // The targets scope joins the docs/20 family over the SAME sealed table the plugin
-    // serves (docs/34 R8) - registered at the composition point like conns/rules, so a
+    // The targets scope joins the SPEC §host.groups family over the SAME sealed table the plugin
+    // serves (SPEC §remote.targets) - registered at the composition point like conns/rules, so a
     // stopped remote plugin does not take its grouping off the air.
     swiss_remote::register_remote_scopes(&ctx.group_scopes, &remote_plugin.system());
     host.register(remote_plugin).expect("the remote plugin registers");
-    // The capability probe the inventory's requiresMet answers through (docs/12 W3): one
+    // The capability probe the inventory's requiresMet answers through (SPEC §host.seats): one
     // closure over the shared services, so "connection-catalog" tracks the catalog's real
     // presence as MCP starts and stops.
     host.set_capability_probe({
@@ -329,11 +329,11 @@ pub async fn run_gateway() -> Result<(), String> {
         let remote = services.remote.clone();
         Arc::new(move |cap: &str| match cap {
             "connection-catalog" => catalog.has_provider(),
-            // docs/14 §4: the terminal plugin does NOT declare requires:["ssh-shell"] —
+            // SPEC §terminal.remote: the terminal plugin does NOT declare requires:["ssh-shell"] —
             // a local session needs no SSH at all — but the probe still answers, so the
             // inventory can say honestly whether remote targets are reachable.
             "ssh-shell" => shells.has_provider(),
-            // docs/34: the remote plugin deliberately does NOT declare
+            // SPEC §remote: the remote plugin deliberately does NOT declare
             // requires:["remote-transport"] (the target table must stay editable while
             // tunnels is off), but the probe still answers, so the inventory can say
             // honestly whether remote exec is currently possible.

@@ -15,7 +15,7 @@
  */
 
 //! The extensible Action contract — the shared execution vocabulary the whole toolbox
-//! speaks (docs/09 §3, docs/10 §2).
+//! speaks (SPEC §host.plugins, SPEC §jobs).
 //!
 //! An Action is ONE callable capability with a stable string id ("process.exec",
 //! "mcp.call", ...). The registry is a plain name -> impl map, NOT an
@@ -291,7 +291,7 @@ pub trait Action: Send + Sync {
     fn schema(&self) -> Value;
 
     /// Validate an input WITHOUT running it - the config-save path's door to the same
-    /// check execute() applies (docs/11 §3.4: action.input is validated by the resolved
+    /// check execute() applies (SPEC §jobs.config: action.input is validated by the resolved
     /// capability's own schema). Default: any object-shaped input passes, which stays
     /// correct for capabilities with no pre-run parse of their own.
     fn validate_input(&self, _input: &Value) -> Result<(), String> {
@@ -306,7 +306,7 @@ pub trait Action: Send + Sync {
         cancel: CancelHandle,
     ) -> Result<ActionOutcome, ActionError>;
 
-    /// The streaming-aware entry point (docs/34 §16): same contract as [Action::execute]
+    /// The streaming-aware entry point (SPEC §host.actions): same contract as [Action::execute]
     /// plus a live output sink. The DEFAULT delegates to `execute`, so every existing
     /// action keeps working unchanged and migrates at its own pace; the run coordinator
     /// calls only this one. An action that produces output incrementally overrides this,
@@ -343,7 +343,7 @@ impl ActionRegistry {
         Ok(())
     }
 
-    /// Withdraw a capability — what a plugin's stop does to its contributions (docs/09 §4:
+    /// Withdraw a capability — what a plugin's stop does to its contributions (SPEC §host.lifecycle:
     /// stopping deregisters contributions). New submissions then fail with "unknown action";
     /// runs already in flight are the coordinator's business, not the registry's.
     pub fn unregister(&self, type_name: &str) {

@@ -14,24 +14,24 @@
  * limitations under the License.
  */
 
-/* docs/46 G5 - the library's shapes are drawn by the library. A class ui.css owns (the base
+/* SPEC §panel.ui - the library's shapes are drawn by the library. A class ui.css owns (the base
    class of a subject it styles - the same identity G2 uses) written into markup OUTSIDE
    src/ui/ is a page hand-drawing a component: an h("div", { class: "lrow" }) is a second row
-   implementation the day it lands, and the drift docs/46 §0.2 measured (four rows, three
+   implementation the day it lands, and the drift SPEC §panel.ui measured (four rows, three
    segs) came from exactly that. Counted: every token of every string literal inside an h()
    call's `class` value and inside el()'s class argument, per file.
 
    A ratchet in the non-null-ratchet shape: frozen at P1b-3, a file may only go down, and a
    commit that lowers a count lowers its row in the same commit (a row above the actual count
    fails too, so the table never lags the tree). A file with no row is held at 0 - the gallery
-   and its scenes are, from their first commit. A migrated view's target is 0 (docs/46 P9). */
+   and its scenes are, from their first commit. A migrated view's target is 0 (SPEC §panel.ui). */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { uiOwnedClasses } from "./styles.js";
 
-/* Frozen at docs/46 P1b-3: 623 classes in 35 files. P2-1: pane.ts 19 -> 0 (the MCP resource head).
+/* Frozen at SPEC §panel.ui: 623 classes in 35 files. P2-1: pane.ts 19 -> 0 (the MCP resource head).
    P2-2: logs.ts 85 -> 50 (the call log is the event list). P2-3a: logs.ts 50 -> 0 (Tools / Resources /
    Prompts on row()). P2-3b: run.ts 24 -> 0, run-history.ts 47 -> 34 (the Run tab).
    P2-3c: run-history.ts 34 -> 0, fields.ts 6, add-sheet.ts 10, groups.ts 1, page-registry.ts 3 -> 0.
@@ -116,12 +116,12 @@ export function uiClassTokens(rel: string, owned: Set<string>, text = fs.readFil
   return hits;
 }
 
-describe("docs/46 G5 - ui.css classes are drawn by src/ui/ only", () => {
+describe("SPEC §panel.ui - ui.css classes are drawn by src/ui/ only", () => {
   const owned = uiOwnedClasses();
 
   it("the counter sees what it must (a clean pass must not be a blind pass)", () => {
     expect(owned.has("btn") && owned.has("lrow") && owned.has("pane")).toBe(true);
-    // A fixed positive control, not the tree's total: the tree is meant to reach 0 (docs/46 P9),
+    // A fixed positive control, not the tree's total: the tree is meant to reach 0 (SPEC §panel.ui),
     // and a counter that found nothing there would pass for the wrong reason. Every counted
     // position - an h() class literal, both arms of a conditional, el()'s class argument - must
     // find its token; the data hook and the plain text must not.

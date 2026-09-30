@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* Status marks (docs/46 §2.1, rules 2 and 10). Saturation is for state: a dot's colour and a
+/* Status marks (SPEC §panel.ui, rules 2 and 10). Saturation is for state: a dot's colour and a
  * tag's tone say "up", "failed", "slow" and nothing else. A descriptive word - a launch type,
  * "proxy", "copies use this" - is a tag with no tone, monochrome, sans. mono only when the
  * tag holds a value you would copy (an exit code, a port). */
@@ -22,8 +22,8 @@ import { h } from "../h.js";
 
 export type DotState = "up" | "down" | "error" | "idle" | "starting" | "stopping" | "off";
 
-/** A 6px state dot. The title is required: a colour names no behaviour of its own (docs/18
- *  V6), so the dot says its state aloud - on hover, and to assistive tech. "off" is the bare
+/** A 6px state dot. The title is required: a colour names no behaviour of its own (SPEC §panel.design),
+ *  so the dot says its state aloud - on hover, and to assistive tech. "off" is the bare
  *  .dot - the quiet grey of nothing running and nothing wrong - so it adds no class for a
  *  rule that would only repeat the base one. `null` is the one exception, and it must be
  *  deliberate: a dot inside something whose own title already explains it (a tunnel's
@@ -35,7 +35,7 @@ export function dot(state: DotState, title: string | null): HTMLElement {
   return h("span", { class: cls, title, role: "img", aria: { label: title } });
 }
 
-/** The amber mark of writes held back until Commit (docs/42 T2): an open object's tab and the
+/** The amber mark of writes held back until Commit (SPEC §data.tabs): an open object's tab and the
  *  overflow row that stands in for it carry it. Its title is the count in words. A held write
  *  is not a process state, so it is its own mark and not a dot(). `null`, as for dot(): the
  *  thing that holds it already says it (a menu row), so it has no title and stays out of AT. */

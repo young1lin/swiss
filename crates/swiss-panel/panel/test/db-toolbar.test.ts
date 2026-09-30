@@ -19,7 +19,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
 
-/* docs/43 M4 = docs/42 T4: the toolbar draws ONLY the active tab's controls — one primary
+/* SPEC §data.tabs = SPEC §data.tabs: the toolbar draws ONLY the active tab's controls — one primary
  * action plus an overflow — and the pager/page-size live on a separate status line. The
  * hard gate is the .btn budget: at most ONE non-icon .btn per toolbar, in every tab kind
  * (swiss-ui-design rule 4, as a machine check instead of a screenshot). */
@@ -147,7 +147,7 @@ function openTable(editable: boolean, editNote?: string): void {
   grid.renderDbStatus();
 }
 
-describe("the toolbar draws only the active tab's controls (docs/43 M4)", () => {
+describe("the toolbar draws only the active tab's controls (SPEC §data.tabs)", () => {
   it("a table tab: at most ONE non-icon .btn (the row buffer), plus the overflow", () => {
     openTable(true);
     const flat = flatBtns();
@@ -205,7 +205,7 @@ describe("the toolbar draws only the active tab's controls (docs/43 M4)", () => 
   });
 });
 
-describe("the six panes fold into four tabs (docs/43 M4)", () => {
+describe("the six panes fold into four tabs (SPEC §data.tabs)", () => {
   it("DB_TABS is exactly Data / Form / Structure / DDL", () => {
     expect(structure.DB_TABS.length).toBe(4);
     expect(structure.DB_TABS.map((x) => x.id)).toEqual(["data", "form", "structure", "ddl"]);
@@ -219,8 +219,8 @@ describe("the six panes fold into four tabs (docs/43 M4)", () => {
   });
 });
 
-describe("the status line (docs/43 M4)", () => {
-  it("leaves the server's read-only sentence to the head (docs/46 §3.7: said once)", () => {
+describe("the status line (SPEC §data.tabs)", () => {
+  it("leaves the server's read-only sentence to the head (SPEC §panel.pages: said once)", () => {
     openTable(false, "Read-only: ops_dev is not this connection's configured database (acme_app_dev).");
     const note = find(byId.dbStatus, (n) => String(n.className).includes("db-status-note"))
       .map((n) => n.textContent).join(" ");

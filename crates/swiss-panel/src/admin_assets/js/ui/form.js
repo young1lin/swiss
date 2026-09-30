@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* Forms (docs/46 §2.1): the few shapes every form in the panel is made of - the Run tab's
+/* Forms (SPEC §panel.ui): the few shapes every form in the panel is made of - the Run tab's
  * argument form, an MCP's edit form, the Add sheet, a job's action. The page builds its own
  * controls (an <input>, a <select>, a <textarea>: their ids and data hooks are the page's
  * contract with its listener); these functions put them in the house shape:

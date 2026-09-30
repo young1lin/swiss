@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 /* Vendored from the npm package whose tarball held lib/addon-unicode11.js — byte-identical, no
-   further minification, no patches (docs/14 §2). The UMD build assigns window.Unicode11Addon
+   further minification, no patches (SPEC §terminal.panel). The UMD build assigns window.Unicode11Addon
    as a classic script; this shim loads it once and hands the class back as a named
    export. Upgrading = a new versioned directory plus a changed import path; this
    directory dies in the same commit. */

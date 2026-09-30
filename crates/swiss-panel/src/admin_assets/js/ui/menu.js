@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The floating menu (docs/46 §2.5): the one popup every "⋯", switcher and row menu opens.
+/* The floating menu (SPEC §panel.ui): the one popup every "⋯", switcher and row menu opens.
  * Moved here from menu.ts (popupMenu, clampMenuPos) and pane.ts (closeMenu) with the row
  * shapes from types/dom.d.ts, so the library owns the whole mechanism: build, place, focus,
  * walk with the arrows, close.
@@ -22,7 +22,7 @@
  * The open flag is the menu's own state, like the dropdown's (ui/select.ts): main.ts must not
  * reload the panel under an open menu and Escape closes a menu before anything else, and both
  * ask menuOpen(). Every menu in the panel is built here: the MCP pane's overflow became
- * anchoredMenu (docs/46 P2) and Data's hand-built .ctx-menu popups became popupMenu (P7).
+ * anchoredMenu (SPEC §panel.pages) and Data's hand-built .ctx-menu popups became popupMenu (P7).
  * setMenuOpen stays exported for the suites that reset the flag between cases. */
 import { h } from "../h.js";
 import { iconNode } from "./icon.js";
@@ -39,7 +39,7 @@ import { heldDot } from "./status.js";
                  
                
                  
-                                                                                         
+                                                                                              
                                                                                        
                 
                 
@@ -49,16 +49,16 @@ import { heldDot } from "./status.js";
                                                                            
                 
                 
-                                                                                      
+                                                                                                
                                                                                        
                                                             
                      
-                                                                                         
+                                                                                               
                                                                                       
                                                                                      
                   
                       
-                                                                                          
+                                                                                                    
                                                                          
                     
               
@@ -101,20 +101,20 @@ function clampMenuPos(anchor                                               , w  
 /* --- a menu anchored to a button ---------------------------------------------------------------
    The pane's overflow menu anchors to .pane-actions; menus raised from the sidebar have no such
    anchor, so they are positioned against the button that opened them. Items are
-   { label, fn, danger, sep, pick, on }. Keyboard (docs/13 D5): the menu is a real menu —
+   { label, fn, danger, sep, pick, on }. Keyboard (SPEC §panel.nav): the menu is a real menu —
    first item focused on open, arrows walk the items, Escape closes — so a page switcher
    built on it needs no second menu idiom. */
 /** The rows of a menu, as popupMenu and anchoredMenu both draw them. */
 function menuNode(cls        , items            )              {
   return h("div", { class: cls, id: "menu" }, items.map((it)              => {
     if (it.sep) return h("hr");
-    // docs/43 M3: a heading is chrome, not a choice — a plain div, so it can neither take
+    // SPEC §data.databases: a heading is chrome, not a choice — a plain div, so it can neither take
     // focus from the first real item nor answer a click.
     if (it.heading) return h("div", { class: "menu-head" }, it.label);
-    // Order is the object card's (docs/43 M1): the type glyph first, then the word, then a
-    // trailing affordance for a row that opens ANOTHER menu (fix-plan #14 - a direction about
+    // Order is the object card's (SPEC §data.tabs): the type glyph first, then the word, then a
+    // trailing affordance for a row that opens ANOTHER menu (SPEC §panel.design - a direction about
     // what happens next), then the held-writes dot last, a fact about the row. A refused row
-    // (docs/43 M3: a database the server will not browse) is shown disabled, its reason in
+    // (SPEC §data.databases: a database the server will not browse) is shown disabled, its reason in
     // the title, and a disabled button runs no fn.
     const b = h("button", {
       type: "button", class: [it.pick ? "pick" : "", it.on ? "on" : "", it.danger ? "danger" : ""].filter(Boolean).join(" ") || undefined,
@@ -128,7 +128,7 @@ function menuNode(cls        , items            )              {
 /** Roles and keys, once the menu is in the document: the first item focused, arrows walk the
  *  items, Escape closes. It used to guard every DOM call (and menuNode used createElement, not
  *  h()) for four suites that drove popupMenu on hand-rolled micro-DOMs; three moved to
- *  happy-dom and the fourth's stub grew the calls (docs/46 P7-3), so the guards are gone. */
+ *  happy-dom and the fourth's stub grew the calls (SPEC §panel.pages), so the guards are gone. */
 function wireMenu(node             )       {
   open = true;
   node.setAttribute("role", "menu");
@@ -166,7 +166,7 @@ function popupMenu(anchor                                                       
   if (anchor.width) node.style.minWidth = "max(160px, " + Math.ceil(anchor.width) + "px)";
   // Aligned to the button's LEFT edge and growing right, over the detail pane. Right-aligning it
   // instead pushed a sidebar menu back across the list it was opened from, hiding those rows.
-  // The clamp itself is clampMenuPos (docs/22 closeout audit).
+  // The clamp itself is clampMenuPos (SPEC §data).
   const r = node.getBoundingClientRect();
   const pos = clampMenuPos(anchor, r.width, r.height, window.innerWidth, window.innerHeight);
   node.style.left = pos.left + "px";

@@ -27,7 +27,7 @@
    somebody is typing a new token's name into it. The once-only secret box lives in
    the tokens domain (setTokenViewSecret) and survives both poll and refresh until navigation leaves.
 
-   Groups (docs/20 G7): the list renders through the groups component with dragging off —
+   Groups (SPEC §host.groups): the list renders through the groups component with dragging off —
    creation time is the tokens' order, so the scope's order route is a 400 and no row can be
    dropped anywhere. A group is a folder a token sits in; the "copies use this" marker is
    real state about the COPY actions, untouched by which folder the token sits in.
@@ -47,7 +47,7 @@ import {
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed                          = {}; // the tokens fold map, loaded once before the first paint
 
-/* The tokens domain's own state (docs/37 R4, slice 1 of 7): the named-token list, its
+/* The tokens domain's own state (SPEC §panel.toolchain, slice 1 of 7): the named-token list, its
  * group family, the most-recently revealed secret, and the once-only create/rotate box.
  * Everything reads and writes through the accessors below - no other module reaches in
  * (connect.ts resolves through them, main.ts boots through loadTokens). */
@@ -79,7 +79,7 @@ export async function loadTokens()                {
   if (!r.ok) return;
   const j = await r.json()                     ;
   tokensDomain.list = j.tokens || [];
-  // The two lists (docs/20 G7). An older gateway answers neither: the single default group,
+  // The two lists (SPEC §host.groups). An older gateway answers neither: the single default group,
   // which the component draws as no divider at all.
   tokensDomain.groups = j.groups && j.groups.length ? j.groups : ["default"];
   tokensDomain.members = j.tokenGroups || {};
@@ -110,7 +110,7 @@ function connectAll(secret        )         {
 }
 
 /** The rendering group of one token: the stored label while its group lives, else the first
- *  group — the sink rule (docs/20 §2.1). */
+ *  group — the sink rule (SPEC §host.groups). */
 function groupOfToken(t             )         {
   const g = tokenMemberOf(t.id);
   const names = tokenGroupNames();
@@ -127,7 +127,7 @@ function signature()         {
  *  rather than "whichever one you touched last". With no prior "Use", copies use `default`. */
 function inUse()                     { return pickCopyToken(tokenRows(), rememberedTokenId()); }
 
-/** One token's row (the library row, docs/46 §3.3): its label, "copies use" as a tag on the one
+/** One token's row (the library row, SPEC §panel.pages): its label, "copies use" as a tag on the one
  *  the copy actions embed, the id - a value you copy, so mono - and when it was made; Use (absent
  *  on the token copies already use) and the ⋯ with Rotate and Revoke - red never sits on a row
  *  (design rule 4). The buttons stay delegated on #pane (wire), so the groups component
@@ -168,7 +168,7 @@ function tkCfg()                        {
     draggable: false,
     rowsById: ()                => { return tokenRows(); },
     groupOfRow: groupOfToken,
-    /* rowNode, not rowsHtml + rowSel (docs/37 R5): the component wires the node this
+    /* rowNode, not rowsHtml + rowSel (SPEC §panel.toolchain): the component wires the node this
      * builder hands back, so the round trip through a parsed string and a
      * [data-token="..."] lookup - and the CSS.escape dance that lookup needed for ids the
      * server lets be arbitrary - is gone. */
@@ -176,7 +176,7 @@ function tkCfg()                        {
   };
 }
 
-/** Keep the form's Group select honest after a group mutation (docs/20 G7): a rename or
+/** Keep the form's Group select honest after a group mutation (SPEC §host.groups): a rename or
  *  delete that the poll reports must not leave a chosen-but-dead option in the box — the
  *  next create would assign into a 400. The selection survives while its group lives. */
 function refreshGroupSelect()       {
@@ -252,7 +252,7 @@ function render()       {
       desc: tr("tokens.descOneLine"),
       actions: [iconBtn("folder-plus", tr("tokens.newGroup"), { id: "tkNewGroup" })],
     }),
-    // The inline create form (docs/35 §3): one row, the Group select beside the primary.
+    // The inline create form (SPEC §panel.groups): one row, the Group select beside the primary.
     inlineForm(
       h("input", { id: "tkLabel", placeholder: tr("tokens.labelEGClaude") }),
       groupSelectNode(),

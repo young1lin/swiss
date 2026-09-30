@@ -51,7 +51,7 @@ pub trait PluginInstance: Send + Sync {
         // footprint is tasks spawned through the scope.
     }
 
-    /// Apply a new config row IN PLACE, without a restart (docs/11 §8). Default:
+    /// Apply a new config row IN PLACE, without a restart (SPEC §jobs.apply). Default:
     /// [ApplyOutcome::NotApplicable], so a plugin that says nothing keeps today's
     /// restart-or-note behaviour exactly. A plugin whose config is a live table - Jobs -
     /// overrides this so editing one entry never bounces the instance (and with it every
@@ -70,7 +70,7 @@ pub enum ApplyOutcome {
     /// The row is PERSISTED but the running instance could not take it: the instance
     /// stays Active, `lastError` carries the reason, and the config revision does NOT
     /// move - desired and actual stay visibly apart until a later reconcile succeeds
-    /// (docs/10 §5). The PUT still answered 200; its body says `applied: false`.
+    /// (SPEC §jobs.config). The PUT still answered 200; its body says `applied: false`.
     Failed(String),
 }
 
@@ -82,7 +82,7 @@ pub trait PluginFactory: Send + Sync {
     fn descriptor(&self) -> PluginDescriptor;
 
     /// Validate a config the PUT route is about to persist. Runs BEFORE the store write, so a
-    /// rejected value never lands on disk (docs/09 §5: validate first, then persist desired,
+    /// rejected value never lands on disk (SPEC §host.config: validate first, then persist desired,
     /// then reconcile). Returning `Err` is a 400 with the message verbatim.
     fn validate_config(&self, config: &Value) -> Result<(), String> {
         let _ = config;
@@ -103,7 +103,7 @@ pub trait PluginFactory: Send + Sync {
     /// eager belongs in `start`, so a failed start cannot leak half a construction.
     async fn create(&self, config: &Value) -> Result<Arc<dyn PluginInstance>, String>;
 
-    /// Advisory notes about a config the validator ACCEPTED (docs/11 §3.4): savable rows
+    /// Advisory notes about a config the validator ACCEPTED (SPEC §jobs.config): savable rows
     /// the running gateway cannot fully execute yet - an action whose provider is
     /// disabled, say. Carried on the PUT response as `warnings`; empty by default.
     fn config_warnings(&self, _config: &Value) -> Vec<String> {

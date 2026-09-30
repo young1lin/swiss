@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The admin session gate (docs/48), through the real router.
+//! The admin session gate (SPEC §host.session), through the real router.
 //!
 //! A request that came through a socket carries ConnectInfo - the listener records it - so
 //! these cases plant one to look like the real thing; the rest of the suite drives the router

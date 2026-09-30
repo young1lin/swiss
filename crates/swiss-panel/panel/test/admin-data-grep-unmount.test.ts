@@ -23,7 +23,7 @@ import { dbConn } from "./db-fixtures.js";
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), with RECORDING
    timers so the 300ms grep debounce can be fired deterministically — the bug is what its
    callback does after the view unmounted, not 300ms later.
-   docs/37 R5: the skeleton is built with h()/fill() and the grep box carries no per-render
+   SPEC §panel.toolchain: the skeleton is built with h()/fill() and the grep box carries no per-render
    wiring — #pane owns one delegated input listener — so the fake DOM extends the Node stub
    (h() instanceof-checks children) and the test fires the pane dispatcher like a real
    event: the target is the painted #dbGrep node, resolved by walking the pane tree. */
@@ -99,7 +99,7 @@ const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const view = await import(pathToFileURL(join(here, "data-view.js")).href) as {
   renderDbView: () => void;
 };
-describe("the table-list grep debounce vs an unmounted view (docs/22 closeout audit)", () => {
+describe("the table-list grep debounce vs an unmounted view (SPEC §data)", () => {
   it("the 300ms callback firing after the view unmounted is a silent no-op, not a TypeError", () => {
     mountDbView();
     view.renderDbView();
@@ -110,7 +110,7 @@ describe("the table-list grep debounce vs an unmounted view (docs/22 closeout au
     const grep = resolveId("dbGrep");
     expect(pane.oninput, "the pane carries the delegated input listener").toBeTruthy();
     grep.value = "abc";
-    pane.oninput({ target: grep }); // docs/37 R5: one delegated listener; the target carries the box
+    pane.oninput({ target: grep }); // SPEC §panel.toolchain: one delegated listener; the target carries the box
     const fired = timers.filter((t) => t.ms === 300);
     expect(fired.length, "the input scheduled its 300ms debounce").toBeGreaterThan(0);
     const cb = fired[fired.length - 1].fn;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The built-in process capability: "process.exec" and "process.legacy-command" (docs/10 §2,
+//! The built-in process capability: "process.exec" and "process.legacy-command" (SPEC §jobs,
 //! §6). Both run over the shared supervisor; they differ ONLY in how the input names the
 //! command line:
 //!
@@ -122,7 +122,7 @@ fn parse_exec_input(input: &Value) -> Result<ProcSpec, ActionError> {
                 let raw = item
                     .as_str()
                     .ok_or_else(|| invalid(format!("input.args[{i}]: must be a string")))?;
-                // One arg stays one arg: substitution never re-tokenizes (docs/10 §6).
+                // One arg stays one arg: substitution never re-tokenizes (SPEC §process.actions).
                 args.push(resolve_with_secrets(
                     raw,
                     &format!("input.args[{i}]"),
@@ -323,7 +323,7 @@ impl Action for LegacyCommandAction {
 }
 
 /// The input half of [LegacyCommandAction::execute], shared with config validation so a
-/// saved job can never hold an input its first run would reject (docs/11 §3.4). No IO
+/// saved job can never hold an input its first run would reject (SPEC §jobs.config). No IO
 /// beyond reading the environment the refs resolve against - the same read execute()
 /// does, one run earlier.
 fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
@@ -344,7 +344,7 @@ fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| invalid("input.command: required non-empty string".into()))?;
     // Env refs keep the documented legacy behaviour (unset -> empty) and post-resolution
-    // tokenization; vault refs are the strict half of the same contract (docs/19 D4) — a
+    // tokenization; vault refs are the strict half of the same contract (SPEC §host.refs) — a
     // missing secret:// reference is a configuration error, never an empty credential.
     // What EITHER kind of ref resolved to is registered for masking: a credential must not
     // survive into captured output just because the legacy env path is lenient.
@@ -508,7 +508,7 @@ mod tests {
     #[tokio::test]
     async fn an_arg_with_spaces_stays_one_argument() {
         // The substituted value contains a space; substitution must NOT re-tokenize it
-        // (docs/10 §6). Asserted on the argv the action builds, because no child reports
+        // (SPEC §process.actions). Asserted on the argv the action builds, because no child reports
         // that portably: `cmd /c echo a b` prints the same line whether it was handed one
         // argument or two.
         unsafe { std::env::set_var("SWISS_EXEC_SPACED", "two words") };
@@ -540,7 +540,7 @@ mod tests {
     #[tokio::test]
     async fn a_resolved_reference_is_masked_out_of_captured_output() {
         // A child that echoes a credential it was handed must not write it into run
-        // history (docs/10 §6): every value a reference resolved to is masked on the way
+        // history (SPEC §process.actions): every value a reference resolved to is masked on the way
         // out. The 8-character floor keeps ordinary short values (a port, a count) that
         // happen to appear in the text from shredding the whole output.
         unsafe { std::env::set_var("SWISS_EXEC_SECRET", "s3cr3t-value") };
@@ -752,7 +752,7 @@ fn plant_secret(name: &str, value: &str) {
 
 #[test]
 fn a_missing_vault_reference_in_a_command_is_refused() {
-    // The strict half of the credential contract (docs/19 D4): the legacy command path
+    // The strict half of the credential contract (SPEC §host.refs): the legacy command path
     // stays lenient for env refs, but a missing vault reference names itself and refuses.
     let err = parse_legacy_input(&json!({
         "command": "echo ${secret://actions-missing-key}"
@@ -799,7 +799,7 @@ fn a_present_vault_reference_resolves_and_masks() {
 
 #[tokio::test]
 async fn an_unreferenced_vault_value_never_reaches_a_child_environment() {
-    // docs/19 D8 — the isolation the env store cannot offer: a vault value is ONLY ever
+    // SPEC §host.vault — the isolation the env store cannot offer: a vault value is ONLY ever
     // present where a reference put it. Plant a secret, run a child that dumps its whole
     // environment, reference nothing: the value must be absent. The job's own env row is
     // the positive control proving the dump actually sees the child environment.

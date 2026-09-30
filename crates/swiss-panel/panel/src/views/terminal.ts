@@ -15,10 +15,10 @@
  */
 
 /* ================================================================================================
-   Terminal - the panel half of the terminal plugin (docs/14 §2, §8).
+   Terminal - the panel half of the terminal plugin (SPEC §terminal.panel, §terminal.api).
 
    One real terminal per session: xterm.js (vendored, native ES modules via shims) over
-   the gateway's WebSocket. The wire contract is exactly docs/14 §8: binary frames are
+   the gateway's WebSocket. The wire contract is exactly SPEC §terminal.api: binary frames are
    raw PTY bytes both ways, the only text is a small control object, and a socket that
    drops does NOT end the session - the gateway holds it for the grace window and the
    catch-up bytes arrive on reconnect. The reconnect loop mints a fresh one-time ticket
@@ -54,7 +54,7 @@ import { btn, iconBtn } from "../ui/button.js";
 import { objTab } from "../ui/tab.js";
 import { heldDot } from "../ui/status.js";
 
-/* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
+/* SPEC §terminal.panel: the system monospace stack - no Nerd Font, no web font. The resource
    pipeline is text-only; a font file cannot enter the tree, by design. */
 const FONT = 'ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", monospace';
 
@@ -76,14 +76,14 @@ let fontSize = readFontSize(readStoredFontSize());
    has already closed, and dismissing would look decorative. Cleared of ids the listing
    no longer carries so it cannot grow without bound. */
 let dismissed = new Set<string>();
-/* P0 preferences (docs/22 §2.3/§2.4): a bell must be VISIBLE by default and a
+/* P0 preferences (SPEC §terminal.panel): a bell must be VISIBLE by default and a
    selection must reach the clipboard by default — both remember their mode per
    browser, like the font size, because they are preferences about this screen. */
 const BELL_KEY = "swiss.terminal.bell";
 const COPYSEL_KEY = "swiss.terminal.copyOnSelect";
 function storedPref(key: string) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
-/* One-shot guidance (docs/22 P0 guidance layer): the first attach is the one moment a
+/* One-shot guidance (SPEC §terminal.panel): the first attach is the one moment a
    newcomer is guaranteed to be looking at the terminal, so it carries one sentence of
    orientation and never appears again. */
 const HINT_KEY = "swiss.terminal.hint";
@@ -149,7 +149,7 @@ function paintStatus() {
 /* The session tabs. A tab exists for every wired model plus every live listing row the
    user has not opened yet; a closed session keeps its tab (the scrollback is readable)
    until dismissed. */
-/* paintTabs' last-markup memo, module-scoped (docs/37 M3): it once rode on the function
+/* paintTabs' last-markup memo, module-scoped (SPEC §panel.lint): it once rode on the function
    object itself (paintTabs.last), typed by a Function augmentation. Null means "the bar's
    DOM was replaced under us - repaint even if the markup is textually equal". */
 let paintTabsLast: string | null = null;
@@ -162,10 +162,10 @@ function paintTabs() {
   bar.hidden = !any;
   /* Rebuilding identical markup rips the nodes out mid-double-click (see select) and
      would destroy an open rename input. The memo is the built tree's own outerHTML
-     (docs/37 R5): same tree in, same markup out - skip. */
+     (SPEC §panel.toolchain): same tree in, same markup out - skip. */
   const tabs = all.map((m) => {
     const label = tabLabel(m, m.shellTitle, m.customTitle) + (m.gone ? tr("terminal.closed") : "");
-    /* docs/46 P8-2: the session tab is the library's objTab - the same card Data's objects
+    /* SPEC §panel.pages: the session tab is the library's objTab - the same card Data's objects
      * wear, top 2px accent and all. Three old shapes went with it: a button holding a
      * span that played a close button, the Unicode × it drew, and the Unicode ● the bell
      * drew - the bell is now the library's CSS dot (heldDot), which carries its words. */
@@ -212,7 +212,7 @@ function setFontSize(size: number) {
     if (!m.term) return;
     m.term.options.fontSize = size;
     /* A zoom across odd sizes can leave the WebGL glyph atlas half-rasterized; one
-       clear rebuilds it on demand (the addon's own advice, docs/22 §4). */
+       clear rebuilds it on demand (the addon's own advice, SPEC §terminal.panel). */
     if (m.gl && m.gl.clearTextureAtlas) m.gl.clearTextureAtlas();
   });
   scheduleFit();
@@ -233,15 +233,15 @@ function copySelection(term: XtermTerminal) {
 /* Create the terminal for one session and append its holder. The holder stays hidden
    until the session is selected - xterm keeps its buffer offscreen, fit measures only
    what is visible. */
-/* --- P0 native-feel machinery (docs/22) ------------------------------------------------ */
+/* --- P0 native-feel machinery (SPEC §terminal.panel) ------------------------------------------------ */
 
-/* A short generated beep: no asset file can enter the panel (docs/14 §2), and xterm
-   5.5 ships no sound of its own (verified, docs/22 §3). The context is created on the
+/* A short generated beep: no asset file can enter the panel (SPEC §terminal.panel), and xterm
+   5.5 ships no sound of its own (verified, SPEC §terminal.panel). The context is created on the
    first audible bell and left alone afterwards — an idle one costs nothing. */
 function beep() {
   try {
     /* The legacy vendor spelling, cast locally: no lib declares webkitAudioContext and the
-       global Window augmentation is retired (docs/37 M3). The || keeps the runtime honest -
+       global Window augmentation is retired (SPEC §panel.lint). The || keeps the runtime honest -
        a browser with neither name throws here exactly as it always did. */
     const audioCtor = window.AudioContext ||
       (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext as typeof AudioContext | undefined;
@@ -261,7 +261,7 @@ function beep() {
 /* Every byte that reaches a screen goes through here so pin state survives it: the
    viewport is captured BEFORE the write and restored after it — the bottom when
    pinned, the saved line when not. Capture-before-write matters because an rAF can
-   flip the pin mid-write (Tabby's rule, docs/22 §2.10). */
+   flip the pin mid-write (Tabby's rule, SPEC §terminal.panel). */
 function writeTerm(m: TermModel, bytes: Uint8Array) {
   const term = m.term as XtermTerminal;
   if (!term) return;
@@ -275,8 +275,8 @@ function writeTerm(m: TermModel, bytes: Uint8Array) {
   });
 }
 
-/* The "N new" chip over a terminal the user has scrolled away from (docs/22
-   §2.10): one button, absolutely positioned, honest about how far behind they are. */
+/* The "N new" chip over a terminal the user has scrolled away from (SPEC §terminal.panel):
+   one button, absolutely positioned, honest about how far behind they are. */
 function paintJump(m: TermModel) {
   if (!m.holder) return;
   if (!m.jump) {
@@ -293,7 +293,7 @@ function paintJump(m: TermModel) {
     m.jump = chip;
   }
   m.jump.hidden = m.pinned || !m.unseen;
-  // fix-plan #14: the down affordance is the i-chevron-down sprite; the count text lives in
+  // SPEC §panel.design: the down affordance is the i-chevron-down sprite; the count text lives in
   // a span so painting it never wipes the icon the chip was built with.
   const label = m.jump.querySelector("span");
   if (label) label.textContent = tr("terminal.nNewDown", { n: m.unseen });
@@ -311,7 +311,7 @@ function tabList() {
   }));
 }
 
-/* Alt+1..9 / Alt+arrows out of a focused terminal (docs/22 §2.5). The browser keeps
+/* Alt+1..9 / Alt+arrows out of a focused terminal (SPEC §terminal.panel). The browser keeps
    Ctrl+Tab and Ctrl+Shift+W for itself — no page can have them — so Alt carries the
    set; the web-panel reality desktop terminals do not face. */
 function jumpTab(at: number) {
@@ -330,7 +330,7 @@ function cycleTab(dir: number) {
 }
 
 /* Double-click renames a tab: one inline input replaces the label; Enter commits,
-   Escape cancels, blur commits (docs/22 consensus 1 + §2.5). A custom title outranks
+   Escape cancels, blur commits (SPEC §terminal.panel). A custom title outranks
    the shell's OSC title until it is emptied. */
 function startRename(id: string) {
   const m = model(id) as TermModel;
@@ -371,7 +371,7 @@ function startRename(id: string) {
   input.addEventListener("blur", () => { done(true); });
 }
 
-/* --- Ctrl+Shift+F find bar (docs/22 P1) ------------------------------------------------ */
+/* --- Ctrl+Shift+F find bar (SPEC §terminal.panel) ------------------------------------------------ */
 /* The addon CLASS loads on first ask — an idle terminal never pays the ~78 KB — and one
    SearchAddon instance attaches per terminal, because a match set belongs to a buffer.
    The addon re-searches internally as the buffer changes under it and reports counts
@@ -423,19 +423,19 @@ function closeFind() {
   if (m && m.term) m.term.focus();
 }
 
-/* The ? reference sheet: the guidance layer's third tier (docs/22 P0). Keys and mouse
+/* The ? reference sheet: the guidance layer's third tier (SPEC §terminal.panel). Keys and mouse
    gestures in the panel's own sheet component - read-only, Esc or backdrop closes, no
    new surfaces invented. kbd is monospace because a key is a value you would copy
    (design rule 1). */
 function openHelpSheet() {
-  /* Rows take NODES now (docs/37 R5): a key combo is an element pair, not a string that
+  /* Rows take NODES now (SPEC §panel.toolchain): a key combo is an element pair, not a string that
      happens to hold markup. */
   const row = (keys: HChild, what: string) => {
     return h("div", { class: "term-key-row" }, h("span", { class: "term-key-k" }, keys), h("span", null, what));
   };
   const cap = (title: string) => { return h("div", { class: "term-key-cap" }, title); };
   const k = (t: string) => { return h("kbd", null, t); };
-  /* The library's sheet frame (docs/46 P8-2): showSheet unhides the host BEFORE the paint
+  /* The library's sheet frame (SPEC §panel.pages): showSheet unhides the host BEFORE the paint
      (panel-proof-of-life rule 1) and owns the backdrop click; the Close button and the
      shell's Escape chain (main.ts) are the two ways out. */
   showSheet(sheet({
@@ -563,14 +563,14 @@ function wireTerminal(m: TermModel) {
     } catch (e) { /* the DOM renderer stays */ }
     term.onData((text) => { sendInput(m, text); });
     /* OSC 0/2 from the shell (vim, ssh, pwsh prompts) drives this tab's label unless the
-       user renamed it (docs/22 consensus 1). ConPTY forwards the sequence; a shell that
+       user renamed it (SPEC §terminal.panel). ConPTY forwards the sequence; a shell that
        never emits one simply keeps its session label. */
     term.onTitleChange((title) => {
       m.shellTitle = title == null ? null : String(title);
       paintTabs();
     });
     /* BEL: a badge on the tab, cleared by selecting it; an optional oscillator beep —
-       xterm 5.5 has no bell sound of its own (verified, docs/22 §3). */
+       xterm 5.5 has no bell sound of its own (verified, SPEC §terminal.panel). */
     term.onBell(() => {
       if (m.gone) return;
       m.bell = true;
@@ -587,7 +587,7 @@ function wireTerminal(m: TermModel) {
       navigator.clipboard.writeText(trimSelection(text)).catch(() => { /* gesture context missing: keep silent */ });
       if (m.overlay) m.overlay.show("\u2702", 500);
     });
-    /* Windows Terminal's key story, not xterm's Linux default (docs/15 §1): without this
+    /* Windows Terminal's key story, not xterm's Linux default (SPEC §terminal.panel): without this
        handler xterm turns Ctrl+V into the ^V control byte and the shell sees nothing
        pasted. Returning false skips xterm's own handling — and nothing else: the browser
        then delivers its native paste event to the focused .xterm-helper-textarea, whose
@@ -630,7 +630,7 @@ function wireTerminal(m: TermModel) {
       setFontSize(nextFontSize(fontSize, action));
     }, { passive: false });
     /* Right-click pastes, or copies a selection away; Shift+right-click keeps the
-       browser's menu as the escape hatch (docs/15 §1). */
+       browser's menu as the escape hatch (SPEC §terminal.panel). */
     holder.addEventListener("contextmenu", (ev) => {
       const action = mouseAction(ev, term.hasSelection());
       if (action === "menu") return;
@@ -647,7 +647,7 @@ function wireTerminal(m: TermModel) {
         term.focus();
       });
     });
-    /* Pin-to-bottom (docs/22 §2.10). Deliberately NO patch of xterm internals: live
+    /* Pin-to-bottom (SPEC §terminal.panel). Deliberately NO patch of xterm internals: live
        verification on the 19996 instance proved xterm 5.5's output auto-follow is the
        buffer natively tracking the bottom while ydisp rides it — scrollToBottom is not
        the path, so patching it disables nothing. Worse, the write path CALLS it
@@ -675,7 +675,7 @@ function wireTerminal(m: TermModel) {
     });
     /* CSI 2026 (synchronized output) h...l paired with CSI 3 J is a full-screen repaint
        — the moment right after quitting vim where the reader must land on the bottom
-       again (Wave's trick, docs/22 §2.10). Both handlers only observe; false lets xterm
+       again (Wave's trick, SPEC §terminal.panel). Both handlers only observe; false lets xterm
        keep processing. */
     term.parser.registerCsiHandler({ prefix: "?", params: [2026], final: "h" }, () => {
       m.sync2026 = Date.now();
@@ -692,7 +692,7 @@ function wireTerminal(m: TermModel) {
       }
       return false;
     });
-    /* Multiline paste confirmation (docs/22 consensus 8): a capture listener on the
+    /* Multiline paste confirmation (SPEC §terminal.panel): a capture listener on the
        holder sees the paste BEFORE xterm's textarea listener, and stopPropagation keeps
        xterm out of it entirely. Only a paste that would type Enter mid-text asks; the
        alternate screen (vim) never does — multiline is the norm there. */
@@ -716,7 +716,7 @@ function wireTerminal(m: TermModel) {
   });
 }
 
-/* The xterm theme is built by terminal-core (termTheme, docs/46 P8-2): the chrome reads
+/* The xterm theme is built by terminal-core (termTheme, SPEC §panel.pages): the chrome reads
    the panel's --term-* tokens so a theme switch reaches the canvas, while the 16 ANSI
    colours are ttyd's literal set - content, not chrome. The theme-switch observer below
    is the other half of that promise. */
@@ -739,7 +739,7 @@ let encoder: TextEncoder | null = null;
 function sendInput(m: TermModel, text: string) {
   if (!m.ws || m.ws.readyState !== 1) {
     /* Keystrokes typed while the FIRST socket is still coming up ride exactly once
-       (VS Code's pre-launch queue, docs/22 §4 P0 item 8); a reconnect gap still drops them —
+       (VS Code's pre-launch queue, SPEC §terminal.panel); a reconnect gap still drops them —
        replaying keys into a shell that may have moved on is worse than losing them. */
     if (m.buffered && m.buffered.length < 64) m.buffered.push(text);
     return;
@@ -773,7 +773,7 @@ function connect(m: TermModel, ticket: string) {
     if (m.term) {
       /* A re-attach must not leak the previous attach's mouse-tracking or
          bracketed-paste modes into the catch-up replay as visible escape text
-         (docs/22 §4 P0 item 8 — Tabby's reconnect reset, adapted to swiss's grace window). */
+         (SPEC §terminal.panel — Tabby's reconnect reset, adapted to swiss's grace window). */
       m.term.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l");
       if (m.overlay) m.overlay.show("attached", 700);
     /* Guidance tier 2: once per browser, three seconds after the first attach, one
@@ -845,8 +845,8 @@ function gone(m: TermModel, story: string) {
   paintTabs();
 }
 
-/* Fit the on-stage terminal and tell the gateway. Two channels on purpose (docs/14
-   §8): the resize frame while the socket is up, POST /resize while it is down - the
+/* Fit the on-stage terminal and tell the gateway. Two channels on purpose (SPEC §terminal.api):
+   the resize frame while the socket is up, POST /resize while it is down - the
    panel's window may have changed during exactly that gap. */
 function fitNow() {
   fitTimer = null;
@@ -1059,13 +1059,13 @@ function render() {
                   pick.rows.map((r) => {
                     return h("option", { value: r.id }, r.label + (r.state ? " (" + r.state + ")" : ""));
                   })),
-                /* The Local shell settings entry (docs/15 §2.1): a quiet gear beside the
+                /* The Local shell settings entry (SPEC §terminal.local): a quiet gear beside the
                    picker, not a second loud button — Open session stays the bar's one accent.
                    The gear is the sprite (i-gear), never a Unicode glyph (design rule 9). */
                 iconBtn("gear", tr("terminal.localShellSettings"), { id: "term-set", ghost: true }),
                 btn(tr("terminal.openSession"), { kind: "primary", id: "term-new" }))
-            /* Local off and nothing to pick: the line itself is the way in (docs/15
-               §2.1) — a dead-end note that names a setting nobody can reach is how the
+            /* Local off and nothing to pick: the line itself is the way in (SPEC §terminal.local)
+               — a dead-end note that names a setting nobody can reach is how the
                gap this sheet closes came to exist. The tunnels reason, when there is one,
                stays readable beside it. */
             : pick.localOff
@@ -1115,7 +1115,7 @@ function render() {
   if (off) off.onclick = () => { void openLocalSheet(); };
   const tabs = $("term-tabs");
   if (tabs) {
-    /* The delegated answers speak objTab's data hooks (docs/37 R5): data-termx on the
+    /* The delegated answers speak objTab's data hooks (SPEC §panel.toolchain): data-termx on the
        library's close button, data-term on the tab itself. The close is checked FIRST -
        it sits inside the tab, and the tab's own hook would swallow it. */
     tabs.onclick = (event) => {

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* docs/46 P9, on docs/38's translation style: Chinese prose punctuates with the
+/* SPEC §panel.ui, on SPEC §panel.i18n's translation style: Chinese prose punctuates with the
  * full-width ，。 A half-width comma sitting right after a Han character is a
  * sentence written in Chinese that lapsed into ASCII punctuation mid-sentence -
  * the exact drift the P7 walkthrough caught 51 times. This gate reads every zh
@@ -26,7 +26,7 @@
 import { describe, expect, it } from "vitest";
 import zh from "../src/locales/zh.js";
 
-describe("docs/46 P9 - zh prose punctuates full-width", () => {
+describe("SPEC §panel.ui - zh prose punctuates full-width", () => {
   it("no half-width comma touches a Han character in any zh value", () => {
     /* Either side counts: a comma after a Latin word or a placeholder is still prose when a
        Han character follows it ("EXPIRE，留空", "{ref}，按"), and a fragment that opens on a

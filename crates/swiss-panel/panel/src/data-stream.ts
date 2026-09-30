@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* --- the stream value view (docs/45 S2) ----------------------------------------------------------- */
+/* --- the stream value view (SPEC §data.streams) ----------------------------------------------------------- */
 /* A stream key opens on its newest-first window (the /key answer for a stream IS the
    window), walks history through Load-earlier (an exclusive Before cursor, prepended
    pages, no row lost or repeated at a seam), and unions its field columns in
@@ -56,7 +56,7 @@ function streamIdCompare(a: string, b: string): number {
  *  row cache. Pure. The seam is deduped by id, then the whole cache sorts newest-first
  *  by id: both directions land in display order without the caller saying which it
  *  meant. (The first cut prepended the page unconditionally, which stood a Before
- *  page on its head — the docs/45 walk on 19998 caught it live, and the sort makes
+ *  page on its head — a walk of SPEC §data.streams on 19998 caught it live, and the sort makes
  *  the order structural instead of load-bearing on where the page came from.) */
 export function streamMerge(rows: ApiDbStreamEntry[], page: ApiDbStreamEntry[]): ApiDbStreamEntry[] {
   const have = new Set(rows.map((e: ApiDbStreamEntry): string => e.id));
@@ -73,7 +73,7 @@ const STREAM_ROW_CAP = 500;
 /** The rate readout's number: entries per second over the sample window, one decimal.
  *  Pure; junk (no elapsed time, a clock that went backwards, a length that never arrived)
  *  reads as "" so a reset baseline paints nothing rather than a fabricated spike.
- *  A REAL shrink, though, reads as a real negative number (docs/45 §2.3): XTRIM or XDEL
+ *  A REAL shrink, though, reads as a real negative number (SPEC §data.streams): XTRIM or XDEL
  *  between two ticks is exactly the event an operator watching a feed wants to see, and
  *  clamping it to 0 would hide "where did my entries go" behind a calm zero. */
 export function streamRateText(dLen: number, dtMs: number): string {
@@ -81,7 +81,7 @@ export function streamRateText(dLen: number, dtMs: number): string {
   return String(Math.round((dLen / (dtMs / 1000)) * 10) / 10);
 }
 
-/** The row cache's trim, one cap and two directions (docs/45 §2.2): a walk of older
+/** The row cache's trim, one cap and two directions (SPEC §data.streams): a walk of older
  *  pages keeps the OLDEST cap rows — the trim drops from the TOP, so the page that
  *  just landed survives and the Before cursor keeps moving; a live-edge Follow keeps
  *  the NEWEST cap rows — the live edge is what Follow exists for, and history can
@@ -93,7 +93,7 @@ export function streamCap(
   return keep === "newest" ? rows.slice(0, cap) : rows.slice(rows.length - cap);
 }
 
-/** The holdback pool's trim (docs/45 S3 follow-up): the pool behind the pill is
+/** The holdback pool's trim (SPEC §data.streams): the pool behind the pill is
  *  bounded by the same STREAM_ROW_CAP as the table itself — a reader deep in history
  *  while the stream runs hot would otherwise park every tick's page in state without
  *  end (50 entries/s read for ten minutes is 30,000 rows). Overflow keeps the NEWEST
@@ -109,7 +109,7 @@ export function streamPool(
   return { pending: merged.slice(0, cap), dropped: true };
 }
 
-/** True when the stream table sits at its live edge (docs/45 §2.3): scrollTop no
+/** True when the stream table sits at its live edge (SPEC §data.streams): scrollTop no
  *  deeper than one row below the top. Junk counts as pinned — an unreadable row
  *  height or a negative offset is a view we cannot prove is reading history, and
  *  the edge must never be missed on a technicality (the terminal's own pinned rule,
@@ -124,7 +124,7 @@ export function streamIdMs(id: string): number {
   return Number((id || "").split("-")[0]);
 }
 
-/** One row of the summary strip (docs/49 §2.3): a value of the grouped field, how
+/** One row of the summary strip (SPEC §data.streams): a value of the grouped field, how
  *  many of the held rows carry it, and that value's own rate. */
 export interface StreamSummaryRow {
   value: string;
@@ -132,7 +132,7 @@ export interface StreamSummaryRow {
   rate: string;
 }
 
-/** The summary strip over the rows the table holds (docs/49 §2.3). Ninety rows a
+/** The summary strip over the rows the table holds (SPEC §data.streams). Ninety rows a
  *  second is not readable; nine numbers are, and this is those nine — count and
  *  rate per value of one field, busiest first. The denominator is the whole held
  *  window's own time span, so the rates add up to the stream's rate instead of
@@ -166,14 +166,14 @@ export function streamSummary(rows: ApiDbStreamEntry[], field: string): StreamSu
   });
 }
 
-/* What counts as a dimension rather than a measurement (docs/49 §2.3): a column
+/* What counts as a dimension rather than a measurement (SPEC §data.streams): a column
    worth grouping by has a handful of repeated values, not one per row. A feed's
    `symbol` has nine; its `price` and `seq` have one each per entry, and grouping
    by those would draw 500 chips nobody can read. */
 const STREAM_GROUP_MAX_VALUES = 24;
 
 /** The field the summary strip opens on, or null when no column looks like a
- *  dimension (docs/49 §2.3). First column that repeats itself wins — column order
+ *  dimension (SPEC §data.streams). First column that repeats itself wins — column order
  *  is the stream's own, so the first repeating field is the one its author put
  *  first. Pure. */
 export function streamAutoField(rows: ApiDbStreamEntry[], cols: string[]): string | null {
@@ -194,7 +194,7 @@ export function streamAutoField(rows: ApiDbStreamEntry[], cols: string[]): strin
 }
 
 /** The field columns of the merged view: first-seen scanning newest-first — the same
- *  derivation the server runs per window (docs/45 §2.1), re-run here over the whole
+ *  derivation the server runs per window (SPEC §data.streams), re-run here over the whole
  *  grown cache so an older page's new field lands at the table's tail. Pure. */
 export function streamColumns(rows: ApiDbStreamEntry[]): string[] {
   const seen = new Set<string>();
@@ -211,7 +211,7 @@ export function streamColumns(rows: ApiDbStreamEntry[]): string[] {
 }
 
 /** The stream's value body: a read-only table in the typed table's own vocabulary — id
- *  and ts lead, then one column per field, every cell carrying the docs/22 W5.3 copy/view
+ *  and ts lead, then one column per field, every cell carrying the SPEC §data.grid copy/view
  *  menu. The row cache seeds from the first window (the /key answer) and grows through
  *  dbStreamLoadEarlier; a `more` that went false ends the walk and paints the
  *  beginning-of-stream line. */
@@ -226,9 +226,9 @@ export function dbRenderStream(wrap: HTMLElement, v: ApiDbRedisValue): void {
   const rows = t.redisStreamRows;
   dbStreamPainted = null;
   if (!rows.length) {
-    // An empty stream is still a followable one (docs/45 §2.3): the bar mounts, the
+    // An empty stream is still a followable one (SPEC §data.streams): the bar mounts, the
     // first tick polls after=0-0, and the first append ever lands without a re-key.
-    // A FILTER that matched nothing keeps its box too (docs/49) — the one control
+    // A FILTER that matched nothing keeps its box too (SPEC §data.streams) — the one control
     // that can undo the emptiness must not vanish with the rows it hid.
     dbStreamFollowBar(wrap, t);
     dbStreamReadBar(wrap, t);
@@ -269,7 +269,7 @@ let dbStreamPainted: { tab: DbKeyTab; table: HTMLElement; groups: HTMLElement | 
 function dbStreamTableNode(rows: ApiDbStreamEntry[], key: string): HTMLElement {
   const cols = streamColumns(rows);
   const tbl = el("table", "db-grid");
-  // docs/49 §2.4: the pointer resting on the table means someone is reading it. A
+  // SPEC §data.streams: the pointer resting on the table means someone is reading it. A
   // fast stream replaces every row on screen in a few seconds, so Follow holds
   // while the pointer is there — the tick still fetches, the page pools behind the
   // pill it already has, and moving away resumes at the live edge. Scrolling into
@@ -340,10 +340,10 @@ function dbStreamRepaint(t: DbKeyTab, rowsMoved: boolean): boolean {
   return true;
 }
 
-/* --- Follow (docs/45 S3) ------------------------------------------------------------------------ */
+/* --- Follow (SPEC §data.streams) ------------------------------------------------------------------------ */
 
 /* The fold cadence: the groups fold pays its one extra command every fifth tick — the
-   per-tick budget stays 3, the fold is the rare 4th (docs/45 S3; the L1 commandstats
+   per-tick budget stays 3, the fold is the rare 4th (SPEC §data.streams; the L1 commandstats
    test pins xinfo|groups separately). STREAM_ROW_CAP is declared with the pure folds
    above — one cap, both directions. */
 const STREAM_GROUPS_EVERY = 5;
@@ -373,7 +373,7 @@ function dbStreamFollowStart(): void {
 function dbStreamUrl(path: string, key: string, extra: string): string {
   const c = dbConn();
   const t = dbTab();
-  // docs/49 §2.2: every window request carries the filter, so the tick, the opening
+  // SPEC §data.streams: every window request carries the filter, so the tick, the opening
   // page and Load-earlier all ask the same question. The groups fold does not: it is
   // about the stream, not about which of its entries someone is reading.
   const line = t.kind === "key" && t.redisStreamMatch ? t.redisStreamMatch.trim() : "";
@@ -381,7 +381,7 @@ function dbStreamUrl(path: string, key: string, extra: string): string {
   return "/api/db/" + encodeURIComponent(c.conn || "") + path + "?key=" + encodeURIComponent(key) + extra + match;
 }
 
-/** Take a whole window as the view's new truth (docs/45 §2.3, docs/49 §2.2): the
+/** Take a whole window as the view's new truth (SPEC §data.streams): the
  *  rows replace what was held, the holdback and the gap are reset because the
  *  answer they described is gone, and the filter's own cursors come along — a
  *  window that walked says how far it walked, one that did not answers null. */
@@ -396,7 +396,7 @@ function dbStreamTake(t: DbKeyTab, j: ApiDbStreamWindow): void {
   t.redisStreamScanTo = j.scannedTo == null ? null : j.scannedTo;
 }
 
-/** One Follow tick (docs/45 S3): one After page for the live edge. A hidden tab
+/** One Follow tick (SPEC §data.streams): one After page for the live edge. A hidden tab
  *  skips the whole fetch (the data-activity visibility idiom), never just the paint;
  *  a tab scrolled into history still fetches — the page pools behind the pill and the
  *  table holds still. Exported for the acceptance suite: the suite drives ticks the
@@ -412,7 +412,7 @@ export async function dbStreamTick(): Promise<void> {
   // An empty stream still gets its edge: the poll starts at the stream's very
   // beginning (after=0-0), so the first append ever lands without a re-key.
   // Under a filter the cursor is the newest id the server EXAMINED, not the newest
-  // it returned (docs/49 §2.2): a filter matching one entry a minute would otherwise
+  // it returned (SPEC §data.streams): a filter matching one entry a minute would otherwise
   // re-read every non-matching entry since that match, every single tick.
   const newest = t.redisStreamSeen || (rows && rows.length ? rows[0].id : "0-0");
   dbFollowTicks++;
@@ -422,7 +422,7 @@ export async function dbStreamTick(): Promise<void> {
   const after = dbTab();
   if (after !== t) { dbStreamFollowStop(); return; } // the tab moved on mid-flight
   if (!j) {
-    // An error STOPS Follow (docs/45 §2.3): a dead tail polled once a second
+    // An error STOPS Follow (SPEC §data.streams): a dead tail polled once a second
     // forever is noise, not persistence — the toggle resets so the state is
     // honest, and the bar carries the reason. The rate baseline dies with it
     // (a stale lastLen would fabricate a spike on a later manual restart);
@@ -442,7 +442,7 @@ export async function dbStreamTick(): Promise<void> {
   // operator jumps to the latest window, the one move that reopens the truth.
   if (j.more) t.redisStreamGap = true;
   // The filter's live cursor moves whether or not anything matched — that is the
-  // whole point of it (docs/49 §2.2). It only ever moves FORWARD: a tick that
+  // whole point of it (SPEC §data.streams). It only ever moves FORWARD: a tick that
   // examined nothing answers null and leaves the last one standing.
   if (typeof j.scannedFrom === "string" && j.scannedFrom) t.redisStreamSeen = j.scannedFrom;
   let pinned = true;
@@ -459,7 +459,7 @@ export async function dbStreamTick(): Promise<void> {
       const r0 = (wrap as HTMLElement).querySelector("tbody tr") as HTMLElement | null;
       rowH = r0 ? r0.offsetHeight : 0;
     }
-    // Reading holds the edge exactly as scrolling away does (docs/49 §2.4).
+    // Reading holds the edge exactly as scrolling away does (SPEC §data.streams).
     pinned = isTopPinned(top, rowH) && !t.redisStreamHold;
     if (pinned) {
       t.redisStreamRows = streamCap(
@@ -472,7 +472,7 @@ export async function dbStreamTick(): Promise<void> {
       const pooled = streamPool(t.redisStreamPending || [], j.entries, STREAM_ROW_CAP);
       t.redisStreamPending = pooled.pending;
       if (pooled.dropped) {
-        // The pool overflowed (docs/45 S3 follow-up): the rows that fell out are a
+        // The pool overflowed (SPEC §data.streams): the rows that fell out are a
         // hole in the middle no later tick can heal — the same gap flag a truncated
         // page sets, and the pill switches to the "500+" copy for the same reason.
         t.redisStreamGap = true;
@@ -502,7 +502,7 @@ export async function dbStreamTick(): Promise<void> {
   dbStreamBarDyn(t); // pill count / rate / gap / groups count in place
 }
 
-/* The Follow bar's live texts (docs/45 §2.3). renderDbGrid rebuilds the bar with
+/* The Follow bar's live texts (SPEC §data.streams). renderDbGrid rebuilds the bar with
    every pinned repaint, so these refs are re-taken per paint; a not-pinned tick
    updates them in place — the pill count, the rate readout, the gap bar's
    visibility — without touching the table the operator is reading. */
@@ -510,7 +510,7 @@ let dbStreamHeldEl: HTMLElement | null = null;
 let dbStreamHitsEl: HTMLElement | null = null;
 let dbStreamReadBarEl: HTMLElement | null = null;
 let dbStreamPill: HTMLElement | null = null;
-let dbStreamPillN: HTMLElement | null = null; // the count text; the arrow icon sits beside it, painted once (fix-plan #14)
+let dbStreamPillN: HTMLElement | null = null; // the count text; the arrow icon sits beside it, painted once (SPEC §panel.design)
 let dbStreamRateEl: HTMLElement | null = null;
 let dbStreamGapEl: HTMLElement | null = null;
 let dbStreamGroupsBtn: HTMLElement | null = null;
@@ -545,7 +545,7 @@ function dbStreamBarDyn(t: DbKeyTab): void {
   dbStreamChipsPaint(t);
 }
 
-/** What a filtered window admits to (docs/49 §2.2): how many of the entries it
+/** What a filtered window admits to (SPEC §data.streams): how many of the entries it
  *  examined matched. Empty when nothing is filtered, or when the answer carried no
  *  scan report — redis cannot count matches it never read, and a filter box with no
  *  number beside it beats one with a number nobody can trust. Pure. */
@@ -557,7 +557,7 @@ export function dbStreamHitsText(t: DbKeyTab): string {
   });
 }
 
-/** The pointer resting on the table, or leaving it (docs/49 §2.4). Nothing is
+/** The pointer resting on the table, or leaving it (SPEC §data.streams). Nothing is
  *  fetched or repainted here: the flag is read by the next tick, which is where
  *  holding the edge actually happens. */
 function dbStreamHold(on: boolean): void {
@@ -567,7 +567,7 @@ function dbStreamHold(on: boolean): void {
   dbStreamBarDyn(t);
 }
 
-/** The summary strip's chips, rebuilt in place (docs/49 §2.3). They live at the end
+/** The summary strip's chips, rebuilt in place (SPEC §data.streams). They live at the end
  *  of the read bar and are addressed by their data hook, so a tick replaces the
  *  counts without touching the filter box the operator may be typing in. */
 function dbStreamChipsPaint(t: DbKeyTab): void {
@@ -607,13 +607,13 @@ let dbStreamChipNodes: HTMLElement[] = [];
 const STREAM_CHIP_CAP = 12;
 
 /** A value on its way into a filter line: quoted when it carries a space or a quote,
- *  because the line is split the way a shell splits it (docs/49 §2.1). Pure. */
+ *  because the line is split the way a shell splits it (SPEC §data.streams). Pure. */
 export function dbStreamQuote(v: string): string {
   if (!/[\s"']/.test(v)) return v;
   return "\"" + v.replace(/(["\\])/g, "\\$1") + "\"";
 }
 
-/** Which field the summary strip groups by (docs/49 §2.3): the operator's choice
+/** Which field the summary strip groups by (SPEC §data.streams): the operator's choice
  *  when they made one — "" is a deliberate off — and otherwise the first column
  *  that looks like a dimension. Choosing for them is the point: a strip nobody
  *  opened is a strip nobody sees, and 90 rows a second is unreadable by default. */
@@ -632,7 +632,7 @@ function dbStreamGroupField(t: DbKeyTab): string {
   return pick;
 }
 
-/** The gap bar's action (docs/45 §2.3): reopen the LATEST window — no cursor, the
+/** The gap bar's action (SPEC §data.streams): reopen the LATEST window — no cursor, the
  *  newest page straight from the server — and let it replace the rows. Splicing the
  *  two ends of a truncated window would present a contiguous stream that never was. */
 async function dbStreamJumpLatest(): Promise<void> {
@@ -640,7 +640,7 @@ async function dbStreamJumpLatest(): Promise<void> {
   if (t.kind !== "key" || !t.redisKey) return;
   // Jumping reopens the follow window itself: any tick still in flight speaks for
   // the window this jump is about to replace — letting its answer land would pool a
-  // page behind a pill whose splice target no longer exists (docs/45 S3 follow-up).
+  // page behind a pill whose splice target no longer exists (SPEC §data.streams).
   // Issuing on the same guard voids those ticks, exactly as a newer tick voids an
   // older one; the converse is accepted — a tick issued AFTER the jump supersedes
   // it, and dedup-plus-sort makes a late live-edge page a no-op at worst.
@@ -652,7 +652,7 @@ async function dbStreamJumpLatest(): Promise<void> {
   dbStreamTake(t, j);
   renderDbGrid();
 }
-/** The reading bar (docs/49): the filter line, what it cost, and the summary strip.
+/** The reading bar (SPEC §data.streams): the filter line, what it cost, and the summary strip.
  *  Its own row under Follow's, because the two answer different questions — Follow is
  *  about the live edge, this is about which of the entries are worth looking at. The
  *  input is built ONCE per paint and never rewritten by a tick: a box that rebuilt
@@ -662,7 +662,7 @@ function dbStreamReadBar(wrap: HTMLElement, t: DbKeyTab): void {
   // The box the operator is typing in is KEPT across the repaint, not rebuilt: a
   // filter applies 400 ms after the last keystroke and repaints the pane, and a
   // rebuilt input is a new node — focus, caret and IME state gone, the next
-  // keystroke landing nowhere. (The MCP logs search learned this at docs/31.)
+  // keystroke landing nowhere. (The MCP logs search learned this at SPEC §mcp.calls.)
   // Moving a node still blurs it, so the focus is put back once the bar is in.
   const live = dbStreamBox && typeof document !== "undefined" && document.activeElement === dbStreamBox
     ? dbStreamBox
@@ -734,7 +734,7 @@ let dbStreamFilterTimer: ReturnType<typeof setTimeout> | null = null;
 let dbStreamBox: HTMLInputElement | null = null;
 const STREAM_FILTER_DEBOUNCE_MS = 400;
 
-/** Apply a filter line (docs/49 §2.2): a new filter is a NEW window, so the rows on
+/** Apply a filter line (SPEC §data.streams): a new filter is a NEW window, so the rows on
  *  screen go — they answered the old question, and splicing the two would present a
  *  table that never existed. Exported for the acceptance suite, which drives it the
  *  way the box's debounce would. */
@@ -795,10 +795,10 @@ function dbStreamFollowBar(wrap: HTMLElement, t: DbKeyTab): void {
   if (t.redisStreamErr) {
     bar.appendChild(el("span", "db-hint", t.redisStreamErr)); // why Follow stopped, in place
   }
-  // The pending pill (docs/45 §2.3): the not-pinned holdback's one visible fact. Click
+  // The pending pill (SPEC §data.streams): the not-pinned holdback's one visible fact. Click
   // IS the flush — pool merges at the live edge, the view returns to the top.
   const pendN = (t.redisStreamPending || []).length;
-  // fix-plan #14: the "new rows above" arrow is the i-arrow-up sprite, so the count lives
+  // SPEC §panel.design: the "new rows above" arrow is the i-arrow-up sprite, so the count lives
   // in its own span — a repaint updates the text without rebuilding the icon.
   const pillN = h("span", null, pendN
     ? (t.redisStreamPendingDropped
@@ -825,7 +825,7 @@ function dbStreamFollowBar(wrap: HTMLElement, t: DbKeyTab): void {
   bar.appendChild(pill);
   dbStreamPill = pill;
   dbStreamPillN = pillN;
-  // docs/49 §2.4: why the table stopped moving. Without this the hold reads as a
+  // SPEC §data.streams: why the table stopped moving. Without this the hold reads as a
   // stall — the one thing a live view must never look like.
   const held = el("span", "db-hint", tr("dataStream.held"));
   held.hidden = !t.redisStreamHold || !t.redisStreamFollow;
@@ -872,7 +872,7 @@ async function dbStreamGroupsLoad(t: DbKeyTab): Promise<void> {
   renderDbGrid();
 }
 
-/** The consumer-group fold (docs/45 §2.4): a read-only table under the stream, fed by the
+/** The consumer-group fold (SPEC §data.streams): a read-only table under the stream, fed by the
  *  fold's own open and then by every fifth Follow tick — pending, lag (null is the honest
  *  pre-7.0 answer), and the group's own delivered cursor. One node, table and hint together,
  *  so a tick replaces it whole. */
@@ -921,7 +921,7 @@ const dbStreamReq = dbReqGuard();
 
 /** Fetch the next-older page and grow the cache. The Before cursor is the OLDEST id
  *  in the grown cache, exclusive on the server; `more` from the answer ends the walk.
- *  The cap keeps the OLDEST rows here (docs/45 §2.2): a walk that trimmed the top of
+ *  The cap keeps the OLDEST rows here (SPEC §data.streams): a walk that trimmed the top of
  *  the table would drop the page it just fetched, the oldest id would never move, and
  *  every further click would re-request the same page - a walk stuck in place. */
 export async function dbStreamLoadEarlier(): Promise<void> {
@@ -931,7 +931,7 @@ export async function dbStreamLoadEarlier(): Promise<void> {
   const rows = t.redisStreamRows;
   if (dbStreamLoading || !rows || !rows.length || !t.redisStreamMore) return;
   // Under a filter the walk resumes where the last one STOPPED looking, not at the
-  // oldest row it kept (docs/49 §2.2): a filter that found three matches in twenty
+  // oldest row it kept (SPEC §data.streams): a filter that found three matches in twenty
   // thousand entries would otherwise re-read the same twenty thousand on every click.
   const oldest = t.redisStreamScanTo || rows[rows.length - 1].id;
   dbStreamLoading = true;

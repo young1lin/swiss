@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The docs/38 L10a dictionary-completeness gate, normalized (2026-09-20): keys are
+/* The SPEC §panel.i18n dictionary-completeness gate, normalized (2026-09-20): keys are
  * symbolic ("<module>.<semanticId>"), English copy lives in en.ts, every locale is its
  * own table over the same keys, and the wire vocabulary (labels the gateway serves as
  * English text on /api/plugins) is mapped at runtime by wireLabel(). Four directions
@@ -45,7 +45,7 @@ const has = (o: Record<string, string>, k: string): boolean => Object.prototype.
  * no .one keys by design - the missing-entry check must not demand them. */
 const exempt = (locale: string, k: string): boolean => locale === "zh" && /[.]one$/.test(k);
 
-/* The labels the gateway serves as English text (docs/09 §6 descriptors), mapped to
+/* The labels the gateway serves as English text (SPEC §panel.nav descriptors), mapped to
  * wire.* keys by wireLabel() in i18n.ts. A new page's label joins this list, the
  * WIRE_LABELS table there, and every locale table - one change. */
 const WIRE_KEYS = [
@@ -104,7 +104,7 @@ function collect(): Set<string> {
   return out;
 }
 
-describe("i18n dictionary completeness (docs/38 L10a, normalized keys)", () => {
+describe("i18n dictionary completeness (SPEC §panel.i18n, normalized keys)", () => {
   const used = collect();
 
   it("the scanner sees the tree (a clean pass must not be a blind pass)", () => {

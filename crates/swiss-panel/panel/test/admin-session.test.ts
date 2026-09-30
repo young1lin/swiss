@@ -16,7 +16,7 @@
 
 // @vitest-environment happy-dom
 
-/* docs/48: /api/* sits behind the admin session. When a browser's sign-in is gone, every call
+/* SPEC §host.session: /api/* sits behind the admin session. When a browser's sign-in is gone, every call
    answers 401; the panel then goes to its own address, which the server answers with the
    sign-in page - rather than a panel of empty lists and error toasts. */
 

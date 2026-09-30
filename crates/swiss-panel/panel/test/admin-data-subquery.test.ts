@@ -57,7 +57,7 @@ const mod = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-sql.ts")).href
 ) as { dbSubqueryAt: (text: string, caret: number | null) => string };
 
-// docs/22 W1.8: blank lines split the console into blocks; the run covers the block the caret
+// SPEC §data.console: blank lines split the console into blocks; the run covers the block the caret
 // is in. A gap caret belongs to the block after it, no caret means the end, and a text without
 // blank lines is one block — exactly the whole box, the old behaviour.
 describe("dbSubqueryAt", () => {

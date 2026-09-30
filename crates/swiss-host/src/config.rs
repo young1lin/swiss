@@ -95,7 +95,7 @@ pub struct GatewayConfig {
 ///
 /// True for a value that is exactly one credential reference — `${ENV_VAR}` (held in the
 /// sealed env store) or `${secret://name}` / `${secret://name:default}` (held in the vault,
-/// docs/25 E1) — i.e. a secret held outside the file, not inline. The masking stack keys off
+/// SPEC §host.refs) — i.e. a secret held outside the file, not inline. The masking stack keys off
 /// this to show the reference instead of ever holding the value.
 pub fn is_env_ref(v: &Value) -> bool {
     let Some(s) = v.as_str() else { return false };
@@ -106,8 +106,8 @@ pub fn is_env_ref(v: &Value) -> bool {
     {
         return !rest.contains('}') && swiss_core::secure::refs::secret_ref_parts(rest).is_some();
     }
-    // A legacy whole-value bare ref (docs/19 D1) still reads as a reference: loaders
-    // migrate these to the envelope in memory (docs/25 E2), so this branch serves the
+    // A legacy whole-value bare ref (SPEC §host.refs) still reads as a reference: loaders
+    // migrate these to the envelope in memory (SPEC §host.refs), so this branch serves the
     // not-yet-re-saved files and fades out as they are rewritten.
     if let Some(name) = s.strip_prefix("secret://") {
         return swiss_core::secure::secretstore::valid_name(name);
@@ -123,7 +123,7 @@ pub fn is_env_ref(v: &Value) -> bool {
 }
 
 /// Expand every `${ENV_VAR}` and `${secret://name}` reference across the whole definition
-/// tree (docs/19 D4), and refuse the definition when a vault reference names a secret this
+/// tree (SPEC §host.refs), and refuse the definition when a vault reference names a secret this
 /// machine does not hold. The error carries the JSON path (`headers.Authorization references secret://x which is
 /// not in the vault`) plus no value ever — the caller prefixes the MCP's name.
 pub fn resolve_def_checked(def: &ServerDef) -> Result<ServerDef, String> {

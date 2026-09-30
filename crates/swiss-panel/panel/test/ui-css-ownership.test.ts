@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-/* docs/46 G2 - the component layer owns its classes. ui.css defines every class a ui/
+/* SPEC §panel.ui - the component layer owns its classes. ui.css defines every class a ui/
    component draws; views.css may lay a page out, but it may not restyle a library class. A
    views.css rule whose SUBJECT (the last compound of the selector) is a library element is a
-   page reaching into a component - the drift docs/46 §0.2 measured, one "row" in four
+   page reaching into a component - the drift SPEC §panel.ui measured, one "row" in four
    implementations. The count is a ratchet frozen at P1a-2: it may only go down, a page's
-   migration lowers it in the same commit, and docs/46 P9 drives it to its floor.
+   migration lowers it in the same commit, and SPEC §panel.ui drives it to its floor.
 
    Identity is the compound's FIRST class, on both sides. ui.css owns the base class of every
    subject it styles (".menu button .ic" owns "ic"; ".pane > .wide > .pane-head" owns
@@ -30,7 +30,7 @@ import { describe, expect, it } from "vitest";
 import { classesOf, allClassesOf, baseClassOf, parseCss, specificity, subjectOf } from "./css-rules.js";
 import { sheet, uiOwnedClasses } from "./styles.js";
 
-/* docs/46 P9: the ratchet's floor. P1a froze 48; per-page migrations walked it down; P9's
+/* SPEC §panel.ui: the ratchet's floor. P1a froze 48; per-page migrations walked it down; P9's
    sweep took the rest - a host sizes and inks the glyphs in its own rows through the icon's
    knobs (--ic, --ic-ink on the host; ui.css .ic reads them), the two dd sizings ride the
    selects' own classes (ui/select.ts carries ownClasses to the trigger), and the rules that
@@ -59,7 +59,7 @@ export function ownershipViolations(): string[] {
   return out;
 }
 
-describe("docs/46 G2 - views.css does not restyle the component layer", () => {
+describe("SPEC §panel.ui - views.css does not restyle the component layer", () => {
   it("the reader under the gate parses what the gates need", () => {
     const rules = parseCss("/* x { } */ .a .b > .c:hover, .d { color: red; font-weight: var(--w-body) } @media (x) { .e { margin: 0 } } @keyframes k { from { opacity: 0 } }");
     expect(rules.map((r) => r.selectors)).toEqual([[".a .b > .c:hover", ".d"], [".e"]]);

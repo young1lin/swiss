@@ -131,7 +131,7 @@ async fn health_and_panel_serve() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    // ok plus the build stamp (docs/16 H3): the loopback-only port makes a short git hash
+    // ok plus the build stamp (SPEC §host.daemon): the loopback-only port makes a short git hash
     // safe to serve unauthenticated, and it is what the status command compares against
     // the binary on disk.
     let health = json.unwrap();
@@ -234,7 +234,7 @@ async fn admin_api_lists_mcps_and_info() {
     assert_eq!(status, StatusCode::OK);
     let info = json.unwrap();
     assert_eq!(info["tokenEnv"], "SWISS_TOKEN");
-    // The build stamp rides here too (docs/16 H3) — additive to the Node shape; the panel
+    // The build stamp rides here too (SPEC §host.daemon) — additive to the Node shape; the panel
     // reads named fields only.
     assert_eq!(info["build"]["hash"], json!(env!("SWISS_GIT_HASH")));
 }
@@ -296,7 +296,7 @@ async fn panel_call_runs_a_tool_and_logs_it() {
 
 // --- the MCP endpoint through the real router ---------------------------------------------------
 
-/// P1 (docs/24): `/mcp/{name}` is the one MCP endpoint shape. A POST with a valid bearer
+/// P1 (SPEC §mcp.oauth): `/mcp/{name}` is the one MCP endpoint shape. A POST with a valid bearer
 /// reaches the same handler the old root-level shape did — the prefix is the only change.
 #[tokio::test]
 async fn new_path_serves_the_endpoint() {
@@ -321,7 +321,7 @@ async fn new_path_serves_the_endpoint() {
     }
 }
 
-/// P1 (docs/24): the hard cutover — the root single-segment shape is gone, with no alias. An
+/// P1 (SPEC §mcp.endpoint): the hard cutover — the root single-segment shape is gone, with no alias. An
 /// authenticated POST to the old shape answers the plain 404 every unknown route gets.
 #[tokio::test]
 async fn old_root_path_is_no_longer_an_mcp_endpoint() {
@@ -336,7 +336,7 @@ async fn old_root_path_is_no_longer_an_mcp_endpoint() {
         .unwrap();
     let (status, json, _) = send(&app, req).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    // P4 (docs/24) appends the migration hint when the name is registered (echo is), so pin
+    // P4 (SPEC §mcp.endpoint) appends the migration hint when the name is registered (echo is), so pin
     // the prefix: the plain "no route" 404, never an MCP answer.
     assert!(
         json.unwrap()["error"]
@@ -347,7 +347,7 @@ async fn old_root_path_is_no_longer_an_mcp_endpoint() {
     );
 }
 
-/// P4 (docs/24): a client still configured for the retired root shape gets a 404 that names
+/// P4 (SPEC §mcp.endpoint): a client still configured for the retired root shape gets a 404 that names
 /// the new home. The cutover stays hard — no alias, no serving — the hint just makes
 /// re-pointing the client a copy-paste instead of a reread of the docs.
 #[tokio::test]
@@ -368,7 +368,7 @@ async fn old_root_post_of_a_registered_mcp_names_its_new_home() {
     assert!(err.contains("update the client URL"), "{err}");
 }
 
-/// P4 (docs/24): the hint names only real MCPs — an unknown name answers the plain 404
+/// P4 (SPEC §mcp.endpoint): the hint names only real MCPs — an unknown name answers the plain 404
 /// shape unchanged, and so does every other unmatched path.
 #[tokio::test]
 async fn old_root_post_of_an_unknown_name_keeps_the_plain_404() {

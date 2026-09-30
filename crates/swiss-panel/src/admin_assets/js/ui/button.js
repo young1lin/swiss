@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* Buttons (docs/46 §2.1). Three shapes and no fourth:
+/* Buttons (SPEC §panel.ui). Three shapes and no fourth:
  *
  *   btn      a word. The page's one primary is kind "primary"; everything else is the plain
  *            push button, or "ghost" where it must not compete (a row's secondary act).
@@ -24,7 +24,7 @@
  *            them reads as one quiet affordance, not a toolbar per row.
  *
  * No handlers: a view answers through its delegated listener, addressing the button by the
- * data hook it passed in (docs/37 R5). */
+ * data hook it passed in (SPEC §panel.toolchain). */
                                        
 import { h } from "../h.js";
 import { iconNode } from "./icon.js";

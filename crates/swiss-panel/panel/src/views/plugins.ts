@@ -32,7 +32,7 @@
    is the OS (a registry Run value, a LaunchAgent, a systemd user unit), not the gateway, so the
    toggle reads and writes /api/autostart with no revision to race on.
 
-   Drawn from the library (docs/46 P5): row() and sw() for both sections, section() + card()
+   Drawn from the library (SPEC §panel.settings): row() and sw() for both sections, section() + card()
    for their frames, pageFoot() for the revision.
    ================================================================================================ */
 import type { ApiPluginRow, ApiPluginsResponse } from "../types/api.js";
@@ -55,7 +55,7 @@ function inv(): ApiPluginsResponse { return pluginInventory() || { plugins: [], 
 function rows(): ApiPluginRow[] { return inv().plugins || []; }
 function signature(): string { return rows().map((p: ApiPluginRow): string => { return p.id; }).join("\n"); }
 
-/** The dot a row needs, or null (docs/46 §3.5). The switch already says on or off, so a plugin
+/** The dot a row needs, or null (SPEC §panel.settings). The switch already says on or off, so a plugin
  *  whose state agrees with it - on and serving, on and lazily idle, off - draws no dot at all:
  *  six green dots beside six "on" switches said the same thing twice. A dot appears only when
  *  the state is not what the switch promises: work in flight (the amber pulse) or a failed
@@ -75,13 +75,13 @@ function stateLabel(p: ApiPluginRow): string {
   return p.enabled ? p.state : tr("plugins.disabled");
 }
 
-/** The dependency badge (docs/12 W3): the row ALWAYS names what a plugin requires -
+/** The dependency badge (SPEC §host.seats): the row ALWAYS names what a plugin requires -
  *  "requires connection-catalog" while the host reports the floor met, "needs X" with a
  *  "no provider" warn tag when it does not - so the build's dependency structure is visible
  *  at a glance, not only in the moment something breaks. Plugins that require nothing say
  *  nothing (null). Exported pure for the suite: the row JSON in, h() children out, so a
- *  capability name is a text node and cannot close anything (docs/37 R5). The words carry no
- *  separator of their own: the sub-line puts the " · " between its parts (docs/46 P3). */
+ *  capability name is a text node and cannot close anything (SPEC §panel.toolchain). The words carry no
+ *  separator of their own: the sub-line puts the " · " between its parts (SPEC §panel.pages). */
 export function requiresBadge(p: ApiPluginRow): HChild {
   const requires = p.requires || [];
   if (!requires.length) return null;
@@ -92,7 +92,7 @@ export function requiresBadge(p: ApiPluginRow): HChild {
 }
 
 /** "3 pages", with the list itself on hover: the ids are for the curious, the count is what
- *  a row has room for (docs/46 §3.5; "pages: mcps, traffic, tokens" ran every row long). */
+ *  a row has room for (SPEC §panel.settings; "pages: mcps, traffic, tokens" ran every row long). */
 function pagesNode(p: ApiPluginRow): HChild {
   const pages = p.pages || [];
   return pages.length
@@ -105,7 +105,7 @@ function pagesNode(p: ApiPluginRow): HChild {
  *  sits after the name, not in the lead column, because most rows have none (stateDot): a
  *  lead on one row in six would push that one name out of line with the rest. A failed
  *  start's reason replaces the sub-line as the row's one red line. Exported pure; every
- *  server string is a text node or an attribute value (docs/37 R5). */
+ *  server string is a text node or an attribute value (SPEC §panel.toolchain). */
 export function rowNode(p: ApiPluginRow): HTMLElement {
   const name = p.label || p.id;
   const state = stateDot(p);

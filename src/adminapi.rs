@@ -17,7 +17,7 @@
 //! The management API under /api — port of `adminapi.ts`.
 //!
 //! The gate: two layers ahead of every route. The loopback guard keeps anything that did not come
-//! from this machine out; the admin session (docs/48) then wants the CLI key or a browser session
+//! from this machine out; the admin session (SPEC §host.session) then wants the CLI key or a browser session
 //! cookie, so another process on this machine cannot use /api by knowing the port. (The MCP
 //! endpoints stay token-gated — that token is what AI clients authenticate with, and /api never
 //! accepts it.)
@@ -74,7 +74,7 @@ fn is_valid_name(name: &str) -> bool {
 }
 
 fn name_ok(name: &str) -> bool {
-    // docs/24 P2: no reserved words. MCP names live under /mcp/, the plugin's own domain,
+    // SPEC §mcp.endpoint: no reserved words. MCP names live under /mcp/, the plugin's own domain,
     // where they cannot shadow a host route — NAME_RE (charset/length) is the whole rule.
     is_valid_name(name)
 }
@@ -124,7 +124,7 @@ const DIRECT_FIELDS: [(&str, &[&str]); 4] = [
             "maxRows",
         ],
     ),
-    // docs/29: MariaDB is its own type with the mysql wire protocol's fields verbatim.
+    // SPEC §mcp.panel: MariaDB is its own type with the mysql wire protocol's fields verbatim.
     (
         "mariadb",
         &[
@@ -238,7 +238,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         }
         return Ok(ServerDef(def));
     }
-    // The figma type (docs/24 rev): the panel asks for a name, the type decides the rest —
+    // The figma type (SPEC §mcp.figma): the panel asks for a name, the type decides the rest —
     // endpoint, OAuth credential mode, client name. A url or auth key on a figma def would be
     // a second way to say what the type already says, so refuse them: the def stays one field
     // long and cannot be configured wrong.
@@ -357,7 +357,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
                 }
             }
         }
-        // OAuth (docs/24 D1): "auth": "oauth" hands Authorization to the gateway's OAuth
+        // OAuth (SPEC §mcp.oauth): "auth": "oauth" hands Authorization to the gateway's OAuth
         // flow; "oauthClientName" overrides the client_name registered with the provider
         // (Figma accepts only "Claude Code" or "Codex").
         if let Some(auth) = str_field(body, "auth") {
@@ -453,7 +453,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
     Ok(ServerDef(def))
 }
 
-/// Map a vault mutation failure to its HTTP answer (docs/19 D5): a bad name is a 400 that
+/// Map a vault mutation failure to its HTTP answer (SPEC §host.vault): a bad name is a 400 that
 /// quotes the grammar, a stale rev is a 409 carrying both numbers, a missing name a 404, and a
 /// failed seal a plain 500. None of them ever echoes the value.
 fn vault_error(e: &swiss_core::secure::secretstore::MutateError) -> Response {
@@ -515,7 +515,7 @@ async fn add_managed(
 /// Whether one def value carries `secret`: the `${secret://name}` envelope (or its defaulted
 /// `${secret://name:...}` form) anywhere inside a string - a header reads
 /// `Bearer ${secret://name}` - or the legacy bare whole value `secret://name` older files
-/// still hold (docs/25 E2). The grammar is refs.rs's; this only walks the tree.
+/// still hold (SPEC §host.refs). The grammar is refs.rs's; this only walks the tree.
 fn mentions_secret(v: &Value, secret: &str) -> bool {
     match v {
         Value::String(s) => swiss_core::secure::refs::names_secret(s, secret),
@@ -525,7 +525,7 @@ fn mentions_secret(v: &Value, secret: &str) -> bool {
     }
 }
 
-/// Rebuild every MCP whose definition references `secret` (docs/19, 2026-09-27 addendum).
+/// Rebuild every MCP whose definition references `secret` (SPEC §host.vault, 2026-09-27 addendum).
 /// make_adapter resolves references into the adapter it builds, so a stored value is read
 /// once per build: before this, replacing a secret reached nothing until the gateway
 /// restarted. The swap is the edit route's - the def is untouched, only re-resolved. A
@@ -583,7 +583,7 @@ async fn refresh_secret_users(ctx: &AppContext, secret: &str) -> (Vec<String>, V
 pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     let mut r = Router::new();
 
-    // The secrets scope joins the family table (docs/20 G6) right where the vault's own
+    // The secrets scope joins the family table (SPEC §host.groups) right where the vault's own
     // routes live below: the scope wraps the same write-only store, and co-locating the
     // registration with the routes keeps the two from drifting apart.
     swiss_host::secret_groups::register_secret_scopes(&_ctx.group_scopes);
@@ -593,7 +593,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // build lands — one edited module counts as much as the shell — so an update never costs the
     // operator a manual refresh.
     r = r.route("/api/info", get(|State(ctx): State<Arc<AppContext>>| async move {
-        // The build stamp (docs/16 H3) joins tokenEnv/panelVersion — additive to the Node
+        // The build stamp (SPEC §host.daemon) joins tokenEnv/panelVersion — additive to the Node
         // shape: the panel reads named fields only, and the stamp is metadata, never a secret.
         admin_json(
             StatusCode::OK,
@@ -633,7 +633,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 .iter()
                 .map(|t| serde_json::to_value(t).unwrap_or(Value::Null))
                 .collect();
-            // The tokens' two lists (docs/20 G7) join the answer: a group is a folder a token
+            // The tokens' two lists (SPEC §host.groups) join the answer: a group is a folder a token
             // sits in; it is not the "in use" marker and never affects whether a token
             // authenticates. An older gateway answered neither field — the panel renders the
             // single default group then.
@@ -713,9 +713,9 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         ),
     );
 
-    // --- the secret vault (docs/19) ----------------------------------------------------------------
+    // --- the secret vault (SPEC §host.vault) ----------------------------------------------------------------
     // Values only ever ENTER the vault: GET answers names + rev, PUT overwrites, DELETE removes.
-    // No route reads a value back — the panel cannot reveal what it never receives (docs/19 D5:
+    // No route reads a value back — the panel cannot reveal what it never receives (SPEC §host.vault:
     // write-only; a forgotten secret is re-stored, never revealed). Every mutation names the rev
     // it planned against, the same discipline the plugins API has, so two panels cannot
     // silently overwrite each other.
@@ -727,12 +727,12 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 json!({
                     "secrets": swiss_core::secure::secretstore::list_secrets(),
                     "rev": swiss_core::secure::secretstore::vault_rev(),
-                    // The one model's two lists (docs/20 G6), labels only: group names and
+                    // The one model's two lists (SPEC §host.groups), labels only: group names and
                     // each stored name's sink-resolved group. A label names a folder, never a
-                    // credential - the write-only rule (docs/19 D5) is about values, and no
+                    // credential - the write-only rule (SPEC §host.vault) is about values, and no
                     // value crosses here.
                     "groups": swiss_core::secure::secretstore::vault_groups(),
-                    // docs/26: the manual row order, raw - a stale name ranks nowhere.
+                    // SPEC §host.vault: the manual row order, raw - a stale name ranks nowhere.
                     "order": swiss_core::secure::secretstore::vault_order(),
                     "secretGroups": swiss_core::secure::secretstore::list_secrets()
                         .into_iter()
@@ -872,12 +872,12 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         ),
     );
 
-    // /api/order and /api/groups are retired (docs/20 §3): the group-scope family below
+    // /api/order and /api/groups are retired (SPEC §host.groups): the group-scope family below
     // answers both through the mcps scope - PUT /api/groups/mcps and PUT /api/groups/mcps/order -
     // with the store behind it unchanged. One protocol is what the panel implements; two doors
     // into one store is how the shapes forked in the first place.
 
-    // --- the group-scope family (docs/20 §3) ---------------------------------------------------------
+    // --- the group-scope family (SPEC §host.groups) ---------------------------------------------------------
     //
     // One family over every grouped list the panel shows: the scope segment names the list
     // (mcps, conns, rules, jobs, secrets, tokens), the handlers are generic, and each scope
@@ -989,7 +989,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
 
     // The scope's own flat order (the sidebar arrangement, the list order): ids in the
     // order the panel now sees. Group membership is untouched - one flat order sliced by
-    // group is the whole design (docs/20 §2.1).
+    // group is the whole design (SPEC §host.groups).
     r = r.route(
         "/api/groups/{scope}/order",
         put(
@@ -1018,7 +1018,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         ),
     );
 
-    // /api/mcps/{name}/group is retired with the other two (docs/20 §3): the family's member
+    // /api/mcps/{name}/group is retired with the other two (SPEC §host.groups): the family's member
     // route - PUT /api/groups/mcps/members/{name} - answers the same store, keyed by name, so
     // config-sourced MCPs work exactly as before.
 
@@ -1070,8 +1070,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                         if let Some(v) = d.started_at.clone() {
                             obj.insert("startedAt".into(), json!(v));
                         }
-                        // OAuth MCPs carry their auth state for the sidebar badge (docs/24
-                        // D5): stored credentials read authorized — expiry is the adapter's
+                        // OAuth MCPs carry their auth state for the sidebar badge (SPEC §mcp.oauth):
+                        // stored credentials read authorized — expiry is the adapter's
                         // to handle with a refresh, not the badge's to guess at.
                         if swiss_mcp::oauth::is_oauth(&d.def) {
                             let state = if swiss_mcp::oauth::credentials(&d.name).is_some() {
@@ -1224,7 +1224,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 };
                 // The one plain GET must carry resolved credentials: baseUrl, headers and
-                // proxy all pass the shared resolver first (docs/19 D4) — a missing vault
+                // proxy all pass the shared resolver first (SPEC §host.refs) — a missing vault
                 // reference fails the test honestly instead of shipping the reference text
                 // to a third party.
                 let def = match swiss_host::config::resolve_def_checked(&def) {
@@ -1446,7 +1446,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 if let Some(links) = tunnel_links(&ctx) {
                     links.rename_mcp(&name, &new_name);
                 }
-                // OAuth credentials and any live flow are name-keyed (docs/24 D1); both must
+                // OAuth credentials and any live flow are name-keyed (SPEC §mcp.oauth); both must
                 // follow or the renamed MCP wakes up needing auth it already granted. A flow
                 // mid-flight keeps running under its old name and answers this name's polls
                 // never — the operator re-POSTs, which single-flight supersedes anyway.
@@ -1467,7 +1467,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         ),
     );
 
-    // --- def revisions (docs/28 D1): same-name replacement with rollback ---------------------------
+    // --- def revisions (SPEC §mcp.revisions): same-name replacement with rollback ---------------------------
     //
     // A revision is a parked def snapshot; the live def stays the only thing that ever runs.
     // Replace parks the CURRENT def and installs a new one: every fallible step (build_def,
@@ -1717,7 +1717,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             ),
         );
 
-    // --- OAuth authorize (docs/24 D5) ---------------------------------------------------------------
+    // --- OAuth authorize (SPEC §mcp.oauth) ---------------------------------------------------------------
     //
     // POST launches one flow per name (single-flight: a live flow is handed back, a terminal
     // one is replaced) — loopback listener, discovery, dynamic registration, then the
@@ -1829,7 +1829,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     fail(&handle, err);
                     return;
                 }
-                // Approval starts the MCP (docs/24 D5): the operator just proved intent. A
+                // Approval starts the MCP (SPEC §mcp.oauth): the operator just proved intent. A
                 // failed start is still an APPROVED flow — the credentials are good, and the
                 // sidebar shows the MCP's own start error rather than a misleading auth one.
                 let mut tools = 0usize;
@@ -1923,7 +1923,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 return admin_error(StatusCode::BAD_REQUEST, &err);
             }
             // The deleted MCP's OAuth credentials and any flow entry are name-keyed
-            // (docs/24 D1); leaving them behind would make a future same-named MCP silently
+            // (SPEC §mcp.oauth); leaving them behind would make a future same-named MCP silently
             // inherit a grant it never asked for.
             if let Err(err) = swiss_mcp::oauth::clear_credentials(&name) {
                 log::log(
@@ -2016,7 +2016,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             if let (Some(obj), Some(reason)) = (body.as_object_mut(), reason) {
                 obj.insert("reason".into(), json!(reason));
             }
-            // Same badge field as the list row (docs/24 D5) — the detail view lights the
+            // Same badge field as the list row (SPEC §mcp.oauth) — the detail view lights the
             // Authorize button on needs-auth.
             if swiss_mcp::oauth::is_oauth(&d.def) {
                 let state = if swiss_mcp::oauth::credentials(&d.name).is_some() {
@@ -2052,7 +2052,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     .get("pageSize")
                     .and_then(|p| p.parse::<i64>().ok())
                     .unwrap_or(CALLS_PAGE_SIZE as i64);
-                // docs/31: q, when given, filters the page server-side — the full stored
+                // SPEC §mcp.calls: q, when given, filters the page server-side — the full stored
                 // arguments and reply are matched, not the clipped row preview.
                 let mut result = ctx
                     .calls

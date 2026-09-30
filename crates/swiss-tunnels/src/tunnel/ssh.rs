@@ -26,7 +26,7 @@
 //! a literal password keeps working exactly as before. A ref whose env var is unset resolves to
 //! "" and fails as `auth` on the first try — visible, never retried.
 //!
-//! A jump reference (docs/27 §3) rides the jump's live session instead of a socket: the
+//! A jump reference (SPEC §tunnels.jump) rides the jump's live session instead of a socket: the
 //! transport is a direct-tcpip channel opened on it and the handshake runs over that stream
 //! (SSH-over-SSH, OpenSSH -J's model). Each hop's client is an ordinary client — the chain
 //! assembles recursively through the manager's connection table, one hold per hop.
@@ -127,7 +127,7 @@ pub fn as_tunnel_error(message: impl std::fmt::Display, prefix: Option<&str>) ->
 /// Shared callback invoked when a server presents a host key.
 pub type HostKeyCallback = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// docs/27 §3.1: resolve one jump hop. Given the jump connection's id and this
+/// SPEC §tunnels.jump: resolve one jump hop. Given the jump connection's id and this
 /// connection's host:port, produce the byte stream the caller's SSH handshake rides on
 /// (a direct-tcpip channel through the jump's live session), together with the hold that
 /// keeps the jump's client alive for exactly as long as the caller's session lives.
@@ -146,7 +146,7 @@ pub type JumpDialer = Arc<
 >;
 
 /// Resolves a jump id to its stored definition — the read-only slice of the store the
-/// throwaway Test chain needs (docs/27 §3.2).
+/// throwaway Test chain needs (SPEC §tunnels.jump).
 pub type JumpDefs = Arc<dyn Fn(&str) -> Option<SshConnDef> + Send + Sync>;
 
 /// One jump dial's boxed future: the channel stream the caller's handshake rides on,
@@ -162,7 +162,7 @@ pub struct SshHooks {
     pub on_host_key: Option<HostKeyCallback>,
     /// The transport died while connected. The manager releases ports and decides about retrying.
     pub on_lost: Option<Arc<dyn Fn(TunnelError) + Send + Sync>>,
-    /// docs/27 §3.1: dial through a jump. Attached by the manager (the shared chain) or
+    /// SPEC §tunnels.jump: dial through a jump. Attached by the manager (the shared chain) or
     /// by the Test path (a throwaway chain); absent on direct and proxied connections.
     pub jump: Option<JumpDialer>,
 }
@@ -243,7 +243,7 @@ struct Live {
     intentional: Arc<AtomicBool>,
     /// Signalled when the transport future completes (any reason).
     closed: tokio::sync::watch::Receiver<bool>,
-    /// docs/27 §3.2: this session's hold on its jump hop, taken when the transport was
+    /// SPEC §tunnels.jump: this session's hold on its jump hop, taken when the transport was
     /// dialed. Dropping it together with the Live — a deliberate end or the transport
     /// watcher — releases the hop. One hold per connection covers every intermediate hop
     /// of a chain, because each hop's own client holds the hop below it.
@@ -364,7 +364,7 @@ impl SshConnection {
         let def_host = def.host.clone();
         let def_port = def.port;
         let result = tokio::time::timeout(READY_TIMEOUT, async {
-            // docs/27 §2.5/§3.1: a jump rides the hop's live session — the transport IS
+            // SPEC §tunnels.proxy, §tunnels.jump: a jump rides the hop's live session — the transport IS
             // the direct-tcpip channel opened on it, and the SSH handshake runs on the
             // channel stream (SSH-over-SSH, OpenSSH -J's model; each hop recursively
             // resolves its own jump first, and the 15s budget here covers the whole
@@ -488,7 +488,7 @@ impl SshConnection {
     ) -> Result<(), TunnelError> {
         let result = match def.auth_type {
             super::types::AuthType::Password => {
-                // Vault refs are strict at the connect boundary (docs/19 D4): a missing
+                // Vault refs are strict at the connect boundary (SPEC §host.refs): a missing
                 // secret refuses the connection with a reason, never an empty password.
                 let password = refs::resolve(def.password.as_deref().unwrap_or(""))
                     .map_err(|e| TunnelError::new(format!("password: {e}"), FailureKind::Config))?;
@@ -553,8 +553,8 @@ impl SshConnection {
     /// task and `hold` — the manager's reference on this client — travels with it, so the
     /// connection is released exactly when the session is over and not a moment before.
     ///
-    /// russh has had PTY channels all along; no new SSH dependency is involved (docs/14
-    /// §4). What is new is the shape of the plumbing on this side of it.
+    /// russh has had PTY channels all along; no new SSH dependency is involved (SPEC §terminal.remote).
+    /// What is new is the shape of the plumbing on this side of it.
     pub async fn open_shell(
         &self,
         size: PtySize,
@@ -619,7 +619,7 @@ impl SshConnection {
         Ok(())
     }
 
-    // --- non-interactive exec and SFTP (docs/34 §11, §20) ---------------------------------------
+    // --- non-interactive exec and SFTP (SPEC §remote.transport, §remote.actions) ---------------------------------------
 
     /// The live handle clone every operation below starts with: connected-state check and
     /// Arc bump in one place, identical to open_channel/open_shell above.
@@ -643,7 +643,7 @@ impl SshConnection {
     /// Run one non-interactive command over a session channel, streaming stdout/stderr
     /// into `events` AS THEY ARRIVE (never read-to-end), and return the exit status.
     ///
-    /// Cancellation is cooperative and real (docs/34 §19): on cancel the channel is
+    /// Cancellation is cooperative and real (SPEC §remote.actions): on cancel the channel is
     /// closed from this side, a bounded drain collects whatever the far side flushes,
     /// and the operation resolves as canceled — no future-dropping pretence. The
     /// `hold` lease travels with this future, so the connection reference lives
@@ -771,7 +771,7 @@ impl SshConnection {
         result
     }
 
-    /// Open one SFTP session over this connection (docs/34 §20): a session channel, the
+    /// Open one SFTP session over this connection (SPEC §remote.actions): a session channel, the
     /// "sftp" subsystem request, then russh-sftp's handshake over the channel stream.
     /// One SFTP session per operation keeps lifetimes obvious; the connection itself is
     /// still shared and refcounted underneath.
@@ -934,7 +934,7 @@ impl SshConnection {
     /// runs WITHOUT the persistence hook — a successful Test of a keyless connection stores
     /// nothing (the first real connect is what learns and persists the fingerprint).
     ///
-    /// docs/27 §3.2: a jump def rides a throwaway CHAIN — one one-off client per hop,
+    /// SPEC §tunnels.jump: a jump def rides a throwaway CHAIN — one one-off client per hop,
     /// resolved through the defs argument at dial time. Nothing is shared with the
     /// manager's connection table, and no hop learns a host key.
     pub async fn test(def: &SshConnDef, defs: Option<JumpDefs>) -> TestResult {
@@ -980,7 +980,7 @@ impl SshConnection {
     }
 }
 
-/// The Test path's jump dialer (docs/27 §3.2): every hop is a one-off client with no
+/// The Test path's jump dialer (SPEC §tunnels.jump): every hop is a one-off client with no
 /// persistence hook — a successful Test of a keyless hop stores nothing (the first real
 /// connect is what learns the fingerprint), and nothing in the manager's shared table is
 /// pinned by a probe.
@@ -1087,7 +1087,7 @@ fn read_key(def: &SshConnDef) -> Result<PrivateKey, TunnelError> {
         )
     })?;
     let text = String::from_utf8_lossy(&bytes);
-    // Same strict connect-time contract as the password (docs/19 D4).
+    // Same strict connect-time contract as the password (SPEC §host.refs).
     let passphrase = refs::resolve(def.passphrase.as_deref().unwrap_or(""))
         .map_err(|e| TunnelError::new(format!("passphrase: {e}"), FailureKind::Config))?;
     russh::keys::decode_secret_key(&text, Some(&passphrase)).map_err(|err| {
@@ -1131,7 +1131,7 @@ impl TestResult {
     }
 }
 
-// --- interactive shell plumbing (docs/14 T2) -------------------------------------------------
+// --- interactive shell plumbing (SPEC §terminal.remote) -------------------------------------------------
 
 /// How long a canceled exec drains for before giving up on the far side's flush.
 /// Bounded so a wedged remote command cannot hold a cancel hostage.
@@ -1160,7 +1160,7 @@ fn is_already_exists(err: &russh_sftp::client::error::Error) -> bool {
 }
 
 /// One streaming remote read over SFTP. Owns the file handle, the SFTP session and the
-/// connection lease: all three live exactly as long as the reader (docs/34 §29).
+/// connection lease: all three live exactly as long as the reader (SPEC §remote.transport).
 struct SftpRead {
     file: russh_sftp::client::fs::File,
     _session: Arc<russh_sftp::client::SftpSession>,
@@ -1278,7 +1278,7 @@ fn answer_of(reply: Option<ChannelMsg>, what: &str) -> Result<(), TunnelError> {
 ///
 /// The send is deliberately NOT inside the select: parking here is the backpressure that
 /// stops us draining the SSH window, which is what makes the far side slow down instead of
-/// this process buffering an unbounded flood (docs/14 §6.8).
+/// this process buffering an unbounded flood (SPEC §terminal.sessions).
 async fn pump_output(read: &mut ChannelReadHalf, out: PtyOut) {
     let mut code: Option<i32> = None;
     loop {
@@ -1320,7 +1320,7 @@ async fn pump_output(read: &mut ChannelReadHalf, out: PtyOut) {
 /// Consumer -> remote, until the consumer drops its session or the transport refuses.
 ///
 /// Its own task so that a flooding terminal cannot starve it: an interrupt typed while the
-/// output pump is parked on a full queue still reaches the far side (docs/14 §10 item 7).
+/// output pump is parked on a full queue still reaches the far side (SPEC §terminal.verify item 7).
 async fn pump_input(mut input: PtyIn, write: ChannelWriteHalf<Msg>) {
     while let Some(next) = input.next().await {
         let sent = match next {
@@ -1388,7 +1388,7 @@ mod tests {
         );
     }
 
-    /// docs/27 §2.4: classify_message scans for the substrings "auth" and "host key",
+    /// SPEC §tunnels.proxy: classify_message scans for the substrings "auth" and "host key",
     /// so a fixed proxy failure string that could ever flow through a classifier must
     /// avoid both — a proxy outage is a network event and the retry policy may run.
     /// (The spec's verbatim "...socks5 auth method" wording DOES contain "auth"; those
@@ -1455,7 +1455,7 @@ mod tests {
 
     #[test]
     fn a_missing_vault_passphrase_reference_refuses_before_the_dial() {
-        // docs/19 D4 at the tunnel surface: a passphrase reference this machine does not hold
+        // SPEC §host.refs at the tunnel surface: a passphrase reference this machine does not hold
         // is a Config failure naming the reference — before any network attempt, and never an
         // empty passphrase sent to a key parser.
         let key =

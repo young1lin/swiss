@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The cleanup acceptance tests (docs/44 SS2.2): the two ways the harness promised
+//! The cleanup acceptance tests (SPEC §testing.it): the two ways the harness promised
 //! containers never outlive their run. Both drive a REAL second test process - the
 //! same binary, re-execed with --exact - because both hazards are about process
 //! boundaries, not in-process behavior:

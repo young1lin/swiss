@@ -15,7 +15,7 @@
  */
 
 // @vitest-environment happy-dom
-/* docs/46 P9: the Jobs view's "unavailable" note is the library's empty state (G5
+/* SPEC §panel.ui: the Jobs view's "unavailable" note is the library's empty state (G5
    views/jobs.ts 2 -> 0). The walk instance serves jobs, so the state cannot be reached
    live; it is pinned here instead: a gateway with no plugin inventory and a failed probe
    gets the one empty shape - glyph, title, hint - in place of the loading placeholder. */
@@ -26,7 +26,7 @@ vi.mock("../src/jobs.js", () => ({ probeJobs: async () => false }));
 vi.mock("../src/polling.js", () => ({ jobsChipText: () => "", loadJobs: async () => undefined }));
 vi.mock("../src/job-state.js", () => ({ clearJobsView: () => undefined }));
 
-describe("the Jobs view on a gateway without the jobs subsystem (docs/46 P9)", () => {
+describe("the Jobs view on a gateway without the jobs subsystem (SPEC §panel.ui)", () => {
   it("paints the library's empty state with its glyph, title and hint", async () => {
     const pane = document.createElement("div");
     pane.id = "pane";

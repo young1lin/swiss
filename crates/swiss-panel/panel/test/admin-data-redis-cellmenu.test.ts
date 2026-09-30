@@ -23,11 +23,11 @@ import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-
 import { tr } from "../src/i18n.js";
 import type { ApiDbRedisValue, ApiDbStreamWindow } from "../src/types/api.js";
 
-/* docs/43 M2 fixup: the typed value table had NO right-click at all — a zset member that is
+/* SPEC §data.tabs: the typed value table had NO right-click at all — a zset member that is
  *  a long JSON blob could only be glimpsed through the title hover, and stream values (a
- *  read-only pre) had nothing. The menu is the docs/22 W5.3 vocabulary on the redis side:
+ *  read-only pre) had nothing. The menu is the SPEC §data.grid vocabulary on the redis side:
  *  copy the cell, or open the same read-only viewer the SQL grid uses.
- *  docs/46 P7-3: on happy-dom (it was a hand-rolled micro-DOM), so the menu is read the way a
+ *  SPEC §panel.pages: on happy-dom (it was a hand-rolled micro-DOM), so the menu is read the way a
  *  person meets it: a real contextmenu event on the cell, the #menu in the document, a click. */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -70,7 +70,7 @@ function rightClick(cell: HTMLElement): HTMLElement | null {
 }
 const labels = (menu: HTMLElement): string[] => Array.from(menu.querySelectorAll("button")).map((b) => b.textContent ?? "");
 
-describe("the typed value table's right-click (docs/43 M2 fixup)", () => {
+describe("the typed value table's right-click (SPEC §data.tabs)", () => {
   it("a zset member cell opens a menu offering copy and the read-only viewer", () => {
     const member = cellWith(mountZset({ "{\"id\":1}": "1767225600" }), "{\"id\":1}");
     expect(member, "the member cell exists").toBeTruthy();
@@ -102,9 +102,9 @@ describe("the typed value table's right-click (docs/43 M2 fixup)", () => {
     expect(head.querySelector(".sheet-sub")!.textContent).toBe("z · zset");
   });
 
-  it("a stream value's window cells carry the same right-click (docs/45 S2)", () => {
-    // The stream view moved off the read-only pre onto its own window table; the docs/22
-    // W5.3 cell menu travels with the cells that actually show data now.
+  it("a stream value's window cells carry the same right-click (SPEC §data.streams)", () => {
+    // The stream view moved off the read-only pre onto its own window table; the SPEC §data.grid
+    // cell menu travels with the cells that actually show data now.
     const wrap = mountValue({
       key: "z", type: "stream", ttl: -1, length: 1,
       entries: [{ id: "1690000000000-0", ts: "2023-07-22T04:00:00.000Z", fields: { a: "1" } }],

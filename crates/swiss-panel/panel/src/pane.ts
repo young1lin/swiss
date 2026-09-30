@@ -52,7 +52,7 @@ function patchDetailHead(): void {
     const started = m.lifecycle === "started";
     primary.textContent = busyVerb ? "…" : (started ? tr("pane.disable") : tr("pane.enable"));
     primary.disabled = !!busyVerb;
-    // No onclick here (docs/37 R5): #pane's delegated click derives the verb from live state.
+    // No onclick here (SPEC §panel.toolchain): #pane's delegated click derives the verb from live state.
   }
 }
 
@@ -66,12 +66,12 @@ function stateDot(m: ApiMcpRow | PhantomMcpRow, busyVerb: string | null | undefi
 function headSubtitle(m: ApiMcpRow | PhantomMcpRow): string {
   const bits = [];
   if (mcpBusyVerb(m.name)) bits.push(mcpBusyVerb(m.name) + "…");
-  else bits.push(m.state === "stopped" ? tr("pane.disabled") : m.state); // docs/28 D2: the honest word
+  else bits.push(m.state === "stopped" ? tr("pane.disabled") : m.state); // SPEC §mcp.revisions: the honest word
   bits.push(m.type);
   bits.push(m.source);
   if (m.state === "up" && m.latencyMs != null) bits.push(m.latencyMs + " ms");
   if (m.startedAt) bits.push(tr("pane.sinceTime", { time: new Date(m.startedAt).toLocaleTimeString(locale()) }));
-  // The OAuth badge (docs/24 D5): stored credentials read authorized; expiry is the
+  // The OAuth badge (SPEC §mcp.oauth): stored credentials read authorized; expiry is the
   // gateway's to handle with a refresh, not the badge's to guess at.
   if (m.oauth) bits.push(tr("pane.oauthState", { state: m.oauth }));
   return bits.join("  ·  ");
@@ -83,7 +83,7 @@ function renderPane(): void {
   const pane = $("pane");
   const d = mcpDetail();
   if (!d) {
-    // The shared empty state (docs/18 V7), and the one place it carries an action: the pane's
+    // The shared empty state (SPEC §panel.design), and the one place it carries an action: the pane's
     // own "add" answers the question the empty screen just asked.
     fill(pane, emptyNode(mcpRows().length
       ? { icon: "mcp", title: tr("pane.selectMcp"), hint: tr("pane.toolsResourcesConfigurationAppear") }
@@ -111,13 +111,13 @@ function renderPane(): void {
   // The title is the MCP's identity, so it is set in the sans face. The mount path is a value you
   // copy, so it keeps the monospace one — down in the status line, where it costs nothing.
   //
-  // The head is BUILT (docs/37 R5): the MCP's name, description and status line are text nodes,
+  // The head is BUILT (SPEC §panel.toolchain): the MCP's name, description and status line are text nodes,
   // so a name with markup in it is a name, not a payload. It is the library's resource head
-  // (docs/46 §3.2): the name row and the tabs pin, the words between them scroll away.
+  // (SPEC §panel.pages): the name row and the tabs pin, the words between them scroll away.
   // Hoisted so the comparison literals stay out of the h() children (i18n gate).
   const oauthKind = !!d.config && (d.config.auth === "oauth" || d.config.type === "figma");
   const actions = [
-    // OAuth MCPs get their authorize action in the header (docs/24 D5) — it is the one
+    // OAuth MCPs get their authorize action in the header (SPEC §mcp.oauth) — it is the one
     // action this MCP cannot live without until it runs, and Reauthorize is the anytime
     // re-consent path after a revoked grant. Disabled while a flow this panel started is
     // still polling.
@@ -126,14 +126,14 @@ function renderPane(): void {
       : null,
     // Tinted only for Start: blue is the affirmative action, and a header full of blue Stop
     // buttons on six healthy MCPs says nothing. Disable is a plain button with the same footprint.
-    // docs/28 D2: the verb is Disable/Enable, not Stop/Start — a stop that survives a boot and
+    // SPEC §mcp.revisions: the verb is Disable/Enable, not Stop/Start — a stop that survives a boot and
     // refuses every client IS a disable; the mechanism below keeps the stop/start verbs.
     btn(busyVerb ? "…" : started ? tr("pane.disable") : tr("pane.enable"),
       { kind: started ? undefined : "primary", id: "primaryBtn", disabled: !!busyVerb }),
     moreBtn(tr("pane.moreActions"), { id: "menuBtn" }),
   ].filter((b): b is HTMLButtonElement => b != null);
 
-  /* Tab names are module-level data (docs/38 L7): stored as keys via tk(), painted through
+  /* Tab names are module-level data (SPEC §panel.i18n): stored as keys via tk(), painted through
    tr() so a language flip re-renders them with the page. */
   const TAB_LABELS: Record<string, string> = {
     tools: tk("pane.tools"), resources: tk("pane.resources"), prompts: tk("pane.prompts"),
@@ -159,7 +159,7 @@ function renderPane(): void {
   const la = lastActionOf(d.name);
 
   // One frame holds the lot — head, tabs, body, notes — so the measure is applied once and they
-  // all share a left edge. The wide one (docs/46 §3.2): the resource template, and the frame the
+  // all share a left edge. The wide one (SPEC §panel.pages): the resource template, and the frame the
   // head's two layers pin in. One width for every tab: changing tabs must not resize the page, so
   // Logs no longer opts into a wider measure of its own — every tab has it.
   fill(pane, paneBody({ wide: true },
@@ -168,7 +168,7 @@ function renderPane(): void {
     m.reason ? note(m.reason, { err: true }) : null,
     la ? note(la.at + " · " + la.msg, { err: !!la.err }) : null));
 
-  // Wire up — ONE delegated claim per event type on the pane (docs/37 R5), assigned (not
+  // Wire up — ONE delegated claim per event type on the pane (SPEC §panel.toolchain), assigned (not
   // addEventListener) so a repaint re-assigns the same property instead of stacking listeners.
   // The chrome dispatch lives here; everything inside #tabbody is answered by run-history's
   // dispatchers, which read live state at event time.
@@ -185,12 +185,12 @@ function renderPane(): void {
   if (menuWasOpen) openMenu(d, m);
 }
 
-/** The pane's own chrome, one click at a time (docs/37 R5): header buttons, the tab bar and the
+/** The pane's own chrome, one click at a time (SPEC §panel.toolchain): header buttons, the tab bar and the
  *  empty state's action. The ... menu's rows answer through the library menu's own handlers
  *  (anchoredMenu), which stop the click before it reaches this listener. Returns true when the
  *  click was chrome and run-history's tab-body dispatch must not see it.
  *
- *  Behavior note (docs/37 §10.1): the primary button and the menu's Enable/Disable verb are
+ *  Behavior note (SPEC §panel.toolchain): the primary button and the menu's Enable/Disable verb are
  *  derived from the LIVE row at click time, not from the object renderPane closed over — a
  *  6 s poll that replaced mcpRows() between render and click can no longer fire Stop at a row
  *  that already stopped (patchDetailHead patched the label; the closure kept the old verb). */
@@ -234,7 +234,7 @@ function menuAct(d: McpDetail, a: string): void {
     return;
   }
   if (a === "restart") void act(d.name, "restart");
-  else if (a === "stop" || a === "start") void act(d.name, a); // docs/28 D3: Disable/Enable beside Restart
+  else if (a === "stop" || a === "start") void act(d.name, a); // SPEC §mcp.revisions: Disable/Enable beside Restart
   else if (a === "rename") void renameMcp(d.name);
   else if (a === "delete") void removeMcp(d.name);
   else if (a === "edit") { d.tab = "config"; startEdit(); }
@@ -287,7 +287,7 @@ function menuItems(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): MenuItem[] {
     { sep: true },
     {
       label: tr(m.lifecycle === "started" ? "pane.disable" : "pane.enable"),
-      // The verb is read from the live row at click time, like the primary button's (docs/37 §10.1).
+      // The verb is read from the live row at click time, like the primary button's (SPEC §panel.toolchain).
       fn: () => { const live = rowOf(d.name); menuAct(d, (live || m).lifecycle === "started" ? "stop" : "start"); },
     },
     { label: tr("pane.restart"), fn: run("restart") },

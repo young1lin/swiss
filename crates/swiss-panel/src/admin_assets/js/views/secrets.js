@@ -15,7 +15,7 @@
  */
 
 /* ================================================================================================
-   Secrets — the Settings group's second page (docs/19 D6).
+   Secrets — the Settings group's second page (SPEC §host.vault).
 
    The vault is host-owned: every plugin may depend on it, so it is not a plugin itself and
    lives beside Plugins, not inside it. Names only, ever (D5: write-only — a forgotten value
@@ -23,14 +23,14 @@
    credential field, not the credential. Writes carry the rev the list was drawn from, the
    same discipline Tokens and Plugins have.
 
-   Groups (docs/20 G6, docs/26): the list renders through the groups component under the
+   Groups (SPEC §host.groups, SPEC §host.vault): the list renders through the groups component under the
    full family contract — rows drag within and across groups in one gesture, the grip
    reorders groups. The stored order is the vault's third list; empty means name order.
    The store form carries a Group select; the header + preselects it. Group labels are
    folder names, not credentials — they are the one thing about a secret a listing may say
    beyond its name.
 
-   Replacing a value (docs/19, 2026-09-27 addendum): the vault never shows a value, so a
+   Replacing a value (SPEC §host.vault, 2026-09-27 addendum): the vault never shows a value, so a
    replace is a store under the same name. The row's ⋯ → Replace value… points the one form
    at the row, the primary reads Replace whenever the typed name is already stored, and the
    gateway rebuilds every MCP that references the name - the toast names them.
@@ -78,7 +78,7 @@ async function loadSecrets()                {
   applyOrder();
 }
 
-/** Rank by the stored order (docs/26): names the list mentions keep their slot, everything
+/** Rank by the stored order (SPEC §host.vault): names the list mentions keep their slot, everything
  *  else lands after them in name order — the same rule the tunnels store ranks by. */
 function applyOrder()       {
   const rank                         = {};
@@ -93,14 +93,14 @@ function applyOrder()       {
   });
 }
 
-/** One secret's row (docs/46 §3.5): the name, and under it the reference in mono - the value
+/** One secret's row (SPEC §panel.settings): the name, and under it the reference in mono - the value
  *  a user copies into a credential field, so it is the one thing the sub-line says. The
  *  sentence every row used to repeat after it ("substituted at run time wherever a credential
  *  is used") said the same thing N times; the page description says it once. Copy ref is a
  *  ghost button with the copy glyph - a quiet act beside each row, not N standing hairline
  *  buttons - and Delete waits behind the ⋯ (rule 4: red never sits on a row). The buttons stay
  *  delegated on #pane (wire), so the groups component rebuilding a card never rewires them.
- *  A name is a text node and an attribute value (docs/37 R5): neither can close a tag. */
+ *  A name is a text node and an attribute value (SPEC §panel.toolchain): neither can close a tag. */
 function rowNode(name        )              {
   return row({
     name,
@@ -112,7 +112,7 @@ function rowNode(name        )              {
   });
 }
 
-/** The secrets scope's cfg for mountGroup (docs/26): the full family contract — rows drag
+/** The secrets scope's cfg for mountGroup (SPEC §host.vault): the full family contract — rows drag
  *  within and across groups in one gesture (a drop carries order + membership), the grip
  *  reorders groups. Rows are plain names, so rowId is the identity. */
 function skCfg()                   {
@@ -144,7 +144,7 @@ function skCfg()                   {
     rowsById: ()           => { return secrets.list; },
     rowId: (r        )         => { return r; },
     groupOfRow: groupOfName,
-    /* rowNode, not rowsHtml + rowSel (docs/37 R5): the component wires the node this builder
+    /* rowNode, not rowsHtml + rowSel (SPEC §panel.toolchain): the component wires the node this builder
      * hands back, so the round trip through a parsed string and a [data-secret] lookup - and
      * the CSS.escape that lookup needed because a secret name is arbitrary bytes from the
      * vault's side - is gone. */
@@ -154,7 +154,7 @@ function skCfg()                   {
   };
 }
 
-/** Move one row to just before/after another (docs/26): re-render from the moved list, then
+/** Move one row to just before/after another (SPEC §host.vault): re-render from the moved list, then
  *  persist the flat order. The PUT bumps the rev the next value write must name, so the
  *  reload that follows it is not optional polish. */
 function moveSecretRow(id        , target        , before         )       {
@@ -171,7 +171,7 @@ function moveSecretRow(id        , target        , before         )       {
   });
 }
 
-/** Put one secret in a group (the cross-group half of a row drag, docs/26): the family's
+/** Put one secret in a group (the cross-group half of a row drag, SPEC §host.vault): the family's
  *  member PUT bumps the rev too, so the reload resyncs both the list and the rev the next
  *  value write needs. */
 async function moveSecretGroup(id        , group               )                {
@@ -226,7 +226,7 @@ function patch()       {
   paintGroups(); // repaints the rows AND the chip
 }
 
-/** Keep the form's Group select honest after a group mutation (docs/20 G6): a rename or
+/** Keep the form's Group select honest after a group mutation (SPEC §host.groups): a rename or
  *  delete that the poll reports must not leave a chosen-but-dead option in the box - the
  * next store would assign into a 400. The selection survives while its group lives; a dead
  * one falls back to the scope's last-used, else the first group. */
@@ -267,7 +267,7 @@ function render()       {
       desc: [tr("secrets.descLead"), h("code", null, "${secret://name}"), tr("secrets.descTail")],
       actions: [iconBtn("folder-plus", tr("secrets.newGroup"), { id: "skNewGroup" })],
     }),
-    // The inline create form (docs/35 §3): one row, the Group select beside the primary.
+    // The inline create form (SPEC §panel.groups): one row, the Group select beside the primary.
     inlineForm(
       h("input", { id: "skName", placeholder: tr("secrets.nameLowercaseKebabZ") }),
       h("input", { id: "skValue", type: "password", placeholder: tr("secrets.valueWriteOnlyNever") }),

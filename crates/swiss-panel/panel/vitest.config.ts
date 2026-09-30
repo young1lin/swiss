@@ -25,15 +25,15 @@ import { fileURLToPath } from "node:url";
    jobs.ts, "../vendor/xterm/…" from views/terminal.ts) by the path the SERVED tree needs:
    emission writes them back beside js/vendor, where the browser resolves them. From the
    source tree that path does not exist, so this alias points vite at the real vendor files.
-   tsc needs no alias: panel/src/vendor/<same-path>/index.d.ts mirrors the shapes (docs/36
-   D7) and the specifier resolves there for type-checking. */
+   tsc needs no alias: panel/src/vendor/<same-path>/index.d.ts mirrors the shapes (SPEC §panel.toolchain)
+   and the specifier resolves there for type-checking. */
 const vendorDir = resolve(fileURLToPath(new URL("../src/admin_assets/js/vendor", import.meta.url)));
 
 /* Same problem, other direction: page descriptors carry their ENTRY as the served path
    ("/admin/js/views/traffic.js"), and page-registry's loader imports that string at
    runtime. From the test tree the path does not exist either, so the served /admin/js/
-   prefix maps onto panel/src - the TypeScript twin of the line-for-line emit (docs/36 D2).
-   Without it, a suite that drives the real navigatePage (docs/39 S4's seat test) cannot
+   prefix maps onto panel/src - the TypeScript twin of the line-for-line emit (SPEC §panel.toolchain).
+   Without it, a suite that drives the real navigatePage (SPEC §panel.nav's seat test) cannot
    load a single view module; with it, the loaded module IS the source instance the suite
    imported directly. */
 const srcDir = resolve(fileURLToPath(new URL("./src", import.meta.url)));

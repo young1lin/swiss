@@ -20,7 +20,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emptyNode, iconNode } from "../src/util.js";
 
-/* docs/37 R5: the glyph and empty-state builders return NODES, so this file carries a
+/* SPEC §panel.toolchain: the glyph and empty-state builders return NODES, so this file carries a
    minimal element stub (attrs + kids + writable props) and a serializer that spells the
    tree back out in tag form for the substring assertions below. */
 class NodeStub {}
@@ -49,13 +49,13 @@ const ser = (n: unknown): string => {
   return "<" + node.tag + cls + attrs + ">" + (node.kids || []).map(ser).join("") + "</" + node.tag + ">";
 };
 
-/* Visual refresh V2 (docs/18): one inline svg sprite in the shell replaces every unicode
+/* Visual refresh V2 (SPEC §panel.design): one inline svg sprite in the shell replaces every unicode
    glyph icon — ↻ ☾ ☀ ⋯ × + › each had their own weight and baseline. These anchors pin the
    sprite's presence, the ban on the old entities, and icon()'s contract. */
 
 const admin = join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets");
 
-/* The sources are TypeScript under panel/src now (docs/36); .d.ts files carry no markup and
+/* The sources are TypeScript under panel/src now (SPEC §panel.toolchain); .d.ts files carry no markup and
    are skipped. The emitted js tree is proven equivalent by panel-emit.test.ts. */
 function walkSrc(dir: string): string[] {
   const out: string[] = [];
@@ -87,7 +87,7 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
     expect(shell).not.toContain("i-refresh-cw"); // the sprite entry goes with the button
     expect(shell).toContain('id="memChip"');
     // Focus mode (js/immersive.js) is the page-sized answer: the context bar's far right
-    // carries the expand control, painted with its own two-state sprite icons (docs/13 D5
+    // carries the expand control, painted with its own two-state sprite icons (SPEC §panel.nav
     // rev. — one shell-owned control, the same in-flow slot in normal and focus modes).
     expect(shell).toContain('id="expandBtn"');
   });
@@ -95,12 +95,12 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
   it("the toolbar token button is gone - token management lives under the MCP group", () => {
     // The token exists FOR MCP clients, so the panel manages it where that story is told:
     // the MCP group's Token page. The toolbar's right side keeps only Appearance. i-key is
-    // BACK in the sprite since fix-plan #14 (the Data grid's PK column marker, not the
+    // BACK in the sprite since SPEC §panel.design (the Data grid's PK column marker, not the
     // token button - which stays gone).
     expect(shell).not.toContain('id="tokenBtn"');
   });
 
-  it("fix-plan #14: the V2 cleanup's symbols are in the sprite", () => {
+  it("SPEC §panel.design: the V2 cleanup's symbols are in the sprite", () => {
     // The key marker, the remove/undo row controls, the picker's folder/file rows and its
     // Up button; i-x and i-history were already there for the chrome.
     for (const id of ["i-key", "i-undo", "i-arrow-up", "i-folder", "i-file", "i-history", "i-x"]) {
@@ -108,7 +108,7 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
     }
   });
 
-  it("fix-plan #14: the retired unicode glyphs are gone from every module source", () => {
+  it("SPEC §panel.design: the retired unicode glyphs are gone from every module source", () => {
     // The acceptance grep as a pin: key marker, remove/undo, history, folder, file (and
     // the gear the plan found already retired). Locale dictionaries never carried these.
     for (const glyph of ["\u26bf", "\u2715", "\u21a9", "\u21ba", "\ud83d\udcc1", "\ud83d\udcc4", "\u2699"]) {
@@ -125,7 +125,7 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
   });
 
   it("iconNode() points at the sprite, hidden by default, labelled on request", () => {
-    // docs/37 R5: the glyph is a BUILT node - the assertions read the attributes the
+    // SPEC §panel.toolchain: the glyph is a BUILT node - the assertions read the attributes the
     // builder set, against the element stub this file installs above.
     const hrefOf = (n: unknown) => ser((n as { kids: unknown[] }).kids[0]);
     const attr = (n: unknown, k: string) => (n as unknown as { attrs: Record<string, string> }).attrs[k];
@@ -136,7 +136,7 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
   });
 });
 
-/* Visual refresh V7 (docs/18): one empty-state template — icon, title, hint, optional ghost
+/* Visual refresh V7 (SPEC §panel.design): one empty-state template — icon, title, hint, optional ghost
    action — used by the MCP pane, Jobs, Tunnels, Plugins and Data. Terminal keeps its own
    (it lives in the black frame with its own token system). */
 describe("visual refresh V7 — one empty-state template", () => {

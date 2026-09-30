@@ -19,13 +19,13 @@ import { describe, expect, it } from "vitest";
 import { styleSelect } from "../src/ui/select.js";
 
 /* The styled dropdown's pick writes the native select programmatically, which fires no native
-   change event, so dropdown.ts dispatches one itself. Before docs/37 R5 every view listened ON
+   change event, so dropdown.ts dispatches one itself. Before SPEC §panel.toolchain every view listened ON
    the select (sel.onchange), and a non-bubbling Event("change") reached it. R5 moved the Data,
    detail and Runs views to one delegated listener on the pane root - which a non-bubbling event
    never reaches. On 19998 that was the Data connection picker repainting its label and doing
    nothing else (2026-09-20). This drives the real menu on a real DOM and listens where the
    views listen now. */
-describe("dropdown pick -> change event (docs/37 R5 delegation)", () => {
+describe("dropdown pick -> change event (SPEC §panel.toolchain delegation)", () => {
   function mount(): { pane: HTMLDivElement; sel: HTMLSelectElement; trig: HTMLButtonElement } {
     document.body.innerHTML = "";
     const pane = document.createElement("div");

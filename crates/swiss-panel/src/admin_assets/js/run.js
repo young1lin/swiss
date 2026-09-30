@@ -68,7 +68,7 @@ function readRunArgs(tool               , idPrefix         )                    
   return out;
 }
 
-/** The node twin of argFieldsHtml (docs/37 R5): same ids, same data-arg/data-kind contract,
+/** The node twin of argFieldsHtml (SPEC §panel.toolchain): same ids, same data-arg/data-kind contract,
  *  same required star - but schema keys, descriptions and placeholders are text nodes and
  *  properties, so a hostile schema key from a proc child is a value, never markup. */
 function argFieldsNode(tool               , idPrefix         , values                          )         {

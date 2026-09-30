@@ -22,14 +22,14 @@ import { dbConn } from "./db-fixtures.js";
    view works every time. It was written for a crash — unmount nulled state.db, a dynamic
    import evaluated data-view.js exactly once, so the module-top literal never ran again and
    every SECOND entry died inside renderDbView's wiring ("Cannot read properties of null
-   (reading 'grep')"), leaving SQL console Run and the cell-edit handlers dead. docs/37 R4
+   (reading 'grep')"), leaving SQL console Run and the cell-edit handlers dead. SPEC §panel.toolchain
    retired the mechanism rather than the symptom: db-state.ts owns the record, unmount resets
    it instead of nulling it, and "is the view on screen" became a flag of its own. The crash
    is now unreachable, so these tests assert the CONTRACT — fresh record on entry, nothing
    buffered after leaving, a second and third entry that work — which is what the user was
    owed all along. Drives the REAL modules under a hand-rolled DOM (same trick as
    admin-navigation.test.ts).
-   docs/37 R5: renderDbView builds its skeleton with h()/fill(), so the fake nodes extend a
+   SPEC §panel.toolchain: renderDbView builds its skeleton with h()/fill(), so the fake nodes extend a
    Node stub (h() instanceof-checks every child) and document carries the NS/fragment
    factories the builders call. */
 class NodeStub {}
@@ -159,7 +159,7 @@ describe("the Data view survives unmount and remount", () => {
     // The original bug: unmount nulled state.db, and the module-top literal that built it
     // ran exactly once, so this threw "Cannot read properties of null (reading 'grep')"
     // inside renderDbView and left the SQL console and cell editing unwired — "Data is
-    // dead after navigating away and back". docs/37 R4 made it unreachable rather than
+    // dead after navigating away and back". SPEC §panel.toolchain made it unreachable rather than
     // handled: db-state.ts owns a record that is never absent. This still drives the real
     // path, because what the user is owed is a working second entry, not a mechanism.
     await expect(view.mount()).resolves.toBeUndefined();
@@ -174,7 +174,7 @@ describe("the Data view survives unmount and remount", () => {
   });
 });
 
-/* The workspace framing (docs/13 D5, as revised): renderDbView turns the pane into a
+/* The workspace framing (SPEC §panel.nav, as revised): renderDbView turns the pane into a
    full-bleed body by adding the library's .full (and the page's own hook,
    .db-host), and views/data.js's unmount must take both back off —
    navigatePage always awaits unmount before the next page paints, so a class left behind
@@ -195,11 +195,11 @@ describe("the workspace framing class is taken back off on unmount", () => {
   });
 });
 
-/* The page bar's count chip (docs/18 V3 moved it there). countText() used to return "Data",
+/* The page bar's count chip (SPEC §panel.nav moved it there). countText() used to return "Data",
    which the group label one slot left already says — the bar read "Data … Data". It now names
    the connection being browsed, in the sidebar dropdown's own words, and renders nothing when
    no connection is selected. */
-describe("countText names the connection, not the page (docs/18 follow-up)", () => {
+describe("countText names the connection, not the page (SPEC §panel.design)", () => {
   it("mirrors the connection dropdown's label for the selected connection", async () => {
     await view.mount();
     dbConnState().conns = [
@@ -222,12 +222,12 @@ describe("countText names the connection, not the page (docs/18 follow-up)", () 
   });
 });
 
-/* docs/42 T1 — the split record's own contract. The old 49-field DbState mixed the
+/* SPEC §data.tabs — the split record's own contract. The old 49-field DbState mixed the
    connection's half with the open object's; these pins hold the seam the split cut: the
    four kinds carrying only their own fields, and unmount resetting BOTH records. T2 hung
    the strip off the same records, so the mount pin now reads as the placeholder invariant —
    never zero tabs, so no renderer needs a null branch. */
-describe("the split record (docs/42 T1)", () => {
+describe("the split record (SPEC §data.tabs)", () => {
   it("a fresh mount holds exactly one table tab — the strip's placeholder", async () => {
     await view.mount();
     expect(dbTabs().length, "the strip is never empty").toBe(1);
@@ -266,7 +266,7 @@ describe("the split record (docs/42 T1)", () => {
       expect(t.selAnchor).toBe(-1);
       expect(t.focus).toBeNull();
       expect(t.sqlPreview).toBe(false);
-      // The LRU stamp (docs/42 D3) is set by the builder and only ever climbs — eviction reads
+      // The LRU stamp (SPEC §data.tabs) is set by the builder and only ever climbs — eviction reads
       // it and nothing else, so a tab born later must always outrank one born earlier.
       expect(t.touched).toBeGreaterThan(last);
       last = t.touched;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The ONE test binary of the harness (docs/44 §2.1). Deliberately a single binary:
+//! The ONE test binary of the harness (SPEC §testing.it). Deliberately a single binary:
 //! the engines' OnceCells live in the process, and one tests/*.rs file per suite would
 //! mean five MySQL cold starts. Splits live in modules under this file, not in
 //! additional binaries.

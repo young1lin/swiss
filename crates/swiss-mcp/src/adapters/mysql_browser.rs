@@ -35,7 +35,7 @@ use swiss_host::dbbrowser::{
     EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
 
-/// The pure half of the docs/43 M3 schema-parameter decision: which database does this
+/// The pure half of the SPEC §data.databases schema-parameter decision: which database does this
 /// READ target? Configured for absent/empty/same-as-configured (byte-identical path —
 /// the SQL builders then receive the very string they always did); Foreign for anything
 /// else, which the caller must whitelist against information_schema BEFORE any statement
@@ -56,7 +56,7 @@ fn resolve_db(asked: Option<&str>, configured: &str) -> DbChoice {
     }
 }
 
-/// The read-only note a non-configured database earns on /data (docs/43 M3): the panel
+/// The read-only note a non-configured database earns on /data (SPEC §data.databases): the panel
 /// already reads editNote, so the rule needs no extra client logic. Pure, so the exact
 /// sentence is asserted without a pool.
 fn foreign_db_note(db: &str, primary: &str) -> String {
@@ -67,7 +67,7 @@ pub struct MysqlBrowser {
     database: String,
     label: String,
     conn: Arc<Lazy<MySqlPool>>,
-    /// Completion candidates cache (docs/22 W3.1): table names + column lists, TTL-bound.
+    /// Completion candidates cache (SPEC §data.completion): table names + column lists, TTL-bound.
     /// Mutex (no await while held) — the browser is shared behind Arc for the lease's life.
     completion_cache: std::sync::Mutex<swiss_host::dbbrowser::CompletionCache>,
 }
@@ -84,7 +84,7 @@ impl MysqlBrowser {
         let pool = self.conn.get().await?;
         Ok(run_query(&pool, sql, params).await?.rows)
     }
-    /// Resolve the database a READ request targets (docs/43 M3). Absent or equal to the
+    /// Resolve the database a READ request targets (SPEC §data.databases). Absent or equal to the
     /// configured database keeps today's behavior byte-identical; any other name must FIRST
     /// appear in information_schema.schemata — the whitelist check runs BEFORE any SQL is
     /// built, so an unknown name is refused without ever being quoted into a statement.
@@ -106,7 +106,7 @@ impl MysqlBrowser {
             }
         }
     }
-    /// The MySQL database catalog (docs/43 M3): every schema in information_schema with its
+    /// The MySQL database catalog (SPEC §data.databases): every schema in information_schema with its
     /// table count, system schemas flagged and still listed (the panel sorts them last and
     /// dims them). primary == current == the configured database; switching costs nothing
     /// because every read statement is db.table-qualified already.
@@ -174,7 +174,7 @@ impl MysqlBrowser {
         Ok((to_browse_columns(&columns, &primary), primary))
     }
     /// SHOW CREATE TABLE folded to its statement text — the DDL the Structure tab serves and
-    /// the SQL dump's head opens with (docs/22 W4.4), read through one helper so the two
+    /// the SQL dump's head opens with (SPEC §data.export), read through one helper so the two
     /// cannot drift apart.
     async fn show_create(&self, db: &str, table: &str) -> Result<String, String> {
         let ddl_sql = format!(
@@ -211,7 +211,7 @@ impl DbBrowser for MysqlBrowser {
             .map(f64::floor)
             .unwrap_or(0.0)
             .max(0.0) as i64;
-        // The sidebar tree fetches WHOLE catalogs (panel sends limit=2000, docs/43 addendum),
+        // The sidebar tree fetches WHOLE catalogs (panel sends limit=2000, SPEC §data.tabs),
         // so the ceiling here bounds a hand-written query, not the panel: 5000 names + row
         // estimates is still one cheap metadata page, and anything larger belongs to grep.
         let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 5000);
@@ -220,13 +220,13 @@ impl DbBrowser for MysqlBrowser {
             o.get("sort").and_then(Value::as_str),
             o.get("dir").and_then(Value::as_str),
         )?;
-        // docs/22 W1.6: a grammar grep (comma AND / | OR / * wildcard) expands to multi-LIKE
+        // SPEC §data.browse: a grammar grep (comma AND / | OR / * wildcard) expands to multi-LIKE
         // SQL; a plain substring keeps the single-LIKE statement byte-for-byte.
         let grammar = grep
             .map(|g| swiss_host::dbbrowser::grep_where(DbDialect::Mysql, "table_name", g, 0))
             .transpose()?
             .flatten();
-        // docs/43 M3: the schema parameter names the DATABASE here — absent keeps the
+        // SPEC §data.databases: the schema parameter names the DATABASE here — absent keeps the
         // configured one byte-identical; a foreign name must clear the whitelist first.
         let db = self.db_of(o).await?;
         let ((ls, lp), (cs, cp)) = match grammar {
@@ -265,11 +265,11 @@ impl DbBrowser for MysqlBrowser {
         let offset = browse_offset(o.get("offset"));
         let limit = browse_page_size(o.get("limit"), 50);
         // The grid's filters feed the page, the COUNT and exports through one WHERE
-        // (browse_where) so the three can never drift (docs/22 W0.2).
+        // (browse_where) so the three can never drift (SPEC §data.export).
         let where_ =
             swiss_host::dbbrowser::browse_where(DbDialect::Mysql, &columns, o.get("filters"))?;
         let exprs = swiss_host::dbbrowser::quoted_exprs(DbDialect::Mysql, &names)?;
-        // docs/22 W1.9: fetch one row past the page — its presence answers "is there a next
+        // SPEC §data.browse: fetch one row past the page — its presence answers "is there a next
         // page" without trusting COUNT arithmetic under concurrent writes.
         let rows_stmt = browse_rows_sql(
             DbDialect::Mysql,
@@ -295,9 +295,9 @@ impl DbBrowser for MysqlBrowser {
         );
         let (rows, next_page) = swiss_host::dbbrowser::page_and_next(rows?, limit);
         let total = super::mysql::num_or_zero(count?.first().and_then(|r| r.get("total")));
-        // docs/22 W4.1: every table is editable — a keyless one addresses rows by every
+        // SPEC §data.edits: every table is editable — a keyless one addresses rows by every
         // column (NULL makes a row unaddressable, twins are refused), so the old pk-less
-        // refusal becomes the note that says how the addressing works instead. docs/43 M3
+        // refusal becomes the note that says how the addressing works instead. SPEC §data.databases
         // adds the one exception: a table in a NON-configured database is read-only — the
         // write paths stay pinned to the configured database, and the panel already reads
         // editable/editNote, so no extra client rule is needed.
@@ -351,7 +351,7 @@ impl DbBrowser for MysqlBrowser {
     }
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
         // A console DDL changes schema shape: the completion cache drops everything so the
-        // next keystroke re-reads the catalog it now describes (docs/22 W3.1).
+        // next keystroke re-reads the catalog it now describes (SPEC §data.completion).
         if swiss_host::dbbrowser::sql_touches_schema(sql) {
             self.completion_cache
                 .lock()
@@ -404,7 +404,7 @@ impl DbBrowser for MysqlBrowser {
         let Some(edits) = edits.filter(|e| !e.is_empty()) else {
             return Err("edits must be a non-empty array".into());
         };
-        // docs/43 M3: edits are a write path — pinned to the CONFIGURED database, always.
+        // SPEC §data.databases: edits are a write path — pinned to the CONFIGURED database, always.
         let (columns, primary) = self.metadata(&self.database, table).await?;
         let typed: Vec<swiss_host::dbbrowser::BrowseEdit> = edits
             .iter()
@@ -418,7 +418,7 @@ impl DbBrowser for MysqlBrowser {
             &columns,
             &primary,
         )?;
-        // docs/22 W1.7: same read-back as Postgres, shaped for MySQL — an insert's row comes
+        // SPEC §data.edits: same read-back as Postgres, shaped for MySQL — an insert's row comes
         // back by LAST_INSERT_ID() on the same connection, an update's by its primary key;
         // both inside the same transaction so the reply is what the commit really kept.
         let pool = self.conn.get().await?;
@@ -434,7 +434,7 @@ impl DbBrowser for MysqlBrowser {
                 &typed[i],
             );
             let affected = super::mysql::run_query_tx(&mut tx, &stmt.sql, &stmt.params).await?;
-            // docs/22 W4.1: a keyless table addresses rows by every column, and the builder
+            // SPEC §data.edits: a keyless table addresses rows by every column, and the builder
             // clips MySQL's statements with LIMIT 1 — an UPDATE can never fan out. The guard
             // stays so the dialects carry the same verdict (Postgres has no LIMIT form and
             // genuinely needs it); an insert is single-row by construction and cannot trip.
@@ -451,7 +451,7 @@ impl DbBrowser for MysqlBrowser {
                     .next(),
                 _ => None,
             };
-            // docs/22 W4.2: an update whose optimistic lock matched zero rows lost the race
+            // SPEC §data.edits: an update whose optimistic lock matched zero rows lost the race
             // — another writer moved the row between the read and this commit. Refuse the
             // whole batch (the dropped transaction rolls back what already ran) instead of
             // overwriting. A bare pk-only update never claimed to know the row, so for it
@@ -489,7 +489,7 @@ impl DbBrowser for MysqlBrowser {
         let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let cap = export_row_limit(o.get("limit"));
         // An export of a filtered grid exports the FILTERED set: the same browse_where the
-        // page and its COUNT use (docs/22 W0.2), values bound, never inlined.
+        // page and its COUNT use (SPEC §data.export), values bound, never inlined.
         let where_ =
             swiss_host::dbbrowser::browse_where(DbDialect::Mysql, &columns, o.get("filters"))?;
         let mut all: Vec<Map<String, Value>> = Vec::new();
@@ -542,7 +542,7 @@ impl DbBrowser for MysqlBrowser {
         let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let cap = export_row_limit(o.get("limit"));
         // The dump exports the FILTERED set: the same browse_where the page, the COUNT and the
-        // folded exports use (docs/22 W0.2), values bound, never inlined.
+        // folded exports use (SPEC §data.export), values bound, never inlined.
         let where_ =
             swiss_host::dbbrowser::browse_where(DbDialect::Mysql, &columns, o.get("filters"))?;
         // Header facts come from that same WHERE's COUNT, so rows and capped are true before
@@ -630,7 +630,7 @@ impl DbBrowser for MysqlBrowser {
                 let fetched = page.len() as i64;
                 for row in &page {
                     // The dump body is EXECUTED on replay — sql_dump_literal, never the
-                    // clipboard's sql_literal (docs/22 W4.4 audit blocker).
+                    // clipboard's sql_literal (SPEC §data.export).
                     let literals: Result<Vec<String>, String> = names
                         .iter()
                         .map(|c| sql_dump_literal(DbDialect::Mysql, row.get(c)))
@@ -709,10 +709,10 @@ impl DbBrowser for MysqlBrowser {
         if rows.is_empty() {
             return Err("nothing to import after mapping — every row was empty or skipped".into());
         }
-        // docs/22 W4.5: upsert appends ON DUPLICATE KEY UPDATE per row; insert builds the
+        // SPEC §data.export: upsert appends ON DUPLICATE KEY UPDATE per row; insert builds the
         // exact statements the edit grid's insert arm builds. One transaction either way.
         let mode = swiss_host::dbbrowser::parse_import_mode(o.get("mode"))?;
-        // docs/43 M3: the write paths stay pinned to the CONFIGURED database — an import
+        // SPEC §data.databases: the write paths stay pinned to the CONFIGURED database — an import
         // never targets a foreign one, schema parameter or not.
         let (columns, primary) = self.metadata(&self.database, table).await?;
         let (stmts, degraded) = build_import_statements(
@@ -737,7 +737,7 @@ impl DbBrowser for MysqlBrowser {
     }
 
     async fn ddl_op(&self, o: &Value) -> Result<Value, String> {
-        // docs/22 W4.6: the create ops share ONE builder with /ddl-preview — the sheet showed
+        // SPEC §data.ddl: the create ops share ONE builder with /ddl-preview — the sheet showed
         // these exact statements before Commit posted. Each op is a single statement here
         // (MySQL embeds comments inline), so there is nothing to wrap: MySQL DDL commits
         // itself, atomically per statement.
@@ -781,7 +781,7 @@ impl DbBrowser for MysqlBrowser {
     async fn activity(&self) -> Result<Value, String> {
         // The statement already aliases to the shared reply keys (dbbrowser.rs). The grid path
         // renders BIGINT cells as text, which is right for a grid and wrong for pid/seconds/own
-        // here - activity_row types those three (docs/37 §11 D11).
+        // here - activity_row types those three (SPEC §panel.toolchain).
         let rows: Vec<Map<String, Value>> = self
             .query(&swiss_host::dbbrowser::activity_sql(DbDialect::Mysql), &[])
             .await?
@@ -853,8 +853,8 @@ impl DbBrowser for MysqlBrowser {
                 // The alias is load-bearing: MySQL 8's prepared-statement metadata
                 // UPPERCASES unaliased information_schema result names (COLUMN_NAME),
                 // so the row key would not match - the FROM-table column completion
-                // silently served nothing on a real server. Found live by the docs/44
-                // L1 suite; an alias keeps its written case.
+                // silently served nothing on a real server. Found live by the L1 suite
+                // (SPEC §testing.it); an alias keeps its written case.
                 let rows = self
                     .query(
                         "SELECT column_name AS col_name FROM information_schema.columns \
@@ -882,7 +882,7 @@ impl DbBrowser for MysqlBrowser {
         let items = completion_items(DbDialect::Mysql, prefix, &tables, columns);
         Ok(json!({ "items": items }))
     }
-    /// docs/43 M3: the full information_schema catalog with table counts. Completion stays
+    /// SPEC §data.databases: the full information_schema catalog with table counts. Completion stays
     /// pinned to the CONFIGURED database (the console's write paths are) — a foreign db's
     /// tables are not completion candidates.
     async fn list_databases(&self) -> Result<Value, String> {
@@ -894,7 +894,7 @@ impl DbBrowser for MysqlBrowser {
 mod tests {
     use super::*;
 
-    /// docs/43 M3: the whitelist decision precedes SQL construction BY CONSTRUCTION —
+    /// SPEC §data.databases: the whitelist decision precedes SQL construction BY CONSTRUCTION —
     /// resolve_db is the only path from a schema parameter to a database name, and its
     /// Foreign arm is the only one the caller may not hand straight to a builder.
     #[test]

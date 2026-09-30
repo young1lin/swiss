@@ -22,8 +22,8 @@ import { tr } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
 import { tag } from "./ui/status.js";
 
-/* --- activity monitor (docs/22 W3.2) -------------------------------------------------------------- */
-/* One open object among the others (docs/42 T2): live sessions on the connection's server, one
+/* --- activity monitor (SPEC §data.activity) -------------------------------------------------------------- */
+/* One open object among the others (SPEC §data.tabs): live sessions on the connection's server, one
    shared table for both dialects (pid / user / state / wait / duration / query), the panel's own
    session chipped, and Cancel / Terminate per row. It paints into the pane's grid slot like a
    row page does, and it polls every 5s WHILE ITS TAB IS ACTIVE — a backgrounded or closed
@@ -46,7 +46,7 @@ function dbActivityDuration(secs                           )         {
 }
 
 /** Start the monitor: first answer now, then the poll. The tab itself is the open/close state
- *  (docs/42 T2) — there is no flag left to set and no pane to take over. */
+ *  (SPEC §data.tabs) — there is no flag left to set and no pane to take over. */
 function dbActivityStart()       {
   void dbActivityLoad();
   dbActivityPollStart();
@@ -101,7 +101,7 @@ function dbActivityRender() {
     pid.title = tr("dataActivity.pidTip", { pid: r.pid });
     tri.appendChild(pid);
     const user = el("td", "", r.user == null ? "" : r.user);
-    // The panel's own session is a descriptive word: the library's toneless tag (docs/46 §3.7).
+    // The panel's own session is a descriptive word: the library's toneless tag (SPEC §panel.pages).
     if (r.own) user.append(" ", tag(tr("dataActivity.thisPanel"), { title: tr("dataActivity.thisPanelTip") }));
     tri.appendChild(user);
     // state and wait are COALESCE'd to "" in activity_sql on both dialects - never null.
@@ -119,7 +119,7 @@ function dbActivityRender() {
     q.title = q.textContent;
     tri.appendChild(q);
     // The per-row menu trigger addresses its row by pid and answers through #pane's
-    // delegated click (docs/37 R5); the row is re-found from live state at event time.
+    // delegated click (SPEC §panel.toolchain); the row is re-found from live state at event time.
     const ctl = el("td", "db-rowctl");
     ctl.appendChild(h("button", {
       class: "db-act-more", type: "button", title: tr("dataActivity.cancelTerminateSession"),
@@ -132,7 +132,7 @@ function dbActivityRender() {
   wrap.appendChild(tbl);
 }
 
-/** #pane's delegated click for the Activity page (docs/37 R5). Behavior note (docs/37 §10.1):
+/** #pane's delegated click for the Activity page (SPEC §panel.toolchain). Behavior note (SPEC §panel.toolchain):
  *  the per-row menu re-finds its row from live d.activityRows by pid at event time — a poll
  *  that repainted the table between render and click can never kill the wrong session. */
 function dbActivityClick(t         , ev            )          {

@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-//! The terminal session machine (docs/14 T4).
+//! The terminal session machine (SPEC §terminal.sessions).
 //!
 //! What lives here is everything that is true about a terminal session no matter how the
 //! bytes reach a browser: the session table, its limits, the one-shot tickets, the idle
 //! and stall clocks, the reconnect grace window with its catch-up buffer, and the
 //! asciicast recorder. **No HTTP** — that is T5, and keeping the split means every rule in
-//! docs/14 §6 is asserted against a fake shell provider and a fake local PTY rather than
+//! SPEC §terminal.config is asserted against a fake shell provider and a fake local PTY rather than
 //! against a live WebSocket.
 //!
 //! Two sources, one type. A remote session comes from the shell capability seat

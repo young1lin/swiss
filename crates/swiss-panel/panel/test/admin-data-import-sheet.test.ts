@@ -19,7 +19,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
 
-/* docs/43 M2 fixup: the CSV import sheet's body and foot were nested INSIDE sheet-head (a
+/* SPEC §data.tabs: the CSV import sheet's body and foot were nested INSIDE sheet-head (a
  *  missing paren on the h2 line), so .sheet-head's band rules laid out the entire dialog on
  *  every dialect — the "broken import styling" on both mysql and pg. This pins the sheet
  *  idiom's shape: head, body, foot are SIBLINGS under .sheet. */
@@ -93,7 +93,7 @@ function openOnTable(): void {
   mod.dbOpenImport();
 }
 
-describe("the CSV import sheet's structure (docs/43 M2 fixup)", () => {
+describe("the CSV import sheet's structure (SPEC §data.tabs)", () => {
   it("head, body and foot are siblings under .sheet — the whole dialog is not laid out by the head band", () => {
     openOnTable();
     expect(byId.sheet.hidden, "the sheet opened").toBe(false);

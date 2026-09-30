@@ -43,7 +43,7 @@ use swiss_host::dbbrowser::{
 pub struct PgBrowser {
     label: String,
     conn: Arc<Lazy<PgPool>>,
-    /// Completion candidates cache (docs/22 W3.1): table names + column lists, TTL-bound.
+    /// Completion candidates cache (SPEC §data.completion): table names + column lists, TTL-bound.
     /// Mutex (no await while held) — the browser is shared behind Arc for the lease's life.
     completion_cache: std::sync::Mutex<swiss_host::dbbrowser::CompletionCache>,
 }
@@ -91,7 +91,7 @@ impl PgBrowser {
     }
 
     /// The catalog-sketch CREATE TABLE and the FK rows it folds in — the shared tail of
-    /// describe_table and the SQL dump's head (docs/22 W4.4), built through one helper so the
+    /// describe_table and the SQL dump's head (SPEC §data.export), built through one helper so the
     /// dump's DDL is by construction the DDL the Structure tab shows.
     async fn ddl_of(
         &self,
@@ -174,14 +174,14 @@ impl DbBrowser for PgBrowser {
         // (panel sends limit=2000), so this bounds hand-written queries only.
         let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 5000);
         let grep = o.get("grep").and_then(Value::as_str);
-        // docs/22 W1.1: the panel's schema picker narrows the catalog walk server-side; MySQL
+        // SPEC §data.browse: the panel's schema picker narrows the catalog walk server-side; MySQL
         // has no such parameter (one database per connection) and ignores it.
         let schema = o.get("schema").and_then(Value::as_str).map(str::to_string);
         let sort = browse_table_sort(
             o.get("sort").and_then(Value::as_str),
             o.get("dir").and_then(Value::as_str),
         )?;
-        // docs/22 W1.6: a grammar grep (comma AND / | OR / * wildcard) expands to multi-LIKE
+        // SPEC §data.browse: a grammar grep (comma AND / | OR / * wildcard) expands to multi-LIKE
         // SQL with the LIMIT/OFFSET binds renumbered past the patterns; a plain substring keeps
         // the const statements byte-for-byte.
         let grammar = grep
@@ -261,11 +261,11 @@ impl DbBrowser for PgBrowser {
         let offset = browse_offset(o.get("offset"));
         let limit = browse_page_size(o.get("limit"), 50);
         // The grid's filters feed the page, the COUNT and exports through one WHERE
-        // (browse_where) so the three can never drift (docs/22 W0.2).
+        // (browse_where) so the three can never drift (SPEC §data.export).
         let where_ =
             swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         let exprs = swiss_host::dbbrowser::pg_typed_exprs(&columns)?;
-        // docs/22 W1.9: fetch one row past the page — its presence answers "is there a next
+        // SPEC §data.browse: fetch one row past the page — its presence answers "is there a next
         // page" without trusting COUNT arithmetic under concurrent writes.
         let rows_stmt = browse_rows_sql(
             DbDialect::Pg,
@@ -291,7 +291,7 @@ impl DbBrowser for PgBrowser {
         );
         let (rows, next_page) = swiss_host::dbbrowser::page_and_next(rows?, limit);
         let total = total_of(&count?);
-        // docs/22 W4.1: every table is editable — a keyless one addresses rows by every
+        // SPEC §data.edits: every table is editable — a keyless one addresses rows by every
         // column (NULL makes a row unaddressable, twins are refused), so the old pk-less
         // refusal becomes the note that says how the addressing works instead.
         let editable = true;
@@ -356,7 +356,7 @@ impl DbBrowser for PgBrowser {
 
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
         // A console DDL changes schema shape: the completion cache drops everything so the
-        // next keystroke re-reads the catalog it now describes (docs/22 W3.1).
+        // next keystroke re-reads the catalog it now describes (SPEC §data.completion).
         if swiss_host::dbbrowser::sql_touches_schema(sql) {
             self.completion_cache
                 .lock()
@@ -428,7 +428,7 @@ impl DbBrowser for PgBrowser {
             &columns,
             &primary,
         )?;
-        // docs/22 W1.7: every update/insert also reads its committed row back inside the same
+        // SPEC §data.edits: every update/insert also reads its committed row back inside the same
         // transaction — silent truncation, DEFAULTs and trigger rewrites land on screen instead
         // of the value that was typed. Deletes read nothing back; a plan that cannot address a
         // row comes home null and the commit itself is unaffected.
@@ -469,7 +469,7 @@ impl DbBrowser for PgBrowser {
                     (affected, row)
                 }
             };
-            // docs/22 W4.1: Postgres has no UPDATE ... LIMIT, so a keyless table's
+            // SPEC §data.edits: Postgres has no UPDATE ... LIMIT, so a keyless table's
             // every-column address guards its own uniqueness here — twins fail the whole
             // batch (the dropped transaction rolls back what came before) instead of
             // silently picking the first row. An insert is single-row by construction and
@@ -477,7 +477,7 @@ impl DbBrowser for PgBrowser {
             if primary.is_empty() && affected > 1 {
                 return Err(EditError::Bad(ambiguous_row_error(typed[i].op(), affected)));
             }
-            // docs/22 W4.2: an update whose optimistic lock matched zero rows lost the
+            // SPEC §data.edits: an update whose optimistic lock matched zero rows lost the
             // race. The read-back SELECT just probed the row as it stands inside this
             // still-open transaction, so its values name the conflicting columns; the
             // dropped transaction rolls the batch back. A bare pk-only update never
@@ -519,7 +519,7 @@ impl DbBrowser for PgBrowser {
         let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let cap = export_row_limit(o.get("limit"));
         // An export of a filtered grid exports the FILTERED set: the same browse_where the
-        // page and its COUNT use (docs/22 W0.2), values bound, never inlined.
+        // page and its COUNT use (SPEC §data.export), values bound, never inlined.
         let where_ =
             swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         let mut all: Vec<Map<String, Value>> = Vec::new();
@@ -576,7 +576,7 @@ impl DbBrowser for PgBrowser {
         let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let cap = export_row_limit(o.get("limit"));
         // The dump exports the FILTERED set: the same browse_where the page, the COUNT and the
-        // folded exports use (docs/22 W0.2), values bound, never inlined.
+        // folded exports use (SPEC §data.export), values bound, never inlined.
         let where_ =
             swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         // Header facts come from that same WHERE's COUNT, so rows and capped are true before
@@ -652,7 +652,7 @@ impl DbBrowser for PgBrowser {
                 let fetched = page.len() as i64;
                 for row in &page {
                     // The dump body is EXECUTED on replay — sql_dump_literal, never the
-                    // clipboard's sql_literal (docs/22 W4.4 audit blocker).
+                    // clipboard's sql_literal (SPEC §data.export).
                     let literals: Result<Vec<String>, String> = names
                         .iter()
                         .map(|c| sql_dump_literal(DbDialect::Pg, row.get(c)))
@@ -736,7 +736,7 @@ impl DbBrowser for PgBrowser {
         if rows.is_empty() {
             return Err("nothing to import after mapping — every row was empty or skipped".into());
         }
-        // docs/22 W4.5: upsert appends ON CONFLICT (pk) DO UPDATE per row — a table without
+        // SPEC §data.export: upsert appends ON CONFLICT (pk) DO UPDATE per row — a table without
         // a primary key cannot target a conflict on Postgres, so the builder degrades to the
         // plain insert statements and says so in the reply; insert mode stays byte-identical
         // to the edit grid's insert arm. One transaction either way.
@@ -764,7 +764,7 @@ impl DbBrowser for PgBrowser {
     }
 
     async fn ddl_op(&self, o: &Value) -> Result<Value, String> {
-        // docs/22 W4.6: the create ops share ONE builder with /ddl-preview — the sheet showed
+        // SPEC §data.ddl: the create ops share ONE builder with /ddl-preview — the sheet showed
         // these exact statements before Commit posted. Postgres DDL is transactional, so the
         // create plus its COMMENT ONs apply whole or not at all.
         let op = o.get("op").and_then(Value::as_str).unwrap_or("");
@@ -814,7 +814,7 @@ impl DbBrowser for PgBrowser {
     async fn activity(&self) -> Result<Value, String> {
         // The statement already aliases to the shared reply keys (dbbrowser.rs). The grid path
         // renders BIGINT cells as text, which is right for a grid and wrong for the bigint
-        // `seconds` here - activity_row types it (docs/37 §11 D11); pid and own are typed already.
+        // `seconds` here - activity_row types it (SPEC §panel.toolchain); pid and own are typed already.
         let rows: Vec<Map<String, Value>> = self
             .query(&swiss_host::dbbrowser::activity_sql(DbDialect::Pg), &[])
             .await?
@@ -928,7 +928,7 @@ impl DbBrowser for PgBrowser {
         let items = completion_items(DbDialect::Pg, prefix, &tables, columns);
         Ok(json!({ "items": items }))
     }
-    /// docs/43 M3 (ADR-027 option b): a PgPool is BOUND to one database — switching costs a
+    /// SPEC §data.databases (ADR-027 option b): a PgPool is BOUND to one database — switching costs a
     /// whole new pool, so every database except the one this connection sits on is listed
     /// but not browsable, with the reason served here for the panel to show. current (and
     /// primary) come from the server itself: SELECT current_database() IS the database the

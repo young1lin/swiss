@@ -83,7 +83,7 @@ pub trait SshLike: Send + Sync {
         host: String,
         port: u16,
     ) -> ConnFuture<'_, Result<ByteStream, TunnelError>>;
-    /// Open an interactive PTY and pump it against `endpoint` (docs/14 T2). Resolves when
+    /// Open an interactive PTY and pump it against `endpoint` (SPEC §terminal.remote). Resolves when
     /// the shell has started, not when it ends.
     ///
     /// `hold` is this session's reference on the client, minted by
@@ -99,7 +99,7 @@ pub trait SshLike: Send + Sync {
         hold: Box<dyn Send + 'static>,
     ) -> ConnFuture<'_, Result<(), TunnelError>>;
     /// Run one non-interactive command to completion over a session channel
-    /// (docs/34 §11), streaming stdout/stderr into `events` as they arrive and
+    /// (SPEC §remote.transport), streaming stdout/stderr into `events` as they arrive and
     /// honouring `cancel` by closing the channel. `hold` is the operation's
     /// reference on this client, owned by the returned future.
     fn exec(
@@ -177,7 +177,7 @@ impl SshLike for SshConnection {
         Box::pin(async move { SshConnection::open_shell(self, size, endpoint, hold).await })
     }
     /// Run one non-interactive command to completion over a session channel
-    /// (docs/34 §11), streaming stdout/stderr into `events` as they arrive and
+    /// (SPEC §remote.transport), streaming stdout/stderr into `events` as they arrive and
     /// honouring `cancel` by closing the channel. `hold` is the operation's
     /// reference on this client, owned by the returned future.
     fn exec(
@@ -238,9 +238,9 @@ impl SshLike for SshConnection {
 }
 
 /// One operation's reference on an SSH client, released when the operation ends
-/// (docs/34 §10).
+/// (SPEC §remote.transport).
 ///
-/// Born as the shell session's guard (docs/14 T2) and generalized when remote exec and
+/// Born as the shell session's guard (SPEC §terminal.remote) and generalized when remote exec and
 /// SFTP needed the same discipline: whatever the operation — a rule, a PTY, an exec, a
 /// file transfer — it counts its reference through the ONE path (`put_ref`) that knows
 /// "the last one out ends the client". Dropping the lease is the release; the task that
@@ -278,7 +278,7 @@ impl Drop for ConnectionLease {
 /// Builds the client for one connection definition, with the manager's hooks already attached.
 type ConnFactory = Arc<dyn Fn(&SshConnDef, SshHooks) -> Arc<dyn SshLike> + Send + Sync>;
 
-/// One live chain's reference on its jump hop (docs/27 §3.2) — ShellSessionGuard's
+/// One live chain's reference on its jump hop (SPEC §tunnels.jump) — ShellSessionGuard's
 /// discipline for the jump case, so a chained connection counts references through the
 /// SAME path a rule and a shell do. It travels inside the connection's Live; dropping it
 /// with that Live is the release.
@@ -528,7 +528,7 @@ impl TunnelManager {
                 mgr.on_connection_lost(&lost_id, &err);
             }
         });
-        // docs/27 §3.1: the dialer this connection's dial calls back into when its def
+        // SPEC §tunnels.jump: the dialer this connection's dial calls back into when its def
         // carries a jump. Weak so the connection table never closes into an Arc cycle
         // (manager -> client -> hook -> manager); a manager that is already gone fails
         // the hop as config rather than holding shutdown open.
@@ -595,7 +595,7 @@ impl TunnelManager {
         Ok(c)
     }
 
-    /// docs/27 §3.1/§3.2 — one hop of a live chain. The jump's own connection is dialed
+    /// SPEC §tunnels.jump — one hop of a live chain. The jump's own connection is dialed
     /// (or reused) through the SAME connection table a rule start goes through —
     /// single-flight, and shared with any rules riding that hop — then a direct-tcpip
     /// channel to this connection's host:port is opened on it and handed back for the
@@ -618,7 +618,7 @@ impl TunnelManager {
             ));
         };
         let name = def.name.clone();
-        // docs/27 §3.3: the hop's failure keeps its OWN kind (auth and hostkey are never
+        // SPEC §tunnels.jump: the hop's failure keeps its OWN kind (auth and hostkey are never
         // retried) while the message names the hop. The pair is constructed directly —
         // the prefix must never flow through classify_message, whose substring scan
         // would wash the kind away. The inner detail is dropped on purpose: a hop's
@@ -702,7 +702,7 @@ impl TunnelManager {
         }
     }
 
-    // --- interactive shells (docs/14 T2) ----------------------------------------------------------
+    // --- interactive shells (SPEC §terminal.remote) ----------------------------------------------------------
 
     /// The connection definitions, for a capability that needs the host list without
     /// reaching through the store lock itself.
@@ -755,7 +755,7 @@ impl TunnelManager {
     }
 
     /// Dial (or reuse) one connection and hand back the client TOGETHER with its
-    /// operation-scoped lease (docs/34 §10): the remote capability's entry point, used
+    /// operation-scoped lease (SPEC §remote.transport): the remote capability's entry point, used
     /// by exec and by every SFTP operation. The caller moves the lease into whatever
     /// owns the operation — the exec future or the file reader/writer — so the reference
     /// lives exactly as long as the work does.
@@ -1272,7 +1272,7 @@ impl TunnelManager {
             .into_iter()
             .filter(|r| self.is_active(&r.id))
             .collect();
-        // docs/27 §3.2: connections that jump through this one ride its transport, so
+        // SPEC §tunnels.jump: connections that jump through this one ride its transport, so
         // their running rules restart with it — conservatively, without diffing which
         // fields changed: the old client is going away either way, and every dependent
         // redials the whole chain through the fresh one.
@@ -1331,7 +1331,7 @@ impl TunnelManager {
         if self.with_store(|s| s.connection(id)).is_none() {
             return Err(OpError::msg(format!("unknown SSH connection: {id}")));
         }
-        // docs/27 §3.2: a connection other definitions jump through cannot be deleted.
+        // SPEC §tunnels.jump: a connection other definitions jump through cannot be deleted.
         // Unlike the rules case below there is no confirm/force path — deleting would
         // leave every dependent's chain pointing at nothing — so this is a plain error
         // naming the dependents (a 400, not the 409 + structured list).
@@ -1379,7 +1379,7 @@ impl TunnelManager {
         let Some(def) = self.with_store(|s| s.connection(id)) else {
             return Err(OpError::msg(format!("unknown SSH connection: {id}")));
         };
-        // docs/27 §3.2: the probe resolves its hop definitions read-only out of the
+        // SPEC §tunnels.jump: the probe resolves its hop definitions read-only out of the
         // store and dials a private throwaway chain — nothing lands in the shared
         // connection table and no hop learns a host key.
         let store = self.store.clone();
@@ -1660,7 +1660,7 @@ impl TunnelManager {
                 }
                 row.insert("ruleCount".into(), json!(mine.len()));
                 row.insert("activeRules".into(), json!(active));
-                // docs/27 §4 addendum: the panel's READ surface for the proxy/jump fields is
+                // SPEC §tunnels.panel: the panel's READ surface for the proxy/jump fields is
                 // this row (the POST/PUT echo is read once and dropped). Proxy, proxyUsername
                 // and the jump id ride plaintext, absent-when-unset — the panel resolves the
                 // jump id to a name from this same list. proxyPassword rides as the MASK
@@ -1688,7 +1688,7 @@ impl TunnelManager {
                 // The key path rides the same read surface: the edit sheet prefills from
                 // this row, so a custom path must arrive here or a save would rewrite it
                 // to the default. Plaintext (a path, not a secret), absent when unset,
-                // appended after the frozen prefix — the docs/27 §4 addendum rule.
+                // appended after the frozen prefix — the SPEC §tunnels.panel rule.
                 if let Some(kp) = &c.key_path {
                     row.insert("keyPath".into(), json!(kp));
                 }
@@ -1814,9 +1814,9 @@ mod tests {
         /// Dials that actually reached the "server" — a connect on a live client is not one.
         dials: AtomicU32,
         ended: AtomicU32,
-        /// Interactive shells opened on this client (docs/14 T2).
+        /// Interactive shells opened on this client (SPEC §terminal.remote).
         shells: AtomicU32,
-        /// Non-interactive execs run on this client (docs/34).
+        /// Non-interactive execs run on this client (SPEC §remote).
         execs: AtomicU32,
         /// The exit status the next fake exec reports.
         exec_exit: AtomicI32,
@@ -2430,7 +2430,7 @@ mod tests {
         assert!(!stored_rule(&store, &r.id).enabled);
     }
 
-    /// docs/27 §2.6.6: a proxied connection through the REAL manager and the real russh
+    /// SPEC §tunnels.proxy: a proxied connection through the REAL manager and the real russh
     /// client — start, one byte round trip riding proxy -> ssh server -> direct-tcpip ->
     /// echo, then stop releases the local port. The existing port-binding invariant,
     /// exercised on the proxied path.
@@ -2628,7 +2628,7 @@ mod tests {
         assert_eq!(nth(&built, 0).ended(), 1);
     }
 
-    /// docs/27 §4 addendum: the connection row is the panel's READ surface for the
+    /// SPEC §tunnels.panel: the connection row is the panel's READ surface for the
     /// proxy/jump fields — the sheet's echo and the row badges render from rows(), not
     /// from the POST/PUT response the panel reads once and drops. Plaintext,
     /// absent-when-unset, for proxy/proxyUsername/jump (the jump is an id; the panel
@@ -3106,7 +3106,7 @@ mod tests {
         assert!(store.lock().unwrap().is_empty());
     }
 
-    // --- jump chains (docs/27 §3) -------------------------------------------------------------
+    // --- jump chains (SPEC §tunnels.jump) -------------------------------------------------------------
 
     /// Every REAL client this manager built, newest last — the jump tests' window into
     /// the shared connection table (refcounts, live state) without opening the manager up.
@@ -3169,7 +3169,7 @@ mod tests {
         }
     }
 
-    /// docs/27 §3.4.1: connection A dials the jump server S1, connection B rides A's
+    /// SPEC §tunnels.jump: connection A dials the jump server S1, connection B rides A's
     /// direct-tcpip channel to reach the target server S2, and the rule's traffic flows
     /// through both — the full SSH-over-SSH path, pinned by the jump's live client
     /// (built, connected, held) and the echoed bytes.
@@ -3197,7 +3197,7 @@ mod tests {
         m.close_all().await;
     }
 
-    /// docs/27 §3.4.2: a two-level chain proves both the recursion (each hop dials
+    /// SPEC §tunnels.jump: a two-level chain proves both the recursion (each hop dials
     /// through the one below it) and the hold discipline — stopping the target unwinds
     /// the whole chain, leaving every hop's refcount at zero.
     #[tokio::test]
@@ -3243,7 +3243,7 @@ mod tests {
         m.close_all().await;
     }
 
-    /// docs/27 §3.4.3: killing the jump server takes the whole chain down — the target's
+    /// SPEC §tunnels.jump: killing the jump server takes the whole chain down — the target's
     /// own watcher reports the loss and releases the local port — and a restarted jump
     /// on the same port lets auto-reconnect rebuild the chain.
     #[tokio::test]
@@ -3293,7 +3293,7 @@ mod tests {
         m.close_all().await;
     }
 
-    /// docs/27 §3.4.4: a jump whose credentials are refused is an auth failure of the
+    /// SPEC §tunnels.jump: a jump whose credentials are refused is an auth failure of the
     /// target — never retried — and the message names the hop it failed on.
     #[tokio::test]
     async fn a_bad_jump_password_is_an_auth_failure_named_after_the_hop_and_never_retried() {
@@ -3346,7 +3346,7 @@ mod tests {
         m.close_all().await;
     }
 
-    /// docs/27 §3.4.5: editing a jump reconnects everything that rides it, and deleting
+    /// SPEC §tunnels.jump: editing a jump reconnects everything that rides it, and deleting
     /// one is refused while a dependent exists — the error names the dependent.
     #[tokio::test]
     async fn editing_a_jump_reconnects_its_dependents_and_delete_lists_them() {
@@ -3400,7 +3400,7 @@ mod tests {
         assert!(store.lock().unwrap().is_empty());
     }
 
-    /// docs/27 §3.2: POST /connections/:id/test rides a PRIVATE throwaway chain — one
+    /// SPEC §tunnels.jump: POST /connections/:id/test rides a PRIVATE throwaway chain — one
     /// one-off client per hop, nothing pinned in the shared table, no host key learned —
     /// and a failing hop is named in the error.
     #[tokio::test]
@@ -3768,7 +3768,7 @@ mod tests {
         assert_eq!(nth(&built, 0).ended(), 1);
     }
 
-    // --- interactive shells (docs/14 T2) ------------------------------------------------------
+    // --- interactive shells (SPEC §terminal.remote) ------------------------------------------------------
     //
     // These live here rather than beside `TunnelShells` because the harness does: a provider is
     // only interesting over a manager whose clients can be driven, and FakeConn is this module's.
@@ -4051,7 +4051,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_typed_interrupt_gets_through_while_the_output_queue_is_full() {
-        // docs/14 section 10 item 7, at this layer: the provider pumps the two directions in
+        // SPEC §terminal.verify item 7, at this layer: the provider pumps the two directions in
         // separate tasks, so a terminal that is flooding still accepts Ctrl-C.
         let (_dir, store) = scratch();
         let def = add_conn(&store);
@@ -4085,7 +4085,7 @@ mod tests {
         assert_eq!(session.next_event().await, Some(PtyEvent::Data(vec![0x03])));
     }
 
-    // --- remote execution leases + provider (docs/34) --------------------------------------
+    // --- remote execution leases + provider (SPEC §remote) --------------------------------------
 
     use swiss_host::services::action::CancelSource;
     use swiss_host::services::remote::{

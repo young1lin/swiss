@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The conns/rules GroupScope pair (docs/20 §2.2).
+//! The conns/rules GroupScope pair (SPEC §host.groups).
 //!
 //! Two scopes over the one tunnels.json - the way `mcps` is a scope over managed.json -
 //! registered into the host's scope table by the composition point (swiss's server.rs),

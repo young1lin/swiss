@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The sheet (docs/46 §2.5): the one modal the panel has - a card over a backdrop, head / body /
+/* The sheet (SPEC §panel.ui): the one modal the panel has - a card over a backdrop, head / body /
  * foot. Moved here from add-sheet.ts at P1b-2 (closeSheet, openFieldSheet) with the frame every
  * sheet builder repeated by hand; the MCP add sheet (openSheet) is app-bound - it knows the
  * field schemas, the detail pane and the poll - and stays in add-sheet.ts, built on these.
@@ -39,7 +39,7 @@ export interface SheetOpts {
   /** An id for the heading, for a caller that repaints it. */
   titleId?: string;
   /** The value the sheet acts on, beside the title and in mono because it is a value you
-   *  would copy: a cell's table and key, a viewed value's table and row (docs/46 P7). */
+   *  would copy: a cell's table and key, a viewed value's table and row (SPEC §panel.pages). */
   sub?: string;
   body: HChild;
   /** The footer, left to right: a leading secondary, a .grow spacer, Cancel, the one primary. */
@@ -71,7 +71,7 @@ export function showSheet(node: HTMLElement): void {
 }
 
 /** A sheet over the open sheet: a picker a sheet opens for one of its own fields (the tunnel
- *  key browser, docs/46 P4), on its own backdrop one layer up. It keeps its keys - Escape
+ *  key browser, SPEC §panel.pages), on its own backdrop one layer up. It keeps its keys - Escape
  *  closes THIS layer and stops there; before, it reached the shell's Escape chain, which closed
  *  the sheet underneath and left the picker floating over nothing. `paint` (re)draws its dialog
  *  (the picker repaints on every folder it opens); `close` removes the layer. */
@@ -148,7 +148,7 @@ export interface FieldSheetSpec {
   submit: (value: string) => Promise<boolean | string> | boolean | string;
 }
 
-/** The general single-field sheet (fix-plan #16): one text ask - creating or renaming a group,
+/** The general single-field sheet (SPEC §panel.ui): one text ask - creating or renaming a group,
  *  renaming an MCP or a table, typing a destructive confirm - so none of them is a browser
  *  prompt(). The sheet owns only the two rules every caller shares: the value is required, and
  *  a rename that changed nothing is a cancel; everything else (a charset, a name the server

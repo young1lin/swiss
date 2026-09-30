@@ -69,13 +69,13 @@ const DB_HISTORY_MAX = 50;
 
 
 /** What the ACTIVE tab is holding back — the number every in-page guard quotes, and the one
- *  the edit bar counts. The row grid's buffer and a key tab's typed-value buffer (docs/22 W3.3)
+ *  the edit bar counts. The row grid's buffer and a key tab's typed-value buffer (SPEC §data.redis)
  *  are the same question asked of two kinds, so one counter answers both. */
 function dbPending(): number {
   return dbTabPending(dbTab());
 }
 
-/** The connection menu's rows (docs/20 G5 as docs/43 M3 restated it): every connection
+/** The connection menu's rows (SPEC §host.groups as SPEC §data.databases restated it): every connection
  *  under its group, a heading row where the optgroups were, first-appearance order over
  *  the flat list, one separator between groups. A single group stays flat (a heading
  *  around everything says nothing); a gateway that answers no group reads as one list.
@@ -111,21 +111,21 @@ export function dbConnMenuItems(
   return items;
 }
 
-/** The WHOLE strip's buffered writes (docs/42 D5). The page-leave guard asks this one, not
+/** The WHOLE strip's buffered writes (SPEC §data.tabs). The page-leave guard asks this one, not
  *  dbPending(): before the tabs, a buffer could only exist on the object in front of the
  *  operator, and after them a background tab's edits would have walked out unmentioned. */
 function dbPendingAll(): number {
-  // docs/47 D4: every session's strip, the parked ones too - a write parked on the MySQL
+  // SPEC §data.sessions: every session's strip, the parked ones too - a write parked on the MySQL
   // session while Redis is in front is exactly what an unguarded tab close would lose.
   return dbParkedTabs().reduce((n: number, strip: DbTab[]): number => n + dbTabsPending(strip), dbTabsPending(dbTabs()));
 }
 
-/** Does a session hold work the park must never evict (docs/47 D7)? */
+/** Does a session hold work the park must never evict (SPEC §data.sessions)? */
 function dbSessionPinned(tabs: DbTab[]): boolean {
   return dbTabsPending(tabs) > 0;
 }
 
-/** The confirmed page leave (docs/47 D3): every session's buffered writes go and the sessions
+/** The confirmed page leave (SPEC §data.sessions): every session's buffered writes go and the sessions
  *  stay. canLeave() has just said the writes would be discarded, and once the page is gone
  *  nothing would count a parked one - beforeunload asks only the page in front. */
 function dbDropAllEdits(): void {
@@ -142,7 +142,7 @@ function dbOkToDrop(): boolean {
   return dbAskDrop(dbPending());
 }
 
-/** Ask before LEAVING the page would drop any tab's buffered edits (docs/42 D5) — once, with
+/** Ask before LEAVING the page would drop any tab's buffered edits (SPEC §data.tabs) — once, with
  *  the total, so eight dirty tabs are eight confirms fewer than one guard per tab. */
 function dbOkToLeave(): boolean {
   return dbAskDrop(dbPendingAll());
@@ -178,7 +178,7 @@ function dbPkVals(pkCols: string[], row: Record<string, unknown>): Record<string
   return out;
 }
 
-/** docs/22 W4.3: a query-result row's selection key — the tab index namespaces it, so every
+/** SPEC §data.console: a query-result row's selection key — the tab index namespaces it, so every
  *  result tab owns an independent checked-row set the same way the table grid's keys live
  *  apart from these under the "q" prefix. Pure. */
 function dbResultKey(tab: number, i: number): string {
@@ -193,7 +193,7 @@ async function loadDbView(): Promise<void> {
   // owns the record now and it is never absent, so all this still marks is that the view is
   // on screen — which the late callbacks below ask about by name.
   mountDbView();
-  // docs/47 D3: a page leave parked the session; the mount takes it back, so the page returns
+  // SPEC §data.sessions: a page leave parked the session; the mount takes it back, so the page returns
   // on the connection it left with everything that connection held.
   dbResumeView();
   renderDbView();
@@ -215,7 +215,7 @@ async function loadDbView(): Promise<void> {
   dbShowSession();
 }
 
-/** Paint the live session whole, then fetch only what it lacks (docs/47 D5). What the session
+/** Paint the live session whole, then fetch only what it lacks (SPEC §data.sessions). What the session
  *  holds is on screen at once; the catalog and the page in front are then re-read QUIETLY - no
  *  Loading, nothing cleared, a repaint only when the answer moved. A Redis key walk is re-walked
  *  as deep as More took it, so no page is lost (D6, revised); a console is never re-run. */
@@ -244,19 +244,19 @@ function dbShowSession(): void {
 function renderDbView(): void {
   const pane = $("pane");
   // "full" turns the pane into the library's full-bleed workspace body (ui.css .pane.full;
-  // docs/13 D5 as revised): no padding, no measure - the explorer divides its own space.
+  // SPEC §panel.nav): no padding, no measure - the explorer divides its own space.
   // db-host is this page's own hook for its child rules. views/data.js takes both back off
   // on unmount so no other page inherits them.
   pane.classList.add("db-host", "full");
   pane.textContent = "";
-  // docs/37 R5: the skeleton is a node tree, and the pane carries ONE delegated listener per
+  // SPEC §panel.toolchain: the skeleton is a node tree, and the pane carries ONE delegated listener per
   // event type (property-assigned, never addEventListener — a repaint re-assigns the same
   // property instead of stacking). Every control below is addressed by id or a data-*
   // attribute; nothing is wired per render.
   const root = el("div", "db-root");
   fill(root,
     h("div", { class: "db-side" },
-      // docs/43 M3: the sidebar's top is TWO band-shaped rows — the connection row (status
+      // SPEC §data.databases: the sidebar's top is TWO band-shaped rows — the connection row (status
       // dot, name, dialect mark, chevron) and, when the connection has a database axis, the
       // database row (current name, chevron). Each opens a DRAWER under itself (the owner's
       // ask: the picker slides down inside the sidebar instead of floating over it) — the
@@ -265,7 +265,7 @@ function renderDbView(): void {
       h("div", { class: "db-drawer", id: "dbConnDrawer" }, h("div", { class: "db-drawer-in" })),
       h("button", { class: "db-db-row", id: "dbDatabaseRow", type: "button", hidden: true, aria: { expanded: "false", controls: "dbDbDrawer", label: tr("dataView.databaseRow") } }),
       h("div", { class: "db-drawer", id: "dbDbDrawer" }, h("div", { class: "db-drawer-in" })),
-      // docs/43 M2: the sidebar's top is the connection row and ONE search box. The sort
+      // SPEC §data.tabs: the sidebar's top is the connection row and ONE search box. The sort
       // select and its direction button moved into the Tables band's ellipsis (where they
       // act), and pg's schema dropdown died - a schema is a VISIBLE band in the tree now,
       // and a dropdown beside it would be two mechanisms saying one thing.
@@ -273,20 +273,20 @@ function renderDbView(): void {
       h("div", { class: "db-tables", id: "dbTables" }, h("div", { class: "db-hint" }, tr("dataView.loading"))),
       h("div", { class: "db-side-foot", id: "dbTablesPager" })),
     h("div", { class: "db-main" },
-      // The object tabs (docs/42 T2). L3 resource navigation, page-body owned: the strip is
+      // The object tabs (SPEC §data.tabs). L3 resource navigation, page-body owned: the strip is
       // the top EDGE of the grid below it (swiss-ui-design §1.3), which is why it sits above
       // the head row rather than beside the seg pills.
       h("div", { class: "db-tabstrip", id: "dbTabStrip", role: "tablist" }),
       h("div", { class: "db-headrow" },
         h("div", { class: "db-head", id: "dbHead" }),
-        // Pane-level actions live behind one ⋯ next to the head (docs/22 W3.2); the Activity
+        // Pane-level actions live behind one ⋯ next to the head (SPEC §data.activity); the Activity
         // monitor is the first. Shown only on a SQL connection (redis has no sessions) and only
-        // while the open object has no ⋯ of its own - renderDbToolbar decides (docs/46 P7).
+        // while the open object has no ⋯ of its own - renderDbToolbar decides (SPEC §panel.pages).
         moreBtn(tr("dataView.morePaneActions"), { id: "dbMore", hidden: true })),
       h("div", { class: "db-filters", id: "dbFilters" }),
-      // The console is the sql tab's BODY now (docs/42 T2), not a block toggled over the
+      // The console is the sql tab's BODY now (SPEC §data.tabs), not a block toggled over the
       // pane: renderDbGrid unhides it for a sql tab and hides it for every other kind.
-      // docs/43 M4: the flat action row is gone — Run is the toolbar's primary action,
+      // SPEC §data.tabs: the flat action row is gone — Run is the toolbar's primary action,
       // Explain/Format/favorites/history ride the toolbar's overflow menu.
       h("div", { class: "db-console", id: "dbConsole", hidden: true },
         h("div", { class: "db-sql-wrap" },
@@ -298,7 +298,7 @@ function renderDbView(): void {
         h("div", { class: "db-console-row" },
           hint(tr("dataView.statementsSplitCtrlEnter"), { id: "dbSqlHint" }))),
       h("div", { class: "db-grid-wrap", id: "dbGridWrap" }),
-      // docs/43 M4: the STATUS bar — pager, page size, elapsed, editability, connection —
+      // SPEC §data.tabs: the STATUS bar — pager, page size, elapsed, editability, connection —
       // a second line under the pane body, separate from .db-bar (the commit bar, whose
       // job is unchanged). Rendered by renderDbStatus on every grid repaint.
       h("div", { class: "db-status", id: "dbStatus" }),
@@ -308,7 +308,7 @@ function renderDbView(): void {
   pane.oninput = dbPaneInput;
   pane.onchange = dbPaneChange;
   pane.onkeydown = dbPaneKeydown;
-  // auxclick is its own event type, property-assigned like its four siblings (docs/37 R5).
+  // auxclick is its own event type, property-assigned like its four siblings (SPEC §panel.toolchain).
   pane.onauxclick = dbPaneAuxClick;
   // So is contextmenu — the strip's card menu (rename / close left / close right) rides it.
   pane.oncontextmenu = dbPaneContext;
@@ -340,11 +340,11 @@ function renderDbView(): void {
   renderDbToolbar(); renderDbGrid(); renderDbBar();
 }
 
-/* --- #pane's four delegated listeners (docs/37 R5) ------------------------------------------------
+/* --- #pane's four delegated listeners (SPEC §panel.toolchain) ------------------------------------------------
    The pane this view owns answers every click/change/input/keydown in it. The chrome
    dispatcher below handles the sidebar and console; each section module exports its own
    dispatcher and the chain calls them in order — selectors are disjoint, and the first
-   match wins. Behavior note (docs/37 §10.1): all state is resolved at EVENT time through
+   match wins. Behavior note (SPEC §panel.toolchain): all state is resolved at EVENT time through
    dbConn()/dbTab(), never captured at render time. */
 
 // The sidebar grep's debounce: one module-level timer, restarted per keystroke.
@@ -372,7 +372,7 @@ function dbPaneClick(ev: MouseEvent): void {
   if (dbActivityClick(t, ev)) return;
 }
 
-/** The middle-button half of the pointer contract (docs/43 M1 D8): a middle press fires
+/** The middle-button half of the pointer contract (SPEC §data.tabs): a middle press fires
  *  click once for compatibility and auxclick for the truth, so the strip's middle close is
  *  answered HERE — acting on click as well would close two tabs for one press. */
 function dbPaneAuxClick(ev: MouseEvent): void {
@@ -401,7 +401,7 @@ function dbPaneInput(ev: Event): void {
 function dbPaneChange(ev: Event): void {
   const t = targetEl(ev);
   if (!t) return;
-  // docs/43 M4: the console's flat row is gone, so the pane has no chrome-owned selects any
+  // SPEC §data.tabs: the console's flat row is gone, so the pane has no chrome-owned selects any
   // more — every change belongs to the grid (the status bar's page-size included) or a form.
   if (dbGridChange(t, ev)) return;
   if (dbFiltersChange(t)) return;
@@ -431,7 +431,7 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
     renderDbSide();
   }
   // wrapped: dbRunSql's first parameter is 'explain' — an event object is truthy, so a
-  // plain Run click used to quietly run EXPLAIN (docs/22 W5.4 audit). docs/43 M4 moved
+  // plain Run click used to quietly run EXPLAIN (SPEC §data.console). SPEC §data.tabs moved
   // Run to the toolbar; the delegated id branch stays — the toolbar button carries it.
   if (t.closest("#dbSqlRun")) { void dbRunSql(false); return true; }
   // The connection row toggles its drawer (the owner's ask: the picker slides down inside
@@ -459,7 +459,7 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
   if (moreBtn) {
     // stopPropagation: the document click closes popup menus — the opening click must not.
     ev.stopPropagation();
-    // The monitor is an open object (docs/42 T2): the entry opens its tab, and the tab's own
+    // The monitor is an open object (SPEC §data.tabs): the entry opens its tab, and the tab's own
     // × closes it — which is why there is no "Close activity" twin here any more.
     popupMenu(moreBtn.getBoundingClientRect(), [
       { label: tr("dataView.activity"), fn: (): void => { dbOpenTab({ kind: "activity" }); } },
@@ -470,7 +470,7 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
   const keyRow = t.closest<HTMLElement>("[data-rkey]");
   if (keyRow) {
     if (keyRow.dataset.rbinary !== undefined) { toast(tr("dataView.binaryKeyTitle"), true); return true; }
-    // A key is an object: it opens its own tab (docs/42 T2), so a second key no longer eats
+    // A key is an object: it opens its own tab (SPEC §data.tabs), so a second key no longer eats
     // the first one's typed-value buffer and no guard has to ask about it.
     dbOpenTab({ kind: "key", key: keyRow.dataset.rkey || "", type: keyRow.dataset.rtype });
     return true;
@@ -486,7 +486,7 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
     return true;
   }
   if (t.closest("[data-keysmore]")) { void dbLoadKeys(false); return true; }
-  // docs/43 addendum: a section's note row. treemore widens the window by the batch the
+  // SPEC §data.tabs: a section's note row. treemore widens the window by the batch the
   // note itself advertised (dataset.next); treeless drops the memory and the window snaps
   // back to the initial cap. The key carries schema + section so a pg catalog widens one
   // schema's Tables band, not every schema's.
@@ -529,7 +529,7 @@ function dbChromeInput(t: Element): boolean {
     if (st) st.sqlText = ta.value;
     dbSqlPaint();
     dbSuggestOnInput.call(ta);
-    dbRedisHint(ta); // docs/50: the line under the box follows the command being typed
+    dbRedisHint(ta); // SPEC §data.redis-console: the line under the box follows the command being typed
     return true;
   }
   return false;
@@ -573,7 +573,7 @@ function dbRedisCompare(a: ApiDbRedisKeyRow, b: ApiDbRedisKeyRow): number {
    redis command has no plan). Called on mount once the connections are known, and again on every
    switch — it used to run once, at mount, before /api/db had even answered, so it never saw a
    redis connection. */
-/** The console's hint line while a redis command is typed (docs/50 §2.3): the syntax and the
+/** The console's hint line while a redis command is typed (SPEC §data.redis-console): the syntax and the
  *  one-line summary the SERVER gave for it, in place of the standing hint. An unknown word -
  *  or a SQL console - leaves the standing hint alone, because a line that flickered between a
  *  signature and a general instruction would be harder to read than either. */
@@ -585,10 +585,10 @@ function dbRedisHint(ta: HTMLTextAreaElement): void {
 }
 
 function dbSyncKind(): void {
-  // Only the skeleton's own ids. This used to demand #dbSqlExplain too, and docs/43 M4 took the
+  // Only the skeleton's own ids. This used to demand #dbSqlExplain too, and SPEC §data.tabs took the
   // console's flat row (Explain, Format) into the toolbar's overflow: the early return then fired
   // on every mount and switch, so the pane's ⋯ never showed and a Redis key list's search said
-  // "Filter tables" (found on the docs/46 P7 walk). Explain and Format are overflow rows now,
+  // "Filter tables" (found on a walk of SPEC §panel.pages). Explain and Format are overflow rows now,
   // and dbMoreItemsForSql leaves them out for a Redis command.
   const grep = $<HTMLInputElement>("dbGrep"), sql = $<HTMLTextAreaElement>("dbSql"), sqlHint = $("dbSqlHint");
   if (!grep || !sql || !sqlHint) return;
@@ -597,15 +597,15 @@ function dbSyncKind(): void {
     grep.title = tr("dataView.filterKeysScanPattern");
     sql.placeholder = tr("dataView.redisConsolePlaceholder");
     sqlHint.textContent = tr("dataView.redisConsoleHint");
-    // docs/50: the console's completion is this server's own command list. One read per
+    // SPEC §data.redis-console: the console's completion is this server's own command list. One read per
     // connection, here - where every mount and every switch already passes.
     void dbRedisLoadCommands();
   } else {
-    // The placeholder IS the grammar (docs/22 W1.6): comma AND, | OR, * wildcard.
+    // The placeholder IS the grammar (SPEC §data.browse): comma AND, | OR, * wildcard.
     grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", tr("dataView.filterTables"));
     grep.title = tr("dataView.filterTablesGrammar");
     sql.placeholder = tr("dataView.selectUpdateDeleteStatements");
-    // docs/22 W4.3: the ; split answers one result tab per statement; the blank-line block
+    // SPEC §data.console: the ; split answers one result tab per statement; the blank-line block
     // rule (W1.8) still decides what a single Run covers.
     sqlHint.textContent = tr("dataView.blankLineStartsNew");
   }
@@ -621,12 +621,12 @@ function dbConnLabel(c: ApiDbConnectionRow): string {
   return c.name + " · " + c.dialect;
 }
 
-/* --- docs/43 M3: the two sidebar rows' menus and the two switches ----------------------------- */
+/* --- SPEC §data.databases: the two sidebar rows' menus and the two switches ----------------------------- */
 
 // One /databases request in flight (renderDbSide can fire the lazy fetch from a busy loop).
 let dbDatabasesInFlight = false;
 
-/** docs/43 M3: the database IN EFFECT — the picked one, or the catalog's primary when
+/** SPEC §data.databases: the database IN EFFECT — the picked one, or the catalog's primary when
  *  nothing has been picked yet ("" means the configured default, which the primary row
  *  stands for). The row's name, the menu's on-mark and the switch's own no-op test all
  *  read THIS, so the three can never disagree. Pure. */
@@ -637,7 +637,7 @@ function dbCurrentDatabase(d: DbConnState): string {
   return p ? p.name : "";
 }
 
-/** Switch CONNECTIONS (docs/47 D1, D2): the session on screen parks whole - its strip, its
+/** Switch CONNECTIONS (SPEC §data.sessions): the session on screen parks whole - its strip, its
  *  buffered writes, its catalog, its search and sort - and the target's parked session comes
  *  back; a connection seen for the first time starts at its family's placeholder on its
  *  CONFIGURED database. Nothing is dropped, so nothing is asked. */
@@ -676,7 +676,7 @@ function dbDrawerFill(host: HTMLElement | null, items: MenuItem[], open: boolean
   items.forEach((it: MenuItem): void => {
     if (it.sep) { inner.appendChild(h("hr")); return; }
     if (it.heading) { inner.appendChild(h("div", { class: "db-drawer-head" }, it.label)); return; }
-    // The current pick is a tick in its own column (docs/46 §3.7, rule 15), the menu's .pick
+    // The current pick is a tick in its own column (SPEC §panel.pages, rule 15), the menu's .pick
     // idiom: blue text said "selected" in the colour links and actions use. Every row keeps the
     // column, so the names line up whether or not their row is the current one.
     const b = h("button", {
@@ -716,9 +716,9 @@ function renderDbSide(): void {
   const dot = el("span", "db-dot" + (cur && cur.state === "stopped" ? " off" : ""));
   row.appendChild(dot);
   row.appendChild(el("span", "db-row-name", cur ? cur.name : tr("dataView.pickConnection")));
-  // The dialect follows the MCP sidebar's launch-tag vocabulary (docs/29): a mapped dialect
+  // The dialect follows the MCP sidebar's launch-tag vocabulary (SPEC §mcp.panel): a mapped dialect
   // paints its brand glyph, bare (the word rides the aria-label); anything outside the
-  // whitelist is the library's mono tag (docs/46 §3.7) - a mark and a word are different
+  // whitelist is the library's mono tag (SPEC §panel.pages) - a mark and a word are different
   // things, and the same tag should never be a mark in one sidebar and a word in the other.
   if (cur) {
     const mark = typeTagNode(cur.dialect);
@@ -733,14 +733,14 @@ function renderDbSide(): void {
   row.appendChild(chev);
   row.setAttribute("aria-expanded", dbDrawer === "conn" ? "true" : "false");
   row.classList.toggle("engaged", dbDrawer === "conn");
-  // The connection drawer: same items the old menu showed (docs/20 G5 groups), rendered
+  // The connection drawer: same items the old menu showed (SPEC §host.groups groups), rendered
   // as rows that push the tree below instead of floating over it.
   dbDrawerFill($("dbConnDrawer"), dbConnMenuItems(d.conns, d.conn || "",
     (name: string): void => { dbDrawer = ""; void dbSwitchConn(name); }), dbDrawer === "conn");
-  // docs/20 G5: the connection menu keeps the groups — heading rows where the optgroups
+  // SPEC §host.groups: the connection menu keeps the groups — heading rows where the optgroups
   // were, first-appearance order over the flat list, one separator between groups. A single
   // group stays flat (a heading around everything says nothing); no group reads as one list.
-  // docs/43 M3: the database row appears only when the catalog answered with entries; the
+  // SPEC §data.databases: the database row appears only when the catalog answered with entries; the
   // catalog itself is fetched once per connection (dbLoadDatabases), null = not yet asked.
   if (dbRow) {
     const names = d.databases || [];
@@ -766,12 +766,12 @@ function renderDbSide(): void {
       dbRow.setAttribute("aria-expanded", "false");
     }
   }
-  // docs/43 M3: the catalog is fetched once per connection — null means not asked yet, and
+  // SPEC §data.databases: the catalog is fetched once per connection — null means not asked yet, and
   // the in-flight flag keeps a busy render loop from asking twice.
   if (d.conn && d.databases === null && !dbDatabasesInFlight) void dbLoadDatabases();
 }
 
-/** docs/43 M3: the database selector's ordering, a pure function so the acceptance suite
+/** SPEC §data.databases: the database selector's ordering, a pure function so the acceptance suite
  *  can pin it - primary first, the rest by name, system databases last (they stay listed:
  *  hiding them is not the panel's call). */
 function dbSortDatabases(list: ApiDbDatabase[]): ApiDbDatabase[] {
@@ -782,7 +782,7 @@ function dbSortDatabases(list: ApiDbDatabase[]): ApiDbDatabase[] {
   });
 }
 
-/** docs/43 M3: the database selector's menu rows, built as DATA so the suite can pin the
+/** SPEC §data.databases: the database selector's menu rows, built as DATA so the suite can pin the
  *  contract (primary first; browsable:false rows disabled with the server's own reason as
  *  title; the selected database marks on and cannot re-pick) without a live menu. */
 function dbDatabaseMenuItems(
@@ -816,7 +816,7 @@ function dbDatabaseMenuItems(
   return items;
 }
 
-/** docs/43 M3 4.3.3: switching DATABASES is the light version of switching connections -
+/** SPEC §data.databases: switching DATABASES is the light version of switching connections -
  *  the same whole-strip confirmation (an orders tab that now points at another database's
  *  orders table is worse than a closed tab), the same resets, but the connection and its
  *  catalog stay. */
@@ -840,7 +840,7 @@ function dbSwitchDatabase(name: string): void {
   void dbLoadTables();
 }
 
-/** docs/43 M3: fetch the connection's database catalog once — null means not asked yet,
+/** SPEC §data.databases: fetch the connection's database catalog once — null means not asked yet,
  *  and an EMPTY array is a real answer (the dialect has no database axis; the row stays
  *  hidden). The lazy fetch rides the first renderDbSide after a connection switch; the
  *  selector itself then reads the cache. `quiet` re-reads a catalog already held (a redis
@@ -865,18 +865,18 @@ async function dbLoadDatabases(quiet?: boolean): Promise<void> {
 /* --- lazy table list ---------------------------------------------------------------------------- */
 
 // One /tables request chain: a slow answer for a page or filter the user just left must be
-// dropped, or it would repopulate the sidebar with the stale page (docs/22 closeout audit).
+// dropped, or it would repopulate the sidebar with the stale page (SPEC §data).
 const dbTablesReq = dbReqGuard();
 
 async function dbLoadTables(quiet?: boolean): Promise<void> {
   const d = dbConn();
   if (!d.conn) return;
   const box = $("dbTables");
-  // docs/47 D5: a quiet re-read keeps the list on screen until the answer is in.
+  // SPEC §data.sessions: a quiet re-read keeps the list on screen until the answer is in.
   if (box && !quiet) { box.textContent = ""; box.appendChild(el("div", "db-hint", tr("dataView.loading"))); }
   let q = "/api/db/" + encodeURIComponent(d.conn) + "/tables?limit=" + DB_TREE_FETCH_LIMIT;
   if (d.grep) q += "&grep=" + encodeURIComponent(d.grep);
-  // docs/43 M3: on MySQL the schema parameter NAMES THE DATABASE — absent keeps the
+  // SPEC §data.databases: on MySQL the schema parameter NAMES THE DATABASE — absent keeps the
   // configured one byte-identical; a chosen database rides here (the server whitelists it
   // before any SQL is built). pg keeps its in-database schema semantics, untouched.
   if (d.schemaFilter) q += "&schema=" + encodeURIComponent(d.schemaFilter);
@@ -907,7 +907,7 @@ function dbIsPg(): boolean {
   return !!c && c.dialect === "pg";
 }
 
-/* The sidebar grep grammar (docs/22 W1.6): comma-separated terms AND together, "|" inside a
+/* The sidebar grep grammar (SPEC §data.browse): comma-separated terms AND together, "|" inside a
    term is OR, "*" is a wildcard, everything case-insensitive. A bare term with no "*" keeps
    the substring behaviour the list always had. Pure so the grammar can be pinned without a
    DOM; the server's table grep speaks the same language in SQL. */
@@ -929,7 +929,7 @@ function dbFilterMatches(tokens: string, name: unknown): boolean {
   });
 }
 
-/* The sidebar's list, which is a TREE now (docs/43 M2): SQL connections cut into Tables /
+/* The sidebar's list, which is a TREE now (SPEC §data.tabs): SQL connections cut into Tables /
    Views / Routines bands (a pg catalog nests them under schema bands), a redis keyspace
    folded along ":" with single-child chains compressed. Every band is mountGroup - the one
    container-head shape swiss-ui-design allows - at side density; the collapse state rides the
@@ -948,9 +948,9 @@ function renderDbTables(): void {
   if (dbIsRedis()) {
     const rr = d.redis;
     if (!rr || !rr.keys.length) {
-      // docs/22 closeout B1: a failed scan is a FAILURE, not an empty keyspace — the toast
+      // SPEC §data: a failed scan is a FAILURE, not an empty keyspace — the toast
       // carries the server's own text; this row keeps the list from pretending otherwise.
-      // docs/43 M2 walk: SCAN MATCH may return a hits-empty page while the keyspace walk
+      // SPEC §data.tabs, found on a walk: SCAN MATCH may return a hits-empty page while the keyspace walk
       // continues (done=false) — that is not "no keys match", it is "not there YET"; the
       // footer's More keeps scanning.
       box.appendChild(el("div", "db-hint", d.redisError
@@ -960,24 +960,24 @@ function renderDbTables(): void {
           : d.grep ? tr("dataView.keysMatchQ", { q: d.grep }) : tr("dataView.keysScanReturnedNone")));
     }
     // The live key tab holds the selection: a redis connection's single tab is kind
-    // "key" (docs/42 T1), and a fresh one with no key opened selects nothing.
+    // "key" (SPEC §data.tabs), and a fresh one with no key opened selects nothing.
     const kt = dbTab();
     const selKey = kt.kind === "key" ? kt.redisKey : null;
-    // ONE collapse map per scope for the whole pass (docs/43 M2): mountGroup mutates the map
+    // ONE collapse map per scope for the whole pass (SPEC §data.tabs): mountGroup mutates the map
     // it is handed and saves it whole, so a per-band load would let the second toggle clobber
     // the first.
     const nsCollapsed = loadCollapsed("dbtree.ns");
     const tree = redisNamespaceTree(rr ? rr.keys : [], dbRedisCompare);
     tree.forEach((g: RedisNsGroup): void => {
       if (!g.prefix) {
-        // Keys with no ":" are the keyspace's own rows (docs/43 M2 acceptance): they sit at
+        // Keys with no ":" are the keyspace's own rows (SPEC §data.tabs): they sit at
         // the root, not under a band that pretends a namespace exists. Told apart by the
         // PREFIX: keys starting with ":" make a band whose name is "" as well.
         g.keys.forEach((k: ApiDbRedisKeyRow): void => { box.appendChild(dbKeyRow(k, k.key, selKey)); });
         return;
       }
       // The leaf promise at the root too: a namespace holding exactly one key and nothing
-      // else IS that row (docs/43 M2 #4) - no folder around a single file.
+      // else IS that row (SPEC §data.tabs) - no folder around a single file.
       if (!g.children.length && g.keys.length === 1) {
         box.appendChild(dbKeyRow(g.keys[0], g.keys[0].key, selKey));
         return;
@@ -1001,7 +1001,7 @@ function renderDbTables(): void {
   if (!d.tables.length) {
     box.appendChild(el("div", "db-hint", d.grep ? tr("dataView.noTablesMatchQ", { q: d.grep }) : tr("dataView.noTables")));
   }
-  // docs/43 M2: the SQL tree. A pg catalog nests its type bands under one band per schema
+  // SPEC §data.tabs: the SQL tree. A pg catalog nests its type bands under one band per schema
   // (mockup B); MySQL is one database, so its three type bands sit at the root. Both shapes
   // are the same component at the same density - a schema band's "rows" are the type bands.
   if (dbIsPg() && d.tables.length) {
@@ -1041,7 +1041,7 @@ function renderDbTables(): void {
   const foot = $("dbTablesPager");
   if (!foot) return;
   foot.textContent = "";
-  // docs/43 addendum: the pager died with whole-catalog fetches. The footer now states the
+  // SPEC §data.tabs: the pager died with whole-catalog fetches. The footer now states the
   // one fact that can still be true - the tree holds everything, or the fetch cap clipped it
   // and grep (server-side, same grammar) is the way past. Browsing is not paging anymore.
   if (d.tablesTotal) {
@@ -1057,9 +1057,9 @@ function renderDbTables(): void {
   }
 }
 
-/** One table row, one LINE (docs/43 M2): the name left, the approximate row count right in
+/** One table row, one LINE (SPEC §data.tabs): the name left, the approximate row count right in
  *  --text-3 tnum caption - the two-line row's "table · ~9,309 rows · 7.0 MB" meta moved into
- *  the title, one hover away, where nothing truncates the name to show it. docs/37 R5: the
+ *  the title, one hover away, where nothing truncates the name to show it. SPEC §panel.toolchain: the
  *  name and schema are the address — the delegated click (dbChromeClick's [data-tname])
  *  re-finds the row in the live list and hands it to dbOpenTab, whose dedupe and cap are
  *  re-read at event time. */
@@ -1073,7 +1073,7 @@ function dbTableRow(t: ApiDbTableRow, scope: string | null): HTMLElement {
     + (t.size ? " · " + t.size : "");
   b.dataset.tname = t.name;
   b.dataset.tschema = t.schema || "";
-  // docs/43 M3 D3's other shoe: a table in a database OTHER than the scope carries its
+  // SPEC §data.databases's other shoe: a table in a database OTHER than the scope carries its
   // db.table qualifier in the row (browsing a secondary database must never read as the
   // configured one's tables); inside the scope the name stands alone, as it always did.
   const qualified = t.schema && scope && t.schema !== scope;
@@ -1085,7 +1085,7 @@ function dbTableRow(t: ApiDbTableRow, scope: string | null): HTMLElement {
   return b;
 }
 
-/** One redis key row, one line (docs/43 M2): the type's glyph, the name (the REMAINDER under its
+/** One redis key row, one line (SPEC §data.tabs): the type's glyph, the name (the REMAINDER under its
  *  band's prefix - the band already said the prefix; a leaf row says the whole key), its type
  *  right. The full key stays the row's title and its address ([data-rkey]).
  *
@@ -1117,19 +1117,19 @@ function dbKeyRow(k: ApiDbRedisKeyRow, label: string, selKey: string | null): HT
   return b;
 }
 
-/** The one-shot catalog fetch asks for this many rows (docs/43 addendum). 2,000 covers a
+/** The one-shot catalog fetch asks for this many rows (SPEC §data.tabs). 2,000 covers a
  *  thousand-table database with margin to spare; the server clamps hand-written queries at
  *  5,000, and anything bigger is grep territory - the footer says so when it happens. */
 const DB_TREE_FETCH_LIMIT = 2000;
-/** Rows painted per section band before the note row takes over (docs/43 addendum). The
+/** Rows painted per section band before the note row takes over (SPEC §data.tabs). The
  *  cap is a DOM budget, not a data limit: the band's badge still numbers the full list. */
 const DB_TREE_ROW_CAP = 200;
-/** Rows one "show more" click appends (docs/43 addendum). Incremental on purpose: the note
+/** Rows one "show more" click appends (SPEC §data.tabs). Incremental on purpose: the note
  *  stays "show N more" until the END of the list, and only then offers "show fewer" - the
  *  owner's ask, verbatim: page your way down, and say fewer when there is nothing left. */
 const DB_TREE_ROW_STEP = 500;
 
-/** One band's render budget (docs/43 addendum). A search renders every MATCH - the server
+/** One band's render budget (SPEC §data.tabs). A search renders every MATCH - the server
  *  already filtered, and a match the operator typed must not hide behind an expander. The
  *  window memory is keyed "schema/section" so a pg catalog widens one schema's Tables band
  *  without dragging every other schema's along. */
@@ -1160,7 +1160,7 @@ function dbTreeCap(sec: { name: DbTreeSection; rows: ApiDbTableRow[] }):
   return { keep: shown, note: more };
 }
 
-/** One Tables / Views / Routines band (docs/43 M2) — the tree's leaf container, shared by
+/** One Tables / Views / Routines band (SPEC §data.tabs) — the tree's leaf container, shared by
  *  MySQL (at the root) and pg (nested inside its schema band). The band owns the list's sort
  *  (its ellipsis, mockup B) and — on the Tables section only — the New table +. */
 function dbSectionBand(sec: { name: DbTreeSection; rows: ApiDbTableRow[] },
@@ -1187,7 +1187,7 @@ function dbSectionBand(sec: { name: DbTreeSection; rows: ApiDbTableRow[] },
   return mountGroup(cfg, sec);
 }
 
-/** The band label over a stable section id (docs/38: identity keys the fold state, copy is
+/** The band label over a stable section id (SPEC §panel.i18n: identity keys the fold state, copy is
  *  a lookup, so the tree never mistranslates between renders - and the keys stay LITERAL,
  *  one branch per section, because the dictionary's orphan scanner reads source, not
  *  concatenations). */
@@ -1198,7 +1198,7 @@ function dbSectionLabel(sec: string): string {
 }
 
 /** What an empty section says: the fact it is missing, not a drop target it cannot honor
- *  (docs/43 M2 - nothing can be dropped into a band the catalog owns). */
+ *  (SPEC §data.tabs - nothing can be dropped into a band the catalog owns). */
 function dbSectionEmpty(sec: string): string {
   if (sec === "tables") return tr("dataTree.no.tables");
   if (sec === "views") return tr("dataTree.no.views");
@@ -1206,7 +1206,7 @@ function dbSectionEmpty(sec: string): string {
 }
 
 /** New table… — the Tables band's +, the same flow the old list header's button opened
- *  (docs/22 W4.6). Where it lands follows the picked schema the same way. */
+ *  (SPEC §data.ddl). Where it lands follows the picked schema the same way. */
 function dbNewTableFlow(): void {
   const d = dbConn();
   if (!d.conn || dbIsRedis()) return;
@@ -1218,7 +1218,7 @@ function dbNewTableFlow(): void {
   });
 }
 
-/** The Tables band's ellipsis (docs/43 M2 #6): the list's sort key and direction, moved off
+/** The Tables band's ellipsis (SPEC §data.tabs): the list's sort key and direction, moved off
  *  the sidebar's top row and put where they act. SQL re-requests the list (server-side sort
  *  against the catalog); redis re-sorts what SCAN has handed over, client-side. */
 function dbSortMenu(): MenuItem[] {
@@ -1232,7 +1232,7 @@ function dbSortMenu(): MenuItem[] {
   return items;
 }
 
-/** Apply a sort choice from the band menu (docs/43 M2): key or direction or both; a null
+/** Apply a sort choice from the band menu (SPEC §data.tabs): key or direction or both; a null
  *  argument keeps what is set. Choosing what is already set is a repaint, not a request. */
 function dbSetSort(key: string | null, dir: string | null): void {
   const d = dbConn();
@@ -1242,7 +1242,7 @@ function dbSetSort(key: string | null, dir: string | null): void {
   else void dbLoadTables();
 }
 
-/** One redis namespace band (docs/43 M2): mountGroup over the node's children (as bands)
+/** One redis namespace band (SPEC §data.tabs): mountGroup over the node's children (as bands)
  *  and its direct keys (as rows), children first. A namespace holding exactly one key and
  *  nothing else IS that row — no folder around a single file (the tree compressed the chain
  *  on the way in; this is the rendering half of that promise). */
@@ -1424,14 +1424,14 @@ export async function dbRedisDeleteKeys(ns: string, keys: string[]): Promise<voi
     }
   });
   if (!sent.length && why !== null) return; // nothing left the panel's hands; nothing moved
-  // The quiet walk (docs/47 D6): as many pages deep as the operator had gone, so a band
+  // The quiet walk (SPEC §data.sessions): as many pages deep as the operator had gone, so a band
   // deleted out of a 5,000-key listing does not drop them back to the first 200.
   if (dbConn() === c) await dbRewalkKeys();
   renderDbGrid();
 }
 
 /** The selected connection's dialect word ("mysql" | "pg") — the DDL sheets build their
- *  type suggestions and titles on it (docs/22 W4.6). */
+ *  type suggestions and titles on it (SPEC §data.ddl). */
 function dbDialectOf(): string {
   const d = dbConn();
   const c = d.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === d.conn; });
@@ -1439,7 +1439,7 @@ function dbDialectOf(): string {
 }
 
 /** Every schema the loaded pages have shown, "public" always among them — the New table
- *  sheet's where-it-goes select (docs/22 W4.6; swiss-ui-design rule 6). */
+ *  sheet's where-it-goes select (SPEC §data.ddl; swiss-ui-design rule 6). */
 function dbKnownSchemas(): string[] {
   const d = dbConn();
   const out: string[] = [];
@@ -1451,7 +1451,7 @@ function dbKnownSchemas(): string[] {
   return out;
 }
 
-/** docs/22 W5.2: the FK jump's payload — one describe_table FK row plus the focused row's
+/** SPEC §data.grid: the FK jump's payload — one describe_table FK row plus the focused row's
  *  value become exactly the open-table state a typed filter would have built (the W1.5
  *  channel's shape), or nothing at all: col = NULL matches nothing, so a NULL has no jump.
  *  Pure. */
@@ -1470,7 +1470,7 @@ function dbFkJump(fk: ApiDbFkRow, value: unknown): { schema: string | null; tabl
 function dbFocusedColumnValue(ct: DbTableTab, column: string): unknown {
   if (!ct.focus || !ct.data) return undefined;
   /* Straight-line flow after the guard: ct, ct.focus and ct.data are all narrowed here, so
-   * the reads below need no assertions at all (docs/37 R2). */
+   * the reads below need no assertions at all (SPEC §panel.lint). */
   if (ct.focus.r < ct.inserts.length) return ct.inserts[ct.focus.r].values[column];
   const row = ct.data.rows[ct.focus.r - ct.inserts.length];
   return row ? row[column] : undefined;
@@ -1479,7 +1479,7 @@ function dbFocusedColumnValue(ct: DbTableTab, column: string): unknown {
 /** Open the referenced table with the filter preset (adminer's select-link, dbgate's
  *  openReferenceForm — both land on the target table already filtered to one row).
  *
- *  docs/22 W5.2, finally right: the jump opens a NEW tab. It used to overwrite the tab the
+ *  SPEC §data.grid, finally right: the jump opens a NEW tab. It used to overwrite the tab the
  *  operator was reading — its filters, its page, its buffered edits all dropped to show them
  *  the one referenced row — which made the feature something people learned not to click. The
  *  source tab is untouched now and one click on the strip is the way back. */

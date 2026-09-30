@@ -19,7 +19,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/* The adaptive shell (docs/13 D5, redrawn; docs/39 S2): a plugin RAIL for global
+/* The adaptive shell (SPEC §panel.nav, redrawn; SPEC §panel.nav): a plugin RAIL for global
    navigation and a TITLE + underline TABS strip in the context bar for page navigation.
    No bundler and no browser in the suite, so this drives the real page-registry under a
    hand-rolled DOM: fake elements that record what paintNavigation writes, and a fetch stub
@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
    gateway (404) would. What is asserted is the generated markup and the hidden state — the
    exact contract the browser renders. */
 
-/* docs/37 R5: the rail/context bar builders construct NODES now, so the fake element is
+/* SPEC §panel.toolchain: the rail/context bar builders construct NODES now, so the fake element is
  * a kid-carrying node with a serializing innerHTML getter. Attribute order in the output
  * (class, id, title, then the bag attrs in insertion order) is chosen so the historical
  * string assertions below keep reading the way they always did. */
@@ -56,7 +56,7 @@ class FakeNode extends NodeStub {
     return n;
   }
   get innerHTML(): string { return this.kids.map(markupOf).join(""); }
-  /* The tab strip's measuring half (docs/39 S3) walks the DOM the browser offers: element
+  /* The tab strip's measuring half (SPEC §panel.nav) walks the DOM the browser offers: element
    * children, classList, dataset, a scoped querySelector and box widths. The fake carries
    * just enough of each for layoutTabs to run un-mocked. width models a tab's natural box
    * width and offsetWidth folds in the CSS rule that matters ([hidden] is display:none, so
@@ -104,7 +104,7 @@ const markupOf = (n: unknown): string => {
 const fakeEl = (): FakeNode => new FakeNode("div");
 
 const els = new Map<string, FakeNode>();
-/* Map-backed so the last-page memory round-trips (docs/39 S4): navigatePage writes the
+/* Map-backed so the last-page memory round-trips (SPEC §panel.nav): navigatePage writes the
  * store, the seat click reads it back. Every other consumer sees an empty store, exactly
  * what the old always-null stub gave them. */
 const memoryStore = new Map<string, string>();
@@ -219,7 +219,7 @@ describe("the plugin rail (global navigation)", () => {
     // The workspace plugin rides the rail like any peer.
     expect(rail).toContain('data-group="terminal" data-view="terminal"');
     // The synthesized management page has no inventory row: GROUP_LABELS names its group.
-    // Seats carry their caption again (docs/39 S1 icon-only reversed by owner, 2026-09-21):
+    // Seats carry their caption again (SPEC §panel.nav icon-only reversed by owner, 2026-09-21):
     // the group's translated name sits under the glyph at --f-caption, and the title
     // tooltip still carries it (plus the error text when the plugin is down).
     expect(rail).toContain('title="Settings" data-group="host" data-view="plugins"');
@@ -249,7 +249,7 @@ describe("the plugin rail (global navigation)", () => {
     expect(rail).not.toMatch(/data-group="tunnels"[^>]*aria-disabled/);
   });
 
-  it("a seat reopens the plugin's LAST page; data-view stays the first page id (docs/39 S4)", async () => {
+  it("a seat reopens the plugin's LAST page; data-view stays the first page id (SPEC §panel.nav)", async () => {
     // Page data fetches fail softly (500) so the real view modules mount without painting -
     // this test is about the shell's navigation, not the traffic or jobs bodies.
     memoryStore.clear();
@@ -277,7 +277,7 @@ describe("the plugin rail (global navigation)", () => {
     expect(memoryStore.get("swiss.lastPage")).toContain('"mcp":"traffic"');
   });
 
-  it("a leave the page vetoes neither navigates nor rewrites the memory (docs/39 S4)", async () => {
+  it("a leave the page vetoes neither navigates nor rewrites the memory (SPEC §panel.nav)", async () => {
     memoryStore.clear();
     // The shared inventory has no Data page; this test needs the one plugin whose view vetoes.
     const withData = {
@@ -310,7 +310,7 @@ describe("the plugin rail (global navigation)", () => {
   });
 });
 
-describe("the tab strip's refit (docs/39 S3, found live at 480px)", () => {
+describe("the tab strip's refit (SPEC §panel.nav, found live at 480px)", () => {
   it("a re-entry pass over an already-fitted strip keeps the fit instead of re-expanding it", async () => {
     await paint("mcps", inventory);
     /* Stage real boxes: a 120px strip, 60px tabs, a 32px ... seat - the widths of the
@@ -426,7 +426,7 @@ describe("the plugin context bar (page navigation)", () => {
 
   it("the terminal is a workspace page and still lives under the same bar", async () => {
     await paint("terminal", inventory);
-    // Workspace frames the BODY only; the shell keeps drawing its chrome (docs/13 D5 rev.).
+    // Workspace frames the BODY only; the shell keeps drawing its chrome (SPEC §panel.nav.).
     expect(byId("ctxBar").hidden).toBe(false);
     expect(byId("pageTitle").hidden).toBe(false);
     expect(byId("pageTitle").innerHTML).toContain('ctx-name">Terminal</span>');
@@ -466,7 +466,7 @@ describe("the plugin context bar (page navigation)", () => {
   });
 });
 
-describe("layouts (docs/13 D5)", () => {
+describe("layouts (SPEC §panel.nav)", () => {
   it("the descriptor states the layout; sidebar derives it when a gateway is older", () => {
     expect(registry.layoutOf({ layout: "workspace" })).toBe("workspace");
     expect(registry.layoutOf({ layout: "resource" })).toBe("resource");
@@ -479,7 +479,7 @@ describe("layouts (docs/13 D5)", () => {
   it("an older gateway answering 404 falls back to the legacy manifest and its labels", async () => {
     await paint("mcps", null, 404);
     const rail = byId("railNav").innerHTML;
-    // Group label from GROUP_LABELS names the seat's tooltip (docs/39 S1); the seat lands
+    // Group label from GROUP_LABELS names the seat's tooltip (SPEC §panel.nav); the seat lands
     // on the manifest's first page.
     expect(rail).toContain('data-group="mcp" data-view="mcps"');
     expect(rail).not.toContain('data-view="traffic"');

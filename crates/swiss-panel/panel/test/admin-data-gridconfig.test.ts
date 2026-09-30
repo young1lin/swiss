@@ -71,7 +71,7 @@ const grid = await import(
   dbGridVisibleColumns: <C extends { name: string }>(columns: C[], hidden: string[]) => C[];
 };
 
-// docs/22 W2.1 — per-connection grid config: one localStorage object per connection+table
+// SPEC §data.grid — per-connection grid config: one localStorage object per connection+table
 // holding dragged widths and hidden columns (dbgate's useGridConfig precedent, one object
 // per grid, never one key per value).
 describe("grid config storage", () => {

@@ -24,8 +24,8 @@
    poll, and never while it holds focus.
 
    This is the entry module: boot, appearance, the toolbar/keyboard wiring, and the poll. Every view
-   lives in its own module next to this one; /admin/js/* is served with no-store, so editing any of
-   them reaches the browser on the next reload — no build, no gateway restart.
+   lives in its own module next to this one; /admin/js/* is served with no-store, so a rebuilt emit
+   reaches the browser on the next reload (SPEC §panel.toolchain).
    ================================================================================================ */
 import { $, THEME_KEY, api, isTyping, toast } from "./util.js";
 import { loadCollapsed } from "./groups.js";
@@ -46,7 +46,7 @@ import { initLangButton, loadLocale, paintChrome, tr } from "./i18n.js";
 import { closeMenu, menuOpen } from "./ui/menu.js";
 import { closeSheet, initSheet, sheetOpen } from "./ui/sheet.js";
 
-/* The dictionary resolves before anything paints (docs/38 §2.1): this top-level await is
+/* The dictionary resolves before anything paints (SPEC §panel.i18n): this top-level await is
    the whole reason a Chinese screen never flashes English chrome — every statement below
    (theme wiring, fold maps, showApp) runs with the dictionary already installed. The views'
    modules have evaluated by import time already, which is exactly why they may only CALL
@@ -58,7 +58,7 @@ paintChrome();
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only
  *  when the reload cannot destroy work: no buffered data-view edits, no open sheet, nothing
  *  being typed. Otherwise say so once and keep checking on later polls. */
-/* One-shot guard for the version toast, module-scoped (docs/37 M3): it once rode on the
+/* One-shot guard for the version toast, module-scoped (SPEC §panel.lint): it once rode on the
    function object itself (maybeReloadPanel._warned), typed by a Function augmentation. */
 let warnedNewPanel = false;
 function maybeReloadPanel(newVersion: string): void {
@@ -77,7 +77,7 @@ function maybeReloadPanel(newVersion: string): void {
 }
 
 /* --- boot -------------------------------------------------------------------------------------- */
-/** The server serves this shell only to a signed-in browser (docs/48: a one-time link from
+/** The server serves this shell only to a signed-in browser (SPEC §host.session: a one-time link from
  *  `swiss open` sets the session cookie), so reaching it means the sign-in is done — just start. */
 function showApp(): void {
   void initPages();
@@ -128,7 +128,7 @@ function setTheme(p: string): void {
 function paintThemeBtn(): void {
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
   const b = $("themeBtn");
-  // The sprite swap (docs/18 V2): switch the referenced symbol, not the button's HTML.
+  // The sprite swap (SPEC §panel.design): switch the referenced symbol, not the button's HTML.
   const use = b.querySelector("use");
   if (use) use.setAttribute("href", dark ? "#i-sun" : "#i-moon");
   b.title = dark ? tr("main.switchLight") : tr("main.switchDark");
@@ -140,7 +140,7 @@ $("themeBtn").onclick = (e) => {
   paintThemeBtn();
 };
 paintThemeBtn();
-initLangButton(paintThemeBtn); // the 文/A flip (docs/38): hands over the theme repainter so chrome stays whole
+initLangButton(paintThemeBtn); // the 文/A flip (SPEC §panel.i18n): hands over the theme repainter so chrome stays whole
 // Every dropdown in the panel becomes the shared custom control: what is in the DOM now, plus
 // whatever the views create later (observed), so no view ever opts in or out.
 initSelects();
@@ -157,10 +157,8 @@ if (window.matchMedia as unknown) {
 
 /* Navigation and deep links are owned by the page registry. */
 
-/* Polling is cheap: /api/mcps is status-only, and /api/memory reads process.memoryUsage() in-process.
-   The child-subtree walk asked for below is the one costly part, and the server bounds it — cached for
-   20s, deduped while in flight, and skipped outright when no proc MCP is running — so a 6s poll costs
-   at most one transient powershell per 20s, and nothing at all when there are no children. Polling
+/* Polling is cheap: /api/mcps is status-only, and /api/memory is an in-process reading (Toolhelp32
+   on Windows, /proc on Linux) - no child process is ever spawned for it (SPEC §host.memory). Polling
    still pauses when the tab is hidden: nobody is looking. */
 function poll(): void {
   if (document.visibilityState !== "visible") return;
@@ -223,7 +221,7 @@ document.addEventListener("keydown", (e) => {
 
 setFoldMap(loadCollapsed("mcps")); // before the first paint, so folded groups never flash open
 setTunFolds(loadCollapsed("conns"), loadCollapsed("rules")); // same, per tunnels page scope
-setJobFolds(loadCollapsed("jobs")); // the jobs scope's own fold map (docs/20 G4)
+setJobFolds(loadCollapsed("jobs")); // the jobs scope's own fold map (SPEC §host.groups)
 showApp();
 // Ask for the child walk on the very first paint too, so the chip never shows a gateway-only total
 // that a poll silently corrects 6s later.

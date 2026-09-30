@@ -150,7 +150,7 @@ pub fn mysql_list_tables_sql(
     mysql_tables_sql_pair(where_clause, &head, mysql_list_order(sort), paging)
 }
 
-/// The grammar-grep variant (docs/22 W1.6): `pred` is the multi-LIKE fragment grep_where built
+/// The grammar-grep variant (SPEC §data.browse): `pred` is the multi-LIKE fragment grep_where built
 /// (" AND (table_name LIKE ? ESCAPE '!' OR ...)") and `patterns` its bound values, slotted after
 /// the database bind. A grep without the grammar characters never reaches here — it keeps
 /// mysql_list_tables_sql's single-LIKE SQL byte-for-byte.
@@ -334,7 +334,7 @@ fn column_to_value(row: &MySqlRow, col: &MySqlColumn, i: usize) -> Value {
     match type_name.as_str() {
         "BIGINT" | "BIGINT UNSIGNED" => {
             // try_get::<i64> refuses an unsigned column (u64-only), so try both spellings.
-            // exact_* (docs/22 W2.4): the value crosses the wire as a string so JavaScript
+            // exact_* (SPEC §data.browse): the value crosses the wire as a string so JavaScript
             // never rounds it through a double.
             if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(i) {
                 return exact_int64(v);
@@ -575,7 +575,7 @@ pub async fn run_query_tx(
     Ok(result.rows_affected())
 }
 
-/// docs/22 W1.7: the rows-returning sibling of run_query_tx — the same-transaction read-back
+/// SPEC §data.edits: the rows-returning sibling of run_query_tx — the same-transaction read-back
 /// SELECT (by primary key, or by LAST_INSERT_ID() right after an insert) needs the committed
 /// row itself, not a count.
 pub async fn run_query_tx_rows(
@@ -919,7 +919,7 @@ mod tests {
 
     #[test]
     fn grammar_greps_expand_to_multi_like_sql() {
-        // docs/22 W1.6: "user*|account" is one OR over two patterns; the database bind stays
+        // SPEC §data.browse: "user*|account" is one OR over two patterns; the database bind stays
         // first and the paging pair binds last, exactly like the single-LIKE statement.
         let w = swiss_host::dbbrowser::grep_where(
             swiss_host::dbbrowser::DbDialect::Mysql,

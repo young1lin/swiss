@@ -38,7 +38,7 @@ function tokenEnv()         {
   return gatewayInfo()?.tokenEnv || "SWISS_TOKEN";
 }
 function endpointUrl(name        )         {
-  // docs/24: /mcp/ is the MCP plugin's domain — every client URL this panel can produce
+  // SPEC §mcp.endpoint: /mcp/ is the MCP plugin's domain — every client URL this panel can produce
   // goes through this one builder, so the prefix lives here and nowhere else.
   return location.origin + "/mcp/" + name;
 }
@@ -115,7 +115,7 @@ function mcpJsonSnippet(name        , secret        )         {
  *  connect snippet): the toast says it is embedded, so nobody pastes it somewhere public by
  *  accident. Everything else - a secret reference, an endpoint URL, a port, the bare token -
  *  is just "copied": the success path used to claim an embedded token for every copy in the
- *  panel (found on the docs/46 P5 walk, on Secrets' Copy ref). */
+ *  panel (found on a walk of SPEC §panel.settings, on Secrets' Copy ref). */
 async function copyText(text        , label        , o                      = {})                {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
@@ -148,7 +148,7 @@ document.addEventListener("click", (e) => {
   if (!inHist && d && d.tab === "run" && d.run.histOpen) histClose();
 });
 
-/** The tab body as built nodes (docs/37 R5). The staging bridge that used to serialise
+/** The tab body as built nodes (SPEC §panel.toolchain). The staging bridge that used to serialise
  *  these back into pane's string paint retired with pane's own conversion: #tabbody is
  *  filled with the tree itself, nothing is parsed on the way in. */
 function tabBody(d           , m                           )         {

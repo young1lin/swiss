@@ -15,14 +15,14 @@
  */
 
 /* ================================================================================================
-   Jobs v2 — the pure helpers behind the S6 panel (docs/10 §5, docs/11 §7).
+   Jobs v2 — the pure helpers behind the S6 panel (SPEC §jobs.config, SPEC §jobs.api).
 
    No DOM in here: everything is data in, data out, so the round-trip guarantees the config
    editor needs (a form edit must not drop fields the form does not know) are testable in
    vitest without a browser. jobs.js renders; this module decides.
    ================================================================================================ */
 
-/** The row's schedule text (docs/11 §3.3): one line naming when the job fires. Reads the
+/** The row's schedule text (SPEC §jobs.triggers): one line naming when the job fires. Reads the
  * v2 `trigger` object with a fallback to the v1 flat fields, so the same row renders on a
  * gateway that predates the v2 listing. */
 import type { ApiJobRow, ApiJobRunRecord } from "./types/api.js";
@@ -31,7 +31,7 @@ import { tr } from "./i18n.js";
 
 /* The Advanced sheet's select options - the closed enums swiss-jobs/src/jobs/def.rs
  * enum_str accepts, in the order the selects show them. Rendering FROM these lists is what
- * keeps the form unable to offer a value the server refuses (docs/37 M9). */
+ * keeps the form unable to offer a value the server refuses (SPEC §panel.toolchain). */
 const JOB_TRIGGER_KINDS: readonly JobTriggerKind[] = ["interval", "cron", "manual"];
 const JOB_FIRST_RUNS: readonly JobFirstRun[] = ["after-interval", "immediate"];
 const JOB_OVERLAPS: readonly JobOverlap[] = ["skip", "queue-one"];
@@ -62,7 +62,7 @@ function triggerSummary(j: ApiJobRow): string {
   return tr("jobsV2.manual");
 }
 
-/** The history meta line for one run record (docs/11 §7.3): what happened, in one glance.
+/** The history meta line for one run record (SPEC §jobs.runlog): what happened, in one glance.
  * Outcome records say why they are not runs; attempts carry their retry position. */
 function historyMeta(r: ApiJobRunRecord & { reason?: string; missedCount?: number; timedOut?: boolean; canceled?: boolean }): string {
   const parts = [r.trigger || "?"];
@@ -81,7 +81,7 @@ function historyMeta(r: ApiJobRunRecord & { reason?: string; missedCount?: numbe
 }
 
 /** A fresh definition for the JSON editor's "New (advanced)" sheet — the minimum the
- * config validator accepts, in config spelling (docs/11 §3.2). */
+ * config validator accepts, in config spelling (SPEC §jobs.config). */
 function defTemplate(id: string): JobDef {
   return {
     title: id,
@@ -127,7 +127,7 @@ function cloneJson(v: unknown): unknown {
 
 /** Form values \u2192 the definition to save. Starts from `base` — the definition as the
  * config row holds it, unknown keys and all — and writes ONLY the keys this form owns, so
- * a field a future gateway understands survives an edit made by this panel (docs/10 §5:
+ * a field a future gateway understands survives an edit made by this panel (SPEC §jobs.config:
  * losing a key here deletes configuration). Keys the form leaves at their default are
  * written explicitly: explicit defaults parse identically and keep the JSON editor honest. */
 function formToV2(form: JobFormValues, base: JobDef, actionInput: Record<string, unknown>): JobDef {

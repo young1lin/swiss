@@ -15,7 +15,7 @@
  */
 
 //! The cleanup watchdog for the swiss-it containers - this repo's ryuk, minus the
-//! container (docs/44 SS2.2). Cleanup must not depend on the cleaned-up process
+//! container (SPEC §testing.it). Cleanup must not depend on the cleaned-up process
 //! running any code: a FAILED libtest run on Windows exits through ExitProcess,
 //! which skips the CRT atexit hook the green path uses, and a killed or crashed
 //! process runs nothing at all.

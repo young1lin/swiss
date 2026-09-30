@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { LAST_PAGE_KEY, loadLastPages, rememberLastPage, targetPageFor } from "../src/last-page.js";
 
-/* The seat's target (docs/39 S4): a pure function over (group, memory, usability) plus a
+/* The seat's target (SPEC §panel.nav): a pure function over (group, memory, usability) plus a
  * localStorage-backed pair. Node has no storage global, so this suite installs one per test -
  * including the hostile variants (garbage JSON, a throwing getItem/setItem) the browser can
  * produce via private mode or a full quota. What must hold everywhere: the memory never

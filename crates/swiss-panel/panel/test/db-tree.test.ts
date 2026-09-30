@@ -22,7 +22,7 @@ import { dbConn as dbConnState } from "../src/db-state.js";
 import { dbConn } from "./db-fixtures.js";
 import { REDIS_NS_MAX_DEPTH, dbSectionOf, dbSectionSlices, redisNamespaceTree, redisTypeGlyph } from "../src/data-tree.js";
 
-/* The Data sidebar's tree (docs/43 M2). The pure half (data-tree.ts) runs directly; the
+/* The Data sidebar's tree (SPEC §data.tabs). The pure half (data-tree.ts) runs directly; the
  *  rendering half runs over the same DOM-stub technique as every panel suite, because the
  *  tree is built from mountGroup bands whose shape IS the acceptance: sections keep their
  *  slots at zero, the + and the ellipsis live on the Tables band alone, rows are one line,
@@ -143,7 +143,7 @@ function mount(kind: "mysql" | "pg" | "redis"): void {
   byId.dbTablesPager = el("div");
 }
 
-describe("the SQL sections cut by type (docs/43 M2 #1)", () => {
+describe("the SQL sections cut by type (SPEC §data.tabs)", () => {
   it("a missing type is a table, not a mystery section — servers that answer no type still land somewhere named", () => {
     expect(dbSectionOf({ schema: "s", name: "t" })).toBe("tables");
   });
@@ -185,7 +185,7 @@ describe("the redis type glyphs (2026-09-28)", () => {
   });
 });
 
-describe("the redis keyspace folds along ':' (docs/43 M2 #4)", () => {
+describe("the redis keyspace folds along ':' (SPEC §data.tabs)", () => {
   it("an empty keyspace answers []", () => {
     expect(redisNamespaceTree([])).toEqual([]);
   });
@@ -243,7 +243,7 @@ describe("the redis keyspace folds along ':' (docs/43 M2 #4)", () => {
   });
 });
 
-describe("the rendered tree (docs/43 M2, DOM stubs)", () => {
+describe("the rendered tree (SPEC §data.tabs, DOM stubs)", () => {
   it("mysql: three section bands in mockup order, rows one line with the count right, + and ellipsis on Tables alone", () => {
     mount("mysql");
     const d = dbConnState();
@@ -259,7 +259,7 @@ describe("the rendered tree (docs/43 M2, DOM stubs)", () => {
     expect(heads[0]).toContain("Tables");
     expect(heads[1]).toContain("Views");
     expect(heads[2]).toContain("Routines");
-    // The + and the ellipsis are Tables-band-only affordances (docs/43 M2 #6): the others
+    // The + and the ellipsis are Tables-band-only affordances (SPEC §data.tabs): the others
     // offer nothing to add and nothing to sort.
     expect(btn(bands[0], "grp-add")).toHaveLength(1);
     expect(btn(bands[0], "grp-more")).toHaveLength(1);
@@ -286,7 +286,7 @@ describe("the rendered tree (docs/43 M2, DOM stubs)", () => {
     expect(text(viewsBand)).toContain("No views");
   });
 
-  it("the sidebar's top row is gone: no #dbSchema select, no .db-sortrow, no dbListHead (docs/43 M2 #6)", () => {
+  it("the sidebar's top row is gone: no #dbSchema select, no .db-sortrow, no dbListHead (SPEC §data.tabs)", () => {
     mount("mysql");
     dbConnState().tables = [{ schema: "iq", name: "t1", type: "table" }];
     view.renderDbTables();
@@ -315,7 +315,7 @@ describe("the rendered tree (docs/43 M2, DOM stubs)", () => {
     expect(asc.on, "the current direction is ticked").toBe(true);
   });
 
-  it("pg: one schema band over nested type bands, the schema's count summing its rows (docs/43 M2 #3)", () => {
+  it("pg: one schema band over nested type bands, the schema's count summing its rows (SPEC §data.tabs)", () => {
     mount("pg");
     const d = dbConnState();
     d.tables = [
@@ -340,7 +340,7 @@ describe("the rendered tree (docs/43 M2, DOM stubs)", () => {
     expect(inner[1].children[1].children).toHaveLength(1);
   });
 
-  it("redis: bands for namespaces, a one-key namespace IS its row, bare keys at the root (docs/43 M2 #4)", () => {
+  it("redis: bands for namespaces, a one-key namespace IS its row, bare keys at the root (SPEC §data.tabs)", () => {
     mount("redis");
     const d = dbConnState();
     d.redis = {
@@ -462,10 +462,10 @@ describe("the rendered tree (docs/43 M2, DOM stubs)", () => {
   });
 });
 
-/* docs/43 addendum — the 200-row wall falls. The tree fetches the WHOLE catalog in one
+/* SPEC §data.tabs — the 200-row wall falls. The tree fetches the WHOLE catalog in one
  * shot; each section paints a render-capped window with a note row that expands it, and a
  * search paints every match. The pager is gone: browsing is not paging. */
-describe("the thousand-table catalog (docs/43 addendum)", () => {
+describe("the thousand-table catalog (SPEC §data.tabs)", () => {
   /** .db-table rows under the box, excluding the note row (which also says db-tree-cap). */
   const rows = (): Stub[] => {
     const out: Stub[] = [];

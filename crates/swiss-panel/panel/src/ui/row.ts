@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The ONE list row (docs/46 §2.3). docs/46 §0.2 counted four hand-built rows - .row,
+/* The ONE list row (SPEC §panel.ui). SPEC §panel.ui counted four hand-built rows - .row,
  * .tun-row, the remote row, the plugin row - that agreed on nothing but "a name on the left,
  * buttons on the right". This is that shape, once:
  *
@@ -39,7 +39,7 @@
  *            become a native disclosure - a chevron, and a <details> that opens under them. The
  *            row's own controls stay outside it, so Try or the switch never opens it.
  *
- * Separators are inset to the text column (docs/46 U7): .lrow.has-lead moves the line past
+ * Separators are inset to the text column (SPEC §panel.design): .lrow.has-lead moves the line past
  * the dot, .has-disc past the chevron. No handlers - the row carries the caller's data hooks
  * for its delegated listener. */
 import type { AttrMap, HChild } from "../h.js";

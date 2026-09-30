@@ -1,6 +1,6 @@
 {
   "about": [
-    "One console line -> the words redis receives (docs/50). The server splits with",
+    "One console line -> the words redis receives (SPEC §data.redis-console). The server splits with",
     "swiss_host::dbbrowser::split_words (shlex, less its '#'-comment rule); the panel counts",
     "words for completion with the vendored JS shlex port. Both suites read this file: a",
     "line's `words` is the server's answer (null = refused), `panel` is where the JS port",

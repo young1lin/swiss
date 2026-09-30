@@ -42,7 +42,7 @@ import { seg } from "./ui/seg.js";
 
 /* --- one page of rows --------------------------------------------------------------------------- */
 
-/* --- grid config: per-connection column widths and hidden columns (docs/22 W2.1) ---------------- */
+/* --- grid config: per-connection column widths and hidden columns (SPEC §data.grid) ---------------- */
 /* dbgate keeps one GridConfig object per grid (GridConfig.ts + useGridConfig.ts); the equivalent
    here is ONE localStorage object per connection+table holding the widths the user dragged and
    the columns they hid. The helpers are pure (or storage-only) so the key format, the parse's
@@ -157,7 +157,7 @@ function dbColResizeStart(e: MouseEvent, name: string, th: HTMLElement, cells: H
   document.addEventListener("mouseup", up);
 }
 
-/* --- keyboard navigation + TSV paste (docs/22 W2.2) --------------------------------------------- */
+/* --- keyboard navigation + TSV paste (SPEC §data.grid) --------------------------------------------- */
 /* The grid owns a zero-size input that carries keyboard focus (dbgate's focus-field): the
    panel's tables are not focusable themselves, and keys have to land somewhere that neither
    scrolls the page nor starts a find. Clicking a cell, an arrow key or a typed character all
@@ -197,7 +197,7 @@ function dbGridRowsCount(): number {
 /** Focus (or move) the focus cell and paint the ring — a single selection the keyboard owns.
  * Moving the ring must NOT rebuild the grid: the rebuild detached the cell mid-click, the
  * browser then never fired the click/dblclick that followed the mousedown, and double-click
- * editing could not open at all (docs/22 closeout audit P0-B). The ring moves between the
+ * editing could not open at all (SPEC §data-B). The ring moves between the
  * LIVE cells by their data-r/data-c address; a full repaint happens only on data changes
  * (edit, paste, commit, paging). */
 function dbFocusCell(r: number, c: number): void {
@@ -251,11 +251,11 @@ function dbPasteUpdateCell(t: DbTableTab, key: string, column: string, meta: DbC
   }
 }
 
-/** Paste a TSV grid starting at the focused cell (docs/22 W2.2). Cells map onto the VISIBLE
+/** Paste a TSV grid starting at the focused cell (SPEC §data.grid). Cells map onto the VISIBLE
  *  columns left to right; paste rows past the page's last row grow NEW buffered inserts; a
  *  wider paste than the grid simply drops its extra cells. Every value lands in the local
  *  buffers exactly as if it had been typed — Commit is still the only write. */
-/** docs/22 W4.1 + W4.2: the values one buffered row ships to the commit. The pk map
+/** SPEC §data.edits: the values one buffered row ships to the commit. The pk map
  *  carries the WHOLE original row for every table now: a keyless table addresses by every
  *  column (a NULL in any column makes the row unaddressable — the server refuses those
  *  rows at commit), and a keyed table's server reads the key columns for addressing and
@@ -270,7 +270,7 @@ function dbRowAddr(pkCols: string[], columns: ApiDbColumn[], row: Record<string,
 }
 
 /** Structural equality for two JSON values — the 409 body's row map against a buffered
- *  entry's pk, so the conflict lands on the exact buffered row (docs/22 W4.2). */
+ *  entry's pk, so the conflict lands on the exact buffered row (SPEC §data.edits). */
 function dbSameJson(a: Record<string, unknown> | null, b: Record<string, unknown> | null): boolean {
   if (a === b) return true;
   if (a == null || b == null || typeof a !== "object" || typeof b !== "object") return false;
@@ -279,7 +279,7 @@ function dbSameJson(a: Record<string, unknown> | null, b: Record<string, unknown
   return ka.length === kb.length && ka.every((k: string): boolean => { return dbSameJson(a[k] as Record<string, unknown> | null, b[k] as Record<string, unknown> | null); });
 }
 
-/** docs/22 W4.2: a lost edit race answers 409 naming the moved columns — but the POST
+/** SPEC §data.edits: a lost edit race answers 409 naming the moved columns — but the POST
  *  itself lives in data-sql.js's dbCommit, which this module cannot call back into. The
  *  narrowest honest seam: watch our own /edits responses at the fetch level (path match
  *  plus status; every other request passes through untouched). The failing commit already
@@ -389,8 +389,7 @@ function dbCopyChecked(): void {
 }
 
 // One /data request chain: a slow answer for the table (or page) the user just left must be
-// dropped, or it would repaint the grid — and rewrite d.schema — from the OLD table (docs/22
-// closeout audit).
+// dropped, or it would repaint the grid — and rewrite d.schema — from the OLD table (SPEC §data).
 const dbDataReq = dbReqGuard();
 
 async function dbLoadData(keepOffset?: boolean, keepEdits?: boolean, quiet?: boolean): Promise<void> {
@@ -399,7 +398,7 @@ async function dbLoadData(keepOffset?: boolean, keepEdits?: boolean, quiet?: boo
   if (d.kind !== "table") return; // a key tab has no row page to load
   if (!c.conn || !d.table) return;
   if (!keepOffset) d.offset = 0;
-  // docs/47 D5: a quiet re-read leaves the page it already holds on screen - no spinner.
+  // SPEC §data.sessions: a quiet re-read leaves the page it already holds on screen - no spinner.
   if (!quiet) {
     d.loading = true;
     renderDbToolbar(); renderDbGrid();
@@ -421,7 +420,7 @@ async function dbLoadData(keepOffset?: boolean, keepEdits?: boolean, quiet?: boo
   // A Commit that emptied the last page (or a filter that shrank the set) can leave this
   // offset past the end of what remains: an empty page with rows behind it is one page
   // back — re-fetch there instead of painting an empty grid whose footer reads "51–50 of
-  // 50" (docs/22 closeout audit).
+  // 50" (SPEC §data).
   if (!j.rows.length && d.offset > 0) {
     d.offset = Math.max(0, d.offset - d.pageSize);
     void dbLoadData(true, keepEdits);
@@ -430,11 +429,11 @@ async function dbLoadData(keepOffset?: boolean, keepEdits?: boolean, quiet?: boo
   d.data = j;
   d.schema = j.schema;
   // The grid config reloads with every page: a rename (new key) or a second tab's hide lands
-  // on the next paint instead of a cached opinion (docs/22 W2.1). It is connection state
+  // on the next paint instead of a cached opinion (SPEC §data.grid). It is connection state
   // (one geometry per conn+table), so the write lands on the connection record.
   const c2 = dbConn();
   c2.gridCfg = dbGridConfigLoad(dbGridKeyNow()!);
-  // A fresh page is a fresh baseline — buffered edits never survive a RELOAD (docs/22). The
+  // A fresh page is a fresh baseline — buffered edits never survive a RELOAD (SPEC §data). The
   // background tab's return fetch is not one: see dbRestoreData.
   if (!keepEdits) dbDropEdits();
   // A filter naming a column that no longer exists would 400 on every reload — drop it instead.
@@ -450,12 +449,12 @@ function dbSamePage(a: ApiDbDataPage | null, b: ApiDbDataPage): boolean {
     JSON.stringify(a.columns) === JSON.stringify(b.columns) && JSON.stringify(a.rows) === JSON.stringify(b.rows);
 }
 
-/** docs/42 D4's return fetch: the page a tab dropped when it went to the background, re-read at
+/** SPEC §data.tabs's return fetch: the page a tab dropped when it went to the background, re-read at
  *  the same coordinates. What it must NOT do is apply the fresh-baseline rule above — going to
  *  the background is not a reload the user asked for, and the strip counts that tab's buffered
  *  writes the whole time it waits there (the card's dot, the page-leave guard, the close
  *  confirm). Dropping them on return would make switching tabs a silent discard of typed-in
- *  changes — found live on 19998 during the docs/42 T2 walk. The writes are keyed by primary
+ *  changes — found live on 19998 during a walk of SPEC §data.tabs. The writes are keyed by primary
  *  key, so they land back on the same rows; a row that moved under them still answers at Commit,
  *  which is where a conflict belongs. */
 async function dbRestoreData(): Promise<void> { await dbLoadData(true, true); }
@@ -500,7 +499,7 @@ async function dbExportTable(btn: HTMLButtonElement, fmt: string): Promise<void>
   }
 }
 
-/* --- docs/43 M4: the toolbar draws ONLY the active tab's controls ----------------------------
+/* --- SPEC §data.tabs: the toolbar draws ONLY the active tab's controls ----------------------------
    One primary action + one overflow menu per tab kind; the pager and page-size moved to
    the status bar (renderDbStatus). The non-icon .btn budget is ONE per toolbar — the
    machine gate in test/db-toolbar.test.ts counts exactly that. */
@@ -528,7 +527,7 @@ function dbMoreItemsForTable(more: HTMLElement, tt: DbTableTab): MenuItem[] {
   }
   if (!dbIsRedis()) {
     items.push({ sep: true });
-    // fix-plan #14: the down-caret the copy used to spell is the trailing chevron
+    // SPEC §panel.design: the down-caret the copy used to spell is the trailing chevron
     // affordance - the row opens ANOTHER menu (rename/truncate/drop), and menu.ts paints
     // that promise.
     items.push({ label: tr("dataStructure.table"), title: tr("dataStructure.renameTruncateDropTable"), affordance: "chevron-down", fn: (): void => { dbTableMenu(more); } });
@@ -536,7 +535,7 @@ function dbMoreItemsForTable(more: HTMLElement, tt: DbTableTab): MenuItem[] {
   return dbWithActivity(items);
 }
 
-/** One ⋯ per head (docs/46 P7): on a SQL connection the open object's overflow ends with the
+/** One ⋯ per head (SPEC §panel.pages): on a SQL connection the open object's overflow ends with the
  *  pane's own action, the Activity monitor, so the pane's ⋯ never stands beside it. */
 function dbWithActivity(items: MenuItem[]): MenuItem[] {
   if (dbIsRedis()) return items;
@@ -547,9 +546,9 @@ function dbWithActivity(items: MenuItem[]): MenuItem[] {
 
 /** The overflow items for a SQL tab: the secondary run modes, the formatter, favorites and
  *  history — everything the console's old flat row carried, one hover deep. A Redis command
- *  has no plan and SQL formatting has nothing to say about it (docs/22 W5.4), so its console
+ *  has no plan and SQL formatting has nothing to say about it (SPEC §data.console), so its console
  *  gets neither: the old flat row hid both buttons, and the fold into this menu had dropped
- *  that until docs/46 P7. */
+ *  that until SPEC §panel.pages. */
 function dbMoreItemsForSql(): MenuItem[] {
   const st = dbSqlTab();
   const d = dbConn();
@@ -560,7 +559,7 @@ function dbMoreItemsForSql(): MenuItem[] {
   ];
   const loadSql = dbLoadConsoleLine;
   items.push({ label: tr("dataView.saveFavorites"), title: tr("dataView.saveConsoleTextFavorites"), fn: (): void => { if (st) dbFavPush(st.sqlText); } });
-  // The templates moved OUT of here (docs/50): they are their own button beside Run now, so
+  // The templates moved OUT of here (SPEC §data.redis-console): they are their own button beside Run now, so
   // this menu is favorites and history - the two lists that are the operator's own.
   if (d.favorites && d.favorites.length) {
     items.push({ sep: true });
@@ -620,7 +619,7 @@ function dbMoreButton2(label: string, build: () => MenuItem[]): HTMLElement {
   return b;
 }
 
-/** The redis console's templates, grouped by what they act on (docs/50 §2.4). The line IS
+/** The redis console's templates, grouped by what they act on (SPEC §data.redis-console). The line IS
  *  the label - a template is loaded into the box, then edited. */
 function dbRedisTemplateItems(): MenuItem[] {
   const items: MenuItem[] = [];
@@ -662,7 +661,7 @@ function dbLoadConsoleLine(line: string): void {
   }
 }
 
-/** docs/43 M4: format the console's text in place — the old #dbSqlFormat button's body. */
+/** SPEC §data.tabs: format the console's text in place — the old #dbSqlFormat button's body. */
 function dbSqlFormatNow(): void {
   const st = dbSqlTab();
   if (!st || !st.sqlText.trim()) return;
@@ -671,7 +670,7 @@ function dbSqlFormatNow(): void {
   if (ta) { ta.value = st.sqlText; dbSqlPaint(); ta.focus(); }
 }
 
-/* --- docs/43 M4: the status bar ---------------------------------------------------------------
+/* --- SPEC §data.tabs: the status bar ---------------------------------------------------------------
    One line under the pane body: pager + page-size for table tabs, row/timing facts for
    the others, editability in the table's own words (editNote verbatim — a read-only
    foreign database says WHY), and the connection always named at the right edge. The
@@ -685,7 +684,7 @@ function renderDbStatus(): void {
   const t = dbTab();
   if (t.kind === "table" && t.data) {
     // The page-size select keeps its data-tb address — #pane's delegated change listener
-    // answers it, and the refused-discard restore reads live state (docs/37 R5).
+    // answers it, and the refused-discard restore reads live state (SPEC §panel.toolchain).
     bar.appendChild(h("select", { class: "db-pagesize", title: tr("dataGrid.rowsPage"), data: { tb: "pagesize" } },
       DB_PAGE_SIZES.map((n: number) => {
         return h("option", { value: String(n), selected: n === t.pageSize }, String(n));
@@ -698,7 +697,7 @@ function renderDbStatus(): void {
     bar.appendChild(iconBtn("chevron-right", tr("dataGrid.nextPage"), {
       disabled: t.data.nextPage != null ? !t.data.nextPage : to >= t.data.total, data: { pg: "next" },
     }));
-    // No editability sentence here (docs/46 §3.7): the head's meta line already says it in the
+    // No editability sentence here (SPEC §panel.pages): the head's meta line already says it in the
     // server's own words, and the same sentence twice on one screen read as two facts.
   } else if (t.kind === "sql" && t.sqlResult) {
     const res = t.sqlResult;
@@ -733,7 +732,7 @@ function renderDbToolbar(): void {
       (res.note ? tr("dataGrid.note", { note: res.note }) : "") +
       (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
     if ((t.sqlResults || []).length > 1) {
-      // The library's seg (docs/46 §3.7), inside a strip that scrolls sideways: eight results
+      // The library's seg (SPEC §panel.pages), inside a strip that scrolls sideways: eight results
       // fit, a longer script's ninth scrolls the strip instead of wrapping the head.
       left.appendChild(h("div", { class: "db-rtabs" },
         seg((t.sqlResults || []).map((r: DbQueryReply, ti: number) => {
@@ -767,7 +766,7 @@ function renderDbToolbar(): void {
   }
   head.appendChild(left);
 
-  // docs/43 M4: the control side is per-kind — the segment (table tabs), ONE primary
+  // SPEC §data.tabs: the control side is per-kind — the segment (table tabs), ONE primary
   // action, and the overflow. The pager and page-size are the status bar's now; the
   // console opener rides the overflow of every non-sql tab.
   const ctl = el("div", "db-head-ctl");
@@ -781,7 +780,7 @@ function renderDbToolbar(): void {
     }
     ctl.appendChild(dbMoreButton((more: HTMLElement): MenuItem[] => { return dbMoreItemsForTable(more, tt); }));
   } else if (t.kind === "sql") {
-    // docs/50: Templates stands on its own for a redis console. It was a section inside the
+    // SPEC §data.redis-console: Templates stands on its own for a redis console. It was a section inside the
     // ⋯, under favorites and history, and the owner never found it ("没有 template") - the
     // one affordance that says what a command LOOKS like has to be visible to be that.
     if (nosql) {
@@ -806,17 +805,17 @@ function renderDbToolbar(): void {
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForActivity(); }));
   } else objMore = false;
   head.appendChild(ctl);
-  // One ⋯ per head (docs/46 P7): the pane's ⋯ - the Activity monitor, a SQL connection's page
+  // One ⋯ per head (SPEC §panel.pages): the pane's ⋯ - the Activity monitor, a SQL connection's page
   // action - stands in only while no open object has a ⋯ of its own; an object's ⋯ carries
   // Activity… as its last row instead. Two identical glyphs a hairline apart, opening two
-  // different menus, was what the docs/43 M4 regression fix first put on screen.
+  // different menus, was what the regression fix under SPEC §data.tabs first put on screen.
   const paneMore = $("dbMore");
   if (paneMore) paneMore.hidden = !d.conn || nosql || objMore;
 }
 
 
 
-/** docs/22 W1.4: fill the console with one generated stats statement and run it, so the SQL
+/** SPEC §data.grid: fill the console with one generated stats statement and run it, so the SQL
  *  is on screen (and in history) rather than hidden behind a one-off request. */
 function dbRunColumnStats(column: string, kind: string): void {
   const c = dbConn();
@@ -831,7 +830,7 @@ function dbRunColumnStats(column: string, kind: string): void {
   void dbRunSql();
 }
 
-/** Paint one cell from its typed view (docs/22 W2.3). Returns the value's long-text title
+/** Paint one cell from its typed view (SPEC §data.grid). Returns the value's long-text title
  *  (the folded JSON's full text; null when the value needs none) so callers can merge it with
  *  their own hint instead of clobbering it. */
 function dbPaintCell(td: HTMLTableCellElement, v: unknown, has: boolean, colType?: string): string | null {
@@ -855,7 +854,7 @@ function dbPaintCell(td: HTMLTableCellElement, v: unknown, has: boolean, colType
 const dbTip: { node: HTMLElement | null; timer: ReturnType<typeof setTimeout> | number } = { node: null, timer: 0 };
 
 function dbTipHide(): void {
-  // Cancel a pending show too (docs/22 closeout audit): dbTipHide is what a grid rebuild
+  // Cancel a pending show too (SPEC §data): dbTipHide is what a grid rebuild
   // and the scroll-dismiss both run through, and a 260ms timer left alive fired dbTipShow
   // for a header that was no longer in the document — a ghost card pointing nowhere.
   clearTimeout(dbTip.timer);
@@ -890,7 +889,7 @@ function renderDbGrid(): void {
   const t = dbTab();
   const wrap = $("dbGridWrap");
   if (!wrap) return;
-  // docs/42 T2: the console is the sql tab's BODY, so it is on screen exactly when that tab
+  // SPEC §data.tabs: the console is the sql tab's BODY, so it is on screen exactly when that tab
   // is the open object — no flag, no toggle, nothing to get out of sync with the strip.
   const con = $("dbConsole");
   if (con) con.hidden = t.kind !== "sql";
@@ -899,9 +898,9 @@ function renderDbGrid(): void {
   // one and compensates by scrolling, which snaps the row the user just clicked to the top.
   wrap.textContent = "";
   dbTipHide(); // a rebuilt grid invalidates any header card still open
-  renderDbStatus(); // docs/43 M4: the status line follows every body repaint
+  renderDbStatus(); // SPEC §data.tabs: the status line follows every body repaint
 
-  // docs/22 W4.2: conflict marks live exactly as long as the buffered change they name —
+  // SPEC §data.edits: conflict marks live exactly as long as the buffered change they name —
   // reverting the cell, dropping the buffer or reloading the table clears them (a new
   // commit answer re-sets or clears them in the fetch observer above).
   if (t.kind === "table" && t.conflict) {
@@ -912,19 +911,19 @@ function renderDbGrid(): void {
     if (!live) t.conflict = null;
   }
 
-  // One open object, one body (docs/42 T2): the kind picks the painter instead of a chain of
+  // One open object, one body (SPEC §data.tabs): the kind picks the painter instead of a chain of
   // flags deciding which view is standing on top of which.
   if (t.kind === "sql") { renderDbResultGrid(wrap); return; }
   if (t.kind === "activity") { dbActivityRender(); return; }
   if (t.kind === "key") { dbRenderRedisValue(wrap); return; }
   const d = t;
-  // docs/22 W5.1: the Form tab paints the same rows as the grid, one record at a time.
+  // SPEC §data.grid: the Form tab paints the same rows as the grid, one record at a time.
   if (d.pane === "form") { renderDbFormView(wrap); return; }
   if (d.pane !== "data") { renderDbDetailGrid(wrap); return; }
   if (!c.conn) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.databaseMcpRegisteredAdd"))); return; }
   if (!d.table || !d.data) {
     if (d.table) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.loading"))); return; }
-    // The shared empty state (docs/18 V7); "Loading…" stays a quiet one-liner.
+    // The shared empty state (SPEC §panel.design); "Loading…" stays a quiet one-liner.
     wrap.appendChild(emptyNode({ icon: "database", title: tr("dataGrid.selectTable"), hint: tr("dataGrid.pickTableLeftBrowse") }));
     return;
   }
@@ -932,7 +931,7 @@ function renderDbGrid(): void {
 
   const pkCols = d.data.primaryKey || [];
   const editable = d.data.editable;
-  // docs/22 W2.1: the per-connection grid config picks the columns the table shows and the
+  // SPEC §data.grid: the per-connection grid config picks the columns the table shows and the
   // width each dragged column keeps. A config older than a column set (columns added since)
   // simply misses those names — an unknown width is no width, an unknown hidden name hides
   // nothing.
@@ -950,7 +949,7 @@ function renderDbGrid(): void {
   const thAll = el("th", "db-rowctl");
   const allOn = d.data?.rows.length > 0 && d.data?.rows.every((row: Record<string, unknown>, i: number): boolean => { return !!d.sel[keyOf(row, i)]; });
   // The select-all box carries a data-selall address — #pane's delegated change listener
-  // answers it (docs/37 R5), so no per-render handler and no re-attach on repaint.
+  // answers it (SPEC §panel.toolchain), so no per-render handler and no re-attach on repaint.
   thAll.appendChild(h("input", {
     type: "checkbox", class: "db-selbox", checked: allOn,
     title: tr("dataGrid.selectEveryRowPage"), data: { selall: "" },
@@ -963,14 +962,14 @@ function renderDbGrid(): void {
   const hasComments = cols.some((c: ApiDbColumn): boolean => { return !!c.comment; });
   cols.forEach((c: ApiDbColumn): void => {
     const sorted = c.name === d.order;
-    // The header sorts through #pane's delegated click via its data-sort address (docs/37 R5);
+    // The header sorts through #pane's delegated click via its data-sort address (SPEC §panel.toolchain);
     // onmouseenter/onmouseleave/oncontextmenu stay per-node — they are not click events and
     // the tip/menus they drive need the header element itself.
     const th = el("th", "db-col" + (sorted ? " db-sorted" + (d.dir === "desc" ? " db-sorted-desc" : "") : ""));
     th.setAttribute("data-sort", c.name);
     const main = el("div", "db-col-main");
     main.appendChild(el("span", "db-col-name", c.name));
-    // fix-plan #14: the PK marker is the i-key sprite (the key-shaped unicode glyph it
+    // SPEC §panel.design: the PK marker is the i-key sprite (the key-shaped unicode glyph it
     // retires was the last one here); the hover keeps saying "primary key" in words.
     if (c.isPrimaryKey) {
       const keyMark = el("span", "db-key");
@@ -978,7 +977,7 @@ function renderDbGrid(): void {
       keyMark.appendChild(iconNode("key"));
       main.appendChild(keyMark);
     }
-    // docs/22 W5.2: the FK column's jump — one small straight arrow (the chevron belongs to
+    // SPEC §data.grid: the FK column's jump — one small straight arrow (the chevron belongs to
     // pagination) that opens the referenced table with the FOCUSED row's value as an eq
     // filter, the same channel a typed filter or W1.5's cell menu uses. The detail (and its
     // foreignKeys) loads with the table; until it answers there is no arrow, which is the
@@ -986,7 +985,7 @@ function renderDbGrid(): void {
     const fk = ((d.detail && d.detail.foreignKeys) || []).find((f: ApiDbFkRow): boolean => { return f.column === c.name; });
     if (fk) {
       // The jump answers through #pane's delegated click via its data-fkjump address; the FK
-      // row is re-resolved from live d.detail at event time (docs/37 §10.1).
+      // row is re-resolved from live d.detail at event time (SPEC §panel.toolchain).
       main.appendChild(h("button", {
         class: "db-col-fk", type: "button",
         title: tr("dataGrid.openRefFilteredColumns", { ref: (fk.refSchema ? fk.refSchema + "." : "") + fk.refTable }),
@@ -998,7 +997,7 @@ function renderDbGrid(): void {
     th.appendChild(main);
     th.appendChild(el("div", "db-col-type", c.dataType));
     if (hasComments) th.appendChild(el("div", "db-col-comment", c.comment || ""));
-    // docs/22 W2.1: the resize grip hugs the header's right edge. It owns mousedown and click
+    // SPEC §data.grid: the resize grip hugs the header's right edge. It owns mousedown and click
     // so a drag neither sorts the column nor fights the hover card for the pointer.
     const grip = el("span", "db-col-grip");
     grip.title = tr("dataGrid.dragResize");
@@ -1022,13 +1021,13 @@ function renderDbGrid(): void {
       dbTip.timer = setTimeout((): void => { dbTipShow(th, c); }, 260);
     };
     th.onmouseleave = (): void => { clearTimeout(dbTip.timer); dbTipHide(); };
-    // docs/22 W1.4: the header's own right-click runs this column's stats — top values or
+    // SPEC §data.grid: the header's own right-click runs this column's stats — top values or
     // COUNT/MIN/MAX/AVG. The statement is generated behind the identifier gate and lands in
     // the console (visible, in history) with its result in the standing result grid.
     th.oncontextmenu = (e: MouseEvent): void => {
       e.preventDefault();
       dbTipHide();
-      // docs/22 W2.1: hiding lives in the same menu, one separator down, and the recovery
+      // SPEC §data.grid: hiding lives in the same menu, one separator down, and the recovery
       // entry ("Show all columns") appears exactly while something is hidden — one place for
       // both directions. The items ride inline at the call (not through a local) so the
       // bare-literal gate keeps seeing every label.
@@ -1049,7 +1048,7 @@ function renderDbGrid(): void {
 
   const tbody = el("tbody");
 
-  // docs/22 W2.1: a table with every column hidden still has to read as a place, not a
+  // SPEC §data.grid: a table with every column hidden still has to read as a place, not a
   // collapsed box — one quiet row says what happened and carries the way back. Rows and
   // buffered inserts are not drawn under it: with no visible column there is nothing to show
   // or edit. (The header keeps the select-all corner for shape.)
@@ -1081,7 +1080,7 @@ function renderDbGrid(): void {
       td.setAttribute("data-c", String(ci));
       widthOf(c, td);
       const long = dbPaintCell(td, has ? ins.values[c.name] : undefined, has, c.dataType);
-      // docs/22 W2.2: one click puts the keyboard's focus cell here; the ring marks it.
+      // SPEC §data.grid: one click puts the keyboard's focus cell here; the ring marks it.
       // preventDefault (P0-A): the mousedown's default focus move lands on <body> AFTER
       // dbFocusCell focused #dbKbd, and arrows/Enter/F2/typing/Esc/Ctrl+C/paste would all
       // go nowhere. Click and dblclick still fire — preventing the default does not
@@ -1099,7 +1098,7 @@ function renderDbGrid(): void {
           const cur = seed != null ? seed : has ? dbCellText(ins.values[c.name]) : "";
           dbEditCellEnter("insert", null, i, c.name, null, td, cur == null ? "" : cur);
         };
-        // docs/22 closeout B2: the editInDialog callback is dbCellMenu's FIFTH parameter —
+        // SPEC §data: the editInDialog callback is dbCellMenu's FIFTH parameter —
         // a stray null before it parked the callback in an unread sixth slot, so the insert
         // row's menu never offered the dialog path a data row's menu always had.
         td.oncontextmenu = (e: MouseEvent): void => { dbCellMenu(e, null, null, c.name, (): void => { dbOpenCellEditor("insert", null, i, c.name, null); }); };
@@ -1114,8 +1113,8 @@ function renderDbGrid(): void {
     const deleted = !!d.deletes[key];
     const upd = d.updates[key];
     const tri = el("tr", (deleted ? "db-del " : "") + (d.sel[key] ? "db-sel" : ""));
-    // The row's controls carry data-srow/data-rdel addresses instead of handlers (docs/37
-    // R5): #pane's delegated change/click resolve the row and its delete state from live
+    // The row's controls carry data-srow/data-rdel addresses instead of handlers (SPEC §panel.toolchain):
+    // #pane's delegated change/click resolve the row and its delete state from live
     // state at event time — the shift-range and the undo/remove glyph both recompute, never capture.
     const rc = el("td", "db-rowctl");
     rc.appendChild(h("input", {
@@ -1133,12 +1132,12 @@ function renderDbGrid(): void {
       const orig = row[c.name];
       const pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, c.name);
       const v = pending ? upd.changes[c.name] : orig;
-      // docs/22 W4.2: the cells a lost commit race named stay red while their buffered
+      // SPEC §data.edits: the cells a lost commit race named stay red while their buffered
       // change is still pending — amber says "differs from the loaded row", red says
       // "the server refused this change; the row moved under it".
       const lost = pending && !!d.conflict && d.conflict.key === key && d.conflict.columns.includes(c.name);
       const td = el("td", "db-cell" + (pending ? " db-dirty" : "") + (lost ? " db-conflict" : "")) as HTMLTableCellElement & { dbKbdEdit?: (seed: string | null) => void };
-      // docs/22 W2.2: same focus wiring as insert cells; the row index counts the inserts
+      // SPEC §data.grid: same focus wiring as insert cells; the row index counts the inserts
       // above. The address rides the cell so the ring can move without a rebuild (P0-B).
       const gridRow = d.inserts.length + rowIdx;
       td.setAttribute("data-r", String(gridRow));
@@ -1171,9 +1170,9 @@ function renderDbGrid(): void {
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
 
-  // docs/22 W2.2: the zero-size input that carries the grid's keyboard focus. It sits inside
+  // SPEC §data.grid: the zero-size input that carries the grid's keyboard focus. It sits inside
   // the scrolling wrap and owns paste directly; keydown (arrows/Enter/F2/Esc/Home/End/
-  // typing, Ctrl+C) answers through #pane's delegated listener (dbGridKeydown, docs/37 R5)
+  // typing, Ctrl+C) answers through #pane's delegated listener (dbGridKeydown, SPEC §panel.toolchain)
   // with the visible-column set recomputed at event time. Every focus() call on it must pass
   // preventScroll: it lives at the end of the scrolled content, and a plain focus() drags the
   // pane to the bottom.
@@ -1195,11 +1194,11 @@ function renderDbGrid(): void {
 
 function renderDbResultGrid(wrap: HTMLElement): void {
   const d = dbTab();
-  if (d.kind !== "sql") return; // the reply grid is the console tab's body (docs/42 T2)
+  if (d.kind !== "sql") return; // the reply grid is the console tab's body (SPEC §data.tabs)
   if (d.sqlBusy) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.running"))); return; }
   const res = d.sqlResult;
   if (!res) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.runQuerySeeRows"))); return; }
-  const tab = d.resultTab || 0; // docs/22 W4.3: this grid is one tab of the strip — its selection keys are that tab's
+  const tab = d.resultTab || 0; // SPEC §data.console: this grid is one tab of the strip — its selection keys are that tab's
   const tbl = el("table", "db-grid");
   const thead = el("thead");
   const hr = el("tr");
@@ -1218,7 +1217,7 @@ function renderDbResultGrid(wrap: HTMLElement): void {
     const qkey = dbResultKey(tab, i);
     const tri = el("tr", d.sel[qkey] ? "db-sel" : "");
     const rc2 = el("td", "db-rowctl");
-    // data-qrow addresses the row for #pane's delegated change (docs/37 R5); the shift-range
+    // data-qrow addresses the row for #pane's delegated change (SPEC §panel.toolchain); the shift-range
     // and selection keys recompute from live state at event time.
     rc2.appendChild(h("input", {
       type: "checkbox", class: "db-selbox", checked: !!d.sel[qkey],
@@ -1250,8 +1249,8 @@ function dbNextSort(order: string | null, dir: string | null, name: string): { o
   return { order: name, dir: "desc" };
 }
 
-/* --- #pane's delegated listeners for the toolbar and the grids (docs/37 R5) -----------------------
-   Behavior notes (docs/37 §10.1), all from state resolved at EVENT time rather than render
+/* --- #pane's delegated listeners for the toolbar and the grids (SPEC §panel.toolchain) -----------------------
+   Behavior notes (SPEC §panel.toolchain), all from state resolved at EVENT time rather than render
    time: the pager and refresh re-read dbOkToDrop() when the click lands (a buffer that grew
    between render and click is still counted); the delete/undo button re-derives its key from
    the live page, so its glyph and its action can never disagree; the result-tab switch
@@ -1270,12 +1269,12 @@ function dbRowKeyAt(rowIdx: number): string | null {
 
 function dbToolbarClick(t: Element, ev: MouseEvent): boolean {
   const d = dbTab();
-  // docs/43 M4: the activity tab's primary action — one guarded refresh of the live view.
+  // SPEC §data.tabs: the activity tab's primary action — one guarded refresh of the live view.
   if (t.closest("[data-actrefresh]")) { void dbActivityLoad(); return true; }
   const tb = t.closest<HTMLElement>("[data-tb]");
   if (tb) {
     const which = tb.dataset.tb;
-    // No "back" button any more (docs/42 T2): the reply lives in the console's own tab, so
+    // No "back" button any more (SPEC §data.tabs): the reply lives in the console's own tab, so
     // the way back to the table is the table's tab — already on the strip, one click away.
     if (which === "refresh") {
       if (!dbOkToDrop()) return true;
@@ -1419,7 +1418,7 @@ function dbGridChange(t: Element, ev: Event): boolean {
   }
   const qrow = t.closest<HTMLInputElement>("[data-qrow]");
   if (qrow && d.kind === "sql") {
-    const tab = d.resultTab || 0; // docs/22 W4.3: selection keys are the ACTIVE tab's
+    const tab = d.resultTab || 0; // SPEC §data.console: selection keys are the ACTIVE tab's
     const i = Number(qrow.dataset.qrow);
     const mse = ev as Event & { shiftKey?: boolean };
     if (mse.shiftKey && d.selAnchor >= 0 && d.selAnchor !== i) {
@@ -1445,7 +1444,7 @@ function dbGridChange(t: Element, ev: Event): boolean {
 }
 
 /** The grid's keyboard layer (#dbKbd) — arrows/Enter/F2/Esc/Ctrl+C/typing, on the live
- *  column set. Delegated from #pane (docs/37 R5): focus stays in the zero-size input and
+ *  column set. Delegated from #pane (SPEC §panel.toolchain): focus stays in the zero-size input and
  *  the key event bubbles up to the pane. */
 function dbGridKeydown(t: Element, ev: KeyboardEvent): boolean {
   if (!t.closest("#dbKbd")) return false;

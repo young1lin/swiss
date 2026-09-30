@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! L1, the MySQL group (docs/44 SS2.5): MysqlBrowser against a real MySQL 8.4, one
+//! L1, the MySQL group (SPEC §testing.it): MysqlBrowser against a real MySQL 8.4, one
 //! test per trait method plus the shapes the seed exists to pin. The browser is
 //! constructed exactly the way the adapter constructs it - same ServerDef, same
 //! connect options, same Lazy pool - so the SQL-to-database half is what runs, with
@@ -103,7 +103,7 @@ async fn list_tables_pages_greps_and_marks_the_view() {
     assert_eq!(page2["tables"].as_array().expect("rows").len(), 2);
     assert_eq!(page2["more"], false, "the last page knows it is the last");
 
-    // docs/22 W1.6: grep narrows the catalog (users and active_users both match).
+    // SPEC §data.browse: grep narrows the catalog (users and active_users both match).
     let grepped = b.list_tables(&json!({ "grep": "user" })).await.expect("grep");
     assert_eq!(grepped["total"], 2, "{grepped}");
 }
@@ -132,12 +132,12 @@ async fn read_table_pages_sorts_and_filters() {
         .await
         .expect("sorted page");
     let first = desc["rows"].as_array().expect("rows").first().expect("a row");
-    // BIGINT cells are exact strings end to end (docs/22 W2.4) - even small ones.
+    // BIGINT cells are exact strings end to end (SPEC §data.browse) - even small ones.
     assert_eq!(first["id"], json!("8"), "{first}");
 
     for (filters, expected) in [
         (json!([{ "column": "status", "op": "eq", "value": "active" }]), 4),
-        // The grid's LIKE contract (docs/22 W1.6): a bare substring, not % patterns -
+        // The grid's LIKE contract (SPEC §data.browse): a bare substring, not % patterns -
         // a user's own % is escaped literal.
         (json!([{ "column": "name", "op": "like", "value": "李" }]), 1),
         (json!([{ "column": "email", "op": "isNull" }]), 2),
@@ -212,7 +212,7 @@ async fn read_table_duplicates_keyless_note_and_wide_columns() {
     let twins: Vec<&Value> = rows.iter().filter(|r| r["kind"] == "tick").collect();
     assert_eq!(twins.len(), 2);
     assert_eq!(twins[0], twins[1], "the duplicates stay byte-identical");
-    // docs/22 W4.1: keyless tables stay editable, with the addressing note.
+    // SPEC §data.edits: keyless tables stay editable, with the addressing note.
     assert_eq!(page["editable"], true);
     let note = page["editNote"].as_str().expect("editNote");
     assert!(note.contains("ambiguous"), "{note}");
@@ -289,7 +289,7 @@ async fn export_table_csv_and_json_counts_match_fetch() {
     let lines: Vec<&str> = ndjson["body"].as_str().expect("body").trim_end().split('\n').collect();
     assert_eq!(lines.len(), 8, "no header in the json form");
 
-    // A filtered export exports the filtered set (docs/22 W0.2).
+    // A filtered export exports the filtered set (SPEC §data.export).
     let filtered = b
         .export_table(&json!({ "table": "users", "filters": [
             { "column": "status", "op": "eq", "value": "banned" }
@@ -370,7 +370,7 @@ async fn apply_edits_update_insert_delete_with_readback() {
     assert_eq!(results[0]["affected"], 1);
     assert_eq!(results[0]["row"]["name"], "renamed", "the update reads back");
     assert_eq!(results[1]["op"], "insert");
-    // LAST_INSERT_ID readback on the same connection (docs/22 W1.7).
+    // LAST_INSERT_ID readback on the same connection (SPEC §data.edits).
     assert_eq!(results[1]["row"]["id"], json!("9"), "{}", results[1]);
     assert_eq!(results[2]["op"], "delete");
     assert_eq!(results[2]["affected"], 1);
@@ -439,7 +439,7 @@ async fn run_query_reads_writes_and_reports_limits() {
         .expect("console read");
     assert_eq!(read["rowCount"], 1);
     assert_eq!(read["columns"], json!(["c"]));
-    // COUNT(*) is BIGINT: an exact string (docs/22 W2.4), never a double.
+    // COUNT(*) is BIGINT: an exact string (SPEC §data.browse), never a double.
     assert_eq!(read["rows"][0]["c"], json!("8"));
 
     let write = b
@@ -508,7 +508,7 @@ async fn activity_lists_this_connection() {
     let reply = b.activity().await.expect("activity");
     let rows = reply["rows"].as_array().expect("rows");
     assert!(!rows.is_empty());
-    // The shared shape (docs/22 W3.2), typed - not the grid's stringly BIGINTs.
+    // The shared shape (SPEC §data.activity), typed - not the grid's stringly BIGINTs.
     for row in rows {
         assert!(row["pid"].is_number(), "{row}");
         assert!(row["user"].is_string(), "{row}");
@@ -625,7 +625,7 @@ async fn list_databases_marks_primary_and_system_and_refuses_unknown() {
         "a database the def account cannot read is not listed: {databases:?}"
     );
 
-    // docs/43 M3: an unknown database name is refused before any SQL is built.
+    // SPEC §data.databases: an unknown database name is refused before any SQL is built.
     let refused = b
         .read_table(&json!({ "table": "users", "schema": "no_such_database" }))
         .await;

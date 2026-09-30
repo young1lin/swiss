@@ -17,7 +17,7 @@
 // @vitest-environment happy-dom
 
 /* h(), frag(), fill() and iconNode — the builders R5 converts this panel's rendering to
- * (docs/37 §7).
+ * (SPEC §panel.toolchain).
  *
  * THE FIRST REAL DOM IN THIS SUITE, on purpose and per-file. Every other test here hand-rolls
  * a stub object with appendChild/setAttribute/textContent, and against a stub these assertions
@@ -37,7 +37,7 @@ import { iconNode } from "../src/util.js";
  * depends on remembering. */
 const HOSTILE = '<img src=x onerror="alert(1)">';
 
-describe("h: remote text is text, not markup (docs/37 R5)", () => {
+describe("h: remote text is text, not markup (SPEC §panel.toolchain)", () => {
   it("a string child lands as a text node, tags and all", () => {
     const node = h("div", { class: "name" }, HOSTILE);
     expect(node.textContent).toBe(HOSTILE);
@@ -140,7 +140,7 @@ describe("frag and fill", () => {
   });
 });
 
-describe("iconNode: the sprite as a node (docs/37 R5)", () => {
+describe("iconNode: the sprite as a node (SPEC §panel.toolchain)", () => {
   it("builds a real SVG element in the SVG namespace", () => {
     const svg = iconNode("ellipsis");
     expect(svg.namespaceURI).toBe("http://www.w3.org/2000/svg");

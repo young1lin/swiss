@@ -57,7 +57,7 @@ const mod = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-sql.ts")).href
 ) as { dbApplyReadback: (rows: Record<string, unknown>[], pk: string[], pkVals: Record<string, unknown>, row: Record<string, unknown>) => Record<string, unknown>[] };
 
-// docs/22 W1.7: the commit reply's read-back rows are folded into the page by primary key, so
+// SPEC §data.edits: the commit reply's read-back rows are folded into the page by primary key, so
 // the server's kept value (a truncated varchar, a DEFAULT, a trigger rewrite) replaces the
 // typed one on screen.
 describe("dbApplyReadback", () => {

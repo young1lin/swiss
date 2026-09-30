@@ -70,9 +70,9 @@ function dbOpenCellEditor(kind: "update" | "insert", key: string | null, i: numb
     const v = pending ? e?.changes[column] : meta.orig;
     isNull = pending ? v === null : meta.orig === null || meta.orig === undefined;
     text = isNull ? "" : dbCellText(v)!;
-    // The address carries every original value on purpose (docs/22 W4.2: the other columns
+    // The address carries every original value on purpose (SPEC §data.edits: the other columns
     // are the optimistic lock), but the head says "PK", so a keyed table shows its key columns
-    // only; a keyless table is addressed by the whole row, and shows it (docs/46 P7-2 walk).
+    // only; a keyless table is addressed by the whole row, and shows it (SPEC §panel.pages, found on a walk).
     const keyCols = d.data.primaryKey;
     pkJson = JSON.stringify(keyCols.length
       ? Object.fromEntries(keyCols.map((k: string): [string, unknown] => [k, (meta.pk as Record<string, unknown>)[k]]))
@@ -89,7 +89,7 @@ function dbOpenCellEditor(kind: "update" | "insert", key: string | null, i: numb
   const isBool = /bool/i.test(colMeta.dataType || "");
   dbCellEdit = { kind: kind, key: key, i: i, column: column, meta: meta };
 
-  // The library's sheet (docs/46 P7): showSheet unhides the host before it paints. The title is
+  // The library's sheet (SPEC §panel.pages): showSheet unhides the host before it paints. The title is
   // the column; the sub is where it lives, a value you would copy. The per-open wiring below
   // stays (the sheet idiom - the buttons and their closure state live only while it is open).
   // The NULL and boolean buttons are worded by paintNull / paintBool.
@@ -203,12 +203,12 @@ function dbCellText(v: unknown): string | null {
   return String(v);
 }
 
-/* The fold width (docs/22 W2.3): JSON longer than this collapses to "(JSON)" with the full
+/* The fold width (SPEC §data.grid): JSON longer than this collapses to "(JSON)" with the full
    text one hover away. dbgate picked 100 for the same affordance — enough for a small object
    to stay readable in place, short enough that a document does not blow out the row. */
 const DB_CELL_FOLD = 100;
 
-/** docs/22 W2.3: the typed view of one cell value — {text, cls, title, href}. The grid painter
+/** SPEC §data.grid: the typed view of one cell value — {text, cls, title, href}. The grid painter
  *  is a thin wrapper over this; every decision here is value- and column-type-driven, never
  *  DOM-dependent, so the intents pin without a browser:
  *  - NULL hands back text null and the painter keeps its italic NULL span (the style it
@@ -222,7 +222,7 @@ const DB_CELL_FOLD = 100;
  *  - an http(s) value becomes a link (href set) opened with the noopener guard.
  *  - JSON past the fold width collapses to "(JSON)" with the full text as the title.
  *  - a binary column shows a byte count instead of its lossy text rendering; the value
- *    sheet (docs/22 W5.3) owns the content itself.
+ *    sheet (SPEC §data.grid) owns the content itself.
  */
 function dbCellView(value: unknown, colType: unknown): { text: string | null; cls: string | null; title: string | null; href: string | null } {
   if (value === null || value === undefined) return { text: null, cls: null, title: null, href: null };

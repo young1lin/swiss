@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Integration tests for the plugin host workstream (docs/09 §10, P1): default-on rows, a
+//! Integration tests for the plugin host workstream (SPEC §host.plugins): default-on rows, a
 //! disabled plugin never creating its instance, real resource release on stop, single-flight
 //! starts, repeated enable/disable, failure isolation, the route guard over every mounted
 //! route, config errors, and API compatibility for the trees the host now gates.
@@ -395,7 +395,7 @@ async fn config_driven_restart_only_for_plugins_that_declare_it() {
 
     // ...and a plugin that does NOT declare it keeps the instance it has. The revision still
     // advances to the current one — the host records what the row says, it just does not
-    // bounce a plugin that never asked to be bounced (docs/09 §4: apply vs restart is an
+    // bounce a plugin that never asked to be bounced (SPEC §host.lifecycle: apply vs restart is an
     // explicit per-plugin decision, never a universal hot reload).
     let counters = Arc::new(Counters::default());
     let mut descriptor = fake_descriptor("beta");
@@ -532,7 +532,7 @@ async fn full_app_with_store(
         19998,
     );
     // The /api/db routes and the inventory's requiresMet read the SAME catalog instance
-    // the mcp plugin registers into (docs/12 W3) — set both before the router is built.
+    // the mcp plugin registers into (SPEC §host.seats) — set both before the router is built.
     let _ = ctx.catalog.set(services.catalog.clone());
     let mut host = PluginHost::new(config_store);
     let deps = builtin::BuiltinDeps {
@@ -644,7 +644,7 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
     }
 
     // Pages in registration order; the fixed view table of this build. The layout column
-    // pins the adaptive-shell contract (docs/13 D5, as revised): resource = master-detail
+    // pins the adaptive-shell contract (SPEC §panel.nav, as revised): resource = master-detail
     // with the panel sidebar, page = ordinary content body, workspace = full-bleed body
     // (the shell still draws its chrome around it). Tunnels contributes two sibling L2
     // pages; #tunnels keeps its saved-link meaning (SSH Connections).
@@ -952,7 +952,7 @@ async fn config_api_validates_before_persisting_and_serves_the_schema() {
     );
 
     // A valid PUT persists, bumps the revision, and echoes the round-trip. The
-    // definition is a v2 one (docs/11 §3): the row's validator is the v2 model now, and
+    // definition is a v2 one (SPEC §jobs.config): the row's validator is the v2 model now, and
     // a v1-shaped body would be refused as an unknown field.
     let (status, body, _) = send(
         &app,
@@ -988,7 +988,7 @@ async fn config_api_validates_before_persisting_and_serves_the_schema() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// docs/11 §9 S1+S5: the jobs config row is validated against the v2 definition model,
+/// SPEC §jobs.config+S5: the jobs config row is validated against the v2 definition model,
 /// and the refusal is honest about what is wrong. The S1 stage-gate refusals (misfire
 /// "run-once" and friends) OPENED at S5: what was a 400 naming the stage now saves and
 /// persists, while structural refusals still carry their dotted field paths and persist
@@ -1001,7 +1001,7 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
     let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
     let before = body.unwrap()["revision"].as_u64().unwrap();
 
-    // The S5 semantics now execute, so they now SAVE (docs/11 §2 rule 5 discharged).
+    // The S5 semantics now execute, so they now SAVE (SPEC §arch.rules discharged).
     let (status, body, _) = send(
         &app,
         json_body(
@@ -1105,7 +1105,7 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
     );
 }
 
-/// docs/11 §5/S4, end to end over a real boot: a v1 jobs.json sitting next to a
+/// SPEC §jobs.migrate, §jobs, end to end over a real boot: a v1 jobs.json sitting next to a
 /// file-backed config migrates when the jobs plugin starts - before the first tick, so
 /// the migrated job is simply part of the table the panel already reads. A second boot
 /// of the same tree (marker present) is a no-op.
@@ -1166,7 +1166,7 @@ async fn a_v1_jobs_table_migrates_at_boot_and_a_reboot_is_a_no_op() {
     assert!(after["migratedAt"].as_str().is_some(), "{after}");
 }
 
-/// docs/11 §9 S4: a migration that cannot persist fails the PLUGIN with the reason in
+/// SPEC §jobs.migrate: a migration that cannot persist fails the PLUGIN with the reason in
 /// lastError, the scheduler never starts (no occurrence is ever claimed), and jobs.json
 /// stays untouched and unmarked for the next boot to retry.
 #[tokio::test]
@@ -1244,7 +1244,7 @@ async fn a_failed_migration_fails_the_plugin_and_never_schedules() {
     );
 }
 
-/// docs/11 §9 S3, the regression that matters most: editing a definition through
+/// SPEC §jobs.apply, the regression that matters most: editing a definition through
 /// PUT /api/plugins/jobs/config applies IN PLACE. The plugin does not restart - which
 /// for Jobs would mean cancelling every run it owns mid-flight - and a run already in
 /// flight finishes under the definition it claimed.
@@ -1355,7 +1355,7 @@ async fn editing_a_config_definition_applies_in_place_without_killing_in_flight_
     assert!(other.get("nextDueAt").is_none());
 }
 
-/// docs/11 §3.4/§9 S3: a definition whose action provider is not registered SAVES - the
+/// SPEC §jobs.config, §jobs.migrate S3: a definition whose action provider is not registered SAVES - the
 /// PUT carries a warning, the listing reports actionAvailable: false, and running it is
 /// a visible refusal, not a silent skip.
 #[tokio::test]
@@ -1401,7 +1401,7 @@ async fn an_unregistered_action_saves_with_a_warning_and_refuses_to_run() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{:?}", body);
 }
 
-/// docs/11 §7.2/§9 S3: the config write keeps the revision CAS. A PUT against a stale
+/// SPEC §jobs.api, §jobs.migrate S3: the config write keeps the revision CAS. A PUT against a stale
 /// revision is a 409, not a silent overwrite of someone else's edit.
 #[tokio::test]
 async fn a_stale_jobs_config_revision_is_a_conflict() {
@@ -1569,7 +1569,7 @@ fn route_ownership_is_longest_prefix_at_segment_boundaries() {
     assert_eq!(host.route_owner("/api/plugins"), None, "host-owned");
     assert_eq!(host.route_owner("/health"), None);
 }
-// --- the shared execution surface: /api/actions and /api/runs (docs/10 §7) -----------------
+// --- the shared execution surface: /api/actions and /api/runs (SPEC §host.actions) -----------------
 
 /// An echo through whichever process capability this platform can spell.
 fn echo_input(text: &str) -> Value {
@@ -1912,7 +1912,7 @@ async fn every_contributed_page_entry_is_actually_served() {
         assert!(plugin["kind"].as_str().is_some(), "{plugin}");
     }
 }
-// --- W3: the connection catalog contract (docs/12) -----------------------------------------------
+// --- W3: the connection catalog contract (SPEC §host.seats) -----------------------------------------------
 
 /// The plugin_row helper for the W3 assertions: find one plugin's inventory row.
 async fn plugin_row(app: &axum::Router, id: &str) -> Value {
@@ -1947,7 +1947,7 @@ async fn disabling_mcp_503s_api_db_and_marks_datas_requirement_unmet() {
     assert!(mcp.get("requires").is_none(), "{mcp}");
     assert!(mcp.get("requiresMet").is_none(), "{mcp}");
 
-    // Disable the provider: /api/db names WHO is missing (docs/12 W3's acceptance), and
+    // Disable the provider: /api/db names WHO is missing (SPEC §host.seats's acceptance), and
     // the inventory's data row flips to unmet.
     let (status, _, text) = send(&app, local("POST", "/api/plugins/mcp/disable")).await;
     assert_eq!(status, StatusCode::OK, "{text}");
@@ -1993,7 +1993,7 @@ async fn disabling_mcp_503s_api_db_and_marks_datas_requirement_unmet() {
 
 #[tokio::test]
 async fn the_catalog_seat_survives_a_hundred_mcp_restarts() {
-    // docs/10 §9's restart-churn acceptance, at the W3 seam: every disable drains and
+    // SPEC §jobs.migrate's restart-churn acceptance, at the W3 seam: every disable drains and
     // frees the catalog seat; every enable re-registers it. If a stop ever failed to
     // clear, the 2nd enable would fail loudly (duplicate provider) and the mcp row would
     // read "failed" — the loop is the leak detector.
@@ -2012,4 +2012,4 @@ async fn the_catalog_seat_survives_a_hundred_mcp_restarts() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.expect("JSON")["connections"], json!([]));
 }
-// --- W4: the touchstone plugin (docs/12) ---------------------------------------------------------
+// --- W4: the touchstone plugin (SPEC §host.seats) ---------------------------------------------------------

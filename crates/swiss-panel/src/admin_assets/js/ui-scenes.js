@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The gallery's scenes (docs/46 §2.6, U17): whole pages drawn from the library and nothing
+/* The gallery's scenes (SPEC §panel.ui): whole pages drawn from the library and nothing
  * else. A new design is a new scene here - composed from ui/, reviewed at
  * /admin/ui.html#scene-<id> in both themes, both languages and both widths - and only then
  * built into a page. The rules (test/ui-gallery.test.ts, G6):
@@ -87,7 +87,7 @@ function traffic(now        )                 {
   ];
 }
 
-/** An expanded call's body, as Logs draws it (docs/46 §3.2): the meta the row left out, then
+/** An expanded call's body, as Logs draws it (SPEC §panel.pages): the meta the row left out, then
  *  the arguments (short: one line) and the reply, each with one Copy and a ⋯. */
 function callBody(it              )         {
   const reply = { rows: [{ id: 1042, status: "open", total: "18.40" }], more: false, note: '{"cached":true}' };

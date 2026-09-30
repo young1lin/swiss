@@ -85,7 +85,7 @@ pub trait Ops {
     async fn status(&self, port: u16) -> StatusResult;
     async fn logs(&self, port: u16, lines: u64, follow: bool, io: &dyn Io);
     fn open(&self, url: &str);
-    /// A one-time sign-in link for the panel on `port` (docs/48).
+    /// A one-time sign-in link for the panel on `port` (SPEC §host.session).
     async fn login_url(&self, port: u16) -> Result<String, String>;
     fn token(&self) -> Option<String>;
     fn creds(&self) -> (String, Option<String>);
@@ -118,7 +118,7 @@ usage: swiss <command> [options]
   logs             show what the background gateway has been printing
   token            print the token clients authenticate with
   creds            print the panel url and the gateway token (for asking an AI)
-  open             open the panel in a browser, signed in with a one-time link (docs/48)
+  open             open the panel in a browser, signed in with a one-time link (SPEC §host.session)
   export           dump every state file as JSON to stdout (vault values masked) — the recovery /
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
@@ -132,7 +132,7 @@ usage: swiss <command> [options]
   run …            a run's status / logs / cancel; `run audit` lists the last 7 days of
                    remote runs - who ran what, where, with what result
   api <METHOD> <path> [json]
-                   one admin API call, signed with this machine's CLI key (docs/48) -
+                   one admin API call, signed with this machine's CLI key (SPEC §host.session) -
                    what a script uses instead of curl; prints the JSON answer
 
 options
@@ -240,7 +240,7 @@ fn row(label: &str, value: &str) -> String {
     format!("  {label:<9}{value}")
 }
 
-/// The one line the version flag prints — the build's name tag (docs/16 H3): version, the
+/// The one line the version flag prints — the build's name tag (SPEC §host.daemon): version, the
 /// git hash build.rs stamped in, and the build time. The parenthesised pair is what the
 /// status command and scripts/deploy.ps1 parse, so this shape is a small public contract.
 pub fn version_line() -> String {
@@ -412,7 +412,7 @@ fn report_stop(r: StopResult, io: &dyn Io) -> i32 {
 
 /// Decide and report. Returns the process exit code: 0 done, 1 refused or failed, 3 nothing
 /// running — the third one so `swiss status` is usable in a script without parsing text.
-/// Open the panel signed in (docs/48): with a one-time link when the daemon mints one - the
+/// Open the panel signed in (SPEC §host.session): with a one-time link when the daemon mints one - the
 /// token "injected" into the start - and on the bare URL, whose page says how to sign in, when
 /// it cannot.
 async fn open_signed_in(ops: &dyn Ops, port: u16, fallback: &str, io: &dyn Io) {
@@ -574,7 +574,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
         "creds" => {
             let (url, token) = ops.creds();
             io.out(&row("url", &url));
-            io.out(&row("login", "swiss open (a one-time sign-in link, docs/48)"));
+            io.out(&row("login", "swiss open (a one-time sign-in link, SPEC §host.session)"));
             match token {
                 Some(token) => {
                     io.out(&row("token", &token));
@@ -710,7 +710,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
 }
 
 /// The `--json` shape of status — camelCase, absent-not-null, the Node build's StatusResult,
-/// plus the docs/16 H3 build pair (build, diskBuild and, on disagreement, buildNote).
+/// plus the SPEC §host.daemon build pair (build, diskBuild and, on disagreement, buildNote).
 pub(crate) fn status_json(st: &StatusResult) -> Value {
     let mut out = serde_json::Map::new();
     out.insert("running".into(), Value::Bool(st.running));
@@ -896,7 +896,7 @@ impl Io for PrintIo {
 
 /// Wire the real implementations and run — the CLI entry point main.rs calls.
 pub async fn main(argv: Vec<String>) -> i32 {
-    // `remote` and `run` carry their own argv contract (docs/34 SS26): a bare `--` means
+    // `remote` and `run` carry their own argv contract (SPEC §remote.cli): a bare `--` means
     // everything after it is the far side's ARGV, untouched. The generic parser would eat
     // flags out of that passthrough, so these two dispatch before it.
     match argv.first().map(String::as_str) {
@@ -971,7 +971,7 @@ mod tests {
 
     #[test]
     fn the_version_line_names_the_build() {
-        // docs/16 H3: "which build is this" is answerable from the binary itself, and the
+        // SPEC §host.daemon: "which build is this" is answerable from the binary itself, and the
         // parenthesised pair is exactly what the status command and deploy.ps1 parse.
         let line = version_line();
         let rest = line

@@ -47,11 +47,11 @@ function esc(s: unknown): string {
 }
 function now(): string { return new Date().toLocaleTimeString(locale()); }
 
-/* iconNode and emptyNode live in the UI library now (docs/46 §2.1-2.2: ui/icon.ts,
+/* iconNode and emptyNode live in the UI library now (SPEC §panel.ui: ui/icon.ts,
  * ui/page.ts); they are re-exported below so the import sites that name util.ts keep working.
  * New code imports them from ui/. */
 
-/** Launch-tag glyphs (docs/29): a monochrome brand mark where one exists, the text chip
+/** Launch-tag glyphs (SPEC §mcp.panel): a monochrome brand mark where one exists, the text chip
  *  otherwise. Keys are the tags tag_of produces on the server: the type for in-process and
  *  remote MCPs, the command's first word for proc ones — arbitrary words appear (node, python,
  *  echo…), so this is a whitelist and everything outside it falls back to text. The icon
@@ -66,12 +66,12 @@ const TYPE_ICONS: Record<string, string> = {
 };
 function typeTagNode(tag: string): HChild {
   const name = TYPE_ICONS[tag];
-  // A mapped tag renders its glyph (the word rides the aria-label, docs/29); anything else
+  // A mapped tag renders its glyph (the word rides the aria-label, SPEC §mcp.panel); anything else
   // keeps the text chip exactly as before - the tag string is a text node, not markup.
   return name ? iconNode(name, tag) : tag;
 }
 
-/** The status dot's tooltip (docs/18 V6): a colour — and the idle hollow ring above all —
+/** The status dot's tooltip (SPEC §panel.design): a colour — and the idle hollow ring above all —
  *  names no behaviour of its own, so the title says it aloud, reusing the state words the row
  *  already paints, never a synonym of our own. ONE builder for every dot in the panel: the
  *  chip text once drifted between two copies, and a dot whose title disagrees with its class
@@ -82,7 +82,7 @@ function dotTitle(word: string, latencyMs?: number | null, reason?: string): str
   // it starts when it is first needed.
   if (word === "idle") return tr("util.idleStartsFirstRequest");
   if (word === "error") return reason ? tr("util.errorReason", { reason }) : tr("util.error");
-  return word || ""; // starting / stopping / reconnecting / down — the word the row already shows (docs/38 L9)
+  return word || ""; // starting / stopping / reconnecting / down — the word the row already shows (SPEC §panel.i18n)
 }
 
 /** One time format for row lists: time-of-day inside the last 24h, date+time beyond it (the
@@ -100,7 +100,7 @@ function whenLabel(iso: string | number): string {
 /** Give focus back to the control a hand (or a key) pressed, once its write has answered. Such a
  *  control is disabled while the write is out (no double send), and a browser blurs a focused
  *  control the moment it is disabled - the focus fell to <body> and the next Tab started over
- *  (found on the docs/46 P5 / P6 walks). Only when nothing else took the focus meanwhile, and
+ *  (found on the SPEC §panel.settings / P6 walks). Only when nothing else took the focus meanwhile, and
  *  only while the control is still on the page (a rebuild replaced it). */
 function refocusIfIdle(pressed: Element | null): void {
   const idle = !document.activeElement || document.activeElement === document.body;
@@ -111,7 +111,7 @@ function refocusIfIdle(pressed: Element | null): void {
 // key per scope, because a group named "prod" in two lists folding together would be a
 // coincidence, not a feature.
 
-/* The toast's auto-hide timer, module-scoped (docs/37 M3): it once rode on the function
+/* The toast's auto-hide timer, module-scoped (SPEC §panel.lint): it once rode on the function
    object itself (toast._t), which needed a global Function augmentation to type. */
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 function toast(msg: string, isErr?: boolean): void {
@@ -123,7 +123,7 @@ function toast(msg: string, isErr?: boolean): void {
   toastTimer = setTimeout(() => { t.hidden = true; }, 3400);
 }
 
-/** The catch-side reader (docs/37 M5): every handler once read e.message off an any-typed
+/** The catch-side reader (SPEC §panel.toolchain): every handler once read e.message off an any-typed
  *  catch variable; unknown is the honest type and this is the one narrowing it takes. */
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -136,7 +136,7 @@ function isTyping(): boolean {
   return /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "");
 }
 
-/** event.target narrowed to Element or null (docs/37 M3): the global EventTarget
+/** event.target narrowed to Element or null (SPEC §panel.lint): the global EventTarget
  *  augmentation is retired, and this is the one narrowing every delegated click handler
  *  shares - the old `target && target.closest && ...` probe as a helper. The duck check,
  *  not instanceof: the suite runs under node with no DOM globals, and a Window or document
@@ -151,7 +151,7 @@ async function api(path: string, opts?: RequestInit): Promise<Response> {
   opts = opts || {};
   opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
   const r = await fetch(path, opts);
-  // docs/48: a 401 from /api is the session gate - this browser's sign-in is gone (expired,
+  // SPEC §host.session: a 401 from /api is the session gate - this browser's sign-in is gone (expired,
   // or the session file was reset). The shell's own address answers with the sign-in page.
   if (r.status === 401 && typeof location !== "undefined" && path.startsWith("/api/")) {
     location.assign("/");

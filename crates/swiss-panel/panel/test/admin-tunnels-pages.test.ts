@@ -19,7 +19,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/* The tunnels plugin contributes two L2 pages (docs/13 D5, as revised): #tunnels (SSH
+/* The tunnels plugin contributes two L2 pages (SPEC §panel.nav, as revised): #tunnels (SSH
    Connections) and #tunnel-forwards (Port Forwards). This suite pins the page split at the
    panel's level — the Rust descriptor's half lives in src/builtin.rs's own tests:
    - both entry modules exist at the paths the descriptors promise;
@@ -33,7 +33,7 @@ let mods: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let tunState: any;
 
-/* docs/37 R5: the render path builds nodes now, so the permissive stub grows the three
+/* SPEC §panel.toolchain: the render path builds nodes now, so the permissive stub grows the three
    factory calls h()/frag() make (plus the Node identity instanceof checks against). This
    suite never reaches renderTunnels — currentView() stays "mcps", so loadTunnels only
    stores the answer — but a stub that would explode on the first paint hides that fact
@@ -137,18 +137,18 @@ describe("the tunnels plugin's two L2 pages", () => {
   it("the body no longer renders a page-local L2 segmented control", () => {
     const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "tunnels.ts"), "utf8");
     // The old .seg tab pair ("SSH Connections | Port Forwards" in the body) is gone; the
-    // context bar's page switcher is the one L2 mechanism. The paint is BUILT now (docs/37
-    // R5), so the guard covers both spellings a built tree could carry the control in.
+    // context bar's page switcher is the one L2 mechanism. The paint is BUILT now (SPEC §panel.toolchain),
+    // so the guard covers both spellings a built tree could carry the control in.
     expect(src).not.toContain("tablist");
     expect(src).not.toContain('data: { tab:');
-    // The name of the removed control, guarded as a literal: docs/37 R4 gave the state slice a
+    // The name of the removed control, guarded as a literal: SPEC §panel.toolchain gave the state slice a
     // reader for the mounted scope, and it is deliberately NOT called this.
     expect(src).not.toContain("tunTab");
     // The scope's actions stayed in the body header, including the rules-only pair. h()
     // carries the id as a property, so the prop spelling is what the source pins.
     expect(src).toContain("tNewConn");
     expect(src).toContain("tNewRule");
-    // docs/46 §3.4: the rules-only pair waits behind the head's ⋯ (#tMore), not as two standing
+    // SPEC §panel.pages: the rules-only pair waits behind the head's ⋯ (#tMore), not as two standing
     // buttons beside New.
     expect(src).toContain('{ id: "tMore" }');
     expect(src).toContain('tr("tunnels.startAll")');

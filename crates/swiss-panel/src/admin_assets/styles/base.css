@@ -27,20 +27,20 @@
           into the status line where a monospace face is earned.
 
        2. SATURATION IS FOR STATE. Status dots, the accent, and error red stay loud. Launch-method
-          tags (http / npx / uvx / …) were quietly hued once; they are monochrome now (docs/18
-          V6) — the hues carried no information (mysql and redis both red, pg and http both
+          tags (http / npx / uvx / …) were quietly hued once; they are monochrome now (SPEC §panel.design)
+          — the hues carried no information (mysql and redis both red, pg and http both
           blue), so the chip says "launch method" and nothing else.
 
        3. TEXT NEEDS A MEASURE. Cards used to stretch to the window's full width, which made a single
           tool card look lost in a 1500px field. Content is capped at --measure; the log and traffic
           views, whose rows are genuinely wide, get --measure-wide. Neither is ever unbounded.
 
-       Font note (docs/18 V1, docs/46 U6): the design is drawn for Segoe UI Variable Text on Windows
+       Font note (SPEC §panel.design): the design is drawn for Segoe UI Variable Text on Windows
        and SF on macOS - the faces a user actually has. Inter stays first in --sans so a machine that
        has it installed uses it, but nothing is embedded and nothing is tuned for it. Tracking is
        neutral except on the sizes large enough to want it (pane titles pull -0.02em).
 
-       Weight note (docs/46 U5): four roles, nothing in between - body 400, a name 450, emphasis
+       Weight note (SPEC §panel.design): four roles, nothing in between - body 400, a name 450, emphasis
        (a selected tab, a button, a caption) 500, a title 600. Nine hand-picked weights on a dark
        ground read as "everything is bold"; a tenth needs a new role, not a new number.
     --------------------------------------------------------------------------------------------- */
@@ -58,7 +58,7 @@
       --f-label: 12px;      /* secondary text */
       --f-caption: 11px;    /* group captions, uppercase */
 
-      /* Weight ramp (docs/46 U5) - four roles; every font-weight in every sheet is one of these. */
+      /* Weight ramp (SPEC §panel.design) - four roles; every font-weight in every sheet is one of these. */
       --w-body: 400;        /* running text, an unselected tab */
       --w-name: 450;        /* identity in a list: a row's name, a tool, a sidebar entry */
       --w-emph: 500;        /* a selected tab, a button, a caption, a group band */
@@ -76,19 +76,19 @@
       --r-btn: 6px;
       --r-pill: 980px;
 
-      /* Component sizes (docs/46): the few a component needs that are not a step of the 4pt
+      /* Component sizes (SPEC §panel.ui): the few a component needs that are not a step of the 4pt
          scale. A new one lands here, named, before any rule uses it (test/css-literals.test.ts). */
       --ic-s: 12px;         /* a disclosure chevron */
       --ic-m: 14px;         /* a glyph inside a button, a menu row */
       --dot: 6px;           /* the status dot - and so the lead column of a list row */
-      --row-h: 42px;        /* a list row: two lines of text clear it (docs/18 V4) */
+      --row-h: 42px;        /* a list row: two lines of text clear it (SPEC §panel.nav) */
 
-      /* CJK after system-ui (docs/38 §5.2): latin glyphs stay Inter, Chinese falls to the system's own faces. */
+      /* CJK after system-ui (SPEC §panel.i18n): latin glyphs stay Inter, Chinese falls to the system's own faces. */
       --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
       --mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
 
       /* Light. The canvas is a neutral near-white, the sidebar one grey step below it, cards pure
-         white — separated by a 1px hairline ONLY, no drop shadow anywhere on the page (docs/18 V1):
+         white — separated by a 1px hairline ONLY, no drop shadow anywhere on the page (SPEC §panel.design):
          a shadow lets two near-identical surfaces pass for different layers, a hairline forces the
          grey ladder to do that work honestly. The older lesson stands: three near-identical greys
          plus a fifth for the cards read as one flat slab with rectangles drawn on it. The status
@@ -110,7 +110,7 @@
       --green: #16a34a;
       --red: #dc2626;
       --amber: #d97706;
-      /* JSON syntax (docs/33 C3) - the one sanctioned exception to rule 2: in a code block the
+      /* JSON syntax (SPEC §mcp.calls) - the one sanctioned exception to rule 2: in a code block the
          hue says which token a character belongs to, which is information. Muted, not neon. */
       --syn-key: #0550ae;
       --syn-str: #116329;
@@ -121,11 +121,11 @@
       --shadow-btn: none;
       --shadow-sheet: 0 24px 60px rgba(20, 24, 36, 0.24), 0 0 0 1px var(--sep);
       --shadow-pop: 0 8px 24px rgba(20, 24, 36, 0.14), 0 0 0 1px var(--sep);
-      /* Scrollbars (docs/46 U8) are ink of the text colour, so one declaration serves both themes
+      /* Scrollbars (SPEC §panel.design) are ink of the text colour, so one declaration serves both themes
          and a surface with its own ground (the terminal stage) re-points the two tokens. */
       --scroll-thumb: color-mix(in srgb, var(--text) 16%, transparent);
       --scroll-thumb-hover: color-mix(in srgb, var(--text) 32%, transparent);
-      /* The terminal (docs/46 U12): the panel's own palette one step darker, and dark in BOTH
+      /* The terminal (SPEC §panel.pages): the panel's own palette one step darker, and dark in BOTH
          themes - a terminal is a dark instrument, and a white one would fight every program's
          colours. Chrome only: the 16 ANSI colours are content and stay in terminal.ts. */
       --term-bg: #17181b;
@@ -139,7 +139,7 @@
     /* Dark. Written once; `data-theme` is always resolved before it reaches the DOM. A warm
        near-black (#0f1012, not the old blue-grey): the dark side should read as paper,
        not as an IDE theme. Brightness is the ladder — sidebar and bars one step up, cards another —
-       and the only lift a card gets is its hairline plus a 1px top highlight (docs/18 V1). */
+       and the only lift a card gets is its hairline plus a 1px top highlight (SPEC §panel.design). */
     :root[data-theme="dark"] {
       color-scheme: dark;
       --bg: #0f1012;
@@ -147,7 +147,7 @@
       --bar: #141518;
       --card: #191a1e;
       --field: #0f1012;
-      --text: #e4e4e7;      /* docs/46 U5: #ededef glared at the lighter weights */
+      --text: #e4e4e7;      /* SPEC §panel.design: #ededef glared at the lighter weights */
       --text-2: #9a9ca3;
       --text-3: #66686f;
       --sep: rgba(255, 255, 255, 0.08);
@@ -186,9 +186,9 @@
     }
     [hidden] { display: none !important; }
     /* The user agent's bold is 700 - a fifth weight. Anything that relies on the default gets
-       the emphasis role instead (docs/46 U5). */
+       the emphasis role instead (SPEC §panel.design). */
     b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: var(--w-emph); }
-    /* Thin scrollbars everywhere (docs/46 U8): 10px, a rounded thumb inset 3px, no arrows, no
+    /* Thin scrollbars everywhere (SPEC §panel.design): 10px, a rounded thumb inset 3px, no arrows, no
        track. Chromium reads the ::-webkit-scrollbar rules; setting the standard properties too
        would switch those off, so they are for engines without the pseudo-elements (Firefox). */
     ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -206,14 +206,14 @@
     :focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; border-radius: 6px; }
 
     /* --- shell --------------------------------------------------------------------------------- */
-    /* The adaptive shell (docs/13 D5, redrawn): a left plugin RAIL for global navigation and
+    /* The adaptive shell (SPEC §panel.nav, redrawn): a left plugin RAIL for global navigation and
        the plugin's workspace to its right. A plugin is a destination, not a label competing
-       with its pages, so the rail stays narrow (docs/39 S1; the icon-only form was
+       with its pages, so the rail stays narrow (SPEC §panel.nav; the icon-only form was
        reversed by owner decision 2026-09-21) - a seat is its glyph plus an in-scale
        caption, never a row of pills; the plugin's full name is the context bar's title
        once landed. Seats are borderless until pointed at (the macOS toolbar
        vocabulary); readouts stay plain text. */
-    /* 56px: the captioned rail. 48px was docs/39's icon-only width; with the seats' names
+    /* 56px: the captioned rail. 48px was SPEC §panel.nav's icon-only width; with the seats' names
        back (S1 reversed by the owner) the longest stock name, "Terminal", is 37px at 10px,
        and a 48px rail left it 2px of air inside its seat - the caption read as pressed
        against the edge. 56 - 2 x --s1 gives a 48px seat whose caption box is 40px, so every
@@ -221,12 +221,12 @@
     .rail {
       width: 56px; flex: none;
       display: flex; flex-direction: column;
-      background: var(--sidebar);   /* no edge of its own (docs/46 U7): beside a page the ground change
+      background: var(--sidebar);   /* no edge of its own (SPEC §panel.design): beside a page the ground change
                                        is the edge; beside the MCP sidebar the two are one surface */
       padding: var(--s2) 0;
     }
     /* The brand carries a mark: the swiss logo (logo.svg), a red tile with three white tools
-       fanned open from one rivet - a multitool drawn from scratch (docs/40 O4: no shield, no
+       fanned open from one rivet - a multitool drawn from scratch (SPEC §release.hygiene: no shield, no
        cross). In the rail it is the one saturated thing, which is what keeps the rail reading
        as the panel's spine. */
     .rail-brand { display: flex; align-items: center; justify-content: center; padding: var(--s1) 0 var(--s2); }
@@ -235,7 +235,7 @@
       display: flex; flex-direction: column; gap: 2px;
       padding: 0 var(--s1); min-height: 0; overflow-y: auto;
     }
-    /* One seat per plugin: an 18px glyph over its caption. docs/39 S1 shipped the rail
+    /* One seat per plugin: an 18px glyph over its caption. SPEC §panel.nav shipped the rail
        icon-only after a 9px caption proved illegible; the owner reversed that (2026-09-21)
        and the caption is back - at 10px, ONE size for the whole rail, fitted by
        page-registry's fitRailLabels: the rail steps down as one (to a 9px floor) only when
@@ -267,7 +267,7 @@
     .grow { flex: 1; }
     /* Rule 1: every number that sits in a column has figures of one width. */
     .tnum { font-variant-numeric: tabular-nums; }
-    /* The bar's readouts are one line of text in one voice (docs/39 S5): the count and the
+    /* The bar's readouts are one line of text in one voice (SPEC §panel.nav): the count and the
        memory number share a size and a grey, separated by a middle dot that exists only
        while the count does. The memory value is still mono — a copyable number — but one
        step smaller, so its x-height meets the sans beside it. */
@@ -288,7 +288,7 @@
     .chip.button:hover { background: var(--hover); color: var(--text-2); cursor: pointer; }
 
     /* The workbench: whatever the rail leaves, the plugin owns. The context bar is ALWAYS
-       drawn (docs/13 D5, as revised) — multi-page, single-page and workspace plugins share
+       drawn (SPEC §panel.nav, as revised) — multi-page, single-page and workspace plugins share
        one bar height and one body origin; a workspace changes only how the BODY is framed.
        min-height:0 is what lets the inner scrollers actually scroll inside a flex column. */
     #app { display: flex; height: 100vh; }
@@ -296,9 +296,9 @@
     .shell { display: flex; flex: 1; min-height: 0; }
 
     /* The plugin context bar: the plugin's name once — the glyph its rail seat wears,
-       beside its label — then its pages as underline tabs (docs/39 S2), then the page's
+       beside its label — then its pages as underline tabs (SPEC §panel.nav), then the page's
        count. A single-page plugin draws only the title. Every plugin draws the bar
-       (docs/13 D5, as revised): the page body below keeps one vertical origin across the
+       (SPEC §panel.nav, as revised): the page body below keeps one vertical origin across the
        whole panel, and three navigation levels wear three shapes — rail seat, underlined
        tab, pill segment inside the page — so plugin navigation and page navigation never
        share a control shape. */
@@ -309,10 +309,10 @@
       background: var(--bar); border-bottom: 1px solid var(--sep);
       min-width: 0;
     }
-    /* The reserved app zone keeps its own breath left of itself (docs/39 S5): one gap
+    /* The reserved app zone keeps its own breath left of itself (SPEC §panel.nav): one gap
        between the readouts and the trio, the same rhythm the bar uses everywhere else. */
     .app-zone { display: inline-flex; align-items: center; gap: var(--s2); flex: none; margin-left: var(--s2); }
-    /* --- context bar: title + page tabs (docs/39) ----------------------------------------------
+    /* --- context bar: title + page tabs (SPEC §panel.nav) ----------------------------------------------
        The bar's left half names the plugin ONCE - its rail glyph and its label - and lays
        the plugin's pages out as underline tabs. Three levels, three shapes: a rail seat,
        an underlined tab, a pill segment inside the page. The title wears the glyph so it
@@ -322,7 +322,7 @@
     .ctx-title .ic { color: var(--text-2); }
     .ctx-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* flex:1 caps the strip at the slack the bar has; overflow:hidden plus the ⋯ seat
-       absorb what does not fit (docs/39 S3). align-self:stretch drops the tab row onto
+       absorb what does not fit (SPEC §panel.nav). align-self:stretch drops the tab row onto
        the bar's own bottom hairline, which is where the active tab's underline sits. */
     .ctx-tabs { display: flex; align-self: stretch; gap: 2px; flex: 1; min-width: 0; overflow: hidden; }
     .ctx-tab {
@@ -377,7 +377,7 @@
     .side-head { display: flex; gap: var(--s1); padding: var(--s3) var(--s2) var(--s1); }
     .side-head input { background: var(--field); }
     /* Quiet in every state. The .btn state rules live in ui.css now, which loads after this
-       file, so the states are named here to keep this rule the winner (docs/46 P1a-1). */
+       file, so the states are named here to keep this rule the winner (SPEC §panel.ui). */
     .side-head .btn, .side-head .btn:hover, .side-head .btn:active, .side-head .btn:disabled { background: none; box-shadow: none; }
     .side-cap {
       font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .06em;
@@ -396,7 +396,7 @@
       color: var(--text);
     }
     .side-row:hover { background: var(--hover); }
-    /* Selection (docs/18 V6): a 2px accent bar on the leading edge over an 8% tint — the row
+    /* Selection (SPEC §panel.design): a 2px accent bar on the leading edge over an 8% tint — the row
        stays flat in the list and the status dot survives it. The previous white-card float (the
        Finder/Xcode idiom) read as a second surface and fought the dot it sat beside. */
     .side-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
@@ -409,7 +409,7 @@
       flex: 1; min-width: 0; font-size: var(--f-body); font-weight: var(--w-name);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    /* How this MCP is launched (docs/18 V6): an address, not a state — one monochrome chip.
+    /* How this MCP is launched (SPEC §panel.design): an address, not a state — one monochrome chip.
        The per-method hues carried nothing a scan could use (mysql and redis were both red,
        pg and http both blue); mono on a 5% wash says "launch method" and nothing else. */
     .side-type {
@@ -417,7 +417,7 @@
       white-space: nowrap; padding: 1px 6px; border-radius: 4px;
       color: var(--text-3); background: color-mix(in srgb, var(--text) 5%, transparent);
     }
-    /* A type GLYPH carries no box (docs/39 S6): the mark is a label in the row's own
+    /* A type GLYPH carries no box (SPEC §panel.nav): the mark is a label in the row's own
        vocabulary, one of nine small squares the view did not need - quiet grey, brightening
        with the row under the cursor or when selected. Word chips (outside the icon
        whitelist) keep the mono + 5% wash above: a word is a different thing from a mark. */

@@ -16,10 +16,10 @@
 
 // @vitest-environment happy-dom
 
-/* The Secrets page (the Settings group's second page, docs/19 D6): names only, a write-only
+/* The Secrets page (the Settings group's second page, SPEC §host.vault): names only, a write-only
    store form, a rev-carrying delete, and a poll that never repaints the form mid-typing.
 
-   REWRITTEN FOR R5 (docs/37 §7), and the rewrite is the point. The view used to build its
+   REWRITTEN FOR R5 (SPEC §panel.toolchain), and the rewrite is the point. The view used to build its
    rows as a string and hand them to the suite through a rowsHtml() export, so every
    assertion here was a substring test against markup nobody parsed - and the vault state
    was planted through a __setVaultForTest seam that bypassed loadSecrets entirely. Now the
@@ -99,7 +99,7 @@ beforeEach(() => {
   document.body.innerHTML = shellSkeleton();
 });
 
-describe("the Secrets page (docs/19 D6)", () => {
+describe("the Secrets page (SPEC §host.vault)", () => {
   it("the view module exists at the entry every page descriptor points at", () => {
     const entry = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "views", "secrets.ts");
     expect(existsSync(entry), entry).toBe(true);
@@ -114,7 +114,7 @@ describe("the Secrets page (docs/19 D6)", () => {
     // holds a value to leak - its state is names + rev only.
     expect(($("pane").querySelector('[data-secret="stripe-key"] .lrow-sub code') as HTMLElement).textContent)
       .toBe("${secret://stripe-key}");
-    // docs/46 §3.5: the reference IS the sub-line. The sentence every row repeated after it
+    // SPEC §panel.settings: the reference IS the sub-line. The sentence every row repeated after it
     // ("substituted at run time wherever a credential is used") is the description's, once.
     expect($("pane").querySelector('[data-secret="stripe-key"] .lrow-sub')?.textContent)
       .toBe("${secret://stripe-key}");
@@ -142,13 +142,13 @@ describe("the Secrets page (docs/19 D6)", () => {
     ($("pane").querySelector('[data-skcopy="stripe-key"]') as HTMLElement).click();
     for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
     expect(wrote).toEqual(["${secret://stripe-key}"]);
-    // Found on the docs/46 P5 walk: every copy in the panel toasted "... copied - the token is
+    // Found on a walk of SPEC §panel.settings: every copy in the panel toasted "... copied - the token is
     // embedded", the secret reference and the endpoint URL included. Only the connect snippets
     // embed a token (copyText's `token` option); a reference only names a secret.
     expect($("toast").textContent).toBe("Reference copied");
   });
 
-  it("renders rows in the stored order, unranked names after in name order (docs/26)", async () => {
+  it("renders rows in the stored order, unranked names after in name order (SPEC §host.vault)", async () => {
     // Through the real path this time: loadSecrets applies the order the server sent.
     body = { secrets: ["zz-last", "aa-unranked", "mm-mid"], rev: 5, order: ["zz-last", "mm-mid"] };
     await view.mount();
@@ -156,7 +156,7 @@ describe("the Secrets page (docs/19 D6)", () => {
     expect(names).toEqual(["zz-last", "mm-mid", "aa-unranked"]);
   });
 
-  it("a row drag PUTs the flat order, then reloads the rev the PUT bumped (docs/26)", async () => {
+  it("a row drag PUTs the flat order, then reloads the rev the PUT bumped (SPEC §host.vault)", async () => {
     body = { secrets: ["aa", "bb", "cc"], rev: 5 };
     await view.mount();
     replies["PUT /api/groups/secrets/order"] = { order: ["bb", "aa", "cc"] };
@@ -256,7 +256,7 @@ describe("the Secrets page (docs/19 D6)", () => {
     expect($("rowsCanary")).toBe(marker);
   });
 
-  it("a name the server sent is text, never markup (docs/37 R5)", async () => {
+  it("a name the server sent is text, never markup (SPEC §panel.toolchain)", async () => {
     // The whole reason the row builder moved off string concatenation. Under the old idiom
     // this passed only because someone remembered esc(); now the DOM cannot do otherwise.
     const hostile = '<b>bold</b><img src=x onerror=1>';
@@ -282,7 +282,7 @@ describe("the Secrets page (docs/19 D6)", () => {
     expect(($("skGroup") as HTMLSelectElement).value).toBe("ci");
 
     // The group is gone from the family: the box must not be left pointing at a dead option,
-    // because the next store would assign into a 400 (docs/20 G6).
+    // because the next store would assign into a 400 (SPEC §host.groups).
     body = { secrets: ["a"], rev: 2, groups: ["default"], secretGroups: {} };
     await view.poll();
     const after = $("skGroup") as HTMLSelectElement;
@@ -290,7 +290,7 @@ describe("the Secrets page (docs/19 D6)", () => {
     expect(after.value).toBe("default");
   });
 
-  /* Replacing a value (docs/19, 2026-09-27 addendum). The API always overwrote, but nothing on
+  /* Replacing a value (SPEC §host.vault, 2026-09-27 addendum). The API always overwrote, but nothing on
      the page said so: the ⋯ held only Delete, and a replace typed into the form moved the
      row to whatever group the select held. */
 

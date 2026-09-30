@@ -24,7 +24,7 @@ export async function mount() { await loadList(); renderPane(); }
 export async function poll() {
   await loadList();
   const d = mcpDetail();
-  // docs/32 B3: only page 0 is live — an offset page is a reading position a poll must not
+  // SPEC §mcp.calls: only page 0 is live — an offset page is a reading position a poll must not
   // drift, and a switch in flight owns the tab until it commits.
   if (d && d.tab === "logs" && d.callsPage === 0 && d.callsPendingPage == null) await loadCalls(d.name, true);
 }

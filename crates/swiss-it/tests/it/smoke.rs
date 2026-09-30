@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The I0 smokes (docs/44 §3): one real round trip per engine through the engine
+//! The I0 smokes (SPEC §testing.it): one real round trip per engine through the engine
 //! table. These prove resolution, readiness and - together with the process exiting -
 //! the exit-hook cleanup story end to end; the L1/L2/L3 suites hang off the same
 //! `engine()` calls.

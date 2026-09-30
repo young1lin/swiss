@@ -47,7 +47,7 @@ function dbSqlLiteral(v         )         {
   return "'" + String(v).replace(/'/g, "''") + "'";
 }
 
-/** docs/22 W1.4: the one-column stats statements the header's right-click menu runs. Built with
+/** SPEC §data.grid: the one-column stats statements the header's right-click menu runs. Built with
  *  the same identifier gate as the Commit preview — a column name that is not a bare word is
  *  refused, never bare-spliced into SQL. `kind` picks the shape:
  *  "dist" -> value + frequency (top 50); "num" -> COUNT/MIN/MAX/AVG. */
@@ -79,7 +79,7 @@ function dbPendingSql()           {
   };
   const table = (d.schema ? q(d.schema) + "." : "") + q(d.table );
   const pkCols = d.data.primaryKey || [];
-  // docs/22 W4.1 (W4b follow-up): the preview sketches the address the server really builds —
+  // SPEC §data.edits (W4b follow-up): the preview sketches the address the server really builds —
   // pk columns for a pk table, EVERY column for a keyless one (the row buffer carries whole
   // rows there), with the md5 fold the server applies (EDIT_ADDR_MD5_MIN = 64). md5() here is
   // a sketch of what gets digested, not the digest itself: the browser has no md5 and the
@@ -116,7 +116,7 @@ function dbPendingSql()           {
 }
 /* --- buffered edits: the commit / discard bar ---------------------------------------------------- */
 
-/** The redis arm of the bar (docs/22 W3.3): same slot, same words, same Discard, with
+/** The redis arm of the bar (SPEC §data.redis): same slot, same words, same Discard, with
  *  "Commands" in place of "SQL" and one pipeline in place of the transaction. The command
  *  list is the very list Commit posts — the preview is the payload, not a paraphrase. */
 function renderDbRedisBar(d          , bar             )       {
@@ -129,7 +129,7 @@ function renderDbRedisBar(d          , bar             )       {
   if (del) parts.push(trn(del, "dataSql.nDeletes.one", "dataSql.nDeletes.other"));
   if (ins) parts.push(trn(ins, "dataSql.nInserts.one", "dataSql.nInserts.other"));
   bar.appendChild(h("span", { class: "db-bar-sum" }, tr("dataSql.partsLocalOnlyRedis", { parts: parts.join(", ") })));
-  // No per-button handlers (docs/37 R5): the buttons carry data-bar addresses and #pane's
+  // No per-button handlers (SPEC §panel.toolchain): the buttons carry data-bar addresses and #pane's
   // delegated click answers them from live state.
   bar.appendChild(btn(d.sqlPreview ? tr("dataSql.hideCommands") : tr("dataSql.commands"), { title: tr("dataSql.showExactCommandsCommit"), data: { bar: "preview" } }));
   bar.appendChild(btn(tr("dataSql.discard"), { data: { bar: "discard" } }));
@@ -154,14 +154,14 @@ function renderDbBar()       {
   const d = dbTab();
   const bar = $("dbBar");
   if (!bar) return;
-  // The card's dirty dot counts exactly what this bar summarises (docs/42 T2), so the strip is
+  // The card's dirty dot counts exactly what this bar summarises (SPEC §data.tabs), so the strip is
   // repainted with it — and at the TOP, because the bar has several exits (a tab with nothing
   // buffered hides it and returns early) and the dot must go when the count does.
   renderDbTabs();
   const redis = dbIsRedis();
-  // The redis bar owns the same slot (docs/22 W3.3): the typed value view buffers edits the
+  // The redis bar owns the same slot (SPEC §data.redis): the typed value view buffers edits the
   // way the row grid does, and its Commit is ONE guarded pipeline instead of a transaction.
-  // The counts and the buffers both read the ACTIVE tab (docs/42 T1) — a key tab's edits, a
+  // The counts and the buffers both read the ACTIVE tab (SPEC §data.tabs) — a key tab's edits, a
   // table tab's — so the wrong kind's tab hides the bar exactly like a missing page did.
   const n = redis ? dbRedisPendingCount() : dbPending();
   const payload = redis ? (d.kind === "key" ? d.redisValue : null) : (d.kind === "table" ? d.data : null);
@@ -182,11 +182,11 @@ function renderDbBar()       {
   if (u) parts.push(trn(u, "dataSql.nUpdates.one", "dataSql.nUpdates.other"));
   if (del) parts.push(trn(del, "dataSql.nDeletes.one", "dataSql.nDeletes.other"));
   if (ins) parts.push(trn(ins, "dataSql.nInserts.one", "dataSql.nInserts.other"));
-  // Same addressing honesty as the Commit gate (docs/22 W4b follow-up): the bar names the
+  // Same addressing honesty as the Commit gate (SPEC §data.edits): the bar names the
   // WHERE the server will build, pk or whole-row.
   const pkColsB = (dt.data && dt.data.primaryKey) || [];
   bar.appendChild(h("span", { class: "db-bar-sum" }, tr("dataSql.partsLocalOnlyDatabase", { parts: parts.join(", "), how: pkColsB.length ? tr("dataSql.primaryKey") : tr("dataSql.allColumnsTablePrimary") })));
-  // No per-button handlers (docs/37 R5): data-bar addresses, answered by #pane's delegated
+  // No per-button handlers (SPEC §panel.toolchain): data-bar addresses, answered by #pane's delegated
   // click with the counts read from live state at event time.
   bar.appendChild(btn(dt.sqlPreview ? tr("dataSql.hideSql") : tr("dataSql.sql"), { title: tr("dataSql.showExactStatementsCommit"), data: { bar: "preview" } }));
   bar.appendChild(btn(tr("dataSql.discard"), { data: { bar: "discard" } }));
@@ -205,7 +205,7 @@ function renderDbBar()       {
   }
 }
 
-/** #pane's delegated click for the edit bar (docs/37 R5). Behavior note (docs/37 §10.1): the
+/** #pane's delegated click for the edit bar (SPEC §panel.toolchain). Behavior note (SPEC §panel.toolchain): the
  *  Discard confirm's count and the preview toggle's label are resolved from LIVE state at
  *  event time — the render-time closure could ask "Discard 3 changes?" about a buffer a
  *  keyboard paste had already grown to 4. */
@@ -237,7 +237,7 @@ function dbBarClick(t         )          {
   return false;
 }
 
-/** docs/22 W1.7: fold one committed row's read-back into the page's rows. The commit reply
+/** SPEC §data.edits: fold one committed row's read-back into the page's rows. The commit reply
  *  carries what the SERVER kept — silent truncation, DEFAULTs, trigger rewrites — so patching it
  *  in shows the truth immediately, whatever the reload race does next. Matching uses the same
  *  pk key the grid's edit buffer uses. */
@@ -252,8 +252,8 @@ function dbApplyReadback(rows                                  , pkCols         
   return rows;
 }
 
-/** docs/22 W1.4 / W1.10: put a generated statement into the console — visible, editable, and
- *  in history once run, instead of hiding behind a one-off request. docs/42 T2: the console is
+/** SPEC §data.grid / W1.10: put a generated statement into the console — visible, editable, and
+ *  in history once run, instead of hiding behind a one-off request. SPEC §data.tabs: the console is
  *  an object, so this OPENS it (or activates the one already open) and then writes into it. */
 function dbFillConsole(sql        )       {
   dbOpenTab({ kind: "sql" });
@@ -287,7 +287,7 @@ async function dbCommit()                {
   if (dels) parts.push(trn(dels, "dataSql.nDeletes.one", "dataSql.nDeletes.other"));
   if (ins) parts.push(trn(ins, "dataSql.nInserts.one", "dataSql.nInserts.other"));
   const tableLabel = (d.schema ? d.schema + "." : "") + d.table ;
-  // docs/22 W4.1 (W4b follow-up): the gate names the address the server will really use — a
+  // SPEC §data.edits (W4b follow-up): the gate names the address the server will really use — a
   // keyless table commits with whole-row WHEREs, and the user deserves that in the decision.
   const pkColsC = (d.data && d.data.primaryKey) || [];
   const addressed = pkColsC.length
@@ -304,7 +304,7 @@ async function dbCommit()                {
   const affected = (j.results || []).reduce((a        , r                       )         => { return a + (r.affected || 0); }, 0);
   toast(trn(edits.length, "dataSql.committedChange.one", "dataSql.committedChange.other",
     { rows: trn(affected, "dataSql.nRowsAffected.one", "dataSql.nRowsAffected.other") }));
-  // docs/22 W1.7: each update's read-back row lands on the page before the reload, so the
+  // SPEC §data.edits: each update's read-back row lands on the page before the reload, so the
   // committed truth (truncated, defaulted, trigger-rewritten) is what the grid shows next.
   const pkCols = (d.data && d.data.primaryKey) || [];
   (j.results || []).forEach((r                                                      , i        )       => {
@@ -313,8 +313,8 @@ async function dbCommit()                {
     }
   });
   dbDropEdits();
-  // docs/22 closeout B4: the reload rebuilds the grid and scroll anchoring is OFF by design
-  // (docs/22 W2.2 — a repaint must never jump the pane), so the commit would otherwise snap
+  // SPEC §data: the reload rebuilds the grid and scroll anchoring is OFF by design
+  // (SPEC §data.grid — a repaint must never jump the pane), so the commit would otherwise snap
   // the user back to the top, away from the row they just committed. Capture before the
   // reload, restore after it lands; a superseding load owns the pane by then and a stale
   // restore is a harmless scroll to where the user was anyway.
@@ -370,7 +370,7 @@ function dbHistoryRender()       {
   head.value = "";
   sel.appendChild(head);
   const d = dbConn();
-  // docs/22 W5.4: one dropdown, two groups — what ran (history) and what was starred
+  // SPEC §data.console: one dropdown, two groups — what ran (history) and what was starred
   // (favorites). The value carries the group: a plain index is history, "f"+i a favorite.
   if (d.history && d.history.length) {
     const og = el("optgroup")                       ;
@@ -396,7 +396,7 @@ function dbHistoryRender()       {
   }
 }
 
-/* --- favorites (docs/22 W5.4) -------------------------------------------------------------------- */
+/* --- favorites (SPEC §data.console) -------------------------------------------------------------------- */
 /* The starred list beside the history: same localStorage-per-browser treatment, same
    bounded list, the history's own rules (newest first, a repeat save moves to the top
    rather than duplicating). */
@@ -433,7 +433,7 @@ function dbFavPush(sql        )       {
   toast(tr("dataSql.savedFavorites"));
 }
 
-/* --- the lightweight SQL formatter (docs/22 W5.4) ------------------------------------------------ */
+/* --- the lightweight SQL formatter (SPEC §data.console) ------------------------------------------------ */
 /* Lexical only — the console's own SQL_TOKEN_RE stream, never a parse: top-level clause
    keywords break onto their own lines (a join lead breaks with its join), AND/OR continue
    two spaces under their clause, statements split at the top-level semicolon, a line
@@ -482,7 +482,7 @@ function dbFormatSql(text        )         {
 
 /* --- SQL console --------------------------------------------------------------------------------- */
 
-/** docs/22 W1.10: the table menu's SQL templates. Column names pass the identifier whitelist
+/** SPEC §data.console: the table menu's SQL templates. Column names pass the identifier whitelist
  *  (never a bare splice), value positions are ? placeholders, and one comment line says what to
  *  do with them — the template lands in the console runnable after the ?s are filled in. */
 function dbTemplateSql(kind        , dialect        , schema                    , table                    , columns          , pk          )         {
@@ -517,7 +517,7 @@ function dbTemplateSql(kind        , dialect        , schema                    
   return hint + "\nDELETE FROM " + t + "\nWHERE " + key.map((c        )         => { return c + " = ?"; }).join(" AND ") + ";";
 }
 
-/** docs/22 W1.8: split SQL text into blank-line-separated blocks and return the one the caret
+/** SPEC §data.console: split SQL text into blank-line-separated blocks and return the one the caret
  *  sits in — Ctrl+Enter on a three-block script runs only the second block. A caret inside a
  *  blank gap belongs to the block AFTER it (that is where the cursor visually rests); a missing
  *  caret means the end of the text. No blank lines means one block: exactly the whole box, the
@@ -536,7 +536,7 @@ function dbSubqueryAt(text        , caret               )         {
   return t.slice(start, end);
 }
 
-/** docs/22 W4.3: split a console block into statements at top-level semicolons — the
+/** SPEC §data.console: split a console block into statements at top-level semicolons — the
  *  panel's half of multi-result tabs. A naive text.split(";") breaks on the first literal or
  *  comment that carries one ('a;b', "-- note;", 'it''s;'), so this walks the SAME token stream
  *  the syntax highlighter lexes (SQL_TOKEN_RE: quotes ', \" and ` with backslash and
@@ -584,7 +584,7 @@ function dbSplitStatements(text        )           {
   return out;
 }
 
-/** docs/22 W4.3: a result tab's name — the statement's first word plus its row count
+/** SPEC §data.console: a result tab's name — the statement's first word plus its row count
  *  ("SELECT · 42"), the shape dbgate's ResultTabs use. Leading comments are skipped (they are
  *  not the word the user recognises); EXPLAIN answers name themselves because the prefix ran
  *  too. A missing count renders the word alone; a statement with no word at all still gets a
@@ -598,14 +598,14 @@ function dbResultTabLabel(stmt        , rowCount                           )    
 
 // One run at a time owns the results pane: a slow run's answer that lands after a newer Run
 // started must be dropped, or it would overwrite the newer run's tabs with the old ones
-// (docs/22 closeout audit). The token is issued only when a request is actually about to
+// (SPEC §data). The token is issued only when a request is actually about to
 // fire — an early guard refusal (empty console) must not invalidate a run in flight.
 const dbRunReq = dbReqGuard();
 
-/* The console's row cap (docs/22 W5.3): the rows-per-page the operator picked on whatever
+/* The console's row cap (SPEC §data.grid): the rows-per-page the operator picked on whatever
    table tab they were last reading, or the fresh default when the strip holds no table at
    all. It is a density preference, not one table's property — which is why the console keeps
-   honoring it now that it sits in a tab of its own (docs/42 T2). */
+   honoring it now that it sits in a tab of its own (SPEC §data.tabs). */
 function dbRunLimit()         {
   const t = dbLastTableTab();
   return t ? t.pageSize : 50;
@@ -613,13 +613,13 @@ function dbRunLimit()         {
 
 async function dbRunSql(explain                 )                { // falsy runs the statement(s); "plan"|"analyze" prefix EXPLAIN
   const c = dbConn();
-  // The console's text, its busy flag and its replies all live on the sql TAB (docs/42 T2):
+  // The console's text, its busy flag and its replies all live on the sql TAB (SPEC §data.tabs):
   // `d` below is that tab, so a run that outlives a tab switch writes where it came from and
   // the request guard decides whether the pane repaints.
   const d = dbSqlTab();
   if (!d) return; // Run reached us with no console open — nothing to run
   if (!c.conn) { toast(tr("dataSql.databaseConnection"), true); return; }
-  // docs/22 W1.8: the run covers the block the caret is in — one block per run keeps the
+  // SPEC §data.console: the run covers the block the caret is in — one block per run keeps the
   // single-statement guard honest on multi-part scripts.
   const ta = $                     ("dbSql");
   const block = dbSubqueryAt(d.sqlText || "", ta ? ta.selectionStart : null).trim();
@@ -643,7 +643,7 @@ async function dbRunSql(explain                 )                { // falsy runs
       elapsedMs: cj.elapsedMs,
       note: typeof cj.reply === "object" && cj.reply && cj.reply.length != null
         ? trn(cj.reply.length, "dataSql.nReplyItems.one", "dataSql.nReplyItems.other") : undefined };
-    d.sqlResults = [d.sqlResult ]; // docs/22 W4.3: the tab strip reads the list — one reply, one tab
+    d.sqlResults = [d.sqlResult ]; // SPEC §data.console: the tab strip reads the list — one reply, one tab
     d.resultTab = 0;
     dbHistoryPush(block);
     renderDbToolbar();
@@ -653,7 +653,7 @@ async function dbRunSql(explain                 )                { // falsy runs
     dbRefreshKeyspace();
     return;
   }
-  // docs/22 W4.3: the block is split on statement-level semicolons and sent ONE STATEMENT PER
+  // SPEC §data.console: the block is split on statement-level semicolons and sent ONE STATEMENT PER
   // REQUEST — the server's single-statement contract is untouched, and every reply gets its
   // own result tab. Empty stretches (a trailing ;, a comment-only piece) never run; the first
   // failure stops the batch with the tabs that already answered kept on screen; history
@@ -675,7 +675,7 @@ async function dbRunSql(explain                 )                { // falsy runs
     const j = await apiJson              ("/api/db/" + encodeURIComponent(c.conn ) + "/query", {
       method: "POST",
       // The row cap for a console query is the open table tab's page size — the operator's
-      // chosen density — or the fresh default when no table tab is open (docs/42 T1).
+      // chosen density — or the fresh default when no table tab is open (SPEC §data.tabs).
       body: JSON.stringify({ sql: toSend, limit: dbRunLimit() }),
     });
     if (!dbRunReq.accepts(token)) return; // superseded mid-batch: stop quietly, the newer run owns the pane

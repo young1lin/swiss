@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR } from "../src/page-registry.js";
 
-/* The rail caption's fitting rule (docs/39 S1 reversed; the 2026-09-21 owner request that a
+/* The rail caption's fitting rule (SPEC §panel.nav reversed; the 2026-09-21 owner request that a
  * caption never press against its seat's edge), pinned with the panel's own measurements:
  * a 56px rail, --s1 of padding, so a 48px seat and a 40px caption box; "Terminal" is 37.2px
  * at 10px in the panel's font. Pure numbers in, one size out - the DOM half only writes

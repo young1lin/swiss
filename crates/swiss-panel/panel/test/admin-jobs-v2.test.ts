@@ -36,14 +36,14 @@ import {
   triggerSummary,
   v2ToForm,
 } from "../src/jobs-v2.js";
-/* Visual refresh V5 (docs/18): one primary action per row, the rest behind an ellipsis that
+/* Visual refresh V5 (SPEC §panel.design): one primary action per row, the rest behind an ellipsis that
    opens menu.js's popupMenu. No text Edit/History/Delete buttons inline, no red Delete
    repeated down the list — danger lives in the menu, where it is red on exactly one item.
-   The tunnel builders live in polling.js and the job row in jobs.js (docs/46 P6: its schedule
+   The tunnel builders live in polling.js and the job row in jobs.js (SPEC §panel.pages: its schedule
    column speaks the sheet's cron translator); both import graphs assign to the DOM at module
-   top level - a permissive element stub satisfies that. Every row is BUILT (docs/37 R5), so
+   top level - a permissive element stub satisfies that. Every row is BUILT (SPEC §panel.toolchain), so
    the builders answer nodes, read back through the serialising micro-DOM below. */
-/* docs/37 R5: the Node identity h()/frag() check children with, and the tree the builders
+/* SPEC §panel.toolchain: the Node identity h()/frag() check children with, and the tree the builders
    return has to read back as markup for the grep-style assertions — a plain-object stub
    can do neither. */
 class NodeStub {}
@@ -179,16 +179,16 @@ describe("visual refresh V5 — one primary action per row", () => {
   });
 });
 
-/* Visual refresh V6 follow-up (docs/18): every status dot carries a title. A colour — and
+/* Visual refresh V6 follow-up (SPEC §panel.design): every status dot carries a title. A colour — and
    the idle hollow ring above all — names no behaviour of its own, and the row already shows
    the state words, so the title reuses them via ONE builder (util.js dotTitle): the wording
    can never disagree between first paint and the 6s patch if both call the same function. */
 describe("visual refresh V6 — the status dot carries a title", () => {
   it("the job row draws no dot at rest: Off is a tag, a failure a red tag, a run the titled pulse", () => {
-    // docs/46 §3.6: a job has no switch to agree with, and a green "scheduled" dot only repeated
+    // SPEC §panel.pages: a job has no switch to agree with, and a green "scheduled" dot only repeated
     // the next-run column - so the lead dot is gone. An off job wears an Off tag after its name
     // (not a greyed row) and has no next run; the last run's failure is a red tag; the amber
-    // pulse after the name means a run is in flight, and its title says so (docs/18 V6). The
+    // pulse after the name means a run is in flight, and its title says so (SPEC §panel.design). The
     // old off dot's title ("idle — starts on first request") was the MCP lazy-start sentence.
     // Only a job with no outcome at all has never run: a manual Run now settles lastOk without a
     // lastRunAt (that is the scheduler's anchor), and the column says what it knows.
@@ -207,7 +207,7 @@ describe("visual refresh V6 — the status dot carries a title", () => {
   });
 
   it("the schedule column is the sheet's own sentence, the raw spelling on hover", () => {
-    // docs/46 §3.6: schedFromJob -> schedToBody, the translator the sheet already has. An
+    // SPEC §panel.pages: schedFromJob -> schedToBody, the translator the sheet already has. An
     // interval needs no library; a cron speaks cronstrue once it has loaded, and until then
     // (and whenever it cannot say it) the column is the raw spelling.
     const every = serialize(jobRowNode({ name: "sync", command: "git pull", enabled: true, trigger: { kind: "interval", everyMs: 900000, firstRun: "after-interval" } }));
@@ -216,7 +216,7 @@ describe("visual refresh V6 — the status dot carries a title", () => {
     expect(cron).toContain('<span class="lrow-col w-m" title="cron 0 4 * * *">cron 0 4 * * *</span>');
     // The next and last run read relative ("in 20 hr."); their titles are the whole moment, date
     // included. whenLabel gave a clock time alone for anything not a day in the past, so a run due
-    // tomorrow at 05:59 hovered as "Next run: 05:59:00" (found on the docs/46 P6 walk).
+    // tomorrow at 05:59 hovered as "Next run: 05:59:00" (found on a walk of SPEC §panel.pages).
     const due = new Date(Date.now() + 20 * 3600 * 1000).toISOString();
     const next = serialize(jobRowNode({ name: "n", command: "c", enabled: true, nextDueAt: due }));
     expect(next).toContain('title="Next run: ' + new Date(due).toLocaleString("en") + '"');
@@ -227,13 +227,13 @@ describe("visual refresh V6 — the status dot carries a title", () => {
   });
 
   it("the rule dot: error names its reason, a busy row says starting", () => {
-    // docs/37 R5: the dot is a built node — class, flag attribute and title are asserted
+    // SPEC §panel.toolchain: the dot is a built node — class, flag attribute and title are asserted
     // each on its own, because a builder fixes the tree, not the attribute order a string
     // concatenation happened to leave behind.
     const bad = serialize(ruleRowNode({ id: "r1", name: "pg", localPort: 18989, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "error", reason: "SSH refused" }));
     expect(bad).toContain('class="dot error"');
     expect(bad).toContain('title="error: SSH refused"');
-    // docs/46 §3.4: the library row's lead column holds it, and the reason is the row's red line.
+    // SPEC §panel.pages: the library row's lead column holds it, and the reason is the row's red line.
     expect(bad).toContain('<span class="lrow-lead"><span class="dot error"');
     expect(bad).toContain('<div class="lrow-err" title="SSH refused">SSH refused</div>');
     setTunBusy("r2", "start");
@@ -261,7 +261,7 @@ describe("visual refresh V6 — the status dot carries a title", () => {
   });
 });
 
-// The pure half of the S6 jobs panel (docs/11 §7): everything the config editor promises
+// The pure half of the S6 jobs panel (SPEC §jobs.api): everything the config editor promises
 // about round-trips is testable right here, without a browser — the guarantees the API
 // cannot give (a form edit must not drop fields the form does not know) live in this module.
 
@@ -369,7 +369,7 @@ describe("the form <-> definition round trip", () => {
   });
 });
 
-/* docs/37 M9: the sheet's enum values are the server's (swiss-jobs/src/jobs/def.rs enum_str
+/* SPEC §panel.toolchain: the sheet's enum values are the server's (swiss-jobs/src/jobs/def.rs enum_str
    and the descriptor's config_schema in src/builtin.rs). Until 2026-09 the template and the
    firstRun select both said "aligned", a word the parser refuses with `must be one of:
    "after-interval", "immediate"` - every Advanced-sheet create with the default interval

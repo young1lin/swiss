@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The jobs GroupScope (docs/20 G4).
+//! The jobs GroupScope (SPEC §host.groups).
 //!
 //! The thinnest adapter in the family: the system's own methods own every rule (the one
 //! model lives in the config row, mutations land through commit_row - strict parse,

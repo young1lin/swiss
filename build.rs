@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// The build stamp (docs/16 H3): which commit this binary was built from, and when.
+// The build stamp (SPEC §host.daemon): which commit this binary was built from, and when.
 //
 // `git rev-parse --short HEAD` + a dirty marker from `git status --porcelain`, stamped into
 // SWISS_GIT_HASH, and an RFC 3339 UTC SWISS_BUILD_TIME computed from the epoch by hand (no

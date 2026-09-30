@@ -25,8 +25,8 @@
 //! Subtree teardown on Windows is a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` —
 //! strictly better than the Node build's `taskkill /T /F`: it also covers a hard kill of the
 //! gateway itself (the OS closes the job handle with the process). The boot-time ledger
-//! ([`crate::proc_pids`]) stays as the backstop for whatever that misses. All FFI for the job
-//! lives in the [`win`] module below and is the only `unsafe` in this file.
+//! ([`crate::proc_pids`]) stays as the backstop for whatever that misses. The job itself is
+//! [`swiss_core::platform::KillOnCloseJob`]; this file holds no `unsafe`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

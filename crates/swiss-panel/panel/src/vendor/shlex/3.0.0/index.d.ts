@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The type mirror of this vendored shim (docs/36 D7): the .js beside it in js/vendor is the
+/* The type mirror of this vendored shim (SPEC §panel.toolchain): the .js beside it in js/vendor is the
    served truth, this file only types the export the panel imports - upstream's own
    shlex.d.ts says the same thing. Upgrading the vendored package means upgrading this
    mirror in the same commit. */

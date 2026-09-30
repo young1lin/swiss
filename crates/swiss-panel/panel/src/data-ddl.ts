@@ -30,7 +30,7 @@ import { checkField, field, hint, pair } from "./ui/form.js";
 import { closeSheet, sheet, showSheet } from "./ui/sheet.js";
 
 /* ================================================================================================
-   docs/22 W4.6 — the minimal DDL set: CREATE TABLE, ADD COLUMN, CREATE INDEX, one sheet per
+   SPEC §data.ddl — the minimal DDL set: CREATE TABLE, ADD COLUMN, CREATE INDEX, one sheet per
    op. The SQL preview is fetched live from POST /api/db/:name/ddl-preview and Commit posts
    the SAME (op, payload) to /api/db/:name/ddl, which builds the statements with the very
    function the preview used (swiss-host's build_ddl_create) — what the sheet shows is what
@@ -119,7 +119,7 @@ function dbDdlFormPayload(kind: string, form: { schema: string; table: string; c
     return base;
   }
   // add_column: the added bucket of the diff IS the commit; changed/removed stay out of the
-  // minimal set (docs/22 §9) and are only classified, never run.
+  // minimal set (SPEC §data) and are only classified, never run.
   const added = dbDdlDiffColumns(form.oldColumns || [], rows).added;
   if (!added.length) return null;
   base.columns = added.map(col);
@@ -138,9 +138,9 @@ function dbDdlIndexSuggestion(table: unknown, cols: string[]): string {
 
 const DDL_OP = { table: "create_table", column: "add_column", index: "create_index" };
 const DDL_TITLE = { table: tk("dataDdl.newTable"), column: tk("dataDdl.addColumn"), index: tk("dataDdl.newIndex") };
-/* tk()-marked "… in {t}" titles (docs/38 L7): chosen by kind, painted through tr(). */
+/* tk()-marked "… in {t}" titles (SPEC §panel.i18n): chosen by kind, painted through tr(). */
 const DDL_IN = { table: tk("dataDdl.newTableT"), column: tk("dataDdl.addColumnT"), index: tk("dataDdl.newIndexT") };
-/* tk()-marked header words (docs/38 L7): painted through tr(hd) below. */
+/* tk()-marked header words (SPEC §panel.i18n): painted through tr(hd) below. */
 const DDL_HEAD = [tk("dataDdl.name"), tk("dataDdl.type"), tk("dataDdl.null"), tk("dataDdl.default"), tk("dataDdl.comment"), ""];
 const DDL_QUIET = {
   table: tk("dataDdl.quietTable"),
@@ -153,7 +153,7 @@ let S: DdlSheetState | null = null;
 
 /** Open one W4.6 sheet. ctx = { kind, dialect, conn, schema, schemas, table, columns } —
  *  kind "table" creates fresh (schema select for pg), "column"/"index" prefill the table's
- *  old state (docs/22 W4.6: same form, prefilled, commit diffs). */
+ *  old state (SPEC §data.ddl: same form, prefilled, commit diffs). */
 function openDbDdlSheet(kind: "table" | "column" | "index", ctx: { dialect: string; conn: string; schema?: string; schemas?: string[]; table?: string; columns?: ApiDbColumn[] }): void {
   closeDbDdlSheet();
   let rows: DdlRow[] = [];
@@ -191,7 +191,7 @@ function closeDbDdlSheet() {
 
 /** Rebuild the whole sheet DOM from S. Called on open and on row add/remove only — keystrokes
  *  write straight into S (and schedule a preview) so an input never loses focus to a re-render.
- *  The library's sheet and form (docs/46 P7): showSheet unhides the host before it paints; the
+ *  The library's sheet and form (SPEC §panel.pages): showSheet unhides the host before it paints; the
  *  per-open wiring (wireDbDdlSheet) stays, per the sheet idiom. */
 function paintDbDdlSheet(): void {
   const S_ = S!;
@@ -199,7 +199,7 @@ function paintDbDdlSheet(): void {
   const title = S_.table ? tr(DDL_IN[kind], { t: S_.table }) : tr(DDL_TITLE[kind]);
   const body: (HChild | null)[] = [];
   if (kind === "table" && S_.dialect === "pg") {
-    // docs/22 W1.1: a Postgres catalog is many schemas, so the new table says where it goes
+    // SPEC §data.browse: a Postgres catalog is many schemas, so the new table says where it goes
     // (swiss-ui-design rule 6) — a select, prefilled from the list's active schema filter.
     const schemas = S_.schemas.slice();
     if (!schemas.includes(S_.schema)) schemas.unshift(S_.schema);

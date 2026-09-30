@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# One-step deploy to production 19999 (docs/16 H3, bin\ since 2026-09-21).
+# One-step deploy to production 19999 (SPEC §host.daemon, bin\ since 2026-09-21).
 #
 # The deploy used to be a three-step ritual (stop, build, start) where doing it out of order
 # failed with "Access is denied (os error 5)" - the linker cannot overwrite the exe a running
@@ -21,7 +21,7 @@
 # into swiss.exe --version, or the script fails loudly with both values.
 #
 # Production runs from bin\swiss.exe, a copy of the build output, never from target\ itself
-# (docs/16 §3.3): the linker and the daemon no longer share a file, so the build happens
+# (SPEC §host.ops): the linker and the daemon no longer share a file, so the build happens
 # while the old daemon is still serving and the outage is stop + copy + start - seconds, not
 # the four minutes a release build takes. Since 2026-09-28 the new daemon also binds the port
 # BEFORE starting its plugins (src/server.rs), so "start" is a second rather than however long
@@ -87,7 +87,7 @@ if (-not $SkipGates) {
     Phase 'cargo test --workspace'
     cargo test --workspace
     if ($LASTEXITCODE -ne 0) { Fail "tests failed - production left untouched" }
-    # Gate 2 (docs/44): the real-database suite. The deploy machine is this one and
+    # Gate 2 (SPEC §testing.it): the real-database suite. The deploy machine is this one and
     # Docker lives in WSL at tcp://127.0.0.1:2375 - set DOCKER_HOST for the run the
     # same way every dev shell does. A diff that never touched a database path can
     # still afford the ~20 s: a deploy is the last place to learn the engines broke.
@@ -100,7 +100,7 @@ if (-not $SkipGates) {
     Phase 'cargo clippy --workspace --all-targets -- -D warnings'
     cargo clippy --workspace --all-targets -- -D warnings
     if ($LASTEXITCODE -ne 0) { Fail "clippy failed - production left untouched" }
-    # The panel's own gate (docs/37 R6): typecheck + lint + emit-freshness + vitest, run
+    # The panel's own gate (SPEC §panel.toolchain): typecheck + lint + emit-freshness + vitest, run
     # where its package.json lives. A stale emit is a failure here, so a deploy can never
     # serve a panel whose committed JS predates its TypeScript sources.
     Phase 'panel: npm run check (crates/swiss-panel/panel)'

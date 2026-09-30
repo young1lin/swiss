@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Seed guard tests (docs/44 I1): after a `fresh`, count every table, check every
+//! Seed guard tests (SPEC §testing.it): after a `fresh`, count every table, check every
 //! column type, and verify the values the seeds exist to pin. A broken seed is a
 //! broken fixture for every later test - these make it a loud, named failure.
 //!
@@ -268,7 +268,7 @@ async fn redis_seed_keys_types_and_ttls() {
     let mut c = redis_conn(&f.def).await;
 
     // 3,010 SET/SETEXT lines + one key each for hash, list, set and zset, plus
-    // the four generated stream keys (docs/45 §2.7) - one number, held by the
+    // the four generated stream keys (SPEC §data.streams) - one number, held by the
     // seed crate so a seed change moves it once.
     let size: i64 = redis::cmd("DBSIZE").query_async(&mut c).await.expect("DBSIZE");
     assert_eq!(size, REDIS_SEED_KEYS);
@@ -307,7 +307,7 @@ async fn redis_seed_keys_types_and_ttls() {
     let bulk: String = redis::cmd("GET").arg("bulk:key01500").query_async(&mut c).await.expect("GET bulk");
     assert_eq!(bulk, "bulk value 01500");
 
-    // docs/45 §2.7: the four generated stream keys. TYPE pins that they exist and
+    // SPEC §data.streams: the four generated stream keys. TYPE pins that they exist and
     // really are streams (an empty stream is a key with a type and no entries),
     // XLEN pins the bulk volume the window tests page through, and XINFO GROUPS
     // pins the `feed` group's read-but-not-ACKed seven - the pending count the
@@ -412,7 +412,7 @@ async fn postgres_two_fresh_databases_are_invisible_to_each_other() {
 
 #[tokio::test]
 async fn redis_two_leased_indexes_are_invisible_to_each_other() {
-    // Both indexes out of ONE lease (docs/45 S1 fix): two separate fresh_redis()
+    // Both indexes out of ONE lease (SPEC §data.streams): two separate fresh_redis()
     // calls would park this test between acquisitions still holding the first
     // - the wait-while-holding shape the one-lease rule exists to kill.
     let mut leased = fresh_redis_many(2).await;
@@ -441,7 +441,7 @@ async fn a_hundred_redis_freshes_do_not_drain_the_index_pool() {
     }
 }
 
-/// docs/45 S1 fix: multi-index leasing must be one atomic acquire, and this is
+/// SPEC §data.streams: multi-index leasing must be one atomic acquire, and this is
 /// the deterministic proof. The order below is chosen so the one-at-a-time
 /// shape cannot pass by scheduling luck:
 ///

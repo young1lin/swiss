@@ -18,7 +18,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vite
 import { lastActionOf, mcpDetail, resetMcpState, setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
 import { menuOpen, setMenuOpen } from "../src/ui/menu.js";
 
-/* OAuth authorize (docs/24): the form fields + the bool-to-string translation (fields.js),
+/* OAuth authorize (SPEC §mcp.oauth): the form fields + the bool-to-string translation (fields.js),
    the pane header button (pane.js renderPane), and the one-click flow (detail.js authorizeMcp)
    — POST plants the flow, the consent URL opens in a real browser window once, polling ends on
    approved with the tools count in the pane note.
@@ -31,7 +31,7 @@ import { menuOpen, setMenuOpen } from "../src/ui/menu.js";
 const NodeStub = class {};
 (globalThis as unknown as Record<string, unknown>).Node = NodeStub;
 
-/* docs/37 R5 stage 3: renderPane paints the pane with fill() and assigns ONE delegated click
+/* SPEC §panel.toolchain: renderPane paints the pane with fill() and assigns ONE delegated click
    on #pane, so the stub records children (an innerHTML read serialises them) and the header
    assertions keep seeing the built tree. */
 function serialize(node: FakeNode): string {
@@ -75,7 +75,7 @@ class FakeNode extends NodeStub {
   }
   querySelector() { return null; }
   querySelectorAll() { return []; }
-  // targetEl() ducks on closest (docs/37 M3): without it the delegated pane click no-ops.
+  // targetEl() ducks on closest (SPEC §panel.lint): without it the delegated pane click no-ops.
   // The dispatchers climb to the BUTTON (t.closest("#oauthBtn")) because a real pointer click
   // lands on the glyph, not the button - so self-match by id is the part of closest() this
   // suite's clicks exercise. The suite's FakeNode tree carries no parent links.
@@ -92,7 +92,7 @@ class FakeNode extends NodeStub {
 }
 
 const byId = new Map<string, FakeNode>();
-/* docs/37 R5: the tab bodies build real nodes now; the stub learns the four DOM entry points
+/* SPEC §panel.toolchain: the tab bodies build real nodes now; the stub learns the four DOM entry points
    h()/frag() touch. Serialized output is not asserted here — these tests read the pane header. */
 const doc = {
   getElementById(id: string) {
@@ -111,7 +111,7 @@ const doc = {
 };
 const windowOpen = vi.fn();
 
-/** Depth-first walk of the built tree (docs/37 R5): painted nodes are not registered in the
+/** Depth-first walk of the built tree (SPEC §panel.toolchain): painted nodes are not registered in the
  *  byId map unless something resolves them by id, so tests locate them structurally. */
 function findInTree(node: FakeNode, pred: (n: FakeNode) => boolean): FakeNode | null {
   if (pred(node)) return node;
@@ -163,7 +163,7 @@ function row(oauth?: string) {
   return { name: "fig", lifecycle: "started", state: "unknown", type: "http", tag: "http", source: "managed", description: "", group: "default", ...(oauth ? { oauth } : {}) };
 }
 
-describe("oauth form fields (docs/24 D1)", () => {
+describe("oauth form fields (SPEC §mcp.oauth)", () => {
   it("the http type carries an auth checkbox and an optional client name", () => {
     const keys = fields.TYPE_FIELDS.http.map((f) => f.k);
     expect(keys).toContain("auth");
@@ -190,7 +190,7 @@ describe("oauth form fields (docs/24 D1)", () => {
   });
 });
 
-describe("the figma type (docs/24 rev): one field, everything implied", () => {
+describe("the figma type (SPEC §mcp.figma): one field, everything implied", () => {
   it("the figma form carries no url, no auth box — the type decides those", () => {
     const keys = fields.TYPE_FIELDS.figma.map((f) => f.k);
     expect(keys).toContain("description");
@@ -220,7 +220,7 @@ describe("the figma type (docs/24 rev): one field, everything implied", () => {
   });
 });
 
-describe("both submit paths run the translation through the real modules (docs/24 D1)", () => {
+describe("both submit paths run the translation through the real modules (SPEC §mcp.oauth)", () => {
   // The browser-only failure class this suite guards: an identifier used but never imported
   // (translateOauth) links fine in vitest's transform and passes every import-graph walk —
   // only RUNNING the call site bites. So both submit paths are driven end to end here.
@@ -284,7 +284,7 @@ describe("both submit paths run the translation through the real modules (docs/2
   });
 });
 
-describe("the pane header authorize button (docs/24 D5)", () => {
+describe("the pane header authorize button (SPEC §mcp.oauth)", () => {
   beforeEach(() => { byId.clear(); freshState(); });
 
   it("renders Authorize for an oauth MCP that has no stored grant", () => {
@@ -316,7 +316,7 @@ describe("the pane header authorize button (docs/24 D5)", () => {
       return { ok: true, status: 200, json: async () => ({ status: "starting" }) } as never;
     };
     pane.renderPane();
-    // The delegated pane click (docs/37 R5): the button carries no handler of its own and is
+    // The delegated pane click (SPEC §panel.toolchain): the button carries no handler of its own and is
     // never resolved by id through the document stub - find it in the built tree.
     const btn = findInTree(byId.get("pane")!, (n) => { return n.id === "oauthBtn"; })!;
     expect(typeof byId.get("pane")!.onclick).toBe("function");
@@ -329,7 +329,7 @@ describe("the pane header authorize button (docs/24 D5)", () => {
   });
 });
 
-describe("the authorize flow (docs/24 D5)", () => {
+describe("the authorize flow (SPEC §mcp.oauth)", () => {
   beforeEach(() => {
     byId.clear();
     freshState();

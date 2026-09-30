@@ -1,5 +1,5 @@
-# The redis seed (docs/44 SS2.3/SS2.4). One command per line, TAB-separated;
-# loaded into whatever db index a Fresh owns. Neutral names only - docs/40 D2
+# The redis seed (SPEC §testing.it). One command per line, TAB-separated;
+# loaded into whatever db index a Fresh owns. Neutral names only - SPEC §release.hygiene
 # applies to seeds exactly as it applies to screenshots. Shapes: five types, a
 # three-level tree namespace, one expiring and one persisted TTL key, UTF-8 keys
 # and values, and 3,000 bulk keys in one namespace for SCAN paging.

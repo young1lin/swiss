@@ -17,7 +17,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /* The Traffic page's context-bar chip counts the MCPs (mcpChipText over mcpRows). Found on the
-   docs/46 P3 walk: a cold load straight onto #traffic read "0 MCPs · 0 up" and kept reading it,
+   SPEC §panel.pages, found on a walk: a cold load straight onto #traffic read "0 MCPs · 0 up" and kept reading it,
    because nothing on that page ever loaded the MCP list - the Servers page's poll is what fills
    it, and that page was never visited. The view now loads the list it counts, on mount and on
    every poll. */
@@ -41,7 +41,7 @@ beforeEach(async () => {
   view = await import("../src/views/traffic.js");
 });
 
-describe("the Traffic view counts MCPs it loaded itself (docs/46 P3)", () => {
+describe("the Traffic view counts MCPs it loaded itself (SPEC §panel.pages)", () => {
   it("mount loads the MCP list before the first paint, so the chip is right on a cold load", async () => {
     await view.mount();
     expect(calls).toEqual(["loadList", "trafficReload"]);

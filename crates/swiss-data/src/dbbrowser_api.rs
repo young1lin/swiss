@@ -23,7 +23,7 @@
 //! because for someone staring at a grid the driver's "Data too long for column 'x'" IS the
 //! useful answer.
 //!
-//! # The catalog seam (docs/12 W3)
+//! # The catalog seam (SPEC §host.seats)
 //!
 //! Node's `mountDbBrowseApi(r, registry)` reached each adapter through the registry; the Rust
 //! port first replaced that with a resolver closure over the live registry. W3 removes the
@@ -61,7 +61,7 @@ use swiss_host::services::catalog::{
 /// The sidebar's manual order, read live per request — the same list PUT /api/order stores.
 /// A closure (not a snapshot) so a drag in the panel reorders the picker on the next poll.
 pub type OrderSource = std::sync::Arc<dyn Fn() -> Vec<String> + Send + Sync>;
-/// The name -> group label source (docs/20 G5): the composition reads the sidebar's group
+/// The name -> group label source (SPEC §host.groups): the composition reads the sidebar's group
 /// assignment live, so a regroup shows in the picker without a restart. Unassigned names
 /// answer whatever the caller's sink rule gives - in practice the first group.
 pub type GroupSource = std::sync::Arc<dyn Fn(&str) -> String + Send + Sync>;
@@ -99,7 +99,7 @@ pub fn browsable_connections(
                 "dialect": c.dialect,
                 "label": c.label,
                 "state": c.state,
-                // The sidebar group the connection renders under (docs/20 G5): a label the
+                // The sidebar group the connection renders under (SPEC §host.groups): a label the
                 // picker's optgroups read - never a sort key, the order is already visual.
                 "group": group_of(&c.id),
             });
@@ -125,7 +125,7 @@ pub fn browsable_connections(
 struct Fail {
     status: StatusCode,
     message: String,
-    /// docs/22 W4.2: a lost optimistic-lock race's 409 extras — present only there. The
+    /// SPEC §data.edits: a lost optimistic-lock race's 409 extras — present only there. The
     /// body adds `conflictColumns` and the buffered `row` beside `error`, so the grid
     /// knows exactly which cells to paint red. Boxed: Fail crosses a dozen small helpers
     /// and stays one pointer wide beyond its status and message.
@@ -235,7 +235,7 @@ fn lease_fail(err: CatalogError) -> Fail {
     }
 }
 
-/// The catalog-wide 503 (docs/12 W3): no provider is NOT "zero connections". The message
+/// The catalog-wide 503 (SPEC §host.seats): no provider is NOT "zero connections". The message
 /// names who is missing — "the mcp plugin provides database connections and is currently
 /// disabled" — so disabling MCP reads as a consequence, not as an empty toolbox.
 fn catalog_guard(catalog: &CatalogRegistry) -> Result<(), Fail> {
@@ -265,7 +265,7 @@ fn catalog_guard(catalog: &CatalogRegistry) -> Result<(), Fail> {
 }
 
 /// Lease one connection as "data" for the life of the request and pull its SQL browser. The
-/// returned LEASE is the point (docs/12 W3): callers keep it in scope until the browser call
+/// returned LEASE is the point (SPEC §host.seats): callers keep it in scope until the browser call
 /// completes — that scope is exactly what a draining provider waits on, so no pool closes
 /// under a live page. The dialect string in the mismatch message is Node's adapter type for
 /// every real dialect (mysql/pg/redis), so the 404 text survives the seam change.
@@ -332,7 +332,7 @@ fn reply(out: Result<Value, Fail>) -> Response {
 
 // --- handler bodies ------------------------------------------------------------------------------
 
-/// GET /api/db/{name}/databases (docs/43 M3): the connection's database catalog — the
+/// GET /api/db/{name}/databases (SPEC §data.databases): the connection's database catalog — the
 /// configured primary, the one the pool sits on, and the rest with an honest per-entry
 /// reason when browsing one needs its own connection. Serves BOTH flavors: the mysql/pg
 /// adapters answer from information_schema / pg_database, redis from INFO keyspace.
@@ -438,7 +438,7 @@ async fn export(
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Response, Fail> {
-    // format=sql streams its body in pieces (docs/22 W4.4) — it cannot ride the folded path.
+    // format=sql streams its body in pieces (SPEC §data.export) — it cannot ride the folded path.
     if q.get("format").map(String::as_str) == Some("sql") {
         return export_sql(catalog, name, q).await;
     }
@@ -457,7 +457,7 @@ async fn export(
     if let Some(limit) = q_raw(q, "limit") {
         o.insert("limit".into(), limit);
     }
-    // The grid's filters ride /export exactly as they ride /data (docs/22 W0.2): the download
+    // The grid's filters ride /export exactly as they ride /data (SPEC §data.export): the download
     // and the grid describe the same filtered set, and x-export-rows counts that set.
     if let Some(filters) = parse_filters(q.get("filters"))? {
         o.insert("filters".into(), filters);
@@ -517,7 +517,7 @@ async fn export(
 /// The dump body as a Stream: each channel piece becomes one body chunk, and the connection
 /// lease rides along inside it. The handler returns while the dump is still being produced —
 /// holding the lease in the body (not the handler's frame) is what keeps a draining provider
-/// from closing the pool under the last pieces (docs/12 W3, docs/22 W4.4).
+/// from closing the pool under the last pieces (SPEC §host.seats, SPEC §data.export).
 struct LeaseBody {
     rx: tokio::sync::mpsc::Receiver<DumpPiece>,
     lease: Option<ConnectionLease>,
@@ -548,7 +548,7 @@ impl futures_core::Stream for LeaseBody {
     }
 }
 
-/// The format=sql arm of /export (docs/22 W4.4): the dump's metadata comes back before the
+/// The format=sql arm of /export (SPEC §data.export): the dump's metadata comes back before the
 /// body starts — a bad table still answers its usual 400 — then the body streams through
 /// [`axum::body::Body::from_stream`] as the producer finishes each ~1 MB statement.
 async fn export_sql(
@@ -566,7 +566,7 @@ async fn export_sql(
     if let Some(limit) = q_raw(q, "limit") {
         o.insert("limit".into(), limit);
     }
-    // The grid's filters ride /export exactly as they ride /data (docs/22 W0.2).
+    // The grid's filters ride /export exactly as they ride /data (SPEC §data.export).
     if let Some(filters) = parse_filters(q.get("filters"))? {
         o.insert("filters".into(), filters);
     }
@@ -651,7 +651,7 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
             "mapping must be an array (one per CSV column) of column names or null",
         ));
     }
-    // docs/22 W4.5: the panel picks the statement form — insert stays the default, and a
+    // SPEC §data.export: the panel picks the statement form — insert stays the default, and a
     // payload without the field rides exactly as it did before the mode existed.
     let mode = swiss_host::dbbrowser::parse_import_mode(body.get("mode")).map_err(Fail::bad)?;
     let mut logged =
@@ -682,7 +682,7 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
 async fn ddl(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
     let (_lease, b) = lease_db(catalog, name)?;
     let op = body.get("op").and_then(Value::as_str);
-    // docs/22 W4.6: the create ops carry their facts in a payload object; /ddl-preview showed
+    // SPEC §data.ddl: the create ops carry their facts in a payload object; /ddl-preview showed
     // the exact statements this runs (same builder, same input), so Commit is the preview.
     if op.is_some_and(|op| matches!(op, "create_table" | "add_column" | "create_index")) {
         let op = op.unwrap_or_default();
@@ -731,8 +731,8 @@ async fn ddl(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Valu
     b.ddl_op(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
-/// The form-to-SQL preview behind the New table / Add column / New index sheets (docs/22
-/// W4.6). The SAME build_ddl_create the commit path runs, on the leased connection's own
+/// The form-to-SQL preview behind the New table / Add column / New index sheets (SPEC §data.ddl).
+/// The SAME build_ddl_create the commit path runs, on the leased connection's own
 /// dialect — pgAdmin's msql flow: one SQL producer serves preview and save, so the text the
 /// sheet shows is byte-for-byte the text /ddl executes on Commit.
 async fn ddl_preview(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
@@ -757,7 +757,7 @@ async fn query(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Va
         return Err(Fail::bad("sql is required"));
     }
     // The elapsed clock wraps the browser call: what the user waited on is the driver round
-    // trip, not the JSON hop around it (docs/22 W0.4).
+    // trip, not the JSON hop around it (SPEC §data.console).
     let started = std::time::Instant::now();
     let out = b
         .run_query(&sql, body.get("limit"))
@@ -809,7 +809,7 @@ async fn edits(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Va
     }
     o.insert("edits".into(), Value::Array(edit_list.clone()));
     b.apply_edits(&Value::Object(o)).await.map_err(|e| match e {
-        // Whose fault the failure is decides the status (docs/22 W4.2): a refused request
+        // Whose fault the failure is decides the status (SPEC §data.edits): a refused request
         // is 400, a lost race against another writer is 409 with the moved columns.
         swiss_host::dbbrowser::EditError::Bad(m) => Fail::bad(m),
         swiss_host::dbbrowser::EditError::Conflict(c) => {
@@ -850,13 +850,13 @@ async fn command(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<
     if line.trim().is_empty() {
         return Err(Fail::bad("command is required"));
     }
-    // Same elapsed contract as the SQL console (docs/22 W0.4): the clock wraps the call.
+    // Same elapsed contract as the SQL console (SPEC §data.console): the clock wraps the call.
     let started = std::time::Instant::now();
     let reply = rb.run_command(&line).await.map_err(Fail::bad)?;
     Ok(with_elapsed_ms(json!({ "reply": reply }), started))
 }
 
-/// Server-side completion for the console (docs/22 W3.1): candidates for the word ending at
+/// Server-side completion for the console (SPEC §data.completion): candidates for the word ending at
 /// the caret. The body carries the WHOLE console text and the caret as a byte offset (the
 /// panel converts its UTF-16 selection index); the browser folds keywords, table names and
 /// the FROM-nearest table's columns into the reply.
@@ -875,7 +875,7 @@ async fn completion(catalog: &CatalogRegistry, name: &str, body: &Value) -> Resu
     b.completion(sql, caret).await.map_err(Fail::bad)
 }
 
-/// Live sessions on the connection's server (docs/22 W3.2) — the Activity page, polled
+/// Live sessions on the connection's server (SPEC §data.activity) — the Activity page, polled
 /// while it is open. The reply shape is shared by both dialects (dbbrowser.rs).
 async fn activity(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> {
     let (_lease, b) = lease_db(catalog, name)?;
@@ -883,7 +883,7 @@ async fn activity(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> 
 }
 
 /// Cancel (pg_cancel_backend / KILL QUERY) or terminate (pg_terminate_backend / KILL) one
-/// session (docs/22 W3.2). The mode word and the pid are validated here — a kill is the one
+/// session (SPEC §data.activity). The mode word and the pid are validated here — a kill is the one
 /// route in this router that interrupts someone else's work, so it logs what it did.
 async fn activity_kill(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
     let (_lease, b) = lease_db(catalog, name)?;
@@ -909,7 +909,7 @@ async fn activity_kill(catalog: &CatalogRegistry, name: &str, body: &Value) -> R
     b.activity_kill(pid, terminate).await.map_err(Fail::bad)
 }
 
-/// Commit a buffered redis structured-edit batch (docs/22 W3.3): the typed value view's
+/// Commit a buffered redis structured-edit batch (SPEC §data.redis): the typed value view's
 /// whole buffer as ONE pipelined round trip. Shape is checked here; WHICH commands may run
 /// stays with the adapter's console guard, applied per command before the socket is touched —
 /// the first refusal rejects the batch whole, so a buffered edit never half-applies.
@@ -942,10 +942,10 @@ async fn key(
     rb.read_key(&key).await.map_err(Fail::bad)
 }
 
-/// GET /api/db/{name}/stream — one newest-first window of one stream key (docs/45
-/// §2.1): the opening page by default, `before` pages strictly older (“load
+/// GET /api/db/{name}/stream — one newest-first window of one stream key (SPEC §data.streams):
+/// the opening page by default, `before` pages strictly older (“load
 /// earlier”), `after` catches up strictly newer (the Follow tick). `match` keeps
-/// only the entries a filter line names (docs/49 §2.2) — a bounded backward walk,
+/// only the entries a filter line names (SPEC §data.streams) — a bounded backward walk,
 /// because redis indexes nothing inside an entry. Query params
 /// become the option object and are validated by the host helper BEFORE the lease
 /// — a caller's mistake is reported as such and costs no socket, the house rule
@@ -966,7 +966,7 @@ async fn stream(
 }
 
 /// GET /api/db/{name}/redis-commands — the command catalog of the redis this connection
-/// speaks to (docs/50): COMMAND DOCS for the words, COMMAND INFO for the key positions. The
+/// speaks to (SPEC §data.redis-console): COMMAND DOCS for the words, COMMAND INFO for the key positions. The
 /// console's completion is built from it, so it offers the commands that server actually has
 /// — its modules and its version included — instead of a table kept by hand in the panel.
 async fn redis_commands(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> {
@@ -975,7 +975,7 @@ async fn redis_commands(catalog: &CatalogRegistry, name: &str) -> Result<Value, 
 }
 
 /// GET /api/db/{name}/stream/groups — the read-only consumer-group table of one
-/// stream key (docs/45 §2.4): name / consumers / pending / lag / last-delivered-id,
+/// stream key (SPEC §data.streams): name / consumers / pending / lag / last-delivered-id,
 /// nothing writable.
 async fn stream_groups(
     catalog: &CatalogRegistry,
@@ -1011,7 +1011,7 @@ async fn connections(
     Extension(order): Extension<OrderSource>,
     Extension(groups): Extension<GroupSource>,
 ) -> Response {
-    // The honest 503 first (docs/12 W3): with no provider, an empty list would read as
+    // The honest 503 first (SPEC §host.seats): with no provider, an empty list would read as
     // "you have no connections" — the message names who is missing instead.
     if let Err(f) = catalog_guard(&catalog) {
         return admin_error(f.status, &f.message);
@@ -1199,7 +1199,7 @@ where
         .route("/api/db", get(connections))
         // The lazy table list: one bounded page plus a counted total, with an optional name filter.
         .route("/api/db/{name}/tables", get(tables_route))
-        // The database axis (docs/43 M3): primary, current, and the rest with per-entry
+        // The database axis (SPEC §data.databases): primary, current, and the rest with per-entry
         // browsability — the panel's database selector is this body, whole.
         .route("/api/db/{name}/databases", get(databases_route))
         // One grid page: columns, rows, total, and whether (and why not) the table is editable.
@@ -1211,17 +1211,17 @@ where
         // --- redis key browser (same /api/db namespace; dialect "redis") ---
         .route("/api/db/{name}/keys", get(keys_route))
         .route("/api/db/{name}/command", post(command_route))
-        // The buffered structured-edit commit (docs/22 W3.3): one pipeline, one round trip.
+        // The buffered structured-edit commit (SPEC §data.redis): one pipeline, one round trip.
         .route("/api/db/{name}/redis-pipeline", post(redis_pipeline_route))
-        // docs/50: the console's completion source, read from the server itself.
+        // SPEC §data.redis-console: the console's completion source, read from the server itself.
         .route("/api/db/{name}/redis-commands", get(redis_commands_route))
-        // Live sessions and the cancel/terminate pair (docs/22 W3.2).
+        // Live sessions and the cancel/terminate pair (SPEC §data.activity).
         .route("/api/db/{name}/activity", get(activity_route))
         .route("/api/db/{name}/activity-kill", post(activity_kill_route))
-        // The console's completion (docs/22 W3.1) — server-side, on the leased connection.
+        // The console's completion (SPEC §data.completion) — server-side, on the leased connection.
         .route("/api/db/{name}/completion", post(completion_route))
         .route("/api/db/{name}/key", get(key_route))
-        // docs/45: the stream window (newest-first, cursor paging) and its read-only
+        // SPEC §data.streams: the stream window (newest-first, cursor paging) and its read-only
         // consumer groups — both GET, neither audited, like every other read here.
         .route("/api/db/{name}/stream", get(stream_route))
         .route("/api/db/{name}/stream/groups", get(stream_groups_route))
@@ -1261,21 +1261,21 @@ mod tests {
         query: Option<String>,
         filters: Option<Value>,
         export_opts: Option<Value>,
-        /// Body pieces the SQL dump's producer handed to the channel (docs/22 W4.4) — the
+        /// Body pieces the SQL dump's producer handed to the channel (SPEC §data.export) — the
         /// route test's proof that the dump streamed instead of folding one string.
         dump_pieces: usize,
         imported: Option<Value>,
         ddl: Option<Value>,
         tables_opts: Option<Value>,
-        /// The command list the redis pipeline route forwarded (docs/22 W3.3).
+        /// The command list the redis pipeline route forwarded (SPEC §data.redis).
         pipeline: Option<Vec<Vec<String>>>,
-        /// The (pid, terminate) the activity-kill route forwarded (docs/22 W3.2).
+        /// The (pid, terminate) the activity-kill route forwarded (SPEC §data.activity).
         activity_kill: Option<(i64, bool)>,
-        /// The (sql, caret) the completion route forwarded (docs/22 W3.1).
+        /// The (sql, caret) the completion route forwarded (SPEC §data.completion).
         completion: Option<(String, usize)>,
-        /// The option object the stream route forwarded (docs/45 §2.5).
+        /// The option object the stream route forwarded (SPEC §data.streams).
         stream_opts: Option<Value>,
-        /// The key the stream groups route forwarded (docs/45 §2.5).
+        /// The key the stream groups route forwarded (SPEC §data.streams).
         stream_groups_key: Option<String>,
     }
 
@@ -1289,7 +1289,7 @@ mod tests {
     }
 
     /// A DbBrowser with an in-memory table, mirroring the Node suite's stubBrowser.
-    /// The databases field opts the stub into the docs/43 M3 catalog route: None keeps
+    /// The databases field opts the stub into the SPEC §data.databases catalog route: None keeps
     /// the trait DEFAULT (the empty catalog — exactly what a stub that never heard of
     /// the route must serve), Some answers as the test needs.
     struct StubDb {
@@ -1342,7 +1342,7 @@ mod tests {
                 "total": 2,
                 "offset": offset,
                 "limit": limit,
-                // docs/22 W1.9: the adapter fetched limit+1 and truncated; the flag is what the
+                // SPEC §data.browse: the adapter fetched limit+1 and truncated; the flag is what the
                 // panel's next-page arrow listens to.
                 "nextPage": false,
                 "primaryKey": ["id"],
@@ -1365,7 +1365,7 @@ mod tests {
             if let Ok(mut seen) = self.seen.lock() {
                 seen.edits = Some(edits.clone());
             }
-            // docs/22 W4.2: the optimistic lock needs a stand-in answer too — an update
+            // SPEC §data.edits: the optimistic lock needs a stand-in answer too — an update
             // that carries a "__conflict__" change (an array of column names) plays the
             // loser of the race, so the route test can pin the 409 shape the panel paints
             // red cells from.
@@ -1397,7 +1397,7 @@ mod tests {
                 .unwrap_or(&vec![])
                 .iter()
                 .map(|e| {
-                    // docs/22 W1.7: the adapter reads every committed update/insert back in the
+                    // SPEC §data.edits: the adapter reads every committed update/insert back in the
                     // same transaction and adds "row" — a delete stays null. The stub mirrors
                     // that shape so the route test can pin that the field survives the route.
                     let op = e.get("op").and_then(Value::as_str).unwrap_or("");
@@ -1556,7 +1556,7 @@ mod tests {
             if let Ok(mut seen) = self.seen.lock() {
                 seen.ddl = Some(o.clone());
             }
-            // docs/22 W4.6: the stub mirrors the real adapters — the create ops build through
+            // SPEC §data.ddl: the stub mirrors the real adapters — the create ops build through
             // the shared builder, so the route test can pin preview == commit byte-for-byte.
             let op = o.get("op").and_then(Value::as_str).unwrap_or("");
             if matches!(op, "create_table" | "add_column" | "create_index") {
@@ -1609,7 +1609,7 @@ mod tests {
     /// The Node suite's fake redis browser.
     struct StubRedis {
         seen: SeenRef,
-        /// docs/43 M3: the redis flavor's catalog answer for the databases route; None
+        /// SPEC §data.databases: the redis flavor's catalog answer for the databases route; None
         /// keeps the trait default (empty catalog).
         databases: Option<Value>,
     }
@@ -1652,7 +1652,7 @@ mod tests {
         async fn read_stream(&self, key: &str, o: &Value) -> Result<Value, String> {
             // The same host helper the real browser runs: the stub validates exactly
             // what the real one validates, so the route's 400s are pinned here
-            // without a redis (docs/45 §2.5).
+            // without a redis (SPEC §data.streams).
             swiss_host::dbbrowser::redis_stream_opts(o)?;
             if let Ok(mut seen) = self.seen.lock() {
                 seen.stream_opts = Some(o.clone());
@@ -1783,7 +1783,7 @@ mod tests {
         catalog_grouped_router_of(provider, order, Vec::new())
     }
 
-    /// Same, with the name -> group labels the composition reads from the store (docs/20 G5).
+    /// Same, with the name -> group labels the composition reads from the store (SPEC §host.groups).
     fn catalog_grouped_router_of(
         provider: impl FnOnce(Arc<LeaseTracker>) -> StubProvider + 'static,
         order: Vec<String>,
@@ -1901,7 +1901,7 @@ mod tests {
 
     #[tokio::test]
     async fn rows_carry_their_group_in_visual_order() {
-        // docs/20 G5: /api/db rows label each connection with the sidebar group it renders
+        // SPEC §host.groups: /api/db rows label each connection with the sidebar group it renders
         // under, and the picker's order stays the VISUAL order the composition passes (groups
         // in stored order, members by flat rank inside them) - the label rides the row, it
         // never re-sorts anything.
@@ -2031,7 +2031,7 @@ mod tests {
         let body = body.expect("json");
         assert_eq!(body["table"], "users");
         assert_eq!(body["total"], 2);
-        // docs/22 W1.9: the page reply carries the nextPage probe alongside the COUNT total.
+        // SPEC §data.browse: the page reply carries the nextPage probe alongside the COUNT total.
         assert_eq!(body["nextPage"], false);
         assert_eq!(body["primaryKey"], json!(["id"]));
         assert_eq!(body["editable"], true);
@@ -2081,7 +2081,7 @@ mod tests {
 
     #[tokio::test]
     async fn forwards_the_schema_filter_to_the_table_list() {
-        // docs/22 W1.1: the schema picker rides the /tables request as a plain param; MySQL
+        // SPEC §data.browse: the schema picker rides the /tables request as a plain param; MySQL
         // ignores it (one database), Postgres narrows the catalog walk to that schema.
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
@@ -2233,7 +2233,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_export_carries_the_grids_filters_to_the_browser() {
-        // docs/22 W0.2: the grid's filters ride /export exactly as they ride /data, so the
+        // SPEC §data.export: the grid's filters ride /export exactly as they ride /data, so the
         // download and the grid describe the same filtered set (and x-export-rows counts it).
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
@@ -2286,7 +2286,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_sql_export_streams_a_replayable_dump_in_pieces() {
-        // docs/22 W4.4: format=sql answers a dump — CREATE TABLE head, the dialect's FK
+        // SPEC §data.export: format=sql answers a dump — CREATE TABLE head, the dialect's FK
         // stance, then the rows as ~1 MB multi-value INSERTs — streamed as several body
         // pieces instead of one folded string, so the producer never holds the whole table.
         let seen = SeenRef::default();
@@ -2339,7 +2339,7 @@ mod tests {
         assert_eq!(opts["format"], json!("sql"));
         assert_eq!(opts["table"], "users");
 
-        // The grid's filters ride the sql arm exactly as they ride csv (docs/22 W0.2): the
+        // The grid's filters ride the sql arm exactly as they ride csv (SPEC §data.export): the
         // WHERE the dump streams is the WHERE the page counted.
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
@@ -2367,7 +2367,7 @@ mod tests {
             json!([{ "column": "pad", "op": "like", "value": "x" }])
         );
 
-        // The row cap (docs/22 W4.4): EXPORT_ROW_CAP stays the ceiling; a lower limit
+        // The row cap (SPEC §data.export): EXPORT_ROW_CAP stays the ceiling; a lower limit
         // truncates the dump and flags it, exactly as the folded formats do.
         let app = router_of(vec![db_entry(
             "db",
@@ -2451,7 +2451,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_import_can_ask_for_upsert_and_refuses_unknown_modes() {
-        // docs/22 W4.5: mode "upsert" rides the payload to the browser; anything but the two
+        // SPEC §data.export: mode "upsert" rides the payload to the browser; anything but the two
         // known spellings is the route's own 400, the same rule ddl's op follows.
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
@@ -2575,7 +2575,7 @@ mod tests {
         assert!(err.contains("rename, truncate or drop"), "{err}");
     }
 
-    // --- docs/22 W4.6: preview and commit share one builder -------------------------------------------
+    // --- SPEC §data.ddl: preview and commit share one builder -------------------------------------------
 
     /// The body both W4.6 endpoints take: (op, payload). The stub browser builds the create
     /// ops the way the real adapters do (the shared builder), so this pins the contract the
@@ -2725,7 +2725,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        // docs/22 W1.7: each result also carries the committed row as the adapter read it back
+        // SPEC §data.edits: each result also carries the committed row as the adapter read it back
         // (same transaction) — the route passes the field through untouched.
         assert_eq!(
             body.expect("json")["results"],
@@ -2739,7 +2739,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_lost_optimistic_lock_answers_409_with_the_column_names() {
-        // docs/22 W4.2: the loser of the edit race answers 409 — not 400, the request was
+        // SPEC §data.edits: the loser of the edit race answers 409 — not 400, the request was
         // well-formed and the row was real; another writer moved it. The body names the
         // columns whose buffered originals no longer match, which is what the grid paints
         // red while keeping the whole buffer for a retry.
@@ -2838,7 +2838,7 @@ mod tests {
     }
 
     /// redis_entry over a shared seen, so a test can read back what the pipeline route
-    /// forwarded (docs/22 W3.3).
+    /// forwarded (SPEC §data.redis).
     fn redis_entry_with(name: &str, seen: SeenRef) -> Arc<StubRow> {
         Arc::new(StubRow {
             name: name.into(),
@@ -2850,7 +2850,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_redis_structured_edit_commit_rides_one_pipeline() {
-        // docs/22 W3.3: the typed value view's whole buffer posts as ONE round trip; args stay
+        // SPEC §data.redis: the typed value view's whole buffer posts as ONE round trip; args stay
         // separate strings (a value with spaces is one argument, never re-split), and the
         // replies come back in order.
         let seen = SeenRef::default();
@@ -2905,7 +2905,7 @@ mod tests {
 
     #[tokio::test]
     async fn completion_forwards_the_console_text_and_caret() {
-        // docs/22 W3.1: the caret is a byte offset; the panel converts its UTF-16 index.
+        // SPEC §data.completion: the caret is a byte offset; the panel converts its UTF-16 index.
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
@@ -2975,7 +2975,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_activity_page_lists_sessions_in_the_shared_shape() {
-        // docs/22 W3.2: one reply shape for both dialects — the panel renders one table.
+        // SPEC §data.activity: one reply shape for both dialects — the panel renders one table.
         let app = router_of(vec![db_entry(
             "db",
             Arc::new(StubDb {
@@ -3136,7 +3136,7 @@ mod tests {
 
     #[tokio::test]
     async fn stream_routes_validate_forward_and_stay_redis_only() {
-        // docs/45 §2.5 route row: the five parameter cases, forwarding recorded, groups
+        // SPEC §data.streams route row: the five parameter cases, forwarding recorded, groups
         // served, and the routes staying redis-only — a db connection 404s them with
         // the same wording as every other redis route. Reads are never audited, so
         // there is no log line to assert, only this route's silence in the code.
@@ -3189,7 +3189,7 @@ mod tests {
             json!({ "after": "1700000999900-0", "count": "40" })
         );
 
-        // docs/49 §2.2: the filter rides the same option object, and a filter line
+        // SPEC §data.streams: the filter rides the same option object, and a filter line
         // that cannot be split is the caller's mistake — refused before the lease,
         // like every other bad parameter on this route.
         let seen = SeenRef::default();
@@ -3263,7 +3263,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_query_answer_carries_how_long_it_took() {
-        // docs/22 W0.4: the console's meta line shows server-measured elapsed time. The clock
+        // SPEC §data.console: the console's meta line shows server-measured elapsed time. The clock
         // wraps the browser call itself, so the number is the driver round trip the user
         // actually waited on, not the JSON hop around it.
         let app = router_of(vec![db_entry(
@@ -3318,7 +3318,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        // docs/22 W0.4 grew the answer by one field; the reply itself is unchanged.
+        // SPEC §data.console grew the answer by one field; the reply itself is unchanged.
         let body = body.expect("json");
         assert_eq!(body["reply"], json!("value"));
         assert!(body["elapsedMs"].is_u64());
@@ -3380,7 +3380,7 @@ mod tests {
     }
     #[tokio::test]
     async fn no_provider_is_a_503_that_names_the_missing_plugin() {
-        // docs/12 W3's MCP-disabled case: the message names the provider that IS the
+        // SPEC §host.seats's MCP-disabled case: the message names the provider that IS the
         // connection source, so the panel can say WHO to enable instead of "no rows".
         let (app, _catalog) = empty_router_after_mcp();
         let (status, _, body, _) = call(app, "GET", "/api/db", None).await;
@@ -3419,7 +3419,7 @@ mod tests {
     #[tokio::test]
     async fn a_draining_provider_refuses_with_a_stopping_503() {
         // The withdraw half of a provider stop: existing leases drain, new requests get
-        // a 503 that says the plugin is stopping (docs/12 W3).
+        // a 503 that says the plugin is stopping (SPEC §host.seats).
         let catalog = Arc::new(CatalogRegistry::new());
         catalog
             .register(
@@ -3502,7 +3502,7 @@ mod tests {
         assert_eq!(tracker.outstanding(), 0);
     }
 
-    // --- docs/43 M3: the database catalog route ----------------------------------------------
+    // --- SPEC §data.databases: the database catalog route ----------------------------------------------
 
     #[tokio::test]
     async fn the_databases_route_passes_the_browsers_catalog_through_whole() {
@@ -3546,7 +3546,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_browser_that_never_heard_of_the_route_serves_the_empty_catalog() {
-        // The trait default is the compatibility story (docs/43 M3): a flavor or a stub
+        // The trait default is the compatibility story (SPEC §data.databases): a flavor or a stub
         // without a database axis compiles unchanged and answers empty — the panel shows
         // no selector, nothing 500s.
         let app = router_of(vec![db_entry(
@@ -3566,7 +3566,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_redis_flavor_answers_the_catalog_route_too() {
-        // INFO keyspace + CLIENT INFO (docs/43 M3): current is the db number the connection
+        // INFO keyspace + CLIENT INFO (SPEC §data.databases): current is the db number the connection
         // SELECTed, every other dbN is listed with its key count and not browsable.
         let catalog = json!({
             "primary": "0",

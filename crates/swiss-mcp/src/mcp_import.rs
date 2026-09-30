@@ -53,7 +53,7 @@ pub struct ImportPlan {
 }
 
 /// A free name under the gateway's path rules: the wanted name, or wanted-N on collision.
-/// `taken` is the whole rule (docs/24 P2) — under the /mcp/ domain nothing is reserved, so a
+/// `taken` is the whole rule (SPEC §mcp.endpoint) — under the /mcp/ domain nothing is reserved, so a
 /// name is taken only when an existing MCP holds it.
 ///
 /// Node's version throws when 9999 suffixed names are all taken; here that surfaces as `Err`,
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn plugin_domain_names_need_no_host_reservation() {
-        // docs/24 P2: the host's root reserved words retired with the root-level route. A
+        // SPEC §mcp.endpoint: the host's root reserved words retired with the root-level route. A
         // name is taken only when it is actually taken; collisions still suffix.
         assert_eq!(unique_name("health", &set(&[])).unwrap(), "health");
         assert_eq!(unique_name("api", &set(&[])).unwrap(), "api");

@@ -349,10 +349,10 @@ fn stream_entries(reply: &[Value]) -> Vec<Value> {
         .collect()
 }
 
-// --- stream windows (docs/45) ----------------------------------------------------------------------
+// --- stream windows (SPEC §data.streams) ----------------------------------------------------------------------
 
 /// A stream entry id is "<ms>-<seq>", and the ms half IS the entry's timestamp
-/// (docs/45 §2.1) — redis guarantees it at XADD time. None for anything that is not
+/// (SPEC §data.streams) — redis guarantees it at XADD time. None for anything that is not
 /// a plain id: the special ids ("$", "+", "-"), malformed strings, and a ms half
 /// that overflows i64 all mean “derive nothing”, because a wrong timestamp is worse
 /// than a blank one.
@@ -361,7 +361,7 @@ pub fn stream_id_ms(id: &str) -> Option<i64> {
     ms.parse::<i64>().ok()
 }
 
-/// The id's ms half as ISO 8601 with millisecond precision and a Z (docs/45 §2.1),
+/// The id's ms half as ISO 8601 with millisecond precision and a Z (SPEC §data.streams),
 /// derived ONCE on the server because every consumer — panel now, agent later —
 /// would otherwise re-implement id parsing, and the panel never should: ids are
 /// redis's wire vocabulary, the timestamp is our display vocabulary, and the
@@ -372,10 +372,10 @@ pub fn stream_id_to_ts(id: &str) -> Option<String> {
         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
 }
 
-/// The XREVRANGE argument list for one window (docs/45 §2.1). Why XREVRANGE for
+/// The XREVRANGE argument list for one window (SPEC §data.streams). Why XREVRANGE for
 /// BOTH directions (D6): XREAD would answer “newer” natively, but it is a
 /// blocking command and this adapter's one shared connection must never be held
-/// (docs/22), so the follow tick is a poll — and a poll wants the NEWEST n
+/// (SPEC §data), so the follow tick is a poll — and a poll wants the NEWEST n
 /// entries, which XRANGE (+ after-cursor) would answer with the OLDEST of the
 /// backlog instead. The exclusive “(” bounds keep the cursor row itself out:
 /// it is already on screen, and an inclusive bound would duplicate it on every
@@ -393,7 +393,7 @@ pub fn stream_window_args(key: &str, bound: &StreamBound, count: i64) -> Vec<Str
 }
 
 /// The XREVRANGE (start, end) pair one bound names — start is the NEWER end,
-/// because XREVRANGE walks downwards. Split out for docs/49's filtered walk,
+/// because XREVRANGE walks downwards. Split out for SPEC §data.streams's filtered walk,
 /// which keeps the bound's own low end fixed and moves only the start as it
 /// pages: a follow tick that filtered must never walk back past its cursor.
 pub fn stream_range_ends(bound: &StreamBound) -> (String, String) {
@@ -405,7 +405,7 @@ pub fn stream_range_ends(bound: &StreamBound) -> (String, String) {
 }
 
 /// The union of field names across a window, in first-seen order scanning
-/// newest-first (docs/45 D3). A feed's field set is stable, so the union is
+/// newest-first (SPEC §data.streams). A feed's field set is stable, so the union is
 /// usually the one set; when entries interleave (seed `stream:ragged`),
 /// first-seen keeps the column order STABLE as pages and ticks merge into one
 /// table — an alphabetized union would reshuffle the header on every arrival,
@@ -454,7 +454,7 @@ pub fn stream_ends(info_reply: &Value) -> (Value, Value) {
 }
 
 /// XINFO GROUPS' RESP2 reply: one flat [key, value, ...] array per group,
-/// parsed into the panel's table rows (docs/45 §2.4). `lag` exists from redis
+/// parsed into the panel's table rows (SPEC §data.streams). `lag` exists from redis
 /// 7; a 6.2 server omits the key and the row carries null — null is “unknown
 /// here”, not zero, because zero would claim the group is caught up. `pending`
 /// absent reads as 0: a reply without it comes from proxies, and “no pending
@@ -496,7 +496,7 @@ pub fn parse_xinfo_groups(reply: &[Value]) -> Vec<Value> {
         .collect()
 }
 
-/// Assemble the window reply the panel codes against (docs/45 §2.1) from the
+/// Assemble the window reply the panel codes against (SPEC §data.streams) from the
 /// three pipelined answers. Pure so the SHAPE — the contract — is pinned by
 /// unit tests without a server; the async wrapper only pipelines and maps
 /// errors. `more` is “the page was full”, deliberately not a count: the exact
@@ -517,7 +517,7 @@ pub fn stream_window_shape(
 /// One XREVRANGE reply into the panel's entry objects: `{ id, ts, fields }`,
 /// newest first, with the timestamp derived from the id server-side so no two
 /// clients disagree about when an entry happened. Split out of
-/// [`stream_window_shape`] for docs/49: a filtered walk decodes every page it
+/// [`stream_window_shape`] for SPEC §data.streams: a filtered walk decodes every page it
 /// examines and keeps only the rows that match.
 pub fn stream_decode(entries_reply: &Value) -> Vec<Value> {
     let raw = entries_reply.as_array().cloned().unwrap_or_default();
@@ -535,7 +535,7 @@ pub fn stream_decode(entries_reply: &Value) -> Vec<Value> {
         .collect()
 }
 
-/// What a filtered walk has to admit to (docs/49 §2.2). Redis indexes nothing
+/// What a filtered walk has to admit to (SPEC §data.streams). Redis indexes nothing
 /// inside a stream entry, so a filter is a bounded backward read: this says how
 /// many entries it examined and which ids it got as far as, and the panel prints
 /// that instead of implying the stream holds nothing else. `from` is the NEWEST
@@ -550,8 +550,8 @@ pub struct StreamScan {
 }
 
 /// The window reply itself, given entries that are already decoded and a `more`
-/// somebody else decided: docs/45's plain window computes it from a full page,
-/// docs/49's filtered walk from whether the range ran out.
+/// somebody else decided: SPEC §data.streams's plain window computes it from a full page,
+/// SPEC §data.streams's filtered walk from whether the range ran out.
 pub fn stream_window_of(
     key: &str,
     entries: Vec<Value>,
@@ -578,7 +578,7 @@ pub fn stream_window_of(
     }
     out
 }
-/// The stream window over the shared handle (docs/45 §2.1): XREVRANGE (the
+/// The stream window over the shared handle (SPEC §data.streams): XREVRANGE (the
 /// window) + XLEN (the length the panel's rate readout differences between
 /// ticks) + XINFO STREAM (first/last ids for the header), ONE pipeline — one
 /// round trip, exactly three commands. Exactly three is a budget every open
@@ -637,7 +637,7 @@ pub async fn read_stream_window(
         let more = (entries.len() as i64) == q.count;
         return Ok(stream_window_of(key, entries, &len, &info, more, None));
     };
-    // docs/49 §2.2: the filtered walk. Redis has no index inside an entry, so the
+    // SPEC §data.streams: the filtered walk. Redis has no index inside an entry, so the
     // only honest answer is to read backwards and keep what matches — bounded by
     // STREAM_SCAN_BUDGET, and the answer says how far it got. Each further page is
     // one more XREVRANGE from the last id examined, with the BOUND'S OWN low end
@@ -701,7 +701,7 @@ pub async fn read_stream_window(
         Some(scan),
     ))
 }
-/* --- docs/50: the command catalog the CONNECTED server describes ------------------------------- */
+/* --- SPEC §data.redis-console: the command catalog the CONNECTED server describes ------------------------------- */
 
 /// One flat RESP2 map ([k, v, k, v, ...]) as pairs. Redis answers COMMAND DOCS this way on
 /// RESP2, and every level of it — the command, an argument, a nested argument — is the same
@@ -724,7 +724,7 @@ fn map_get<'a>(map: &'a [(String, Value)], key: &str) -> Option<&'a Value> {
     map.iter().find(|(k, _)| k == key).map(|(_, v)| v)
 }
 
-/// One argument of a command as the syntax line spells it (docs/50 §2.1). The shapes come
+/// One argument of a command as the syntax line spells it (SPEC §data.redis). The shapes come
 /// straight from COMMAND DOCS' own vocabulary: a `pure-token` IS its token (NX), a `oneof`
 /// is its children separated by |, a `block` is its children in order, and anything else is
 /// its name. Any of the last three may carry a token, which leads it: `[LIMIT offset count]`
@@ -812,7 +812,7 @@ fn arg_tokens(arg: &Value, out: &mut Vec<String>, depth: usize) {
     }
 }
 
-/// COMMAND DOCS into the catalog rows the console codes against (docs/50 §2.1). The reply is
+/// COMMAND DOCS into the catalog rows the console codes against (SPEC §data.redis). The reply is
 /// a flat [name, spec, name, spec, ...] array; a container's subcommands are nested under it
 /// and are flattened here as "XINFO STREAM" rows of their own, because that is what somebody
 /// types. Pure, so the shape is pinned without a server.
@@ -866,7 +866,7 @@ fn push_command_doc(name: &str, spec: &Value, out: &mut Vec<Value>, depth: usize
     }
 }
 
-/// COMMAND INFO into the key positions the console needs (docs/50 §2.1): first key, last key
+/// COMMAND INFO into the key positions the console needs (SPEC §data.redis): first key, last key
 /// and step, the same three numbers redis-cli reads to know which words are key names. The
 /// reply is one row per command — [name, arity, flags, first, last, step, …] — and a row that
 /// is not that shape is skipped rather than guessed at. Redis 7 carries a container's
@@ -963,7 +963,7 @@ fn parse_key_spec(spec: &Value) -> Option<Value> {
     Some(json!({ "begin": begin, "find": find }))
 }
 
-/// Merge the two answers into one catalog (docs/50 §2.1). DOCS carries the words (summary,
+/// Merge the two answers into one catalog (SPEC §data.redis). DOCS carries the words (summary,
 /// syntax, group), INFO the numbers (arity, key positions); a command either side missed
 /// still ships with what the other knew, because half a row is what makes the difference
 /// between completing a command and not offering it at all. Pure.
@@ -1016,7 +1016,7 @@ pub fn merge_command_catalog(docs: Vec<Value>, info: Vec<Value>) -> Vec<Value> {
     out
 }
 
-/// The console's command catalog, read from the server that will run the commands (docs/50).
+/// The console's command catalog, read from the server that will run the commands (SPEC §data.redis-console).
 /// One pipeline, two introspection commands: COMMAND DOCS for the words and COMMAND INFO for
 /// the key positions. A server without DOCS (redis < 7, or a proxy) answers an error or an
 /// empty array and the catalog is INFO's alone — names and key positions, which is still a
@@ -1048,7 +1048,7 @@ pub async fn read_command_catalog(handle: &RedisHandle) -> Result<Value, String>
     }))
 }
 
-/// XINFO GROUPS, read-only (docs/45 §2.4): the consumer-group table behind the
+/// XINFO GROUPS, read-only (SPEC §data.streams): the consumer-group table behind the
 /// groups fold. A key that vanished mid-view answers an empty table rather than
 /// an error — the stream view above it owns that story — while a non-stream
 /// key is refused with its real type, same wording as the window.
@@ -1861,7 +1861,7 @@ mod tests {
     fn ordinary_writes_run_there_is_no_readonly_gate() {
         // SET/DEL/EXPIRE pass with no opt-in: there is no readonly flag anymore, the operator's
         // data is the operator's to change. RENAME/PERSIST are the Data view's key-sheet ops
-        // (docs/22 W1.3) — pinned here so a future deny-list sweep cannot quietly break the
+        // (SPEC §data.redis) — pinned here so a future deny-list sweep cannot quietly break the
         // panel's Rename / Set-TTL sheets.
         assert!(assert_command_allowed("SET", &["k", "v"], false, false).is_ok());
         assert!(assert_command_allowed("DEL", &["k"], false, false).is_ok());
@@ -1903,7 +1903,7 @@ mod tests {
 
     #[test]
     fn stream_ids_split_and_derive() {
-        // docs/45 §2.1: the ms half is the timestamp; everything that is not a
+        // SPEC §data.streams: the ms half is the timestamp; everything that is not a
         // plain id derives nothing rather than a wrong time.
         assert_eq!(stream_id_ms("1700000999900-0"), Some(1_700_000_999_900));
         assert_eq!(stream_id_ms("0-0"), Some(0));
@@ -1927,7 +1927,7 @@ mod tests {
 
     #[test]
     fn stream_window_args_spell_the_three_bounds() {
-        // docs/45 §2.1/D6: both directions are XREVRANGE with exclusive “(” bounds,
+        // SPEC §data.streams: both directions are XREVRANGE with exclusive “(” bounds,
         // so the cursor row never repeats and every page arrives newest-first.
         assert_eq!(
             stream_window_args("s", &StreamBound::Newest, 100),
@@ -1945,7 +1945,7 @@ mod tests {
 
     #[test]
     fn stream_columns_union_in_first_seen_order() {
-        // docs/45 D3: newest-first scan, first-seen order — the ragged seed's five
+        // SPEC §data.streams: newest-first scan, first-seen order — the ragged seed's five
         // entries (a / a,b / b,c / c / a,c,d newest-first) union to a,c,d,b, and a
         // repeated field name never appears twice.
         let entries = vec![
@@ -1983,7 +1983,7 @@ mod tests {
 
     #[test]
     fn parse_xinfo_groups_tolerates_62_and_proxies() {
-        // docs/45 §2.4: lag exists from redis 7 (6.2 omits it -> null, never 0:
+        // SPEC §data.streams: lag exists from redis 7 (6.2 omits it -> null, never 0:
         // zero would claim “caught up”); pending missing reads 0; an empty reply is
         // an empty table.
         let with_lag = vec![json!([
@@ -2025,7 +2025,7 @@ mod tests {
 
     #[test]
     fn stream_window_shape_is_the_contract() {
-        // docs/45 §2.1: the reply the panel codes against — newest-first entries,
+        // SPEC §data.streams: the reply the panel codes against — newest-first entries,
         // server-derived ts, the column union, the length, and `more` as
         // "the page was full", never a count.
         let entries = json!([
@@ -2050,14 +2050,14 @@ mod tests {
         let full = json!([["1-0", ["a", "1"]]]);
         let v = stream_window_shape("k", &full, &json!(1), &info, 1);
         assert_eq!(v["more"], json!(true), "a full page probably has more");
-        // docs/49 §2.2: an unfiltered window says nothing about scanning — there was
+        // SPEC §data.streams: an unfiltered window says nothing about scanning — there was
         // none. Absent, not zero: zero would claim a walk that examined nothing.
         assert_eq!(v.get("scanned"), None);
     }
 
     #[test]
 fn a_filtered_window_reports_how_far_it_walked() {
-    // docs/49 §2.2: the filter's answer carries its own bound — how many entries
+    // SPEC §data.streams: the filter's answer carries its own bound — how many entries
     // were examined and the newest/oldest ids reached — so the panel can say "3 of
     // the newest 20,000" instead of implying the stream holds nothing else. The
     // two cursors are the two directions: `scannedFrom` is the follow tick's next
@@ -2101,7 +2101,7 @@ fn a_filtered_window_reports_how_far_it_walked() {
 }
     #[test]
     fn command_docs_become_syntax_lines_and_tokens() {
-        // docs/50 §2.1: the syntax a console prints is BUILT from the server's own argument
+        // SPEC §data.redis: the syntax a console prints is BUILT from the server's own argument
         // spec, in redis' own notation - optional in brackets, a choice with |, a repeat
         // saying so once. This is SET as redis 7 describes it, trimmed to the shapes that
         // matter: a key, a value, a one-of of pure tokens, and a token with an argument.
@@ -2146,7 +2146,7 @@ fn a_filtered_window_reports_how_far_it_walked() {
 
     #[test]
     fn a_container_command_contributes_its_subcommands_as_rows() {
-        // docs/50 §2.1: nobody types "XINFO"; they type "XINFO STREAM". A container keeps its
+        // SPEC §data.redis: nobody types "XINFO"; they type "XINFO STREAM". A container keeps its
         // own row (marked as one, so the console can say it needs a subcommand) and every
         // subcommand becomes a row under the name a person would write.
         let docs = json!([
@@ -2182,7 +2182,7 @@ fn a_filtered_window_reports_how_far_it_walked() {
 
     #[test]
     fn command_info_gives_the_key_positions_and_merges_with_the_words() {
-        // docs/50 §2.1: DOCS has the words, INFO has the numbers - which ARGUMENT is a key.
+        // SPEC §data.redis: DOCS has the words, INFO has the numbers - which ARGUMENT is a key.
         // A redis 7 row carries a container's subcommands in its tenth cell, each a full row
         // of the same shape, because the container's own numbers are zeros: `XINFO STREAM`'s
         // key position exists nowhere else.
@@ -2342,7 +2342,7 @@ fn a_filtered_window_reports_how_far_it_walked() {
 
     #[test]
     fn a_catalog_survives_a_server_that_documents_nothing() {
-        // docs/50 §2.1: redis 6 has no COMMAND DOCS, and some proxies answer neither in the
+        // SPEC §data.redis: redis 6 has no COMMAND DOCS, and some proxies answer neither in the
         // shape the spec promises. Junk in is an empty catalog, never a panic.
         assert_eq!(parse_command_docs(&json!("nonsense")), Vec::<Value>::new());
         assert_eq!(parse_command_docs(&json!([])), Vec::<Value>::new());

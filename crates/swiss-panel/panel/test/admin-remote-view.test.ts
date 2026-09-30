@@ -16,10 +16,10 @@
 
 // @vitest-environment happy-dom
 
-/* The Remote Targets page (docs/34 R6 + R8, on the library since docs/46 P6-2): a grouped list
-   of alias rows plus an Add/Edit sheet. The page carries the docs/20 family wiring - the group
+/* The Remote Targets page (SPEC §remote.panel, §remote.targets, on the library since SPEC §panel.pages): a grouped list
+   of alias rows plus an Add/Edit sheet. The page carries the SPEC §host.groups family wiring - the group
    names from the same response become headers, the sheet's Group select rides the POST body,
-   the New-group glyph exists - and the docs/46 row: the endpoint's state only when it is not a
+   the New-group glyph exists - and the one list row (SPEC §panel.ui): the endpoint's state only when it is not a
    resting one, where the target runs as the sub-line, and when it last ran from the run record.
 
    A real DOM (happy-dom) since P6-2: the library's rows, sheet and menu are real nodes, so the
@@ -373,7 +373,7 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     const sent = JSON.parse(String(post.body));
     // The row route still wants the id in the body - the store compares it with the path's to
     // refuse a rename (api.rs write_target). The panel left it out, so every Edit from this page
-    // answered "target.id is required" (found on the docs/46 P6-2 walk; the old suite pinned
+    // answered "target.id is required" (found on a walk of SPEC §panel.pages; the old suite pinned
     // the missing id as the contract).
     expect(sent.id).toBe("build");
     expect(sent.label).toBe("Renamed");

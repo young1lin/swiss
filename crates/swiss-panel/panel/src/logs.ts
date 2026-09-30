@@ -57,7 +57,7 @@ function fmtJson(text: string | null | undefined): string {
   }
 }
 
-/** docs/33 C1: the house clipboard idiom (connect.js copyText, data-csv dbCopyText) for the log
+/** SPEC §mcp.calls: the house clipboard idiom (connect.js copyText, data-csv dbCopyText) for the log
  *  blocks: async clipboard first, the textarea fallback second, one quiet toast either way. */
 function legacyCopy(text: string): void {
   const ta = document.createElement("textarea");
@@ -82,10 +82,10 @@ async function copyLogText(text: string): Promise<void> {
   catch (e) { toast(tr("logs.copyFailed"), true); }
 }
 
-/* --- docs/33 C3: one block of a call — the formatted JSON view -------------------------------
+/* --- SPEC §mcp.calls: one block of a call — the formatted JSON view -------------------------------
    ui/json-view.ts owns parsing, decoding, the code block and the labelled block around it; this is
    what Logs puts in it: the caption, what the body turned out to be, one visible Copy with Copy raw
-   behind the block's ⋯ (docs/46 §3.2, revising C3's two standing buttons), the Show all tail. The
+   behind the block's ⋯ (SPEC §panel.pages, revising C3's two standing buttons), the Show all tail. The
    block carries data-blk="<kind>:<seq>" so a full reply landing, or Show all, repaints this one
    block in place (repaintCallBlock) instead of the whole list. */
 type BlockKind = "args" | "out";
@@ -110,7 +110,7 @@ function callBlockNode(d: McpDetail, c: ApiMcpCallRow, kind: BlockKind): HTMLEle
   const parsed = error ? null : splitJsonBlock(raw);
   if (parsed) {
     const value = decodeStrings(parsed.value);
-    // A short value sits on one line (docs/46 §3.2) - unless prose follows it, which reads as a
+    // A short value sits on one line (SPEC §panel.pages) - unless prose follows it, which reads as a
     // paragraph under a block, not after a one-liner.
     const code = jsonCodeNode(value, all, { oneLine: !parsed.tail });
     if (hasDecoded(value)) notes.push(tr("logs.kindDecoded"));
@@ -157,13 +157,13 @@ function callBlockCopyText(d: McpDetail, key: string, raw: boolean): string | nu
   return raw ? text : formattedCopyText(text);
 }
 
-/** docs/33 C3: the line under a preview whose full reply was pruned. One builder for the painted
+/** SPEC §mcp.calls: the line under a preview whose full reply was pruned. One builder for the painted
  *  body and for showFullResult's in-place swap, so the two cannot drift. */
 function goneNode(seq: number): HTMLElement {
   return note(tr("detail.fullReplyLongerStored"), { data: { gone: seq } });
 }
 
-/** A value to read, the way Logs shows one (docs/46 §3.2): JSON as the panel's code block - on
+/** A value to read, the way Logs shows one (SPEC §panel.pages): JSON as the panel's code block - on
  *  one line when it is short - and anything else exactly as it arrived; an error stays red text.
  *  Past JV_LINES the whole reply is plain formatted text instead: neither Run nor a hover has a
  *  Show all, and a 3,000-line reply painted token by token is DOM nobody reads. */
@@ -176,7 +176,7 @@ function readableBody(text: string, err: boolean): HChild[] {
   return [textNode(err ? text : fmtJson(text), true, "logs" + (err ? " err" : "")).node];
 }
 
-/* --- docs/46 §3.2: the log is an event list ----------------------------------------------------
+/* --- SPEC §panel.pages: the log is an event list ----------------------------------------------------
    One call is one timeline row: the time (the date is the day heading above it), the tool, its
    arguments, a failure as a red tag, the duration. What every row said the same - the transport,
    the client, the size - moved into the expanded body, and consecutive identical calls (same tool,
@@ -232,7 +232,7 @@ function callBodyNode(d: McpDetail, run: ApiMcpCallRow[]): HChild[] {
         { time: timeLabel(Date.parse(r.at)), ms: fmtMs(r.ms), client: r.client || "" });
     })));
   }
-  // A page ships only the head of each reply; opening the row fetches the rest (docs/33 C3). The
+  // A page ships only the head of each reply; opening the row fetches the rest (SPEC §mcp.calls). The
   // button stays for the moment before that lands and as the retry when it failed. A reply whose
   // body was pruned says so in place — the preview above it is all that is left.
   const more = !c.preview || d.callsFull[c.seq] != null
@@ -261,7 +261,7 @@ function callsTimeline(d: McpDetail): HTMLElement {
 
 /** The pager's status cell: the committed page number, with the pending suffix while a switch
  *  is in flight. The number NEVER shows the target — pending must not pretend to be committed
- *  (docs/32 B1). One builder for the full paint and the in-place chrome patch, so they cannot drift. */
+ *  (SPEC §mcp.calls). One builder for the full paint and the in-place chrome patch, so they cannot drift. */
 function callsStatusNode(d: McpDetail): HChild {
   const page = d.callsPage + 1;
   return d.callsPendingPage != null
@@ -270,7 +270,7 @@ function callsStatusNode(d: McpDetail): HChild {
 }
 
 /** A failed foreground load, in place: the sentence and the way out, nothing else. The HTTP
- *  status is the only secondary text — a response body never lands in the panel (docs/32 B1). */
+ *  status is the only secondary text — a response body never lands in the panel (SPEC §mcp.calls). */
 function callsErrNode(d: McpDetail): HTMLElement {
   // The sentence is set once, in the state field (detail.js callsLoadFailed) — the node renders
   // the field, so the copy cannot drift between the two.
@@ -292,12 +292,12 @@ function callsEmptyNode(d: McpDetail, q: string): HTMLElement {
 
 function logsBodyNode(d: McpDetail): HChild {
   if (d.calls == null && !d.callsError) {
-    /* First open, before anything is there to keep in place (docs/32 B1). */
+    /* First open, before anything is there to keep in place (SPEC §mcp.calls). */
     return note(tr("logs.loadingCalls"), { busy: true });
   }
-  /* docs/31: server-side search over the stored calls. The input re-renders with the page, but
+  /* SPEC §mcp.calls: server-side search over the stored calls. The input re-renders with the page, but
    * renderCallsOnly swaps the LIVE node back in, so focus and caret survive a result repaint.
-   * docs/32 B4: Clear lives behind the ⋯, never as a standing button beside the filter. */
+   * SPEC §mcp.calls: Clear lives behind the ⋯, never as a standing button beside the filter. */
   const q = d.callsQ || "";
   const tools = [
     filterInput({ id: "callsQ", placeholder: tr("logs.searchCalls"), label: tr("logs.searchToolCalls"), value: q }),
@@ -321,7 +321,7 @@ function logsBodyNode(d: McpDetail): HChild {
   }
   const errAgain = d.callsError && d.calls != null ? callsErrNode(d) : null;
   /* One region for rows/pager/error lets a pending switch mark itself busy in place, without
-   * touching the search box above it or the stderr section below it (docs/32 B1). */
+   * touching the search box above it or the stderr section below it (SPEC §mcp.calls). */
   const region = h("div", { id: "callsRegion", aria: { busy: busy ? "true" : "false" } }, body, pages, errAgain);
   let err: HChild = null;
   if (d.stderr) {
@@ -342,7 +342,7 @@ function logsBodyNode(d: McpDetail): HChild {
 
 /** Expand/collapse one call without re-rendering: a poll must not close what you just opened.
  *  The state is per call; closing a folded row forgets every call in it. The body is painted on
- *  open only (docs/46 §2.4) - a closed row costs no code block. Answers whether the row is now
+ *  open only (SPEC §panel.ui) - a closed row costs no code block. Answers whether the row is now
  *  open, so the caller can fetch a clipped reply in full. */
 function toggleCall(seq: number): boolean {
   const d = mcpDetail();
@@ -358,7 +358,7 @@ function toggleCall(seq: number): boolean {
   return open;
 }
 
-/* --- docs/46 §3.2: Tools, Resources, Prompts ---------------------------------------------------
+/* --- SPEC §panel.pages: Tools, Resources, Prompts ---------------------------------------------------
    One library row per item: the name (mono - a tool name is a value you type), one line of
    description, and the row's controls - Try and the client switch on a tool, Read on a resource.
    A tool or a prompt opens in place to its whole record: the full description, then its

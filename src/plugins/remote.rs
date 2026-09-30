@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The remote plugin's factory (docs/34): descriptor, config validation, and the
+//! The remote plugin's factory (SPEC §remote): descriptor, config validation, and the
 //! instance that owns the remote system's lifetime.
 //!
 //! A plugin built purely on the public contracts, like the terminal plugin before
@@ -25,7 +25,7 @@
 //! on stop. The transport itself belongs to the tunnels plugin - this plugin
 //! declares NO capability requirement on purpose: the target table must stay
 //! writable while tunnels is off, and the exec actions say honestly what is
-//! missing (docs/34).
+//! missing (SPEC §remote).
 
 use std::sync::Arc;
 
@@ -56,7 +56,7 @@ pub struct RemotePlugin {
     /// The one system for the whole factory lifetime: the sealed target table, opened
     /// once here (not per start) so the targets group scope can register over it at
     /// the composition point and outlive start/stop - the same shape as the tunnel
-    /// scopes over tunnels.json (docs/34 R8). A restart installs the SAME Arc; stop
+    /// scopes over tunnels.json (SPEC §remote.targets). A restart installs the SAME Arc; stop
     /// only withdraws it from the routes' slot.
     system: Arc<RemoteSystem>,
     /// The app's MCP registry, where the instance mounts its builtin entry (R7).
@@ -85,7 +85,7 @@ impl RemotePlugin {
         }
     }
 
-    /// The system the targets group scope registers over (docs/34 R8): the SAME
+    /// The system the targets group scope registers over (SPEC §remote.targets): the SAME
     /// sealed table the plugin serves, so /api/groups/targets and /api/remote
     /// targets can never disagree about what is on disk.
     pub fn system(&self) -> Arc<RemoteSystem> {
@@ -121,7 +121,7 @@ impl PluginFactory for RemotePlugin {
                 "additionalProperties": false
             }),
             // Two pages, switched in the context bar (the panel's L2): the targets
-            // page (docs/34 R6 - the CLI stays the primary client, but a target no
+            // page (SPEC §remote.panel - the CLI stays the primary client, but a target no
             // longer needs a terminal to exist) and the runs page (history.rs - what
             // ran, with its output, after the coordinator's ring forgot it). Before
             // the plugins page's 1000, after Terminal's 70.
@@ -151,10 +151,10 @@ impl PluginFactory for RemotePlugin {
             // The targets/routes have nothing to re-read; a config PUT does not
             // restart the instance.
             restart_on_config_change: false,
-            // NOT ["remote-transport"] (docs/34): the target table must be
+            // NOT ["remote-transport"] (SPEC §remote): the target table must be
             // editable while tunnels is off - `requires` is a functional
             // dependency, not a hard gate (WaitingDependency was never
-            // implemented, docs/09 as-built; an unmet require is a plain route-
+            // implemented, SPEC §host.plugins; an unmet require is a plain route-
             // level refusal). Exec actions answer honestly when the transport
             // is missing.
             requires: Vec::new(),
@@ -202,21 +202,21 @@ fn mcp_is_ours(registry: &Arc<Registry>) -> bool {
 #[async_trait]
 impl PluginInstance for RemoteInstance {
     async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
-        // The factory's one system (docs/34 R8): the sealed target table and the
+        // The factory's one system (SPEC §remote.targets): the sealed target table and the
         // remote capabilities registered into the shared action registry - a
         // remote.exec IS a run through the coordinator, not a new job system
-        // (docs/34). Reused across restarts so the group scope and the routes
+        // (SPEC §remote). Reused across restarts so the group scope and the routes
         // always see the same table.
         let system = self.system.clone();
         swiss_remote::actions::register_all(system.clone(), &self.services.actions)?;
-        // The durable run log (docs/34 follow-up, history.rs): from here every remote.*
+        // The durable run log (SPEC §remote.history, history.rs): from here every remote.*
         // run the coordinator starts is teed to disk and recorded at its end. A seat
         // like the others - stop() takes it back.
         let sink: Arc<dyn swiss_host::services::runs::RunHistorySink> = system.history().clone();
         self.services.runs.add_history_sink(sink);
         self.state.install(system.clone());
 
-        // R7 (docs/34): the same table as an MCP under /mcp/remote - five thin
+        // R7 (SPEC §remote): the same table as an MCP under /mcp/remote - five thin
         // tools that run the actions just registered through the same
         // coordinator, so a model can drive a target with no shell. Plugin-owned
         // on purpose: the entry mounts here and comes down with stop(), so

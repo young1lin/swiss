@@ -105,7 +105,7 @@ pub fn plugin_disabled(raw: &Value, id: &str) -> bool {
 }
 
 /// Legacy whole-value bare vault refs become envelope refs before any snapshot is published
-/// (docs/25 E2). In memory only: the file keeps its spelling until the next save rewrites
+/// (SPEC §host.refs). In memory only: the file keeps its spelling until the next save rewrites
 /// it, so a boot never rewrites state just to re-spell a reference.
 fn normalize_legacy_refs(path: &std::path::Path, mut raw: Value) -> Value {
     let n = swiss_core::secure::refs::migrate_legacy(&mut raw);
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn legacy_bare_vault_refs_load_as_envelope_refs() {
-        // docs/25 E2 at the config surface: whole-value bare refs migrate in memory at
+        // SPEC §host.refs at the config surface: whole-value bare refs migrate in memory at
         // load; mixed strings stay byte-identical; the disk file is untouched by the load
         // and catches up only when a later save rewrites it.
         swiss_core::secure::key::use_test_master_key();

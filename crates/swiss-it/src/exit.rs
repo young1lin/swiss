@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The exit story for the containers engine.rs starts (docs/44 SS2.2). The locked
+//! The exit story for the containers engine.rs starts (SPEC §testing.it). The locked
 //! testcontainers 0.27.3 has no ryuk reaper; cleanup there is `ContainerAsync`'s
 //! Drop, which needs a live tokio runtime and therefore never runs for a value held
 //! in a static.
@@ -141,7 +141,7 @@ fn spawn_reaper(endpoint: &str) -> Option<ChildStdin> {
             eprintln!(
                 "swiss-it: no it-reaper binary beside the test binary; \
                  cleanup falls back to the atexit hook, and a red run on Windows leaks \
-                 (docs/44-wsl-docker-setup.md SS4)"
+                 (SPEC §testing.it)"
             );
             return None;
         }

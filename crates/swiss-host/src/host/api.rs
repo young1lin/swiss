@@ -16,7 +16,7 @@
 
 //! The `/api/plugins` management surface and the host route boundary.
 //!
-//! The boundary is the docs/09 §4 answer to "axum routes must not capture an expensive
+//! The boundary is the SPEC §host.lifecycle answer to "axum routes must not capture an expensive
 //! instance and then only flip an enabled bool": the routes stay MOUNTED (stable — same paths
 //! whether the plugin serves or not), and each request asks the host one cheap question — is
 //! the owning plugin serving? A disabled plugin's instance is not parked behind that answer;
@@ -200,7 +200,7 @@ async fn put_config(
     let Some(config) = body.0.get("config").cloned() else {
         return admin_error(StatusCode::BAD_REQUEST, "config is required");
     };
-    // Validate against the plugin BEFORE anything persists (docs/09 §5 — known-schema fields
+    // Validate against the plugin BEFORE anything persists (SPEC §host.config — known-schema fields
     // are checked server-side; the frontend is never the authority).
     if let Err(err) = entry.factory().validate_config(&config) {
         return admin_error(StatusCode::BAD_REQUEST, &format!("invalid config: {err}"));
@@ -224,8 +224,8 @@ async fn put_config(
             // Reconcile applies what the plugin declares applicable — an in-place apply,
             // a restart, or a noted revision.
             let _ = host.reconcile(&id).await;
-            // The response tells the whole truth about the row that just landed (docs/11
-            // §3.4/§8): warnings name what is savable but not currently runnable, and
+            // The response tells the whole truth about the row that just landed (SPEC §jobs.config, §jobs.apply):
+            // warnings name what is savable but not currently runnable, and
             // applied:false means the running instance has not taken the row yet.
             let config = host.store().plugin_config(&id);
             let warnings = entry.factory().config_warnings(&config);

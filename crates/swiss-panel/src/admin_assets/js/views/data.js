@@ -19,13 +19,13 @@ import { dbConnLabel, dbDropAllEdits, dbOkToLeave, dbPendingAll, dbSessionPinned
 import { dbConn, dbSuspendView } from "../db-state.js";
 export function mount() { return loadDbView(); }
 export function refresh() { return loadDbView(); }
-/* docs/42 D5: the page-leave guards ask the WHOLE strip, not the object in front. A buffer
+/* SPEC §data.tabs: the page-leave guards ask the WHOLE strip, not the object in front. A buffer
    parked on a background tab is exactly the edit a single-record guard used to let walk out
    of the page unmentioned, and canLeave() asks once with the total rather than once per tab. */
 export function hasPendingChanges() { return dbPendingAll() > 0; }
 export function canLeave() { return !dbPendingAll() || dbOkToLeave(); }
 export function unmount() {
-  // docs/47 D3: the leave PARKS the session, so the page comes back on the same connection with
+  // SPEC §data.sessions: the leave PARKS the session, so the page comes back on the same connection with
   // its strip, rows and catalog. The buffered writes go: canLeave() asked about them, and once
   // the page is gone no guard would count them.
   dbDropAllEdits();

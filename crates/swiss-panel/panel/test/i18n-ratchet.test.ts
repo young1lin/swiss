@@ -14,16 +14,16 @@
  * limitations under the License.
  */
 
-/* The docs/38 L10b coverage ratchet. The spec names an eslint no-restricted-syntax
+/* The SPEC §panel.i18n coverage ratchet. The spec names an eslint no-restricted-syntax
  * warn, but that rule's single severity slot in the src block is held by R5's
  * innerHTML error (one config per rule per file - a second block would replace it,
  * not add to it), so the ratchet lands here in the house non-null-ratchet shape
  * instead: an AST count of bare English literals in the spec's VISIBLE positions,
- * frozen per file, allowed only to shrink. The warn count doubles as the docs/38
- * §7 "remaining bare literals" stage number; at I10 the frozen rows go to zero and
+ * frozen per file, allowed only to shrink. The warn count doubles as the SPEC §panel.i18n
+ * "remaining bare literals" stage number; at I10 the frozen rows go to zero and
  * growth fails the suite - the same gate an eslint error would be.
  *
- * Positions selected (docs/38 §5.1): h() children (3rd argument on, tag code/kbd/pre
+ * Positions selected (SPEC §panel.i18n): h() children (3rd argument on, tag code/kbd/pre
  * exempt), h() props title/placeholder/aria.label, the first argument of
  * toast/confirm/prompt/say, and emptyNode's title/hint/action values. A literal
  * counts when it carries two consecutive letters - " · ", "—" and "…" are layout,
@@ -167,13 +167,13 @@ function countBare(rel: string): number {
   return n;
 }
 
-/* The documented exemptions (docs/38 §2.2): the 文/A button's own title is the one
+/* The documented exemptions (SPEC §panel.i18n): the 文/A button's own title is the one
  * panel string written in the TARGET language - on an English screen only 切换到中文
  * tells a Chinese reader where to click. A count, not a line number, so refactors of
  * paintLangBtn cannot silently invalidate it. */
 const EXEMPT: Record<string, number> = { "i18n.ts": 1 };
 
-describe("docs/38 L10b bare-literal gate (the ratchet closed at I10)", () => {
+describe("SPEC §panel.i18n bare-literal gate (the ratchet closed at I10)", () => {
   it("every src file's bare-visible count is exactly zero", () => {
     const failures: string[] = [];
     for (const rel of srcFiles()) {

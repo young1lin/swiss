@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* Back to the top (docs/46 U18). A long page - forty open calls in MCP Logs, a busy traffic
+/* Back to the top (SPEC §panel.ui). A long page - forty open calls in MCP Logs, a busy traffic
  * log - costs a long scroll home, and the pinned head only keeps the page's name and tabs in
  * reach, not its top. One round glyph at the scroller's bottom-right corner answers it:
  *

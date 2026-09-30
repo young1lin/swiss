@@ -30,7 +30,7 @@ import { dot, popupMenu, sideRow } from "./ui/index.js";
 /* --- rendering: sidebar ----------------------------------------------------------------------- */
 /** The MCP side of the mcps scope: row rendering, the flat order and the glue between the
  *  panel's MCP state and the groups component. Everything a grouped list IS lives in
- *  groups.js now (docs/20); what stayed here is what only the MCP list knows — which row
+ *  groups.js now (SPEC §host.groups); what stayed here is what only the MCP list knows — which row
  *  fields exist, what opening one does, and the chip text. */
 function rowOf(name        )                        {
   return mcpRows().find((m) => { return m.name === name; });
@@ -118,11 +118,11 @@ function nudgeSelected(up         )          {
 /** One sidebar row: dot, name, launch tag. One line — the description, source and latency live
  *  in the tooltip and the pane header. Click opens the detail pane; drag is wired by the
  *  groups component (reorder + re-home in one gesture). Right-click raises the row's action
- *  menu (docs/28 D3): the row itself is a <button>, and a button cannot nest the ellipsis
+ *  menu (SPEC §mcp.revisions): the row itself is a <button>, and a button cannot nest the ellipsis
  *  button the Jobs/Tunnels rows use — a menu at the cursor fits instead, the way the data
  *  grid's cell menus open, and the tooltip says so. */
 function sideRowNode(m           )                    {
-  // The library's source-list row (docs/46 §2.3). Built once per rebuild key; the dot's state and
+  // The library's source-list row (SPEC §panel.ui). Built once per rebuild key; the dot's state and
   // title, the trailing tag and the row title are painted by the patch pass (menu.ts
   // patchSidebar), which keeps them current between rebuilds.
   const b = sideRow({ name: m.name, lead: dot(m.state            , m.state), data: { name: m.name } });
@@ -136,7 +136,7 @@ function sideRowNode(m           )                    {
   return b;
 }
 
-/** The row's right-click menu (docs/28 D3): the three verbs the operator asked to have
+/** The row's right-click menu (SPEC §mcp.revisions): the three verbs the operator asked to have
  *  within reach — rename, disable/enable by state, delete. The label is read live from
  *  mcpRows() (rowOf), never off the row's render-time snapshot, so a poll that flipped the
  *  lifecycle cannot make the menu offer the wrong verb. */

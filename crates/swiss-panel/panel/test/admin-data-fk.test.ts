@@ -60,7 +60,7 @@ const view = await import(pathToFileURL(join(admin, "js", "data-view.js")).href)
   dbFocusedColumnValue: (d: unknown, column: string) => unknown;
 };
 
-/* docs/22 W5.2 — the FK jump. The payload is pure: describe_table's FK row plus the focused
+/* SPEC §data.grid — the FK jump. The payload is pure: describe_table's FK row plus the focused
    row's value become exactly the open-table state a typed filter would have built (the W1.5
    channel), or nothing at all when there is no value to equal. */
 describe("dbFkJump — the payload one FK jump opens", () => {
@@ -92,7 +92,7 @@ describe("dbFkJump — the payload one FK jump opens", () => {
   });
 });
 
-describe("dbFocusedColumnValue — the header arrow's row (docs/22 W5.2)", () => {
+describe("dbFocusedColumnValue — the header arrow's row (SPEC §data.grid)", () => {
   const mk = (focus: unknown) => ({
     focus,
     inserts: [{ values: { customer_id: 7 } }],
@@ -110,7 +110,7 @@ describe("dbFocusedColumnValue — the header arrow's row (docs/22 W5.2)", () =>
   it("returns undefined (not null) when nothing is focused — null IS a value here", () => {
     expect(view.dbFocusedColumnValue(mk(null), "customer_id")).toBeUndefined();
     // The second case this used to pin — a null record, i.e. the view not mounted — is gone
-    // with docs/37 R4: db-state.ts hands out a record that is never null, so there is no
+    // with SPEC §panel.toolchain: db-state.ts hands out a record that is never null, so there is no
     // such input to defend against. Asserting it now would only pin a guard against the
     // impossible. What remains is the real question: focus null, value undefined.
   });

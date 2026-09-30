@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* Page scaffolding (docs/46 §2.2). A content page is, top to bottom: a head (one sentence
+/* Page scaffolding (SPEC §panel.ui). A content page is, top to bottom: a head (one sentence
  * of description, the page's actions), maybe an inline create form, sections of cards, a
  * foot. Each piece is one function here so every page draws it the same way:
  *
@@ -22,10 +22,10 @@
  *              in it capped at the measure (skill §6). `wide` for genuinely wide rows (and the
  *              frame the pinned head lives in), `full` for a workspace (Data, Terminal).
  *   paneBody   the same measure frame for a view that fills the shell's own #pane.
- *   paneHead   pinned on a content page (ui.css, docs/46 U9). No location title - the
+ *   paneHead   pinned on a content page (ui.css, SPEC §panel.design). No location title - the
  *              context bar already says where you are (skill §7).
  *   resHead    a RESOURCE head (the selected MCP), where the name is the page's subject: the
- *              name row and the resource's tabs pin, its words scroll away (docs/46 §3.2).
+ *              name row and the resource's tabs pin, its words scroll away (SPEC §panel.pages).
  *   section    a product-named caption over its body, with the section's tools at its end.
  *              A caption the user named is a group band instead (rule 5).
  *   card       the grouped inset surface rows sit on.
@@ -34,8 +34,8 @@
  *   pager      newer / where you are / older under a paged list.
  *   filterInput the search box in a section's tools.
  *   pageFoot   the revision line. Never a count the context bar already shows (rule 25).
- *   inlineForm one row: the fields, a Group select, the one primary (docs/35 §3).
- *   emptyNode  the one "nothing here" shape (docs/18 V7); its action answers
+ *   inlineForm one row: the fields, a Group select, the one primary (SPEC §panel.groups).
+ *   emptyNode  the one "nothing here" shape (SPEC §panel.design); its action answers
  *              [data-empty-action] in the owning view's delegated listener. */
 import type { AttrMap, HChild } from "../h.js";
 import { h } from "../h.js";
@@ -73,7 +73,7 @@ export function paneHead(o: { title?: HChild; desc?: HChild; sub?: HChild; actio
     o.actions && o.actions.length ? h("div", { class: "pane-actions" }, o.actions) : null);
 }
 
-/** A RESOURCE head (docs/46 §3.2) - the selected MCP's name, words, state and sections - as
+/** A RESOURCE head (SPEC §panel.pages) - the selected MCP's name, words, state and sections - as
  *  two pinned layers instead of one block. The name row pins at the top (the content-page
  *  pin, .pane > .wide > .pane-head); the description and state line are ordinary flow and
  *  scroll away beneath it; the nav (a seg) pins under the name row. Stuck, it reads as the
@@ -118,7 +118,7 @@ export function note(body: HChild, o: { err?: boolean; busy?: boolean; id?: stri
 }
 
 /** A load that failed, in place: the sentence, the status code (the only secondary text - a
- *  response body never lands in the panel, docs/32 B1) and the way out. */
+ *  response body never lands in the panel, SPEC §mcp.calls) and the way out. */
 export function failNote(o: { id?: string; text: HChild; why?: HChild; action?: HTMLElement }): HTMLElement {
   return h("div", { class: "fail-note", id: o.id, role: "status" },
     h("span", null, o.text),
@@ -128,7 +128,7 @@ export function failNote(o: { id?: string; text: HChild; why?: HChild; action?: 
 
 /** A list's pages: the newer button, where you are, the older button. The status is a live
  *  region, so a switch is announced; the view patches the buttons and the status in place
- *  rather than repainting the list (docs/32 B1), which is why it names them by id. */
+ *  rather than repainting the list (SPEC §mcp.calls), which is why it names them by id. */
 export function pager(o: { id?: string; label: string; prev: HTMLElement; next: HTMLElement; status: HChild; statusId?: string }): HTMLElement {
   return h("div", { class: "pager", id: o.id, role: "navigation", aria: { label: o.label } },
     o.prev,

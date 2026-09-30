@@ -112,7 +112,7 @@
     }
 
     /* --- tunnels ------------------------------------------------------------------------------- */
-    /* The rows are ui/row.ts since docs/46 P4, and the Jobs rows that still wore .tun-* moved in P6:
+    /* The rows are ui/row.ts since SPEC §panel.pages, and the Jobs rows that still wore .tun-* moved in P6:
        what is left here is the one thing a forward row draws that the library does not. */
     /* An MCP the tunnel serves, with the MCP's own health dot: a red MCP beside a green tunnel says
        "the tunnel is fine, the database is not". */
@@ -121,11 +121,11 @@
     .serves.unknown { color: var(--text-3); text-decoration: line-through; }
     .keylist { display: grid; gap: 2px; max-height: 210px; overflow-y: auto; }
     .keylist button { text-align: left; font-family: var(--mono); font-size: var(--f-label); padding: 4px var(--s2); border-radius: 6px;
-      --ic: 14px; --ic-ink: var(--text-3); } /* fix-plan #14: folder/file rows */
+      --ic: 14px; --ic-ink: var(--text-3); } /* folder/file rows */
     .keylist button:hover { background: var(--hover); }
     .mcp-picks { display: grid; gap: var(--s1); max-height: 168px; overflow-y: auto; padding: var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: 8px; }
 
-    /* Traffic clients (docs/18 V4): one line per client in a five-column grid — name, token,
+    /* Traffic clients (SPEC §panel.nav): one line per client in a five-column grid — name, token,
        paths, last seen, request count — instead of a two-line card row. Same grid for the
        header so the columns line up; the last column is the clear-filter slot, usually empty. */
     .cli-head, .cli-row {
@@ -134,7 +134,7 @@
     }
     .cli-head { font-size: var(--f-caption); color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--sep-soft); }
     .cli-row { cursor: pointer; }
-    /* No separators (docs/46 U7): one-line rows in a column grid read as a table without them,
+    /* No separators (SPEC §panel.design): one-line rows in a column grid read as a table without them,
        and the hover band marks the row the pointer is on. */
     .cli-row:hover { background: var(--hover); }
     .cli-row.sel { background: color-mix(in srgb, var(--accent) 9%, transparent); }
@@ -144,9 +144,9 @@
     .cli-n { font-variant-numeric: tabular-nums; text-align: right; font-size: var(--f-label); color: var(--text-2); }
     .cli-x { width: 25px; } /* the clear button's width, reserved so counts stay aligned */
 
-    /* --- data view (the DBeaver-style browser) --------------------------------------------------- */
+    /* --- data view (the DBeaver-style browser; SPEC §data.tabs, §data.grid) ---------------------- */
     .pane > .db-root { max-width: none; }
-    /* A workspace body (.pane.full, ui.css; docs/13 D5 as revised): no padding, no measure,
+    /* A workspace body (.pane.full, ui.css; SPEC §panel.nav): no padding, no measure,
        the explorer consumes everything under the context bar. The boundary it used to draw as
        one giant enclosing card is gone too - the browser column wears the sidebar's own surface
        and hairline, the work area sits on the canvas: the shell's vocabulary, not a second
@@ -154,7 +154,7 @@
     .pane.db-host > .db-root { flex: 1; min-height: 0; }
     .db-root { display: flex; height: 100%; min-height: 420px; }
     .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; background: var(--sidebar); border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
-    /* docs/43 M3: the sidebar's top is two band-shaped rows. The CONNECTION row carries the
+    /* SPEC §data.databases: the sidebar's top is two band-shaped rows. The CONNECTION row carries the
        status dot, the name, the dialect mark and the menu chevron; the DATABASE row (present
        only when the connection has a database axis) carries the database glyph and the
        current name. Both open popup menus — the band geometry matches .side-row's flex
@@ -179,7 +179,7 @@
       padding: 4px 6px; border-radius: 6px; text-align: left; font-size: var(--f-body); color: var(--text-2);
       --ic: var(--ic-m); --ic-ink: var(--text-3); }
     .db-drow:hover { background: var(--hover); }
-    /* The current pick is a tick in a column every row keeps (docs/46 §3.7, rule 15; the
+    /* The current pick is a tick in a column every row keeps (SPEC §panel.pages, rule 15; the
        menu's .pick idiom), not blue text: the name stays in the row's own ink. */
     .db-drow.on { color: var(--text); font-weight: var(--w-emph); }
     .db-drow:disabled { color: var(--text-3); cursor: default; background: none; }
@@ -188,15 +188,15 @@
     .db-drow-meta { flex: none; color: var(--text-3); font-size: var(--f-caption); font-variant-numeric: tabular-nums; }
     .db-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
     .db-dot.off { background: var(--text-3); }
-    /* A dialect GLYPH carries no pill - the MCP sidebar's side-type vocabulary (docs/29): a
+    /* A dialect GLYPH carries no pill - the MCP sidebar's side-type vocabulary (SPEC §mcp.panel): a
        mark is quiet grey and brightens with the row. A word (a dialect outside the icon
-       whitelist, e.g. sqlite) is the library's mono tag (docs/46 §3.7). */
+       whitelist, e.g. sqlite) is the library's mono tag (SPEC §panel.pages). */
     .db-row-mark { flex: none; display: block; width: var(--ic-m); height: var(--ic-m); color: var(--text-3); }
     .db-conn-row:hover .db-row-mark { color: var(--text-2); }
     .db-row-name { flex: 1; min-width: 0; font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-row-chev, .db-row-ic { flex: none; color: var(--text-3); }
     .db-tables { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--s1); }
-    /* docs/43 M4: the STATUS bar — one line under the pane body (pager, page size,
+    /* The STATUS bar — one line under the pane body (pager, page size,
        editability, connection), a sibling of the commit bar (.db-bar), not part of it.
        Caption ink and the same row height as the console's hint row; the connection name
        rides the right edge in --text-3, the note keeps body ink. */
@@ -204,17 +204,17 @@
     .db-status .db-pageinfo { color: var(--text-3); font-size: var(--f-caption); }
     .db-status-note { font-size: var(--f-caption); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-status-conn { flex: none; font-size: var(--f-caption); color: var(--text-3); }
-    /* docs/43 M4: the Structure tab's sub-segment (Columns/Indexes/Foreign Keys) — same
+    /* The Structure tab's sub-segment (Columns/Indexes/Foreign Keys) — same
        vocabulary as the main strip, one size down, seated above the catalog tables. */
     .db-struct-sub { margin: var(--s1) var(--s2); }
-    /* docs/43 M2: the list is a TREE of bands (mountGroup at side density), so its rows are
+    /* The list is a TREE of bands (mountGroup at side density), so its rows are
        ONE line now — the name left, the count/type right in --text-3 tnum caption. The two-line
        row's whole meta line (type · rows · size) moved into the title, one hover away, where
        it cannot truncate the name to show itself. Rows sit INSIDE band bodies, so the flex
        metrics match .side-row's geometry (base.css) rather than inventing a second one. */
     .db-table { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: 4px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-table:hover { background: var(--hover); }
-    /* Selection is the source list's (docs/46 §3.7, rule 15; base.css .side-row): a 2px accent
+    /* Selection is the source list's (SPEC §panel.pages, rule 15; base.css .side-row): a 2px accent
        bar on the leading edge over an 8% tint, the name in the row's own ink at --w-emph.
        Blue text said "link" as loudly as it said "open". */
     .db-table.sel { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
@@ -227,7 +227,7 @@
        sliced at the card's edge; the full name is the row's title, one hover away. */
     .db-table-name { flex: 1; min-width: 0; font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-table-meta { flex: none; max-width: 45%; font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* docs/43 addendum: a section's expander/collapse note row — same geometry as a .db-table
+    /* A section's expander/collapse note row — same geometry as a .db-table
        (it sits inside the band body under the last row), but quiet: caption color, accent on
        hover, no meta slot. It is an affordance, not an object. */
     .db-tree-cap { display: flex; align-items: center; width: 100%; min-width: 0; text-align: left; padding: 4px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; cursor: pointer; }
@@ -235,7 +235,7 @@
     .db-tree-cap:hover .db-table-name { color: var(--accent); }
     .db-side-foot { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); justify-content: space-between; }
     .db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; padding: var(--s3) var(--s4) 0; }
-    /* The object tab strip (docs/42 T2). L3 resource navigation owned by the page body, drawn
+    /* The object tab strip (SPEC §data.tabs). L3 resource navigation owned by the page body, drawn
        as CARD tabs — the shape swiss-ui-design §1.3 reserves for "one open resource". It is
        deliberately neither of the other two tab shapes on screen: the context bar's underline
        tabs are L2 pages, and the seg pills below name a SECTION of the open object.
@@ -245,7 +245,7 @@
        one surface (rule 16). The accent is a 2px inset on the card's TOP edge — the bottom edge
        belongs to the L2 underline and must not be echoed here. */
     .db-tabstrip { display: flex; align-items: stretch; flex: none; margin: calc(var(--s3) * -1) calc(var(--s4) * -1) 0; background: var(--sidebar); border-bottom: 1px solid var(--sep); }
-    /* docs/43 M1 D1: the cards scroll, the exits stay. The "+" and the overflow button used
+    /* The cards scroll, the exits stay. The "+" and the overflow button used
        to sit INSIDE the scroll run, so a full strip scrolled its own way out offscreen (the
        owner's screenshot). Two zones now: the run overflows and hides its scrollbar (the
        wheel still scrolls it — wired in data-tabs.ts), the end cap is pinned and separated
@@ -253,14 +253,14 @@
     .db-tabstrip-scroll { display: flex; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-width: none; padding-left: var(--s2); }
     .db-tabstrip-scroll::-webkit-scrollbar { display: none; }
     .db-tabstrip-end { flex: none; display: flex; align-items: stretch; border-left: 1px solid var(--sep); }
-    /* The tabs themselves are the library's objTab (ui.css .otab, docs/46 P8). The rename input (the card right-click): sized to the card's own name slot so the
+    /* The tabs themselves are the library's objTab (ui.css .otab, SPEC §panel.pages). The rename input (the card right-click): sized to the card's own name slot so the
        card does not change shape while it is being edited. */
     .db-tab-rename { flex: 1; min-width: 0; width: 9em; height: 18px; padding: 0 3px;
       font: inherit; font-size: var(--f-caption); color: var(--text); background: var(--bg);
       border: 1px solid var(--accent); border-radius: 4px; outline: none; }
     .db-tab-add { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 var(--s2); border: none; background: none; color: var(--text-3); font-size: var(--f-label); cursor: pointer; --ic: 14px; }
     .db-tab-add:hover { background: var(--hover); color: var(--text); }
-    /* The overflow seat (docs/43 M1 D4): one glyph, one job — "the whole set, listed". Same
+    /* The overflow seat (SPEC §data.tabs): one glyph, one job — "the whole set, listed". Same
        height and hover as the "+" it sits beside, icon-only because its title says the rest. */
     .db-tab-more { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 32px; border: none; background: none; color: var(--text-3); cursor: pointer; --ic: 14px; }
     .db-tab-more:hover { background: var(--hover); color: var(--text); }
@@ -285,7 +285,7 @@
     .db-rtabs::-webkit-scrollbar { display: none; }
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); white-space: pre-wrap; word-break: break-word; }
-    /* docs/22 W4.6 — the DDL sheet's column mini-grid: caption header row, one line per
+    /* SPEC §data.ddl — the DDL sheet's column mini-grid: caption header row, one line per
        column on the field surface. Existing columns render disabled (only ADD is in the
        minimal set), so the sheet reads as the table's shape with new rows at its end; fixed
        layout keeps the five inputs column-aligned whatever a name carries. */
@@ -299,7 +299,7 @@
     /* The preview's quiet placeholder is the same block in a whisper, so "nothing yet" and
        the real script read as one surface. */
     .db-ddl.db-ddl-quiet { color: var(--text-3); }
-    /* docs/22 W3.3 — the typed redis value view. The meta line carries its own actions now, so
+    /* SPEC §data.redis — the typed redis value view. The meta line carries its own actions now, so
        it flexes; the TTL chip is the one inline-editable readout; a string is a plain field
        with the one primary action beside it. The typed table itself reuses .db-grid as-is. */
     .db-detail-meta { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; }
@@ -309,7 +309,7 @@
     .db-redis-str-row { display: flex; gap: var(--s2); align-items: flex-end; padding: var(--s2); }
     .db-redis-str { flex: 1; min-height: 96px; resize: vertical; font-family: var(--mono); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: var(--r-row); color: var(--text); }
     .db-redis-str:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
-    /* docs/22 W3.2 — the Activity page. The head sits in a row with the pane's ⋯; the sessions
+    /* SPEC §data.activity — the Activity page. The head sits in a row with the pane's ⋯; the sessions
        table reuses .db-grid as-is. The panel's own row is marked, a blocked wait reads amber
        (state, not danger), and the row ⋯ matches the rowctl control the grid already uses. */
     .db-headrow { display: flex; align-items: flex-end; gap: var(--s2); }
@@ -318,7 +318,7 @@
     .db-act-blocked { color: var(--amber); }
     .db-act-more { border: 0; background: none; padding: 2px var(--s1); cursor: pointer; color: var(--text-3); border-radius: var(--r-row); }
     .db-act-more:hover { color: var(--text); background: var(--sep-soft); }
-    /* docs/22 W3.1 — the console's completion list. Same popup vocabulary as .menu (card,
+    /* SPEC §data.completion — the console's completion list. Same popup vocabulary as .menu (card,
        shadow-pop, hover); labels are identifiers you would type, so they sit in mono. The
        mirror borrows .db-sql-face above to inherit the textarea's exact metrics. */
     .db-suggest { position: absolute; z-index: 35; min-width: 200px; max-width: 360px; background: var(--card); border-radius: var(--r-row); box-shadow: var(--shadow-pop); padding: 3px; }
@@ -353,7 +353,7 @@
     #dbSql { min-height: 84px; }
     .db-grid-wrap { flex: 1; overflow: auto; min-height: 200px; overflow-anchor: none; }
     .db-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: var(--f-label); }
-    /* Rows only (docs/46 U7): the columns are read by alignment, and a hairline between every
+    /* Rows only (SPEC §panel.design): the columns are read by alignment, and a hairline between every
        cell drew a spreadsheet the eye had to look through. A body row is 4px taller than the
        header so the lines a row does carry have air around them. */
     .db-grid th, .db-grid td { border-bottom: 1px solid var(--sep-soft); padding: var(--s1) var(--s2); white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
@@ -364,20 +364,20 @@
     .db-grid thead th:is(.db-rowctl, .db-nosort) { cursor: default; }
     .db-rowctl { width: 58px; text-align: center; white-space: nowrap; }
     .db-selbox { accent-color: var(--accent); width: auto; margin: 0 3px 0 0; vertical-align: middle; }
-    /* A row's checkbox and delete wait for the row (docs/46 §3.7): hidden until the pointer or
+    /* A row's checkbox and delete wait for the row (SPEC §panel.pages): hidden until the pointer or
        the keyboard is in it, or it is checked. A row holding buffered work (a delete to undo,
        an insert to drop) keeps its control in sight, and so does the header's select-all. */
     .db-grid tbody tr:not(:hover, :focus-within, .db-sel, .db-del, .db-ins) > td.db-rowctl > :is(.db-selbox, .db-act) { opacity: 0; }
     /* The header is a two-line stack: name line, then — when any column carries a comment — a
-       caption line with the field's meaning, in the caption grey (docs/46 §3.7, rule 2: a
+       caption line with the field's meaning, in the caption grey (SPEC §panel.pages, rule 2: a
        comment describes, it reports no state). */
     .db-col-main { display: flex; align-items: center; min-width: 0; }
     .db-col-name { overflow: hidden; text-overflow: ellipsis; }
     .db-col-comment { font-size: var(--f-caption); font-weight: var(--w-body); color: var(--text-2); margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
     .db-col-comment:empty::before { content: "\a0"; } /* holds its line: names align */
-    .db-key { color: var(--amber); margin-left: 4px; --ic: 12px; } /* fix-plan #14: the i-key sprite, sized to the marker it replaced */
+    .db-key { color: var(--amber); margin-left: 4px; --ic: 12px; } /* the i-key sprite, sized to the marker it replaced */
     .db-col-type { color: var(--text-3); font-size: var(--f-caption); font-weight: var(--w-body); font-family: var(--mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
-    /* docs/22 W5.2 — the FK column's jump arrow: a quiet straight arrow after the name (the
+    /* The FK column's jump arrow: a quiet straight arrow after the name (the
        chevron shape belongs to pagination), accent only under the pointer. Its click stops
        propagation — the header around it still sorts. */
     .db-col-fk { border: 0; background: none; padding: 0; margin-left: 5px; color: var(--text-3); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; --ic: 13px; }
@@ -395,20 +395,20 @@
       border-right: 1.5px solid var(--accent); border-bottom: 1.5px solid var(--accent);
       transform: rotate(225deg); }
     .db-sorted-desc .db-sort { transform: rotate(45deg); }
-    /* The column resize grip (docs/22 W2.1): 4px of the header's right edge, quiet until the
+    /* The column resize grip (SPEC §data.grid): 4px of the header's right edge, quiet until the
        pointer is on it, then the accent a drag is about to move. The header is already
        position:sticky (a positioned box), so the absolute grip anchors to it without help. */
     .db-col-grip { position: absolute; top: 0; right: 0; bottom: 0; width: 4px; cursor: col-resize; }
-    /* The keyboard's focus carrier (docs/22 W2.2): zero size so it never paints, focusable so
+    /* The keyboard's focus carrier (SPEC §data.grid): zero size so it never paints, focusable so
        keys land somewhere stable. It lives inside the wrap so focusing it cannot scroll the
        pane away from the grid. */
     .db-kbd { position: absolute; width: 0; height: 0; padding: 0; border: 0; opacity: 0; }
-    /* The focus cell: the panel's standing 2px accent selection edge (docs/18 V6), drawn
+    /* The focus cell: the panel's standing 2px accent selection edge (SPEC §panel.design), drawn
        inside the cell so it never shifts the grid's hairlines. */
     .db-grid td.db-focus { outline: 2px solid var(--accent); outline-offset: -2px; }
     .db-grid thead th:hover .db-col-grip { background: var(--sep); }
     .db-col-grip:hover, .db-grid thead th:hover .db-col-grip:hover { background: var(--accent); }
-    /* The all-columns-hidden row: a place, not a collapsed table (docs/22 W2.1). */
+    /* The all-columns-hidden row: a place, not a collapsed table (SPEC §data.grid). */
     .db-grid td.db-grid-hiddenall { padding: var(--s3); }
     .db-grid td.db-grid-hiddenall > div { display: flex; align-items: center; gap: var(--s2); color: var(--text-3); }
     /* The column-header hover card: the panel's own chrome instead of the OS tooltip. */
@@ -423,7 +423,7 @@
     .db-tip .t-hint { margin-top: 5px; font-size: var(--f-caption); color: var(--text-3); }
     .db-null { color: var(--text-3); font-style: italic; }
     .db-cell { font-family: var(--mono); }
-    /* docs/22 W2.3 — typed cells. Numbers right-align in tabular figures so a column of ids
+    /* Typed cells. Numbers right-align in tabular figures so a column of ids
        and amounts compares by digit (the mono face already draws them one glyph wide, but the
        alignment is the readable half). A folded value — "(JSON)", "binary, N bytes" — is a
        summary standing in for content that lives one hover/open away, so it sits in the quiet
@@ -453,7 +453,7 @@
     .db-grid-wrap { position: relative; }
     #dbCellText { min-height: 180px; white-space: pre-wrap; }
     #dbCellText.json { min-height: 260px; }
-    /* docs/22 W5.3 — the value sheet's read-only body. The content sits on the quiet inset
+    /* The value sheet's read-only body. The content sits on the quiet inset
        ground (the same surface .db-ddl uses); values are values you would copy, so mono
        (base rule 1). A JSON value is the library's code block (pre.jv), scrolled here. */
     .db-val-pre { margin: 0; padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-size: var(--f-label); max-height: 50vh; overflow: auto; }
@@ -461,7 +461,7 @@
     .db-val-more { margin-top: var(--s2); }
     .db-val-pre { font-family: var(--mono); white-space: pre-wrap; word-break: break-word; }
     .db-val-meta { font-size: var(--f-label); color: var(--text-3); font-variant-numeric: tabular-nums; }
-    /* docs/22 W5.1 — the single-record form: the grid's rows worn vertically. Labels are
+    /* The single-record form: the grid's rows worn vertically. Labels are
        identity (text face, quiet), values are values you would copy (mono, rule 1); the
        pending background is the grid's own amber dirty tint, and the head carries the
        stepper plus the record's own actions on the right. */
@@ -482,25 +482,25 @@
     /* Checked rows tint blue — but a pending cell edit keeps its amber tint so both states read. */
     tr.db-sel td { background: color-mix(in srgb, var(--accent) 13%, transparent); }
     tr.db-sel td.db-dirty { background: color-mix(in srgb, var(--amber) 26%, transparent); }
-    /* docs/22 W4.2: a cell whose commit lost the optimistic-lock race — the same tint trick
+    /* SPEC §data.edits: a cell whose commit lost the optimistic-lock race — the same tint trick
        as db-dirty but in --red: the change is still buffered (still dirty), but the server
        refused it because the row moved under it. */
     .db-dirty.db-conflict { background: color-mix(in srgb, var(--red) 16%, transparent); }
     tr.db-sel td.db-conflict { background: color-mix(in srgb, var(--red) 26%, transparent); }
     .db-act { border: none; background: none; cursor: pointer; font-size: var(--f-label); color: var(--text-3); padding: 0 4px; border-radius: 4px;
-      --ic: 13px; } /* fix-plan #14: the row controls' sprites */
+      --ic: 13px; } /* the row controls' sprites */
     .db-act:hover { color: var(--red); background: var(--hover); }
 
     .db-bar { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s3); background: color-mix(in srgb, var(--amber) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--sep)); border-radius: var(--r-card); font-size: var(--f-body); }
     /* The summary takes the slack, so the bar's buttons sit together at its end. */
     .db-bar-sum { flex: 1; min-width: 0; }
 
-    /* --- terminal (docs/14 §2) ----------------------------------------------------------------- */
+    /* --- terminal (SPEC §terminal.panel) ------------------------------------------------------- */
     /* =====================================================================================
        Terminal — the pane stops being a form here. Every real web terminal (ttyd, wetty,
        VS Code's integrated panel) gives the terminal the whole viewport: one bar of
        session tabs up top, a deep dark surface that IS the terminal, a one-line status
-       foot. docs/46 P8-2: the chrome still reads the PANEL tokens — but on this page they
+       foot. SPEC §panel.pages: the chrome still reads the PANEL tokens — but on this page they
        are re-pointed one step darker (--term-*, base.css), dark in BOTH themes, so a
        library control dropped onto the bar is already sitting on the stage with no
        page-specific restyling; the xterm canvas follows the same --term-* tokens
@@ -519,7 +519,7 @@
       min-height: 340px;
       /* The page's chrome reads the PANEL tokens like everywhere else — they are just
          re-pointed here at --term-* (base.css), the darker register a terminal keeps in
-         BOTH themes (docs/46 U12). Every library control on the bar or the foot (objTab,
+         BOTH themes (SPEC §panel.pages). Every library control on the bar or the foot (objTab,
          the picker's dropdown face, btn, iconBtn) therefore sits on the stage with no
          page-specific restyling; --accent and the state colours stay the panel's own —
          a selection is a selection everywhere. */
@@ -545,12 +545,12 @@
     }
     .term-tabs::-webkit-scrollbar { display: none; }
     .term-tabs[hidden] { display: none; }
-    /* The tabs themselves are the library's objTab (docs/46 P8-2, ui.css .otab) — the
+    /* The tabs themselves are the library's objTab (SPEC §panel.pages, ui.css .otab) — the
        same card Data's objects wear, selected state merging into the stage under it. The
        strip only aligns them on the bar's bottom edge; the page adds no shape of its own. */
     /* The picker row. The target select wears the panel's own dropdown face
        (initSelects, ui/select.ts) — on this page's re-pointed tokens it already belongs
-       to the dark bar, so the old page-styled native select is gone (docs/46 P8-2). */
+       to the dark bar, so the old page-styled native select is gone (SPEC §panel.pages). */
     .term-ctl { display: flex; align-items: center; gap: var(--s2); padding: 4px 2px 7px; flex: none; }
     /* Focus docks the shell-owned app zone into this declared slot instead of stacking an
        empty shell row above the terminal. The divider keeps app controls distinct from the
@@ -568,7 +568,7 @@
       box-shadow: inset 0 0 0 1px var(--sep);
     }
     .term-none { font-size: var(--f-label); color: var(--text-3); }
-/* The Local shell settings gear beside the picker (docs/15 §2.1) is the library's
+/* The Local shell settings gear beside the picker (SPEC §terminal.local) is the library's
    ghost iconBtn (ui/button.ts) since P8-2 - a quiet gear, not a second accent button;
    the ? reference button is the same. No page shape of their own is left here. */
 /* kbd: a key is a value you would copy - monospace, hairline, no colour of its own
@@ -590,7 +590,7 @@
 .term-key-row > span:last-child { color: var(--text-2); }
 /* The empty state's teaching line: quieter than the hint above it. */
 .term-keys-hint { margin-top: var(--s1) !important; color: var(--text-3); }
-/* The clickable "Local shell is off" line in the empty bar (docs/15 §2.1): text that
+/* The clickable "Local shell is off" line in the empty bar (SPEC §terminal.local): text that
    acts, not a button that shouts. The page's own quiet link shape - deliberately not a
    library button, it is a sentence you can click, not a control. */
 .term-off {
@@ -637,7 +637,7 @@
     .term-dot.warn { background: var(--amber); }
     .term-dot.bad { background: var(--red); }
     .term-zoom { margin-left: auto; }   /* the zoom note sits at the right edge, away from the status */
-    /* --- docs/22 P0: rename input, jump chip, overlay pill (the bell is heldDot, ui.css) --- */
+    /* --- rename input, jump chip, overlay pill (the bell is heldDot, ui.css) --- */
     /* The inline rename input replaces the name span; it wears the surface dark. */
     .term-rename {
       font: inherit; font-size: var(--f-label);
@@ -646,7 +646,7 @@
       padding: 1px 4px; width: 9em; height: 19px; outline: none;
     }
     /* The "N new" chip rides the holder's bottom-right corner, one hop from the
-       scrollbar thumb it answers to; its down affordance is the chevron sprite (fix-plan #14). */
+       scrollbar thumb it answers to; its down affordance is the chevron sprite. */
     .term-jump {
       position: absolute; right: var(--s3); bottom: var(--s2);
       font-size: var(--f-label); color: var(--text);
@@ -666,7 +666,7 @@
       pointer-events: none; user-select: none;
     }
     .term-overlay.on { opacity: 1; }
-    /* --- docs/22 P1: the find bar ------------------------------------------------------ */
+    /* --- the find bar ------------------------------------------------------------------ */
     /* One thin row between the tab bar and the surface, wearing the same dark chrome:
     "the terminal grew a find field" rather than "a dialog appeared". */
     .term-find {

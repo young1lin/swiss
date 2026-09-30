@@ -25,7 +25,7 @@ import {
   RAIL_LIMIT,
 } from "../src/plugin-palette.js";
 
-/* The rail/palette model (docs/13 D5): the rail is the pinned SHORTLIST of plugin groups,
+/* The rail/palette model (SPEC §panel.nav): the rail is the pinned SHORTLIST of plugin groups,
  * the palette is the whole list, searchable. Everything here is pure — the DOM half of
  * plugin-palette.js is one overlay, the policy is data. The groups are the shape
  * page-core.groupPages produces: { id, label, order, pages }. */
@@ -68,7 +68,7 @@ describe("the palette rows", () => {
 });
 
 describe("seat glyphs", () => {
-  // docs/37 R5: the glyph is a BUILT node now, so the assertions read its attributes off
+  // SPEC §panel.toolchain: the glyph is a BUILT node now, so the assertions read its attributes off
   // the SVG the builder returns. The stub satisfies the two createElementNS calls the
   // builder makes (the svg wrapper and its use) - this suite has no DOM otherwise.
   const stubSvg = () => {

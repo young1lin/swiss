@@ -15,7 +15,7 @@
  */
 
 //! The typed connection catalog — who may browse or call a connection, and for how long
-//! (docs/09 §4, the P4 decoupling; docs/12 W3).
+//! (SPEC §host.lifecycle, the P4 decoupling; SPEC §host.seats).
 //!
 //! Data owns no resources: every browse rides an MCP adapter's pool or child. Before this
 //! module that sharing was implicit — Data resolved rows out of the live registry, so
@@ -41,9 +41,9 @@ use std::time::Duration;
 use crate::dbbrowser::BrowserFlavor;
 
 /// A connection definition someone can browse or call, independent of who owns the driver.
-/// The key must carry configuration identity, credential context and read-only semantics -
-/// two connections that merely share host and port are NOT the same connection (docs/09
-/// §3): the id is the registry entry's name, which already encodes the whole definition.
+/// The key must carry configuration identity and credential context - two connections that
+/// merely share host and port are NOT the same connection (SPEC §host.seats):
+/// the id is the registry entry's name, which already encodes the whole definition.
 #[derive(Clone, Debug)]
 pub struct ConnectionInfo {
     pub id: String,
@@ -178,7 +178,7 @@ impl LeaseTracker {
 /// How long a draining provider waits for in-flight leases before closing over them.
 /// Five seconds covers a bounded /api/db page or one SQL console round-trip; a lease held
 /// longer than that is a bug in its holder, and the warning names it.
-/// A streamed SQL dump (docs/22 W4.4) legitimately outlives this window on a big table — its
+/// A streamed SQL dump (SPEC §data.export) legitimately outlives this window on a big table — its
 /// lease travels inside the body stream — and that is the deliberate trade: the drain aborts
 /// honestly (the download ends early) rather than pinning pools open for a download nobody
 /// is reading. Raising this for dumps would stall every disable for one slow client.
@@ -276,7 +276,7 @@ pub enum CatalogPresence {
     Absent(Option<String>),
 }
 
-/// The single-provider registry, ActionRegistry's shape (docs/09 §2: provide conflicts
+/// The single-provider registry, ActionRegistry's shape (SPEC §host.plugins: provide conflicts
 /// are visible). One catalog per process: the day a second provider exists, the registry
 /// grows a per-capability map — not a silent overwrite.
 #[derive(Default)]
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn a_hundred_lifecycles_leave_the_registry_exactly_empty() {
-        // docs/10 §9's last acceptance item, at the registry level: enable/disable churn
+        // SPEC §jobs.migrate's last acceptance item, at the registry level: enable/disable churn
         // must not leak providers, leases or rows.
         let reg = CatalogRegistry::new();
         for _ in 0..100 {
@@ -618,7 +618,7 @@ mod tests {
 
     #[test]
     fn two_definitions_sharing_host_and_port_stay_two_connections() {
-        // docs/09 §3's named trap: identity is the DEFINITION (credentials and all), not
+        // SPEC §host.plugins's named trap: identity is the DEFINITION (credentials and all), not
         // the endpoint. The catalog key is the registry entry's name — two entries that
         // differ only in credentials are two names, never merged into one connection.
         let reg = CatalogRegistry::new();

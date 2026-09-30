@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* Emits the served panel tree from the TypeScript sources (docs/36 D2).
+/* Emits the served panel tree from the TypeScript sources (SPEC §panel.toolchain).
  *
  * panel/src (TypeScript) -types-blanked-in-place-> ../src/admin_assets/js (JavaScript)
  *
@@ -22,7 +22,7 @@
  * quotes, line breaks and layout survive byte for byte, so the browser's module graph keeps
  * the paths, the line numbers and the bug-record comments the sources carry. That property
  * is the whole reason this tool was chosen over tsc's printer, which reindents, splits
- * statements and drops comments (docs/36 §0.1 measured it).
+ * statements and drops comments (SPEC §panel.toolchain measured it).
  *
  * Contract (pinned by test/panel-emit.test.ts and test/panel-build-script.test.ts):
  * - walks every .ts under src/, skips the .d.ts files (pure types never emit), and
@@ -46,7 +46,7 @@ import { blankSourceFile } from "ts-blank-space";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "src");
-// The committed, served tree: rust-embed embeds it, cargo build never runs node (docs/36 D3).
+// The committed, served tree: rust-embed embeds it, cargo build never runs node (SPEC §panel.toolchain).
 const outDir = join(here, "..", "src", "admin_assets", "js");
 
 /* All non-declaration sources, as "/"-separated paths relative to src/ (stable across
@@ -91,7 +91,7 @@ export function emitOne(rel) {
     const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
     throw new Error(rel + ":" + (pos.line + 1) + ":" + (pos.character + 1) +
       " - non-erasable syntax (" + ts.SyntaxKind[node.kind] +
-      "): the panel must stay erasable-only (docs/36 D4)");
+      "): the panel must stay erasable-only (SPEC §panel.toolchain)");
   });
 }
 
@@ -147,7 +147,7 @@ if (isMain && args.includes("--check")) {
   if (stale.length || orphans.length) process.exit(1);
   console.log("panel emit fresh: " + listSources().length + " sources, no orphans");
 } else if (isMain && args.includes("--watch")) {
-  // The dev loop (docs/36 D13): save -> emit that one file -> refresh the debug build.
+  // The dev loop (SPEC §panel.toolchain): save -> emit that one file -> refresh the debug build.
   const pending = new Map(); // rel -> timer
   const emitIfSource = (rel) => {
     if (!rel.endsWith(".ts") || rel.endsWith(".d.ts")) return;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The on/off switch (docs/46 §2.1): a state you set, not an action you fire. A <button
+/* The on/off switch (SPEC §panel.ui): a state you set, not an action you fire. A <button
  * role="switch"> rather than a checkbox, so it takes the same delegated click and disabled
  * handling as every other row control; aria-checked is both the state and the CSS hook. The
  * label is required - a switch beside a row name still needs to say WHAT it switches. */

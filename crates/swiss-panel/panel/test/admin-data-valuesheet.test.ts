@@ -109,7 +109,7 @@ const html = (v: unknown): string => { return serialize(value.dbJsonValueNode(v)
 /** Every node of a tree, depth first. */
 const walk = (n: FakeNode): FakeNode[] => { return [n].concat(...(n.children || []).map(walk)); };
 
-/* docs/22 W5.3 — the value sheet. The presenter choice, the hex cap and the JSON tree are
+/* SPEC §data.grid — the value sheet. The presenter choice, the hex cap and the JSON tree are
    pure: every rule is value- and column-type-driven, never DOM-dependent, so the intents
    pin without a browser. The sheet itself is a thin wrapper over these. */
 describe("dbValueKind — which of the four presentations a value opens as", () => {

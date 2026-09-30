@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! HTTP CONNECT / SOCKS5 proxy dialing for SSH connections (docs/27 §2).
+//! HTTP CONNECT / SOCKS5 proxy dialing for SSH connections (SPEC §tunnels.proxy).
 //!
 //! The proxy is a TRANSPORT for the SSH connection, not a URL feature: credentials never
 //! ride inside the proxy URL (save-time validation already refused userinfo, §1.3) and
@@ -45,7 +45,7 @@ pub enum ProxyScheme {
     Socks5,
 }
 
-/// A parsed, ready-to-dial proxy (docs/27 §2.1): the stored URL's three components plus
+/// A parsed, ready-to-dial proxy (SPEC §tunnels.proxy): the stored URL's three components plus
 /// the two credential fields, kept apart until they reach the handshake (§2.4).
 #[derive(Debug, Clone)]
 pub struct ResolvedProxy {
@@ -129,8 +129,8 @@ fn parse_port(raw: &str) -> Result<u16, String> {
 }
 
 /// Dial `host:port` THROUGH the proxy and hand back the raw stream for the SSH handshake
-/// (docs/27 §2.1). Credential references resolve HERE, before any socket: a missing
-/// reference is a config failure (docs/19 D4) — visible, never retried, and the proxy
+/// (SPEC §tunnels.proxy). Credential references resolve HERE, before any socket: a missing
+/// reference is a config failure (SPEC §host.refs) — visible, never retried, and the proxy
 /// never sees a connection. The two values then travel only as handshake components.
 pub async fn dial(p: &ResolvedProxy, host: &str, port: u16) -> Result<TcpStream, TunnelError> {
     let username = match &p.username {
@@ -178,7 +178,7 @@ pub async fn dial(p: &ResolvedProxy, host: &str, port: u16) -> Result<TcpStream,
         })?;
     // Nagle off, matching what russh::client::connect does for its own TCP dial: an
     // interactive SSH session should not queue small packets on the proxied socket
-    // either (docs/27 §2.1).
+    // either (SPEC §tunnels.proxy).
     if let Err(e) = stream.set_nodelay(true) {
         swiss_core::log::warn(
             "proxy set_nodelay failed",
@@ -191,7 +191,7 @@ pub async fn dial(p: &ResolvedProxy, host: &str, port: u16) -> Result<TcpStream,
     }
 }
 
-/// HTTP CONNECT (docs/27 §2.2). The request carries the target authority, Host, and —
+/// HTTP CONNECT (SPEC §tunnels.proxy). The request carries the target authority, Host, and —
 /// only when a credential is configured — Basic authorization assembled from the two
 /// component fields (§2.4: components in a header, never a URL string). The response
 /// head is read BYTE-WISE so nothing past CRLFCRLF is swallowed: the stream is handed
@@ -272,7 +272,7 @@ async fn connect_http(
     }
 }
 
-/// SOCKS5 (docs/27 §2.3, RFC 1928 + RFC 1929). Method negotiation, optional username/
+/// SOCKS5 (SPEC §tunnels.proxy, RFC 1928 + RFC 1929). Method negotiation, optional username/
 /// password sub-negotiation, then CONNECT with the target as-is: a name goes through as
 /// ATYP 03 for the PROXY to resolve (socks5h semantics, §1.3), IP literals as 01/04.
 async fn connect_socks5(
@@ -442,7 +442,7 @@ mod tests {
         conn
     }
 
-    /// docs/27 §2.6.2, no credentials: the greeting offers exactly \x00, the connect
+    /// SPEC §tunnels.proxy, no credentials: the greeting offers exactly \x00, the connect
     /// request carries the hostname as ATYP 03 plus the network-order port, and the SSH
     /// handshake completes through the pump.
     #[tokio::test]
@@ -463,7 +463,7 @@ mod tests {
         let _ = conn.end().await;
     }
 
-    /// docs/27 §2.6.2, with credentials: the greeting offers \x00+\x02 and the RFC 1929
+    /// SPEC §tunnels.proxy, with credentials: the greeting offers \x00+\x02 and the RFC 1929
     /// blob is byte-exact — VER, the lengths, and the two values as sent.
     #[tokio::test]
     async fn socks5_dial_offers_rfc1929_credentials_when_configured() {
@@ -486,7 +486,7 @@ mod tests {
         let _ = conn.end().await;
     }
 
-    /// docs/27 §2.6.3: the CONNECT request line, the Host header, and the Basic
+    /// SPEC §tunnels.proxy: the CONNECT request line, the Host header, and the Basic
     /// authorization built from the two component fields — then the session completes.
     #[tokio::test]
     async fn http_connect_dials_through_the_proxy_and_carries_basic_auth() {
@@ -512,7 +512,7 @@ mod tests {
         let _ = conn.end().await;
     }
 
-    /// docs/27 §2.6.3: a non-2xx answer is a network failure naming the proxy and the code.
+    /// SPEC §tunnels.proxy: a non-2xx answer is a network failure naming the proxy and the code.
     #[tokio::test]
     async fn http_connect_refusal_is_a_network_failure() {
         let (proxy_port, _requests) =
@@ -528,7 +528,7 @@ mod tests {
         );
     }
 
-    /// docs/27 §2.6.4: REP != 0 is a network failure; the retry policy may run.
+    /// SPEC §tunnels.proxy: REP != 0 is a network failure; the retry policy may run.
     #[tokio::test]
     async fn a_socks5_connect_refusal_is_a_network_failure() {
         let (proxy_port, _obs) = sshtest::spawn_socks5_proxy(SocksAuth::None, 1).await;
@@ -539,9 +539,9 @@ mod tests {
         assert!(err.message.contains("socks5 reply"), "{}", err.message);
     }
 
-    /// docs/27 §2.6.5: a credential reference that does not resolve fails as Config,
+    /// SPEC §tunnels.proxy: a credential reference that does not resolve fails as Config,
     /// naming the field and the reference, BEFORE any socket to the proxy is opened —
-    /// docs/19 D4's strict contract, same shape as the passphrase one.
+    /// SPEC §host.refs's strict contract, same shape as the passphrase one.
     #[tokio::test]
     async fn a_broken_proxy_credential_reference_fails_as_config_before_any_dial() {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind proxy");
@@ -572,7 +572,7 @@ mod tests {
         );
     }
 
-    /// docs/27 §2.3: a proxy that offers no acceptable method (\xFF) is a network
+    /// SPEC §tunnels.proxy: a proxy that offers no acceptable method (\xFF) is a network
     /// failure — the verbatim message says "auth method", so its kind is pinned here
     /// rather than through the classifier (see the note in ssh.rs's pin test).
     #[tokio::test]

@@ -15,8 +15,8 @@ All notable changes to swiss are recorded here. The format follows
   (`start` / `stop` / `token` / `creds` / `skill install` / `autostart` / `update` /
   `export` / `import` / `remote` / `run`).
 - Redis Streams on the Data page: newest-first windows with entry-id cursor paging, a Follow
-  toggle polling `XREVRANGE` into a 500-row ring, and read-only consumer groups (docs/45).
-- The panel and `/api/*` need a sign-in (docs/48): `swiss start` and `swiss open` open a
+  toggle polling `XREVRANGE` into a 500-row ring, and read-only consumer groups (SPEC §data.streams).
+- The panel and `/api/*` need a sign-in (SPEC §host.session): `swiss start` and `swiss open` open a
   single-use sign-in link that expires in two minutes and sets a 30-day `HttpOnly`,
   `SameSite=Strict` session cookie; the CLI signs its calls with a key rotated on every start
   and sealed in `session.json`. `swiss api <METHOD> <path> [json]` is the scripted way to call
@@ -26,11 +26,11 @@ All notable changes to swiss are recorded here. The format follows
   it is an IP literal) draw as `••••••`, with no tooltip carrying the value, so a screenshot
   shares none. The reveal lasts until the page reloads; loopback draws plain.
 - The `swiss-it` integration harness behind feature `it`: real MySQL/PostgreSQL/Redis engines
-  through testcontainers, a CI integration job, and gate 2 in `scripts/deploy.ps1` (docs/44).
+  through testcontainers, a CI integration job, and gate 2 in `scripts/deploy.ps1` (SPEC §testing.it).
 - `swiss remote exec` resolves vault references: `${secret://name}` in an argv word, an
   `--env` value or `--cwd` is replaced by the stored value on the way out, while the run list,
   the audit and the panel keep the reference as typed, and output that echoes the value comes
-  back as `••••••••`. A missing name fails the run before anything is sent (docs/34 R10).
+  back as `••••••••`. A missing name fails the run before anything is sent (SPEC §remote.security).
 - The Data page's Redis console completes as you type and carries templates: the command word
   offers the commands with their arguments (`SET key value [EX seconds]`), the word after a
   command that takes a key offers the keys already in the sidebar, and the console's overflow
@@ -40,9 +40,9 @@ All notable changes to swiss are recorded here. The format follows
   Write a file… for the capabilities it holds, each submitting the same recorded run the CLI
   does, then opening Runs - where an open run already streams its output and offers Cancel. A
   typed command goes to the target's own shell, so pipes and redirects mean what they say and
-  the record shows exactly what was sent (docs/34 R14).
+  the record shows exactly what was sent (SPEC §remote.panel).
 - A vault reference can carry a default: `${secret://name:default}` uses `default` when the
-  vault has no such name, everywhere references resolve (docs/19, 2026-09-28).
+  vault has no such name, everywhere references resolve (SPEC §host.vault, 2026-09-28).
 
 ### Changed
 - A Redis key's overflow menu names every act on the key directly - Set the TTL…, Rename…,
@@ -60,7 +60,7 @@ All notable changes to swiss are recorded here. The format follows
 - Remote runs no longer share the two-slot run pool that protects this machine: each remote
   target has its own lane of 8 runs at once (each its own channel on the one SSH connection),
   so parallel terminals driving one server stop getting `429 run capacity is full (2/2
-  running)`; local jobs keep `maxConcurrentRuns` (docs/34 R11).
+  running)`; local jobs keep `maxConcurrentRuns` (SPEC §remote.actions).
 - The Data page's value viewer shows JSON as the panel's highlighted code block, the one Logs,
   Runs and Traffic use, instead of a folding tree; a string that holds JSON is shown decoded,
   and a document longer than 200 lines paints its first 200 with a Show all button.
@@ -68,11 +68,11 @@ All notable changes to swiss are recorded here. The format follows
   set, zset, stream), so `string` and `stream` no longer read alike; the type word stays.
 - An open row on the Runs page starts with a Command block holding the whole command, quoted
   word by word the way it was sent, with a Copy: the row's own line is cut to fit, so a long
-  command could be neither read nor copied (docs/34 R13).
+  command could be neither read nor copied (SPEC §remote.panel).
 - A Data grid column header stacks its name, its type and its comment on lines of their own, so
   a short column such as `id` is as wide as its longest line rather than its name and type side
   by side; a column without a comment keeps its empty line's height, so every name lines up
-  (docs/46 §3.7).
+  (SPEC §panel.pages).
 
 - `swiss export` no longer writes vault secrets in the clear: every value leaves as `******`
   and the names ride so a restore says what to re-enter. An import skips a masked entry rather
@@ -81,21 +81,21 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 - With Follow on, a Redis stream's new rows replace only the table: the Follow bar was rebuilt
-  on every tick, so its interval picker closed itself each second (docs/45 §2.3).
+  on every tick, so its interval picker closed itself each second (SPEC §data.streams).
 - The Data page's Redis sidebar follows the keyspace: the `r` refresh, a return to the page or
   the connection, and every console command re-walk the key list quietly, as deep as More
   went, with the open key kept. It used to freeze at its first answer, so `SET test 1` on an
   empty Redis never showed up. An empty Redis also lists the database the connection sits on
   (INFO keyspace names only databases holding keys), so the database row is there from the
-  first visit (docs/47 D6).
+  first visit (SPEC §data.sessions).
 - Replacing a secret now takes effect at once: the vault write rebuilds every MCP that
   references it, which kept the old value resolved in its adapter until the gateway
   restarted. The Secrets page gains Replace value… on each row's ⋯ menu, a Replace label
-  when the typed name is already stored, and a toast naming the MCPs that reloaded (docs/19).
+  when the typed name is already stored, and a toast naming the MCPs that reloaded (SPEC §host.vault).
 - A group made on an empty list now shows up: SSH Connections, Port Forwards, Jobs, Secrets
   and Tokens replaced their whole groups region with a page-level empty state while they had
   no rows, so a new group appeared only in the New sheet's Group select, with no header to
-  rename or delete it by. The groups always paint now, as Remote Targets already did (docs/20).
+  rename or delete it by. The groups always paint now, as Remote Targets already did (SPEC §host.groups).
 - The Terminal page's target picker names a remote by its connection name alone; it showed
   `user@host`, which put the server's address into every screenshot of a terminal.
 - A run being canceled stays visible until it has stopped: cancel took it out of the active
@@ -105,7 +105,7 @@ All notable changes to swiss are recorded here. The format follows
 - `swiss remote write` no longer records the file's content in clear in the run log
   (`logs/remote/runs.jsonl`): the audit line keeps its size as `contentBytes`, and the body is
   sealed beside the record under the machine key (capped at 256 KiB), shown on the Runs page
-  when its Show is pressed (docs/34 R12). Records written before that carried the body in
+  when its Show is pressed (SPEC §remote.history). Records written before that carried the body in
   clear in `runs.jsonl`: the gateway now seals each one beside its record the first time it
   opens the log, so those writes can be read in the panel and their bodies leave the log. A
   write recorded in between, which kept its size only, says so instead of showing nothing.
@@ -114,7 +114,7 @@ All notable changes to swiss are recorded here. The format follows
 - `/api/tunnels` connection rows now carry `keyPath`: the panel's edit sheet prefills from the
   row, and a custom private-key path is no longer silently rewritten to the default on save.
 - Jumping a Redis stream view back to the latest window now voids the follow tick already in
-  flight, so a late poll can no longer pool stale rows behind the jump (docs/45 S3).
+  flight, so a late poll can no longer pool stale rows behind the jump (SPEC §data.streams).
 - The connection-test gate accepts `mariadb` like the panel's Test button always offered it:
   a mariadb Test click answered 400 "no connection test" before.
 

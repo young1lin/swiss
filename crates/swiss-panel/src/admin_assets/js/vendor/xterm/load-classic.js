@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* A classic-script loader for the vendored UMD bundles (docs/14 §2, constraint 2).
+/* A classic-script loader for the vendored UMD bundles (SPEC §terminal.panel, constraint 2).
    The panel is native ES modules with no bundler, and the UMD builds assign their
    exports onto the GLOBAL object the way classic scripts do — @xterm/addon-unicode11
    even binds to top-level "this", which is undefined inside a module, so the bundles

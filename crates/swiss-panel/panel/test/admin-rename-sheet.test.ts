@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 
 // @vitest-environment happy-dom
 
-/* fix-plan #16: the three renames share ONE surface — the general one-field sheet
+/* SPEC §panel.ui: the three renames share ONE surface — the general one-field sheet
    (openFieldSheet in ui/sheet.ts) — and no browser dialog remains. The suite runs on a
    real DOM (happy-dom) with the served shell's ids in place, then drives the real entry
    points: detail.js's renameMcp, data-edit.js's dbTableMenu (its Rename item), and the
@@ -73,7 +73,7 @@ const save = () => (document.getElementById("g-save") as HTMLButtonElement).clic
 
 beforeEach(() => { calls.length = 0; });
 
-describe("fix-plan #16 — one one-field sheet for every rename", () => {
+describe("SPEC §panel.ui — one one-field sheet for every rename", () => {
   it("an MCP rename submits the sheet's value as the POST /rename payload", async () => {
     mcpState.resetMcpState();
     mcpState.setMcpGroups(["default"]);

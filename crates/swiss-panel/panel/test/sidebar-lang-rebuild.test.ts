@@ -19,7 +19,7 @@
 /* The MCP sidebar rebuilds its group bands only when its structural key changes (menu.ts
    patchSidebar) - the poll must not flash the list every six seconds. The bands' words (the
    empty line, the + and ⋯ labels) are built at rebuild time, so the language has to be part
-   of that key: found live on 19998 in the docs/46 P1b second-language pass, where a 文/A flip
+   of that key: found live on 19998 in a second-language pass (SPEC §panel.ui), where a 文/A flip
    left "No items - drop here or press +" on an otherwise Chinese screen until the membership
    next changed. */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

@@ -194,7 +194,7 @@ async fn close_drops_the_connection_so_the_next_build_reconnects() {
 
 #[tokio::test]
 async fn a_vault_header_reference_authenticates_the_proxy() {
-    // docs/19 D4, the positive half at the http surface: the Authorization header holds a
+    // SPEC §host.refs, the positive half at the http surface: the Authorization header holds a
     // ${secret://} reference and the vault carries the remote's REAL bearer token — so the
     // handshake succeeding IS the proof the header carried the resolved value (the remote's
     // auth rejects anything else).
@@ -221,7 +221,7 @@ async fn a_vault_header_reference_authenticates_the_proxy() {
 
 #[tokio::test]
 async fn replacing_a_secret_rebuilds_the_mcps_that_reference_it() {
-    // docs/19, 2026-09-27 addendum. make_adapter resolves a reference into the adapter it
+    // SPEC §host.vault, 2026-09-27 addendum. make_adapter resolves a reference into the adapter it
     // builds, so a replaced value used to reach nothing until the gateway restarted - the
     // vault looked like it could not be overwritten. The remote's auth is the proof here: it
     // accepts only its real token, so the retried start succeeding means the rebuilt header

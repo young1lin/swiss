@@ -25,7 +25,7 @@ serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
 # Only the OS CSPRNG (getrandom's SysRng) - no thread-local generator, so no chacha20 here.
 rand = { version = "0.10", default-features = false, features = ["sys_rng"] }
-# The sealed-envelope format (docs/05 §1) — frozen, byte-identical to the Node build.
+# The sealed-envelope format (SPEC §formats.sealed) — frozen, byte-identical to the Node build.
 hkdf = "0.13"
 sha2 = "0.11"
 aes-gcm = "0.11"

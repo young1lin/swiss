@@ -18,7 +18,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 // @vitest-environment happy-dom
 
-/* docs/33 C3 — the Logs JSON view. A call's arguments and reply are one formatted code block,
+/* SPEC §mcp.calls — the Logs JSON view. A call's arguments and reply are one formatted code block,
    the same for every MCP: standard indented JSON, a string that holds JSON shown as that JSON
    (behind a "decoded" marker), JSON followed by prose split into code + text, anything else as
    it arrived. Copy hands over valid JSON of what is shown; Copy raw the stored text. */
@@ -57,7 +57,7 @@ function stub(over: Record<string, unknown> = {}) {
   } as never;
 }
 
-/* docs/37 R5: logsBodyNode paints a real tree — the assertions read the painted DOM. */
+/* SPEC §panel.toolchain: logsBodyNode paints a real tree — the assertions read the painted DOM. */
 function paint(over: Record<string, unknown> = {}): HTMLElement {
   const host = document.createElement("div");
   host.append(...[logs.logsBodyNode(stub(over) as never)].flat().filter((n): n is Node => n != null));
@@ -72,7 +72,7 @@ const ZHIPU = JSON.stringify(JSON.stringify([{ title: "Rust 1.90", link: "https:
 const REDIS_HASH = JSON.stringify({ profile: JSON.stringify(JSON.stringify({ id: 1, tags: ["a"] })), n: "50", flag: "true" });
 const FIGMA = '[{"type":"image","mime":"image/png"}]\n\nThe screenshot above is the selected frame.';
 
-describe("docs/33 C3: splitJsonBlock — what counts as JSON", () => {
+describe("SPEC §mcp.calls: splitJsonBlock — what counts as JSON", () => {
   it("a whole JSON value is one block with no tail", () => {
     expect(jv.splitJsonBlock('{"a":1}')).toEqual({ value: { a: 1 }, tail: "" });
     expect(jv.splitJsonBlock('  [1,2]\n')).toEqual({ value: [1, 2], tail: "" });
@@ -97,7 +97,7 @@ describe("docs/33 C3: splitJsonBlock — what counts as JSON", () => {
   });
 });
 
-describe("docs/33 C3: decodeStrings — a string that holds JSON is shown as JSON", () => {
+describe("SPEC §mcp.calls: decodeStrings — a string that holds JSON is shown as JSON", () => {
   it("a search reply that is one JSON string is decoded once", () => {
     const v = jv.decodeStrings(jv.splitJsonBlock(ZHIPU)!.value);
     expect(v).toBeInstanceOf(jv.DecodedString);
@@ -119,7 +119,7 @@ describe("docs/33 C3: decodeStrings — a string that holds JSON is shown as JSO
   });
 });
 
-describe("docs/33 C3: Copy is valid JSON of what is shown", () => {
+describe("SPEC §mcp.calls: Copy is valid JSON of what is shown", () => {
   it("a decoded reply copies as the structure it holds", () => {
     const text = jv.formattedCopyText(ZHIPU);
     expect(JSON.parse(text)).toEqual([{ title: "Rust 1.90", link: "https://example.test/a", content: "line one\nline two" }]);
@@ -135,7 +135,7 @@ describe("docs/33 C3: Copy is valid JSON of what is shown", () => {
   });
 });
 
-describe("docs/33 C3: jsonCodeNode — one formatted code block", () => {
+describe("SPEC §mcp.calls: jsonCodeNode — one formatted code block", () => {
   it("prints exactly JSON.stringify(v, null, 2) for a plain value", () => {
     const v = { s: "a \"q\" \\ b", n: -1.5e3, t: true, f: false, z: null, e: {}, a: [], nest: [{ k: [1, { deep: "ü" }] }] };
     const code = jv.jsonCodeNode(v, false);
@@ -200,7 +200,7 @@ describe("docs/33 C3: jsonCodeNode — one formatted code block", () => {
   });
 });
 
-describe("docs/33 C3: a call paints its blocks as code, with Copy, Copy raw and Show all", () => {
+describe("SPEC §mcp.calls: a call paints its blocks as code, with Copy, Copy raw and Show all", () => {
   it("both blocks are code blocks - a short one on one line - each with one Copy and a ⋯", () => {
     const host = paint({ calls: [call()], callsOpen: { 7: true } });
     expect(block(host, "args:7").querySelector("pre.jv")!.textContent).toBe('{"command": "GET", "args": ["k"]}');
@@ -212,7 +212,7 @@ describe("docs/33 C3: a call paints its blocks as code, with Copy, Copy raw and 
     expect(host.querySelector('[data-copy="out:7"]')!.textContent, "the glyph is the whole button").toBe("");
     expect(host.querySelector('[data-blkmore="args:7"]')!.getAttribute("aria-label")).toBe("More for the arguments");
     expect(host.querySelector('[data-blkmore="out:7"]')!.getAttribute("aria-label")).toBe("More for the result");
-    expect(host.querySelector("[data-copyraw]"), "Copy raw is behind the ⋯, not a standing button (docs/46 §3.2)").toBeNull();
+    expect(host.querySelector("[data-copyraw]"), "Copy raw is behind the ⋯, not a standing button (SPEC §panel.pages)").toBeNull();
     expect(block(host, "args:7").querySelector(".vblock-cap")!.textContent).toBe("Arguments");
     expect(host.querySelector(".jtree, [data-jtree]"), "the folding tree is gone").toBeNull();
   });
@@ -237,7 +237,7 @@ describe("docs/33 C3: a call paints its blocks as code, with Copy, Copy raw and 
     expect(block(empty, "out:7").querySelector("pre.logs")!.textContent).toBe("(empty)");
   });
 
-  it("a closed row paints no body; an open one paints its meta and both blocks (docs/46 §2.4)", () => {
+  it("a closed row paints no body; an open one paints its meta and both blocks (SPEC §panel.ui)", () => {
     const shut = paint({ calls: [call()] });
     expect(shut.querySelector(".tl-item.open")).toBeNull();
     expect(shut.querySelectorAll("pre.jv").length, "a closed row costs no code block").toBe(0);
@@ -269,7 +269,7 @@ describe("docs/33 C3: a call paints its blocks as code, with Copy, Copy raw and 
   });
 });
 
-describe("docs/46 §3.2: a call is one event-list row", () => {
+describe("SPEC §panel.pages: a call is one event-list row", () => {
   it("time, tool, arguments, the duration - no date, no transport, no size on the row", () => {
     const host = paint({ calls: [call({ ms: 1250 })] });
     const row = host.querySelector<HTMLElement>('.tl-item[data-callseq="7"]')!;
@@ -313,7 +313,7 @@ describe("docs/46 §3.2: a call is one event-list row", () => {
   });
 });
 
-describe("docs/33 C3: copy text and in-place repaint read the call row", () => {
+describe("SPEC §mcp.calls: copy text and in-place repaint read the call row", () => {
   it("Copy gives formatted JSON of the decoded reply, Copy raw the stored text; the full reply wins", () => {
     const d = stub({ calls: [call({ output: ZHIPU, preview: true })] });
     expect(logs.callBlockCopyText(d, "out:7", true)).toBe(ZHIPU);
@@ -339,7 +339,7 @@ describe("docs/33 C3: copy text and in-place repaint read the call row", () => {
   });
 });
 
-describe("docs/33: compact wire text is formatted only for display", () => {
+describe("SPEC §mcp.calls: compact wire text is formatted only for display", () => {
   it("pretty-prints compact JSON while preserving the gateway truncation note", () => {
     const raw = '{"rowCount":1,"rows":[{"id":1}]}\n\n[showing the first 1 of 4 items. Narrow the request.]';
     expect(logs.fmtJson(raw)).toBe(
@@ -354,7 +354,7 @@ describe("docs/33: compact wire text is formatted only for display", () => {
   });
 });
 
-describe("docs/33 C1: the clipboard path", () => {
+describe("SPEC §mcp.calls: the clipboard path", () => {
   it("copyLogText uses the async clipboard and says Copied", async () => {
     const wrote: string[] = [];
     vi.stubGlobal("navigator", {

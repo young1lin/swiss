@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* A user-named container (rule 5, docs/35): a header BAND over its members - chevron, name,
+/* A user-named container (rule 5, SPEC §panel.groups): a header BAND over its members - chevron, name,
  * count leading; + (always, dimmed) and ⋯ (hover) trailing. Two densities: "side" (the
  * sidebar, 28px band, members one grid step in) and "page" (the band across the top of a
  * card, rows edge to edge under it). ui.css holds the x-coordinate contract.

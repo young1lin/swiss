@@ -62,7 +62,7 @@ const mod = await import(
   dbDdlIndexSuggestion: (t: string, cols: string[]) => string;
 };
 
-// docs/22 W4.6: the pure layer under the DDL sheets — the (op, payload) body both endpoints
+// SPEC §data.ddl: the pure layer under the DDL sheets — the (op, payload) body both endpoints
 // take, the three-bucket diff that keeps the commit to its added bucket, and the datalist's
 // suggestions. The SQL itself is built server-side; these pin what the panel sends it.
 describe("dbDdlTypeOptions", () => {

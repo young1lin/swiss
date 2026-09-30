@@ -15,7 +15,7 @@
  */
 // @vitest-environment happy-dom
 
-/* docs/46 §2.5, P1b-2 - the three DOM-only mechanisms the library took over: the floating
+/* SPEC §panel.ui - the three DOM-only mechanisms the library took over: the floating
    menu (ui/menu.ts), the select (ui/select.ts) and the sheet (ui/sheet.ts). Each is driven on
    a real DOM with dispatched keys and clicks, and each key test also listens where main.ts
    listens - a bubbling keydown on document - because the bugs these moves fixed were keys
@@ -89,7 +89,7 @@ describe("ui/menu - popupMenu", () => {
   });
 
   it("such a row is a flex row in ui.css - inline, the glyph touched its label and the dot drew nothing", () => {
-    // Found by the gallery walk (docs/46 P1b-3), shipped that way since docs/43 M1: the dot is
+    // Found by the gallery walk (SPEC §panel.ui), shipped that way since SPEC §data.tabs: the dot is
     // a sized span, and a sized inline span has no box. Layout is the browser's to prove (the
     // walk measures the dot); this pins the rule that gives it one.
     const rule = parseCss(styleSheet("ui.css")).find((r) => !r.at && r.selectors.some((sel) => /^\.menu button:has\(/.test(sel) && sel.includes(".ic") && sel.includes(".db-tab-dot")));

@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-/* Small cross-module DOM shapes, ambient globals on purpose (docs/36 D6). These are
+/* Small cross-module DOM shapes, ambient globals on purpose (SPEC §panel.toolchain). These are
    panel-side conventions, not API shapes - menu items and empty states are built by one
    module and read by many, so the shape lives where both sides can see it. The built-in
    augmentations this file once carried (Function, EventTarget, RegExp) are retired by
-   docs/37 M3: handlers read e.currentTarget, guards narrow with instanceof, and the
+   SPEC §panel.lint: handlers read e.currentTarget, guards narrow with instanceof, and the
    module-scoped singletons live in their modules now. */
 
-/** The popupMenu row shapes live with the menu itself now (ui/menu.ts, docs/46 P1b-2); the
+/** The popupMenu row shapes live with the menu itself now (ui/menu.ts, SPEC §panel.ui); the
  *  re-export keeps every "import type { MenuItem } from ./types/dom.js" site compiling. */
 import type { ApiMcpRow } from "./api.js";
 import type { MenuItem } from "../ui/menu.js";
@@ -37,7 +37,7 @@ export interface PageMenuItemSpec {
   fn?: (ev?: MouseEvent) => void;
 }
 
-/** The module contract every page entry exports (docs/13): mount owns the pane while
+/** The module contract every page entry exports (SPEC §panel.nav): mount owns the pane while
  *  mounted; the optional hooks are called by the shell exactly when present. */
 export interface PageModule {
   mount?: (ctx: { signal: AbortSignal }) => void | Promise<void>;
@@ -49,7 +49,7 @@ export interface PageModule {
   hasPendingChanges?: () => boolean;
 }
 
-/** One empty state - util.ts emptyHtml opts (docs/18 V7): every view's nothing-here is
+/** One empty state - util.ts emptyHtml opts (SPEC §panel.design): every view's nothing-here is
  *  this shape. action, when present, renders the ghost button and names the data-empty-action
  *  the owning view wires. */
 /** One page descriptor as the registry stores it after valid(): the server rows plus the
@@ -107,7 +107,7 @@ export interface GroupedRow {
  *  fields every renderer reads, absent the ones only a real row carries. */
 export type PhantomMcpRow = Partial<ApiMcpRow> & { name: string; state: string; type: string; source: string; lifecycle: string };
 
-/** The one grouped-list component's configuration (groups.ts mountGroup, docs/20 section 4):
+/** The one grouped-list component's configuration (groups.ts mountGroup, SPEC §panel.groups):
  *  everything a scope owns - row markup, ids, its own moves - while the component owns the
  *  band, the folds, the drags and the /api/groups/{scope} family. Row-generic: mcps, conns,
  *  rules, jobs, secrets, tokens and targets all pass their own row type through it. */
@@ -122,7 +122,7 @@ export interface GroupCfg<Row> {
   noun: string;
   addTitle?: (group: string) => string;
   onAdd?: (group: string) => void;
-  /* docs/43 M2 (the Data tree): optional gates and overrides for scopes whose bands are
+  /* SPEC §data.tabs (the Data tree): optional gates and overrides for scopes whose bands are
    *  DERIVED from data rather than named by the operator. label renames a band for display
    *  without touching the collapse key; canAdd gates the header + per band; moreItems
    *  replaces the stock Move/Rename/Delete list (null = this band gets no ellipsis at all,
@@ -135,7 +135,7 @@ export interface GroupCfg<Row> {
   moreTitle?: (group: string) => string;
   emptyText?: (group: string) => string;
   countOf?: (slice: { name: string; rows: unknown[] }) => number;
-  /* docs/43 addendum (the 200-row wall): optional render cap for bands whose rows run into
+  /* SPEC §data.tabs (the 200-row wall): optional render cap for bands whose rows run into
    *  the thousands. Given the band's FULL row list, answer how many to paint and the note
    *  row to append under them (null = paint everything, no note). The band's count badge
    *  still numbers the full list - the cap is a DOM budget, not a redefinition of what the
@@ -146,7 +146,7 @@ export interface GroupCfg<Row> {
   afterDrag?: () => void;
   drag?: { get(): string | null | undefined; set(value: string | null): void };
   dragGroup?: { get(): string | null | undefined; set(value: string | null): void };
-  /* The row builder every scope supplies (docs/37 R5): the component wires click + drag on
+  /* The row builder every scope supplies (SPEC §panel.toolchain): the component wires click + drag on
    * the node it hands back. The pre-R5 rowsHtml + rowSel string path retired with the last
    * unconverted scope. */
   rowNode?: (row: Row) => HTMLElement;
@@ -177,7 +177,7 @@ export interface FieldSpec {
   def?: boolean;
 }
 
-/** A pg url decomposed into the form's parts (fields.ts parsePgUrl; docs/30). */
+/** A pg url decomposed into the form's parts (fields.ts parsePgUrl; SPEC §mcp.panel). */
 export interface PgUrlParts {
   host: string;
   port: string;

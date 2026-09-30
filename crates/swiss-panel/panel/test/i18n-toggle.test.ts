@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-/* The chrome repaint and the 文/A flip guard (docs/38 §2.5): paintChrome rewrites the
+/* The chrome repaint and the 文/A flip guard (SPEC §panel.i18n): paintChrome rewrites the
    static index.html strings through tr() (English writes the same text back), and a
    canLeave veto aborts the flip BEFORE the preference is written — the guard must not cost
    the user their language. page-registry is mocked because toggleLang consults it at click
@@ -49,7 +49,7 @@ function chromeSkeleton(): string {
   ].join("");
 }
 
-describe("paintChrome and the language flip (docs/38 §2.5)", () => {
+describe("paintChrome and the language flip (SPEC §panel.i18n)", () => {
   beforeEach(() => {
     document.body.innerHTML = chromeSkeleton();
     document.documentElement.lang = "en";
@@ -78,7 +78,7 @@ describe("paintChrome and the language flip (docs/38 §2.5)", () => {
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 
-  it("the back-to-top button the shell built at boot follows the flip (docs/46 U18)", () => {
+  it("the back-to-top button the shell built at boot follows the flip (SPEC §panel.ui)", () => {
     const pane = document.createElement("main");
     document.body.appendChild(pane);
     trackPaneScroll(pane);
@@ -94,7 +94,7 @@ describe("paintChrome and the language flip (docs/38 §2.5)", () => {
     await toggleLang();
     expect(localStorage.getItem(LANG_KEY)).toBe(null);
     expect(document.documentElement.lang).toBe("en");
-    // A button that answers a click with nothing reads as broken (found live, docs/42 T2).
+    // A button that answers a click with nothing reads as broken (found live, SPEC §data.tabs).
     const t = document.getElementById("toast")!;
     expect(t.hidden).toBe(false);
     expect(t.textContent).toContain("Unsaved changes");

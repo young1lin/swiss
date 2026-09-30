@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! One-shot WebSocket tickets (docs/14 §3).
+//! One-shot WebSocket tickets (SPEC §terminal.api).
 //!
 //! A browser cannot put a header on a WebSocket handshake, so the only thing the gateway
 //! can check on the upgrade is what `loopback_guard` already checks: peer IP, `Host` and
@@ -35,7 +35,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-/// docs/14 §3. Long enough for the panel to POST a session and open the socket; far too
+/// SPEC §terminal.api. Long enough for the panel to POST a session and open the socket; far too
 /// short to be worth writing down anywhere.
 pub const TICKET_TTL: Duration = Duration::from_secs(10);
 

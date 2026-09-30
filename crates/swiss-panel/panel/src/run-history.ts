@@ -46,7 +46,7 @@ function histWhen(iso: string): string {
 
 /** The control's closed label. "Past runs (12)" says what it opens and how much is in it, so
  *  the closed control explains itself without looking like a form value — the history glyph
- *  beside the words is the i-history sprite the paint sites carry (fix-plan #14). */
+ *  beside the words is the i-history sprite the paint sites carry (SPEC §panel.design). */
 function histButtonLabel(d: McpDetail, tool: string): string {
   if (d.run.histTool !== tool) return tr("runHistory.pastRuns"); // never loaded, or a fetch in flight
   const n = (d.run.hist || []).length;
@@ -131,7 +131,7 @@ function histOpen(): void {
     h("div", { class: "hist-view", id: "r-hist-view" },
       h("div", { class: "hist-empty" }, tr("runHistory.hoverRunSeeFull"))));
   document.body.appendChild(pop);
-  // One delegated listener triplet on the popover (docs/37 R5) instead of three handlers
+  // One delegated listener triplet on the popover (SPEC §panel.toolchain) instead of three handlers
   // re-attached to every row on every filter repaint: rows come and go, the listener stays.
   pop.onclick = (ev: MouseEvent): void => {
     const row = targetEl(ev)?.closest<HTMLElement>(".hist-row");
@@ -302,7 +302,7 @@ async function applyRunHistory(seq: number): Promise<void> {
   histClose();
 }
 
-/* wireHistRows retired with the delegated popover listener (docs/37 R5): the rows used to
+/* wireHistRows retired with the delegated popover listener (SPEC §panel.toolchain): the rows used to
    re-attach three handlers each on every filter repaint; the popover's own listener now
    answers click/hover/focus for whichever rows exist, and a repaint wires nothing. */
 
@@ -382,13 +382,13 @@ function renderRunResult(): void {
   if (!out || !d) return;
   const res = d.run.result as McpRunResult | null;
   if (!res) { fill(out); if (meta) meta.textContent = ""; return; }
-  // The reply as Logs shows one (docs/46 §3.2); the size in the meta line is the real (compact)
+  // The reply as Logs shows one (SPEC §panel.pages); the size in the meta line is the real (compact)
   // reply, not the formatted text.
   fill(out, valueBlock({ label: res.ok ? tr("runHistory.result") : tr("runHistory.error") }, ...readableBody(res.text, !res.ok)));
   if (meta) {
     const bytes = new TextEncoder().encode(res.text).length;
-    // ms reuses runHistory.durationMs; B/KB are unit format strings, not copy (docs/38
-    // §2.1) - both hoisted so the write itself carries only translated text and the
+    // ms reuses runHistory.durationMs; B/KB are unit format strings, not copy (SPEC §panel.i18n)
+    // - both hoisted so the write itself carries only translated text and the
     // "  ·  " separators.
     const ms = res.ms != null ? tr("runHistory.durationMs", { ms: res.ms }) : "";
     const size = bytes < 1024 ? bytes + " B" : (bytes / 1024).toFixed(1) + " KB";
@@ -460,7 +460,7 @@ function configBodyNode(d: McpDetail): HChild {
     // Stored values for the MCP's own type, nothing for a different one — then whatever the user has
     // already typed on top, so a type switch or a rejected save doesn't empty the form.
     const vals = Object.assign({}, type === ((d.config && d.config.type) || "proc") ? d.config : {}, d.editVals || {});
-    // docs/30: a pg def stores one url; the form edits the pieces. Split it here (once, the same
+    // SPEC §mcp.panel: a pg def stores one url; the form edits the pieces. Split it here (once, the same
     // parser the submit path mirrors) — an unparseable url falls back to a raw field and rides
     // through save untouched (__pgRaw), because old experience beats lost data.
     if (type === "pg" && vals.url !== undefined) {
@@ -612,7 +612,7 @@ function tunnelDepsNode(d: McpDetail): HChild {
   return section({ cap: tr("runHistory.depends") }, card(rows));
 }
 
-/** docs/33 C3: the one way a call row opens or closes, from a click or from Enter/Space. The
+/** SPEC §mcp.calls: the one way a call row opens or closes, from a click or from Enter/Space. The
  *  operator opens a call to read its result, so a reply the page clipped to its 2 KB preview is
  *  fetched whole right away instead of waiting behind a Show full result click. */
 function openOrCloseCall(seq: number): void {
@@ -620,7 +620,7 @@ function openOrCloseCall(seq: number): void {
 }
 
 
-/* --- pane-level delegation (docs/37 R5) --------------------------------------------------------
+/* --- pane-level delegation (SPEC §panel.toolchain) --------------------------------------------------------
    wireTabBody used to walk the fresh tab body after every paint and assign ~34 handlers; each
    repaint re-attached them, and several handlers closed over the detail object the render
    happened under. The tab body's events now ride the ONE listener per event type that
@@ -663,7 +663,7 @@ function paneTabClick(ev: MouseEvent): void {
   const resTog = t.closest<HTMLButtonElement>("[data-restog]");
   if (resTog) { void toggleResources(resTog.dataset.restog === "1", resTog); return; }
   // Logs tab
-  // docs/32 B4: Clear lives behind the toolbar's ellipsis menu — a destructive action does not
+  // SPEC §mcp.calls: Clear lives behind the toolbar's ellipsis menu — a destructive action does not
   // get a standing button in the filter row. The house popupMenu (menu.js) carries the item.
   const clMenuBtn = t.closest<HTMLElement>("#clMenu");
   if (clMenuBtn) {
@@ -676,14 +676,14 @@ function paneTabClick(ev: MouseEvent): void {
     ]);
     return;
   }
-  // docs/32 B2: a keyboard activation (Enter/Space on a focused button) carries detail === 0 —
+  // SPEC §mcp.calls: a keyboard activation (Enter/Space on a focused button) carries detail === 0 —
   // that action owes the user focus back on the equivalent button once the switch commits.
   if (t.id === "clPrev") { callsPageStep(-1, { fromKey: ev.detail === 0 }); return; }
   if (t.id === "clNext") { callsPageStep(1, { fromKey: ev.detail === 0 }); return; }
   if (t.id === "clRetry") { callsRetry({ fromKey: ev.detail === 0 }); return; }
-  // docs/33 C3: a block's Copy (formatted: the decoded structure as valid JSON) and Copy raw
+  // SPEC §mcp.calls: a block's Copy (formatted: the decoded structure as valid JSON) and Copy raw
   // (the text exactly as stored). Both read the CALL ROW, not the painted DOM, so a block cut at
-  // its line cap still copies everything. docs/46 §3.2: Copy is the block's one visible button;
+  // its line cap still copies everything. SPEC §panel.pages: Copy is the block's one visible button;
   // Copy raw is the one item behind its ⋯.
   const copyBtn = t.closest<HTMLElement>("[data-copy]");
   if (copyBtn) {
@@ -709,7 +709,7 @@ function paneTabClick(ev: MouseEvent): void {
     }]);
     return;
   }
-  // docs/33 C3: Show all lifts one block's line cap; the choice is state, so a poll repaint of
+  // SPEC §mcp.calls: Show all lifts one block's line cap; the choice is state, so a poll repaint of
   // the list keeps the block whole.
   const showAll = t.closest<HTMLElement>("[data-showall]");
   if (showAll) {
@@ -737,7 +737,7 @@ function paneTabClick(ev: MouseEvent): void {
 function paneTabChange(ev: Event): void {
   const t = targetEl(ev);
   if (!t) return;
-  // Selects climb too (docs/37 R5): a change event's target is the select itself today, but
+  // Selects climb too (SPEC §panel.toolchain): a change event's target is the select itself today, but
   // matching by closest keeps the dispatcher's one idiom instead of two.
   const eType = t.closest<HTMLSelectElement>("#e-type");
   if (eType) { changeEditType(eType.value); return; }
@@ -751,7 +751,7 @@ function paneTabChange(ev: Event): void {
   }
 }
 
-/** The calls search box (docs/31): debounced server-side reload. The input node itself carries
+/** The calls search box (SPEC §mcp.calls): debounced server-side reload. The input node itself carries
  *  no handler — this dispatcher sees every keystroke from #pane, and renderCallsOnly's swap-back
  *  of the live #callsQ node needs no re-wiring to keep working. */
 function paneTabInput(ev: Event): void {
@@ -767,7 +767,7 @@ function paneTabInput(ev: Event): void {
   d.callsQTimer = setTimeout(() => {
     const nd = mcpDetail();
     if (!nd || nd.name !== d.name) return;
-    // docs/32 B3: a new needle supersedes any switch in flight — target page 0, the
+    // SPEC §mcp.calls: a new needle supersedes any switch in flight — target page 0, the
     // pending switch cancelled, its error taken down.
     nd.callsQ = q.value;
     nd.callsPage = 0;
@@ -784,7 +784,7 @@ function paneTabKeydown(ev: KeyboardEvent): void {
   const t = targetEl(ev);
   if (!t) return;
   if (t.id === "callsQ") {
-    // Escape clears at once (docs/31): no debounce, no wait. #callsQ is the calls
+    // Escape clears at once (SPEC §mcp.calls): no debounce, no wait. #callsQ is the calls
     // search input - see paneTabInput for why the narrow is an id, not instanceof.
     const q = t as HTMLInputElement;
     if (ev.key !== "Escape" || !q.value) return;
@@ -909,10 +909,10 @@ function renderCallsOnly(): void {
   const body = $("tabbody");
   if (!body) return;
   // Repaint only when the log actually changed — otherwise a 6 s poll would scroll an open result
-  // back to the top while it is being read. The needle counts too (docs/31): a cleared or changed
+  // back to the top while it is being read. The needle counts too (SPEC §mcp.calls): a cleared or changed
   // search must repaint even when the row count happens to stay the same.
   const calls = d.calls || [];
-  // The page, a pending switch and the error state are part of the picture now (docs/32 B1):
+  // The page, a pending switch and the error state are part of the picture now (SPEC §mcp.calls):
   // a commit or a failure must repaint even when the row count happens to stay the same.
   const sig = (calls.length ? calls[0].seq : 0) + ":" + calls.length + ":" + d.stderr.length + ":" + (d.callsQ || "") +
     ":p" + d.callsPage + ":w" + (d.callsPendingPage == null ? "-" : d.callsPendingPage) + ":e" + (d.callsError || "");
@@ -932,7 +932,7 @@ function renderCallsOnly(): void {
     try { liveQ.setSelectionRange(caret, caret); } catch (err) { /* type=search supports it; guard anyway */ }
   }
   body.dataset.callsig = sig;
-  // No re-wiring here (docs/37 R5): the pager, the copy buttons and the search box answer
+  // No re-wiring here (SPEC §panel.toolchain): the pager, the copy buttons and the search box answer
   // through #pane's delegated listeners, which a body repaint never disturbs. The swap-back
   // of the live #callsQ node needs no re-attached oninput for the same reason.
 }

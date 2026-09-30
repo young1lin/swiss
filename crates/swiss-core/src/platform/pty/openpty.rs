@@ -151,7 +151,7 @@ impl Drop for PtyPump {
 }
 
 /// The shell a local session gets when the configuration names none: $SHELL, then
-/// /bin/sh. Unix is unchanged by docs/15 §2.1 (the pwsh default order is a Windows gap).
+/// /bin/sh. Unix is unchanged by SPEC §terminal.local (the pwsh default order is a Windows gap).
 pub fn default_shell() -> PtyCommand {
     PtyCommand::new(std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()))
 }

@@ -15,7 +15,7 @@
  */
 
 /* ================================================================================================
-   h() — the element builder R5 replaces string-concatenated innerHTML with (docs/37 §7).
+   h() — the element builder R5 replaces string-concatenated innerHTML with (SPEC §panel.toolchain).
 
    util.ts' el(tag, cls, text) covers "a div with a class and a label" and nothing more, so every
    row, chip and form in this panel is built by gluing strings together and assigning the result to

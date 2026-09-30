@@ -17,13 +17,13 @@
 import { describe, it, expect } from "vitest";
 import { fitTabs } from "../src/page-registry.js";
 
-/* The tab strip's fitting rule (docs/39 S3), pinned with the spec's own numbers: all fit
+/* The tab strip's fitting rule (SPEC §panel.nav), pinned with the spec's own numbers: all fit
  * when they fit; otherwise the ⋯ seat is reserved, tabs stay in order while they fit, and
  * the ACTIVE page is guaranteed a visible slot even when it fell into the overflow. Pure
  * numbers in, ids out - the DOM half only toggles hidden. */
 const three = [{ id: "a", width: 60 }, { id: "b", width: 60 }, { id: "c", width: 60 }];
 
-describe("fitTabs (docs/39 S3)", () => {
+describe("fitTabs (SPEC §panel.nav)", () => {
   it("everything fits: all visible, no overflow", () => {
     expect(fitTabs(three, "a", 300, 32)).toEqual({ visible: ["a", "b", "c"], overflow: [] });
   });

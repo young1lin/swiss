@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-//! The /api/terminal routes (docs/14 §8) — the HTTP and WebSocket half of the session
-//! machine that lives in [swiss_terminal] (docs/14 T4).
+//! The /api/terminal routes (SPEC §terminal.api) — the HTTP and WebSocket half of the session
+//! machine that lives in [swiss_terminal] (SPEC §terminal.sessions).
 //!
 //! Mounted through the extra tree in server.rs, which is the whole reason this file sits
 //! in the composition crate and not in swiss-terminal: build_app layers the loopback guard
@@ -40,11 +40,11 @@
 //! - the WRITE half owns the sink plus the attachment's frame receiver and stalled
 //!   watcher. It is the only place the attachment exists, so when it returns — client
 //!   gone, socket unwritable, or the driver closed — the attachment halves drop and the
-//!   session's reconnect grace window STARTS (docs/14 §6.7). Leaking them into a
+//!   session's reconnect grace window STARTS (SPEC §terminal.sessions). Leaking them into a
 //!   longer-lived task would tell the driver its client is still attached.
 //! - the READ half owns the stream, because keystrokes must keep flowing while the write
 //!   half is parked on a client that stopped reading. That independence IS the
-//!   backpressure design (docs/14 §6.8), not an optimization: a Ctrl-C typed into a
+//!   backpressure design (SPEC §terminal.sessions), not an optimization: a Ctrl-C typed into a
 //!   flooding terminal has to get through.
 //!
 //! There is no extra outbound buffer on purpose: the queue that matters is the driver's
@@ -162,7 +162,7 @@ fn view_json(view: impl serde::Serialize) -> Response {
     }
 }
 
-/// One PTY axis, rejected as a 400 rather than clamped (docs/14 §8: a 0-column PTY is
+/// One PTY axis, rejected as a 400 rather than clamped (SPEC §terminal.api: a 0-column PTY is
 /// undefined behaviour on the far side, so out of range is a refusal, not a default).
 /// Checked as u64 BEFORE the cast — 70000 as u16 would wrap straight past the range.
 fn axis(value: Option<&Value>, name: &str) -> Result<u16, String> {
@@ -255,7 +255,7 @@ async fn open_session(State(t): State<Arc<TerminalState>>, body: NodeBody) -> Re
     }
 }
 
-/// The reconnect half of the ticket flow — the one route docs/14 §8 does not list. A
+/// The reconnect half of the ticket flow — the one route SPEC §terminal.api does not list. A
 /// ticket lives TICKET_TTL (10 s) and a grace window lives graceSeconds (60 s), so the
 /// ticket minted at open can never serve a reconnect: the panel must mint a fresh one
 /// here, then open the socket with it.
@@ -292,7 +292,7 @@ async fn resize_session(
         Ok(size) => size,
         Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
     };
-    // The redundant channel on purpose (docs/14 §8): during a reconnect gap there is no
+    // The redundant channel on purpose (SPEC §terminal.api): during a reconnect gap there is no
     // socket to send a resize frame on, but the panel's window already changed.
     match sessions.resize(&id, size).await {
         Ok(()) => admin_json(StatusCode::OK, json!({ "id": id, "resized": true })),
@@ -427,7 +427,7 @@ async fn write_side(
 }
 
 /// The inbound half: keystrokes and resize frames to the session. Independent of
-/// write_side so a parked outbound send never blocks keystrokes (docs/14 §6.8).
+/// write_side so a parked outbound send never blocks keystrokes (SPEC §terminal.sessions).
 async fn read_side(
     mut stream: SplitStream<WebSocket>,
     sessions: Arc<TerminalSessions>,
@@ -436,7 +436,7 @@ async fn read_side(
 ) {
     while let Some(Ok(message)) = stream.next().await {
         match message {
-            // Raw PTY bytes, both directions, no wrapping (docs/14 §8): a terminal can
+            // Raw PTY bytes, both directions, no wrapping (SPEC §terminal.api): a terminal can
             // produce megabytes a second and every layer of framing is pure cost.
             Message::Binary(bytes) => {
                 if sessions.input(&id, bytes.to_vec()).await.is_err() {
@@ -451,7 +451,7 @@ async fn read_side(
                 }
                 // Anything else — unknown t, missing fields, wrong types, absurd
                 // geometry — is ignored, strictly. A control frame a client improvised
-                // must never crash the pump (docs/14 §8).
+                // must never crash the pump (SPEC §terminal.api).
             }
             // Ping/Pong are answered by the protocol layer itself; a Close falls
             // through to the None below.
@@ -498,7 +498,7 @@ mod tests {
 
     #[test]
     fn geometry_is_refused_not_clamped() {
-        // docs/14 §8: a 0-column PTY is undefined behaviour on the far side.
+        // SPEC §terminal.api: a 0-column PTY is undefined behaviour on the far side.
         assert!(geometry(&json!({ "cols": 80, "rows": 24 })).is_ok());
         let err = geometry(&json!({ "cols": 0, "rows": 24 })).unwrap_err();
         assert!(err.contains("cols must be between 1 and 1000"), "{err}");
@@ -524,7 +524,7 @@ mod tests {
         assert!(parse_control("not json at all").is_none());
     }
 
-    /// docs/15 §2.3: the targets route's local object carries the candidate shells (an
+    /// SPEC §terminal.api: the targets route's local object carries the candidate shells (an
     /// array of {program,label}) and a shell that is a resolved absolute path, so the
     /// panel's `local · …` label and the settings sheet's dropdown are the truth about
     /// this host. Driven through the mounted router with a fixed fake local shell.
@@ -609,7 +609,7 @@ mod tests {
             std::path::Path::new(shell).is_absolute(),
             "resolved to an absolute path, got {shell}"
         );
-        // The old fields are untouched — an older panel still reads them (docs/15 §2.2).
+        // The old fields are untouched — an older panel still reads them (SPEC §terminal.api).
         assert_eq!(body["local"]["enabled"], json!(false));
     }
 

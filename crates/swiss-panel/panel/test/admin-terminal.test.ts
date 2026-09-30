@@ -25,7 +25,7 @@ import {
   streamUrl, tabLabel, targetRows, termTheme, ticketUrl, trimSelection, wheelAction, withLocalConfig,
 } from "../src/terminal-core.js";
 
-/** The pure half of the terminal view (docs/14 §8): everything the page decides without
+/** The pure half of the terminal view (SPEC §terminal.api): everything the page decides without
  *  a DOM is pinned here, because these ARE the wire contract's client side — URL shapes,
  *  reconnect pacing inside the 60 s grace, the close-frame stories, geometry clamping to
  *  the PTY bounds, and the target picker's honesty about an absent remote side. */
@@ -158,7 +158,7 @@ describe("terminal target picker rows", () => {
   });
 });
 
-describe("terminal key bindings (Windows Terminal semantics, docs/15 §1)", () => {
+describe("terminal key bindings (Windows Terminal semantics, SPEC §terminal.panel)", () => {
   /** The duck-typed event keyAction takes: a plain object, not a KeyboardEvent, so a
    *  test can press any combination without a DOM — the same shape xterm hands the
    *  custom key handler. */
@@ -252,7 +252,7 @@ describe("terminal font zoom (Windows Terminal keys)", () => {
   });
 });
 
-describe("terminal right-click (Windows Terminal semantics, docs/15 §1)", () => {
+describe("terminal right-click (Windows Terminal semantics, SPEC §terminal.panel)", () => {
   it("pastes with no selection, copies one away, Shift keeps the browser menu", () => {
     const right = (shift: boolean) => ({ button: 2, shiftKey: shift });
     expect(mouseAction(right(false), false)).toBe("paste");
@@ -264,7 +264,7 @@ describe("terminal right-click (Windows Terminal semantics, docs/15 §1)", () =>
   });
 });
 
-describe("local shell settings (docs/15 §2)", () => {
+describe("local shell settings (SPEC §terminal.local)", () => {
   it("labels the local row with the candidate's name when one matches", () => {
     const local = {
       enabled: true,
@@ -313,7 +313,7 @@ describe("local shell settings (docs/15 §2)", () => {
   });
 });
 
-describe("terminal tab labels (rename > shell title > target, docs/22 consensus 1)", () => {
+describe("terminal tab labels (rename > shell title > target, SPEC §terminal.panel)", () => {
   it("prefers a manual rename over the shell's title over the target", () => {
     const s = { target: "local", label: "Local shell" } as ApiTerminalSessionRow;
     expect(tabLabel(s, "vim ~/.bashrc", "my tab")).toBe("my tab");
@@ -327,7 +327,7 @@ describe("terminal tab labels (rename > shell title > target, docs/22 consensus 
   });
 });
 
-describe("scroll pinning (Tabby's rule, docs/22 §2.10)", () => {
+describe("scroll pinning (Tabby's rule, SPEC §terminal.panel)", () => {
   it("rides the bottom within one line of the base", () => {
     expect(isPinned(10, 10)).toBe(true);
     expect(isPinned(9, 10)).toBe(true);   // baseY - 1: the wrap edge still counts as riding
@@ -374,7 +374,7 @@ describe("stored terminal preferences", () => {
   });
 });
 
-describe("terminal tab shortcuts (Alt-combos) and search (docs/22 P0/P1)", () => {
+describe("terminal tab shortcuts (Alt-combos) and search (SPEC §terminal.panel)", () => {
   const ev = (over: Record<string, unknown>) =>
     ({ type: "keydown", key: "1", ...over }) as Parameters<typeof keyAction>[0];
   it("Alt+digits jump, Alt+arrows cycle, Alt+W closes", () => {
@@ -429,14 +429,14 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
     fileURLToPath(new URL("../src/views/terminal.ts", import.meta.url)), "utf8",
   );
 
-  it("says the context bar's session count in the reader's language (docs/46 P9 walk)", () => {
+  it("says the context bar's session count in the reader's language (SPEC §panel.ui, found on a walk)", () => {
     // The chip read "1 live" on the Chinese panel: countText() glued a bare English word to
-    // the number, in a position the docs/38 L10b scanner does not visit (a return value).
+    // the number, in a position the SPEC §panel.i18n scanner does not visit (a return value).
     expect(view).toContain('trn(sessions.length, "terminal.nLive.one", "terminal.nLive.other")');
     expect(view).not.toMatch(/\+ " live"/);
   });
 
-  it("republishes the context bar's count wherever the listing is replaced (docs/46 P9 walk)", () => {
+  it("republishes the context bar's count wherever the listing is replaced (SPEC §panel.ui, found on a walk)", () => {
     // Opening a session left the chip blank until another page's poll happened to redraw it:
     // reload() and poll() replaced `sessions` from the wire and repainted the tabs, never the
     // chip. Both write it now, the way remote.ts writes its own after a load.
@@ -446,7 +446,7 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
 
   it("resets the paintTabs memo wherever the DOM changed outside paintTabs", () => {
     // B1a: render() rebuilt the pane (fresh empty bar); B1b: done() replaced a node
-    // docs/37 M3: the memo moved from the function object (paintTabs.last) to a
+    // SPEC §panel.lint: the memo moved from the function object (paintTabs.last) to a
     // module-scoped paintTabsLast - the reset contract is the same.
     const resets = view.match(/paintTabsLast = null/g) ?? [];
     expect(resets.length).toBeGreaterThanOrEqual(2);
@@ -479,8 +479,8 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
     expect(view).toContain("\\x1b[?2004l");
   });
 
-  it("carries the three guidance tiers (docs/22 P0 guidance layer)", () => {
-    // tier 1: the empty state teaches the headline keys (built as nodes, docs/37 R5)
+  it("carries the three guidance tiers (SPEC §terminal.panel)", () => {
+    // tier 1: the empty state teaches the headline keys (built as nodes, SPEC §panel.toolchain)
     expect(view).toContain('h("p", { class: "term-keys-hint" }');
     expect(view).toContain('h("kbd", null, "Ctrl+Shift+F")');
     // tier 2: one first-attach hint, stored so it never returns
@@ -537,7 +537,7 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
   });
 });
 
-describe("terminal xterm theme (docs/46 P8-2: chrome from tokens, content literal)", () => {
+describe("terminal xterm theme (SPEC §panel.pages: chrome from tokens, content literal)", () => {
   /* A fake token reader stands in for getComputedStyle: the unit under test is the SPLIT -
    * background/cursor/selection follow the panel's --term-* tokens (so a theme switch can
    * re-read them), the 16 ANSI colours are CONTENT and never move. */
@@ -563,7 +563,7 @@ describe("terminal xterm theme (docs/46 P8-2: chrome from tokens, content litera
     expect(t.cursor).toBe("#e4e4e7");
   });
 
-  it("the 16 ANSI colours are content and stay ttyd's literal set (docs/46 U12)", () => {
+  it("the 16 ANSI colours are content and stay ttyd's literal set (SPEC §panel.pages)", () => {
     const t = termTheme(read({ background: "#0b0c0e", cursor: "#e4e4e7", selection: "rgba(0,0,0,0)" }));
     expect(t).toMatchObject({
       black: "#000000", red: "#d81e00", green: "#5ea702", yellow: "#cfae00",
@@ -586,7 +586,7 @@ describe("terminal xterm theme (docs/46 P8-2: chrome from tokens, content litera
   });
 });
 
-describe("the new-output chip takes its own click (docs/46 P9 walk)", () => {
+describe("the new-output chip takes its own click (SPEC §panel.ui, found on a walk)", () => {
   /* xterm's link layer is a transparent canvas the addon stamps with an INLINE z-index: 2
      across the whole screen. A chip with no z-index of its own paints over the text canvas
      but sits under that layer for hit-testing - visible, and every click on it landed in

@@ -26,11 +26,11 @@
 //!  - `port`    — local-port occupancy (probe / wait-for-release), the direct-Win32 owner
 //!    lookup, and Force free.
 //!  - `proxy`  — the HTTP CONNECT / SOCKS5 dialer a proxied connection dials through
-//!    before its SSH handshake (docs/27 §2): credentials reach the handshake as
+//!    before its SSH handshake (SPEC §tunnels.proxy): credentials reach the handshake as
 //!    components, never as a URL string.
 //!  - `ssh`     — one refcounted russh client per SSH connection: TOFU host keys, the banner,
 //!    single-flight dial, channel opens, the transport-death watcher, and the jump
-//!    chains that dial through another connection's live session (docs/27 §3).
+//!    chains that dial through another connection's live session (SPEC §tunnels.jump).
 //!  - `forward` — one rule's local listener: accept, cap, pipe socket <-> SSH channel, and the
 //!    close-destroys-everything-then-verify-release contract.
 //!  - `manager` — the live state machine: start/stop with per-rule serialization, reconnect
@@ -39,7 +39,7 @@
 //!  - `mcpmatch`— THE ROUTER SEAM: maps an MCP definition's loopback target to a local port,
 //!    which is how the panel suggests "this rule serves that MCP" and how the
 //!    manager knows a rule has live dependents. Read-only on the registry.
-//!  - `shell`  — the interactive-shell PROVIDER (docs/14 T2): the tunnels connections seen as
+//!  - `shell`  — the interactive-shell PROVIDER (SPEC §terminal.remote): the tunnels connections seen as
 //!    hosts a PTY can be opened on, handed to the host's shell capability so the
 //!    terminal plugin never links an SSH client.
 //!  - `import` — the one-shot forward-port config adoption on first run.
@@ -58,7 +58,7 @@ pub mod import;
 pub mod manager;
 pub mod mcpmatch;
 pub mod port;
-/// HTTP CONNECT / SOCKS5 dialing for proxied SSH connections (docs/27 §2).
+/// HTTP CONNECT / SOCKS5 dialing for proxied SSH connections (SPEC §tunnels.proxy).
 pub mod proxy;
 pub mod remote;
 pub mod shell;

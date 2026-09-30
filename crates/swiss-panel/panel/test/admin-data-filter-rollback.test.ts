@@ -23,7 +23,7 @@ import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), with child-tracking
    nodes so a test can walk the filter row's selects. confirm defaults to REFUSAL: the audit
    case is a user with buffered edits saying "no" to the discard gate.
-   docs/37 R5: the rows are built with h()/fill() and carry data-fi/data-fk/data-frm addresses
+   SPEC §panel.toolchain: the rows are built with h()/fill() and carry data-fi/data-fk/data-frm addresses
    instead of per-render handlers, so the stub extends the Node stub (h() instanceof-checks
    children), closest self-matches the attribute selectors the dispatchers climb, and the
    tests fire the exported dispatchers the pane's delegated listeners would call. */
@@ -106,7 +106,7 @@ function renderFilterRow(): { d: Record<string, any>; selects: Stub[] } {
   const c = dbConnState();
   c.conns = [dbConn("c", "mysql")];
   c.conn = "c"; c.gridCfg = { widths: {}, hidden: [] };
-  // The filter rows are the open table tab's (docs/42 T1); the callers read only tab
+  // The filter rows are the open table tab's (SPEC §data.tabs); the callers read only tab
   // fields through d, so d IS the narrowed tab.
   const tab = dbTab();
   if (tab.kind !== "table") throw new Error("fresh state must hold a table tab");
@@ -123,12 +123,12 @@ function renderFilterRow(): { d: Record<string, any>; selects: Stub[] } {
   return { d, selects: selects.slice(0, 2) }; // [column, operator]
 }
 
-describe("a refused discard leaves the filter row exactly as it was (docs/22 closeout audit)", () => {
+describe("a refused discard leaves the filter row exactly as it was (SPEC §data)", () => {
   it("changing the column select and refusing does not keep the new column", () => {
     const { d, selects } = renderFilterRow();
     const [cs] = selects;
     cs.value = "b";
-    // docs/37 R5: the pane's delegated change listener would resolve this select by its
+    // SPEC §panel.toolchain: the pane's delegated change listener would resolve this select by its
     // data-fi/data-fk address — the dispatcher is the pane's answer, fired directly.
     filters.dbFiltersChange(cs);
     expect(d.filters[0].column, "the row keeps its column").toBe("a");
@@ -142,7 +142,7 @@ describe("a refused discard leaves the filter row exactly as it was (docs/22 clo
     expect(d.filters[0].op, "the row keeps its operator").toBe("eq");
   });
 
-  it("the row's remove button stays after a refused discard (docs/22 closeout B6)", () => {
+  it("the row's remove button stays after a refused discard (SPEC §data)", () => {
     const { d } = renderFilterRow();
     const rm = find(byId.dbFilters, (n) => n.tag === "button" && n.title === "Remove this filter")[0];
     expect(rm, "the remove button carries its data-frm address").toBeTruthy();
@@ -151,7 +151,7 @@ describe("a refused discard leaves the filter row exactly as it was (docs/22 clo
     expect(d.filters[0].column).toBe("a");
   });
 
-  it("a pushed cell filter is taken back on a refused discard (docs/22 closeout B6)", () => {
+  it("a pushed cell filter is taken back on a refused discard (SPEC §data)", () => {
     const { d } = renderFilterRow();
     d.filters = []; // nothing on screen — the push is the only movement
     csv.dbPushCellFilter("a", "eq", "x");

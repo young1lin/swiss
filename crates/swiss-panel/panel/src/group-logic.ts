@@ -15,7 +15,7 @@
  */
 
 /* ================================================================================================
-   Group logic - the pure half of groups.js (docs/20 G4/G3).
+   Group logic - the pure half of groups.js (SPEC §host.groups).
 
    Data in, data out: no DOM, no localStorage, no fetch. That is the point - these rules are
    the contracts every scope shares (which group a row renders under, what the delete confirm
@@ -31,7 +31,7 @@ import { tr, trn } from "./i18n.js";
 
 /** The group a row renders under: its stored group while that group still exists, else the
  *  FIRST group - that slot is the sink for unassigned rows, whatever it is called (mirrors
- *  the server's one rule, docs/20 2.1). */
+ *  the server's one rule, SPEC §host.groups). */
 function groupOf(names: string[]): (row: GroupedRow | null | undefined) => string {
   const first = names[0] || DEFAULT_GROUP;
   return (row) => {
@@ -66,7 +66,7 @@ function deleteConfirmMsg(name: string, names: string[], count: number, noun: st
 /** A create title that says where the new thing goes ("New MCP in learn"). The group is
  *  part of the promise the + made; a sheet that opens unnamed breaks it. The old
  *  verb+noun composition ("Add an" + "MCP" + "to learn") could not survive translation
- *  (docs/38 L2: no concatenation in visible copy), so the sentence is one key. */
+ *  (SPEC §panel.i18n: no concatenation in visible copy), so the sentence is one key. */
 function addTitle(noun: string, group: string): string {
   return tr("groupLogic.newNounGroup", { noun, group });
 }

@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-//! The plugin host — P1 of docs/09: a small in-process host for statically linked built-in
+//! The plugin host — P1 of SPEC §host.plugins: a small in-process host for statically linked built-in
 //! plugins, with descriptors, page contributions, config rows in the ConfigStore, an explicit
 //! lifecycle, scoped task cleanup, and one live route boundary.
 //!
-//! What the host IS (and the only things allowed in here — docs/09 §3):
+//! What the host IS (and the only things allowed in here — SPEC §host.plugins):
 //! - the plugin state machine ([`PluginState`]) with serialized start/stop per plugin and
 //!   single-flight starts ([`PluginHost::reconcile`]);
 //! - per-plugin scoped resources ([`PluginScope`]): every task a plugin spawns is tracked,

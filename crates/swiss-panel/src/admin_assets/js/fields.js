@@ -62,7 +62,7 @@ const TYPE_FIELDS                              = {
     { k: "maxRows", label: tk("fields.defaultRowLimit"), num: true, half: true, ph: "200" },
     AUTOSTART_EAGER,
   ],
-  // docs/29: MariaDB speaks the MySQL wire protocol — this form is the mysql one verbatim
+  // SPEC §mcp.panel: MariaDB speaks the MySQL wire protocol — this form is the mysql one verbatim
   // (the server maps the type to the same engine); only the type string and the seal differ.
   mariadb: [
     DESC_FIELD,
@@ -80,7 +80,7 @@ const TYPE_FIELDS                              = {
     { k: "allowEval", label: tk("fields.allowLuaEvalFcall"), bool: true, hint: tk("fields.scriptOpaqueEveryOther") },
     AUTOSTART_EAGER,
   ],
-  // docs/30: the def keeps ONE url string; the form edits the pieces. parse/serialize below,
+  // SPEC §mcp.panel: the def keeps ONE url string; the form edits the pieces. parse/serialize below,
   // the same pair on open and on save, so an edit touches exactly the field it meant to.
   pg: [
     DESC_FIELD,
@@ -102,7 +102,7 @@ const TYPE_FIELDS                              = {
       ph: "Authorization=Bearer ${CONTEXT7_API_KEY}",
       hint: tk("fields.whereRemotesApiKey"),
     },
-    /* OAuth (docs/24): the checkbox is the def's auth string — checked sends "oauth", and the
+    /* OAuth (SPEC §mcp.oauth): the checkbox is the def's auth string — checked sends "oauth", and the
        gateway then owns Authorization end to end (register, consent, refresh). The headers
        field above must not carry Authorization when this is on; the server refuses the pair. */
     {
@@ -121,7 +121,7 @@ const TYPE_FIELDS                              = {
     { k: "exposePrompts", label: tk("fields.exposePrompts"), bool: true, def: true },
     AUTOSTART_EAGER,
   ],
-  /* The figma type (docs/24 rev): the form is a description and nothing else. The endpoint
+  /* The figma type (SPEC §mcp.figma): the form is a description and nothing else. The endpoint
      and the OAuth mode are the type's to decide — the server refuses a url or auth key on a
      figma def — and the detail view's Authorize button is the one step after Save. No Test
      button: a keyless handshake is always 401 (see runConnTest). */
@@ -210,7 +210,7 @@ function envToObj(text                           )                         {
   return o;
 }
 
-/** Render one field as a NODE (docs/37 R5). `p` prefixes element ids so the Add sheet and the
+/** Render one field as a NODE (SPEC §panel.toolchain). `p` prefixes element ids so the Add sheet and the
  *  inline editor can coexist. The label, hint, placeholder and value are text nodes and
  *  properties now - the esc() discipline this file carried is structural instead. */
 function fieldNode(spec           , val         , p        )              {
@@ -258,7 +258,7 @@ function fieldsNode(type        , vals                                          
   return out;
 }
 
-/** The form's auth checkbox is the def's auth string (docs/24 D1): checked sends "oauth",
+/** The form's auth checkbox is the def's auth string (SPEC §mcp.oauth): checked sends "oauth",
  *  unchecked removes the key — which is how OAuth is switched back off. An empty client name
  *  never travels; the server applies its provider default. Both submit paths run the body
  *  through this before the server sees it, exactly like autostart -> lazy. */
@@ -269,7 +269,7 @@ function translateOauth(body                         )                          
   return body;
 }
 
-/* --- pg url <-> fields (docs/30) ------------------------------------------------------------------ */
+/* --- pg url <-> fields (SPEC §mcp.panel) ------------------------------------------------------------------ */
 /* The def keeps ONE url string (the engine, the mask/unmask machinery and DIRECT_FIELDS all
  * read it); the form edits the pieces. The pair below is the only place the split happens,
  * used on open AND on every submit path. Two things must survive verbatim:
@@ -330,7 +330,7 @@ function translatePg(type        , body                         )               
 
 function readFields(type        , p        )                          {
   const o                          = {};
-  /* docs/30: the unparseable-url fallback renders its own textarea (#e-pgraw / #a-pgraw);
+  /* SPEC §mcp.panel: the unparseable-url fallback renders its own textarea (#e-pgraw / #a-pgraw);
      every submit path reads through readFields, so the raw value boards here like any field. */
   if (type === "pg") { const raw = $                  (p + "pgraw"); if (raw) o.__pgRaw = raw.value; }
   (TYPE_FIELDS[type] || []).forEach((f) => {

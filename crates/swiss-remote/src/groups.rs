@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The targets GroupScope (docs/34 R8) - the seventh scope of the docs/20 family.
+//! The targets GroupScope (SPEC §remote.targets) - the seventh scope of the SPEC §host.groups family.
 //!
 //! Exactly the shape of tunnels' conns/rules pair: one scope over the one sealed
 //! table, registered into the host's scope table by the composition point (swiss's

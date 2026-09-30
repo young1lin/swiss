@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/* Integration: the row overflow menus (docs/18 V5) against the document-level click closer in
+/* Integration: the row overflow menus (SPEC §panel.design) against the document-level click closer in
    connect.js. Regression (2026-09-12): the Jobs/Tunnels row ellipsis wired popupMenu WITHOUT
    stopping propagation, so the very click that opened the menu bubbled on to document, where
    connect.js's closer saw the menu latch and tore the menu down — a click, no menu, no error.
@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 
    The suite drives the real modules (wireJobs / wireTunnels -> ui/menu popupMenu -> closeMenu
    -> connect.js's document closer). The bug only exists where clicks bubble, so the DOM must
-   bubble them: happy-dom does (docs/46 P7-3; this suite used to carry its own micro-DOM with a
+   bubble them: happy-dom does (SPEC §panel.pages; this suite used to carry its own micro-DOM with a
    hand-written bubbling loop, from before the repo had a DOM library). */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -79,7 +79,7 @@ beforeEach(() => {
   sheet.textContent = "";
 });
 
-describe("row overflow menus vs the document click closer (docs/18 V5)", () => {
+describe("row overflow menus vs the document click closer (SPEC §panel.design)", () => {
   function row(attr: string, id: string, act: string): HTMLElement {
     const r = document.createElement("div");
     r.setAttribute(attr, id);

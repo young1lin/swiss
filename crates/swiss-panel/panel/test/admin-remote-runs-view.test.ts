@@ -17,7 +17,7 @@
 // @vitest-environment happy-dom
 
 /* The Remote Runs page (#remote-runs, the remote plugin's second page): the run record
-   (crates/swiss-remote/src/history.rs) as the event list Logs and Traffic are (docs/46 P6-2) -
+   (crates/swiss-remote/src/history.rs) as the event list Logs and Traffic are (SPEC §panel.pages) -
    live runs first, the output fetched when a row opens, a run that did not succeed a red tag.
    A real DOM (happy-dom) since P6-2: the timeline, the menu and the pager are the library's
    nodes, read the way a user sees them. */
@@ -106,7 +106,7 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
   it("the head is one sentence, what the record keeps, the target filter and a ⋯ - no caption, no standing Clear", async () => {
     // One list is the whole page, so its filter and its ⋯ are the head's (the Jobs and Tunnels
     // head ⋯ hold page-wide verbs too). In a captionless section head they stood on a row of
-    // their own over the note (found on the docs/46 P6-2 walk).
+    // their own over the note (found on a walk of SPEC §panel.pages).
     serve([finished], [running]);
     await view.mount();
     const pane = $("pane");
@@ -180,7 +180,7 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(label(":odd")).toBe(":odd");
   });
 
-  it("who is the target and the actor, verbatim (docs/41 A1) - a column once the rows disagree", async () => {
+  it("who is the target and the actor, verbatim (SPEC §remote.history) - a column once the rows disagree", async () => {
     const byCli = { ...finished, runId: 19, actor: "cli:jdoe@box" };
     const byMcp = { ...running, runId: 20, actor: "mcp:claude-code" };
     // A file action has no exit code: success is no tag, its kind and shape say what ran.
@@ -272,7 +272,7 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(body.querySelector("[data-rmore]")).toBeNull();
   });
 
-  it("an evicted output says so in place of the stream, keeps a capped run's tail, and the note names the window (docs/41 A2)", async () => {
+  it("an evicted output says so in place of the stream, keeps a capped run's tail, and the note names the window (SPEC §remote.history)", async () => {
     const evicted = { ...finished, runId: 22, outputBytes: 3072, outputEvicted: true, outputCapped: true, tail: "the last lines\n" };
     serve([evicted], [], { limits: { ...LIMITS, auditWindowMs: 7 * 86400000 } });
     replies["/api/remote/runs/22/output?after=0&max=131072"] = { runId: 22, cursor: 0, nextCursor: 0, output: "", total: 0, truncated: false, terminal: true };
@@ -287,7 +287,7 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
   });
 
   /* The owner's report (2026-09-28): a write's row showed "Output 34 B" and nothing of what
-     was written. The body is kept sealed beside the record (docs/34 R12) and unsealed only
+     was written. The body is kept sealed beside the record (SPEC §remote.history) and unsealed only
      when asked - a screenshot of an opened row shares no file until Show is pressed. */
   it("a write keeps what it wrote: Show unseals and paints it, Hide puts it away", async () => {
     const wrote = {

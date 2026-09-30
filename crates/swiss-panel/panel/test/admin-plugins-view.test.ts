@@ -17,10 +17,10 @@
 // @vitest-environment happy-dom
 
 /* The Plugins page (the host's own management view): name + one grey line + a switch per row,
-   a dot only when the state disagrees with the switch (docs/46 §3.5), a start-at-sign-in row,
+   a dot only when the state disagrees with the switch (SPEC §panel.settings), a start-at-sign-in row,
    and a poll that patches state in place without ever rebuilding structure.
 
-   REWRITTEN FOR R5 (docs/37 §7), and the rewrite is the point. The builders used to return
+   REWRITTEN FOR R5 (SPEC §panel.toolchain), and the rewrite is the point. The builders used to return
    HTML strings, so every assertion here was a substring test against markup nobody parsed.
    Now they return nodes, so the suite runs on a real DOM (happy-dom, per file) and asks what
    it always meant: does the switch carry role and state, does the grey line name the pages,
@@ -92,7 +92,7 @@ beforeEach(() => {
   if (view) view.unmount(); // the real lifecycle between pages resets the module state
 });
 
-/** The dependency badge is the panel's half of the W3 contract (docs/12): the inventory
+/** The dependency badge is the panel's half of the W3 contract (SPEC §host.seats): the inventory
  *  states a plugin's required capabilities with a met/unmet verdict, and the row must SAY
  *  when the floor is missing — "needs connection-catalog (no provider)" — so disabling the
  *  provider reads as a consequence, not as a mysteriously broken Data view. A MET
@@ -101,7 +101,7 @@ beforeEach(() => {
 describe("plugins view dependency badge", () => {
   it("names the capability when the requirement is unmet", () => {
     const badge = rendered(view.requiresBadge({ id: "data", requires: ["connection-catalog"], requiresMet: false } as ApiPluginRow));
-    // docs/46 §3.5: the missing floor is a warn TAG (a state mark, amber), and the words carry
+    // SPEC §panel.settings: the missing floor is a warn TAG (a state mark, amber), and the words carry
     // no separator of their own - the sub-line puts the " · " between its parts.
     expect(badge.textContent).toBe("needs connection-catalog no provider");
     expect(badge.querySelector(".tag.warn")?.textContent).toBe("no provider");
@@ -121,14 +121,14 @@ describe("plugins view dependency badge", () => {
     expect(view.requiresBadge({ id: "jobs", requires: [], requiresMet: true } as unknown as ApiPluginRow)).toBeNull();
   });
 
-  it("a capability name is text, never markup (docs/37 R5)", () => {
+  it("a capability name is text, never markup (SPEC §panel.toolchain)", () => {
     const badge = rendered(view.requiresBadge({ id: "x", requires: ["a<b", "c&d"], requiresMet: false } as ApiPluginRow));
     expect(badge.textContent).toBe("needs a<b, c&d no provider");
     expect(badge.querySelector("b")).toBeNull();
   });
 });
 
-/* Visual refresh V4 (docs/18), on the library row since docs/46 P5: name + one grey line, the
+/* Visual refresh V4 (SPEC §panel.design), on the library row since SPEC §panel.settings: name + one grey line, the
    toggle is a switch, and the version moves into the row title. The switch says on or off, so
    the dot is left for what the switch cannot say - work in flight and a failed start. */
 describe("the plugins row", () => {
@@ -169,7 +169,7 @@ describe("the plugins row", () => {
     const row = view.rowNode({ id: "x", label: "X", enabled: true, state: "failed", lastError: "port 9000 is taken", pages: ["x"] } as ApiPluginRow);
     const d = row.querySelector(".lrow-name .dot") as HTMLElement;
     expect(d.className).toBe("dot error");
-    expect(d.getAttribute("title")).toBe("failed"); // the host's own word (docs/18 V6)
+    expect(d.getAttribute("title")).toBe("failed"); // the host's own word (SPEC §panel.design)
     expect(row.querySelector(".lrow-err")?.textContent).toBe("port 9000 is taken");
     expect(row.querySelector(".lrow-err")?.getAttribute("title")).toBe("port 9000 is taken");
     expect(row.querySelector(".lrow-sub")).toBeNull(); // the red line takes the sub-line's place
@@ -182,7 +182,7 @@ describe("the plugins row", () => {
     expect([s.className, s.getAttribute("title")]).toEqual(["dot starting", "starting"]);
   });
 
-  it("a hostile label is text in the name and the switch's aria-label (docs/37 R5)", () => {
+  it("a hostile label is text in the name and the switch's aria-label (SPEC §panel.toolchain)", () => {
     const hostile = '<b>bold</b><img src=x onerror=1>';
     const row = view.rowNode({ id: "x", label: hostile, enabled: true, state: "active" } as ApiPluginRow);
     expect(row.querySelector(".lrow-name")?.textContent).toContain(hostile);
@@ -286,7 +286,7 @@ describe("the Plugins page through mount", () => {
     toggle.focus();
     // The switch is disabled while its write is out (no double send), and a real browser
     // blurs a focused control the moment it is disabled - happy-dom does not, so the case
-    // does it by hand, inside the request, where Chrome does it. Found on the docs/46 P5 walk:
+    // does it by hand, inside the request, where Chrome does it. Found on a walk of SPEC §panel.settings:
     // after a click (or Space) the focus was on <body>, and the next Tab started over.
     duringToggle = (): void => {
       expect(toggle.disabled).toBe(true);
@@ -323,7 +323,7 @@ describe("the Plugins page through mount", () => {
     expect(view.countText()).toBe("0 plugins · 0 on");
   });
 
-  // The pane frame moved into the library with pane() (docs/46 P1b-3): ui.css owns it now.
+  // The pane frame moved into the library with pane() (SPEC §panel.ui): ui.css owns it now.
   it("the pane stops centring its content", () => {
     const css = readFileSync(join(here, "../..", "src", "admin_assets", "styles", "ui.css"), "utf8");
     expect(css).toMatch(/\.pane > \* \{[^}]*margin-inline: 0;/);

@@ -143,7 +143,7 @@ fn ensure_first_run_from(repo: &Path) -> FirstRunReport {
 
     // Guarantee the token exists, in the sealed env store (the plaintext .env replacement). A
     // generated token means clients configured against it keep working only if it is durable —
-    // hence the data dir, not a package cache. (The panel's sign-in is a one-time link, docs/48,
+    // hence the data dir, not a package cache. (The panel's sign-in is a one-time link, SPEC §host.session,
     // so no password is generated.)
     let new_token = set_env_default_marker();
 
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn a_home_nested_under_missing_directories_is_created_whole() {
-        // docs/16 H2: scripts/test-instance.ps1 points SWISS_HOME at a directory that
+        // SPEC §host.ops: scripts/test-instance.ps1 points SWISS_HOME at a directory that
         // may not exist yet (and -Fresh deletes it first). serve must create the whole path —
         // create_dir_all, not mkdir — or every first run of the test instance panics on a
         // missing parent instead of seeding a gateway.

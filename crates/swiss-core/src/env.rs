@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The daemon's environment is this machine's, not its launcher's — docs/16 §1.
+//! The daemon's environment is this machine's, not its launcher's — SPEC §host.daemon.
 //!
 //! `swiss start` hands the detached gateway the environment of whatever shell ran it, and the
 //! gateway hands that on to every child it spawns (proc MCPs, job scripts, local shells). A

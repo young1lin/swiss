@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* Every /api/* response the panel reads, ambient globals on purpose (docs/36 D6/D11): each
+/* Every /api/* response the panel reads, ambient globals on purpose (SPEC §panel.toolchain): each
    interface is copied field-for-field from the Rust struct that serializes it - the comment
    above a type names that producer. Optional fields below are absent-not-null on the wire
    (Node-era JSON.stringify semantics the Rust side preserves with skip_serializing_if), and
@@ -343,7 +343,7 @@ export interface ApiTokenSecret {
 }
 
 /** GET /api/secrets - adminapi.rs:661: names and labels only; values never leave the vault
- *  (docs/19 D5). secretGroups is name -> sink-resolved group label. */
+ *  (SPEC §host.vault). secretGroups is name -> sink-resolved group label. */
 export interface ApiSecretsResponse {
   secrets: string[];
   rev: number;
@@ -353,7 +353,7 @@ export interface ApiSecretsResponse {
 }
 
 /** PUT/DELETE /api/secrets/{name} - adminapi.rs: the new rev after the write. A PUT also
- *  names the MCPs it rebuilt on the stored value and those whose rebuild failed (docs/19,
+ *  names the MCPs it rebuilt on the stored value and those whose rebuild failed (SPEC §host.vault,
  *  2026-09-27 addendum); a DELETE answers the rev alone. */
 export interface ApiSecretWriteResponse {
   rev: number;
@@ -399,7 +399,7 @@ export interface ApiRunsResponse {
 export interface ApiRunRow {
   runId: number;
   owner: string;
-  /** Who submitted the run (docs/41 A1): `cli:<user>@<host>`, `mcp:<token label>`,
+  /** Who submitted the run (SPEC §remote.history): `cli:<user>@<host>`, `mcp:<token label>`,
    *  `panel`, `jobs` or `api`. Absent on rows an older gateway recorded. */
   actor?: string;
   label: string;
@@ -451,7 +451,7 @@ export interface ApiJobsResponse {
  *  v2 triggers leave both schedule fields absent rather than rounding a lie. */
 export interface ApiJobRow {
   name: string;
-  /* The v2 identity (docs/11 section 7.1): a human title and free-form labels on top of
+  /* The v2 identity (SPEC §jobs.api): a human title and free-form labels on top of
    *  the id; optional because a v1-era config carries neither. */
   title?: string;
   labels?: string[];
@@ -464,7 +464,7 @@ export interface ApiJobRow {
   env?: Record<string, string>;
   editableInV1: boolean;
   /* trigger/action are the VIEW shapes swiss-jobs def.rs trigger_json/action_json emit,
-   * field-for-field (docs/37 M9 closed these two; the config-file spellings the v2 sheet
+   * field-for-field (SPEC §panel.toolchain closed these two; the config-file spellings the v2 sheet
    * PUTs stay open in types/state.d.ts JobDef - unknown action fields must ride along). */
   trigger?: ApiJobTrigger;
   action?: { type: string; input: Record<string, unknown>; schemaVersion: number };
@@ -523,7 +523,7 @@ export interface ApiTunnelsResponse {
 
 /** One connection row - tunnel/manager.rs rows() builds it key by key (not from
  *  types.rs SshConnDef::to_json()): the frozen id..activeRules prefix, then the
- *  docs/27 §4 addendum fields and keyPath, each absent when unset. Secrets ride
+ *  SPEC §tunnels.panel fields and keyPath, each absent when unset. Secrets ride
  *  masked (proxyPassword) or absent (passphrase, password). */
 export interface ApiTunnelConnectionRow {
   id: string;
@@ -678,7 +678,7 @@ export interface ApiDbTableRow {
   size?: string;
 }
 
-/** GET /api/db/{name}/databases - dbbrowser_api.rs databases (docs/43 M3). The configured
+/** GET /api/db/{name}/databases - dbbrowser_api.rs databases (SPEC §data.databases). The configured
  *  database, the one the pool sits on, and every other database the instance will name.
  *  reason is a SERVER-GIVEN English sentence shown verbatim on the disabled row — the same
  *  rule as ApiDbDataPage.editNote. tables is optional (pg cannot count cross-database). */
@@ -771,7 +771,7 @@ export interface ApiDbRedisValue {
   note?: string;
 }
 
-/** One XREVRANGE entry (docs/45 §2.1): the id verbatim, the server-derived ISO 8601
+/** One XREVRANGE entry (SPEC §data.streams): the id verbatim, the server-derived ISO 8601
  *  timestamp with milliseconds (the id's ms half — the panel never parses an id), and the
  *  entry's own fields, ragged as stored. */
 export interface ApiDbStreamEntry {
@@ -781,7 +781,7 @@ export interface ApiDbStreamEntry {
 }
 
 /** GET /api/db/{name}/key on a stream key, and GET /api/db/{name}/stream — one
- *  newest-first window of a stream (docs/45 §2.1): entries strictly newest-first, columns
+ *  newest-first window of a stream (SPEC §data.streams): entries strictly newest-first, columns
  *  the field union in first-seen-scanning-newest-first order, more = “the page was full”
  *  (a capped page says so; a full final page still flags it), firstId/lastId the XINFO
  *  STREAM ends, null on an empty stream. ttl rides only the /key fact read; the /stream
@@ -792,7 +792,7 @@ export interface ApiDbStreamWindow extends ApiDbRedisValue {
   more: boolean;
   firstId: string | null;
   lastId: string | null;
-  /* docs/49 §2.2: present only on a FILTERED window, because only a filter walks.
+  /* SPEC §data.streams: present only on a FILTERED window, because only a filter walks.
    *  scanned is how many entries the server examined to answer; scannedFrom is the
    *  newest id it reached (the follow tick's next cursor, so a quiet filter does not
    *  re-read the same thousands every second) and scannedTo the oldest (where Load
@@ -802,7 +802,7 @@ export interface ApiDbStreamWindow extends ApiDbRedisValue {
   scannedTo?: string | null;
 }
 
-/** One command as the CONNECTED redis describes it (docs/50): COMMAND DOCS for the words
+/** One command as the CONNECTED redis describes it (SPEC §data.redis-console): COMMAND DOCS for the words
  *  (syntax built from its own argument spec, summary, since, group, the literal tokens it
  *  accepts) and COMMAND INFO for the numbers (arity and the key positions - first, last and
  *  step - that say which words of a line are key names). `container` marks a command that
@@ -820,7 +820,7 @@ export interface ApiRedisCommand {
   firstKey?: number;
   lastKey?: number;
   step?: number;
-  /** redis 7's key specifications (docs/50 §2.4) - present where the keys MOVE (XREAD's come
+  /** redis 7's key specifications (SPEC §data.redis-console) - present where the keys MOVE (XREAD's come
    *  after STREAMS, ZUNION's after a count), where first/last/step alone say "no key". */
   keySpecs?: ApiRedisKeySpec[];
 }
@@ -840,7 +840,7 @@ export interface ApiRedisCommandsResponse {
   documented: boolean;
 }
 
-/** One row of the read-only consumer-group fold (docs/45 §2.4): pending is the group's
+/** One row of the read-only consumer-group fold (SPEC §data.streams): pending is the group's
  *  PEL size, lag the entries-append gap (null on a redis older than 7.0, where XINFO
  *  GROUPS does not report it), last-delivered-id the group's own cursor. */
 export interface ApiDbStreamGroupRow {
@@ -880,8 +880,8 @@ export interface ApiDbActivityReply {
  *  marks the row this panel's own polling session is, seconds feeds the duration column.
  *  pid, seconds and own are the three the panel computes on, and the three activity_row types
  *  - the browsers answer through the grid's query() path, which renders BIGINT cells as text,
- *  and before the normalizer mysql shipped pid "88", seconds "12", own "0"/"1" (docs/37 §11
- *  D11, walked 2026-09-20: "0" is truthy, so every mysql row read as the panel's own). */
+ *  and before the normalizer mysql shipped pid "88", seconds "12", own "0"/"1" (SPEC §panel.toolchain,
+ *  walked 2026-09-20: "0" is truthy, so every mysql row read as the panel's own). */
 export interface ApiDbActivityRow {
   /* Goes back to POST activity-kill, whose `as_i64` refuses a digit string. */
   pid: number;
@@ -940,7 +940,7 @@ export interface ApiRemoteEndpointsResponse {
 export interface ApiRemoteRunsResponse {
   runs: ApiRunRow[];
   active: (ApiRunRow & { input?: Record<string, unknown> })[];
-  /** auditWindowMs (docs/41 A2): lines this young are never dropped by a budget. */
+  /** auditWindowMs (SPEC §remote.history): lines this young are never dropped by a budget. */
   limits: { maxAgeMs: number; maxTotalBytes: number; maxRuns: number; maxOutputBytes: number; auditWindowMs?: number };
   usage: { bytes: number; runs: number };
   nextBefore?: number;

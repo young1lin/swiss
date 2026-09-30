@@ -16,10 +16,10 @@
 
                                                                                                                      
 
-/* The Data view owns its state (docs/37 R4, slice 6 of 7; docs/42 §2 splits the record).
+/* The Data view owns its state (SPEC §panel.toolchain, slice 6 of 7; SPEC §data.tabs splits the record).
 
-   docs/37 R4 made this record a never-null singleton with ONE read mouth (dbView) because
-   every reader already lived in the db domain. docs/42 cuts that record in two along the
+   SPEC §panel.toolchain made this record a never-null singleton with ONE read mouth (dbView) because
+   every reader already lived in the db domain. SPEC §data.tabs cuts that record in two along the
    line the object tabs need: DbConnState is what survives switching the open object, and
    DbTab is one open object — a discriminated union, so a read of the wrong domain is a
    typecheck error rather than a browser bug. The four accessors below replace dbView()
@@ -35,7 +35,7 @@
    every other data-* module, so hosting the record there closes a cycle. This file
    imports types only.
 
-   T2 shape (docs/42 §4): the strip holds many tabs and an active index. What it never
+   T2 shape (SPEC §data.tabs): the strip holds many tabs and an active index. What it never
    holds is zero tabs — closing the last one leaves a PLACEHOLDER (a table tab with no
    table, a key tab with no key), which is what a fresh mount starts from. The placeholder
    keeps dbTab() total, so no reader needs a null branch, and data-tabs.ts keeps it off the
@@ -47,20 +47,20 @@ function freshConnState()              {
     conn: null,           // selected connection (MCP name)
     tables: [],           // the WHOLE catalog (one fetch, capped at DB_TREE_FETCH_LIMIT)
     tablesTotal: 0, more: false, grep: "", treeShown: {},
-    schemaFilter: "",     // pg only: "" = every schema; the /tables schema param (docs/22 W1.1)
+    schemaFilter: "",     // pg only: "" = every schema; the /tables schema param (SPEC §data.browse)
     sort: "name", sortDir: "asc", // the list's sort key/dir — SQL sorts server-side, redis client-side
-    gridCfg: { widths: {}, hidden: [] }, // per-connection column widths/hides (docs/22 W2.1), reloaded per page
+    gridCfg: { widths: {}, hidden: [] }, // per-connection column widths/hides (SPEC §data.grid), reloaded per page
     history: [],         // last-run console queries, newest first (per-browser, localStorage)
-    favorites: [],       // starred queries, same store (docs/22 W5.4)
+    favorites: [],       // starred queries, same store (SPEC §data.console)
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
     redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
-    redisError: false,  // the last /keys fetch FAILED (docs/22 closeout B1) — the list must say so, not "no keys"
-    database: "",       // docs/43 M3: the SELECTED database ("" = the connection's configured one)
-    databases: null,    // docs/43 M3: lazy /databases catalog (null = never asked; [] = no axis → no row)
+    redisError: false,  // the last /keys fetch FAILED (SPEC §data) — the list must say so, not "no keys"
+    database: "",       // SPEC §data.databases: the SELECTED database ("" = the connection's configured one)
+    databases: null,    // SPEC §data.databases: lazy /databases catalog (null = never asked; [] = no axis → no row)
   };
 }
 
-/* The strip's LRU clock (docs/42 D3). Monotonic and view-lifetime scoped: a tab born or
+/* The strip's LRU clock (SPEC §data.tabs). Monotonic and view-lifetime scoped: a tab born or
    activated later always outranks one born or activated earlier, which is the whole
    question eviction asks. It is deliberately not a wall clock — Date.now() would make the
    cap behave differently for a fast operator than a slow one, and two tabs opened in the
@@ -90,7 +90,7 @@ export function freshTab(kind           )        {
       updates: {},          // pkKey -> { pk, changes: { col: value-or-null } }
       deletes: {},          // pkKey -> pk object
       inserts: [],          // [{ values: { col: value-or-null } }]
-      pane: "data",         // data | form | columns | indexes | fks | ddl — Form is the data page's own second view (W5.1); six folds into four with docs/42 T4
+      pane: "data",         // data | form | columns | indexes | fks | ddl — Form is the data page's own second view (W5.1); six folds into four with SPEC §data.tabs
       formIdx: 0,           // the Form tab's record — grid row space (inserts first), shared with the keyboard focus
       detail: null,         // last /api/db/:name/schema answer (BrowseTableDetail)
       detailBusy: false,
@@ -114,7 +114,7 @@ let tabs          = [freshTab("table")];
 let activeIdx = 0;
 let mounted = false;
 
-/* docs/47: one PARKED session per connection. A session is the connection record, its strip
+/* SPEC §data.sessions: one PARKED session per connection. A session is the connection record, its strip
    and the index in front - the three things the switch used to rebuild from nothing, which
    is how "MySQL, then Redis, then back" lost every open table. The park swaps whole objects
    instead of copying fields: a request that captured its record or tab before an await
@@ -127,7 +127,7 @@ let mounted = false;
 const parked = new Map                   ();
 let lastConn                = null;
 
-/** How many sessions the park holds (docs/47 D7). Connections are a handful; the cap only
+/** How many sessions the park holds (SPEC §data.sessions). Connections are a handful; the cap only
  *  bounds the pathological case, and a session holding buffered writes is never the one to go. */
 export const DB_PARKED_MAX = 8;
 
@@ -162,7 +162,7 @@ function resume(s           , from             )       {
   activeIdx = Math.max(0, Math.min(tabs.length - 1, s.activeIdx));
 }
 
-/** Switch the live session to connection `name` (docs/47 D1): park the one on screen, then
+/** Switch the live session to connection `name` (SPEC §data.sessions): park the one on screen, then
  *  take `name`'s parked session back - or, for a connection not seen yet, start a fresh record
  *  whose strip the caller seeds (it knows the connection's family). True when a parked session
  *  came back. */
@@ -196,7 +196,7 @@ function take(name               )          {
   return false;
 }
 
-/** Leaving the page (docs/47 D3): the live session parks and is remembered, and the live
+/** Leaving the page (SPEC §data.sessions): the live session parks and is remembered, and the live
  *  records go back to the fresh literals so nothing unmounted reads as on screen. */
 export function dbSuspendView(pinned                            )       {
   lastConn = connRec.conn;
@@ -220,7 +220,7 @@ export function dbResumeView()          {
 }
 
 /** Every parked session's strip - what the page-leave and unload guards count alongside the
- *  live one (docs/47 D4), and what a confirmed leave drops the buffered writes from. */
+ *  live one (SPEC §data.sessions), and what a confirmed leave drops the buffered writes from. */
 export function dbParkedTabs()            {
   return Array.from(parked.values(), (s           )          => s.tabs);
 }
@@ -230,7 +230,7 @@ export function dbParkedNames()           {
   return Array.from(parked.keys());
 }
 
-/** Drop the sessions of connections that left the registry (docs/47 D7): nothing can be read
+/** Drop the sessions of connections that left the registry (SPEC §data.sessions): nothing can be read
  *  or committed through a connection that is gone. */
 export function dbForgetParked(keep                           )       {
   for (const k of Array.from(parked.keys())) if (!keep(k)) parked.delete(k);
@@ -255,7 +255,7 @@ export function dbActiveIndex()         { return activeIdx; }
 
 /** The sql tab the pane is showing, or null when the open object is not a console. The
  *  question `dbConn().sqlResult` used to answer when the console overlaid the pane
- *  (docs/42 T1) — every reader of a query reply asks it. */
+ *  (SPEC §data.tabs) — every reader of a query reply asks it. */
 export function dbSqlTab()                  {
   const t = tabs[activeIdx];
   return t.kind === "sql" ? t : null;
@@ -286,7 +286,7 @@ export function mountDbView()       { mounted = true; }
 
 /** The FULL reset: both records back to the fresh literals and the park emptied - the rows,
  *  the buffered edits and the query results of every session dropped together. The page's own
- *  leave parks instead (dbSuspendView, docs/47 D9); this is the reset a suite starts from. */
+ *  leave parks instead (dbSuspendView, SPEC §data.sessions); this is the reset a suite starts from. */
 export function unmountDbView()       {
   connRec = freshConnState();
   tabs = [freshTab("table")];

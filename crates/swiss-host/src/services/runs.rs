@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-//! The shared run registry — bounded, owner-scoped, first-wins (docs/09 §3: "Jobs only
-//! owns scheduling, it does not monopolize background execution"; docs/10 §2: the
+//! The shared run registry — bounded, owner-scoped, first-wins (SPEC §host.plugins: "Jobs only
+//! owns scheduling, it does not monopolize background execution"; SPEC §jobs: the
 //! lightweight RunRegistry / RunCoordinator is the shared run service, and the jobs
 //! scheduler is one producer among several).
 //!
@@ -62,7 +62,7 @@ use swiss_core::util::now_ms;
 /// many recent outcomes, each with its already-capped output).
 const FINISHED_RING: usize = 32;
 
-/// The live-output ceiling while a run is active (docs/34 §17). 256 KiB is a few hundred
+/// The live-output ceiling while a run is active (SPEC §host.actions). 256 KiB is a few hundred
 /// build lines either side of "now" — enough for a follower to see progress, small
 /// enough that a dozen concurrent runs cost single-digit megabytes worst case.
 pub const MAX_LIVE_OUTPUT_BYTES: usize = 256 * 1024;
@@ -166,7 +166,7 @@ impl RunOutputBuffer {
     /// Read from `after` (a previous next-cursor). Returns the text, the cursor to poll
     /// with next, and whether the requested range had already been partially evicted.
     ///
-    /// The window ends on a character boundary (docs/41 U1): a multi-byte character the
+    /// The window ends on a character boundary (SPEC §remote.utf8): a multi-byte character the
     /// `max` cut would split is held back and the next cursor points at its first byte,
     /// so the follower sees it whole on its next poll instead of two U+FFFD. A window
     /// that starts inside a character (an evicted ring, a cursor that was never ours)
@@ -265,7 +265,7 @@ pub struct SubmitRequest {
     pub timeout_ms: u64,
     /// overlap=queue-one: when the pool is busy, hold ONE successor instead of refusing.
     pub queue_if_busy: bool,
-    /// Who asked (docs/41 A1): `cli:<user>@<host>` (self-declared over loopback),
+    /// Who asked (SPEC §remote.history): `cli:<user>@<host>` (self-declared over loopback),
     /// `mcp:<token label>` (the authenticating token), `panel`, `jobs`, or `api` for any
     /// other /api/runs caller. Recorded with the run; the audit trail's "who" column.
     pub actor: String,
@@ -630,7 +630,7 @@ impl RunCoordinator {
     }
 
     /// Register + start (or queue) one run. Returns immediately with the run id — an HTTP
-    /// request must never own a background task's lifetime (docs/10 §7).
+    /// request must never own a background task's lifetime (SPEC §host.actions).
     pub fn submit(self: &Arc<Self>, request: SubmitRequest) -> Result<SubmittedRun, SubmitError> {
         let action = self.registry.get(&request.action_type).ok_or_else(|| {
             SubmitError::Action(format!(
@@ -846,7 +846,7 @@ impl RunCoordinator {
 
     /// Bookkeeping when a run reaches its terminal state: leave the active set, enter the
     /// bounded finished ring, dispatch whatever was waiting for the freed slot.
-    /// One bounded read of a run's live output (docs/34 §17): the text from `after`
+    /// One bounded read of a run's live output (SPEC §host.actions): the text from `after`
     /// onward, the cursor to poll with next, and the run's state so a follower can stop
     /// polling the moment it goes terminal. None when the id is unknown — a run whose
     /// history has rotated out of the finished ring is gone, not empty.
@@ -1187,7 +1187,7 @@ async fn drive_action(
         );
     };
     let deadline = tokio::time::Instant::now() + Duration::from_millis(request.timeout_ms.max(1));
-    // The single execution seam (docs/34 §16): every action runs through
+    // The single execution seam (SPEC §host.actions): every action runs through
     // execute_with_context; actions that predate it simply never touch the sink.
     let ctx = ActionContext {
         cancel: cancel.handle(),
@@ -1723,7 +1723,7 @@ mod tests {
         assert_eq!(next.done.await.expect("view").state, RunState::Succeeded);
     }
 
-    // --- live output (docs/34 §17) -------------------------------------------------------
+    // --- live output (SPEC §host.actions) -------------------------------------------------------
 
     /// An action that appends to the live sink in bursts and finishes: the
     /// streaming-aware seam without any process or network in the way.
@@ -1883,7 +1883,7 @@ mod tests {
 
     #[test]
     fn a_window_never_cuts_a_character_in_half_while_the_run_is_live() {
-        // docs/41 U2: "日志" is 6 bytes; a 4-byte max would cut 志 after its first byte.
+        // SPEC §remote.utf8: "日志" is 6 bytes; a 4-byte max would cut 志 after its first byte.
         let buffer = RunOutputBuffer::new();
         buffer.append("日志\n".as_bytes());
         let first = buffer.read_from(0, 4);

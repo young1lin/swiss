@@ -16,7 +16,7 @@
 
 // @vitest-environment happy-dom
 
-/* docs/46 §2 - the ui/ component library, one describe per module. Each pins the markup a
+/* SPEC §panel.ui - the ui/ component library, one describe per module. Each pins the markup a
    page and the stylesheet agree on (class, role, aria, data hooks) and the option that
    changes it, so a component cannot drift from ui.css or from the delegated listeners that
    address it. The last block renders every component with every option and checks each class
@@ -89,7 +89,7 @@ describe("ui/button", () => {
   });
 
   it("a disabled primary keeps its accent ground, dimmed (ui.css)", () => {
-    // Found on the docs/46 P7-2 walk: .btn:disabled repainted every disabled button's ground to
+    // Found on a walk of SPEC §panel.pages: .btn:disabled repainted every disabled button's ground to
     // --card, a primary's too, and its --accent-text word is white - a DDL sheet's "Add column"
     // was white on white until a name was typed, a foot with Cancel and a hole beside it.
     const rules = parseCss(sheet("ui.css")).filter((r) => !r.at);
@@ -129,7 +129,7 @@ describe("ui/button", () => {
     expect(useHref(b)).toBe("#i-ellipsis");
     expect(b.getAttribute("aria-label")).toBe("More actions");
     expect(b.dataset.more).toBe("fs");
-    // Every ⋯ opens a menu, and says so to assistive tech (docs/46 P7: Data's said it by hand).
+    // Every ⋯ opens a menu, and says so to assistive tech (SPEC §panel.pages: Data's said it by hand).
     expect(b.getAttribute("aria-haspopup")).toBe("menu");
   });
 });
@@ -152,7 +152,7 @@ describe("ui/status", () => {
     expect(tag("exit 2", { title: "non-zero exit" }).title).toBe("non-zero exit");
   });
 
-  it("heldDot: the amber mark of buffered writes, its count said aloud (docs/46 P7)", () => {
+  it("heldDot: the amber mark of buffered writes, its count said aloud (SPEC §panel.pages)", () => {
     const d = heldDot("2 buffered changes");
     expect(d.className).toBe("db-tab-dot");
     expect(d.title).toBe("2 buffered changes");
@@ -174,7 +174,7 @@ describe("ui/sheet - sheet()", () => {
     expect(s.querySelector(".sheet-sub")).toBeNull();
   });
 
-  it("sub: the value the sheet acts on, mono, after the title and not inside it (docs/46 P7)", () => {
+  it("sub: the value the sheet acts on, mono, after the title and not inside it (SPEC §panel.pages)", () => {
     const s = sheetFrame({ title: "note", sub: "demo_shop.orders · pk {\"id\":4}", label: "Edit cell", body: "b", foot: "f" });
     const head = s.querySelector(".sheet-head")!;
     expect(Array.from(head.children).map((c) => c.tagName + "." + c.className)).toEqual(["H2.", "SPAN.sheet-sub"]);
@@ -353,7 +353,7 @@ describe("ui/page", () => {
   });
 
   it("a check beside a field in a pair sits on the control's row, not the caption's (ui.css)", () => {
-    // Found on the docs/46 P7-2 walk: the index sheet's Unique sat level with the "Index name"
+    // Found on a walk of SPEC §panel.pages: the index sheet's Unique sat level with the "Index name"
     // caption, 18px above the input it qualifies (Jobs' timeout + Disabled pair did the same).
     // End-aligned, lifted by the input's own padding and border, it centres on the input.
     const rule = parseCss(sheet("ui.css")).find((r) => !r.at && r.selectors.includes(".two > .fld:has(> label.check)"));
@@ -581,7 +581,7 @@ describe("ui/group - groupNode", () => {
   });
 });
 
-describe("ui/tab - objTab (docs/46 P8)", () => {
+describe("ui/tab - objTab (SPEC §panel.pages)", () => {
   it("a role=tab with its glyph, name, count and mark, and a real close button beside them", () => {
     const t = objTab({
       name: "orders", selected: true, icon: "table", title: "demo_shop.orders", data: { dbtab: "0" },
@@ -616,7 +616,7 @@ describe("ui/tab - objTab (docs/46 P8)", () => {
   });
 
   it("tnum is base.css's tabular-figures utility, and no sheet spells the OpenType tag as a value", () => {
-    // Found in docs/46 P8: rule 1's `tnum` was a class with no rule (Data's activity pid and
+    // Found in SPEC §panel.pages: rule 1's `tnum` was a class with no rule (Data's activity pid and
     // duration cells, the tab count), and two views.css rules wrote `font-variant-numeric: tnum`,
     // which is not a value - the browser drops the declaration.
     const rule = parseCss(sheet("base.css")).find((r) => !r.at && r.selectors.includes(".tnum"));
@@ -660,7 +660,7 @@ describe("ui/seg", () => {
     expect((s.querySelector("button") as HTMLButtonElement).dataset.seg).toBe("all");
   });
 
-  it("fill is a class the page asks for, not a width it restyles (docs/46 P9)", () => {
+  it("fill is a class the page asks for, not a width it restyles (SPEC §panel.ui)", () => {
     expect(seg([{ id: "daily", label: "Daily" }], "daily", { fill: true }).className).toBe("seg fill");
     expect(seg([{ id: "x", label: "X" }], "x").className).toBe("seg");
   });
@@ -720,7 +720,7 @@ describe("ui/timeline - the helpers", () => {
 
 describe("ui/timeline - timeline()", () => {
   it("a long argument or output never widens the timeline, nor the sheet around it", () => {
-    // Found on the docs/46 P6 walk (a job's history, a multi-line claude reply): an implicit
+    // Found on a walk of SPEC §panel.pages (a job's history, a multi-line claude reply): an implicit
     // grid column is `auto`, and an auto track never shrinks below its item's min-content - the
     // no-wrap summary line's full width. The row grew to 728 px in a 560 px sheet and was cut at
     // its edge, ellipsis and Output block with it. Both grids give their one column a 0 minimum.
@@ -754,7 +754,7 @@ describe("ui/timeline - timeline()", () => {
   });
 
   it("live: a run still in flight is a pulse and its word where its duration will go", () => {
-    // docs/46 P6-2: Remote Runs lists the runs the coordinator still holds above the record.
+    // SPEC §panel.pages: Remote Runs lists the runs the coordinator still holds above the record.
     // Such a run has no duration yet; its state (running, or queued behind a busy slot) sits in
     // that column - the amber pulse for running, the hollow dot for waiting - never a tag, which
     // is for an outcome.
@@ -970,7 +970,7 @@ describe("ui/to-top - toTop", () => {
   });
 });
 
-describe("docs/46 - every class the library draws is styled by base.css or ui.css", () => {
+describe("SPEC §panel.ui - every class the library draws is styled by base.css or ui.css", () => {
   it("renders every component with every option; no class is left unstyled", () => {
     const tl = timeline([
       item("a", at(23, 9), { same: "q", ms: 1500, arg: "{}", who: "x", status: { text: "error", tone: "bad" } }),

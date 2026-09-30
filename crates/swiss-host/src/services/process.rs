@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The shared process supervisor (docs/10 §6: ownership of the Windows process-tree Job
+//! The shared process supervisor (SPEC §process.actions: ownership of the Windows process-tree Job
 //! Object and the Unix process group belongs to the SHARED process service) — the one place
 //! that owns how this gateway spawns, watches, captures and tears down an external command.
 //! Two consumers plug into it: the proc MCP adapter's long-lived children and Jobs' one-shot
@@ -33,12 +33,12 @@
 //!   kill-on-close Job Object assigned at spawn (one handle owns the whole tree, PID-reuse
 //!   safe) and a Unix private process group killed via kill(-pgid). Both seams live DOWN in
 //!   `swiss_core::platform` — the job guard moved there when the local terminal needed it
-//!   too (docs/14 T3), and the group kill is `kill_process_group` — so this crate holds no
+//!   too (SPEC §terminal.local), and the group kill is `kill_process_group` — so this crate holds no
 //!   unsafe at all; the proc adapter, the jobs runner and the terminal all assign through
 //!   those two functions, and every child of this gateway dies with the same guarantee.
 //!
 //! Environment references in typed input are resolved STRICTLY by the action layer: a
-//! missing required env var is an error naming the variable (docs/10 §6), never a silent
+//! missing required env var is an error naming the variable (SPEC §process.actions), never a silent
 //! empty string. Captured output is masked for every value a run resolved, so a child that
 //! echoes its own credentials does not write them into run history.
 
@@ -456,7 +456,7 @@ pub fn mask_secrets(text: &mut String, secrets: &[String]) {
 
 /// Resolve env references in ONE string, STRICTLY (typed process.exec input): a reference
 /// to an unset variable is an ERROR naming the variable — never a silent empty string, and
-/// never an inference to the current directory (docs/10 §3). Malformed text (an unclosed
+/// never an inference to the current directory (SPEC §jobs.config). Malformed text (an unclosed
 /// or empty reference) stays literal, the same reading the shared lenient scanner uses.
 pub fn resolve_refs_strict(value: &str) -> Result<String, String> {
     let bytes = value.as_bytes();

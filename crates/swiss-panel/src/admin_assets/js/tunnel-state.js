@@ -16,7 +16,7 @@
 
                                                                                  
 
-/* The tunnels domain owns its state (docs/37 R4, slice 4 of 7): which scope is mounted, the last
+/* The tunnels domain owns its state (SPEC §panel.toolchain, slice 4 of 7): which scope is mounted, the last
    /api/tunnels answer, the per-row verb in flight, the cached key list, the two drag slots and the
    group a header "+" has staged for the sheet it opens.
 

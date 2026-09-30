@@ -36,7 +36,7 @@ async function loadKeys(): Promise<ApiTunnelsKeysResponse> {
   return keys;
 }
 
-/** docs/27 §4: the Advanced fold — proxy and jump live here, collapsed by default. The
+/** SPEC §tunnels.panel: the Advanced fold — proxy and jump live here, collapsed by default. The
  *  summary chips keep "goes through a proxy / via <jump>" visible without unfolding, so
  *  collapsed never means hidden; with nothing configured the fold is the sheet's only new
  *  line. Native details/summary is the house fold primitive (the data-value JSON tree) —
@@ -44,7 +44,7 @@ async function loadKeys(): Promise<ApiTunnelsKeysResponse> {
  *  connection (this one excluded); the backend stays the single source of truth for cycles,
  *  its 400 lands inline in the sheet, and the panel does not pre-walk chains.
  *
- *  Built, not concatenated (docs/37 R5); returns TWO siblings (the fold and the inline
+ *  Built, not concatenated (SPEC §panel.toolchain); returns TWO siblings (the fold and the inline
  *  error line), which h() flattens into the sheet body. */
 function advancedConnNode(d: ConnSheetDraft, editing: boolean): HChild[] {
   const chips: HChild[] = [];
@@ -212,7 +212,7 @@ async function saveConn(existing: ApiTunnelConnectionRow | null): Promise<void> 
   } else {
     body.password = $<HTMLInputElement>("c-pass").value;
   }
-  // docs/27 §4: the Advanced fields are optional — a key rides the payload only while the
+  // SPEC §tunnels.panel: the Advanced fields are optional — a key rides the payload only while the
   // sheet holds a value; empty means unset, and clearing a stored value sends nothing (the
   // server rebuilds the def from the request body, so an absent key and an empty string
   // both land as "no value"). An untouched proxyPassword input still carries the mask
