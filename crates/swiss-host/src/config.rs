@@ -84,7 +84,7 @@ pub struct GatewayConfig {
     /// The whole config object as loaded, credential refs intact. The subsystem composition
     /// (subsystems.rs) reads its per-subsystem rows from here — toggles like
     /// {"jobs":{"disabled":true}} are ROW metadata, not parsed fields, so they never need a
-    /// struct field of their own (the RH entry-metadata rule: addressing a row and disabling
+    /// struct field of their own (the entry-metadata rule: addressing a row and disabling
     /// it are the same syntax as configuring it).
     pub raw: Value,
 }

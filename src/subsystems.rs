@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-//! Subsystem composition — the plugin-ization seam, ported from the reference harness's
-//! "everything is a plugin" design into a statically-linked single binary.
+//! Subsystem composition — the plugin-ization seam: an "everything is a plugin" design inside
+//! a statically-linked single binary.
 //!
-//! What survives the translation (and what this module IS):
+//! What this module IS:
 //! - Rows: a subsystem is addressed by its key in gateway.config.json. Its config block, its
 //!   enable/disable switch, and future knobs are all the SAME row — "turn off jobs" is
 //!   {"jobs":{"disabled":true}}, no second mechanism, no separate flag file. Deleting the row
@@ -28,16 +28,16 @@
 //!   turned it off (see absent_router) — never a silent empty 200, never an anonymous 404.
 //!   Consumers (the panel, an AI client) can tell "not built" from "switched off".
 //! - One composition point: adding a subsystem is one module + one compose line + one state
-//!   file + one test — the checklist RH enforces with verify scripts. Since the plugin host
-//!   (host/) landed, server.rs composes subsystems as PLUGINS: their start/stop is the host's
-//!   lifecycle, their rows are read through the ConfigStore (v2 plugins.<id> rows take
-//!   precedence over these root rows), and a not-serving plugin's 503 comes from the host's
-//!   live route boundary (host::api::plugin_boundary) rather than a swapped-in stub router.
+//!   file + one test. Since the plugin host (host/) landed, server.rs composes subsystems as
+//!   PLUGINS: their start/stop is the host's lifecycle, their rows are read through the
+//!   ConfigStore (v2 plugins.<id> rows take precedence over these root rows), and a
+//!   not-serving plugin's 503 comes from the host's live route boundary
+//!   (host::api::plugin_boundary) rather than a swapped-in stub router.
 //!
 //! These helpers remain the row-reading and explicit-absence vocabulary of that design; the
 //! tests below pin the row semantics the host now inherits.
 //!
-//! What is deliberately NOT ported: dynamic loading (no dylib; a Rust "plugin" is a module
+//! What is deliberately left out: dynamic loading (no dylib; a Rust "plugin" is a module
 //! compiled straight into the binary),
 //! and realms (single-tenant local process). Runtime start/stop DID arrive — with the host —
 //! and the MCP hosting core is a plugin now too (row "mcp"), while per-MCP disable remains

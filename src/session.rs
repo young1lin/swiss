@@ -24,7 +24,7 @@
 //! - a **browser session**: a cookie `swiss_session_<port>` signed with HMAC-SHA256 under a
 //!   signing key that survives restarts, so a signed-in browser stays signed in. A browser gets
 //!   one only by redeeming a **login token** on `GET /?token=` - single-use and good for
-//!   [`TICKET_TTL_MS`], minted for `swiss start` / `swiss open` (SPEC §host.session: RH's per-process
+//!   [`TICKET_TTL_MS`], minted for `swiss start` / `swiss open` (SPEC §host.session: a per-process
 //!   startup token, tightened to one use);
 //! - the **CLI key**, sent as `X-Swiss-Key`: rotated on every daemon start and readable only by
 //!   unsealing `session.json`, i.e. by the same OS user on the same machine.
