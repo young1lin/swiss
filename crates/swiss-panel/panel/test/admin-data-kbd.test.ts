@@ -60,7 +60,7 @@ const grid = await import(
   dbKbdMove: (r: number, c: number, key: string, maxR: number, maxC: number) => { r: number; c: number };
 };
 
-// docs/22 W2.2 — the two pure halves of keyboard navigation and TSV paste. The handlers that
+// SPEC §data.grid — the two pure halves of keyboard navigation and TSV paste. The handlers that
 // own focus and the clipboard are verified live on 19998; the arithmetic is pinned here.
 describe("dbTsvRows", () => {
   it("splits rows on newlines and cells on tabs", () => {

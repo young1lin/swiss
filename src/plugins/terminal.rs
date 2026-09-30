@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The terminal plugin's factory (docs/14 §9 T5): descriptor, config validation, and
+//! The terminal plugin's factory (SPEC §terminal): descriptor, config validation, and
 //! the instance that owns the session machine's lifetime.
 //!
 //! A plugin built purely on the public contracts: everything the host needs is said
@@ -73,7 +73,7 @@ impl PluginFactory for TerminalPlugin {
                             "enabled": {
                                 "type": "boolean",
                                 "default": false,
-                                "description": "OFF by default (docs/14 §6.1): the gateway already runs as you, but this turns a loopback port into a shell entry — flip it on deliberately."
+                                "description": "OFF by default (SPEC §terminal.config): the gateway already runs as you, but this turns a loopback port into a shell entry — flip it on deliberately."
                             },
                             "shell": {
                                 "type": "string",
@@ -134,17 +134,17 @@ impl PluginFactory for TerminalPlugin {
                 id: "terminal".into(),
                 plugin_id: PLUGIN_ID.into(),
                 label: "Terminal".into(),
-                // docs/14 §8: its own first-level group under the docs/13 rules,
+                // SPEC §terminal.api: its own first-level group under the SPEC §panel.nav rules,
                 // before the plugins page's 1000.
                 order: 70,
                 path: "#terminal".into(),
                 entry: "/admin/js/views/terminal.js".into(),
                 // sidebar:true would park the shell's MCP list beside the terminal: the flag
                 // means "this page renders INTO that list's layout", and only the mcps page
-                // does (page-registry hides .sidebar for every page without it). docs/14's
+                // does (page-registry hides .sidebar for every page without it). SPEC §terminal's
                 // sketch said true; the browser said otherwise.
                 sidebar: false,
-                // workspace (docs/13 D5, as revised): a full-bleed, dense body. The
+                // workspace (SPEC §panel.nav, as revised): a full-bleed, dense body. The
                 // terminal's session tabs, target picker and status footer are L3 page-
                 // local chrome INSIDE that body; the shell still draws the context bar
                 // above it, and immersive folds straight to the body.
@@ -155,9 +155,9 @@ impl PluginFactory for TerminalPlugin {
             // restarting the instance is honest AND cheap — sessions close with a
             // visible reason and the panel reopens them.
             restart_on_config_change: true,
-            // NOT ["ssh-shell"] (docs/14 §4): a local session needs no SSH — `requires`
+            // NOT ["ssh-shell"] (SPEC §terminal.remote): a local session needs no SSH — `requires`
             // expresses a functional dependency, not a hard gate. WaitingDependency was
-            // never implemented (docs/09 as-built): an unmet require is a plain refusal
+            // never implemented (SPEC §host.plugins): an unmet require is a plain refusal
             // naming the dependency, and the targets route already says honestly whether
             // remote hosts are reachable.
             requires: Vec::new(),
@@ -180,7 +180,7 @@ impl PluginFactory for TerminalPlugin {
 
 struct TerminalInstance {
     state: Arc<TerminalState>,
-    /// The shell capability seat (docs/14 §4): provided by the tunnels plugin, read
+    /// The shell capability seat (SPEC §terminal.remote): provided by the tunnels plugin, read
     /// live per open — never captured, so a provider restart needs no terminal restart.
     shells: Arc<ShellRegistry>,
     config: TerminalConfig,
@@ -240,7 +240,7 @@ mod tests {
             props["local"]["properties"]["enabled"]["default"],
             json!(false)
         );
-        // docs/15 §2.1: the schema is the sheet's hint, so the default order it states must
+        // SPEC §terminal.local: the schema is the sheet's hint, so the default order it states must
         // name the same shells conpty's probe prefers.
         let shell_desc = props["local"]["properties"]["shell"]["description"]
             .as_str()

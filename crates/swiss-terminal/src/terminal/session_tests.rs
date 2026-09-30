@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-//! The session machine's acceptance surface (docs/14 T4).
+//! The session machine's acceptance surface (SPEC §terminal.sessions).
 //!
-//! Every rule in docs/14 §6 that can be asserted without a socket is asserted here,
+//! Every rule in SPEC §terminal.config that can be asserted without a socket is asserted here,
 //! against a fake shell provider and a fake local PTY — the test plays the part of the
 //! shell, so a 30-minute idle timeout, a 60-second grace window and a jammed client are
 //! all exact rather than approximate.
@@ -303,7 +303,7 @@ async fn keystrokes_and_resizes_reach_the_shell_in_the_order_they_were_sent() {
         .input(&opened.id, b"ls\r".to_vec())
         .await
         .expect("input");
-    // The redundant resize path (docs/14 §8): POST /resize and the socket's resize frame
+    // The redundant resize path (SPEC §terminal.api): POST /resize and the socket's resize frame
     // are the same call underneath, which is the only reason having both is safe.
     h.sessions
         .resize(&opened.id, PtySize::new(132, 43).unwrap())
@@ -319,7 +319,7 @@ async fn keystrokes_and_resizes_reach_the_shell_in_the_order_they_were_sent() {
 
 #[tokio::test]
 async fn the_local_shell_is_refused_while_it_is_switched_off() {
-    // docs/14 §6.1: off by default, and the refusal has to say which switch to flip.
+    // SPEC §terminal.config: off by default, and the refusal has to say which switch to flip.
     let mut h = Harness::new(quiet(false));
     let err = h.open(LOCAL_TARGET).await.expect_err("refused");
     assert!(err.to_string().contains("local.enabled"), "{err}");
@@ -404,7 +404,7 @@ async fn allowed_targets_narrows_what_may_be_opened() {
 
 #[tokio::test]
 async fn an_absent_provider_is_reported_by_name_not_as_an_empty_host_list() {
-    // docs/14 §4, acceptance item 4: "you have no servers" and "the tunnels plugin is
+    // SPEC §terminal.remote, acceptance item 4: "you have no servers" and "the tunnels plugin is
     // off" are different statements and the panel has to be able to tell them apart.
     let h = Harness::without_provider(quiet(true));
     let view = h.sessions.targets();
@@ -462,7 +462,7 @@ async fn the_local_view_reports_the_program_that_would_actually_run() {
 
 #[tokio::test]
 async fn the_local_view_lists_the_candidates_the_sheet_offers() {
-    // docs/15 §2.1: local.shells is the settings sheet's dropdown — the machine hands the
+    // SPEC §terminal.local: local.shells is the settings sheet's dropdown — the machine hands the
     // fake's fixed list through untouched, and the view adds nothing of its own.
     let h = Harness::new(quiet(false));
     let view = h.sessions.targets();
@@ -474,7 +474,7 @@ async fn the_local_view_lists_the_candidates_the_sheet_offers() {
 
 #[tokio::test]
 async fn the_configured_local_shell_is_what_a_session_runs_unless_overridden() {
-    // docs/15 §2: the settings sheet writes local.shell; before this the config row only
+    // SPEC §terminal.local: the settings sheet writes local.shell; before this the config row only
     // ever changed the LABEL — a saved "Git Bash" still opened the default. The request's
     // one-shot override (the API's shell field) must keep winning.
     let mut config = quiet(true);
@@ -594,7 +594,7 @@ async fn jam(far: &FarSide) -> Vec<String> {
 
 #[tokio::test]
 async fn a_client_that_stops_reading_parks_the_shell_and_loses_no_bytes() {
-    // docs/14 §6.8 and acceptance item 7. Dropping a fragment of an escape sequence
+    // SPEC §terminal.sessions and acceptance item 7. Dropping a fragment of an escape sequence
     // corrupts a terminal permanently, so "slow" must mean parked, never lossy.
     let mut h = Harness::new(quiet(true));
     let (_opened, far, mut attachment) = h.started(LOCAL_TARGET).await;
@@ -638,7 +638,7 @@ async fn a_keystroke_gets_through_while_the_output_is_jammed() {
 
 #[tokio::test]
 async fn a_dropped_socket_does_not_kill_the_session_and_the_output_catches_up() {
-    // docs/14 §6.7: a closed laptop lid must not kill a running compile.
+    // SPEC §terminal.sessions: a closed laptop lid must not kill a running compile.
     let mut h = Harness::new(quiet(true));
     let (opened, far, attachment) = h.started(LOCAL_TARGET).await;
     drop(attachment);
@@ -814,7 +814,7 @@ async fn a_session_nobody_ever_attached_to_is_collected_when_the_grace_expires()
 
 #[tokio::test(start_paused = true)]
 async fn a_client_that_never_drains_is_warned_and_then_closed() {
-    // docs/14 §6.8: a send queue that stays full is a client that is gone in every way
+    // SPEC §terminal.sessions: a send queue that stays full is a client that is gone in every way
     // except the socket being open.
     let mut h = Harness::new(TerminalConfig {
         stall: Duration::from_secs(30),

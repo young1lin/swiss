@@ -19,7 +19,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
 
-/* docs/43 M2 fixup: upstream Java services store their strings JSON-encoded, with astral
+/* SPEC §data.tabs: upstream Java services store their strings JSON-encoded, with astral
  *  characters escaped as literal surrogate-pair text. The wire hands the panel
  *  '"\uD83D\uDCC8⏫\uD83D\uDC46{0} rose {2} within {1} hr"' (verified live on the
  *  i18n_strings hash) and the value views used to paint those escapes verbatim.
@@ -111,7 +111,7 @@ function mountHash(value: Record<string, unknown>): Stub {
   return wrap;
 }
 
-describe("redis values show the characters they name (docs/43 M2 fixup)", () => {
+describe("redis values show the characters they name (SPEC §data.tabs)", () => {
   it("the live wire title decodes: quotes gone, emoji and arrow whole, template body intact", () => {
     expect(mod.dbRedisDisplayText(WIRE_TITLE)).toBe(DECODED_TITLE);
   });

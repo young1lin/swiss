@@ -18,7 +18,7 @@
 import { h } from "../h.js";
 import { tr } from "../i18n.js";
 
-/* --- docs/33 C3: the Logs JSON view ------------------------------------------------------------
+/* --- SPEC §mcp.calls: the Logs JSON view ------------------------------------------------------------
    A tool call's arguments and reply are shown as ONE formatted code block: standard JSON, two-space
    indent, everything visible, coloured by token. It replaced the C2 folding tree after the operator
    found that reading a reply took a click per level, and that the tree's own layout (sans-serif
@@ -39,7 +39,7 @@ import { tr } from "../i18n.js";
    The block is a single <pre> of text spans: a drag-selection copies exactly what is shown,
    indentation included, and the marker is a ::before pseudo-element that no selection picks up.
 
-   In ui/ since docs/46 P1b-2: the code block is a library shape, so any page that shows a JSON
+   In ui/ since SPEC §panel.ui: the code block is a library shape, so any page that shows a JSON
    value (a run's output, a secret's reference, a plugin's manifest) draws this one. */
 
 /** A string that held JSON, parsed for display. `layers` counts the encodings peeled off. Plain
@@ -58,7 +58,7 @@ class DecodedString {
 const JV_LINES = 200;
 
 /** Compact JSON at or under this many characters prints on ONE line when the caller asks for it
- *  (docs/46 §3.2, revising docs/33 C3's "always indented"): {"sql": "SELECT 1"} spread over three
+ *  (SPEC §panel.pages, revising SPEC §mcp.calls's "always indented"): {"sql": "SELECT 1"} spread over three
  *  lines is two lines of braces around the one line that says anything. */
 const JV_INLINE = 80;
 
@@ -246,7 +246,7 @@ function textNode(text        , all         , cls        )          {
   return { node: h("pre", { class: cls }, body), lines: lines.length };
 }
 
-/** A labelled value (docs/46 §3.2): a caption naming it (Arguments, Result), notes on what the
+/** A labelled value (SPEC §panel.pages): a caption naming it (Arguments, Result), notes on what the
  *  body turned out to be ("JSON + text"), the block's tools at the end of that line - one visible
  *  Copy, the rest behind ⋯ - and then the body: a code block and whatever follows it. */
 function valueBlock(o                                                                                      , ...body          )              {

@@ -15,7 +15,7 @@
  */
 
 /* ================================================================================================
-   The plugin palette - the rail's "..." seat (docs/13 D5, the adaptive shell).
+   The plugin palette - the rail's "..." seat (SPEC §panel.nav, the adaptive shell).
 
    The rail holds the pinned few; this holds EVERY plugin the host serves, searchable, with
    pinning per browser. Pin state is a preference about this screen, not gateway state, so it
@@ -23,7 +23,7 @@
 
    The pure half (pin slice, palette rows, the glyph map) is exported for the vitest suite;
    openPluginPalette builds the one overlay. The caller passes the "go" callback (the shell
-   navigates to the group's remembered page, docs/39 S4 - the callee picks the page, so the
+   navigates to the group's remembered page, SPEC §panel.nav - the callee picks the page, so the
    policy stays out of the palette) and an "onchange" repaint callback, so this module never
    imports the shell back.
    ================================================================================================ */
@@ -103,7 +103,7 @@ function paletteRows(groups                , pins          , query        )     
 
 /** Open the palette over everything (z-index above menus: it is the navigation itself).
  *  groups: registry groups (each may carry .off - every page unavailable). go(group)
- *  navigates - which PAGE that is (the remembered one, docs/39 S4) is the callee's call;
+ *  navigates - which PAGE that is (the remembered one, SPEC §panel.nav) is the callee's call;
  *  onchange() repaints the rail after a pin toggle. Escape or a click on the backdrop
  *  closes, and focus returns to the "..." seat so the keyboard path does not dead-end. */
 function openPluginPalette(groups                , go                                               , onchange             )       {

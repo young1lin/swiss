@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Live acceptance for docs/16 H1/H2/H3 on the isolated 19998 instance.
+# Live acceptance for SPEC §host.daemon, §host.ops on the isolated 19998 instance.
 # Never touches 19999 except a read-only /health at the very end.
-# Since docs/48 /api/* needs the admin session: every API call goes through `swiss api`, which
+# Since SPEC §host.session /api/* needs the admin session: every API call goes through `swiss api`, which
 # signs it with the test home's CLI key (never printed). H1's terminal-env probe used a raw
 # WebSocket that cannot carry the key; it is covered by swiss-terminal's
 # a_local_pwsh_keeps_its_colours_under_a_no_color_launcher instead.
@@ -73,7 +73,7 @@ Write-Output "OK: status carries the build"
 Remove-Item Env:\SWISS_HOME -ErrorAction SilentlyContinue
 Remove-Item Env:\SWISS_PORT -ErrorAction SilentlyContinue
 
-Write-Output "=== [5] H1: covered by a_local_pwsh_keeps_its_colours_under_a_no_color_launcher (docs/48) ==="
+Write-Output "=== [5] H1: covered by a_local_pwsh_keeps_its_colours_under_a_no_color_launcher (SPEC §host.session) ==="
 
 Write-Output "=== [6] H2: saving terminal config writes the TEST home only ==="
 $cfg = Invoke-Api GET /api/plugins/terminal/config

@@ -14,6 +14,6 @@
  * limitations under the License.
  */
 
-//! The terminal subsystem: the session machine behind /api/terminal (docs/14).
+//! The terminal subsystem: the session machine behind /api/terminal (SPEC §terminal).
 
 pub mod terminal;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The served sources (docs/36 D4). Browser code: no node types (types: [] keeps @types/node
+/* The served sources (SPEC §panel.toolchain). Browser code: no node types (types: [] keeps @types/node
    out of every src file - the panel must not learn about process or Buffer), strict from day
    one, and erasableSyntaxOnly so the emit tool's constraint and the checker's agree. The
    .js specifiers are deliberate: they resolve to the .ts sibling here and survive emission

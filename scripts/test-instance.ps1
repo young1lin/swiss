@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# The isolated 19998 test instance (docs/16 H2).
+# The isolated 19998 test instance (SPEC §host.ops).
 #
 # One script, one rule: live verification of this repo runs on an instance whose state lives
 # in its OWN home (%LOCALAPPDATA%\swiss-test-home), so a save on 19998 can never write the
 # user's production config in ~\.swiss (the 2026-09-11 footgun).
 #
 # Why copying master.key works: every state file is AES-256-GCM sealed under a master key
-# that is itself DPAPI-protected for the CURRENT USER (docs/05 "The master key"). A copy of
+# that is itself DPAPI-protected for the CURRENT USER (SPEC §formats.masterkey). A copy of
 # that blob stays decryptable on the same machine under the same user - exactly what a local
 # test instance needs. Cross-machine the copy is useless BY DESIGN; do not try to make this
 # a portable snapshot.
@@ -57,7 +57,7 @@ $Exe = Join-Path $PSScriptRoot '..\target-test\release\swiss.exe'
 $HealthUrl = "http://127.0.0.1:$Port/health"
 
 # Sealed state worth snapshotting: keys, config, managed MCPs, tunnels, jobs and their run
-# facts, the env store, the secret vault (docs/19), and the OAuth grants (docs/24 - without
+# facts, the env store, the secret vault (SPEC §host.vault), and the OAuth grants (SPEC §mcp.oauth - without
 # that file a 19998 Figma MCP would answer needs-auth on a home that holds a real grant).
 # Copied, never linked - the test home must be a point-in-time snapshot the test instance may
 # then scribble over freely.

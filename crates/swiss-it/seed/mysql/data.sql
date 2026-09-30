@@ -1,4 +1,4 @@
--- The MySQL seed, data (docs/44 SS2.4). Neutral names only - docs/40 D2 applies to
+-- The MySQL seed, data (SPEC §testing.it). Neutral names only - SPEC §release.hygiene applies to
 -- seeds exactly as it applies to screenshots: nothing here names a real system.
 
 INSERT INTO users (id, name, email, status, balance, flags, avatar, big, born_at, is_active) VALUES

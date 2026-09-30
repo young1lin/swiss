@@ -15,7 +15,7 @@
  */
 // @vitest-environment happy-dom
 
-/* docs/46 P7 (§3.7): Data wears the library's look. Each case pins one item of the page's
+/* SPEC §panel.pages (§3.7): Data wears the library's look. Each case pins one item of the page's
    acceptance list against the real renderers on a real DOM: the status line stops repeating
    the head, the connection row's dialect is a mark or a tag (never a bordered chip), the
    drawers tick the current pick instead of painting it blue, the two segmented strips are
@@ -83,7 +83,7 @@ beforeEach(() => {
   view.renderDbView();
 });
 
-describe("the status line leaves editability to the head (docs/46 §3.7)", () => {
+describe("the status line leaves editability to the head (SPEC §panel.pages)", () => {
   it("an editable table says so once, in the head", () => {
     openTable(true);
     grid.renderDbToolbar();
@@ -107,7 +107,7 @@ describe("the status line leaves editability to the head (docs/46 §3.7)", () =>
   });
 });
 
-describe("the connection row's dialect (docs/46 §3.7: .db-chip becomes tag())", () => {
+describe("the connection row's dialect (SPEC §panel.pages: .db-chip becomes tag())", () => {
   it("a mapped dialect is its glyph, bare; a word dialect is a mono tag", () => {
     view.renderDbSide();
     const row = document.getElementById("dbConnRow")!;
@@ -123,7 +123,7 @@ describe("the connection row's dialect (docs/46 §3.7: .db-chip becomes tag())",
   });
 });
 
-describe("the drawers tick the current pick (docs/46 §3.7, rule 15)", () => {
+describe("the drawers tick the current pick (SPEC §panel.pages, rule 15)", () => {
   it("every drawer row has a tick column; only the current connection's holds the check", () => {
     Object.assign(dbConnState(), { conns: [dbConn("demo-cache", "redis"), dbConn("demo-shop", "mysql")] });
     view.renderDbSide();
@@ -137,7 +137,7 @@ describe("the drawers tick the current pick (docs/46 §3.7, rule 15)", () => {
   });
 });
 
-describe("the segmented strips are seg() (docs/46 §3.7: .db-tabs goes)", () => {
+describe("the segmented strips are seg() (SPEC §panel.pages: .db-tabs goes)", () => {
   it("the table tab's Data / Form / Structure / DDL", () => {
     openTable(true);
     grid.renderDbToolbar();
@@ -173,7 +173,7 @@ describe("the segmented strips are seg() (docs/46 §3.7: .db-tabs goes)", () => 
   });
 });
 
-describe("every Data context menu is the library's floating menu (docs/46 §3.7: .ctx-menu goes)", () => {
+describe("every Data context menu is the library's floating menu (SPEC §panel.pages: .ctx-menu goes)", () => {
   const at = (): MouseEvent => new MouseEvent("contextmenu", { clientX: 40, clientY: 40, cancelable: true });
 
   it("a table cell's menu", () => {
@@ -214,7 +214,7 @@ describe("every Data context menu is the library's floating menu (docs/46 §3.7:
   });
 });
 
-describe("the activity monitor's own session is a tag (docs/46 §3.7: .db-keytype goes)", () => {
+describe("the activity monitor's own session is a tag (SPEC §panel.pages: .db-keytype goes)", () => {
   it("the panel's row carries tag(), not a hand-drawn pill", () => {
     const t = freshTab("activity");
     t.activityRows = [{ pid: 7, user: "root", state: "", wait: "", seconds: 1, query: "SELECT 1", own: true }];
@@ -230,11 +230,11 @@ describe("the activity monitor's own session is a tag (docs/46 §3.7: .db-keytyp
 
 /* Found on the P7 walk (19996, a throwaway MySQL): the pane's ⋯ - the Activity monitor's only
    door - never showed on a SQL connection, and a Redis key list's search still said "Filter
-   tables". dbSyncKind bailed out on a missing #dbSqlExplain: docs/43 M4 folded the console's
+   tables". dbSyncKind bailed out on a missing #dbSqlExplain: SPEC §data.tabs folded the console's
    flat row (Explain, Format) into the toolbar's overflow and dropped those ids, so the early
    return has fired on every mount and switch since. The same fold lost the rule that a Redis
    command has no plan and no SQL formatting: its overflow offered both. */
-describe("the connection's kind reaches the page (docs/43 M4 regression)", () => {
+describe("the connection's kind reaches the page (SPEC §data.tabs, a regression)", () => {
   it("a SQL connection shows the pane's ⋯ and the table grammar", () => {
     const more = document.getElementById("dbMore")!;
     expect(more.hidden, "the Activity door is open").toBe(false);
@@ -296,7 +296,7 @@ describe("the connection's kind reaches the page (docs/43 M4 regression)", () =>
   });
 });
 
-/* Found on the P7 walk: a Redis hash drew "+ Field" and ⋯ twice - in the head (docs/43 M4's
+/* Found on the P7 walk: a Redis hash drew "+ Field" and ⋯ twice - in the head (SPEC §data.tabs's
    one primary + one overflow) and again on the value view's own meta line, which predates the
    fold. The meta line's "+ Field" carried no data-radd address, so a real click on it did
    nothing at all; the head's buffered the row. The value view keeps its facts, the head keeps
@@ -362,8 +362,8 @@ describe("a Redis value's table speaks the row grid's words (found on the P7 wal
   });
 });
 
-/* Found on the docs/46 P7-2 walk: the cell editor's head said "PK" and printed the whole row.
-   The buffered row's address carries every original value on purpose (docs/22 W4.2: the other
+/* Found on a walk of SPEC §panel.pages: the cell editor's head said "PK" and printed the whole row.
+   The buffered row's address carries every original value on purpose (SPEC §data.edits: the other
    columns are the optimistic lock), but on a keyed table the key is its key columns. */
 describe("the cell editor's head names the row by its key (found on the P7-2 walk)", () => {
   it("title is the column, the sub is table · PK with the key columns only", async () => {
@@ -377,9 +377,9 @@ describe("the cell editor's head names the row by its key (found on the P7-2 wal
   });
 });
 
-/* docs/46 P7-2: renaming a key is the library's one-field sheet. The hand-built one closed
+/* SPEC §panel.pages: renaming a key is the library's one-field sheet. The hand-built one closed
    before RENAME ran, so a refusal lost what was typed, and an empty name was a silent cancel. */
-describe("a Redis key's rename is the library's one-field sheet (docs/46 P7-2)", () => {
+describe("a Redis key's rename is the library's one-field sheet (SPEC §panel.pages)", () => {
   const menuItem = (label: string): HTMLButtonElement =>
     Array.from(document.querySelectorAll<HTMLButtonElement>("#menu button")).find((b) => b.textContent === label)!;
   const flush = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });
@@ -672,7 +672,7 @@ describe("a Redis key's ⋯ offers every act on the key, one press away", () => 
   });
 });
 
-describe("the grid's look in views.css (docs/46 §3.7, U7)", () => {
+describe("the grid's look in views.css (SPEC §panel.pages, §panel.design)", () => {
   const css = sheet("views.css");
   const rule = (sel: string): string => {
     const i = css.indexOf("\n    " + sel + " {");

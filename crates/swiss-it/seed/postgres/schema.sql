@@ -1,4 +1,4 @@
--- The PostgreSQL seed, schema (docs/44 SS2.3/SS2.4). The MySQL shapes carry over
+-- The PostgreSQL seed, schema (SPEC §testing.it). The MySQL shapes carry over
 -- (utf8 text, BIGINT past 2^53, NUMERIC precision, JSONB, microsecond timestamps,
 -- composite PK with FK, PK-less duplicate rows, a 60-column wide table, 1,000 bulk
 -- rows, a view) plus what only postgres has: an enum type, schemas app and audit with

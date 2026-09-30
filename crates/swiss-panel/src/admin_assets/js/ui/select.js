@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The select (docs/46 §2.5): the panel-wide custom dropdown, moved here from dropdown.ts at
+/* The select (SPEC §panel.ui): the panel-wide custom dropdown, moved here from dropdown.ts at
  * P1b-2 so the library owns the one control every form has.
  *
  * A native <select>'s CLOSED box can be styled, but its option POPUP cannot - on Windows it is
@@ -52,7 +52,7 @@ const trigs = new WeakMap                                      ();
 
 /** A styled select that leaves the DOM takes its face with it. The trigger sits BESIDE the
  *  select ("afterend"), so removing the select alone orphans a live-looking dropdown -
- *  docs/22 closeout B7 caught one on a redis page still showing the previous pg connection's
+ *  SPEC §data caught one on a redis page still showing the previous pg connection's
  *  schema pick, because the view removes the select when the connection kind changes. */
 function dropTrig(sel                   )       {
   const t = trigs.get(sel);
@@ -96,7 +96,7 @@ function openMenuFor(sel                   , trig                   )       {
         valDesc?.set.call(sel, o.value);
         paint(sel, trig);
         // Native change events do not fire on programmatic assignment, so the pick dispatches
-        // one - and it must BUBBLE like the native event does: since docs/37 R5 the views listen
+        // one - and it must BUBBLE like the native event does: since SPEC §panel.toolchain the views listen
         // once, on the pane root (data-view dbPaneChange, run-history paneTabChange, remote-runs),
         // and a non-bubbling Event("change") stops at the select and never reaches them. That
         // was the Data connection picker doing nothing on 19998 (2026-09-20).
@@ -142,7 +142,7 @@ function buildTrigger(sel                   , ownClasses        )               
   };
   // The keyboard contract of a native select, on the trigger: open on Enter/Space/arrows. A key
   // that opened the list was the trigger's and goes no further: an ArrowDown that opened it also
-  // walked the MCP sidebar behind the Add sheet (found live on 19997, docs/46 P1b-2).
+  // walked the MCP sidebar behind the Add sheet (found live on 19997, SPEC §panel.ui).
   trig.onkeydown = (e) => {
     if (trig.disabled) return;
     if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -238,7 +238,7 @@ function initSelects()       {
         if (added.tagName === "SELECT") styleSelect(added                     );
         else added.querySelectorAll("select").forEach((s) => { styleSelect(s); });
       }
-      // docs/22 closeout B7: a removed styled select must not leave its trigger behind.
+      // SPEC §data: a removed styled select must not leave its trigger behind.
       for (const n of m.removedNodes) {
         if (n.nodeType !== 1) continue;
         const gone = n           ;

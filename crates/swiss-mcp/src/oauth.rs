@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! MCP-over-HTTP OAuth (docs/24) — discovery, dynamic client registration, PKCE, token
+//! MCP-over-HTTP OAuth (SPEC §mcp.oauth) — discovery, dynamic client registration, PKCE, token
 //! exchange/refresh, and the sealed per-MCP credential store.
 //!
 //! Built for the hosted MCP endpoints that require OAuth 2.1 (Figma's remote MCP first, but
@@ -23,12 +23,12 @@
 //! metadata → RFC 7591 dynamic client registration (DCR) → authorization-code + PKCE S256 with
 //! a loopback callback → bearer tokens on every request, refresh on expiry.
 //!
-//! Why DCR deserves its own care (docs/24 §0): some providers — Figma — gate the registration
+//! Why DCR deserves its own care (SPEC §mcp.oauth): some providers — Figma — gate the registration
 //! endpoint on an EXACT `client_name` allowlist ("Claude Code" and "Codex" register; anything
 //! else 403s before a browser ever opens). The provider-defaults table below names those
 //! defaults; `oauthClientName` in the def is the operator's one override.
 //!
-//! Credential discipline (docs/19 extended to OAuth): access/refresh tokens, client secrets,
+//! Credential discipline (SPEC §host.vault extended to OAuth): access/refresh tokens, client secrets,
 //! codes, verifiers and states never reach managed.json, panel responses, logs, or error text.
 //! Everything lives in the sealed `mcp-oauth.json` state file, keyed by MCP registry name.
 //!
@@ -50,23 +50,23 @@ use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
 
 use crate::adapters::rest::{encode_uri_component, form_encode};
 
-/// The marker every "re-authorize" error starts with (docs/24 D7). The panel keys on it to
+/// The marker every "re-authorize" error starts with (SPEC §mcp.oauth). The panel keys on it to
 /// light the Authorize button; adapters and the registry prefix it with the MCP's name.
 pub const NEEDS_AUTH: &str = "needs authorization";
 
-/// How long a flow waits for the browser redirect before giving up (docs/24 D5).
+/// How long a flow waits for the browser redirect before giving up (SPEC §mcp.oauth).
 const CALLBACK_WAIT: Duration = Duration::from_secs(5 * 60);
 
 /// Per-request deadline for the OAuth exchanges themselves (discovery/DCR/token).
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// An access token expiring within this margin is treated as expired (docs/24 D4) — sending
+/// An access token expiring within this margin is treated as expired (SPEC §mcp.oauth) — sending
 /// one that dies in transit just buys a 401 round trip.
 const EXPIRY_MARGIN_SECS: u64 = 60;
 
-// --- provider defaults (docs/24 D3) -------------------------------------------------------------
+// --- provider defaults (SPEC §mcp.oauth) -------------------------------------------------------------
 
-/// The one endpoint the `figma` adapter type connects to (docs/24 rev). That type exists so
+/// The one endpoint the `figma` adapter type connects to (SPEC §mcp.figma). That type exists so
 /// the panel asks for a name and nothing else — the URL is not the operator's decision.
 pub const FIGMA_MCP_URL: &str = "https://mcp.figma.com/mcp";
 
@@ -96,7 +96,7 @@ pub fn is_figma_remote(url: &str, name: &str) -> bool {
     name.to_ascii_lowercase().contains("figma") && (url.is_empty() || url.contains("figma"))
 }
 
-/// The defaults table (docs/24 D3). Figma's DCR allowlist only accepts specific client names
+/// The defaults table (SPEC §mcp.oauth). Figma's DCR allowlist only accepts specific client names
 /// — registering as "Claude Code" is how every third-party client (Qoder/Hermes/pi included)
 /// gets a browser flow at all; `"Codex"` is the other known-good name an operator can pin via
 /// `oauthClientName`.
@@ -158,7 +158,7 @@ fn origin_of(url: &str) -> Result<String, String> {
     Ok(format!("{scheme}://{authority}"))
 }
 
-// --- discovery (docs/24 D2 steps 1–2) -----------------------------------------------------------
+// --- discovery (SPEC §mcp.oauth) ------------------------------------------------------------------------
 
 /// Everything one authorization flow needs that the endpoints themselves advertise.
 #[derive(Clone)]
@@ -271,7 +271,7 @@ pub async fn discover(client: &reqwest::Client, mcp_url: &str) -> Result<Discove
     })
 }
 
-// --- dynamic client registration (docs/24 D2 step 3) ---------------------------------------------
+// --- dynamic client registration (SPEC §mcp.oauth) ---------------------------------------------
 
 /// What DCR handed back: the client identity (and, when the provider issues one despite
 /// advertising public-client flows — Figma does — the secret the token endpoint will demand).
@@ -284,7 +284,7 @@ pub struct ClientReg {
 }
 
 /// Register a client (RFC 7591). A 403 here usually means the provider allowlists client
-/// names — the human message says exactly that rather than a bare "forbidden" (docs/24 D7,
+/// names — the human message says exactly that rather than a bare "forbidden" (SPEC §mcp.oauth,
 /// after hermes' `humanize_oauth_registration_error`).
 pub async fn register_client(
     client: &reqwest::Client,
@@ -337,7 +337,7 @@ pub async fn register_client(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| "registration response has no client_id".to_string())?
         .to_string();
-    // Figma's quirk (docs/24 D2.3): the register response carries a client_secret that the
+    // Figma's quirk (SPEC §mcp.oauth): the register response carries a client_secret that the
     // token endpoint then requires — saved unconditionally when present, sent as
     // client_secret_post. A provider that states its own auth method wins over our default.
     let token_auth = body
@@ -357,7 +357,7 @@ pub async fn register_client(
     })
 }
 
-// --- the authorization URL (docs/24 D2 step 4) ---------------------------------------------------
+// --- the authorization URL (SPEC §mcp.oauth) ---------------------------------------------------
 
 /// Build the authorization URL — pure, so its exact shape is testable. Every value is
 /// percent-encoded; `state` is mandatory (Figma sets `require_state_parameter`).
@@ -390,7 +390,7 @@ pub fn authorization_url(
     format!("{authorization_endpoint}?{query}")
 }
 
-// --- token exchange and refresh (docs/24 D2 steps 6–7) -------------------------------------------
+// --- token exchange and refresh (SPEC §mcp.oauth) --------------------------------------------------------
 
 /// One grant's outcome. `expires_at` is absolute (unix seconds) — the response's relative
 /// `expires_in` is useless the moment it is persisted.
@@ -431,7 +431,7 @@ async fn token_post(
             .and_then(|v| v.get("error"))
             .and_then(Value::as_str)
             .unwrap_or("unknown_error");
-        // The two codes that mean "this grant is dead, re-authorize" (docs/24 D2.7) — surfaced
+        // The two codes that mean "this grant is dead, re-authorize" (SPEC §mcp.oauth) — surfaced
         // with the marker the panel keys on so the Authorize button lights.
         if error_code == "invalid_grant" || error_code == "invalid_client" {
             return Err(format!(
@@ -500,7 +500,7 @@ pub async fn exchange_code(
 
 /// Refresh the access token. An `invalid_grant`/`invalid_client` refusal comes back with the
 /// NEEDS_AUTH marker — the caller clears the stored credentials and the panel re-lights the
-/// Authorize button (docs/24 D4).
+/// Authorize button (SPEC §mcp.oauth).
 pub async fn refresh(
     client: &reqwest::Client,
     token_endpoint: &str,
@@ -520,10 +520,10 @@ pub async fn refresh(
     parse_tokens(token_post(client, token_endpoint, &pairs).await?)
 }
 
-// --- the sealed credential store (docs/24 D1) -----------------------------------------------------
+// --- the sealed credential store (SPEC §mcp.oauth) -----------------------------------------------------
 
 /// Where the sealed credential file lives — `mcp-oauth.json` in the data dir, keyed by MCP
-/// registry name. NOT the docs/19 vault: these values are machine-rotated runtime state, and
+/// registry name. NOT the SPEC §host.vault vault: these values are machine-rotated runtime state, and
 /// the vault's "write-only, re-store when forgotten" human contract has no business over a
 /// refresh chain.
 pub fn store_path() -> PathBuf {
@@ -545,7 +545,7 @@ pub struct StoredCredentials {
 
 impl StoredCredentials {
     /// Assemble from a completed flow: the fresh client registration and its first tokens
-    /// land together (docs/24 D6 — never a new client beside old tokens).
+    /// land together (SPEC §mcp.oauth — never a new client beside old tokens).
     pub fn new(reg: &ClientReg, tokens: &TokenSet, at: u64) -> Self {
         Self {
             client_id: reg.client_id.clone(),
@@ -559,7 +559,7 @@ impl StoredCredentials {
         }
     }
 
-    /// Swap the token half, keeping the client half — the refresh path (docs/24 D4).
+    /// Swap the token half, keeping the client half — the refresh path (SPEC §mcp.oauth).
     pub fn with_tokens(mut self, tokens: &TokenSet) -> Self {
         self.access_token = Some(tokens.access_token.clone());
         // A refresh response may omit the refresh token; the old one stays valid (RFC 6749 §6).
@@ -574,7 +574,7 @@ impl StoredCredentials {
     }
 
     /// True when the access token is usable RIGHT NOW (unexpired with the margin) — the
-    /// connect-time check in docs/24 D4.
+    /// connect-time check in SPEC §mcp.oauth.
     pub fn access_fresh(&self) -> bool {
         match (&self.access_token, self.expires_at) {
             (Some(_), Some(expires_at)) => now_unix() + EXPIRY_MARGIN_SECS < expires_at,
@@ -659,7 +659,7 @@ pub fn credentials(name: &str) -> Option<StoredCredentials> {
 }
 
 /// Replace one MCP's credentials whole — the post-flow write (new client AND new tokens in one
-/// atomic swap, docs/24 D6). A read failure logs and keeps serving; a write failure is an
+/// atomic swap, SPEC §mcp.oauth). A read failure logs and keeps serving; a write failure is an
 /// error the caller reports.
 pub fn replace_credentials(name: &str, creds: StoredCredentials) -> Result<(), String> {
     let mut guard = store()
@@ -684,7 +684,7 @@ pub fn update_tokens(name: &str, tokens: &TokenSet) -> Result<StoredCredentials,
     Ok(out)
 }
 
-/// Drop one MCP's credentials entirely — the needs-auth path (docs/24 D2.7/D4): the old
+/// Drop one MCP's credentials entirely — the needs-auth path (SPEC §mcp.oauth): the old
 /// client_id is worthless anyway (each flow re-registers with a fresh loopback port).
 pub fn clear_credentials(name: &str) -> Result<(), String> {
     let mut guard = store()
@@ -702,7 +702,7 @@ fn persist_locked(map: &HashMap<String, StoredCredentials>) -> Result<(), String
         .map_err(|err| format!("persisting oauth credentials failed: {err}"))
 }
 
-/// An MCP rename re-keys its stored credentials (the store is name-keyed, docs/24 D1). A name
+/// An MCP rename re-keys its stored credentials (the store is name-keyed, SPEC §mcp.oauth). A name
 /// holding nothing is a no-op — renaming an MCP that never authorized must not fail the rename.
 /// A collision at the destination is refused rather than silently overwritten.
 pub fn rename_credentials(from: &str, to: &str) -> Result<(), String> {
@@ -721,7 +721,7 @@ pub fn rename_credentials(from: &str, to: &str) -> Result<(), String> {
     persist_locked(&guard)
 }
 
-// --- authorize flows: the pollable state behind the admin API (docs/24 D5) --------------------------
+// --- authorize flows: the pollable state behind the admin API (SPEC §mcp.oauth) --------------------------
 
 /// One authorize flow's live state, written by the flow task and polled by the admin API. Held
 /// in AppContext's name-keyed map; a new POST replaces a terminal handle and is refused while
@@ -732,7 +732,7 @@ pub struct FlowHandle {
     pub status: RwLock<FlowStatus>,
 }
 
-/// The four states of docs/24 D5. `Starting` and `AuthorizationRequired` are live (the flow owns
+/// The four states of SPEC §mcp.oauth. `Starting` and `AuthorizationRequired` are live (the flow owns
 /// a loopback listener); `Approved` and `Error` are terminal — the panel stops polling on them.
 #[derive(Clone)]
 pub enum FlowStatus {
@@ -765,13 +765,13 @@ impl FlowStatus {
     }
 }
 
-// --- the authorization flow (docs/24 D2 steps 3–6, D5) ---------------------------------------------
+// --- the authorization flow (SPEC §mcp.oauth) --------------------------------------------------------------
 
 /// A running authorization flow. `start_flow` binds the loopback callback, registers the
 /// client (DCR) and returns here with the URL the PANEL opens in the user's browser — the
 /// gateway never spawns a browser. `complete` waits for the redirect and exchanges the code.
 pub struct AuthFlow {
-    /// What the panel opens; also surfaced by the authorize API (docs/24 D5).
+    /// What the panel opens; also surfaced by the authorize API (SPEC §mcp.oauth).
     pub authorization_url: String,
     /// The loopback redirect this flow registered — `http://127.0.0.1:{port}/callback`.
     pub redirect_uri: String,
@@ -840,7 +840,7 @@ async fn callback_handler(
 
 /// Bind the loopback listener, discover the endpoints, register the client, and build the
 /// authorization URL. `client_name_override` is the def's `oauthClientName` and always wins
-/// over the provider default (docs/24 D3).
+/// over the provider default (SPEC §mcp.oauth).
 pub async fn start_flow(
     http: reqwest::Client,
     mcp_name: &str,
@@ -859,7 +859,7 @@ pub async fn start_flow(
     let discovered = discover(&http, mcp_url).await?;
     let defaults = provider_defaults(mcp_url, mcp_name);
     let client_name = client_name_override.unwrap_or(defaults.client_name);
-    // Scope: the provider default first, else what the AS advertises, else none (docs/24 D3).
+    // Scope: the provider default first, else what the AS advertises, else none (SPEC §mcp.oauth).
     let scope: Option<String> = defaults.scope.map(str::to_string).or_else(|| {
         (!discovered.scopes_supported.is_empty()).then(|| discovered.scopes_supported.join(" "))
     });
@@ -968,7 +968,7 @@ mod tests {
     //! Pure parts pinned by unit tests; the wire flow driven end-to-end against a fake
     //! authorization server on an ephemeral loopback port — the same shape rest.rs's tests use.
     //!
-    //! The fake AS replicates Figma's quirks (docs/24 §0): a client_name allowlist on the
+    //! The fake AS replicates Figma's quirks (SPEC §mcp.oauth): a client_name allowlist on the
     //! register endpoint, a client_secret issued alongside token_endpoint_auth_method:"none",
     //! the secret then REQUIRED on the token POST, mandatory state, S256 verification and the
     //! RFC 8707 resource check. Nothing here touches the network beyond 127.0.0.1.

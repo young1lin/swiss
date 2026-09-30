@@ -63,7 +63,7 @@ fn whole_number(v: &Value) -> Option<u64> {
     }
 }
 
-/// The status of a definition write (docs/11 §7.1): a bad definition is the caller's
+/// The status of a definition write (SPEC §jobs.api): a bad definition is the caller's
 /// (400), a job the v1 shape cannot spell points at the config editor (409), and a
 /// failed persist is this gateway's (500).
 fn write_status(err: &WriteError) -> StatusCode {
@@ -210,7 +210,7 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
             |State(jobs): State<Arc<JobSystem>>,
              Path(name): Path<String>,
              body: swiss_host::reply::NodeBody| async move {
-                // {"async": true} (docs/11 §7.3): 202 + the runId, the work outlives the
+                // {"async": true} (SPEC §jobs.runlog): 202 + the runId, the work outlives the
                 // request - the panel's Run now polls GET /api/runs/{id} so closing the
                 // page never cancels a job. The SAME coordinator run as the sync door;
                 // the record and lastOk settle identically, one tick later.
@@ -250,7 +250,7 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
                     .get("limit")
                     .and_then(|v| v.parse::<usize>().ok())
                     .unwrap_or(super::runlog::RUNS_PAGE_SIZE);
-                // `cursor` is the spelling docs/11 §7.3 gives the page walk; `before` stays
+                // `cursor` is the spelling SPEC §jobs.runlog gives the page walk; `before` stays
                 // as its alias so existing clients (and the shared tests) see no change.
                 let before = q
                     .get("cursor")
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     }
 
-    /// docs/11 §7.1, the frozen half: every v1 field the panel reads is present with the
+    /// SPEC §jobs.api, the frozen half: every v1 field the panel reads is present with the
     /// type it always had, and the v2 fields ride along. One test per field so a silent
     /// shape change fails with the offender named.
     #[tokio::test]
@@ -442,7 +442,7 @@ mod tests {
         );
         assert!(job.get("lastOk").is_none(), "absent-not-null");
         assert!(job["nextDueAt"].as_str().is_some(), "{job}");
-        // The v2 additions (docs/11 §7.1).
+        // The v2 additions (SPEC §jobs.api).
         assert_eq!(job["id"], json!("shaped"));
         assert_eq!(job["title"], json!("shaped"));
         assert_eq!(job["labels"], json!([]));
@@ -462,7 +462,7 @@ mod tests {
         );
     }
 
-    /// docs/11 §7.1: PUT on a job the v1 shape cannot spell is a 409 that names the
+    /// SPEC §jobs.api: PUT on a job the v1 shape cannot spell is a 409 that names the
     /// config editor, and the definition is left exactly as it was.
     #[tokio::test]
     async fn v1_put_on_a_v2_only_job_is_a_409_pointing_at_the_config_editor() {
@@ -619,7 +619,7 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
-    /// docs/11 §7.3, the S6 half: POST /run with {"async": true} is a 202 carrying the
+    /// SPEC §jobs.runlog, the S6 half: POST /run with {"async": true} is a 202 carrying the
     /// runId. The run outlives the request - the response carries NO record - but the
     /// SAME coordinator run settles into the history with the same shape the sync door
     /// writes (outcome, runId, attempt fields), and lastOk lands with it.
@@ -685,7 +685,7 @@ mod tests {
         assert_eq!(sys.run_state("slow-echoer").last_ok, Some(true));
     }
 
-    /// docs/11 §7.3: `cursor` is the pagination parameter's name now, `before` its
+    /// SPEC §jobs.runlog: `cursor` is the pagination parameter's name now, `before` its
     /// alias - both spellings walk the same pages.
     #[tokio::test]
     async fn the_history_cursor_parameter_walks_the_same_pages_as_before() {

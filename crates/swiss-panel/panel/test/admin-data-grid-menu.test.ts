@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn as dbConnState, dbTab, mountDbView, unmountDbView } from "../src/db-state.js";
 import { dbConn } from "./db-fixtures.js";
 
-/* Grid-internal clicks must not escape #pane (docs/37 R5 + the code-review P3): master's
+/* Grid-internal clicks must not escape #pane (SPEC §panel.toolchain + the code-review P3): master's
  * data-grid.js stopped click propagation on every selection checkbox (cb/cbAll/cb2/cbAll2)
  * and the column grip, because connect.ts's document listener closes any open
  * Export/Explain/#dbMore menu over a click that reaches it. The delegated dispatch has no

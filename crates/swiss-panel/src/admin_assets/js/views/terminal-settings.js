@@ -16,7 +16,7 @@
 
 /* ================================================================================================
    Terminal settings - the Local shell settings sheet, split out of views/terminal.js
-   (docs/16 §6) so that file carries the xterm wiring and the session machine only.
+   (SPEC §panel) so that file carries the xterm wiring and the session machine only.
 
    The dependency direction mirrors the js/tunnels.js + js/tunnel-sheets.js split: the
    page imports this module's opener alone, and this module reads the page's live state
@@ -33,7 +33,7 @@ import { closeSheet, sheet, showSheet } from "../ui/sheet.js";
 import { btn } from "../ui/button.js";
 import { checkField, field } from "../ui/form.js";
 
-/* The Local shell settings sheet (docs/15 §2): the switch docs/14 §6.1 asks for and
+/* The Local shell settings sheet (SPEC §terminal.local): the switch SPEC §terminal.config asks for and
    the shell picker. Saving is a plugin-config PUT — the terminal plugin restarts on
    config change, so every open session closes with a reason; the confirm names how many,
    and the revision from the GET makes a save that raced another panel lose loudly (409)
@@ -52,7 +52,7 @@ export async function openLocalSheet() {
     return h("option", { value: s.program }, s.label + " · " + s.program);
   });
   /* A datalist, not a select: the candidates are suggestions, and any path the
-     gateway can spawn is legal (docs/15 §2.1 — "may be typed by hand"). `list` is a
+     gateway can spawn is legal (SPEC §terminal.local — "may be typed by hand"). `list` is a
      read-only input property, so it rides as an attribute post-build; the datalist
      itself rides beside its field - association is by id, document-wide. */
   const shellInput = h("input", { id: "ls-shell", value: local.shell || "",
@@ -64,7 +64,7 @@ export async function openLocalSheet() {
     hint: tr("terminalSettings.emptyPlatformDefaultWhich", { which: l.shell || "?" }),
   });
   shellField.appendChild(h("datalist", { id: "ls-shells" }, options));
-  /* The library's sheet frame and form pieces (docs/46 P8-2): showSheet unhides the
+  /* The library's sheet frame and form pieces (SPEC §panel.pages): showSheet unhides the
      host BEFORE the paint (panel-proof-of-life rule 1) and owns the backdrop click. */
   showSheet(sheet({
     title: tr("terminalSettings.localShell"),
@@ -87,7 +87,7 @@ export async function openLocalSheet() {
 async function saveLocalSheet(got                              ) {
   const enabled = $                  ("ls-enabled").checked;
   const shell = $                  ("ls-shell").value;
-  /* restart_on_config_change is the honest cost of this save (docs/15 §2.1): the
+  /* restart_on_config_change is the honest cost of this save (SPEC §terminal.local): the
      plugin restarts, and with it every session — say how many and let the user back out. */
   if (sessions.length) {
     const n = sessions.length;

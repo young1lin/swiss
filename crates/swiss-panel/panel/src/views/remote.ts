@@ -15,15 +15,15 @@
  */
 
 /* ================================================================================================
-   Remote Targets - the remote plugin page (#remote), docs/34 R6 + R8.
+   Remote Targets - the remote plugin page (#remote), SPEC §remote.panel, §remote.targets.
 
-   Library rows (docs/46 P6-2): the alias, a sub-line saying where it runs (the endpoint, the
+   Library rows (SPEC §panel.pages): the alias, a sub-line saying where it runs (the endpoint, the
    workspace root in mono, what it may do), when it last ran, and one overflow menu. The CLI
    (swiss remote ...) and this page write the SAME rows through the same routes; the
    page exists so a target never needs a terminal to exist.
 
-   Groups (docs/34 R8): the list renders through the groups component as the seventh
-   scope of the docs/20 family - page density (one card per group, docs/35), drag ON
+   Groups (SPEC §remote.targets): the list renders through the groups component as the seventh
+   scope of the SPEC §host.groups family - page density (one card per group, SPEC §panel.groups), drag ON
    both ways. A row drag reorders the flat list (the scope's order route); a drop into
    another group moves the row (the member route); a group drags by its whole head. The
    group names ride with the rows in ONE /api/remote/targets response, and an older
@@ -53,7 +53,7 @@ let dragging = null as string | null; // in-flight row drag: a poll must not reb
 let draggingGroup = null as string | null; // in-flight group drag, same rule
 let painted = ""; // structural signature of the drawn list; a poll that changes nothing repaints nothing
 let collapsed = {} as Record<string, boolean>; // the groups fold map, loaded once before the first paint
-/* The last-run column (docs/46 §3.6), read from the run record's own route - no API of its own. */
+/* The last-run column (SPEC §panel.pages), read from the run record's own route - no API of its own. */
 let lastRuns = null as Record<string, ApiRemoteRunRow | undefined> | null; // target -> its newest run; null: the record did not answer, no column
 let olderLast = {} as Record<string, ApiRemoteRunRow | null>; // targets the newest page missed, asked once per visit
 
@@ -67,7 +67,7 @@ async function load() {
   presence = e.presence || "none";
   endpoints = e.endpoints || [];
   targets = t.targets || [];
-  // The names arrive with the rows (docs/34 R8); an older gateway answers neither,
+  // The names arrive with the rows (SPEC §remote.targets); an older gateway answers neither,
   // and the single default group renders as no divider at all.
   groupNames = t.groups && t.groups.length ? t.groups : ["default"];
   await loadLastRuns();
@@ -125,7 +125,7 @@ function endpointLabel(id: string): string {
   return hit ? hit.label || hit.id : id;
 }
 
-/** The endpoint's state, only when it is not a resting one (docs/46 §3.6, the P5 rule). Connected
+/** The endpoint's state, only when it is not a resting one (SPEC §panel.pages, the P5 rule). Connected
  *  and idle both run a command (idle dials on demand), so they draw nothing; a dial in flight is
  *  the amber pulse, and a failed or missing endpoint - a command would not get through - is red.
  *  An `error` used to share the amber of a transition. The title says the state in words. */
@@ -271,7 +271,7 @@ function openWriteSheet(t: RemoteTargetRow): void {
   $("rmw-path").focus();
 }
 
-/** The groups component's cfg (docs/20): this page's nouns, rows and moves. */
+/** The groups component's cfg (SPEC §host.groups): this page's nouns, rows and moves. */
 function cfg(): GroupCfg<RemoteTargetRow> {
   return {
     scope: "targets",
@@ -316,7 +316,7 @@ function paint(): void {
 
 function render(): void {
   painted = signature();
-  // The family's head (docs/46 §3.6): one sentence of what, the status line, and the actions -
+  // The family's head (SPEC §panel.pages): one sentence of what, the status line, and the actions -
   // the folder-plus glyph and the one primary. No location title (the context bar says Remote
   // Targets); the drag is taught by the list itself, not by prose.
   // The status line names the presence only when it is NOT the normal one: "serving ·
@@ -335,7 +335,7 @@ function render(): void {
         ],
       }),
       h("div", { id: "rmGroups" })));
-  // The grouped list ALWAYS paints, rows or none. A group is a place (docs/20: an empty
+  // The grouped list ALWAYS paints, rows or none. A group is a place (SPEC §host.groups: an empty
   // group is not an empty state - it is a drop target with a +), and the default group is
   // one too: it exists on every gateway and its + is the first way a target gets added.
   // This page used to swap in the "No targets yet" empty state whenever the table was bare
@@ -443,12 +443,12 @@ async function save(): Promise<void> {
     // a rejected save the user cannot see the reason for.
     label: $<HTMLInputElement>("rm-label").value.trim() || id,
     endpoint: $<HTMLSelectElement>("rm-endpoint").value,
-    // The group the select shows - the row is born INTO it server-side (docs/34 R8),
+    // The group the select shows - the row is born INTO it server-side (SPEC §remote.targets),
     // one write, no second assign round-trip.
     group: $<HTMLSelectElement>("g-sel") ? $<HTMLSelectElement>("g-sel").value : null,
     workspaceRoot: $<HTMLInputElement>("rm-root").value.trim(),
     capabilities: caps,
-    // The one shell the surface speaks today (docs/34): the route requires it, and a
+    // The one shell the surface speaks today (SPEC §remote): the route requires it, and a
     // select with a single honest option would be decoration.
     shell: "posix",
   };
@@ -505,7 +505,7 @@ export async function mount() {
 export async function refresh() {
   if (!(await load())) return;
   // Never rebuild under an in-flight gesture: the groups component finishes the drag
-  // on nodes it captured, and afterDrag() runs the catch-up paint (docs/20).
+  // on nodes it captured, and afterDrag() runs the catch-up paint (SPEC §host.groups).
   if (dragging || draggingGroup) return;
   // A poll that changed nothing structural repaints nothing: the pane keeps its nodes (and a
   // sheet the user may be typing into stays put, the same discipline as Tokens). The last-run

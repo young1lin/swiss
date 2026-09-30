@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* docs/46 G1 (U2) - the library's boundary, zero tolerance. src/ui/** imports ../h.js,
+/* SPEC §panel.ui (U2) - the library's boundary, zero tolerance. src/ui/** imports ../h.js,
    ../i18n.js and its own siblings, nothing else: no api, no state, no view. That is what lets
    the gallery render every component with made-up data and nothing else loaded, and what
    keeps a component from quietly growing a fetch. A mechanism that needs more (a menu that
@@ -59,7 +59,7 @@ describe("specifiersOf", () => {
   });
 });
 
-describe("docs/46 G1 - src/ui imports only ../h.js, ../i18n.js and ./*", () => {
+describe("SPEC §panel.ui - src/ui imports only ../h.js, ../i18n.js and ./*", () => {
   it("the library exists", () => {
     expect(uiFiles().length).toBeGreaterThan(5);
   });
@@ -86,7 +86,7 @@ describe("docs/46 G1 - src/ui imports only ../h.js, ../i18n.js and ./*", () => {
   });
 });
 
-describe("docs/46 - ui/index.ts is the whole library", () => {
+describe("SPEC §panel.ui - ui/index.ts is the whole library", () => {
   it("re-exports every module in ui/", () => {
     const index = readFileSync(join(UI, "index.ts"), "utf8");
     const named = new Set(specifiersOf(index).map((s) => s.replace(/^\.\//, "").replace(/\.js$/, ".ts")));

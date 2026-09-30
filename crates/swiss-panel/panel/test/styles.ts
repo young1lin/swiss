@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The shipped stylesheets, for tests that pin a CSS contract. Since docs/46 the panel links
+/* The shipped stylesheets, for tests that pin a CSS contract. Since SPEC §panel.ui the panel links
    three sheets - base.css (tokens, reset, shell), ui.css (every component class) and views.css
    (page layouts) - in that order, and a rule's winner depends on that order. Tests read the
    sheets through here instead of naming a file, so a rule moving between layers does not
@@ -57,7 +57,7 @@ export function uiOwnedClasses(): Set<string> {
 }
 
 /** Every class base.css or ui.css mentions - what a page that links only those two sheets (the
- *  gallery, docs/46 §2.6) can draw and still be styled. */
+ *  gallery, SPEC §panel.ui) can draw and still be styled. */
 export function libraryClasses(): Set<string> {
   const out = new Set<string>();
   for (const name of ["base.css", "ui.css"] as const) {

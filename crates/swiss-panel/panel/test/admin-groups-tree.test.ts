@@ -25,12 +25,12 @@ import { tr } from "../src/i18n.js";
 import type { GroupCfg } from "../src/types/dom.js";
 import { sheet } from "./styles.js";
 
-/* The group component DOM contract (docs/20 section 4 as revised by docs/35): one shape at
+/* The group component DOM contract (SPEC §panel.groups by SPEC §panel.groups): one shape at
  * two densities. The head is a BAND that leads with chevron, name, count, with the two
  * low-frequency actions after them, so the leading columns keep one stable x for the CSS
  * indent contract; no folder glyph, no guide line. The WHOLE head is draggable - there is
  * no grip - and the two buttons opt out at dragstart. At page density the group is the
- * card itself. The suite runs the real mountGroup on a real DOM (happy-dom): since docs/46
+ * card itself. The suite runs the real mountGroup on a real DOM (happy-dom): since SPEC §panel.ui
  * the markup is ui/group.ts's, built with h(), and the drag, drop, fold, + and ⋯ wiring is
  * driven by dispatched events and clicks - so each assertion reads what a browser would,
  * not what a hand-rolled stub recorded. Plus pure wording and the CSS numbers the head
@@ -243,7 +243,7 @@ describe("group head - anatomy", () => {
     expect(sideRow.draggable).toBe(true);
     const pageCfg = cfg([]);
     pageCfg.density = "page";
-    // docs/37 R5: the rowsHtml string path retired - the builder's node lands directly,
+    // SPEC §panel.toolchain: the rowsHtml string path retired - the builder's node lands directly,
     // already wired, at BOTH densities. wireRow still runs at page density only.
     let wired = 0;
     pageCfg.rowNode = (row: Row) => { const n = document.createElement("div"); n.dataset.name = row.name; return n; };
@@ -266,7 +266,7 @@ describe("empty-line wording (pure)", () => {
 });
 
 describe("the CSS contract (over the shipped sheet)", () => {
-  // The groups component's rules live in the component layer since docs/46.
+  // The groups component's rules live in the component layer since SPEC §panel.ui.
   const base = sheet("ui.css");
   const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "index.html"), "utf8");
 
@@ -276,7 +276,7 @@ describe("the CSS contract (over the shipped sheet)", () => {
     expect(base).toMatch(/\.grp--page \.grp-head \{ height: 36px/);
     expect(base).not.toMatch(/.grp[^ {]*::before/);
     expect(base).not.toContain("grp-folder");
-    // fix-plan #14 brought i-folder back to the sprite (the tunnel key picker's directory
+    // SPEC §panel.design brought i-folder back to the sprite (the tunnel key picker's directory
     // rows), so the symbol's presence in the shell proves nothing about the tree - the
     // tree's own module must not reference it.
     const groupsSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "groups.ts"), "utf8");

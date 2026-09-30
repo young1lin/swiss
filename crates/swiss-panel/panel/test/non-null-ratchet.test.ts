@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The docs/37 R2 assertion ratchet. no-non-null-assertion is an eslint error, but 33
+/* The SPEC §panel.lint assertion ratchet. no-non-null-assertion is an eslint error, but 33
  * src files still carry survivors of the 1,193 the migration started from; those files sit
  * in the eslint override block at "warn" so the tree stays green, and THIS test is what
  * makes the budget real: each file's count is frozen below and may only shrink. When a
@@ -28,7 +28,7 @@ import * as path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-/* Frozen at R2 commit time (docs/37 M5) at 326, of which 121 were the single boundary
+/* Frozen at R2 commit time (SPEC §panel.toolchain) at 326, of which 121 were the single boundary
  * assertion a function carried when it opened the Data pane (const d_ = d!). R4's db slice
  * collected that debt: db-state.ts owns a record that is never null, so the boundary had
  * nothing left to assert and the thirteen data-* files fell from 229 to 113 - 207 total.
@@ -97,7 +97,7 @@ function countAssertions(rel: string): number {
   return n;
 }
 
-describe("docs/37 R2 non-null assertion ratchet", () => {
+describe("SPEC §panel.lint non-null assertion ratchet", () => {
   it("every src file's assertion count is at or below its frozen row", () => {
     const failures: string[] = [];
     for (const rel of srcFiles()) {

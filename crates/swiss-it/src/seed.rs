@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Per-test databases, restored from the committed seeds (docs/44 §2.3/§2.4).
+//! Per-test databases, restored from the committed seeds (SPEC §testing.it).
 //!
 //! [`fresh`] is the one call a test makes: it resolves the engine (container or
 //! override URL), carves out a database only this test can see, loads the seed into
@@ -35,15 +35,15 @@
 //! - Redis: redis has no per-test databases beyond the 16 numbered indexes, so
 //!   they are leased from a pool (a semaphore plus a free list); a lease starts
 //!   with `FLUSHDB`, reloads `seed/redis/keys.txt` and generates the four stream
-//!   keys (docs/45 §2.7); releasing flushes again
+//!   keys (SPEC §data.streams); releasing flushes again
 //!   and returns the index. A test takes every index it will hold in ONE lease
 //!   ([`fresh_redis_many`] / [`hold_redis_indices`] are each a single atomic
 //!   `acquire_many_owned`) - waiting while holding part of a lease is the
-//!   deadlock docs/45 S1 fixed. The keyspace-catalog test leases a second index
+//!   deadlock SPEC §data.streams fixed. The keyspace-catalog test leases a second index
 //!   and puts two keys in it - see [`fresh_redis_with_neighbor`].
 //!
 //! Every failure here panics rather than returning `Err`: a test that cannot get
-//! its database is a red test, not a skip (docs/44 §2.2's rule, applied one
+//! its database is a red test, not a skip (SPEC §testing.it's rule, applied one
 //! layer up).
 
 use std::sync::{Mutex, OnceLock};
@@ -60,10 +60,10 @@ use crate::engine::{engine, on_worker, Engine, Kind};
 
 /// Bump when any file under `seed/` changes: an existing `it_seed` template (or
 /// `it` role) built from an older seed is rebuilt instead of reused.
-/// Version 3: the redis seed grew four generated stream keys (docs/45 §2.7).
+/// Version 3: the redis seed grew four generated stream keys (SPEC §data.streams).
 const SEED_VERSION: i64 = 3;
 
-/// How many keys a freshly leased redis db holds (docs/45 §2.7): 3,016 replayed
+/// How many keys a freshly leased redis db holds (SPEC §data.streams): 3,016 replayed
 /// from keys.txt plus the four generated stream keys. A pub const because the
 /// seed guards and the L1 scan tests ask this same question in three files — a
 /// seed change must move ONE number, not send the next change literal-hunting.
@@ -158,11 +158,11 @@ pub async fn fresh(kind: Kind, tag: &str) -> Fresh {
 }
 
 /// A redis Fresh plus a second leased index holding exactly two keys, for the
-/// keyspace-catalog surface (docs/43 M3): the catalog must list both dbs and must
+/// keyspace-catalog surface (SPEC §data.databases): the catalog must list both dbs and must
 /// not confuse which is which.
 ///
 /// Both indexes come out of the ONE `fresh_redis_many(2)` lease - the rule every
-/// multi-index test follows (docs/45 S1 fix): leasing them one at a time parks a
+/// multi-index test follows (SPEC §data.streams): leasing them one at a time parks a
 /// test in the semaphore's FIFO queue still holding the first, which is exactly
 /// the deadlock shape the atomic lease exists to kill.
 pub async fn fresh_redis_with_neighbor(_tag: &str) -> (Fresh, Fresh) {
@@ -244,8 +244,8 @@ pub async fn hold_redis_indices(n: usize) -> RedisHold {
     }
 }
 
-/// A seeded Fresh PLUS every other redis index the pool has, held empty (docs/45
-/// S2.1): INFO commandstats is SERVER-wide, so a measurement that wants to count only
+/// A seeded Fresh PLUS every other redis index the pool has, held empty (SPEC §data.streams):
+/// INFO commandstats is SERVER-wide, so a measurement that wants to count only
 /// this test's commands must hold all sixteen indexes - any concurrently running redis
 /// test would land its commands in the same counters.
 ///
@@ -498,7 +498,7 @@ fn redis_pool() -> &'static RedisPool {
 /// Waiting while holding NOTHING is the entire reason this cannot deadlock. A test
 /// that takes its indexes one at a time (acquire; ...; acquire) sits in the semaphore's
 /// FIFO queue BETWEEN acquisitions while still holding what it already took: the
-/// exclusive commandstats lease (docs/45 S2.1) waits for every last permit, a
+/// exclusive commandstats lease (SPEC §data.streams) waits for every last permit, a
 /// neighbor pair waits for its second, each holds what the other needs, and a FIFO
 /// semaphore makes that mutual wait a hang - not a scheduling accident. This function
 /// is the one place indexes are leased, and it never waits holding any.
@@ -561,7 +561,7 @@ async fn fresh_redis() -> Fresh {
     seed_redis_index(e, index, permit).await
 }
 
-/// `n` seeded redis Freshes out of ONE atomic lease. The docs/45 S1 fix rule:
+/// `n` seeded redis Freshes out of ONE atomic lease. The SPEC §data.streams rule:
 /// a test takes every redis index it will hold in a single lease - one
 /// `acquire_many` parks holding nothing, so any queue position is safe.
 /// Splitting one test's indexes across two leases re-introduces the
@@ -606,7 +606,7 @@ async fn load_redis_seed(conn: &mut redis::aio::MultiplexedConnection) {
     }
 }
 
-/// The four stream keys the seed GENERATES on top of keys.txt (docs/45 §2.7).
+/// The four stream keys the seed GENERATES on top of keys.txt (SPEC §data.streams).
 ///
 /// Why generated, not keys.txt lines: `stream:ticks` is 10,000 XADDs — the mysql
 /// seed uses a recursive CTE and the pg seed generate_series for the same reason,
@@ -671,7 +671,7 @@ async fn load_redis_streams(conn: &mut redis::aio::MultiplexedConnection) {
 
     // An empty stream can only be born by XGROUP ... MKSTREAM — no XADD leaves
     // zero entries — which is exactly the shape the empty-state UI needs on
-    // disk (docs/45 §2.5 “empty / single” row).
+    // disk (SPEC §data.streams “empty / single” row).
     redis::cmd("XGROUP")
         .arg("CREATE")
         .arg("stream:empty")

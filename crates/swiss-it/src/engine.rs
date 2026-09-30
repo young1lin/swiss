@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The engine table: how the three real databases arrive (docs/44 §2.2).
+//! The engine table: how the three real databases arrive (SPEC §testing.it).
 //!
 //! One engine per kind per test process. The first test that needs a kind starts it;
 //! everything afterwards - including tests on other libtest runtimes - only reads the
@@ -28,7 +28,7 @@
 //! 2. testcontainers - the module images, tags from the one table below, ports published
 //!    by Docker and read back through the API (never a literal 3306/5432/6379).
 //! 3. Neither answers -> the test FAILS, not skips: asking for `--features it` is
-//!    asking for real databases (docs/44 D5), and the panic carries the fixed
+//!    asking for real databases (SPEC §testing.it), and the panic carries the fixed
 //!    three-part report of `failure_report`.
 //!
 //! Two properties of testcontainers-rs 0.27.3 shape this module and are load-bearing:
@@ -74,7 +74,7 @@ const OWNED_LABEL: &str = "org.swiss-it.owned";
 /// pid-based prune deleted parallel runs' live engines (see prune_stale's doc).
 const PID_LABEL: &str = "org.swiss-it.pid";
 
-/// The three engines docs/44 D1 fixed the matrix to. MariaDB is deliberately absent
+/// The three engines SPEC §testing.it fixed the matrix to. MariaDB is deliberately absent
 /// (D7): when it enters it is one more variant and one more table row, nothing else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
@@ -95,7 +95,7 @@ impl std::fmt::Display for Kind {
 
 impl Kind {
     /// The env var that bypasses containers for this engine - the escape hatch for a
-    /// machine that already runs the real thing (docs/44 D1).
+    /// machine that already runs the real thing (SPEC §testing.it).
     pub fn env_var(self) -> &'static str {
         match self {
             Kind::Mysql => "SWISS_IT_MYSQL_URL",
@@ -104,8 +104,8 @@ impl Kind {
         }
     }
 
-    /// The image table - versions live in this one place and nowhere else (docs/44
-    /// §2.2): mysql:8.4, postgres:17, redis:7.
+    /// The image table - versions live in this one place and nowhere else (SPEC §testing.it):
+    /// mysql:8.4, postgres:17, redis:7.
     fn image(self) -> (&'static str, &'static str) {
         match self {
             Kind::Mysql => ("mysql", "8.4"),
@@ -135,7 +135,7 @@ impl Kind {
 
 /// A resolved engine: where it answers and the privileged URL the harness itself uses
 /// (CREATE DATABASE, FLUSHDB, counting connections). Tests never see `root_url` -
-/// docs/44 I1's `Fresh` hands them a non-privileged def instead.
+/// SPEC §testing.it's `Fresh` hands them a non-privileged def instead.
 pub struct Engine {
     pub kind: Kind,
     /// Where the published port answers ("127.0.0.1").
@@ -194,7 +194,7 @@ async fn build(kind: Kind) -> Engine {
     }
 }
 
-/// The fixed resolution order of docs/44 §2.2; every step that does not answer appends
+/// The fixed resolution order of SPEC §testing.it; every step that does not answer appends
 /// one line the report will print.
 async fn try_build(
     kind: Kind,
@@ -289,7 +289,7 @@ where
 
 /// Start the engine's container. Runs wholly on the docker worker; the module's own
 /// ready conditions (log matching) gate the start, then a real handshake gates the
-/// return - readiness is a query, not a log line (docs/44 §2.2).
+/// return - readiness is a query, not a log line (SPEC §testing.it).
 fn start_container(kind: Kind) -> Result<Engine, String> {
     on_worker(async move {
         prune_stale().await;
@@ -320,7 +320,7 @@ fn start_container(kind: Kind) -> Result<Engine, String> {
             Kind::Postgres => Held::Postgres(
                 PostgresImage::default()
                     .with_tag(tag)
-                    // UTF-8 is the product's contract with the panel (docs/41): the
+                    // UTF-8 is the product's contract with the panel (SPEC §remote.utf8): the
                     // seed's CJK and emoji must survive initdb's locale defaults.
                     .with_env_var(
                         "POSTGRES_INITDB_ARGS",
@@ -573,13 +573,13 @@ fn parse_endpoint(kind: Kind, url: &str) -> Result<(String, u16), String> {
     }
 }
 
-/// The fixed three-part failure report (docs/44 §2.2): every resolution step and why it
+/// The fixed three-part failure report (SPEC §testing.it): every resolution step and why it
 /// did not answer; the current DOCKER_HOST; the one actionable sentence for the most
 /// common cause, pointing at the runbook section that lists the rest.
 fn failure_report(kind: Kind, docker_host: Option<&str>, steps: &[String]) -> String {
     let mut out = format!(
         "the {} engine could not be resolved: `--features it` asks for a real \
-         database (docs/44)
+         database (SPEC §testing.it)
 
 ",
         kind.describe(),
@@ -604,7 +604,7 @@ fn failure_report(kind: Kind, docker_host: Option<&str>, steps: &[String]) -> St
 \
            and run the suite again. The other known traps - dockerd not started, \
            random published ports, user-level env vars a service cannot see, proxies - \
-           are docs/44-wsl-docker-setup.md §4.
+           are SPEC §testing.it.
 ",
     );
     out
@@ -629,7 +629,7 @@ mod tests {
             "{r}"
         );
         assert!(r.contains("wsl -d <distro> --exec true"), "{r}");
-        assert!(r.contains("docs/44-wsl-docker-setup.md"), "{r}");
+        assert!(r.contains("SPEC §testing.it"), "{r}");
         assert!(r.contains("the first run of the day"), "{r}");
         // An unset DOCKER_HOST is reported as exactly that, never as an empty value.
         let r2 = failure_report(Kind::Redis, None, &[]);

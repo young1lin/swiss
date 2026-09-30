@@ -66,7 +66,7 @@ fn pg_table_list_supplies_every_placeholder() {
         pg_browse_table_params(None, Some("us")),
         vec![json!(null), json!("%us%")]
     );
-    // docs/22 W1.1: a schema pick fills the $1 slot the same statement always carried.
+    // SPEC §data.browse: a schema pick fills the $1 slot the same statement always carried.
     assert_eq!(
         pg_browse_table_params(Some("app"), Some("us")),
         vec![json!("app"), json!("%us%")]

@@ -15,7 +15,7 @@
  */
 // @vitest-environment happy-dom
 
-/* docs/46 G6 (U13, U17) - the gallery shows the whole library, zero tolerance.
+/* SPEC §panel.ui (U13, U17) - the gallery shows the whole library, zero tolerance.
 
    /admin/ui.html is where a component is judged and where a new design is proposed (a scene),
    so it is only worth anything if it is complete and honest:
@@ -182,7 +182,7 @@ afterAll(() => {
   vi.unstubAllGlobals();
 });
 
-describe("docs/46 G6 - ui.html is the library and nothing else", () => {
+describe("SPEC §panel.ui - ui.html is the library and nothing else", () => {
   it("links base.css and ui.css only, and loads the gallery as a module", () => {
     const sheets = Array.from(galleryHtml.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)).map((m) => m[1]);
     expect(sheets).toEqual(["/admin/styles/base.css", "/admin/styles/ui.css"]);
@@ -220,7 +220,7 @@ describe("docs/46 G6 - ui.html is the library and nothing else", () => {
   });
 });
 
-describe("docs/46 G6 - every export is on the page", () => {
+describe("SPEC §panel.ui - every export is on the page", () => {
   it("the barrel is what the ledger is read against", () => {
     expect(exportedValues().length).toBeGreaterThan(30);
   });
@@ -267,7 +267,7 @@ describe("docs/46 G6 - every export is on the page", () => {
   });
 });
 
-describe("docs/46 G6 - the scenes", () => {
+describe("SPEC §panel.ui - the scenes", () => {
   it("there are the four §2.6 names", () => {
     expect(SCENES.map((s) => s.id)).toEqual(["content", "resource", "event", "empty"]);
   });
@@ -333,7 +333,7 @@ describe("docs/46 G6 - the scenes", () => {
   });
 });
 
-describe("docs/46 G6 - only the library's classes are drawn", () => {
+describe("SPEC §panel.ui - only the library's classes are drawn", () => {
   const known = libraryClasses();
   const drawn = (): string[] => {
     const out = new Set<string>();
@@ -354,7 +354,7 @@ describe("docs/46 G6 - only the library's classes are drawn", () => {
   }
 });
 
-describe("docs/46 G6 - the switches and demos answer", () => {
+describe("SPEC §panel.ui - the switches and demos answer", () => {
   it("theme: a click flips data-theme and the query, and back", async () => {
     await go("#components");
     click(app().querySelector("[data-g=theme]")!);

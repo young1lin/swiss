@@ -16,7 +16,7 @@
 
 import type { ApiJobRow, ApiJobRunRecord } from "./types/api.js";
 
-/* The jobs domain owns its state (docs/37 R4, slice 5 of 7): the rows, the scope's group family
+/* The jobs domain owns its state (SPEC §panel.toolchain, slice 5 of 7): the rows, the scope's group family
    and fold map, the per-row verb in flight, the structural signature the poll compares before it
    rebuilds, the paged run history the sheet renders, and the drag/staging slots.
 
@@ -34,7 +34,7 @@ const jobs: {
   pendingGroup: string | null;
 } = {
   data: [],              // rows from /api/jobs
-  groups: ["default"],   // the scope's group names, from /api/jobs' top level (docs/20 G4)
+  groups: ["default"],   // the scope's group names, from /api/jobs' top level (SPEC §host.groups)
   collapsed: {},         // jobs fold map; group name -> true (localStorage, groups.ts)
   busy: {},              // name -> a run is in flight
   painted: "",           // structural signature of the drawn list; a change means the rows move

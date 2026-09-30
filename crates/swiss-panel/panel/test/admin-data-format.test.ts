@@ -89,7 +89,7 @@ function stripWs(text: string): string {
   return out.join("");
 }
 
-/* docs/22 W5.4 — the lightweight formatter. Lexical only (the console's own SQL_TOKEN_RE
+/* SPEC §data.console — the lightweight formatter. Lexical only (the console's own SQL_TOKEN_RE
    stream), clause line breaks plus a two-space continuation indent, and it changes NOTHING
    but whitespace: case, tokens, strings and comments stay byte-identical, so a formatted
    statement runs exactly as it did. */
@@ -159,7 +159,7 @@ describe("dbFormatSql — the running equivalence the format button promises", (
   }
 });
 
-describe("favorites — localStorage swiss.dbFavorites (docs/22 W5.4, key renamed fix-plan #17)", () => {
+describe("favorites — localStorage swiss.dbFavorites (SPEC §data.console, key renamed SPEC §panel)", () => {
   it("names a query by its first line, folded and truncated", () => {
     expect(sql.dbFavoriteName("select 1\nfrom t")).toBe("select 1");
     expect(sql.dbFavoriteName("  select  a,\nb from t")).toBe("select a,");
@@ -193,12 +193,12 @@ describe("the sprite carries the favorites star", () => {
    skeleton carried it (the DOM-stubbed boot test cannot see a missing id — its $() returns a
    node for anything), so the whole Data view died on mount. The skeleton and the wiring are
    pinned to agree instead.
-   docs/37 R5: the skeleton is a node tree now — the ids live as h() props and the aria-label
+   SPEC §panel.toolchain: the skeleton is a node tree now — the ids live as h() props and the aria-label
    as an aria bag entry, which is what the emitted source carries. */
 describe("the console skeleton carries what its wiring queries", () => {
-  it("dbSqlRun exists in the skeleton; the flat row's buttons left with docs/43 M4", () => {
+  it("dbSqlRun exists in the skeleton; the flat row's buttons left with SPEC §data.tabs", () => {
     const src = readFileSync(join(admin, "js", "data-view.js"), "utf8");
-    // The console's flat action row folded into the toolbar (docs/43 M4): Run is the
+    // The console's flat action row folded into the toolbar (SPEC §data.tabs): Run is the
     // toolbar's primary action (data-grid's emit carries it), the rest ride the overflow.
     // What still must agree here is the textarea the paint fills — and that the flat row's
     // ids really left the skeleton.

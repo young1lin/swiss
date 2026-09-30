@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-//! The plugin's config row -> the limits the session machine runs by (docs/14 §6).
+//! The plugin's config row -> the limits the session machine runs by (SPEC §terminal.config).
 //!
 //! Every value here is a policy the user can see and change; the two that are NOT config
 //! live next door as constants (the 64 KB catch-up buffer and the 8 MB recording cap),
-//! because docs/14 §7 puts them in the memory budget rather than in the user's hands.
+//! because SPEC §terminal.budget puts them in the memory budget rather than in the user's hands.
 //!
 //! Parsing is strict and the errors are user-facing: the plugin's `validate_config`
 //! hands them back behind a 400. A mistyped `maxSessions` that silently fell back to the
@@ -28,13 +28,13 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-/// docs/14 §6.6. Four at once is a developer's desk, not a bastion host.
+/// SPEC §terminal.sessions. Four at once is a developer's desk, not a bastion host.
 pub const DEFAULT_MAX_SESSIONS: usize = 4;
 pub const DEFAULT_MAX_SESSIONS_PER_TARGET: usize = 2;
 pub const DEFAULT_IDLE_TIMEOUT_MINUTES: u64 = 30;
-/// docs/14 §6.7: a closed laptop lid must not kill a running compile.
+/// SPEC §terminal.sessions: a closed laptop lid must not kill a running compile.
 pub const DEFAULT_GRACE_SECONDS: u64 = 60;
-/// docs/14 §6.8: how long a full send queue is tolerated before the session is closed.
+/// SPEC §terminal.sessions: how long a full send queue is tolerated before the session is closed.
 pub const DEFAULT_STALL_SECONDS: u64 = 30;
 
 /// What the terminal plugin was configured with.
@@ -42,7 +42,7 @@ pub const DEFAULT_STALL_SECONDS: u64 = 30;
 pub struct TerminalConfig {
     pub local: LocalConfig,
     /// Empty = every target the shell provider lists. Otherwise an exact allowlist of
-    /// connection ids (docs/14 §6.2).
+    /// connection ids (SPEC §terminal.config).
     pub allowed_targets: Vec<String>,
     pub max_sessions: usize,
     pub max_sessions_per_target: usize,
@@ -56,7 +56,7 @@ pub struct TerminalConfig {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LocalConfig {
-    /// docs/14 §6.1: OFF by default. The gateway already runs as the user, so a local
+    /// SPEC §terminal.config: OFF by default. The gateway already runs as the user, so a local
     /// shell gives a local attacker nothing new — but it turns a loopback HTTP port into
     /// arbitrary code execution, and that upgrade is worth one deliberate click.
     pub enabled: bool,
@@ -199,7 +199,7 @@ mod tests {
     fn an_empty_config_is_the_documented_defaults() {
         let cfg = TerminalConfig::parse(&json!({})).expect("parses");
         assert_eq!(cfg, TerminalConfig::default());
-        // The one default that is a security decision rather than a number (docs/14 §6.1).
+        // The one default that is a security decision rather than a number (SPEC §terminal.config).
         assert!(!cfg.local.enabled, "the local shell must default to OFF");
         assert_eq!(cfg.max_sessions, 4);
         assert_eq!(cfg.max_sessions_per_target, 2);

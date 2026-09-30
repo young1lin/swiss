@@ -16,7 +16,7 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-/* docs/29 — the launch-tag glyph map. docs/37 R5: typeTagNode() BUILDS the glyph, so the
+/* SPEC §mcp.panel — the launch-tag glyph map. SPEC §panel.toolchain: typeTagNode() BUILDS the glyph, so the
    suite reads the attributes off the returned svg (mapped tags) or the plain string the
    unmapped fallback hands back. What is pinned here is the whitelist, the fallback, and
    the aria label that keeps the word audible when the chip goes graphical. */
@@ -41,7 +41,7 @@ beforeAll(async () => {
 const hrefOf = (n: unknown) => (n as { kids: { attrs: Record<string, string> }[] }).kids[0].attrs.href;
 const attr = (n: unknown, k: string) => (n as { attrs: Record<string, string> }).attrs[k];
 
-describe("docs/29: typeTagNode — glyph when mapped, word when not", () => {
+describe("SPEC §mcp.panel: typeTagNode — glyph when mapped, word when not", () => {
   it("a mapped tag renders its sprite glyph and carries the word as the aria-label", () => {
     const svg = util.typeTagNode("mysql");
     expect(hrefOf(svg)).toBe("#i-mysql");
@@ -59,7 +59,7 @@ describe("docs/29: typeTagNode — glyph when mapped, word when not", () => {
   });
 
   it("an unmapped tag falls back to the plain word — the chip users had before", () => {
-    // docs/37 R5: the fallback is a TEXT NODE now, so the tag string is the string itself;
+    // SPEC §panel.toolchain: the fallback is a TEXT NODE now, so the tag string is the string itself;
     // a tag that looks like markup can never be parsed as markup.
     expect(util.typeTagNode("echo")).toBe("echo");
     expect(util.typeTagNode("node")).toBe("node");

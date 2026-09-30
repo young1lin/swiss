@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-//! The clock the scheduler reads (docs/11 §6.6).
+//! The clock the scheduler reads (SPEC §jobs.triggers).
 //!
 //! DST and suspend-resume tests must not depend on the machine the test run happens to
 //! sit in. Everything time-shaped in the scheduler goes through [Clock]: the real one is
 //! chrono::Local, tests inject a fake with a synthetic DST rule so the same assertions
-//! pass in any machine timezone. No new dependency - no `chrono-tz`, ever (docs/11 §10).
+//! pass in any machine timezone. No new dependency - no `chrono-tz`, ever (SPEC §jobs).
 
 use chrono::TimeZone;
 
@@ -73,7 +73,7 @@ pub(crate) mod testing {
     use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
     use std::sync::Arc;
 
-    /// The injected clock (docs/11 §6.6). Local time is UTC plus a piecewise offset:
+    /// The injected clock (SPEC §jobs.triggers). Local time is UTC plus a piecewise offset:
     /// +60 minutes normally, +120 minutes inside [spring_forward_ms, fall_back_ms) - so
     /// on the spring day the local minutes [spring+1h, spring+2h) DO NOT EXIST, and on
     /// the fall day the local minutes [fall+1h, fall+2h) HAPPEN TWICE. The same
@@ -81,7 +81,7 @@ pub(crate) mod testing {
     ///
     /// Default spring/fall sit far from any test's window (a straight +60 zone); the
     /// DST tests pass their own instants. `local_calls` counts local_from_ms
-    /// invocations - the next-due budget test's counter (docs/11 §6.5).
+    /// invocations - the next-due budget test's counter (SPEC §jobs.triggers).
     pub struct FakeClock {
         pub now_ms: AtomicI64,
         pub spring_forward_ms: i64,

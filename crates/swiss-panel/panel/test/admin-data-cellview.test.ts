@@ -59,7 +59,7 @@ const cell = await import(
   text: string | null; cls: string | null; title: string | null; href: string | null;
 } };
 
-// docs/22 W2.3 — the typed rendering of one cell value. Pure so every intent (NULL, numbers,
+// SPEC §data.grid — the typed rendering of one cell value. Pure so every intent (NULL, numbers,
 // booleans, URLs, folded JSON, binary) is pinned without a DOM; the grid painter is a thin
 // wrapper over this.
 describe("dbCellView", () => {

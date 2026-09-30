@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The pane's scrolled state (docs/46 U9, §3.2, U18). The shell owns three facts about #pane,
+/* The pane's scrolled state (SPEC §panel.design, §panel.pages, §panel.ui). The shell owns three facts about #pane,
  * not each page - installed ONCE at boot, reset on every page switch so a page never opens
  * with the previous page's hairline (or its scroll offset):
  *

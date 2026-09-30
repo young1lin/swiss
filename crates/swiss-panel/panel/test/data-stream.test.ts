@@ -20,8 +20,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
 import type { ApiDbRedisValue, ApiDbStreamGroupRow, ApiDbStreamWindow } from "../src/types/api.js";
 
-/* The stream view's tests: the pure merge/cap/columns folds (docs/45 S2), plus the DOM
- * walk - Load-earlier against a parked fetch, the docs/43 M3 cellmenu technique. */
+/* The stream view's tests: the pure merge/cap/columns folds (SPEC §data.streams), plus the DOM
+ * walk - Load-earlier against a parked fetch, the SPEC §data.databases cellmenu technique. */
 class NodeStub {}
 (globalThis as unknown as { Node: unknown }).Node = NodeStub;
 
@@ -131,7 +131,7 @@ const entry = (id: string, fields: Record<string, string>): StreamEntry => {
   return { id: id, ts: null, fields: fields };
 };
 
-// docs/45 S2 fix: the merge SORTS both directions into newest-first order — the first
+// SPEC §data.streams: the merge SORTS both directions into newest-first order — the first
 // cut prepended the page unconditionally and stood a Before page on its head.
 describe("streamMerge", () => {
   it("lands an older page BELOW the cached window, in order", () => {
@@ -175,7 +175,7 @@ describe("streamMerge", () => {
   });
 });
 
-// docs/45 §2.2: one cap, two directions - a walk of older pages drops from the TOP so
+// SPEC §data.streams: one cap, two directions - a walk of older pages drops from the TOP so
 // the page it just fetched survives; a live-edge follow drops from the BOTTOM.
 describe("streamCap", () => {
   it("keep newest: the head survives, the oldest tail falls out", () => {
@@ -208,7 +208,7 @@ describe("streamCap", () => {
   });
 });
 
-// docs/45 S3 follow-up: the holdback pool behind the pill is bounded by the same cap
+// SPEC §data.streams: the holdback pool behind the pill is bounded by the same cap
 // as the table — overflow keeps the newest half and reports the drop (a hole in the
 // middle is the gap bar's own semantic, whoever made the hole).
 describe("streamPool", () => {
@@ -241,14 +241,14 @@ describe("streamPool", () => {
   });
 });
 
-// docs/45 S2/D3: the columns derivation — the field union in first-seen-scanning-
+// SPEC §data.streams: the columns derivation — the field union in first-seen-scanning-
 // newest-first order, the same algorithm the server runs per window, re-run over the
 // merged rows so an older page's new field lands at the tail.
-// docs/45 §2.3: the rate readout is a pure function over two samples of XLEN, and the
+// SPEC §data.streams: the rate readout is a pure function over two samples of XLEN, and the
 // decision it carries is the negative one - a stream that SHRANK between ticks (XTRIM,
 // XDEL) reads as a real negative number. Clamping to 0 would hide exactly the signal an
 // operator watching a feed is looking for ("where did my entries go"), so the sign stays.
-describe("streamRateText (docs/45 §2.3)", () => {
+describe("streamRateText (SPEC §data.streams)", () => {
   it("no elapsed time is no sample: junk reads as empty, never a fabricated spike", () => {
     expect(streamRateText(120, 0)).toBe("");        // the first tick: no baseline yet
     expect(streamRateText(120, -1000)).toBe("");    // a clock that went backwards
@@ -300,7 +300,7 @@ describe("streamColumns", () => {
   });
 });
 
-// docs/45 §2.3: the edge rule. Junk counts as pinned — the edge must never be missed
+// SPEC §data.streams: the edge rule. Junk counts as pinned — the edge must never be missed
 // on a technicality; only a provably-scrolled view counts as history.
 describe("isTopPinned", () => {
   it("scrollTop 0 is the edge", () => {
@@ -319,7 +319,7 @@ describe("isTopPinned", () => {
   });
 });
 
-/* --- the DOM walk (docs/45 S2 fix) ------------------------------------------------------------- */
+/* --- the DOM walk (SPEC §data.streams) ------------------------------------------------------------- */
 
 function find(node: Stub, pred: (n: Stub) => boolean, out: Stub[] = []): Stub[] {
   if (pred(node)) out.push(node);
@@ -373,7 +373,7 @@ const loadEarlierBtn = (): Stub =>
 const pageOf = (ms: number): StreamEntry[] =>
   Array.from({ length: 500 }, (_v: unknown, i: number) => entry(ms + "-" + (499 - i), { a: String(i) }));
 
-describe("the stream value view's Load-earlier walk (docs/45 S2 fix)", () => {
+describe("the stream value view's Load-earlier walk (SPEC §data.streams)", () => {
   it("mounts newest-first: the FIRST row is the stream's lastId, headers id/time then first-seen fields", () => {
     const wrap = mountStream({
       key: "s", type: "stream", ttl: -1, length: 2,
@@ -427,14 +427,14 @@ describe("the stream value view's Load-earlier walk (docs/45 S2 fix)", () => {
   });
 });
 
-/* --- the Follow edge (docs/45 S3) ------------------------------------------------------------- */
+/* --- the Follow edge (SPEC §data.streams) ------------------------------------------------------------- */
 
 /* 2026-09-28: Follow is an on/off switch, not a button whose word flips between Follow and
    Pause - the owner asked for the state to be the control ("用 UI 来替换文字"). */
 const followBtn = (): Stub =>
   find(byId.dbGridWrap, (n) => n.dataset && n.dataset.stream === "follow")[0];
 const following = (): boolean => followBtn().attrs["aria-checked"] === "true";
-// docs/46 P7: library buttons, addressed by their data hook (the classes had no rule of their own).
+// SPEC §panel.pages: library buttons, addressed by their data hook (the classes had no rule of their own).
 const pill = (): Stub => find(byId.dbGridWrap, (n) => n.dataset && n.dataset.stream === "pill")[0];
 const gapBar = (): Stub => find(byId.dbGridWrap, (n) => n.dataset && n.dataset.stream === "gap")[0];
 const barText = (): string => {
@@ -454,7 +454,7 @@ const answerErr = async (): Promise<void> => {
 };
 const followOn = (): void => { followBtn().onclick(); }; // renderDbGrid repainted; state is on
 
-describe("the stream Follow edge (docs/45 S3)", () => {
+describe("the stream Follow edge (SPEC §data.streams)", () => {
   it("an empty stream mounts the Follow bar too, and its tick polls after=0-0", async () => {
     mountStream({
       key: "s", type: "stream", ttl: -1, length: 0,
@@ -515,7 +515,7 @@ describe("the stream Follow edge (docs/45 S3)", () => {
     await p;
     expect(rowIds()).toEqual(["9-0", "8-0"]); // NOTHING inserted under the reader
     expect(pill().hidden).toBe(false);
-    expect(text(pill()).trim()).toBe("2 new entries"); // fix-plan #14: the arrow is the i-arrow-up sprite, not copy
+    expect(text(pill()).trim()).toBe("2 new entries"); // SPEC §panel.design: the arrow is the i-arrow-up sprite, not copy
     expect(gapBar().hidden).toBe(true); // an untruncated page is no gap
     setScroll(500, 24); // still reading; the flush itself returns to the top
     pill().onclick();
@@ -525,7 +525,7 @@ describe("the stream Follow edge (docs/45 S3)", () => {
   });
 
   it("not pinned, stream running hot: the pool holds at the cap, the pill says 500+, the flush lands at most 500", async () => {
-    // docs/45 S3 follow-up: 7 ticks x 100 entries while the operator reads history —
+    // SPEC §data.streams: 7 ticks x 100 entries while the operator reads history —
     // the pool must never grow past the row cap, and what falls out is a hole in the
     // middle (the gap bar's own semantic), not a silent loss.
     mountStream({
@@ -595,7 +595,7 @@ describe("the stream Follow edge (docs/45 S3)", () => {
   });
 
   it("a jump voids the tick in flight: the late answer pools nothing, pending stays empty", async () => {
-    // docs/45 S3 follow-up: the jump reopens the window, so a tick still in flight
+    // SPEC §data.streams: the jump reopens the window, so a tick still in flight
     // speaks for rows that no longer exist. Its answer must be dropped on arrival —
     // not pooled behind a pill whose splice target the jump just replaced.
     mountStream({
@@ -711,7 +711,7 @@ describe("the stream Follow edge (docs/45 S3)", () => {
   });
 });
 
-/* --- the consumer-group fold (docs/45 §2.4) ------------------------------------------------------ */
+/* --- the consumer-group fold (SPEC §data.streams) ------------------------------------------------------ */
 
 const groupsBtn = (): Stub =>
   find(byId.dbGridWrap, (n) => n.tag === "button" && text(n).indexOf("Consumer groups") === 0)[0];
@@ -724,7 +724,7 @@ const groupsTable = (): Stub | undefined =>
 const groupsRows = (tb: Stub): string[][] =>
   (tb.children[1] ? tb.children[1].children : []).map((r: Stub) => r.children.map((c: Stub) => c.textContent));
 
-describe("the consumer-group fold (docs/45 §2.4)", () => {
+describe("the consumer-group fold (SPEC §data.streams)", () => {
   const groupRow = (over: Partial<ApiDbStreamGroupRow>): ApiDbStreamGroupRow =>
     Object.assign({ name: "feed", consumers: 1, pending: 7, lag: 9993, "last-delivered-id": "1700000000600-0" }, over);
   const mountTwo = (): void => {
@@ -853,7 +853,7 @@ const newer = (a: string, b: string): boolean => {
   return Number(aseq) > Number(bseq);
 };
 
-/* --- reading a fast stream (docs/49) ------------------------------------------------------------ */
+/* --- reading a fast stream (SPEC §data.streams) ------------------------------------------------------------ */
 
 /* The feed that made this necessary: 9 symbols x 10 entries a second is 90 rows a second,
    and a 500-row table turns over in under six seconds. Filtering, the summary strip and
@@ -866,7 +866,7 @@ const streamAutoField = (stream as unknown as {
 }).streamAutoField;
 const dbStreamQuote = (stream as unknown as { dbStreamQuote: (v: string) => string }).dbStreamQuote;
 
-describe("docs/49 S2.3 - the summary strip's folds", () => {
+describe("SPEC §data.streams - the summary strip's folds", () => {
   const tickRows = (n: number, syms: string[]): StreamEntry[] =>
     Array.from({ length: n }, (_v: unknown, i: number) =>
       entry(String(1000000 - i * 100) + "-0", { symbol: syms[i % syms.length], price: String(100 + i) }));
@@ -916,7 +916,7 @@ describe("docs/49 S2.3 - the summary strip's folds", () => {
   });
 });
 
-describe("docs/49 - the reading bar on a fast stream", () => {
+describe("SPEC §data.streams - the reading bar on a fast stream", () => {
   const filterBox = (): Stub => find(byId.dbGridWrap, (n) => n.tag === "input")[0];
   const chips = (): Stub[] => find(byId.dbGridWrap, (n) => n.dataset && n.dataset.schip !== undefined);
   const groupSel = (): Stub => find(byId.dbGridWrap, (n) => n.tag === "select" && n.className === "db-stream-by")[0];

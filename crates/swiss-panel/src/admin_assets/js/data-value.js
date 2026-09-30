@@ -22,13 +22,13 @@ import { btn } from "./ui/button.js";
 import { JV_LINES, decodeStrings, jsonCodeNode } from "./ui/json-view.js";
 import { closeSheet, sheet, showSheet } from "./ui/sheet.js";
 
-/* --- value viewer sheet (docs/22 W5.3) ----------------------------------------------------------- */
+/* --- value viewer sheet (SPEC §data.grid) ----------------------------------------------------------- */
 /* A cell is a 30px row; its content is not. "View value\u2026" opens the full value in a
    read-only sheet — the same surface the editor lives in, minus every write affordance
    (editing stays in the editor sheet; this one only looks). cloudbeaver registers value
    presentations by MIME (TextValuePresentationBootstrap); the equivalent here is one pure
    kind picker over the value itself, because the wire already says what the value is:
-   - the \\x hex form (both adapters' binary ride, docs/22 W4b) opens as a hex dump,
+   - the \\x hex form (both adapters' binary ride, SPEC §data.edits) opens as a hex dump,
    - an http(s) text opens as itself plus the link,
    - parseable JSON opens as a details-folded tree,
    - everything else opens as full text.
@@ -76,7 +76,7 @@ function dbHexPreview(value        , maxBytes        )                          
 
 /** A JSON value as the panel's code block (ui/json-view.ts) - the one every other page shows
  *  JSON in: standard JSON, two-space indent, coloured by token, a string that holds JSON shown
- *  as the JSON it holds. It replaced a folding tree (docs/37 R5) whose sans-serif keys and click
+ *  as the JSON it holds. It replaced a folding tree (SPEC §panel.toolchain) whose sans-serif keys and click
  *  per level read unlike the rest of the panel (2026-09-28). Past JV_LINES the first lines are
  *  painted and Show all swaps in the rest: a large document builds its DOM on request. Every
  *  string lands as a TEXT node, so a document full of tags stays inert. */
@@ -120,7 +120,7 @@ function dbOpenValueSheet(column        , value         , where                 
   } else {
     body = h("pre", { class: "db-val-pre" }, String(value));
   }
-  // The library's sheet (docs/46 P7): showSheet unhides the host before it paints, the sub
+  // The library's sheet (SPEC §panel.pages): showSheet unhides the host before it paints, the sub
   // names where the value came from. Per-open button wiring stays, per the sheet idiom.
   showSheet(sheet({
     title: column,

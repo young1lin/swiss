@@ -33,7 +33,7 @@ import { closeSheet, sheet, showSheet } from "./ui/sheet.js";
 /* --- CSV import wizard -------------------------------------------------------------------------- */
 /* Paste or upload CSV, map its columns to table columns, preview the first rows, then commit.
    The batch runs server-side in ONE transaction; a failure rolls the whole file back. The
-   Insert/Upsert segmented control picks the statement form (docs/22 W4.5): Insert keeps the
+   Insert/Upsert segmented control picks the statement form (SPEC §data.export): Insert keeps the
    plain INSERT (a duplicate key aborts the file), Upsert maps conflicts onto existing rows. */
 function dbParseCsvLine(line        )           {
   const out           = []; let cur = "", inQ = false;
@@ -68,10 +68,10 @@ function dbOpenImport()       {
   if (!d.data.editable) { toast(tr("dataCsv.tableNotEditable", { reason: d.data.editNote || tr("dataCsv.noPrimaryKey") }), true); return; }
   if (dbPending() && !dbOkToDrop()) return;
   let header           = [], lines           = [], mapping                    = [];
-  let mode = "insert"; // docs/22 W4.5: "insert" | "upsert" — the statement form the commit uses
-  // The library's sheet (docs/46 P7): showSheet unhides the host before it paints, and head,
+  let mode = "insert"; // SPEC §data.export: "insert" | "upsert" — the statement form the commit uses
+  // The library's sheet (SPEC §panel.pages): showSheet unhides the host before it paints, and head,
   // body and foot are siblings by construction - a missing paren once nested body and foot
-  // inside the head band (docs/43 M2 fixup). The mode switch is seg(). The sheet body's grid
+  // inside the head band (SPEC §data.tabs). The mode switch is seg(). The sheet body's grid
   // spaces its children, so the mapping and preview boxes stay hidden while they are empty
   // instead of holding two empty gaps. The per-open wiring below stays (parse / paint /
   // setMode close over the mapping state).
@@ -162,7 +162,7 @@ function dbOpenImport()       {
     $("dbImpMode").querySelectorAll("button").forEach((b) => {
       b.setAttribute("aria-selected", String(b.dataset.mode === m));
     });
-    // One sentence beside the control names the cost of the picked mode (docs/22 W4.5).
+    // One sentence beside the control names the cost of the picked mode (SPEC §data.export).
     $("dbImpModeSay").textContent = isUpsert
       ? tr("dataCsv.rowsMatchExistingKey")
       : tr("dataCsv.everyRowInsertsDuplicate");
@@ -191,7 +191,7 @@ function dbOpenImport()       {
     const j = await apiJson                                     ("/api/db/" + encodeURIComponent(c.conn ) + "/import", {
       method: "POST",
       // mode rides the payload only when upsert — a default import stays byte-identical to
-      // what a pre-W4.5 panel sent (docs/22 W4.5).
+      // what a pre-W4.5 panel sent (SPEC §data.export).
       body: JSON.stringify(Object.assign(
         { table: d.table, schema: d.schema, header: header, lines: lines, mapping: mapping },
         upsert ? { mode: "upsert" } : {}
@@ -246,8 +246,8 @@ function dbCopyCsvCell(v         )         {
   return String.fromCharCode(34) + s.split(String.fromCharCode(34)).join(String.fromCharCode(34) + String.fromCharCode(34)) + String.fromCharCode(34);
 }
 
-/** docs/22 W1.5: one filter straight from a cell value — push it, paint the row, apply.
- * docs/22 closeout B6: a REFUSED discard takes the pushed row back — a filter the user just
+/** SPEC §data.grid: one filter straight from a cell value — push it, paint the row, apply.
+ * SPEC §data: a REFUSED discard takes the pushed row back — a filter the user just
  * said no to must not stay on screen as if it had been accepted. */
 function dbPushCellFilter(column        , op        , value         )       {
   const d = dbTab();
@@ -272,12 +272,12 @@ function dbCellMenu(e            , row                                , key     
   const names = d.data?.columns.map((c             )         => { return c.name; });
   const dialect = (c.conns.find((x                    )          => { return x.name === c.conn; }) || {}                        ).dialect || "mysql";
 
-  // The library's floating menu (docs/46 §3.7): its rows, keys, clamp and close are the ones
+  // The library's floating menu (SPEC §panel.pages): its rows, keys, clamp and close are the ones
   // every other menu in the panel has; this one only lists what a cell can do.
   const items             = [];
   const item = (label        , fn            )       => { items.push({ label, fn }); };
   item(tr("logs.copyValue"), ()       => { dbCopyText(value === null || value === undefined ? "NULL" : String(value)); });
-  // docs/22 W5.3: the read-only viewer — full text, a JSON tree, hex or the link. NULL has
+  // SPEC §data.grid: the read-only viewer — full text, a JSON tree, hex or the link. NULL has
   // no content to view, so it gets no item (same rule as the filter items below).
   if (value !== null && value !== undefined) {
     item(tr("dataCsv.viewValue"), ()       => {
@@ -287,7 +287,7 @@ function dbCellMenu(e            , row                                , key     
   if (editInDialog) {
     item(tr("dataCsv.editInDialog"), editInDialog); // long text / JSON: the user-chosen dialog path
   }
-  // docs/22 W1.5: filter-by-value straight off a cell. NULL cells show none of these (there is
+  // SPEC §data.grid: filter-by-value straight off a cell. NULL cells show none of these (there is
   // no value to equal); the pushed filter lands in the standing filter row like a typed one.
   if (row && value !== null && value !== undefined) {
     item(tr("dataCsv.filterEqValue"), ()       => { dbPushCellFilter(column, "eq", value); });
@@ -295,7 +295,7 @@ function dbCellMenu(e            , row                                , key     
     item(tr("dataCsv.filterContains"), ()       => { dbPushCellFilter(column, "like", value); });
   }
   // Checked-row copies live in the SAME menu — one right-click reaches every format. No
-  // sqlResult guard left (docs/42 T2): this is the TABLE grid's cell menu, and a query reply
+  // sqlResult guard left (SPEC §data.tabs): this is the TABLE grid's cell menu, and a query reply
   // now paints in its own tab with dbResultCellMenu below — the two can no longer overlap.
   dbAppendSelItems(items, dbSelectedForCopy());
   item(tr("dataCsv.selectAllOnPage"), ()       => { dbSelAll(true); });
@@ -319,7 +319,7 @@ function dbCellMenu(e            , row                                , key     
       } catch (err) { toast(errText(err), true); }
     });
   }
-  // The cursor point is the anchor; popupMenu clamps it to the viewport (docs/22 closeout
+  // The cursor point is the anchor; popupMenu clamps it to the viewport (SPEC §data
   // audit: a right-click at an edge used to strand the menu off-screen).
   popupMenu({ left: e.clientX, top: e.clientY, bottom: e.clientY }, items);
 }
@@ -328,7 +328,7 @@ function dbCellMenu(e            , row                                , key     
 /* Checked rows (the rowctl checkboxes) copied to the clipboard in a paste-anywhere format.
    The row list mirrors what the grid SHOWS: pending buffered edits ride along, deleted-buffered
    rows keep their original values. For a query-result grid the keys are dbResultKey(tab, index) —
-   the ACTIVE tab's namespace (docs/22 W4.3), so a copy never crosses tabs. */
+   the ACTIVE tab's namespace (SPEC §data.console), so a copy never crosses tabs. */
 function dbSelectedForCopy()                                                      {
   const t = dbTab();
   const st = dbSqlTab();
@@ -434,7 +434,7 @@ function dbResultCellMenu(e            , row                                , co
   const item = (label        , fn            )       => { items.push({ label, fn }); };
   const v = row ? row[column] : undefined;
   item(tr("logs.copyValue"), ()       => { dbCopyText(v === null || v === undefined ? "NULL" : String(v)); });
-  // docs/22 W5.3: the same read-only viewer on a console-result cell (no column types there —
+  // SPEC §data.grid: the same read-only viewer on a console-result cell (no column types there —
   // the value alone picks the presentation, and the \\x wire form still says hex).
   if (v !== null && v !== undefined) {
     item(tr("dataCsv.viewValue"), ()       => { dbOpenValueSheet(column, v, tr("dataCsv.sqlResult")); });

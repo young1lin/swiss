@@ -15,7 +15,7 @@
  */
 
     /* ---------------------------------------------------------------------------------------------
-       The component layer (docs/46). Every class a ui/ component draws is defined here and only
+       The component layer (SPEC §panel.ui). Every class a ui/ component draws is defined here and only
        here: base.css holds the tokens, the reset and the shell (rail, context bar, sidebar);
        views.css holds page layouts that have no reusable shape (the Data and Terminal
        workspaces). The load order is base -> ui -> views, and views.css must not restyle a class
@@ -38,13 +38,13 @@
     .btn.primary { background: var(--accent); color: var(--accent-text); box-shadow: var(--shadow-btn); font-weight: var(--w-emph); }
     .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
     .btn.danger { color: var(--red); }
-    /* The quiet slots: toolbar icon buttons, a row's secondary affordance (docs/18 V1). Chrome
+    /* The quiet slots: toolbar icon buttons, a row's secondary affordance (SPEC §panel.design). Chrome
        appears only on hover — the toolbar's own idiom. V2's icon buttons and V5's ⋯ hang off it. */
     .btn.ghost { background: none; box-shadow: none; color: var(--text-2); }
     .btn.ghost:hover { background: var(--hover); color: var(--text); }
     .btn:disabled, .btn.disabled { opacity: .4; cursor: default; background: var(--card); }
     /* A disabled primary stays a primary, dimmed: the card ground above left its white word on
-       white (a DDL sheet's "Add column" until a name is typed - docs/46 P7-2 walk). */
+       white (a DDL sheet's "Add column" until a name is typed - SPEC §panel.pages, found on a walk). */
     .btn.primary:disabled { background: var(--accent); box-shadow: none; }
     /* A word with a leading glyph (btn({ icon })): the glyph is a hint, the word the meaning. */
     .btn.with-ic { display: inline-flex; align-items: center; gap: var(--s1); }
@@ -74,7 +74,7 @@
     .btn.icon { padding: 4px 8px; font-size: 14px; line-height: 1; color: var(--text-2); display: inline-flex; align-items: center; justify-content: center; }
     /* A toggle that is on (iconBtn's `pressed`, aria-pressed="true"): the glyph takes the accent and
        the seat a tint of it - the selected-seat treatment, not a new colour. Without it "pressed"
-       drew exactly like "not pressed" (found by the gallery, docs/46 P1b-3). */
+       drew exactly like "not pressed" (found by the gallery, SPEC §panel.ui). */
     /* redacted() (2026-09-28): a masked address and the eye that reveals it. The eye is a bare
        glyph a step smaller than an action icon: it sits inside a 12px sub-line, not a toolbar. */
     .redact { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; vertical-align: bottom; }
@@ -83,9 +83,9 @@
     .redact-eye .ic { width: var(--ic-m); height: var(--ic-m); }
     .redact-eye:hover, .redact-eye[aria-pressed="true"] { color: var(--text); background: var(--hover); }
     .btn.icon[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-    /* Inline icons (docs/18 V2): one sprite in the shell, stroke=currentColor, sized here.
+    /* Inline icons (SPEC §panel.design): one sprite in the shell, stroke=currentColor, sized here.
        Size and ink are knobs the HOST sets on its own element (--ic, --ic-ink): a page's row
-       sizes its glyphs without a rule on .ic, which stays the library's (docs/46 G2). */
+       sizes its glyphs without a rule on .ic, which stays the library's (SPEC §panel.ui). */
     .ic { width: var(--ic, 16px); height: var(--ic, 16px); flex: none; color: var(--ic-ink, currentColor); }
     /* Disclosure chevrons read better a step smaller than action icons. */
     .grp-chev .ic { width: var(--ic-s); height: var(--ic-s); }
@@ -153,7 +153,7 @@
     label.check { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-body); }
     label.check input { width: auto; accent-color: var(--accent); }
 
-    /* --- groups (docs/20 §4 as revised by docs/35) -----------------------------------------------
+    /* --- groups (SPEC §panel.groups by SPEC §panel.groups) -----------------------------------------------
        One component, one shape, two densities. A group is a header BAND over its members:
        chevron + name + count leading, + (always, dimmed) and the ellipsis (hover) trailing. The
        band is the container marker - no folder glyph, no guide line, no second surface under
@@ -189,7 +189,7 @@
     /* Squared on the card, which clips its own corners; the right pad lines the head's glyphs
        up with the rows' own ellipsis column. */
     .grp--page .grp-head { height: 36px; padding: 0 var(--s4) 0 var(--s3); border-radius: 0; }
-    /* Draggable whole (docs/35): the head, and the toggle that covers most of it, show the grab
+    /* Draggable whole (SPEC §panel.groups): the head, and the toggle that covers most of it, show the grab
        cursor; the two buttons keep the pointer they were born with. data-view.js builds inert
        heads with the same classes and never sets draggable, so they show neither. */
     .grp-head[draggable="true"] { cursor: grab; }
@@ -247,23 +247,23 @@
     /* Status is a dot plus neutral text — color is reserved for interaction, not for body copy. */
     /* inline-block: in a flex row (a list row, a band) the dot sizes itself either way; beside
        plain text (a head's status line, a key/value) an empty inline span collapsed to nothing -
-       found by the gallery (docs/46 P1b-3). */
+       found by the gallery (SPEC §panel.ui). */
     .dot { display: inline-block; vertical-align: middle; width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; background: var(--text-3); }
     .dot.up { background: var(--green); }
     .dot.down, .dot.error { background: var(--red); }
-    /* A lazy proc (docs/18 V6): idle is the absence of a claim, so the dot is a hollow ring in
+    /* A lazy proc (SPEC §panel.design): idle is the absence of a claim, so the dot is a hollow ring in
        the quiet text tone — not a filled blue disc arguing with the greens and the reds. */
     .dot.idle { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
     .dot.starting, .dot.stopping { background: var(--amber); animation: pulse 1.1s ease-in-out infinite; }
     @keyframes pulse { 50% { opacity: .35; } }
     @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }
 
-    /* --- the page body (docs/46 §2.2; skill §6's templates) ------------------------------------ */
+    /* --- the page body (SPEC §panel.ui; skill §6's templates) ------------------------------------ */
     /* The pane: the padded, scrolling frame under the bars (the shell's #pane; ui/page.ts pane()).
        The measure: every top-level block in it is capped, so one tool card reads as a card and
        not as a stripe across a 2560px monitor. `.wide` is the opt-out for content whose rows are
        genuinely wide (the call log, the traffic log, the tunnel table) - still capped, just
-       further. Left-hugging (docs/18 V4): centring was the first attempt, and with the sidebar
+       further. Left-hugging (SPEC §panel.nav): centring was the first attempt, and with the sidebar
        already pushing the pane off-centre the auto margins read as two blank gutters with the
        content floating between them. The cap stays, only the centring goes; emptiness belongs on
        the right, where it reads as room rather than as imbalance. */
@@ -279,7 +279,7 @@
 
     /* --- page scaffolding, lists, menus, sheets (from views.css) -------------------------------- */
     .pane-head { display: flex; align-items: flex-start; gap: var(--s4); margin-bottom: var(--s5); }
-    /* The pinned page head (docs/46 U9). On a content page (.pane > .wide > .pane-head) the
+    /* The pinned page head (SPEC §panel.design). On a content page (.pane > .wide > .pane-head) the
        description and the page's actions stay in reach while a long list scrolls under them -
        New on Port Forwards is one click away at row forty. At rest nothing moves: the head takes
        the pane's 20px top padding inside itself (margin -20 / padding 20) and splits its 20px of
@@ -303,7 +303,7 @@
     .pane > .wide > .pane-head::before, .pane > .wide > .pane-nav::before { top: 0; bottom: 0; z-index: -1; background: var(--bg); box-shadow: 0 0 0 100vmax var(--bg); }
     .pane > .wide > .pane-head::after, .pane > .wide > .pane-nav::after { bottom: -1px; height: 1px; background: var(--sep); box-shadow: 0 0 0 100vmax var(--sep); visibility: hidden; }
     .pane.scrolled > .wide > .pane-head::after, .pane.scrolled > .wide > .pane-nav::after { visibility: visible; }
-    /* The resource head (resHead, docs/46 §3.2) as two pinned layers. The name row is the pin
+    /* The resource head (resHead, SPEC §panel.pages) as two pinned layers. The name row is the pin
        above, closed up to the name; the description and state line (.res-meta) are plain flow
        and scroll away beneath it; the nav (.pane-nav: the resource's seg) sticks under the name
        row at --pin-title-h, which the shell measures (pane-scroll.ts). Stuck, the two read as
@@ -330,7 +330,7 @@
     /* height:100% resolves against .pane when this is a direct child; min-height carries it when the
        tunnel view nests it inside a .wide wrapper. */
     .empty { height: 100%; min-height: 320px; display: grid; place-items: center; text-align: center; color: var(--text-3); }
-    /* The empty state's own rhythm (docs/18 V7): a quiet icon, a heading, one line of hint,
+    /* The empty state's own rhythm (SPEC §panel.design): a quiet icon, a heading, one line of hint,
        maybe one ghost action — vertical, centred, nothing else competing. */
     .empty > div { display: grid; justify-items: center; }
     .empty-ic .ic { width: 20px; height: 20px; }
@@ -340,7 +340,7 @@
 
     /* Segmented control. */
     .seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--sep-soft); border-radius: 8px; }
-    /* The control-slot seg (docs/46 P9): fills its row the way .field .dd does, so equal
+    /* The control-slot seg (SPEC §panel.ui): fills its row the way .field .dd does, so equal
        pills split the slot - a schedule's mode picker. */
     .seg.fill { display: flex; width: 100%; }
     .seg.fill button { flex: 1; }
@@ -352,7 +352,7 @@
     .seg:empty { display: none; }
     .seg button { font-size: var(--f-body); font-weight: var(--w-body); color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; transition: color .12s ease; }
     .seg button:hover { color: var(--text); }
-    /* Hairline rings, no drops (docs/18 V6): the selected tab is a card with an edge, not a
+    /* Hairline rings, no drops (SPEC §panel.design): the selected tab is a card with an edge, not a
        keycap — brightness separates it from the well, and the ring closes the silhouette. */
     .seg button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: var(--w-emph); box-shadow: 0 0 0 1px var(--sep); }
     :root[data-theme="dark"] .seg button[aria-selected="true"] { background: color-mix(in srgb, var(--card), white 7%); box-shadow: inset 0 0 0 1px var(--sep); }
@@ -361,7 +361,7 @@
     .seg-n { font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; margin-left: 5px; }
     .seg button[aria-selected="true"] .seg-n { color: var(--text-2); }
 
-    /* --- object tabs (ui/tab.ts objTab, docs/46 P8) ------------------------------------------------
+    /* --- object tabs (ui/tab.ts objTab, SPEC §panel.pages) ------------------------------------------------
        One open thing on a strip the page body owns: Data's tables and consoles, Terminal's sessions.
        Flat, a hairline between neighbours; the open tab takes the surface's own ground and sits
        1px over the strip's bottom edge, so it reads as the top of what it opened, with a 2px accent
@@ -389,7 +389,7 @@
     .group { background: var(--card); border: 0; box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
     .group + .cap { margin-top: var(--s5); }
     .cap { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: 0 var(--s1) var(--s2); }
-    /* Separators start at the text column, not the card's edge (docs/46 U7, the System Settings
+    /* Separators start at the text column, not the card's edge (SPEC §panel.design, the System Settings
        inset): a line that runs under the leading dot or chevron cuts the row's own lead off from
        its name. --row-inset is the text column's x; a row with no lead keeps the padding's 16. */
     .lrow + .lrow, .kv + .kv { position: relative; }
@@ -403,7 +403,7 @@
     .tag.bad { color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
     .tag.warn { color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); }
 
-    /* --- the list row (ui/row.ts, docs/46 §2.3) ----------------------------------------------
+    /* --- the list row (ui/row.ts, SPEC §panel.ui) ----------------------------------------------
        One shape for every list: [lead] name / sub-or-err [cols] [acts]. At --row-h two lines of
        text clear it, so a row with an error is exactly as tall as a healthy one. The lead is the
        dot column: row pad 16 + dot 6 + gap 12 puts the name at x 34 - the groups contract - and
@@ -456,13 +456,13 @@
     .kv-v { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .kv-v.mono { font-family: var(--mono); font-size: var(--f-label); }
 
-    /* --- the event list (ui/timeline.ts, docs/46 §2.4, U10) -----------------------------------
+    /* --- the event list (ui/timeline.ts, SPEC §panel.ui) -----------------------------------
        No box and no row lines: rows sit on the page and the hover is the row. A day heading
        sticks under the pinned head (--pane-head-h, measured by the shell from P2 on); the one
        expanded row becomes a card. The time, the count and the duration are tabular so a
        column of them does not wiggle. The one column has a 0 minimum: an implicit column is
        `auto`, which never shrinks below its item's min-content - a no-wrap summary line's full
-       width - and a long argument widened the whole timeline past its box (docs/46 P6 walk). */
+       width - and a long argument widened the whole timeline past its box (SPEC §panel.pages, found on a walk). */
     .tl { display: grid; grid-template-columns: minmax(0, 1fr); }
     /* Stuck over an open row (a card), the heading's ground also covers the card's 1px outline
        on either side of it - otherwise two stubs of the card's edge stand beside the words. */
@@ -513,7 +513,7 @@
     .pager { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s1) 0; font-size: var(--f-label); color: var(--text-2); }
     .pager-status { display: inline-flex; align-items: center; gap: var(--s1); font-variant-numeric: tabular-nums; }
     /* ui/page.ts failNote(): a failed load, patched in beside the pager - the sentence and the way
-       out, nothing else; the HTTP status is the only secondary text, never a body (docs/32 B1). */
+       out, nothing else; the HTTP status is the only secondary text, never a body (SPEC §mcp.calls). */
     .fail-note { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s1) 0; color: var(--red); font-size: var(--f-label); }
     .fail-why { color: var(--text-3); font-size: var(--f-caption); }
     /* ui/page.ts filterInput(): a filter in a section's tools takes a filter's width, not a
@@ -522,7 +522,7 @@
 
     /* center, not baseline: this header carries a segmented control and a button next to its caption,
        and a segmented control has no baseline to share. */
-    /* docs/32 B4: the head may wrap under ~900px — the caption and the trailing menu button
+    /* SPEC §mcp.calls: the head may wrap under ~900px — the caption and the trailing menu button
        keep the first row, the search box takes what width is left rather than forcing overflow. */
     .sec-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s3); padding: 0 var(--s1) var(--s2); min-height: 36px; }
     .sec-cap { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
@@ -538,7 +538,7 @@
     .page-foot { display: flex; justify-content: space-between; gap: var(--s3); padding: var(--s3) var(--s1) 0; font-size: var(--f-label); color: var(--text-3); }
     .page-foot-rev { font-family: var(--mono); font-size: var(--f-caption); }
 
-    /* docs/33 C3: the JSON view is one formatted code block (json-view.ts) — standard indented
+    /* SPEC §mcp.calls: the JSON view is one formatted code block (json-view.ts) — standard indented
        JSON, every line visible, no fold and no inner scroll box: the page scrolls, and a block
        past 200 lines ends in "Show all". Long values wrap instead of widening the pane. */
     pre.jv { margin: 0; padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); line-height: 1.6; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
@@ -572,7 +572,7 @@
     .form { padding: var(--s4); display: grid; gap: var(--s3); }
     /* ui/form.ts pair(): two fields side by side, wherever the pair sits. It used to be a grid only
        under .form or as a direct child of .sheet-body, so a pair one div deeper (the Add sheet's
-       generated fields, docs/46 P2-3c) stacked its halves with no gap between them. */
+       generated fields, SPEC §panel.pages) stacked its halves with no gap between them. */
     .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); align-items: start; }
     .form-actions { display: flex; align-items: center; gap: var(--s3); padding-top: var(--s1); }
 
@@ -582,7 +582,7 @@
       background: var(--card); border: 0; border-radius: 10px;
       box-shadow: var(--shadow-pop); padding: var(--s1); display: grid;
     }
-    /* docs/43 M3: a heading row inside a menu — the connection groups and the database
+    /* SPEC §data.databases: a heading row inside a menu — the connection groups and the database
        selector's Primary/Databases/System bands. Chrome, not a choice: caption-sized,
        text-3, and never a button. A disabled row keeps its ink but sits inert, its reason
        one hover away (title). */
@@ -596,7 +596,7 @@
        sheet. Stating the layer HERE is what makes it win: this rule outranks .menu above by
        specificity, while a same-specificity .dd-menu (the controls block above) loses the tie to
        the later .menu rule.
-       The width floor is the float's own (docs/18 V5 follow-up): .menu's 236px is sized for the
+       The width floor is the float's own (SPEC §panel.design): .menu's 236px is sized for the
        pane's overflow list, and this rule's old min-width: 0 let a row's ⋯ menu collapse to one
        label's width — "History" measured 66px and "Force free 50383" sat clipped beside it.
        160px holds the longest row-menu item on one line without inheriting the pane size. */
@@ -608,14 +608,14 @@
     .menu button.pick { display: flex; align-items: center; gap: var(--s2); }
     .menu button.pick::before { content: "\2713"; width: 10px; flex: none; color: var(--accent); visibility: hidden; }
     .menu button.pick.on::before { visibility: visible; }
-    /* docs/43 M1: the tab strip's overflow lists open objects, so its rows carry the same
+    /* SPEC §data.tabs: the tab strip's overflow lists open objects, so its rows carry the same
        type glyph and dirty dot the cards do — the menu is the whole set's one read. */
     .menu button .ic { width: var(--ic-m); height: var(--ic-m); flex: none; color: var(--text-3); }
     /* ...and such a row is a flex row. Left inline, the glyph touched its label and the dot - a
        sized span - drew no box at all: every Data overflow row with held edits looked clean
-       (docs/43 M1 to docs/46 P1b-3, where the gallery's menu demo showed it). */
+       (SPEC §data.tabs to SPEC §panel.ui, where the gallery's menu demo showed it). */
     .menu button:has(> .ic, > .db-tab-dot) { display: flex; align-items: center; gap: var(--s2); }
-    /* The held-edits dot (docs/43 M1): buffered writes are a STATE, so they get the dot (rule 10) -
+    /* The held-edits dot (SPEC §data.tabs): buffered writes are a STATE, so they get the dot (rule 10) -
        amber for "held, not written", the count in its title. A Data tab carries it, and so does
        the popupMenu row standing in for that tab (its item's `dot`), trailing the label. */
     .db-tab-dot { flex: none; width: var(--dot); height: var(--dot); border-radius: 50%; background: var(--amber); }
@@ -630,7 +630,7 @@
     /* A sheet is a card, not a second canvas: on the canvas colour its fields had no edge but their
        hairline and the whole dialog read as a grey slab over a grey slab. */
     .sheet { width: min(560px, 92vw); background: var(--card); border-radius: 10px; box-shadow: var(--shadow-sheet); overflow: hidden; }
-    /* Entrances (docs/18 V1): the floating layers rise 4px in 120ms — the same tempo as the .12s
+    /* Entrances (SPEC §panel.design): the floating layers rise 4px in 120ms — the same tempo as the .12s
        hover transitions, stated once for opening rather than a new motion language. */
     @keyframes pop-in { from { opacity: 0; transform: translateY(4px); } }
     .sheet, .menu.float { animation: pop-in .12s ease-out; }
@@ -643,7 +643,7 @@
     /* One column with a 0 minimum, like .tl: nothing inside a sheet can push it wider than the sheet. */
     .sheet-body { padding: var(--s4) var(--s5); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); max-height: 66vh; overflow-y: auto; }
     .sheet-foot { display: flex; justify-content: flex-end; gap: var(--s2); padding: var(--s3) var(--s5); border-top: 1px solid var(--sep-soft); background: color-mix(in srgb, var(--bg) 60%, var(--card)); }
-    /* The inline create form (docs/35 §3): Tokens and Secrets create in place, not in a sheet.
+    /* The inline create form (SPEC §panel.groups): Tokens and Secrets create in place, not in a sheet.
        ONE row - the fields, the Group select, the one primary - and a full step of air before
        the list; New group lives in the header's pane-actions like every other grouped page.
        The Token page used to pour these into a .two with no rule outside a sheet: a full-width
@@ -680,7 +680,7 @@
     .hint { font-size: var(--f-label); color: var(--text-3); }
     /* A hint that reports a refusal (the one-field sheet's inline error): state, so red (rule 2). */
     .hint.bad { color: var(--red); }
-    /* docs/27 §4: the connection sheet's Advanced fold. Native <details> is the house fold
+    /* SPEC §tunnels.panel: the connection sheet's Advanced fold. Native <details> is the house fold
        primitive (the data-value JSON tree); this is its form instance — a quiet summary that
        carries whatever proxy/jump is configured as monochrome tags, so collapsed never means
        hidden: the row's transport stays visible without unfolding. The interior grid gives
@@ -697,7 +697,7 @@
       font-size: var(--f-body); max-width: 78vw; z-index: 50;
     }
     .toast.err { border-color: var(--red); }
-    /* Back to top (toTop, docs/46 U18): one round glyph at the pane's bottom-right, fixed on
+    /* Back to top (toTop, SPEC §panel.ui): one round glyph at the pane's bottom-right, fixed on
        <body>. Hidden by visibility - which also takes it out of the Tab order - until its
        scroller is more than a screen down. Under the menus (30), the backdrop (40), the toast (50). */
     .btn.to-top {

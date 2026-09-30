@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The `swiss remote` and `swiss run` command lines (docs/34 SS26).
+//! The `swiss remote` and `swiss run` command lines (SPEC §remote.cli).
 //!
 //! A thin, honest client of the HTTP surface: every mutation goes through
 //! /api/remote, every execution goes through /api/runs, and the command streams
@@ -22,7 +22,7 @@
 //! No second job system, no local exec engine - the CLI is just the agent-facing
 //! face of the same gateway.
 //!
-//! THE HARD RULE (docs/34 SS26): everything after a bare `--` is ARGV for the far
+//! THE HARD RULE (SPEC §remote.cli): everything after a bare `--` is ARGV for the far
 //! side, never parsed as a flag. `swiss remote exec build -- make -j8 -- -k` must
 //! send `["make","-j8","--","-k"]` untouched. The same cut happens at exec's first
 //! command word: `exec t ls -a` needs no `--`, and local flags end there.
@@ -32,9 +32,9 @@ use serde_json::{json, Value};
 use crate::daemon::{read_gateway_token, resolve_port};
 
 /// How long one exec may run unless --timeout, the project binding, or the target
-/// row says otherwise (docs/34 SS26: CLI > binding > target > this).
+/// row says otherwise (SPEC §remote.cli: CLI > binding > target > this).
 const DEFAULT_EXEC_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1000;
-/// The submit route ceiling (docs/10 SS7); refusing here is a better error than
+/// The submit route ceiling (SPEC §host.actions); refusing here is a better error than
 /// the same refusal from the API after a round trip.
 const MAX_TIMEOUT_MS: u64 = 24 * 60 * 60 * 1000;
 /// The parsed `swiss remote ...` command, after `--` splitting.
@@ -46,7 +46,7 @@ pub struct RemoteArgs {
     /// Everything after the bare `--`: ARGV, passed through UNTOUCHED.
     pub passthrough: Vec<String>,
     /// Exec only: the tokens from the first command word on, cut verbatim before
-    /// flag parsing could eat them (docs/34 SS26). [parse_command] splices this
+    /// flag parsing could eat them (SPEC §remote.cli). [parse_command] splices this
     /// ahead of the post-`--` tail so `passthrough` is the whole remote ARGV.
     pub operand: Vec<String>,
     pub port: Option<u16>,
@@ -65,7 +65,7 @@ pub struct RemoteArgs {
     pub follow: bool,
     pub verbose: bool,
     pub json: bool,
-    /// `swiss run audit` (docs/41 A3): the window, the actor, and where to copy it.
+    /// `swiss run audit` (SPEC §remote.history): the window, the actor, and where to copy it.
     pub since: Option<String>,
     pub until: Option<String>,
     pub actor: Option<String>,
@@ -93,7 +93,7 @@ pub fn parse(argv: &[String]) -> RemoteArgs {
         let arg = &argv[i];
         if !arg.starts_with('-') {
             words.push(arg.clone());
-            // Exec's ARGV begins at the first command word (docs/34 SS26): the
+            // Exec's ARGV begins at the first command word (SPEC §remote.cli): the
             // second positional after the subcommand, or the first when --target
             // already named the target. From that word on nothing is a local
             // flag; the synopsis's bare "--" is the explicit spelling of the
@@ -237,7 +237,7 @@ pub fn query_encode(raw: &str) -> String {
     out
 }
 
-/// One gateway client: base URL, the CLI key the admin API wants (docs/48, attached per
+/// One gateway client: base URL, the CLI key the admin API wants (SPEC §host.session, attached per
 /// request) and the bearer token the MCP side knows this user by.
 struct Gateway {
     client: reqwest::Client,
@@ -662,7 +662,7 @@ fn report(result: Result<Value, String>, done: &str, as_json: bool) -> i32 {
 // --- name resolution: explicit target > project action > binding default --------------------
 
 /// What one exec/sync/pull name resolved to. The binding is discovered from the
-/// working directory, exactly like git finds .git (docs/34 SS24).
+/// working directory, exactly like git finds .git (SPEC §remote.project).
 pub struct Resolved {
     pub target: String,
     pub cwd: Option<String>,
@@ -670,7 +670,7 @@ pub struct Resolved {
     pub via: String,
 }
 
-/// The deadline chain (docs/34 SS26): --timeout > project action > target row >
+/// The deadline chain (SPEC §remote.cli): --timeout > project action > target row >
 /// 2h, capped at the submit route's 24h ceiling.
 fn deadline(cli: Option<&str>, action: Option<u64>, target_default: Option<u64>) -> Option<u64> {
     let picked = parse_duration(cli.unwrap_or(""))
@@ -829,8 +829,8 @@ async fn cmd_exec(gw: Gateway, a: &RemoteArgs) -> i32 {
     )
     .await
 }
-/// Which surface submitted the run, for the record (docs/41 A1): `cli`, as against `panel` or
-/// an MCP client's own actor. The admin API's CLI key (docs/48) proves "this machine's CLI", not
+/// Which surface submitted the run, for the record (SPEC §remote.history): `cli`, as against `panel` or
+/// an MCP client's own actor. The admin API's CLI key (SPEC §host.session) proves "this machine's CLI", not
 /// who, so this is self-declared either way, and the distinction that matters in the audit trail
 /// is "the operator ran make" vs "an agent's MCP token ran make" — which the word alone carries.
 ///
@@ -843,8 +843,8 @@ fn cli_actor() -> String {
 }
 
 /// Submit one remote run and, unless --detach, stream its live output through the
-/// cursor API until it is terminal - then exit with the REMOTE exit code (docs/34
-/// SS26): `swiss remote exec build -- false` exits 1 because false did.
+/// cursor API until it is terminal - then exit with the REMOTE exit code (SPEC §remote.cli):
+/// `swiss remote exec build -- false` exits 1 because false did.
 async fn submit_and_stream(
     gw: &Gateway,
     action: &str,
@@ -1172,7 +1172,7 @@ async fn cmd_pull(gw: Gateway, a: &RemoteArgs) -> i32 {
 // --- `swiss run`: the run surface, shared with every submit --------------------------------
 
 /// The entry for `swiss run ...` (argv is everything after `swiss run`).
-/// `swiss api <METHOD> </api/...> [json-body]` (docs/48): one admin API call with the CLI key
+/// `swiss api <METHOD> </api/...> [json-body]` (SPEC §host.session): one admin API call with the CLI key
 /// attached - how a script reaches /api/* now that it needs a credential, without the key ever
 /// being printed or passed on a command line. The answer's JSON goes to stdout; an HTTP error
 /// goes to stderr with exit 1.
@@ -1289,7 +1289,7 @@ pub async fn run_main(argv: Vec<String>) -> i32 {
     }
 }
 
-// --- `swiss run audit`: the last seven days, one line a run (docs/41 A3) ------------------
+// --- `swiss run audit`: the last seven days, one line a run (SPEC §remote.history) ------------------
 
 /// The record's rows inside the window, newest first, every page of them - the API
 /// stops walking at `since`, so this ends where the window does.
@@ -1576,7 +1576,7 @@ mod tests {
 
     #[test]
     fn the_bare_dash_dash_splits_and_nothing_after_it_is_a_flag() {
-        // THE contract (docs/34 SS26): everything after the first -- is ARGV.
+        // THE contract (SPEC §remote.cli): everything after the first -- is ARGV.
         let whole = argv(&["exec", "build", "--", "make", "-j8", "--", "-k", "--json"]);
         let (head, tail) = split_passthrough(&whole);
         assert_eq!(head, &argv(&["exec", "build"]));
@@ -1595,7 +1595,7 @@ mod tests {
 
     #[test]
     fn the_cli_declares_the_surface_and_not_the_person() {
-        // docs/41 A1 keys the audit trail on WHICH surface submitted the run. It used to
+        // SPEC §remote.history keys the audit trail on WHICH surface submitted the run. It used to
         // spell `cli:<user>@<host>`, which on this machine is the operator's own name, and
         // the Runs page shows the actor in every row (2026-09-28). The word alone answers
         // the question the record is for; --actor still exists for anyone who wants more.
@@ -1741,7 +1741,7 @@ mod tests {
 
     #[test]
     fn exec_argv_also_begins_at_the_first_command_word() {
-        // docs/34 SS26: "exec test ls -a" and "exec test -- ls -a" are the same
+        // SPEC §remote.cli: "exec test ls -a" and "exec test -- ls -a" are the same
         // call; the local-flag zone ends at the first command word after the name.
         let a = parse_command(&argv(&["exec", "test", "ls", "-a"]));
         assert_eq!(a.sub, "exec");

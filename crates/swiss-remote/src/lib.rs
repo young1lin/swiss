@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Agent-friendly remote execution (docs/34): the swiss-remote plugin.
+//! Agent-friendly remote execution (SPEC §remote): the swiss-remote plugin.
 //!
 //! The fourth way to reach a machine: NOT a second SSH client. This crate knows no
 //! russh, no tunnels store, no credentials - it holds the agent-facing vocabulary
@@ -28,9 +28,9 @@
 //! coordinator's own cancel, and live output is the run output endpoint added with the
 //! ActionContext seam.
 //!
-//! The MCP adapter shipped with R7 (docs/34): five thin tools over /mcp/remote in
+//! The MCP adapter shipped with R7 (SPEC §remote): five thin tools over /mcp/remote in
 //! swiss-mcp, dispatching these actions BY NAME through the shared run coordinator.
-//! The targets list is the seventh scope of the docs/20 group family (R8): the
+//! The targets list is the seventh scope of the SPEC §host.groups group family (R8): the
 //! register_remote_scopes seat below plugs the sealed table into /api/groups/targets.
 
 pub mod actions;
@@ -485,7 +485,7 @@ pub(crate) mod testing {
     }
 }
 
-/// The whole submit-then-read chain (docs/34 SS17): POST /api/runs answers 202 with
+/// The whole submit-then-read chain (SPEC §host.actions): POST /api/runs answers 202 with
 /// a runId immediately, the live output endpoint streams what the exec produced while
 /// it runs, and the finished row carries the REMOTE exit code. Mounted through the
 /// REAL host routes (services::api) plus the real /api/remote tree, driven with
@@ -703,7 +703,7 @@ mod recorded {
         assert_eq!(row["outputBytes"], 24);
         assert_eq!(page["usage"]["runs"], 1);
         assert_eq!(page["active"], json!([]), "a finished run is not active");
-        // docs/41 A1: a submission that names no actor is recorded as `api`.
+        // SPEC §remote.history: a submission that names no actor is recorded as `api`.
         assert_eq!(row["actor"], "api");
 
         // The CLI's self-declared actor lands on its line, verbatim; blank or oversized
@@ -748,7 +748,7 @@ mod recorded {
         assert!(raw.contains("\"actor\":\"cli:jdoe@box\""), "{raw}");
         assert_eq!(raw.lines().count(), 4);
 
-        // docs/41 A3: the audit predicates over the same route.
+        // SPEC §remote.history: the audit predicates over the same route.
         let (status, page) = call(
             &app,
             "GET",
@@ -832,7 +832,7 @@ mod recorded {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
-        // A write keeps its body, sealed, and the route hands it back (docs/34 R12).
+        // A write keeps its body, sealed, and the route hands it back (SPEC §remote.history).
         let (status, submitted) = call(
             &app,
             "POST",

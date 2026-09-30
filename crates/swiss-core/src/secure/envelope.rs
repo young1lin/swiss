@@ -15,7 +15,7 @@
  */
 
 //! The sealed-envelope format every gateway state file is written in — port of
-//! `secure/envelope.ts`, whose format is FROZEN (docs/05 §1): the `"lmg"` marker key and the
+//! `secure/envelope.ts`, whose format is FROZEN (SPEC §formats.sealed): the `"lmg"` marker key and the
 //! `lmg-state-v1` HKDF info are the format's historical wire literals, not the product name —
 //! a rename of the product must never touch them.
 //!
@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
 const FORMAT_VERSION: u8 = 1;
-// FROZEN wire literal (docs/05 §1): every sealed file on disk was derived with this info
+// FROZEN wire literal (SPEC §formats.sealed): every sealed file on disk was derived with this info
 // string. It is the format's historical name, not the product name — never rename it.
 const HKDF_INFO: &[u8] = b"lmg-state-v1";
 
@@ -51,8 +51,8 @@ const HKDF_INFO: &[u8] = b"lmg-state-v1";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Sealed {
-    /// Envelope marker, serialized as the JSON key `"lmg"` — a FROZEN wire literal (docs/05
-    /// §1), the format's historical name rather than the product name. Do not rename.
+    /// Envelope marker, serialized as the JSON key `"lmg"` — a FROZEN wire literal (SPEC §formats.sealed),
+    /// the format's historical name rather than the product name. Do not rename.
     pub lmg: u8,
     pub alg: String,
     pub key_source: String,
@@ -201,7 +201,7 @@ mod tests {
         0xe9, 0x1f,
     ];
 
-    /// The blocking Phase 0 test (docs/05 §1): a fixture sealed by the NODE build must open here,
+    /// The blocking Phase 0 test (SPEC §formats.sealed): a fixture sealed by the NODE build must open here,
     /// byte for byte. This is the test that catches an HKDF argument-order or base64 mistake at
     /// the moment it is introduced rather than on a user's machine.
     #[test]
@@ -250,7 +250,7 @@ mod tests {
         assert_ne!(a.salt, b.salt);
     }
 
-    /// docs/05 §1: the marker key and the HKDF info are FROZEN wire literals keyed to the
+    /// SPEC §formats.sealed: the marker key and the HKDF info are FROZEN wire literals keyed to the
     /// format's historical name. This fails the moment someone "modernizes" them — which is
     /// exactly the moment every sealed file on every machine stops opening.
     #[test]

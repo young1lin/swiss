@@ -2,7 +2,7 @@
 # on every platform (see AGENTS.md "Line endings"). CRLF never enters a commit.
 * text=auto eol=lf
 
-# The emitted panel tree (docs/36 D3): committed product, regenerated from
+# The emitted panel tree (SPEC §panel.toolchain): committed product, regenerated from
 # crates/swiss-panel/panel/src by npm run build — marked generated so diffs and language
 # stats skip it. LF normalization above still applies; emission writes LF only.
 crates/swiss-panel/src/admin_assets/js/**/*.js linguist-generated=true

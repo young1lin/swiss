@@ -27,7 +27,7 @@
 //! one-run-at-a-time claim per job already serializes writers) and no body layer (the runner
 //! caps the output before it ever reaches here).
 //!
-//! [RunLog] is an INSTANCE owned by the JobSystem (docs/11 §9 S2): the directory, the
+//! [RunLog] is an INSTANCE owned by the JobSystem (SPEC §jobs.runlog): the directory, the
 //! per-job write states and the budgets are fields, not process globals - two systems in
 //! one process (or two tests in one binary) each hold their own and cannot see each
 //! other's files. Reading a page walks the file from its END in blocks and stops when the
@@ -47,7 +47,7 @@ use swiss_core::util::{now_ms, parse_iso_ms};
 pub const RUNS_PAGE_SIZE: usize = 20;
 
 /// Byte and age budgets. The defaults are today's values; the retention config starts
-/// driving them when definitions move into the plugin config row (docs/11 §8, S3).
+/// driving them when definitions move into the plugin config row (SPEC §jobs.apply, §jobs).
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     /// Trim the file down to keep_bytes once it passes max_bytes.
@@ -72,7 +72,7 @@ impl Default for Limits {
 /// call log's SWEEP_EVERY_MS).
 const SWEEP_EVERY_MS: u64 = 60 * 60 * 1000;
 
-/// The retention config row's budgets as [Limits] (docs/11 §3.2 -> §8). days drives the
+/// The retention config row's budgets as [Limits] (SPEC §jobs.config -> §8). days drives the
 /// age cap; maxBytesPerJob drives both the trim trigger and (at half) the size it trims
 /// down to, preserving the default 2:1 ratio. maxHistoryBytes has no per-file home - it
 /// is the TOTAL ceiling this build accepts and stores but does not yet enforce across
@@ -117,7 +117,7 @@ impl RunLog {
         }
     }
 
-    /// Swap the budgets - what a config apply does when retention changes (docs/11 §8:)
+    /// Swap the budgets - what a config apply does when retention changes (SPEC §jobs.apply:)
     /// the new caps bind from the NEXT write; existing files age out under them.
     pub fn set_limits(&self, limits: Limits) {
         *self.limits.lock().unwrap_or_else(|e| e.into_inner()) = limits;
@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn two_instances_on_different_directories_never_see_each_other() {
-        // The whole point of the instantiation (docs/11 §9 S2): what used to be
+        // The whole point of the instantiation (SPEC §jobs.runlog): what used to be
         // process-global DIR/STATES is now per-instance, provably.
         let a = RunLog::at(scratch("iso-a"));
         let b = RunLog::at(scratch("iso-b"));

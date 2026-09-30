@@ -58,7 +58,7 @@ const mod = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-suggest.ts")).href
 ) as { dbSuggestOnInput: () => void; dbSuggestHide: () => void };
 
-describe("the suggest list render (docs/22 W3.1)", () => {
+describe("the suggest list render (SPEC §data.completion)", () => {
   it("a reply draws its rows — not an empty positioned box", async () => {
     // Regression, caught live: render called dbSuggestHide() first, which clears the item
     // list, then drew the list — every box reached the screen with zero rows.

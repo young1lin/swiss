@@ -114,7 +114,7 @@ pub fn import_forward_port(store: &mut TunnelStore, path: Option<&Path>) -> Opti
             passphrase: None,
             password: None,
             host_key: None,
-            // The forward-port config has no proxy/jump vocabulary (docs/27 §1.1).
+            // The forward-port config has no proxy/jump vocabulary (SPEC §tunnels.store).
             proxy: None,
             proxy_username: None,
             proxy_password: None,

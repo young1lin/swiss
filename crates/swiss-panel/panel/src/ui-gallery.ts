@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The UI library's gallery (docs/46 §2.6, U13): /admin/ui.html, reached by typing it - it is
+/* The UI library's gallery (SPEC §panel.ui): /admin/ui.html, reached by typing it - it is
  * not a user feature and has no seat in the panel. It shows every shape the library draws, in
  * every state, then the scenes (ui-scenes.ts): whole pages composed from those shapes, which is
  * where a new design is proposed before any page is built.
@@ -418,7 +418,7 @@ function render(): void {
   const current = route();
   const scene = SCENES.find((s) => "scene-" + s.id === current);
   fill(appNode(), h("div", { class: "workbench" }, bar(current), scene ? scene.build(now) : catalogue(now)));
-  // Every render builds a new pane, so its back-to-top button is rebuilt with it (docs/46 U18).
+  // Every render builds a new pane, so its back-to-top button is rebuilt with it (SPEC §panel.ui).
   document.querySelectorAll(".to-top").forEach((b) => { b.remove(); });
   const scroller = appNode().querySelector<HTMLElement>("main.pane");
   if (scroller) document.body.appendChild(toTop(scroller));

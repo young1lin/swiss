@@ -16,7 +16,7 @@
 // @vitest-environment happy-dom
 
 /* The Structure tab's Foreign Keys list draws each target as a button that opens the
-   referenced table (docs/22 W5.2). Since docs/37 R5 the button carries its target in data
+   referenced table (SPEC §data.grid). Since SPEC §panel.toolchain the button carries its target in data
    attributes and #pane's delegated click answers it via `closest("[data-ref-table]")` +
    `dataset.refTable`. The R5 conversion spelled the h() data keys camelCase
    (`{ refTable, refSchema }`); h() writes data keys verbatim, the HTML parser lowercases
@@ -84,7 +84,7 @@ beforeEach(() => {
   }
 });
 
-describe("Structure > Foreign Keys > the referenced-table button (docs/22 W5.2, R5 delegation)", () => {
+describe("Structure > Foreign Keys > the referenced-table button (SPEC §data.grid, §data delegation)", () => {
   it("carries its target where the dispatcher looks: [data-ref-table] / dataset.refTable", () => {
     const wrap = document.createElement("div");
     structure.renderDbDetailGrid(wrap);
@@ -109,7 +109,7 @@ describe("Structure > Foreign Keys > the referenced-table button (docs/22 W5.2, 
     expect(d.table).toBe("customers");
     expect(d.schema).toBeNull(); // an empty refSchema opens schemaless (dbOpenTab's contract)
     expect(d.pane).toBe("data");
-    // docs/42 T2: the jump ADDS an object. The table the FK was read from is still on the
+    // SPEC §data.tabs: the jump ADDS an object. The table the FK was read from is still on the
     // strip, one click behind — the old in-place swap is what made a jump a one-way trip.
     expect(dbTabs().length, "the referenced table opened beside its source").toBe(2);
     const src = dbTabs()[0];

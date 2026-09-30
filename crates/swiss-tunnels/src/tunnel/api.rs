@@ -73,7 +73,7 @@ fn with_store<T>(t: &Arc<Tunnels>, f: impl FnOnce(&mut TunnelStore) -> T) -> T {
 fn mask_conn(def: &SshConnDef) -> Value {
     let def_value = def.to_json();
     let mut server_def = ServerDef(def_value.as_object().cloned().unwrap_or_default());
-    // docs/27 §1.4: the host masker's secret-key list is an EXACT match ("password",
+    // SPEC §tunnels.store: the host masker's secret-key list is an EXACT match ("password",
     // "pass", …), so proxyPassword would ride out in the clear. The sentinel is applied
     // here instead — mask.rs itself stays untouched, and a whole-value `${...}` reference
     // still passes through (the reference is not the secret).
@@ -236,7 +236,7 @@ fn conn_input(body: &Map<String, Value>) -> ConnInput {
             .get("group")
             .and_then(Value::as_str)
             .map(str::to_string),
-        // docs/27 §1.1: the proxy/jump fields, absent when the panel did not send them.
+        // SPEC §tunnels.store: the proxy/jump fields, absent when the panel did not send them.
         proxy: body
             .get("proxy")
             .and_then(Value::as_str)
@@ -419,7 +419,7 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
 
     // --- groups and order ---------------------------------------------------------------------------
     //
-    // Retired (docs/20 §3): /api/tunnels/order, /api/tunnels/groups/{kind},
+    // Retired (SPEC §host.groups): /api/tunnels/order, /api/tunnels/groups/{kind},
     // /api/tunnels/groups/{kind}/rename and /api/tunnels/groups/{kind}/{id} answered the
     // same store the /api/groups/{scope} family does, with a second set of grouping rules
     // that had already forked from managed.json's once. The family owns it now - conns and
@@ -914,7 +914,7 @@ mod tests {
         assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
     }
 
-    /// docs/27 §1.4/§1.5: proxyPassword rides the sentinel round-trip; proxy (no userinfo
+    /// SPEC §tunnels.store: proxyPassword rides the sentinel round-trip; proxy (no userinfo
     /// possible after save-time validation), proxyUsername and jump are plaintext. The host
     /// masker's secret-key list is exact-match, so the proxyPassword sentinel is applied
     /// here rather than in mask.rs.
@@ -976,7 +976,7 @@ mod tests {
         assert!(dropped.get("proxyPassword").is_none());
     }
 
-    /// docs/20 §3: the four tunnel group/order routes are retired in favour of the
+    /// SPEC §host.groups: the four tunnel group/order routes are retired in favour of the
     /// /api/groups/{scope} family (the host owns them; conns and rules register as scopes).
     /// What this pins is that they are GONE, not merely unused - two doors into one store is
     /// how the two copies of the grouping rules forked in the first place.
@@ -1043,7 +1043,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// docs/27 §3.2/§3.4.5: deleting a connection another one jumps through is a plain
+    /// SPEC §tunnels.jump: deleting a connection another one jumps through is a plain
     /// 400 naming the dependent. Unlike the rules case there is no confirm/force path —
     /// deleting would leave the dependent's chain pointing at nothing.
     #[tokio::test]

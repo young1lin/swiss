@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The shell owns its state (docs/37 R4, slice 3 of 7): which page is on screen, whether a menu
+/* The shell owns its state (SPEC §panel.toolchain, slice 3 of 7): which page is on screen, whether a menu
    has the pointer latched, the MCP list's filter and fold map, the two drag slots a poll freezes
    on, the group a header "+" targets, and the build stamp the reload check compares against.
 

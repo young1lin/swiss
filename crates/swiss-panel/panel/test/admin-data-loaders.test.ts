@@ -23,7 +23,7 @@ import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), plus a fetch stub
    whose responses the TEST resolves by hand — that is the only way to make a slow response
    arrive after a newer one under Node.
-   docs/37 R5: the renders build with h()/fill(), so nodes extend a Node stub (h()
+   SPEC §panel.toolchain: the renders build with h()/fill(), so nodes extend a Node stub (h()
    instanceof-checks children), textContent="" wipes like the DOM's, and document carries
    the NS/fragment factories. */
 class NodeStub {}
@@ -121,7 +121,7 @@ const fail = async (body: any, index = 0) => {
   await tick();
 };
 
-/* docs/42 T1: the one record is two halves — the connection's and the open object's.
+/* SPEC §data.tabs: the one record is two halves — the connection's and the open object's.
    freshTab() supplies each tab's defaults, so only the connection fields and the fixture's
    own base line (two conns, mysql selected) are named. t is the ACTIVE tab (as a fresh
    mount leaves it); k is the key tab the redis tests install, the way selecting a redis
@@ -133,7 +133,7 @@ function freshDb(): { c: Record<string, any>; t: Record<string, any>; k: Record<
   const tt = freshTab("table");
   const kk = freshTab("key");
   // The whole strip, not dbTabs()[0]: a test that opened a second tab must not leak it into
-  // the next one (docs/42 T2).
+  // the next one (SPEC §data.tabs).
   dbResetTabs([tt], 0);
   return {
     c: c,
@@ -143,7 +143,7 @@ function freshDb(): { c: Record<string, any>; t: Record<string, any>; k: Record<
   };
 }
 
-describe("db loader response races (docs/22 closeout audit)", () => {
+describe("db loader response races (SPEC §data)", () => {
   it("a slow /data answer for the previous table never overwrites the newer table's page", async () => {
     const { t } = freshDb();
     t.table = "t1"; t.schema = "s1";
@@ -171,7 +171,7 @@ describe("db loader response races (docs/22 closeout audit)", () => {
   });
 });
 
-describe("the grid's pager after the set shrinks under it (docs/22 closeout audit)", () => {
+describe("the grid's pager after the set shrinks under it (SPEC §data)", () => {
   it("a reload that lands past the end backs off one page and re-fetches — no empty page reading 51-50 of 50", async () => {
     // A Commit that deletes the last page's rows (or a filter that shrinks the set) leaves
     // t.offset past the end: the reload returns zero rows and the footer used to paint an
@@ -201,7 +201,7 @@ describe("the grid's pager after the set shrinks under it (docs/22 closeout audi
   });
 });
 
-describe("who may drop a tab's buffered writes (docs/42 D4)", () => {
+describe("who may drop a tab's buffered writes (SPEC §data.tabs)", () => {
   it("an explicit reload is a fresh baseline: the buffer goes", async () => {
     const { t } = freshDb();
     t.table = "t";
@@ -209,11 +209,11 @@ describe("who may drop a tab's buffered writes (docs/42 D4)", () => {
     const p = grid.dbLoadData(true);
     await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true });
     await p;
-    expect(Object.keys(t.updates).length, "Refresh says so in its own tooltip (docs/22)").toBe(0);
+    expect(Object.keys(t.updates).length, "Refresh says so in its own tooltip (SPEC §data)").toBe(0);
   });
 
   it("the return fetch of a backgrounded tab is NOT a reload: the buffer stays", async () => {
-    // Found live on 19998 during the docs/42 T2 walk: switching to another tab and back ran the
+    // Found live on 19998 during a walk of SPEC §data.tabs: switching to another tab and back ran the
     // same loader, so the writes the strip was still counting on that card vanished without a
     // word. D4 re-reads the page the tab dropped; it does not re-baseline the tab.
     const { t } = freshDb();
@@ -242,7 +242,7 @@ describe("who may drop a tab's buffered writes (docs/42 D4)", () => {
   });
 });
 
-describe("a redis commit that deletes the key's last field (docs/22 closeout audit)", () => {
+describe("a redis commit that deletes the key's last field (SPEC §data)", () => {
   it("re-reads the key and refreshes the key list — the sidebar must not offer a key that is gone", async () => {
     // Deleting a hash's last field deletes the KEY itself. The commit path never awaited
     // the value re-read, so it checked a null redisValue, the "type none" branch never
@@ -265,7 +265,7 @@ describe("a redis commit that deletes the key's last field (docs/22 closeout aud
   });
 });
 
-describe("the sidebar grep reaches redis as a substring (docs/43 M2 walk)", () => {
+describe("the sidebar grep reaches redis as a substring (SPEC §data.tabs, found on a walk)", () => {
   it("a bare word wraps in wildcards; a grep that already shapes its own wildcard rides through", async () => {
     // SCAN MATCH is exact-shape while the SQL side greps substrings - a bare "i18n"
     // used to answer "no keys" on a keyspace that plainly holds i18n_strings.
@@ -289,13 +289,13 @@ describe("the sidebar grep reaches redis as a substring (docs/43 M2 walk)", () =
   });
 });
 
-describe("the redis key list's More button (docs/22 closeout audit)", () => {
+describe("the redis key list's More button (SPEC §data)", () => {
   it("a second More while a SCAN page is in flight is a no-op — the same cursor must not append its page twice", async () => {
     // A double click on More fired two dbLoadKeys with the SAME c.redis.cursor; both
     // answers concatenated their page onto the key list, duplicating every key in it.
     const { c } = freshDb();
     c.conn = "r";
-    // docs/43 M2: the tree renderer folds d.redis.keys by .key, so the fixture carries the
+    // SPEC §data.tabs: the tree renderer folds d.redis.keys by .key, so the fixture carries the
     // wire shape (ApiDbRedisKeyRow), not bare strings.
     c.redis = { keys: [{ key: "a", type: "string", ttl: -1 }], cursor: "42", done: false, total: 10 };
     const before = requests.length;
@@ -308,9 +308,9 @@ describe("the redis key list's More button (docs/22 closeout audit)", () => {
   });
 });
 
-describe("DROP leaves no trace of the table on the right pane (docs/22 closeout audit)", () => {
+describe("DROP leaves no trace of the table on the right pane (SPEC §data)", () => {
   /* A wrap that keeps what it is given: the no-table empty state is a fill()/emptyNode APPEND
-     (docs/37 R5), so the assertions walk the collected text of the tree. */
+     (SPEC §panel.toolchain), so the assertions walk the collected text of the tree. */
   function gridWrap(): Stub {
     const wrap: any = {
       style: {}, children: [], textContent: "",
@@ -335,7 +335,7 @@ describe("DROP leaves no trace of the table on the right pane (docs/22 closeout 
   it("closes the dropped table's own tab — the pane falls back to the empty state", async () => {
     // The drop branch used to null table/data/detail but leave d.schema and the view state
     // behind, and the pane itself unpainted — renderDbTables refreshes only the LEFT list.
-    // Under docs/42 T2 the whole tab goes instead: an object that no longer exists has no
+    // Under SPEC §data.tabs the whole tab goes instead: an object that no longer exists has no
     // business holding a card on the strip.
     const { t } = freshDb();
     t.table = "t"; t.schema = "s"; t.data = page("t");
@@ -356,7 +356,7 @@ describe("DROP leaves no trace of the table on the right pane (docs/22 closeout 
 
   it("a background tab on the same table goes with it; the console's own tab stays", async () => {
     // Two tabs can hold one table — an FK jump opens the target under its own filter beside
-    // the plain tab (docs/22 W5.2). The DROP must take both, and must take nothing else: a
+    // the plain tab (SPEC §data.grid). The DROP must take both, and must take nothing else: a
     // console reply belongs to the console object, not to the table that was dropped.
     const { t } = freshDb();
     t.table = "t"; t.schema = "s"; t.data = page("t");
@@ -379,16 +379,16 @@ describe("DROP leaves no trace of the table on the right pane (docs/22 closeout 
   });
 });
 
-describe("Commit keeps the grid where the user was looking (docs/22 closeout B4)", () => {
+describe("Commit keeps the grid where the user was looking (SPEC §data)", () => {
   it("a successful commit reloads the page but restores scrollTop — the edited row stays in view", async () => {
-    // The reload after Commit rebuilds the grid; overflow-anchor is OFF (docs/22 W2.2), so the
+    // The reload after Commit rebuilds the grid; overflow-anchor is OFF (SPEC §data.grid), so the
     // pane snaps to the top and the row the user just committed scrolls out of sight.
     const { t } = freshDb();
     t.table = "t";
     t.data = { table: "t", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true };
     t.updates = { "[1]": { pk: { id: 1 }, changes: { id: 2 } } };
     // A wrap that behaves like the real one: a repaint (the textContent wipe that opens
-    // fill(), docs/37 R5) RESETS scroll to the top.
+    // fill(), SPEC §panel.toolchain) RESETS scroll to the top.
     let paintedText = "";
     const wrap: any = {
       style: {}, children: [], scrollTop: 0, scrollLeft: 0,
@@ -410,7 +410,7 @@ describe("Commit keeps the grid where the user was looking (docs/22 closeout B4)
   });
 });
 
-describe("a failed scan does not leave the key list pretending (docs/22 closeout B1)", () => {
+describe("a failed scan does not leave the key list pretending (SPEC §data)", () => {
   it("paints the failure in the list — not 'no keys' as if the keyspace were empty", async () => {
     // The redis 5.0.5 case: the server refuses the scan and the toast scrolls away, but the
     // list must not say "No keys match" — that reads as an empty keyspace, not a failure.
@@ -434,7 +434,7 @@ describe("a failed scan does not leave the key list pretending (docs/22 closeout
     expect(hints[0], "and not the empty-keyspace wording").not.toContain("No keys");
   });
 
-  it("a stale More answer landing after a reset is dropped — its old-cursor page never splices in (docs/22 closeout B3)", async () => {
+  it("a stale More answer landing after a reset is dropped — its old-cursor page never splices in (SPEC §data)", async () => {
     // The suspected page-loss window: a slow More answer arriving after a grep/type reset
     // concatenated its page onto the FRESH walk and dragged the cursor BACKWARD, so the
     // walk re-scanned old ground and later pages shifted under the user.
@@ -453,7 +453,7 @@ describe("a failed scan does not leave the key list pretending (docs/22 closeout
     expect(c.redis.keys.map(function (row: any) { return row.key; }), "the stale page never spliced in").toEqual(["fresh"]);
   });
 
-  it("a redis key scan never carries a schema param — even one left over from a pg connection (docs/22 closeout B7)", async () => {
+  it("a redis key scan never carries a schema param — even one left over from a pg connection (SPEC §data)", async () => {
     // Defense-in-depth: redis has no schema concept, and a residual c.schemaFilter (a pick
     // made against a pg catalog) must not ride the /keys request even if a future refactor
     // of the switch path forgets to clear it.

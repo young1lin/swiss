@@ -19,7 +19,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
 
-/* docs/43 M3: the database selector's contract. The catalog order, the disabled rows, and
+/* SPEC §data.databases: the database selector's contract. The catalog order, the disabled rows, and
  * the two switches (database, connection) are the whole feature's panel half — a selector
  * that listed system databases first, or let a not-browsable row be picked, would be worse
  * than no selector at all. Pinned here as data, without a live menu. */
@@ -79,7 +79,7 @@ const mod = await import(pathToFileURL(join(here, "data-view.js")).href) as {
   dbSwitchDatabase: (name: string) => void;
 };
 
-// The live mysql catalog's shape, shrunk to what the contract reads (docs/43 M3 4.2).
+// The live mysql catalog's shape, shrunk to what the contract reads (SPEC §data.databases).
 const CATALOG = [
   { name: "acme_app_dev", primary: true, browsable: true, system: false, tables: 1712 },
   { name: "sys", primary: false, browsable: true, system: true, tables: 101 },
@@ -107,14 +107,14 @@ function mountMysql(): void {
   dbTabs().push(t, freshTab("sql"));
 }
 
-describe("the database selector's order (docs/43 M3 4.3.2)", () => {
+describe("the database selector's order (SPEC §data.databases)", () => {
   it("primary first, the rest by name, system last - whatever the server sent", () => {
     const out = mod.dbSortDatabases(CATALOG).map((x) => x.name);
     expect(out).toEqual(["acme_app_dev", "acme_app_uat", "zdata", "information_schema", "sys"]);
   });
 });
 
-describe("the selector's menu rows (docs/43 M3 4.3.2)", () => {
+describe("the selector's menu rows (SPEC §data.databases)", () => {
   it("a not-browsable row is disabled and carries the server's reason as its title", () => {
     const rows = mod.dbDatabaseMenuItems(CATALOG, "acme_app_dev", () => {});
     const info = rows.find((r) => r.label && r.label.startsWith("information_schema"));
@@ -144,7 +144,7 @@ describe("the selector's menu rows (docs/43 M3 4.3.2)", () => {
   });
 });
 
-describe("switching databases (docs/43 M3 4.3.3)", () => {
+describe("switching databases (SPEC §data.databases)", () => {
   it("the selected database lands in state, the strip drops to the placeholder, filters reset", () => {
     mountMysql();
     const d = dbConn();

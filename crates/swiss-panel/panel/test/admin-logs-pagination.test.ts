@@ -18,16 +18,16 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
 import { menuOpen, setMenuOpen } from "../src/ui/menu.js";
 
-/* docs/32 B1 — the Logs pager becomes a transaction. The suite drives the REAL module graph
+/* SPEC §mcp.calls — the Logs pager becomes a transaction. The suite drives the REAL module graph
    (wireTabBody -> callsPageStep -> loadCalls -> renderCallsOnly) under the FakeNode micro-DOM,
    with a fetch queue the test resolves by hand — the only way to make a stale response land
    after a newer one under Node. Assertions never trust a bare logsBody string: they check
    state, issued requests, painted tabbody HTML and the patched pager chrome.
-   It stays on the micro-DOM on purpose (docs/46 P7-3, where the other three menu suites moved
+   It stays on the micro-DOM on purpose (SPEC §panel.pages, where the other three menu suites moved
    to happy-dom): its assertions count paints, error strips and focus calls on FakeNode, which a
    real DOM does not record. */
 
-/* h()/frag() branch on the global Node class (docs/37 R5); under this micro-DOM it is this
+/* h()/frag() branch on the global Node class (SPEC §panel.toolchain); under this micro-DOM it is this
    stub, so a FakeNode IS a Node to the builder. */
 const NodeStub = class {};
 class FakeNode extends NodeStub {
@@ -38,7 +38,7 @@ class FakeNode extends NodeStub {
   _text = "";
   // Set directly, or read back from the children the way a real DOM does: a text child is
   // { text } (createTextNode below) and an element child answers for itself. h() builds a menu
-  // row's word as a text child (docs/46 P7-3), so the menu assertions read it through here.
+  // row's word as a text child (SPEC §panel.pages), so the menu assertions read it through here.
   get textContent(): string {
     return this._text || this.children.map((c) => {
       const t = (c as unknown as { text?: string }).text;
@@ -76,7 +76,7 @@ class FakeNode extends NodeStub {
   static fragment(): FakeNode { const f = new FakeNode("#document-fragment"); f.tag = "#DOCUMENT-FRAGMENT"; return f; }
   get innerHTML(): string { return this._html || serialize(this); }
   set innerHTML(v: string) { this._html = v; this.children = []; this.paints.push(v); }
-  /* docs/37 R5: the real renderers now paint with fill() — textContent wipe + appendChild —
+  /* SPEC §panel.toolchain: the real renderers now paint with fill() — textContent wipe + appendChild —
    *  instead of assigning innerHTML. The wipe marks a paint (same count semantics: one paint
    *  per repaint, none for an in-place chrome patch), and innerHTML READS serialise the live
    *  children so the substring assertions keep their meaning on the built tree. */
@@ -104,7 +104,7 @@ class FakeNode extends NodeStub {
   append(...nodes: FakeNode[]) {
     nodes.forEach((n) => {
       this.appendChild(n);
-      // The error strip moved from insertAdjacentHTML to append (docs/37 R5); record it the
+      // The error strip moved from insertAdjacentHTML to append (SPEC §panel.toolchain); record it the
       // same way so the transaction assertions keep counting strips.
       this.inserted.push(["beforeend", serialize(n)]);
     });
@@ -135,7 +135,7 @@ function serialize(node: FakeNode): string {
   const inner = node.children.map((c) => { return serialize(c); }).join("");
   return "<" + node.tag.toLowerCase() + id + attrs + role + cls + dis + val + ">" + inner + "</" + node.tag.toLowerCase() + ">";
 }
-/* docs/37 R5: nothing walks the fresh tab body assigning handlers any more, so controls are
+/* SPEC §panel.toolchain: nothing walks the fresh tab body assigning handlers any more, so controls are
    * no longer registered by id as a side effect of wiring. Painted nodes resolve from the tree
    * the paint built (the real DOM's own answer), the byId cache first like before. */
 let paintedTb: FakeNode | null = null;
@@ -177,7 +177,7 @@ const doc = {
 const requests: Array<{ url: string; method?: string }> = [];
 const parked: Array<{ ok(body: any): void; http(body: any, status?: number): void; net(): void }> = [];
 
-/* docs/32 B4: the confirm behind Clear logs — recorded, and its answer the test's to choose. */
+/* SPEC §mcp.calls: the confirm behind Clear logs — recorded, and its answer the test's to choose. */
 let confirmAnswer = false;
 const confirmTexts: string[] = [];
 
@@ -237,7 +237,7 @@ function fakeDetail(name = "redis") {
     tools: { ...kd }, resources: { ...kd }, prompts: { ...kd },
     run: { tool: null, result: null, running: false, hist: null, histTool: null, histLoading: false, histOpen: false, histSelSeq: null, histFull: {}, histQ: "" },
     calls: null, stderr: "", callsOpen: {}, callsPage: 0, callsMore: false, callsFull: {}, callsQ: "",
-    // docs/32 B1 fields, seeded the way openDetail builds them — the generation counter must
+    // SPEC §mcp.calls fields, seeded the way openDetail builds them — the generation counter must
     // start at a number, or every response would look stale to it.
     callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
     callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
@@ -261,7 +261,7 @@ function mountLogs(d: any, opts: { rows?: any[]; more?: boolean; q?: string } = 
   return tb;
 }
 
-/** Route a click on a tab-body control through the REAL delegated dispatcher (docs/37 R5):
+/** Route a click on a tab-body control through the REAL delegated dispatcher (SPEC §panel.toolchain):
  *  #pane's listener answers it - the per-node onclick wiring retired with wireTabBody. */
 function fireTab(idOrNode: string | FakeNode, ev: Record<string, unknown> = { detail: 1 }): void {
   const what = typeof idOrNode === "string" ? doc.getElementById(idOrNode) : idOrNode;
@@ -293,7 +293,7 @@ beforeEach(() => {
   setMenuOpen(false);
 });
 
-describe("docs/32 B2: the pager is the scroll anchor, focus follows the action", () => {
+describe("SPEC §mcp.calls: the pager is the scroll anchor, focus follows the action", () => {
   it("pane.scrollTop compensates exactly the pager's viewport drift", async () => {
     const d = fakeDetail();
     mountLogs(d);
@@ -337,7 +337,7 @@ describe("docs/32 B2: the pager is the scroll anchor, focus follows the action",
     expect(byId.get("clNext")!.focused + byId.get("clPrev")!.focused + byId.get("callsQ")!.focused).toBe(0);
   });
 
-  it("the docs/31 input contract survives a switch repaint: a focused search box keeps node, focus and caret", async () => {
+  it("the SPEC §mcp.calls input contract survives a switch repaint: a focused search box keeps node, focus and caret", async () => {
     const d = fakeDetail();
     mountLogs(d);
     const q = byId.get("callsQ")!;
@@ -349,7 +349,7 @@ describe("docs/32 B2: the pager is the scroll anchor, focus follows the action",
   });
 });
 
-describe("docs/32 B3: history pages hold still, errors are honest", () => {
+describe("SPEC §mcp.calls: history pages hold still, errors are honest", () => {
   it("the MCP poll refreshes calls on page 0 and stays off every older page", async () => {
     const d = fakeDetail();
     mountLogs(d); // page 0, committed
@@ -457,7 +457,7 @@ describe("docs/32 B3: history pages hold still, errors are honest", () => {
     const q = byId.get("callsQ")!;
     q.value = "GET";
     fireInput(q);
-    await new Promise((r) => setTimeout(r, 340)); // the docs/31 debounce
+    await new Promise((r) => setTimeout(r, 340)); // the SPEC §mcp.calls debounce
     expect(d.callsPendingPage).toBeNull();
     expect(d.callsPage).toBe(0);
     const last = requests[requests.length - 1];
@@ -490,7 +490,7 @@ describe("docs/32 B3: history pages hold still, errors are honest", () => {
   });
 });
 
-describe("docs/32 B1: a page switch is a transaction", () => {
+describe("SPEC §mcp.calls: a page switch is a transaction", () => {
   it("pending keeps the committed page, its rows and the scroll container — no repaint to a shell", async () => {
     const d = fakeDetail();
     const tb = mountLogs(d, { q: "GET" });
@@ -578,7 +578,7 @@ describe("docs/32 B1: a page switch is a transaction", () => {
     const qRows = rowsOf([42]);
     mountLogs(d);
     clickOlder(); // request A: page 1 of the old needle
-    // The user types a new needle — docs/31's path: q set, back to page 0, request B issued.
+    // The user types a new needle — SPEC §mcp.calls's path: q set, back to page 0, request B issued.
     d.callsQ = "GET";
     d.callsPage = 0;
     d.callsPendingPage = null;
@@ -602,7 +602,7 @@ describe("docs/32 B1: a page switch is a transaction", () => {
     expect(tb.innerHTML).toContain("Loading calls…");
   });
 
-  it("the pager markup carries the docs/32 semantics (nav role, live status)", () => {
+  it("the pager markup carries the SPEC §mcp.calls semantics (nav role, live status)", () => {
     const host = new FakeNode("div");
     host.appendChild(logs.logsBodyNode({ ...fakeDetail(), calls: PAGE0, callsMore: true }) as unknown as FakeNode);
     const html = host.innerHTML;
@@ -612,7 +612,7 @@ describe("docs/32 B1: a page switch is a transaction", () => {
   });
 });
 
-describe("docs/32 B4: the toolbar ellipsis, Clear logs behind a confirm", () => {
+describe("SPEC §mcp.calls: the toolbar ellipsis, Clear logs behind a confirm", () => {
   /** The popup menu popupMenu appends to <body> — its last child. */
   function lastMenu() {
     const body = (globalThis as unknown as { document: typeof doc }).document.body;
@@ -676,7 +676,7 @@ describe("docs/32 B4: the toolbar ellipsis, Clear logs behind a confirm", () => 
   });
 });
 
-describe("docs/32 review fixes: the clear transaction and the error strip's edges", () => {
+describe("SPEC §mcp.calls review fixes: the clear transaction and the error strip's edges", () => {
   /** The popup menu popupMenu appends to <body> — its last child. */
   function lastMenu() {
     const body = (globalThis as unknown as { document: typeof doc }).document.body;
@@ -751,15 +751,15 @@ describe("docs/32 review fixes: the clear transaction and the error strip's edge
   });
 });
 
-/* docs/33 C3 — the operator opens a call to read its result. A reply the page clipped to its
+/* SPEC §mcp.calls — the operator opens a call to read its result. A reply the page clipped to its
    2 KB preview is fetched whole on the open itself, through the same REAL dispatcher a pointer
    click and Enter/Space reach; the Show full result button is only the retry. */
-describe("docs/33 C3: opening a clipped call fetches its full reply", () => {
+describe("SPEC §mcp.calls: opening a clipped call fetches its full reply", () => {
   function clipped(seq: number) {
     return { ...callRow(seq), chars: 5000, output: '{"rows":[', preview: true };
   }
   /** A target inside one call's summary button — the dispatcher climbs to .tl-sum, then to
-   *  the row's [data-callseq] (docs/46 P2-2: only the summary toggles, never the open body). */
+   *  the row's [data-callseq] (SPEC §panel.pages: only the summary toggles, never the open body). */
   function summaryOf(seq: number) {
     const item = { dataset: { callseq: String(seq) } };
     const sum = { closest: (sel: string) => (sel === "[data-callseq]" ? item : null) };
@@ -862,10 +862,10 @@ describe("docs/33 C3: opening a clipped call fetches its full reply", () => {
   });
 });
 
-/* docs/33 C3 — a block's Copy, Copy raw and Show all, through the REAL delegated dispatcher.
+/* SPEC §mcp.calls — a block's Copy, Copy raw and Show all, through the REAL delegated dispatcher.
    Both copies read the call row, not the painted DOM, so a block cut at its line cap still
    copies everything; Show all is state, so a poll repaint keeps the block whole. */
-describe("docs/33 C3: the block buttons dispatch", () => {
+describe("SPEC §mcp.calls: the block buttons dispatch", () => {
   /** A target inside one button — the dispatcher climbs to its data attribute. */
   function btn(attr: string, key: string) {
     const dataKey = attr.replace(/^data-/, "");

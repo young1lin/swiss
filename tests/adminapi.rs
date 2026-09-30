@@ -261,7 +261,7 @@ fn rest_def(base: &str) -> Value {
 async fn serves_reads_and_mutations_in_process_without_a_credential() {
     // An in-process call (no socket, no ConnectInfo) passes the admin session gate the way it
     // passes the loopback guard - which is what lets this suite drive the router directly. The
-    // socket side of the gate is pinned in tests/admin_session.rs (docs/48).
+    // socket side of the gate is pinned in tests/admin_session.rs (SPEC §host.session).
     let h = setup();
     assert_eq!(h.get("/api/mcps").await.0, StatusCode::OK);
     let (status, _) = h
@@ -272,7 +272,7 @@ async fn serves_reads_and_mutations_in_process_without_a_credential() {
 
 #[tokio::test]
 async fn has_no_password_route_to_answer() {
-    // A browser signs in with a one-time link on GET /?token= (docs/48) - there is no password
+    // A browser signs in with a one-time link on GET /?token= (SPEC §host.session) - there is no password
     // login to post to.
     let h = setup();
     let (status, _) = h
@@ -703,7 +703,7 @@ async fn exposes_the_tokens_env_var_name_never_the_token() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["tokenEnv"], json!("SWISS_TOKEN"));
     assert!(!body.to_string().contains(TOKEN), "{body}");
-    // The build stamp (docs/16 H3) — present, and never a secret either.
+    // The build stamp (SPEC §host.daemon) — present, and never a secret either.
     assert_eq!(body["build"]["hash"], json!(env!("SWISS_GIT_HASH")));
     assert!(!body["build"].to_string().contains(TOKEN), "{body}");
 }
@@ -1464,7 +1464,7 @@ async fn persists_added_mcps_to_managed_json() {
 
 #[tokio::test]
 async fn plugin_domain_names_need_no_host_reservation() {
-    // docs/24 P2: inside /mcp/* the host's root reserved words are gone — health/api/admin/
+    // SPEC §mcp.endpoint: inside /mcp/* the host's root reserved words are gone — health/api/admin/
     // mcp are ordinary MCP names there, creatable and reachable, while the host's own
     // routes at the root keep answering untouched.
     let h = setup();
@@ -2086,7 +2086,7 @@ async fn carries_an_mcps_group_through_a_rename_and_drops_it_on_delete() {
     assert!(h.store.get_mcp_groups().is_empty());
 }
 
-// --- the group-scope route family (docs/20 §3) ---------------------------------------------------
+// --- the group-scope route family (SPEC §host.groups) ---------------------------------------------------
 //
 // One family over every scope; mcps is the one this harness wires, and its behavior pins the
 // shape every other scope answers with.
@@ -2393,7 +2393,7 @@ async fn the_family_serves_the_tunnel_scopes() {
 }
 
 /// setup(), plus the targets scope registered over a scratch sealed table - the way
-/// server.rs composes it over the remote plugin's one system (docs/34 R8). What comes
+/// server.rs composes it over the remote plugin's one system (SPEC §remote.targets). What comes
 /// back is the system handle, for asserting what actually landed on disk.
 fn setup_with_remote() -> (Harness, Arc<swiss_remote::RemoteSystem>) {
     sandbox();
@@ -2449,7 +2449,7 @@ fn setup_with_remote() -> (Harness, Arc<swiss_remote::RemoteSystem>) {
     )
 }
 
-/// The seventh scope (docs/34 R8): targets answers the same family routes the tunnel
+/// The seventh scope (SPEC §remote.targets): targets answers the same family routes the tunnel
 /// scopes do, over the one sealed table, while the remote plugin itself is not even
 /// registered here - grouping outlives start/stop by construction.
 #[tokio::test]
@@ -2507,7 +2507,7 @@ async fn the_family_serves_the_targets_scope() {
 #[tokio::test]
 async fn the_retired_mcp_group_and_order_routes_are_gone() {
     let (h, _) = setup_with_tunnels();
-    // docs/20 §3: one family, one door. The per-mcp group route, the bare /api/groups and the
+    // SPEC §host.groups: one family, one door. The per-mcp group route, the bare /api/groups and the
     // unscoped /api/order all answered the same store the family does - keeping them is how
     // two copies of one protocol drift apart.
     for (method, path, body) in [
@@ -2583,7 +2583,7 @@ async fn imports_stdio_and_http_entries_suffixes_collisions_and_skips_this_gatew
 
 #[tokio::test]
 async fn imports_a_name_the_root_once_reserved_without_renaming() {
-    // docs/24 P2: the RESERVED rename-on-import rule retired with the root-level route — an
+    // SPEC §mcp.endpoint: the RESERVED rename-on-import rule retired with the root-level route — an
     // imported "health" keeps its name under the MCP plugin's /mcp/ domain.
     let h = setup();
     let (status, body) = h
@@ -2657,7 +2657,7 @@ async fn removes_the_entry_from_gateway_config_json_and_the_runtime_registry() {
     let _ = std::fs::remove_file(&config);
 }
 
-// --- the secret vault (docs/19) ------------------------------------------------------------------
+// --- the secret vault (SPEC §host.vault) ------------------------------------------------------------------
 // The real router, the real sealed file under the sandbox home: names only on GET, write-only
 // PUT, rev-checked mutations, and the value observable through no response. One tokio mutex
 // serializes these five — the vault is process-global state, and two tests planning mutations
@@ -2790,7 +2790,7 @@ async fn the_vault_refuses_names_outside_the_grammar() {
 async fn an_mcp_builder_refuses_a_missing_vault_reference() {
     let _guard = VAULT_LOCK.lock().await;
     let h = setup();
-    // The strict contract's first wiring (docs/19 D4): make_adapter resolves vault refs and
+    // The strict contract's first wiring (SPEC §host.refs): make_adapter resolves vault refs and
     // REFUSES the build when one names a secret this machine does not hold — the error names
     // the MCP, the JSON path, and the reference, never a value.
     let d = def(json!({
@@ -2826,7 +2826,7 @@ async fn an_mcp_builder_refuses_a_missing_vault_reference() {
 #[tokio::test]
 async fn the_rest_connection_test_fails_honestly_on_a_missing_vault_reference() {
     // The rest branch of /api/mcpdefs/test resolves the WHOLE def before its one plain GET
-    // (docs/19 D4): a missing vault reference answers ok:false naming the JSON path — no
+    // (SPEC §host.refs): a missing vault reference answers ok:false naming the JSON path — no
     // request is made, no reference text ships anywhere.
     let _guard = VAULT_LOCK.lock().await;
     let h = setup();
@@ -2882,8 +2882,8 @@ async fn the_connection_test_accepts_mariadb_like_mysql() {
 async fn a_vault_reference_masks_like_an_env_ref() {
     // is_env_ref is what the whole masking stack keys off; a vault reference must read as a
     // reference so the panel edit forms show it as authored, never hold the value. Both the
-    // envelope form (docs/25 E1) and the legacy whole-value bare form (still on disks the
-    // loaders have not re-saved, docs/25 E2) pass; anything mixed or malformed must not.
+    // envelope form (SPEC §host.refs) and the legacy whole-value bare form (still on disks the
+    // loaders have not re-saved, SPEC §host.refs) pass; anything mixed or malformed must not.
     use swiss_host::config::is_env_ref;
     assert!(is_env_ref(&json!("secret://stripe-key")));
     assert!(is_env_ref(&json!("${secret://stripe-key}")));
@@ -2895,7 +2895,7 @@ async fn a_vault_reference_masks_like_an_env_ref() {
     assert!(!is_env_ref(&json!("Bearer ${secret://stripe-key}")));
     assert!(!is_env_ref(&json!("plain text")));
 }
-// --- the secrets scope over the family (docs/20 G6) ----------------------------------------------
+// --- the secrets scope over the family (SPEC §host.groups) ----------------------------------------------
 
 #[tokio::test]
 async fn the_family_serves_the_secrets_scope() {
@@ -2938,7 +2938,7 @@ async fn the_family_serves_the_secrets_scope() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["group"], json!("Ops"));
 
-    // The listing answers the labels and NEVER a value: the write-only rule (docs/19 D5)
+    // The listing answers the labels and NEVER a value: the write-only rule (SPEC §host.vault)
     // is about values, and a group label is a folder name.
     let (status, body) = h.get("/api/secrets").await;
     assert_eq!(status, StatusCode::OK);
@@ -2979,7 +2979,7 @@ async fn the_family_serves_the_secrets_scope() {
         "the whole first slot moved"
     );
 
-    // docs/26: the order is the model's third list. Unknown names drop out, so a stale
+    // SPEC §host.vault: the order is the model's third list. Unknown names drop out, so a stale
     // panel cannot plant a ghost row; the landed order comes back.
     let (status, body) = h
         .put(
@@ -2990,7 +2990,7 @@ async fn the_family_serves_the_secrets_scope() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["order"], json!(["panel-g6-a"]));
 
-    // The listing carries the stored order raw (docs/26 E2).
+    // The listing carries the stored order raw (SPEC §host.vault).
     let (status, body) = h.get("/api/secrets").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["order"], json!(["panel-g6-a"]));
@@ -3047,7 +3047,7 @@ async fn a_secrets_regroup_is_one_rev_bump_and_values_survive() {
         "the group move never touches values"
     );
 }
-// --- the tokens scope over the family (docs/20 G7) ----------------------------------------------
+// --- the tokens scope over the family (SPEC §host.groups) ----------------------------------------------
 
 #[tokio::test]
 async fn the_family_serves_the_tokens_scope() {
@@ -3074,7 +3074,7 @@ async fn the_family_serves_the_tokens_scope() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["group"], json!("Lab"), "canonical casing comes back");
 
-    // The listing answers the two lists beside the tokens (docs/20 §2.3): a group is a
+    // The listing answers the two lists beside the tokens (SPEC §formats.groups): a group is a
     // folder a token sits in; it says nothing about whether the token is in use.
     let (status, body) = h.get("/api/tokens").await;
     assert_eq!(status, StatusCode::OK);
@@ -3091,8 +3091,8 @@ async fn the_family_serves_the_tokens_scope() {
     assert_eq!(body["groups"], json!(["default", "Ops"]));
     assert_eq!(body["moved"], json!(1), "the one assigned member moved");
 
-    // Creation time is the order (docs/20 §2.1): like tokens, no manual order exists
-    // (secrets gained one - docs/26).
+    // Creation time is the order (SPEC §host.groups): like tokens, no manual order exists
+    // (secrets gained one - SPEC §host.vault).
     let (status, body) = h
         .put("/api/groups/tokens/order", json!({ "order": [id] }))
         .await;
@@ -3134,7 +3134,7 @@ async fn token_lifecycle_never_touches_the_groups() {
     );
 
     // Deleting the group sinks its tokens into the first one - the token itself is
-    // untouched, still listed, still authenticating (docs/20 G7).
+    // untouched, still listed, still authenticating (SPEC §host.groups).
     let (status, body) = h
         .put("/api/groups/tokens", json!({ "groups": ["default"] }))
         .await;
@@ -3177,7 +3177,7 @@ async fn token_lifecycle_never_touches_the_groups() {
     );
 }
 
-// --- the jobs scope over the family (docs/20 G4) --------------------------------------------------
+// --- the jobs scope over the family (SPEC §host.groups) --------------------------------------------------
 /// The jobs-scope harness: a real JobSystem over a real config store, its row seeded with
 /// two manual jobs, registered into the family the way server.rs composes it. What comes
 /// back is the system handle, for asserting the applied table directly.
@@ -3358,7 +3358,7 @@ async fn reordering_job_groups_never_rehomes_the_first_groups_default_members() 
 
 #[tokio::test]
 async fn moving_a_job_between_groups_advances_the_config_revision_in_place() {
-    // docs/11 8's guarantee, restated for groups (docs/20 G4): a group mutation is a config
+    // SPEC §jobs 8's guarantee, restated for groups (SPEC §host.groups): a group mutation is a config
     // edit, so the running table moves without a restart - configRevision advances and the
     // definitions all survive the apply.
     let (h, jobs) = setup_with_jobs();
@@ -3378,7 +3378,7 @@ async fn moving_a_job_between_groups_advances_the_config_revision_in_place() {
     assert_eq!(jobs.job_ids().len(), 2, "the table survived the apply");
 }
 
-// --- OAuth authorize (docs/24 D5) ----------------------------------------------------------------
+// --- OAuth authorize (SPEC §mcp.oauth) ----------------------------------------------------------------
 //
 // One loopback server plays the whole Figma-shaped cast: the protected resource (bearer-gated
 // /mcp), the authorization server (well-knowns, dynamic registration, both token grants) and —
@@ -3707,7 +3707,7 @@ async fn polling_without_a_flow_is_a_404() {
 
 #[tokio::test]
 async fn the_figma_type_adds_with_nothing_but_a_name() {
-    // docs/24 rev: figma is its own type — the panel asks for a name, the type decides the
+    // SPEC §mcp.figma: figma is its own type — the panel asks for a name, the type decides the
     // endpoint and the OAuth mode. What this pins is the SHAPE: the row tags figma even though
     // the adapter it builds is http, the badge rides the shared OAuth predicate, and the
     // stored def stays one field long. (The authorize flow itself is not driven here: the
@@ -3758,7 +3758,7 @@ async fn the_figma_type_adds_with_nothing_but_a_name() {
 async fn the_zai_vision_type_adds_and_keeps_the_key_a_reference() {
     // The zai-vision type is the @z_ai/mcp-server port compiled in: no child, no endpoint of
     // its own. What this pins is the SHAPE - the row tags zai-vision, the def keeps the apiKey
-    // exactly as written (${...} reference stays a reference, docs/19), a literal key is
+    // exactly as written (${...} reference stays a reference, SPEC §host.vault), a literal key is
     // refused at add, mode is validated, and a reference that cannot expand fails the build
     // at the engine. Tool calls are not driven here: the engine's request shape is pinned in
     // swiss-mcp's unit tests against a fake OpenAI-compatible server, and every call costs
@@ -3899,7 +3899,7 @@ async fn autostart_route_refuses_a_body_without_a_verdict() {
     assert!(body["error"].is_string(), "{body}");
 }
 
-// ---- docs/28 D1: replace / restore / revisions ----------------------------------------------
+// ---- SPEC §mcp.revisions: replace / restore / revisions ----------------------------------------------
 // The operator's flow this serves: park the current def of a name, install a new one under
 // the SAME name, roll back with one click. "One active def per name" is structural — the
 // revision list is inert data and never reaches the registry or the boot path.
@@ -4078,7 +4078,7 @@ async fn one_revision_can_be_dropped_without_touching_the_rest() {
 async fn a_disabled_mcp_refuses_clients_with_the_disabled_wording() {
     let h = setup();
     add_echo(&h, "m", false).await;
-    // docs/28 D2: disabled means the client sees nothing of it — every method answers the
+    // SPEC §mcp.revisions: disabled means the client sees nothing of it — every method answers the
     // same refusal, and the wording names the operator's verb and the way out.
     let (status, body) = h
         .mcp(
@@ -4099,7 +4099,7 @@ async fn a_disabled_mcp_refuses_clients_with_the_disabled_wording() {
 #[tokio::test]
 async fn a_mariadb_def_builds_and_carries_its_own_tag() {
     let h = setup();
-    // docs/29: MariaDB is its own type — the def, the tag, the seal — on the mysql engine.
+    // SPEC §mcp.panel: MariaDB is its own type — the def, the tag, the seal — on the mysql engine.
     // Disabled so the test never depends on a server existing anywhere.
     let (status, body) = h
         .post(

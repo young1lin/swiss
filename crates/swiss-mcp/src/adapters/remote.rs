@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The builtin remote MCP adapter (docs/34 R7): the remote plugin's agent-facing
+//! The builtin remote MCP adapter (SPEC §remote.mcp): the remote plugin's agent-facing
 //! vocabulary as FIVE tools under /mcp/remote, so a model can drive a build box
 //! without a shell.
 //!
@@ -26,7 +26,7 @@
 //! registered (the remote plugin disabled) answers as an in-band tool error
 //! naming it, never a protocol fault.
 //!
-//! Routing rules every tool's description repeats (docs/34 SS5): 'target' is an
+//! Routing rules every tool's description repeats (SPEC §remote.mcp): 'target' is an
 //! ALIAS from the gateway's sealed targets table - never a host; relative paths
 //! resolve under the target's workspaceRoot; absolute paths pass through as-is.
 //! Paths named by sync/pull are GATEWAY-side paths, a fact the descriptions
@@ -55,7 +55,7 @@ use swiss_host::services::RuntimeServices;
 /// so neither population's cancels and shutdown sweeps reach these runs.
 const MCP_RUN_OWNER: &str = "remote-mcp";
 
-/// The run's actor (docs/41 A1): the token that authenticated this MCP call, as
+/// The run's actor (SPEC §remote.history): the token that authenticated this MCP call, as
 /// `mcp:<token label>` - the one actor string in the system that is not self-declared.
 /// The panel's Run button reaches the same tools without a token: `panel`. Read from
 /// the source the server captured at factory time, never from the task-local: rmcp
@@ -72,7 +72,7 @@ fn actor_of(source: &crate::calls::CallSource) -> String {
 /// surface's own default, which is what a panel-run action of the same shape gets.
 const TOOL_TIMEOUT_MS: u64 = 600_000;
 /// The default deadline for remote_exec: the remote.exec action's own default
-/// (docs/34 SS26), so a model that omits timeoutMs gets the same two hours the
+/// (SPEC §remote.cli), so a model that omits timeoutMs gets the same two hours the
 /// CLI does, not a silent ten-minute cap.
 const EXEC_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1000;
 /// The submit-route ceiling, enforced the same way here: a deadline past this is
@@ -611,7 +611,7 @@ impl ServerHandler for RemoteServer {
 /// host service handles and the alias seam, and costs nothing until a call
 /// arrives.
 ///
-/// Registered by the remote plugin under the name "remote" (docs/34 R7): the
+/// Registered by the remote plugin under the name "remote" (SPEC §remote.mcp): the
 /// entry's lifecycle follows the plugin's, so disabling Remote withdraws the
 /// tools together with the actions they dispatch to.
 pub struct RemoteAdapter {
@@ -896,7 +896,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_run_is_booked_to_the_token_that_made_the_call() {
-        // docs/41 A1: the actor comes from the source captured at factory time - the
+        // SPEC §remote.history: the actor comes from the source captured at factory time - the
         // one attribution in the system that is authenticated - and rmcp's own task
         // (where the task-local is unset) cannot blank it.
         let (services, _stubs) = server_with_actions();

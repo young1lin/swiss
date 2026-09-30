@@ -32,18 +32,18 @@
 //!   run log, and summarised into the gateway log so 'swiss logs' shows it.
 //! - schedule.rs: when a job is due (interval or 5-field cron, local time).
 //! - runner.rs: what a run PRODUCED (the record type). How it runs is no longer here: the
-//!   scheduler is one producer of the shared run coordinator (docs/10 §2), which executes the
+//!   scheduler is one producer of the shared run coordinator (SPEC §jobs), which executes the
 //!   `process.legacy-command` capability over the shared process supervisor. That is what
 //!   gives a job bounded output capture, a real cancel, and one global concurrency bound
 //!   shared with manual runs - instead of a second execution path of its own.
 //! - runlog.rs: what is remembered (logs/jobs/<name>.jsonl, byte- and age-capped) -
 //!   an INSTANCE the system owns, never a process-global directory.
-//! - state.rs: run FACTS (docs/11 §4) - the interval anchor, lastOk, the failure
+//! - state.rs: run FACTS (SPEC §jobs.runlog) - the interval anchor, lastOk, the failure
 //!   streak - sealed into jobs-state.json, one line per job, best-effort writes.
 //! - api.rs: the /api/jobs management surface (the panel does not know it exists).
-//! - def.rs: the v2 definition model (docs/11) - the scheduler's source of definitions
+//! - def.rs: the v2 definition model (SPEC §jobs) - the scheduler's source of definitions
 //!   since S3, applied from the plugin config row.
-//! - migrate.rs: the one-time v1 jobs.json → config row migration (docs/11 §5, S4).
+//! - migrate.rs: the one-time v1 jobs.json → config row migration (SPEC §jobs.migrate, §jobs).
 
 pub mod api;
 pub mod clock;
@@ -76,7 +76,7 @@ use def::JobDefinition;
 /// string: stopping Jobs takes back the runs Jobs started and nothing else.
 pub const JOBS_OWNER: &str = "jobs";
 /// The capability a v1 job's `command` string executes as - the compatibility action that
-/// keeps the old tokenizer and the old lenient `${VAR}` expansion (docs/10 §9 step 2).
+/// keeps the old tokenizer and the old lenient `${VAR}` expansion (SPEC §jobs.migrate).
 pub const JOBS_ACTION: &str = "process.legacy-command";
 
 /// One scheduled command, exactly as it is persisted (camelCase on the wire, like every state
@@ -180,7 +180,7 @@ impl JobDef {
                 Some(_) => return Err("env: must be an object of string values".into()),
             },
             // lastRunAt / lastOk in an old jobs.json are READ PAST here on purpose: run
-            // state moved to jobs-state.json (docs/11 §4), and the S4 migration reads
+            // state moved to jobs-state.json (SPEC §jobs.runlog), and the S4 migration reads
             // those v1 keys deliberately when it moves them. For loading they are simply
             // not definition fields any more.
         };
@@ -208,7 +208,7 @@ impl JobDef {
             m.insert("env".into(), json!(env));
         }
         // Run facts (lastRunAt / lastOk) are NOT written here any more: a definition file
-        // holds intent, the state file holds facts (docs/11 §4). Every run used to
+        // holds intent, the state file holds facts (SPEC §jobs.runlog). Every run used to
         // rewrite jobs.json just to move the anchor; now jobs.json only changes when a
         // definition changes.
         Value::Object(m)
@@ -216,7 +216,7 @@ impl JobDef {
 }
 
 /// The v1 job table, sealed into jobs.json. From S3 on the scheduler never consults it -
-/// definitions live in the plugin config row (docs/11 §9 S3) - and the whole type exists
+/// definitions live in the plugin config row (SPEC §jobs.apply) - and the whole type exists
 /// as the READ-ONLY migration input S4 consumes. Its write side is kept (unused until
 /// then) because the migration's tests round-trip it.
 #[allow(dead_code)]
@@ -254,7 +254,7 @@ impl JobStore {
     }
 
     /// Seal the table to disk. The error is RETURNED, not just logged: a config write that
-    /// could not persist must not answer the caller with a success (docs/10 §5).
+    /// could not persist must not answer the caller with a success (SPEC §jobs.config).
     #[allow(dead_code)] // the S4 migration and its tests; the S3 scheduler never writes
     fn save(&self) -> Result<(), String> {
         write_secure_json(
@@ -272,7 +272,7 @@ impl JobStore {
 }
 
 /// Why a run could not start. Every variant is a REFUSAL the caller is told about: a manual
-/// request never gets a success reply for work that did not happen (docs/10 §4, the
+/// request never gets a success reply for work that did not happen (SPEC §jobs.config, the
 /// queue-full refusal).
 #[derive(Debug)]
 pub enum RunError {
@@ -282,7 +282,7 @@ pub enum RunError {
     /// The shared pool is full. The bound is global: manual runs and other producers count.
     Capacity(String),
     /// The capability is not registered - the process plugin is disabled. A dependency that
-    /// is not there is reported as missing, not silently skipped (docs/09 §9).
+    /// is not there is reported as missing, not silently skipped (SPEC §host.plugins).
     Unavailable(String),
 }
 
@@ -300,22 +300,22 @@ impl std::fmt::Display for RunError {
 /// The scheduler plus its mutable state. Shared as one Arc between the boot sequence, the tick
 /// task and the /api/jobs handlers - the same shape as Tunnels.
 pub struct JobSystem {
-    /// The APPLIED definitions row (docs/11 §9 S3): parsed from plugins.jobs.config by
+    /// The APPLIED definitions row (SPEC §jobs.apply): parsed from plugins.jobs.config by
     /// [JobSystem::apply_config], which is the one writer - boot, plugin reconcile and the
     /// v1 API edit path all go through it, so capacity, retention and the table itself
     /// can never fall out of step.
     config: Mutex<def::JobsConfig>,
     /// The config revision the applied row came from. `/api/jobs` reports it so a client
-    /// can tell a stale listing from a fresh one (docs/11 §7.1).
+    /// can tell a stale listing from a fresh one (SPEC §jobs.api).
     applied_revision: AtomicU64,
     /// The gateway's config store: the v1 API's edit path writes the SAME row the plugin
     /// host reconciles, revision-checked, instead of growing a second definition file.
     config_store: Arc<ConfigStore>,
     /// The v1 jobs.json path. From S3 on the scheduler never consults the file; the
-    /// path is kept for the S4 migration (docs/11 §5), which reads it once and
+    /// path is kept for the S4 migration (SPEC §jobs.migrate), which reads it once and
     /// rewrites it with its completion marker.
     jobs_path: PathBuf,
-    /// Run FACTS, sealed into jobs-state.json (docs/11 §4): the interval anchor, lastOk,
+    /// Run FACTS, sealed into jobs-state.json (SPEC §jobs.runlog): the interval anchor, lastOk,
     /// the failure streak. Definitions and facts stopped sharing a file in S2.
     state: state::JobsState,
     /// The per-job run history (logs/jobs), owned - no process-global directory any more.
@@ -324,11 +324,11 @@ pub struct JobSystem {
     /// run itself (bounds, cancellation, the terminal state) and the supervisor owns the
     /// child process. This subsystem spawns nothing of its own any more.
     services: Arc<RuntimeServices>,
-    /// The clock the scheduler reads (docs/11 §6.6): the real one is chrono::Local; the
+    /// The clock the scheduler reads (SPEC §jobs.triggers): the real one is chrono::Local; the
     /// DST tests inject a fake with a synthetic rule so the same assertions pass on any
     /// machine. Swappable before start through [JobSystem::set_clock] - the test seam.
     clock: Mutex<Arc<dyn clock::Clock>>,
-    /// The next-due table (docs/11 §6.5): one unix-ms instant per job id. Rebuilt on
+    /// The next-due table (SPEC §jobs.triggers): one unix-ms instant per job id. Rebuilt on
     /// every apply, recomputed for ONE job when its occurrence is claimed - so the
     /// per-second tick is a map scan, never a calendar walk.
     next_due: Mutex<HashMap<String, i64>>,
@@ -336,7 +336,7 @@ pub struct JobSystem {
     /// two of them cannot both see \"not running\" and double-submit one job. No await is
     /// ever held through this lock.
     submit_gate: Mutex<()>,
-    /// Cancellation for occurrence tasks (docs/11 §6.4): a retry sitting out its delayMs
+    /// Cancellation for occurrence tasks (SPEC §jobs.triggers): a retry sitting out its delayMs
     /// must abort the moment the plugin stops, not after the delay. A fresh channel per
     /// start() so a stopped-and-re-enabled scheduler works again.
     cancel: Mutex<tokio::sync::watch::Sender<bool>>,
@@ -352,7 +352,7 @@ impl JobSystem {
         services: Arc<RuntimeServices>,
         config_store: Arc<ConfigStore>,
     ) -> Arc<Self> {
-        // The siblings of jobs.json place the other two artifacts (docs/11 §4): run state
+        // The siblings of jobs.json place the other two artifacts (SPEC §jobs.runlog): run state
         // sits NEXT TO the definitions file, the per-job logs under logs/jobs beside it.
         // One argument keeps every caller colocating the family - and gives each
         // JobSystem its own private tree, which is the point of this stage.
@@ -383,14 +383,14 @@ impl JobSystem {
         })
     }
 
-    /// Apply a `plugins.jobs.config` row IN PLACE (docs/11 §8): swap the definitions,
+    /// Apply a `plugins.jobs.config` row IN PLACE (SPEC §jobs.apply): swap the definitions,
     /// push the new capacity to the shared coordinator (a lower bound does not touch runs
     /// already executing) and re-budget the run log. Called at boot (plugin create) and
     /// on every config apply - plugin reconcile or the v1 edit path, both of which land
     /// here so there is exactly one interpretation of the row.
     ///
     /// The boot leniency applies here too: a leftover entry an older validator let in is
-    /// dropped with a warn, not allowed to fail the whole table (docs/11 §9 S1). An
+    /// dropped with a warn, not allowed to fail the whole table (SPEC §jobs.config). An
     /// unregistered action type only warns - the provider may be disabled, and its jobs
     /// report `actionAvailable: false` until it returns.
     pub fn apply_config(&self, config: &Value) -> Result<(), String> {
@@ -423,12 +423,12 @@ impl JobSystem {
         self.runlog
             .set_limits(runlog::limits_of_retention(&retention));
         // The applied table changed, so every next-due entry is recomputed once here
-        // (docs/11 §6.5) - the per-second tick never walks the calendar.
+        // (SPEC §jobs.triggers) - the per-second tick never walks the calendar.
         self.rebuild_next_due();
         Ok(())
     }
 
-    /// The registry-backed action lookup behind `actionAvailable` (docs/11 §7.1).
+    /// The registry-backed action lookup behind `actionAvailable` (SPEC §jobs.api).
     pub fn actions(&self) -> &Arc<swiss_host::services::action::ActionRegistry> {
         &self.services.actions
     }
@@ -438,7 +438,7 @@ impl JobSystem {
         self.applied_revision.load(Ordering::SeqCst)
     }
 
-    /// The groups of the APPLIED config (docs/20 G4) - never empty: the parser
+    /// The groups of the APPLIED config (SPEC §host.groups) - never empty: the parser
     /// materializes `["default"]` for a row that names none.
     pub fn groups(&self) -> Vec<String> {
         self.config
@@ -471,7 +471,7 @@ impl JobSystem {
     }
 
     /// The flat member order of the jobs scope: definition order in the row, which is
-    /// also run-log and display order (docs/20 G4's `set_order`).
+    /// also run-log and display order (SPEC §host.groups's `set_order`).
     pub fn job_ids(&self) -> Vec<String> {
         self.config
             .lock()
@@ -482,7 +482,7 @@ impl JobSystem {
             .collect()
     }
 
-    /// Build the row's one-model view (docs/20 G4): names from `groups`, members from
+    /// Build the row's one-model view (SPEC §host.groups): names from `groups`, members from
     /// each definition's group entry. Reading the STORED row (not the applied config)
     /// keeps every family mutation one read-mutate-commit cycle over the same bytes.
     fn row_groups(row: &Value) -> swiss_host::groups::Groups {
@@ -512,7 +512,7 @@ impl JobSystem {
     }
 
     /// Write a mutated one-model view back into the row and land it through the one door:
-    /// strict parse, revision-checked store write, apply in place (docs/11 §8 - no restart,
+    /// strict parse, revision-checked store write, apply in place (SPEC §jobs.apply - no restart,
     /// configRevision advances). Everything the family asks of the jobs scope ends here.
     fn commit_groups(
         &self,
@@ -602,12 +602,12 @@ impl JobSystem {
 
     /// The jobs config row as the STORE holds it right now - the row apply_config
     /// reads at boot after the S4 migration may have merged v1 definitions into it
-    /// (docs/11 §5.1). `{}` when no row exists yet.
+    /// (SPEC §jobs.migrate). `{}` when no row exists yet.
     pub fn current_config(&self) -> Value {
         self.config_store.plugin_config("jobs")
     }
 
-    /// The test seam of docs/11 §6.6: swap the clock (before start) and rebuild the
+    /// The test seam of SPEC §jobs.triggers: swap the clock (before start) and rebuild the
     /// next-due table against it. Production never calls this - the system opens on
     /// [clock::LocalClock].
     pub fn set_clock(&self, clock: Arc<dyn clock::Clock>) {
@@ -622,7 +622,7 @@ impl JobSystem {
             .now_ms()
     }
 
-    /// Recompute the next-due table for the whole applied table (docs/11 §6.5): the one
+    /// Recompute the next-due table for the whole applied table (SPEC §jobs.triggers): the one
     /// place every definition is walked. Called on apply and on clock swap - a per-job
     /// recompute happens when an occurrence is claimed, never in the tick.
     fn rebuild_next_due(&self) {
@@ -667,7 +667,7 @@ impl JobSystem {
         }
     }
 
-    /// Start the one-second tick task (docs/11 §6.5): each tick is one map scan - the
+    /// Start the one-second tick task (SPEC §jobs.triggers): each tick is one map scan - the
     /// entries at or before \"now\" - and one spawned occurrence task per due job. No
     /// calendar math ever runs here. A fresh cancel channel per start, so a
     /// stopped-and-re-enabled scheduler works again.
@@ -717,14 +717,14 @@ impl JobSystem {
     }
 
     /// The jobs whose next-due entry sits at or before now. The tick's whole read side:
-    /// a clock read and a map scan (docs/11 §6.5).
+    /// a clock read and a map scan (SPEC §jobs.triggers).
     pub fn due_jobs_now(&self) -> Vec<String> {
         let now = self.clock_now_ms();
         self.due_jobs(now)
     }
 
     /// The testable half of the tick: the jobs whose next-due entry is at or before
-    /// `now`. The table is maintained by apply/claim (docs/11 §6.5), so this reads the
+    /// `now`. The table is maintained by apply/claim (SPEC §jobs.triggers), so this reads the
     /// map, not the calendar.
     pub fn due_jobs(&self, now: i64) -> Vec<String> {
         self.next_due
@@ -737,7 +737,7 @@ impl JobSystem {
     }
 
     /// The definition snapshot for `name`, or Unknown. The clone IS the snapshot
-    /// (docs/11 §8, modifying-a-job): an apply_config that rewrites the table mid-flight
+    /// (SPEC §jobs.apply, modifying-a-job): an apply_config that rewrites the table mid-flight
     /// cannot reach into a run that already claimed its definition - the run finishes
     /// under the one it started with.
     fn definition_of(&self, name: &str) -> Result<JobDefinition, RunError> {
@@ -763,7 +763,7 @@ impl JobSystem {
         }
     }
 
-    /// The manual submission half, shared by both manual doors (docs/11 §7.3): the
+    /// The manual submission half, shared by both manual doors (SPEC §jobs.runlog): the
     /// check-then-submit under the gate, and on a submission refusal the record plus the
     /// typed error. There is exactly ONE execution path into the coordinator - the sync
     /// and async doors differ only in who waits for the outcome.
@@ -782,7 +782,7 @@ impl JobSystem {
             self.services.runs.submit(SubmitRequest {
                 owner: JOBS_OWNER.to_string(),
                 label,
-                // The definition's OWN action ref (docs/11 §3.4): any registered capability,
+                // The definition's OWN action ref (SPEC §jobs.config): any registered capability,
                 // input verbatim - env refs stay refs and resolve inside the action.
                 action_type: def.action.type_.clone(),
                 input: def.action.input.clone(),
@@ -806,7 +806,7 @@ impl JobSystem {
 
     /// The manual-run door (POST /run and tests): ONE attempt, no occurrence key, no
     /// retry - a manual run is a human's explicit act, not an occurrence the scheduler
-    /// owns (docs/11 §6.1), so it never moves a scheduling anchor either. Busy when
+    /// owns (SPEC §jobs.triggers), so it never moves a scheduling anchor either. Busy when
     /// this job already has a run in flight, whatever started it (the label gate).
     pub async fn execute(
         self: Arc<Self>,
@@ -821,7 +821,7 @@ impl JobSystem {
         Ok((seq, out))
     }
 
-    /// The async manual door (POST /run with {"async": true}, docs/11 §7.3): submit,
+    /// The async manual door (POST /run with {"async": true}, SPEC §jobs.runlog): submit,
     /// hand the runId back immediately, and finish the bookkeeping in a detached task.
     /// The run outlives the request by design - closing the page does not stop the job;
     /// the record and lastOk settle exactly as the sync door would have written them.
@@ -838,7 +838,7 @@ impl JobSystem {
         Ok(run_id)
     }
 
-    /// One scheduled occurrence, start to finish (docs/11 §6): claim + occurrence
+    /// One scheduled occurrence, start to finish (SPEC §jobs.triggers): claim + occurrence
     /// identity, misfire accounting, the overlap gate, the retry loop with cancellable
     /// delays, and a record for everything that happened on the way.
     async fn run_occurrence(self: &Arc<Self>, name: &str) {
@@ -862,7 +862,7 @@ impl JobSystem {
             return;
         };
         let key = def::occurrence_key_of(&def.trigger, latest_due, clock.as_ref());
-        // Occurrence identity (docs/11 §6.1): a restart inside the same cron minute - or
+        // Occurrence identity (SPEC §jobs.triggers): a restart inside the same cron minute - or
         // the fall-back's repeated local minute - already ran this occurrence.
         if st.last_occurrence_key.as_deref() == Some(key.as_str()) {
             self.refresh_next_due(name);
@@ -874,7 +874,7 @@ impl JobSystem {
         self.state.claim(name, latest_due, Some(&key));
         self.refresh_next_due(name);
 
-        // Misfire accounting (docs/11 §6.3): everything older than the newest
+        // Misfire accounting (SPEC §jobs.triggers): everything older than the newest
         // occurrence is one summary line, never a catch-up storm.
         if count > 1 {
             self.record_missed(name, &key, count - 1);
@@ -885,7 +885,7 @@ impl JobSystem {
             }
         }
 
-        // The retry loop (docs/11 §6.4). Attempt 1..=max_attempts; each attempt is its
+        // The retry loop (SPEC §jobs.triggers). Attempt 1..=max_attempts; each attempt is its
         // own submit (so the global bounds apply every time); the wait between attempts
         // is cancellable - a plugin stop aborts the occurrence mid-delay.
         let label = format!("job:{}", def.id);
@@ -912,7 +912,7 @@ impl JobSystem {
                     action_type: def.action.type_.clone(),
                     input: def.action.input.clone(),
                     timeout_ms: def.timeout_ms,
-                    // queue-one: a busy pool queues this occurrence (docs/11 §6.2);
+                    // queue-one: a busy pool queues this occurrence (SPEC §jobs.triggers);
                     // the queue's own bound turns into a visible capacity skip below.
                     queue_if_busy: queue,
                     actor: JOBS_OWNER.to_string(),
@@ -936,7 +936,7 @@ impl JobSystem {
                 Err(SubmitError::Action(reason)) => {
                     // A missing capability is a REFUSAL, not a failed run: lastOk must
                     // not claim an exit that never happened. Retrying it would only
-                    // keep hitting the same missing wall (docs/11 §6.4).
+                    // keep hitting the same missing wall (SPEC §jobs.triggers).
                     let refusal = runner::RunOutcome::refused(reason.clone());
                     self.record_ran(
                         name,
@@ -956,7 +956,7 @@ impl JobSystem {
 
             self.record_ran(name, "timer", Some(&key), (attempt, attempts), run_id, &out);
 
-            // Retry only the outcomes the policy names (docs/11 §6.4): failure = a
+            // Retry only the outcomes the policy names (SPEC §jobs.triggers): failure = a
             // non-zero exit or a spawn error; timeout = the deadline. canceled never
             // retries - someone asked for it to stop - and neither do refusals.
             let retryable = !out.ok
@@ -1022,7 +1022,7 @@ impl JobSystem {
         self.runlog.append_run(job, map).unwrap_or(0)
     }
 
-    /// One ATTEMPT's record (docs/11 §7.3): outcome "ran" (or "refused" for a
+    /// One ATTEMPT's record (SPEC §jobs.runlog): outcome "ran" (or "refused" for a
     /// submission that never started), with the occurrence key, the attempt numbers and
     /// the coordinator's run id riding along.
     fn record_ran(
@@ -1036,7 +1036,7 @@ impl JobSystem {
     ) -> u64 {
         let (attempt, attempts) = try_no;
         let mut entry = ran_record(trigger, occurrence, attempt, attempts, run_id, out);
-        // output.capture "none" (docs/11 §3.2): the record keeps NO output - the run
+        // output.capture "none" (SPEC §jobs.config): the record keeps NO output - the run
         // itself still captured; only the history is cut.
         let none_capture = self
             .config
@@ -1055,7 +1055,7 @@ impl JobSystem {
         self.record_entry(name, entry, level, "job ran")
     }
 
-    /// A skipped occurrence (docs/11 §6.2/§7.3): no exit code, no output, the reason
+    /// A skipped occurrence (SPEC §jobs.triggers, §jobs.runlog): no exit code, no output, the reason
     /// and the occurrence key are the story.
     fn record_skipped(&self, name: &str, occurrence: &str, reason: &str) -> u64 {
         let entry = json!({
@@ -1073,7 +1073,7 @@ impl JobSystem {
         self.record_entry(name, map, "warn", "job occurrence skipped")
     }
 
-    /// The misfire summary (docs/11 §6.3): ONE line for every occurrence that will
+    /// The misfire summary (SPEC §jobs.triggers): ONE line for every occurrence that will
     /// never be caught up, with the newest occurrence's key for context.
     fn record_missed(&self, name: &str, occurrence: &str, missed: usize) -> u64 {
         let entry = json!({
@@ -1106,7 +1106,7 @@ impl JobSystem {
         self.state.settle(name, ok, run_id);
     }
 
-    /// The v1 edit path (docs/11 §7.1): fold a v1-shaped body into the definitions row,
+    /// The v1 edit path (SPEC §jobs.api): fold a v1-shaped body into the definitions row,
     /// through the SAME revision-checked config write the plugin host reconciles from. A
     /// definition the v1 shape cannot spell without loss (`editableInV1: false`) is
     /// refused with [WriteError::NotEditableV1] - overwriting it would silently drop
@@ -1143,7 +1143,7 @@ impl JobSystem {
         self.commit_row(row).map_err(WriteError::Persist)
     }
 
-    /// Delete a definition (docs/11 §7.1/§8): the row loses the id, the run history
+    /// Delete a definition (SPEC §jobs.api, §jobs.apply): the row loses the id, the run history
     /// stays on disk, and a run already in flight keeps its claimed snapshot to the end.
     /// `Ok(false)` means there was no such id.
     pub fn delete(&self, name: &str) -> Result<bool, WriteError> {
@@ -1153,7 +1153,7 @@ impl JobSystem {
             return Ok(false);
         }
         self.commit_row(row).map_err(WriteError::Persist)?;
-        // The deleted definition's scheduling facts go with it (docs/11 §4); the run
+        // The deleted definition's scheduling facts go with it (SPEC §jobs.runlog); the run
         // HISTORY stays in the log file, which outlives the job that wrote it. Best-effort
         // like every state write on a non-config path.
         self.state.forget(name);
@@ -1173,7 +1173,7 @@ impl JobSystem {
         self.apply_config(&row)
     }
 
-    /// One job's API row (docs/11 §7.1): every v1 field the panel reads, exactly the
+    /// One job's API row (SPEC §jobs.api): every v1 field the panel reads, exactly the
     /// shape they had when definitions lived in jobs.json, plus the v2 fields. Built for
     /// GET /api/jobs and the PUT reply, so both show the same shape.
     pub fn job_view(&self, def: &JobDefinition) -> Value {
@@ -1183,7 +1183,7 @@ impl JobSystem {
     /// [job_view] against a caller-supplied groups list - the building loop's form: it
     /// snapshots definitions AND groups under one lock, then builds views lock-free.
     fn job_view_in(&self, def: &JobDefinition, groups: &[String]) -> Value {
-        // "Running" is the coordinator's truth now (docs/11 §6.2): the label count is
+        // "Running" is the coordinator's truth now (SPEC §jobs.triggers): the label count is
         // owner-blind, so a manual submission of the same job shows as running too -
         // which is exactly what the reader wants to know.
         let running = self
@@ -1197,13 +1197,13 @@ impl JobSystem {
             v[key] = value;
         }
         v["source"] = json!("config");
-        // The group this job renders under (docs/20 G4): its stored entry while that group
+        // The group this job renders under (SPEC §host.groups): its stored entry while that group
         // still exists, else the first slot - the same sink rule every scope serves.
         v["group"] = json!(Self::group_of_def(def, groups));
         v["actionAvailable"] = json!(self.services.actions.get(&def.action.type_).is_some());
         v["configRevision"] = json!(self.applied_revision());
         // The live facts the panel reads: lastRunAt / lastOk come from the state file,
-        // exactly the shape they had when they rode inside the definition (docs/11 §7.1
+        // exactly the shape they had when they rode inside the definition (SPEC §jobs.api
         // keeps the v1 /api/jobs fields frozen).
         if let Some(ms) = st.last_run_at {
             v["lastRunAt"] = json!(state::iso_of_ms(ms));
@@ -1213,7 +1213,7 @@ impl JobSystem {
         }
         v["running"] = json!(running);
         if !def.disabled {
-            // The maintained table, not a calendar walk per view (docs/11 §6.5).
+            // The maintained table, not a calendar walk per view (SPEC §jobs.triggers).
             if let Some(next) = self
                 .next_due
                 .lock()
@@ -1238,13 +1238,13 @@ impl JobSystem {
         defs.iter().map(|d| self.job_view_in(d, &groups)).collect()
     }
 
-    /// One job's run facts (docs/11 §4) - what lastRunAt / lastOk used to be inside a
+    /// One job's run facts (SPEC §jobs.runlog) - what lastRunAt / lastOk used to be inside a
     /// JobDef, now read from jobs-state.json.
     pub fn run_state(&self, name: &str) -> state::JobRunState {
         self.state.get(name)
     }
 
-    /// One page of a job's run history (docs/11 §7.3), read from THIS system's log.
+    /// One page of a job's run history (SPEC §jobs.runlog), read from THIS system's log.
     pub fn read_runs(
         &self,
         job: &str,
@@ -1294,7 +1294,7 @@ fn definitions_map_of(row: &mut Value) -> Result<&mut Map<String, Value>, WriteE
         })
 }
 
-/// Fold a v1-shaped edit onto an editable definition (docs/11 §7.1): command/cwd move
+/// Fold a v1-shaped edit onto an editable definition (SPEC §jobs.api): command/cwd move
 /// into the legacy action input, the schedule becomes the matching trigger, and every
 /// v2 field the shape does not know keeps its value - the caller checked
 /// [def::JobDefinition::editable_in_v1], so there are none to lose today, and the check
@@ -1340,7 +1340,7 @@ fn definition_to_config(def: &JobDefinition) -> Value {
     def.to_config_json()
 }
 
-/// One ATTEMPT's JSONL record and API-reply shape (docs/11 §7.3) - built in ONE place
+/// One ATTEMPT's JSONL record and API-reply shape (SPEC §jobs.runlog) - built in ONE place
 /// so the file line and the POST /run response cannot drift apart. The seq is assigned
 /// (and inserted first) by runlog::append_run; the API reply inserts it the same way.
 /// A submission that never started (outcome "refused") keeps the classic fields it can
@@ -1375,7 +1375,7 @@ pub fn ran_record(
         rec.insert("pid".into(), json!(pid));
     }
     if !refused {
-        // outcome != "ran" carries no exit code or output (docs/11 §7.3); a refused
+        // outcome != "ran" carries no exit code or output (SPEC §jobs.runlog); a refused
         // submission never had either.
         if let Some(code) = out.exit_code {
             rec.insert("exitCode".into(), json!(code));
@@ -1589,7 +1589,7 @@ mod tests {
             "11s since the last run: one occurrence, at the 10s mark past the anchor"
         );
         // Three shut-down periods are THREE due occurrences, newest last - the misfire
-        // half of the story (docs/11 §6.3) starts from this count.
+        // half of the story (SPEC §jobs.triggers) starts from this count.
         assert_eq!(
             def::missed_occurrences(&d, now, anchor, Some(now - 31_000), clock.as_ref()),
             Some((3, now - 1_000))
@@ -1685,7 +1685,7 @@ mod tests {
         .is_err());
     }
 
-    /// The S3 promise in one assertion set (docs/11 §9 S3): the row IS the table. A due
+    /// The S3 promise in one assertion set (SPEC §jobs.apply): the row IS the table. A due
     /// interval job fires, a future one does not, a disabled one does not, a manual one
     /// never auto-fires - and a jobs.json row schedules nothing any more.
     #[test]
@@ -1728,7 +1728,7 @@ mod tests {
         );
     }
 
-    /// docs/11 §8: capacity changes reach the shared coordinator on apply.
+    /// SPEC §jobs.apply: capacity changes reach the shared coordinator on apply.
     #[test]
     fn apply_config_moves_capacity() {
         let (sys, store) = system("capacity-apply", test_services());
@@ -1795,7 +1795,7 @@ mod tests {
 
         // A fresh boot over the same tree reads the same facts: the config row is
         // re-applied the way plugin create does, and the state file carries the run
-        // facts across the boundary (docs/11 §4).
+        // facts across the boundary (SPEC §jobs.runlog).
         let reopened = JobSystem::open(path, test_services(), store.clone());
         reopened
             .apply_config(&store.plugin_config("jobs"))
@@ -1804,7 +1804,7 @@ mod tests {
         assert_eq!(st.last_ok, Some(true));
         assert_eq!(
             st.last_run_at, None,
-            "a manual run never moves the scheduling anchor (docs/11 §6.1) - only an
+            "a manual run never moves the scheduling anchor (SPEC §jobs.triggers) - only an
             occurrence does, so Run now cannot delay the next timer firing"
         );
         assert_eq!(
@@ -1826,7 +1826,7 @@ mod tests {
             other => panic!("expected Unknown, got {other:?}"),
         }
         install(&sys, &store, row_of(&[interval_job("busy-job", 3_600)]));
-        // "Busy" is the coordinator's label count now (docs/11 §6.2): occupy the
+        // "Busy" is the coordinator's label count now (SPEC §jobs.triggers): occupy the
         // job:<id> label with a manual submission of our own, the way any producer
         // would, and the manual door refuses with Busy instead of double-running.
         let hog = sys
@@ -1861,7 +1861,7 @@ mod tests {
         sys.set_clock(fake.clone());
         fake.set(sys.anchor_ms + 3_600_000 + 100); // the interval has elapsed
 
-        // The timer path is an OCCURRENCE now (docs/11 §6): it claims (stamping the
+        // The timer path is an OCCURRENCE now (SPEC §jobs.triggers): it claims (stamping the
         // anchor and the occurrence key) and then hits the missing capability - the
         // refusal is a record, not a silent skip, and the anchor moved so it will not
         // re-fire every tick against the same wall.
@@ -1951,7 +1951,7 @@ mod tests {
         let (sys, store) = system("deadline", test_services());
         let mut def = interval_job("wedged", 3_600);
         def.command = long_command();
-        def.timeout_ms = 1_500; // v2 floors timeoutMs at 1000 (docs/11 §3.2)
+        def.timeout_ms = 1_500; // v2 floors timeoutMs at 1000 (SPEC §jobs.config)
         install(&sys, &store, row_of(&[def]));
 
         let started = std::time::Instant::now();
@@ -1997,7 +1997,7 @@ mod tests {
         assert!(!out.timed_out, "nobody waited too long; it was cancelled");
         assert!(!sys.all_views().iter().any(|v| v["running"] == json!(true)));
     }
-    /// docs/10 §5 asks for this by name: a persist that failed must not be reported as a
+    /// SPEC §jobs.config asks for this by name: a persist that failed must not be reported as a
     /// save. The config row is the definition store now, so a store whose file cannot be
     /// written refuses the v1 edit - and nothing half-applies anywhere.
     #[test]
@@ -2053,7 +2053,7 @@ mod tests {
         assert!(matches!(sys.delete("edit-me"), Ok(true)));
         assert!(matches!(sys.delete("edit-me"), Ok(false)), "already gone");
         assert!(sys.all_views().is_empty());
-        // The deleted definition's state line is gone too (docs/11 §4); the run history
+        // The deleted definition's state line is gone too (SPEC §jobs.runlog); the run history
         // file is deliberately NOT touched - it outlives the job.
         assert_eq!(sys.run_state("edit-me"), state::JobRunState::default());
     }
@@ -2077,7 +2077,7 @@ mod tests {
                 v.get("nextDueAt").and_then(Value::as_str).is_some(),
                 "every enabled job shows its next firing: {v}"
             );
-            // The v2 fields ride along (docs/11 §7.1) so a v2 client needs no second
+            // The v2 fields ride along (SPEC §jobs.api) so a v2 client needs no second
             // endpoint and the panel's future form can round-trip through the row.
             assert_eq!(v["source"], json!("config"));
             assert_eq!(v["actionAvailable"], json!(true));
@@ -2113,7 +2113,7 @@ mod tests {
         assert!(v.get("nextDueAt").is_none());
     }
 
-    /// docs/11 §8: deleting a definition cancels its FUTURE schedule only. The run in
+    /// SPEC §jobs.apply: deleting a definition cancels its FUTURE schedule only. The run in
     /// flight holds the snapshot it claimed and finishes normally, and the history file
     /// outlives the job that wrote it.
     #[tokio::test]
@@ -2146,7 +2146,7 @@ mod tests {
         assert_eq!(page.len(), 1, "the history outlives the definition");
     }
 
-    /// docs/11 §7.1: a definition the v1 shape cannot spell without loss refuses the v1
+    /// SPEC §jobs.api: a definition the v1 shape cannot spell without loss refuses the v1
     /// edit outright - overwriting it would silently drop fields.
     #[test]
     fn v1_edit_of_a_v2_only_definition_is_refused() {
@@ -2180,9 +2180,9 @@ mod tests {
         assert_eq!(sys.all_views().remove(0)["title"], json!("A titled job"));
     }
 
-    // ---- S5: scheduling semantics (docs/11 §6, all injected-clock) ----
+    // ---- S5: scheduling semantics (SPEC §jobs.triggers, all injected-clock) ----
 
-    /// docs/11 §6.6: a cron minute inside the spring-forward gap never happens on the
+    /// SPEC §jobs.triggers: a cron minute inside the spring-forward gap never happens on the
     /// wall clock. The next-due scan skips it to the next REAL matching minute, and the
     /// missed walk does not count it.
     #[test]
@@ -2237,7 +2237,7 @@ mod tests {
         );
     }
 
-    /// docs/11 §6.1/§6.6: the fall-back's repeated local minute has ONE occurrence key,
+    /// SPEC §jobs.triggers: the fall-back's repeated local minute has ONE occurrence key,
     /// so the second wall-clock pass of that minute is the same occurrence - already
     /// claimed, never run twice.
     #[test]
@@ -2307,7 +2307,7 @@ mod tests {
         (sys, fake)
     }
 
-    /// docs/11 §6.3: skip - ONE summary line, NO catch-up run, and the anchor pushed to
+    /// SPEC §jobs.triggers: skip - ONE summary line, NO catch-up run, and the anchor pushed to
     /// the newest occurrence so the next firing is a full period out.
     #[tokio::test]
     async fn misfire_skip_summarizes_and_never_catches_up() {
@@ -2331,7 +2331,7 @@ mod tests {
         assert!(sys.due_jobs(fake.now_ms()).is_empty());
     }
 
-    /// docs/11 §6.3: run-once - the SAME one summary line, plus exactly one catch-up run
+    /// SPEC §jobs.triggers: run-once - the SAME one summary line, plus exactly one catch-up run
     /// carrying the newest occurrence's key.
     #[tokio::test]
     async fn misfire_run_once_catches_up_exactly_one() {
@@ -2355,7 +2355,7 @@ mod tests {
         );
     }
 
-    /// docs/11 §6.2: overlap=skip records a skipped occurrence and still moves the anchor
+    /// SPEC §jobs.triggers: overlap=skip records a skipped occurrence and still moves the anchor
     /// - the invariant that keeps a busy job from re-firing every tick.
     #[tokio::test]
     async fn overlap_skip_records_and_moves_the_anchor() {
@@ -2394,7 +2394,7 @@ mod tests {
         assert!(hog.done.await.is_ok());
     }
 
-    /// docs/11 §6.2: overlap=queue-one queues the successor behind the busy pool, and a
+    /// SPEC §jobs.triggers: overlap=queue-one queues the successor behind the busy pool, and a
     /// FULL queue is a visible capacity skip, never a silent drop.
     #[tokio::test]
     async fn overlap_queue_one_queues_and_a_full_queue_skips_visibly() {
@@ -2497,7 +2497,7 @@ mod tests {
         assert_eq!(ran["attempt"], json!(1));
     }
 
-    /// docs/11 §6.4: retry to maxAttempts inside one occurrence - each attempt its own
+    /// SPEC §jobs.triggers: retry to maxAttempts inside one occurrence - each attempt its own
     /// record - and lastOk settles ONCE, on the final attempt.
     #[tokio::test]
     async fn retry_runs_to_max_attempts_inside_one_occurrence() {
@@ -2540,7 +2540,7 @@ mod tests {
         );
     }
 
-    /// docs/11 §6.4: a timeout the policy does not name is final on attempt 1.
+    /// SPEC §jobs.triggers: a timeout the policy does not name is final on attempt 1.
     #[tokio::test]
     async fn a_timeout_the_policy_does_not_name_is_final() {
         let (sys, store) = system("retry-timeout", test_services());
@@ -2571,7 +2571,7 @@ mod tests {
         assert_eq!(page[0]["timedOut"], json!(true));
     }
 
-    /// docs/11 §6.4: canceled never retries - someone asked for it to stop.
+    /// SPEC §jobs.triggers: canceled never retries - someone asked for it to stop.
     #[tokio::test]
     async fn a_canceled_attempt_never_retries() {
         let (sys, store) = system("retry-cancel", test_services());
@@ -2607,7 +2607,7 @@ mod tests {
         assert_eq!(page[0]["canceled"], json!(true));
     }
 
-    /// docs/11 §6.4: the delay between attempts is cancellable - stopping the scheduler
+    /// SPEC §jobs.triggers: the delay between attempts is cancellable - stopping the scheduler
     /// mid-delay ends the occurrence instead of coming back to life later.
     #[tokio::test]
     async fn stopping_mid_delay_aborts_the_occurrence() {
@@ -2653,7 +2653,7 @@ mod tests {
         assert_eq!(page.len(), 1, "attempt 2 never happened: {page:?}");
     }
 
-    /// docs/11 §6.5: the per-second tick is a map scan. A table of a thousand jobs,
+    /// SPEC §jobs.triggers: the per-second tick is a map scan. A table of a thousand jobs,
     /// every one of them overdue, costs ZERO calendar calls to enumerate; only a claim
     /// walks the calendar again, for exactly that job.
     #[test]

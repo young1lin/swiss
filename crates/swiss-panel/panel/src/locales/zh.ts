@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The Chinese dictionary (docs/38 L3): symbolic keys, module-sectioned, values carried
+/* The Chinese dictionary (SPEC §panel.i18n): symbolic keys, module-sectioned, values carried
    over from the English-keyed table by the migration. A plural's entry is the .other form
    only — Chinese has no "one" category under Intl.PluralRules("zh-CN"), so trn() never
    looks for one. */
@@ -118,7 +118,7 @@ const zh: Record<string, string> = {
   "dataBrowsers.ttlZeroDeletes": "0 会立即删除该键——要删除请用删除",
   "dataBrowsers.renameTargetExists": "{to} 已存在——重命名到它会覆盖原有的值",
   "dataBrowsers.keyAlreadyGone": "{key} 此前已不存在",
-  /* --- dataStream（docs/45 S2） --- */
+  /* --- dataStream（SPEC §data.streams） --- */
   "dataStream.colId": "id",
   "dataStream.colTime": "时间",
   "dataStream.loadEarlier": "加载更早的条目",
@@ -137,13 +137,13 @@ const zh: Record<string, string> = {
   "dataStream.colPending": "待确认",
   "dataStream.colLag": "积压",
   "dataStream.colLastDelivered": "最后投递",
-/* fix-plan #14: direction glyphs moved to the sprite icons at the paint sites. */
+/* SPEC §panel.design: direction glyphs moved to the sprite icons at the paint sites. */
 "dataStream.pendingNew.other": "{n} 条新",
 "dataStream.pendingNewOver": "{n}+ 条新",
 "dataStream.gapSkipped": "有更多，已跳过中间部分",
 "dataStream.jumpLatest": "跳到最新",
 "dataStream.followStopped": "已停止跟随——上次轮询失败",
-/* docs/49：快速流的阅读——过滤条件、扫描代价、分组概览，以及表格为何暂停。*/
+/* SPEC §data.streams：快速流的阅读——过滤条件、扫描代价、分组概览，以及表格为何暂停。*/
 "dataStream.filter": "过滤条目",
 "dataStream.filterHint": "字段=值，或任意文本",
 "dataStream.filterHits": "最近扫描 {s} 条，命中 {n} 条",
@@ -258,7 +258,7 @@ const zh: Record<string, string> = {
   "dataEdit.renameTable": "重命名表…",
   "dataEdit.renameTo": "重命名 {name} 为：",
   "dataEdit.truncateTable": "清空表…",
-  /* fix-plan #16: the typed confirm is the one-field sheet now — a short title, the field
+  /* SPEC §panel.ui: the typed confirm is the one-field sheet now — a short title, the field
      caption that names what must be typed, and the button word (English comment per the
      house rule; only the VALUES are Chinese). */
   "dataEdit.typedConfirmTitle": "{what} {name}——此操作无法撤销",
@@ -464,7 +464,7 @@ const zh: Record<string, string> = {
   "dataTabs.openObjects": "已打开的对象",
   "dataTabs.sql": "SQL",
   "dataTabs.untitled": "未命名",
-  /* --- dataTree（侧栏分区，docs/43 M2） --- */
+  /* --- dataTree（侧栏分区，SPEC §data.tabs） --- */
   "dataTree.no.routines": "此连接没有例程。",
   "dataTree.no.tables": "此连接没有表。",
   "dataTree.no.views": "此连接没有视图。",
@@ -1033,7 +1033,7 @@ const zh: Record<string, string> = {
   "polling.test": "测试",
   /* --- runHistory --- */
   "runHistory.durationMs": "{ms} 毫秒",
-  /* fix-plan #14: the history glyph is the i-history sprite at the two paint sites. */
+  /* SPEC §panel.design: the history glyph is the i-history sprite at the two paint sites. */
   "runHistory.pastRuns": "过往运行…",
   "runHistory.pastRunsN": "过往运行({n})",
   "runHistory.pastRuns2": "没有过往运行",
@@ -1569,7 +1569,7 @@ const zh: Record<string, string> = {
   "wire.plugins": "插件",
   "wire.secrets": "密钥",
   "wire.system": "系统",
-  /* --- ui (docs/46: the component library) --- */
+  /* --- ui (SPEC §panel.ui: the component library) --- */
   "ui.toTop": "回到顶部",
   "ui.redact.show": "显示地址",
   "ui.redact.hide": "隐藏地址",
@@ -1585,7 +1585,7 @@ const zh: Record<string, string> = {
   "ui.cancel": "取消",
   "ui.rename": "重命名",
   "ui.create": "创建",
-  /* --- gallery (docs/46 §2.6: /admin/ui.html, made-up data) --- */
+  /* --- gallery (SPEC §panel.ui: /admin/ui.html, made-up data) --- */
   "gallery.title": "组件库",
   "gallery.docTitle": "swiss 组件库",
   "gallery.views": "陈列页视图",

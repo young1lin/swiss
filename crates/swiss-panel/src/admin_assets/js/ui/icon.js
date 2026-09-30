@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* A sprite reference as a NODE (docs/18 V2, docs/37 R5). The sprite is the <svg hidden> block
+/* A sprite reference as a NODE (SPEC §panel.design, SPEC §panel.toolchain). The sprite is the <svg hidden> block
  * in index.html - Lucide-style, 24 viewBox, 1.5 stroke, currentColor - and .ic (base.css)
  * sizes it at 16px. SVG is its own namespace: createElement("svg") builds an
  * HTMLUnknownElement that renders nothing, so this goes through createElementNS and cannot be

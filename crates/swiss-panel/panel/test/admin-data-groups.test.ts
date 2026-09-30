@@ -21,7 +21,7 @@ import { dbConn, mountDbView, unmountDbView } from "../src/db-state.js";
 import type { ApiDbConnectionRow } from "../src/types/api.js";
 import type { MenuItemAction } from "../src/types/dom.js";
 
-/* The connection menu's grouping (docs/20 G5, restated by docs/43 M3): the dropdown became
+/* The connection menu's grouping (SPEC §host.groups, restated by SPEC §data.databases): the dropdown became
    a row that opens a menu, so the optgroups became heading rows and the flat list became
    rows without one. The three facts the old optgroup suite pinned are the same three this
    one pins — a single group stays flat (a heading around everything is noise that says
@@ -117,7 +117,7 @@ function labels(items: MenuItemAction[]): string[] {
   return items.map((r) => r.label.split(" · ")[0]);
 }
 
-describe("the connection menu's groups (docs/20 G5, docs/43 M3)", () => {
+describe("the connection menu's groups (SPEC §host.groups, SPEC §data.databases)", () => {
   it("a single group stays a flat list — no heading around everything", () => {
     const items = rows([
       { name: "shop-mysql", dialect: "mysql", group: "default" },
@@ -187,7 +187,7 @@ describe("the connection menu's groups (docs/20 G5, docs/43 M3)", () => {
       byId.dbDatabaseRow = el();
       dataView.renderDbSide();
       const kids = byId.dbConnRow.children as Record<string, any>[];
-      // docs/46 §3.7: the bordered .db-chip wrapper is gone in both cases.
+      // SPEC §panel.pages: the bordered .db-chip wrapper is gone in both cases.
       expect(kids.some((c) => String(c.className).includes("db-chip")), "no chip wrapper").toBe(false);
       return kids;
     };

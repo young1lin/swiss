@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-//! L1, the redis group (docs/44 SS2.5): RedisDataBrowser against a real redis 7,
+//! L1, the redis group (SPEC §testing.it): RedisDataBrowser against a real redis 7,
 //! over a leased db index reloaded from keys.txt (3,020 keys: five types, a
 //! three-level tree namespace, one expiring and one persisted TTL key, UTF-8
 //! values, 3,000 bulk keys to make SCAN paging earn its keep, and the four
-//! generated stream keys of docs/45 §2.7). The browser
+//! generated stream keys of SPEC §data.streams). The browser
 //! is built exactly the way the adapter builds it: ServerDef -> RedisEngine ->
 //! Engine::browser(), carrying the def's own policy flags.
 
@@ -334,7 +334,7 @@ async fn run_pipeline_applies_structured_edits_with_readback() {
 
 #[tokio::test]
 async fn a_refused_command_rejects_the_whole_pipeline() {
-    // docs/22 W3.3: the guard vets the whole batch before the socket - a
+    // SPEC §data.redis: the guard vets the whole batch before the socket - a
     // buffered edit never half-applies, so the write in front of the refused
     // EVAL must not land either.
     let (_f, b) = fresh_with("r3_refuse", json!({ "allowDestructive": true })).await;
@@ -400,7 +400,7 @@ async fn list_databases_names_each_keyspace_with_the_foreign_reason() {
     let reason = other["reason"].as_str().expect("the reason text");
     assert!(reason.contains("its own connection"), "{reason}");
 }
-// --- docs/45: stream windows ----------------------------------------------------------------------
+// --- SPEC §data.streams: stream windows ----------------------------------------------------------------------
 
 /// A raw connection straight to a Fresh def's index — the commandstats reader in
 /// the tick test. Its commands (INFO, CONFIG RESETSTAT) never pass through the
@@ -430,7 +430,7 @@ fn id_ms(id: &str) -> i64 {
 
 #[tokio::test]
 async fn read_key_on_a_stream_returns_the_newest_window_first() {
-    // docs/45 §2.1: opening a stream key must land on the NEWEST 100 entries with
+    // SPEC §data.streams: opening a stream key must land on the NEWEST 100 entries with
     // the shape the stream view codes against — not type_aware_read's oldest-first
     // page (the panel opens keys without knowing their type).
     let (_f, b) = browser("r45_latest").await;
@@ -457,7 +457,7 @@ async fn read_key_on_a_stream_returns_the_newest_window_first() {
 
 #[tokio::test]
 async fn read_stream_pages_older_by_cursor_without_loss_or_duplication() {
-    // docs/45 §2.1: the exclusive `before` cursor walks the whole stream, oldest
+    // SPEC §data.streams: the exclusive `before` cursor walks the whole stream, oldest
     // page last, with no row repeated at a seam and none dropped.
     let (_f, b) = browser("r45_before").await;
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -487,7 +487,7 @@ async fn read_stream_pages_older_by_cursor_without_loss_or_duplication() {
     // Eleven pages, not ten: `more` means “the page was full”, so the tenth page
     // (exactly 10,000th entry) still flags more and the walk ends on one empty
     // page — the documented cost of a `more` that never spends a fourth command
-    // (docs/45 §2.1); the panel's Load-earlier renders that page as the end.
+    // (SPEC §data.streams); the panel's Load-earlier renders that page as the end.
     assert_eq!(pages, 11);
     assert_eq!(seen.len(), 10_000, "no loss, no duplication");
     assert_eq!(seen.first().map(String::as_str), Some("1700000000000-0"));
@@ -496,7 +496,7 @@ async fn read_stream_pages_older_by_cursor_without_loss_or_duplication() {
 
 #[tokio::test]
 async fn read_stream_after_returns_only_newer_entries_newest_first() {
-    // docs/45 §2.1/D6: the Follow tick's catch-up — strictly newer than the
+    // SPEC §data.streams: the Follow tick's catch-up — strictly newer than the
     // cursor, newest first, and quiet when caught up.
     let (_f, b) = browser("r45_after").await;
     let cmds: Vec<Vec<String>> = (0..3)
@@ -540,8 +540,8 @@ async fn read_stream_after_returns_only_newer_entries_newest_first() {
 
 #[tokio::test]
 async fn read_stream_after_caps_and_flags_more() {
-    // docs/45 §2.1: a backlog larger than the window must show the NEWEST end of
-    // it (catching up means seeing now, docs/45's own words) and flag `more` —
+    // SPEC §data.streams: a backlog larger than the window must show the NEWEST end of
+    // it (catching up means seeing now, SPEC §data.streams's own words) and flag `more` —
     // never silently fill the window with the oldest of the gap.
     let (_f, b) = browser("r45_backlog").await;
     let cmds: Vec<Vec<String>> = (0..150)
@@ -578,7 +578,7 @@ async fn read_stream_after_caps_and_flags_more() {
 
 #[tokio::test]
 async fn follow_polling_costs_three_commands_per_tick() {
-    // docs/45 §2.1: one tick = XREVRANGE + XLEN + XINFO STREAM, exactly. INFO
+    // SPEC §data.streams: one tick = XREVRANGE + XLEN + XINFO STREAM, exactly. INFO
     // commandstats is SERVER-wide, so the measurement needs the whole redis to itself:
     // fresh_redis_exclusive leases all sixteen indexes in ONE atomic acquire (holding
     // nothing while it waits), seeds only the one this browser reads, and holds the
@@ -640,7 +640,7 @@ async fn follow_polling_costs_three_commands_per_tick() {
 
 #[tokio::test]
 async fn read_stream_ts_derives_from_the_id() {
-    // docs/45 §2.1: the ms half of the id, as ISO 8601 with milliseconds,
+    // SPEC §data.streams: the ms half of the id, as ISO 8601 with milliseconds,
     // derived on the server — the panel never parses an id.
     let (_f, b) = browser("r45_ts").await;
     let one = b.read_stream("stream:one", &json!({})).await.expect("one");
@@ -653,7 +653,7 @@ async fn read_stream_ts_derives_from_the_id() {
 
 #[tokio::test]
 async fn read_stream_ragged_fields_union_columns_in_first_seen_order() {
-    // docs/45 D3: the seed's five interleaved entries (a / a,b / b,c / c / a,c,d,
+    // SPEC §data.streams: the seed's five interleaved entries (a / a,b / b,c / c / a,c,d,
     // oldest to newest) union into first-seen-scanning-newest-first order — a,c,d,b
     // — and each row shows exactly its own fields.
     let (_f, b) = browser("r45_ragged").await;
@@ -673,7 +673,7 @@ async fn read_stream_ragged_fields_union_columns_in_first_seen_order() {
 
 #[tokio::test]
 async fn read_stream_empty_and_single_entry_streams() {
-    // docs/45 §2.5: the empty stream is a key with a type and no entries — a
+    // SPEC §data.streams: the empty stream is a key with a type and no entries — a
     // real window, not an error; the single-entry stream is a complete first page.
     let (_f, b) = browser("r45_edges").await;
     let empty = b.read_stream("stream:empty", &json!({})).await.expect("empty");
@@ -692,7 +692,7 @@ async fn read_stream_empty_and_single_entry_streams() {
 
 #[tokio::test]
 async fn read_stream_refuses_non_stream_keys_and_both_cursors() {
-    // docs/45 §2.1: the refusal names the real type (one follow-up TYPE on the
+    // SPEC §data.streams: the refusal names the real type (one follow-up TYPE on the
     // error path only), a missing key is the /key route's { type: none } fact, and
     // the two cursors never run together.
     let (_f, b) = browser("r45_refuse").await;
@@ -715,7 +715,7 @@ async fn read_stream_refuses_non_stream_keys_and_both_cursors() {
 
 #[tokio::test]
 async fn read_stream_filters_through_a_bounded_backward_walk() {
-    // docs/49 §2.2: redis indexes nothing inside an entry, so a filter is a walk —
+    // SPEC §data.streams: redis indexes nothing inside an entry, so a filter is a walk —
     // read backwards, keep what matches, stop at the count or the budget, and SAY
     // how far you got. The seed's 10,000 ticks cycle five symbols, so `sym=AAA` is
     // every fifth entry: a 500-entry scan page holds exactly the 100 the window
@@ -839,7 +839,7 @@ async fn read_stream_filters_through_a_bounded_backward_walk() {
 
 #[tokio::test]
 async fn a_filter_that_matches_nothing_says_how_far_it_looked() {
-    // docs/49 §2.2: the honest empty answer. The walk reads the whole stream (10,000
+    // SPEC §data.streams: the honest empty answer. The walk reads the whole stream (10,000
     // entries, well inside the 20,000 budget), keeps nothing, and reports both the
     // count it examined and the oldest id it reached — so the panel can say "nothing
     // in the newest 10,000" instead of implying the stream holds nothing else.
@@ -876,7 +876,7 @@ async fn a_filter_that_matches_nothing_says_how_far_it_looked() {
 }
 #[tokio::test]
 async fn the_command_catalog_comes_from_the_server_itself() {
-    // docs/50: the console's completion is built from COMMAND DOCS + COMMAND INFO, so it
+    // SPEC §data.redis-console: the console's completion is built from COMMAND DOCS + COMMAND INFO, so it
     // knows the commands THIS server has - its version, its modules - instead of a table
     // kept by hand in the panel. Against a real redis 7 that means summaries, syntax built
     // from redis' own argument spec, the key positions, and the container commands flattened
@@ -937,7 +937,7 @@ async fn the_command_catalog_comes_from_the_server_itself() {
 
 #[tokio::test]
 async fn stream_groups_reports_pending_and_lag() {
-    // docs/45 §2.4: the read-only consumer table over the seed's feed group —
+    // SPEC §data.streams: the read-only consumer table over the seed's feed group —
     // seven read-never-ACKed entries, one consumer, and the lag that follows; a
     // vanished key is an empty table, not an error.
     let (_f, b) = browser("r45_groups").await;

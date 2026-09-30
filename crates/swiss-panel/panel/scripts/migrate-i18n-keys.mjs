@@ -15,7 +15,7 @@
  */
 
 /*
- * The docs/38 key-normalization codemod (2026-09-20 decision): rewrites every
+ * The SPEC §panel.i18n key-normalization codemod (2026-09-20 decision): rewrites every
  * tr()/trn()/tk() English-string literal in panel/src and panel/test to a symbolic
  * key "<module>.<semanticId>", and regenerates locales/en.ts (key -> English) and
  * locales/zh.ts (key -> Chinese, values carried over from the English-keyed table).
@@ -231,11 +231,11 @@ function renderTable(varName, entries) {
 }
 
 fs.writeFileSync(path.join(srcDir, "locales/en.ts"),
-  HEADER("en", "The English dictionary (docs/38, normalized 2026-09-20): symbolic keys, module-sectioned.\n   English copy is editable here without touching call sites or any other locale.")
+  HEADER("en", "The English dictionary (SPEC §panel.i18n, normalized 2026-09-20): symbolic keys, module-sectioned.\n   English copy is editable here without touching call sites or any other locale.")
   + renderTable("en", enEntries), "utf8");
 
 fs.writeFileSync(path.join(srcDir, "locales/zh.ts"),
-  HEADER("zh", "The Chinese dictionary (docs/38 L3): symbolic keys, module-sectioned, values carried\n   over from the English-keyed table by the migration. A plural's entry is the .other form\n   only — Chinese has no \"one\" category under Intl.PluralRules(\"zh-CN\"), so trn() never\n   looks for one.")
+  HEADER("zh", "The Chinese dictionary (SPEC §panel.i18n): symbolic keys, module-sectioned, values carried\n   over from the English-keyed table by the migration. A plural's entry is the .other form\n   only — Chinese has no \"one\" category under Intl.PluralRules(\"zh-CN\"), so trn() never\n   looks for one.")
   + renderTable("zh", enEntries), "utf8");
 
 console.log("edits=" + total + " files=" + changed.length);

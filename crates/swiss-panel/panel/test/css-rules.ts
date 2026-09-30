@@ -15,7 +15,7 @@
  */
 
 /* ================================================================================================
-   A deliberately small CSS reader for the docs/46 gates (G2 ownership, G3 weights, G4 literals).
+   A deliberately small CSS reader for the SPEC §panel.ui gates (G2 ownership, G3 weights, G4 literals).
 
    The panel's stylesheets are hand-written and flat: plain rules, plus @media / @supports blocks
    that hold plain rules, plus @keyframes. No nesting, no @layer, no @import. So a full parser

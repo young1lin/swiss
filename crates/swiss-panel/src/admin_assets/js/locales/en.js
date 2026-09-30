@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The English dictionary (docs/38, normalized 2026-09-20): symbolic keys, module-sectioned.
+/* The English dictionary (SPEC §panel.i18n, normalized 2026-09-20): symbolic keys, module-sectioned.
    English copy is editable here without touching call sites or any other locale. */
 
 const en                         = {
@@ -119,7 +119,7 @@ const en                         = {
   "dataBrowsers.ttlZeroDeletes": "0 would delete the key at once - use Delete for that",
   "dataBrowsers.renameTargetExists": "{to} already exists - renaming onto it would overwrite it",
   "dataBrowsers.keyAlreadyGone": "{key} was already gone",
-  /* --- dataStream (docs/45 S2) --- */
+  /* --- dataStream (SPEC §data.streams) --- */
   "dataStream.colId": "id",
   "dataStream.colTime": "time",
   "dataStream.loadEarlier": "Load earlier entries",
@@ -139,15 +139,15 @@ const en                         = {
   "dataStream.colPending": "pending",
   "dataStream.colLag": "lag",
   "dataStream.colLastDelivered": "last delivered",
-/* fix-plan #14: the direction glyphs left the copies - the paint sites carry the
-   i-arrow-up / i-chevron-down sprites beside these words (docs/38: copy is words). */
+/* SPEC §panel.design: the direction glyphs left the copies - the paint sites carry the
+   i-arrow-up / i-chevron-down sprites beside these words (SPEC §panel.i18n: copy is words). */
 "dataStream.pendingNew.one": "{n} new entry",
 "dataStream.pendingNew.other": "{n} new entries",
 "dataStream.pendingNewOver": "{n}+ new entries",
 "dataStream.gapSkipped": "more arrived than one page — a middle chunk was skipped",
 "dataStream.jumpLatest": "Jump to latest",
 "dataStream.followStopped": "Follow stopped — the last poll failed",
-/* docs/49: reading a fast stream — the filter line, what the walk cost, the summary
+/* SPEC §data.streams: reading a fast stream — the filter line, what the walk cost, the summary
    strip's chips, and why the table is holding still while someone reads it. */
 "dataStream.filter": "Filter entries",
 "dataStream.filterHint": "field=value, or any text",
@@ -265,7 +265,7 @@ const en                         = {
   "dataEdit.renameTable": "Rename table…",
   "dataEdit.renameTo": "Rename {name} to:",
   "dataEdit.truncateTable": "Truncate table…",
-  /* fix-plan #16: the typed confirm is the one-field sheet now — a short title, the field
+  /* SPEC §panel.ui: the typed confirm is the one-field sheet now — a short title, the field
      caption that names what must be typed, and the button word. The old single prompt
      sentence could not carry the three. */
   "dataEdit.typedConfirmTitle": "{what} {name} — this cannot be undone",
@@ -486,7 +486,7 @@ const en                         = {
   "dataTabs.openObjects": "Open objects",
   "dataTabs.sql": "SQL",
   "dataTabs.untitled": "Untitled",
-  /* --- dataTree (the sidebar's sections, docs/43 M2) --- */
+  /* --- dataTree (the sidebar's sections, SPEC §data.tabs) --- */
   "dataTree.no.routines": "No routines on this connection.",
   "dataTree.no.tables": "No tables on this connection.",
   "dataTree.no.views": "No views on this connection.",
@@ -1061,7 +1061,7 @@ const en                         = {
   "polling.test": "Test",
   /* --- runHistory --- */
   "runHistory.durationMs": "{ms} ms",
-  /* fix-plan #14: the history glyph is the i-history sprite at the two paint sites. */
+  /* SPEC §panel.design: the history glyph is the i-history sprite at the two paint sites. */
   "runHistory.pastRuns": "Past runs…",
   "runHistory.pastRunsN": "Past runs ({n})",
   "runHistory.pastRuns2": "No past runs",
@@ -1619,7 +1619,7 @@ const en                         = {
   "wire.plugins": "Plugins",
   "wire.secrets": "Secrets",
   "wire.system": "System",
-  /* --- ui (docs/46: the component library) --- */
+  /* --- ui (SPEC §panel.ui: the component library) --- */
   "ui.toTop": "Back to top",
   "ui.redact.show": "Show address",
   "ui.redact.hide": "Hide address",
@@ -1635,7 +1635,7 @@ const en                         = {
   "ui.cancel": "Cancel",
   "ui.rename": "Rename",
   "ui.create": "Create",
-  /* --- gallery (docs/46 §2.6: /admin/ui.html, made-up data) --- */
+  /* --- gallery (SPEC §panel.ui: /admin/ui.html, made-up data) --- */
   "gallery.title": "UI library",
   "gallery.docTitle": "swiss UI library",
   "gallery.views": "Gallery views",

@@ -82,7 +82,7 @@ pub struct StatusResult {
     pub log_file: String,
     pub health: Option<Value>,
     pub memory: Option<Value>,
-    /// The RUNNING daemon's build, straight off /health (docs/16 H3).
+    /// The RUNNING daemon's build, straight off /health (SPEC §host.daemon).
     pub build: Option<Value>,
     /// The build of the entry ON DISK, from running the entry's own --version.
     pub disk_build: Option<String>,
@@ -102,7 +102,7 @@ pub fn parse_version_hash(line: &str) -> Option<&str> {
 }
 
 /// The build of the gateway binary ON DISK: run the entry's own --version and read its hash
-/// (docs/16 H3). A missing entry or a non-gateway placeholder answers None — never a guess.
+/// (SPEC §host.daemon). A missing entry or a non-gateway placeholder answers None — never a guess.
 fn disk_build_of(entry: &str) -> Option<String> {
     let out = std::process::Command::new(entry)
         .arg("--version")
@@ -220,7 +220,7 @@ pub fn read_gateway_token() -> Option<String> {
 }
 
 /// Panel URL + bearer token, for `swiss creds`. Never dumps the rest of the env store (DB
-/// passwords live there). The panel signs in with a one-time link (`swiss open`, docs/48), so
+/// passwords live there). The panel signs in with a one-time link (`swiss open`, SPEC §host.session), so
 /// there is no username or password to print.
 pub fn read_creds() -> (String, Option<String>) {
     (url_for(resolve_port()), read_gateway_token())
@@ -244,7 +244,7 @@ pub fn export_state() -> Value {
         "config": read_secure_json(&data_path(&["gateway.config.json"])).ok().flatten(),
         "managed": read_secure_json(&data_path(&["managed.json"])).ok().flatten(),
         "tunnels": read_secure_json(&data_path(&["tunnels.json"])).ok().flatten(),
-        // OAuth grants ride too (docs/24 D6): values included for the same reason the vault
+        // OAuth grants ride too (SPEC §mcp.oauth): values included for the same reason the vault
         // is — this bundle is already the one plaintext escape, and without this section a
         // machine move would silently drop every MCP grant.
         "oauth": read_secure_json(&swiss_mcp::oauth::store_path()).ok().flatten(),
@@ -252,7 +252,7 @@ pub fn export_state() -> Value {
             .into_iter()
             .map(|(k, v)| (k, Value::String(v)))
             .collect()),
-        // The vault rides by NAME only (docs/19 D7, revised 2026-09-28): every value is
+        // The vault rides by NAME only (SPEC §host.vault, revised 2026-09-28): every value is
         // SECRET_MASK, so a bundle read by anyone - a backup, a terminal scrollback, a
         // support attachment - hands over no key. An import re-enters them by hand.
         "secrets": masked_vault(),
@@ -321,7 +321,7 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
     }
     if let Some(vault) = obj.get("secrets") {
         // Accept the export shape ({rev, secrets: {name -> value}}) or a bare map; imported
-        // values win, nothing is deleted (docs/19 D7 — a restore, not a mirror). The static
+        // values win, nothing is deleted (SPEC §host.vault — a restore, not a mirror). The static
         // empty map is only for a section that is neither — a borrowed Map::new() would die
         // at the end of the expression.
         let entries: serde_json::Map<String, Value> = match vault.get("secrets") {
@@ -486,7 +486,7 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
         .stdin(std::process::Stdio::null())
         .stdout(open_log(&log))
         .stderr(open_log(&log));
-    // The daemon's environment is this machine's, not this shell's (docs/16 §1): an agent or
+    // The daemon's environment is this machine's, not this shell's (SPEC §host.daemon): an agent or
     // CI launcher must not speak for every child the gateway will ever spawn. The serve path
     // repeats the scrub in its own process, so this covers the spawn even where main() grew a
     // regression.
@@ -571,7 +571,7 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
     }
 }
 
-/// The CLI key the running daemon accepts on /api/* (docs/48), unsealed from `session.json`
+/// The CLI key the running daemon accepts on /api/* (SPEC §host.session), unsealed from `session.json`
 /// under this home. None before the first start, or when the file cannot be opened.
 pub fn read_cli_key() -> Option<String> {
     crate::session::read_cli_key(&data_path(&[crate::session::SESSION_FILE]))
@@ -585,7 +585,7 @@ pub fn with_cli_key(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     }
 }
 
-/// A one-time sign-in link for the panel (docs/48): the daemon mints a login token, good for
+/// A one-time sign-in link for the panel (SPEC §host.session): the daemon mints a login token, good for
 /// one use within two minutes, behind the CLI key. What `swiss start` and `swiss open` open.
 pub async fn login_url(port: u16) -> Result<String, String> {
     let client = reqwest::Client::new();
@@ -745,7 +745,7 @@ pub async fn daemon_status(port: u16) -> StatusResult {
         .unwrap_or_else(|| json!([])) }));
     result.memory = memory;
 
-    // The build pair (docs/16 H3): what the daemon REPORTS it is, versus what the entry on
+    // The build pair (SPEC §host.daemon): what the daemon REPORTS it is, versus what the entry on
     // disk would report. A disagreement is the deploy that never happened — exactly the
     // thing status exists to surface.
     result.build = live.as_ref().and_then(|v| v.get("build")).cloned();
@@ -879,7 +879,7 @@ mod tests {
             let app = axum::Router::new()
                 .route(
                     "/health",
-                    // Carries a build stamp the way the real one does (docs/16 H3), so the
+                    // Carries a build stamp the way the real one does (SPEC §host.daemon), so the
                     // status path has a running-build to compare the disk entry against.
                     get(|| async {
                         axum::Json(json!({
@@ -1109,7 +1109,7 @@ mod tests {
         assert_eq!(bundle["config"]["port"], json!(18084));
         assert_eq!(bundle["managed"], json!({ "mcps": [] }));
         assert_eq!(bundle["tunnels"], json!({ "connections": [] }));
-        // OAuth grants are state like any other (docs/24 D6): without this section a machine
+        // OAuth grants are state like any other (SPEC §mcp.oauth): without this section a machine
         // move would silently drop every grant the operator consented to.
         assert_eq!(bundle["oauth"]["figma"]["client_id"], json!("cid"));
         assert_eq!(bundle["env"]["SWISS_TOKEN"], json!("tok"));
@@ -1150,7 +1150,7 @@ mod tests {
         );
 
         // The target machine already holds the other name: a restore keeps it, and the
-        // imported value wins on the name both have (docs/19 D7).
+        // imported value wins on the name both have (SPEC §host.vault).
         seal(
             "secrets.json",
             json!({ "rev": 1, "secrets": { "keep-me": "target-value", "local-only": "x" } }),
@@ -1400,7 +1400,7 @@ mod tests {
         let _ = std::fs::remove_file(log_file_path(port));
     }
 
-    // --- the daemon's environment (docs/16 §1) ------------------------------------------------
+    // --- the daemon's environment (SPEC §host.daemon) ------------------------------------------------
 
     /// A fake entry that dumps the environment it was handed to a file and exits — the probe
     /// that makes the scrub observable from outside the process. A .cmd on Windows (Rust spawns
@@ -1436,7 +1436,7 @@ mod tests {
     async fn the_spawned_daemon_does_not_inherit_the_launchers_noise() {
         // The 2026-09-11 incident as a test: a launcher carrying NO_COLOR=1 started the
         // gateway, and every child below it went colourless. The daemon's environment must be
-        // this machine's, not the launching shell's (docs/16 §1) — the exact names and the
+        // this machine's, not the launching shell's (SPEC §host.daemon) — the exact names and the
         // prefix family both go, while the machine's own variables survive.
         let _lock = daemon_state().await;
         let (entry, dump) = env_probe_entry(&data_dir());
@@ -1654,7 +1654,7 @@ mod tests {
         );
         // startedAt is an ISO stamp, so the uptime is a duration rather than a guess.
         assert!(status.uptime_ms.is_some());
-        // The build pair agrees (disk probe says what /health says): no note (docs/16 H3).
+        // The build pair agrees (disk probe says what /health says): no note (SPEC §host.daemon).
         assert_eq!(
             status.build.as_ref().map(|b| b["hash"].clone()),
             Some(json!("aaaaaaa"))
@@ -1670,7 +1670,7 @@ mod tests {
         // The 2026-09-11 confusion as a test: "19999 runs the old binary" was believed
         // deployed because nothing surfaced WHICH build was running. The fake gateway serves
         // build aaaaaaa; the probe standing in for the on-disk entry reports bbbbbbb — status
-        // must carry both and say what to do (docs/16 H3).
+        // must carry both and say what to do (SPEC §host.daemon).
         let _lock = daemon_state().await;
         let gw = FakeGateway::start().await;
         let entry = version_probe_entry(&data_dir(), "bbbbbbb");

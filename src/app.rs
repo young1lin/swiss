@@ -17,7 +17,7 @@
 //! The gateway HTTP server — port of `router.ts` (with `http.ts`'s routing contract carried by
 //! axum): the panel, health, the management API, and the MCP endpoints under the `/mcp/` prefix
 //! as a catch-all single-segment route resolved dynamically from the registry, so paths can be
-//! added and removed at runtime. The prefix is the MCP plugin's domain (docs/24, ADR-018): the
+//! added and removed at runtime. The prefix is the MCP plugin's domain (SPEC §mcp.endpoint, ADR-018): the
 //! root stays free for host chrome and whatever a future plugin claims there.
 //!
 //! The boundary, installed ahead of every route (the port of the router guard): this gateway
@@ -52,7 +52,7 @@ use swiss_panel::admin;
 /// previewed in the traffic log (the Node build's capture cap).
 const RESPONSE_CAPTURE: usize = 16 * 1024;
 
-/// Which build is running — the stamp build.rs planted at compile time (docs/16 H3). Served on
+/// Which build is running — the stamp build.rs planted at compile time (SPEC §host.daemon). Served on
 /// every surface an operator can check (/health, /api/info, the status command, --version), so
 /// "is the running daemon the binary I just built?" is answerable without guessing. A short git
 /// hash and an RFC 3339 time, nothing more: this is a loopback-only service, and a commit id
@@ -100,23 +100,23 @@ pub struct AppContext {
     /// every host-dependent guard treats absence as "no plugin gating", which is exactly the
     /// pre-host behavior.
     pub plugin_host: std::sync::OnceLock<Arc<swiss_host::host::PluginHost>>,
-    /// The connection catalog the /api/db routes lease through (docs/12 W3). Set once by
+    /// The connection catalog the /api/db routes lease through (SPEC §host.seats). Set once by
     /// the boot sequence from RuntimeServices — the SAME instance the MCP plugin
     /// registers into — before the listener accepts requests. Absent in compositions that
     /// mount no Data plugin: /api/db then answers an honest 503 rather than pretending.
     pub catalog: std::sync::OnceLock<Arc<swiss_host::services::catalog::CatalogRegistry>>,
-    /// The group-scope table behind /api/groups/{scope} (docs/20 §2.2). The scopes AppContext
+    /// The group-scope table behind /api/groups/{scope} (SPEC §host.groups). The scopes AppContext
     /// owns natively (mcps) register in new(); the subsystem scopes (conns/rules/jobs/secrets)
     /// register from the boot sequence as their objects come up. A scope that never registered
     /// answers 404 "unknown scope", which is the honest state on a composition without it.
     pub group_scopes: swiss_host::groups::GroupScopes,
-    /// OAuth authorize flows by MCP name (docs/24 D5): the authorize POST plants one
+    /// OAuth authorize flows by MCP name (SPEC §mcp.oauth): the authorize POST plants one
     /// (single-flight per name — a live flow is returned, a terminal one replaced), the GET
     /// polls it. Written by the flow task, read by the poll route; entries leave with their
     /// MCP (delete) or its rename.
     pub oauth_flows:
         std::sync::RwLock<HashMap<String, std::sync::Arc<swiss_mcp::oauth::FlowHandle>>>,
-    /// The admin session (docs/48): the browser cookie and the CLI key that open /api/*. Set
+    /// The admin session (SPEC §host.session): the browser cookie and the CLI key that open /api/*. Set
     /// once by the boot sequence before the listener accepts requests. Unset, a request that
     /// came through a socket is refused - the gate fails closed; in-process requests (tests
     /// driving the router with oneshot) carry no ConnectInfo and pass, as they pass the
@@ -153,7 +153,7 @@ impl AppContext {
             session: std::sync::OnceLock::new(),
             handlers: Mutex::new(HashMap::new()),
         });
-        // The scopes this context owns natively (docs/20 §2.2): the managed store holds the
+        // The scopes this context owns natively (SPEC §host.groups): the managed store holds the
         // groups, the registry answers "is this a real MCP". Subsystem scopes join from
         // server.rs. Registered here so the admin API tests serve the same family the gateway
         // does, without each harness repeating the wiring.
@@ -231,7 +231,7 @@ impl AppContext {
 
 /// An MCP-endpoint rejection in JSON-RPC shape, exactly as the Node build's `jsonError` writes
 /// it. MCP endpoints answer JSON-RPC; admin routes answer `{error}` — the two are deliberately
-/// not unified (see docs/05 §3).
+/// not unified (see SPEC §formats.wire).
 pub fn json_rpc_error(status: StatusCode, message: &str) -> Response {
     let body = json!({
         "jsonrpc": "2.0",
@@ -310,7 +310,7 @@ fn via_socket(req: &Request) -> bool {
         .is_some()
 }
 
-/// The admin session gate (docs/48), inside the loopback guard: every /api/* request needs
+/// The admin session gate (SPEC §host.session), inside the loopback guard: every /api/* request needs
 /// the CLI key or a signed session cookie. Everything else passes - the panel shell answers
 /// its own sign-in (panel_root), /admin/* is code without data, /health is liveness, and
 /// /mcp/* has its own bearer gate.
@@ -334,7 +334,7 @@ struct RootQuery {
 
 /// The dashboard shell. no-store: always serve the latest, so a rebuilt panel needs no restart.
 ///
-/// Also the one place a browser signs in (docs/48): `/?token=<login token>` spends the token,
+/// Also the one place a browser signs in (SPEC §host.session): `/?token=<login token>` spends the token,
 /// sets the session cookie and redirects to a clean `/` - the token never stays in the address
 /// bar or reaches an API path. Without a valid session the shell is not served; the lock page
 /// says how to get one.
@@ -445,7 +445,7 @@ async fn panel_asset(Path(path): Path<String>) -> Response {
 
 async fn health() -> Response {
     // ok plus the build stamp, deliberately on the unauthenticated route: a liveness probe is
-    // exactly where "up, but up since before your deploy" wants to be visible (docs/16 H3).
+    // exactly where "up, but up since before your deploy" wants to be visible (SPEC §host.daemon).
     admin_json(StatusCode::OK, json!({ "ok": true, "build": build_info() }))
 }
 
@@ -474,7 +474,7 @@ async fn mcp_delete(
     StatusCode::NO_CONTENT.into_response()
 }
 
-/// MCP endpoint: POST /mcp/<name> (docs/24: the /mcp/ prefix is the MCP plugin's domain — the
+/// MCP endpoint: POST /mcp/<name> (SPEC §mcp.endpoint: the /mcp/ prefix is the MCP plugin's domain — the
 /// root belongs to host chrome and future plugins). Served through the per-generation cached
 /// StreamableHttpService
 /// so the endpoint answers BOTH protocol eras: the modern per-request-envelope path (native
@@ -518,7 +518,7 @@ async fn mcp_post(
     }
     ctx.registry.note_activity(&name); // served traffic pushes a lazy proc's idle-reap deadline back
     let Some(handler) = ctx.handler_for(&entry) else {
-        // docs/28 D2: this state is a disable — it persists across boots and refuses every
+        // SPEC §mcp.revisions: this state is a disable — it persists across boots and refuses every
         // client method. The wording says the operator's word and the way out, not the
         // lifecycle's internal noun.
         return json_rpc_error(
@@ -598,7 +598,7 @@ pub(crate) async fn fallback_404(req: Request) -> Response {
     )
 }
 
-/// The terminal 404, with the migration hint (docs/24 P4): a POST or DELETE aimed at a
+/// The terminal 404, with the migration hint (SPEC §mcp.endpoint): a POST or DELETE aimed at a
 /// single-segment root path that names a REGISTERED MCP is almost certainly a client still
 /// configured for the retired root-level endpoint shape. The cutover stays hard — this is
 /// still a 404, never an alias — but the body names the new home, so re-pointing the client
@@ -681,7 +681,7 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         .route("/health/check", get(health_check))
         .merge(
             swiss_data::dbbrowser_api::dbbrowser_router::<Arc<AppContext>>(
-                // The W3 seam (docs/12): /api/db leases through the connection catalog the MCP
+                // The W3 seam (SPEC §host.seats): /api/db leases through the connection catalog the MCP
                 // plugin provides. Compositions that never set one (no Data plugin mounted)
                 // get an empty registry — every route then answers the honest 503.
                 ctx.catalog.get().cloned().unwrap_or_else(|| {
@@ -704,7 +704,7 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
                         visual_order(&ctx.store, &mut names)
                     })
                 },
-                // The row's group label (docs/20 G5): the same store answer visual_order
+                // The row's group label (SPEC §host.groups): the same store answer visual_order
                 // slices by, read live per request - ManagedStore::group_of already sinks an
                 // unassigned name into the first group, which is the rendering rule too.
                 {

@@ -34,7 +34,7 @@ async function act(name        , verb        )                {
   if (mcpBusyVerb(name)) return;
   setMcpBusy(name, verb);
   patchSidebar(); patchDetailHead();
-  // docs/28 D2: the wire keeps the stop/start verbs; the panel says disable/enable — a stop
+  // SPEC §mcp.revisions: the wire keeps the stop/start verbs; the panel says disable/enable — a stop
   // that survives a boot and refuses every client is a disable, and the word owed it.
   const shown = verb === "stop" ? tr("detail.disable") : verb === "start" ? tr("detail.enable") : verb === "restart" ? tr("detail.restart") : verb;
   try {
@@ -66,7 +66,7 @@ async function act(name        , verb        )                {
   }
 }
 
-/* fix-plan #16: the rename is the one-field sheet (openFieldSheet), the same surface as a
+/* SPEC §panel.ui: the rename is the one-field sheet (openFieldSheet), the same surface as a
  * group rename and a table rename. The sheet owns "required" and "unchanged is a cancel";
  * a POST refusal keeps the sheet open with the typed name still in it. */
 function renameMcp(name        )       {
@@ -102,7 +102,7 @@ async function removeMcp(name        )                {
   renderPane();
 }
 
-/* --- OAuth authorize (docs/24 D5) -------------------------------------------------------------- */
+/* --- OAuth authorize (SPEC §mcp.oauth) -------------------------------------------------------------- */
 /** One click, one flow: the POST plants it (or hands back the live one — the server
  *  single-flights per name), this opens the provider's consent page in a real browser
  *  window the moment its URL exists, and keeps polling every 3s until approval lands
@@ -176,7 +176,7 @@ function openDetail(name        )       {
   setSelectedMcp(name);
   const d            = {
     name: name, tab: "tools", config: null, source: undefined, editing: false, editType: null, editVals: null,
-    // OAuth (docs/24 D5): the detail's auth state ("authorized" | "needs-auth" | undefined),
+    // OAuth (SPEC §mcp.oauth): the detail's auth state ("authorized" | "needs-auth" | undefined),
     // and whether an authorize flow this panel started is still polling.
     oauth: undefined, oauthBusy: false,
     run: {
@@ -191,8 +191,8 @@ function openDetail(name        )       {
       histOpen: false, histSelSeq: null, histFull: {}, histQ: "",
     },
     // Logs tab: a page of recorded tool calls (null until loaded), any child stderr, which rows are
-    // expanded, replies fetched in full by seq, and the server-side search needle (docs/31).
-    // docs/32 B1: paging is a transaction — callsPage is ALWAYS the committed page; a switch in
+    // expanded, replies fetched in full by seq, and the server-side search needle (SPEC §mcp.calls).
+    // SPEC §mcp.calls: paging is a transaction — callsPage is ALWAYS the committed page; a switch in
     // flight lives in callsPendingPage, its visible failure in callsError (with the target a
     // Retry owes in callsRetryTarget), and callsRequest is the generation that drops stale
     // responses before they can commit over a newer needle/page.
@@ -200,7 +200,7 @@ function openDetail(name        )       {
     callsPage: 0, callsMore: false, callsFull: {}, callsGone: {}, callsQ: "",
     callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
     callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
-    callsAll: {}, // docs/33 C3: blocks the operator expanded past the line cap ("out:<seq>")
+    callsAll: {}, // SPEC §mcp.calls: blocks the operator expanded past the line cap ("out:<seq>")
     // The three kind pages (views/mcps.ts stages the active one under d[d.tab]) open fresh.
     tools: pageState(), resources: pageState(), prompts: pageState(),
   };
@@ -236,11 +236,11 @@ async function loadMeta(name        )                {
 }
 
 /** One page of recorded tool calls (arguments + reply) and, for a proc MCP, its stderr.
- * docs/32 B1: a load is a transaction — a response may only commit while it is still the newest
+ * SPEC §mcp.calls: a load is a transaction — a response may only commit while it is still the newest
  * request for this detail (generation), and it commits exactly the page it asked for. The page,
  * rows, more-flag and stderr land together or not at all; a failure keeps everything committed
  * and shows itself in place with a Retry.
- * docs/32 B3: the poll (isPoll) refreshes the LIVE page only — never an offset page, never a
+ * SPEC §mcp.calls: the poll (isPoll) refreshes the LIVE page only — never an offset page, never a
  * switch in mid-transaction — and its failures are silent: the poll says nothing the user asked
  * for, so it takes nothing away either. */
 async function loadCalls(name        , isPoll          )                {
@@ -255,7 +255,7 @@ async function loadCalls(name        , isPoll          )                {
   const gen = ++d.callsRequest;
   d.callsActive = (d.callsActive || 0) + 1;
   // A page switch rides this request; take its anchor intent now, so a request issued later (a
-  // new needle) can never spend an anchor that belonged to this one (docs/32 B2).
+  // new needle) can never spend an anchor that belonged to this one (SPEC §mcp.calls).
   let sw                                                                      = null;
   if (d.callsPendingPage === target && d.callsSwitch) { sw = d.callsSwitch; d.callsSwitch = null; }
   try {
@@ -286,7 +286,7 @@ async function loadCalls(name        , isPoll          )                {
 
 /** A foreground load failed: the committed page, its rows, the open expansions and the scroll
  *  position all stay exactly as they are; the failure says so in place and offers the same
- *  target again (docs/32 B1). */
+ *  target again (SPEC §mcp.calls). */
 function callsLoadFailed(d           , target        , status        , sw                               )       {
   d.callsPendingPage = null;
   d.callsSwitch = null;
@@ -299,7 +299,7 @@ function callsLoadFailed(d           , target        , status        , sw       
 }
 
 /** Newer/Older: begin a page switch. Nothing committed changes until the response lands — the
- *  rows stay on screen, marked busy, and the request carries the target page (docs/32 B1). */
+ *  rows stay on screen, marked busy, and the request carries the target page (SPEC §mcp.calls). */
 function callsPageStep(delta        , opts                        )       {
   opts = opts || {};
   const d = mcpDetail();
@@ -320,7 +320,7 @@ function callsRetry(opts                        )       {
 
 /** Begin a switch toward a target page. The anchor — the pager's viewport top, the direction,
  *  and whether a keyboard drove the action — rides the REQUEST (not the detail), so an anchor
- *  can never be spent by a response it did not belong to (docs/32 B2). */
+ *  can never be spent by a response it did not belong to (SPEC §mcp.calls). */
 function callsBegin(d           , target        , dir               , fromKey         )       {
   d.callsError = "";
   d.callsErrStatus = "";
@@ -337,7 +337,7 @@ function callsBegin(d           , target        , dir               , fromKey   
 /** After a committed switch: put the pager back where it was on screen — the button the user
  *  clicked is where their hand and eye already are — and hand keyboard drivers their focus back
  *  on the equivalent button, falling to the other direction at a boundary. Never scrollIntoView:
- *  that drags the whole app shell (docs/32 B2). */
+ *  that drags the whole app shell (SPEC §mcp.calls). */
 function restoreCallsAnchor(sw                                                              , d           )       {
   const pane = $("pane");
   const pager = $("clPager");
@@ -359,7 +359,7 @@ function restoreCallsAnchor(sw                                                  
 
 /** Sync the pager chrome — busy state, both buttons, the status cell, the error block — onto
  *  the PAINTED dom without repainting: a pending switch or a failed one must not detach the
- *  rows, the search input or the scroll position (docs/32 B1). */
+ *  rows, the search input or the scroll position (SPEC §mcp.calls). */
 function patchCallsChrome(d           )       {
   const busy = d.callsPendingPage != null;
   const region = $("callsRegion");
@@ -390,7 +390,7 @@ function patchCallsChrome(d           )       {
 const fullInFlight = new Set        ();
 
 /** Fetch one reply in full — the log page ships only the first 2 KB of each. Runs when a clipped
- *  row opens (docs/33 C3) and from its Show full result button; a no-op once the reply is here,
+ *  row opens (SPEC §mcp.calls) and from its Show full result button; a no-op once the reply is here,
  *  known pruned, or already on its way. */
 async function showFullResult(seq        )                {
   const d = mcpDetail();
@@ -417,7 +417,7 @@ async function showFullResult(seq        )                {
       return;
     }
     d.callsFull[seq] = j.call.output;
-    // docs/33 C3: the result block repaints from the whole reply — a preview clipped mid-value
+    // SPEC §mcp.calls: the result block repaints from the whole reply — a preview clipped mid-value
     // could not be formatted, the full one usually can.
     repaintCallBlock(d, "out:" + seq);
     const btn = document.querySelector('#tabbody [data-full="' + seq + '"]');
@@ -429,7 +429,7 @@ async function showFullResult(seq        )                {
 async function clearCalls()                {
   const d = mcpDetail();
   if (!d) return;
-  // docs/32 B4: one mis-click removes the index AND the stored full replies, and nothing can
+  // SPEC §mcp.calls: one mis-click removes the index AND the stored full replies, and nothing can
   // undo it — so the confirm names both costs, and a cancelled confirm fires no request at all.
   if (!confirm(tr("detail.clearAllRecordedTool", { name: d.name }))) return;
   try {
@@ -498,11 +498,11 @@ function showTab(tab        )       {
   d.editing = false;
   renderPane();
   if (isMcpKind(tab) && !d[tab].loaded && !d[tab].loading) void loadPage(d.name, tab);
-  // The config tab's revision list (docs/28 D1) rides along with the tab, not the poll.
+  // The config tab's revision list (SPEC §mcp.revisions) rides along with the tab, not the poll.
   if (tab === "config") void loadRevisions(d.name);
   // Run needs the tool list to build its argument form.
   if (tab === "run" && !d.tools.loaded && !d.tools.loading) void loadPage(d.name, "tools");
-  // docs/32 B3: a pending switch already owns the tab; re-entering it must not fire a second
+  // SPEC §mcp.calls: a pending switch already owns the tab; re-entering it must not fire a second
   // request for the same target on top of the one in flight.
   if (tab === "logs" && d.callsPendingPage == null) void loadCalls(d.name);
 }
@@ -536,7 +536,7 @@ function startEdit()       {
   d.editVals = null; // start from what is stored
   renderPane();
 }
-// docs/28 D1: the same form, another verb — Save parks the current def as a revision and
+// SPEC §mcp.revisions: the same form, another verb — Save parks the current def as a revision and
 // installs the new one under the SAME name. The operator's rollback lives one click away.
 function startReplace()       {
   const d = mcpDetail();
@@ -557,7 +557,7 @@ function cancelEdit()       {
   renderPane();
 }
 
-/* --- def revisions (docs/28 D1) ---------------------------------------------------------------- */
+/* --- def revisions (SPEC §mcp.revisions) ---------------------------------------------------------------- */
 async function loadRevisions(name        )                {
   const d = mcpDetail();
   if (!d || d.name !== name) return;
@@ -579,7 +579,7 @@ async function saveReplace()                {
   const body = Object.assign({ type: type }, fields);
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body);
-  translatePg(type, body); // docs/30: the pg form's pieces become one url
+  translatePg(type, body); // SPEC §mcp.panel: the pg form's pieces become one url
   const noteEl = $                  ("e-note");
   if (noteEl) body.note = noteEl.value;
   if (type === "proc" && !body.command) { toast(tr("detail.commandRequired"), true); return; }
@@ -669,7 +669,7 @@ async function runConnTest(p        )                {
   const d = mcpDetail();
   const type = p === "a-" ? $                   ("a-type").value : (d && (d.editType || (d.config && d.config.type          ))) || "proc";
   const body = Object.assign({ type: type }, readFields(type, p));
-  translatePg(type, body); // docs/30: pg's split fields travel as the url the server tests
+  translatePg(type, body); // SPEC §mcp.panel: pg's split fields travel as the url the server tests
   delete body.autostart; // a boot-time switch, not a credential — irrelevant to a connection test
   // figma implies OAuth the way a checked auth box states it: no keyless test exists for either.
   const wantsOauth = type === "figma" || (type === "http" && body.auth === true);
@@ -728,8 +728,8 @@ async function saveEdit()                {
   const fields = readFields(type, "e-");
   const body = Object.assign({ type: type }, fields);
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
-  translateOauth(body); // the auth checkbox is the def auth string (docs/24 D1)
-  translatePg(type, body); // docs/30: the pg form's pieces become one url
+  translateOauth(body); // the auth checkbox is the def auth string (SPEC §mcp.oauth)
+  translatePg(type, body); // SPEC §mcp.panel: the pg form's pieces become one url
   if (type === "proc" && !body.command) { toast(tr("detail.commandRequired"), true); return; }
   const name = d.name;
   // Rendering the pane destroys the form, so hold on to what was typed: a save the server rejects

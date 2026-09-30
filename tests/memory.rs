@@ -16,7 +16,7 @@
 
 //! The RSS guard — the one number this project exists for.
 //!
-//! docs/01 states the case for the port as memory: the Node build idles at ~86 MB and reaches
+//! SPEC §product.memory states the case for the port as memory: the Node build idles at ~86 MB and reaches
 //! ~118 MB loaded, and the Rust build is supposed to sit near 16-20 MB. Nothing in the suite
 //! guarded that, so a change that started buffering whole payloads, or leaking a session per
 //! call, would have shipped silently and only shown up on a user's machine.
@@ -26,7 +26,7 @@
 //! - It CANNOT assert an absolute ceiling. The measurement is this test binary's working set, and
 //!   that includes the test harness, an rmcp client, reqwest and every dev-dependency — none of
 //!   which are in the shipping `swiss`. An absolute number here would be measuring the wrong
-//!   process. The shipped figure is measured from the binary itself (docs/01).
+//!   process. The shipped figure is measured from the binary itself (SPEC §product.memory).
 //! - It CAN assert that serving does not GROW the footprint. That is the actual regression shape:
 //!   a leak, an unbounded buffer, or a payload-proportional allocation on a forwarding path. A
 //!   delta needs no knowledge of the baseline, which is what makes it honest here.

@@ -36,7 +36,7 @@ pub struct UpdateInfo {
     pub newer: bool,
 }
 
-/// The running build's name tag: version plus the build stamp's commit (docs/16 H3).
+/// The running build's name tag: version plus the build stamp's commit (SPEC §host.daemon).
 pub fn current_version() -> String {
     let hash = option_env!("SWISS_GIT_HASH").unwrap_or("unknown");
     format!("{} ({hash})", env!("CARGO_PKG_VERSION"))

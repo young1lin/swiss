@@ -15,7 +15,7 @@
  */
 
 //! The remote-execution transport capability — who can run a non-interactive command
-//! (or move a file) on a remote machine, and under what identity (docs/34).
+//! (or move a file) on a remote machine, and under what identity (SPEC §remote).
 //!
 //! Same shape as [crate::services::catalog] and [crate::services::shell]: ONE provider
 //! registers on start, consumers take operation-scoped leases through the provider, and
@@ -97,7 +97,7 @@ pub struct RemoteExecResult {
 }
 
 /// How much output may sit between the provider and the consumer before the provider's
-/// sends park. Bounded on purpose (docs/34 §memory): a build that floods must slow the
+/// sends park. Bounded on purpose (SPEC §remote.transport): a build that floods must slow the
 /// transport down, not buffer here.
 pub const EXEC_EVENT_QUEUE: usize = 64;
 
@@ -237,7 +237,7 @@ pub trait RemoteTransportProvider: Send + Sync {
 
 /// Whether the transport capability can serve right now, and if not, who is missing —
 /// the same three states as the catalog and shell presences, kept a separate type for
-/// the same reason those two are separate (docs/14 §4).
+/// the same reason those two are separate (SPEC §terminal.remote).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RemotePresence {
     Serving(String),

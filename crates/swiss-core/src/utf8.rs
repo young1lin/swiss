@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Byte windows that end on character boundaries (docs/41 U1).
+//! Byte windows that end on character boundaries (SPEC §remote.utf8).
 //!
 //! Every place that turns a byte range into text — a live run's cursor window, a
 //! recorded run's file window, a tail ring, a streamed `cat` — used to cut at an

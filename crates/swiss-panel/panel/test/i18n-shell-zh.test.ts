@@ -15,7 +15,7 @@
  */
 // @vitest-environment happy-dom
 
-/* The I1 shell sweep's Chinese direction (docs/38 stage I1): the same builders the
+/* The I1 shell sweep's Chinese direction (SPEC §panel.i18n): the same builders the
  * English tests pin must produce Chinese once the zh dictionary is installed — the
  * sentence-level group strings, the plural chip text, and the field form's labels.
  * This is the acceptance pair of admin-groups.test.ts, not a duplicate of it. */
@@ -109,7 +109,7 @@ describe("the I2 views in Chinese (plugins, secrets, system)", () => {
     expect(unmet.join("")).toContain("需要 a, b ");
     const warn = unmet.find((n) => { return typeof n !== "string"; }) as HTMLElement;
     expect(warn.textContent).toBe("无提供方");
-    // The separators are the layout's, the words are the locale's (docs/46 P3).
+    // The separators are the layout's, the words are the locale's (SPEC §panel.pages).
     const off = rowNode({ id: "mcp", label: "MCP", enabled: false, state: "disabled", pages: [] } as never);
     expect(off.querySelector(".lrow-sub")?.textContent).toBe("mcp · 无页面");
     const three = rowNode({ id: "mcp", label: "MCP", enabled: true, state: "active", pages: ["a", "b", "c"] } as never);
@@ -136,8 +136,8 @@ describe("the I2 views in Chinese (plugins, secrets, system)", () => {
     const buttons = Array.from(sheet.querySelectorAll("button")).map((b) => { return b.textContent; });
     expect(buttons).toEqual(["取消", "退出 swiss"]);
     expect(sheet.textContent).toContain("这会断开所有 MCP 客户端");
-    // The sentence ends in the locale, not in a "." the code appended (found on the docs/46 P5
-    // walk: "需要时用 swiss start." - an English full stop and no verb).
+    // The sentence ends in the locale, not in a "." the code appended (found on a walk of SPEC §panel.settings:
+    // "需要时用 swiss start." - an English full stop and no verb).
     expect(sheet.querySelector(".hint")!.textContent).toBe("配置和日志会保留。需要时用 swiss start 重新启动。");
   });
 
@@ -278,7 +278,7 @@ describe("the I5 views in Chinese (remote targets, remote runs)", () => {
     expect(tr("remote.endpointState", { state: "serving" })).toBe("端点 serving");
     expect(tr("remote.tunnelsState", { state: "none" })).toBe("隧道 none · ");
     expect(tr("remoteRuns.exitN", { n: 2 })).toBe("退出码 2");
-    // docs/46 P6-2: durations are the timeline's (ui.ms / ui.sec); the Targets column and the
+    // SPEC §panel.pages: durations are the timeline's (ui.ms / ui.sec); the Targets column and the
     // folded-run line frame the host's words the same way.
     expect(tr("remote.lastRunAt", { when: "2026/9/24 09:12:03", what: "make -j8" })).toBe("上次运行：2026/9/24 09:12:03 · make -j8");
     expect(tr("remoteRuns.nIdenticalRuns", { n: 3 })).toBe("3 次相同的运行");
@@ -379,7 +379,7 @@ describe("the I7 jobs machinery in Chinese", () => {
 
   it("fills the run tab's own controls (the I4 runBtn mystery, solved)", async () => {
     await loadLocale();
-    // fix-plan #14: the history glyph is the i-history sprite at the paint sites, so the
+    // SPEC §panel.design: the history glyph is the i-history sprite at the paint sites, so the
     // zh copies carry words only.
     expect(tr("runHistory.pastRunsN", { n: 12 })).toBe("过往运行(12)");
     expect(tr("runHistory.pastRuns2")).toBe("没有过往运行");
@@ -419,7 +419,7 @@ describe("the I8a data machinery in Chinese", () => {
 
   it("names the ddl sheet's parts", async () => {
     await loadLocale();
-    // dataView.newTable retired with the old list header's + (docs/43 M2): the Tables
+    // dataView.newTable retired with the old list header's + (SPEC §data.tabs): the Tables
     // band's button carries newTable2, which this section keeps asserting below.
     expect(tr("dataView.newTable2")).toBe("新建表…");
     expect(tr("dataDdl.newTableT2", { t: "public" })).toBe("在 public 中新建表");
@@ -483,7 +483,7 @@ describe("the I9 terminal surfaces in Chinese", () => {
     expect(tr("terminal.closeEsc")).toBe("关闭(Esc)");
   });
 
-  it("counts live sessions in the context bar in Chinese (docs/46 P9 walk)", async () => {
+  it("counts live sessions in the context bar in Chinese (SPEC §panel.ui, found on a walk)", async () => {
     await loadLocale();
     expect(trn(2, "terminal.nLive.one", "terminal.nLive.other")).toBe("2 个活动会话");
   });

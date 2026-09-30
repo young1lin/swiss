@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-//! Run state, the second file (docs/11 §4). Definitions are user intent; this file is
+//! Run state, the second file (SPEC §jobs.runlog). Definitions are user intent; this file is
 //! gateway-maintained FACT about runs. The two must not share a writable file
-//! (docs/10 §5): editing a definition can never fabricate or lose a "last ran" fact.
+//! (SPEC §jobs.config): editing a definition can never fabricate or lose a "last ran" fact.
 //!
 //! `~/.swiss/jobs-state.json`, sealed and private-permission like every state
-//! file (docs/11 §2 rule 1). Only SMALL BOUNDED facts live here - one line per job:
+//! file (SPEC §formats.sealed). Only SMALL BOUNDED facts live here - one line per job:
 //! when it last started, whether that run exited 0, the coordinator's run id, and a
 //! consecutive-failure counter. Output, command text and credential references never
 //! enter this file.
@@ -31,7 +31,7 @@
 //! - a failed WRITE is a warn, not an Err. The run already happened; refusing to
 //!   acknowledge a run because its state line could not be written is the worse trade.
 //!   This is deliberately the opposite of the config-write rule (a config that cannot
-//!   persist must answer with an error, docs/10 §5): config is intent the user asked
+//!   persist must answer with an error, SPEC §jobs.config): config is intent the user asked
 //!   to save, state is a fact the gateway records best-effort. The same trade the
 //!   best-effort anchor write in JobSystem::claim has always made.
 //!
@@ -64,7 +64,7 @@ pub fn iso_of_ms(ms: i64) -> String {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct JobRunState {
     /// The occurrence identity of the last CLAIMED run, e.g. "cron:2026-09-09T03:30"
-    /// (docs/11 §6.1). Manual runs do not set it.
+    /// (SPEC §jobs.triggers). Manual runs do not set it.
     pub last_occurrence_key: Option<String>,
     /// When the last run STARTED (the interval anchor), unix milliseconds.
     pub last_run_at: Option<i64>,
@@ -205,7 +205,7 @@ impl JobsState {
         self.persist(&jobs);
     }
 
-    /// Migration-only (docs/11 §5.1 step 5): seed a v1 row's run facts without
+    /// Migration-only (SPEC §jobs.migrate): seed a v1 row's run facts without
     /// overwriting anything newer. A crash between the config write and the jobs.json
     /// marker re-runs the seed against a state file that may already hold migrated
     /// facts - or facts for a run that happened since - and the migration must converge,
@@ -234,7 +234,7 @@ impl JobsState {
     /// Seal the table to disk. The error is only logged: every caller is on a RUN path
     /// where the run has already happened - the exact opposite trade of
     /// JobStore::save, whose caller MUST hear about a config write that did not
-    /// persist (docs/10 §5).
+    /// persist (SPEC §jobs.config).
     fn persist(&self, jobs: &HashMap<String, JobRunState>) {
         let body = json!({
             "version": 1,

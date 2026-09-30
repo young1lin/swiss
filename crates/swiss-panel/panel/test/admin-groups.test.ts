@@ -25,7 +25,7 @@ import {
   slice,
 } from "../src/group-logic.js";
 
-/** The pure half of groups.js (docs/20 G3): every rule here is one the panel once got wrong
+/** The pure half of groups.js (SPEC §host.groups): every rule here is one the panel once got wrong
  *  by having two copies of it - the delete confirm hard-coding 'default', the create title
  *  landing unnamed. Pinned here so the wording and the sink rule are data, not typing. */
 describe("group logic", () => {
@@ -65,7 +65,7 @@ describe("group logic", () => {
   });
 
   it("builds create titles that name where the new thing goes", () => {
-    // One sentence key since docs/38 L2: the old verb+noun+group concatenation could not
+    // One sentence key since SPEC §panel.i18n: the old verb+noun+group concatenation could not
     // translate. The zh dictionary carries the other direction (see i18n-shell-zh.test.ts).
     expect(addTitle("MCP", "learn")).toBe("New MCP in learn");
   });

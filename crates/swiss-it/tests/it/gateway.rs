@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The L2 gateway group (docs/44 SS2.6): the real router on a REAL listener, driven
+//! The L2 gateway group (SPEC §testing.it): the real router on a REAL listener, driven
 //! by a real rmcp client over HTTP. Gateway::boot is the copy of tests/adminapi.rs's
 //! sandbox()+setup() the spec asked for - a copy, not a share, because the root
 //! crate's test binary must stay untouched; drift between the two is what the
@@ -46,7 +46,7 @@ fn scratch_id() -> String {
 }
 
 /// The scratch home + master key, once per process - the same two lines
-/// tests/adminapi.rs sets, copied per docs/44 SS2.6 rather than shared.
+/// tests/adminapi.rs sets, copied per SPEC §testing.it rather than shared.
 fn sandbox() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| {
@@ -111,8 +111,8 @@ pub(crate) async fn boot(defs: Vec<(&str, Value)>) -> Gateway {
         "SWISS_TOKEN",
         port,
     );
-    // The connection catalog the daemon's MCP plugin registers on start (docs/12
-    // W3): without it every /api/db route answers the honest 503, and docs/45's L2
+    // The connection catalog the daemon's MCP plugin registers on start (SPEC §host.seats):
+    // without it every /api/db route answers the honest 503, and SPEC §data.streams's L2
     // needs the stream routes over the real gateway. Registered exactly the way the
     // plugin does, so the harness cannot drift from the product's wiring.
     let catalog = swiss_host::services::catalog::CatalogRegistry::new();
@@ -146,7 +146,7 @@ impl Gateway {
     }
 
     /// One admin-API call over real HTTP. The harness serves without ConnectInfo, so the
-    /// admin session gate (docs/48) treats these calls as in-process, as the loopback guard
+    /// admin session gate (SPEC §host.session) treats these calls as in-process, as the loopback guard
     /// does; the Host header reqwest sends is the loopback one the guard requires.
     pub(crate) async fn api(
         &self,
@@ -276,7 +276,7 @@ async fn mysql_group_round_trips_through_the_real_gateway() {
     assert!(text.contains("users"), "{tables}");
     assert!(text.contains("active_users"), "the view too: {tables}");
 
-    // The write contract as the code ships it (docs/44 SS2.6: record the present):
+    // The write contract as the code ships it (SPEC §testing.it: record the present):
     // mysql_query is NOT read-only - UPDATE runs, reports matched rows, and lands.
     let upd = call(
         &c,
@@ -438,7 +438,7 @@ async fn redis_group_round_trips_through_the_real_gateway() {
 }
 #[tokio::test]
 async fn stream_route_round_trips_three_directions_and_groups() {
-    // docs/45 §2.5 L2: the admin route over the real gateway — newest window,
+    // SPEC §data.streams: the admin route over the real gateway — newest window,
     // before-page, after-page, the groups table, and the two 400s, exactly the
     // calls the panel's stream view makes.
     let f = fresh(Kind::Redis, "l2_stream").await;
@@ -532,7 +532,7 @@ fn url_db(def: &Value) -> String {
 
 #[tokio::test]
 async fn credential_refs_close_the_loop_over_a_real_database() {
-    // docs/19/25 on real engines for the first time: the def holds ONLY the
+    // SPEC §host.vault/25 on real engines for the first time: the def holds ONLY the
     // reference, the vault holds the value (stored through the panel's own API), and
     // the engine still connects. Redis has no credential in this harness (no ACL on
     // the engine), so the loop runs on mysql's password and pg's URL.
@@ -575,7 +575,7 @@ async fn credential_refs_close_the_loop_over_a_real_database() {
     .await;
     assert!(rows.to_string().contains("8"), "{rows}");
 
-    // The write-only rule (docs/19 D5): a listing answers names and rev, never values.
+    // The write-only rule (SPEC §host.vault): a listing answers names and rev, never values.
     let (s, listed) = g.api(reqwest::Method::GET, "/api/secrets", None).await;
     assert_eq!(s, 200);
     assert_eq!(listed["secrets"], json!(["it-pass"]), "{listed}");
@@ -603,7 +603,7 @@ async fn credential_refs_close_the_loop_over_a_real_database() {
 
 #[tokio::test]
 async fn stopping_an_mcp_releases_its_server_connections() {
-    // The property docs/44 SS2.6 says this file can prove: disabled means RELEASED.
+    // The property SPEC §testing.it says this file can prove: disabled means RELEASED.
     // One gateway, three engines; each takes a tool call (so each pool holds a live
     // 'it' connection), then stop - and the server side must see zero of our
     // connections within 2 s. Start again, and the tool answers once more.

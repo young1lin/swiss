@@ -57,7 +57,7 @@ const act = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-activity.ts")).href
 ) as { dbActivityDuration: (secs: number) => string };
 
-// docs/22 W3.2: the Activity table's duration column — one compact form across the whole
+// SPEC §data.activity: the Activity table's duration column — one compact form across the whole
 // range a session can run for, and junk reads as zero instead of NaN-in-a-table.
 describe("dbActivityDuration", () => {
   it("reads seconds under a minute as plain seconds", () => {

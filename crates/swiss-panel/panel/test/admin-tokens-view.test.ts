@@ -23,7 +23,7 @@
    patches the GROUPS REGION only, because rebuilding the pane would wipe the label input the
    user may be typing a new token's name into.
 
-   REWRITTEN FOR R5 (docs/37 §7), and the rewrite is the point. The view used to build its
+   REWRITTEN FOR R5 (SPEC §panel.toolchain), and the rewrite is the point. The view used to build its
    markup as a string, so this file hand-rolled a fake element whose innerHTML was a string
    too, and every assertion was `expect(paneEl.innerHTML).toContain("…")` — a substring test
    against markup nobody parsed. Now the view builds nodes, so the test runs on a real DOM
@@ -90,12 +90,12 @@ describe("the Token page (MCP group)", () => {
     ] };
     await view.mount();
     // No location title: the context bar already says "MCP / Token"; the body opens with
-    // its workflow description instead (docs/13 D5 rev., body-chrome dedup).
+    // its workflow description instead (SPEC §panel.nav., body-chrome dedup).
     expect($("pane").querySelector(".pane-desc")).not.toBeNull();
     expect($("pane").querySelector(".pane-title")).toBeNull();
     expect($("pane").textContent).toContain("claude-code");
     expect($("tkLabel")).not.toBeNull();
-    // The create form carries the Group select (docs/20 G7) — one option on a bare gateway.
+    // The create form carries the Group select (SPEC §host.groups) — one option on a bare gateway.
     expect($("tkGroup")).not.toBeNull();
     expect($("tkNewGroup")).not.toBeNull();
     expect($("countChip").textContent).toBe("2 tokens");
@@ -115,12 +115,12 @@ describe("the Token page (MCP group)", () => {
     const uses = Array.from($("pane").querySelectorAll("[data-tkuse]")).map((b) => b.getAttribute("data-tkuse"));
     expect(uses).toEqual(["t1"]);
     expect($("pane").querySelector('[data-token="t0"] .tag')?.textContent).toBe("copies use this");
-    // docs/46 §3.3: the library row; the id is a value you copy, so it is mono.
+    // SPEC §panel.pages: the library row; the id is a value you copy, so it is mono.
     expect($("pane").querySelector('[data-token="t1"].lrow .lrow-sub code')?.textContent).toBe("t1");
     expect($("pane").querySelector("#tkNewGroup use")?.getAttribute("href"), "New group is the folder-plus glyph (rule 7)").toBe("#i-folder-plus");
   });
 
-  it("a label the server sent is text, never markup (docs/37 R5)", async () => {
+  it("a label the server sent is text, never markup (SPEC §panel.toolchain)", async () => {
     // The whole reason the row builder moved off string concatenation. Under the old idiom
     // this passed only because someone remembered esc(); now the DOM cannot do otherwise.
     body = { tokens: [{ id: "t0", label: '<img src=x onerror="boom()">', createdAt: 1 }] };
@@ -150,7 +150,7 @@ describe("the Token page (MCP group)", () => {
     expect(($("tkSecret") as HTMLInputElement).value).toBe("s3cr3t-oneshot");
     expect(($("tkSecret") as HTMLInputElement).readOnly).toBe(true);
     // The copies say what they carry: the connect commands have the token inside them, so their
-    // toast says so; the bare secret is only "copied" (docs/46 P5: copyText's claim is opt-in).
+    // toast says so; the bare secret is only "copied" (SPEC §panel.settings: copyText's claim is opt-in).
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => Promise.resolve() } });
     $("tkCopyConn").click();
     for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
@@ -218,7 +218,7 @@ describe("the Token page (MCP group)", () => {
     expect(($("tkGroup") as HTMLSelectElement).value).toBe("clients");
 
     // The group is gone from the family: the box must not be left pointing at a dead option,
-    // because the next create would assign into a 400 (docs/20 G7).
+    // because the next create would assign into a 400 (SPEC §host.groups).
     body = { tokens: [{ id: "t0", label: "default" }], groups: ["default"], tokenGroups: {} };
     await view.poll();
     const after = $("tkGroup") as HTMLSelectElement;

@@ -14,20 +14,20 @@
  * limitations under the License.
  */
 
-//! Test-only SSH and proxy infrastructure (docs/27 §2.6.1).
+//! Test-only SSH and proxy infrastructure (SPEC §tunnels.proxy).
 //!
 //! Three pieces, all on ephemeral loopback ports, none of them sleeping:
 //!  - a REAL ssh server: russh's server side, auth per a chosen policy (accept-all, or
 //!    reject-everything for the bad-credentials paths), direct-tcpip channels dialed
 //!    back to the requested address — the far end a proxied or jumped client must reach.
 //!    A killable/restartable flavor keeps one fixed port and host key for the
-//!    loss-and-recovery lifecycle (docs/27 §3.4.3);
+//!    loss-and-recovery lifecycle (SPEC §tunnels.jump);
 //!  - a fake socks5 proxy speaking RFC 1928/1929, recording every byte of the handshake
 //!    and then transparently pumping to the real target;
 //!  - a fake http proxy answering CONNECT with a canned status line and pumping on 2xx.
 //!
 //! Shared by the proxy dialer tests (proxy.rs) and the manager-level lifecycle tests
-//! (manager.rs), including the jump chains (docs/27 §3.4).
+//! (manager.rs), including the jump chains (SPEC §tunnels.jump).
 
 #![cfg(test)]
 
@@ -38,7 +38,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::sync::mpsc;
 
-/// Everything the fake socks5 proxy observed on one connection (docs/27 §2.6.2): the
+/// Everything the fake socks5 proxy observed on one connection (SPEC §tunnels.proxy): the
 /// methods the client offered, the RFC 1929 credential blob verbatim, and the connect
 /// request's ATYP + address bytes + network-order port.
 #[derive(Debug, Clone, PartialEq)]
@@ -60,7 +60,7 @@ pub enum SocksAuth {
     UserPass,
 }
 
-/// What the test SSH server does with credentials (docs/27 §3.4.4): accept anything,
+/// What the test SSH server does with credentials (SPEC §tunnels.jump): accept anything,
 /// or refuse every method — the bad-credentials paths need a server that says no.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TestAuth {
@@ -68,7 +68,7 @@ pub enum TestAuth {
     RejectAll,
 }
 
-/// What the fake exec server answers one exec request with (docs/34 §11):
+/// What the fake exec server answers one exec request with (SPEC §remote.transport):
 /// channel success, stdout, stderr, then — when `exit` is set — the exit status
 /// and channel close. A None `exit` is a WEDGED command: the handler returns, the
 /// channel stays open, and the client must cancel or hit its deadline. (The stall
@@ -86,7 +86,7 @@ pub struct ExecScript {
 /// forward direct-tcpip channels to the address the client asked for.
 struct TestHandler {
     auth: TestAuth,
-    /// When set, session-channel exec requests answer with this script (docs/34 §11
+    /// When set, session-channel exec requests answer with this script (SPEC §remote.transport
     /// tests): channel success, stdout, stderr, an optional stall, then the exit
     /// status. A None handler ignores exec requests entirely.
     exec: Option<ExecScript>,
@@ -247,8 +247,8 @@ pub async fn spawn_ssh_server() -> u16 {
     spawn_ssh_server_with(TestAuth::AcceptAll).await
 }
 
-/// The same server whose session channels answer exec requests per `script` (docs/34
-/// §11): the full russh client path — connect, session channel, exec request, streaming
+/// The same server whose session channels answer exec requests per `script` (SPEC §remote.transport):
+/// the full russh client path — connect, session channel, exec request, streaming
 /// Data/ExtendedData, exit status — with no real shell anywhere.
 pub async fn spawn_exec_ssh_server(script: ExecScript) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ssh");
@@ -263,7 +263,7 @@ pub async fn spawn_exec_ssh_server(script: ExecScript) -> u16 {
     port
 }
 
-/// The same server with a chosen auth policy (docs/27 §3.4.4).
+/// The same server with a chosen auth policy (SPEC §tunnels.jump).
 pub async fn spawn_ssh_server_with(auth: TestAuth) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ssh");
     let port = listener.local_addr().expect("ssh addr").port();
@@ -288,7 +288,7 @@ fn bind_reuse_port(port: u16) -> TcpListener {
     socket.listen(64).expect("listen ssh")
 }
 
-/// A killable and restartable SSH server on one fixed port (docs/27 §3.4.3). `kill`
+/// A killable and restartable SSH server on one fixed port (SPEC §tunnels.jump). `kill`
 /// stops the accepts and disconnects every established session — "the bastion went
 /// away" — and `restart` rebinds the SAME port with the SAME host key, so the def
 /// under test keeps pointing at it and TOFU still verifies when it comes back.
@@ -350,7 +350,7 @@ impl SshServerHandle {
     }
 }
 
-/// The loss-and-recovery fixture (docs/27 §3.4.3): a server whose death and return are
+/// The loss-and-recovery fixture (SPEC §tunnels.jump): a server whose death and return are
 /// both real and observable.
 pub fn spawn_killable_ssh_server(auth: TestAuth) -> SshServerHandle {
     let listener = bind_reuse_port(0);
@@ -476,7 +476,7 @@ pub async fn spawn_socks5_proxy(
 
 /// A fake http proxy answering CONNECT with the canned `status_line`. On 2xx it pumps
 /// transparently to the CONNECT target; otherwise it closes. Each accepted connection
-/// reports the full request head verbatim for the header assertions (docs/27 §2.6.3).
+/// reports the full request head verbatim for the header assertions (SPEC §tunnels.proxy).
 pub async fn spawn_http_proxy(status_line: &'static str) -> (u16, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await

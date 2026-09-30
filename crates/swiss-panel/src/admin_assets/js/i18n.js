@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-/* The panel's second language (docs/38). English is both the source and the key: every
-   visible string is written in English where it is used and wrapped in tr()/trn(); Chinese
-   is one flat dictionary fetched on demand. Nothing here probes navigator.language — the
+/* The panel's second language (SPEC §panel.i18n). Every visible string is a symbolic key
+   (`<module>.<semanticId>`) wrapped in tr()/trn(); English (locales/en.ts) is the always-loaded
+   floor and Chinese is one flat dictionary fetched on demand. Nothing here probes navigator.language — the
    preference is per-browser (localStorage), exactly like the theme, because it describes
    this screen, not the user.
 
    Module-scope state only (no window.*): the installed language and the dictionary are two
-   lets. Module top level NEVER calls tr() (docs/38 L7): imported modules evaluate before
+   lets. Module top level NEVER calls tr() (SPEC §panel.i18n): imported modules evaluate before
    main.ts's await loadLocale() resolves, so a top-level tr() would freeze English onto a
    Chinese screen. */
 import { currentView } from "./ui-state.js";
@@ -41,7 +41,7 @@ let lang       = "en";
 let dict                                = null;
 /* The last setLang() choice, kept in memory: when localStorage is blocked the stored
  * preference cannot exist, so this is the preference the loader falls back to and the
- * flip targets read (docs/38 L4's "the choice still applies to this page load"). */
+ * flip targets read (SPEC §panel.i18n's "the choice still applies to this page load"). */
 let wanted       = "en";
 /* English is the fallback chain's floor and every language renders it, so its table is a
  * static leaf import (no cycle: locales import nothing); each locale above it stays lazy. */
@@ -156,7 +156,7 @@ export function installEnglish(table                        )       { enDict = t
 
 /** Resolve the preference into memory at boot (and again after a flip): the Chinese
  *  dictionary is fetched only when the preference is Chinese — an English browser downloads
- *  none of it (docs/38 §1.1, the "ruthlessly small" row). */
+ *  none of it (SPEC §panel.i18n, the "ruthlessly small" row). */
 export async function loadLocale()                {
   if (langPref() === "zh-CN") {
     try {
@@ -185,7 +185,7 @@ export async function loadLocale()                {
    edge, and it is the same single source for those two strings. */
 let repaintThemeBtn                      = null;
 
-/** Repaint the static chrome index.html carries in English (docs/38 §1.4): in English this
+/** Repaint the static chrome index.html carries in English (SPEC §panel.i18n): in English this
  *  writes the same strings back (a no-op); in Chinese it swaps them. The 文/A button's own
  *  title is NOT here — see paintLangBtn. */
 export function paintChrome()       {
@@ -219,7 +219,7 @@ export function paintChrome()       {
 }
 
 /** The button's title is the one string in the panel written in the TARGET language
- *  (docs/38 §2.2): on an English screen only "切换到中文" tells a Chinese reader where to
+ *  (SPEC §panel.i18n): on an English screen only "切换到中文" tells a Chinese reader where to
  *  click, and vice versa — a reader fluent in the current language needs no label at all.
  *  This pair deliberately stays out of the dictionary (the scanner never sees it). */
 function paintLangBtn()       {
@@ -236,8 +236,8 @@ export async function toggleLang()                {
   const reg                      = await import("./page-registry.js");
   if (reg.pageHasPendingChanges()) {
     // The remount at the end of this function would drop those changes, so the flip refuses.
-    // It used to refuse in silence, which reads as a broken button: found live during the
-    // docs/42 T2 second-language pass, where one buffered cell edit on any Data tab made 文/A
+    // It used to refuse in silence, which reads as a broken button: found live during a
+    // second-language pass (SPEC §data.tabs), where one buffered cell edit on any Data tab made 文/A
     // answer every click with nothing. util is imported here rather than at the top for the
     // same reason page-registry is: a static edge would close a cycle back into this module.
     const { toast } = await import("./util.js");

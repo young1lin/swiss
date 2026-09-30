@@ -20,18 +20,18 @@ import { dbIsRedis } from "./data-browsers.js";
 import { dbSqlPaint } from "./data-filters.js";
 import { dbConn, dbSqlTab } from "./db-state.js";
 import { dbKeyShown } from "./data-tree.js";
-// docs/50: the same lexer the gateway splits a console line with (vendored, MIT).
+// SPEC §data.redis-console: the same lexer the gateway splits a console line with (vendored, MIT).
 import { split } from "./vendor/shlex/3.0.0/index.js";
 
 
-/* --- redis completion (2026-09-28; rebuilt on the server's own catalog, docs/50) --------------- */
+/* --- redis completion (2026-09-28; rebuilt on the server's own catalog, SPEC §data.redis-console) --------------- */
 /* The owner, on the redis console: "I need completion, and templates - otherwise there is no way
    to know how to set a key, or delete one." Then, on what that first cut became: "Redis 命令自动
    补全的功能，做得也很烂，没有 template，反正做得我不太满意，需要你来重构下."
 
    What was wrong with the table this file used to carry: forty commands written out by hand, no
    summaries, nothing past the first argument, and a Templates menu buried in the tab's ⋯. The
-   catalog now comes from the SERVER — COMMAND DOCS plus COMMAND INFO (docs/50) — so it is that
+   catalog now comes from the SERVER — COMMAND DOCS plus COMMAND INFO (SPEC §data.redis-console) — so it is that
    server's commands, its modules, its version, with redis' own one-line summaries and its own
    argument spelling; completion works at every word, not just the first; and the console's hint
    line under the box shows the syntax of the command being typed. */
@@ -256,7 +256,7 @@ export function dbRedisKeyAt(cmd          , index        , words          )     
   return (index - first) % step === 0;
 }
 
-/** What to offer for the caret in a redis console line (docs/50 §2.2). Word 0 completes from the
+/** What to offer for the caret in a redis console line (SPEC §data.redis). Word 0 completes from the
  *  catalog; the word after a container completes from its subcommands; a key position completes
  *  from the keys the sidebar has walked; anything else completes the command's own tokens (NX,
  *  MATCH, WITHSCORES). A value is never guessed - it is the operator's to type, and a list of
@@ -324,7 +324,7 @@ export function dbRedisCandidates(
     .map((t        )                      => { return { label: t, kind: "token", detail: cmd.name + " " + cmd.syntax }; });
 }
 
-/** The console's hint line while a redis command is being typed (docs/50 §2.3): the command's
+/** The console's hint line while a redis command is being typed (SPEC §data.redis-console): the command's
  *  own syntax and summary, from the server that will run it. Empty when the line names nothing
  *  known, so the standing hint stays. Pure. */
 export function dbRedisSignature(text        , caret        , cmds            )         {
@@ -353,7 +353,7 @@ function dbRedisCommands()             {
    change while the connection lives, and asking again per keystroke would be absurd. */
 let dbRedisCatalogFor = "";
 
-/** Read the command catalog for the open connection, once (docs/50). A failure is quiet: the
+/** Read the command catalog for the open connection, once (SPEC §data.redis-console). A failure is quiet: the
  *  console still runs commands, the completion simply has nothing to offer, and the next
  *  connection switch tries again. */
 export async function dbRedisLoadCommands()                {
@@ -368,7 +368,7 @@ export async function dbRedisLoadCommands()                {
   cur.redisCommands = j.commands || [];
 }
 
-/* --- SQL completion (docs/22 W3.1) ------------------------------------------------------------------ */
+/* --- SQL completion (SPEC §data.completion) ------------------------------------------------------------------ */
 /* The console's suggestion list. The SERVER builds the candidate set (dialect keywords + table
    names + the FROM-nearest table's columns, cached per connection); this side only decides
    WHEN to ask: 150ms after a keystroke that ends in a word, never for redis, never more than

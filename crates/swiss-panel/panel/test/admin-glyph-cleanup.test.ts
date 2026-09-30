@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 
 // @vitest-environment happy-dom
 
-/* fix-plan #14: the V2 glyph cleanup's RENDERED side. admin-icons.test.ts pins the sprite
+/* SPEC §panel.design: the V2 glyph cleanup's RENDERED side. admin-icons.test.ts pins the sprite
    and the source-level ban; this suite drives the real builders on a real DOM (happy-dom,
    served shell ids in place) and asks what the USER sees: the control buttons and labels
    carry the svg sprite references and none of the retired unicode glyphs — while the
@@ -103,7 +103,7 @@ function seedTable(): Record<string, unknown> {
   return t;
 }
 
-describe("fix-plan #14 — the glyph sites render sprite icons, not unicode glyphs", () => {
+describe("SPEC §panel.design — the glyph sites render sprite icons, not unicode glyphs", () => {
   it("the grid header's PK marker is the key sprite, not a glyph", () => {
     seedTable();
     grid.renderDbGrid();
@@ -132,7 +132,7 @@ describe("fix-plan #14 — the glyph sites render sprite icons, not unicode glyp
     expect(wrap).not.toContain("\u2715");
   });
 
-  it("the Form tab's record action is the same x and undo sprites (docs/46 P7: it still drew the glyphs)", () => {
+  it("the Form tab's record action is the same x and undo sprites (SPEC §panel.pages: it still drew the glyphs)", () => {
     const t = seedTable();
     t.pane = "form";
     grid.renderDbGrid();

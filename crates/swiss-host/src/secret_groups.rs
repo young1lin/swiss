@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The secrets GroupScope (docs/20 G6).
+//! The secrets GroupScope (SPEC §host.groups).
 //!
 //! The vault is a global in swiss-core, so this adapter is a pure translation: it reads
 //! the one model's two lists out of the vault, runs every mutation through the shared
@@ -22,7 +22,7 @@
 //! ONE rev-checked vault write - the same discipline a value write has. Values never
 //! cross this boundary: a group label names a folder, not a credential.
 //!
-//! The order is the model's third list (docs/26): `set_order` lands it in the same
+//! The order is the model's third list (SPEC §host.vault): `set_order` lands it in the same
 //! single rev-checked vault write, and an empty order keeps the name order every pre-26
 //! file had.
 
@@ -47,7 +47,7 @@ fn model() -> Groups {
 }
 
 /// Land a mutated model as one vault write, mapping the vault's errors to the family's
-/// strings. A regroup is one rev bump (docs/20 G6), so a concurrent value write fails
+/// strings. A regroup is one rev bump (SPEC §host.groups), so a concurrent value write fails
 /// here honestly - the message says reload, which is all a single panel ever needs.
 fn commit(groups: Groups, order: Vec<String>) -> Result<(), String> {
     vault::set_vault_groups(
@@ -92,7 +92,7 @@ impl GroupScope for SecretGroups {
         Ok(answer)
     }
 
-    // docs/26: the order is the model's third list. Unknown names drop out and duplicates
+    // SPEC §host.vault: the order is the model's third list. Unknown names drop out and duplicates
     // keep their first slot - the managed scope's discipline - so a stale panel cannot
     // plant a ghost row.
     fn set_order(&self, ids: Vec<String>) -> Result<Vec<String>, String> {

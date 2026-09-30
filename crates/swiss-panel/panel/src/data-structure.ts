@@ -32,8 +32,8 @@ import { seg } from "./ui/seg.js";
 
 /* --- structure tabs (columns / indexes / DDL / foreign keys) ------------------------------------ */
 
-/* tk()-marked tab labels (docs/38 L7): painted through tr(t.label) at render time. */
-/* docs/42 T4 / docs/43 M4: the strip folds SIX panes into FOUR tabs — Data, Form,
+/* tk()-marked tab labels (SPEC §panel.i18n): painted through tr(t.label) at render time. */
+/* SPEC §data.tabs / SPEC §data.tabs: the strip folds SIX panes into FOUR tabs — Data, Form,
  * Structure, DDL. Structure is one tab whose body is the three catalog tables
  * (Columns / Indexes / Foreign Keys) behind its own sub-segment; the pane ids
  * columns/indexes/fks stay, so every renderer and the detail load keep their ids. */
@@ -45,17 +45,17 @@ const DB_TABS = [
 ];
 
 /* The Structure strip's pane ids: data | form | columns | indexes | fks | ddl — the six
- * fold into four with docs/42 T4; "structure" itself resolves to columns when entered. */
+ * fold into four with SPEC §data.tabs; "structure" itself resolves to columns when entered. */
 const DB_PANES = ["data", "form", "columns", "indexes", "fks", "ddl"];
 
-/** docs/43 M4: the pane id a main-segment tab STANDS FOR — the three catalog pane ids
+/** SPEC §data.tabs: the pane id a main-segment tab STANDS FOR — the three catalog pane ids
  *  all belong to the Structure tab. Pure. */
 export function dbPaneToTab(pane: string): string {
   if (pane === "columns" || pane === "indexes" || pane === "fks") return "structure";
   return pane;
 }
 
-/** docs/43 M4: the pane a main-segment tab OPENS — Structure lands on Columns. Pure. */
+/** SPEC §data.tabs: the pane a main-segment tab OPENS — Structure lands on Columns. Pure. */
 export function dbTabToPane(tab: string): string {
   return tab === "structure" ? "columns" : tab;
 }
@@ -66,7 +66,7 @@ function dbSetTab(t: string): void {
   if (d.kind !== "table") return; // the strip belongs to the open table tab
   const pane = dbTabToPane(t);
   if (d.pane === pane) return;
-  // docs/22 W5.1: the form opens on the row the keyboard focused, and the grid's focus
+  // SPEC §data.grid: the form opens on the row the keyboard focused, and the grid's focus
   // returns to the form's row — one cursor, two presentations of it.
   if (t === "form" && d.focus) d.formIdx = d.focus.r;
   if (t === "data" && d.formIdx != null) d.focus = { r: d.formIdx, c: d.focus ? d.focus.c : 0 };
@@ -80,7 +80,7 @@ function dbSetTab(t: string): void {
 
 // One /schema request chain: a slow answer for the table the user just left must be
 // dropped, or it would paint the OLD table's structure (and rewrite d.schema) over the new
-// one's (docs/22 closeout audit).
+// one's (SPEC §data).
 const dbDetailReq = dbReqGuard();
 
 async function dbLoadDetail(): Promise<void> {
@@ -106,8 +106,8 @@ function dbRenderTabs(ctl: HTMLElement): void {
   const t = dbTab();
   const pane = t.kind === "table" ? t.pane : null;
   // Tab clicks and the Structure sub-segment answer through #pane's delegated listener via
-  // their data-dtab addresses (docs/37 R5) — no per-render handlers on the strip. The main
-  // segment folds three catalog panes into Structure (docs/43 M4): the selected mark reads
+  // their data-dtab addresses (SPEC §panel.toolchain) — no per-render handlers on the strip. The main
+  // segment folds three catalog panes into Structure (SPEC §data.tabs): the selected mark reads
   // dbPaneToTab, the click sends the pane id the same handler already knew.
   ctl.appendChild(seg(DB_TABS.map((x: { id: string; label: string }) => { return { id: x.id, label: tr(x.label) }; }),
     pane != null ? dbPaneToTab(pane) : "", { key: "dtab" }));
@@ -120,7 +120,7 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
   const d = dbTab();
   if (d.kind !== "table") return;
   if (d.detailBusy) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.loading"))); return; }
-  // docs/43 M4: the three catalog panes are ONE tab's body now — the Structure sub-segment
+  // SPEC §data.tabs: the three catalog panes are ONE tab's body now — the Structure sub-segment
   // (Columns / Indexes / Foreign Keys) heads each of the three, and its clicks ride the same
   // data-dtab address the main segment uses, so dbSetTab already knows every pane id.
   if (d.pane === "columns" || d.pane === "indexes" || d.pane === "fks") {
@@ -158,7 +158,7 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
           c.defaultValue == null ? "—" : String(c.defaultValue),
           c.isPrimaryKey ? "PRI" : "",
           // { text, cls } marks a cell that carries a class of its own: a real comment is the
-          // quiet --text-2 the header caption and the hover card use for it (docs/46 §3.7),
+          // quiet --text-2 the header caption and the hover card use for it (SPEC §panel.pages),
           // the "—" placeholder stays in the default cell color.
           c.comment == null ? "—" : { text: String(c.comment), cls: "db-det-comment" }];
       },
@@ -180,7 +180,7 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
     spec = {
       head: [tr("dataStructure.constraint"), tr("dataFilters.column"), tr("dataStructure.references")],
       row: (f: ApiDbFkRow) => {
-        // docs/22 W5.2: the target name carries its fk — the renderer draws it as a link
+        // SPEC §data.grid: the target name carries its fk — the renderer draws it as a link
         // (read-only navigation; the grid header's arrow is the filtered jump).
         return [f.name, f.column, { text: f.refSchema + "." + f.refTable + " (" + f.refColumn + ")", fk: f }];
       },
@@ -188,7 +188,7 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
       meta: trn(det.foreignKeys.length, "dataStructure.nForeignKeys.one", "dataStructure.nForeignKeys.other"),
     };
   }
-  // docs/22 W4.6: the tab's own create action rides the meta line (the W3.3 idiom) —
+  // SPEC §data.ddl: the tab's own create action rides the meta line (the W3.3 idiom) —
   // the same sheet family the table list's New table opens, prefilled with this table's
   // old state so the commit diffs against what is already there.
   const meta = el("div", "db-detail-meta");
@@ -196,7 +196,7 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
   meta.appendChild(el("span", "grow"));
   if (d.pane === "columns" || d.pane === "indexes") {
     // data-dadd carries the sheet kind; the click handler resolves the live detail for the
-    // sheet's payload (docs/37 R5 — state at event time, not render time).
+    // sheet's payload (SPEC §panel.toolchain — state at event time, not render time).
     const colsTab = d.pane === "columns";
     meta.appendChild(btn(colsTab ? tr("dataStructure.addColumn") : tr("dataStructure.newIndex"), { data: { dadd: colsTab ? "column" : "index" } }));
   }
@@ -214,7 +214,7 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
       const td = el("td", "db-cell" + (cell.cls ? " " + cell.cls : ""));
       const fk_ = cell.fk!;
       if (cell.fk) {
-        // docs/22 W5.2: the referenced table opens on click — no filter here, just the
+        // SPEC §data.grid: the referenced table opens on click — no filter here, just the
         // navigation (the arrow in the grid header owns the filtered jump). The target rides
         // data attributes and the click is answered by #pane's delegated listener, which
         // matches [data-ref-table] and reads dataset.refTable. h() writes data keys verbatim,
@@ -298,8 +298,8 @@ function dbAlignDdl(ddl: string | null): string {
   }).join("\n");
 }
 
-/** #pane's delegated click for the Structure tab strip and the detail grids (docs/37 R5).
- *  Behavior note (docs/37 §10.1): the Add-column / New-index payload is built from the LIVE
+/** #pane's delegated click for the Structure tab strip and the detail grids (SPEC §panel.toolchain).
+ *  Behavior note (SPEC §panel.toolchain): the Add-column / New-index payload is built from the LIVE
  *  d.detail at event time — a detail that reloaded between render and click opens the sheet
  *  against what is on screen now, not what the button was painted with. */
 function dbStructureClick(t: Element, ev: MouseEvent): boolean {

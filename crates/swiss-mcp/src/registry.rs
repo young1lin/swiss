@@ -26,7 +26,7 @@
 //!
 //! One deliberate deviation: the Node build's per-handler notifier (tool/resource toggle fan-out
 //! to `subscriptions/listen` streams) has no counterpart under rmcp's stateless session mode —
-//! toggles take effect on the client's next list, and the panel re-polls. See docs/06.
+//! toggles take effect on the client's next list, and the panel re-polls. See SPEC §product.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -851,7 +851,7 @@ impl Registry {
         }
     }
 }
-// --- the connection catalog provider (docs/12 W3) -------------------------------------------------
+// --- the connection catalog provider (SPEC §host.seats) -------------------------------------------------
 
 /// The registry AS a [swiss_host::services::catalog::ConnectionCatalog]: the browsable half of
 /// every registered MCP, offered for lease. This is the logic app.rs's browser_resolver
@@ -1820,11 +1820,11 @@ mod tests {
         }
     }
 
-    // --- the connection catalog provider (docs/12 W3) ---
+    // --- the connection catalog provider (SPEC §host.seats) ---
 
     #[test]
     fn the_catalog_lists_one_row_per_entry_and_keys_them_by_definition() {
-        // docs/09 §3's identity rule, at the provider: two definitions that share every
+        // SPEC §host.plugins's identity rule, at the provider: two definitions that share every
         // endpoint field (host, port) but differ in NAME — which is where credentials and
         // the whole definition live — are TWO connections. Never merged, never shadowed.
         let r = reg();

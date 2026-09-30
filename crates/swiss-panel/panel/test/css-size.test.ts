@@ -14,22 +14,22 @@
  * limitations under the License.
  */
 
-/* docs/46 G7 - views.css only shrinks. The library is a replacement, not a layer on top
-   (docs/46 §1.1 "ruthlessly small"): every page that migrates to ui/ deletes its own rules
+/* SPEC §panel.ui - views.css only shrinks. The library is a replacement, not a layer on top
+   (SPEC §panel.ui "ruthlessly small"): every page that migrates to ui/ deletes its own rules
    from views.css, so the file's size is the plainest measure of whether that is happening.
    Frozen at P1a-2 in bytes with LF line endings (a CRLF checkout must not read as growth);
-   a commit that shrinks it lowers the number in the same commit. docs/46 §0.2 started it at
+   a commit that shrinks it lowers the number in the same commit. SPEC §panel.ui started it at
    94,663 bytes. */
 import { describe, expect, it } from "vitest";
 import { sheet } from "./styles.js";
 
-const FROZEN_VIEWS_BYTES = 60001; // docs/46 P9: the terminal's own palette and the dead rules went, icon sizes on the --ic knob, the jump chip's z-index in (P8-2: 61447, Terminal on the library's objTab/select face/sheets; P8-1: Data's tab strip is the library's objTab; P7-2: 63072, Data on the library; P7-1: 63479, P6-2: 64049, P6-1: 67801, P5: 69920, P4: 70223, P3: 70330, P2-3c: 71473, P1b-3: 74519, P1b-2: 76099, P1a-2: 76412)
+const FROZEN_VIEWS_BYTES = 60001; // SPEC §panel.ui: the terminal's own palette and the dead rules went, icon sizes on the --ic knob, the jump chip's z-index in (P8-2: 61447, Terminal on the library's objTab/select face/sheets; P8-1: Data's tab strip is the library's objTab; P7-2: 63072, Data on the library; P7-1: 63479, P6-2: 64049, P6-1: 67801, P5: 69920, P4: 70223, P3: 70330, P2-3c: 71473, P1b-3: 74519, P1b-2: 76099, P1a-2: 76412)
 
 export function lfBytes(css: string): number {
   return Buffer.byteLength(css.replace(/\r\n/g, "\n"), "utf8");
 }
 
-describe("docs/46 G7 - views.css does not grow", () => {
+describe("SPEC §panel.ui - views.css does not grow", () => {
   it("is at or below its frozen size", () => {
     const n = lfBytes(sheet("views.css"));
     expect(n, "views.css grew to " + n + " bytes - a new shape belongs in ui.css (and ui/), not in a page's sheet").toBeLessThanOrEqual(FROZEN_VIEWS_BYTES);

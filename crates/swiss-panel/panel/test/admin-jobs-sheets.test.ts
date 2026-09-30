@@ -16,7 +16,7 @@
 
 // @vitest-environment happy-dom
 
-/* The Jobs page's head and its three sheets on the library (docs/46 P6): the create/edit sheet
+/* The Jobs page's head and its three sheets on the library (SPEC §panel.pages): the create/edit sheet
    (the schedule builder), the advanced definition sheet behind the head's ⋯, and the run
    history as the event list. None of them had a suite before - their structure was only ever
    checked by eye - so this file pins what the page promises: the sheet opens visibly, each
@@ -92,7 +92,7 @@ function before(a: Element, b: Element): boolean {
   return !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 }
 
-describe("the Jobs head (docs/46 §3.6)", () => {
+describe("the Jobs head (SPEC §panel.pages)", () => {
   it("is one sentence, the folder-plus glyph, a ⋯ and the one primary - no caption, no foot", () => {
     jobs.renderJobs();
     const pane = $("pane");
@@ -110,7 +110,7 @@ describe("the list stays put under the poll", () => {
   const job = { name: "echo", command: "cmd /c echo hi", enabled: true, trigger: { kind: "interval", everyMs: 3600000, firstRun: "after-interval" } };
 
   it("a poll patches the drawn rows in place - it never rebuilds them", async () => {
-    // Found on the docs/46 P6 walk, in the loader: loadJobs(true) chose between patch and
+    // Found on a walk of SPEC §panel.pages, in the loader: loadJobs(true) chose between patch and
     // rebuild by looking for the page foot ([data-foot]). The foot is gone (the count is the
     // context bar's), so every 6 s poll rebuilt the list - cancelling a drag, dropping focus.
     replies["/api/jobs"] = { jobs: [job], groups: ["default"] };

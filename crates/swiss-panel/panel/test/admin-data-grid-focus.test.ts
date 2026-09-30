@@ -25,7 +25,7 @@ import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
    attrs, querySelector walks the children tree (tag / .class / [attr="v"] chains), and a
    textContent/innerHTML assignment of "" CLEARS the children — so a full-grid rebuild is
    observable as the death of a marker node that survived every ring move.
-   docs/37 R5: the grid is built with h()/fill() (nodes extend the Node stub — h()
+   SPEC §panel.toolchain: the grid is built with h()/fill() (nodes extend the Node stub — h()
    instanceof-checks children) and #dbKbd carries no per-render keydown; the pane's
    delegated listener calls dbGridKeydown, which the arrow/Esc cases fire directly. */
 class NodeStub {}
@@ -89,7 +89,7 @@ const el = (tag = "div"): Stub => {
   });
   Object.defineProperty(n, "textContent", {
     // Set directly, or read back from the children as a real DOM does: h() builds a menu row's
-    // word as a text child (docs/46 P7-3).
+    // word as a text child (SPEC §panel.pages).
     get: (): string => (n as any)._text || n.children.map((c: Stub) => String(c.textContent)).join(""),
     set: (v: string) => { if (v === "") n.children = []; (n as any)._text = v; }, // the R5 wipe
   });
@@ -131,7 +131,7 @@ function renderTwoRowGrid(): { d: Record<string, any>; wrap: Stub } {
   const c = dbConnState();
   c.conns = [dbConn("c", "mysql")];
   c.conn = "c"; c.gridCfg = { widths: {}, hidden: [] };
-  // The grid and its focus ring are the open table tab's (docs/42 T1); the callers read
+  // The grid and its focus ring are the open table tab's (SPEC §data.tabs); the callers read
   // only tab fields through d, so d IS the narrowed tab.
   const tab = dbTab();
   if (tab.kind !== "table") throw new Error("fresh state must hold a table tab");
@@ -154,7 +154,7 @@ function renderTwoRowGrid(): { d: Record<string, any>; wrap: Stub } {
   return { d, wrap: byId.dbGridWrap };
 }
 
-describe("the grid's keyboard focus ring (docs/22 closeout audit P0-B)", () => {
+describe("the grid's keyboard focus ring (SPEC §data-B)", () => {
   it("a cell mousedown moves the ring on the LIVE grid — no innerHTML rebuild, so the click/dblclick that follows still lands", () => {
     // Real-input regression (CDP: a mousedown that rebuilt the table left only
     // mousedown+mouseup in the stream — no click, no dblclick — so double-click editing
@@ -179,7 +179,7 @@ describe("the grid's keyboard focus ring (docs/22 closeout audit P0-B)", () => {
     const tdRow1 = queryAll(wrap, 'td[data-r="1"][data-c="0"]')[0];
     tdRow1.onmousedown({ preventDefault: () => {} });
     const kbd = byId.dbKbd;
-    // docs/37 R5: the pane's delegated keydown would hand the dispatcher this input as its
+    // SPEC §panel.toolchain: the pane's delegated keydown would hand the dispatcher this input as its
     // target — fired directly here, same event shape.
     grid.dbGridKeydown(kbd, { key: "ArrowUp", preventDefault: () => {}, ctrlKey: false, metaKey: false, altKey: false });
     expect(d.focus).toEqual({ r: 0, c: 0 });
@@ -202,7 +202,7 @@ describe("the grid's keyboard focus ring (docs/22 closeout audit P0-B)", () => {
   });
 });
 
-describe("a cell mousedown keeps the keyboard layer alive (docs/22 closeout audit P0-A)", () => {
+describe("a cell mousedown keeps the keyboard layer alive (SPEC §data-A)", () => {
   it("the mousedown preventDefaults — the default focus move to <body> would land AFTER dbFocusCell focused #dbKbd and every key would go nowhere", () => {
     const { wrap } = renderTwoRowGrid();
     for (const sel of ['td[data-r="0"][data-c="0"]', 'td[data-r="1"][data-c="1"]']) {
@@ -231,7 +231,7 @@ describe("a cell mousedown keeps the keyboard layer alive (docs/22 closeout audi
     expect(d.focus.c).toBe(0);
   });
 
-  it("the insert row's context menu offers Edit in dialog… like a data row (docs/22 closeout B2)", () => {
+  it("the insert row's context menu offers Edit in dialog… like a data row (SPEC §data)", () => {
     // dbCellMenu's 5th parameter is the editInDialog callback; the insert row's call passed a
     // stray null before it, so the callback landed in an unread 6th slot and the item never
     // rendered — the keyboard path could open the dialog but the menu could not.
@@ -252,7 +252,7 @@ describe("a cell mousedown keeps the keyboard layer alive (docs/22 closeout audi
   });
 });
 
-describe("the header hover card's 260ms timer (docs/22 closeout audit)", () => {
+describe("the header hover card's 260ms timer (SPEC §data)", () => {
   const scheduled: { fn: () => void; ms: number }[] = [];
   const cleared: unknown[] = [];
   let origSet: any, origClear: any;

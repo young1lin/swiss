@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The per-project binding (docs/34 §24): a .swiss/remote.json file a repository
+//! The per-project binding (SPEC §remote.project): a .swiss/remote.json file a repository
 //! carries, discovered by walking up from the working directory. It is what turns
 //! `swiss remote exec build -- ...` into `swiss remote exec --target dev --timeout
 //! 2h -- ...` without the agent retyping anything: named actions, a default target,

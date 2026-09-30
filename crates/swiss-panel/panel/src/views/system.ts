@@ -23,12 +23,12 @@ import { btn, card, closeSheet, emptyNode, hint, paneBody, paneHead, row, sectio
 /** The process action is deliberately a Settings page, not permanent app chrome: quitting the
  *  whole toolbox is destructive, rare, and belongs beside other host-owned controls.
  *
- *  Built with h() (docs/37 R5): every string here is the panel's own prose, so the security
+ *  Built with h() (SPEC §panel.toolchain): every string here is the panel's own prose, so the security
  *  face that moved the other views off innerHTML does not exist on this page - what the
  *  builders buy here is the ledger (the file joins the node side of the eventual ratchet)
  *  and a pane whose wiring survives its own repaint.
  *
- *  On the library since docs/46 P5: paneHead, section + card, and the one row(). The Quit
+ *  On the library since SPEC §panel.settings: paneHead, section + card, and the one row(). The Quit
  *  button keeps its red on the row - the prototype's call, and the exception rule 4 allows
  *  for a page whose ONE act is the destructive one: there is no overflow to hide it in, and
  *  the sheet it opens is the confirmation. */
@@ -90,7 +90,7 @@ async function requestQuit(): Promise<void> {
 
 async function mount(): Promise<void> {
   fill($("pane"), systemBodyNode());
-  // One delegated claim on the pane (docs/37 R5): the quit button is reached through the
+  // One delegated claim on the pane (SPEC §panel.toolchain): the quit button is reached through the
   // pane's own listener, so the wiring survives any repaint of the pane's children.
   $("pane").onclick = (event: MouseEvent): void => {
     if (targetEl(event)?.closest("#system-quit")) openQuitSheet();

@@ -16,7 +16,7 @@
 
 import type { ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage } from "../src/types/api.js";
 
-/* Typed fixtures for the Data view's record (docs/37 R4, slice 6).
+/* Typed fixtures for the Data view's record (SPEC §panel.toolchain, slice 6).
  *
  * Until the db slice landed, the suite reached the record through util.js's `state`, which
  * the tests declare as `any` — so a row written as { name, dialect } type-checked against
@@ -24,7 +24,7 @@ import type { ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage } from "../src/type
  * is typed, so those partial literals became 17 errors the moment the record moved.
  *
  * The fix is these builders rather than seventeen `as unknown as` casts: a cast would put the
- * laundering back exactly where docs/37 is taking it out, and it would keep the fixtures
+ * laundering back exactly where SPEC §panel.toolchain is taking it out, and it would keep the fixtures
  * free to drift from the wire. Each builder fills the fields a test does not care about with
  * neutral values and takes an override for the ones it does. */
 

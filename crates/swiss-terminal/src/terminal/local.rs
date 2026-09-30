@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The local shell source (docs/14 §5) — the other half of what the session machine can
+//! The local shell source (SPEC §terminal.local) — the other half of what the session machine can
 //! open, and the mirror image of the remote one.
 //!
 //! Remote sessions arrive through the shell capability seat in `swiss-host`, provided by
@@ -27,14 +27,14 @@
 //!
 //! ## The blocking thread, and where the backpressure goes
 //!
-//! A ConPTY's output is an anonymous pipe (docs/14 §5), so reading it costs one
+//! A ConPTY's output is an anonymous pipe (SPEC §terminal.local), so reading it costs one
 //! `spawn_blocking` thread for the life of the session — the direct reason local sessions
 //! are capped. That thread cannot `await`, so it hands chunks to an async forwarder over
 //! a channel of **depth one**. The depth is the whole design: with one slot, a forwarder
 //! parked on a full consumer queue leaves the reader parked on `blocking_send`, which
 //! leaves the pipe unread, which is exactly how a real tty pushes back on a program that
 //! is printing faster than anyone is reading. Nothing is dropped anywhere along it
-//! (docs/14 §6.8).
+//! (SPEC §terminal.sessions).
 //!
 //! Teardown is by ownership, not by protocol. The reader thread owns the [`PtyPump`], and
 //! dropping the pump kills the child's whole subtree (ADR-008). So when the consumer
@@ -73,12 +73,12 @@ pub trait LocalShell: Send + Sync {
     fn program(&self) -> String;
 
     /// The shells this host offers a local terminal, probed once at plugin start
-    /// (docs/15 §2.1): the settings sheet's candidate list. Never a per-request probe —
+    /// (SPEC §terminal.local): the settings sheet's candidate list. Never a per-request probe —
     /// detection walks PATH, which is fine once at start and wrong on every GET.
     fn candidates(&self) -> Vec<ShellCandidate>;
 
     /// The program string the panel should label a configured shell with: resolved to an
-    /// absolute path where the platform can (docs/15 §2.1). The default is the identity,
+    /// absolute path where the platform can (SPEC §terminal.local). The default is the identity,
     /// which is exactly right for the tests' fake and for unix.
     fn resolve(&self, program: &str) -> String {
         program.to_string()
@@ -180,7 +180,7 @@ impl LocalShell for LocalShells {
 /// is whatever launched it — an agent harness sets NO_COLOR=1 for its own tool shells,
 /// and a gateway started from one handed every local pwsh a colourless PSStyle
 /// (OutputRendering=PlainText, seen on 19999). The launcher's taste is not the tab's.
-/// The daemon layer has since scrubbed the launcher's noise at the source (docs/16 §1,
+/// The daemon layer has since scrubbed the launcher's noise at the source (SPEC §host.daemon,
 /// on both the spawn and the serve path); this strike stays anyway — a terminal tab's
 /// environment is this layer's own contract, not an implementation detail of a clean daemon.
 fn shell_command(shell: Option<&str>, default: &PtyCommand) -> PtyCommand {
@@ -219,7 +219,7 @@ async fn forward_output(out: PtyOut, mut chunks: mpsc::Receiver<Vec<u8>>, handle
         tokio::select! {
             chunk = chunks.recv() => match chunk {
                 Some(bytes) => {
-                    // Parking here IS the backpressure (docs/14 §6.8); an Err means the
+                    // Parking here IS the backpressure (SPEC §terminal.sessions); an Err means the
                     // consumer dropped the session while we were parked.
                     if out.send(PtyEvent::Data(bytes)).await.is_err() {
                         break;
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn the_candidate_list_is_probed_once_and_is_never_empty() {
-        // docs/15 §2.1: the settings sheet's dropdown comes from this list, and every
+        // SPEC §terminal.local: the settings sheet's dropdown comes from this list, and every
         // host offers at least one shell (cmd via COMSPEC on Windows, $SHELL on unix) —
         // an empty list means the probe broke, not that the host has no shells.
         let shells = LocalShells::new();

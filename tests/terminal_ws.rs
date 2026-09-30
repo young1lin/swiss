@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! docs/14 T5's acceptance surface: the /api/terminal routes over a REAL socket.
+//! SPEC §terminal.api's acceptance surface: the /api/terminal routes over a REAL socket.
 //!
 //! The handshake decisions cannot be driven through tower's oneshot — axum's upgrade
 //! extractor needs hyper's OnUpgrade state, which only a live connection carries — so
@@ -374,7 +374,7 @@ async fn the_enabled_plugin_lists_targets_and_local_is_off() {
     let (status, body, text) = rig.http("GET", "/api/terminal/targets", None).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     let body = body.expect("JSON");
-    // The local switch is OFF by default (docs/14 §6.1) and the reported program is
+    // The local switch is OFF by default (SPEC §terminal.config) and the reported program is
     // the truth about this host's real shell seam (the plugin builds the real
     // LocalShells; no test override exists, by design).
     assert_eq!(body["local"]["enabled"], json!(false));
@@ -426,7 +426,7 @@ async fn the_disabled_terminal_plugin_answers_the_structured_503() {
 #[tokio::test]
 async fn cols_out_of_range_is_refused_not_clamped() {
     let rig = rig("cols", quiet()).await;
-    // docs/14 §8: a 0-column PTY is undefined behaviour on the far side; out of range
+    // SPEC §terminal.api: a 0-column PTY is undefined behaviour on the far side; out of range
     // is a 400 naming the axis, never a silent default.
     let (status, body, text) = rig
         .http(
@@ -478,7 +478,7 @@ async fn a_good_ticket_upgrades_and_bytes_flow_both_ways() {
     let (mut ws, response) = rig.connect_session(&id, &ticket).await.expect("upgrades");
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
 
-    // Output arrives as raw binary — no base64, no JSON wrapping (docs/14 §8).
+    // Output arrives as raw binary — no base64, no JSON wrapping (SPEC §terminal.api).
     far.say(
         "hello
 ",
@@ -516,7 +516,7 @@ async fn a_good_ticket_upgrades_and_bytes_flow_both_ways() {
         other => panic!("expected a resize, got {other:?}"),
     }
 
-    // An unknown control object is ignored, not fatal (docs/14 §8) — the next real
+    // An unknown control object is ignored, not fatal (SPEC §terminal.api) — the next real
     // frame still flows after the junk one.
     ws.send(Message::Text(r#"{"t":"ping"}"#.into()))
         .await
@@ -643,7 +643,7 @@ async fn a_reconnect_within_the_grace_picks_up_the_catch_up() {
         other => panic!("expected binary output, got {other:?}"),
     }
 
-    // The laptop lid: the socket dies, the session must not (docs/14 §6.7).
+    // The laptop lid: the socket dies, the session must not (SPEC §terminal.sessions).
     drop(ws);
     wait_detached(&rig, &id).await;
 

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The xterm.js type face the PANEL actually calls (docs/36 D7) - ambient globals so each
+/* The xterm.js type face the PANEL actually calls (SPEC §panel.toolchain) - ambient globals so each
    vendored shim's index.d.ts stays a one-liner, exactly like the shims themselves. Only
    members the panel touches are declared: this is a mirror of js/vendor/..., the upstream
    @xterm/xterm types stay out of the tree. Add a member here the day the panel first

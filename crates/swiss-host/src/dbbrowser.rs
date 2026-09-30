@@ -96,7 +96,7 @@ pub fn like_contains(filter: &str) -> String {
 /// hundred-term WHERE either.
 pub const BROWSE_GREP_MAX: usize = 32;
 
-/// One side of the sidebar grep grammar (docs/22 W1.6): comma-separated terms AND together,
+/// One side of the sidebar grep grammar (SPEC §data.browse): comma-separated terms AND together,
 /// "|" inside a term is OR, "*" is a wildcard, everything case-insensitive (ILIKE on Postgres,
 /// MySQL's default _ci collation). The panel's pure `dbFilterMatches` speaks the same language
 /// client-side. Returns one list of LIKE patterns per AND-term — each escaped and %wrapped as
@@ -253,7 +253,7 @@ pub const IMPORT_ROW_CAP: usize = 10_000;
 pub const EXPORT_ROW_CAP: i64 = 100_000;
 /// Rows fetched per chunk while paging through an export.
 pub const EXPORT_CHUNK: i64 = 5_000;
-/// The flush threshold of a streaming SQL dump (docs/22 W4.4) — adminer's max_packet number
+/// The flush threshold of a streaming SQL dump (SPEC §data.export) — adminer's max_packet number
 /// (`adminer.inc.php:982`): rows accumulate into one multi-value INSERT until the statement
 /// would cross this size, then the statement ships whole and a fresh one opens. A single row
 /// larger than the threshold is never split — it ships alone, exactly as adminer let it.
@@ -481,7 +481,7 @@ pub struct ExportResult {
 /// honest behavior of a body whose headers were already sent.
 pub type DumpPiece = Result<Vec<u8>, String>;
 
-/// The streaming form of format=sql (docs/22 W4.4): response-header facts up front — rows and
+/// The streaming form of format=sql (SPEC §data.export): response-header facts up front — rows and
 /// capped come from a COUNT over the same WHERE the grid, the CSV and the NDJSON exports use —
 /// and the body arriving as pieces on a bounded channel. The producer holds one chunk of
 /// source rows and one statement under construction, never the table: a dump of any capped
@@ -509,7 +509,7 @@ pub enum BrowseEdit {
     Update {
         pk: Map<String, Value>,
         changes: Map<String, Value>,
-        /// docs/22 W4.2: the row's original values, against which every CHANGED column is
+        /// SPEC §data.edits: the row's original values, against which every CHANGED column is
         /// compared in the WHERE (the optimistic lock — cloudbeaver sends the same shape in
         /// ResultSetEditAction.ts:112-127). The panel instead packs the whole row into pk;
         /// either map feeds the lock, whichever carries the column.
@@ -533,7 +533,7 @@ impl BrowseEdit {
     }
 }
 
-/// docs/22 W4.2: the CHANGED columns an update compares against the buffered originals —
+/// SPEC §data.edits: the CHANGED columns an update compares against the buffered originals —
 /// the optimistic lock's column list, which is also the 409 body's answer. Empty when the
 /// edit carries no originals to compare with (a pk-only update keeps today's semantics:
 /// zero affected rows stays a quiet result, not a conflict — the request never claimed to
@@ -563,7 +563,7 @@ pub fn optimistic_lock_columns(primary_key: &[String], edit: &BrowseEdit) -> Vec
     }
 }
 
-/// A lost optimistic-lock race (docs/22 W4.2): another writer moved the row between the
+/// A lost optimistic-lock race (SPEC §data.edits): another writer moved the row between the
 /// read and the commit. The columns are the ones whose buffered originals no longer match,
 /// so the panel can paint exactly those cells red; an empty list means the mismatch sat in
 /// the addressing itself (the row exists but nothing we meant to change differs).
@@ -714,7 +714,7 @@ pub trait DbBrowser: Send + Sync {
     /// Columns, indexes, foreign keys and DDL for one table — the Structure tabs.
     async fn describe_table(&self, o: &Value) -> Result<Value, String>;
     /// Apply a buffered edit list in ONE transaction: all of it, or none of it. The
-    /// error says whose fault it is (docs/22 W4.2): Bad is the caller's request, Conflict
+    /// error says whose fault it is (SPEC §data.edits): Bad is the caller's request, Conflict
     /// is another writer having moved a row the buffer claimed to still see.
     async fn apply_edits(&self, o: &Value) -> Result<Value, EditError>;
     /// The SQL console: one statement per run, reads and writes alike — this console belongs
@@ -722,8 +722,8 @@ pub trait DbBrowser: Send + Sync {
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String>;
     /// Stream a whole table (capped at EXPORT_ROW_CAP) out as CSV or newline JSON.
     async fn export_table(&self, o: &Value) -> Result<Value, String>;
-    /// Stream the same table out as a SQL dump — the format=sql arm of the export (docs/22
-    /// W4.4): the CREATE TABLE head (the same DDL path describe_table uses), then the rows as
+    /// Stream the same table out as a SQL dump — the format=sql arm of the export (SPEC §data.export):
+    /// the CREATE TABLE head (the same DDL path describe_table uses), then the rows as
     /// ~1 MB multi-value INSERTs. The head facts come back before the first byte ships; the
     /// body arrives as channel pieces so the dump never materializes whole.
     async fn export_sql_dump(&self, o: &Value) -> Result<SqlDump, String>;
@@ -732,18 +732,18 @@ pub trait DbBrowser: Send + Sync {
     async fn import_table(&self, o: &Value) -> Result<Value, String>;
     /// Rename / truncate / drop a table.
     async fn ddl_op(&self, o: &Value) -> Result<Value, String>;
-    /// Live sessions on this connection's server (docs/22 W3.2) — the Activity page, polled
+    /// Live sessions on this connection's server (SPEC §data.activity) — the Activity page, polled
     /// while open. Rows speak the shared shape {pid, user, state, wait, seconds, query, own,
     /// blockedBy?} so one panel table fits both dialects.
     async fn activity(&self) -> Result<Value, String>;
     /// Cancel (mode "cancel") or terminate one session by pid. The route validated the mode;
     /// the browser still refuses a pid that cannot name a session.
     async fn activity_kill(&self, pid: i64, terminate: bool) -> Result<Value, String>;
-    /// Server-side SQL completion (docs/22 W3.1): candidates for the word ending at the
+    /// Server-side SQL completion (SPEC §data.completion): candidates for the word ending at the
     /// caret — dialect keywords + table names + the FROM-nearest table's columns. `caret` is
     /// a byte offset into `sql`.
     async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String>;
-    /// The database axis of this connection (docs/43 M3): the configured primary, the
+    /// The database axis of this connection (SPEC §data.databases): the configured primary, the
     /// database the pool actually sits on, and every other database the instance will name,
     /// each entry honestly marking whether it is browsable on THIS connection and why not.
     /// The DEFAULT is the empty catalog — a dialect with no database axis (and every test
@@ -762,31 +762,31 @@ pub trait RedisBrowser: Send + Sync {
     /// Run ONE command from the console: reads AND writes (SET, DEL, EXPIRE…). The adapter's
     /// own command guard still refuses what would break the shared connection or the server.
     async fn run_command(&self, line: &str) -> Result<Value, String>;
-    /// Run a buffered structured-edit batch as ONE pipelined round trip (docs/22 W3.3). Every
+    /// Run a buffered structured-edit batch as ONE pipelined round trip (SPEC §data.redis). Every
     /// command passes the SAME guard the one-command console applies — checked per command,
     /// before the socket is touched — and the first refusal rejects the whole batch, so a
     /// buffered edit never half-applies. No MULTI: the panel's edits are field-addressed and
     /// safe to re-run, and a plain pipeline keeps every reply individual and honest.
     async fn run_pipeline(&self, commands: &[Vec<String>]) -> Result<Value, String>;
-    /// The redis twin of DbBrowser::list_databases (docs/43 M3): INFO keyspace names every
+    /// The redis twin of DbBrowser::list_databases (SPEC §data.databases): INFO keyspace names every
     /// dbN with its key count, CLIENT INFO says which one this connection sits on. The
     /// default (empty catalog) serves every stub and any future flavor that has no axis.
     async fn list_databases(&self) -> Result<Value, String> {
         Ok(json!({ "primary": null, "current": null, "databases": [] }))
     }
-    /// docs/45 §2.1: a newest-first window of one stream key — the opening page,
+    /// SPEC §data.streams: a newest-first window of one stream key — the opening page,
     /// the page strictly older than a cursor (“load earlier”), or the page strictly
     /// newer than one (the Follow tick). `o` is { before?: id, after?: id, count?: n,
-    /// match?: line } — the filter is docs/49's, a bounded backward walk because redis
+    /// match?: line } — the filter is SPEC §data.streams's, a bounded backward walk because redis
     /// indexes nothing inside an entry — validated by [`redis_stream_opts`]. Defaulted exactly like list_databases above
-    /// (docs/43 M3): the capability is redis-only, and a defaulted method means every
+    /// (SPEC §data.databases): the capability is redis-only, and a defaulted method means every
     /// stub and any future flavor keeps compiling and answering an honest “not
     /// supported” instead of the host growing a match arm per capability.
     async fn read_stream(&self, key: &str, o: &Value) -> Result<Value, String> {
         let _ = (key, o);
         Err("stream windows are not supported by this connection".into())
     }
-    /// docs/45 §2.4: XINFO GROUPS for one stream key, read-only — name /
+    /// SPEC §data.streams: XINFO GROUPS for one stream key, read-only — name /
     /// consumers / pending / lag / last-delivered-id. Same defaulting rationale:
     /// the only implementation is redis, and no other flavor should be forced to
     /// say so.
@@ -794,7 +794,7 @@ pub trait RedisBrowser: Send + Sync {
         let _ = key;
         Err("stream groups are not supported by this connection".into())
     }
-    /// docs/50: the command catalog of the server this connection speaks to — COMMAND DOCS
+    /// SPEC §data.redis-console: the command catalog of the server this connection speaks to — COMMAND DOCS
     /// plus COMMAND INFO, merged. The console's completion is built from it rather than from
     /// a table in the panel, so it knows exactly the commands (and modules, and versions)
     /// that are actually there. Defaulted like the two above.
@@ -803,7 +803,7 @@ pub trait RedisBrowser: Send + Sync {
     }
 }
 
-/// The three window shapes one XREVRANGE serves (docs/45 §2.1). `Newest` is the
+/// The three window shapes one XREVRANGE serves (SPEC §data.streams). `Newest` is the
 /// opening page; `Before` pages strictly older than a cursor (“load earlier”);
 /// `After` catches up strictly newer than one (the Follow tick). The exclusive
 /// bounds need redis >= 6.2 — older servers answer “ERR syntax”, which passes
@@ -815,14 +815,14 @@ pub enum StreamBound {
     After(String),
 }
 
-/// Default and ceiling of a stream window's `count` (docs/45 D1): 100 is a
+/// Default and ceiling of a stream window's `count` (SPEC §data.streams): 100 is a
 /// screenful, and 1000 matches `type_aware_read`'s existing cap — 1,000 entries
 /// × ~20 fields is roughly 200 KB of JSON, the line where one fetch stops being
 /// instant in a browser.
 pub const STREAM_WINDOW_DEFAULT: i64 = 100;
 pub const STREAM_WINDOW_MAX: i64 = 1000;
 
-/// docs/45 §2.1: clamp of the `count` option. Absent means the default (100);
+/// SPEC §data.streams: clamp of the `count` option. Absent means the default (100);
 /// anything above the ceiling clamps DOWN; but zero, negatives and non-numeric
 /// values are the caller's mistake and refuse — a silent default would page
 /// somewhere the caller never asked. Numeric strings count (the panel sends
@@ -844,7 +844,7 @@ pub fn clamp_count(v: Option<&Value>) -> Result<i64, String> {
     Ok(n.min(STREAM_WINDOW_MAX))
 }
 
-/// One term of a stream filter (docs/49 §2.1). `symbol=NVDA` is an exact field
+/// One term of a stream filter (SPEC §data.streams). `symbol=NVDA` is an exact field
 /// match, `data~"last": 1` is a substring of ONE field, and a bare word is a
 /// substring of anything the row carries — its id or any of its values. Case is
 /// ignored on the value side of all three: a feed writes `NVDA`, an operator
@@ -858,7 +858,7 @@ pub enum StreamTerm {
     Text(String),
 }
 
-/// A parsed stream filter (docs/49 §2.1): every term must match, so
+/// A parsed stream filter (SPEC §data.streams): every term must match, so
 /// `symbol=NVDA seq~99` narrows twice. AND and not OR because narrowing is what
 /// a reader of a fast feed is doing — 90 entries a second is already the OR of
 /// everything, and the one move that helps is taking things away.
@@ -936,7 +936,7 @@ pub fn split_words(line: &str) -> Option<Vec<String>> {
         .collect()
 }
 
-/// docs/49 §2.1: the `match` option into a filter. Splitting is shlex's job, not
+/// SPEC §data.streams: the `match` option into a filter. Splitting is shlex's job, not
 /// a hand-rolled whitespace split — `data~"last": 12` is one term with a space
 /// in it, and the redis console already learned this lesson the hard way
 /// (2026-09-28). An unbalanced quote is the caller's mistake and says so; an
@@ -979,7 +979,7 @@ pub fn parse_stream_filter(line: &str) -> Result<Option<StreamFilter>, String> {
     Ok(Some(StreamFilter { terms }))
 }
 
-/// How far back a filtered window may walk (docs/49 §2.2). Redis has no index
+/// How far back a filtered window may walk (SPEC §data.streams). Redis has no index
 /// over a stream's fields: the only honest answer to “show me NVDA” is to read
 /// entries backwards and keep the ones that match, so the walk is bounded and
 /// the answer REPORTS its bound — `scanned` entries examined, `scannedTo` the
@@ -989,15 +989,15 @@ pub fn parse_stream_filter(line: &str) -> Result<Option<StreamFilter>, String> {
 pub const STREAM_SCAN_PAGE: i64 = 500;
 pub const STREAM_SCAN_BUDGET: i64 = 20_000;
 
-/// One validated stream request (docs/45 §2.1, docs/49 §2.2): which window, how
-/// many entries, and — since docs/49 — what to keep.
+/// One validated stream request (SPEC §data.streams): which window, how
+/// many entries, and — since SPEC §data.streams — what to keep.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamQuery {
     pub bound: StreamBound,
     pub count: i64,
     pub filter: Option<StreamFilter>,
 }
-/// docs/45 §2.1: one option object into one bound + count. This is the single
+/// SPEC §data.streams: one option object into one bound + count. This is the single
 /// validation both the route (whose stub tests pin the 400s without a redis) and
 /// the real browser impl run — trait callers cannot bypass it and the rule
 /// cannot drift between transport and model. `before` and `after` together are
@@ -1040,7 +1040,7 @@ pub fn redis_stream_opts(o: &Value) -> Result<StreamQuery, String> {
         filter,
     })
 }
-/// Cap on one buffered redis commit (docs/22 W3.3): one pipeline is one bounded round trip,
+/// Cap on one buffered redis commit (SPEC §data.redis): one pipeline is one bounded round trip,
 /// the redis twin of the edit route's MAX_EDITS.
 pub const REDIS_PIPELINE_MAX: usize = 1000;
 
@@ -1419,7 +1419,7 @@ pub fn build_filter_where(
                 };
                 let dtype = type_of.get(f.column.as_str()).copied().flatten();
                 let subject = like_subject(dialect, &f.column, dtype)?;
-                // A "*" in the value is the user's own wildcard (docs/22 W1.6): same escaping
+                // A "*" in the value is the user's own wildcard (SPEC §data.browse): same escaping
                 // as like_contains, * translated to %, still wrapped as a substring — a value
                 // without * keeps the exact pattern the operator always built.
                 let pattern = if text.contains('*') {
@@ -1467,7 +1467,7 @@ pub fn build_filter_where(
                 );
                 parts.push(format!("{col} {sql_op} {typed}"));
             }
-            // docs/22 W1.2: IN/NOT IN bind a comma-separated list, BETWEEN the closed interval
+            // SPEC §data.browse: IN/NOT IN bind a comma-separated list, BETWEEN the closed interval
             // lo,hi. Every item is its own bound parameter carrying the same typed placeholder a
             // comparison gets, so a list over a bigint column on Postgres does not hit the 42883
             // a bare text bind would.
@@ -1536,7 +1536,7 @@ pub fn browse_filters_of(v: Option<&Value>) -> Vec<BrowseFilter> {
 }
 
 /// The grid-filter WHERE behind rows, export and COUNT — ONE assembly point for the three
-/// (docs/22 W0.2), so the filter applied to a page is by construction the filter applied to
+/// (SPEC §data.export), so the filter applied to a page is by construction the filter applied to
 /// the download that claims to export it. Values stay bound parameters and identifier vetting
 /// stays inside build_filter_where, next to the SQL it guards.
 pub fn browse_where(
@@ -1601,7 +1601,7 @@ fn castable_data_type(data_type: Option<&str>) -> Option<&str> {
     })
 }
 
-// --- exact-precision serialization (docs/22 W2.4) ------------------------------------------------
+// --- exact-precision serialization (SPEC §data.browse) ------------------------------------------------
 
 /// An i64 cell as an exact JSON string. The panel is JavaScript: JSON.parse turns any number
 /// beyond +/-2^53 into the nearest double and silently rounds the low digits away
@@ -1647,8 +1647,8 @@ fn typed_ph(dialect: DbDialect, params: &[Value], data_type: Option<&str>) -> St
         // MySQL coerces string binds against the column itself - except JSON: a string
         // bound next to a JSON column compares as TEXT (server-verified on 8.4: zero
         // matches), so filters and keyless row addresses over a JSON column never hit.
-        // CASTing the placeholder restores the comparison. Found live by the docs/44
-        // L1 suite; only the comparison placeholder changes, never the SET clause.
+        // CASTing the placeholder restores the comparison. Found live by the L1 suite
+        // (SPEC §testing.it); only the comparison placeholder changes, never the SET clause.
         let json_compare = data_type.is_some_and(|t| t.eq_ignore_ascii_case("json"));
         return if json_compare {
             format!("CAST({base} AS JSON)")
@@ -1662,7 +1662,7 @@ fn typed_ph(dialect: DbDialect, params: &[Value], data_type: Option<&str>) -> St
     }
 }
 
-// --- addressing a row without a key (docs/22 W4.1) ------------------------------------------------
+// --- addressing a row without a key (SPEC §data.edits) ------------------------------------------------
 
 /// The length past which a text or binary value addresses its row through md5() instead of
 /// itself. Adminer's own line (select.inc.php:458 — there "the value is too long for the
@@ -1724,7 +1724,7 @@ pub fn md5_hex(input: &[u8]) -> String {
 }
 
 /// MD5 (RFC 1321), hand-rolled exactly the way swiss-panel's sha1 is: the digest only
-/// ADDRESSES rows here (docs/22 W4.1), it guards nothing, and a crypto crate pulled into
+/// ADDRESSES rows here (SPEC §data.edits), it guards nothing, and a crypto crate pulled into
 /// the host for seventy lines of fixed arithmetic would be the heavier dependency, not the
 /// lighter one. md-5 already sits in the lock file behind sqlx, but reaching into another
 /// crate's transitive pocket is not a dependency policy either. Verified against the RFC's
@@ -1840,7 +1840,7 @@ impl AddressGap {
     }
 }
 
-/// The every-column address of one row (docs/22 W4.1): `col = value` per table column,
+/// The every-column address of one row (SPEC §data.edits): `col = value` per table column,
 /// typed placeholders as everywhere else, md5(col) for long text/binary values. Values come
 /// from the row map the panel buffered (the pk map, which carries the whole original row on
 /// a keyless table). Appends the bound parameters in comparison order.
@@ -1889,7 +1889,7 @@ fn value_len(v: &Value) -> usize {
     }
 }
 
-/// The ambiguous-row refusal (docs/22 W4.1): Postgres has no UPDATE … LIMIT, so an
+/// The ambiguous-row refusal (SPEC §data.edits): Postgres has no UPDATE … LIMIT, so an
 /// every-column address matching more than one row fails the whole batch instead of
 /// quietly picking a winner. MySQL clips with LIMIT 1 and reports 1, so the check there
 /// never fires — kept dialect-blind because the verdict is the adapter's, not the builder's.
@@ -1904,7 +1904,7 @@ pub fn ambiguous_row_error(op: &str, affected: u64) -> String {
 /// dropped from SET/INSERT (a stale page may reference a dropped column); an edit that ends up
 /// with nothing to do is an error, because "commit 3 changes" that silently did 2 is a lie.
 ///
-/// docs/22 W1.9: the fetch-one-more paging probe. The adapter asks for `limit + 1` rows; a
+/// SPEC §data.browse: the fetch-one-more paging probe. The adapter asks for `limit + 1` rows; a
 /// full page plus a spare row means another page exists, and the spare is dropped before the
 /// reply. Cheaper and more truthful than offset arithmetic against a COUNT that concurrent
 /// writes may have already moved — the count stays in the reply for the "x–y of z" line only.
@@ -1919,7 +1919,7 @@ pub fn page_and_next(
     (rows, next)
 }
 
-/// How one edit's committed row comes home with the batch reply (docs/22 W1.7). The point is
+/// How one edit's committed row comes home with the batch reply (SPEC §data.edits). The point is
 /// showing what the SERVER kept — silent truncation, column DEFAULTs, trigger rewrites —
 /// instead of the value the panel sent. Three shapes:
 ///
@@ -1994,7 +1994,7 @@ pub fn readback_plan(
             changes,
             ..
         } if pk.is_empty() => {
-            // docs/22 W4.1: a keyless table reads its row back by the same every-column
+            // SPEC §data.edits: a keyless table reads its row back by the same every-column
             // address the update itself used — the read-back is the same truth, and twins
             // (identical on every column) come back identical, which is exactly the one
             // case where a LIMIT-less SELECT still tells it. A row the values cannot
@@ -2070,7 +2070,7 @@ pub fn readback_plan(
 /// with nothing to do is an error, because "commit 3 changes" that silently did 2 is a lie.
 ///
 /// The INSERT for one map of values — the shared body of the edit grid's insert arm and both
-/// import modes (docs/22 W4.5): the same known-column filter, the same placeholder typing, the
+/// import modes (SPEC §data.export): the same known-column filter, the same placeholder typing, the
 /// same column order (the map's own), so a row commits as the same statement wherever it came
 /// from. Returns the columns it mapped (an upsert tail addresses them), the SQL without any
 /// suffix, and the bound parameters in SQL order.
@@ -2110,7 +2110,7 @@ fn insert_half(
     ))
 }
 
-/// The import modes (docs/22 W4.5): insert keeps today's behavior; upsert turns every row's
+/// The import modes (SPEC §data.export): insert keeps today's behavior; upsert turns every row's
 /// INSERT into a conflict-aware statement so re-importing a file lands instead of key-clashing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportMode {
@@ -2137,7 +2137,7 @@ pub fn parse_import_mode(v: Option<&Value>) -> Result<ImportMode, String> {
     }
 }
 
-/// The conflict tail of an upsert import (docs/22 W4.5), adminer's insertUpdate per dialect
+/// The conflict tail of an upsert import (SPEC §data.export), adminer's insertUpdate per dialect
 /// (`drivers/mysql.inc.php:292`, `drivers/pgsql.inc.php:340`): MySQL maps every column the row
 /// carries (`col` = VALUES(col)) — a table without any unique key simply never conflicts;
 /// Postgres targets the table's primary key and updates the non-key columns from EXCLUDED,
@@ -2191,7 +2191,7 @@ pub fn upsert_suffix(
     }
 }
 
-/// Import rows → statements (docs/22 W4.5). Insert mode produces exactly the statements the
+/// Import rows → statements (SPEC §data.export). Insert mode produces exactly the statements the
 /// edit grid's insert arm builds, one per row, by construction. Upsert appends the conflict
 /// tail per row (the columns a row carries vary — empty CSV cells drop). A table that cannot
 /// upsert (Postgres without a primary key) comes back in INSERT form plus the note that says
@@ -2238,7 +2238,7 @@ pub fn build_import_statements(
 
 /// Updates and deletes address rows by the FULL primary key when there is one — the DBeaver
 /// default, so an edit can never fan out over more rows than the cell you changed — and by
-/// EVERY column when there is not (docs/22 W4.1, adminer's unique_idf): the row map then
+/// EVERY column when there is not (SPEC §data.edits, adminer's unique_idf): the row map then
 /// carries the whole original row, a NULL in any column makes the row unaddressable ("NULL
 /// is ambiguous"), text/binary values past EDIT_ADDR_MD5_MIN bytes compare through md5(),
 /// and MySQL clips the statement with LIMIT 1 while Postgres' affected-rows check in the
@@ -2275,7 +2275,7 @@ pub fn build_edit_statements(
                 }
                 Ok(where_sql.join(" AND "))
             };
-        // The every-column twin of pk_where (docs/22 W4.1): the trailing LIMIT 1 MySQL alone
+        // The every-column twin of pk_where (SPEC §data.edits): the trailing LIMIT 1 MySQL alone
         // accepts — Postgres' ambiguity guard is the affected-rows check in the adapter.
         let row_where =
             |pk: &Map<String, Value>, params: &mut Vec<Value>| -> Result<String, String> {
@@ -2359,7 +2359,7 @@ pub fn build_edit_statements(
                     // merge on their own): the row the panel buffered is the row asked for.
                     row_where(pk, &mut params)?
                 } else {
-                    // docs/22 W4.2: the optimistic lock — every CHANGED column whose
+                    // SPEC §data.edits: the optimistic lock — every CHANGED column whose
                     // original the row map carries is compared in the WHERE, so a row that
                     // moved underneath matches zero rows instead of silently overwriting.
                     // Only columns the map actually carries are compared: a pk-only payload
@@ -2530,7 +2530,7 @@ pub fn build_pg_ddl(
         ));
     }
     // Lines join with their own commas — the last one must not carry one into the closing
-    // paren, or the sketch (and any SQL dump that replays it, docs/22 W4.4) is invalid SQL.
+    // paren, or the sketch (and any SQL dump that replays it, SPEC §data.export) is invalid SQL.
     let body = if lines.is_empty() {
         String::new()
     } else {
@@ -2602,7 +2602,7 @@ pub fn build_ddl_op_sql(
 
 // --- the W4.6 minimal DDL set -----------------------------------------------------------------------
 //
-// Exactly three operations: CREATE TABLE, ADD COLUMN, CREATE INDEX (docs/22 W4.6; the visual
+// Exactly three operations: CREATE TABLE, ADD COLUMN, CREATE INDEX (SPEC §data.ddl; the visual
 // designer stays out on purpose, §9). One builder serves BOTH the panel's live preview
 // (POST /api/db/:name/ddl-preview) and the commit (POST /api/db/:name/ddl) — pgAdmin's msql
 // flow: preview and save share one SQL producer, so what the sheet showed is byte-for-byte
@@ -2957,19 +2957,17 @@ pub fn ddl_script(statements: &[String]) -> String {
         .join("\n")
 }
 
-// --- the read-only console -----------------------------------------------------------------------
+// --- the SQL console ----------------------------------------------------------------------------
 
 /// Prefix a statement with EXPLAIN for the console's plan view — idempotent, so a query that
 /// already explains itself is not double-prefixed. The statement keeps its single trailing
 /// terminator stripped (EXPLAIN accepts one statement, not one plus a dangling ";").
 ///
-/// Both dialects spell it the same way. Read-only-ness still gates the WHOLE statement inside
-/// run_query: EXPLAIN of an INSERT is refused there by the write-keyword scan, and EXPLAIN ANALYZE
-/// of a SELECT is allowed (it executes the select — reads only).
+/// Both dialects spell it the same way.
 ///
 /// Not on any production path: the console's plan view gets its prefix from the panel twin
 /// (panel/src/data-sql.ts, dbWithExplain); this copy anchors the semantics and the tests
-/// (with_explain_prefixes_once_and_strips_the_terminator) — kept deliberately (fix-plan #23).
+/// (with_explain_prefixes_once_and_strips_the_terminator) — kept deliberately (SPEC §arch.exceptions).
 pub fn with_explain(sql: &str) -> String {
     // .replace(/\s+$/, "").replace(/;\s*$/, "").replace(/\s+$/, "") — one trailing terminator,
     // then whitespace gone again.
@@ -3129,7 +3127,7 @@ pub fn csv_escape(v: Option<&Value>) -> String {
     out
 }
 
-/// One SQL literal for a DUMP BODY — the dump is EXECUTED on replay (docs/22 W4.4), so the
+/// One SQL literal for a DUMP BODY — the dump is EXECUTED on replay (SPEC §data.export), so the
 /// escaping has to hold as real SQL, not just as display. The clipboard's sql_literal only
 /// doubles quotes and must never be used here: a trailing backslash in a MySQL value swallowed
 /// the closing quote and let an ordinary string break (or inject into) the replay — an audit
@@ -3250,7 +3248,7 @@ pub fn to_insert_statement(
     ))
 }
 
-// --- streaming SQL dump (docs/22 W4.4) ------------------------------------------------------------
+// --- streaming SQL dump (SPEC §data.export) ------------------------------------------------------------
 
 /// Accumulates multi-value INSERT rows for a streaming SQL dump, adminer's dumpData shape
 /// (`adminer.inc.php:1007-1070`): one `INSERT INTO … VALUES` prefix, each row appended behind
@@ -3321,7 +3319,7 @@ impl SqlInsertBatch {
     }
 }
 
-/// The preamble of a streaming SQL dump (docs/22 W4.4): a provenance comment, the dialect's
+/// The preamble of a streaming SQL dump (SPEC §data.export): a provenance comment, the dialect's
 /// foreign-key stance, and the CREATE TABLE from the same DDL path the Structure tab uses.
 /// MySQL's `SET FOREIGN_KEY_CHECKS=0` lets the replay session load rows before any referenced
 /// table exists (the footer restores it); Postgres has no session switch, so a comment states
@@ -3359,7 +3357,7 @@ pub fn sql_dump_foot(dialect: DbDialect) -> &'static str {
     }
 }
 
-// --- activity monitoring (docs/22 W3.2) -----------------------------------------------------------
+// --- activity monitoring (SPEC §data.activity) -----------------------------------------------------------
 
 /// The sessions query for the Activity page. Postgres reads pg_stat_activity with
 /// pgadmin's dashboard columns — the wait_event pair, pg_blocking_pids flattened to a comma
@@ -3410,12 +3408,12 @@ pub fn activity_kill_sql(dialect: DbDialect, pid: i64, terminate: bool) -> Resul
 
 /// One Activity row, typed the way the panel computes on it. Both browsers answer
 /// `activity()` through their grid `query()` path, whose cell renderer stringifies every
-/// BIGINT on purpose (docs/22 W2.4, `exact_int64`: a JS number cannot hold one). Right for a
+/// BIGINT on purpose (SPEC §data.browse, `exact_int64`: a JS number cannot hold one). Right for a
 /// data grid; wrong for the three columns here that the panel does not merely display:
 /// `pid` goes back into the kill route's `as_i64` (a `"88"` is a 400), `seconds` into a
 /// duration, and `own` — MySQL's `(ID = CONNECTION_ID())` is an integer 0/1, so it arrived as
 /// `"0"`/`"1"` — into an `if`, where `"0"` is truthy and marked EVERY mysql row "this panel"
-/// (docs/37 §11 D11, 2026-09-20). The three are typed here, once, for both dialects; a cell
+/// (SPEC §panel.toolchain, 2026-09-20). The three are typed here, once, for both dialects; a cell
 /// that is not a number/boolean spelling is left as it came, so an oddity shows rather than
 /// vanishes. The display columns pass through untouched.
 pub fn activity_row(mut row: Map<String, Value>) -> Map<String, Value> {
@@ -3454,7 +3452,7 @@ fn wire_bool(v: &Value) -> Option<bool> {
     }
 }
 
-// --- SQL completion (docs/22 W3.1) ------------------------------------------------------------------
+// --- SQL completion (SPEC §data.completion) ------------------------------------------------------------------
 
 /// How long a completion cache entry stays fresh. Ten minutes: long enough that typing a
 /// query does not re-walk the catalog per keystroke, short enough that a table created in
@@ -3904,7 +3902,7 @@ pub fn sql_touches_schema(sql: &str) -> bool {
     )
 }
 
-/// Per-connection completion cache (docs/22 W3.1): table names and column lists fetched
+/// Per-connection completion cache (SPEC §data.completion): table names and column lists fetched
 /// lazily on first use, served for COMPLETION_TTL, dropped whole the moment DDL runs. The
 /// column half is byte-budgeted; past the budget the cache serves keywords + tables only
 /// rather than memorising a schema nobody navigates by typing.
@@ -4024,7 +4022,7 @@ mod tests {
 
     #[test]
     fn stream_count_clamps_and_refuses() {
-        // docs/45 §2.1: absent -> the 100-entry screenful; over the ceiling clamps
+        // SPEC §data.streams: absent -> the 100-entry screenful; over the ceiling clamps
         // down; zero / negative / non-numeric are the caller's mistake, not a default.
         assert_eq!(clamp_count(None).unwrap(), 100);
         assert_eq!(clamp_count(Some(&json!(1000))).unwrap(), 1000);
@@ -4038,7 +4036,7 @@ mod tests {
 
     #[test]
 fn stream_opts_pick_one_direction() {
-    // docs/45 §2.1: before and after page in opposite directions — both at
+    // SPEC §data.streams: before and after page in opposite directions — both at
     // once is refused rather than silently resolved; neither is the opening page.
     let q = |v: Value| redis_stream_opts(&v).unwrap();
     assert_eq!(q(json!({})).bound, StreamBound::Newest);
@@ -4055,7 +4053,7 @@ fn stream_opts_pick_one_direction() {
     assert!(redis_stream_opts(&json!({ "before": 7 }))
         .unwrap_err()
         .contains("entry id"));
-    // docs/49 §2.1: the filter rides the same option object, and a filter that
+    // SPEC §data.streams: the filter rides the same option object, and a filter that
     // is not a line at all is the caller's mistake — not a silently dropped one.
     assert_eq!(
         q(json!({ "match": "symbol=NVDA" })).filter,
@@ -4073,7 +4071,7 @@ fn stream_opts_pick_one_direction() {
 
 #[test]
 fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
-    // docs/49 §2.1: three forms — exact field, field substring, and a bare word
+    // SPEC §data.streams: three forms — exact field, field substring, and a bare word
     // that looks everywhere. Quoting is shlex's, so a term may carry spaces, and
     // an unbalanced quote is refused instead of being split down the middle.
     let f = parse_stream_filter("symbol=NVDA").unwrap().unwrap();
@@ -4123,7 +4121,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 }
     #[test]
     fn a_filter_keeps_the_rows_that_match_every_term() {
-        // docs/49 §2.1: AND across terms, case ignored on the value side, and a row
+        // SPEC §data.streams: AND across terms, case ignored on the value side, and a row
         // missing the field never matches a term about it (rather than matching the
         // empty string). The bare word looks at the id too — that is how an operator
         // pastes an entry id from a log back into the filter box.
@@ -4149,7 +4147,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[tokio::test]
     async fn stream_trait_defaults_refuse_honestly() {
-        // docs/43 M3's list_databases precedent, held for docs/45: a flavor that
+        // SPEC §data.databases's list_databases precedent, held for SPEC §data.streams: a flavor that
         // never heard of streams must keep compiling and answer “not supported”,
         // never a panic and never a silent empty window.
         struct Bare;
@@ -4427,7 +4425,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn grep_patterns_parse_the_grammar_and_keep_plain_substrings_alone() {
-        // docs/22 W1.6: comma terms AND, | OR, * wildcard. A grep without any of the three
+        // SPEC §data.browse: comma terms AND, | OR, * wildcard. A grep without any of the three
         // grammar characters is the substring the list always matched — None, so the caller's
         // single-LIKE SQL stays byte-for-byte what it was.
         assert!(grep_patterns("").unwrap().is_none());
@@ -4481,7 +4479,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn a_star_in_a_contains_value_is_a_like_wildcard() {
-        // docs/22 W1.6: inside a contains-filter value, * means "any run" — translated to LIKE's
+        // SPEC §data.browse: inside a contains-filter value, * means "any run" — translated to LIKE's
         // own % after the metacharacters are escaped, so the operator still matches as a
         // substring but a value's own wildcards shape it.
         let out = build_filter_where(
@@ -4504,7 +4502,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn page_and_next_truncates_the_probe_row() {
-        // docs/22 W1.9: limit+1 fetched, the spare row reported as nextPage and dropped.
+        // SPEC §data.browse: limit+1 fetched, the spare row reported as nextPage and dropped.
         let row = || -> Map<String, Value> {
             [("id", 1)]
                 .iter()
@@ -4524,7 +4522,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn readback_plan_addresses_every_committed_row() {
-        // docs/22 W1.7: the commit reply carries what the SERVER kept, not what was sent.
+        // SPEC §data.edits: the commit reply carries what the SERVER kept, not what was sent.
         let vmap = |pairs: &[(&str, i64)]| -> Map<String, Value> {
             pairs
                 .iter()
@@ -4606,7 +4604,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn int64_precision_survives_the_json_boundary_as_a_string() {
-        // docs/22 W2.4: the panel is JavaScript; a JSON number beyond +/-2^53 is parsed by
+        // SPEC §data.browse: the panel is JavaScript; a JSON number beyond +/-2^53 is parsed by
         // JSON.parse into the nearest double, silently rounding the low digits away
         // (9223372036854775807 becomes 9223372036854776000). serde_json keeps the digits,
         // but the value only stays exact if it crosses the wire as a STRING — which is what
@@ -4638,7 +4636,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn export_carries_the_exact_digits_verbatim() {
-        // docs/22 W2.4: rows/query/export all receive the SAME stringified cell, so the
+        // SPEC §data.browse: rows/query/export all receive the SAME stringified cell, so the
         // digits a bigint column holds are what every surface shows — CSV quotes it (it is
         // a string cell), NDJSON re-quotes it as a JSON string, and neither re-parses it
         // through a number.
@@ -4657,7 +4655,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn in_not_in_and_between_bind_every_value() {
-        // docs/22 W1.2: IN/NOT IN split the value on commas and bind each item; BETWEEN takes
+        // SPEC §data.browse: IN/NOT IN split the value on commas and bind each item; BETWEEN takes
         // exactly lo,hi (the closed interval). Values stay bound parameters with the same typed
         // placeholder a comparison gets — never inlined into the SQL.
         let cols = vec![FilterColumn::Column(col("id", "bigint", false, true))];
@@ -4762,7 +4760,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn browse_where_is_the_one_assembly_rows_and_export_share() {
-        // docs/22 W0.2: rows, COUNT and export all build their WHERE through browse_where, so
+        // SPEC §data.export: rows, COUNT and export all build their WHERE through browse_where, so
         // the download and the grid can never disagree — and an export with filters carries
         // the same bound values the page did (never inlined into the SQL).
         let columns = vec![
@@ -4948,7 +4946,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
     #[test]
     fn edit_statements_refuse_unaddressable_rows() {
         let cols = stub_columns();
-        // docs/22 W4.1: a table with no primary key is no longer refused outright — its rows
+        // SPEC §data.edits: a table with no primary key is no longer refused outright — its rows
         // are addressed by every column — but the row map still has to carry those values.
         // An empty map names the first missing column instead of the old blanket refusal.
         let err = build_edit_statements(
@@ -5106,7 +5104,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn no_pk_edits_address_every_column() {
-        // docs/22 W4.1 (adminer select.inc.php:440-472): without a primary key a row is
+        // SPEC §data.edits (adminer select.inc.php:440-472): without a primary key a row is
         // addressed by ALL its columns — the panel carries the buffered row's original
         // values in the pk map, so the same map that holds key values on a keyed table
         // holds the whole row here. MySQL clips the statement with LIMIT 1; Postgres has
@@ -5230,7 +5228,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn update_source_compares_each_changed_columns_original() {
-        // docs/22 W4.2 (cloudbeaver ResultSetEditAction.ts:112-127): an update that carries
+        // SPEC §data.edits (cloudbeaver ResultSetEditAction.ts:112-127): an update that carries
         // its row's original values — the source field, or the pk map holding the whole row,
         // which is what the panel posts — compares every CHANGED column against that
         // original in the WHERE. Zero affected rows means another writer moved the row
@@ -5299,7 +5297,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn optimistic_lock_columns_follow_the_carried_originals() {
-        // docs/22 W4.2: what rides the optimistic lock. A keyed update that carries the
+        // SPEC §data.edits: what rides the optimistic lock. A keyed update that carries the
         // row compares every changed non-key column; the bare pk-only payload an API
         // caller might post compares nothing (old semantics, byte-identical SQL); a
         // keyless update compares all changed columns through its every-column address.
@@ -5356,7 +5354,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn no_pk_readback_selects_by_the_same_all_column_address() {
-        // docs/22 W4.1: the W1.7 read-back shares the update's addressing, so a no-PK row
+        // SPEC §data.edits: the W1.7 read-back shares the update's addressing, so a no-PK row
         // reads back by the same every-column WHERE — twins come back identical, which is
         // the one case where LIMIT-less SELECT still tells the truth. A row whose values
         // cannot address anything (a NULL among them) reads nothing back rather than
@@ -5525,7 +5523,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
         assert!(ddl.contains("\"note\" text"));
         assert!(ddl.contains("PRIMARY KEY (\"id\")"));
         assert!(ddl.contains("FOREIGN KEY (\"id\") REFERENCES \"public\".\"users\" (\"id\")"));
-        // docs/22 W4.4 live-verify caught this once: a trailing comma after the last clause
+        // SPEC §data.export live-verify caught this once: a trailing comma after the last clause
         // made the sketch (and any SQL dump that replays it) invalid SQL. The tail must be
         // the clause, then the paren — never a comma between them.
         assert!(
@@ -5624,7 +5622,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
         assert!(err.contains("unknown structure operation"), "{err}");
     }
 
-    // --- docs/22 W4.6: the minimal DDL set (form -> one builder -> SQL; preview = commit) -------------
+    // --- SPEC §data.ddl: the minimal DDL set (form -> one builder -> SQL; preview = commit) -------------
 
     /// The W4.6 tests' plain column: name/type/nullability only.
     fn ddl_col(name: &str, type_: &str, nullable: bool) -> DdlColumn {
@@ -6058,7 +6056,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
         assert!(browse_edit_of(&json!({ "op": "explode" })).is_err());
     }
 
-    // --- streaming SQL dump (docs/22 W4.4) ------------------------------------------------------------
+    // --- streaming SQL dump (SPEC §data.export) ------------------------------------------------------------
 
     #[test]
     fn sql_dump_head_and_foot_snapshots() {
@@ -6145,7 +6143,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
         assert_eq!(batch.finish(), None);
     }
 
-    // --- import upsert (docs/22 W4.5) ----------------------------------------------------------------
+    // --- import upsert (SPEC §data.export) ----------------------------------------------------------------
 
     #[test]
     fn upsert_tails_match_adminer_per_dialect() {
@@ -6247,7 +6245,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
         );
     }
 
-    // --- dump literal escaping (docs/22 W4.4 audit blocker) ---------------------------------------
+    // --- dump literal escaping (SPEC §data.export) ---------------------------------------
 
     #[test]
     fn mysql_dump_literals_escape_everything_adminer_does() {
@@ -6353,7 +6351,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn a_redis_pipeline_body_parses_into_separate_string_args() {
-        // docs/22 W3.3: the panel's typed editors post [verb, arg...] arrays — a hash value
+        // SPEC §data.redis: the panel's typed editors post [verb, arg...] arrays — a hash value
         // with spaces is ONE argument, never re-split, because the pipeline binds args as-is.
         let cmds = redis_pipeline_commands(&json!({
             "commands": [["HSET", "h:1", "a field", "two words"], ["ZADD", "z", 9.75, "m"], ["LSET", "l", 0, "v"]]
@@ -6400,7 +6398,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn activity_sql_names_each_dialects_session_source() {
-        // docs/22 W3.2: Postgres reads pg_stat_activity with the blocking-pid expansion
+        // SPEC §data.activity: Postgres reads pg_stat_activity with the blocking-pid expansion
         // (pgadmin's dashboard shape); MySQL reads information_schema.processlist (adminer's).
         let pg = activity_sql(DbDialect::Pg);
         assert!(pg.contains("pg_stat_activity"), "{pg}");
@@ -6449,7 +6447,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
 
     #[test]
     fn activity_row_types_what_the_panel_computes_on_a_mysql_row() {
-        // docs/37 §11 D11 (2026-09-20): through the grid's BIGINT-as-text path mysql delivered
+        // SPEC §panel.toolchain (2026-09-20): through the grid's BIGINT-as-text path mysql delivered
         // pid "88", seconds "12" and own "0" - and "0" is truthy in the panel, which marked
         // every row "this panel" and would have sent the kill route a pid it refuses.
         let row = activity_row(row_of(json!({
@@ -6495,7 +6493,7 @@ fn a_filter_line_splits_into_terms_the_way_a_shell_would() {
         assert_eq!(row["own"], json!("maybe"));
     }
 
-    // --- docs/22 W3.1: server-side completion -------------------------------------------------
+    // --- SPEC §data.completion: server-side completion -------------------------------------------------
 
     fn items_of(
         dialect: DbDialect,

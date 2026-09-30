@@ -53,7 +53,7 @@ let active: { id: string; module: PageModule; controller: AbortController } | nu
 let sequence = 0;
 let boot: Promise<void> | null = null;
 let polling = false;
-/* The one tab-strip width watcher (docs/39 S3): re-created never, re-pointed every repaint. */
+/* The one tab-strip width watcher (SPEC §panel.nav): re-created never, re-pointed every repaint. */
 let tabsObserver: ResizeObserver | null = null;
 
 function pluginInventory(): ApiPluginsResponse | null { return inventory; }
@@ -66,7 +66,7 @@ function unavailable(page: PageDescriptor): ApiPluginRow | null {
   return plugin && (plugin.enabled === false || ["disabled", "failed", "waitingDependency", "not-built"].includes(plugin.state)) ? plugin : null;
 }
 
-/* --- layouts (docs/13 D5, as revised) -------------------------------------------------------------
+/* --- layouts (SPEC §panel.nav, as revised) -------------------------------------------------------------
    How a page's BODY is framed, from the descriptor when the gateway states it and derived
    from sidebar when it does not (an older gateway): resource = master-detail that owns the
    panel's sidebar; page = an ordinary content body; workspace = a full-bleed, dense body
@@ -89,7 +89,7 @@ function currentGroup(): PageGroup | undefined {
    searchable list - the rail is the shortlist, not the ceiling). A seat carries data-group
    and data-view (the group's lowest-order page) so the deep selector in jobs.js keeps
    matching, and clicks delegate on [data-group] - the page actually opened is computed per
-   click (seatTarget, docs/39 S4), never written into the markup. */
+   click (seatTarget, SPEC §panel.nav), never written into the markup. */
 function railSeat(g: PageGroup): HTMLElement {
   const active = g.pages.some((p) => { return p.id === currentView(); });
   const offPlugin = unavailable(g.pages[0]);
@@ -97,7 +97,7 @@ function railSeat(g: PageGroup): HTMLElement {
   const title = allOff && offPlugin
     ? tr("pageRegistry.labelError", { label: tr(wireLabel(g.label)), error: offPlugin.lastError || tr("pageRegistry.pluginDisabled") })
     : tr(wireLabel(g.label));
-  /* docs/39 S1 shipped the rail icon-only; reversed by owner decision (2026-09-21) for
+  /* SPEC §panel.nav shipped the rail icon-only; reversed by owner decision (2026-09-21) for
    * clarity - the seat wears its glyph AND the plugin's translated name, sized for the
    * whole rail by fitRailLabels after each paint. The tooltip still carries the richer
    * error text when the plugin is down; the label stays the plain name. The More seat
@@ -115,13 +115,13 @@ function moreSeat(): HTMLElement {
 }
 
 /** One caption size for the whole rail, fitted to the longest name. The rail carries its
- * seats' names again (docs/39 S1 reversed by the owner) and a gateway-served plugin name
+ * seats' names again (SPEC §panel.nav reversed by the owner) and a gateway-served plugin name
  * is unknowable at build time, so the size cannot be a constant - but it is ONE size: a
  * column of captions in mixed sizes reads as a mistake, so the rail steps down as one.
  * Captions start at RAIL_CAPTION_CEIL and the rail takes the largest half-pixel step at
  * which the longest name fits its seat's content box - the seat's padding is the air, and
  * the label's max-width (base.css) clips to that same box when nothing fits - floored at
- * RAIL_CAPTION_FLOOR - the size docs/39 recorded as the legibility floor. A name that does
+ * RAIL_CAPTION_FLOOR - the size SPEC §panel.nav recorded as the legibility floor. A name that does
  * not fit even there is clipped by the ellipsis rule and keeps its full text in the seat's
  * title. Measured once at the ceiling and written once: two reflows, never a loop. A rail
  * with no width (focus mode hides it) is left at the ceiling; the resize event that
@@ -177,7 +177,7 @@ function paintPluginRail(): void {
   };
 }
 
-/** The page a plugin's seat or palette row opens (docs/39 S4): the last page visited when
+/** The page a plugin's seat or palette row opens (SPEC §panel.nav): the last page visited when
  *  it is still a member of the group and usable, else the group's first page. Both entry
  *  points go through this one wrapper, so the policy exists exactly once. */
 function seatTarget(group: { id: string; pages: { id: string }[] }): string {
@@ -201,7 +201,7 @@ function decoratedGroups() {
 }
 
 /* --- the plugin context bar: page navigation (level two) ------------------------------------------
-   ALWAYS drawn in normal mode (docs/13 D5, as revised; docs/39 S2): the same bar height
+   ALWAYS drawn in normal mode (SPEC §panel.nav, as revised; SPEC §panel.nav): the same bar height
    and the same body origin for every plugin - multi-page, single-page and workspace alike.
    The left half names the plugin ONCE - the same glyph its rail seat wears, beside its
    label - and a multi-page plugin lays its pages out as underline tabs, every page visible
@@ -223,7 +223,7 @@ function pageMenuItems(current: PageGroup): PageMenuItemSpec[] {
   });
 }
 
-/** One underline tab (docs/39 S2/S8): a real link through the hash, so keyboard focus,
+/** One underline tab (SPEC §panel.nav): a real link through the hash, so keyboard focus,
  *  middle-click and copy-link come free and the existing hashchange path does the
  *  navigating. Unavailable pages stay listed and marked - the same contract the old
  *  switcher menu had - and still navigate (the landing paints the unavailable state). */
@@ -239,7 +239,7 @@ function tabNode(p: PageDescriptor, active: boolean): HTMLAnchorElement {
   }, tr(wireLabel(p.label)) + (po ? tr("pageRegistry.off") : ""));
 }
 
-/** The overflow seat (docs/39 S3): the ⋯ tab that appears when the pages do not fit. It
+/** The overflow seat (SPEC §panel.nav): the ⋯ tab that appears when the pages do not fit. It
  *  reuses the old switcher's menu exactly - pageMenuItems lists every page, the current
  *  one picked - so the safety net and the tabs can never disagree about what exists. */
 function moreTab(current: PageGroup): HTMLButtonElement {
@@ -252,7 +252,7 @@ function moreTab(current: PageGroup): HTMLButtonElement {
       it.fn = () => { b.setAttribute("aria-expanded", "false"); void navigatePage(p.id); };
       return it as MenuItemAction;
     });
-    /* A static import since docs/46 P1b-2: ui/menu.js touches no DOM at eval (the old
+    /* A static import since SPEC §panel.ui: ui/menu.js touches no DOM at eval (the old
      * menu.js pulled add-sheet in, which binds its buttons at the top level, so it used to
      * load here at interaction time to keep the shell's graph DOM-free for plugins.js). */
     popupMenu(b.getBoundingClientRect(), items);
@@ -265,7 +265,7 @@ function moreTab(current: PageGroup): HTMLButtonElement {
   return b;
 }
 
-/** Which tabs stay visible in `avail` px (docs/39 S3). All fit -> all visible. Otherwise
+/** Which tabs stay visible in `avail` px (SPEC §panel.nav). All fit -> all visible. Otherwise
  *  reserve `moreWidth` for the ⋯ tab, keep tabs in order while they fit, and guarantee
  *  the active one: when it fell into the overflow it takes the last visible slot. Returns
  *  ids; the caller toggles `hidden`. Pure - the suite pins each rule with numbers. */
@@ -290,7 +290,7 @@ function fitTabs(tabs: { id: string; width: number }[], activeId: string, avail:
   return { visible: visible, overflow: overflow };
 }
 
-/** Measure the painted tabs and hide what does not fit (docs/39 S3): every width comes
+/** Measure the painted tabs and hide what does not fit (SPEC §panel.nav): every width comes
  *  from the laid-out nodes, the decision from fitTabs. EVERYTHING is un-hidden for the
  *  read - a display:none box has no width, and a re-entry pass that measured only the
  *  visible tabs would always conclude "everything fits" and re-expand the strip (found
@@ -347,7 +347,7 @@ function paintPluginContext(): void {
   }
   const off = unavailable(page!);
   const current_ = current!;
-  /* The plugin's name lives here once (docs/39 S2): its rail glyph beside its label, so an
+  /* The plugin's name lives here once (SPEC §panel.nav): its rail glyph beside its label, so an
    * icon-only rail still names the destination and the title can never read as a tab. */
   title.hidden = false;
   title.title = off ? (off.lastError || tr("pageRegistry.pluginDisabled")) : "";
@@ -438,7 +438,7 @@ async function navigatePage(id: string, force?: boolean): Promise<void> {
   }
   const controller = new AbortController();
   setCurrentView(id);
-  /* docs/39 S4: the plugin's seat reopens here. Keyed by the GROUP id (currentGroup()'s),
+  /* SPEC §panel.nav: the plugin's seat reopens here. Keyed by the GROUP id (currentGroup()'s),
    * not page.pluginId - legacy descriptors may omit the field and groups() homogenized it
    * already. Only a navigation that LANDED records: the canLeave early-return above never
    * reaches this line, so a blocked leave keeps the previous memory intact. */

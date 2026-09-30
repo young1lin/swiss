@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! One grouping model for every list the panel shows (docs/20).
+//! One grouping model for every list the panel shows (SPEC §host.groups).
 //!
 //! "An ordered list of group names + one group name per member + the first group as the sink"
 //! used to exist twice (managed.json, tunnels.json) and was about to be written four more times
@@ -22,7 +22,7 @@
 //! copies - whether `default` is renameable, what a rename body looks like, which name a
 //! delete-confirm names as the landing group. This module is the one implementation: pure data,
 //! no I/O, embedded by each scope's store, which decides only the JSON key names it serializes
-//! under (docs/20 §2.3).
+//! under (SPEC §formats.groups).
 //!
 //! Order is deliberately NOT here. Every scope already owns a flat order (the MCP `order` side
 //! map, tunnels.json array order, jobs definition order); `Groups` only slices it. That is why
@@ -59,7 +59,7 @@ pub fn demoted_first(before: &[String], after: &[String]) -> Option<String> {
     (still_there && !still_first).then(|| first.clone())
 }
 
-/// The one grouping model (docs/20 §2.1): ordered names, sparse member assignments.
+/// The one grouping model (SPEC §host.groups): ordered names, sparse member assignments.
 ///
 /// Embedders hold this behind their own lock and give it their persistence; it never touches
 /// a file itself, which is what keeps every rule here testable in one place.
@@ -277,7 +277,7 @@ impl Default for Groups {
     }
 }
 
-/// What the route family needs from a scope (docs/20 §2.2). The host holds only this
+/// What the route family needs from a scope (SPEC §host.groups). The host holds only this
 /// mechanism - each scope's members are its own business, which is why `has_member` is here
 /// instead of a host-side registry lookup: only the scope knows what a valid member id is.
 pub trait GroupScope: Send + Sync {
@@ -295,7 +295,7 @@ pub trait GroupScope: Send + Sync {
 
 /// The scope table the route family dispatches through (`mcps`, `conns`, `rules`, `jobs`,
 /// `secrets`, `tokens`). The host carries no match arm: a scope joins by registering, the
-/// same way a plugin joins the host - docs/09's "mechanism in the host, business in the
+/// same way a plugin joins the host - SPEC §host.plugins's "mechanism in the host, business in the
 /// plugin", applied to groups.
 #[derive(Default)]
 pub struct GroupScopes(

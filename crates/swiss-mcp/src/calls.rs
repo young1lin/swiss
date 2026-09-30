@@ -36,7 +36,7 @@
 //! handler (including rmcp's) inherits it, and a handler running outside any scope reads the
 //! "mcp" default — the same `?? "mcp"` fallback.
 //!
-//! [CallLog] is an INSTANCE (the same move the jobs run log made in S2, docs/11 §9): the
+//! [CallLog] is an INSTANCE (the same move the jobs run log made in S2, SPEC §jobs.migrate): the
 //! directory, the per-MCP write states and the rename aliases are fields held by the
 //! AppContext and everything it builds, not process globals - so two apps in one process
 //! (or two tests in one binary) each see exactly their own calls.
@@ -1302,7 +1302,7 @@ mod tests {
         assert_eq!(parsed["rows"].as_array().unwrap().len(), 4000);
     }
 
-    // docs/31 — the Logs search. The needle matches what a row shows: the tool name, the FULL
+    // SPEC §mcp.calls — the Logs search. The needle matches what a row shows: the tool name, the FULL
     // stored arguments, or the stored reply text; case-insensitive; pages over the filtered set.
     #[tokio::test]
     async fn search_matches_tool_args_or_reply_case_insensitively() {

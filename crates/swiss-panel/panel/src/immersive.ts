@@ -27,7 +27,7 @@ import { fill } from "./h.js";
  * #pane re-docks it after a page render replaces the workspace root; it does not watch xterm's
  * deep output mutations. This still is not browser F11 — Terminal fills the Swiss window,
  * while browser fullscreen remains the user's own action. Every mode change dispatches resize
- * so xterm refits and the gateway receives the new rows and columns (docs/14 §8). */
+ * so xterm refits and the gateway receives the new rows and columns (SPEC §terminal.api). */
 const IMMERSIVE = "immersive";
 const DOCKED = "immersive-docked";
 let appZoneNode: HTMLElement | null = null;

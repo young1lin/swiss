@@ -34,7 +34,7 @@ import { heldDot } from "./ui/status.js";
 import { objTab } from "./ui/tab.js";
 
 /* ================================================================================================
-   The object tab strip (docs/42 T2).
+   The object tab strip (SPEC §data.tabs).
 
    The Data page used to hold exactly one object: opening a table, jumping through a foreign key
    or running a query all overwrote whatever was in front of the operator, filters and buffered
@@ -59,10 +59,10 @@ import { objTab } from "./ui/tab.js";
      of rows, and a background tab drops even that.
    ================================================================================================ */
 
-/** docs/42 D3: how many objects the page holds at once. The protection is not the number —
+/** SPEC §data.tabs: how many objects the page holds at once. The protection is not the number —
  *  it is that eviction only takes CLEAN background tabs and a strip where everything holds
  *  work refuses the open outright. Eight was the value set when the strip could not scroll
- *  and had no overflow menu; docs/43 M1 D6 pins both exits, so the cap can follow the
+ *  and had no overflow menu; SPEC §data.tabs pins both exits, so the cap can follow the
  *  operator's workload instead: twelve cards at floor width fit a 1440px window, and
  *  twelve pages of rows is the memory budget the cap exists to defend. */
 
@@ -85,7 +85,7 @@ function dbTabVisible(t       )          {
 }
 
 /** What one tab is holding back from the database: the row grid's buffered updates, deletes and
- *  inserts, or a key tab's buffered field edits (docs/22 W3.3). This is the number the close
+ *  inserts, or a key tab's buffered field edits (SPEC §data.redis). This is the number the close
  *  confirm and the page-leave guard both quote, so it counts writes and nothing else. Pure. */
 function dbTabPending(t       )         {
   if (t.kind === "table") {
@@ -98,7 +98,7 @@ function dbTabPending(t       )         {
   return 0;
 }
 
-/** The whole strip's buffered writes — what `canLeave()` reports in ONE question (docs/42 D5).
+/** The whole strip's buffered writes — what `canLeave()` reports in ONE question (SPEC §data.tabs).
  *  The old guard asked the single record, so a buffer parked on a background tab walked out
  *  silently. Pure. */
 function dbTabsPending(tabs         )         {
@@ -114,7 +114,7 @@ function dbTabEvictable(t       )          {
   return true;
 }
 
-/** Which tab makes room for the next one, or null when none may go (docs/42 D3). The victim is
+/** Which tab makes room for the next one, or null when none may go (SPEC §data.tabs). The victim is
  *  the least recently touched tab that is neither the active one nor holding work. Returning
  *  null is not a failure — it is the refusal dbOpenTab turns into a message, because dropping
  *  an edit to open a table is never the right trade. Pure. */
@@ -136,13 +136,13 @@ function dbFiltersSame(a                , b                )          {
 }
 
 /** Is this open tab the object the spec asks for? The dedupe rule, and the reason the FK jump
- *  and the sidebar click behave differently on the same table (docs/42 D6):
+ *  and the sidebar click behave differently on the same table (SPEC §data.tabs):
  *
  *  - a plain open ("show me orders") lands on whatever tab already holds orders, filters and
  *    buffered edits included — a second `orders` tab would only confuse the strip;
  *  - a jump carries its own filter, so it matches only a tab already showing exactly that.
  *    Anything else and it would rewrite the filter the operator is reading, which is the
- *    docs/22 W5.2 regression this whole tier exists to end.
+ *    regression this whole tier exists to end (SPEC §data.grid).
  *
  *  A console and an activity monitor have no address: there is one of each per connection, so a
  *  second open activates the first. Pure. */
@@ -185,8 +185,8 @@ function dbTabGlyph(t       )         {
   return "clock";
 }
 
-/** The scope a card's schema qualifier is redundant against (docs/43 M1 D3, revised by
- *  docs/43 M3): on MySQL the scope is the CONFIGURED primary database, not whichever
+/** The scope a card's schema qualifier is redundant against (SPEC §data.tabs, revised by
+ *  SPEC §data.databases): on MySQL the scope is the CONFIGURED primary database, not whichever
  *  database is being browsed — a secondary database's cards carry their db.table qualifier
  *  everywhere (row, card, overflow menu), the primary's never do. A pg connection spans
  *  schemas: the scope is the schema the operator picked, public by default. Null when
@@ -199,7 +199,7 @@ export function dbTabScope(c             , pg         )                {
 }
 
 /** The name the card SHOWS: the object's own name inside the current scope, qualified only
- *  when the qualifier tells two cards apart (docs/43 M1 D3). On MySQL the old title spent
+ *  when the qualifier tells two cards apart (SPEC §data.tabs). On MySQL the old title spent
  *  13 of a card's 210px on an `acme_app_dev.` prefix that carried nothing, and the table
  *  name — the part that actually distinguishes cards — was the part being truncated. The
  *  full name stays one hover away (the card's title) and in every confirm, which must name
@@ -241,7 +241,7 @@ function dbTabRenameInput(t       , scope               )                   {
 
 /** Paint the strip. Card tabs (swiss-ui-design §1.3): a leading type glyph, the name, a trailing
  *  ×, the whole row sitting on --sidebar with the active card lifted to --bg and joined to the
- *  grid below it. Every control is an address answered by #pane's delegated click (docs/37 R5) —
+ *  grid below it. Every control is an address answered by #pane's delegated click (SPEC §panel.toolchain) —
  *  the index it carries is re-read against live state when the click lands. */
 function renderDbTabs()       {
   const strip = $("dbTabStrip");
@@ -252,20 +252,20 @@ function renderDbTabs()       {
   // Every repaint replaces the card the keyboard was standing on, and the browser answers a
   // destroyed activeElement by falling back to <body> — so one arrow key moved the strip and
   // the next one went nowhere, because the handler only listens while focus is ON the strip
-  // (found live on 19998 during the docs/42 T2 walk: the tab's own fetch repaints on arrival,
+  // (found live on 19998 during a walk of SPEC §data.tabs: the tab's own fetch repaints on arrival,
   // a second after the move). Focus is put back only when it was here to begin with: a repaint
   // while the user types in a filter box or the grid must never pull them out of it.
   const hadFocus = strip.contains(document.activeElement);
   const tabs = dbTabs();
   const active = dbActiveIndex();
-  // The qualifier a card can drop (docs/43 M1 D3): read once per paint, shared by the cards
+  // The qualifier a card can drop (SPEC §data.tabs): read once per paint, shared by the cards
   // and the overflow menu so the two never disagree about an object's name.
   const scope = dbTabScope(dbConn(), dbIsPg());
   const kids = tabs.map((t       , i        ) => {
     if (!dbTabVisible(t)) return null;
     const n = dbTabPending(t);
     const filters = t.kind === "table" ? t.filters.length : 0;
-    // The library's object tab (docs/46 P8): the shape Terminal's sessions wear too. It carries
+    // The library's object tab (SPEC §panel.pages): the shape Terminal's sessions wear too. It carries
     // the roving tabindex and the close; the rename (right-click) swaps the name for an input
     // for as long as dbTabRenaming points here (built by dbTabRenameInput - handlers are
     // property-assigned there, h() strips function-valued props by design).
@@ -280,7 +280,7 @@ function renderDbTabs()       {
       close: { label: tr("dataTabs.closeTab"), data: { dbtabx: String(i) } },
     });
   });
-  // docs/43 M1 D1: the strip is two zones — a scrolling run of cards and a PINNED end.
+  // SPEC §data.tabs: the strip is two zones — a scrolling run of cards and a PINNED end.
   // The exits used to sit inside the scroll, so a full strip scrolled its own "+" out of
   // reach (the owner's screenshot): opening a console became a hunt for an offscreen button.
   // The cards scroll; the overflow button and the "+" never do.
@@ -298,7 +298,7 @@ function renderDbTabs()       {
   fill(strip, scroller,
     h("div", { class: "db-tabstrip-end" },
       // The overflow menu is the one place the whole set stays visible once the strip scrolls
-      // (docs/43 M1 D4): every open object, then the browser's bulk-close idioms. Nothing is
+      // (SPEC §data.tabs): every open object, then the browser's bulk-close idioms. Nothing is
       // open yet → nothing to list → the button is not offered.
       h("button", {
         class: "db-tab-more", type: "button", hidden: !shown,
@@ -315,7 +315,7 @@ function renderDbTabs()       {
   dbScrollActiveTab();
 }
 
-/** Bring the active card into the visible run after every paint (docs/43 M1 D2): the
+/** Bring the active card into the visible run after every paint (SPEC §data.tabs): the
  *  keyboard walk, Ctrl+Tab and the overflow menu can all land on a card the strip has
  *  scrolled out of sight, and a "current" tab nobody can see is not current. Guarded — the
  *  vitest DOM has no layout and may not implement scrollIntoView at all (house rule 5);
@@ -328,7 +328,7 @@ function dbScrollActiveTab()       {
   }
 }
 
-/** #pane's delegated click for the strip (docs/37 R5). The × is checked before the card so a
+/** #pane's delegated click for the strip (SPEC §panel.toolchain). The × is checked before the card so a
  *  close never reads as an activate. ev is the live event when the caller has it: opening
  *  the overflow menu must stop the document click that would close it again. */
 function dbTabsClick(t         , ev             )          {
@@ -347,7 +347,7 @@ function dbTabsClick(t         , ev             )          {
   return false;
 }
 
-/** The middle-button close (docs/43 M1 D8): the browser-tab idiom, on the ×'s exact path —
+/** The middle-button close (SPEC §data.tabs): the browser-tab idiom, on the ×'s exact path —
  *  the dirty-tab confirm included. #pane answers auxclick (a middle press fires BOTH click
  *  and auxclick, so only auxclick may act) and hands the target here. */
 function dbTabsAuxClick(t         )          {
@@ -407,7 +407,7 @@ function dbTabsContext(t         , ev            )          {
   return true;
 }
 
-/** The overflow menu's rows (docs/43 M1 D4): one per open object, in strip order, the
+/** The overflow menu's rows (SPEC §data.tabs): one per open object, in strip order, the
  *  current one ticked — the strip's whole set in one place that never scrolls away. The type
  *  glyph and the dirty dot ride the row so the menu also answers "which of these is holding
  *  my work" without opening anything. Behind a separator sit the bulk closes; the
@@ -439,7 +439,7 @@ function dbTabsMenuItems()             {
   return items;
 }
 
-/** Close a set of tabs by index, asking ONCE when any of them holds work (docs/43 M1 D4).
+/** Close a set of tabs by index, asking ONCE when any of them holds work (SPEC §data.tabs).
  *  A single × names the one object it drops; a bulk close asks the one question the operator
  *  can actually answer — "N buffered changes would go" — and a refusal keeps every tab
  *  exactly where it was. */
@@ -571,7 +571,7 @@ function dbBuildTab(spec           )        {
   return freshTab("activity");
 }
 
-/** The one way an object reaches the pane (docs/42 D6 — dbOpenTable and dbFkOpen were the same
+/** The one way an object reaches the pane (SPEC §data.tabs — dbOpenTable and dbFkOpen were the same
  *  ritual written twice). Already open → activated, never duplicated. Strip full → the least
  *  recently used tab with nothing in it makes room; if every tab holds work, the open is REFUSED
  *  and says so, because silently dropping an operator's edits to show them a table is not a
@@ -590,7 +590,7 @@ function dbOpenTab(spec           )       {
       toast(tr("dataTabs.fullCloseOne", { n: DB_TAB_MAX }), true);
       return;
     }
-    // Not silent (docs/43 M1 D5): a clean card vanishing without a word reads as "the page
+    // Not silent (SPEC §data.tabs): a clean card vanishing without a word reads as "the page
     // ate my tab". Say which one made room — and that it held nothing unsaved.
     toast(tr("dataTabs.evictedForRoom", { name: dbTabTitle(next[victim]) }));
     next.splice(victim, 1);
@@ -625,7 +625,7 @@ function dbOpenTabForce(spec           )       {
   dbAfterTabSwitch();
 }
 
-/** Drop every tab open on one table — what DROP TABLE leaves behind (docs/22 closeout audit,
+/** Drop every tab open on one table — what DROP TABLE leaves behind (SPEC §data,
  *  now that the pane is a strip). Nothing of the dropped table may linger, and a BACKGROUND tab
  *  is exactly where it would: renderDbTables refreshes only the left list. No confirm on the
  *  buffered writes it discards — they address rows that no longer exist, so the only question a
@@ -655,7 +655,7 @@ function dbActivateTab(i        , byKeyboard          )       {
   dbAfterTabSwitch(byKeyboard);
 }
 
-/** Close it. A tab holding buffered writes asks first (docs/42 D5) and a refusal keeps it
+/** Close it. A tab holding buffered writes asks first (SPEC §data.tabs) and a refusal keeps it
  *  exactly where it was. The active tab's place goes to its right neighbour, or its left when
  *  there is no right; closing the last one leaves the placeholder, so the pane falls back to the
  *  empty state instead of to nothing. */
@@ -698,7 +698,7 @@ function dbResetTabsForConn()       {
   dbResetTabs([next], 0);
 }
 
-/** docs/42 D4: a tab going to the background keeps what is cheap — its filters, its offset, its
+/** SPEC §data.tabs: a tab going to the background keeps what is cheap — its filters, its offset, its
  *  order, its buffered edits — and drops what is expensive, the page of rows. Coming back
  *  re-fetches from exactly those coordinates, which is why a filtered, paged, half-edited table
  *  looks untouched on return. */
@@ -711,7 +711,7 @@ function dbLeaveTab(t       )       {
  *  fetch for whatever the tab dropped while it was in the background. */
 function dbAfterTabSwitch(byKeyboard          )       {
   const t = dbTab();
-  // The console is the sql tab's body now (docs/42 T2), so the textarea is seeded from the tab
+  // The console is the sql tab's body now (SPEC §data.tabs), so the textarea is seeded from the tab
   // being shown — otherwise the previous console's text sits in the new one's box.
   const ta = $                     ("dbSql");
   if (ta) ta.value = t.kind === "sql" ? t.sqlText : "";
@@ -727,7 +727,7 @@ function dbAfterTabSwitch(byKeyboard          )       {
     if (!t.detail) void dbLoadDetail();
   }
   if (t.kind === "key" && t.redisKey && !t.redisValue) void dbLoadRedisValue(t.redisKey);
-  // The 5s poll follows "is that tab active" (docs/42 T2 item 6): a backgrounded monitor stops
+  // The 5s poll follows "is that tab active" (SPEC §data.tabs): a backgrounded monitor stops
   // asking the server about sessions nobody is looking at.
   if (t.kind === "activity") dbActivityStart();
   // Landing on a console by pointer means "I am going to type here"; landing on it mid-walk

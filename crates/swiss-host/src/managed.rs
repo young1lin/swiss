@@ -40,7 +40,7 @@ pub struct ManagedEntry {
     pub override_: bool,
 }
 
-/// One parked def snapshot for a name (docs/28 D1): what the MCP ran BEFORE a replace or a
+/// One parked def snapshot for a name (SPEC §mcp.revisions): what the MCP ran BEFORE a replace or a
 /// restore. A revision is inert data — never registered, never started, never resolved; the
 /// def keeps its `${...}` references verbatim, exactly as the live def does.
 #[derive(Debug, Clone)]
@@ -94,7 +94,7 @@ pub fn load_managed(path: &Path) -> Vec<ManagedEntry> {
     let Some(raw) = read_managed_raw(path) else {
         return Vec::new();
     };
-    // docs/25 E2: whole-value bare vault refs become envelope refs in memory here — the
+    // SPEC §host.refs: whole-value bare vault refs become envelope refs in memory here — the
     // file keeps its spelling until the next save rewrites it. Mixed strings stay as
     // authored (a mid-string rewrite would need the ambiguous scan the envelope replaced).
     let mut mcps = Value::Array(match raw.get("mcps") {
@@ -164,7 +164,7 @@ fn load_bool_map(path: &Path, key: &str) -> HashMap<String, bool> {
     out
 }
 
-/// The parked def snapshots per name (docs/28 D1). Malformed entries are dropped like the
+/// The parked def snapshots per name (SPEC §mcp.revisions). Malformed entries are dropped like the
 /// loaders above drop them: one bad revision must not cost the rest of the file.
 fn load_revisions(path: &Path) -> HashMap<String, Vec<RevisionRec>> {
     let mut out = HashMap::new();
@@ -256,7 +256,7 @@ pub fn load_groups(path: &Path) -> Vec<String> {
     }
 }
 
-/// The tokens' group list (docs/20 G7). A file from before groups names no `tokenGroups` and
+/// The tokens' group list (SPEC §host.groups). A file from before groups names no `tokenGroups` and
 /// reads as the single default group; a list someone emptied by hand recovers the same way —
 /// something must catch unassigned tokens.
 pub fn load_token_groups(path: &Path) -> Vec<String> {
@@ -276,7 +276,7 @@ pub fn load_token_groups(path: &Path) -> Vec<String> {
     }
 }
 
-/// Which group each token is in — sparse, keyed by token id (docs/20 G7). An absent id
+/// Which group each token is in — sparse, keyed by token id (SPEC §host.groups). An absent id
 /// renders in the first group; rotate keeps the id, so an assignment survives a rotate.
 pub fn load_token_members(path: &Path) -> HashMap<String, String> {
     let mut out = HashMap::new();
@@ -357,14 +357,14 @@ struct StoreState {
     resource_toggles: HashMap<String, bool>,
     tokens: Vec<TokenRec>,
     order: Vec<String>,
-    /// The one grouping model (docs/20): this store owns only the managed.json key names it
+    /// The one grouping model (SPEC §host.groups): this store owns only the managed.json key names it
     /// serializes under (`groups` + `mcpGroups`); every rule lives in swiss_host::groups.
     groups: Groups,
-    /// The second grouping model (docs/20 G7): the same rules, keyed by token id under
+    /// The second grouping model (SPEC §host.groups): the same rules, keyed by token id under
     /// `tokenGroups` + `tokenMembers`.
     token_groups: Groups,
     mcp_enabled: HashMap<String, bool>,
-    /// Parked def snapshots per name (docs/28 D1). Boot never reads them — only the
+    /// Parked def snapshots per name (SPEC §mcp.revisions). Boot never reads them — only the
     /// revisions routes do; the entry list above stays the single source of what runs.
     revisions: HashMap<String, Vec<RevisionRec>>,
 }
@@ -451,7 +451,7 @@ impl ManagedStore {
         s.order.retain(|n| n != name); // a deleted MCP holds no sidebar slot
         s.groups.forget_member(name); // ...nor a group membership
         s.mcp_enabled.remove(name); // ...nor a run/stop state
-        s.revisions.remove(name); // ...nor parked def snapshots (docs/28 D1)
+        s.revisions.remove(name); // ...nor parked def snapshots (SPEC §mcp.revisions)
         self.persist(&s)
     }
 
@@ -481,7 +481,7 @@ impl ManagedStore {
             s.mcp_enabled.insert(new_name.into(), v);
         }
         // Parked def snapshots describe this logical service, so they follow the rename
-        // (docs/28 D1: the name is the identity, the def is a revision of it).
+        // (SPEC §mcp.revisions: the name is the identity, the def is a revision of it).
         if let Some(list) = s.revisions.remove(old_name) {
             s.revisions.insert(new_name.into(), list);
         }
@@ -520,7 +520,7 @@ impl ManagedStore {
         })
     }
 
-    // --- revisions (docs/28 D1): parked def snapshots, one list per name ----------------------------
+    // --- revisions (SPEC §mcp.revisions): parked def snapshots, one list per name ----------------------------
 
     /// The parked revisions for a name, oldest first. Empty when none were ever parked.
     pub fn revisions_of(&self, name: &str) -> Vec<RevisionRec> {
@@ -607,7 +607,7 @@ impl ManagedStore {
 
     /// Replace the whole token set (create / rotate / revoke all persist through here). A
     /// token that left the set forgets its group entry: a revoked id must not keep a ghost
-    /// assignment (docs/20 G7) — the group model never names a token that is not there.
+    /// assignment (SPEC §host.groups) — the group model never names a token that is not there.
     pub fn save_tokens(&self, next: Vec<TokenRec>) {
         if let Ok(mut s) = self.state.lock() {
             for gone in s.tokens.iter().map(|t| t.id.clone()).collect::<Vec<_>>() {
@@ -724,7 +724,7 @@ impl ManagedStore {
         self.persist(&s)
     }
 
-    // --- the tokens' groups (docs/20 G7): the same five verbs the MCPs have, over the second
+    // --- the tokens' groups (SPEC §host.groups): the same five verbs the MCPs have, over the second
     // model — `token_groups`. Rotation never passes through here (same id, same entry); a
     // revoke drops the member so no ghost entry outlives its token.
 
@@ -984,7 +984,7 @@ mod tests {
         }
     }
 
-    // ---- docs/28 D1: parked def revisions ---------------------------------------------
+    // ---- SPEC §mcp.revisions: parked def revisions ---------------------------------------------
 
     #[test]
     fn revisions_round_trip_through_the_sealed_file() {
@@ -1060,7 +1060,7 @@ mod tests {
         assert!(ManagedStore::open_at(path).revisions_of("new").is_empty());
     }
 
-    // ---- docs/25 E2: legacy ref migration ---------------------------------------------
+    // ---- SPEC §host.refs: legacy ref migration ---------------------------------------------
 
     #[test]
     fn legacy_bare_refs_load_as_envelope_refs() {

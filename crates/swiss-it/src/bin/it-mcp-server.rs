@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The repo's own stdio MCP server for the L3 suite (docs/44 SS2.7).
+//! The repo's own stdio MCP server for the L3 suite (SPEC §testing.it).
 //!
 //! Five tools, none of them for looks - each one exists to make a proc-adapter
 //! behavior observable from the far side of a real child process:
@@ -28,9 +28,9 @@
 //! - `fail {code}` - a deliberate MCP error: error mapping without killing the
 //!   process (the next call still answers).
 //! - `env` - the environment NAMES the child sees: the daemon scrubs the launcher's
-//!   noise (docs/16 H1) before any child inherits it.
+//!   noise (SPEC §host.daemon) before any child inherits it.
 //!
-//! Startup writes one Chinese line to stderr ON PURPOSE: stderr noise must never
+//! Startup writes one line to stderr ON PURPOSE: stderr noise must never
 //! leak into the stdout protocol stream, and this server is the proof vehicle.
 
 use std::future::Future;

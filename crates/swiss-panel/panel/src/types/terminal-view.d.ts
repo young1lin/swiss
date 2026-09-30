@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-/* The terminal view's own ambient shapes (docs/36 D6/D7): the per-session model
+/* The terminal view's own ambient shapes (SPEC §panel.toolchain): the per-session model
    views/terminal.ts wires and the vendored-package bundle its load() caches. The
    surface augmentations this file once carried (Window.webkitAudioContext, the
-   Function-property memo) are retired - docs/37 M3 - in favour of local casts and
+   Function-property memo) are retired - SPEC §panel.lint - in favour of local casts and
    module-scoped state in views/terminal.ts. */
 
 import type { JsonSchemaNode } from "./api.js";
@@ -35,7 +35,7 @@ export interface TermModel {
   gone: boolean;
   sentCols: number;
   sentRows: number;
-  /* OSC 0/2 title vs the manual rename - tabLabel() reads both (docs/22 consensus 1). */
+  /* OSC 0/2 title vs the manual rename - tabLabel() reads both (SPEC §terminal.panel). */
   shellTitle: string | null;
   customTitle: string | null;
   bell: boolean;
@@ -85,7 +85,7 @@ export interface TerminalLocalCfg {
 }
 
 /** The terminal plugin's config row - the keys src/plugins/terminal.rs config_schema
- *  declares (docs/14 section 6): the local block the settings sheet edits, and the remote
+ *  declares (SPEC §terminal.config): the local block the settings sheet edits, and the remote
  *  session limits it leaves alone. Every field is optional on the wire; the plugin defaults
  *  what is absent. */
 export interface TerminalPluginConfig {

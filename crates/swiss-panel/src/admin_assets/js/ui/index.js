@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The panel's UI library (docs/46, ADR-029): the ONLY way a page draws a shape.
+/* The panel's UI library (SPEC §panel.ui, ADR-029): the ONLY way a page draws a shape.
  *
  * A page composes these; a shape the library lacks is added HERE first - the function in
  * ui/, its classes in styles/ui.css, a section in the gallery (/admin/ui.html), a test - and
@@ -23,7 +23,7 @@
  * (test/ui-boundary.test.ts): no api, no state, no views - which is what lets the gallery
  * render every component with made-up data and nothing else loaded.
  *
- * A design is a gallery SCENE built from these, not a page of hand-written CSS (docs/46 U17). */
+ * A design is a gallery SCENE built from these, not a page of hand-written CSS (SPEC §panel.ui). */
 export { btn, iconBtn, moreBtn } from "./button.js";
                                                         
 export { iconNode } from "./icon.js";

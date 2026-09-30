@@ -16,7 +16,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 
-/* docs/27 §4/§4.1.1: the connection sheet's Advanced fold (proxy + jump) and the transport
+/* SPEC §tunnels.panel: the connection sheet's Advanced fold (proxy + jump) and the transport
    tags on the connection row. The wire half lives in manager.rs's rows test — here the
    panel reads the row fields the backend now carries: the fold renders collapsed with the
    bare word when nothing is configured, chips when something is, the interior echoes the
@@ -35,7 +35,7 @@ interface FakeEvent {
   preventDefault(): void;
 }
 
-/* docs/37 R5: the sheets paint with h()/fill() now, so the fake DOM is a Node-extending
+/* SPEC §panel.toolchain: the sheets paint with h()/fill() now, so the fake DOM is a Node-extending
    class whose innerHTML READS serialise the built tree, textContent = "" wipes it, and a
    #document-fragment append splices its children in — the pattern the remote suites use. */
 class NodeStub {}
@@ -231,7 +231,7 @@ function lastSaveBody(): Record<string, unknown> {
   return JSON.parse(call!.body);
 }
 
-describe("the connection sheet's Advanced fold (docs/27 §4)", () => {
+describe("the connection sheet's Advanced fold (SPEC §tunnels.panel)", () => {
   beforeEach(() => {
     fetchCalls.length = 0;
     saveResponses.length = 0;
@@ -241,7 +241,7 @@ describe("the connection sheet's Advanced fold (docs/27 §4)", () => {
     seedTunData([{ id: "c1", name: "bastion" }]);
     const html = openSheet(null);
     // No open attribute on the details element: the browser starts it folded. A built tree
-    // answers that on the node itself (docs/37 R5), not on a markup string.
+    // answers that on the node itself (SPEC §panel.toolchain), not on a markup string.
     const advanced = get("c-advanced");
     expect(advanced, "the Advanced fold").toBeTruthy();
     expect(advanced.className).toBe("fold");
@@ -286,7 +286,7 @@ describe("the connection sheet's Advanced fold (docs/27 §4)", () => {
       id: "c2", name: "db", host: "10.0.0.9", port: 22, username: "u", authType: "key",
       proxy: "socks5://127.0.0.1:7890", proxyUsername: "pxuser", proxyPassword: MASK, jump: "c1",
     });
-    // h() carries the stored values as PROPERTIES (docs/37 R5), so the echo is asserted on
+    // h() carries the stored values as PROPERTIES (SPEC §panel.toolchain), so the echo is asserted on
     // the node - the attribute order a string builder left behind is not a contract.
     expect(get("c-proxy").value).toBe("socks5://127.0.0.1:7890");
     expect(get("c-proxy").placeholder).toBe("socks5://127.0.0.1:7890");
@@ -352,13 +352,13 @@ describe("the connection sheet's Advanced fold (docs/27 §4)", () => {
   });
 });
 
-describe("the connection row's transport tags (docs/27 §4)", () => {
+describe("the connection row's transport tags (SPEC §tunnels.panel)", () => {
   it("paints proxy / via <name> and nothing for a plain row", () => {
     seedTunData([
       { id: "c1", name: "bastion" },
       { id: "c2", name: "db", host: "10.0.0.9", port: 22, username: "u", authType: "key", state: "idle" },
     ]);
-    // The row is a built node now (docs/37 R5); serialize reads it back as markup.
+    // The row is a built node now (SPEC §panel.toolchain); serialize reads it back as markup.
     const plain = serialize(mods.polling.connRowNode({ id: "c2", name: "db", host: "10.0.0.9", port: 22, username: "u", authType: "key", state: "idle" }));
     expect(plain).not.toContain('<span class="tag">');
 

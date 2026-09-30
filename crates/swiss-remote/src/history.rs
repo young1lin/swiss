@@ -24,7 +24,7 @@
 //! may be secrets; a remote.write's content as its SIZE only, since the file written may
 //! be a credential) — and the full output stream in `logs/remote/out/<runId>.txt`, teed
 //! as it flows. A remote.write's body is kept too, but SEALED, beside the output as
-//! `out/<runId>.content` (docs/34 R12): the owner wants to see what a write wrote, and a
+//! `out/<runId>.content` (SPEC §remote.history): the owner wants to see what a write wrote, and a
 //! written .env must not sit on disk in clear. The live buffer keeps a 256 KiB window; the file keeps the head up to
 //! [Limits::max_output_bytes], and past that the line keeps the last 64 KiB as `tail`, so
 //! a capped build log still shows both ends — the error is usually at the end.
@@ -33,7 +33,7 @@
 //! run count so the index itself stays small. Checked in O(1) on every finish and every
 //! page read from three tracked numbers; the full pass (two streaming walks of the index
 //! and a tmp+rename rewrite, never the whole file in memory) runs only when one is over.
-//! One promise sits above the budgets (docs/41 A2): a line younger than
+//! One promise sits above the budgets (SPEC §remote.history): a line younger than
 //! [AUDIT_WINDOW_MS] is never dropped by a budget. Under byte pressure the window's
 //! OUTPUT FILES go, oldest first, and the line says so (`outputEvicted: true`; its
 //! `tail`, when it has one, stays); under count pressure the window simply runs over,
@@ -60,7 +60,7 @@ use swiss_host::services::runs::{RunHistorySink, RunView, SubmitRequest};
 
 /// Records older than this age out (the user's retention: 30 days).
 pub const MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
-/// Records younger than this are never dropped by a budget (docs/41 A2): the seven days
+/// Records younger than this are never dropped by a budget (SPEC §remote.history): the seven days
 /// the owner can always trace back. Their output files may go under byte pressure; the
 /// line — what ran, who, exit, tail — stays until the age limit.
 pub const AUDIT_WINDOW_MS: u64 = 7 * 24 * 60 * 60 * 1000;
@@ -70,7 +70,7 @@ pub const MAX_TOTAL_BYTES: u64 = 500 * 1024 * 1024;
 pub const MAX_RUNS: usize = 5000;
 /// One run's output file stops growing here; the record keeps the tail past it.
 pub const MAX_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
-/// What a capped run keeps of its end (the ring's finished-keep size, docs/34 §17).
+/// What a capped run keeps of its end (the ring's finished-keep size, SPEC §host.actions).
 pub const TAIL_BYTES: usize = 64 * 1024;
 /// One output read never materialises more than this — the live route's own ceiling.
 pub const MAX_READ_BYTES: usize = 128 * 1024;
@@ -186,7 +186,7 @@ impl OutputFile {
             let _ = file.flush();
         }
         // The ring kept the LAST tail bytes by count, so it may start inside a character
-        // (docs/41 U3): decode from the first boundary, not from byte zero.
+        // (SPEC §remote.utf8): decode from the first boundary, not from byte zero.
         let tail = inner.overflow.take().map(|ring| {
             let bytes = ring.into_iter().collect::<Vec<u8>>();
             String::from_utf8_lossy(swiss_core::utf8::window(&bytes)).into_owned()
@@ -195,7 +195,7 @@ impl OutputFile {
     }
 }
 
-/// What a page read asks for (docs/41 A3): the cursor and size the pane pages with,
+/// What a page read asks for (SPEC §remote.history): the cursor and size the pane pages with,
 /// and the predicates the audit surface adds. `since` (inclusive) and `until`
 /// (exclusive) are epoch ms against the record's `endedAt`. The index is in finish
 /// order, so a line older than `since` ends the walk (finishes a few ms apart can
@@ -446,7 +446,7 @@ impl RunHistory {
         })
     }
 
-    /// [Self::page] with every predicate (docs/41 A3): the time window and the actor,
+    /// [Self::page] with every predicate (SPEC §remote.history): the time window and the actor,
     /// on top of the cursor and the target. Still one walk from the end, one page's
     /// worth of records in memory.
     pub fn query(&self, q: PageQuery<'_>) -> (Vec<Value>, Option<u64>) {
@@ -526,7 +526,7 @@ impl RunHistory {
             }
             buf.truncate(got);
         }
-        // Character boundaries (docs/41 U1): a window that would end inside a
+        // Character boundaries (SPEC §remote.utf8): a window that would end inside a
         // character stops before it - unless that would leave nothing, or the bytes are
         // the file's last (a capped file can end mid-character; the record's `tail`
         // carries the rest) - so the follower reads the character whole next time.
@@ -633,7 +633,7 @@ impl RunHistory {
     }
 
     /// Bring the budgets back under, oldest first, without touching a protected line
-    /// (docs/41 A2). Two phases: whole records outside the window (their output files
+    /// (SPEC §remote.history). Two phases: whole records outside the window (their output files
     /// go with them; an expired one goes whatever the budgets say), then — for the
     /// byte budget only — the output files of the window's oldest runs, whose lines
     /// stay and are rewritten with `outputEvicted: true`. What is still over after that
@@ -1236,7 +1236,7 @@ mod tests {
         assert_eq!(row["state"], "succeeded");
         assert_eq!(
             row["actor"], "test",
-            "who ran it is on the line (docs/41 A1)"
+            "who ran it is on the line (SPEC §remote.history)"
         );
         assert_eq!(row["outputBytes"], 18);
         assert_eq!(row["meta"]["target"], "build");
@@ -1323,7 +1323,7 @@ mod tests {
 
     #[test]
     fn the_byte_budget_evicts_the_oldest_with_its_output_file() {
-        // Outside the seven-day window (docs/41 A2) the budgets work as they always
+        // Outside the seven-day window (SPEC §remote.history) the budgets work as they always
         // did: whole records go, oldest first.
         let dir = scratch();
         let history = RunHistory::open_with(
@@ -1377,7 +1377,7 @@ mod tests {
 
     #[test]
     fn the_window_keeps_every_line_under_byte_pressure_and_gives_up_output_files_oldest_first() {
-        // docs/41 A2: six runs today, 500 bytes each (a line is ~300 more), a 3.5 KB
+        // SPEC §remote.history: six runs today, 500 bytes each (a line is ~300 more), a 3.5 KB
         // budget. Before: half of them gone. Now: all six lines stay; the oldest
         // output files go, the lines say so, and the budget holds on what is on disk.
         let dir = scratch();

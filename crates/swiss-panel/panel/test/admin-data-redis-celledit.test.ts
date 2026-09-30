@@ -23,7 +23,7 @@ import { dbConn, dbTab, dbTabs, freshTab, mountDbView, unmountDbView } from "../
    need the globals stubbed before they will evaluate under Node. getElementById keeps ONE
    stub per id, so a test can hold the same node the wiring will look up later — the editor
    lands in $("dbGridWrap") exactly as on a real page.
-   docs/37 R5: dbRenderRedisValue builds its rows with h(), so the stub extends the Node
+   SPEC §panel.toolchain: dbRenderRedisValue builds its rows with h(), so the stub extends the Node
    stub (h() instanceof-checks every child) and document carries the fragment/text factories. */
 class NodeStub {}
 (globalThis as unknown as { Node: unknown }).Node = NodeStub;
@@ -79,7 +79,7 @@ function find(node: Stub, pred: (n: Stub) => boolean, out: Stub[] = []): Stub[] 
   return out;
 }
 
-describe("the typed hash table's inline editor (docs/22 W3.3)", () => {
+describe("the typed hash table's inline editor (SPEC §data.redis)", () => {
   it("buffers an edited existing value as an update, not as insert #0", () => {
     // Regression, caught live on 19998: the existing-row dblclick once passed insertIdx 0,
     // and save() read 0 >= 0 as "this is an insert row" — b.inserts[0] was undefined, so
@@ -89,7 +89,7 @@ describe("the typed hash table's inline editor (docs/22 W3.3)", () => {
     unmountDbView();
     mountDbView();
     Object.assign(dbConn(), { conn: "r", conns: [{ name: "r", dialect: "redis" }] });
-    // The redis value view reads its fields off the OPEN KEY TAB (docs/42 T1): install one,
+    // The redis value view reads its fields off the OPEN KEY TAB (SPEC §data.tabs): install one,
     // the way selecting a redis connection swaps the tab kind in the view.
     const k = freshTab("key");
     dbTabs()[0] = k;

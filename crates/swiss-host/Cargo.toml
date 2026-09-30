@@ -25,7 +25,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 sha2 = "0.11"
 encoding_rs = { version = "0.8", default-features = false }
-# A redis console line and a stream filter line split the way a shell splits (docs/49,
+# A redis console line and a stream filter line split the way a shell splits (SPEC §data.streams,
 # dbbrowser::split_words): `data~"last": 12` is one term with a space in it. A shell-style
 # splitter is a solved problem and a poor thing to hand-write; shlex is already in the tree
 # through cc's build graph (same version resolves) and has no dependencies of its own.

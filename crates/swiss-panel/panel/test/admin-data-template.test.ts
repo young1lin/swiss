@@ -57,7 +57,7 @@ const mod = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-sql.ts")).href
 ) as { dbTemplateSql: (k: string, d: string, s: string, t: string, c: string[], pk: string[]) => string };
 
-// docs/22 W1.10: the table menu's templates — every column listed, identifiers quoted through
+// SPEC §data.console: the table menu's templates — every column listed, identifiers quoted through
 // the whitelist, value positions as ? placeholders behind one comment hint.
 describe("dbTemplateSql", () => {
   it("SELECT lists every column and keys the WHERE", () => {

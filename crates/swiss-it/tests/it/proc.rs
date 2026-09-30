@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! L3: the proc adapter against the repo's OWN stdio MCP server (docs/44 SS2.7).
+//! L3: the proc adapter against the repo's OWN stdio MCP server (SPEC §testing.it).
 //!
 //! The child is a real process (CARGO_BIN_EXE_it-mcp-server, cargo-guaranteed for a
 //! same-package bin), the gateway is the real listener from L2, and the client is
@@ -25,9 +25,9 @@
 //! - a stop kills the child tree (Job Object on Windows, process group on unix);
 //! - the five tools: UTF-8 echo, byte-identical blob over the &RawValue proxy path,
 //!   a real sleep, an MCP error that does not kill the process, and the env NAMES
-//!   the child sees (the daemon's launcher-noise scrub, docs/16 H1, proven on a proc
+//!   the child sees (the daemon's launcher-noise scrub, SPEC §host.daemon, proven on a proc
 //!   child for the first time);
-//! - the call log the Logs tab reads (docs/33 C3): replies stored verbatim, a long one
+//! - the call log the Logs tab reads (SPEC §mcp.calls): replies stored verbatim, a long one
 //!   clipped on the page and served whole by seq.
 
 use std::time::{Duration, Instant};
@@ -209,7 +209,7 @@ async fn echo_round_trips_utf8_and_stderr_never_pollutes_stdout() {
     await_no_child(Duration::from_secs(2)).await;
 }
 
-/// docs/33 C3: the Logs JSON view's contract with the call log. The panel decodes a reply that is
+/// SPEC §mcp.calls: the Logs JSON view's contract with the call log. The panel decodes a reply that is
 /// JSON held in a string and hands the stored text back on Copy raw, so the log must keep a reply
 /// VERBATIM - never re-encoded or unwrapped on the way in. And it fetches a clipped reply whole
 /// the moment its row opens, so the page must mark a reply past the 2 KB preview (`preview`, the
@@ -345,7 +345,7 @@ async fn fail_maps_to_an_mcp_error_and_the_process_survives() {
 #[tokio::test]
 async fn env_names_show_the_daemon_scrub_reached_the_child() {
     let _guard = L3.lock().await;
-    // The harness plays the daemon (docs/44 SS2.6): scrub OUR environment the way
+    // The harness plays the daemon (SPEC §testing.it): scrub OUR environment the way
     // swiss's main() does at startup, with launcher noise planted first so the
     // scrub has something to bite on. The proc child inherits from this process.
     // SAFETY: env-planting races parallel tests exactly like every other

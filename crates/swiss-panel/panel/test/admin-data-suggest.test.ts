@@ -76,7 +76,7 @@ const sug = await import(
   REDIS_TEMPLATES: { group: string; line: string }[];
 };
 
-// docs/22 W3.1: the panel's half of the completion contract — the word class matches the
+// SPEC §data.completion: the panel's half of the completion contract — the word class matches the
 // server's sql_word_ending_at, and the caret crosses the wire as a byte offset.
 describe("dbSuggestPrefixAt", () => {
   it("reads the identifier (dots and dollars included) ending at the caret", () => {
@@ -138,7 +138,7 @@ describe("dbRedisWordSpan", () => {
   });
 });
 
-/* docs/50: the completion is built from the catalog the SERVER answered with, so these
+/* SPEC §data.redis-console: the completion is built from the catalog the SERVER answered with, so these
    fixtures are what COMMAND DOCS + COMMAND INFO produce for a handful of commands - the
    same rows redis_commands returns over the wire. */
 const CAT = [
@@ -155,7 +155,7 @@ const CAT = [
     since: "2.8.0", group: "generic", tokens: ["MATCH", "COUNT"], container: false,
     arity: -2, firstKey: 0, lastKey: 0, step: 0 },
   // A container's OWN key positions are zeros - redis 7 puts the real ones on each
-  // subcommand's row, which is what the panel reads (docs/50 §2.3).
+  // subcommand's row, which is what the panel reads (SPEC §data.redis-console).
   { name: "XINFO", syntax: "", summary: "A container for stream introspection", since: "5.0.0",
     group: "stream", tokens: [], container: true, arity: -2, firstKey: 0, lastKey: 0, step: 0 },
   { name: "XINFO GROUPS", syntax: "key", summary: "List the consumer groups", since: "5.0.0",
@@ -166,7 +166,7 @@ const CAT = [
     group: "server", tokens: [], container: false, arity: -1, firstKey: 0, lastKey: 0, step: 0 },
 ];
 
-describe("dbRedisCandidates (docs/50 - from the server's own catalog)", () => {
+describe("dbRedisCandidates (SPEC §data.redis-console - from the server's own catalog)", () => {
   const keys = ["user:1", "user:2", "market:ticks", "htest"];
   const labels = (text: string, caret = text.length): string[] =>
     sug.dbRedisCandidates(text, caret, keys, CAT).map((c) => c.label);
@@ -223,7 +223,7 @@ describe("dbRedisCandidates (docs/50 - from the server's own catalog)", () => {
   });
 });
 
-describe("dbRedisKeyAt (docs/50 - the three numbers redis-cli reads)", () => {
+describe("dbRedisKeyAt (SPEC §data.redis-console - the three numbers redis-cli reads)", () => {
   const of = (name: string) => CAT.find((c) => c.name === name)!;
   const w = (n: number): string[] => Array.from({ length: n }, (_, i) => "w" + i);
   it("says which words of a line are key names", () => {
@@ -238,7 +238,7 @@ describe("dbRedisKeyAt (docs/50 - the three numbers redis-cli reads)", () => {
   });
 });
 
-describe("dbRedisSignature (docs/50 - the line under the box)", () => {
+describe("dbRedisSignature (SPEC §data.redis-console - the line under the box)", () => {
   it("shows the command being typed, its arguments and what it does", () => {
     expect(sug.dbRedisSignature("SET user:1 ", 11, CAT))
       .toBe("SET key value [NX|XX] [EX seconds] — Set the string value of a key");

@@ -74,7 +74,7 @@ const form = await import(
   ) => void;
 };
 
-/* docs/22 W5.1 — the single-record form. The field resolution and the buffer write are the
+/* SPEC §data.grid — the single-record form. The field resolution and the buffer write are the
    form's whole contract: the form paints dbFormRowFields' answer, and its controls write
    through dbFormWrite with EXACTLY the grid's collapse-back semantics, so the buffer counts
    on the bar are the two views' shared truth. */

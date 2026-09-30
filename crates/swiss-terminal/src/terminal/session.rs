@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The session table and the per-session driver (docs/14 §6).
+//! The session table and the per-session driver (SPEC §terminal.config).
 //!
 //! One driver task per session owns the [`PtySession`] and is the only thing that touches
 //! it. Everything else — opening, listing, attaching a socket, a resize that arrived over
@@ -39,7 +39,7 @@
 //!
 //! ## Bytes are never dropped, except in one place that says so
 //!
-//! While a client is attached the driver parks rather than drops (docs/14 §6.8): the
+//! While a client is attached the driver parks rather than drops (SPEC §terminal.sessions): the
 //! output queue fills, the driver stops reading the session, the provider stops reading
 //! its PTY or SSH channel, and the pressure reaches the program that is printing. Exactly
 //! one place is allowed to lose bytes — the catch-up buffer of a **disconnected** session,
@@ -69,7 +69,7 @@ use super::tickets::{TicketBook, TicketError};
 
 use swiss_core::platform::pty::ShellCandidate;
 
-/// docs/14 §7: 64 KB per session, a constant and not a config item, because it is a line
+/// SPEC §terminal.budget: 64 KB per session, a constant and not a config item, because it is a line
 /// in the memory budget rather than a preference.
 pub const CATCHUP_BYTES: usize = 64 * 1024;
 
@@ -91,7 +91,7 @@ const STALL_NOTICE: Duration = Duration::from_secs(1);
 /// most likely reason a session is closing is that nobody is reading it.
 const CLOSE_FLUSH: Duration = Duration::from_millis(250);
 
-/// What the panel is told about one session, in the order docs/14 §8 spells it.
+/// What the panel is told about one session, in the order SPEC §terminal.api spells it.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionView {
@@ -115,11 +115,11 @@ pub struct TargetsView {
 pub struct LocalView {
     pub enabled: bool,
     /// The program a session would actually run, resolved to an absolute path where the
-    /// platform can (docs/15 §2.1) — the panel's `local · …` label must be the truth.
+    /// platform can (SPEC §terminal.local) — the panel's `local · …` label must be the truth.
     pub shell: String,
     /// Every shell this host offers, probed once at plugin start: the settings sheet's
     /// candidate list. Additive on purpose — the panel's older readers only look at
-    /// `enabled` and `shell` (docs/15 §2.2).
+    /// `enabled` and `shell` (SPEC §terminal.api).
     pub shells: Vec<ShellCandidate>,
 }
 
@@ -127,7 +127,7 @@ pub struct LocalView {
 pub struct RemoteView {
     pub presence: String,
     /// Present only when there is nothing to serve, and it NAMES the plugin that is
-    /// missing (docs/14 §4). An empty target list on its own reads as "you have no
+    /// missing (SPEC §terminal.remote). An empty target list on its own reads as "you have no
     /// servers", which is a different and wrong statement.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -418,7 +418,7 @@ impl TerminalSessions {
         let session = if target == LOCAL_TARGET {
             // The request's one-shot override beats the plugin's configured shell; with
             // neither, the default the probe cached at start runs. Without this the
-            // config row only ever changed the label, never the program (docs/15 §2).
+            // config row only ever changed the label, never the program (SPEC §terminal.local).
             let shell = shell.or_else(|| table.config.local.shell.as_deref());
             table.local.open(&id, size, shell)?
         } else {
@@ -535,7 +535,7 @@ impl TerminalSessions {
     }
 
     /// A window change, from either the socket's resize frame or `POST /resize`. Both
-    /// paths land here, which is the point of having both (docs/14 §8).
+    /// paths land here, which is the point of having both (SPEC §terminal.api).
     pub async fn resize(&self, id: &str, size: PtySize) -> Result<(), TerminalError> {
         self.send(id, DriverCommand::Resize(size)).await
     }
@@ -701,7 +701,7 @@ impl Drop for Reservation {
     }
 }
 
-/// The bounded catch-up buffer of a disconnected session (docs/14 §6.7).
+/// The bounded catch-up buffer of a disconnected session (SPEC §terminal.sessions).
 #[derive(Default)]
 struct Backlog {
     bytes: VecDeque<u8>,

@@ -16,7 +16,7 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-/* docs/30 — the pg url <-> fields pair. Pure string work, so no DOM: what is pinned is the
+/* SPEC §mcp.panel — the pg url <-> fields pair. Pure string work, so no DOM: what is pinned is the
    round-trip (incl. ${...} refs and the mask sentinel) and the submit-path translation. */
 let fields: typeof import("../src/fields.js");
 
@@ -24,7 +24,7 @@ beforeAll(async () => {
   fields = await import("../src/fields.js");
 });
 
-describe("docs/30: parsePgUrl / pgUrlFrom", () => {
+describe("SPEC §mcp.panel: parsePgUrl / pgUrlFrom", () => {
   it("a full url splits, and the pieces rebuild the same url", () => {
     const url = "postgresql://shop:hunter2@127.0.0.1:5432/shop?sslmode=disable";
     expect(fields.parsePgUrl(url)).toEqual({
@@ -63,7 +63,7 @@ describe("docs/30: parsePgUrl / pgUrlFrom", () => {
   });
 });
 
-describe("docs/30: translatePg — the submit path", () => {
+describe("SPEC §mcp.panel: translatePg — the submit path", () => {
   it("assembles the url and drops the part keys", () => {
     const body = fields.translatePg("pg", {
       type: "pg", host: "h", port: 5432, user: "u", password: "p", database: "d",

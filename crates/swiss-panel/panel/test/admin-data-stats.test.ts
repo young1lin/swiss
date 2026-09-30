@@ -57,7 +57,7 @@ const mod = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-sql.ts")).href
 ) as { dbStatsSql: (d: string, s: string, t: string, c: string, k: string) => string };
 
-// docs/22 W1.4: the header right-click stats statements — dialect-correct quoting through the
+// SPEC §data.grid: the header right-click stats statements — dialect-correct quoting through the
 // identifier whitelist, never a bare splice, and refusal of anything not a bare word.
 describe("dbStatsSql", () => {
   it("builds the top-values shape with LIMIT 50", () => {

@@ -47,7 +47,7 @@ const doc = {
   documentElement: el(), body: el(), head: el(),
   hidden: false, visibilityState: "visible", activeElement: null,
   getElementById: (_id?: string) => el(), createElement: () => el(), createTextNode: () => el(),
-  // The sprite factory: renderDbBar repaints the object strip beside it (docs/42 T2), and
+  // The sprite factory: renderDbBar repaints the object strip beside it (SPEC §data.tabs), and
   // every card carries an iconNode, which builds through the SVG namespace.
   createElementNS: () => el(),
   createDocumentFragment: () => el(),
@@ -79,7 +79,7 @@ const sql = await import(
 };
 
 /* The pending-SQL preview and the Commit gate read the Data view's record, which db-state.ts
-   owns since docs/37 R4. Plain static import, unlike data-sql.ts above: that one dodges tsc
+   owns since SPEC §panel.toolchain. Plain static import, unlike data-sql.ts above: that one dodges tsc
    because its module graph is browser JS, while this is an ordinary typed module — and a
    literal specifier is also what keeps this binding the SAME instance data-sql.ts resolves.
    The unmount/mount pair is the reset, which is what assigning over the whole record did. */
@@ -104,7 +104,7 @@ const setTable = (over: Record<string, unknown> = {}) => {
   }
 };
 
-// docs/22 W0.5: the Explain button offers plain EXPLAIN and EXPLAIN ANALYZE; the prefix is
+// SPEC §data.console: the Explain button offers plain EXPLAIN and EXPLAIN ANALYZE; the prefix is
 // built by one pure helper so this file can pin both spellings without a DOM.
 describe("dbWithExplain modes", () => {
   it("prefixes a plain statement with EXPLAIN", () => {
@@ -129,7 +129,7 @@ describe("dbWithExplain modes", () => {
   });
 });
 
-// docs/22 W4.3: the console splits the caret's block on statement-level semicolons and runs
+// SPEC §data.console: the console splits the caret's block on statement-level semicolons and runs
 // each reply into its own result tab. The split is one pure helper because it must never cut
 // inside a string literal or a comment — a naive split(";") shreds both.
 describe("dbSplitStatements", () => {
@@ -183,7 +183,7 @@ describe("dbSplitStatements", () => {
   });
 });
 
-// docs/22 W4.3: a tab's name is the statement's first word plus its row count — the shape the
+// SPEC §data.console: a tab's name is the statement's first word plus its row count — the shape the
 // spec pins ("SELECT · 42"). EXPLAIN answers name themselves because the prefix ran too.
 describe("dbResultTabLabel", () => {
   it("first word uppercased plus row count", () => {
@@ -199,11 +199,11 @@ describe("dbResultTabLabel", () => {
   });
 });
 
-/* docs/42 T1 regression pin: the bar's gate reads the ACTIVE TAB's buffers, and the
+/* SPEC §data.tabs, regression pin: the bar's gate reads the ACTIVE TAB's buffers, and the
    rewrite once dropped master's unhide — a buffered edit left the bar hidden and every
    re-render APPENDED another button set (no fill). The visibility half is what a stub can
    see; the append-reset half is the real-browser walkthrough's. */
-describe("the edit bar's visibility (docs/42 T1)", () => {
+describe("the edit bar's visibility (SPEC §data.tabs)", () => {
   it("hides with nothing buffered, unhides the moment an edit is buffered", () => {
     const bar = el();
     doc.getElementById = (id?: string) => (id === "dbBar" ? bar : el());
@@ -219,7 +219,7 @@ describe("the edit bar's visibility (docs/42 T1)", () => {
   });
 });
 
-// docs/22 W4.1 (W4b follow-up): the preview must sketch the address the SERVER will really
+// SPEC §data.edits (W4b follow-up): the preview must sketch the address the SERVER will really
 // use - pk columns when the table has one, every column when it has none, with the md5 fold
 // the server applies to long text (EDIT_ADDR_MD5_MIN = 64) - instead of promising a primary
 // key it does not have and printing an empty WHERE for exactly the keyless tables.

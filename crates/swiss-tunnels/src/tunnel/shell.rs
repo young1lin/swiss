@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The tunnels plugin as a provider of interactive shells (docs/14 T2).
+//! The tunnels plugin as a provider of interactive shells (SPEC §terminal.remote).
 //!
 //! This is the whole of the SSH side of the terminal feature. Everything above it — the
 //! session machine, the WebSocket, the panel page — reaches a remote host through
@@ -25,7 +25,7 @@
 //!
 //! - **A second host list.** Targets are the tunnels connections the user already
 //!   configured, by their own ids. No second place to type a hostname, no second copy of
-//!   a credential, no second host-key decision (docs/14 §1).
+//!   a credential, no second host-key decision (SPEC §terminal).
 //! - **The credentials.** The provider opens the channel and hands back bytes. A password
 //!   or a key passphrase never crosses into the consumer, and `${ENV_VAR}` refs expand at
 //!   connect time in `ssh.rs` exactly as they do for a forwarding rule.
@@ -77,7 +77,7 @@ impl ShellProvider for TunnelShells {
             .map(|def| ShellTarget {
                 // The tunnels connection id IS the identity: two servers that merely share
                 // host and port are two definitions, and merging them would silently open
-                // a shell as the wrong user (docs/09 §3).
+                // a shell as the wrong user (SPEC §host.plugins).
                 id: def.id.clone(),
                 label: def.name.clone(),
                 host: def.host.clone(),

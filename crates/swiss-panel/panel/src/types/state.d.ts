@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The panel's domain shapes. The file is named for what it used to be: docs/36 D6 put the
+/* The panel's domain shapes. The file is named for what it used to be: SPEC §panel.toolchain put the
    shared `state` bag's type here as an ambient global, R3 made it an ordinary module, and
    R4 split the bag itself into seven slices that each own their record — so there is no
    PanelState any more, and nothing in here is state. What is left is the shapes those
@@ -110,11 +110,11 @@ export interface McpDetail {
   callsErrStatus: string;
   callsRetryTarget: number | null;
   callsRetryDir: string | null;
-  /* A page switch's anchor intent (docs/32 B2): direction, keyboard drive, pager top. */
+  /* A page switch's anchor intent (SPEC §mcp.calls): direction, keyboard drive, pager top. */
   callsSwitch: { dir: string | null; fromKey?: boolean; pagerTop?: number } | null;
   callsRequest: number;
   callsActive: number;
-  /* docs/33 C3: seqs whose full reply the server has pruned (bodyGone), so the row stops offering
+  /* SPEC §mcp.calls: seqs whose full reply the server has pruned (bodyGone), so the row stops offering
    * a fetch it cannot serve; and blocks ("out:<seq>") lifted past the 200-line cap by Show all.
    * Both are state, not DOM, so a poll repaint keeps them. */
   callsGone: Record<string, boolean>;
@@ -160,7 +160,7 @@ export interface JobTrigger {
   timezone?: "local";
 }
 
-/* One v2 job definition (docs/11 section 3) - the wire form of def.rs JobDefinition, keyed
+/* One v2 job definition (SPEC §jobs.config) - the wire form of def.rs JobDefinition, keyed
  *  by id in JobConfigRow.definitions (the id is the map key, never a field: the parser's
  *  known-field list does not include it). Closed: def.rs parse_definition check_known
  *  refuses any other key, so nothing "rides along" - a key this form does not own cannot
@@ -330,16 +330,16 @@ export interface DbFilterTerm {
   value: string | number | boolean | null;
 }
 
-/** Per-connection grid geometry (docs/22 W2.1): saved column widths and hidden columns. */
+/** Per-connection grid geometry (SPEC §data.grid): saved column widths and hidden columns. */
 export interface DbGridConfig {
   widths: Record<string, number>;
   hidden: string[];
 }
 
-/* --- the Data view's split record (docs/42 §2) --------------------------------------------------- */
+/* --- the Data view's split record (SPEC §data.tabs) --------------------------------------------------- */
 /* The 49-field DbState mixed two domains that change at different times: what belongs to
    the CONNECTION (the sidebar's list, its filters, what the console remembers) and what
-   belongs to the OPEN OBJECT (the grid's page, its filters, its buffered edits). docs/42
+   belongs to the OPEN OBJECT (the grid's page, its filters, its buffered edits). SPEC §data.tabs
    splits the record along that line — every field of the old record lands in exactly one
    of the shapes below, and the division is disjoint (17 connection + 30 tab + 2 retired
    = 49; the "tab" count includes the kind discriminant itself).
@@ -364,7 +364,7 @@ export interface DbTabBase {
   selAnchor: number;
   focus: { r: number; c: number } | null;
   sqlPreview: boolean;
-  /* The strip's least-recently-used clock (docs/42 D3): a monotonic stamp bumped when the
+  /* The strip's least-recently-used clock (SPEC §data.tabs): a monotonic stamp bumped when the
      tab is created and every time it is activated. Eviction reads it and nothing else — a
      wall clock would tie the cap to how fast the operator works. */
   touched: number;
@@ -377,7 +377,7 @@ export interface DbTabBase {
 
 /** A table (or view) opened in the row grid: its page, its filters, its buffered edits,
  *  and the pane segment showing (data | form | columns | indexes | fks | ddl until the
- *  six fold into four with docs/42 T4). */
+ *  six fold into four with SPEC §data.tabs). */
 export interface DbTableTab extends DbTabBase {
   kind: "table";
   table: string | null;
@@ -399,8 +399,8 @@ export interface DbTableTab extends DbTabBase {
   conflict: { key: string; columns: string[] } | null;
 }
 
-/** The console as an open object (docs/42 T2): the text being written, the reply strip,
- *  and which reply is showing. One statement per result tab (docs/22 W4.3). */
+/** The console as an open object (SPEC §data.tabs): the text being written, the reply strip,
+ *  and which reply is showing. One statement per result tab (SPEC §data.console). */
 export interface DbSqlTab extends DbTabBase {
   kind: "sql";
   sqlText: string;
@@ -410,7 +410,7 @@ export interface DbSqlTab extends DbTabBase {
   sqlBusy: boolean;
 }
 
-/** A redis key opened in the value view (docs/22 W3.3): the shown key, its decoded
+/** A redis key opened in the value view (SPEC §data.redis): the shown key, its decoded
  *  value, and the buffered typed-value edits Commit would pipeline. */
 export interface DbKeyTab extends DbTabBase {
   kind: "key";
@@ -423,13 +423,13 @@ export interface DbKeyTab extends DbTabBase {
    * repaint carrying no new read resumes the count instead of restarting it. */
   redisValueAt?: number;
   redisEdits: DbRedisEdits | null;
-  /* docs/45 S2: the stream view's grown row cache — the newest window plus every Load-
+  /* SPEC §data.streams: the stream view's grown row cache — the newest window plus every Load-
    * earlier page prepended, newest-first throughout. Null until the first window paints
    * (the value view's own loading state covers that); reset whenever the key re-reads,
    * because a fresh newest window is the truth and history re-walks from it. */
   redisStreamRows?: ApiDbStreamEntry[] | null;
   redisStreamMore?: boolean | null;
-  /* docs/45 S3: Follow — the live-edge poller. redisStreamFollow is the switch,
+  /* SPEC §data.streams: Follow — the live-edge poller. redisStreamFollow is the switch,
    *  redisStreamEvery the tick interval in ms (1 s default, 2 s / 5 s options),
    *  redisStreamGroups/redisStreamGroupsOpen the consumer-group fold and its toggle.
    *  redisStreamLen/redisStreamLenAt sample the rate readout (dXLEN/dt); a tick error
@@ -441,7 +441,7 @@ export interface DbKeyTab extends DbTabBase {
   redisStreamLen?: number | null;
   redisStreamLenAt?: number | null;
   redisStreamRate?: string | null;
-  /* docs/45 §2.3: the not-pinned holdback. redisStreamPending pools the pages a tick
+  /* SPEC §data.streams: the not-pinned holdback. redisStreamPending pools the pages a tick
    *  fetched while the operator reads history — nothing inserts, the table holds still,
    *  the pill counts. redisStreamGap is the more=true flag on a live-edge page (a
    *  middle chunk was skipped); redisStreamErr is why Follow stopped, if it stopped.
@@ -453,7 +453,7 @@ export interface DbKeyTab extends DbTabBase {
   redisStreamGap?: boolean;
   redisStreamPendingDropped?: boolean;
   redisStreamErr?: string | null;
-  /* docs/49: reading a fast stream. redisStreamMatch is the filter line as typed
+  /* SPEC §data.streams: reading a fast stream. redisStreamMatch is the filter line as typed
    *  (empty is no filter); redisStreamScanned/redisStreamSeen/redisStreamScanTo are
    *  the last filtered answer's own report — how many entries the server examined,
    *  the newest id it reached (the follow tick's cursor, so a filter that matches
@@ -473,7 +473,7 @@ export interface DbKeyTab extends DbTabBase {
   redisStreamHold?: boolean;
 }
 
-/** The activity monitor as an open object (docs/22 W3.2, docs/42 T2): the last
+/** The activity monitor as an open object (SPEC §data.activity, SPEC §data.tabs): the last
  *  /activity answer the 5s poll re-renders. */
 export interface DbActivityTab extends DbTabBase {
   kind: "activity";
@@ -482,11 +482,11 @@ export interface DbActivityTab extends DbTabBase {
 
 export type DbTab = DbTableTab | DbSqlTab | DbKeyTab | DbActivityTab;
 
-/** What a tab is opened FOR (docs/42 T2): the address `dbOpenTab` dedupes on before it
+/** What a tab is opened FOR (SPEC §data.tabs): the address `dbOpenTab` dedupes on before it
  *  builds anything. A table's identity is schema+table+filters — the FK jump's filtered
  *  view of a table is a different object than the same table unfiltered, which is exactly
  *  why the jump opens a tab of its own instead of rewriting the one in front of the user
- *  (docs/22 W5.2). `sql` and `activity` carry no address: there is one console and one
+ *  (SPEC §data.grid). `sql` and `activity` carry no address: there is one console and one
  *  activity monitor per connection, so a second open activates the first. */
 export type DbTabSpec =
   | { kind: "table"; table: string; schema: string | null; filters?: DbFilterTerm[] }
@@ -495,12 +495,12 @@ export type DbTabSpec =
   | { kind: "activity" };
 
 /** The connection-scoped half of the old record: the sidebar's list state, the pickers,
- *  the grid geometry (per-connection by construction, docs/22 W2.1) and what the console
+ *  the grid geometry (per-connection by construction, SPEC §data.grid) and what the console
  *  remembers ACROSS consoles — the query history and the favorites, which belong to the
  *  connection, not to one scratchpad. Shared by every open tab; reset when the connection
  *  changes.
  *
- *  T1's transitional block is gone (docs/42 T2): the console's text and replies live on
+ *  T1's transitional block is gone (SPEC §data.tabs): the console's text and replies live on
  *  DbSqlTab and the activity rows on DbActivityTab, so `sqlOpen` and `activity: boolean`
  *  have nothing left to flag — an open console IS an open tab. */
 export interface DbConnState {
@@ -508,7 +508,7 @@ export interface DbConnState {
   conn: string | null;
   tables: ApiDbTableRow[];
   tablesTotal: number;
-  /* docs/43 addendum: the tree fetches the WHOLE catalog (no pager), so "more" is the one
+  /* SPEC §data.tabs: the tree fetches the WHOLE catalog (no pager), so "more" is the one
    * honest truncation flag left - the fetch cap clipped the list and grep is the way past.
    * treeShown remembers how many rows each section band has painted past the render cap,
    * keyed by "schema/section" (empty schema for MySQL's root bands); the note row grows it
@@ -529,12 +529,12 @@ export interface DbConnState {
   redis: { keys: ApiDbRedisKeyRow[]; cursor: string; done: boolean; total: number; pages?: number } | null;
   redisType: string;
   redisError: boolean;
-  /* docs/50: the command catalog the CONNECTED redis described (COMMAND DOCS + COMMAND INFO),
+  /* SPEC §data.redis-console: the command catalog the CONNECTED redis described (COMMAND DOCS + COMMAND INFO),
      read once per connection and kept for as long as it is open. Null until it answers; the
      console's completion and its syntax hint are built from it, so they know that server's
      commands — its modules and its version — rather than a table written here by hand. */
   redisCommands?: ApiRedisCommand[] | null;
-  /* docs/43 M3: the database axis. database is the SELECTED one ("" = the connection's
+  /* SPEC §data.databases: the database axis. database is the SELECTED one ("" = the connection's
      configured default — the byte-identical path); databases is the lazy catalog, null
      until the selector is first opened ([] = the dialect has no axis → no database row). */
   database: string;

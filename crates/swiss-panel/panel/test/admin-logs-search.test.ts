@@ -18,7 +18,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 // @vitest-environment happy-dom
 
-/* docs/31 — the Logs tab's server-side search box. Pure markup: what is pinned is that the input
+/* SPEC §mcp.calls — the Logs tab's server-side search box. Pure markup: what is pinned is that the input
    renders with the live needle, the empty state names the needle, and the unfiltered wording is
    untouched when there is no needle. logs.js itself touches no DOM at import time; its two
    imports do (the sidebar graph wires buttons), so both are mocked — the page-registry idiom
@@ -45,14 +45,14 @@ function stub(over: Record<string, unknown> = {}) {
   } as never;
 }
 
-/* docs/37 R5: logsBodyNode paints a real tree — assertions read the painted DOM. */
+/* SPEC §panel.toolchain: logsBodyNode paints a real tree — assertions read the painted DOM. */
 function paint(over: Record<string, unknown> = {}): HTMLElement {
   const host = document.createElement("div");
   host.append(...[logs.logsBodyNode(stub(over) as never)].flat().filter((n): n is Node => n != null));
   return host;
 }
 
-describe("docs/31: logs search box", () => {
+describe("SPEC §mcp.calls: logs search box", () => {
   it("renders the search input with the live needle", () => {
     const input = paint({ callsQ: "GET" }).querySelector<HTMLInputElement>("#callsQ")!;
     expect(input.value).toBe("GET");
@@ -72,7 +72,7 @@ describe("docs/31: logs search box", () => {
     expect(text).not.toContain("No calls matching");
   });
 
-  it("docs/32 B4: the toolbar action is the ellipsis menu — no standing Clear button", () => {
+  it("SPEC §mcp.calls: the toolbar action is the ellipsis menu — no standing Clear button", () => {
     const host = paint({ callsQ: "x" });
     expect(host.querySelector("#clMenu")!.getAttribute("aria-label")).toBe("More log actions");
     expect(host.querySelector("#callsClear")).toBeNull();

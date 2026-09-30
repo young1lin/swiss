@@ -31,14 +31,14 @@ import { dbConn, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
                                              
 import { popupMenu } from "./ui/menu.js";
-// fix-plan #16: the Table menu's rename and the typed confirm ride the one-field sheet from
+// SPEC §panel.ui: the Table menu's rename and the typed confirm ride the one-field sheet from
 // the library (ui/sheet.js imports nothing of the panel's, so no cycle).
 import { openFieldSheet } from "./ui/sheet.js";
 
 /* --- structure operations (rename / truncate / drop) ---------------------------------------------- */
 /* A Table menu beside the tabs. Truncate and drop demand a TYPED confirmation — the user
    retypes the table name — because both destroy data with no transaction to roll back to. */
-/** docs/22 W1.10: build one template for the open table and drop it into the console. */
+/** SPEC §data.console: build one template for the open table and drop it into the console. */
 function dbGenerateSql(kind        )       {
   const c = dbConn();
   const d = dbTab();
@@ -61,11 +61,11 @@ function dbTableMenu(anchorEl             )       {
   const d = dbTab();
   if (d.kind !== "table") return;
   if (!c.conn || !d.table) return;
-  // The library's floating menu under the button (docs/46 §3.7): rows, keys, clamp and close
+  // The library's floating menu under the button (SPEC §panel.pages): rows, keys, clamp and close
   // are popupMenu's, the same as the ⋯ this menu is opened from.
   const items             = [];
   const item = (label        , fn            )       => { items.push({ label, fn }); };
-  // docs/22 W1.10: generate this table's four statements from the column set the page already
+  // SPEC §data.console: generate this table's four statements from the column set the page already
   // carries (the describe_table shape). Identifiers pass the whitelist, values are ?
   // placeholders, and the template lands in the console — fill the ?s, run, and it is history.
   ["select", "insert", "update", "delete"].forEach((kind        )       => {
@@ -73,7 +73,7 @@ function dbTableMenu(anchorEl             )       {
   });
   items.push({ sep: true });
   item(tr("dataEdit.renameTable"), () => {
-    // fix-plan #16: the one-field sheet — an illegal name errors INLINE (the typed value
+    // SPEC §panel.ui: the one-field sheet — an illegal name errors INLINE (the typed value
     // stays on the sheet), and nothing is sent until the charset holds.
     openFieldSheet({
       title: tr("dataEdit.renameTo", { name: (d.schema ? d.schema + "." : "") + d.table }),
@@ -102,7 +102,7 @@ function dbTableMenu(anchorEl             )       {
    the thing itself. */
 function dbTypedConfirm(o                                                                     , fn            )       {
   const expected = o.typed != null ? o.typed : o.name;
-  // fix-plan #16: the typed confirm rides the same one-field sheet as the renames. The old
+  // SPEC §panel.ui: the typed confirm rides the same one-field sheet as the renames. The old
   // dialog's cancel-with-empty-string early exit is the sheet's Cancel, and a mismatch is
   // an inline error beside the field instead of a toast that dismisses the retyping.
   openFieldSheet({
@@ -133,7 +133,7 @@ async function dbRunDdl(op        , to         )                {
     // The table is gone, so every tab open on it goes with it — this one and any background
     // tab holding the same table under a different filter. What is left is whatever else was
     // open, or the strip's placeholder, whose empty state IS the repaint the right pane needs:
-    // renderDbTables refreshes only the LEFT list (docs/22 closeout audit, under docs/42 T2).
+    // renderDbTables refreshes only the LEFT list (SPEC §data, under SPEC §data.tabs).
     dbDropTableTabs(d.table, d.schema);
     if (dbIsRedis()) void dbLoadKeys(true);
     else void dbLoadTables();

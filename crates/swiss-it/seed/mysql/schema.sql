@@ -1,4 +1,4 @@
--- The MySQL seed, schema (docs/44 SS2.3/SS2.4). Every shape below is a trap the panel
+-- The MySQL seed, schema (SPEC §testing.it). Every shape below is a trap the panel
 -- or an adapter has already fallen into once; the seed guard test pins each one:
 -- utf8mb4 text, an unsigned BIGINT past 2^53, DECIMAL precision, JSON, ENUM, BLOB,
 -- microsecond DATETIME, a composite primary key with a foreign key, a PK-less table

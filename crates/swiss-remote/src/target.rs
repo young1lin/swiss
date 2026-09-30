@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The remote TARGET table (docs/34): what an agent may aim at.
+//! The remote TARGET table (SPEC §remote): what an agent may aim at.
 //!
 //! A target is the agent-facing half of a connection: an endpoint id (a tunnels
 //! connection, by that connection's own id), a workspaceRoot on the far side, a shell
@@ -73,7 +73,7 @@ pub struct RemoteTarget {
     pub capabilities: Vec<String>,
     /// Per-target default deadline for runs, when the caller gives none.
     pub default_timeout_ms: Option<u64>,
-    /// The docs/20 rendering group this target lists under (R8). None means "the
+    /// The SPEC §host.groups rendering group this target lists under (R8). None means "the
     /// first group, whatever it is called" - the sink rule every scope shares; the
     /// canonical spelling is stored, matched case-insensitively like every scope.
     pub group: Option<String>,
@@ -307,7 +307,7 @@ fn canonicalize_group(
 pub struct TargetStore {
     path: PathBuf,
     targets: Vec<RemoteTarget>,
-    /// The ordered group names (docs/34 R8). Membership lives on the rows themselves -
+    /// The ordered group names (SPEC §remote.targets). Membership lives on the rows themselves -
     /// the tunnels.json shape - so this model holds names only and the members map
     /// stays empty by construction.
     groups: swiss_host::groups::Groups,
@@ -409,7 +409,7 @@ impl TargetStore {
         self.save()
     }
 
-    // --- groups (docs/34 R8: the targets scope of the docs/20 family) ---------------------------
+    // --- groups (SPEC §remote.targets: the targets scope of the SPEC §host.groups family) ---------------------------
 
     /// The ordered group names, exactly as the family's PUT answers them.
     pub fn group_names(&self) -> Vec<String> {
@@ -434,7 +434,7 @@ impl TargetStore {
     }
 
     /// Replace the whole group-name list: create, reorder and delete are all "here is
-    /// the new list". Row-side bookkeeping mirrors tunnels.json exactly (docs/20 §2.2):
+    /// the new list". Row-side bookkeeping mirrors tunnels.json exactly (SPEC §host.groups):
     /// a demoted first group pins its default members to the name so nobody silently
     /// re-homes, and a group dropped by omission loses its rows' explicit entries.
     pub fn set_group_names(&mut self, next: &[String]) -> Result<Vec<String>, String> {
@@ -573,7 +573,7 @@ mod tests {
     #[test]
     fn safe_join_passes_an_absolute_rel_through_as_the_path_itself() {
         // An absolute path is what the caller typed in full - ssh-level trust, never
-        // joined onto the root (docs/34: the root anchors relative paths, not a cage).
+        // joined onto the root (SPEC §remote: the root anchors relative paths, not a cage).
         assert_eq!(
             safe_join("/tmp/ws", "/home/dev/app").unwrap(),
             "/home/dev/app"
@@ -757,9 +757,9 @@ mod tests {
         assert!(safe_join("/data/ws", "a/../../..").is_err());
     }
 
-    /// The docs/34 R8 group contract on the one sealed table: names, membership,
+    /// The SPEC §remote.targets group contract on the one sealed table: names, membership,
     /// pinning and order - the same word-for-word semantics tunnels.json carries
-    /// (docs/20 §2.2), asserted through a reopen so persistence is part of the proof.
+    /// (SPEC §host.groups), asserted through a reopen so persistence is part of the proof.
     #[test]
     fn groups_follow_the_family_contract_and_survive_a_reopen() {
         let dir = scratch();
@@ -785,7 +785,7 @@ mod tests {
         assert_eq!(store.group_of("build"), "prod");
         assert_eq!(store.group_of("flash"), "default", "the sink group");
 
-        // A demoted first group pins its default members to the name (docs/20 §2.2).
+        // A demoted first group pins its default members to the name (SPEC §host.groups).
         store
             .set_group_names(&["prod".into(), "default".into()])
             .expect("demote");

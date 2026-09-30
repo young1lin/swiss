@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-//! The one resolver every credential string passes on its way to a live use (docs/19 D4,
-//! grammar revised by docs/25 E1).
+//! The one resolver every credential string passes on its way to a live use (SPEC §host.refs,
+//! grammar revised by SPEC §host.refs).
 //!
 //! One envelope, two families, one pass:
 //! - `${UPPER_SNAKE}` — env refs, resolved against envstore's overlay plus the process env.
@@ -35,7 +35,7 @@
 //! Outside the envelope there are NO references. A bare `secret://` is literal text —
 //! `https://x/secret://aaa/y` passes through byte-identical whatever the vault holds,
 //! because without delimiters a scheme substring cannot be told apart from a URL path (the
-//! defect docs/25 §0 records as the reason the bare scheme was retired).
+//! defect SPEC §host.refs records as the reason the bare scheme was retired).
 //!
 //! A replaced value is never re-scanned: a secret whose value itself contains `${X}` is data,
 //! not a second-order reference. The scan advances one CHARACTER past anything it does not
@@ -49,7 +49,7 @@ use super::secretstore::{valid_name, vault_lookup};
 /// The scheme a vault reference carries inside the envelope.
 const SECRET_SCHEME: &str = "secret://";
 
-/// Resolve every reference in ONE string (docs/19 D4; grammar docs/25 E1). Err carries the
+/// Resolve every reference in ONE string (SPEC §host.refs; grammar SPEC §host.refs). Err carries the
 /// sentence an operator reads — it names the reference, never a value.
 pub fn resolve(input: &str) -> Result<String, String> {
     resolve_collect(input).map(|(out, _)| out)
@@ -88,7 +88,7 @@ pub fn secret_ref_parts(rest: &str) -> Option<(&str, Option<&str>)> {
 
 /// Does one string reference the vault secret `name` - `${secret://name}`, the defaulted
 /// `${secret://name:...}` anywhere inside it, or the legacy bare whole value `secret://name`
-/// (docs/25 E2)? The question a secret replace asks of every definition string it may have
+/// (SPEC §host.refs)? The question a secret replace asks of every definition string it may have
 /// to rebuild.
 pub fn names_secret(s: &str, name: &str) -> bool {
     s == format!("{SECRET_SCHEME}{name}")
@@ -135,7 +135,7 @@ fn resolve_families(
                         "invalid reference '${{{shown}}}' — secret names are lowercase kebab ([a-z][a-z0-9-]{{0,63}}), optionally followed by :default"
                     ));
                 }
-                // Env refs: the pre-vault grammar, unchanged and lenient (docs/19 D4). The
+                // Env refs: the pre-vault grammar, unchanged and lenient (SPEC §host.refs). The
                 // vault-only pass leaves them as text for the far side's shell.
                 let is_env_name = env_refs
                     && !content.is_empty()
@@ -158,7 +158,7 @@ fn resolve_families(
     Ok((out, resolved))
 }
 
-/// The one-time shape normalization (docs/25 E2): rewrite WHOLE-VALUE bare vault refs
+/// The one-time shape normalization (SPEC §host.refs): rewrite WHOLE-VALUE bare vault refs
 /// `secret://name` into the envelope form `${secret://name}`. Loaders call it on a state
 /// file's tree right after reading; the disk copy catches up on the next save, so no boot
 /// ever rewrites a file just to re-spell a reference. Mixed strings (`Bearer secret://x`)
@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn a_bare_scheme_is_literal_text_whatever_the_vault_holds() {
-        // The URL that decided the grammar (docs/25 §0): no envelope, no reference —
+        // The URL that decided the grammar (SPEC §host.refs): no envelope, no reference —
         // byte-identical passthrough with the name stored AND with it absent.
         plant("refs-url", "v");
         let stored = "https://test.com/secret://refs-url/tail";
@@ -427,7 +427,7 @@ mod tests {
             resolve("${secret://refs-default-absent:redis://h:6379/0}").unwrap(),
             "redis://h:6379/0"
         );
-        // Without a default a missing secret still fails hard (docs/19 D4).
+        // Without a default a missing secret still fails hard (SPEC §host.refs).
         let err = resolve("${secret://refs-default-absent}").unwrap_err();
         assert!(err.contains("not in the vault"), "{err}");
     }

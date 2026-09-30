@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* docs/46 G3 - four weights. The panel had nine font-weight values (400 450 500 550 560 590
+/* SPEC §panel.ui - four weights. The panel had nine font-weight values (400 450 500 550 560 590
    600 650 700), every one a literal; on a dark ground in Segoe UI that read as "everything is
    bold". Direction B names four roles in the token block - --w-body 400, --w-name 450,
    --w-emph 500, --w-title 600 - and every font-weight in every sheet uses one of them. */
@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
 import { parseCss } from "./css-rules.js";
 import { linkedSheets } from "./styles.js";
 
-describe("docs/46 G3 - every font-weight is a --w-* token", () => {
+describe("SPEC §panel.ui - every font-weight is a --w-* token", () => {
   it("the four roles are defined once, in the light token block", () => {
     const defs: string[] = [];
     for (const s of linkedSheets()) {

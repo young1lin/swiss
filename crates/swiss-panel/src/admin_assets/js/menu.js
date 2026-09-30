@@ -27,18 +27,18 @@ import { locale, tr } from "./i18n.js";
  *  description, the source, the latency, the reason a row is red — lives here, and in the pane
  *  header for the selected MCP. */
 function tooltipOf(m           )         {
-  // Idle is the one state word that names no behaviour of its own (docs/18 V6): a lazy proc
+  // Idle is the one state word that names no behaviour of its own (SPEC §panel.design): a lazy proc
   // has no child yet and wakes on the first request — say that, so a hollow ring explains itself.
   const stateWord = mcpBusyVerb(m.name) ? mcpBusyVerb(m.name) + "…"
     : m.state === "idle" ? tr("menu.idleLazyChildWakes")
     : m.state === "stopped" ? tr("menu.disabled")
     : m.state;
-  // docs/24: the endpoint path shown to the operator carries the /mcp/ domain prefix.
+  // SPEC §mcp.endpoint: the endpoint path shown to the operator carries the /mcp/ domain prefix.
   const bits = ["/mcp/" + m.name, m.type, m.source, stateWord];
   if (m.latencyMs != null) bits.push(m.latencyMs + " ms");
   if (m.description) bits.unshift(m.description);
   if (m.reason) bits.push(m.reason);
-  bits.push(tr("menu.rightClickActions")); // docs/28 D3: the row menu has no button of its own
+  bits.push(tr("menu.rightClickActions")); // SPEC §mcp.revisions: the row menu has no button of its own
   return bits.join("  ·  ");
 }
 
@@ -56,7 +56,7 @@ function patchSidebar()       {
   // folded shut. Dot colour, latency and selection are patched below and stay out of it on purpose.
   // The language is in it too: the group bands' words (the empty line, the + and ⋯ labels) are
   // built once per rebuild, so without it a 文/A flip left them in the old language until the
-  // membership next changed (found live on 19998 in the docs/46 P1b second-language pass).
+  // membership next changed (found live on 19998 in a second-language pass (SPEC §panel.ui)).
   const sig = locale() + "\u0003" + groups.map((g) => {
     return g.name + "\u0001" + (foldMap()[g.name] && !listFilter().trim() ? "c" : "o") + "\u0001" +
       g.rows.map((m) => { return m.name; }).join("\u0000");
@@ -76,7 +76,7 @@ function patchSidebar()       {
     const dot = node.querySelector             (".dot");
     if (dot) {
       dot.className = "dot " + word;
-      // The title rides the same patch pass as the class (docs/18 V6): the poll never
+      // The title rides the same patch pass as the class (SPEC §panel.design): the poll never
       // rebuilds the sidebar, so a title painted only at build time would go stale with the
       // first state change and never move again.
       dot.title = dotTitle(word, m.latencyMs, m.reason);
@@ -85,7 +85,7 @@ function patchSidebar()       {
     // same name, so the row is never rebuilt and the trailing label would otherwise go stale.
     const tagEl = node.querySelector             (".side-type") ;
     const tag = m.tag || m.type || "";
-    // docs/29: a mapped tag renders its glyph (the word rides the aria-label); anything else
+    // SPEC §mcp.panel: a mapped tag renders its glyph (the word rides the aria-label); anything else
     // keeps the text chip exactly as before. fill() so the tag string lands as a text node.
     fill(tagEl, tag ? typeTagNode(tag) : null);
     if (tag) tagEl.setAttribute("data-tag", tag);

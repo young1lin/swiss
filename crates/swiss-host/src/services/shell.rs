@@ -15,14 +15,14 @@
  */
 
 //! The interactive shell capability — who can open a PTY on a remote host, and for how
-//! long (docs/14 §4).
+//! long (SPEC §terminal.remote).
 //!
 //! Same shape as [crate::services::catalog]: ONE provider registers on start, consumers
 //! take a session-scoped lease, and a provider stopping withdraws (no new leases), drains,
 //! then closes. The terminal plugin never links an SSH client; the tunnels plugin never
 //! learns that a terminal exists. ADR-010 forbids an edge between two subsystem crates, so
 //! a need like this one is read as a MISSING HOST CONTRACT, not as a reason to add the
-//! edge — the connection catalog (docs/12 W3) arrived the same way.
+//! edge — the connection catalog (SPEC §host.seats) arrived the same way.
 //!
 //! Two things here deliberately differ from the catalog, and both follow from what a shell
 //! session IS:
@@ -48,7 +48,7 @@ use tokio::sync::{mpsc, watch};
 
 /// PTY geometry bounds. A 0-column PTY is undefined behaviour on the far side and a
 /// 100k-column one is a memory bug wearing a resize frame, so both ends are refused
-/// rather than clamped to a default — docs/14 §8: out of range is a rejection.
+/// rather than clamped to a default — SPEC §terminal.api: out of range is a rejection.
 pub const MIN_PTY_AXIS: u16 = 1;
 pub const MAX_PTY_AXIS: u16 = 1000;
 
@@ -56,7 +56,7 @@ pub const MAX_PTY_AXIS: u16 = 1000;
 /// purpose: when it fills, the provider's send parks, the provider stops reading its PTY,
 /// and the pressure travels back through the SSH window or the pipe exactly as it would
 /// on a real tty. Nothing is ever dropped — losing a fragment of an escape sequence
-/// corrupts the display permanently (docs/14 §6.8).
+/// corrupts the display permanently (SPEC §terminal.sessions).
 pub const OUTPUT_QUEUE_CHUNKS: usize = 32;
 
 /// The same, for keystrokes and control frames heading in. Small: a human types slower
@@ -142,7 +142,7 @@ impl fmt::Display for ShellError {
 
 /// One host an interactive shell can be opened on. Identity is the provider's own
 /// connection id: two servers that merely share host and port are NOT the same target
-/// (docs/09 §3) — the id encodes the whole definition, credentials included.
+/// (SPEC §host.plugins) — the id encodes the whole definition, credentials included.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShellTarget {
     pub id: String,
@@ -358,7 +358,7 @@ impl PtySession {
 impl PtyEndpoint {
     /// Publish one event. Parks while the consumer is behind — that parking IS the
     /// backpressure, and it is why the provider must call this from the same task that
-    /// reads its PTY (docs/14 §6.8).
+    /// reads its PTY (SPEC §terminal.sessions).
     pub async fn send(&self, event: PtyEvent) -> Result<(), ShellError> {
         self.output
             .send(event)
@@ -383,8 +383,8 @@ impl PtyEndpoint {
     /// Necessary rather than stylistic. One `select!` loop cannot do this correctly: it
     /// must park on a full output queue (that parking is the backpressure), and while it
     /// is parked nothing is reading input — so a Ctrl-C typed into a terminal that is
-    /// flooding would never reach the far side, which is acceptance item 7 in docs/14
-    /// §10. Moving the send inside the select instead makes it cancellable, and a
+    /// flooding would never reach the far side, which is SPEC §terminal.verify item 7.
+    /// Moving the send inside the select instead makes it cancellable, and a
     /// cancelled send drops the bytes it was carrying. Two tasks have neither problem.
     pub fn split(self) -> (PtyOut, PtyIn) {
         (
@@ -465,7 +465,7 @@ pub enum ShellPresence {
 }
 
 impl ShellPresence {
-    /// The wire word, as docs/14 §8 spells it.
+    /// The wire word, as SPEC §terminal.api spells it.
     pub fn as_str(&self) -> &'static str {
         match self {
             ShellPresence::Serving(_) => "serving",
@@ -812,7 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_full_output_queue_parks_the_provider_instead_of_dropping_bytes() {
-        // docs/14 §6.8: never drop a byte - a lost escape sequence corrupts the display
+        // SPEC §terminal.sessions: never drop a byte - a lost escape sequence corrupts the display
         // permanently. The proof is that the provider's send is still pending while the
         // consumer is behind, and that every chunk arrives once it catches up.
         let ledger = SessionLedger::new();
@@ -850,7 +850,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_split_endpoint_still_takes_input_while_its_output_is_parked() {
-        // docs/14 §10 item 7: Ctrl-C must reach a terminal that is flooding. With the two
+        // SPEC §terminal.verify item 7: Ctrl-C must reach a terminal that is flooding. With the two
         // directions in one select! loop it could not - the loop would be parked on the
         // full output queue. Split, the input side keeps moving.
         let ledger = SessionLedger::new();
@@ -972,7 +972,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_hundred_lifecycles_leave_the_registry_exactly_empty() {
-        // docs/10 §9's last acceptance item, at the capability level: enable/disable churn
+        // SPEC §jobs.migrate's last acceptance item, at the capability level: enable/disable churn
         // must not leak providers, sessions or rows.
         let reg = ShellRegistry::new();
         let provider = StubShells::new();

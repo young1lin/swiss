@@ -16,7 +16,7 @@
 
 // @vitest-environment happy-dom
 
-/* docs/46 U9, §3.2, U18 - the pinned page head's hairline follows the pane's scroll offset, and a page
+/* SPEC §panel.design, §panel.pages, §panel.ui - the pinned page head's hairline follows the pane's scroll offset, and a page
    switch never inherits the previous page's. The CSS half (.pane.scrolled > .wide >
    .pane-head::after) is pinned in the sheet test below; this is the shell half. */
 import { readFileSync } from "node:fs";
@@ -30,7 +30,7 @@ function scrollTo(pane: HTMLElement, top: number): void {
   pane.dispatchEvent(new Event("scroll"));
 }
 
-describe("docs/46 U9 - .pane.scrolled", () => {
+describe("SPEC §panel.design - .pane.scrolled", () => {
   it("is on while the pane is scrolled and off at the top", () => {
     const pane = document.createElement("main");
     trackPaneScroll(pane);

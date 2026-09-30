@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-//! The file-movement half of remote execution (docs/34 §20): one-way sync (a local
+//! The file-movement half of remote execution (SPEC §remote.actions): one-way sync (a local
 //! directory, or a single file -> workspace on the target) and pull (one remote
 //! file, or a whole directory tree -> local).
 //!
-//! Sync is UPLOAD-ONLY and NEVER DELETES (docs/34 §20): a sync that removes files
+//! Sync is UPLOAD-ONLY and NEVER DELETES (SPEC §remote.actions): a sync that removes files
 //! remotely is a footgun no agent should hold. What it does: walk the local tree,
 //! skip the default excludes (.git, .swiss, target, node_modules - the build
-//! artifacts nobody wants on the far side), compare size+mtime against the remote
-//! stat, and stream changed files through the transport's chunked write.
+//! artifacts nobody wants on the far side), compare the size against the remote
+//! stat (size only - a same-size edit is not seen), and stream changed files through the transport's chunked write.
 //!
 //! Both operations report COMPACTLY: one line per transferred file and one summary
 //! line at the end - an agent watching a run wants the shape, not a wall of text.
@@ -34,7 +34,7 @@ use swiss_host::services::remote::RemoteTransportRegistry;
 
 use crate::target::{safe_join, RemoteTarget};
 
-/// The excludes every sync starts from (docs/34 §20), applied by path prefix.
+/// The excludes every sync starts from (SPEC §remote.actions), applied by path prefix.
 pub const DEFAULT_EXCLUDES: [&str; 4] = [".git/", ".swiss/", "target/", "node_modules/"];
 
 /// One sync's knobs, with the wire's defaults already applied.

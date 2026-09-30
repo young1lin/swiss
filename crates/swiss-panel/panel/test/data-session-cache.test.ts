@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-/* docs/47: one parked session per connection. The owner's report was "I clicked MySQL, then
+/* SPEC §data.sessions: one parked session per connection. The owner's report was "I clicked MySQL, then
    Redis, then back, and everything MySQL had was gone": the switch rebuilt the connection
    record and the object strip from nothing, and a page leave did the same. These pins hold
    the promises the park makes - the session comes back whole and at once, a buffered write
@@ -125,7 +125,7 @@ beforeEach(async () => {
   await flush();
 });
 
-describe("switching away and back brings the session back whole (docs/47 D1, D2)", () => {
+describe("switching away and back brings the session back whole (SPEC §data.sessions)", () => {
   it("the strip, the front tab, its coordinates, its buffered writes and the catalog all return", async () => {
     tabs.dbOpenTab({ kind: "table", table: "orders", schema: "demo" });
     await flush();
@@ -166,7 +166,7 @@ describe("switching away and back brings the session back whole (docs/47 D1, D2)
   });
 });
 
-describe("the guards count every session (docs/47 D3, D4)", () => {
+describe("the guards count every session (SPEC §data.sessions)", () => {
   it("a write parked on another connection still counts; a page leave drops writes, keeps the rest", async () => {
     tabs.dbOpenTab({ kind: "table", table: "orders", schema: "demo" });
     await flush();
@@ -199,7 +199,7 @@ describe("the guards count every session (docs/47 D3, D4)", () => {
   });
 });
 
-describe("the park is capped, and a session holding writes is never the one to go (docs/47 D7)", () => {
+describe("the park is capped, and a session holding writes is never the one to go (SPEC §data.sessions)", () => {
   it("the least recently used clean session goes; a dirty one stays", async () => {
     conns = Array.from({ length: 11 }, (_, i) => dbConn("c" + i, "mysql"));
     await page.refresh();
@@ -216,7 +216,7 @@ describe("the park is capped, and a session holding writes is never the one to g
   });
 });
 
-describe("the return is quiet and incremental (docs/47 D5)", () => {
+describe("the return is quiet and incremental (SPEC §data.sessions)", () => {
   async function parkOrders(): Promise<void> {
     tabs.dbOpenTab({ kind: "table", table: "orders", schema: "demo" });
     await flush();
@@ -256,7 +256,7 @@ describe("the return is quiet and incremental (docs/47 D5)", () => {
 /* The owner's report: on an empty Redis, "SET test 1" never showed up - not after the refresh
    button, not after leaving the page and coming back. D6 had kept the key walk as paged so More's
    pages would not be lost, and nothing else re-walked it: the list froze at its first answer. */
-describe("a Redis key list is re-read, never frozen (docs/47 D6, revised)", () => {
+describe("a Redis key list is re-read, never frozen (SPEC §data.sessions, revised)", () => {
   const keys = (): string[] => (rec().redis?.keys || []).map((k) => k.key);
 
   it("the refresh re-walks quietly: a key SET elsewhere shows up, and the walk is never dropped", async () => {

@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-/* The writing-style gate that replaced docs/36 D9 (docs/37 M10): D9 held the emitted bytes
+/* The writing-style gate that replaced SPEC §panel.toolchain (SPEC §panel.lint): D9 held the emitted bytes
  * to "identical to the pre-migration JS", which forced the type system to bend around
- * untouched 2015-era code. From docs/37 on, the STYLE itself is what the machine checks,
+ * untouched 2015-era code. From SPEC §panel.toolchain on, the STYLE itself is what the machine checks,
  * and this ratchet is where each stage's rules land:
 
  *   R0  no-explicit-any (error)              the any budget, retires panel-no-any's regex
@@ -30,7 +30,7 @@
  *
  * Only rules the tree already passes are on; each stage flips its row in one commit so the
  * ratchet only ever tightens. No prettier: this house hand-aligns its comments and the
- * formatter would destroy that (docs/37 M10).
+ * formatter would destroy that (SPEC §panel.lint).
  */
 
 import tseslint from "typescript-eslint";
@@ -53,19 +53,19 @@ export default tseslint.config(
   plugins: { "@typescript-eslint": tseslint.plugin },
   },
   {
-    /* The src rule set proper (docs/37 R0-R2). The suite gets its own block below: R2's
+    /* The src rule set proper (SPEC §panel.lint-R2). The suite gets its own block below: R2's
      * mechanical sweep scoped itself to the emitted tree, and the suite's idioms are a
      * separate budget. */
     files: ["src/**/*.ts"],
     rules: {
-      /* R0: docs/37 D10 - the any budget is zero; the regex guard in panel-no-any.test.ts
+      /* R0: SPEC §panel.toolchain - the any budget is zero; the regex guard in panel-no-any.test.ts
        * retires in favor of this. */
       "@typescript-eslint/no-explicit-any": "error",
       /* R3: every fire-and-forget now carries a visible void (the handler meant it),
        * and every awaited path awaits. The warn inventory closed with M8/M9. */
       "@typescript-eslint/no-floating-promises": "error",
       /* R2: block scope and const-first everywhere; the var/function-expression era ended
-       * with docs/37. The four survivors are exempt by position, not by rule: the fetch
+       * with SPEC §panel.toolchain. The four survivors are exempt by position, not by rule: the fetch
        * wrapper needs this+arguments, and three self-removing document listeners keep
        * their names (no-var cannot see them - they are function expressions). */
       "no-var": "error",
@@ -86,7 +86,7 @@ export default tseslint.config(
        * warn; the exact per-file counts are frozen by test/non-null-ratchet.test.ts, which
        * fails on any growth. Clean files get the full error. */
       "@typescript-eslint/no-non-null-assertion": "error",
-      /* R4, not a row on the docs/37 §9 table - added because the state slices kept leaving
+      /* R4, not a row on the SPEC §panel.lint table - added because the state slices kept leaving
        * dead `state` imports behind and nothing caught them. This config lists its rules one
        * by one instead of spreading a preset, so no-unused-vars was simply absent; switching
        * it on found 21 sites that predate R4 entirely. The ratchet only tightens, so it goes
@@ -94,7 +94,7 @@ export default tseslint.config(
        * caughtErrors is off: the deliberate `catch (e) { /* comment *\/ }` swallows are the
        * house idiom for "this failure is the expected path", and the comment IS the handling. */
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", caughtErrors: "none" }],
-      /* R4's row, landed with the last slice (docs/37 M11). util.js no longer exports a
+      /* R4's row, landed with the last slice (SPEC §panel.toolchain). util.js no longer exports a
        * `state` — the bag it held is seven domain modules now — so this cannot fire today.
        * That is the point: it is what stops the 35-field bag growing back one convenient
        * field at a time. util.js keeps its helpers ($, el, api, esc, toast…); what it may
@@ -103,20 +103,20 @@ export default tseslint.config(
         paths: [{
           name: "./util.js",
           importNames: ["state"],
-          message: "state lives in its domain slice (mcp-state / ui-state / traffic / tunnel-state / job-state / db-state), not in util.js — docs/37 R4.",
+          message: "state lives in its domain slice (mcp-state / ui-state / traffic / tunnel-state / job-state / db-state), not in util.js — SPEC §panel.toolchain.",
         }, {
           name: "../util.js",
           importNames: ["state"],
-          message: "state lives in its domain slice (mcp-state / ui-state / traffic / tunnel-state / job-state / db-state), not in util.js — docs/37 R4.",
+          message: "state lives in its domain slice (mcp-state / ui-state / traffic / tunnel-state / job-state / db-state), not in util.js — SPEC §panel.toolchain.",
         }],
       }],
-      /* R5 (docs/37 section 9): no innerHTML WRITES anywhere in src - the string builders
+      /* R5 (SPEC §panel.lint): no innerHTML WRITES anywhere in src - the string builders
        * retired with the last of them, so the machine gate needs no allowlist. The selector
        * matches ANY `.innerHTML =` / `.innerHTML +=` (no-restricted-properties would only
        * see variables named element); reads stay legal. */
       "no-restricted-syntax": ["error", {
         selector: "AssignmentExpression[left.type='MemberExpression'][left.property.name='innerHTML'], UpdateExpression[argument.type='MemberExpression'][argument.property.name='innerHTML']",
-        message: "innerHTML writes are retired (docs/37 R5) - build with h()/frag() and mount with fill(), or iconNode()/emptyNode() for the shared shapes.",
+        message: "innerHTML writes are retired (SPEC §panel.toolchain) - build with h()/frag() and mount with fill(), or iconNode()/emptyNode() for the shared shapes.",
       }],
     },
   },
@@ -132,7 +132,7 @@ export default tseslint.config(
     },
   },
   {
-    /* R2 assertion-budget carriers (docs/37 M5): the rule warns here instead of erroring
+    /* R2 assertion-budget carriers (SPEC §panel.toolchain): the rule warns here instead of erroring
      * so the tree stays green while the counts burn down; test/non-null-ratchet.test.ts
      * freezes each file's exact count and fails on growth, so "warn" here is not a free
      * pass. A file that reaches zero loses its line here and its protection upgrades to
@@ -184,8 +184,8 @@ export default tseslint.config(
     },
   },
   {
-    /* R1 (docs/37 M3): no augmenting built-in interfaces in the shape library. These five
-     * names are the ones docs/36 D9 once forced in (Function for toast._t/_warned and
+    /* R1 (SPEC §panel.lint): no augmenting built-in interfaces in the shape library. These five
+     * names are the ones SPEC §panel.toolchain once forced in (Function for toast._t/_warned and
      * paintTabs.last, EventTarget for closest/tagName, RegExp for test(string | null),
      * Window for webkitAudioContext) - each bent the whole program's types around one
      * call site. Narrow at the call site (targetEl, casts) or keep module state instead. */
@@ -197,7 +197,7 @@ export default tseslint.config(
       "no-restricted-syntax": ["error",
         ...["Function", "EventTarget", "RegExp", "Window", "Element", "Array", "String", "Number", "Boolean", "Object", "Promise"].map((name) => ({
           selector: "TSInterfaceDeclaration[id.name='" + name + "']",
-          message: "Global built-in augmentation (docs/37 M3): narrow at the call site or keep the state module-scoped.",
+          message: "Global built-in augmentation (SPEC §panel.lint): narrow at the call site or keep the state module-scoped.",
         })),
       ],
     },

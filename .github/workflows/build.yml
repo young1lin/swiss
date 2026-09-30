@@ -123,7 +123,7 @@ jobs:
           # -e normal,build: this gate owns the SHIPPING graph. Dev-dependencies - the
           # swiss-it testcontainers harness among them - pull their own copies of hyper
           # and friends into the dev graph; that never reaches the binary, so dev edges
-          # must not be able to fail this step (docs/44 §2.8).
+          # must not be able to fail this step (SPEC §testing.it).
           cargo tree -d -e normal,build --locked || true
           # Only the column-0 lines are the duplicated crates themselves; everything indented
           # under them is a parent that merely depends on one, and must not count.
@@ -225,7 +225,7 @@ jobs:
           path: dist-bin/*
           if-no-files-found: error
 
-  # The panel's own gate (docs/37 R6): the Rust jobs above do not need node —
+  # The panel's own gate (SPEC §panel.toolchain): the Rust jobs above do not need node —
   # the committed emit is what ships — so the TypeScript side is proved here, standalone,
   # on the platform npm is fastest on. Kept independent: no Rust job depends on it and it
   # depends on none of them.
@@ -246,7 +246,7 @@ jobs:
         run: npm run check
         working-directory: crates/swiss-panel/panel
 
-  # Licenses, advisories and registry sources against deny.toml (docs/40 O5). Independent of
+  # Licenses, advisories and registry sources against deny.toml (SPEC §release.ci). Independent of
   # the Rust jobs like the panel job: one cheap ubuntu run, no Rust build.
   deny:
     runs-on: ubuntu-latest
@@ -258,7 +258,7 @@ jobs:
           command: check
           arguments: --locked
 
-  # Gate 2 (docs/44 §2.8): the real-database suite - testcontainers raises MySQL/PG/
+  # Gate 2 (SPEC §testing.it): the real-database suite - testcontainers raises MySQL/PG/
   # Redis through the runner's own dockerd, so the adapters, the browsers and the L2/L3
   # gateway/proc paths are proven on real engines before any tag ships. Ubuntu only:
   # docker is preinstalled there and the SQL wire is not platform-shaped; mac and

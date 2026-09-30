@@ -27,7 +27,7 @@ import { dbConn, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
 import { btn, iconBtn } from "./ui/button.js";
 
-/* --- single-record form view (docs/22 W5.1) ------------------------------------------------------ */
+/* --- single-record form view (SPEC §data.grid) ------------------------------------------------------ */
 /* dbgate's SqlFormView precedent: one record, one field per line, a stepper for the adjacent
    records. The form is the SAME editor the grid is, worn differently — dbFormRowFields decides
    what each field shows (buffer over original), dbFormWrite writes with the grid's exact
@@ -82,7 +82,7 @@ function dbFormWrite(d            , kind        , key        , i        , column
  *  boolean toggle and NULL button from the cell dialog, and long text opening the edit
  *  sheet (never an inline overlay: a form row is not a grid cell).
  *
- *  docs/37 R5: the controls carry data-ff/data-col addresses and NO handlers — #pane's
+ *  SPEC §panel.toolchain: the controls carry data-ff/data-col addresses and NO handlers — #pane's
  *  delegated click/change/keydown (dbFormClick and friends) resolve the field's ctx from
  *  LIVE state at event time, so a toggle writes what the record says now, not what the
  *  button was painted with. */
@@ -144,7 +144,7 @@ function renderDbFormView(wrap             )       {
   const idx = Math.max(0, Math.min(total - 1, d.formIdx || 0));
   d.formIdx = idx;
 
-  // The stepper answers through #pane's delegated click via data-fpg (docs/37 R5).
+  // The stepper answers through #pane's delegated click via data-fpg (SPEC §panel.toolchain).
   const head = el("div", "db-form-head");
   head.appendChild(iconBtn("chevron-left", tr("dataForm.previousRecord"), { disabled: idx === 0, data: { fpg: "prev" } }));
   const isIns = idx < nIns;
@@ -164,7 +164,7 @@ function renderDbFormView(wrap             )       {
   head.appendChild(iconBtn("chevron-right", tr("dataForm.nextRecord"), { disabled: idx === total - 1, data: { fpg: "next" } }));
 
   // The record's own action rides the head's right end — the grid rowctl vocabulary. The
-  // data-fact click re-derives insert/delete from live state (docs/37 R5).
+  // data-fact click re-derives insert/delete from live state (SPEC §panel.toolchain).
   if (editable) {
     head.appendChild(el("span", "grow"));
     head.appendChild(h("button", {
@@ -172,8 +172,8 @@ function renderDbFormView(wrap             )       {
       title: isIns ? tr("dataGrid.removeBufferedInsert")
         : deleted ? tr("dataGrid.undoBufferedDelete") : tr("dataGrid.bufferDeleteAppliedOnly"),
       data: { fact: "" },
-      // The grid's row-control sprites (fix-plan #14); this head still drew the unicode glyphs
-      // until docs/46 P7.
+      // The grid's row-control sprites (SPEC §panel.design); this head still drew the unicode glyphs
+      // until SPEC §panel.pages.
     }, iconNode(deleted ? "undo" : "x")));
   }
   wrap.appendChild(head);
@@ -200,8 +200,8 @@ function renderDbFormView(wrap             )       {
   wrap.appendChild(form);
 }
 
-/* --- #pane's delegated listeners for the form (docs/37 R5) ----------------------------------------
-   Behavior notes (docs/37 §10.1): every control resolves its record and field from LIVE
+/* --- #pane's delegated listeners for the form (SPEC §panel.toolchain) ----------------------------------------
+   Behavior notes (SPEC §panel.toolchain): every control resolves its record and field from LIVE
    state at event time — the boolean toggle's on/off, the NULL button's back-to-original
    value and the stepper's bounds all re-read dbTab(), so a buffered write that lands
    between render and click is what the next click acts on. The old per-render closures

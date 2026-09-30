@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The emitted tree is a committed product (docs/36 D3): cargo build, CI's Rust jobs and the
+/* The emitted tree is a committed product (SPEC §panel.toolchain): cargo build, CI's Rust jobs and the
    jobs API test embed ../src/admin_assets/js without node ever running. That only works if
    the committed .js files are exactly what the sources emit, so this suite re-emits every
    source in memory and compares - a stale emission or an orphan .js fails here, not on a
@@ -32,7 +32,7 @@ const { listEmitted, listSources, emitOne } = await import(new URL("../build.mjs
 
 const outDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", "js");
 
-describe("panel emit freshness (docs/36 D3)", () => {
+describe("panel emit freshness (SPEC §panel.toolchain)", () => {
   it("every committed .js under js/ is exactly what its .ts source emits", () => {
     const sources = listSources();
     expect(sources.length, "the tree moved? expected the panel's ~55 own modules").toBeGreaterThan(40);
@@ -52,7 +52,7 @@ describe("panel emit freshness (docs/36 D3)", () => {
   });
 
   it("declaration files never emit: no types/*.js exists in the served tree", () => {
-    // .d.ts files are ambient contracts (docs/36 D6); if one ever emitted, an empty module
+    // .d.ts files are ambient contracts (SPEC §panel.toolchain); if one ever emitted, an empty module
     // would enter the served graph. The walker skipping them is build.mjs's job; this pins
     // the visible half - nothing under js/ mirrors a declaration source.
     const emitted = new Set(listEmitted());

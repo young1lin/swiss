@@ -23,7 +23,7 @@ const util = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "util.ts")).href
 ) as { dbReqGuard: () => { issue: () => number; accepts: (t: number) => boolean } };
 
-/* docs/22 closeout audit: every db loader (dbLoadData, dbLoadRedisValue, dbLoadDetail,
+/* SPEC §data: every db loader (dbLoadData, dbLoadRedisValue, dbLoadDetail,
    dbLoadTables, dbRunSql) fires a request with no record of which invocation it belongs to,
    so a slow answer could land after a newer one and overwrite the state the user is looking
    at (dbLoadData would even rewrite d.schema from the OLD table). The guard is the DDL

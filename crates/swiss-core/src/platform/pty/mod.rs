@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Local pseudo-terminals (docs/14 §5): ConPTY on Windows, `openpty` on unix.
+//! Local pseudo-terminals (SPEC §terminal.local): ConPTY on Windows, `openpty` on unix.
 //!
 //! The whole point of this module is that `unsafe` stops here. The terminal plugin above it
 //! opens a shell, reads bytes, writes bytes and resizes a grid; it never sees a HANDLE, an fd or
@@ -22,7 +22,7 @@
 //! applied to a feature that would otherwise sprinkle it across a whole crate — and it is why
 //! `portable-pty` is not here: this is ~300 lines of FFI against a `windows` crate the gateway
 //! already links, versus a dependency tree with its own winpty compatibility path, in a process
-//! whose whole budget is 15 MB (docs/14 §5).
+//! whose whole budget is 15 MB (SPEC §terminal.local).
 //!
 //! ## The shape, and why it is split in two
 //!
@@ -36,7 +36,7 @@
 //!
 //! The split is not decoration. A ConPTY's output is an anonymous pipe, which tokio cannot poll,
 //! so a local session costs one blocking thread and that thread is the direct reason local
-//! sessions are capped (docs/14 §7). Putting teardown in the pump rather than in the handle is
+//! sessions are capped (SPEC §terminal.budget). Putting teardown in the pump rather than in the handle is
 //! what keeps that thread from leaking: on Windows conhost owns the write end of the output pipe
 //! and holds it open after the child exits, so a reader blocked in `ReadFile` would never return
 //! and the thread would be lost for the life of the process. The Windows reader therefore polls
@@ -67,7 +67,7 @@ pub use openpty::{default_shell, open_pty, resolve_program, shell_candidates, Pt
 /// One shell this host can offer a local terminal, as the settings sheet lists it: the
 /// program (an absolute path — what would actually run) and a human label. Plain data in
 /// swiss-core so the pty seam, the session machine and the /targets JSON share one type
-/// instead of mapping between three (docs/15 §2.1).
+/// instead of mapping between three (SPEC §terminal.local).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ShellCandidate {
     pub program: String,

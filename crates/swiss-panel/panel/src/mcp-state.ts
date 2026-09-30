@@ -17,7 +17,7 @@
 import type { ApiInfoResponse, ApiMcpRow, ApiMemoryInfo } from "./types/api.js";
 import type { LastAction, McpDetail } from "./types/state.js";
 
-/* The MCP domain owns its state (docs/37 R4, slice 7 of 7 — the last one).
+/* The MCP domain owns its state (SPEC §panel.toolchain, slice 7 of 7 — the last one).
 
    These eight fields are what was left of PanelState, and with this module util.ts stops
    holding state at all: the `state` literal and the PanelState type are both gone, and the
@@ -66,7 +66,7 @@ export function setSelectedMcp(name: string | null): void { mcp.selected = name;
 
 /** The open detail pane. Null is REAL here, unlike the Data view's record (slice 6): nothing
  *  selected is a state the pane renders, as the shared empty state with its own add action
- *  (docs/18 V7). Every reader keeps its guard, and that guard is now the only thing that has
+ *  (SPEC §panel.design). Every reader keeps its guard, and that guard is now the only thing that has
  *  to be true — no assertion follows it. */
 export function mcpDetail(): McpDetail | null { return mcp.detail; }
 export function setMcpDetail(detail: McpDetail | null): void { mcp.detail = detail; }

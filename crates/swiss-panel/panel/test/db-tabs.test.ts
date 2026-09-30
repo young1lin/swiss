@@ -15,7 +15,7 @@
  */
 // @vitest-environment happy-dom
 
-/* The object tab strip (docs/42 T2). The page used to hold ONE object: opening a table,
+/* The object tab strip (SPEC §data.tabs). The page used to hold ONE object: opening a table,
    jumping a foreign key or running a query overwrote whatever was in front of the operator,
    filters and buffered edits with it. These pins hold the four promises the strip makes —
    dedupe, a cap that never evicts work, a close that asks, and a page-leave guard that counts
@@ -106,7 +106,7 @@ beforeEach(() => {
 
 /* --- the policy, as pure functions ---------------------------------------------------------- */
 
-describe("what a tab is worth (docs/42 D3)", () => {
+describe("what a tab is worth (SPEC §data.tabs)", () => {
   it("a tab pointing at nothing is the placeholder: off the strip, off the cap", () => {
     expect(tabs.dbTabPlaceholder(freshTab("table"))).toBe(true);
     expect(tabs.dbTabPlaceholder(freshTab("key"))).toBe(true);
@@ -202,7 +202,7 @@ describe("what a tab is worth (docs/42 D3)", () => {
 
 /* --- open, close, activate -------------------------------------------------------------------- */
 
-describe("opening an object (docs/42 D3, D6)", () => {
+describe("opening an object (SPEC §data.tabs)", () => {
   it("a key opened from the sidebar carries its type, so the card wears the right glyph at once", () => {
     tabs.dbOpenTab({ kind: "key", key: "ticks", type: "stream" });
     const k = dbTab();
@@ -312,7 +312,7 @@ describe("opening an object (docs/42 D3, D6)", () => {
     expect((left as HTMLButtonElement).disabled, "no left neighbors: the row refuses").toBe(true);
   });
 
-  it("a jump opens a NEW tab and leaves the source exactly as it was (docs/22 W5.2)", () => {
+  it("a jump opens a NEW tab and leaves the source exactly as it was (SPEC §data.grid)", () => {
     tabs.dbOpenTab({ kind: "table", table: "orders", schema: null });
     const src = tableAt(0);
     src.filters = [{ column: "state", op: "=", value: "paid" }];
@@ -430,7 +430,7 @@ describe("opening an object (docs/42 D3, D6)", () => {
   });
 });
 
-describe("closing an object (docs/42 D5)", () => {
+describe("closing an object (SPEC §data.tabs)", () => {
   it("a tab holding writes asks first, and a refusal keeps it where it was", () => {
     tabs.dbOpenTab({ kind: "table", table: "t1", schema: null });
     tabs.dbOpenTab({ kind: "table", table: "t2", schema: null });
@@ -465,7 +465,7 @@ describe("closing an object (docs/42 D5)", () => {
 
 /* --- the page-leave guards -------------------------------------------------------------------- */
 
-describe("leaving the page asks once, for the whole strip (docs/42 D5)", () => {
+describe("leaving the page asks once, for the whole strip (SPEC §data.tabs)", () => {
   it("a buffer parked on a BACKGROUND tab still stops the page", () => {
     tabs.dbOpenTab({ kind: "table", table: "t1", schema: null });
     tabs.dbOpenTab({ kind: "sql" });
@@ -526,7 +526,7 @@ describe("the strip's markup (swiss-ui-design §1.3)", () => {
     const card = document.querySelector(".otab");
     if (!card) throw new Error("no card");
     expect(card.querySelector(".otab-n")?.textContent, "this tab shows a subset").toBe("2");
-    // The dot is the mark (docs/46 P8: the library tab has no "dirty" class; no rule ever read it),
+    // The dot is the mark (SPEC §panel.pages: the library tab has no "dirty" class; no rule ever read it),
     // and it says its count aloud.
     expect(card.querySelector(".db-tab-dot")?.getAttribute("aria-label"), "and is holding writes").toMatch(/^1 /);
   });
@@ -570,7 +570,7 @@ describe("the strip's markup (swiss-ui-design §1.3)", () => {
 
 /* --- the connection switch --------------------------------------------------------------------- */
 
-describe("switching connection empties the strip (docs/42 T2)", () => {
+describe("switching connection empties the strip (SPEC §data.tabs)", () => {
   it("every open object belonged to the connection it was opened on", () => {
     for (const t of ["t1", "t2"]) tabs.dbOpenTab({ kind: "table", table: t, schema: null });
     // The density carries over from the most recently used table tab — the operator's last
@@ -589,9 +589,9 @@ describe("switching connection empties the strip (docs/42 T2)", () => {
   });
 });
 
-/* --- the strip's exits (docs/43 M1) --------------------------------------------------------- */
+/* --- the strip's exits (SPEC §data.tabs) --------------------------------------------------------- */
 
-describe("a full strip still has exits (docs/43 M1)", () => {
+describe("a full strip still has exits (SPEC §data.tabs)", () => {
   it("the cap is twelve — the exits, not the number, are the protection", () => {
     expect(tabs.DB_TAB_MAX).toBe(12);
   });

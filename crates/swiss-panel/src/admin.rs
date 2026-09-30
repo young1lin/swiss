@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
-//! The dashboard panel — port of `admin.ts`: the Node build's `src/admin` tree (index.html +
-//! styles/ + js/ ES modules, no bundler), copied VERBATIM into `src/admin_assets` and embedded
-//! (ADR-009: the panel is the spec for the admin API — never edited here).
+//! The dashboard panel: `src/admin_assets` (index.html + styles/ + the js/ ES modules the
+//! TypeScript in `panel/` erases to, no bundler) embedded and served (SPEC §panel.toolchain,
+//! ADR-016, ADR-024).
 //!
-//! In debug builds rust-embed reads from disk on each request, so a saved edit is live on the
-//! next reload, exactly like the Node build's read-per-request; in release the tree is compiled
-//! into the binary.
+//! In debug builds rust-embed reads from disk on each request, so a rebuilt emit is live on the
+//! next reload; in release the tree is compiled into the binary.
 
 use rust_embed::RustEmbed;
 

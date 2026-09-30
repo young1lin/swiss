@@ -33,7 +33,7 @@ import { btn } from "./ui/button.js";
    The token stream is classified pure (dbSqlTokens) and painted two ways: the node twin
    dbHighlightNodes builds the highlight layer the console mirrors, where every token is a TEXT
    NODE or a span wrapping one — a query full of <script> tags stays inert text without a single
-   esc() call (docs/37 R5). */
+   esc() call (SPEC §panel.toolchain). */
 const SQL_KEYWORDS = new Set((
   "select from where group by order having limit offset fetch insert into values update set delete " +
   "create table drop alter rename add column constraint primary key foreign references index unique " +
@@ -99,7 +99,7 @@ function dbValueless(op        )          { return op === "isNull" || op === "is
 /** Apply the current filter set: back to page one (the filtered set is a different set) and
  *  reload. Buffered edits never survive a reload — the baseline rows change under them.
  *  Returns whether it ran: a REFUSED discard gate leaves everything untouched, and the row
- *  editors below restore their select from that answer (docs/22 closeout audit). */
+ *  editors below restore their select from that answer (SPEC §data). */
 function dbApplyFilters()          {
   const d = dbTab();
   if (!dbOkToDrop()) { renderDbFilters(); return false; }
@@ -110,7 +110,7 @@ function dbApplyFilters()          {
   return true;
 }
 
-/* The redis pattern box's debounce (docs/37 R5): one module-level timer, restarted per
+/* The redis pattern box's debounce (SPEC §panel.toolchain): one module-level timer, restarted per
    keystroke by #pane's delegated input listener. */
 let dbKeyPatternTimer                                       = null;
 
@@ -118,7 +118,7 @@ function renderDbFilters()       {
   const box = $("dbFilters");
   if (!box) return;
   fill(box, dbFiltersNodes());
-  // The card carries this tab's filter COUNT (docs/42 T2), so the strip is repainted with the
+  // The card carries this tab's filter COUNT (SPEC §data.tabs), so the strip is repainted with the
   // row it counts. Pairing it here is what keeps the two from drifting: every path that adds,
   // edits or drops a term already ends in this render.
   renderDbTabs();
@@ -151,7 +151,7 @@ function dbFiltersNodes()           {
   if (d.kind !== "table" || !d.data || d.pane !== "data") return []; // filters belong to the row grid only
   const cols = d.data?.columns.map((c                  )         => { return c.name; });
   const rows           = d.filters.map((f              , i        )         => {
-    // The list operators say what they want right in the box (docs/22 W1.2).
+    // The list operators say what they want right in the box (SPEC §data.browse).
     const ph = f.op === "in" || f.op === "notIn" ? tr("dataFilters.phList")
       : f.op === "between" ? tr("dataFilters.phBetween") : tr("dataFilters.phValue");
     return h("div", { class: "db-filter" },
@@ -177,8 +177,8 @@ function dbFiltersNodes()           {
   return rows;
 }
 
-/* --- #pane's delegated listeners for the filter rows (docs/37 R5) --------------------------------
-   Behavior note (docs/37 §10.1): the refused-discard contract is unchanged but its timing
+/* --- #pane's delegated listeners for the filter rows (SPEC §panel.toolchain) --------------------------------
+   Behavior note (SPEC §panel.toolchain): the refused-discard contract is unchanged but its timing
    moved — the column and operator handlers used to close over the filter object at render
    time; the delegated handlers resolve d.filters[i] from LIVE state at event time, so a
    re-render between paint and click can never restore into a stale object. */
@@ -190,7 +190,7 @@ function dbFiltersClick(t         )          {
     const i = Number(rm.dataset.frm);
     const f = d.filters[i];
     if (!f) return true; // a stale address (the row set changed under the click) — nothing to do
-    // docs/22 closeout B6: remove goes through the same gate as every other row change —
+    // SPEC §data: remove goes through the same gate as every other row change —
     // a REFUSED discard must leave the row on screen, not silently swallow it.
     d.filters.splice(i, 1);
     if (!dbApplyFilters()) { d.filters.splice(i, 0, f); renderDbFilters(); }
@@ -228,7 +228,7 @@ function dbFiltersChange(t         )          {
   if (!f) return false;
   const value = (sel                     ).value;
   if (sel.dataset.fk === "col") {
-    // docs/22 closeout audit: a refused discard must leave the row as it was — assign, ask,
+    // SPEC §data: a refused discard must leave the row as it was — assign, ask,
     // and restore (plus one re-render, because the refused ask already repainted the mutated
     // row) instead of keeping a column change the user just said no to.
     const from = f.column;

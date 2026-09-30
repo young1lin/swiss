@@ -53,7 +53,7 @@ pub struct RedisDataBrowser {
     allow_destructive: bool,
     allow_eval: bool,
     conn: Arc<Lazy<RedisHandle>>,
-    /// The server's (major, minor), probed once via INFO and cached (docs/22 closeout B1):
+    /// The server's (major, minor), probed once via INFO and cached (SPEC §data):
     /// SCAN's TYPE option needs >= 6.0, and probing per page would add a round trip to
     /// every More click for a fact that never changes under us.
     server_version: OnceLock<(u64, u64)>,
@@ -64,7 +64,7 @@ pub struct RedisDataBrowser {
 const REPLY_CAP: usize = 1000;
 
 /// The version SCAN grew its TYPE option - older servers answer "Unknown option" and the
-/// whole walk dies with a 400 (docs/22 closeout B1).
+/// whole walk dies with a 400 (SPEC §data).
 const SCAN_TYPE_SINCE: (u64, u64) = (6, 0);
 
 /// The (major, minor) out of an INFO reply's redis_version line. None when the line is
@@ -138,7 +138,7 @@ fn scan_args(
             args.push("TYPE".into());
             args.push(type_);
         } else {
-            // Pre-6.0 server (docs/22 closeout B1): the option would 400 the whole walk, so
+            // Pre-6.0 server (SPEC §data): the option would 400 the whole walk, so
             // the type filters LOCALLY over the per-key TYPEs the page pipeline fetches anyway.
             local_type = Some(type_);
         }
@@ -146,8 +146,8 @@ fn scan_args(
     Ok((args, local_type))
 }
 
-/// The console guard applied to every command of a structured-edit pipeline (docs/22
-/// W3.3), BEFORE any connection is opened: one bad command refuses the whole batch, so a
+/// The console guard applied to every command of a structured-edit pipeline (SPEC §data.redis),
+/// BEFORE any connection is opened: one bad command refuses the whole batch, so a
 /// buffered edit never half-applies. Split out from run_pipeline so the rule is testable
 /// without a server, exactly like assert_command_allowed itself.
 fn vet_pipeline(
@@ -220,7 +220,7 @@ impl RedisBrowser for RedisDataBrowser {
         // build only validates - the real one below decides TYPE by server version.
         scan_args(o, true)?;
         let handle = self.conn.get().await?;
-        // docs/22 closeout B1: SCAN TYPE needs >= 6.0; on an older server the type comes back
+        // SPEC §data: SCAN TYPE needs >= 6.0; on an older server the type comes back
         // for local filtering instead of riding the SCAN.
         let supported = self.supports_scan_type(handle.as_ref()).await;
         let (scan_args, local_type) = scan_args(o, supported)?;
@@ -296,7 +296,7 @@ impl RedisBrowser for RedisDataBrowser {
             }
         }
         if let Some(want) = &local_type {
-            // Pre-6.0 filtering (docs/22 closeout B1): every key's TYPE is already in hand, so
+            // Pre-6.0 filtering (SPEC §data): every key's TYPE is already in hand, so
             // the filter is a retain. A page left empty by it is NORMAL - the walk continues
             // from the raw cursor, and done is cursor == 0, never the key count.
             infos.retain(|i| i.get("type").and_then(Value::as_str) == Some(want.as_str()));
@@ -306,12 +306,12 @@ impl RedisBrowser for RedisDataBrowser {
 
     async fn read_key(&self, key: &str) -> Result<Value, String> {
         let handle = self.conn.get().await?;
-        // docs/45 §2.1: a stream key's /key answer is the newest-first window, not
+        // SPEC §data.streams: a stream key's /key answer is the newest-first window, not
         // type_aware_read's oldest-first page — the panel opens a key without knowing
         // its type, so the first response already carries the right shape. TYPE (and
         // TTL, the one fact every other type's /key answer carries) ride ahead;
         // type_aware_read itself is untouched: the MCP redis_read tool keeps its
-        // published oldest-first contract (docs/45 D8). The extra TYPE round trip is a
+        // published oldest-first contract (SPEC §data.streams). The extra TYPE round trip is a
         // one-click cost, never a per-tick one.
         let type_ = handle.as_ref().type_of(key).await?;
         if type_ == "stream" {
@@ -326,7 +326,7 @@ impl RedisBrowser for RedisDataBrowser {
     }
 
     async fn read_stream(&self, key: &str, o: &Value) -> Result<Value, String> {
-        // docs/45 §2.1: the window over the leased shared handle. Options go through
+        // SPEC §data.streams: the window over the leased shared handle. Options go through
         // the same host helper the route validates with — one rule, no drift between
         // transport and model.
         if key.is_empty() {
@@ -338,14 +338,14 @@ impl RedisBrowser for RedisDataBrowser {
     }
 
     async fn command_catalog(&self) -> Result<Value, String> {
-        // docs/50: read-only introspection over the leased shared handle, exactly like the
+        // SPEC §data.redis-console: read-only introspection over the leased shared handle, exactly like the
         // stream reads. Two commands, no cache here — the panel asks once per connection.
         let handle = self.conn.get().await?;
         read_command_catalog(handle.as_ref()).await
     }
 
     async fn stream_groups(&self, key: &str) -> Result<Value, String> {
-        // docs/45 §2.4: the read-only consumer-group fold — XINFO GROUPS is the
+        // SPEC §data.streams: the read-only consumer-group fold — XINFO GROUPS is the
         // whole story; no XACK/XCLAIM/XTRIM ever leaves this surface.
         if key.is_empty() {
             return Err("key is required".into());
@@ -379,7 +379,7 @@ impl RedisBrowser for RedisDataBrowser {
 
     async fn run_pipeline(&self, commands: &[Vec<String>]) -> Result<Value, String> {
         // Guarded whole, before the connection is opened: the refusal names the command, and
-        // a batch that cannot run in full does not run at all (docs/22 W3.3).
+        // a batch that cannot run in full does not run at all (SPEC §data.redis).
         let vetted = vet_pipeline(commands, self.allow_destructive, self.allow_eval)?;
         let handle = self.conn.get().await?;
         let owned: Vec<(String, Vec<String>)> = vetted
@@ -395,7 +395,7 @@ impl RedisBrowser for RedisDataBrowser {
         Ok(json!({ "replies": replies }))
     }
 
-    /// docs/43 M3 (ADR-027 option b): INFO keyspace names every dbN with its key count and
+    /// SPEC §data.databases (ADR-027 option b): INFO keyspace names every dbN with its key count and
     /// CLIENT INFO says which one this connection SELECTed at connect time — that number is
     /// both primary and current. Every OTHER database is listed but not browsable: SELECT is
     /// a connection-breaking command on the shared handle (it would permanently re-mode the
@@ -620,7 +620,7 @@ mod tests {
         }
     }
 
-    // --- docs/22 closeout B1: SCAN TYPE needs server >= 6.0 -------------------------------------
+    // --- SPEC §data: SCAN TYPE needs server >= 6.0 -------------------------------------
     // On an older server the option is a 400 and the whole walk dies; the type then filters
     // LOCALLY, over the TYPEs the page pipeline already fetches per key.
 
@@ -670,7 +670,7 @@ redis_mode:standalone
 
     #[test]
     fn a_structured_edit_batch_passes_the_same_guard_as_the_console() {
-        // Every verb the typed value editors can buffer (docs/22 W3.3), under the strictest
+        // Every verb the typed value editors can buffer (SPEC §data.redis), under the strictest
         // flags a config can set — the panel's Commit must not depend on allow* to work.
         let cmds = batch(&[
             &["SET", "k", "v"],
@@ -693,7 +693,7 @@ redis_mode:standalone
     #[test]
     fn a_pipeline_is_refused_whole_when_any_command_is_on_the_deny_list() {
         // One KEYS buried mid-batch refuses everything before a socket is touched: a buffered
-        // edit must never half-apply (docs/22 W3.3).
+        // edit must never half-apply (SPEC §data.redis).
         let cmds = batch(&[
             &["HSET", "h", "f", "v"],
             &["KEYS", "*"] as &[&str],

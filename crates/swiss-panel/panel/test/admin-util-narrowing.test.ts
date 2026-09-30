@@ -16,7 +16,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-/* docs/37 R1 - the three narrowings that replaced the retired global augmentations:
+/* SPEC §panel.toolchain - the three narrowings that replaced the retired global augmentations:
  * errText (Function's message reads in catches), isTyping (the RegExp.test(string | null)
  * overload: main.ts's typing guards), targetEl (EventTarget's optional closest/tagName).
  * Each case here pins the branch whose behavior the augmentation used to decide. */
@@ -26,7 +26,7 @@ const util = await import("../src/util.js");
 /* The duck-typed probe only reads target, so a two-field stand-in is the honest event. */
 const ev = (target: unknown) => ({ target }) as unknown as Event;
 
-describe("errText: the catch-side reader (docs/37 M5)", () => {
+describe("errText: the catch-side reader (SPEC §panel.toolchain)", () => {
   it("an Error yields its message, everything else its String form", () => {
     expect(util.errText(new Error("boom"))).toBe("boom");
     expect(util.errText("plain string")).toBe("plain string");
@@ -36,7 +36,7 @@ describe("errText: the catch-side reader (docs/37 M5)", () => {
   });
 });
 
-describe("isTyping: the typing guard without the RegExp overload (docs/37 M3)", () => {
+describe("isTyping: the typing guard without the RegExp overload (SPEC §panel.lint)", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
   it("no active element is not typing - the branch the old null-to-\"null\" coercion decided", () => {
@@ -56,7 +56,7 @@ describe("isTyping: the typing guard without the RegExp overload (docs/37 M3)", 
   });
 });
 
-describe("targetEl: event.target narrowed without the EventTarget augmentation (docs/37 M3)", () => {
+describe("targetEl: event.target narrowed without the EventTarget augmentation (SPEC §panel.lint)", () => {
   it("a target with closest comes back; one without (a Window) answers null", () => {
     const row = { closest: (sel: string) => ({ sel }) } as unknown as Element;
     expect(util.targetEl(ev(row))).toBe(row);

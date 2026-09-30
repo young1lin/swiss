@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The asciicast v2 recorder (docs/14 §6.4).
+//! The asciicast v2 recorder (SPEC §terminal.recording).
 //!
 //! One file per session at `~/.swiss/terminal/<sessionId>.cast`, one JSON value per
 //! line: a header object, then `[elapsed, "o", "text"]` for every chunk the shell wrote.
@@ -34,7 +34,7 @@
 //!
 //! **A cap, and no rotation.** 8 MB, then recording stops with a marker line that says so
 //! in the terminal's own output stream, so it is visible on playback rather than only in
-//! a log. Silent rotation was considered and rejected in docs/14 §6.4: a session whose
+//! a log. Silent rotation was considered and rejected in SPEC §terminal.recording: a session whose
 //! recording quietly became "the last 8 MB" is a recording nobody can trust as evidence
 //! of what happened at the start.
 //!
@@ -52,8 +52,8 @@ use tokio::time::Instant;
 
 use swiss_core::platform::{chmod_private, mkdir_private, private_file_mode};
 
-/// docs/14 §6.4 suggests 8 MB. A constant rather than config, like the catch-up buffer:
-/// it is a line in the memory and disk budget (docs/14 §7), not a preference.
+/// SPEC §terminal.recording suggests 8 MB. A constant rather than config, like the catch-up buffer:
+/// it is a line in the memory and disk budget (SPEC §terminal.budget), not a preference.
 pub const RECORDING_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 /// The terminal used for playback. xterm.js on the panel side is configured to match.
@@ -140,7 +140,7 @@ impl Recorder {
         self.event(&text);
     }
 
-    /// The end marker docs/14 §6.4 requires — written into the output stream so it is
+    /// The end marker SPEC §terminal.recording requires — written into the output stream so it is
     /// visible on playback, not just in a log nobody replays. Closing twice is a no-op.
     pub fn finish(&mut self, reason: &str) {
         if self.stopped {

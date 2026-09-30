@@ -15,7 +15,7 @@
  */
 
 /* ================================================================================================
-   The last page visited, per plugin (docs/39 S4).
+   The last page visited, per plugin (SPEC §panel.nav).
 
    A plugin's seat and its palette row reopen where the user left that plugin, not always on
    its first page: "I clicked away from A while it was on A2 — clicking A's seat should land

@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-//! The three remote capabilities (docs/34): remote.exec, remote.sync, remote.pull.
+//! The five remote capabilities (SPEC §remote): remote.exec, remote.sync, remote.pull,
+//! remote.cat and remote.write.
 //! One file because they share the resolve-stream-report skeleton, and none of them
 //! is large enough alone to deserve a module of plumbing.
 //!
@@ -55,7 +56,7 @@ struct Tap<'a> {
     tail: Vec<u8>,
     chars: usize,
     /// The values vault references resolved to: masked before a byte reaches the live
-    /// buffer, the record or the outcome (docs/34, 2026-09-28 addendum).
+    /// buffer, the record or the outcome (SPEC §remote, 2026-09-28 addendum).
     mask: StreamMask,
 }
 
@@ -118,7 +119,7 @@ impl<'a> Tap<'a> {
     }
 
     fn text(&self) -> String {
-        // The head kept by byte count may end inside a character (docs/41 U3).
+        // The head kept by byte count may end inside a character (SPEC §remote.utf8).
         String::from_utf8_lossy(swiss_core::utf8::window(&self.tail)).into_owned()
     }
 }
@@ -186,7 +187,7 @@ fn env_map(obj: &Map<String, Value>) -> Result<Vec<(String, String)>, ActionErro
 }
 
 /// The locale every remote command runs under unless the caller says otherwise
-/// (docs/41 U4): `LANG` and `LC_ALL` set to `C.UTF-8`, so a remote login user whose
+/// (SPEC §remote.utf8): `LANG` and `LC_ALL` set to `C.UTF-8`, so a remote login user whose
 /// shell profile leaves `LANG` empty (or on a GB18030 box) still gets UTF-8 from `ls`,
 /// `git`, `python` and friends, and argv bytes are read as the UTF-8 they are.
 pub const UTF8_LOCALE: &str = "C.UTF-8";
@@ -231,7 +232,7 @@ fn object_of(input: &Value) -> Result<Map<String, Value>, ActionError> {
 
 // --- remote.exec --------------------------------------------------------------------------
 
-/// Run one command on a target, streaming output (docs/34). THE action of this
+/// Run one command on a target, streaming output (SPEC §remote). THE action of this
 /// plugin: argv arrives as an array and crosses the transport as argv - the quoting
 /// into a POSIX command string happens once, inside the tunnels crate, through its
 /// tested quote_posix. Nothing here ever builds a shell command itself.
@@ -302,7 +303,7 @@ struct ParsedExec {
     cwd: Option<String>,
 }
 
-/// Resolve the vault references in an exec's argv, env values and cwd (docs/34 R10):
+/// Resolve the vault references in an exec's argv, env values and cwd (SPEC §remote.security):
 /// `${secret://name}` becomes the stored value, `${secret://name:default}` the default when
 /// the vault does not hold the name, and a missing name without a default refuses the run
 /// before anything is sent. `${UPPER}` stays text - the far side's shell owns it. This runs
@@ -565,7 +566,7 @@ impl Action for RemoteExecAction {
 
 const SYNC_FIELDS: [&str; 5] = ["target", "source", "exclude", "verbose", "to"];
 
-/// Upload a local tree to the target workspace (docs/34 §20). One-way, no deletes:
+/// Upload a local tree to the target workspace (SPEC §remote.actions). One-way, no deletes:
 /// changed files (by size) stream up; up-to-date files are skipped; the summary
 /// line is the last thing the run prints.
 pub struct RemoteSyncAction {
@@ -741,8 +742,8 @@ impl Action for RemoteSyncAction {
 
 const PULL_FIELDS: [&str; 4] = ["target", "remote", "to", "verbose"];
 
-/// Download a file or a whole directory tree from the target workspace (docs/34
-/// §20): the remote path is statted first - a file streams chunk by chunk into a
+/// Download a file or a whole directory tree from the target workspace (SPEC §remote.actions):
+/// the remote path is statted first - a file streams chunk by chunk into a
 /// local path (default: the same relative path under the current directory), a
 /// directory walks down recursively. The remote path is workspace-relative;
 /// escaping is refused.
@@ -977,7 +978,7 @@ impl RemoteCatAction {
             .map_err(transport_error)?;
         // Bytes first, text once: a chunk boundary is an SSH read boundary, never a
         // character boundary, so decoding per chunk turned a 汉字 split across two reads
-        // into two U+FFFD (docs/41 U3). The cap is 128 KiB, so holding the bytes is free.
+        // into two U+FFFD (SPEC §remote.utf8). The cap is 128 KiB, so holding the bytes is free.
         let mut bytes: Vec<u8> = Vec::new();
         let mut total: u64 = 0;
         loop {
@@ -1209,7 +1210,7 @@ impl Action for RemoteWriteAction {
     }
 }
 
-/// Every remote capability runs in its target's lane (docs/34 R11): the work happens on the
+/// Every remote capability runs in its target's lane (SPEC §remote.actions): the work happens on the
 /// far machine, one session channel on the target's connection here - not a local slot.
 fn target_lane(input: &Value) -> RunLane {
     match input.get("target").and_then(Value::as_str) {
@@ -1321,7 +1322,7 @@ mod tests {
 
     #[test]
     fn every_exec_carries_the_utf8_locale_unless_the_caller_set_one() {
-        // docs/41 U4. No env at all: both defaults, in a fixed order.
+        // SPEC §remote.utf8. No env at all: both defaults, in a fixed order.
         let none = env_map(&Map::new()).unwrap();
         assert_eq!(
             none,
@@ -1356,7 +1357,7 @@ mod tests {
             .validate_input(&json!({ "target": "dev", "argv": ["make"], "cwd": "build" }))
             .is_ok());
         // An absolute cwd is an explicit path the caller typed in full - ssh-level
-        // trust; only `..` is refused in either form (docs/34 superset rule).
+        // trust; only `..` is refused in either form (SPEC §remote superset rule).
         assert!(action
             .validate_input(
                 &json!({ "target": "dev", "argv": ["make"], "cwd": "/home/dev/app" })
@@ -1424,7 +1425,7 @@ mod tests {
             .expect("runs");
         let calls = fake.exec_calls.lock().unwrap();
         assert_eq!(calls[0].cwd.as_deref(), Some("/data/ws/proj/build/arm"));
-        // The UTF-8 locale defaults ride first (docs/41 U4), the caller's env after.
+        // The UTF-8 locale defaults ride first (SPEC §remote.utf8), the caller's env after.
         assert_eq!(
             calls[0].env,
             vec![
@@ -1807,7 +1808,7 @@ mod tests {
 
     #[tokio::test]
     async fn cat_decodes_once_so_a_character_split_across_read_chunks_survives() {
-        // docs/41 U3: the fake reads in 64 KiB chunks; a file whose 65 535th byte begins
+        // SPEC §remote.utf8: the fake reads in 64 KiB chunks; a file whose 65 535th byte begins
         // a 汉字 puts that character's bytes in two chunks. Decoding per chunk made it
         // two U+FFFD; decoding the whole once keeps it.
         let (system, fake) = system_with_fake();
@@ -1851,7 +1852,7 @@ mod tests {
         }
     }
 
-    // --- vault references in an exec (docs/34, 2026-09-28 addendum) ----------------------
+    // --- vault references in an exec (SPEC §remote, 2026-09-28 addendum) ----------------------
 
     /// Plant a vault value under a test-unique name. The vault is process-wide and its
     /// scratch home is locked by a blocking mutex, so the write leaves the async runtime.

@@ -18,10 +18,10 @@
 import { describe, expect, it } from "vitest";
 import { initSelects, styleSelect } from "../src/ui/select.js";
 
-/* docs/22 closeout B7: a styled select that leaves the DOM must take its trigger button with
+/* SPEC §data: a styled select that leaves the DOM must take its trigger button with
    it. The trigger sits BESIDE the select ("afterend"), so removing the select alone orphans a
    live-looking dropdown - on a redis page one kept showing the previous pg connection's schema
-   pick. Until docs/46 P1b-2 this suite ran under node on hand-rolled stubs with a fake
+   pick. Until SPEC §panel.ui this suite ran under node on hand-rolled stubs with a fake
    MutationObserver it fired by hand; ui/select.ts now builds with h(), which the stubs cannot
    host, so it runs on happy-dom and the REAL observer delivers the removal. */
 const settle = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });
@@ -42,7 +42,7 @@ function styled(host: HTMLElement, label: string): { sel: HTMLSelectElement; tri
   return { sel, trig };
 }
 
-describe("a styled select leaving the DOM takes its trigger with it (docs/22 closeout B7)", () => {
+describe("a styled select leaving the DOM takes its trigger with it (SPEC §data)", () => {
   document.body.innerHTML = "";
   const parent = document.body.appendChild(document.createElement("div"));
   initSelects();

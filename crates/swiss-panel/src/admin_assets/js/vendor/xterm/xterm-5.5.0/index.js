@@ -18,7 +18,7 @@
    window.Terminal when evaluated as a classic script; this shim injects that script and
    the stylesheet once, then hands the constructor back as a named export. Upgrading =
    a new versioned directory plus a changed import path; this directory dies in the same
-   commit (docs/14 §2, vendoring rules). */
+   commit (SPEC §terminal.panel, vendoring rules). */
 import { loadClassic, unwrapGlobal } from "../load-classic.js";
 
 export async function loadXterm() {

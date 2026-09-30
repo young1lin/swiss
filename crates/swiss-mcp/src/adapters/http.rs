@@ -97,7 +97,7 @@ fn value_as_string(value: &Value) -> String {
     }
 }
 
-/// The OAuth half of a proxied remote (docs/24 D4): where the bearer comes from, and what to
+/// The OAuth half of a proxied remote (SPEC §mcp.oauth): where the bearer comes from, and what to
 /// do when it stops working. Holds the registry name (followed across renames — credentials
 /// are keyed by it), the MCP URL, the outbound client (the same proxy the MCP traffic rides),
 /// a discovery cache, and the single-flight lock that makes concurrent 401s share one refresh.
@@ -125,7 +125,7 @@ impl OauthHalf {
     }
 
     /// The endpoints, discovered once and cached — a failed attempt is never cached, so the
-    /// next 401 gets a fresh discovery (docs/24 D4).
+    /// next 401 gets a fresh discovery (SPEC §mcp.oauth).
     async fn ensure_discovered(&self) -> Result<Discovered, String> {
         if let Ok(cell) = self.discovery.read() {
             if let Some(found) = cell.clone() {
@@ -188,7 +188,7 @@ impl OauthHalf {
 
     /// The 401 path, single-flown: concurrent refusals share one refresh, and a waiter that
     /// finds the token already REPLACED (another request refreshed while this one queued)
-    /// takes the new one without spending the grant again (docs/24 D4). The dedup key is the
+    /// takes the new one without spending the grant again (SPEC §mcp.oauth). The dedup key is the
     /// refused token, NOT freshness — a no-expiry token reads fresh right up to the 401 that
     /// just proved it dead, and shortcutting on "fresh" would hand the corpse back.
     async fn refresh_bearer(&self, refused: &str) -> Result<String, String> {
@@ -214,7 +214,7 @@ impl OauthHalf {
         }
     }
 
-    /// Drop the stored credentials — the needs-auth outcome (docs/24 D2.7): the old client_id
+    /// Drop the stored credentials — the needs-auth outcome (SPEC §mcp.oauth): the old client_id
     /// is worthless anyway (each flow re-registers on a fresh loopback port).
     fn mark_needs_auth(&self) {
         if let Err(err) = oauth_flow::clear_credentials(&self.current_name()) {
@@ -263,7 +263,7 @@ pub struct RemoteMcpClient {
     url: String,
     headers: RemoteHeaders,
     /// The OAuth half, when this remote is an OAuth MCP — owns the bearer's source and its
-    /// refresh (docs/24 D4). None on a plain http MCP.
+    /// refresh (SPEC §mcp.oauth). None on a plain http MCP.
     oauth: Option<Arc<OauthHalf>>,
     /// The bearer currently in force; swapped on refresh, read on every request.
     bearer: RwLock<Option<String>>,
@@ -276,7 +276,7 @@ impl RemoteMcpClient {
     /// Connect: run the initialize handshake — this IS the reachability check, which is why
     /// it happens eagerly in build() and not lazily on the first call — and capture what the
     /// remote negotiated. The client is built by the caller (proxied when the def names a
-    /// proxy) so the OAuth half can share the exact same outbound path (docs/24 D4).
+    /// proxy) so the OAuth half can share the exact same outbound path (SPEC §mcp.oauth).
     async fn connect(
         client: reqwest::Client,
         url: &str,
@@ -284,7 +284,7 @@ impl RemoteMcpClient {
         auth: Option<Arc<OauthHalf>>,
     ) -> Result<(Arc<RemoteMcpClient>, Value), String> {
         // OAuth MCPs gate every request behind the bearer; an unusable one is a start error
-        // carrying the marker the panel lights up on (docs/24 D4).
+        // carrying the marker the panel lights up on (SPEC §mcp.oauth).
         let mut bearer = None;
         if let Some(auth) = &auth {
             bearer = Some(auth.usable_token().await?);
@@ -372,7 +372,7 @@ impl RemoteMcpClient {
             params,
         })
         .map_err(|err| format!("building {method} request: {err}"))?;
-        // OAuth 401s get ONE refresh-retry, no more (docs/24 D4): a second refusal after a
+        // OAuth 401s get ONE refresh-retry, no more (SPEC §mcp.oauth): a second refusal after a
         // fresh token means the grant itself is dead, and the marker below sends the operator
         // to the panel's Authorize button instead of into a refresh loop.
         let mut refreshed = false;
@@ -675,7 +675,7 @@ impl HttpAdapter {
             .map(assert_proxy_url)
             .transpose()?;
         let headers = RemoteHeaders::from_def(def)?;
-        // OAuth (docs/24 D1): "auth": "oauth" makes the gateway own the Authorization
+        // OAuth (SPEC §mcp.oauth): "auth": "oauth" makes the gateway own the Authorization
         // header — a def that also hand-writes one is a config error, refused here rather
         // than silently stacked under the bearer.
         let want_oauth = def.get_str("auth") == Some("oauth");
@@ -1018,7 +1018,7 @@ mod tests {
         assert_eq!(a.name.read().unwrap().as_str(), "renamed");
     }
 
-    // ---- OAuth (docs/24 Phase 2) ----------------------------------------------------------------
+    // ---- OAuth (SPEC §mcp.oauth) ----------------------------------------------------------------
     //
     // One loopback server plays all three roles a real OAuth MCP deployment spreads across
     // hosts: the protected resource (/mcp, bearer-gated JSON-RPC), the authorization server
@@ -1313,7 +1313,7 @@ mod tests {
         })
         .await;
         plant(name, "acc-long-dead", Some("ref-1"));
-        // Expired long ago: the 60s margin already counts it dead (docs/24 D4).
+        // Expired long ago: the 60s margin already counts it dead (SPEC §mcp.oauth).
         {
             let mut creds = oauth::credentials(name).expect("planted");
             creds.expires_at = Some(1);

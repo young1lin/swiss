@@ -102,7 +102,7 @@ pub fn log_disabled(subsystem: &str) {
     );
 }
 
-// --- group scopes (docs/20 §2.2) -----------------------------------------------------------------
+// --- group scopes (SPEC §host.groups) -----------------------------------------------------------------
 //
 // The /api/groups/{scope} family dispatches through a table, not a match arm: each scope
 // registers an implementation, and the host stays mechanism. The scopes whose owners live
@@ -153,7 +153,7 @@ impl GroupScope for McpGroups {
     }
 }
 
-/// The `tokens` scope (docs/20 G7): both halves live in the managed store, so this is a thin
+/// The `tokens` scope (SPEC §host.groups): both halves live in the managed store, so this is a thin
 /// translation — the only judgment call is `has_member`, which the store answers from the
 /// token set itself. Creation time is the tokens' order, so `set_order` is refused: the same
 /// stance the secrets scope takes.

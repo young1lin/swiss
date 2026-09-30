@@ -15,7 +15,7 @@
  */
 
 /* Ambient shapes owned by the runs/remote modules (run.ts, run-history.ts,
-   views/remote.ts, views/remote-runs.ts) - docs/36 D6/D11. The cross-module families stay in
+   views/remote.ts, views/remote-runs.ts) - SPEC §panel.toolchain. The cross-module families stay in
    types/{api,dom,state}.d.ts; a shape only one of these four files reads lives here so no
    shared file has to change for their migration. Wire shapes are field-for-field from the
    Rust struct that serializes them, like api.d.ts; panel-side shapes say which module owns
@@ -142,9 +142,9 @@ export interface ApiRemoteRunRow extends ApiRunRow {
   /** What the run produced (the record's count, whether or not the file is still there). */
   outputBytes?: number;
   outputCapped?: boolean;
-  /** docs/41 A2: the size budget took this run's output file; the line stays. */
+  /** SPEC §remote.history: the size budget took this run's output file; the line stays. */
   outputEvicted?: boolean;
-  /** docs/34 R12: a remote.write's body is kept sealed (GET .../content unseals it), cut at
+  /** SPEC §remote.history: a remote.write's body is kept sealed (GET .../content unseals it), cut at
    *  256 KiB when truncated; evicted when the size budget took it. */
   contentStored?: boolean;
   contentTruncated?: boolean;

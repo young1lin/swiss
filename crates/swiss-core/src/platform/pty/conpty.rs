@@ -278,7 +278,7 @@ fn available(reader: &File) -> io::Result<u32> {
     Ok(avail)
 }
 
-/// The shell a local session gets when the configuration names none (docs/15 §2.1):
+/// The shell a local session gets when the configuration names none (SPEC §terminal.local):
 /// PowerShell 7 if PATH can resolve it, then Windows PowerShell, then COMSPEC, then the
 /// bare cmd.exe. pwsh leads because COMSPEC is cmd on every Windows box — the previous
 /// default handed every terminal a cmd.exe nobody asked for on machines carrying three
@@ -394,7 +394,7 @@ fn offer(found: &mut Vec<ShellCandidate>, seen: &mut Vec<String>, program: PathB
     });
 }
 
-/// Every shell this host offers a local terminal, in preference order (docs/15 §2.1):
+/// Every shell this host offers a local terminal, in preference order (SPEC §terminal.local):
 /// pwsh and Windows PowerShell from PATH, cmd from COMSPEC, then the two fixed spots a
 /// PATH miss hides — a PowerShell 7 under Program Files and Git's bash. Probed ONCE at
 /// plugin start by the caller and cached: this walks PATH with a stat per candidate,
@@ -441,7 +441,7 @@ pub fn shell_candidates_in(
 }
 
 /// The program a configured shell string would actually run, for the panel's label
-/// (docs/15 §2.1: `local.shell` reports a resolved absolute path, not the bare name the
+/// (SPEC §terminal.local: `local.shell` reports a resolved absolute path, not the bare name the
 /// user typed). An absolute path passes through untouched — it is already the truth,
 /// exists or not — and an unresolvable name comes back as given, because CreateProcessW
 /// gets the last word at open time and refusing here would be a guess, not a resolution.
@@ -774,7 +774,7 @@ mod tests {
         assert!(entries.len() > 1, "the inherited environment was dropped");
     }
 
-    // --- shell discovery (docs/15 §2) ---------------------------------------------------
+    // --- shell discovery (SPEC §terminal.local) ---------------------------------------------------
 
     /// A scratch directory holding fake executables. Empty files: the probe only asks
     /// whether a file is there, never whether it runs.
@@ -844,7 +844,7 @@ mod tests {
 
     #[test]
     fn default_shell_prefers_pwsh_and_falls_back_to_comspec() {
-        // The order docs/15 §2.1 fixes, proven against a PATH we build in the test — the
+        // The order SPEC §terminal.local fixes, proven against a PATH we build in the test — the
         // process environment is never touched.
         let pwsh = scratch_shells(&["pwsh.exe"]);
         let powershell = scratch_shells(&["powershell.exe"]);

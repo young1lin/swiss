@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The event list (docs/46 §2.4, U10). MCP Logs, Traffic activity, Remote runs and a job's
+/* The event list (SPEC §panel.ui). MCP Logs, Traffic activity, Remote runs and a job's
  * run history are the same thing - "this happened, at this time, took this long, and maybe
  * failed" - and were four hand-built lists that each repeated the date on every row and
  * painted a whole row red for one failure. One component:
@@ -109,7 +109,7 @@ export function fmtMs(ms: number): string {
  *  "tomorrow", "8小时前". Intl.RelativeTimeFormat (short, numeric auto) owns the words and the
  *  plurals, so no dictionary key can drift from them. The unit is the largest that fits:
  *  seconds under a minute, minutes under an hour, hours under a day, then days. For a list
- *  read at a glance - a job's next and last run, a target's last run (docs/46 §3.6); the exact
+ *  read at a glance - a job's next and last run, a target's last run (SPEC §panel.pages); the exact
  *  moment belongs in the title beside it. */
 export function relTime(at: number, now: number = Date.now()): string {
   const d = at - now;

@@ -304,7 +304,7 @@ pub trait Adapter: Send + Sync {
 /// third-party module door (ADR-001: an external adapter becomes a proc or http MCP).
 /// `${ENV_VAR}` and `${secret://name}` refs are expanded HERE, never at load, so persisted defs
 /// keep the reference. A vault reference that names a secret this machine does not hold REFUSES
-/// the build (docs/19 D4): an absent credential is a configuration error the operator can fix
+/// the build (SPEC §host.refs): an absent credential is a configuration error the operator can fix
 /// in one panel visit, not an empty password to debug on someone else's server.
 /// `log` is the call log every adapter records into - the caller's, so an app and its
 /// adapters share exactly one view of what was called.
@@ -321,7 +321,7 @@ pub fn make_adapter(
             let engine = mysql::MysqlEngine::new(&def, name)?;
             Ok(Arc::new(direct::DirectAdapter::new(&def, name, engine, log.clone())))
         }
-        // MariaDB speaks the MySQL wire protocol (docs/29): the type stays "mariadb" in the
+        // MariaDB speaks the MySQL wire protocol (SPEC §mcp.panel): the type stays "mariadb" in the
         // def — identity, panel tag, icon — while the engine is the mysql one. A def that says
         // what it points at is worth more than an alias that erases it.
         "mariadb" => {
@@ -340,7 +340,7 @@ pub fn make_adapter(
             zai::ZaiEngine::new(&def, name)?,
             log.clone(),
         ))),
-        // The figma type is an http+oauth def with every choice already made (docs/24 rev):
+        // The figma type is an http+oauth def with every choice already made (SPEC §mcp.figma):
         // expand to the full http def, then build exactly the adapter a hand-written def
         // would get — refresh, badge and authorize flows need no case of their own.
         "figma" => {
@@ -509,7 +509,7 @@ mod tests {
 
     #[test]
     fn a_figma_def_builds_the_oauth_http_adapter_and_keeps_its_own_shape() {
-        // The figma type is sugar over http+oauth (docs/24 rev): the built adapter IS the http
+        // The figma type is sugar over http+oauth (SPEC §mcp.figma): the built adapter IS the http
         // one — kind is what the tag and the authorize guard read — while the def the registry
         // holds stays type figma with no url or auth key on it, exactly as the panel wrote it.
         let raw = def(json!({ "type": "figma", "description": "Figma design files" }));

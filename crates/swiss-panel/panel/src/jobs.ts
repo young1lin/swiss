@@ -27,7 +27,7 @@
    subsystem answers 503 with the row that turned it off — either way the tab hides itself,
    because a tab that can only toast an error every 6 seconds is noise, not a feature.
 
-   v2 (docs/10 §5, docs/11 §7): rows read the v2 fields (title, labels, trigger summary), Run
+   v2 (SPEC §jobs.config, SPEC §jobs.api): rows read the v2 fields (title, labels, trigger summary), Run
    now submits {"async": true} and polls /api/runs/{id} — closing the page never cancels a job —
    and the Advanced sheet edits the definition through the plugin config row: schema-driven form
    (action input built from GET /api/actions, run.js's builder) plus a JSON editor, round-tripping
@@ -111,10 +111,10 @@ async function assignJobGroup(id: string, group: string | null): Promise<void> {
   renderJobs();
 }
 
-/* --- the row (docs/46 §3.6) -------------------------------------------------------------------- */
+/* --- the row (SPEC §panel.pages) -------------------------------------------------------------------- */
 
 /** The schedule in words, from the sheet's own translator: schedFromJob into the builder state,
- *  schedToBody's sentence out (docs/46 §3.6 - no second translator). A v2 trigger is read in the
+ *  schedToBody's sentence out (SPEC §panel.pages - no second translator). A v2 trigger is read in the
  *  v1 spelling the builder speaks. What it cannot say - a manual job, a sub-second interval, a
  *  cron cronstrue refuses or has not loaded yet - is the raw spelling, which is also the
  *  column's title either way. */
@@ -141,7 +141,7 @@ function nextCol(j: ApiJobRow): RowCol {
   return { v: due ? relTime(Date.parse(due)) : "—", w: "s", title: due ? tr("jobs.nextAt", { when: fullWhen(due) }) : undefined };
 }
 
-/** How the last run went, relative. Only a failure is red, and it is a tag (docs/46 §3.6): a
+/** How the last run went, relative. Only a failure is red, and it is a tag (SPEC §panel.pages): a
  *  healthy "OK · 8 hr. ago" stays grey text. The time is the scheduler's lastRunAt, which only a
  *  scheduled run stamps (it is the schedule's anchor); a Run now settles lastOk alone. So an
  *  outcome with no time is "OK" or the tag by itself - "Never run" is for a job with neither. */
@@ -157,13 +157,13 @@ function lastCol(j: ApiJobRow): RowCol {
   };
 }
 
-/** One job, on the library row (docs/46 §3.6): the name, then what it runs in mono, then three
+/** One job, on the library row (SPEC §panel.pages): the name, then what it runs in mono, then three
  *  fixed columns that line up down the card - the schedule in words, the next run, the last
  *  run. There is no lead dot. A switched-off job is an Off tag after its name, not a greyed
  *  row, and a green "scheduled" dot would only repeat the next-run column. The amber pulse
  *  after the name appears only while the job runs. A v2 title is the name; the id every action
  *  addresses rides the sub-line in mono. Run now is the one word button, the rest is behind
- *  the ⋯. Every label, command and trigger sentence is a text node (docs/37 R5). */
+ *  the ⋯. Every label, command and trigger sentence is a text node (SPEC §panel.toolchain). */
 function jobRowNode(j: ApiJobRow): HTMLElement {
   const busy = jobIsBusy(j.name);
   const titled = !!j.title && j.title !== j.name;
@@ -208,8 +208,8 @@ function renderJobs(): void {
   // The schedule column speaks cronstrue, which loads on first use: until it lands a cron row
   // shows its raw spelling, and the landing patches the words in.
   if (!cronstrueLib) ensureCronstrue((): void => { if (currentView() === "jobs") patchJobs(); });
-  // One group per slice — the component owns the header band and the empty line (docs/20
-  // G4). The groups ALWAYS paint, jobs or none (the Remote Targets rule, 2026-09-20): an
+  // One group per slice — the component owns the header band and the empty line (SPEC §host.groups).
+  // The groups ALWAYS paint, jobs or none (the Remote Targets rule, 2026-09-20): an
   // empty group is a place - a drop target with a + - not an empty state. The page used to
   // swap in "No jobs" whenever it had no rows, so a group made before the first job was
   // listed in the sheet's Group select and nowhere else: no header to rename or delete it by.
@@ -248,7 +248,7 @@ function jobCfg(): GroupCfg<ApiJobRow> {
     rowId: (r: ApiJobRow): string => { return r.name; },
     rowsById: (): ApiJobRow[] => { return jobRows(); },
     groupOfRow: jobGroupOfRow,
-    // The row as a node (docs/37 R5): the actions ride the pane's delegated click, so the
+    // The row as a node (SPEC §panel.toolchain): the actions ride the pane's delegated click, so the
     // row carries no per-render handlers of its own.
     rowNode: jobRowNode,
     onMoveRow: moveJobRow,
@@ -306,7 +306,7 @@ function jobByName(name: string | null): ApiJobRow | null {
 }
 
 function wireJobs(): void {
-  // docs/37 R5: the head's buttons AND every row action answer through ONE delegated
+  // SPEC §panel.toolchain: the head's buttons AND every row action answer through ONE delegated
   // click on #pane, climbed with closest() — a real pointer click lands on the button's
   // text or glyph and the glyph carries no id. The row is re-resolved from jobRows() at
   // click time, so a poll that landed between render and click cannot act on a stale row.
@@ -334,13 +334,13 @@ function wireJobs(): void {
     if (t.closest("[data-run]")) { void runJob(job.name); return; }
     const more = t.closest<HTMLElement>("[data-more]");
     if (more) {
-      // The overflow half of the row (docs/18 V5): the rare verbs and the destructive one.
+      // The overflow half of the row (SPEC §panel.design): the rare verbs and the destructive one.
       // stopPropagation FIRST: connect.js closes any open menu on clicks that reach document,
       // and without this the very click that opens the menu also tears it down.
       ev.stopPropagation();
       popupMenu(more.getBoundingClientRect(), [
         { label: tr("jobs.edit"), fn: () => {
-            // A definition the v1 shape cannot spell (docs/11 §7.1: editableInV1 false) goes
+            // A definition the v1 shape cannot spell (SPEC §jobs.api: editableInV1 false) goes
             // straight to the advanced sheet — the v1 form would silently drop its fields.
             if (job.editableInV1 === false) void openV2Sheet(job);
             else openJobSheet(job);
@@ -355,7 +355,7 @@ function wireJobs(): void {
 
 /* --- actions ---------------------------------------------------------------------------------- */
 
-/** Run now submits {"async": true} (docs/11 §7.3) and polls the coordinator's run view: the
+/** Run now submits {"async": true} (SPEC §jobs.runlog) and polls the coordinator's run view: the
  * run outlives the page, and the row stays live through the poll. The toast still names the
  * outcome, because the record settles into the history either way. */
 async function runJob(name: string): Promise<void> {
@@ -416,12 +416,12 @@ function deleteJob(job: ApiJobRow): void {
  *  break never silently means a second command — one job supervises one process. */
 function joinCommand(text: string): string { return text.trim().replace(/\s*\n+\s*/g, " "); }
 
-/* tk() marks the table's English entries for the completeness scanner (docs/38 L7): the
+/* tk() marks the table's English entries for the completeness scanner (SPEC §panel.i18n): the
    paint renders them through tr(label) at call time, so the key stays literal here. */
 const DOW_LABELS = [tk("jobs.sun"), tk("jobs.mon"), tk("jobs.tue"), tk("jobs.wed"), tk("jobs.thu"), tk("jobs.fri"), tk("jobs.sat")];
 /* The interval units stay PLAIN in the schedule state and in the select's option values —
  * schedFromJob, readFields and the everySec multiplier all speak this vocabulary — while
- * the display text paints through the dictionary at render time (docs/38 L5: keys never
+ * the display text paints through the dictionary at render time (SPEC §panel.i18n: keys never
  * travel as data). tk() marks the table's entries for the completeness scanner. */
 const INTERVAL_UNITS: string[] = ["seconds", "minutes", "hours"];
 const UNIT_LABELS: Record<string, string> = {
@@ -447,7 +447,7 @@ function two(n: number): string { return (n < 10 ? "0" : "") + n; }
  *  and a missing global means the vendor file was not served — say that, not a TypeError. */
 let cronstrueLib: { toString: (expr: string, opts?: { throwExceptionOnParseError?: boolean; locale?: string }) => string } | null = null;
 
-/** cronstrue, loaded once through the vendored shim (docs/14 §2: UMD bundles arrive as
+/** cronstrue, loaded once through the vendored shim (SPEC §terminal.panel: UMD bundles arrive as
  *  classic scripts, not imports). Sheets call ensureCronstrue with their own re-say as the
  *  ready callback; before the library lands, describeCron's complaint names it instead of
  *  throwing a TypeError about it. */
@@ -463,7 +463,7 @@ function describeCron(expr: string): string {
   if (!/^(\S+\s+){4}\S+$/.test(expr)) throw new Error(tr("jobs.giveAllFiveCron"));
   if (!cronstrueLib) throw new Error(tr("jobs.cronstrueStillLoadingOne"));
   /* The vendored bundle carries every cronstrue locale; the panel's schedule sentence
-   *  follows the installed language (docs/38) - cronstrue names Chinese "zh_CN". */
+   *  follows the installed language (SPEC §panel.i18n) - cronstrue names Chinese "zh_CN". */
   return cronstrueLib.toString(expr, {
     throwExceptionOnParseError: true,
     locale: locale() === "zh-CN" ? "zh_CN" : undefined,
@@ -556,7 +556,7 @@ function openJobSheet(job: ApiJobRow | null): void {
     const staged = takeJobPendingGroup();
     picked = staged != null ? staged : resolveDefaultGroup(jobGroupsList(), lastGroup("jobs"));
   }
-  // The library sheet and form pieces (docs/46 P6). showSheet unhides the host BEFORE it paints
+  // The library sheet and form pieces (SPEC §panel.pages). showSheet unhides the host BEFORE it paints
   // (panel-proof-of-life rule 1) and claims the backdrop click. Each caption heads the fields it
   // names: Environment used to sit directly on top of Options, an empty section, with the env
   // variables filed under Options.
@@ -752,7 +752,7 @@ async function saveJob(existing: ApiJobRow | null): Promise<void> {
   const picked = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
   closeSheet();
   if (!existing && picked) {
-    // The select the sheet carried is where the new job lands (docs/20 G4). A gateway
+    // The select the sheet carried is where the new job lands (SPEC §host.groups). A gateway
     // without the family route just keeps the first-group default - not worth a toast.
     rememberGroup("jobs", picked);
     await assignMember("jobs", name, picked);
@@ -764,7 +764,7 @@ async function saveJob(existing: ApiJobRow | null): Promise<void> {
 /* --- the advanced sheet (v2: schema-driven form + JSON editor over the config row) -------------- */
 
 /** The live action list, fetched once per sheet open: the action input form is generated from
- *  each capability's own schema (docs/10 §7), exactly like the Run view's argument fields. */
+ *  each capability's own schema (SPEC §host.actions), exactly like the Run view's argument fields. */
 async function fetchActions(): Promise<ApiActionRow[]> {
   const j = await apiJson<ApiActionsResponse>("/api/actions");
   return (j && j.actions) || [];
@@ -775,7 +775,7 @@ function actionByType(actions: ApiActionRow[], type: string): ApiActionRow | nul
 }
 
 /** The Advanced editor. `job` null = create. Edits go through PUT /api/plugins/jobs/config
- * (docs/11 §7.2 — there is no second CRUD surface): GET the row, replace this one definition,
+ * (SPEC §jobs.api — there is no second CRUD surface): GET the row, replace this one definition,
  * PUT the whole config back with the revision just read. The form writes only the keys it
  * owns onto the definition object it loaded, so unknown-but-legal fields ride along, and the
  * JSON textarea is always the definition itself — the two editors are one object. */
@@ -821,7 +821,7 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
   const cronRow = h("div", { id: "jv-cron-row" },
     fld(tr("jobs.cronLocalTime"), h("input", { id: "jv-cron", value: form.cron, placeholder: "30 3 * * *", autocomplete: "off" })),
     h("div", { class: "sched-say", id: "jv-cron-say" }));
-  // The library sheet (docs/46 P6). It was drawn "sheet wide", a class no stylesheet ever
+  // The library sheet (SPEC §panel.pages). It was drawn "sheet wide", a class no stylesheet ever
   // defined: this sheet has always been the standard width.
   showSheet(sheet({
     title: editing ? tr("jobs.definitionOf", { name }) : tr("jobs.newDefinitionIn", { picked: picked ?? "" }),
@@ -971,7 +971,7 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
       formToJson();
       if (dirty) return;
     }
-    // A fresh GET right before the PUT: the whole-row CAS (docs/11 §7.2) wants the newest
+    // A fresh GET right before the PUT: the whole-row CAS (SPEC §jobs.api) wants the newest
     // revision, and a concurrent edit anywhere in the row must not be silently overwritten.
     const fresh = await apiJson<{ config?: JobConfigRow; revision?: number }>("/api/plugins/jobs/config");
     if (!fresh) return;
@@ -979,7 +979,7 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
     const definitions = cfg.definitions || {};
     if (!editing) {
       // The group the sheet promised: a definition key, so the whole-row CAS carries it and
-      // no second request is needed (docs/20 G4). A "group" typed straight into the JSON
+      // no second request is needed (SPEC §host.groups). A "group" typed straight into the JSON
       // wins over the select - the textarea is the truth once hand-edited.
       const g = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
       if (g) {
@@ -1004,7 +1004,7 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
 
 /* The sheet pages through the JSONL history: each fetch appends to the domain buffer and the
    whole sheet re-renders from it, so "Load more" is just another fetch with a cursor. The
-   cursor parameter is the v2 spelling (docs/11 §7.3); the records carry the v2 outcome
+   cursor parameter is the v2 spelling (SPEC §jobs.runlog); the records carry the v2 outcome
    fields, so a skipped or missed line says so instead of masquerading as a failed run. */
 async function openRunsSheet(name: string, cursor?: string | null): Promise<void> {
   if (!cursor || !jobHistoryIsFor(name)) {
@@ -1028,7 +1028,7 @@ function firstLine(text: string): string {
   return line.length > 200 ? line.slice(0, 200) + "\u2026" : line;
 }
 
-/** One run as a timeline item (docs/46 §3.6): the time, what triggered it, the first line of what
+/** One run as a timeline item (SPEC §panel.pages): the time, what triggered it, the first line of what
  *  it said, the duration. A failure is a red tag - the exit code when there is one; an outcome
  *  that is not a run at all (skipped, missed) is an amber one, with no duration. Identical
  *  consecutive runs fold into ×N. */
@@ -1060,7 +1060,7 @@ function runBody(run: ApiJobRunRecord[]): HChild {
   ];
 }
 
-/** The run history in the library sheet, as the event list (docs/46 §3.6): the Logs call list's
+/** The run history in the library sheet, as the event list (SPEC §panel.pages): the Logs call list's
  *  shape - day headings, time column, ×N, failure tags - for a job's runs. */
 function renderRunsSheet(nextBefore?: string | null): void {
   const hist = jobHistory();

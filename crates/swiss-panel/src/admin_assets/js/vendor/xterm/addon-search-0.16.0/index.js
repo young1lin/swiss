@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 /* Vendored from the npm package whose tarball held lib/addon-search.js — byte-identical, no
-   further minification, no patches (docs/14 §2). As a classic script the UMD assigns
+   further minification, no patches (SPEC §terminal.panel). As a classic script the UMD assigns
    window.SearchAddon = { SearchAddon: class } — a NAMESPACE, the class one level down; this
    shim loads it once (lazily — only when the find bar is first asked for, an idle terminal
    never pays for it), unwraps the class, and hands it back as a named export. Upgrading =

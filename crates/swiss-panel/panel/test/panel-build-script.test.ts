@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* build.mjs's own contract (docs/36 D2), driven as a real subprocess the way deploy.ps1 and
+/* build.mjs's own contract (SPEC §panel.toolchain), driven as a real subprocess the way deploy.ps1 and
    CI will run it: non-erasable syntax fails naming file and line, --check refuses stale
    emissions and orphans without writing, and an unchanged tree keeps its mtimes (the debug
    build serves from disk per request and must not look fresh when nothing changed). */
@@ -50,7 +50,7 @@ function run(inner: string, arg?: string) {
   return spawnSync(process.execPath, args, { encoding: "utf8" });
 }
 
-describe("panel build script (docs/36 D2)", () => {
+describe("panel build script (SPEC §panel.toolchain)", () => {
   it("non-erasable syntax fails the build naming the file and line", () => {
     const { inner, src } = scratch();
     try {

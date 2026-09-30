@@ -17,7 +17,7 @@
 //! The host engine: registration, the lifecycle state machine, serialized start/stop with
 //! single-flight starts, scoped cleanup, and the inventory. Deliberately free of business
 //! branches — which plugins exist and what their instances do is `builtin.rs`'s composition
-//! table (docs/09 §10: "separate orchestration ... rather than put every business branch into
+//! table (SPEC §host.plugins: "separate orchestration ... rather than put every business branch into
 //! core host").
 //!
 //! Concurrency shape mirrors registry.rs: ONE tokio mutex per plugin serializes its lifecycle
@@ -50,12 +50,12 @@ pub struct PluginEntry {
     state: Mutex<PluginState>,
     last_error: Mutex<Option<String>>,
     /// The config revision the CURRENT instance was started with — "actual" next to the
-    /// store's desired revision (docs/09 §4). 0 until the first successful start.
+    /// store's desired revision (SPEC §host.lifecycle). 0 until the first successful start.
     config_revision: AtomicU64,
     /// Serializes this plugin's lifecycle operations (the registry's per-entry `op` queue,
     /// one per plugin).
     op: tokio::sync::Mutex<()>,
-    /// The last IN-PLACE config apply's failure, if it failed (docs/11 §8): Some(err) means
+    /// The last IN-PLACE config apply's failure, if it failed (SPEC §jobs.apply): Some(err) means
     /// a row is persisted that the running instance has not taken - the visible
     /// desired-vs-actual gap. Cleared by the apply that succeeds (or the restart that
     /// supersedes it).
@@ -93,7 +93,7 @@ impl PluginEntry {
         self.factory.clone()
     }
 
-    /// The failure of the last in-place config apply, if any (docs/11 §8): what the PUT
+    /// The failure of the last in-place config apply, if any (SPEC §jobs.apply): what the PUT
     /// response reports as `applied: false` and the inventory keeps as the gap between
     /// the persisted row and the running instance.
     pub fn apply_error(&self) -> Option<String> {
@@ -149,7 +149,7 @@ impl PluginHost {
     }
 
     /// Install the capability probe the inventory's `requiresMet` answers through
-    /// (docs/12 W3). Call once, at composition, before the first inventory read.
+    /// (SPEC §host.seats). Call once, at composition, before the first inventory read.
     pub fn set_capability_probe(&self, probe: CapabilityProbe) {
         *self
             .capability_probe
@@ -170,7 +170,7 @@ impl PluginHost {
     /// page order; boot starts in the REVERSE so low-level connectivity comes up before the
     /// plugins that may ride it (tunnels before the MCP registry — the boot order server.rs
     /// used to hand-roll). Id and route-prefix conflicts are refused here, loudly, because a
-    /// silent shadowed route would be a boundary hole (docs/09 §6: conflicts are refused at
+    /// silent shadowed route would be a boundary hole (SPEC §panel.nav: conflicts are refused at
     /// registration).
     pub fn register(&mut self, factory: Arc<dyn PluginFactory>) -> Result<(), String> {
         let descriptor = factory.descriptor();
@@ -251,7 +251,7 @@ impl PluginHost {
 
     /// Boot: bring every non-disabled plugin up, isolating failures. A plugin that fails to
     /// start is recorded (`failed` + `lastError`) and the boot CONTINUES — the host itself
-    /// failing is the only thing allowed to stop the gateway (docs/09 §4).
+    /// failing is the only thing allowed to stop the gateway (SPEC §host.lifecycle).
     pub async fn start_enabled(self: &Arc<Self>) {
         for entry in self.plugins().into_iter().rev() {
             let id = entry.descriptor().id.clone();
@@ -301,7 +301,7 @@ impl PluginHost {
             (true, true) => {
                 let current = self.store.snapshot().revision;
                 if entry.config_revision() != current {
-                    // The running instance gets FIRST claim on the new row (docs/11 §8):
+                    // The running instance gets FIRST claim on the new row (SPEC §jobs.apply):
                     // an in-place apply never bounces the plugin - which for Jobs would
                     // mean cancelling every run it owns mid-flight.
                     let instance = entry.slot.read().ok().and_then(|s| s.clone());
@@ -316,7 +316,7 @@ impl PluginHost {
                             ApplyOutcome::Failed(err) => {
                                 // The instance stays Active and the revision does NOT move:
                                 // desired and actual stay visibly apart until a later
-                                // reconcile succeeds (docs/10 §5). reconcile itself is not
+                                // reconcile succeeds (SPEC §jobs.config). reconcile itself is not
                                 // an error - the row IS persisted; the PUT body says
                                 // `applied: false` and the inventory carries the reason.
                                 entry.set_apply_error(Some(err));
@@ -331,7 +331,7 @@ impl PluginHost {
                     }
                     if entry.descriptor().restart_on_config_change {
                         // Config moved under a running instance that declares it restartable:
-                        // stop, then start again on the new config (docs/09 §4 — apply vs
+                        // stop, then start again on the new config (SPEC §host.lifecycle — apply vs
                         // restart is an explicit per-plugin decision, never a universal hot
                         // reload).
                         self.stop_instance(entry).await?;
@@ -404,7 +404,7 @@ impl PluginHost {
     }
 
     /// Stop one plugin: out of the route slot FIRST (the entrance closes before anything
-    /// else — docs/09 §4's stop order), then the instance's own release under a timeout,
+    /// else — SPEC §host.lifecycle's stop order), then the instance's own release under a timeout,
     /// then the scoped tasks. Desired state stays whatever the store row says.
     async fn stop_instance(self: &Arc<Self>, entry: &Arc<PluginEntry>) -> Result<(), String> {
         let id = entry.descriptor().id.clone();
@@ -452,7 +452,7 @@ impl PluginHost {
     }
 
     /// The inventory: current revision, one row per plugin in registration order, then every
-    /// contributed page in registration order (docs/09 §6 — the shell renders this list and
+    /// contributed page in registration order (SPEC §panel.nav — the shell renders this list and
     /// never learns a plugin by name).
     pub fn inventory(&self) -> Value {
         let entries = self.plugins();
@@ -491,7 +491,7 @@ impl PluginHost {
         if let (Some(obj), Some(err)) = (row.as_object_mut(), entry.last_error()) {
             obj.insert("lastError".into(), json!(err));
         }
-        // Capabilities this plugin needs (docs/12 W3): stated with a met/unmet verdict,
+        // Capabilities this plugin needs (SPEC §host.seats): stated with a met/unmet verdict,
         // absent-not-null when the plugin needs nothing — most do not.
         if !descriptor.requires.is_empty() {
             let requires = descriptor.requires.clone();

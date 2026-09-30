@@ -27,7 +27,7 @@ import {
 } from "./ui/index.js";
                                                   
 
-/* The traffic domain owns its state (docs/37 R4, slice 2 of 7): ONE page of interactions, the
+/* The traffic domain owns its state (SPEC §panel.toolchain, slice 2 of 7): ONE page of interactions, the
  * ring-wide client fold, the query that produced them (filter, client, page) and the per-row
  * expansion cache. This module reads the record directly; views/traffic.ts reaches it only
  * through resetTrafficSig/clearTrafficView below, so no other module can poke a field. */
@@ -120,7 +120,7 @@ function trafficPageStep(delta        )       {
   traffic.page = next;
   trafficReload(false);
 }
-/* --- docs/46 §3.3: the activity is the event list ----------------------------------------------
+/* --- SPEC §panel.pages: the activity is the event list ----------------------------------------------
    The same list MCP Logs is: the time (the date is the day heading), the method, its params on one
    line, who asked - the client and the MCP, a column only while the page holds more than one - a
    failure as a red tag, the duration. Consecutive identical interactions (a client's poll) fold
@@ -229,7 +229,7 @@ function renderTraffic()       {
   // connection to query). Click a row to filter the activity log to that client.
   let clientBlock        ;
   if (clients.length) {
-    // One line per client (docs/18 V4): name, token, paths, last seen, request count — a
+    // One line per client (SPEC §panel.nav): name, token, paths, last seen, request count — a
     // five-column grid (the page's own table, views.css .cli-*), not a card-per-client.
     const head = h("div", { class: "cli-head" },
       h("span", null, tr("traffic.client")), h("span", null, tr("traffic.token")), h("span", null, tr("traffic.paths")),
@@ -288,8 +288,8 @@ function renderTraffic()       {
     : null;
 
   // The wide frame: an interaction row is time + method + params + who + timing on one line. The
-  // wiring below queries nothing: ONE delegated click and ONE delegated keydown on #pane (docs/37
-  // R5) answer every control, rows and pager included.
+  // wiring below queries nothing: ONE delegated click and ONE delegated keydown on #pane (SPEC §panel.toolchain)
+  // answer every control, rows and pager included.
   fill($("pane"), paneBody({ wide: true },
     clientBlock,
     section({ cap: tr("traffic.activity"), note: countTxt, tools }, body, pages)));

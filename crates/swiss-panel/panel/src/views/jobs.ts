@@ -25,7 +25,7 @@ import { emptyNode } from "../ui/page.js";
 
 /** On a gateway without the jobs subsystem (no inventory API and a failed probe) the view says
  *  so once instead of parking on its loading placeholder — the row the tab could still show.
- *  The library's one empty-state shape (docs/18 V7), the last two ui.css tokens in a view. */
+ *  The library's one empty-state shape (SPEC §panel.design), the last two ui.css tokens in a view. */
 function unavailable() {
   fill($("pane"), emptyNode({
     icon: "clock",   // the sprite's own clock (i-calendar does not exist)

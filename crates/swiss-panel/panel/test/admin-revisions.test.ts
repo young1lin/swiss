@@ -22,10 +22,10 @@ import { fileURLToPath } from "node:url";
 import { mcpDetail, mcpRows, resetMcpState, setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
 import { closeMenu } from "../src/ui/menu.js";
 
-/* def revisions (docs/28 D1): the config tab's Replace flow and the rollback shelf. The
+/* def revisions (SPEC §mcp.revisions): the config tab's Replace flow and the rollback shelf. The
    rendering assertions go through the real renderPane markup; the confirm-gated restore is
    driven through a fetch queue — cancelled confirm must not fire a request at all.
-   docs/46 P7-3: on happy-dom. This suite carried a micro-DOM whose innerHTML serialised its
+   SPEC §panel.pages: on happy-dom. This suite carried a micro-DOM whose innerHTML serialised its
    own children; the real DOM reads the built tree back the same way, and the menus are the
    #menu a person sees. */
 
@@ -87,7 +87,7 @@ beforeEach(() => {
   confirmMock.mockReset();
 });
 
-describe("config tab: the replace flow and the rollback shelf (docs/28 D1)", () => {
+describe("config tab: the replace flow and the rollback shelf (SPEC §mcp.revisions)", () => {
   it("renders Replace definition… beside Edit, and the parked revisions under the config rows", () => {
     const d = fakeDetail("m", { type: "echo" });
     (d as unknown as Record<string, unknown>).revisions = [
@@ -136,7 +136,7 @@ describe("config tab: the replace flow and the rollback shelf (docs/28 D1)", () 
   });
 });
 
-describe("docs/28 D2: the verb is disable, the word is disabled", () => {
+describe("SPEC §mcp.revisions: the verb is disable, the word is disabled", () => {
   it("the detail header's primary button says Disable on a started MCP and Enable on a stopped one", () => {
     freshState({ mcps: [{ ...ROW }] as never, detail: fakeDetail("m", { type: "echo" }) });
     pane.renderPane();
@@ -151,7 +151,7 @@ describe("docs/28 D2: the verb is disable, the word is disabled", () => {
   it("the header subtitle and the overflow menu use the operator's word", () => {
     const stopped = { ...ROW, lifecycle: "stopped", state: "stopped" };
     expect(pane.headSubtitle(stopped as never)).toContain("disabled");
-    // The menu is the library's (anchoredMenu, docs/46 P2-1): its rows are items, and the verb
+    // The menu is the library's (anchoredMenu, SPEC §panel.pages): its rows are items, and the verb
     // row's label is the operator's word for the row it was opened on.
     const labels = (row: unknown): string[] => pane.menuItems(fakeDetail("m", { type: "echo" }) as never, row as never)
       .map((it) => ("label" in it ? it.label : "")).filter(Boolean);
@@ -162,7 +162,7 @@ describe("docs/28 D2: the verb is disable, the word is disabled", () => {
   });
 });
 
-describe("docs/28 D3: the row's right-click menu", () => {
+describe("SPEC §mcp.revisions: the row's right-click menu", () => {
   const item = (label: string): HTMLButtonElement =>
     Array.from(document.querySelectorAll<HTMLButtonElement>("#menu button")).find((b) => b.textContent === label)!;
 

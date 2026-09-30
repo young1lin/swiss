@@ -60,7 +60,7 @@ const filters = await import(
   dbValueless: (op: string) => boolean;
 };
 
-// docs/22 W1.2: the operator dropdown carries in / notIn / between alongside the comparison
+// SPEC §data.browse: the operator dropdown carries in / notIn / between alongside the comparison
 // ops, mirroring the server's BROWSE_FILTER_OPS whitelist. The three are value operators —
 // picking one must keep the value input on screen (only isNull/isNotNull are valueless).
 describe("DB_FILTER_OPS", () => {

@@ -99,7 +99,7 @@ function refreshNow(): void { void loadMemory(true); void refreshPage(); }
    never wipe something being typed — but a poll that rebuilt the list would still steal focus from
    a keyboard user mid-tab, which is why patching exists at all.
 
-   The plugin owns TWO L2 pages now (docs/13 D5, as revised): #tunnels (SSH Connections,
+   The plugin owns TWO L2 pages now (SPEC §panel.nav, as revised): #tunnels (SSH Connections,
    scope "conns") and #tunnel-forwards (Port Forwards, scope "rules"). The page mount sets
    mountedTunScope() to its scope; there is no page-local tab control anymore.
    ================================================================================================ */
@@ -112,7 +112,7 @@ function tunData(): ApiTunnelsResponse {
 function isTunnelsView(v: string | null): boolean { return v === "tunnels" || v === "tunnel-forwards"; }
 
 /** Which tunnel scope is on screen — the /api/groups/{scope} family's own word. The wire keys
- *  stay ruleGroups/connGroups (docs/20 §3); this maps the mounted page to its scope. */
+ *  stay ruleGroups/connGroups (SPEC §host.groups); this maps the mounted page to its scope. */
 function tunScope(): "conns" | "rules" { return mountedTunScope() === "conns" ? "conns" : "rules"; }
 function tunRows(): ApiTunnelConnectionRow[] | ApiTunnelRuleRow[] { return mountedTunScope() === "conns" ? tunData().connections : tunData().rules; }
 /* Both fall back to the default group on an empty or missing list, as the Remote, Tokens and
@@ -123,7 +123,7 @@ function tunGroupsList(): string[] {
   return names && names.length ? names : ["default"];
 }
 
-/** The jobs scope's group names (docs/20 G4) — /api/jobs carries them at its top level. */
+/** The jobs scope's group names (SPEC §host.groups) — /api/jobs carries them at its top level. */
 function jobGroupsList(): string[] {
   const names = jobGroupNames();
   return names && names.length ? names : ["default"];
@@ -169,7 +169,7 @@ async function loadTunnels(patchOnly?: boolean): Promise<void> {
    header chip and the view footer — the mcpChipText drift taught that lesson once already.
    ================================================================================================ */
 
-// The job row lives with the page that draws it (jobs.ts jobRowNode, docs/46 P6): its schedule
+// The job row lives with the page that draws it (jobs.ts jobRowNode, SPEC §panel.pages): its schedule
 // column speaks the sheet's cron translator, which is jobs.ts's.
 
 function jobsChipText(): string {
@@ -192,7 +192,7 @@ async function loadJobs(patchOnly?: boolean): Promise<void> {
     const { patchJobs, renderJobs } = await import("./jobs.js");
     // patchJobs owns the patch-or-rebuild call (a structural change, or a pane another page
     // drew, is a rebuild). This used to look for the page foot first, and once the foot was gone
-    // (docs/46 P6) every poll rebuilt the list - cancelling a drag, dropping the focus.
+    // (SPEC §panel.pages) every poll rebuilt the list - cancelling a drag, dropping the focus.
     if (patchOnly) patchJobs();
     else renderJobs();
   }
@@ -209,9 +209,9 @@ function tunDot(state: string): DotState {
   return "off";
 }
 
-/** `→ 127.0.0.1:18989 · via bastion · serves pg-app ●` — a rule's sub-line (docs/37 R5: every
+/** `→ 127.0.0.1:18989 · via bastion · serves pg-app ●` — a rule's sub-line (SPEC §panel.toolchain: every
  *  host, connection name and remark the server sends is a text node). The local port is the
- *  row's own column now (docs/46 §3.4), so the line starts at the target; the target is a value
+ *  row's own column now (SPEC §panel.pages), so the line starts at the target; the target is a value
  *  you would type, so mono. */
 function ruleSubNode(r: ApiTunnelRuleRow): HChild[] {
   const out: HChild[] = ["→ ", redacted(r.targetHost, { suffix: ":" + r.targetPort }), " · ", tr("polling.conn", { conn: r.connectionName })];
@@ -219,7 +219,7 @@ function ruleSubNode(r: ApiTunnelRuleRow): HChild[] {
     out.push(" · ", tr("polling.serves"), " ");
     r.mcpRows.forEach((m, i) => {
       if (i) out.push(", ");
-      // A known MCP's dot keeps its own one-word title (docs/18 V6); an unknown name paints
+      // A known MCP's dot keeps its own one-word title (SPEC §panel.design); an unknown name paints
       // no state - the hover falls through to the span around it ("no MCP named …").
       out.push(h("span", { class: "serves" + (m.known ? "" : " unknown"),
           title: m.known ? tr("polling.mcpNameState", { name: m.name, state: m.state }) : tr("polling.mcpNamedName", { name: m.name }) },
@@ -231,10 +231,10 @@ function ruleSubNode(r: ApiTunnelRuleRow): HChild[] {
   return out;
 }
 
-/** One rule row: the library row (docs/46 §3.4). The dot, the name, the route; the local port
+/** One rule row: the library row (SPEC §panel.pages). The dot, the name, the route; the local port
  *  in its own column (the value you point a client at); a failure as the row's one red line with
  *  the whole reason in its title, so a failing row is as tall as a healthy one. Start / Stop is
- *  the row's one word button - hairline, never the page's solid primary (docs/18 V5) - and the
+ *  the row's one word button - hairline, never the page's solid primary (SPEC §panel.design) - and the
  *  rest is behind ⋯. data-act / data-more answer #pane's delegated click (tunnels.ts). */
 function ruleRowNode(r: ApiTunnelRuleRow): HTMLElement {
   const busy = tunBusyOf(r.id);
@@ -258,7 +258,7 @@ function ruleFailing(r: ApiTunnelRuleRow): boolean {
   return r.state === "error" || r.state === "reconnecting";
 }
 
-/** A jump id -> its connection's name (docs/27 §4). The row carries the id; the panel
+/** A jump id -> its connection's name (SPEC §tunnels.panel). The row carries the id; the panel
  *  resolves it because this list is the one place both ids and names live. Falls back to
  *  the raw id when the target is missing — deleting a jump in use is refused, so this is a
  *  stale-tab guard, and an id says more than an empty tag. */
@@ -267,7 +267,7 @@ function tunConnName(id: string): string {
   return hit ? hit.name : id;
 }
 
-/** docs/27 §4: the transport tags a connection row carries. Going through a proxy or a
+/** SPEC §tunnels.panel: the transport tags a connection row carries. Going through a proxy or a
  *  jump is part of the row's identity ("this one dials through clash / through bastion"),
  *  so it rides the sub-line as the monochrome tag — the same form the sheet's Advanced
  *  summary uses, one word for the same fact in both places. */
@@ -278,7 +278,7 @@ function connBadgeNodes(c: ApiTunnelConnectionRow): HChild[] {
   return out;
 }
 
-/** One connection row: the library row (docs/46 §3.4). The host (a value, mono, masked until its
+/** One connection row: the library row (SPEC §panel.pages). The host (a value, mono, masked until its
  *  eye is pressed - redacted(), 2026-09-28), who it signs in
  *  as and how, the transport tags; how many rules ride it is the row's column now, not a clause
  *  in the sub-line; a failure is the one red line. Test is the row's one word button. */

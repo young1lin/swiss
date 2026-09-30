@@ -16,7 +16,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 
-/* docs/24 P3: every client-facing URL the panel can produce goes through connect.js's
+/* SPEC §mcp.endpoint: every client-facing URL the panel can produce goes through connect.js's
    endpointUrl — the single exit point for MCP endpoint addresses. The /mcp/ prefix lives
    there and in the two places that DISPLAY an endpoint path (the sidebar tooltip, the
    traffic clients' path column): if any of these regress to a root-level path, a copied
@@ -56,7 +56,7 @@ beforeAll(async () => {
   mods.menu = await import("../src/menu.js");
 });
 
-describe("connect snippets carry the /mcp/ domain prefix (docs/24 P3)", () => {
+describe("connect snippets carry the /mcp/ domain prefix (SPEC §mcp.endpoint)", () => {
   it("endpointUrl builds origin + /mcp/ + name", () => {
     expect(mods.endpointUrl("redis")).toBe("http://127.0.0.1:19999/mcp/redis");
     expect(mods.endpointUrl("deep-wiki")).toBe("http://127.0.0.1:19999/mcp/deep-wiki");

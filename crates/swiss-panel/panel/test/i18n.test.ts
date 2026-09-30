@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The lookup's own contract (docs/38 §2.5): English passthrough, installed-dictionary
+/* The lookup's own contract (SPEC §panel.i18n): English passthrough, installed-dictionary
    lookups, placeholder handling with missing slots kept visible, plural selection in both
    languages, and the preference round-trip on a stubbed storage. Node env on purpose: the
    module under test touches localStorage and document only through guards, and those guards
@@ -42,7 +42,7 @@ const throwingStorage = {
   removeItem: (): void => { throw new Error("blocked"); },
 } as unknown as Storage;
 
-describe("i18n lookup and preference (docs/38 §2.5)", () => {
+describe("i18n lookup and preference (SPEC §panel.i18n)", () => {
   beforeEach(() => {
     install("en", null);
     vi.stubGlobal("localStorage", makeStorage());

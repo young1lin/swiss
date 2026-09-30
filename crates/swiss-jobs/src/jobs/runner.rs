@@ -20,7 +20,7 @@
 //! process-tree teardown. It no longer does. Running a command is a shared capability now
 //! (`process.legacy-command` over `services::process::Supervisor`), submitted through the
 //! shared [`swiss_host::services::runs::RunCoordinator`] like every other run in the gateway
-//! (docs/10 §8, the process-capabilities-move-up decision; §9 step 2). Keeping a second
+//! (SPEC §jobs, the process-capabilities-move-up decision; §9 step 2). Keeping a second
 //! spawner here would mean
 //! two execution paths with two sets of teardown bugs — exactly what the shared service
 //! exists to prevent.
@@ -29,7 +29,7 @@
 //! unchanged and still tested at its new home: the old argv tokenizer (quoting rules and all),
 //! PATH+PATHEXT resolution, lenient `${ENV_VAR}` expansion at RUN time so the file keeps the
 //! reference rather than the secret (vault `${secret://...}` references resolve at the same point,
-//! strictly — a missing one fails the run, docs/19 D4), GBK/lossy decoding, CREATE_NO_WINDOW,
+//! strictly — a missing one fails the run, SPEC §host.refs), GBK/lossy decoding, CREATE_NO_WINDOW,
 //! and subtree teardown on both platforms.
 //!
 //! What stays here is the outcome type the run log and the /api/jobs reply are written

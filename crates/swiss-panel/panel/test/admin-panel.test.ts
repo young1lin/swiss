@@ -44,7 +44,7 @@ describe("admin panel assets", () => {
   it("the shell references its styles and its module entry, with the theme boot inline", () => {
     const shell = readFileSync(join(panelDir, "index.html"), "utf8");
     expect(shell).toContain('src="/admin/js/main.js"');
-    // Three layers in cascade order (docs/46): tokens + shell, the component layer, page layouts.
+    // Three layers in cascade order (SPEC §panel.ui): tokens + shell, the component layer, page layouts.
     const at = (f: string): number => shell.indexOf('href="/admin/styles/' + f + '"');
     expect(at("base.css")).toBeGreaterThan(-1);
     expect(at("ui.css")).toBeGreaterThan(at("base.css"));
@@ -53,9 +53,9 @@ describe("admin panel assets", () => {
     // (The localStorage key was renamed swiss_theme by the rebrand; this assertion lagged it.)
     expect(shell).toContain("swiss_theme");
     // And the 6k-line monolith it replaces is really gone. The bound rose with the icon sprite
-    // — docs/18 V2 (~26 lines of hand-drawn symbols), docs/29 (13 more: the launch-tag glyphs),
-    // docs/42 T2 (i-table, the object strip's own glyph), 2693073 (the Lucide ISC attribution
-    // line, which landed one over the bound), fix-plan #14 (five more: key, undo, arrow-up,
+    // — SPEC §panel.design (~26 lines of hand-drawn symbols), SPEC §mcp.panel (13 more: the launch-tag glyphs),
+    // SPEC §data.tabs (i-table, the object strip's own glyph), 2693073 (the Lucide ISC attribution
+    // line, which landed one over the bound), SPEC §panel.design (five more: key, undo, arrow-up,
     // folder, file), the find-bar pass (i-chevron-up, the last escape-sequence glyph site),
     // redacted() (i-eye, i-eye-off: the masked address's reveal), the redis type glyphs (six
     // symbols and their two-line note: a key row leads with its type) — still small, still no markup. The Apache-2.0 banner is stripped
@@ -90,7 +90,7 @@ describe("admin panel assets", () => {
       if (bodies.has(path)) continue;
       bodies.set(path, readFileSync(join(jsDir, path), "utf8")); // a missing file throws here
       // `export { a } from "./x.js"` links like an import: the browser resolves x.js and
-      // refuses the module when x.js has no `a`. ui/index.js (docs/46) is all re-exports, so
+      // refuses the module when x.js has no `a`. ui/index.js (SPEC §panel.ui) is all re-exports, so
       // walking only `import {` would have left the library's barrel unchecked.
       for (const m of bodies.get(path)!.matchAll(/(?:import|export)\s*\{([^}]*)\}\s*from\s*"((?:\.{1,2})(?:\/[\w.-]+)+)"/g)) {
         // Resolve the specifier like the browser would: "." stays in the importing
@@ -207,7 +207,7 @@ describe("admin panel assets", () => {
       documentElement: el(), body: el(), head: el(),
       hidden: false, visibilityState: "visible", activeElement: null,
       getElementById: () => el(), createElement: () => el(), createTextNode: () => el(),
-      // The node builders reach these on paint (docs/37 R5): every module must still
+      // The node builders reach these on paint (SPEC §panel.toolchain): every module must still
       // evaluate with them present.
       createElementNS: () => el(), createDocumentFragment: () => el(),
       // The boot's first navigation sets the shell's .sidebar (see the wait below).
@@ -248,7 +248,7 @@ describe("admin panel assets", () => {
   });
 });
 
-/* Visual refresh V1 (docs/18): the token contract. Regression anchors for the palette swap —
+/* Visual refresh V1 (SPEC §panel.design): the token contract. Regression anchors for the palette swap —
    hairline surfaces, a warm near-black dark side, tabular numerals — not proofs of the design;
    the design itself is verified on the 19998 instance with screenshots. */
 describe("visual refresh V1 — token contract", () => {
@@ -269,13 +269,13 @@ describe("visual refresh V1 — token contract", () => {
   });
 });
 
-/* Visual refresh V6 (docs/18): state and controls. Idle is a hollow ring — "not running" is the
+/* Visual refresh V6 (SPEC §panel.design): state and controls. Idle is a hollow ring — "not running" is the
    absence of a claim, not a blue claim. Launch tags are monochrome (mysql and redis were both
    red, pg and http both blue — the hues carried nothing a scan could use). The sidebar's
    selected row is an accent bar over a tint, not a white card floating out of the list. The
    segmented controls drop their drop-shadows for hairline rings. */
 describe("visual refresh V6 — state and controls", () => {
-  // Every linked sheet: the dot and the segmented control live in ui.css since docs/46.
+  // Every linked sheet: the dot and the segmented control live in ui.css since SPEC §panel.ui.
   const base = allCss();
 
   it("launch tags are one colour: the per-tag hue table is gone", () => {
@@ -440,7 +440,7 @@ describe("the memory chip is a memory-only control", () => {
    The browser's own fullscreen is deliberately NEVER requested: F11 is the user's keypress,
    the app layout is ours — the stub below pins that it stays uncalled. */
 describe("focus mode - the page gains navigation space", () => {
-  /* docs/37 R5: paintImmersive BUILDS the glyph (fill + iconNode), so the fake button
+  /* SPEC §panel.toolchain: paintImmersive BUILDS the glyph (fill + iconNode), so the fake button
    * carries kids and a serializing innerHTML getter, and the fake document answers the
    * three createElementNS/createDocumentFragment calls the builder makes. */
   /* The Node base: h.js classifies children with instanceof Node, so the stub nodes must
@@ -613,7 +613,7 @@ describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
     const terminal = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "views", "terminal.ts"), "utf8");
     const immersive = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "immersive.ts"), "utf8");
     expect(shell).toContain('id="appZone"');
-    // docs/37 R5: the slot is a built node now - the attribute key is the quoted kebab
+    // SPEC §panel.toolchain: the slot is a built node now - the attribute key is the quoted kebab
     // spelling in the h() data bag, which immersive.ts looks up with the same selector.
     expect(terminal).toContain('"shell-focus-slot"');
     expect(immersive).toContain('[data-shell-focus-slot]');
@@ -622,13 +622,13 @@ describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
   });
 });
 
-/* Focus mode is ONE shell-owned control (docs/13 D5, as revised). The entry lives at the
+/* Focus mode is ONE shell-owned control (SPEC §panel.nav, as revised). The entry lives at the
    context bar's far right in normal mode and remains there when the bar becomes minimal;
    no page mounts a fullscreen control of its own — the terminal's old .imm-toggle was
    exactly that debt. Pinned here as source contracts over the shipped shell and modules,
    next to the behavioral suite above. */
 describe("focus mode - one shell-owned control", () => {
-  // Source contracts read the TypeScript sources (docs/36 D2); panel-emit.test.ts proves the
+  // Source contracts read the TypeScript sources (SPEC §panel.toolchain); panel-emit.test.ts proves the
   // emitted tree matches them, so what is asserted here is what ships. The shell stays an
   // admin_assets read - index.html is still edited in place, never emitted.
   const read = (rel: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", rel), "utf8");
@@ -677,7 +677,7 @@ describe("focus mode - one shell-owned control", () => {
   });
 });
 
-/* Body-chrome dedup (docs/13 D5, as revised): the context bar says where the user is, so
+/* Body-chrome dedup (SPEC §panel.nav, as revised): the context bar says where the user is, so
    single-page plugin bodies stop repeating the location as an h1. The workflow description
    stays. Pinned as source contracts over the shipped modules (Tokens is pinned
    behaviorally in admin-tokens-view.test.ts; the tunnels body in admin-tunnels-pages). */
@@ -689,7 +689,7 @@ describe("body chrome dedup - no repeated location titles", () => {
       const src = read(rel);
       expect(src, rel).not.toContain("pane-title");
       // A description, and no title: the hand-built .pane-desc, or the library's paneHead()
-      // given a desc and no title (docs/46 P5 moved Plugins and Secrets onto it).
+      // given a desc and no title (SPEC §panel.settings moved Plugins and Secrets onto it).
       expect(/pane-desc|paneHead\(\{\s*desc:/.test(src), rel).toBe(true);
       expect(src, rel).not.toMatch(/paneHead\(\{\s*title:/);
     }

@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-//! The /api/remote management surface (docs/34): which endpoints the transport
+//! The /api/remote management surface (SPEC §remote): which endpoints the transport
 //! can see, and the target table CRUD. The CLI and the #remote targets page are
 //! both primary clients - they drive the SAME routes - and the group list rides
-//! with the rows so the page paints the docs/20 grouped list from one response.
+//! with the rows so the page paints the SPEC §host.groups grouped list from one response.
 //!
 //! ## State: one slot the plugin lifecycle owns
 //!
@@ -109,7 +109,7 @@ struct RunsQuery {
     before: Option<String>,
     limit: Option<String>,
     target: Option<String>,
-    /// docs/41 A3: epoch ms or ISO-8601, against endedAt; since inclusive, until exclusive.
+    /// SPEC §remote.history: epoch ms or ISO-8601, against endedAt; since inclusive, until exclusive.
     since: Option<String>,
     until: Option<String>,
     actor: Option<String>,
@@ -291,7 +291,7 @@ async fn clear_runs(State(state): State<Arc<RemoteState>>) -> Response {
 }
 
 /// GET /api/remote/runs/{id}/content: a remote.write's body, unsealed for the signed-in
-/// panel (docs/34 R12). 404 when the record kept none - not a write, or the size budget
+/// panel (SPEC §remote.history). 404 when the record kept none - not a write, or the size budget
 /// evicted it.
 async fn run_content(State(state): State<Arc<RemoteState>>, Path(id): Path<String>) -> Response {
     let Some(system) = state.live() else {
@@ -374,7 +374,7 @@ async fn list_targets(State(state): State<Arc<RemoteState>>) -> Response {
             store.group_names(),
         )
     });
-    // The group list rides with the rows (docs/34 R8): the panel reads ONE response
+    // The group list rides with the rows (SPEC §remote.targets): the panel reads ONE response
     // to paint the grouped page, exactly like /api/tunnels carries connGroups.
     admin_json(StatusCode::OK, json!({ "targets": rows, "groups": groups }))
 }
@@ -569,7 +569,7 @@ mod tests {
     #[tokio::test]
     async fn the_list_carries_the_group_names_and_rows_can_join() {
         let (_state, system, router) = app();
-        // The names ride with the rows (docs/34 R8): one response paints the grouped
+        // The names ride with the rows (SPEC §remote.targets): one response paints the grouped
         // page, and an ungrouped table answers the single default group.
         let (status, body) = get_json(&router, "/api/remote/targets").await;
         assert_eq!(status, StatusCode::OK);

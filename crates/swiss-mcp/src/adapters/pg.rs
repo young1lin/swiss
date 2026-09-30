@@ -186,7 +186,7 @@ fn with_pg_list_order(sql: String, sort: TableSort) -> String {
     sql.replacen("ORDER BY 1, 2", &format!("ORDER BY {clause}"), 1)
 }
 
-/// The grammar-grep twin (docs/22 W1.6): the const SQL has ONE grep placeholder, but a grammar
+/// The grammar-grep twin (SPEC §data.browse): the const SQL has ONE grep placeholder, but a grammar
 /// grep expands to any number of patterns, so the same query text is assembled here with the
 /// predicate grep_where built inline and the LIMIT/OFFSET placeholders renumbered past it.
 /// `pred` arrives as " AND (...)" from grep_where — the leading AND is the one the replaced
@@ -268,7 +268,7 @@ pub const PG_BROWSE_FK_SQL: &str = "
 
 /// The filter params LIST_TABLES_SQL / COUNT_TABLES_SQL expect: `[schema-or-null,
 /// grep-or-null]` (the LIMIT/OFFSET pair is appended by the caller). The Data view lists every
-/// non-system schema by default (null), but the panel's schema picker (docs/22 W1.1) and the
+/// non-system schema by default (null), but the panel's schema picker (SPEC §data.browse) and the
 /// pg_list_tables tool both narrow the walk to one schema — and the slot must still BE there
 /// either way, or the bind message supplies one parameter fewer than the statement's
 /// placeholders and Postgres refuses the query.
@@ -284,7 +284,7 @@ pub fn pg_browse_table_params(schema: Option<&str>, grep: Option<&str>) -> Vec<V
     ]
 }
 
-/// The bind pair for the grammar list/count statements (docs/22 W1.6): schema first (the $1
+/// The bind pair for the grammar list/count statements (SPEC §data.browse): schema first (the $1
 /// slot every one of these statements carries), then the grammar patterns; the list appends the
 /// paging pair, the count shares exactly the head. Extracted because the inline version once
 /// sent the count without its schema bind and Postgres answered "bind message supplies 2
@@ -391,7 +391,7 @@ fn column_to_value(row: &PgRow, col: &PgColumn, i: usize) -> Value {
             .try_get::<Option<i64>, _>(i)
             .ok()
             .flatten()
-            .map(exact_int64) // exact digits past the JS double boundary (docs/22 W2.4)
+            .map(exact_int64) // exact digits past the JS double boundary (SPEC §data.browse)
             .unwrap_or(Value::Null),
         "FLOAT4" | "FLOAT8" => row
             .try_get::<Option<f64>, _>(i)
@@ -459,7 +459,7 @@ fn column_to_value(row: &PgRow, col: &PgColumn, i: usize) -> Value {
             .try_get::<Option<Vec<i64>>, _>(i)
             .ok()
             .flatten()
-            .map(exact_int64_list) // same exact-digits rule, per element (docs/22 W2.4)
+            .map(exact_int64_list) // same exact-digits rule, per element (SPEC §data.browse)
             .unwrap_or(Value::Null),
         "FLOAT4[]" | "FLOAT8[]" => row
             .try_get::<Option<Vec<f64>>, _>(i)
@@ -709,7 +709,7 @@ pub async fn run_pg_tx(
     Ok(result.rows_affected())
 }
 
-/// docs/22 W1.7: the rows-returning sibling of run_pg_tx — an INSERT..RETURNING or the
+/// SPEC §data.edits: the rows-returning sibling of run_pg_tx — an INSERT..RETURNING or the
 /// same-transaction read-back SELECT needs the committed row itself, not a count.
 pub async fn run_pg_tx_rows(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -1012,7 +1012,7 @@ mod tests {
 
     #[test]
     fn browse_table_params_carry_the_schema_pick() {
-        // docs/22 W1.1: the schema picker narrows the walk to one schema; the slot stays bound
+        // SPEC §data.browse: the schema picker narrows the walk to one schema; the slot stays bound
         // (null) when the panel asks for every schema, and an empty string means the same as
         // absent — the panel never sends one, a hand-written URL might.
         assert_eq!(
@@ -1048,7 +1048,7 @@ mod tests {
 
     #[test]
     fn grammar_grep_sql_renumbers_the_paging_binds() {
-        // docs/22 W1.6: two patterns push LIMIT/OFFSET from $3/$4 to $4/$5, the schema keeps $1,
+        // SPEC §data.browse: two patterns push LIMIT/OFFSET from $3/$4 to $4/$5, the schema keeps $1,
         // and the count shares the predicate without the paging pair.
         let w = swiss_host::dbbrowser::grep_where(
             swiss_host::dbbrowser::DbDialect::Pg,

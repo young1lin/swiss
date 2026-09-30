@@ -34,7 +34,7 @@ use swiss_core::log;
 use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
 use swiss_host::groups::Groups;
 
-/// The one grouping vocabulary (docs/20 §2): the FIRST group is the sink slot for unassigned
+/// The one grouping vocabulary (SPEC §host.groups): the FIRST group is the sink slot for unassigned
 /// rows; `default` is just the name a fresh list starts from - an ordinary group.
 pub use swiss_host::groups::DEFAULT_GROUP;
 
@@ -54,7 +54,7 @@ pub struct ConnInput {
     pub password: Option<String>,
     pub host_key: Option<String>,
     pub group: Option<String>,
-    /// docs/27 §1.1: the four proxy/jump fields, absent when the caller did not send them.
+    /// SPEC §tunnels.store: the four proxy/jump fields, absent when the caller did not send them.
     pub proxy: Option<String>,
     pub proxy_username: Option<String>,
     pub proxy_password: Option<String>,
@@ -143,7 +143,7 @@ impl TunnelStore {
                 return;
             }
         };
-        // docs/25 E2: whole-value bare vault refs become envelope refs in memory here —
+        // SPEC §host.refs: whole-value bare vault refs become envelope refs in memory here —
         // the file keeps its spelling until the next save rewrites it. Mixed strings stay
         // as authored (a mid-string rewrite would need the ambiguous scan the envelope
         // exists to replace).
@@ -271,7 +271,7 @@ impl TunnelStore {
                 .unwrap_or_default()
         };
         // A v1 file never stored "default" - it was the implicit first group the loader
-        // invented on the fly. The one model stores it like any other name (docs/20 §2.1),
+        // invented on the fly. The one model stores it like any other name (SPEC §host.groups),
         // so a v1 list gains it at the HEAD, where the sink slot lives. The marker written
         // on every save since means verbatim from then on: a default the user deleted must
         // not resurrect on the next load, the same contract managed.json's groupsV2 has.
@@ -401,7 +401,7 @@ impl TunnelStore {
                 def.group = Some(g.trim().to_string());
             }
         }
-        // docs/27 §1.1/§1.3: proxy and jump, validated in the spec's order — proxy syntax,
+        // SPEC §tunnels.store: proxy and jump, validated in the spec's order — proxy syntax,
         // then jump target, self, cycle, and the mutual exclusion last.
         if let Some(url) = nonempty(input.proxy.as_deref()) {
             def.proxy = Some(normalize_proxy(&url)?);
@@ -692,7 +692,7 @@ impl TunnelStore {
     }
 
     /// Replace the whole group-name list: create, reorder and delete are all "here is the new
-    /// list" (docs/20 §2.1). Validation and ordering live in the one Groups model; this store
+    /// list" (SPEC §host.groups). Validation and ordering live in the one Groups model; this store
     /// adds the row-side bookkeeping - a group dropped by omission loses its rows' explicit
     /// entries, so they render in the new first group. A reorder pins the rows that render in
     /// the first group by default (group: None) to the name, so demoting it re-homes nobody:
@@ -914,7 +914,7 @@ fn parse_proxy_port(raw: &str) -> Result<u16, String> {
         .ok_or_else(|| format!("invalid proxy port: {raw}"))
 }
 
-/// docs/27 §1.3: save-time proxy validation and normalization. The grammar is deliberately
+/// SPEC §tunnels.store: save-time proxy validation and normalization. The grammar is deliberately
 /// tiny — `scheme://host[:port]` — because the dialer (§2) is a hand-written client, not a
 /// URL library; anything richer (userinfo, path, query) is refused by name so it cannot
 /// silently mean something else at connect time. Portless URLs store WITH their scheme's
@@ -939,7 +939,7 @@ fn normalize_proxy(input: &str) -> Result<String, String> {
         "socks5h" => {
             return Err("socks5h:// is not needed: the hostname is always resolved by the proxy, write socks5:// instead".into());
         }
-        // TLS to the proxy is deliberately out of scope (docs/27 §6).
+        // TLS to the proxy is deliberately out of scope (SPEC §tunnels.proxy).
         "https" => {
             return Err("https:// proxies are not supported, use http:// or socks5:// (TLS to the proxy is not implemented)".into());
         }
@@ -1038,7 +1038,7 @@ mod tests {
 
     #[test]
     fn legacy_bare_vault_refs_load_as_envelope_refs() {
-        // docs/25 E2 at the tunnels surface: a connection saved with a whole-value bare
+        // SPEC §host.refs at the tunnels surface: a connection saved with a whole-value bare
         // password loads wrapped in memory; the disk file keeps its legacy spelling — a
         // load is not a write.
         let (dir, mut s) = temp_store("legacy-refs");
@@ -1205,7 +1205,7 @@ mod tests {
         s.add_rule(&rule_input("a", &c.id, 5433.0)).unwrap();
         s.add_rule(&rule_input("z", &c.id, 5434.0)).unwrap();
 
-        // A fresh store starts from the one default group (docs/20 §2.1): an ordinary name,
+        // A fresh store starts from the one default group (SPEC §host.groups): an ordinary name,
         // whose only privilege is being the FIRST entry - the sink slot.
         assert_eq!(s.groups_of(GroupKind::Rules), vec!["default".to_string()]);
         assert_eq!(
@@ -1502,7 +1502,7 @@ mod tests {
         }
     }
 
-    /// docs/27 §1.5: a file from before the feature loads with every new field unset —
+    /// SPEC §tunnels.store: a file from before the feature loads with every new field unset —
     /// the def is exactly what the current construction would produce.
     #[test]
     fn old_conn_files_load_without_proxy_or_jump_fields() {
@@ -1528,7 +1528,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// docs/27 §1.3, one case per rule. Portless URLs store normalized (http -> 80,
+    /// SPEC §tunnels.store, one case per rule. Portless URLs store normalized (http -> 80,
     /// socks5 -> 1080) and the normalized value is what lands in tunnels.json.
     #[test]
     fn proxy_validation_follows_the_spec_family() {
@@ -1620,7 +1620,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// docs/27 §1.3: jump targets must exist, must not be the connection itself, must not
+    /// SPEC §tunnels.store: jump targets must exist, must not be the connection itself, must not
     /// close a cycle (the whole chain is named), and never coexist with a proxy.
     #[test]
     fn jump_validation_rejects_missing_self_cycles_and_coexistence() {

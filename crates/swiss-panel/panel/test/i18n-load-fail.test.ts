@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-/* The loader's English floor (docs/38 §1.1): a Chinese dictionary import that rejects
+/* The loader's English floor (SPEC §panel.i18n): a Chinese dictionary import that rejects
    must not reject loadLocale itself. main.ts awaits loadLocale at the TOP LEVEL, so a
    rejection there kills the whole module graph and the panel boots dead; a 文/A click
    would instead leave an unhandled rejection with the preference already written. The
@@ -49,7 +49,7 @@ function chromeSkeleton(): string {
   ].join("");
 }
 
-describe("the zh dictionary failing to load (docs/38 §1.1 fallback floor)", () => {
+describe("the zh dictionary failing to load (SPEC §panel.i18n fallback floor)", () => {
   beforeEach(() => {
     document.body.innerHTML = chromeSkeleton();
     document.documentElement.lang = "en";

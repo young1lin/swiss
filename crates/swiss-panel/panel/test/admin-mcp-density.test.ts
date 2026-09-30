@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 // @vitest-environment happy-dom
 
 /* The MCP renderers sit in the browser module graph, whose entry modules wire a few DOM
-   handles at import time. docs/37 R5 moved the builders onto real nodes, so the suite runs on
+   handles at import time. SPEC §panel.toolchain moved the builders onto real nodes, so the suite runs on
    a real DOM (happy-dom) with the served shell's id soup in place before the import — the same
    contract as the other view suites — instead of a permissive proxy the assertions could not
    read a built tree through. */
@@ -84,7 +84,7 @@ describe("MCP detail progressive disclosure", () => {
     const host = document.createElement("div");
     host.append(logs.kindBodyNode(d, "tools", { lifecycle: "started" }));
 
-    // docs/46 P2-3: the library row with a record behind it (row({ detail })).
+    // SPEC §panel.pages: the library row with a record behind it (row({ detail })).
     const detail = host.querySelector("details.lrow-disc")!;
     expect(detail).not.toBeNull();
     expect(detail.querySelector("summary .lrow-name")!.textContent).toBe("mysql_query");
@@ -133,7 +133,7 @@ describe("MCP detail progressive disclosure", () => {
     })].flat().filter((n): n is Node => n != null));
 
     expect(host.querySelector(".group > .config-summary")).not.toBeNull();
-    // docs/46 P2-3c: every setting is a library label / value row, the value mono.
+    // SPEC §panel.pages: every setting is a library label / value row, the value mono.
     expect(host.querySelector(".config-rows > .kv .kv-v.mono")).not.toBeNull();
     expect(host.querySelector(".config-target")!.textContent).toContain("127.0.0.1:3306 / acme_app_dev");
     expect(host.querySelector(".config-badges")).not.toBeNull();

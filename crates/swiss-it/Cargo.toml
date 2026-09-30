@@ -1,7 +1,7 @@
 [package]
 name = "swiss-it"
 version.workspace = true
-description = "Dev-only integration harness (docs/44): the real MySQL, PostgreSQL and Redis gates behind the it feature."
+description = "Dev-only integration harness (SPEC §testing.it): the real MySQL, PostgreSQL and Redis gates behind the it feature."
 edition = "2021"
 authors.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ publish = false
 
 [features]
 default = []
-# The integration gate (docs/44 D5): one flag turns the lib, the test binary and (from
+# The integration gate (SPEC §testing.it): one flag turns the lib, the test binary and (from
 # I6) the stdio server from empty files into the real-database harness. Every dependency
 # is optional and only enters through this feature, so `cargo test --workspace` on a
 # machine without Docker compiles exactly the three empty targets it compiled before this
@@ -78,7 +78,7 @@ futures-util = { version = "0.3", default-features = false, features = [
 serde_json = { version = "1", default-features = false, optional = true }
 # The DbBrowser traits plus the shared browse SQL builders the browsers sit on.
 swiss-host = { path = "../swiss-host", version = "0.1.0", optional = true }
-# The launcher-noise scrub the daemon's main() applies (docs/16 H1): the L3 env
+# The launcher-noise scrub the daemon's main() applies (SPEC §host.daemon): the L3 env
 # test replays the daemon's startup scrub before a proc child inherits. Already in
 # the dev graph through swiss-mcp - same path crate, one copy.
 swiss-core = { path = "../swiss-core", version = "0.1.0", optional = true }
@@ -89,7 +89,7 @@ swiss-core = { path = "../swiss-core", version = "0.1.0", optional = true }
 swiss-mcp = { path = "../swiss-mcp", version = "0.1.0", features = [
     "test-utils",
 ], optional = true }
-# The gateway itself (L2, docs/44 SS2.6): build_app + AppContext for Gateway::boot,
+# The gateway itself (L2, SPEC §testing.it): build_app + AppContext for Gateway::boot,
 # which serves a REAL listener on 127.0.0.1:0 - an rmcp client needs a URL, so
 # tower oneshot cannot stand in. The root package never depends on this crate, so
 # the shipping graph is untouched; this edge lives in the dev graph only.
@@ -123,7 +123,7 @@ windows-sys = { version = "0.61", default-features = false, features = [
     "Win32_System_Diagnostics_ToolHelp",
 ], optional = true }
 
-# The cleanup watchdog (docs/44 SS2.2): stdin = docker endpoint + container ids, EOF
+# The cleanup watchdog (SPEC §testing.it): stdin = docker endpoint + container ids, EOF
 # = parent died, then one force-DELETE per id. Behind the same `it` feature as the
 # lib it links - a machine without Docker never builds it.
 [[bin]]
@@ -131,7 +131,7 @@ name = "it-reaper"
 path = "src/bin/it-reaper.rs"
 required-features = ["it"]
 
-# The L3 stdio server (docs/44 SS2.7): the proc adapter's far side. Same gate as
+# The L3 stdio server (SPEC §testing.it): the proc adapter's far side. Same gate as
 # everything else here; the test binary reaches it through CARGO_BIN_EXE.
 [[bin]]
 name = "it-mcp-server"

@@ -15,10 +15,10 @@
  */
 
 /* ================================================================================================
-   Groups - the one grouped-list component (docs/20 §4).
+   Groups - the one grouped-list component (SPEC §panel.groups).
 
    Seven scopes (mcps, conns, rules, jobs, secrets, tokens, targets), two densities, ONE
-   shape (docs/35): a header BAND - chevron, name in mixed case, count, with + always
+   shape (SPEC §panel.groups): a header BAND - chevron, name in mixed case, count, with + always
    visible and the ellipsis on hover - over the members. The band is what says "container";
    there is no folder glyph, no guide line and no second surface. The densities differ only
    in size and in what the members sit on:
@@ -99,7 +99,7 @@ function rememberGroup(scope        , name        )       {
   try { localStorage.setItem(lastGroupKey(scope), name); } catch (e) { /* full or blocked */ }
 }
 
-/* --- the /api/groups/{scope} family (docs/20 §3) -------------------------------------------------- */
+/* --- the /api/groups/{scope} family (SPEC §host.groups) -------------------------------------------------- */
 
 /** Create, reorder and delete are all "here is the new list"; the server drops omitted
  *  groups and returns their members to the first remaining one. */
@@ -139,7 +139,7 @@ function newGroupFlow(scope        , names          , reload                    
  *  hidden promise made by whichever + opened the sheet - is where the row lands, so a value
  *  the user changed wins. #g-sel is the one id every create sheet shares.
  *
- *  groupFieldNode is the builder (docs/37 R5); the string twin stays for the views not yet
+ *  groupFieldNode is the builder (SPEC §panel.toolchain); the string twin stays for the views not yet
  *  converted (jobs, remote, tunnels) and retires with them. */
 function groupFieldNode(names          , sel                )              {
   return field({
@@ -175,13 +175,13 @@ function groupFieldHtml(names          , sel                )         {
  *    drag/dragGroup { get, set } - the two in-flight-drag slots; a poll must not rebuild
  *                   under either (the caller's loader checks them)
  *    rowNode(row)   one row ELEMENT, at both densities; the component wires click
- *                   + drag on what it hands back (docs/37 R5 — the string twin retired)
+ *                   + drag on what it hands back (SPEC §panel.toolchain — the string twin retired)
  *    wireRow(el, row) page density: extra per-row wiring (actions); drag is wired here
  *    rowId(row)     the id a drag carries (name for MCPs, id for tunnels)
  *    rowsById()     live rows, for drop-into's "slot after the last member" step
  *    groupOfRow(row) the rendering group of a row (a groupOf(names) closure)
- *    capRows(rows) optional render budget: how many rows to paint + the note row (docs/43
- *                   addendum - thousand-row catalogs); absent = paint everything
+ *    capRows(rows) optional render budget: how many rows to paint + the note row (SPEC §data.tabs:
+ *                   thousand-row catalogs); absent = paint everything
  *    onMoveRow(id, targetId, before) flat reorder + order PUT + render (caller-owned list)
  *    onAssign(id, group)             member PUT, applied locally first (caller-owned rows)
  *    filtered       a search is on: groups with no match hide, matches force expansion
@@ -194,7 +194,7 @@ function mountGroup     (cfg               , g                 )              {
   // a group, and doing it from here means it lands where you meant it to instead of appearing
   // in the first group to be dragged over afterwards. + stays visible (dimmed) because
   // adding is frequent; one persistent glyph per header is a hierarchy, two would be a toolbar.
-  // docs/43 M2: onAdd is optional now - a scope whose groups cannot gain members from
+  // SPEC §data.tabs: onAdd is optional now - a scope whose groups cannot gain members from
   // their band (the Data tree's Views / Routines sections) simply offers no +, and canAdd
   // gates it per band for the scope that offers it in one place only.
   const canAdd = !!cfg.onAdd && (!cfg.canAdd || cfg.canAdd(g.name));
@@ -202,20 +202,20 @@ function mountGroup     (cfg               , g                 )              {
   // The ellipsis is rare, so it appears on hover/focus only. Move up/down are the
   // keyboard-and-precision path to what dragging the head does: present exactly when the move
   // exists, absent at the list's edges. A scope with its own row set (the Data tree,
-  // docs/43 M2) supplies the items itself - its bands are derived, there is nothing to move,
+  // SPEC §data.tabs) supplies the items itself - its bands are derived, there is nothing to move,
   // rename or delete - and answers null for a band that has no actions at all.
   const ownItems = cfg.moreItems ? cfg.moreItems(g.name) : undefined;
   // null and an empty list both mean "this band gets no ellipsis"; only a scope with no
   // moreItems hook at all falls back to the stock Move/Rename/Delete list.
   const useOwn = ownItems != null && ownItems.length > 0;
 
-  // rowNode at BOTH densities (docs/37 R5): side density always built nodes, and page density
+  // rowNode at BOTH densities (SPEC §panel.toolchain): side density always built nodes, and page density
   // once parsed a rowsHtml string and then went looking for each row again with rowSel. Every
   // scope supplies a builder now, so the node it returns IS the node to wire — the string
   // path and the querySelector retired with the last rowsHtml caller.
   const members                = [];
   if (cfg.rowNode) {
-    // docs/43 addendum: capRows may hold the band to a DOM budget (a 1,700-table catalog
+    // SPEC §data.tabs: capRows may hold the band to a DOM budget (a 1,700-table catalog
     // paints its first cap-1 rows plus a note row, not 1,700 nodes). The slice is render-only
     // - the badge and every cfg callback keep seeing the whole list.
     const cap = cfg.capRows ? cfg.capRows(g.rows) : null;
@@ -228,15 +228,15 @@ function mountGroup     (cfg               , g                 )              {
     if (cap && cap.note) members.push(cap.note);
   }
 
-  // The markup is the library's (ui/group.ts, docs/46): the band, its leading columns - the
+  // The markup is the library's (ui/group.ts, SPEC §panel.ui): the band, its leading columns - the
   // contract ui.css aligns to - and the body. This function owns the behaviour on top of it.
   // The count stays visible when folded - 0 versus 3 is exactly how a folded empty group
   // tells itself apart from a folded full one. countOf lets a nested band number its ROWS
-  // when its direct members are inner bands (the Data tree's schema bands, docs/43 M2).
+  // when its direct members are inner bands (the Data tree's schema bands, SPEC §data.tabs).
   // An empty group is not an empty state - it is a place. One SHORT quiet line keeps the
   // container visible as a drop target (the only way in); the head's + explains itself on
   // hover, so the line does not have to repeat the instructions. A scope whose rows cannot
-  // drag (tokens) says the honest half only; a read-only tree (emptyText, docs/43 M2) says
+  // drag (tokens) says the honest half only; a read-only tree (emptyText, SPEC §data.tabs) says
   // what the section is missing, not "drop here".
   const parts = groupNode({
     name: g.name,
@@ -281,7 +281,7 @@ function mountGroup     (cfg               , g                 )              {
     };
   }
 
-  // docs/43 M2: a scope with draggable: false gets no drag or drop wiring at all - the
+  // SPEC §data.tabs: a scope with draggable: false gets no drag or drop wiring at all - the
   // Data tree's bands are derived from the catalog, not named by the operator, so picking
   // one up or dropping onto it would be a gesture that lies. "Drop here" has to be true of
   // the empty line that says it, not only of the head above it.
@@ -294,7 +294,7 @@ function mountGroup     (cfg               , g                 )              {
   return parts.root;
 }
 
-/** The whole head drags the group (docs/35). Picking it up anywhere - the name, the count,
+/** The whole head drags the group (SPEC §panel.groups). Picking it up anywhere - the name, the count,
  *  the band - starts a group drag; the browser's own drag threshold keeps a plain click a
  *  click, so the toggle still folds. The + and ellipsis buttons cancel the drag at its
  *  start instead: a hand that moves a pixel while pressing one must still land the click,

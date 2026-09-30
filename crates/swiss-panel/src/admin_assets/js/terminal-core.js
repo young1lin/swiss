@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-/* The terminal view's pure half (docs/14 §8): URL building, reconnect pacing, the
+/* The terminal view's pure half (SPEC §terminal.api): URL building, reconnect pacing, the
    close-frame stories, geometry clamping, the target-picker rows, the Windows-Terminal
-   key/mouse actions (docs/15 §1), the font-size zoom steps, the tab-label precedence
+   key/mouse actions (SPEC §terminal.panel), the font-size zoom steps, the tab-label precedence
    (rename > shell title > target), scroll pinning, paste risk and the bell/copy prefs.
    Plain data in,
    plain data out — the contract with the gateway's Rust side is pinned by the tests in
@@ -28,7 +28,7 @@
 const PTY_MIN = 1;
 const PTY_MAX = 1000;   // the bounds swiss-host enforces on both axes — a 0-column PTY is
                       // undefined behaviour on the far side, so the panel clamps BEFORE
-                      // the gateway has to refuse (docs/14 §8)
+                      // the gateway has to refuse (SPEC §terminal.api)
 
 export function targetsUrl()         { return "/api/terminal/targets"; }
 export function sessionsUrl()         { return "/api/terminal/sessions"; }
@@ -68,7 +68,7 @@ export function frameStatus(frame                                               
 
 /** True while the session is still in the gateway's listing — the listing is the truth:
  *  a session that left it is past its grace window, timed out, or was deleted, and no
- *  ticket will ever bring it back (docs/14 §6.7). */
+ *  ticket will ever bring it back (SPEC §terminal.sessions). */
 export function sessionAlive(listing         , id        )          {
   return Array.isArray(listing) && listing.some((s) => { return s && s.id === id; });
 }
@@ -85,7 +85,7 @@ export function clampGeometry(cols         , rows         )                     
 }
 
 /** The resize control frame as the wire wants it: one small JSON object, the only text
- *  the client is allowed to mean anything with (docs/14 §8). */
+ *  the client is allowed to mean anything with (SPEC §terminal.api). */
 export function resizeFrame(cols         , rows         )         {
   const g = clampGeometry(cols, rows);
   return JSON.stringify({ t: "resize", cols: g.cols, rows: g.rows });
@@ -94,7 +94,7 @@ export function resizeFrame(cols         , rows         )         {
 /** Rows for the target picker, in order: local (if the config says so), then every
  *  remote target the shell seat reports. A remote side that is absent explains ITSELF
  *  with the reason the gateway sent — "the tunnels plugin is disabled", never a bare
- *  empty list (docs/14 §4). Returns { rows, note } — note is the one-line story under
+ *  empty list (SPEC §terminal.remote). Returns { rows, note } — note is the one-line story under
  *  the picker when there is nothing remote to pick. */
 export function targetRows(reply                                       )                                                                                                             {
   const rows                                                  = [];
@@ -122,7 +122,7 @@ export function targetRows(reply                                       )        
       || "no terminal targets — connect a tunnel first, or enable the local shell in the plugin config";
   }
   /* localOff turns the empty bar's line into the clickable "turn it on" that opens the
-     settings sheet (docs/15 §2.1); reason rides along separately so the tunnels story
+     settings sheet (SPEC §terminal.local); reason rides along separately so the tunnels story
      stays visible next to it instead of being buried in the note. */
   const localOff = !!(r.local && r.local.enabled === false);
   return { rows: rows, note: note, reason: reason, localOff: localOff };
@@ -156,7 +156,7 @@ function baseName(p         )         {
 }
 
 /** The Local shell sheet's config: the CURRENT plugin config with only `local` replaced,
- *  so a save cannot silently drop a limit someone else set (docs/15 §2.1). An empty
+ *  so a save cannot silently drop a limit someone else set (SPEC §terminal.local). An empty
  *  shell string is omitted rather than sent as "" — that is how "the platform default"
  *  stays expressible. */
 export function withLocalConfig(config                                         , enabled         , shell         )                       {
@@ -187,8 +187,8 @@ export function sessionLabel(session                                            
   return t === "local" ? "local" : t;
 }
 
-/** What one keyboard event means inside the terminal, Windows Terminal style (docs/15
- *  §1): "paste" | "copy" | "sigint" | null, where null means "not ours — xterm keeps the
+/** What one keyboard event means inside the terminal, Windows Terminal style (SPEC §terminal.panel):
+ *  "paste" | "copy" | "sigint" | null, where null means "not ours — xterm keeps the
  *  event". Takes a duck-typed { key, code, ctrlKey, shiftKey, altKey, metaKey, type }
  *  rather than a KeyboardEvent so a test can press any combination without a DOM, and
  *  judges keydown ONLY: xterm hands keypress and keyup to the custom handler too, and
@@ -278,7 +278,7 @@ export function mouseAction(ev                                                  
  *  rename wins, then the shell's own OSC 0/2 title, then the target the session was
  *  opened on. An EMPTY shell title is the shell resetting its title, not a label —
  *  fall through. Seven of nine explored reference terminals converged on exactly
- *  this order (docs/22 consensus 1). */
+ *  this order (SPEC §terminal.panel). */
 export function tabLabel(session                                                                    , shellTitle         , customTitle         )         {
   const custom = customTitle == null ? "" : String(customTitle).trim();
   if (custom) return custom;
@@ -287,7 +287,7 @@ export function tabLabel(session                                                
   return sessionLabel(session);
 }
 
-/** Pinned-to-bottom judgment while output streams in (Tabby's rule, docs/22 §2.10):
+/** Pinned-to-bottom judgment while output streams in (Tabby's rule, SPEC §terminal.panel):
  *  within one line of the base means the user is riding the bottom. Unknown values
  *  count as pinned — a wrongly-pinned terminal merely scrolls; a wrongly-unpinned
  *  one yanks the user's scrollback, which is the failure this exists to prevent. */
@@ -327,7 +327,7 @@ export function trimSelection(text         )         {
   return String(text == null ? "" : text).replace(/[ \t]+(?=\n)/g, "").replace(/\s+$/, "");
 }
 
-/* --- the xterm theme's chrome (docs/46 P8-2, U12) ----------------------------------------------
+/* --- the xterm theme's chrome (SPEC §panel.pages) ----------------------------------------------
  * The theme splits in two: the CHROME (background, cursor, selection) reads the panel's
  * --term-* tokens (base.css) through getComputedStyle, so the surface follows a theme
  * switch like every other surface in the panel; the 16 ANSI colours are CONTENT - what a

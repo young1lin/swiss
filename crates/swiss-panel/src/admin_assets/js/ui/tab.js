@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-/* The object tab (docs/46 P8): one open thing on a strip the page body owns - a Data table,
- * key or console (docs/42 T2), a Terminal session. Flat, a hairline between neighbours; the
+/* The object tab (SPEC §panel.pages): one open thing on a strip the page body owns - a Data table,
+ * key or console (SPEC §data.tabs), a Terminal session. Flat, a hairline between neighbours; the
  * open one merges into the surface under it with a 2px accent on its top edge, the same
  * accent the context bar's page tab stands on. Its close is a real button BESIDE the name:
  * a tab is role=tab and holds no button of its own role (the terminal's tab was a button
@@ -23,7 +23,7 @@
  * with the page; the tab is only the shape.
  *
  * No handlers: the view answers through its delegated listener, by the data hooks it passes
- * for the tab and for its close (docs/37 R5). */
+ * for the tab and for its close (SPEC §panel.toolchain). */
                                                
 import { h } from "../h.js";
 import { iconNode } from "./icon.js";

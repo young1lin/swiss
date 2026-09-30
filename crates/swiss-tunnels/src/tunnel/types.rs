@@ -136,11 +136,11 @@ pub struct SshConnDef {
     pub password: Option<String>,
     /// `SHA256:…`, learned on first successful connect; a change refuses the connection.
     pub host_key: Option<String>,
-    /// docs/27 §1.1: `scheme://host[:port]`, scheme ∈ {http, socks5}. Stored port-normalized
+    /// SPEC §tunnels.store: `scheme://host[:port]`, scheme ∈ {http, socks5}. Stored port-normalized
     /// (http -> 80, socks5 -> 1080) with no credentials inside — those are the two fields
     /// below, resolved at connect time like every other credential.
     pub proxy: Option<String>,
-    /// Whole-field `${...}` reference or literal; consumed by the proxy dialer (docs/27 §2).
+    /// Whole-field `${...}` reference or literal; consumed by the proxy dialer (SPEC §tunnels.proxy).
     pub proxy_username: Option<String>,
     /// Same contract as proxy_username.
     pub proxy_password: Option<String>,
@@ -175,7 +175,7 @@ impl SshConnDef {
         if let Some(v) = &self.group {
             m.insert("group".into(), json!(v));
         }
-        // docs/27 §1.2: the new keys append AFTER the historical order, absent when unset —
+        // SPEC §tunnels.store: the new keys append AFTER the historical order, absent when unset —
         // the stored prefix stays byte-identical, so old files and old readers are untouched.
         if let Some(v) = &self.proxy {
             m.insert("proxy".into(), json!(v));
@@ -313,7 +313,7 @@ pub enum FailureKind {
     Port,
     Config,
     /// An in-flight remote operation was canceled through its handle — never retried,
-    /// and mapped to RemoteError::Canceled at the transport seam (docs/34).
+    /// and mapped to RemoteError::Canceled at the transport seam (SPEC §remote).
     Canceled,
 }
 
@@ -461,7 +461,7 @@ mod tests {
         }
     }
 
-    /// docs/27 §1.2: unset proxy fields are ABSENT and the historical key order is unchanged —
+    /// SPEC §tunnels.store: unset proxy fields are ABSENT and the historical key order is unchanged —
     /// an old reader sees byte-identical objects.
     #[test]
     fn conn_json_keeps_node_field_order_without_proxy_fields() {
@@ -485,7 +485,7 @@ mod tests {
         );
     }
 
-    /// docs/27 §1.2: the four new keys append after the historical order, absent when unset.
+    /// SPEC §tunnels.store: the four new keys append after the historical order, absent when unset.
     #[test]
     fn conn_json_appends_proxy_fields_in_spec_order() {
         let v = conn_def("c1", true).to_json();
