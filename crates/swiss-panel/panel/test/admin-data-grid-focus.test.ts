@@ -154,7 +154,7 @@ function renderTwoRowGrid(): { d: Record<string, any>; wrap: Stub } {
   return { d, wrap: byId.dbGridWrap };
 }
 
-describe("the grid's keyboard focus ring (SPEC §data-B)", () => {
+describe("the grid's keyboard focus ring (SPEC §data.grid)", () => {
   it("a cell mousedown moves the ring on the LIVE grid — no innerHTML rebuild, so the click/dblclick that follows still lands", () => {
     // Real-input regression (CDP: a mousedown that rebuilt the table left only
     // mousedown+mouseup in the stream — no click, no dblclick — so double-click editing
@@ -202,7 +202,7 @@ describe("the grid's keyboard focus ring (SPEC §data-B)", () => {
   });
 });
 
-describe("a cell mousedown keeps the keyboard layer alive (SPEC §data-A)", () => {
+describe("a cell mousedown keeps the keyboard layer alive (SPEC §data.grid)", () => {
   it("the mousedown preventDefaults — the default focus move to <body> would land AFTER dbFocusCell focused #dbKbd and every key would go nowhere", () => {
     const { wrap } = renderTwoRowGrid();
     for (const sel of ['td[data-r="0"][data-c="0"]', 'td[data-r="1"][data-c="1"]']) {

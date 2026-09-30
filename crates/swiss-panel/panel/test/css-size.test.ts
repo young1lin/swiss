@@ -23,7 +23,7 @@
 import { describe, expect, it } from "vitest";
 import { sheet } from "./styles.js";
 
-const FROZEN_VIEWS_BYTES = 60001; // SPEC §panel.ui: the terminal's own palette and the dead rules went, icon sizes on the --ic knob, the jump chip's z-index in (P8-2: 61447, Terminal on the library's objTab/select face/sheets; P8-1: Data's tab strip is the library's objTab; P7-2: 63072, Data on the library; P7-1: 63479, P6-2: 64049, P6-1: 67801, P5: 69920, P4: 70223, P3: 70330, P2-3c: 71473, P1b-3: 74519, P1b-2: 76099, P1a-2: 76412)
+const FROZEN_VIEWS_BYTES = 59932; // SPEC §panel.ui; each shrink's reason is in git log
 
 export function lfBytes(css: string): number {
   return Buffer.byteLength(css.replace(/\r\n/g, "\n"), "utf8");

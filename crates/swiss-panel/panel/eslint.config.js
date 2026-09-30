@@ -53,9 +53,8 @@ export default tseslint.config(
   plugins: { "@typescript-eslint": tseslint.plugin },
   },
   {
-    /* The src rule set proper (SPEC §panel.lint-R2). The suite gets its own block below: R2's
-     * mechanical sweep scoped itself to the emitted tree, and the suite's idioms are a
-     * separate budget. */
+    /* The src rule set proper (SPEC §panel.lint). The suite gets its own block below: its
+     * idioms are a separate budget. */
     files: ["src/**/*.ts"],
     rules: {
       /* R0: SPEC §panel.toolchain - the any budget is zero; the regex guard in panel-no-any.test.ts

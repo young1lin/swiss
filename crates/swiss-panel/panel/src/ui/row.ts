@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* The ONE list row (SPEC §panel.ui). SPEC §panel.ui counted four hand-built rows - .row,
+/* The ONE list row (SPEC §panel.ui). There were four hand-built rows - .row,
  * .tun-row, the remote row, the plugin row - that agreed on nothing but "a name on the left,
  * buttons on the right". This is that shape, once:
  *
@@ -128,7 +128,7 @@ export interface SideRowOpts {
   title?: string;
 }
 
-/** One source-list row: the sidebar beside a detail pane (the MCP list; skill §17 "sidebar").
+/** One source-list row: the sidebar beside a detail pane (the MCP list; SPEC §panel.nav).
  *  One line, 30px: dot, name, the trailing tag. Everything else - the description, the source,
  *  the reason a row is red - lives in the title and in the pane head of the selected one (the
  *  second line it used to carry was a ruler of ellipses). A <button role=option>: the list is a

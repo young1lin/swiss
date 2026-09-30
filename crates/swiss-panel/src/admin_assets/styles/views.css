@@ -236,7 +236,7 @@
     .db-side-foot { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); justify-content: space-between; }
     .db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; padding: var(--s3) var(--s4) 0; }
     /* The object tab strip (SPEC §data.tabs). L3 resource navigation owned by the page body, drawn
-       as CARD tabs — the shape swiss-ui-design §1.3 reserves for "one open resource". It is
+       as CARD tabs — the shape for "one open resource". It is
        deliberately neither of the other two tab shapes on screen: the context bar's underline
        tabs are L2 pages, and the seg pills below name a SECTION of the open object.
        Full-bleed by negative margins because the strip is the pane's top EDGE, not a control

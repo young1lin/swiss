@@ -25,7 +25,7 @@ import { tr } from "../src/i18n.js";
 import type { GroupCfg } from "../src/types/dom.js";
 import { sheet } from "./styles.js";
 
-/* The group component DOM contract (SPEC §panel.groups by SPEC §panel.groups): one shape at
+/* The group component DOM contract (SPEC §panel.groups): one shape at
  * two densities. The head is a BAND that leads with chevron, name, count, with the two
  * low-frequency actions after them, so the leading columns keep one stable x for the CSS
  * indent contract; no folder glyph, no guide line. The WHOLE head is draggable - there is

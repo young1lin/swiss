@@ -17,7 +17,7 @@
 /* The segmented control (SPEC §panel.ui): the L3 switcher - a resource's panes (Tools /
  * Resources / … / Logs), a list's filter (Actions / Everything), a picker inside a sheet.
  * Never an L2 page switcher: sibling pages belong to the context bar's underline tabs
- * (skill §5). It replaces the two hand-built strips, .seg and .db-tabs.
+ * (SPEC §panel.nav). It replaces the two hand-built strips, .seg and .db-tabs.
  *
  * Each button carries the page's own data hook (`key`, default "seg") with the item id, so a
  * view migrating onto this keeps the data-* name its delegated listener and its tests already

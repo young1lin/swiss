@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* SPEC §panel.ui - values come from tokens. SPEC §panel.ui counted 247 px literals in views.css
+/* SPEC §panel.ui - values come from tokens. There were once 247 px literals in views.css
    alone: every one is a size somebody picked by eye instead of reading the scale, and two
    pages that picked 5px and 6px for the same gap drift apart for good. This gate counts,
    per sheet, the literals a declaration writes OUTSIDE the token blocks (:root and

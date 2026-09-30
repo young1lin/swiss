@@ -330,7 +330,7 @@ mod tests {
             .descriptor();
         assert_eq!(d.id, "remote");
         // Targets and Runs are sibling pages of one plugin: the context bar switches
-        // them (swiss-ui-design §5), so both ride the descriptor, targets first.
+        // them (SPEC §panel.nav), so both ride the descriptor, targets first.
         assert_eq!(d.pages.len(), 2);
         assert_eq!(d.pages[0].id, "remote");
         assert_eq!(d.pages[0].entry, "/admin/js/views/remote.js");

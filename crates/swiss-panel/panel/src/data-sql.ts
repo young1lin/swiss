@@ -205,7 +205,7 @@ function renderDbBar(): void {
   }
 }
 
-/** #pane's delegated click for the edit bar (SPEC §panel.toolchain). Behavior note (SPEC §panel.toolchain): the
+/** #pane's delegated click for the edit bar (SPEC §panel.toolchain). Behavior note: the
  *  Discard confirm's count and the preview toggle's label are resolved from LIVE state at
  *  event time — the render-time closure could ask "Discard 3 changes?" about a buffer a
  *  keyboard paste had already grown to 4. */
