@@ -14,26 +14,22 @@
  * limitations under the License.
  */
 
-//! The v2 job definition model (docs/11 §3): pure data and pure functions, no IO.
+//! The v2 job definition model (SPEC §jobs.config): pure data and pure functions, no IO.
 //!
-//! Scope of this stage (docs/11 §9 S1): the types, [JobsConfig::parse] as the one
+//! What lives here (SPEC §jobs.config): the types, [JobsConfig::parse] as the one
 //! authoritative validator of the `plugins.jobs.config` row, and the v1<->v2 projections.
-//! Nothing here is wired into [super::JobSystem] yet - the scheduler still reads jobs.json;
-//! config-side definitions are validated and stored, and that is all this build claims they
-//! are (the plugin descriptor's config_schema says the same thing out loud).
 //!
 //! Two rules shape the parser:
 //! - Every error carries the DOTTED PATH of the offending field
 //!   ("definitions.nightly.retry.maxAttempts"), because the panel points its forms at
-//!   exactly that (docs/11 §3.5). Unknown fields are refused naming the layer's legal
+//!   exactly that (SPEC §jobs.config). Unknown fields are refused naming the layer's legal
 //!   field list, the way services::actions refuses exec input.
-//! - Accepted-but-unexecuted config would be a lie (docs/11 §2 rule 5). Fields whose
-//!   semantics only exist in a later stage - retry past its default, misfire "run-once",
-//!   overlap "queue-one", output.capture "none" - are REFUSED with "not implemented until
-//!   S5" instead of silently ignored. A 400 beats a config this build will not honour.
+//! - Accepted-but-unexecuted config would be a lie (SPEC §arch.rules): every field this
+//!   parser accepts is one the scheduler honours - retry, misfire "run-once", overlap
+//!   "queue-one" and output.capture "none" included (SPEC §jobs.triggers).
 //!
 //! Numbers are whole and non-negative: a string, a fraction or a negative is a type error,
-//! never a silent default (docs/10 §4). The 60.0 spelling of 60 is tolerated the way
+//! never a silent default (SPEC §jobs.config). The 60.0 spelling of 60 is tolerated the way
 //! jobs::api's whole_number tolerates it for JS clients.
 
 use serde_json::{json, Map, Value};
@@ -42,7 +38,7 @@ use super::runlog::valid_name;
 use super::schedule::CronExpr;
 use super::{JobDef, JOBS_ACTION};
 
-/// Plugin-config level defaults (docs/11 §3.2). Applied when the row omits the field.
+/// Plugin-config level defaults (SPEC §jobs.config). Applied when the row omits the field.
 pub const DEFAULT_MAX_CONCURRENT_RUNS: usize = 2;
 pub const DEFAULT_MAX_QUEUED_RUNS: usize = 32;
 /// One day: the ceiling every definition's total retry deadline is checked against.
@@ -50,14 +46,14 @@ const ONE_DAY_MS: u64 = 86_400_000;
 /// At most this many definitions in one config row. The cap keeps a hand-grown config
 /// file from becoming a table the per-second tick has to scan on a slow machine.
 const MAX_DEFINITIONS: usize = 512;
-/// The one model's name cap (docs/20 2.1), mirrored so the config row's own validator
+/// The one model's name cap (SPEC §host.groups), mirrored so the config row's own validator
 /// and the family's mutations refuse the same names for the same reason.
 const MAX_GROUP_NAME: usize = 64;
-/// The one model's default name (docs/20 2.1) - the host's own constant, not a second copy.
+/// The one model's default name (SPEC §host.groups) - the host's own constant, not a second copy.
 use swiss_host::groups::DEFAULT_GROUP;
 
 /// A config rejection that knows WHICH field it is about. The panel's editor points its
-/// controls at the dotted path; a bare string cannot do that (docs/11 §3.5).
+/// controls at the dotted path; a bare string cannot do that (SPEC §jobs.config).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigError {
     /// Dotted path of the offending field, e.g. "definitions.nightly.retry.maxAttempts".
@@ -82,15 +78,14 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-/// The parsed `plugins.jobs.config` row (docs/11 §3.1-§3.2). No Clone: this is the
-/// one parsed view of a revision, not a value to copy around (the trigger's compiled
-/// cron is part of its identity).
+/// The parsed `plugins.jobs.config` row (SPEC §jobs.config): one revision's definitions,
+/// capacity and retention, each trigger's cron already compiled.
 #[derive(Clone)]
 pub struct JobsConfig {
     pub max_concurrent_runs: usize,
     pub max_queued_runs: usize,
     pub retention: Retention,
-    /// The job groups (docs/20 G4): one ordered list of names, `default` included as an
+    /// The job groups (SPEC §host.groups): one ordered list of names, `default` included as an
     /// ordinary entry. Absent from an old row means `["default"]` - the list before the
     /// feature existed, materialized exactly once at read time.
     pub groups: Vec<String>,
@@ -99,7 +94,7 @@ pub struct JobsConfig {
     pub definitions: Vec<JobDefinition>,
 }
 
-/// How long and how large the per-job run history may grow (docs/11 §3.2).
+/// How long and how large the per-job run history may grow (SPEC §jobs.config).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Retention {
     pub days: u32,
@@ -118,14 +113,14 @@ impl Default for Retention {
 }
 
 /// One v2 job definition. The stable identity is `id`; `title` is display-only, so
-/// renaming a job means deleting one id and creating another (docs/11 §3.1).
+/// renaming a job means deleting one id and creating another (SPEC §jobs.config).
 #[derive(Clone)]
 pub struct JobDefinition {
     pub id: String,
     pub title: String,
     pub labels: Vec<String>,
     pub disabled: bool,
-    /// The group this job renders under (docs/20 G4): None means the first group - the
+    /// The group this job renders under (SPEC §host.groups): None means the first group - the
     /// sink slot, whatever it is called - and follows it through renames on its own.
     pub group: Option<String>,
     pub trigger: Trigger,
@@ -137,7 +132,7 @@ pub struct JobDefinition {
     pub output: OutputPolicy,
 }
 
-/// When a job fires (docs/11 §3.3). Exactly one kind per definition, chosen by `kind`.
+/// When a job fires (SPEC §jobs.triggers). Exactly one kind per definition, chosen by `kind`.
 #[derive(Clone)]
 pub enum Trigger {
     Manual,
@@ -145,21 +140,21 @@ pub enum Trigger {
         every_ms: u64,
         first_run: FirstRun,
     },
-    /// The expression is compiled ONCE, at parse time - never per tick (docs/11 §6.5).
+    /// The expression is compiled ONCE, at parse time - never per tick (SPEC §jobs.triggers).
     Cron {
         expression: String,
         compiled: CronExpr,
     },
 }
 
-/// The anchor rule of an interval's first firing (docs/11 §3.3, §6.1).
+/// The anchor rule of an interval's first firing (SPEC §jobs.triggers).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirstRun {
     AfterInterval,
     Immediate,
 }
 
-/// Which capability a job runs and with what input (docs/11 §3.4). The input is kept
+/// Which capability a job runs and with what input (SPEC §jobs.config). The input is kept
 /// VERBATIM: `${ENV_VAR}` refs stay refs on disk and resolve at run time, and the
 /// capability itself owns the input's schema - this layer only checks it is an object.
 #[derive(Clone)]
@@ -170,22 +165,21 @@ pub struct ActionRef {
 }
 
 /// What to do when a job's previous run is still going at the next occurrence
-/// (docs/11 §6.2). Only Skip exists yet; the parser refuses QueueOne until it does.
+/// (SPEC §jobs.triggers).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overlap {
     Skip,
     QueueOne,
 }
 
-/// What to do with occurrences missed while the gateway was down (docs/11 §6.3).
-/// Only Skip exists yet; the parser refuses RunOnce until it does.
+/// What to do with occurrences missed while the gateway was down (SPEC §jobs.triggers).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Misfire {
     Skip,
     RunOnce,
 }
 
-/// Retry belongs to one occurrence, not to the shared coordinator (docs/11 §6.4). The
+/// Retry belongs to one occurrence, not to the shared coordinator (SPEC §jobs.triggers). The
 /// default is "one attempt, nothing retried" ON PURPOSE: automatically repeating a
 /// side-effecting command that failed is a decision, never a default.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,7 +207,7 @@ pub enum Backoff {
     Exponential,
 }
 
-/// Which terminal states may trigger another attempt (docs/11 §6.4). Canceled and
+/// Which terminal states may trigger another attempt (SPEC §jobs.triggers). Canceled and
 /// refusals never retry; that rule lives in the future runner, not in the config shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryOn {
@@ -221,7 +215,7 @@ pub enum RetryOn {
     Timeout,
 }
 
-/// How much of a run's output is kept (docs/11 §3.2). Only Tail exists yet.
+/// How much of a run's output is kept (SPEC §jobs.config): the tail, or nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputPolicy {
     pub capture: OutputCapture,
@@ -364,11 +358,10 @@ fn enum_str<'a>(
 // --- the parser ---
 
 impl JobsConfig {
-    /// Parse and fully validate a `plugins.jobs.config` object (docs/11 §3). This is the
+    /// Parse and fully validate a `plugins.jobs.config` object (SPEC §jobs.config). This is the
     /// server-side authority for every SAVE of the row: a body that fails here is a 400,
     /// because accepting config this build cannot execute would be the
-    /// accepted-but-unexecuted lie (docs/11 §2 rule 5). The scheduler does not read the
-    /// row yet (that wiring is a later stage), which the descriptor states honestly.
+    /// accepted-but-unexecuted lie (SPEC §arch.rules).
     pub fn parse(config: &Value) -> Result<JobsConfig, ConfigError> {
         parse_at(config, false).map(|parsed| parsed.config)
     }
@@ -389,7 +382,7 @@ impl JobsConfig {
         parse_at(config, true)
     }
 
-    /// The S3 save path (docs/11 §3.4, §9): strict parse PLUS per-action input
+    /// The S3 save path (SPEC §jobs.config, §jobs.migrate): strict parse PLUS per-action input
     /// validation through the resolved capability, and one warning per definition
     /// whose action type is not currently registered. Registration is not required to
     /// SAVE - the provider may be disabled - but the PUT response carries the warning,
@@ -423,7 +416,7 @@ impl JobsConfig {
     /// validation layered on the same way. A definition whose action input the resolved
     /// capability rejects is DROPPED with its reason (a leftover, not a new save), while
     /// an unregistered action type is only warned about: the provider may simply be
-    /// disabled right now (docs/11 §3.4).
+    /// disabled right now (SPEC §jobs.config).
     pub fn parse_boot_with_actions(
         config: &Value,
         actions: &swiss_host::services::action::ActionRegistry,
@@ -485,7 +478,7 @@ fn parse_at(config: &Value, boot: bool) -> Result<BootParsed, ConfigError> {
     )?;
     // Absent means 2; any other value refuses the WHOLE row. A config written for
     // another schema is never parsed "down" into something it does not say
-    // (docs/11 §3.2).
+    // (SPEC §jobs.config).
     if let Some(v) = obj.get("schemaVersion") {
         if v != &Value::Null {
             let n = whole_u64(v).ok_or_else(|| type_err("schemaVersion", "a whole number"))?;
@@ -528,7 +521,7 @@ fn parse_at(config: &Value, boot: bool) -> Result<BootParsed, ConfigError> {
     })
 }
 
-/// The groups list (docs/20 G4). The one model's read-side rules, so a hand-edited row
+/// The groups list (SPEC §host.groups). The one model's read-side rules, so a hand-edited row
 /// cannot smuggle past what every family mutation already refuses: names trim to something
 /// non-empty, cap at 64 characters, are unique case-insensitively, and the list is never
 /// empty - absent or empty means the one default group an ungrouped row always had.
@@ -758,7 +751,7 @@ fn parse_definition(
     let retry = parse_retry(obj.get("retry"), &field_path(parent, "retry"))?;
     let output = parse_output(obj.get("output"), &field_path(parent, "output"))?;
 
-    // The total-deadline ceiling is checked at VALIDATION time (docs/11 §3.2): a job
+    // The total-deadline ceiling is checked at VALIDATION time (SPEC §jobs.config): a job
     // that could retry its way past 24 h is refused here, not discovered at run time.
     // This runs BEFORE the not-implemented gates below, so an impossible deadline
     // reports as the deadline error it is, whatever stage the retry fields belong to.
@@ -839,7 +832,7 @@ fn parse_trigger(v: Option<&Value>, parent: &str) -> Result<Trigger, ConfigError
         }
         "interval" => {
             check_known(obj, parent, &["kind", "everyMs", "firstRun"])?;
-            // 1 second to 365 days (docs/11 §3.3).
+            // 1 second to 365 days (SPEC §jobs.triggers).
             let every_ms =
                 required_bounded(obj.get("everyMs"), parent, "everyMs", 1000, 31_536_000_000)?;
             let first_run = if enum_str(obj, "firstRun", parent, &["after-interval", "immediate"])?
@@ -873,7 +866,7 @@ fn parse_trigger(v: Option<&Value>, parent: &str) -> Result<Trigger, ConfigError
                 Some(_) => return Err(type_err(field_path(parent, "expression"), "a string")),
             };
             // Compile once, here: the vixie DOM/DOW semantics stay exactly where they are
-            // (docs/11 §3.3 says not to touch schedule.rs's meaning).
+            // (SPEC §jobs.triggers says not to touch schedule.rs's meaning).
             let compiled = CronExpr::parse(expression)
                 .map_err(|err| ConfigError::new(field_path(parent, "expression"), err))?;
             match obj.get("timezone") {
@@ -883,7 +876,7 @@ fn parse_trigger(v: Option<&Value>, parent: &str) -> Result<Trigger, ConfigError
                     return Err(ConfigError::new(
                         field_path(parent, "timezone"),
                         format!(
-                            "only \"local\" is supported, got {tz:?}; named zones would need chrono-tz, which docs/11 §10 rules out"
+                            "only \"local\" is supported, got {tz:?}; named zones would need chrono-tz, which SPEC §jobs rules out"
                         ),
                     ))
                 }
@@ -923,16 +916,13 @@ fn parse_action(v: Option<&Value>, parent: &str) -> Result<ActionRef, ConfigErro
         }
         Some(_) => return Err(type_err(field_path(parent, "type"), "a string")),
     };
-    // The capability owns its input schema (docs/11 §3.4): this layer only checks the
+    // The capability owns its input schema (SPEC §jobs.config): this layer only checks the
     // input IS an object and keeps it verbatim - `${ENV_VAR}` refs stay refs, resolved
     // at run time. Registration is deliberately NOT required: a provider may be disabled
     // right now, and a definition that cannot run yet must still be savable (its runs
-    // will be refused until the plugin is back, which the run log reports).
-    // TODO(S3): this module cannot reach the ActionRegistry, so the two remaining §3.4
-    // promises are deferred, not dropped - once the plugin can hand a registry in,
-    // validate input against the resolved capability's own schema here, and surface
-    // "action <type> is not registered" as a PUT warning plus actionAvailable: false in
-    // the listing. Both are pinned as S3 test items in docs/11 §9 S3.
+    // will be refused until the plugin is back, which the run log reports). Validating
+    // the input against the capability's own schema needs the registry, so it happens a
+    // layer up, in [JobsConfig::parse_with_actions].
     let input = match obj.get("input") {
         None | Some(Value::Null) => Value::Object(Map::new()),
         Some(v) if v.is_object() => v.clone(),
@@ -998,7 +988,7 @@ fn parse_retry(v: Option<&Value>, parent: &str) -> Result<RetryPolicy, ConfigErr
                     }
                 });
             }
-            // An empty array is legal and means "never retry" (docs/11 §3.2).
+            // An empty array is legal and means "never retry" (SPEC §jobs.config).
             list
         }
         Some(_) => {
@@ -1034,7 +1024,7 @@ fn parse_output(v: Option<&Value>, parent: &str) -> Result<OutputPolicy, ConfigE
 // --- v1 <-> v2 projections ---
 
 impl JobDefinition {
-    /// The docs/11 §5.2 migration mapping, pure half: one v1 jobs.json row becomes one
+    /// The SPEC §jobs.migrate migration mapping, pure half: one v1 jobs.json row becomes one
     /// v2 definition. The action is process.legacy-command ON PURPOSE - the old
     /// tokenizer and the lenient `${VAR}` expansion are the semantics the saved command
     /// already has, and re-spelling it as process.exec would quietly change them.
@@ -1068,18 +1058,18 @@ impl JobDefinition {
         if let Some(env) = &def.env {
             input.insert("env".into(), json!(env));
         }
-        // docs/25 E2 rides the mapping: a whole-value bare vault ref in a legacy row
+        // SPEC §host.refs rides the mapping: a whole-value bare vault ref in a legacy row
         // lands in the config row already speaking the envelope grammar.
         let mut input_value = Value::Object(input);
         swiss_core::secure::refs::migrate_legacy(&mut input_value);
         JobDefinition {
             id: def.name.clone(),
-            // v1 had no separate title; the name is the honest one (docs/11 §5.2).
+            // v1 had no separate title; the name is the honest one (SPEC §jobs.migrate).
             title: def.name.clone(),
             labels: Vec::new(),
             disabled: !def.enabled,
             // v1 had no groups; the migrated job lands in the first group like every
-            // unassigned member (docs/20 G4).
+            // unassigned member (SPEC §host.groups).
             group: None,
             trigger,
             action: ActionRef {
@@ -1095,7 +1085,7 @@ impl JobDefinition {
         }
     }
 
-    /// The v1 API row for this definition (docs/11 §7.1): the pure, definition-level
+    /// The v1 API row for this definition (SPEC §jobs.api): the pure, definition-level
     /// half - runtime facts (running, lastRunAt, nextDueAt) are layered on by whoever
     /// serves the row, not fabricated here. everySec is absent unless the interval is a
     /// whole number of seconds; a v1-inexpressible trigger (manual, sub-second interval)
@@ -1122,7 +1112,7 @@ impl JobDefinition {
                 m.insert("cwd".into(), json!(cwd));
             }
             // The per-job env vars ride inside the action input; echo them back so the
-            // panel's edit form can show what a run will be handed (docs/11 SS7.1).
+            // panel's edit form can show what a run will be handed (SPEC §jobs.api).
             if let Some(Value::Object(env)) = self.action.input.get("env") {
                 let all_strings = env.iter().all(|(_, v)| v.is_string());
                 if all_strings && !env.is_empty() {
@@ -1134,7 +1124,7 @@ impl JobDefinition {
         Value::Object(m)
     }
 
-    /// The v1 row's "command" string (docs/11 §7.1): verbatim for the legacy
+    /// The v1 row's "command" string (SPEC §jobs.api): verbatim for the legacy
     /// compatibility action, a quote-wrapped-args display string for process.exec, and a
     /// bracketed placeholder for anything else. Only the first round-trips; the others
     /// are read-only display, which editable_in_v1 says out loud.
@@ -1162,7 +1152,7 @@ impl JobDefinition {
     /// Whether the v1 PUT shape can rewrite this definition without losing anything:
     /// exactly the legacy action (command/cwd/env — env is a v1 field now too), a trigger
     /// v1 can spell, and no v2 decoration. Everything else must go through
-    /// PUT /api/plugins/jobs/config, and the v1 PUT answers 409 for it (docs/11 §7.1) -
+    /// PUT /api/plugins/jobs/config, and the v1 PUT answers 409 for it (SPEC §jobs.api) -
     /// overwriting would silently drop fields.
     pub fn editable_in_v1(&self) -> bool {
         let legacy_input = self.action.type_ == JOBS_ACTION
@@ -1196,14 +1186,14 @@ impl JobDefinition {
     }
 }
 
-// --- S3: the v2 fields of the /api/jobs row (docs/11 §7.1) -----------------------------
+// --- S3: the v2 fields of the /api/jobs row (SPEC §jobs.api) -----------------------------
 //
 // The listing must carry the definition's own fields (trigger, action, policies) so
 // a v2 client never needs a second endpoint, and so the panel's future form (S6) can
 // round-trip through the config editor losslessly. Serializers, not projections: they
 // spell the config grammar back, the same names [JobsConfig::parse] reads.
 impl JobDefinition {
-    /// The definition as the config row spells it (docs/11 §3) - the exact grammar
+    /// The definition as the config row spells it (SPEC §jobs.config) - the exact grammar
     /// [JobsConfig::parse] reads back. The v1 edit path writes rows through this, so a
     /// folded edit can never smuggle in a shape the strict validator would refuse.
     pub fn to_config_json(&self) -> Value {
@@ -1220,7 +1210,7 @@ impl JobDefinition {
             "output": self.output_json(),
         });
         // Sparse like every scope: an unassigned job carries no group key, so the row it
-        // came from round-trips byte-stable (docs/20 G4).
+        // came from round-trips byte-stable (SPEC §host.groups).
         if let Some(g) = &self.group {
             v["group"] = json!(g);
         }
@@ -1242,7 +1232,7 @@ impl JobDefinition {
         m
     }
 
-    /// The trigger in config spelling (docs/11 §3.3).
+    /// The trigger in config spelling (SPEC §jobs.triggers).
     pub fn trigger_json(&self) -> Value {
         match &self.trigger {
             Trigger::Manual => json!({ "kind": "manual" }),
@@ -1262,7 +1252,7 @@ impl JobDefinition {
         }
     }
 
-    /// The action ref in config spelling (docs/11 §3.4). The input rides verbatim -
+    /// The action ref in config spelling (SPEC §jobs.config). The input rides verbatim -
     /// `${ENV_VAR}` refs stay refs on the wire, exactly as they were saved.
     pub fn action_json(&self) -> Value {
         json!({
@@ -1300,7 +1290,7 @@ impl Trigger {
 }
 
 impl FirstRun {
-    /// The config spelling (docs/11 §3.3).
+    /// The config spelling (SPEC §jobs.triggers).
     pub fn as_str(&self) -> &'static str {
         match self {
             FirstRun::AfterInterval => "after-interval",
@@ -1310,7 +1300,7 @@ impl FirstRun {
 }
 
 impl Overlap {
-    /// The config spelling (docs/11 §3.2).
+    /// The config spelling (SPEC §jobs.config).
     pub fn as_str(&self) -> &'static str {
         match self {
             Overlap::Skip => "skip",
@@ -1320,7 +1310,7 @@ impl Overlap {
 }
 
 impl Misfire {
-    /// The config spelling (docs/11 §3.2).
+    /// The config spelling (SPEC §jobs.config).
     pub fn as_str(&self) -> &'static str {
         match self {
             Misfire::Skip => "skip",
@@ -1330,7 +1320,7 @@ impl Misfire {
 }
 
 impl Backoff {
-    /// The config spelling (docs/11 §3.2).
+    /// The config spelling (SPEC §jobs.config).
     pub fn as_str(&self) -> &'static str {
         match self {
             Backoff::Fixed => "fixed",
@@ -1340,7 +1330,7 @@ impl Backoff {
 }
 
 impl RetryOn {
-    /// The config spelling (docs/11 §3.2).
+    /// The config spelling (SPEC §jobs.config).
     pub fn as_str(&self) -> &'static str {
         match self {
             RetryOn::Failure => "failure",
@@ -1350,7 +1340,7 @@ impl RetryOn {
 }
 
 impl OutputCapture {
-    /// The config spelling (docs/11 §3.2).
+    /// The config spelling (SPEC §jobs.config).
     pub fn as_str(&self) -> &'static str {
         match self {
             OutputCapture::Tail => "tail",
@@ -1359,7 +1349,7 @@ impl OutputCapture {
     }
 }
 
-/// The occurrence identity of one due instant (docs/11 §6.1). Cron keys carry the
+/// The occurrence identity of one due instant (SPEC §jobs.triggers). Cron keys carry the
 /// LOCAL wall minute without a zone offset - which is exactly how the fall-back's
 /// repeated local minute collapses into one run. Interval keys carry the due instant.
 /// Manual runs never ask for a key and never move a scheduling anchor.
@@ -1379,7 +1369,7 @@ pub fn occurrence_key_of(
 
 /// The base an interval anchors on: the last run when there is one, the boot anchor
 /// otherwise - except a never-run `firstRun: "immediate"` job, whose first anchor is 0
-/// so the very first tick after boot finds it due (docs/11 §6.1).
+/// so the very first tick after boot finds it due (SPEC §jobs.triggers).
 fn interval_base(def: &JobDefinition, last_run_ms: Option<i64>, anchor_ms: i64) -> i64 {
     match last_run_ms {
         Some(ms) => ms,
@@ -1394,7 +1384,7 @@ fn interval_base(def: &JobDefinition, last_run_ms: Option<i64>, anchor_ms: i64) 
 }
 
 /// The next instant this definition is due, as unix milliseconds - the value the
-/// next-due table holds (docs/11 §6.5). An OVERDUE job (its computed next sits in the
+/// next-due table holds (SPEC §jobs.triggers). An OVERDUE job (its computed next sits in the
 /// past) reports `now`: the tick treats it as due immediately and the occurrence math
 /// in [missed_occurrences] recovers the real count from the claim state. Manual has no
 /// next due.
@@ -1414,7 +1404,7 @@ pub fn next_due_ms(
         Trigger::Cron { compiled, .. } => {
             let mut cur = crate::jobs::clock::minute_floor(clock.local_from_ms(now));
             // A matching minute that does not exist this year-day (the spring-forward
-            // gap) is skipped, not waited for: keep scanning (docs/11 §6.6).
+            // gap) is skipped, not waited for: keep scanning (SPEC §jobs.triggers).
             for _ in 0..3 {
                 let next = compiled.next_after(&cur)?;
                 match clock.ms_from_local(&next) {
@@ -1430,7 +1420,7 @@ pub fn next_due_ms(
 /// How this definition's schedule stands at `now`, given its claim state: the number of
 /// occurrences due since the last claim (counting the newest) and the newest due
 /// instant, or None when nothing is due. This is the misfire bookkeeping half of
-/// docs/11 §6.3 - the caller decides skip vs run-once.
+/// SPEC §jobs.triggers - the caller decides skip vs run-once.
 ///
 /// Interval math is arithmetic; cron walks [CronExpr::next_after] from the last claim's
 /// local minute. A walked minute that does not exist (spring-forward gap) is skipped by
@@ -1505,7 +1495,7 @@ pub fn missed_occurrences(
 }
 
 /// The wait before attempt `next_attempt` (2-based: the wait only exists before a
-/// RETRY). Fixed is flat; exponential doubles from the previous wait (docs/11 §6.4):
+/// RETRY). Fixed is flat; exponential doubles from the previous wait (SPEC §jobs.triggers):
 /// waits go delayMs, 2*delayMs, 4*delayMs ... The shift saturates rather than
 /// overflowing; the config ceiling already bounds the total.
 pub fn retry_delay_ms(retry: &RetryPolicy, next_attempt: u32) -> u64 {
@@ -1577,7 +1567,7 @@ mod tests {
 
     #[test]
     fn from_v1_migrates_whole_value_bare_vault_refs() {
-        // docs/25 E2 rides the v1→v2 mapping: a whole-value bare ref (the env row) lands
+        // SPEC §host.refs rides the v1→v2 mapping: a whole-value bare ref (the env row) lands
         // in the config row speaking the envelope grammar; a mixed string (the command)
         // stays as authored — rewriting it would need the ambiguous scan the envelope
         // exists to replace.
@@ -1667,7 +1657,7 @@ mod tests {
 
     #[test]
     fn the_spec_example_parses_with_documented_defaults() {
-        // The docs/11 §3.1 example, verbatim as the plugins.jobs.config row. Its policy
+        // The SPEC §jobs.config example, verbatim as the plugins.jobs.config row. Its policy
         // fields are all at their defaults, which is exactly why it is valid at THIS
         // stage: the example is aspirational, but nothing in it lies about S1 scope.
         let config = json!({
@@ -1710,7 +1700,7 @@ mod tests {
         );
         assert!(!def.disabled);
         assert_eq!(def.timeout_ms, 600_000);
-        // The credential stays a REFERENCE, never a resolved value (docs/11 §2 rule 2).
+        // The credential stays a REFERENCE, never a resolved value (SPEC §host.refs).
         assert_eq!(
             def.action.input["env"]["PGPASSWORD"],
             json!("${APP_DB_PASSWORD}")
@@ -1720,7 +1710,7 @@ mod tests {
 
     #[test]
     fn an_old_row_without_groups_parses_to_the_one_default_group() {
-        // docs/20 G4: a pre-groups plugins.jobs.config row never named a group, so its list
+        // SPEC §host.groups: a pre-groups plugins.jobs.config row never named a group, so its list
         // is the one default group and every definition is implicitly in it (group: None).
         let config = one_def(minimal_manual_body());
         let parsed = JobsConfig::parse(&config).expect("an old row is valid");
@@ -1761,7 +1751,7 @@ mod tests {
 
     #[test]
     fn a_group_list_itself_follows_the_one_model() {
-        // The invariants every scope enforces (docs/20 2.1), read at parse time so a
+        // The invariants every scope enforces (SPEC §host.groups), read at parse time so a
         // hand-edited row cannot smuggle a broken list past the family's mutations.
         for bad in [json!(["  "]), json!(["Ops", "ops"]), json!({"x": 1})] {
             let config = json!({ "groups": bad, "definitions": {} });
@@ -1771,7 +1761,7 @@ mod tests {
             );
         }
         // An explicitly empty list materializes the default group like an absent one - the
-        // read-side convention every scope shares (docs/20 2.1); refusing it would make a
+        // read-side convention every scope shares (SPEC §host.groups); refusing it would make a
         // hand edit of "groups": [] unrecoverable without deleting the key.
         let parsed = JobsConfig::parse(&json!({ "groups": [], "definitions": {} }))
             .expect("an empty list reads as the one default group");
@@ -2184,9 +2174,8 @@ mod tests {
 
     #[test]
     fn s5_semantics_parse_and_round_trip() {
-        // The S1 refusals opened at S5 (docs/11 §9 S5): every spelling this file used
-        // to reject as "not implemented until S5" now parses into the definition it
-        // always meant, and serializes back through the config grammar unchanged.
+        // SPEC §jobs.triggers: queue-one, run-once, retry and capture "none" parse into
+        // the definition they mean and serialize back through the config grammar unchanged.
         let mut body = def_body();
         set(&mut body, "overlap", json!("queue-one"));
         set(&mut body, "misfire", json!("run-once"));
@@ -2220,7 +2209,7 @@ mod tests {
             back["output"],
             json!({ "capture": "none", "maxBytes": 16384 })
         );
-        // The exponential spacing sequence (docs/11 §6.4): delayMs, 2x, 4x ...
+        // The exponential spacing sequence (SPEC §jobs.triggers): delayMs, 2x, 4x ...
         assert_eq!(
             retry_delay_ms(&def.retry, 1),
             0,
@@ -2332,7 +2321,7 @@ mod tests {
     #[test]
     fn v2_only_definitions_project_read_only_v1_rows() {
         // process.exec: a synthesized display command, and never v1-editable - the v1
-        // PUT would overwrite the definition with the display string (docs/11 §7.1).
+        // PUT would overwrite the definition with the display string (SPEC §jobs.api).
         let def = parse_one(json!({
             "trigger": { "kind": "manual" },
             "action": {
@@ -2443,7 +2432,7 @@ mod tests {
     }
     #[test]
     fn action_input_is_kept_verbatim_with_env_refs() {
-        // An unregistered capability type is savable on purpose (docs/11 §3.4): its
+        // An unregistered capability type is savable on purpose (SPEC §jobs.config): its
         // provider may be disabled right now, and refusing the save would make the job
         // impossible to edit until the plugin came back.
         let def = parse_one(json!({

@@ -17,10 +17,10 @@
 //! The composition table: the built-in plugins of this build, their descriptors, and the
 //! wrappers that bind the EXISTING subsystems (registry, tunnel manager, job system, db
 //! browser) to the host lifecycle. Everything business-shaped lives here, not in the host
-//! core — adding a plugin is one factory plus one `register` line (docs/09 §9).
+//! core — adding a plugin is one factory plus one `register` line (SPEC §host.plugins).
 //!
 //! Every wrapper documents, in its own comments, what disable REALLY does to its subsystem.
-//! That is the honesty rule of docs/09 §4: a wrapper may stop short of a full unload, but it
+//! That is the honesty rule of SPEC §host.lifecycle: a wrapper may stop short of a full unload, but it
 //! must never claim one it does not perform.
 
 use std::sync::atomic::Ordering;
@@ -49,7 +49,7 @@ pub const PROCESS_ID: &str = "process";
 
 /// One built-in page: id-derived hash path (`#mcps`) and entry (`/admin/js/views/<id>.js`),
 /// sidebar only for the primary MCPs view — the built-in view table of this build. The
-/// layout names how the shell frames the PAGE BODY (resource/page/workspace, docs/13 D5 as
+/// layout names how the shell frames the PAGE BODY (resource/page/workspace, SPEC §panel.nav as
 /// revised): resource = master-detail owning the shell sidebar, page = ordinary content
 /// body, workspace = full-bleed body. The shell always draws its own chrome either way;
 /// every built-in states the layout so the wire never has to guess from sidebar alone.
@@ -118,7 +118,7 @@ pub fn register_all(host: &mut PluginHost, deps: &BuiltinDeps) -> Result<(), Str
 struct McpPlugin {
     registry: Arc<Registry>,
     managed: Arc<ManagedStore>,
-    /// The connection catalog lives here (docs/12 W3): MCP is the one provider, Data the
+    /// The connection catalog lives here (SPEC §host.seats): MCP is the one provider, Data the
     /// one consumer, and neither reaches into the other's objects anymore.
     services: Arc<RuntimeServices>,
 }
@@ -162,7 +162,7 @@ impl PluginFactory for McpPlugin {
 
 /// The MCP+Traffic instance.
 ///
-/// WHAT DISABLE REALLY DOES (the docs/09 §4 honesty rule, applied): stopping this plugin
+/// WHAT DISABLE REALLY DOES (the SPEC §host.lifecycle honesty rule, applied): stopping this plugin
 /// closes EVERY hosted MCP — `adapter.close()` tree-kills proc children and tears down DB
 /// pools, which is the real memory this process spends — and stops the health/idle timer.
 /// While stopped, the client catch-all and the /api/mcps + /api/traffic trees answer the
@@ -187,7 +187,7 @@ impl PluginInstance for McpInstance {
         self.registry.start_timer();
         start_hosted_mcps(&self.registry, &self.managed).await;
         // Register the connection catalog LAST, so a failed start never leaves a catalog
-        // behind that a stopped registry is supposedly serving (docs/12 W3).
+        // behind that a stopped registry is supposedly serving (SPEC §host.seats).
         self.services
             .catalog
             .register(
@@ -202,7 +202,7 @@ impl PluginInstance for McpInstance {
     }
 
     async fn stop(&self) {
-        // The W3 order (docs/12): withdraw first (no NEW leases reach a pool that is about
+        // The W3 order (SPEC §host.seats): withdraw first (no NEW leases reach a pool that is about
         // to close), drain what is in flight with an honest warning when the wait was not
         // clean, close the pools, and only then free the catalog seat for the next start.
         self.services.catalog.begin_withdraw();
@@ -299,7 +299,7 @@ impl PluginFactory for TunnelsPlugin {
             version: "0.1".into(),
             config_schema_version: 1,
             config_schema: json!({ "type": "object", "properties": {} }),
-            // Two L2 pages, one group (docs/13 D5 as revised): the old page-local
+            // Two L2 pages, one group (SPEC §panel.nav): the old page-local
             // SSH Connections / Port Forwards segmented control became real sibling
             // pages. `#tunnels` keeps its saved links as SSH Connections;
             // `#tunnel-forwards` is the new sibling at the adjacent order, and
@@ -341,10 +341,10 @@ struct TunnelsInstance {
     tunnels: Arc<swiss_tunnels::tunnel::api::Tunnels>,
     manager: Arc<TunnelManager>,
     services: Arc<RuntimeServices>,
-    /// The interactive-shell provider this instance registers (docs/14 T2). One per
+    /// The interactive-shell provider this instance registers (SPEC §terminal.remote). One per
     /// INSTANCE: a stopped instance drains ITS sessions, never the next one's.
     shells: Arc<swiss_tunnels::tunnel::shell::TunnelShells>,
-    /// The remote-execution transport this instance registers (docs/34 §9). Same
+    /// The remote-execution transport this instance registers (SPEC §remote.transport). Same
     /// manager, same connection inventory, same refcounting — a remote exec shares the
     /// client a tunnel or a terminal already holds.
     remote: Arc<swiss_tunnels::tunnel::remote::TunnelRemote>,
@@ -385,7 +385,7 @@ impl PluginInstance for TunnelsInstance {
         });
         // Register the shell capability LAST, for the same reason the MCP plugin registers
         // its catalog last: a failed start must never leave a provider behind that a
-        // stopped subsystem is supposedly serving (docs/12 W3, docs/14 §4). The remote
+        // stopped subsystem is supposedly serving (SPEC §host.seats, SPEC §terminal.remote). The remote
         // transport registers just before it under the same rule: if either
         // registration fails, this start returns Err having left nothing behind.
         self.services
@@ -404,12 +404,12 @@ impl PluginInstance for TunnelsInstance {
     }
 
     async fn stop(&self) {
-        // The same withdraw-drain-close order the catalog uses (docs/12 W3): no NEW
+        // The same withdraw-drain-close order the catalog uses (SPEC §host.seats): no NEW
         // terminals reach a client that is about to close, the live ones get a short
         // window, and the warning names how many were closed over. The window is short on
-        // purpose — an attached terminal does not hand itself back (docs/14 §4).
+        // purpose — an attached terminal does not hand itself back (SPEC §terminal.remote).
         //
-        // The remote transport withdraws FIRST (docs/34 §28): it must reject new
+        // The remote transport withdraws FIRST (SPEC §remote.transport): it must reject new
         // operations before anything closes, but it does NOT get a drain window — a
         // remote exec is a RUN with its own deadline and its own cancel path, and the
         // connections closing underneath turn any survivor into an honestly-failed run.
@@ -431,7 +431,7 @@ impl PluginInstance for TunnelsInstance {
 // --- Data ---
 
 /// No fields anymore: the resolver seam is gone, replaced by the connection catalog in
-/// RuntimeServices (docs/12 W3). Data LEASES what it browses; it no longer holds a
+/// RuntimeServices (SPEC §host.seats). Data LEASES what it browses; it no longer holds a
 /// closure into the MCP registry.
 struct DataPlugin;
 
@@ -445,13 +445,13 @@ impl PluginFactory for DataPlugin {
             version: "0.1".into(),
             config_schema_version: 1,
             config_schema: json!({ "type": "object", "properties": {} }),
-            // workspace (docs/13 D5 as revised): a full-bleed page BODY — the dense
+            // workspace (SPEC §panel.nav): a full-bleed page BODY — the dense
             // explorer consumes everything under the context bar. The shell still draws
             // its own chrome; this only frames the body.
             pages: vec![page("data", DATA_ID, "Data", 40, false, "workspace")],
             routes: vec!["/api/db".into()],
             restart_on_config_change: false,
-            // The honest dependency, stated as data (docs/12 W3): Data browses through the
+            // The honest dependency, stated as data (SPEC §host.seats): Data browses through the
             // connection catalog the MCP plugin provides. The inventory carries this with
             // a met/unmet verdict, so "disable MCP" no longer silently paralyses Data.
             requires: vec!["connection-catalog".into()],
@@ -467,7 +467,7 @@ impl PluginFactory for DataPlugin {
 /// which is this plugin's entire runtime footprint — because Data OWNS NO EAGER RESOURCES.
 /// Every browse/query opens through the OWNING MCP adapter's existing pool or child and
 /// drops back; the connections stay with the MCP plugin that owns them. That sharing is
-/// exactly what docs/09 §3's ConnectionCatalog work (P4) will turn into explicit leases;
+/// exactly what SPEC §host.plugins's ConnectionCatalog work (P4) will turn into explicit leases;
 /// until then this wrapper does NOT claim independent Data resources, and disabling MCP
 /// takes the shared connectivity away from Data with it.
 struct DataInstance;
@@ -478,7 +478,7 @@ impl PluginInstance for DataInstance {
         // Nothing eager to start: /api/db takes a REQUEST-SCOPED lease per call and drops
         // it with the request. Starting without a catalog provider is legal — the routes
         // answer an honest 503 naming who is missing, and the inventory row says the
-        // requirement is unmet (docs/12 W3).
+        // requirement is unmet (SPEC §host.seats).
         Ok(())
     }
 
@@ -495,7 +495,7 @@ struct JobsPlugin {
     jobs: Arc<JobSystem>,
 }
 
-/// The jobs config row is validated through the v2 definition model (docs/11 §3/§9):
+/// The jobs config row is validated through the v2 definition model (SPEC §jobs.config, §jobs.migrate):
 /// this is the server-side authority for every PUT /api/plugins/jobs/config and every
 /// plugin start. Errors carry the dotted field path so the panel can point its form at
 /// the offender, and action.input is checked against the RESOLVED capability's own
@@ -522,9 +522,8 @@ impl PluginFactory for JobsPlugin {
             version: "0.1".into(),
             config_schema_version: 1,
             // Schema-lite metadata (the real authority is validate_config -> the v2
-            // model). The definitions note is the honesty rule: this build validates and
-            // stores definitions but does not schedule from them yet, and the four
-            // not-yet-implemented semantics say so in place (docs/11 §9 S1).
+            // model), mirroring it field for field so the panel's form offers exactly what
+            // the scheduler runs (SPEC §jobs.config).
             config_schema: json!({
                 "type": "object",
                 "additionalProperties": false,
@@ -552,7 +551,7 @@ impl PluginFactory for JobsPlugin {
                     "definitions": {
                         "type": "object",
                         "maxProperties": 512,
-                        "description": "v2 job definitions keyed by stable id (docs/11 §3). This row is the scheduler's source of definitions; editing it applies in place, without restarting the plugin.",
+                        "description": "v2 job definitions keyed by stable id (SPEC §jobs.config). This row is the scheduler's source of definitions; editing it applies in place, without restarting the plugin.",
                         "additionalProperties": { "$ref": "#/definitions/jobDefinition" }
                     }
                 },
@@ -589,12 +588,12 @@ impl PluginFactory for JobsPlugin {
                                 }
                             },
                             "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 86400000, "default": 600000, "description": "Deadline per attempt; maxAttempts * (timeoutMs + delayMs) must stay within 24 h." },
-                            "overlap": { "enum": ["skip"], "description": "queue-one is not implemented until S5 (docs/11 §2 rule 5)." },
-                            "misfire": { "enum": ["skip"], "description": "run-once is not implemented until S5 (docs/11 §2 rule 5)." },
+                            "overlap": { "enum": ["skip", "queue-one"], "default": "skip", "description": "An occurrence while the previous run is still going: skip it, or queue one successor (SPEC §jobs.triggers)." },
+                            "misfire": { "enum": ["skip", "run-once"], "default": "skip", "description": "Occurrences missed while the gateway was down: record them, or run the newest once (SPEC §jobs.triggers)." },
                             "retry": {
                                 "type": "object",
                                 "additionalProperties": false,
-                                "description": "Retry is not implemented until S5; only the default (no automatic retry) is accepted.",
+                                "description": "Retry of one occurrence; the default is one attempt, nothing retried (SPEC §jobs.triggers).",
                                 "properties": {
                                     "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 10, "default": 1 },
                                     "delayMs": { "type": "integer", "minimum": 0, "maximum": 3600000, "default": 0 },
@@ -606,7 +605,7 @@ impl PluginFactory for JobsPlugin {
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
-                                    "capture": { "enum": ["tail"], "default": "tail", "description": "none is not implemented until S5 (docs/11 §2 rule 5)." },
+                                    "capture": { "enum": ["tail", "none"], "default": "tail", "description": "tail keeps the last maxBytes of output; none keeps no output (SPEC §jobs.triggers)." },
                                     "maxBytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 16384 }
                                 }
                             }
@@ -616,7 +615,7 @@ impl PluginFactory for JobsPlugin {
             }),
             pages: vec![page("jobs", JOBS_ID, "Jobs", 50, false, "page")],
             routes: vec!["/api/jobs".into()],
-            // FALSE from S3 (docs/11 §8): the row is applied in place through
+            // FALSE from S3 (SPEC §jobs.apply): the row is applied in place through
             // [JobsInstance::apply_config]. A restart here would run
             // [JobsInstance::stop] - cancelling and awaiting every in-flight run - on
             // every edit of any job; the in-place apply is the whole point of the
@@ -642,7 +641,7 @@ impl PluginFactory for JobsPlugin {
     /// dropped with a warn here instead of failing the plugin - one stale entry must not
     /// take the scheduler down for every job. A PUT of the same body stays a 400 via
     /// [validate_jobs_config]: a human saving it NOW is doing something new, and
-    /// accepting it would be the accepted-but-unexecuted lie (docs/11 §2 rule 5). The
+    /// accepting it would be the accepted-but-unexecuted lie (SPEC §arch.rules). The
     /// warn itself is asserted at the def.rs unit level (parse_boot reports the drops
     /// that feed it); log output is println and not capturable from integration tests.
     fn validate_config_for_start(&self, config: &Value) -> Result<(), String> {
@@ -664,7 +663,7 @@ impl PluginFactory for JobsPlugin {
     }
 
     async fn create(&self, config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
-        // The v1 table migrates FIRST (docs/11 §5.1): jobs.json rows merge into the
+        // The v1 table migrates FIRST (SPEC §jobs.migrate): jobs.json rows merge into the
         // config row and their run facts seed the state file, before any apply. A failed
         // step fails this create - the plugin lands failed with the reason, jobs.json
         // stays untouched and unmarked, and the scheduler never ticks over a
@@ -717,7 +716,7 @@ impl PluginInstance for JobsInstance {
         }
     }
 
-    /// The in-place row apply (docs/11 §8): definitions, capacity and retention move
+    /// The in-place row apply (SPEC §jobs.apply): definitions, capacity and retention move
     /// under the run; a run already claimed keeps its snapshot to the end. Failure is
     /// reported, never guessed at - the host keeps the instance Active and the
     /// desired-vs-actual gap visible.
@@ -749,7 +748,7 @@ impl PluginFactory for ProcessPlugin {
             version: "0.1".into(),
             config_schema_version: 1,
             config_schema: json!({ "type": "object", "properties": {} }),
-            // No page and no routes of its own (docs/09 §3): a capability plugin is reached
+            // No page and no routes of its own (SPEC §host.plugins): a capability plugin is reached
             // through the host's /api/actions and /api/runs, and adding a navigation tab for
             // it would be a page nobody asked for.
             pages: vec![],
@@ -773,7 +772,7 @@ impl PluginFactory for ProcessPlugin {
 ///
 /// What it does not do: touch runs of other capabilities, or the producers themselves. A
 /// disabled process plugin leaves the Jobs scheduler ticking; its process-backed jobs report
-/// the missing capability, which is exactly the dependency-unavailable outcome docs/09 §9
+/// the missing capability, which is exactly the dependency-unavailable outcome SPEC §host.plugins
 /// asks for.
 struct ProcessInstance {
     services: Arc<RuntimeServices>,
@@ -836,7 +835,7 @@ mod tests {
         ))
     }
 
-    /// The two-level navigation (docs/13 N4) shows the PLUGIN label on level one and the PAGE
+    /// The two-level navigation (SPEC §panel.nav) shows the PLUGIN label on level one and the PAGE
     /// labels on level two, so a plugin whose label duplicates one of its own pages would
     /// render the same word twice in one bar - "MCPs" over "MCPs", which is exactly what the
     /// MCPs to MCP / MCPs to Servers rename fixed. Should the duplication ever come back, it
