@@ -22,6 +22,7 @@
 //! next reload; in release the tree is compiled into the binary.
 
 use rust_embed::RustEmbed;
+use sha1::{Digest, Sha1};
 
 #[derive(RustEmbed)]
 #[folder = "src/admin_assets"]
@@ -78,116 +79,13 @@ pub fn panel_version_stamp() -> String {
         let len = PanelAssets::get(&name).map(|f| f.data.len()).unwrap_or(0);
         let _ = write!(parts, "{name}:{len}|");
     }
-    swiss_core::util::to_hex(&sha1_of(parts.as_bytes()))
-}
-
-/// SHA-1 over the stamp input — change detection, not security (the same call the Node build
-/// made via node:crypto). Hand-rolled to keep the dependency list closed: SHA-1 is 70 lines.
-fn sha1_of(data: &[u8]) -> [u8; 20] {
-    let ml = (data.len() as u64) * 8;
-    let mut msg = data.to_vec();
-    msg.push(0x80);
-    while msg.len() % 64 != 56 {
-        msg.push(0);
-    }
-    msg.extend_from_slice(&ml.to_be_bytes());
-
-    let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
-    for chunk in msg.chunks(64) {
-        let mut w = [0u32; 80];
-        for (i, word) in chunk.chunks(4).enumerate() {
-            w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
-        }
-        for i in 16..80 {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
-        }
-        let (mut a, mut b, mut c, mut d, mut e) = (h[0], h[1], h[2], h[3], h[4]);
-        for (i, wi) in w.iter().enumerate() {
-            let (f, k) = match i {
-                0..=19 => ((b & c) | ((!b) & d), 0x5A827999u32),
-                20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
-                _ => (b ^ c ^ d, 0xCA62C1D6),
-            };
-            let temp = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(*wi);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = temp;
-        }
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(c);
-        h[3] = h[3].wrapping_add(d);
-        h[4] = h[4].wrapping_add(e);
-    }
-    let mut out = [0u8; 20];
-    for (i, word) in h.iter().enumerate() {
-        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
-    }
-    out
+    // SHA-1 as change detection, not security: the same digest the Node build took via node:crypto.
+    swiss_core::util::to_hex(&Sha1::digest(parts.as_bytes()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn sha1_hex(data: &[u8]) -> String {
-        swiss_core::util::to_hex(&sha1_of(data))
-    }
-
-    #[test]
-    fn sha1_matches_the_published_vectors() {
-        // Hand-rolled to keep the dependency list closed, which means nothing else checks it.
-        // These are the FIPS 180-1 vectors plus the classic pangram.
-        assert_eq!(sha1_hex(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
-        assert_eq!(sha1_hex(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
-        assert_eq!(
-            sha1_hex(b"The quick brown fox jumps over the lazy dog"),
-            "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12"
-        );
-        assert_eq!(
-            sha1_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
-            "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
-        );
-    }
-
-    #[test]
-    fn sha1_pads_correctly_around_every_block_boundary() {
-        // The padding rule (append 0x80, zero-fill to 56 mod 64, then the bit length) is where a
-        // hand-rolled implementation goes wrong, and it only shows at these lengths: 55 is the
-        // last that fits with its length word, 56 forces a whole extra block, 64 is exactly one
-        // block, and 119/120 repeat the pair one block up.
-        let expected = [
-            (55, "c1c8bbdc22796e28c0e15163d20899b65621d65a"),
-            (56, "c2db330f6083854c99d4b5bfb6e8f29f201be699"),
-            (57, "f08f24908d682555111be7ff6f004e78283d989a"),
-            (63, "03f09f5b158a7a8cdad920bddc29b81c18a551f5"),
-            (64, "0098ba824b5c16427bd7a1122a5a442a25ec644d"),
-            (65, "11655326c708d70319be2610e8a57d9a5b959d3b"),
-            (119, "ee971065aaa017e0632a8ca6c77bb3bf8b1dfc56"),
-            (120, "f34c1488385346a55709ba056ddd08280dd4c6d6"),
-        ];
-        for (n, want) in expected {
-            assert_eq!(sha1_hex(&b"a".repeat(n)), want, "{n} bytes");
-        }
-    }
-
-    #[test]
-    fn sha1_carries_a_length_past_what_one_byte_holds() {
-        // The bit length is a u64 in the last 8 bytes; a 32-bit or byte-count mix-up survives
-        // every short vector above and fails here.
-        assert_eq!(
-            sha1_hex(&b"a".repeat(1_000_000)),
-            "34aa973cd4c4daa4f61eeb2bdbad27316534016f"
-        );
-    }
 
     #[test]
     fn only_the_extensions_the_panel_serves_resolve() {
@@ -256,7 +154,7 @@ mod tests {
 
         // It is built from every file's path and length, sorted — so it is NOT the hash of any
         // single file, and it is not the empty-input hash of a tree that failed to enumerate.
-        assert_ne!(stamp, sha1_hex(b""));
+        assert_ne!(stamp, "da39a3ee5e6b4b0d3255bfef95601890afd80709", "the empty-input sha1");
         assert!(PanelAssets::iter().count() > 1, "more than one asset");
     }
 }

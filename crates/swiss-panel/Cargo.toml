@@ -16,6 +16,9 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 serde_json = { version = "1", features = ["preserve_order"] }
 # The admin panel, embedded byte-for-byte and served from &'static [u8].
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+# The panel version stamp's digest. russh and sqlx-mysql already build this exact version, so
+# the direct edge costs no code.
+sha1 = { version = "0.11", default-features = false }
 
 [dev-dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
