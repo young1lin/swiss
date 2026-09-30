@@ -5,15 +5,13 @@
 A developer's pocket multitool — one tiny local process, every tool behind one loopback port.
 
 swiss serves on `127.0.0.1:19999`: every MCP server an AI client needs, on HTTP paths under
-`/mcp/<name>`, plus database browsing, SSH tunnels, scheduled jobs and a web terminal — one
-static binary, one admin panel, no script runtime, no `node_modules`, no npx wrapper. It began
-as a rewrite of an earlier Node.js gateway (retired; ADR-016) and now owns every layer, the
-panel included: TypeScript in `crates/swiss-panel/panel/src` erased to plain ES modules committed under `crates/swiss-panel/src/admin_assets/` (ADR-024), served straight
-from the binary with no bundler and no build step.
+`/mcp/<name>`, plus database browsing, SSH tunnels, scheduled jobs, remote execution and a web
+terminal — one static binary with its admin panel embedded, no script runtime, no
+`node_modules`, no npx wrapper.
 
-**Why it exists:** memory. The old build measured 113.8 MB RSS on a typical workload; the same
-workload here reads **22.4 MB** (private bytes 8.6 MB), shipped as a single self-contained
-executable. Memory numbers are records, not gates — [SPEC §product.memory](docs/SPEC.md) holds them.
+**Why it exists:** memory. The Node.js gateway it replaced measured 113.8 MB RSS on a typical
+workload; the same workload here reads **22.4 MB** (private bytes 8.6 MB). The numbers are
+records, not gates — [SPEC §product.memory](docs/SPEC.md) holds them.
 
 ![The swiss panel's Data page browsing a demo MySQL table](docs/assets/data-page.png)
 
@@ -60,12 +58,8 @@ and installed to `~/.agents/skills`, `~/.claude/skills`, and
 the gateway or exposes tokens just because an agent loads it.
 
 Or build from source: Rust stable, `cargo build --release` — the same single binary. Linux
-additionally needs `cmake` and a C compiler (the TLS stack builds aws-lc-rs). No Node is
-needed to build: the panel's emitted assets are committed; Node 24 only develops the panel.
-
-Loopback-only is security, not a default: the gateway binds `127.0.0.1`, refuses every
-non-loopback `Host`/origin, and refuses a non-loopback `host` in config at load. Reach it
-remotely by forwarding the port over SSH, never by widening the bind.
+additionally needs `cmake` and a C compiler (the TLS stack builds aws-lc-rs). Node is not
+needed to build; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Quick start
 
@@ -89,17 +83,22 @@ remotely by forwarding the port over SSH, never by widening the bind.
 
 ## Security model
 
-Two layers. Every request — panel page or `/api/*` — must arrive from a loopback peer with a
-loopback `Host`/`Origin`; the check exists because DNS rebinding can make a remote page send
-same-origin-looking requests at a loopback listener. On top of that the panel and `/api/*`
-need the admin session (SPEC §host.session): `swiss start` and `swiss open` open a single-use sign-in link
-that expires in two minutes and trades itself for an `HttpOnly`, `SameSite=Strict` cookie, and
-the CLI signs its calls with a key rotated on every start and sealed like the rest of the state
-(`swiss api` is the scripted way in). So another local user or a process that only knows the
-port gets 401. A bearer token gates the MCP endpoints (`/mcp/*`, verified before the body is
-read), so other tools on the machine cannot use your MCP servers unchallenged; the terminal WebSocket adds a single-use ticket that burns in 10
-seconds. Run records mask resolved credential values before anything is stored. If you
-forward the port over SSH, the far side gains the token boundary — not the loopback one.
+- **Loopback only.** The gateway binds `127.0.0.1`, refuses every request whose `Host`/`Origin`
+  is not loopback (DNS rebinding can make a remote page aim same-origin-looking requests at a
+  loopback listener), and refuses a non-loopback `host` in config at load. Reach it remotely by
+  forwarding the port over SSH, never by widening the bind.
+- **A sign-in for the panel and `/api/*`.** `swiss start` and `swiss open` open a single-use
+  link that expires in two minutes and trades itself for an `HttpOnly`, `SameSite=Strict`
+  cookie; the CLI signs its calls with a key rotated on every start (`swiss api` is the
+  scripted way in). Another local user or a process that only knows the port gets 401.
+- **A bearer token for `/mcp/*`**, checked before the body is read, so other tools on the
+  machine cannot use your MCP servers unchallenged. The terminal WebSocket adds a single-use
+  ticket that burns in 10 seconds.
+- **Credentials stay out of records.** Run records mask resolved credential values before
+  anything is stored.
+
+If you forward the port over SSH, the far side gains the token boundary — not the loopback one.
+The full model is [SPEC §security](docs/SPEC.md).
 
 ## Update
 
@@ -130,43 +129,11 @@ swiss autostart on     # Windows: an HKCU Run value · macOS: a LaunchAgent · L
 swiss autostart off
 ```
 
-## Status and validation
-
-**Implementation complete.** Every planned adapter family is wired into the factory: echo,
-MySQL, PostgreSQL, Redis, proc, HTTP, REST, zai-vision, and SSH tunnels. The admin API, the
-embedded panel, sealed-envelope compatibility, the lazy proc lifecycle and loopback security
-paths are all in, and the build is the plugin toolbox SPEC §host describes: a plugin host
-over shared Action/Run/process services, configuration-driven Jobs, and nine crates that
-still link into one `swiss` binary.
-
-The panel is drawn by one in-tree component library (`crates/swiss-panel/panel/src/ui/` +
-`ui.css`, SPEC §panel.ui): every plugin page composes the same
-components, a gallery page demos them all, and two vitest gates hold the line — `views.css`
-restyling a library class, or a view hand-writing a library class name, both fail the suite.
-
-The gates: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`
-and the vitest suite in `crates/swiss-panel/panel/test/`. `--workspace` is load-bearing:
-without it cargo selects the root package alone, runs a small minority of the suite, and
-still reports ok.
-
 ## Documentation
 
 The design record is one living document, [`docs/SPEC.md`](docs/SPEC.md): what swiss does now,
 organised by area (product and memory, architecture, formats, the host, each plugin, the panel,
-security, testing, release), with the decision log (ADR-001 …) as its last section. Code and
-tests cite it as `SPEC §area.sub`; a change to behaviour amends the section it touches in the
-same commit. [`docs/README.md`](docs/README.md) lists the areas.
-
-## Development
-
-Two instances, two ports: **19999 is the operator's production instance**, and **19998 is where
-every change is verified** — `scripts/test-instance.ps1` snapshots state into an isolated test
-home and serves the fresh build there; panel changes additionally walk the page in a real
-browser. Deploying to 19999 is the last step, done once, through `scripts/deploy.ps1` (gates
-→ build → stop → copy to `bin\swiss.exe` → start → prove the served build hash equals the
-freshly built binary). Production runs from `bin\`, never from `target\`: the build never
-fights the daemon for its file, and `bin\` is a stable path to put on PATH so other programs
-can call `swiss remote ...`.
+security, testing, release), with the decision log (ADR-001 …) as its last section.
 
 ## Non-goals
 
@@ -176,9 +143,9 @@ can call `swiss remote ...`.
 
 ## Contributing and security
 
-[CONTRIBUTING.md](CONTRIBUTING.md) is the short version of the house rules (the long one is
-[AGENTS.md](AGENTS.md)); [SECURITY.md](SECURITY.md) says how to report a vulnerability
-privately — swiss holds credentials, so please use it rather than a public issue.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the build, the gates and the house rules (the long
+version is [AGENTS.md](AGENTS.md)); [SECURITY.md](SECURITY.md) says how to report a
+vulnerability privately — swiss holds credentials, so please use it rather than a public issue.
 
 ## License
 

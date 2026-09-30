@@ -1,80 +1,64 @@
 # Panel changes: proof of life before "done"
 
-Written after the agent-page shipped dead three times (2026-10): a view the user could not
-open, a sheet that rendered nothing, all reported as "live verified". These rules are
-binding for every change under `crates/swiss-panel/src/admin_assets/`.
+A panel page once shipped dead three times running — a view the user could not open, a sheet
+that rendered nothing — each reported as "live verified". These rules bind every change under
+`crates/swiss-panel/`.
 
 ## The rule in one line
 
 A panel change is done only after a REAL browser, freshly loaded, opened the page and every
-visible control was clicked with real pointer events and answered. vitest green plus
-`node --check` is the entry ticket, never the proof.
+visible control was clicked with real pointer events and answered. `npm run check` green is the
+entry ticket, never the proof.
 
-## Why vitest cannot catch this class
+## Why the suite cannot catch this class
 
-- The vitest transform does not validate named imports at link time. `import { closeSheet }
-  from "../util.js"` when the export lives in `add-sheet.js` passes every test and kills the
-  whole module in the browser (ES modules refuse to link), leaving the page dead.
+- vitest loads modules one at a time through its own transform. A page that fails at load in
+  the browser — a module that throws at top level, wiring that expects an element the markup
+  lacks — never shows up there.
 - DOM-existence assertions are blind to visibility. `!!document.querySelector(".sheet")` is
-  true while the container still has `hidden` - the exact bug where sheet markup rendered
-  into a hidden box and the user's click "did nothing".
-- Synthetic `.click()` fires the handler directly and bypasses coordinate hit-testing,
-  overlays and focus. It proves the handler exists, not that a human click works.
+  true while the container still has `hidden` — the exact bug where a sheet rendered into a
+  hidden box and the user's click "did nothing".
+- Synthetic `.click()` calls the handler directly and bypasses hit-testing, overlays and focus.
+  It proves the handler exists, not that a human click works.
 
 ## The checklist (all of it, every panel change)
 
-1. **Edit `panel/src/*.ts`, never hand-edit `js/`** — the served tree is emitted
-   (`npm run build` in `crates/swiss-panel/panel`). Read the house idiom before writing
-   wiring: one existing view that already does the thing is the spec, and the shapes and
-   mechanisms live in the library `panel/src/ui/` (SPEC §panel.ui) — sheets -> `ui/sheet.ts`:
-   `showSheet(sheet({ title, body, foot }))` unhides #sheet BEFORE it fills the body and
-   closes on a backdrop click (`add-sheet.ts openSheet` is the worked example; an
-   innerHTML write is an eslint error now); `closeSheet` and `openFieldSheet` come from
-   ui/sheet.ts — add-sheet.ts no longer exports them; menus -> `popupMenu` from
-   `ui/menu.ts`; empty states -> `emptyNode` from `ui/page.ts` (its action button answers
-   `[data-empty-action]`); icons -> the `i-*` sprite via `iconNode(name)` from
-   `ui/icon.ts`; markup -> `h(tag, props, ...kids)` from h.ts, `fill(host, ...kids)` to
-   repaint a container. Never invent a parallel mechanism.
-2. **`npm run check` in `crates/swiss-panel/panel`** (typecheck ×2 + lint + emit
-   freshness + vitest). Catches syntax, link-time import errors and pure-function
-   regressions.
-3. **Rebuild and restart 19998** (`scripts/test-instance.ps1 -Stop`, build with
-   `CARGO_TARGET_DIR=target-test`, then `-Fresh`). Never verify against a stale binary.
-   The panel is now authored in TypeScript (`crates/swiss-panel/panel/src`, SPEC §panel.toolchain): run
-   `npm run build` there first so the committed emit in `admin_assets/js` is fresh, THEN
-   `touch crates/swiss-panel/src/lib.rs` before the release build — the rust_embed
-   fingerprint trap below is unchanged by the port.
-4. **Real-browser walk on a fresh page load.** Using browser automation with REAL clicks
-   (CDP input events, not `element.click()`), on a page navigated from scratch:
-   - every level of navigation reaches the view (top tab -> page -> seg);
-   - every seg switches and shows its pane;
-   - every sheet opener OPENS VISIBLY - assert `sheet.hidden === false` AND computed
-     `display` of the dialog, or read its bounding rect (position:fixed makes
-     `offsetParent` null - do not use it as a visibility probe);
-   - every primary action (Save / Send / Test / Delete) runs its request and the UI
-     reflects the result;
+1. **Edit `panel/src/*.ts`, never the emit** in `admin_assets/js`. Draw with the library
+   (swiss-ui-design §1, SPEC §panel.ui): sheets `showSheet(sheet({ title, body, foot }))` from
+   `ui/sheet.ts` (it unhides `#sheet` before filling it and closes on a backdrop click;
+   `add-sheet.ts` is the worked example), menus `popupMenu` (`ui/menu.ts`), empty states
+   `emptyNode` (`ui/page.ts`), icons `iconNode(name)` (`ui/icon.ts`), markup `h()` and `fill()`
+   (`h.ts`). Never invent a parallel mechanism.
+2. **`npm run check`** in `crates/swiss-panel/panel` (typecheck + lint + emit freshness +
+   vitest).
+3. **Rebuild and restart 19998**: `npm run build`, `touch crates/swiss-panel/src/lib.rs` (the
+   rust_embed trap below), then the swiss-live-verify loop. Never verify against a stale binary.
+4. **Real-browser walk on a fresh page load**, with REAL clicks (CDP input events, not
+   `element.click()`), on a page navigated from scratch:
+   - every level of navigation reaches the view (rail → page → section);
+   - every section switch shows its pane;
+   - every sheet opener OPENS VISIBLY — assert `sheet.hidden === false` and the dialog's
+     computed `display`, or read its bounding rect (`position: fixed` makes `offsetParent`
+     null; it is not a visibility probe);
+   - every primary action (Save / Send / Test / Delete) runs its request and the UI reflects
+     the result;
    - empty states render when the store is empty.
-5. **Honest reporting.** A flow that cannot be verified (missing credential, external
-   endpoint) is listed as NOT verified with the reason - never marked with a checkmark.
-   "Done" claims a dead page is a lie that costs the user's trust and their time as your
-   test runner.
-6. **The second-language pass.** A change that touches visible copy is walked a SECOND
-   time in Chinese: click 文/A, confirm `document.documentElement.lang === "zh-CN"`, and
-   re-check the words (SPEC §panel.i18n).
+5. **Honest reporting.** A flow that cannot be verified (a missing credential, an external
+   endpoint) is listed as NOT verified with the reason, never ticked. A "done" on a dead page
+   makes the user your test runner.
+6. **The second-language pass.** A change that touches visible copy is walked again in
+   Chinese: click 文/A, confirm `document.documentElement.lang === "zh-CN"`, re-read the words
+   (SPEC §panel.i18n).
 
-## Mechanical traps that shipped broken code (do not repeat)
+## Mechanical traps that shipped broken code
 
-- Inside code-splicing templates, `${` interpolates even under `String.raw`. Write
-  `"${" + "VAR}"` for literal env-ref placeholders.
-- A real newline inside a JS string literal (from careless splicing) is a syntax error that
-  kills the module. Use `String.fromCharCode(10)` when building newline-containing code
-  programmatically.
+- `rust_embed` fingerprints can miss an asset change: the release build says "Finished" while
+  the binary still embeds the OLD panel. Touch `crates/swiss-panel/src/lib.rs` before every
+  release rebuild, then verify the served bytes, not the build status.
+- A script that splices code: `${` interpolates even under `String.raw` (write
+  `"${" + "VAR}"`), and a real newline inside a JS string literal kills the module (use
+  `String.fromCharCode(10)`).
 - PowerShell `cd` inside a chained command breaks every later relative path. Run build and
-  instance scripts from the repo root in their own call.
-- `rust_embed` fingerprints do not include asset content: editing `admin_assets` does NOT
-  recompile swiss-panel, so a release build says "Finished" while the binary still embeds
-  the OLD panel (found live on a Tunnels page walk, 2026-09-15). Before every release rebuild on
-  19998, `touch crates/swiss-panel/src/lib.rs` — then verify the served bytes, not just the
-  build status.
-- A "successful" UI assertion that only checks existence is worse than no assertion: it
-  manufactures false confidence. Assert state changes the user can see.
+  instance scripts from the repo root, each in its own call.
+- An assertion that only checks existence is worse than none: it manufactures confidence.
+  Assert state changes the user can see.

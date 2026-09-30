@@ -21,8 +21,8 @@ dependency, a child process, or a new crate.
 ## The shape to follow
 
 - **Edges are the architecture:** `swiss-core ← swiss-host ← {mcp, data, tunnels, jobs, terminal,
-  panel} ← swiss`. `swiss` (root `src/`) is composition and nothing else. No peer-to-peer
-  dependencies between the six subsystem crates.
+  remote, panel} ← swiss`. `swiss` (root `src/`) is composition and nothing else. No peer-to-peer
+  dependencies between the seven subsystem crates (SPEC §arch.crates).
 - **Three ways to bring a tool in:** a stdio child process, an HTTP endpoint, or Rust compiled
   straight into the binary. The first two are how foreign tools arrive; native is how tools worth
   keeping end up shipping (it costs almost nothing).
@@ -39,21 +39,23 @@ dependency, a child process, or a new crate.
   overflowing into the bar's `⋯` seat.
 - **Give the plugin a sprite glyph:** one line in the `GLYPHS` table in
   `crates/swiss-panel/panel/src/plugin-palette.ts` maps the group id to an existing `i-*` symbol
-  (the rail is icon-only, SPEC §panel.nav — without a glyph the seat falls back to the puzzle piece,
-  which cannot tell two such plugins apart).
+  (the rail seat draws it above the caption, SPEC §panel.nav — without a glyph the seat falls back
+  to the puzzle piece, which cannot tell two such plugins apart).
 
 ## Non-negotiables for anything new
 
 The load-bearing rules in AGENTS.md own the details; the ones a new capability most easily breaks:
 
 - Loopback-only is security: bind `127.0.0.1`, refuse non-loopback `Host`/origin on every new
-  route, refuse a non-loopback `host` at config load. `/api/*` routes carry bearer auth.
-- Credentials enter config as `${ENV_VAR}` or `secret://name` references, never literals.
+  route, refuse a non-loopback `host` at config load. `/api/*` routes sit behind the admin
+  session (SPEC §host.session) and never accept the MCP bearer.
+- Credentials enter config as `${ENV_VAR}` or `${secret://name}` references, never literals.
 - No `serde_json::Value` on a forwarding path — route on envelope fields, pass payloads as
   `&RawValue`. The runtime is `current_thread`; no `unsafe`; no `.unwrap()` on anything
   touching config, network, database or filesystem.
-- **The panel is edited here, directly.** Panel JS/HTML/CSS lives in
-  `crates/swiss-panel/panel/src/*.ts` with the emit committed under `src/admin_assets/js` (ADR-024) — run `npm run build` there after editing, still no bundler;
+- **The panel is edited here, directly.** Its logic is `crates/swiss-panel/panel/src/*.ts`, with
+  the emit committed under `src/admin_assets/js` (ADR-024) — run `npm run build` there after
+  editing, no bundler; `index.html` and the CSS live in `src/admin_assets/`.
   [swiss-ui-design](../swiss-ui-design/SKILL.md) owns its language and checklists. A panel
   change ships with its vitest case in `crates/swiss-panel/panel/test/`, and every `/api/*`
   response stays shape-identical to what the panel reads — a shape change ships on both sides in
