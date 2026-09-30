@@ -76,7 +76,8 @@ for (const key of ['code','prompt','spec','description']) {
 let rs = '//! System prompts for the zai-vision adapter, ported VERBATIM from @z_ai/mcp-server\n';
 rs += '//! 0.1.5 (build/prompts/*.js). The text is the product — every prompt survived the move\n';
 rs += '//! byte for byte, extracted by a one-shot script rather than retyped. Do not edit by hand;\n';
-rs += '//! re-extract from the vendored package at <vendor>/zai-mcp-server if upstream moves.\n\n';
+rs += '//! re-extract with scripts/extract-zai-prompts.js from an unpacked copy of the npm package\n';
+rs += '//! (`npm pack @z_ai/mcp-server@0.1.5`) if upstream moves. Attribution: THIRD_PARTY_NOTICES.md.\n\n';
 for (const c of consts) {
   const d = rawDelim(c.text);
   const open = 'r' + '#'.repeat(d) + '"';

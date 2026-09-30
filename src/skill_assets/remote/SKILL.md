@@ -48,7 +48,7 @@ explicitly asks for setup:
 swiss remote endpoints
 transport: serving
   NAME                     STATE        ID
-  开发机               connected    7c0e9d52-3f1a-4b8e-a6d2-91f4c5b03e18
+  开发机                   connected    7c0e9d52-3f1a-4b8e-a6d2-91f4c5b03e18
 
 swiss remote target add test --endpoint "开发机" --root /home/dev/app --caps exec,sync,files
 swiss remote target set test --endpoint "开发机"
