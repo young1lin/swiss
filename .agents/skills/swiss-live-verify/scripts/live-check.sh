@@ -16,7 +16,7 @@
 # Cross-platform sibling of live-check.ps1 (macOS / Linux).
 #
 # Same contract, same behaviour: stale-port guard, target-test build, isolated test home on
-# a REAL-state snapshot, legacy-name token pin, and the served-build proof (/health hash vs
+# a REAL-state snapshot, the MCP bearer pin, and the served-build proof (/health hash vs
 # the exe's --version hash). Never touches 19999. The repo's own scripts/test-instance.ps1
 # is Windows-only, so on POSIX this script implements the boot procedure directly.
 #
@@ -29,8 +29,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 PORT=19998
-# The same literal acceptance-16.ps1 pins. The canonical name: a boot's one-shot rename points
-# the snapshot's tokenEnv at SWISS_TOKEN, so pin the name the config carries.
+# The same literal acceptance-16.ps1 pins: the /mcp/* bearer, under the tokenEnv name the
+# config carries.
 TOKEN='acceptance-token-for-1998'
 TEST_HOME="${SWISS_TEST_HOME:-$HOME/.swiss-test-home}"
 # The production home.
@@ -123,7 +123,9 @@ version="$("$EXE" --version | head -1)"
 built="$(printf '%s' "$version" | sed -n 's/^swiss [^ ]* (\([0-9a-f]*\),.*/\1/p')"
 if [ -z "$built" ]; then echo "no build hash in version line: $version" >&2; exit 1; fi
 health_hash="$(curl -s "http://127.0.0.1:$PORT/health" | sed -n 's/.*"hash":"\([0-9a-f]*\)".*/\1/p')"
-info_hash="$(curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/api/info" | sed -n 's/.*"hash":"\([0-9a-f]*\)".*/\1/p')"
+# /api/* needs the admin session (SPEC §host.session), never the bearer: `swiss api` signs the
+# call with the test home's CLI key (SWISS_HOME/SWISS_PORT are exported above).
+info_hash="$("$EXE" api GET /api/info | sed -n 's/.*"hash": *"\([0-9a-f]*\)".*/\1/p')"
 echo "exe --version : $version"
 echo "health.build  : $health_hash"
 echo "info.build    : $info_hash"
@@ -132,5 +134,6 @@ if [ "$health_hash" != "$built" ] || [ "$info_hash" != "$built" ]; then
     exit 1
 fi
 echo "$PORT is serving this build; state writes go to $TEST_HOME - production config untouched"
-echo "bearer for /api/* probes: the pinned SWISS_TOKEN above"
+echo "/api/* calls: swiss api, with SWISS_HOME=$TEST_HOME and SWISS_PORT=$PORT"
+echo "/mcp/* calls: the pinned SWISS_TOKEN bearer"
 exit 0

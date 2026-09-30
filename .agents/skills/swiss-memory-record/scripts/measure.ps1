@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Memory measurement loop for SPEC §product.memory - records, not gates (user call 2026-09-11).
+# Memory measurement loop for SPEC §product.memory - records, not gates.
 #
 # Builds into target-test, boots the isolated 19998 instance on a REAL-state snapshot
 # (the workload is the point; never 19999), reads /health + /api/memory + swiss status,
@@ -34,19 +34,19 @@ $Spec = Join-Path $Root 'docs\SPEC.md'
 $Port = 19998
 
 # Boot via the live-verify helper (it owns build, stale-port guard, token pin, hash proof).
-$bootArgs = @()
-if ($SkipBuild) { $bootArgs += '-SkipBuild' }
+# A hashtable, not an array: an array splat hands '-SkipBuild' over as a positional string.
+$bootArgs = @{}
+if ($SkipBuild) { $bootArgs.SkipBuild = $true }
 & $Boot @bootArgs
 if ($LASTEXITCODE -ne 0) { Write-Error 'boot failed - no measurement'; exit 1 }
 
-$Token = 'acceptance-token-for-1998'   # pinned by live-check.ps1 before boot
-$hdr = @{ Authorization = "Bearer $Token" }
 $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 5
-$mem = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/memory" -Headers $hdr -TimeoutSec 5
 
-# swiss status against the test home (env scoped to this invocation only).
+# Against the test home (env scoped to these calls only). /api/* needs the admin session
+# (SPEC §host.session), never the bearer: `swiss api` signs the call with the test home's CLI key.
 $env:SWISS_HOME = Join-Path $env:LOCALAPPDATA 'swiss-test-home'
 $env:SWISS_PORT = "$Port"
+$mem = (& $Exe api GET /api/memory) | Out-String | ConvertFrom-Json
 $status = (& $Exe status 2>&1 | Out-String)
 Remove-Item Env:\SWISS_HOME -ErrorAction SilentlyContinue
 Remove-Item Env:\SWISS_PORT -ErrorAction SilentlyContinue

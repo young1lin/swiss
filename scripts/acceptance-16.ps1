@@ -20,9 +20,7 @@
 # a_local_pwsh_keeps_its_colours_under_a_no_color_launcher instead.
 $ErrorActionPreference = "Continue"
 $Token = "acceptance-token-for-1998"
-# The token pin deliberately stays on the legacy name: the boot's one-shot rename flips the
-# snapshot's tokenEnv to SWISS_TOKEN, and this script is the regression proof that the Node-era
-# pin still authenticates through the pair partner after that rename.
+# The /mcp/* bearer, pinned under the tokenEnv name the config carries.
 $env:SWISS_TOKEN = $Token
 $Exe = "target-test\release\swiss.exe"
 $Health98 = "http://127.0.0.1:19998/health"
