@@ -19,10 +19,10 @@ import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
 
-/* SPEC §data.tabs = SPEC §data.tabs: the toolbar draws ONLY the active tab's controls — one primary
+/* SPEC §data.tabs: the toolbar draws ONLY the active tab's controls — one primary
  * action plus an overflow — and the pager/page-size live on a separate status line. The
  * hard gate is the .btn budget: at most ONE non-icon .btn per toolbar, in every tab kind
- * (swiss-ui-design rule 4, as a machine check instead of a screenshot). */
+ * (rule 4, as a machine check instead of a screenshot). */
 class NodeStub {}
 (globalThis as unknown as { Node: unknown }).Node = NodeStub;
 

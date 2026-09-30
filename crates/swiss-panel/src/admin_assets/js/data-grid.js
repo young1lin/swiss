@@ -197,7 +197,7 @@ function dbGridRowsCount()         {
 /** Focus (or move) the focus cell and paint the ring — a single selection the keyboard owns.
  * Moving the ring must NOT rebuild the grid: the rebuild detached the cell mid-click, the
  * browser then never fired the click/dblclick that followed the mousedown, and double-click
- * editing could not open at all (SPEC §data-B). The ring moves between the
+ * editing could not open at all (SPEC §data.grid). The ring moves between the
  * LIVE cells by their data-r/data-c address; a full repaint happens only on data changes
  * (edit, paste, commit, paging). */
 function dbFocusCell(r        , c        )       {

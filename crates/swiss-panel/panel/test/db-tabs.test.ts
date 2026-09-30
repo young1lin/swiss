@@ -494,7 +494,7 @@ describe("leaving the page asks once, for the whole strip (SPEC §data.tabs)", (
 
 /* --- the strip itself ------------------------------------------------------------------------- */
 
-describe("the strip's markup (swiss-ui-design §1.3)", () => {
+describe("the strip's markup (SPEC §data.tabs)", () => {
   it("one card per visible object: glyph, name, close — and the placeholder is not on it", () => {
     tabs.renderDbTabs();
     const strip = document.getElementById("dbTabStrip");

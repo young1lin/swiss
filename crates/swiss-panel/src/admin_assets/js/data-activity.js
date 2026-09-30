@@ -132,7 +132,7 @@ function dbActivityRender() {
   wrap.appendChild(tbl);
 }
 
-/** #pane's delegated click for the Activity page (SPEC §panel.toolchain). Behavior note (SPEC §panel.toolchain):
+/** #pane's delegated click for the Activity page (SPEC §panel.toolchain). Behavior note:
  *  the per-row menu re-finds its row from live d.activityRows by pid at event time — a poll
  *  that repainted the table between render and click can never kill the wrong session. */
 function dbActivityClick(t         , ev            )          {

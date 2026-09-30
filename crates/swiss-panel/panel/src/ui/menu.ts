@@ -22,7 +22,7 @@
  * The open flag is the menu's own state, like the dropdown's (ui/select.ts): main.ts must not
  * reload the panel under an open menu and Escape closes a menu before anything else, and both
  * ask menuOpen(). Every menu in the panel is built here: the MCP pane's overflow became
- * anchoredMenu (SPEC §panel.pages) and Data's hand-built .ctx-menu popups became popupMenu (P7).
+ * anchoredMenu (SPEC §panel.pages) and Data's hand-built .ctx-menu popups became popupMenu.
  * setMenuOpen stays exported for the suites that reset the flag between cases. */
 import { h } from "../h.js";
 import { iconNode } from "./icon.js";

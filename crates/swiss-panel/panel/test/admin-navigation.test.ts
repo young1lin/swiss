@@ -19,7 +19,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/* The adaptive shell (SPEC §panel.nav, redrawn; SPEC §panel.nav): a plugin RAIL for global
+/* The adaptive shell (SPEC §panel.nav): a plugin RAIL for global
    navigation and a TITLE + underline TABS strip in the context bar for page navigation.
    No bundler and no browser in the suite, so this drives the real page-registry under a
    hand-rolled DOM: fake elements that record what paintNavigation writes, and a fetch stub

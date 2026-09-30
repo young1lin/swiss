@@ -200,7 +200,7 @@ function paintDbDdlSheet(): void {
   const body: (HChild | null)[] = [];
   if (kind === "table" && S_.dialect === "pg") {
     // SPEC §data.browse: a Postgres catalog is many schemas, so the new table says where it goes
-    // (swiss-ui-design rule 6) — a select, prefilled from the list's active schema filter.
+    // (rule 6) — a select, prefilled from the list's active schema filter.
     const schemas = S_.schemas.slice();
     if (!schemas.includes(S_.schema)) schemas.unshift(S_.schema);
     body.push(field({

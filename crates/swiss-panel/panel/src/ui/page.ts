@@ -19,11 +19,11 @@
  * foot. Each piece is one function here so every page draws it the same way:
  *
  *   pane       the page body itself: the padded, scrolling frame under the bars, every block
- *              in it capped at the measure (skill §6). `wide` for genuinely wide rows (and the
+ *              in it capped at the measure (SPEC §panel.nav). `wide` for genuinely wide rows (and the
  *              frame the pinned head lives in), `full` for a workspace (Data, Terminal).
  *   paneBody   the same measure frame for a view that fills the shell's own #pane.
  *   paneHead   pinned on a content page (ui.css, SPEC §panel.design). No location title - the
- *              context bar already says where you are (skill §7).
+ *              context bar already says where you are (SPEC §panel.nav).
  *   resHead    a RESOURCE head (the selected MCP), where the name is the page's subject: the
  *              name row and the resource's tabs pin, its words scroll away (SPEC §panel.pages).
  *   section    a product-named caption over its body, with the section's tools at its end.

@@ -33,7 +33,7 @@ import { seg } from "./ui/seg.js";
 /* --- structure tabs (columns / indexes / DDL / foreign keys) ------------------------------------ */
 
 /* tk()-marked tab labels (SPEC §panel.i18n): painted through tr(t.label) at render time. */
-/* SPEC §data.tabs / SPEC §data.tabs: the strip folds SIX panes into FOUR tabs — Data, Form,
+/* SPEC §data.tabs: the strip folds SIX panes into FOUR tabs — Data, Form,
  * Structure, DDL. Structure is one tab whose body is the three catalog tables
  * (Columns / Indexes / Foreign Keys) behind its own sub-segment; the pane ids
  * columns/indexes/fks stay, so every renderer and the detail load keep their ids. */

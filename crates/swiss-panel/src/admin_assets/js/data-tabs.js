@@ -171,7 +171,7 @@ function dbTabTitle(t       )         {
   return tr("dataTabs.activity");
 }
 
-/** The leading type glyph (swiss-ui-design §1.3): one per kind, so the strip is readable before
+/** The leading type glyph (SPEC §data.tabs): one per kind, so the strip is readable before
  *  a single name is. A key's card wears its type's glyph - the one its sidebar row leads with:
  *  the type the row handed over at open, then the landed value's (the truth, should the key
  *  have been recreated as another type); the redis mark when neither is known. Pure. */
@@ -239,7 +239,7 @@ function dbTabRenameInput(t       , scope               )                   {
   return inp;
 }
 
-/** Paint the strip. Card tabs (swiss-ui-design §1.3): a leading type glyph, the name, a trailing
+/** Paint the strip. Card tabs (SPEC §data.tabs): a leading type glyph, the name, a trailing
  *  ×, the whole row sitting on --sidebar with the active card lifted to --bg and joined to the
  *  grid below it. Every control is an address answered by #pane's delegated click (SPEC §panel.toolchain) —
  *  the index it carries is re-read against live state when the click lands. */
@@ -305,7 +305,7 @@ function renderDbTabs()       {
         title: tr("dataTabs.openObjects"), aria: { haspopup: "menu" }, data: { dbtabmenu: "" },
       }, iconNode("chevron-down")),
       // The console opens from the strip's own end: it is an object like the rest, and the one
-      // gesture that ADDS to the strip belongs on it (swiss-ui-design rule 19).
+      // gesture that ADDS to the strip belongs on it (rule 19).
       h("button", {
         class: "db-tab-add", type: "button",
         title: tr(dbIsRedis() ? "dataTabs.newCommandConsoleTitle" : "dataTabs.newConsoleTitle"),
@@ -411,7 +411,7 @@ function dbTabsContext(t         , ev            )          {
  *  current one ticked — the strip's whole set in one place that never scrolls away. The type
  *  glyph and the dirty dot ride the row so the menu also answers "which of these is holding
  *  my work" without opening anything. Behind a separator sit the bulk closes; the
- *  destructive one is last and red (swiss-ui-design rule 4). */
+ *  destructive one is last and red (rule 4). */
 function dbTabsMenuItems()             {
   const tabs = dbTabs();
   const active = dbActiveIndex();
@@ -501,7 +501,7 @@ function dbCloseAllTabs()       {
   dbCloseBatch(ix);
 }
 
-/* Ctrl+Tab / Ctrl+Shift+Tab cycle the strip (swiss-ui-design rule 19: the frequent gesture must
+/* Ctrl+Tab / Ctrl+Shift+Tab cycle the strip (rule 19: the frequent gesture must
    not need discovering). Document-level and capture-phase, because the console textarea would
    otherwise swallow a Tab before the pane's delegated listener saw it; the dbIsMounted() guard is
    what keeps a Data shortcut from firing on any other page. Note for the reader: Chrome reserves

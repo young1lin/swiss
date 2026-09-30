@@ -101,7 +101,7 @@ function callBody(it              )         {
 
 /* --- the scenes ------------------------------------------------------------------------------- */
 
-/** A content page (skill §6 A): the pinned head, the inline create form, two groups of rows,
+/** A content page (SPEC §panel.nav, the Content template): the pinned head, the inline create form, two groups of rows,
  *  the foot - the Tokens page's shape. */
 function content()              {
   const groups = GROUPS.map((g) => {
@@ -133,7 +133,7 @@ function content()              {
       pageFoot({ note: tr("gallery.s.tokensFoot"), rev: "rev 14" })));
 }
 
-/** A resource page (skill §6 B): the source list, and the selected resource's pinned head,
+/** A resource page (SPEC §panel.nav, the Resource template): the source list, and the selected resource's pinned head,
  *  its sections as a seg, and its log as the event list with one call open. */
 function resource(now        )              {
   const stateWord                         = {

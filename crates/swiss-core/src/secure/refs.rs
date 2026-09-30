@@ -49,7 +49,7 @@ use super::secretstore::{valid_name, vault_lookup};
 /// The scheme a vault reference carries inside the envelope.
 const SECRET_SCHEME: &str = "secret://";
 
-/// Resolve every reference in ONE string (SPEC §host.refs; grammar SPEC §host.refs). Err carries the
+/// Resolve every reference in ONE string (SPEC §host.refs). Err carries the
 /// sentence an operator reads — it names the reference, never a value.
 pub fn resolve(input: &str) -> Result<String, String> {
     resolve_collect(input).map(|(out, _)| out)

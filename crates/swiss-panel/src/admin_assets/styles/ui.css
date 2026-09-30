@@ -153,7 +153,7 @@
     label.check { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-body); }
     label.check input { width: auto; accent-color: var(--accent); }
 
-    /* --- groups (SPEC §panel.groups by SPEC §panel.groups) -----------------------------------------------
+    /* --- groups (SPEC §panel.groups) ------------------------------------------------------------------
        One component, one shape, two densities. A group is a header BAND over its members:
        chevron + name + count leading, + (always, dimmed) and the ellipsis (hover) trailing. The
        band is the container marker - no folder glyph, no guide line, no second surface under
@@ -258,7 +258,7 @@
     @keyframes pulse { 50% { opacity: .35; } }
     @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }
 
-    /* --- the page body (SPEC §panel.ui; skill §6's templates) ------------------------------------ */
+    /* --- the page body (SPEC §panel.ui; §panel.nav's templates) ------------------------------------ */
     /* The pane: the padded, scrolling frame under the bars (the shell's #pane; ui/page.ts pane()).
        The measure: every top-level block in it is capped, so one tool card reads as a card and
        not as a stripe across a 2560px monitor. `.wide` is the opt-out for content whose rows are
@@ -273,7 +273,7 @@
     .pane > * { max-width: var(--measure); margin-inline: 0; }
     .pane > .wide { max-width: var(--measure-wide); }
     .pane > .empty { max-width: none; }
-    /* The workspace template (skill §6 C): a full-bleed body - no padding, no measure, no scroll
+    /* The workspace template (SPEC §panel.nav): a full-bleed body - no padding, no measure, no scroll
        of its own; the page inside divides the space itself (Data, Terminal). */
     .pane.full { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 

@@ -274,7 +274,7 @@ function renderDbView(): void {
       h("div", { class: "db-side-foot", id: "dbTablesPager" })),
     h("div", { class: "db-main" },
       // The object tabs (SPEC §data.tabs). L3 resource navigation, page-body owned: the strip is
-      // the top EDGE of the grid below it (swiss-ui-design §1.3), which is why it sits above
+      // the top EDGE of the grid below it (SPEC §data.tabs), which is why it sits above
       // the head row rather than beside the seg pills.
       h("div", { class: "db-tabstrip", id: "dbTabStrip", role: "tablist" }),
       h("div", { class: "db-headrow" },
@@ -932,7 +932,7 @@ function dbFilterMatches(tokens: string, name: unknown): boolean {
 /* The sidebar's list, which is a TREE now (SPEC §data.tabs): SQL connections cut into Tables /
    Views / Routines bands (a pg catalog nests them under schema bands), a redis keyspace
    folded along ":" with single-child chains compressed. Every band is mountGroup - the one
-   container-head shape swiss-ui-design allows - at side density; the collapse state rides the
+   container-head shape SPEC §panel.groups allows - at side density; the collapse state rides the
    component's own localStorage (scope "dbtree", plus ".sch" for pg's schema bands and ".ns"
    for redis namespaces). Nothing here drags: the grouping is DERIVED from the catalog, not
    named by the operator. */
@@ -1439,7 +1439,7 @@ function dbDialectOf(): string {
 }
 
 /** Every schema the loaded pages have shown, "public" always among them — the New table
- *  sheet's where-it-goes select (SPEC §data.ddl; swiss-ui-design rule 6). */
+ *  sheet's where-it-goes select (SPEC §data.ddl; rule 6). */
 function dbKnownSchemas(): string[] {
   const d = dbConn();
   const out: string[] = [];

@@ -201,7 +201,7 @@ function decoratedGroups() {
 }
 
 /* --- the plugin context bar: page navigation (level two) ------------------------------------------
-   ALWAYS drawn in normal mode (SPEC §panel.nav, as revised; SPEC §panel.nav): the same bar height
+   ALWAYS drawn in normal mode (SPEC §panel.nav): the same bar height
    and the same body origin for every plugin - multi-page, single-page and workspace alike.
    The left half names the plugin ONCE - the same glyph its rail seat wears, beside its
    label - and a multi-page plugin lays its pages out as underline tabs, every page visible
