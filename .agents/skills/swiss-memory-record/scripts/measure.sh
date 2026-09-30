@@ -27,7 +27,6 @@ SPEC="$ROOT/docs/SPEC.md"
 PORT=19998
 TEST_HOME="${SWISS_TEST_HOME:-$HOME/.swiss-test-home}"
 EXE="$ROOT/target-test/release/swiss"
-TOKEN='acceptance-token-for-1998'   # pinned by live-check.sh before boot
 
 SKIP_BUILD=0; KEEP=0
 for arg in "$@"; do
@@ -41,9 +40,11 @@ done
 if [ "$SKIP_BUILD" -eq 1 ]; then bash "$BOOT" --skip-build; else bash "$BOOT"; fi
 
 health="$(curl -s "http://127.0.0.1:$PORT/health")"
-mem="$(curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/api/memory")"
+# /api/* needs the admin session (SPEC §host.session), never the bearer: `swiss api` signs the
+# call with the test home's CLI key. It prints the JSON pretty, one field per line.
+mem="$(SWISS_HOME="$TEST_HOME" SWISS_PORT="$PORT" "$EXE" api GET /api/memory)"
 
-field() { printf '%s' "$mem" | sed -n "s/.*\"$1\":\([0-9.]*\).*/\1/p"; }
+field() { printf '%s' "$mem" | sed -n "s/.*\"$1\": *\([0-9.]*\).*/\1/p" | head -1; }
 date_str="$(date +%F)"
 hash="$(printf '%s' "$health" | sed -n 's/.*"hash":"\([0-9a-f]*\)".*/\1/p')"
 row="| $date_str | Rust $hash | real-state snapshot on 19998 | $(field gatewayMb) MB | private ~$(field heapUsedMb)/$(field heapTotalMb) MB; children $(field childrenMb) MB ($(field processCount) proc) |"

@@ -15,7 +15,7 @@
 # Live-verify boot helper for the swiss skill suite.
 #
 # Wraps the repo's own scripts/test-instance.ps1 (which owns the boot procedure and the
-# state isolation) with the pieces every live check needs anyway: the legacy-name token pin,
+# state isolation) with the pieces every live check needs anyway: the MCP bearer pin,
 # a stale-port guard, and the served-build proof (/health hash vs the exe's --version hash).
 # Never touches 19999. Run from anywhere; the repo root is resolved from this script's path.
 #
@@ -36,8 +36,9 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path
 $TestInstance = Join-Path $Root 'scripts\test-instance.ps1'
 $Exe = Join-Path $Root 'target-test\release\swiss.exe'
 $Port = 19998
-# The same literal acceptance-16.ps1 pins. The canonical name: a boot's one-shot rename points
-# the snapshot's tokenEnv at SWISS_TOKEN, so pin the name the config carries.
+$TestHome = Join-Path $env:LOCALAPPDATA 'swiss-test-home'
+# The same literal acceptance-16.ps1 pins: the /mcp/* bearer, under the tokenEnv name the
+# config carries.
 $Token = 'acceptance-token-for-1998'
 
 if ($Stop) { & $TestInstance -Stop; exit $LASTEXITCODE }
@@ -77,8 +78,13 @@ $version = (& $Exe --version) | Select-Object -First 1
 if (-not ($version -match '\((?<hash>[0-9a-f]{7,}(?:-[0-9a-z]+)?)')) { Write-Error "no build hash in version line: $version"; exit 1 }
 $built = $Matches.hash
 $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 5
-$hdr = @{ Authorization = "Bearer $Token" }
-$info = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/info" -Headers $hdr -TimeoutSec 5
+# /api/* needs the admin session (SPEC §host.session), never the bearer: `swiss api` signs the
+# call with the test home's CLI key, which is never printed.
+$prevHome = $env:SWISS_HOME; $prevPort = $env:SWISS_PORT
+$env:SWISS_HOME = $TestHome; $env:SWISS_PORT = "$Port"
+try {
+    $info = (& $Exe api GET /api/info) | Out-String | ConvertFrom-Json
+} finally { $env:SWISS_HOME = $prevHome; $env:SWISS_PORT = $prevPort }
 
 Write-Host "exe --version : $version"
 Write-Host "health.build  : $($health.build.hash)"
@@ -88,5 +94,6 @@ if ($health.build.hash -ne $built -or $info.build.hash -ne $built) {
     exit 1
 }
 Write-Host "19998 is serving this build; state writes go to %LOCALAPPDATA%\swiss-test-home"
-Write-Host "bearer for /api/* probes: the pinned SWISS_TOKEN above"
+Write-Host "/api/* calls: swiss api, with SWISS_HOME=$TestHome and SWISS_PORT=$Port"
+Write-Host "/mcp/* calls: the pinned SWISS_TOKEN bearer"
 exit 0
