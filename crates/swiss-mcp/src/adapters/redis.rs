@@ -52,8 +52,9 @@ fn key_arg() -> Value {
 ///   `SUBSCRIBE`/`MONITOR` leaves it in a mode it never exits and `BLPOP key 0` hangs forever.
 ///
 /// Everything else lives behind `redis_command`, whose description states the return
-/// conventions: one line of prose is far cheaper than ten JSON schemas.
-fn tools() -> Vec<ToolDef> {
+/// conventions: one line of prose is far cheaper than ten JSON schemas. It also states what THIS
+/// instance refuses, since `allowEval` / `allowDestructive` move commands across that line.
+fn tools(allow_destructive: bool, allow_eval: bool) -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "redis_scan".into(),
@@ -69,9 +70,15 @@ fn tools() -> Vec<ToolDef> {
                 "properties": {
                     "pattern": { "type": "string", "description": "Glob pattern, e.g. `session:*`. Omit for all keys." },
                     "cursor": { "type": "string", "description": "Cursor from a previous call. Omit to start." },
-                    "count": { "type": "number", "description": "Keys scanned per iteration (default 100)." },
-                    "type": { "type": "string", "description": "Only keys of this type: string, hash, list, set, zset or stream." },
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": SCAN_COUNT_MAX,
+                        "description": format!("Keys scanned per iteration (default 100, max {SCAN_COUNT_MAX})."),
+                    },
+                    "type": { "type": "string", "enum": SCAN_TYPES, "description": "Only keys of this type." },
                 },
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -90,27 +97,25 @@ fn tools() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {
                     "key": key_arg(),
-                    "offset": { "type": "number", "description": "First entry to return, by rank (list, zset, stream). Default 0." },
-                    "limit": { "type": "number", "description": "Entries to return (list, zset, stream). Default 100, max 1000." },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "First entry to return, by rank (list, zset, stream). Default 0.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": READ_WINDOW_MAX,
+                        "description": format!("Entries to return (list, zset, stream). Default 100, max {READ_WINDOW_MAX}."),
+                    },
                 },
                 "required": ["key"],
+                "additionalProperties": false,
             }),
         },
         ToolDef {
             name: "redis_command".into(),
-            description: concat!(
-                "Run any other Redis command: { command: \"SET\", args: [\"k\", \"v\", \"EX\", \"60\"] }. Covers ",
-                "SET/DEL/EXISTS/TTL/TYPE/EXPIRE/INCR, MGET, HSET/HGET/HDEL, LPUSH/LRANGE/LLEN, SADD/SMEMBERS, ",
-                "ZADD/ZRANGE, XADD/XRANGE, INFO/DBSIZE/CONFIG GET, and the rest. Bound your range reads ",
-                "(`LRANGE key 0 99`) — output is capped either way. Return conventions: status replies come ",
-                "back as \"OK\"/\"PONG\", integer replies as numbers, a missing value as null, and collections ",
-                "as FLAT arrays — `ZRANGE k 0 -1 WITHSCORES` is [member, score, member, score]; prefer ",
-                "redis_read when you want the shaped version. Rejected: KEYS (use redis_scan), Lua and ",
-                "functions (EVAL/SCRIPT/FCALL), transactions (MULTI/EXEC/WATCH), anything that would break this ",
-                "shared connection (SUBSCRIBE/MONITOR/BLPOP…) or the server (SHUTDOWN/DEBUG/CONFIG SET/ACL/",
-                "MODULE/SAVE…), and FLUSHALL/FLUSHDB unless this MCP permits them.",
-            )
-            .to_string(),
+            description: command_description(allow_destructive, allow_eval),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -118,9 +123,48 @@ fn tools() -> Vec<ToolDef> {
                     "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments, in order." },
                 },
                 "required": ["command"],
+                "additionalProperties": false,
             }),
         },
     ]
+}
+
+/// redis_command's description, closing with what this instance refuses — so a model on an
+/// `allowEval` MCP is not told EVAL is off, and one on a default MCP is not left guessing whether
+/// FLUSHDB "is permitted here". The refusals themselves are assert_command_allowed's.
+fn command_description(allow_destructive: bool, allow_eval: bool) -> String {
+    let mut rejected = vec!["KEYS (use redis_scan)"];
+    rejected.push(if allow_eval {
+        "script management (SCRIPT/FUNCTION)"
+    } else {
+        "Lua and functions (EVAL/FCALL/SCRIPT/FUNCTION)"
+    });
+    rejected.push("transactions (MULTI/EXEC/WATCH)");
+    rejected.push(
+        "anything that would break this shared connection (SUBSCRIBE/MONITOR/BLPOP…) or the server \
+         (SHUTDOWN/DEBUG/CONFIG SET/ACL/MODULE/SAVE…)",
+    );
+    if !allow_destructive {
+        rejected.push("FLUSHALL/FLUSHDB");
+    }
+    let (last, rest) = rejected.split_last().expect("never empty");
+    let mut text = format!(
+        "Run any other Redis command: {{ command: \"SET\", args: [\"k\", \"v\", \"EX\", \"60\"] }}. Covers \
+         SET/DEL/EXISTS/TTL/TYPE/EXPIRE/INCR, MGET, HSET/HGET/HDEL, LPUSH/LRANGE/LLEN, SADD/SMEMBERS, \
+         ZADD/ZRANGE, XADD/XRANGE, INFO/DBSIZE/CONFIG GET, and the rest. Bound your range reads \
+         (`LRANGE key 0 99`) — output is capped either way. Return conventions: status replies come \
+         back as \"OK\"/\"PONG\", integer replies as numbers, a missing value as null, and collections \
+         as FLAT arrays — `ZRANGE k 0 -1 WITHSCORES` is [member, score, member, score]; prefer \
+         redis_read when you want the shaped version. Rejected: {}, and {last}.",
+        rest.join(", ")
+    );
+    if allow_eval {
+        text.push_str(" This MCP allows EVAL/EVALSHA/FCALL with the script inline.");
+    }
+    if allow_destructive {
+        text.push_str(" This MCP allows FLUSHALL/FLUSHDB.");
+    }
+    text
 }
 
 /// Commands that put the shared connection into a mode it never leaves, or block it indefinitely.
@@ -178,6 +222,9 @@ const SCRIPT_ADMIN: &[&str] = &["SCRIPT", "FUNCTION"];
 
 /// TYPE values SCAN can filter by — validated before a socket is opened, so a typo costs nothing.
 pub const SCAN_TYPES: &[&str] = &["string", "hash", "list", "set", "zset", "stream"];
+/// Ceiling on redis_scan's COUNT hint: past it, one round blocks the server for longer than a
+/// page is worth.
+const SCAN_COUNT_MAX: i64 = 10_000;
 
 /// Commands rejected outright, each with the reason the model sees. A rejection has to say what
 /// to do instead, or the model simply tries the next bad idea: an unexplained "rejected" turns
@@ -1604,7 +1651,7 @@ impl RedisEngine {
             // with COUNT 0 is a protocol error, never a useful ask.
             .filter(|n| *n > 0)
             .unwrap_or(100)
-            .clamp(1, 10_000);
+            .clamp(1, SCAN_COUNT_MAX);
         let pattern = args
             .get("pattern")
             .map(value_string)
@@ -1696,7 +1743,7 @@ impl Engine for RedisEngine {
     }
 
     fn tools(&self) -> Vec<ToolDef> {
-        tools()
+        tools(self.allow_destructive(), self.allow_eval())
     }
 
     async fn call(&self, tool: &str, args: &Value) -> Result<Value, String> {
@@ -1868,6 +1915,26 @@ mod tests {
         assert!(assert_command_allowed("EXPIRE", &["k", "60"], false, false).is_ok());
         assert!(assert_command_allowed("RENAME", &["k", "k2"], false, false).is_ok());
         assert!(assert_command_allowed("PERSIST", &["k"], false, false).is_ok());
+    }
+
+    #[test]
+    fn the_command_description_states_what_this_instance_refuses() {
+        // The description and the guard must agree for every flag combination: a model told
+        // EVAL is off never tries it, and one told it is on must not meet a refusal.
+        for (destructive, eval) in [(false, false), (true, false), (false, true), (true, true)] {
+            let text = command_description(destructive, eval);
+            let refused = text.split("Rejected: ").nth(1).expect("a Rejected clause");
+            let refused = refused.split(". ").next().unwrap_or(refused);
+            for (command, args) in [("EVAL", &["return 1", "0"][..]), ("FLUSHDB", &[][..])] {
+                let allowed = assert_command_allowed(command, args, destructive, eval).is_ok();
+                assert_eq!(
+                    refused.contains(command),
+                    !allowed,
+                    "{command} with allowDestructive={destructive} allowEval={eval}: {text}"
+                );
+            }
+            assert!(refused.contains("SCRIPT/FUNCTION"), "management stays shut: {text}");
+        }
     }
 
     #[test]

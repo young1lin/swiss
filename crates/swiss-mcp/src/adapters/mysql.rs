@@ -39,33 +39,11 @@ use super::mysql_browser::MysqlBrowser;
 use super::mysql_resources::MysqlResources;
 use super::resources::human_bytes;
 use super::sql::{
-    assert_single_statement, clamp_row_limit, drop_null_columns, like_contains, limit_report,
-    table_page_args, with_row_limit, DEFAULT_ROW_LIMIT, DEFAULT_TABLE_LIMIT, MAX_ROW_LIMIT,
-    MAX_TABLE_LIMIT,
+    assert_single_statement, clamp_row_limit, drop_null_columns, grep_arg, like_contains,
+    limit_report, page_arg, row_limit_arg, table_limit_arg, table_page_args, with_row_limit,
+    DEFAULT_ROW_LIMIT,
 };
 use super::tool_server::{Engine, ServerMeta, ToolDef};
-
-fn grep_arg() -> Value {
-    json!({
-        "type": "string",
-        "description": concat!(
-            "Keep only tables whose name contains this substring (case-insensitive): \"users\" lists p_users, ",
-            "users_settings, … Optional — omit to list everything.",
-        ),
-    })
-}
-fn limit_arg() -> Value {
-    json!({
-        "type": "number",
-        "description": format!("Max tables per page (default {DEFAULT_TABLE_LIMIT}, max {MAX_TABLE_LIMIT})."),
-    })
-}
-fn page_arg() -> Value {
-    json!({
-        "type": "number",
-        "description": "0-based page index through the filtered list (default 0) — the reply's total/more say what is left.",
-    })
-}
 
 /// Two tools: the query tool (matching the single-tool MySQL MCP this replaced), and a table
 /// listing with an optional name filter.
@@ -77,8 +55,9 @@ fn page_arg() -> Value {
 /// unlike Postgres's describe tool: they are one-liners every model already knows, and each
 /// wrapper schema is re-sent on every request.
 ///
-/// Targets MySQL 8.0+.
-fn tools() -> Vec<ToolDef> {
+/// Targets MySQL 8.0+. `max_rows` is this instance's cap for a LIMIT-less SELECT (its
+/// `maxRows`), so the description states the number the reply will actually stop at.
+fn tools(max_rows: i64) -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "mysql_query".into(),
@@ -87,7 +66,7 @@ fn tools() -> Vec<ToolDef> {
                  schema and plans). Returns {{ rowCount, rows }} for a SELECT, or {{ affectedRows, insertId, \
                  changedRows }} for DML/DDL — affectedRows counts MATCHED rows on UPDATE, and changedRows is \
                  always 0 in this build. A SELECT written without its own LIMIT is capped at \
-                 {DEFAULT_ROW_LIMIT} rows and says so in the reply — raise `limit` or write your own \
+                 {max_rows} rows and says so in the reply — raise `limit` or write your own \
                  LIMIT/OFFSET for more. NULL columns are omitted from each row (use DESCRIBE for the full \
                  column list), so on a wide table name the columns you need rather than SELECT *."
             ),
@@ -95,9 +74,10 @@ fn tools() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {
                     "sql": { "type": "string", "description": "The SQL statement to execute." },
-                    "limit": { "type": "number", "description": format!("Row cap for a LIMIT-less SELECT (default {DEFAULT_ROW_LIMIT}, max {MAX_ROW_LIMIT}).") },
+                    "limit": row_limit_arg(max_rows),
                 },
                 "required": ["sql"],
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -109,7 +89,11 @@ fn tools() -> Vec<ToolDef> {
                 "more. Pass `grep` to keep only names containing it: grep \"users\" lists p_users, users_settings, …"
             )
             .to_string(),
-            input_schema: json!({ "type": "object", "properties": { "grep": grep_arg(), "limit": limit_arg(), "page": page_arg() } }),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "grep": grep_arg(), "limit": table_limit_arg(), "page": page_arg() },
+                "additionalProperties": false,
+            }),
         },
     ]
 }
@@ -815,7 +799,7 @@ impl Engine for MysqlEngine {
     }
 
     fn tools(&self) -> Vec<ToolDef> {
-        tools()
+        tools(self.max_rows())
     }
 
     async fn call(&self, tool: &str, args: &Value) -> Result<Value, String> {

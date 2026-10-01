@@ -187,6 +187,47 @@ pub fn clamp_row_limit(requested: Option<&serde_json::Value>, fallback: i64) -> 
     n.min(MAX_ROW_LIMIT)
 }
 
+// --- tool argument schemas ----------------------------------------------------------------------
+
+/// The query tool's `limit`. `default` is the instance's own cap (its `maxRows`), so the schema
+/// states the number a LIMIT-less SELECT will actually stop at.
+pub fn row_limit_arg(default: i64) -> serde_json::Value {
+    serde_json::json!({
+        "type": "integer",
+        "minimum": 1,
+        "maximum": MAX_ROW_LIMIT,
+        "description": format!("Row cap for a LIMIT-less SELECT (default {default}, max {MAX_ROW_LIMIT})."),
+    })
+}
+
+/// The table listings' `grep`, `limit` and `page`, shared by both engines.
+pub fn grep_arg() -> serde_json::Value {
+    serde_json::json!({
+        "type": "string",
+        "description": concat!(
+            "Keep only tables whose name contains this substring (case-insensitive): \"users\" lists p_users, ",
+            "users_settings, … Optional — omit to list everything.",
+        ),
+    })
+}
+
+pub fn table_limit_arg() -> serde_json::Value {
+    serde_json::json!({
+        "type": "integer",
+        "minimum": 1,
+        "maximum": MAX_TABLE_LIMIT,
+        "description": format!("Max tables per page (default {DEFAULT_TABLE_LIMIT}, max {MAX_TABLE_LIMIT})."),
+    })
+}
+
+pub fn page_arg() -> serde_json::Value {
+    serde_json::json!({
+        "type": "integer",
+        "minimum": 0,
+        "description": "0-based page index through the filtered list (default 0) — the reply's total/more say what is left.",
+    })
+}
+
 /// Blank out string literals, quoted identifiers and comments, preserving length so offsets
 /// into the original stay valid. Keyword scanning must not be fooled by
 /// `WHERE note = 'limit 5'`.

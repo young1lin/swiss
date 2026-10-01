@@ -39,8 +39,8 @@ use swiss_host::dbbrowser::{
 use super::direct::{BoxFut, Lazy};
 use super::pg_resources::PgResources;
 use super::sql::{
-    clamp_row_limit, drop_null_columns, like_contains, limit_report, table_page_args,
-    with_row_limit, DEFAULT_ROW_LIMIT, DEFAULT_TABLE_LIMIT, MAX_ROW_LIMIT, MAX_TABLE_LIMIT,
+    clamp_row_limit, drop_null_columns, grep_arg, like_contains, limit_report, page_arg,
+    row_limit_arg, table_limit_arg, table_page_args, with_row_limit, DEFAULT_ROW_LIMIT,
 };
 use super::tool_server::{Engine, ServerMeta, ToolDef};
 
@@ -50,42 +50,22 @@ fn schema_arg() -> Value {
 fn table_arg() -> Value {
     json!({ "type": "string", "description": "Table name (unqualified)." })
 }
-fn grep_arg() -> Value {
-    json!({
-        "type": "string",
-        "description": concat!(
-            "Keep only tables whose name contains this substring (case-insensitive): \"users\" lists p_users, ",
-            "users_settings, … Optional — omit to list everything.",
-        ),
-    })
-}
-fn limit_arg() -> Value {
-    json!({
-        "type": "number",
-        "description": format!("Max tables per page (default {DEFAULT_TABLE_LIMIT}, max {MAX_TABLE_LIMIT})."),
-    })
-}
-fn page_arg() -> Value {
-    json!({
-        "type": "number",
-        "description": "0-based page index through the filtered list (default 0) — the reply's total/more say what is left.",
-    })
-}
 
 /// Three tools: run a statement, and the two things a model cannot guess — what tables exist
 /// (with sizes, so it knows what needs a LIMIT) and what columns they have.
 ///
 /// Deliberately no pg_list_indexes / pg_list_schemas / pg_explain. Each was a `pg_query` the
 /// model can write itself (pg_indexes, the schema column already in pg_list_tables, EXPLAIN),
-/// and every tool schema is re-sent on every request.
-fn tools() -> Vec<ToolDef> {
+/// and every tool schema is re-sent on every request. `max_rows` is this instance's cap for a
+/// LIMIT-less SELECT (its `maxRows`), stated as the number it is.
+fn tools(max_rows: i64) -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "pg_query".into(),
             description: format!(
                 "Run a SQL statement. Returns {{ command, rowCount, rows }} — so an UPDATE/DELETE reports how \
                  many rows it actually touched. A SELECT written without its own LIMIT is capped at \
-                 {DEFAULT_ROW_LIMIT} rows and says so in the reply — raise `limit` or write your own \
+                 {max_rows} rows and says so in the reply — raise `limit` or write your own \
                  LIMIT/OFFSET to page through more. NULL columns are omitted from each row (pg_describe_table \
                  gives the full column list), so on a wide table name the columns you need rather than SELECT *."
             ),
@@ -93,9 +73,10 @@ fn tools() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {
                     "sql": { "type": "string", "description": "The SQL statement to execute." },
-                    "limit": { "type": "number", "description": format!("Row cap for a LIMIT-less SELECT (default {DEFAULT_ROW_LIMIT}, max {MAX_ROW_LIMIT}).") },
+                    "limit": row_limit_arg(max_rows),
                 },
                 "required": ["sql"],
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -109,7 +90,8 @@ fn tools() -> Vec<ToolDef> {
             .to_string(),
             input_schema: json!({
                 "type": "object",
-                "properties": { "schema": schema_arg(), "grep": grep_arg(), "limit": limit_arg(), "page": page_arg() }
+                "properties": { "schema": schema_arg(), "grep": grep_arg(), "limit": table_limit_arg(), "page": page_arg() },
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -126,6 +108,7 @@ fn tools() -> Vec<ToolDef> {
                     "schema": { "type": "string", "description": "Schema name (default 'public')." },
                 },
                 "required": ["table"],
+                "additionalProperties": false,
             }),
         },
     ]
@@ -943,7 +926,7 @@ impl Engine for PgEngine {
     }
 
     fn tools(&self) -> Vec<ToolDef> {
-        tools()
+        tools(self.max_rows())
     }
 
     async fn call(&self, tool: &str, args: &Value) -> Result<Value, String> {
