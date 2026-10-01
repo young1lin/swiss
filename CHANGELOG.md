@@ -6,7 +6,9 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
-The first release, 0.1.0.
+## [0.1.0] - 2026-10-02
+
+The first release.
 
 ### Added
 - The gateway: every MCP an AI client needs on `/mcp/<name>` behind a bearer token — stdio
@@ -34,3 +36,6 @@ The first release, 0.1.0.
 - Groups on every list, start at sign-in (`swiss autostart`), `swiss update` to check for a new
   release, `swiss export` / `import` to move machines, and the embedded `swiss` and
   `swiss-remote` AI skills (`swiss skill install`).
+
+[Unreleased]: https://github.com/young1lin/swiss/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/young1lin/swiss/releases/tag/v0.1.0
