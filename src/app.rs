@@ -311,15 +311,28 @@ fn via_socket(req: &Request) -> bool {
 }
 
 /// The admin session gate (SPEC §host.session), inside the loopback guard: every /api/* request needs
-/// the CLI key or a signed session cookie. Everything else passes - the panel shell answers
-/// its own sign-in (panel_root), /admin/* is code without data, /health is liveness, and
-/// /mcp/* has its own bearer gate.
+/// the CLI key or a signed session cookie, and the cookie counts only from the panel's own pages
+/// (`session::cross_origin_reason`) - the browser attaches it for any port of 127.0.0.1.
+/// Everything else passes - the panel shell answers its own sign-in (panel_root), /admin/* is
+/// code without data, /health is liveness, and /mcp/* has its own bearer gate.
 async fn session_gate(State(ctx): State<Arc<AppContext>>, req: Request, next: Next) -> Response {
     if !req.uri().path().starts_with("/api/") || !via_socket(&req) {
         return next.run(req).await;
     }
     match ctx.session.get() {
-        Some(session) if session.authorized(req.headers()) => next.run(req).await,
+        Some(session) if session.cli_key_ok(req.headers()) => next.run(req).await,
+        Some(session) if session.cookie_ok(req.headers()) => {
+            match crate::session::cross_origin_reason(req.method(), req.headers()) {
+                None => next.run(req).await,
+                Some(reason) => {
+                    swiss_core::log::warn(
+                        "refused another page's use of the panel session",
+                        Some(json!({ "reason": reason, "method": req.method().as_str(), "url": req.uri().path() })),
+                    );
+                    admin_error(StatusCode::FORBIDDEN, &reason)
+                }
+            }
+        }
         _ => admin_error(
             StatusCode::UNAUTHORIZED,
             "not signed in - run `swiss open` to sign this browser in",
