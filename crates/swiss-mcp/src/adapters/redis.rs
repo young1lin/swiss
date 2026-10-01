@@ -18,9 +18,9 @@
 //! connection behind a purposeful three-tool set, with the command policy that keeps a shared
 //! connection shared.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
@@ -61,8 +61,10 @@ fn tools(allow_destructive: bool, allow_eval: bool) -> Vec<ToolDef> {
             description: concat!(
                 "Incrementally list keys matching a glob pattern (cursor-based SCAN — safe on large ",
                 "instances, unlike KEYS, which blocks the server and can return hundreds of thousands of ",
-                "keys). Returns { cursor, keys, done }; pass the returned cursor back to continue until ",
-                "done is true.",
+                "keys). One call runs SCAN rounds until it holds about `limit` keys, the keyspace ends, or ",
+                "about 2 s pass — so it can return a few more than limit, or under a sparse pattern fewer, ",
+                "even none, with done false. Returns { cursor, keys, done }; while done is false, pass the ",
+                "cursor back to continue. A key can repeat across calls (SCAN's own guarantee).",
             )
             .to_string(),
             input_schema: json!({
@@ -70,11 +72,11 @@ fn tools(allow_destructive: bool, allow_eval: bool) -> Vec<ToolDef> {
                 "properties": {
                     "pattern": { "type": "string", "description": "Glob pattern, e.g. `session:*`. Omit for all keys." },
                     "cursor": { "type": "string", "description": "Cursor from a previous call. Omit to start." },
-                    "count": {
+                    "limit": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": SCAN_COUNT_MAX,
-                        "description": format!("Keys scanned per iteration (default 100, max {SCAN_COUNT_MAX})."),
+                        "maximum": SCAN_LIMIT_MAX,
+                        "description": format!("Keys to collect before returning (default {SCAN_LIMIT_DEFAULT}, max {SCAN_LIMIT_MAX})."),
                     },
                     "type": { "type": "string", "enum": SCAN_TYPES, "description": "Only keys of this type." },
                 },
@@ -222,9 +224,30 @@ const SCRIPT_ADMIN: &[&str] = &["SCRIPT", "FUNCTION"];
 
 /// TYPE values SCAN can filter by — validated before a socket is opened, so a typo costs nothing.
 pub const SCAN_TYPES: &[&str] = &["string", "hash", "list", "set", "zset", "stream"];
-/// Ceiling on redis_scan's COUNT hint: past it, one round blocks the server for longer than a
+/// Keys one redis_scan call collects by default, and at most — the output budget's item cap.
+const SCAN_LIMIT_DEFAULT: i64 = 100;
+const SCAN_LIMIT_MAX: i64 = 1000;
+/// Ceiling on one round's COUNT hint: past it, one round blocks the server for longer than a
 /// page is worth.
 const SCAN_COUNT_MAX: i64 = 10_000;
+/// Rounds, and wall time, one redis_scan call spends before handing the cursor back. A raw SCAN
+/// round under a sparse pattern often matches nothing while the cursor is far from done, and a
+/// model reading `keys: []` concludes there are none — so the call keeps scanning, but never
+/// for long: a huge keyspace still pages, the cursor carrying the rest.
+const SCAN_ROUNDS_MAX: usize = 32;
+const SCAN_BUDGET: Duration = Duration::from_secs(2);
+
+/// The next round's COUNT hint, scaled by how densely the last round matched: a sparse pattern
+/// widens fast, a dense one stops close to `limit`, and a round that matched nothing doubles.
+fn next_scan_count(count: i64, found: usize, wanted: usize) -> i64 {
+    let next = if found == 0 {
+        count.saturating_mul(2)
+    } else {
+        let found = found as i64;
+        (count.saturating_mul(wanted as i64) + found - 1) / found
+    };
+    next.clamp(1, SCAN_COUNT_MAX)
+}
 
 /// Commands rejected outright, each with the reason the model sees. A rejection has to say what
 /// to do instead, or the model simply tries the next bad idea: an unexplained "rejected" turns
@@ -1644,14 +1667,12 @@ impl RedisEngine {
             .map(value_string)
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "0".into());
-        let count = args
-            .get("count")
+        let limit = args
+            .get("limit")
             .and_then(as_i64)
-            // Node's `Number(...) || 100`: a zero (or unparseable) count is "not sent" — SCAN
-            // with COUNT 0 is a protocol error, never a useful ask.
             .filter(|n| *n > 0)
-            .unwrap_or(100)
-            .clamp(1, SCAN_COUNT_MAX);
+            .unwrap_or(SCAN_LIMIT_DEFAULT)
+            .clamp(1, SCAN_LIMIT_MAX) as usize;
         let pattern = args
             .get("pattern")
             .map(value_string)
@@ -1669,33 +1690,52 @@ impl RedisEngine {
             ));
         }
         let client = self.conn.get().await?;
-        // Through the raw channel: the TYPE filter only exists as an option token, and SCAN's
-        // raw reply is already [cursor, keys].
-        let mut scan_args: Vec<String> = vec![
-            cursor,
-            "MATCH".into(),
-            pattern,
-            "COUNT".into(),
-            count.to_string(),
-        ];
-        if !type_.is_empty() {
-            scan_args.push("TYPE".into());
-            scan_args.push(type_);
+        let started = Instant::now();
+        let mut cursor = cursor;
+        let mut count = limit as i64;
+        let mut keys: Vec<String> = Vec::new();
+        // SCAN may hand a key back twice within one walk; one call's list stays unique.
+        let mut seen: HashSet<String> = HashSet::new();
+        for _ in 0..SCAN_ROUNDS_MAX {
+            // Through the raw channel: the TYPE filter only exists as an option token, and
+            // SCAN's raw reply is already [cursor, keys].
+            let mut scan_args: Vec<String> = vec![
+                cursor.clone(),
+                "MATCH".into(),
+                pattern.clone(),
+                "COUNT".into(),
+                count.to_string(),
+            ];
+            if !type_.is_empty() {
+                scan_args.push("TYPE".into());
+                scan_args.push(type_.clone());
+            }
+            let refs: Vec<&str> = scan_args.iter().map(String::as_str).collect();
+            let reply = RedisHandle::call(&client, "SCAN", &refs).await?;
+            let (next, batch) = match &reply {
+                Value::Array(pair) if pair.len() >= 2 => (
+                    value_string(&pair[0]),
+                    match &pair[1] {
+                        Value::Array(items) => items.iter().map(value_string).collect::<Vec<_>>(),
+                        _ => Vec::new(),
+                    },
+                ),
+                _ => ("0".into(), Vec::new()),
+            };
+            cursor = next;
+            let found = batch.len();
+            for key in batch {
+                if seen.insert(key.clone()) {
+                    keys.push(key);
+                }
+            }
+            if cursor == "0" || keys.len() >= limit || started.elapsed() >= SCAN_BUDGET {
+                break;
+            }
+            count = next_scan_count(count, found, limit - keys.len());
         }
-        let refs: Vec<&str> = scan_args.iter().map(String::as_str).collect();
-        let reply = RedisHandle::call(&client, "SCAN", &refs).await?;
-        let (next, keys) = match &reply {
-            Value::Array(pair) if pair.len() >= 2 => (
-                value_string(&pair[0]),
-                match &pair[1] {
-                    Value::Array(items) => items.iter().map(value_string).collect::<Vec<_>>(),
-                    _ => Vec::new(),
-                },
-            ),
-            _ => ("0".into(), Vec::new()),
-        };
-        let done = next == "0";
-        Ok(json!({ "cursor": next, "keys": keys, "done": done }))
+        let done = cursor == "0";
+        Ok(json!({ "cursor": cursor, "keys": keys, "done": done }))
     }
 
     async fn call_read(&self, args: &Value) -> Result<Value, String> {
@@ -1831,6 +1871,22 @@ impl Engine for RedisEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scan_round_widens_with_how_sparse_the_pattern_matched() {
+        // Nothing matched: double, up to the ceiling.
+        assert_eq!(next_scan_count(100, 0, 100), 200);
+        assert_eq!(next_scan_count(SCAN_COUNT_MAX, 0, 100), SCAN_COUNT_MAX);
+        // Dense: 95 of 100 came back, so the last 5 need a narrow round.
+        assert_eq!(next_scan_count(100, 95, 5), 6);
+        // Sparse: one match per hundred slots, 99 still wanted.
+        assert_eq!(next_scan_count(100, 1, 99), 9900);
+        assert_eq!(next_scan_count(100, 1, 999), SCAN_COUNT_MAX);
+        let scan = tools(false, false).remove(0);
+        assert_eq!(scan.name, "redis_scan");
+        assert_eq!(scan.input_schema["properties"]["limit"]["maximum"], json!(SCAN_LIMIT_MAX));
+        assert!(scan.input_schema["properties"].get("count").is_none());
+    }
 
     #[tokio::test]
     async fn a_refused_password_answers_as_an_auth_failure_not_a_timeout() {

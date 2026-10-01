@@ -97,7 +97,7 @@ fn strip_trailing_semicolon(s: &str) -> &str {
 /// A `SELECT *` on a wide table spends most of its reply saying nothing: one row of a 65-column
 /// table is ~2 KB, and a third of the columns can be `"col": null`. An absent key carries the
 /// same information for free. Both query tools state this in their description, and
-/// `pg_describe_table` / `DESCRIBE` remain the way to see the full column list.
+/// `pg_describe_table` / `mysql_describe_table` remain the way to see the full column list.
 pub fn drop_null_columns(rows: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
     rows.into_iter()
         .map(|row| match row {
@@ -552,6 +552,111 @@ fn word_index_from(haystack: &str, word: &str, from: usize) -> Option<usize> {
     None
 }
 
+// --- diagnostics --------------------------------------------------------------------------------
+
+/// Rows one pg_inspect / mysql_inspect check returns when the caller passes no limit.
+pub const DEFAULT_INSPECT_LIMIT: i64 = 20;
+/// Ceiling on a check's rows: a diagnosis reads the worst offenders, not the whole catalog.
+pub const MAX_INSPECT_LIMIT: i64 = 100;
+
+/// One built-in check of pg_inspect / mysql_inspect, in the engine's own dialect. The row
+/// query's last placeholder is the row limit.
+#[derive(Debug)]
+pub struct Check {
+    pub name: &'static str,
+    /// What it reports — one clause of the tool description.
+    pub about: &'static str,
+    pub rows: Option<&'static str>,
+    /// A one-row query whose columns become the reply's `summary`.
+    pub summary: Option<&'static str>,
+    /// What the numbers do not say on their own, carried in the reply.
+    pub note: Option<&'static str>,
+}
+
+/// The inspect tool's description: `intro`, every check as `name — about`, then `outro`.
+pub fn inspect_description(intro: &str, checks: &[Check], outro: &str) -> String {
+    let list: Vec<String> = checks
+        .iter()
+        .map(|c| format!("{} — {}", c.name, c.about))
+        .collect();
+    format!("{intro} Checks: {}. {outro}", list.join("; "))
+}
+
+pub fn inspect_schema(checks: &[Check]) -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "check": {
+                "type": "string",
+                "enum": checks.iter().map(|c| c.name).collect::<Vec<_>>(),
+                "description": "Which diagnostic to run (the tool description says what each reports).",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_INSPECT_LIMIT,
+                "description": format!(
+                    "Max rows (default {DEFAULT_INSPECT_LIMIT}, max {MAX_INSPECT_LIMIT})."
+                ),
+            },
+        },
+        "required": ["check"],
+        "additionalProperties": false,
+    })
+}
+
+/// The check a call names, and its clamped row limit. The enum is checked here: the tool layer
+/// refuses unknown argument names, not values outside an enum.
+pub fn inspect_args<'a>(
+    args: &serde_json::Value,
+    checks: &'a [Check],
+) -> Result<(&'a Check, i64), String> {
+    let name = args
+        .get("check")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let names = || checks.iter().map(|c| c.name).collect::<Vec<_>>().join(", ");
+    if name.is_empty() {
+        return Err(format!("check is required — one of {}", names()));
+    }
+    let check = checks
+        .iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| format!("unknown check \"{name}\" — one of {}", names()))?;
+    let limit = match args.get("limit").and_then(as_i64) {
+        Some(n) if n > 0 => n.min(MAX_INSPECT_LIMIT),
+        _ => DEFAULT_INSPECT_LIMIT,
+    };
+    Ok((check, limit))
+}
+
+/// `{ check, rows?, summary?, note? }`, with NULL fields dropped from each row and the summary.
+pub fn inspect_reply(
+    check: &Check,
+    rows: Option<Vec<serde_json::Map<String, serde_json::Value>>>,
+    summary: Option<serde_json::Map<String, serde_json::Value>>,
+) -> serde_json::Value {
+    use serde_json::Value;
+    let mut out = serde_json::Map::new();
+    out.insert("check".into(), Value::from(check.name));
+    if let Some(rows) = rows {
+        let rows = drop_null_columns(rows.into_iter().map(Value::Object).collect());
+        out.insert("rows".into(), Value::Array(rows));
+    }
+    if let Some(summary) = summary {
+        let summary: serde_json::Map<_, _> =
+            summary.into_iter().filter(|(_, v)| !v.is_null()).collect();
+        if !summary.is_empty() {
+            out.insert("summary".into(), Value::Object(summary));
+        }
+    }
+    if let Some(note) = check.note {
+        out.insert("note".into(), Value::from(note));
+    }
+    Value::Object(out)
+}
+
 #[cfg(test)]
 mod tests {
     // Ported from the guards the Node build's sql.test.ts pinned.
@@ -653,5 +758,79 @@ mod tests {
         ] {
             assert!(!is_row_returning(sql), "expected OK-packet: {sql}");
         }
+    }
+
+    const CHECKS: &[Check] = &[
+        Check {
+            name: "activity",
+            about: "running statements",
+            rows: Some("SELECT 1 LIMIT ?"),
+            summary: None,
+            note: None,
+        },
+        Check {
+            name: "cache",
+            about: "hit ratios",
+            rows: None,
+            summary: Some("SELECT 1"),
+            note: Some("since start"),
+        },
+    ];
+
+    #[test]
+    fn inspect_args_name_a_known_check_and_clamp_the_limit() {
+        let args = serde_json::json!({ "check": "cache" });
+        let (check, limit) = inspect_args(&args, CHECKS).unwrap();
+        assert_eq!((check.name, limit), ("cache", DEFAULT_INSPECT_LIMIT));
+        let args = serde_json::json!({ "check": "activity", "limit": 5000 });
+        assert_eq!(inspect_args(&args, CHECKS).unwrap().1, MAX_INSPECT_LIMIT);
+        let args = serde_json::json!({ "check": "activity", "limit": 0 });
+        assert_eq!(inspect_args(&args, CHECKS).unwrap().1, DEFAULT_INSPECT_LIMIT);
+        // The tool layer does not enforce the enum; a typo must say what exists.
+        let err = inspect_args(&serde_json::json!({ "check": "lock" }), CHECKS).unwrap_err();
+        assert!(err.contains("activity, cache"), "{err}");
+        let err = inspect_args(&serde_json::json!({}), CHECKS).unwrap_err();
+        assert!(err.starts_with("check is required"), "{err}");
+    }
+
+    #[test]
+    fn inspect_schema_and_description_list_every_check() {
+        let schema = inspect_schema(CHECKS);
+        assert_eq!(
+            schema["properties"]["check"]["enum"],
+            serde_json::json!(["activity", "cache"])
+        );
+        assert_eq!(schema["required"], serde_json::json!(["check"]));
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(schema["properties"]["limit"]["maximum"], MAX_INSPECT_LIMIT);
+        let text = inspect_description("Diagnose.", CHECKS, "Read-only.");
+        assert_eq!(
+            text,
+            "Diagnose. Checks: activity — running statements; cache — hit ratios. Read-only."
+        );
+    }
+
+    #[test]
+    fn inspect_reply_drops_nulls_and_carries_the_note() {
+        let row = serde_json::json!({ "pid": 7, "query": null });
+        let summary = serde_json::json!({ "hit_pct": 99.5, "size": null });
+        let reply = inspect_reply(
+            &CHECKS[1],
+            Some(vec![row.as_object().unwrap().clone()]),
+            Some(summary.as_object().unwrap().clone()),
+        );
+        assert_eq!(
+            reply,
+            serde_json::json!({
+                "check": "cache",
+                "rows": [{ "pid": 7 }],
+                "summary": { "hit_pct": 99.5 },
+                "note": "since start",
+            })
+        );
+        // No row query, an all-NULL summary and no note leave only the check's name.
+        let empty = serde_json::json!({ "x": null });
+        let reply = inspect_reply(&CHECKS[0], None, Some(empty.as_object().unwrap().clone()));
+        assert_eq!(reply, serde_json::json!({ "check": "activity" }));
     }
 }

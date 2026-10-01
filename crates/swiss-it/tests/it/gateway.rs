@@ -255,8 +255,11 @@ async fn mysql_group_round_trips_through_the_real_gateway() {
     let g = boot(vec![("l2m", f.def.clone())]).await;
     let c = mcp(&g, "l2m").await;
 
-    // The two-tool contract, exactly - no extras smuggled in, none missing.
-    assert_eq!(tool_names(&c).await, ["mysql_list_tables", "mysql_query"]);
+    // The four-tool contract, exactly - no extras smuggled in, none missing.
+    assert_eq!(
+        tool_names(&c).await,
+        ["mysql_describe_table", "mysql_inspect", "mysql_list_tables", "mysql_query"]
+    );
 
     // A real query over the whole path: rmcp client -> HTTP -> adapter -> pool -> seed.
     let rows = call(
@@ -275,6 +278,41 @@ async fn mysql_group_round_trips_through_the_real_gateway() {
     let text = tables.to_string();
     assert!(text.contains("users"), "{tables}");
     assert!(text.contains("active_users"), "the view too: {tables}");
+    // The database is named once, at the top - not repeated on every row.
+    assert_eq!(tables["database"], f.def["database"], "{tables}");
+    assert!(tables["tables"][0].get("schema").is_none(), "{tables}");
+
+    // Describe hands back the server's own DDL, plus the foreign keys pointing IN,
+    // which no DDL of this table shows.
+    let db = f.def["database"].as_str().expect("the seeded database");
+    let users = call(&c, "mysql_describe_table", json!({ "table": "users" })).await;
+    assert_eq!(users["type"], "table", "{users}");
+    let ddl = users["ddl"].as_str().unwrap_or_default();
+    assert!(ddl.starts_with("CREATE TABLE `users`"), "{users}");
+    assert!(ddl.contains("PRIMARY KEY (`id`)"), "{users}");
+    assert_eq!(
+        users["referencedBy"],
+        json!([{
+            "table": format!("{db}.orders"),
+            "name": "fk_orders_user",
+            "definition": format!("FOREIGN KEY (user_id) REFERENCES {db}.users (id)"),
+        }]),
+        "{users}"
+    );
+    let view = call(&c, "mysql_describe_table", json!({ "table": "active_users" })).await;
+    assert_eq!(view["type"], "view", "{view}");
+    assert!(view["ddl"].as_str().unwrap_or_default().contains("VIEW"), "{view}");
+    assert!(view.get("size").is_none(), "a view has no storage: {view}");
+    let miss = call(&c, "mysql_describe_table", json!({ "table": "nope" })).await;
+    assert!(miss.as_str().is_some_and(|e| e.contains("mysql_list_tables")), "{miss}");
+
+    // Diagnostics read the server's own views; this login has only its database, and
+    // the refusal names the grants that fix it.
+    let denied = call(&c, "mysql_inspect", json!({ "check": "activity" })).await;
+    assert!(
+        denied.as_str().is_some_and(|e| e.contains("PROCESS and SELECT on performance_schema")),
+        "{denied}"
+    );
 
     // The write contract as the code ships it (SPEC §testing.it: record the present):
     // mysql_query is NOT read-only - UPDATE runs, reports matched rows, and lands.
@@ -322,7 +360,7 @@ async fn pg_group_round_trips_through_the_real_gateway() {
 
     assert_eq!(
         tool_names(&c).await,
-        ["pg_describe_table", "pg_list_tables", "pg_query"]
+        ["pg_describe_table", "pg_inspect", "pg_list_tables", "pg_query"]
     );
 
     let rows = call(
@@ -351,6 +389,37 @@ async fn pg_group_round_trips_through_the_real_gateway() {
     let described = call(&c, "pg_describe_table", json!({ "table": "users" })).await;
     let text = described.to_string();
     assert!(text.contains("user_status"), "{described}");
+    // One call carries the keys both ways: the primary key, and every table whose
+    // foreign key points here - across schemas.
+    assert_eq!(described["schema"], "public", "found on the search_path: {described}");
+    assert_eq!(described["primaryKey"], json!(["id"]), "{described}");
+    let referencing: Vec<&str> = described["referencedBy"]
+        .as_array()
+        .map(|r| r.iter().filter_map(|e| e["table"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        referencing.contains(&"public.orders") && referencing.contains(&"app.documents"),
+        "{described}"
+    );
+    // A schema outside the search_path is named apart; the partial index keeps its
+    // predicate, and the outgoing key names its target.
+    let log = call(
+        &c,
+        "pg_describe_table",
+        json!({ "schema": "audit", "table": "log_entries" }),
+    )
+    .await;
+    let index = log["indexes"]
+        .as_array()
+        .and_then(|i| i.iter().find(|i| i["name"] == "log_entries_noted_at"))
+        .unwrap_or_else(|| panic!("the partial index: {log}"));
+    assert!(
+        index["definition"].as_str().is_some_and(|d| d.contains("WHERE (note IS NOT NULL)")),
+        "{log}"
+    );
+    assert!(log["foreignKeys"].to_string().contains("app.documents"), "{log}");
+    let dotted = call(&c, "pg_describe_table", json!({ "table": "audit.log_entries" })).await;
+    assert!(dotted.as_str().is_some_and(|e| e.contains("pass the parts apart")), "{dotted}");
 
     // The write contract as the code ships it: like mysql, pg_query runs DML.
     let upd = call(
@@ -397,33 +466,44 @@ async fn redis_group_round_trips_through_the_real_gateway() {
     let read = call(&c, "redis_read", json!({ "key": "ns:h:profile" })).await;
     assert!(read.to_string().contains("f01"), "{read}");
 
-    // The scan tool narrows by pattern server-side. One page may legitimately be
-    // empty (SCAN skips buckets), so walk the cursor to done like the panel does.
-    let mut cursor = String::new();
-    let mut walked = Vec::new();
+    // The scan tool narrows by pattern server-side and keeps scanning until it holds
+    // `limit` keys or the keyspace ends: a raw SCAN round under this sparse pattern
+    // mostly answers `keys: []`, but one call here walks all ~3,000 keys.
+    let scan = call(&c, "redis_scan", json!({ "pattern": "tree:l1:l2:*" })).await;
+    assert_eq!(scan["done"], json!(true), "one call finishes a sparse walk: {scan}");
+    let names: Vec<&str> = scan["keys"]
+        .as_array()
+        .map(|k| k.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    assert!(
+        names.contains(&"tree:l1:l2:leaf1") && names.contains(&"tree:l1:l2:leaf2"),
+        "the l2 subtree walks out: {scan}"
+    );
+
+    // `limit` pages a dense walk: every key, each page about `limit` keys.
+    let size = call(&c, "redis_command", json!({ "command": "DBSIZE" })).await;
+    let size = size.as_u64().unwrap_or_else(|| panic!("DBSIZE: {size}")) as usize;
+    let mut cursor = Value::Null;
+    let mut walked = std::collections::HashSet::new();
+    let mut calls = 0;
     loop {
-        let mut args = json!({ "pattern": "tree:l1:l2:*" });
-        if !cursor.is_empty() {
-            args["cursor"] = json!(cursor);
+        let mut args = json!({ "limit": 500 });
+        if !cursor.is_null() {
+            args["cursor"] = cursor.clone();
         }
-        let scan = call(&c, "redis_scan", args).await;
-        for k in scan["keys"].as_array().cloned().unwrap_or_default() {
-            walked.push(k);
-        }
-        if scan["done"] == json!(true) {
+        let page = call(&c, "redis_scan", args).await;
+        let keys = page["keys"].as_array().cloned().unwrap_or_default();
+        calls += 1;
+        let done = page["done"] == json!(true);
+        assert!(done || keys.len() >= 500, "a page short of its limit: {}", keys.len());
+        walked.extend(keys.into_iter().filter_map(|k| k.as_str().map(str::to_string)));
+        if done {
             break;
         }
-        cursor = scan["cursor"].as_str().unwrap_or_default().to_string();
+        cursor = page["cursor"].clone();
     }
-    let names: Vec<String> = walked
-        .iter()
-        .map(|k| k["key"].as_str().or(k.as_str()).unwrap_or_default().to_string())
-        .collect();
-    assert!(
-        names.contains(&"tree:l1:l2:leaf1".to_string())
-            && names.contains(&"tree:l1:l2:leaf2".to_string()),
-        "the l2 subtree walks out: {names:?}"
-    );
+    assert_eq!(walked.len(), size, "the walk reaches every key");
+    assert!(calls <= size.div_ceil(500) + 1, "{calls} calls for {size} keys");
 
     // One resource: the keyspace overview, readable.
     let res = c.list_resources(None).await.expect("resources/list");
@@ -436,6 +516,271 @@ async fn redis_group_round_trips_through_the_real_gateway() {
         .expect("resources/read");
     assert!(!read.contents.is_empty());
 }
+
+// --- diagnostics: every check against a real server -----------------------------------------
+
+/// The rows of an inspect reply.
+fn inspect_rows(reply: &Value) -> Vec<Value> {
+    reply["rows"].as_array().cloned().unwrap_or_default()
+}
+
+/// Ask `check` until `ready` accepts its rows - lock waits and table statistics land a
+/// moment after the statement that causes them.
+async fn inspect_until(
+    c: &rmcp::service::RunningService<rmcp::RoleClient, NoopClient>,
+    tool: &str,
+    check: &str,
+    ready: impl Fn(&[Value]) -> bool,
+) -> Value {
+    let mut reply = Value::Null;
+    for _ in 0..100 {
+        reply = call(c, tool, json!({ "check": check, "limit": 100 })).await;
+        if ready(&inspect_rows(&reply)) {
+            return reply;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("{check} never showed what the test set up: {reply}");
+}
+
+/// The first row whose `field` (a string) starts with `prefix`.
+fn row_with<'a>(rows: &'a [Value], field: &str, prefix: &str) -> Option<&'a Value> {
+    rows.iter()
+        .find(|r| r[field].as_str().is_some_and(|v| v.starts_with(prefix)))
+}
+
+#[tokio::test]
+async fn mysql_inspect_answers_every_check_for_a_monitoring_login() {
+    let f = fresh(Kind::Mysql, "l2g_mi").await;
+    let db = f.def["database"].as_str().expect("the seeded database").to_string();
+    let root_url = engine(Kind::Mysql).await.root_url.clone();
+    let db_url = format!("{root_url}/{db}");
+    // The grants mysql_inspect's description asks for, on a login of its own.
+    let mut root = sqlx::MySqlConnection::connect(&root_url).await.expect("root connects");
+    for sql in [
+        "CREATE USER IF NOT EXISTS 'it_ops'@'%' IDENTIFIED BY 'it_ops'".to_string(),
+        "GRANT PROCESS ON *.* TO 'it_ops'@'%'".to_string(),
+        "GRANT SELECT ON performance_schema.* TO 'it_ops'@'%'".to_string(),
+        format!("GRANT ALL PRIVILEGES ON `{db}`.* TO 'it_ops'@'%'"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&mut root).await.expect("grant");
+    }
+    let mut def = f.def.clone();
+    def["user"] = json!("it_ops");
+    def["password"] = json!("it_ops");
+    let g = boot(vec![("l2mi", def)]).await;
+    let c = mcp(&g, "l2mi").await;
+
+    // One open transaction blocks two sessions: a row lock and a metadata lock.
+    let mut blocker = sqlx::MySqlConnection::connect(&db_url).await.expect("blocker");
+    let blocker_id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()")
+        .fetch_one(&mut blocker)
+        .await
+        .expect("connection id");
+    let mut tx = blocker.begin().await.expect("begin");
+    sqlx::query("SELECT id FROM users WHERE id = 1 FOR UPDATE")
+        .fetch_all(&mut *tx)
+        .await
+        .expect("row lock");
+    sqlx::query("SELECT COUNT(*) FROM events").fetch_all(&mut *tx).await.expect("events read");
+    let waiter = |setting: &'static str, sql: &'static str| {
+        let url = db_url.clone();
+        tokio::spawn(async move {
+            let mut w = sqlx::MySqlConnection::connect(&url).await.expect("waiter connects");
+            sqlx::query(setting).execute(&mut w).await.expect("bound the wait");
+            sqlx::query(sql).execute(&mut w).await.map(|_| ())
+        })
+    };
+    let row_wait = waiter(
+        "SET SESSION innodb_lock_wait_timeout = 30",
+        "UPDATE users SET name = name WHERE id = 1",
+    );
+    let mdl_wait = waiter(
+        "SET SESSION lock_wait_timeout = 30",
+        "ALTER TABLE events ADD COLUMN probe INT NULL",
+    );
+    let locks = inspect_until(&c, "mysql_inspect", "locks", |rows| {
+        rows.iter().any(|r| r["kind"] == "row") && rows.iter().any(|r| r["kind"] == "metadata")
+    })
+    .await;
+    let rows = inspect_rows(&locks);
+    let row = row_with(&rows, "waiting_query", "UPDATE users").expect("the row wait");
+    assert_eq!(row["kind"], "row", "{locks}");
+    assert_eq!(row["locked"], json!(format!("{db}.users")), "{locks}");
+    assert_eq!(row["blocking_pid"], json!(blocker_id), "{locks}");
+    let mdl = row_with(&rows, "waiting_query", "ALTER TABLE events").expect("the metadata wait");
+    assert_eq!(mdl["kind"], "metadata", "{locks}");
+    assert_eq!(mdl["locked"], json!(format!("{db}.events")), "{locks}");
+    assert_eq!(mdl["blocking_pid"], json!(blocker_id), "{locks}");
+    // The blocker sleeps between statements, and activity still lists it: it holds a
+    // transaction open.
+    let activity = call(&c, "mysql_inspect", json!({ "check": "activity" })).await;
+    assert!(
+        inspect_rows(&activity).iter().any(|r| r["id"] == json!(blocker_id)),
+        "{activity}"
+    );
+    tx.rollback().await.expect("release");
+    row_wait.await.expect("joined").expect("the row wait completes");
+    mdl_wait.await.expect("joined").expect("the metadata wait completes");
+
+    // Work for the counters: a full scan of the PK-less events table.
+    call(
+        &c,
+        "mysql_query",
+        json!({ "sql": "SELECT COUNT(*) AS n FROM events WHERE kind = 'probe'" }),
+    )
+    .await;
+    let scans = inspect_until(&c, "mysql_inspect", "table_scans", |rows| {
+        rows.iter().any(|r| r["table"] == "events")
+    })
+    .await;
+    let events = inspect_rows(&scans).into_iter().find(|r| r["table"] == "events");
+    assert!(events.is_some_and(|r| r["rows_read_without_index"].is_u64()), "{scans}");
+
+    let mut replies = std::collections::HashMap::new();
+    for check in [
+        "activity",
+        "locks",
+        "top_queries",
+        "table_scans",
+        "indexes",
+        "fragmentation",
+        "cache",
+        "connections",
+    ] {
+        let reply = call(&c, "mysql_inspect", json!({ "check": check })).await;
+        assert_eq!(reply["check"], check, "{reply}");
+        replies.insert(check, reply);
+    }
+    let top = &replies["top_queries"];
+    assert!(inspect_rows(top).first().is_some_and(|r| r["calls"].is_u64()), "{top}");
+    let indexes = &replies["indexes"];
+    assert!(
+        inspect_rows(indexes)
+            .iter()
+            .any(|r| r["problem"] == "no primary key" && r["table"] == "events"),
+        "{indexes}"
+    );
+    let cache = &replies["cache"]["summary"];
+    assert!(cache["hit_pct"].is_number() && cache["size"].is_string(), "{cache}");
+    let conns = &replies["connections"]["summary"];
+    assert!(conns["connected"].as_u64().is_some_and(|n| n >= 1), "{conns}");
+    assert!(conns["max_connections"].is_u64(), "{conns}");
+}
+
+#[tokio::test]
+async fn pg_inspect_answers_every_check() {
+    let f = fresh(Kind::Postgres, "l2g_pi").await;
+    let url = f.def["url"].as_str().expect("the def url").to_string();
+    let g = boot(vec![("l2pi", f.def.clone())]).await;
+    let c = mcp(&g, "l2pi").await;
+
+    // top_queries names what it is missing, then reads the extension once it exists.
+    let missing = call(&c, "pg_inspect", json!({ "check": "top_queries" })).await;
+    assert!(
+        missing.as_str().is_some_and(|e| e.contains("CREATE EXTENSION pg_stat_statements")),
+        "{missing}"
+    );
+    let root_url = engine(Kind::Postgres).await.root_url.clone();
+    let (server, _) = root_url.rsplit_once('/').expect("a database in the root url");
+    let mut root = sqlx::PgConnection::connect(&format!("{server}/{}", url_db(&f.def)))
+        .await
+        .expect("root connects to the test database");
+    sqlx::query("CREATE EXTENSION pg_stat_statements")
+        .execute(&mut root)
+        .await
+        .expect("the extension installs");
+
+    // One open transaction blocks two sessions: a row lock and a table lock. All three
+    // are this login's own, so pg_stat_activity shows their statements.
+    let mut blocker = sqlx::PgConnection::connect(&url).await.expect("blocker");
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut blocker)
+        .await
+        .expect("backend pid");
+    let mut tx = blocker.begin().await.expect("begin");
+    sqlx::query("UPDATE users SET name = name WHERE id = 1")
+        .execute(&mut *tx)
+        .await
+        .expect("row lock");
+    sqlx::query("SELECT count(*) FROM events").fetch_all(&mut *tx).await.expect("events read");
+    let waiter = |sql: &'static str| {
+        let url = url.clone();
+        tokio::spawn(async move {
+            let mut w = sqlx::PgConnection::connect(&url).await.expect("waiter connects");
+            sqlx::query("SET lock_timeout = '30s'").execute(&mut w).await.expect("bound");
+            sqlx::query(sql).execute(&mut w).await.map(|_| ())
+        })
+    };
+    let row_wait = waiter("UPDATE users SET name = name WHERE id = 1");
+    let table_wait = waiter("ALTER TABLE events ADD COLUMN probe int");
+    let locks = inspect_until(&c, "pg_inspect", "locks", |rows| {
+        row_with(rows, "waiting_query", "UPDATE users").is_some()
+            && row_with(rows, "waiting_query", "ALTER TABLE events").is_some()
+    })
+    .await;
+    let rows = inspect_rows(&locks);
+    let row = row_with(&rows, "waiting_query", "UPDATE users").expect("the row wait");
+    assert_eq!(row["waiting_for"], "ShareLock on transactionid", "{locks}");
+    assert_eq!(row["blocking_pid"], json!(blocker_pid), "{locks}");
+    let table = row_with(&rows, "waiting_query", "ALTER TABLE events").expect("the table wait");
+    assert_eq!(table["waiting_for"], "AccessExclusiveLock on events", "{locks}");
+    assert_eq!(table["blocking_pid"], json!(blocker_pid), "{locks}");
+    let activity = call(&c, "pg_inspect", json!({ "check": "activity" })).await;
+    let held = inspect_rows(&activity).into_iter().find(|r| r["pid"] == json!(blocker_pid));
+    assert!(held.is_some_and(|r| r["state"] == "idle in transaction"), "{activity}");
+    tx.rollback().await.expect("release");
+    row_wait.await.expect("joined").expect("the row wait completes");
+    table_wait.await.expect("joined").expect("the table wait completes");
+
+    // Work for the counters: a sequential scan of events, on a session that then ends -
+    // a backend flushes its statistics on exit.
+    let mut scanner = sqlx::PgConnection::connect(&url).await.expect("scanner");
+    sqlx::query("SELECT count(*) FROM events WHERE kind = 'probe'")
+        .fetch_all(&mut scanner)
+        .await
+        .expect("scan");
+    scanner.close().await.expect("scanner closes");
+    inspect_until(&c, "pg_inspect", "table_scans", |rows| {
+        rows.iter().any(|r| r["table"] == "events" && r["seq_scan"].is_u64())
+    })
+    .await;
+
+    let mut replies = std::collections::HashMap::new();
+    for check in [
+        "activity",
+        "locks",
+        "top_queries",
+        "table_scans",
+        "vacuum",
+        "indexes",
+        "cache",
+        "connections",
+    ] {
+        let reply = call(&c, "pg_inspect", json!({ "check": check })).await;
+        assert_eq!(reply["check"], check, "{reply}");
+        replies.insert(check, reply);
+    }
+    let top = &replies["top_queries"];
+    assert!(inspect_rows(top).first().is_some_and(|r| r["calls"].is_u64()), "{top}");
+    let indexes = inspect_rows(&replies["indexes"]);
+    assert!(
+        indexes.iter().any(|r| r["problem"] == "no primary key" && r["table"] == "events"),
+        "{indexes:?}"
+    );
+    assert!(
+        indexes.iter().any(|r| r["problem"] == "unused" && r["index"] == "log_entries_noted_at"),
+        "{indexes:?}"
+    );
+    let vacuum = &replies["vacuum"];
+    assert!(vacuum["summary"]["database_xid_age"].is_u64(), "{vacuum}");
+    assert!(!inspect_rows(vacuum).is_empty(), "{vacuum}");
+    let cache = &replies["cache"]["summary"];
+    assert!(cache["shared_buffers"].is_string(), "{cache}");
+    let conns = &replies["connections"]["summary"];
+    assert!(conns["client_connections"].as_u64().is_some_and(|n| n >= 1), "{conns}");
+}
+
 #[tokio::test]
 async fn stream_route_round_trips_three_directions_and_groups() {
     // SPEC §data.streams: the admin route over the real gateway — newest window,

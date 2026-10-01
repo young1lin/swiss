@@ -326,6 +326,14 @@ fn start_container(kind: Kind) -> Result<Engine, String> {
                         "POSTGRES_INITDB_ARGS",
                         "--encoding=UTF8 --locale=C.UTF-8",
                     )
+                    // pg_inspect's top_queries reads pg_stat_statements, which only works
+                    // preloaded. A command replaces the module's own, so its fsync=off stays.
+                    .with_cmd([
+                        "-c",
+                        "fsync=off",
+                        "-c",
+                        "shared_preload_libraries=pg_stat_statements",
+                    ])
                     .with_label(OWNED_LABEL, "1")
                     .with_label(PID_LABEL, &pid)
                     .with_startup_timeout(Duration::from_secs(180))

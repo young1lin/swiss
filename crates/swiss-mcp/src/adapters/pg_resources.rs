@@ -43,10 +43,10 @@ const TABLES_SQL: &str = "
 
 /// Everything one table's resource says, in a single round trip.
 ///
-/// Deliberately not assembled from `pg_describe_table`'s three queries: a resource read is one
-/// user-visible action, so it should be one 75 ms trip rather than three. Primary-key columns
-/// come out in table order; `indexes` carries the definitions, which is where a composite key's
-/// real column order is visible.
+/// Not `pg_describe_table`'s query: a resource is the compact card an AI client attaches as
+/// context (byte sizes, no constraint DDL or incoming references), keyed by the schema in its
+/// URI. Primary-key columns come out in table order; `indexes` carries the definitions, which is
+/// where a composite key's real column order is visible.
 const ONE_TABLE_SQL: &str = "
   SELECT n.nspname AS schema, c.relname AS name,
          CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'matview'
