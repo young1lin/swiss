@@ -1057,6 +1057,15 @@ Compiled-in results go to the model as **compact JSON**; display formatting belo
 **Output budget.** Engine results render under `DEFAULT_LIMITS` — 1000 items and 256 KB. Past
 the budget items are shed, then halved, and the result says it is no longer valid JSON.
 
+**Calls.** A compiled-in engine (`tool_server.rs`) answers `tools/call` as the MCP spec asks. A
+tool that ran and failed — a driver error, a refused command, a vendor 4xx — is an in-band result
+with `isError: true`: the model reads the reason, and the call log records a failure. Only a tool
+the list does not advertise (unknown, or disabled by the operator) is a protocol error, `-32602`;
+naming a disabled tool never runs it. A schema that declares `additionalProperties: false` —
+every built-in engine's — refuses an argument it does not name, in-band, listing the ones it
+takes, so a typo such as `limt` is not silently a default. A `rest` tool's schema stays open:
+its templates may read any argument.
+
 **A new family** is a new adapter module plus one `make_adapter` arm plus its `build_typed_def`
 row; there is no third-party module door (ADR-001). The `swiss-add-plugin` skill covers a whole
 new plugin; a new MCP type is a smaller change inside this one.
