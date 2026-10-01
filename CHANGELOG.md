@@ -16,6 +16,7 @@ All notable changes to swiss are recorded here. The format follows
 
 - Running the test suite no longer turns start at sign-in off on the machine that runs it; the
   tests write no OS registration of the operator's.
+- `swiss autostart` no longer runs its label into the registry location it prints.
 
 ## [0.1.1] - 2026-10-02
 
