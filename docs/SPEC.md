@@ -1164,6 +1164,14 @@ system prompts are ported verbatim from the upstream package (`zai_prompts.rs`, 
 `scripts/extract-zai-prompts.js`, attributed in `THIRD_PARTY_NOTICES.md`). `apiKey` must be a
 reference — a literal key is refused by the type.
 
+A media source is an http(s) URL, passed through, or a local file the gateway reads and sends
+base64-encoded. The local path must be **absolute**: upstream ran as the client's own child, in
+the client's project directory, while the gateway would resolve a relative path against its own
+working directory and quietly read another file. A local image is `.jpg`/`.jpeg`/`.png` up to
+5 MB; a local video is `.mp4`/`.mov`/`.m4v` up to 8 MB — upstream encoded any extension as video,
+which would let any file the gateway can read ride to the vendor. Both are checked before the
+file is opened. The schemas refuse undeclared arguments.
+
 ### §mcp.figma — The figma type (ADR-021)
 
 `{"type": "figma"}` is sugar: at build time it expands to an `http` def with `auth: "oauth"`
@@ -4563,9 +4571,10 @@ Rejected: a panel preset (a saved URL the operator never chose) and a generic pr
 
 **Accepted.** The upstream vision MCP is eight tools, each a fixed system prompt plus one
 multimodal chat-completions call, so it is an `Engine` compiled into the binary
-(`adapters/zai.rs`) instead of a Node child. Parity is the contract: tool names, descriptions,
-schemas and prompts are byte-identical, the prompts extracted verbatim by
-`scripts/extract-zai-prompts.js` (one noted deviation: retries skip non-429 4xx). The key is
+(`adapters/zai.rs`) instead of a Node child. Parity is the contract: tool names and prompts are
+byte-identical, the prompts extracted verbatim by `scripts/extract-zai-prompts.js`; descriptions
+and schemas match upstream except where the gateway is not the client's child (§mcp.zai:
+absolute local paths, video formats, strict schemas), and retries skip non-429 4xx. The key is
 always a `${...}` reference (a literal is refused). No ping and no Test button: a metered endpoint
 is never probed. The def names only `mode` or `baseUrl`, and optional `model`, `proxy`,
 `timeoutMs`.

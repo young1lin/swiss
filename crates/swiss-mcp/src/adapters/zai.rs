@@ -27,8 +27,15 @@
 //!
 //! Behavior parity is deliberate: tool names, descriptions, JSON schemas, the optional-argument
 //! prompt weaving (`<language_hint>` etc.) and the system prompts (see `zai_prompts.rs`,
-//! extracted verbatim) all match the deployed 0.1.5 build. The one improvement over upstream:
-//! retries skip non-429 4xx (a 400 will still be a 400 a second later).
+//! extracted verbatim) all match the deployed 0.1.5 build. Where the port departs from it, it is
+//! because the gateway is not the client's own child process:
+//! - a local media path must be absolute. Upstream ran in the client's project directory, so a
+//!   relative path named the caller's file; here it would resolve against the gateway's working
+//!   directory and quietly name another one. The source descriptions say so.
+//! - a local video must be .mp4, .mov or .m4v, the formats the tool advertises. Upstream encoded
+//!   any extension as video, which would let any file the gateway can read ride to the vendor.
+//! - the schemas refuse an argument they do not declare (`additionalProperties: false`).
+//! - retries skip non-429 4xx (a 400 will still be a 400 a second later).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,8 +63,8 @@ const MAX_ATTEMPTS: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 /// Upstream `MAX_IMAGE_SIZE_MB = 5`, formats jpg/jpeg/png (its validator rejects the rest).
 const IMAGE_MAX_BYTES: u64 = 5 * 1024 * 1024;
-/// Upstream `MAX_VIDEO_SIZE_MB = 8`. The extension is NOT validated upstream (the mime table
-/// covers more than the advertised mp4/mov/m4v); the port keeps that tolerance.
+/// Upstream `MAX_VIDEO_SIZE_MB = 8`. Upstream does not check a video's extension; the port
+/// takes only the advertised mp4/mov/m4v (see the module doc).
 const VIDEO_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// Sampling defaults from `getVisionConfig` - kept identical so answers do not drift between
 /// the child process and the port.
@@ -226,17 +233,13 @@ impl ZaiEngine {
     }
 
     /// One `image_url` content part: http(s) URLs pass through untouched; a local path is
-    /// validated (exists, <=5 MB, jpg/jpeg/png) and encoded as a base64 data URL - the same
-    /// two shapes the deployed child process produced.
+    /// validated (absolute, jpg/jpeg/png, exists, <=5 MB) and encoded as a base64 data URL -
+    /// the same two shapes the deployed child process produced.
     async fn image_part(source: &str) -> Result<Value, String> {
         let url = if is_url(source) {
             source.to_string()
         } else {
-            let ext = std::path::Path::new(source)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
+            let ext = local_extension("Image", source)?;
             if !matches!(ext.as_str(), "jpg" | "jpeg" | "png") {
                 return Err(format!(
                     "Unsupported image format: .{ext}. Supported formats: .jpg, .jpeg, .png"
@@ -265,12 +268,23 @@ impl ZaiEngine {
         Ok(json!({ "type": "image_url", "image_url": { "url": url } }))
     }
 
-    /// One `video_url` content part - same passthrough/encode split, video limits and mime
-    /// table (unknown extensions read as video/mp4, as upstream's fallback does).
+    /// One `video_url` content part - same passthrough/encode split, with the video limits and
+    /// the three advertised formats.
     async fn video_part(source: &str) -> Result<Value, String> {
         let url = if is_url(source) {
             source.to_string()
         } else {
+            let ext = local_extension("Video", source)?;
+            let mime = match ext.as_str() {
+                "mp4" => "video/mp4",
+                "mov" => "video/quicktime",
+                "m4v" => "video/x-m4v",
+                _ => {
+                    return Err(format!(
+                        "Unsupported video format: .{ext}. Supported formats: .mp4, .mov, .m4v"
+                    ))
+                }
+            };
             let meta = tokio::fs::metadata(source)
                 .await
                 .map_err(|_| format!("Video file not found: {source}"))?;
@@ -283,18 +297,6 @@ impl ZaiEngine {
             let bytes = tokio::fs::read(source)
                 .await
                 .map_err(|err| format!("reading {source} failed: {err}"))?;
-            let ext = std::path::Path::new(source)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            let mime = match ext.as_str() {
-                "avi" => "video/x-msvideo",
-                "mov" => "video/quicktime",
-                "wmv" => "video/x-ms-wmv",
-                "m4v" => "video/x-m4v",
-                _ => "video/mp4",
-            };
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
             format!("data:{mime};base64,{b64}")
         };
@@ -305,6 +307,24 @@ impl ZaiEngine {
 /// Upstream `isUrl`: http/https scheme, nothing else counts as remote.
 fn is_url(source: &str) -> bool {
     source.starts_with("http://") || source.starts_with("https://")
+}
+
+/// A local media source's lowercased extension, once the path is known to be absolute. The
+/// gateway reads the file from its own disk, relative to its own working directory - not the
+/// caller's - so a relative path is refused rather than resolved against the wrong place.
+fn local_extension(kind: &str, source: &str) -> Result<String, String> {
+    let path = std::path::Path::new(source);
+    if !path.is_absolute() {
+        return Err(format!(
+            "{kind} path must be absolute: {source}. The gateway reads local files from its own \
+             disk and working directory, not the caller's - pass an absolute path or an http(s) URL."
+        ));
+    }
+    Ok(path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase())
 }
 
 /// A required string argument, non-empty after trimming (upstream `nonEmptyString`).
@@ -327,11 +347,12 @@ fn arg_opt<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 /// The eight tool declarations, ported from the upstream `server.tool(...)` calls: names,
-/// descriptions and JSON Schemas verbatim - a client written against the child process
-/// must not see anything move.
+/// descriptions and JSON Schemas as upstream wrote them, save the departures the module doc
+/// lists - a client written against the child process finds the same tools.
 fn tool_defs() -> Vec<ToolDef> {
-    let image_source =
-        || json!({ "type": "string", "description": "Local file path or remote URL to the image" });
+    let image_source = || {
+        json!({ "type": "string", "description": "Absolute local file path or remote URL to the image" })
+    };
     vec![
         ToolDef {
             name: "ui_to_artifact".into(),
@@ -344,6 +365,7 @@ fn tool_defs() -> Vec<ToolDef> {
                     "prompt": { "type": "string", "description": "Detailed instructions describing what to generate from this UI image. Should clearly state the desired output and any specific requirements." },
                 },
                 "required": ["image_source", "output_type", "prompt"],
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -357,6 +379,7 @@ fn tool_defs() -> Vec<ToolDef> {
                     "programming_language": { "type": "string", "description": "Optional: specify the programming language if the screenshot contains code (e.g., 'python', 'javascript', 'java'). Leave empty for auto-detection or non-code text." },
                 },
                 "required": ["image_source", "prompt"],
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -370,6 +393,7 @@ fn tool_defs() -> Vec<ToolDef> {
                     "context": { "type": "string", "description": "Optional: additional context about when the error occurred (e.g., 'during npm install', 'when running the app', 'after deployment'). Helps with more accurate diagnosis." },
                 },
                 "required": ["image_source", "prompt"],
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -383,6 +407,7 @@ fn tool_defs() -> Vec<ToolDef> {
                     "diagram_type": { "type": "string", "description": "Optional: specify the diagram type if known (e.g., 'architecture', 'flowchart', 'uml', 'er-diagram', 'sequence'). Leave empty for auto-detection." },
                 },
                 "required": ["image_source", "prompt"],
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -396,6 +421,7 @@ fn tool_defs() -> Vec<ToolDef> {
                     "analysis_focus": { "type": "string", "description": "Optional: specify what to focus on (e.g., 'trends', 'anomalies', 'comparisons', 'performance metrics'). Leave empty for comprehensive analysis." },
                 },
                 "required": ["image_source", "prompt"],
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -404,11 +430,12 @@ fn tool_defs() -> Vec<ToolDef> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "expected_image_source": { "type": "string", "description": "Local file path or remote URL to the image" },
-                    "actual_image_source": { "type": "string", "description": "Local file path or remote URL to the image" },
+                    "expected_image_source": image_source(),
+                    "actual_image_source": image_source(),
                     "prompt": { "type": "string", "description": "Instructions for the comparison. Specify what aspects to focus on or what level of detail is needed." },
                 },
                 "required": ["expected_image_source", "actual_image_source", "prompt"],
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -421,6 +448,7 @@ fn tool_defs() -> Vec<ToolDef> {
                     "prompt": { "type": "string", "description": "Detailed description of what you want to analyze, extract, or understand from the image. Be specific about your requirements." },
                 },
                 "required": ["image_source", "prompt"],
+                "additionalProperties": false,
             }),
         },
         ToolDef {
@@ -429,10 +457,11 @@ fn tool_defs() -> Vec<ToolDef> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "video_source": { "type": "string", "description": "Local file path or remote URL to the video (supports MP4, MOV, M4V)" },
+                    "video_source": { "type": "string", "description": "Absolute local file path or remote URL to the video (supports MP4, MOV, M4V)" },
                     "prompt": { "type": "string", "description": "Detailed text prompt describing what to analyze, extract, or understand from the video" },
                 },
                 "required": ["video_source", "prompt"],
+                "additionalProperties": false,
             }),
         },
     ]
@@ -685,6 +714,9 @@ mod tests {
             ui["properties"]["output_type"]["enum"],
             json!(["code", "prompt", "spec", "description"])
         );
+        for tool in &tools {
+            assert_eq!(tool.input_schema["additionalProperties"], json!(false), "{}", tool.name);
+        }
     }
 
     #[test]
@@ -814,6 +846,38 @@ mod tests {
             .await
             .unwrap_err();
         assert!(missing.contains("not found"), "{missing}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_relative_or_non_video_local_file_never_reaches_the_api() {
+        let dir = std::env::temp_dir().join(format!("zai-media-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let secret = dir.join("notes.txt");
+        std::fs::write(&secret, b"not a video").expect("write");
+        let (base, seen) = fake_chat(vec![(200, "ok")]).await;
+        let engine = engine_against(&base);
+        // A relative path would resolve against the gateway's working directory, not the caller's.
+        for (tool, key, source) in [
+            ("analyze_image", "image_source", "shot.png"),
+            ("analyze_video", "video_source", "clip.mp4"),
+        ] {
+            let err = engine
+                .call(tool, &json!({ key: source, "prompt": "x" }))
+                .await
+                .unwrap_err();
+            assert!(err.contains("must be absolute"), "{tool}: {err}");
+        }
+        // Any readable file is not a video just because a tool was asked to watch it.
+        let err = engine
+            .call(
+                "analyze_video",
+                &json!({ "video_source": secret.to_string_lossy(), "prompt": "x" }),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.contains("Unsupported video format: .txt"), "{err}");
+        assert!(seen.lock().expect("seen").is_empty(), "no request may leave");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
