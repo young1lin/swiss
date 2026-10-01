@@ -82,15 +82,16 @@ License, Version 2.0. The tool itself is not vendored: the skill installs it fro
 
 ## 3. Rust crates linked into the binary
 
-The release binary statically links the crates below (every dependency that reaches the
-`swiss` package through a normal or build edge; dev-only dependencies are excluded). The list
-is generated from `cargo metadata` for the committed `Cargo.lock` and is kept in step by the
-`cargo deny` gate (`deny.toml`), whose license allowlist is exactly the set of expressions
-appearing here. Each crate's full license text is available in its source repository and in
-the crate tarball on crates.io.
+The release binary statically links the crates below: every crate that reaches the `swiss`
+package through a normal or build edge on any release target, for the committed `Cargo.lock`
+(dev-only dependencies are excluded). Each crate's full license text is available in its source
+repository and in the crate tarball on crates.io. The `cargo deny` gate checks the licenses of
+this same graph against the `deny.toml` allowlist on every CI run; the table itself is not
+checked, so regenerate it whenever `Cargo.lock` changes.
 
-Regenerate: `cargo metadata --format-version 1 --locked` → walk `resolve` from the root,
-drop dev-only edges, print name / version / `license` / `repository`.
+Regenerate: the crate set is `cargo tree -p swiss -e normal,build --target all --prefix none
+--locked` minus the workspace's own `swiss*` crates; `license` and `repository` (else
+crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sorted by name.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -130,8 +131,8 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | bytes | 1.12.1 | MIT | https://github.com/tokio-rs/bytes |
 | cbc | 0.2.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-modes |
 | cc | 1.4.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/cc-rs |
-| cfg_aliases | 0.2.2 | MIT | https://github.com/katharostech/cfg_aliases |
 | cfg-if | 1.0.4 | MIT OR Apache-2.0 | https://github.com/rust-lang/cfg-if |
+| cfg_aliases | 0.2.2 | MIT | https://github.com/katharostech/cfg_aliases |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/stream-ciphers |
 | chrono | 0.4.45 | MIT OR Apache-2.0 | https://github.com/chronotope/chrono |
 | cipher | 0.5.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
@@ -139,9 +140,9 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | cmov | 0.5.4 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | combine | 4.6.8 | MIT | https://github.com/Marwes/combine |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
-| core_detect | 1.0.0 | MIT/Apache-2.0 | https://github.com/thomcc/core_detect |
 | core-foundation | 0.10.1 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
+| core_detect | 1.0.0 | MIT/Apache-2.0 | https://github.com/thomcc/core_detect |
 | cpubits | 0.1.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
@@ -187,7 +188,6 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | ff | 0.14.0 | MIT/Apache-2.0 | https://github.com/zkcrypto/ff |
 | fiat-crypto | 0.3.0 | MIT OR Apache-2.0 OR BSD-1-Clause | https://github.com/mit-plv/fiat-crypto |
 | find-msvc-tools | 0.1.12 | MIT OR Apache-2.0 | https://github.com/rust-lang/cc-rs |
-| flume | 0.12.0 | Apache-2.0/MIT | https://github.com/zesterer/flume |
 | foldhash | 0.2.0 | Zlib | https://github.com/orlp/foldhash |
 | foreign-types | 0.3.2 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
 | foreign-types-shared | 0.1.1 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
@@ -215,10 +215,9 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | hashbrown | 0.16.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashlink | 0.11.1 | MIT OR Apache-2.0 | https://github.com/djc/hashlink |
-| heck | 0.5.0 | MIT OR Apache-2.0 | https://github.com/withoutboats/heck |
 | hex | 0.4.3 | MIT OR Apache-2.0 | https://github.com/KokaKiwi/rust-hex |
 | hex-literal | 1.1.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
-| hkdf | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/KDFs/ |
+| hkdf | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/KDFs |
 | hmac | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/MACs |
 | http | 1.5.0 | MIT OR Apache-2.0 | https://github.com/hyperium/http |
 | http-body | 1.1.0 | MIT | https://github.com/hyperium/http-body |
@@ -239,7 +238,7 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | icu_properties | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | icu_properties_data | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | icu_provider | 2.3.1 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
-| idna | 1.1.0 | MIT OR Apache-2.0 | https://github.com/servo/rust-url/ |
+| idna | 1.1.0 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT | https://github.com/hsivonen/idna_adapter |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | https://github.com/indexmap-rs/indexmap |
 | inout | 0.2.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
@@ -256,12 +255,10 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | libc | 0.2.189 | MIT OR Apache-2.0 | https://github.com/rust-lang/libc |
 | libm | 0.2.16 | MIT | https://github.com/rust-lang/compiler-builtins |
 | libredox | 0.1.23 | MIT | https://gitlab.redox-os.org/redox-os/libredox |
-| libsqlite3-sys | 0.30.1 | MIT | https://github.com/rusqlite/rusqlite |
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/sunfishcode/linux-raw-sys |
 | litemap | 0.8.3 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
 | log | 0.4.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/log |
-| lru-slab | 0.1.2 | MIT OR Apache-2.0 OR Zlib | https://github.com/Ralith/lru-slab |
 | matchit | 0.8.4 | MIT AND BSD-3-Clause | https://github.com/ibraheemdev/matchit |
 | md-5 | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | md5 | 0.8.1 | Apache-2.0 OR MIT | https://github.com/stainless-steel/md5 |
@@ -281,7 +278,7 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | https://github.com/rust-num/num-traits |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | https://github.com/matklad/once_cell |
 | openssl | 0.10.81 | Apache-2.0 | https://github.com/rust-openssl/rust-openssl |
-| openssl-macros | 0.1.1 | MIT/Apache-2.0 | crates.io |
+| openssl-macros | 0.1.1 | MIT/Apache-2.0 | https://crates.io/crates/openssl-macros |
 | openssl-probe | 0.2.1 | MIT OR Apache-2.0 | https://github.com/rustls/openssl-probe |
 | openssl-sys | 0.9.117 | MIT | https://github.com/rust-openssl/rust-openssl |
 | option-ext | 0.2.0 | MPL-2.0 | https://github.com/soc/option-ext |
@@ -292,12 +289,10 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | parking | 2.2.1 | Apache-2.0 OR MIT | https://github.com/smol-rs/parking |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
-| password-hash | 0.6.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | pastey | 0.2.3 | MIT OR Apache-2.0 | https://github.com/as1100k/pastey |
 | pbkdf2 | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/password-hashes |
 | pem-rfc7468 | 1.0.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
-| percent-encoding | 2.3.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url/ |
-| phc | 0.6.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
+| percent-encoding | 2.3.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT | https://github.com/taiki-e/pin-project-lite |
 | pkcs1 | 0.8.0-rc.4 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
 | pkcs5 | 0.8.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
@@ -312,18 +307,14 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | primeorder | 0.14.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/elliptic-curves |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | https://github.com/dtolnay/proc-macro2 |
 | process-wrap | 10.0.1 | Apache-2.0 OR MIT | https://github.com/watchexec/process-wrap |
-| quinn | 0.11.11 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
-| quinn-proto | 0.11.17 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
-| quinn-udp | 0.5.15 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn |
 | quote | 1.0.47 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote |
 | r-efi | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
 | r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
-| rand | 0.10.2 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
 | rand | 0.9.5 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
+| rand | 0.10.3 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
 | rand_chacha | 0.9.0 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
-| rand_core | 0.10.1 | MIT OR Apache-2.0 | https://github.com/rust-random/rand_core |
 | rand_core | 0.9.5 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
-| rand_pcg | 0.10.2 | MIT OR Apache-2.0 | https://github.com/rust-random/rngs |
+| rand_core | 0.10.1 | MIT OR Apache-2.0 | https://github.com/rust-random/rand_core |
 | redis | 1.7.1 | BSD-3-Clause | https://github.com/redis-rs/redis-rs |
 | redox_syscall | 0.5.18 | MIT | https://gitlab.redox-os.org/redox-os/syscall |
 | redox_users | 0.5.2 | MIT | https://gitlab.redox-os.org/redox-os/users |
@@ -332,7 +323,7 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | https://github.com/seanmonstar/reqwest |
 | rfc6979 | 0.6.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/signatures |
 | ring | 0.17.14 | Apache-2.0 AND ISC | https://github.com/briansmith/ring |
-| rmcp | 3.5.0 | Apache-2.0 | https://github.com/modelcontextprotocol/rust-sdk/ |
+| rmcp | 3.5.0 | Apache-2.0 | https://github.com/modelcontextprotocol/rust-sdk |
 | rsa | 0.10.0-rc.18 | MIT OR Apache-2.0 | https://github.com/RustCrypto/RSA |
 | russh | 0.63.3 | Apache-2.0 | https://github.com/warp-tech/russh |
 | russh-cryptovec | 0.62.0 | Apache-2.0 | https://github.com/warp-tech/russh |
@@ -342,7 +333,6 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | rust-embed-impl | 8.12.0 | MIT | https://pyrossh.dev/repos/rust-embed |
 | rust-embed-utils | 8.12.0 | MIT | https://pyrossh.dev/repos/rust-embed |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | https://github.com/djc/rustc-version-rs |
-| rustc-hash | 2.1.3 | Apache-2.0 OR MIT | https://github.com/rust-lang/rustc-hash |
 | rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls |
 | rustls-native-certs | 0.8.4 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls-native-certs |
@@ -371,7 +361,6 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | serde_json | 1.0.151 | MIT OR Apache-2.0 | https://github.com/serde-rs/json |
 | serde_path_to_error | 0.1.20 | MIT OR Apache-2.0 | https://github.com/dtolnay/path-to-error |
 | serde_urlencoded | 0.7.1 | MIT/Apache-2.0 | https://github.com/nox/serde_urlencoded |
-| serdect | 0.4.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
 | sha1 | 0.10.7 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | sha1 | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
@@ -387,17 +376,13 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | slab | 0.4.12 | MIT | https://github.com/tokio-rs/slab |
 | smallvec | 1.16.0 | MIT OR Apache-2.0 | https://github.com/servo/rust-smallvec |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/socket2 |
-| spin | 0.9.9 | MIT | https://github.com/mvdnes/spin-rs |
 | spki | 0.8.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
 | sponge-cursor | 0.1.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | sqlx | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
 | sqlx-core | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
-| sqlx-macros | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
-| sqlx-macros-core | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
 | sqlx-mysql | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
 | sqlx-postgres | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
-| sqlx-sqlite | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
-| sse-stream | 0.2.6 | MIT OR Apache-2.0 | https://github.com/4t145/sse-stream/ |
+| sse-stream | 0.2.6 | MIT OR Apache-2.0 | https://github.com/4t145/sse-stream |
 | ssh-cipher | 0.3.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/SSH |
 | ssh-encoding | 0.3.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/SSH |
 | ssh-key | 0.7.0-rc.11 | Apache-2.0 OR MIT | https://github.com/RustCrypto/SSH |
@@ -455,21 +440,11 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | wasm-bindgen-macro | 0.2.128 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro |
 | wasm-bindgen-macro-support | 0.2.128 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support |
 | wasm-bindgen-shared | 0.2.128 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared |
-| wasm-streams | 0.5.0 | MIT OR Apache-2.0 | https://github.com/MattiasBuelens/wasm-streams/ |
 | web-sys | 0.3.105 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys |
-| web-time | 1.1.0 | MIT OR Apache-2.0 | https://github.com/daxpedda/web-time |
 | webpki-root-certs | 1.0.9 | CDLA-Permissive-2.0 | https://github.com/rustls/webpki-roots |
 | whoami | 2.1.3 | Apache-2.0 OR BSL-1.0 OR MIT | https://github.com/ardaku/whoami |
 | winapi-util | 0.1.11 | Unlicense OR MIT | https://github.com/BurntSushi/winapi-util |
 | windows | 0.62.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_aarch64_gnullvm | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_aarch64_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_i686_gnu | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_i686_gnullvm | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_i686_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_x86_64_gnu | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_x86_64_gnullvm | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-collections | 0.3.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-core | 0.62.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-future | 0.3.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
@@ -483,6 +458,14 @@ drop dev-only edges, print name / version / `license` / `repository`.
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-targets | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-threading | 0.2.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows_aarch64_gnullvm | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows_aarch64_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows_i686_gnu | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows_i686_gnullvm | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows_i686_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows_x86_64_gnu | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows_x86_64_gnullvm | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | wit-bindgen | 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/wit-bindgen |
 | wnaf | 0.14.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/elliptic-curves |
 | writeable | 0.6.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |

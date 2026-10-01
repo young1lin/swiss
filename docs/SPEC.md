@@ -4256,13 +4256,9 @@ The workflow is `.github/workflows/build.yml`.
 
 ### §release.ci — The workflow
 
-Runner minutes on a private repository are billed (Windows 2×, macOS 10×), so each event runs
-what it has to prove:
-
 | Event | Jobs |
 |---|---|
-| Pull request | `check` on Linux only, `panel`, `deny`, `integration` |
-| Push to master | `check` on Linux and Windows, plus clippy on the arm Mac; `panel`, `deny`, `integration` |
+| Pull request or push to master | `check` on Linux and Windows, plus clippy on the arm Mac; `panel`, `deny`, `integration` |
 | `v*` tag or a manual run | Everything above, plus `dist` for all five targets; a tag also runs `tag-version` and `release` |
 | A change under `docs/` alone | Nothing |
 
@@ -4311,7 +4307,8 @@ together with its lockfile.
   members inherit it.
 - **Third-party attribution is kept** — a licence obligation, not authorship: `NOTICE`,
   `THIRD_PARTY_NOTICES.md` (the hand-written entries plus a crate → licence table generated from
-  `cargo metadata`, excluding dev-only crates), the upstream licence text next to each vendored
+  the `cargo tree -e normal,build` set and `cargo metadata`, excluding dev-only crates;
+  regenerated when `Cargo.lock` changes), the upstream licence text next to each vendored
   panel library (`admin_assets/js/vendor/*/LICENSE`, embedded with them), and the Z.AI notice on
   the prompt texts the zai-vision adapter reproduces (`zai_prompts.rs`).
 - **Standard files.** `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`

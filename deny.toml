@@ -14,7 +14,7 @@
 
 # cargo-deny (https://github.com/EmbarkStudios/cargo-deny): the license, advisory and source
 # gate. `cargo deny check` locally; CI runs it as the `deny` job. The license allowlist is
-# exactly the set of expressions the dependency tree carried on 2026-09-21 (SPEC §release.hygiene) -
+# the set of license identifiers the dependency tree needed on 2026-09-21 (SPEC §release.hygiene) -
 # every one permissive, no copyleft beyond the file-level MPL-2.0 of option-ext. A new
 # license family fails the gate on purpose: it is a review, not a nuisance, and
 # THIRD_PARTY_NOTICES.md §3 has to learn the newcomer at the same time.

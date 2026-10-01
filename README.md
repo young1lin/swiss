@@ -37,9 +37,10 @@ on Linux, or `shasum -a 256 <archive>` on macOS). Extract it, then put
 
 ¹ macOS builds have no master-key source yet (no machine-id, no Keychain source), so the
   first state save fails with "no master key available". The assets are published for
-  evaluation; a Keychain source is tracked future work. CI lints and builds both macOS
-  targets but does not run the test suite there yet: besides the key, a killed local shell's
-  pty does not reach EOF on macOS, and the gateway's own memory reads 0 MB there.
+  evaluation; a Keychain source is tracked future work. CI lints on the Apple Silicon runner
+  for every change and builds both macOS targets for each release, but does not run the test
+  suite there yet: besides the key, a killed local shell's pty does not reach EOF on macOS,
+  and the gateway's own memory reads 0 MB there.
 
 ```
 swiss --version        # verify the installed binary
