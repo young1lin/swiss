@@ -23,11 +23,9 @@ master.key
 # The admin session's signing and CLI keys (SPEC §host.session), sealed but still this machine's secret.
 session.json
 
-# Stray dev binaries at the repo root (lmg-* are the pre-rename builds still on disk)
+# Stray dev binaries at the repo root
 /swiss-dev.exe
 /swiss.exe
-/lmg.exe
-/lmg-dev.exe
 
 # Claude Code scratch: agent worktrees, per-machine settings and the rest of its runtime
 # tree (skills, rules, checkpoints, registry) — none of it is source. These used to live
@@ -42,10 +40,8 @@ session.json
 # Agent-authored context under .agents is SOURCE now (docs/, skills/, skill-eval/,
 # .mcp.json) and ships with the repo. The worktrees/ subtree stays untracked on purpose:
 # each is a full checkout of THIS repo (git would nest the repo inside itself) plus its
-# own target*/ build trees - ~157 GB of mechanical copies. Their source state travels in
-# the diagnosis zip instead, not in git.
+# own target*/ build trees - ~157 GB of mechanical copies.
 /.agents/worktrees/
-/conpty_ref.rs
 /term-*.png
 /job-*.png
 
@@ -59,6 +55,6 @@ session.json
 *.pem
 *.kdbx
 
-# Scratch files - commit-message drafts included: four *.tmp drafts were committed on
-# 2026-09-20 and carried trailers SPEC §release.hygiene forbids.
+# Scratch files - commit-message drafts included: a committed draft carries whatever
+# trailers the tool that wrote it added, which SPEC §release.hygiene forbids.
 *.tmp

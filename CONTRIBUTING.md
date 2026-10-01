@@ -34,6 +34,14 @@ through Docker (`DOCKER_HOST`) or the `SWISS_IT_*_URL` overrides, and a diff tou
 database adapters, browsers or `crates/swiss-it` itself is not done without it. A machine
 without Docker runs the other gates and says so in the PR.
 
+## Trying a change live
+
+`cargo run -- start --no-open` serves the gateway on `127.0.0.1:19999`. Point `SWISS_HOME` at a
+scratch directory first and the instance never touches your own `~/.swiss`. AGENTS.md also
+describes the maintainer's own loop — a second instance on 19998 (`scripts/test-instance.ps1`)
+so the 19999 one in daily use is never restarted mid-change, and `scripts/deploy.ps1` to update
+it. Those scripts are PowerShell for that Windows machine; nothing requires them.
+
 ## Rules that are not negotiable
 
 - **Loopback only.** Nothing widens the bind, relaxes the `Host`/`Origin` checks or adds a way

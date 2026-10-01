@@ -14,13 +14,9 @@
 
 # Check swiss on every change, build every platform's archive on version tags.
 #
-# The repository is private, so every runner minute is billed against a monthly quota - Windows
-# at 2x, macOS at 10x - and the jobs are sized to what each event has to prove:
-# - pull request: the Linux gate (clippy, the heavy-duplicate check, the tests) plus panel, deny
-#   and the real-database suite. A bump that only breaks Windows is caught by the local gates
-#   before merge and by the master push after it.
-# - push to master: the same gate on Linux and Windows, and clippy on the arm Mac - the cheapest
-#   check that catches a call that only compiles against glibc. No release build.
+# - pull request or push to master: the gate (clippy, the heavy-duplicate check, the tests) on
+#   Linux and Windows, clippy on the arm Mac - which catches a call that only compiles against
+#   glibc - plus panel, deny and the real-database suite. No release build.
 # - v* tag (e.g. v0.1.0) or a manual run: all of that plus the release build of all five targets;
 #   a tag also verifies the manifest version and publishes one archive per target plus
 #   SHA256SUMS in a GitHub Release.
@@ -90,8 +86,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        # Pull requests run the Linux gate alone (see the header).
-        exclude: ${{ github.event_name == 'pull_request' && fromJSON('[{"os":"windows-latest"},{"os":"macos-latest"}]') || fromJSON('[]') }}
 
     steps:
       - uses: actions/checkout@v7
@@ -130,7 +124,9 @@ jobs:
           # `|| true` on the grep alone: the step runs under `-e -o pipefail`, and a clean tree
           # is exactly the case where grep matches nothing and exits 1 - without it the gate
           # failed on success. A failing `cargo tree` still fails the pipeline, as it should.
-          heavy=$(cargo tree -d -e normal,build --locked             | { grep -E '^(tokio|rustls|native-tls|openssl|openssl-sys|hyper|aws-lc-rs) v' || true; }             | sort -u)
+          heavy=$(cargo tree -d -e normal,build --locked \
+            | { grep -E '^(tokio|rustls|native-tls|openssl|openssl-sys|hyper|aws-lc-rs) v' || true; } \
+            | sort -u)
           if [ -n "$heavy" ]; then
             echo "::error::a runtime or TLS stack is linked twice:"
             echo "$heavy"
@@ -166,8 +162,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             exe: swiss
-          # The arm runner fleet is free for PUBLIC repos only; on a private one it bills by
-          # the minute like any Linux runner - one release build per tag.
+          # A native arm64 Linux runner, so no cross toolchain is needed.
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
             exe: swiss

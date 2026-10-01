@@ -17,19 +17,21 @@
 /**
  * Regenerates the Node-sealed envelope fixture used by the Rust envelope tests.
  *
- * Runs the REFERENCE implementation's own `seal()` (../local-mcp-gateway/src/secure/envelope.ts)
- * under a fixed test key, so the Rust test proves it opens bytes the Node build produced — the
- * blocking Phase 0 check in SPEC §formats.sealed. CI never needs the Node repo afterwards: the output is
- * committed under tests/fixtures/.
+ * Runs the REFERENCE implementation's own `seal()` (src/secure/envelope.ts of the earlier Node
+ * build, `local-mcp-gateway`, which is not part of this repository) under a fixed test key, so
+ * the Rust test proves it opens bytes the Node build produced — the blocking Phase 0 check in
+ * SPEC §formats.sealed. Nothing needs the Node build afterwards: the output is committed under
+ * tests/fixtures/, and this file is kept as the record of how it was made.
  *
- *   cd ../local-mcp-gateway && npx tsx ../local-mcp-gateway-rust/scripts/seal-fixture.mts
+ *   # with the Node build checked out next to this repository
+ *   cd ../local-mcp-gateway && npx tsx ../swiss/scripts/seal-fixture.mts
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { seal } from "../../local-mcp-gateway/src/secure/envelope.ts";
 
-// Must stay in sync with FIXTURE_KEY in src/secure/envelope.rs. A test key, never a real one.
+// Must stay in sync with FIXTURE_KEY in crates/swiss-core/src/secure/envelope.rs. A test key, never a real one.
 const TEST_MASTER_KEY = "3f7a9c2e58b1d406af83c2e97b1f6d0a4c8e2f5b7a9d1c06e3b8f4a2d5c7e91f";
 
 // A realistic sealed-payload shape: pretty-printed JSON, exactly how statefile.ts writes it.
