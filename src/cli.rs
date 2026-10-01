@@ -246,8 +246,10 @@ fn fmt_duration(ms: u64) -> String {
     format!("{}d {}h", h / 24, h % 24)
 }
 
+/// One indented "label  value" line. The label column is 8 wide plus a space that is always
+/// there, so a longer label pushes its value right rather than running into it.
 fn row(label: &str, value: &str) -> String {
-    format!("  {label:<9}{value}")
+    format!("  {label:<8} {value}")
 }
 
 /// The one line the version flag prints — the build's name tag (SPEC §host.daemon): version, the
@@ -652,7 +654,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
                     "start at sign-in: {}",
                     if st.enabled { "on" } else { "off" }
                 ));
-                io.out(&row("registered", &st.detail));
+                io.out(&row("where", &st.detail));
                 io.out(&row("command", &st.command));
                 0
             }
@@ -1042,5 +1044,13 @@ mod tests {
         assert_eq!(fmt_duration(90_000), "1m");
         assert_eq!(fmt_duration(3_600_000), "1h 0m");
         assert_eq!(fmt_duration(90_000_000), "1d 1h");
+    }
+
+    #[test]
+    fn a_row_keeps_its_column_and_never_glues_a_long_label_to_its_value() {
+        assert_eq!(row("pid", "42"), "  pid      42");
+        assert_eq!(row("sign in", "x"), "  sign in  x");
+        assert_eq!(row("12345678", "x"), "  12345678 x");
+        assert_eq!(row("registered", "x"), "  registered x");
     }
 }
