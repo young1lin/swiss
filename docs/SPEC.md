@@ -1141,6 +1141,13 @@ The drivers are in-process; the tool surfaces are deliberately tiny.
   `DEBUG`, `REPLICAOF`, `MIGRATE`, `SWAPDB` …) are always refused; `FLUSHALL`/`FLUSHDB` need
   `allowDestructive`; scripting (`EVAL`, `FCALL` and their variants — the one family no other
   rule can inspect) needs `allowEval`; container commands are decided per subcommand.
+- **Tool schemas.** Numeric arguments are integers with their bounds declared: a query's
+  `limit` 1–10 000, `mysql_list_tables`/`pg_list_tables` `limit` 1–1000 and `page` from 0,
+  `redis_scan` `count` 1–10 000, `redis_read` `offset` from 0 and `limit` 1–1000. The engines
+  still clamp, so a client that skips validation is bounded, not refused. Descriptions state this
+  instance's own numbers: the query tools name the def's `maxRows` as their row cap, and
+  `redis_command` lists exactly what this instance rejects given `allowEval` and
+  `allowDestructive`. Every schema refuses undeclared arguments (§mcp.adapters).
 - **Resources.** Each engine exposes its schema or keyspace as MCP resources (shard folding,
   bounded sampling, the protocol's narrow 2024-11-05 field set).
 - **Browsers.** Each engine also carries the Data plugin's `DbBrowser` half (`*_browser.rs`),
