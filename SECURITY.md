@@ -25,7 +25,8 @@ the reporter in the release notes unless they prefer otherwise.
 In scope — anything that lets:
 
 - a non-loopback peer reach the gateway or the panel (bind, `Host`/`Origin` checks, tunnels);
-- a page on another local port, or any other page, use a signed-in browser's session on `/api/*`;
+- a page on another local port, or any other page, use a signed-in browser's session on `/api/*`
+  or frame the panel;
 - a caller read a stored secret back out (the vault is write-only by design), or read another
   client's traffic or token;
 - a `${secret://…}` reference, an env reference or a masked field leak its value through a log,

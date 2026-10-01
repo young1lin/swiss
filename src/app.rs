@@ -31,7 +31,7 @@ use std::time::Instant;
 
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Path, Request, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -338,6 +338,16 @@ async fn session_gate(State(ctx): State<Arc<AppContext>>, req: Request, next: Ne
             "not signed in - run `swiss open` to sign this browser in",
         ),
     }
+}
+
+/// No page may frame any answer (SPEC §host.boundary). The panel frames nothing of its own, and a
+/// page on another local port that framed the signed-in panel could steer its clicks. Both
+/// headers: `frame-ancestors` is the rule, `X-Frame-Options` covers browsers that predate it.
+async fn forbid_framing(mut res: Response) -> Response {
+    let headers = res.headers_mut();
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("frame-ancestors 'none'"));
+    res
 }
 
 #[derive(serde::Deserialize)]
@@ -746,7 +756,7 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         ))
         .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(ctx);
-    match (extra, boundary) {
+    let app = match (extra, boundary) {
         (Some(extra), Some(layer)) => app.merge(
             extra
                 .layer(layer)
@@ -761,7 +771,9 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
                 .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT)),
         ),
         (None, _) => app,
-    }
+    };
+    // Outermost, so refusals, the fallback and both trees carry it too.
+    app.layer(middleware::map_response(forbid_framing))
 }
 
 /// The Data picker's ranking: the sidebar's VISUAL order, not the flat one. `names` arrives in
