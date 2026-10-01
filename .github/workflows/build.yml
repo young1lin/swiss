@@ -159,12 +159,15 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             exe: swiss.exe
+          # A Linux binary needs at least its build host's glibc, so both Linux targets build on
+          # 22.04 (glibc 2.35): the archives run on Ubuntu 22.04 and Debian 12 onwards, where an
+          # ubuntu-latest (24.04) build would demand glibc 2.38.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             exe: swiss
           # A native arm64 Linux runner, so no cross toolchain is needed.
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+            os: ubuntu-22.04-arm
             exe: swiss
           - target: aarch64-apple-darwin
             os: macos-latest
