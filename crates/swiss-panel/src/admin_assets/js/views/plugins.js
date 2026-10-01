@@ -27,10 +27,11 @@
    instead of silently overwriting it. A failed START is not a failed request — the row comes back
    state="failed" with its lastError, and the retry is pressing Enable again.
 
-   A third, smaller section rides along: start-at-sign-in, the one OS-level host setting. It is
-   host-owned like this page, so it lives here rather than in a page of its own — and its store
-   is the OS (a registry Run value, a LaunchAgent, a systemd user unit), not the gateway, so the
-   toggle reads and writes /api/autostart with no revision to race on.
+   A smaller section rides along: This machine - start-at-sign-in and swiss on the user's PATH,
+   the two OS-level host settings. They are host-owned like this page, so they live here rather
+   than in a page of their own - and their store is the OS (a registry value, a LaunchAgent, a
+   systemd user unit, a symlink), not the gateway, so the toggles read and write /api/autostart
+   and /api/user-path with no revision to race on.
 
    Drawn from the library (SPEC §panel.settings): row() and sw() for both sections, section() + card()
    for their frames, pageFoot() for the revision.
@@ -48,6 +49,8 @@ let busy                          = {}; // plugin id -> true while its own toggl
 let painted = ""; // the structural signature of the drawn list; a change means rebuild
 let autostart                                                                 = null; // { enabled, detail, command } from /api/autostart; null = old gateway
 let autostartBusy = false; // true while the OS registration write is in flight
+let userPath                                                             = null; // from /api/user-path; null = old gateway
+let userPathBusy = false; // true while the PATH write is in flight
 
 /* The never-loaded fallback carries every field the inventory answers with, so an
    unreachable-empty list is still a truthful ApiPluginsResponse. */
@@ -136,6 +139,21 @@ export function startupRowNode(a                                                
   });
 }
 
+/** The PATH row, the startup row's twin: the sub-line says where the entry lives (the user's
+ *  Path value, or the ~/.local/bin symlink), the row title the folder or exe a terminal will
+ *  find. An entry the operator added by hand reads as on - the host compares it the way the
+ *  OS resolves it. Exported pure; null renders nothing. */
+export function pathRowNode(p                                                            )                     {
+  if (!p) return null;
+  return row({
+    name: tr("plugins.swissOnYourPath"),
+    sub: p.detail || null,
+    toggle: sw(p.enabled, tr("plugins.togglePath"), { data: { "userpath-toggle": true }, disabled: userPathBusy }),
+    data: { userpath: true },
+    title: p.dir || undefined,
+  });
+}
+
 function chipText()         {
   const all = rows();
   const on = all.filter((p              )          => { return p.enabled; }).length;
@@ -150,12 +168,13 @@ function revText()         { return tr("plugins.revisionN", { n: inv().revision 
 function render()       {
   painted = signature();
   const all = rows();
-  const startup = startupRowNode(autostart);
+  const machine = [startupRowNode(autostart), pathRowNode(userPath)]
+    .filter((node                    )                      => { return node !== null; });
   // No location title: the context bar already says "Settings / Plugins", and its chip is
   // the count the foot used to repeat (rule 25) - the foot keeps the revision alone.
   fill($("pane"), paneBody({ wide: true },
     paneHead({ desc: tr("plugins.descOneLine") }),
-    startup ? section({ cap: tr("plugins.startup") }, card(startup)) : null,
+    machine.length ? section({ cap: tr("plugins.thisMachine") }, card(machine)) : null,
     section({ cap: tr("plugins.installed") },
       all.length
         ? card(all.map(rowNode))
@@ -196,6 +215,9 @@ function patch()       {
   const startup = pane.querySelector("[data-autostart]");
   const fresh = startupRowNode(autostart);
   if (startup && fresh) patchRow(startup, fresh);
+  const onPath = pane.querySelector("[data-userpath]");
+  const freshPath = pathRowNode(userPath);
+  if (onPath && freshPath) patchRow(onPath, freshPath);
 }
 
 function wire()       {
@@ -203,6 +225,7 @@ function wire()       {
   pane.onclick = (event            )       => {
     const asButton = targetEl(event)?.closest("[data-autostart-toggle]");
     if (asButton) { void toggleAutostart(); return; }
+    if (targetEl(event)?.closest("[data-userpath-toggle]")) { void toggleUserPath(); return; }
     const button = targetEl(event)?.closest("[data-toggle]");
     if (!button) return;
     const prow = button.closest("[data-plugin]");
@@ -232,6 +255,31 @@ async function toggleAutostart()                {
   });
   autostartBusy = false;
   if (j) autostart = j; // else apiJson already toasted the refusal
+  patch();
+  refocusIfIdle(pressed);
+}
+
+/** The PATH setting, read the way the host reads it; an old gateway 404s and the row stays
+ *  hidden, as with autostart. */
+async function loadUserPath()                {
+  const r = await api("/api/user-path");
+  if (r.ok) userPath = await r.json()                                                       ;
+}
+
+/** Flip the PATH entry and redraw from the host's read-back. A change reaches new terminals
+ *  only - the toast says so, because an open terminal that still cannot find swiss (or still
+ *  can) is otherwise the first thing the operator tries. */
+async function toggleUserPath()                {
+  if (!userPath || userPathBusy) return;
+  const pressed = document.activeElement;
+  userPathBusy = true;
+  patch();
+  const j = await apiJson                                                     ("/api/user-path", {
+    method: "PUT",
+    body: JSON.stringify({ enabled: !userPath.enabled }),
+  });
+  userPathBusy = false;
+  if (j) { userPath = j; toast(tr("plugins.pathNewTerminals")); } // else apiJson already toasted
   patch();
   refocusIfIdle(pressed);
 }
@@ -267,7 +315,8 @@ async function toggle(id               )                {
 export async function mount()                {
   busy = {};
   try { await reloadPluginInventory(); } catch (error) { /* the toast is enough; draw what we have */ }
-  try { await loadAutostart(); } catch (error) { /* no route or no answer: the section stays hidden */ }
+  try { await loadAutostart(); } catch (error) { /* no route or no answer: the row stays hidden */ }
+  try { await loadUserPath(); } catch (error) { /* likewise */ }
   render();
 }
 export async function refresh()                { await mount(); }
@@ -276,4 +325,4 @@ export async function poll()                {
   patch();
 }
 export function countText()         { return chipText(); }
-export function unmount() { busy = {}; painted = ""; autostart = null; }
+export function unmount() { busy = {}; painted = ""; autostart = null; userPath = null; }

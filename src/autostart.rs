@@ -285,6 +285,28 @@ pub fn set(enabled: bool) -> Result<AutoStartState, String> {
     }
 }
 
+/// The seam /api/autostart reads through (AppContext::autostart). The gateway mounts
+/// [`OsAutoStart`]; a test composition mounts a fake or nothing, so a green suite never touches
+/// the machine's login items. The suite once wrote the real Run value on every run and left it
+/// removed, which read to the operator as "the switch does nothing".
+pub trait AutoStart: Send + Sync {
+    fn status(&self) -> AutoStartState;
+    fn set(&self, enabled: bool) -> Result<AutoStartState, String>;
+}
+
+/// The real registration: this OS's provider, for the current user.
+pub struct OsAutoStart;
+
+impl AutoStart for OsAutoStart {
+    fn status(&self) -> AutoStartState {
+        status()
+    }
+
+    fn set(&self, enabled: bool) -> Result<AutoStartState, String> {
+        set(enabled)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,22 +329,6 @@ mod tests {
         assert_eq!(v["enabled"], false);
         assert_eq!(v["detail"], "d");
         assert_eq!(v["command"], "c");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn run_entry_roundtrip_is_clean() {
-        // The real key, briefly: remove first so a previously failed run cannot fool the
-        // assert, then write, read, remove, read — the test always leaves the machine as it
-        // found it whatever assert fires.
-        let _ = swiss_core::platform::run_entry_remove();
-        swiss_core::platform::run_entry_write("test-value").expect("write Run value");
-        assert_eq!(
-            swiss_core::platform::run_entry_read().as_deref(),
-            Some("test-value")
-        );
-        swiss_core::platform::run_entry_remove().expect("remove Run value");
-        assert!(swiss_core::platform::run_entry_read().is_none());
     }
 
     #[cfg(target_os = "macos")]

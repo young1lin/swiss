@@ -54,6 +54,13 @@ export interface ApiAutoStartResponse {
   command: string;
 }
 
+/** GET /api/user-path - src/userpath.rs UserPathState::to_json. */
+export interface ApiUserPathResponse {
+  enabled: boolean;
+  detail: string;
+  dir: string;
+}
+
 /* --- MCP (src/adminapi.rs, swiss-mcp) ------------------------------------------------------------ */
 
 /** GET /api/mcps - adminapi.rs:997: both lists the sidebar renders, groups in sidebar order. */

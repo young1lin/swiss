@@ -124,6 +124,13 @@ describe("the I2 views in Chinese (plugins, secrets, system)", () => {
     expect((row.querySelector("[data-autostart-toggle]") as HTMLElement).getAttribute("aria-label")).toBe("切换开机自启");
   });
 
+  it("names the PATH row and its toggle in Chinese", async () => {
+    const { pathRowNode } = await import("../src/views/plugins.js");
+    const row = pathRowNode({ enabled: true, detail: "HKCU\\Environment" })!;
+    expect(row.textContent).toContain("把 swiss 加入 PATH");
+    expect((row.querySelector("[data-userpath-toggle]") as HTMLElement).getAttribute("aria-label")).toBe("切换 PATH");
+  });
+
   it("builds the quit sheet in Chinese", async () => {
     // system.js -> add-sheet.js wires #addBtn at import time: give it the shell skeleton,
     // every id the served index.html carries (the house shellSkeleton idiom).

@@ -43,13 +43,14 @@ pub const COMMANDS: &[&str] = &[
     "import",
     "skill",
     "autostart",
+    "path",
     "update",
 ];
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Parsed {
     pub cmd: String,
-    /// The subcommand slot `skill` (only `install`) and `autostart` (`on`/`off`, or
+    /// The subcommand slot `skill` (only `install`), `autostart` and `path` (`on`/`off`, or
     /// nothing for the status read) share.
     pub sub: Option<String>,
     /// The positional file argument for 'import'.
@@ -94,15 +95,22 @@ pub trait Ops {
     async fn foreground(&self, port: Option<u16>);
     fn skill_install(&self) -> Result<Vec<String>, String>;
 
-    // The autostart commands carry no daemon state, so the trait ships them as defaults over
-    // the library fns: RealOps needs nothing hand-written, and a test fake inherits real
-    // behaviour. (swiss update is NOT here: an async default would force Sync onto dyn Ops
-    // for every implementor, and a network call has no fake worth trait plumbing.)
+    // The autostart and path commands carry no daemon state, so the trait ships them as
+    // defaults over the library fns: RealOps needs nothing hand-written. A test fake that
+    // drives these commands must override them - the defaults write the real machine. (swiss
+    // update is NOT here: an async default would force Sync onto dyn Ops for every implementor,
+    // and a network call has no fake worth trait plumbing.)
     fn autostart_status(&self) -> crate::autostart::AutoStartState {
         crate::autostart::status()
     }
     fn autostart_set(&self, enabled: bool) -> Result<crate::autostart::AutoStartState, String> {
         crate::autostart::set(enabled)
+    }
+    fn user_path_status(&self) -> crate::userpath::UserPathState {
+        crate::userpath::status()
+    }
+    fn user_path_set(&self, enabled: bool) -> Result<crate::userpath::UserPathState, String> {
+        crate::userpath::set(enabled)
     }
 
 }
@@ -126,6 +134,8 @@ usage: swiss <command> [options]
   autostart [on|off]
                    show, enable or disable start-at-sign-in — a registry Run value on
                    Windows, a LaunchAgent on macOS, a systemd user unit on Linux
+  path [on|off]    show, add or remove swiss on your own PATH — this exe's folder in the
+                   user Path on Windows, a ~/.local/bin/swiss symlink elsewhere
   update           check GitHub for a newer release; updating stays a manual exe swap
   serve            run the gateway in this process (what the daemon spawns)
   remote …         run commands and move files on SSH targets (swiss remote help)
@@ -158,7 +168,7 @@ pub fn parse_argv(argv: &[String]) -> Parsed {
         if !arg.starts_with('-') {
             if p.cmd.is_empty() {
                 p.cmd = arg.clone();
-            } else if (p.cmd == "skill" || p.cmd == "autostart") && p.sub.is_none() {
+            } else if matches!(p.cmd.as_str(), "skill" | "autostart" | "path") && p.sub.is_none() {
                 p.sub = Some(arg.clone());
             } else if p.file.is_none() {
                 p.file = Some(arg.clone());
@@ -671,6 +681,33 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
                 1
             }
         },
+        "path" => match p.sub.as_deref() {
+            None | Some("status") => {
+                let st = ops.user_path_status();
+                io.out(&format!("on your PATH: {}", if st.enabled { "yes" } else { "no" }));
+                io.out(&row("where", &st.detail));
+                io.out(&row("swiss", &st.dir));
+                0
+            }
+            Some(verb @ ("on" | "off")) => match ops.user_path_set(verb == "on") {
+                Ok(_) => {
+                    io.out(if verb == "on" {
+                        "swiss is on your PATH - open a new terminal to use it"
+                    } else {
+                        "swiss is off your PATH - terminals opened from now on will not find it"
+                    });
+                    0
+                }
+                Err(err) => {
+                    io.err(&err);
+                    1
+                }
+            },
+            Some(other) => {
+                io.err(&format!("unknown path subcommand: {other}"));
+                1
+            }
+        },
         "update" => match crate::update_check::check().await {
             Ok(info) => {
                 for line in info.render().lines() {
@@ -960,6 +997,12 @@ mod tests {
         // Bare autostart is the status read.
         let p = parse_argv(&argv(&["autostart"]));
         assert_eq!(p.sub, None);
+
+        // path takes the same on/off slot.
+        let p = parse_argv(&argv(&["path", "off"]));
+        assert_eq!(p.cmd, "path");
+        assert_eq!(p.sub.as_deref(), Some("off"));
+        assert_eq!(p.file, None);
 
         let p = parse_argv(&argv(&["update"]));
         assert_eq!(p.cmd, "update");

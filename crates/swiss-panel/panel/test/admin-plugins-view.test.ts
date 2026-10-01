@@ -28,7 +28,7 @@
    DOM - the in-place patch is this page's own regression, and only a real tree can pin node
    identity across it. */
 
-import { describe, expect, it, beforeAll, beforeEach } from "vitest";
+import { describe, expect, it, beforeAll, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +40,9 @@ import type { ApiPluginRow } from "../src/types/api.js";
 let view: any;
 let inventory: unknown = { plugins: [], revision: 0 };
 let autostartReply: unknown = null;
+let userPathReply: unknown = null;
+/* Every PUT a case made, so a case can say what reached the host. */
+let puts: { url: string; body: unknown }[] = [];
 /* Runs inside the enable/disable POST, before it answers: a case uses it to do what the browser
  * does in that window (blur the switch it just disabled) and to move the inventory on. */
 let duringToggle: (() => void) | null = null;
@@ -77,6 +80,14 @@ beforeAll(async () => {
       if (u === "/api/autostart") {
         return Promise.resolve({ status: autostartReply == null ? 404 : 200, ok: autostartReply != null, json: () => Promise.resolve(autostartReply) } as Response);
       }
+      if (u === "/api/user-path") {
+        if (init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as { enabled: boolean };
+          puts.push({ url: u, body });
+          userPathReply = { ...(userPathReply as object), enabled: body.enabled };
+        }
+        return Promise.resolve({ status: userPathReply == null ? 404 : 200, ok: userPathReply != null, json: () => Promise.resolve(userPathReply) } as Response);
+      }
       return Promise.resolve({ status: 404, ok: false, json: () => Promise.resolve({ error: "no stub for " + u }) } as Response);
     },
   });
@@ -87,6 +98,8 @@ beforeAll(async () => {
 beforeEach(() => {
   inventory = { plugins: [], revision: 0, pages: [] };
   autostartReply = null;
+  userPathReply = null;
+  puts = [];
   duringToggle = null;
   document.body.innerHTML = shellSkeleton();
   if (view) view.unmount(); // the real lifecycle between pages resets the module state
@@ -222,6 +235,23 @@ describe("plugins view start-at-sign-in row", () => {
   });
 });
 
+/* The PATH row: the startup row's twin over /api/user-path. */
+describe("plugins view PATH row", () => {
+  it("says where the entry lives and titles the folder a terminal will find", () => {
+    const row = view.pathRowNode({ enabled: true, detail: "registry: HKCU\\Environment (value: Path)", dir: "C:\\Users\\jdoe\\swiss" });
+    const sw = row.querySelector("[data-userpath-toggle]");
+    expect(sw?.getAttribute("role")).toBe("switch");
+    expect(sw?.getAttribute("aria-checked")).toBe("true");
+    expect(sw?.getAttribute("aria-label")).toBe("Toggle swiss on your PATH");
+    expect(row.textContent).toBe("Put swiss on your PATHregistry: HKCU\\Environment (value: Path)");
+    expect(row.getAttribute("title")).toBe("C:\\Users\\jdoe\\swiss");
+  });
+
+  it("renders nothing without an answer", () => {
+    expect(view.pathRowNode(null)).toBeNull();
+  });
+});
+
 /* The page itself, through the real load path: mount reads /api/plugins and /api/autostart
  * under the fetch stub, and the poll patches state IN PLACE - the row nodes and their switches
  * keep their identity while the words, the dot and the revision follow the inventory. */
@@ -232,21 +262,38 @@ describe("the Plugins page through mount", () => {
       { id: "data", label: "Data", enabled: true, state: "active", pages: ["data"], requires: ["connection-catalog"] },
     ], revision: 7, pages: [] };
     autostartReply = { enabled: false, detail: "registry: HKCU\\...\\Run", command: "c" };
+    userPathReply = { enabled: true, detail: "symlink: /home/jdoe/.local/bin/swiss", dir: "/opt/swiss/swiss" };
     await view.mount();
     expect($("pane").querySelectorAll("[data-plugin]").length).toBe(2);
     expect($("pane").querySelector("[data-autostart]")).not.toBeNull();
+    expect($("pane").querySelector("[data-userpath]")).not.toBeNull();
     expect($("pane").textContent).toContain("data · 1 page · requires connection-catalog");
-    expect(Array.from($("pane").querySelectorAll(".sec-cap")).map((c) => c.textContent)).toEqual(["Startup", "Installed"]);
+    expect(Array.from($("pane").querySelectorAll(".sec-cap")).map((c) => c.textContent)).toEqual(["This machine", "Installed"]);
     // The count is the context bar's chip (rule 25); the foot keeps what nothing else says.
     expect($("pane").querySelector(".page-foot")?.textContent).toBe("revision 7");
     expect(view.countText()).toBe("2 plugins · 2 on");
   });
 
-  it("an old gateway without /api/autostart grows no Startup section", async () => {
+  it("an old gateway without the machine routes grows no This machine section", async () => {
     inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: true, state: "active" }], revision: 1, pages: [] };
-    autostartReply = null; // the route 404s
+    autostartReply = null; // both routes 404
     await view.mount();
     expect($("pane").querySelector("[data-autostart]")).toBeNull();
+    expect($("pane").querySelector("[data-userpath]")).toBeNull();
+    expect(Array.from($("pane").querySelectorAll(".sec-cap")).map((c) => c.textContent)).toEqual(["Installed"]);
+  });
+
+  it("the PATH switch PUTs the opposite verdict and redraws from the host's answer, in place", async () => {
+    inventory = { plugins: [], revision: 1, pages: [] };
+    userPathReply = { enabled: false, detail: "registry: HKCU\\Environment (value: Path)", dir: "C:\\swiss" };
+    await view.mount();
+    const row = $("pane").querySelector("[data-userpath]") as HTMLElement;
+    const toggle = row.querySelector("[data-userpath-toggle]") as HTMLButtonElement;
+    toggle.click();
+    await vi.waitFor(() => { expect(toggle.getAttribute("aria-checked")).toBe("true"); });
+    expect(puts).toEqual([{ url: "/api/user-path", body: { enabled: true } }]);
+    expect($("pane").querySelector("[data-userpath]")).toBe(row); // patched, not rebuilt
+    expect(toggle.disabled).toBe(false);
   });
 
   it("poll patches state in place - the row and its switch are the SAME nodes, the words follow", async () => {

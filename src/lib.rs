@@ -36,6 +36,7 @@ pub mod session;
 pub mod skill_install;
 pub mod subsystems;
 pub mod update_check;
+pub mod userpath;
 
 #[doc(inline)]
 pub use swiss_host::reply;

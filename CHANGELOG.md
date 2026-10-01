@@ -6,6 +6,17 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `swiss path [on|off]` and a "Put swiss on your PATH" switch in the panel: this exe's folder in
+  the current user's PATH on Windows, a `~/.local/bin/swiss` symlink elsewhere. A PATH entry
+  added by hand counts as on.
+
+### Fixed
+
+- Running the test suite no longer turns start at sign-in off on the machine that runs it; the
+  tests write no OS registration of the operator's.
+
 ## [0.1.1] - 2026-10-02
 
 ### Fixed

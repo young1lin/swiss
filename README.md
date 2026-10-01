@@ -33,7 +33,7 @@ The Linux binaries need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, or later).
 Compare the archive's SHA-256 with its line in `SHA256SUMS`
 (`Get-FileHash <archive> -Algorithm SHA256` on Windows, `sha256sum <archive>`
 on Linux, or `shasum -a 256 <archive>` on macOS). Extract it, then put
-`swiss.exe` or `swiss` on your PATH. Each archive also includes `LICENSE`, `NOTICE`,
+`swiss.exe` or `swiss` on your PATH (`swiss path on` does it for your user). Each archive also includes `LICENSE`, `NOTICE`,
 `THIRD_PARTY_NOTICES.md`, and standalone `skills/swiss/SKILL.md` and
 `skills/swiss-remote/SKILL.md` for inspection before installing or running the binary.
 
@@ -124,15 +124,19 @@ binary. Moving machines uses `swiss export > bundle.json` and `swiss import bund
 On Windows the seal binds to your user (DPAPI); on Linux it binds to the machine via the
 world-readable machine-id, not to your user — treat shared hosts accordingly.
 
-## Start at sign-in
+## Start at sign-in, and swiss on your PATH
 
-The panel's Settings → Plugins page carries a "Start swiss when you sign in" switch, or from
-the terminal:
+The panel's Settings → Plugins page has a This machine section with two switches, "Start swiss
+when you sign in" and "Put swiss on your PATH". Both act for your user only. From the terminal:
 
 ```
 swiss autostart on     # Windows: an HKCU Run value · macOS: a LaunchAgent · Linux: a systemd user unit
 swiss autostart off
+swiss path on          # Windows: this exe's folder in your user Path · elsewhere: ~/.local/bin/swiss
+swiss path off
 ```
+
+A PATH change reaches terminals opened afterwards; ones already open keep their old PATH.
 
 ## Documentation
 

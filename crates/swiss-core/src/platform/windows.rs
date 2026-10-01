@@ -19,10 +19,13 @@
 //! direct calls are free, which is why the memory view stops being opt-in in this build.
 
 use windows::core::{w, Result as WinResult, PCWSTR};
-use windows::Win32::Foundation::{LocalFree, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HLOCAL};
+use windows::Win32::Foundation::{
+    LocalFree, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HLOCAL, LPARAM, WPARAM,
+};
 use windows::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
 };
+use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
@@ -30,9 +33,12 @@ use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_OPEN_CREATE_OPTIONS,
-    REG_SAM_FLAGS, REG_SZ, REG_VALUE_TYPE,
+    REG_EXPAND_SZ, REG_SAM_FLAGS, REG_SZ, REG_VALUE_TYPE,
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
+use windows::Win32::UI::WindowsAndMessaging::{
+    SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+};
 
 use super::ParentProcess;
 
@@ -181,112 +187,213 @@ pub fn machine_id() -> Option<String> {
     }
 }
 
-/// The HKCU Run entry the start-at-sign-in setting owns (src/autostart.rs): one REG_SZ value
-/// named "swiss" under the per-user Run key. HKCU needs no elevation, and a per-user value is
-/// the honest scope for a per-user toolbox. None when the value is absent or unreadable.
-pub fn run_entry_read() -> Option<String> {
-    // SAFETY: same shape as machine_id — the handle is closed on every path and the buffer is
-    // bounded by the length the size query reported.
+/// A NUL-terminated UTF-16 copy of `s`, for a PCWSTR that must outlive the call it is passed to.
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// One string value under HKCU: its text and whether it is REG_EXPAND_SZ. Ok(None) when the key
+/// or the value is absent; an Err when it is there but cannot be read as a string - which a
+/// writer must not mistake for "absent" and overwrite. The Run entry and the user PATH both
+/// read through here, and the suite drives it against a scratch key - never the operator's own.
+fn hkcu_string_read(subkey: &str, value: &str) -> Result<Option<(String, bool)>, String> {
+    let label = format!("HKCU\\{subkey} value {value}");
+    let subkey = wide(subkey);
+    let value = wide(value);
+    // SAFETY: both name buffers outlive the calls; the handle is closed on every path; the data
+    // buffer is bounded by the length the size query reported.
     unsafe {
         let mut hkey = HKEY::default();
-        if RegOpenKeyExW(
+        let opened = RegOpenKeyExW(
             HKEY_CURRENT_USER,
-            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+            PCWSTR(subkey.as_ptr()),
             None,
             REG_SAM_FLAGS(KEY_READ.0),
             &mut hkey,
-        ) != ERROR_SUCCESS
-        {
-            return None;
+        );
+        if opened == ERROR_FILE_NOT_FOUND {
+            return Ok(None);
         }
+        if opened != ERROR_SUCCESS {
+            return Err(format!("could not open {label} ({opened:?})"));
+        }
+        let name = PCWSTR(value.as_ptr());
         let mut ty = REG_VALUE_TYPE::default();
         let mut len = 0u32;
-        if RegQueryValueExW(hkey, w!("swiss"), None, Some(&mut ty), None, Some(&mut len))
-            != ERROR_SUCCESS
-            || ty != REG_SZ
-            || len == 0
-        {
+        let sized = RegQueryValueExW(hkey, name, None, Some(&mut ty), None, Some(&mut len));
+        if sized != ERROR_SUCCESS || (ty != REG_SZ && ty != REG_EXPAND_SZ) {
             let _ = RegCloseKey(hkey);
-            return None;
+            return match sized {
+                ERROR_FILE_NOT_FOUND => Ok(None),
+                ERROR_SUCCESS => Err(format!("{label} is not a string value ({ty:?})")),
+                err => Err(format!("could not read {label} ({err:?})")),
+            };
         }
         let mut buf = vec![0u8; len as usize];
-        let ok = RegQueryValueExW(
-            hkey,
-            w!("swiss"),
-            None,
-            None,
-            Some(buf.as_mut_ptr()),
-            Some(&mut len),
-        ) == ERROR_SUCCESS;
+        let read = RegQueryValueExW(hkey, name, None, None, Some(buf.as_mut_ptr()), Some(&mut len));
         let _ = RegCloseKey(hkey);
-        if !ok {
-            return None;
+        if read != ERROR_SUCCESS {
+            return Err(format!("could not read {label} ({read:?})"));
         }
-        // REG_SZ is NUL-terminated UTF-16; trim everything from the first NUL.
-        let wide = std::slice::from_raw_parts(buf.as_ptr() as *const u16, len as usize / 2);
-        let end = wide.iter().position(|c| *c == 0).unwrap_or(wide.len());
-        Some(String::from_utf16_lossy(&wide[..end]))
+        // A string value is UTF-16 and normally NUL-terminated; trim everything from the first
+        // NUL. Paired up byte by byte, so an odd length or an unaligned buffer cannot misread.
+        let units: Vec<u16> = buf[..(len as usize).min(buf.len())]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
+            .collect();
+        let end = units.iter().position(|c| *c == 0).unwrap_or(units.len());
+        Ok(Some((String::from_utf16_lossy(&units[..end]), ty == REG_EXPAND_SZ)))
     }
 }
 
-/// Write the Run value, creating the key if a profile somehow lacks it. The value data is a
-/// NUL-terminated UTF-16 copy of the command string, owned by a live Vec across the call.
-pub fn run_entry_write(cmd: &str) -> Result<(), String> {
-    // SAFETY: the handle is created and closed here; the value data points at a Vec that
-    // outlives the call, and every parameter that may be NULL is.
+/// Write one string value under HKCU, creating the key if a profile somehow lacks it. `expand`
+/// picks REG_EXPAND_SZ - what a PATH holding `%USERPROFILE%` must stay - over REG_SZ.
+fn hkcu_string_write(subkey: &str, value: &str, data: &str, expand: bool) -> Result<(), String> {
+    let key = wide(subkey);
+    let name = wide(value);
+    // The binding takes the value data as bytes, the terminating NUL included.
+    let bytes: Vec<u8> = wide(data).iter().flat_map(|unit| unit.to_le_bytes()).collect();
+    // SAFETY: the handle is created and closed here; every buffer outlives the call it is
+    // passed to, and every parameter that may be NULL is.
     unsafe {
         let mut hkey = HKEY::default();
         if RegCreateKeyExW(
             HKEY_CURRENT_USER,
-            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+            PCWSTR(key.as_ptr()),
             None,
             PCWSTR::null(),
-            REG_OPEN_CREATE_OPTIONS(0), // REG_OPTION_NON_VOLATILE — persist across sessions
+            REG_OPEN_CREATE_OPTIONS(0), // REG_OPTION_NON_VOLATILE - persist across sessions
             REG_SAM_FLAGS(KEY_WRITE.0),
             None,
             &mut hkey,
             None,
         ) != ERROR_SUCCESS
         {
-            return Err("could not open the Run key".to_string());
+            return Err(format!("could not open HKCU\\{subkey}"));
         }
-        let mut wide: Vec<u16> = cmd.encode_utf16().collect();
-        wide.push(0); // REG_SZ is NUL-terminated
-                      // The binding takes the value data as a byte slice, length included.
-        let mut data: Vec<u8> = Vec::with_capacity(wide.len() * 2);
-        for unit in &wide {
-            data.extend_from_slice(&unit.to_le_bytes());
-        }
-        let written = RegSetValueExW(hkey, w!("swiss"), None, REG_SZ, Some(&data));
+        let ty = if expand { REG_EXPAND_SZ } else { REG_SZ };
+        let written = RegSetValueExW(hkey, PCWSTR(name.as_ptr()), None, ty, Some(&bytes));
         let _ = RegCloseKey(hkey);
         if written != ERROR_SUCCESS {
-            return Err(format!("could not write the Run value ({written:?})"));
+            return Err(format!("could not write HKCU\\{subkey} value {value} ({written:?})"));
         }
         Ok(())
     }
 }
 
-/// Delete the Run value. A value that is already gone is success — "off" must be idempotent.
-pub fn run_entry_remove() -> Result<(), String> {
-    // SAFETY: the handle is opened and closed here; RegDeleteValueW takes no pointers.
+/// Delete one value under HKCU. A value - or a key - that is already gone is success: "off"
+/// must be idempotent.
+fn hkcu_value_remove(subkey: &str, value: &str) -> Result<(), String> {
+    let key = wide(subkey);
+    let name = wide(value);
+    // SAFETY: the handle is opened and closed here; both name buffers outlive the calls.
     unsafe {
         let mut hkey = HKEY::default();
-        if RegOpenKeyExW(
+        let opened = RegOpenKeyExW(
             HKEY_CURRENT_USER,
-            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+            PCWSTR(key.as_ptr()),
             None,
             REG_SAM_FLAGS(KEY_WRITE.0),
             &mut hkey,
-        ) != ERROR_SUCCESS
-        {
-            return Err("could not open the Run key".to_string());
+        );
+        if opened == ERROR_FILE_NOT_FOUND {
+            return Ok(());
         }
-        let deleted = RegDeleteValueW(hkey, w!("swiss"));
+        if opened != ERROR_SUCCESS {
+            return Err(format!("could not open HKCU\\{subkey}"));
+        }
+        let deleted = RegDeleteValueW(hkey, PCWSTR(name.as_ptr()));
         let _ = RegCloseKey(hkey);
         if deleted == ERROR_SUCCESS || deleted == ERROR_FILE_NOT_FOUND {
             return Ok(());
         }
-        Err(format!("could not delete the Run value ({deleted:?})"))
+        Err(format!("could not delete HKCU\\{subkey} value {value} ({deleted:?})"))
+    }
+}
+
+const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const RUN_VALUE: &str = "swiss";
+
+/// The HKCU Run entry the start-at-sign-in setting owns (src/autostart.rs): one string value
+/// named "swiss" under the per-user Run key. HKCU needs no elevation, and a per-user value is
+/// the honest scope for a per-user toolbox. None when the value is absent, empty or unreadable.
+pub fn run_entry_read() -> Option<String> {
+    hkcu_string_read(RUN_KEY, RUN_VALUE)
+        .ok()
+        .flatten()
+        .map(|(cmd, _)| cmd)
+        .filter(|cmd| !cmd.is_empty())
+}
+
+/// Write the Run value as REG_SZ, creating the key if a profile somehow lacks it.
+pub fn run_entry_write(cmd: &str) -> Result<(), String> {
+    hkcu_string_write(RUN_KEY, RUN_VALUE, cmd, false)
+}
+
+/// Delete the Run value. A value that is already gone is success.
+pub fn run_entry_remove() -> Result<(), String> {
+    hkcu_value_remove(RUN_KEY, RUN_VALUE)
+}
+
+const ENV_KEY: &str = "Environment";
+const PATH_VALUE: &str = "Path";
+
+/// The current user's own PATH exactly as stored - `%VAR%` references unexpanded - and whether
+/// it is REG_EXPAND_SZ (src/userpath.rs). Ok(None) when the user has no PATH value of their own;
+/// an Err when there is one that cannot be read, so nothing writes over it.
+pub fn user_path_read() -> Result<Option<(String, bool)>, String> {
+    hkcu_string_read(ENV_KEY, PATH_VALUE)
+}
+
+/// Store the current user's PATH, then announce the change the way setx and the System
+/// Properties dialog do, so a terminal opened from Explorer afterwards sees it. Programs that
+/// are already running - this gateway, an open terminal - keep the PATH they started with.
+pub fn user_path_write(path: &str, expand: bool) -> Result<(), String> {
+    hkcu_string_write(ENV_KEY, PATH_VALUE, path, expand)?;
+    broadcast_environment_change();
+    Ok(())
+}
+
+/// WM_SETTINGCHANGE("Environment") to every top-level window - the message Explorer rereads
+/// the user environment on. A hung window is skipped (SMTO_ABORTIFHUNG) and a slow one gets a
+/// second, so no other program can hold the caller; the registry write already stands either way.
+fn broadcast_environment_change() {
+    let area = wide("Environment");
+    // SAFETY: lParam points at a NUL-terminated wide string that outlives the call, which is
+    // all WM_SETTINGCHANGE reads; no result pointer is requested.
+    unsafe {
+        let _ = SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            WPARAM(0),
+            LPARAM(area.as_ptr() as isize),
+            SMTO_ABORTIFHUNG,
+            1000,
+            None,
+        );
+    }
+}
+
+/// `s` with its `%VAR%` references expanded against this process's environment - how a PATH
+/// entry is compared with a directory. An unknown variable stays as written, as cmd leaves it.
+pub fn expand_env(s: &str) -> String {
+    let src = wide(s);
+    // SAFETY: the source buffer outlives both calls; the destination is sized from the first
+    // call's answer, and the second call writes at most that many units.
+    unsafe {
+        let need = ExpandEnvironmentStringsW(PCWSTR(src.as_ptr()), None);
+        if need == 0 {
+            return s.to_string();
+        }
+        let mut buf = vec![0u16; need as usize];
+        let got = ExpandEnvironmentStringsW(PCWSTR(src.as_ptr()), Some(&mut buf));
+        if got == 0 || got as usize > buf.len() {
+            return s.to_string();
+        }
+        let end = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+        String::from_utf16_lossy(&buf[..end])
     }
 }
 
@@ -717,6 +824,92 @@ mod tests {
         assert!(!inherit_flag(handle), "the flag is gone");
         drop(file);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A scratch HKCU key of the test's own, deleted on drop - so a failing assert still
+    /// leaves the profile as it found it, and the Run key and the PATH are never touched.
+    struct ScratchKey(String);
+
+    impl ScratchKey {
+        fn new(tag: &str) -> Self {
+            Self(format!("Software\\swiss-suite-{tag}-{}", crate::util::random_hex(8)))
+        }
+    }
+
+    impl Drop for ScratchKey {
+        fn drop(&mut self) {
+            use windows::Win32::System::Registry::RegDeleteKeyW;
+            let key = wide(&self.0);
+            // SAFETY: the name buffer outlives the call; the key has values only, no subkeys.
+            unsafe {
+                let _ = RegDeleteKeyW(HKEY_CURRENT_USER, PCWSTR(key.as_ptr()));
+            }
+        }
+    }
+
+    #[test]
+    fn a_string_value_round_trips_with_its_type() {
+        let key = ScratchKey::new("string");
+        assert_eq!(hkcu_string_read(&key.0, "v"), Ok(None), "no key reads as absent");
+        hkcu_string_write(&key.0, "v", "C:\\a b;%USERPROFILE%\\bin", true).expect("write");
+        assert_eq!(
+            hkcu_string_read(&key.0, "v"),
+            Ok(Some(("C:\\a b;%USERPROFILE%\\bin".to_string(), true))),
+            "REG_EXPAND_SZ reads back unexpanded, and says so"
+        );
+        hkcu_string_write(&key.0, "v", "plain", false).expect("rewrite");
+        assert_eq!(hkcu_string_read(&key.0, "v"), Ok(Some(("plain".to_string(), false))));
+        hkcu_value_remove(&key.0, "v").expect("remove");
+        assert_eq!(hkcu_string_read(&key.0, "v"), Ok(None), "no value reads as absent");
+        hkcu_value_remove(&key.0, "v").expect("removing a missing value is success");
+    }
+
+    #[test]
+    fn removing_from_a_missing_key_is_success() {
+        let key = ScratchKey::new("missing");
+        hkcu_value_remove(&key.0, "v").expect("no key, nothing to remove");
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_string_is_an_error_not_absent() {
+        // The PATH writer appends to what it read; a REG_DWORD read as "absent" would be
+        // replaced by a one-entry PATH. It must refuse instead.
+        use windows::Win32::System::Registry::{RegSetValueExW, REG_DWORD};
+        let key = ScratchKey::new("dword");
+        hkcu_string_write(&key.0, "s", "", false).expect("create the key");
+        let sub = wide(&key.0);
+        let name = wide("v");
+        // SAFETY: the handle is opened and closed here; every buffer outlives its call.
+        unsafe {
+            let mut hkey = HKEY::default();
+            assert_eq!(
+                RegOpenKeyExW(
+                    HKEY_CURRENT_USER,
+                    PCWSTR(sub.as_ptr()),
+                    None,
+                    REG_SAM_FLAGS(KEY_WRITE.0),
+                    &mut hkey,
+                ),
+                ERROR_SUCCESS
+            );
+            let seven = 7u32.to_le_bytes();
+            let set = RegSetValueExW(hkey, PCWSTR(name.as_ptr()), None, REG_DWORD, Some(&seven));
+            let _ = RegCloseKey(hkey);
+            assert_eq!(set, ERROR_SUCCESS);
+        }
+        let read = hkcu_string_read(&key.0, "v");
+        assert!(read.as_ref().is_err_and(|e| e.contains("not a string")), "{read:?}");
+    }
+
+    #[test]
+    fn expand_env_expands_known_references_and_keeps_unknown_ones() {
+        let windir = std::env::var("SystemRoot").expect("Windows sets SystemRoot");
+        assert_eq!(expand_env("%SystemRoot%\\x"), format!("{windir}\\x"));
+        assert_eq!(
+            expand_env("%SWISS_SURELY_UNSET_VAR%\\x"),
+            "%SWISS_SURELY_UNSET_VAR%\\x"
+        );
+        assert_eq!(expand_env("C:\\plain"), "C:\\plain");
     }
 
     #[test]
