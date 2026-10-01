@@ -595,6 +595,11 @@ swiss is a local tool. Three checks run on every route, before anything else:
 A refusal is `403 {error}`. Requests without `ConnectInfo` (tests driving the router with
 `oneshot`) count as local; a real listener always uses `into_make_service_with_connect_info`.
 
+**No framing.** Every answer — the panel shell, the lock page, assets, API answers and refusals —
+carries `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`. The panel
+frames nothing of its own, and a page on another local port that framed the signed-in panel
+could steer its clicks.
+
 ### §host.session — The admin session
 
 The loopback checks cannot tell one local process from another, so `/api/*` and the panel
@@ -3872,7 +3877,8 @@ and a change that weakens any line of it is a security change whatever else it d
 |---|---|---|
 | Bind | Only a loopback host is accepted; a non-loopback host is refused at config load | §host.boundary |
 | Peer, `Host`, `Origin` | Every route checks all three; a refusal is `403 {error}` (DNS-rebinding defence) | §host.boundary |
-| Admin surface | Loopback **and** a credential: a single-use login token → a signed `HttpOnly; SameSite=Strict` cookie, or the rotating CLI key in `X-Swiss-Key` | §host.session |
+| Framing | Every answer forbids framing (`frame-ancestors 'none'`, `X-Frame-Options: DENY`) | §host.boundary |
+| Admin surface | Loopback **and** a credential: a single-use login token → a signed `HttpOnly; SameSite=Strict` cookie that counts only from the panel's own origin, or the rotating CLI key in `X-Swiss-Key` | §host.session |
 | MCP clients | Named bearer tokens, compared timing-safe before the body is read | §host.tokens |
 | Terminal stream | A 10 s single-use ticket bound to one session on top of the loopback guard, so loosening `Origin` can never loosen the terminal | §terminal.api |
 | At rest | Every state file sealed (AES-256-GCM under a key derived from the device-bound master key); unix modes 0700/0600 | §formats.sealed, §formats.masterkey, §formats.home |
@@ -3890,6 +3896,8 @@ and a change that weakens any line of it is a security change whatever else it d
 **In scope** — anything that lets:
 
 - a non-loopback peer reach the gateway or the panel (bind, `Host`/`Origin` checks, tunnels);
+- a page on another local port, or any other page, use a signed-in browser's session on
+  `/api/*` or frame the panel;
 - a caller read a stored secret back out, or read another client's traffic or token;
 - a `${secret://…}` reference, an env reference or a masked field leak its value through a
   log, an API answer, an error message or a run record;

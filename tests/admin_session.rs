@@ -292,6 +292,42 @@ async fn the_panel_itself_still_reads_and_writes_with_its_cookie() {
 }
 
 #[tokio::test]
+async fn no_page_may_frame_any_answer_the_gateway_gives() {
+    // A page on another local port must not be able to frame the signed-in panel and steer its
+    // clicks: every answer says so - the shell, the lock page, assets, API answers, refusals.
+    let g = gateway(true);
+    let cookie = |path: &str| get_req(path).header(header::COOKIE, &g.cookie).body(Body::empty()).unwrap();
+    let requests = [
+        ("signed-in shell", socket(cookie("/"))),
+        ("lock page", socket(get_req("/").body(Body::empty()).unwrap())),
+        ("asset", socket(get_req("/admin/app.js").body(Body::empty()).unwrap())),
+        ("api answer", socket(cookie("/api/extra-tree"))),
+        ("api refusal", socket(get_req("/api/mcps").body(Body::empty()).unwrap())),
+        ("unknown path", socket(get_req("/no-such-page").body(Body::empty()).unwrap())),
+        ("health", socket(get_req("/health").body(Body::empty()).unwrap())),
+        (
+            "loopback refusal",
+            socket(
+                Request::builder()
+                    .uri("/")
+                    .header(header::HOST, "rebound.example.test")
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+        ),
+    ];
+    for (what, req) in requests {
+        let (status, headers, _) = send(&g.app, req).await;
+        let get = |name| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
+        assert_eq!(get(header::X_FRAME_OPTIONS), "DENY", "{what} ({status})");
+        assert!(
+            get(header::CONTENT_SECURITY_POLICY).contains("frame-ancestors 'none'"),
+            "{what} ({status})"
+        );
+    }
+}
+
+#[tokio::test]
 async fn without_a_session_installed_the_gate_fails_closed() {
     let g = gateway(false);
     let (status, _, _) = send(

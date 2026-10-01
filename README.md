@@ -90,8 +90,9 @@ needed to build; see [CONTRIBUTING.md](CONTRIBUTING.md).
 - **A sign-in for the panel and `/api/*`.** `swiss start` and `swiss open` open a single-use
   link that expires in two minutes and trades itself for an `HttpOnly`, `SameSite=Strict`
   cookie that counts only from the panel's own pages (a page on another local port cannot ride
-  it); the CLI signs its calls with a key rotated on every start (`swiss api` is the scripted
-  way in). Another local user or a process that only knows the port gets 401.
+  it, nor frame the panel); the CLI signs its calls with a key rotated on every start
+  (`swiss api` is the scripted way in). Another local user or a process that only knows the
+  port gets 401.
 - **A bearer token for `/mcp/*`**, checked before the body is read, so other tools on the
   machine cannot use your MCP servers unchallenged. The terminal WebSocket adds a single-use
   ticket that burns in 10 seconds.
