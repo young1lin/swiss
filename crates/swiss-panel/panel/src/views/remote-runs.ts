@@ -316,7 +316,7 @@ function writtenNode(r: ApiRemoteRunRow): HChild {
   const size = fmtBytes(bytes);
   if (r.contentEvicted) return note(tr("remoteRuns.contentEvicted", { size }));
   if (!r.contentStored) {
-    // Between c720f0c and R12 a write kept its size and nothing else. Such a row drew no
+    // Between 9a6aebe and R12 a write kept its size and nothing else. Such a row drew no
     // block at all, which reads exactly like one whose Show has not been pressed yet.
     return kindOf(r) === "write" && bytes > 0 ? note(tr("remoteRuns.contentNotKept", { size })) : null;
   }
