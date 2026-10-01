@@ -1018,8 +1018,8 @@ fn throwaway_jump(defs: JumpDefs, jump_id: String, host: String, port: u16) -> J
                 ..SshHooks::default()
             },
         );
-        probe.connect().await.map_err(&via)?;
-        let stream = probe.open_channel(&host, port).await.map_err(&via)?;
+        probe.connect().await.map_err(via)?;
+        let stream = probe.open_channel(&host, port).await.map_err(via)?;
         Ok((stream, Box::new(probe) as Box<dyn Send + 'static>))
     })
 }
