@@ -122,6 +122,12 @@ pub struct AppContext {
     /// driving the router with oneshot) carry no ConnectInfo and pass, as they pass the
     /// loopback guard.
     pub session: std::sync::OnceLock<Arc<crate::session::AdminSession>>,
+    /// Start-at-sign-in (/api/autostart) and the user PATH entry (/api/user-path): the two
+    /// settings that write the machine rather than the home. Set once by the boot sequence to
+    /// the OS providers; unset in every test composition, where both routes answer an honest
+    /// 503, so no suite run can register, unregister or rewrite anything on the host.
+    pub autostart: std::sync::OnceLock<Arc<dyn crate::autostart::AutoStart>>,
+    pub user_path: std::sync::OnceLock<Arc<dyn crate::userpath::UserPath>>,
     handlers: Mutex<HashMap<String, CachedHandler>>,
 }
 
@@ -151,6 +157,8 @@ impl AppContext {
             group_scopes: swiss_host::groups::GroupScopes::new(),
             oauth_flows: std::sync::RwLock::new(HashMap::new()),
             session: std::sync::OnceLock::new(),
+            autostart: std::sync::OnceLock::new(),
+            user_path: std::sync::OnceLock::new(),
             handlers: Mutex::new(HashMap::new()),
         });
         // The scopes this context owns natively (SPEC §host.groups): the managed store holds the

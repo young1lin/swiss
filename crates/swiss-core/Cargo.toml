@@ -37,6 +37,8 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",           # DPAPI, replacing the powershell spawn
     "Win32_System_Registry",                 # MachineGuid, direct registry read
+    "Win32_System_Environment",              # ExpandEnvironmentStringsW for user PATH entries
+    "Win32_UI_WindowsAndMessaging",          # WM_SETTINGCHANGE after a user PATH write
     "Win32_System_Threading",                # process-tree walk + open-process
     "Win32_System_JobObjects",               # KILL_ON_JOB_CLOSE subtree kill for proc children
     "Win32_System_Diagnostics_ToolHelp",     # Toolhelp32 snapshot, replacing the other powershell spawn

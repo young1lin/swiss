@@ -267,6 +267,9 @@ pub async fn run_gateway() -> Result<(), String> {
         cfg.port,
     )?;
     let _ = ctx.session.set(session);
+    // The machine-level settings: only the real gateway writes the OS (see AppContext).
+    let _ = ctx.autostart.set(Arc::new(crate::autostart::OsAutoStart));
+    let _ = ctx.user_path.set(Arc::new(crate::userpath::OsUserPath));
     if let Ok(mut links) = ctx.tunnel_links.write() {
         *links = Some(tunnel_manager.clone());
     }

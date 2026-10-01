@@ -578,6 +578,21 @@ async fn refresh_secret_users(ctx: &AppContext, secret: &str) -> (Vec<String>, V
     (refreshed, failed)
 }
 
+/// The one body the machine-setting PUTs take.
+const ENABLED_BODY: &str = "body must carry {\"enabled\": true|false}";
+
+fn enabled_verdict(body: &Value) -> Option<bool> {
+    body.get("enabled").and_then(Value::as_bool)
+}
+
+/// A machine-setting route on a composition that mounted no provider (see AppContext).
+fn machine_setting_unmounted(what: &str) -> Response {
+    admin_error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        &format!("{what} is not available in this composition"),
+    )
+}
+
 // --- mounting -----------------------------------------------------------------------------------
 
 pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
@@ -601,26 +616,60 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         )
     }));
 
-    // --- start-at-sign-in: the one OS-level host setting --------------------------------------------
+    // --- the machine settings: start-at-sign-in and the user PATH entry --------------------------
     //
-    // GET reads the registration the OS holds; PUT applies {"enabled": bool} and answers with
-    // the state read back from the OS. There is no revision to race on — the registry entry,
-    // plist or unit file IS the store, and status() reads it the same way this answer does.
+    // GET reads what the OS holds; PUT applies {"enabled": bool} and answers with the state read
+    // back from the OS. There is no revision to race on — the registry value, plist, unit file
+    // or symlink IS the store, and status() reads it the same way this answer does. Both go
+    // through AppContext seams the boot sequence sets; a composition without them (every test)
+    // answers 503 rather than writing the host.
     r = r.route(
         "/api/autostart",
-        get(|| async move { admin_json(StatusCode::OK, crate::autostart::status().to_json()) })
-            .put(|body: crate::reply::NodeBody| async move {
-                let Some(enabled) = body.0.get("enabled").and_then(Value::as_bool) else {
-                    return admin_error(
-                        StatusCode::BAD_REQUEST,
-                        "body must carry {\"enabled\": true|false}",
-                    );
-                };
-                match crate::autostart::set(enabled) {
-                    Ok(state) => admin_json(StatusCode::OK, state.to_json()),
-                    Err(err) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
-                }
-            }),
+        get(|State(ctx): State<Arc<AppContext>>| async move {
+            match ctx.autostart.get() {
+                Some(auto) => admin_json(StatusCode::OK, auto.status().to_json()),
+                None => machine_setting_unmounted("start-at-sign-in"),
+            }
+        })
+        .put(|State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
+            let Some(enabled) = enabled_verdict(&body.0) else {
+                return admin_error(StatusCode::BAD_REQUEST, ENABLED_BODY);
+            };
+            let Some(auto) = ctx.autostart.get().cloned() else {
+                return machine_setting_unmounted("start-at-sign-in");
+            };
+            match auto.set(enabled) {
+                Ok(state) => admin_json(StatusCode::OK, state.to_json()),
+                Err(err) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
+            }
+        }),
+    );
+    r = r.route(
+        "/api/user-path",
+        get(|State(ctx): State<Arc<AppContext>>| async move {
+            match ctx.user_path.get() {
+                Some(up) => admin_json(StatusCode::OK, up.status().to_json()),
+                None => machine_setting_unmounted("the user PATH setting"),
+            }
+        })
+        .put(|State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
+            let Some(enabled) = enabled_verdict(&body.0) else {
+                return admin_error(StatusCode::BAD_REQUEST, ENABLED_BODY);
+            };
+            let Some(up) = ctx.user_path.get().cloned() else {
+                return machine_setting_unmounted("the user PATH setting");
+            };
+            // Off the runtime: on Windows the write ends in a WM_SETTINGCHANGE broadcast that
+            // waits (bounded) on every top-level window.
+            match tokio::task::spawn_blocking(move || up.set(enabled)).await {
+                Ok(Ok(state)) => admin_json(StatusCode::OK, state.to_json()),
+                Ok(Err(err)) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
+                Err(err) => admin_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &format!("the PATH update did not finish: {err}"),
+                ),
+            }
+        }),
     );
 
     // --- tokens: named per-client bearers, so the logs can attribute every request to a client ----

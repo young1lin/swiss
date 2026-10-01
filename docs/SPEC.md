@@ -167,7 +167,7 @@ swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-
 | `swiss-terminal` | The terminal session machine: config, sessions, tickets, recording, local shells. No axum and no SSH — its routes live in the root crate's `plugins/` |
 | `swiss-remote` | Remote execution: targets, actions, sync, project config, history, the `/api/remote` routes |
 | `swiss-panel` | The admin panel: the TypeScript source (`panel/`), the committed emit (`src/admin_assets/`), the embedded asset server (`admin.rs`) |
-| `swiss` (root `src/`) | Composition and nothing else: argv, the axum app, `/api/*` assembly, plugin descriptors, boot, the daemon and CLI, the admin session, autostart, the update check, skill install |
+| `swiss` (root `src/`) | Composition and nothing else: argv, the axum app, `/api/*` assembly, plugin descriptors, boot, the daemon and CLI, the admin session, autostart and the user PATH entry, the update check, skill install |
 | `swiss-it` | The dev-only integration harness (§testing.it). A leaf nothing depends on; every dependency hides behind its `it` feature, so without it the crate compiles to empty targets |
 
 **No subsystem crate depends on another.** Data reaches its connections through the connection
@@ -573,7 +573,7 @@ registration (`host/engine.rs`): a silently shadowed route would be a boundary h
 | `/api/secrets…` | §host.vault |
 | `/api/groups/{scope}…` | §host.groups |
 | `GET /api/info` | `tokenEnv`, `panelVersion`, `build` — the panel reloads itself when the build changes |
-| `GET/PUT /api/autostart` | the one OS-level setting (§host.cli) |
+| `GET/PUT /api/autostart`, `GET/PUT /api/user-path` | the two OS-level settings (§host.cli); 503 in a composition that mounted no provider |
 | `GET /api/memory[?tree=1]` | §host.memory |
 | `POST /api/shutdown` | answers first, then signals |
 | `POST /api/session/ticket` | §host.session |
@@ -810,8 +810,8 @@ read passes `tree=1`. Numbers are honest or absent. The records are in §product
 ### §host.cli — The command line
 
 `swiss start | stop | restart | status | logs | token | creds | open | export | import <file> |
-skill install | autostart [on|off] | update | serve | remote … | run … | api <METHOD> <path>
-[json]`. Options: `-p/--port` (start: listen and save as default; others: which instance),
+skill install | autostart [on|off] | path [on|off] | update | serve | remote … | run … |
+api <METHOD> <path> [json]`. Options: `-p/--port` (start: listen and save as default; others: which instance),
 `-f` (start: foreground; logs: follow), `--no-open`, `-n/--lines` (default 200), `--force`,
 `--json`, `-h`, `-v`. `swiss --help` is the reference text; `remote` and `run` are §remote.
 
@@ -823,6 +823,17 @@ skill install | autostart [on|off] | update | serve | remote … | run … | api
 - **`autostart`** — start at sign-in: a registry Run value on Windows, a LaunchAgent on macOS,
   a systemd user unit on Linux. The OS registration is the store (no revision to race);
   `GET/PUT /api/autostart` read and apply it.
+- **`path`** — swiss on the current user's PATH. Windows: this exe's folder as an entry of the
+  user's own `Path` (HKCU\Environment, its REG_EXPAND_SZ type kept), then a
+  `WM_SETTINGCHANGE` broadcast as `setx` sends. An entry counts as on however it is written
+  (`%VAR%` expanded, quotes, a trailing `\`, case), and off removes exactly those entries. A
+  `Path` that exists but is not a string is an error, never overwritten. Unix: a
+  `~/.local/bin/swiss` symlink to this exe; only a symlink resolving here is on or removed, and
+  a real file in the way is refused. Running programs keep their PATH. `GET/PUT
+  /api/user-path` read and apply it.
+- Both machine settings reach the admin API through `AppContext` seams (`autostart`,
+  `user_path`) that only the boot sequence sets to the OS providers, so no test composition can
+  write the host (§testing.rules).
 - **`update`** — checks GitHub for a newer release; updating stays a manual exe swap.
 - **`skill install`** — writes the embedded `swiss` and `swiss-remote` skills into each AI
   client's skills directory, staged beside and renamed.
@@ -3750,8 +3761,9 @@ cannot serve the page that re-enables it.
   on the sub-line. The sub-line counts the plugin's pages (the list in its title); the page
   foot is the revision.
 - The poll patches rows in place, so a switch keeps its focus.
-- A **Start at sign-in** section drives `/api/autostart` (the OS store, no revision;
-  §host.cli).
+- A **This machine** section holds start at sign-in (`/api/autostart`) and swiss on the user's
+  PATH (`/api/user-path`): the OS is the store, no revision (§host.cli). A PATH change toasts
+  that only new terminals see it. A gateway without a route shows no row for it.
 
 **Secrets** (`views/secrets.ts`) — the vault (§host.vault). Names only, write-only: a value is
 never shown again, and a forgotten one is re-stored, never revealed.
@@ -4042,6 +4054,10 @@ pid to kill, and the only one a test owns is its own runner.
   child is `ping -n 60 127.0.0.1` (there is no shell sleep). A test never spawns PowerShell.
 - **Environment changes** only inside an integration binary that owns its process
   (`tests/env_precedence.rs`), restored afterwards.
+- **The machine is not a fixture.** No test writes the operator's OS registrations: the admin
+  API tests mount fakes on the `AppContext` seams, and the registry helpers are tested against
+  a scratch HKCU key of their own, deleted on drop. (A suite that drove the real Run value
+  left start-at-sign-in removed after every run.)
 - **Databases.** Unit tests stay connection-free (pure functions over defs and SQL strings);
   anything that needs a real engine belongs to gate 2.
 - **Process-global state is locked; the rest is per harness.** Each test composition owns its

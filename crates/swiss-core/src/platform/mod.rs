@@ -38,10 +38,10 @@ pub use job::KillOnCloseJob;
 mod windows;
 #[cfg(windows)]
 pub use windows::{
-    descendant_pids, dpapi_protect, dpapi_unprotect, keep_std_handles_from_children, machine_id,
-    parent_process, pid_alive, process_name, process_tree_working_set, run_entry_read,
-    run_entry_remove, run_entry_write, self_private_bytes, self_working_set, tcp_listener_pid,
-    tree_kill,
+    descendant_pids, dpapi_protect, dpapi_unprotect, expand_env, keep_std_handles_from_children,
+    machine_id, parent_process, pid_alive, process_name, process_tree_working_set,
+    run_entry_read, run_entry_remove, run_entry_write, self_private_bytes, self_working_set,
+    tcp_listener_pid, tree_kill, user_path_read, user_path_write,
 };
 
 #[cfg(not(windows))]

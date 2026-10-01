@@ -78,6 +78,12 @@ struct Harness {
 }
 
 fn setup() -> Harness {
+    setup_with(|_| {})
+}
+
+/// setup(), with a hook on the context before the router is built over it — where a test mounts
+/// the seams the boot sequence would set (the machine settings, below).
+fn setup_with(configure: impl FnOnce(&AppContext)) -> Harness {
     sandbox();
     let path = std::env::temp_dir()
         .join(format!(
@@ -107,6 +113,7 @@ fn setup() -> Harness {
         "SWISS_TOKEN",
         19999,
     );
+    configure(&ctx);
     Harness {
         app: build_app(ctx, None),
         registry,
@@ -3857,46 +3864,121 @@ async fn the_zai_vision_type_adds_and_keeps_the_key_a_reference() {
     );
 }
 
-// --- start-at-sign-in (src/autostart.rs) ---------------------------------------------------------
+// --- the machine settings (src/autostart.rs, src/userpath.rs) ------------------------------------
 //
-// The OS registration is real machine state, so the suite exercises the read and the "off"
-// write only: "off" is idempotent on every platform (a missing Run value / plist / unit is
-// success), while "on" would register the TEST binary as a login item on whatever machine
-// runs this file — not something a green suite should leave behind.
+// Both write the real machine, so the suite never mounts the OS providers: these fakes hold the
+// switch in memory. The suite once drove /api/autostart against the real registration and left
+// the operator's start-at-sign-in removed after every run.
 
-#[tokio::test]
-async fn autostart_route_reads_the_os_registration() {
-    let h = setup();
-    let (status, body) = h.get("/api/autostart").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(
-        body["enabled"].is_boolean(),
-        "enabled must be a bool: {body}"
-    );
-    assert!(
-        body["detail"].is_string(),
-        "detail must say where the registration lives: {body}"
-    );
-    assert!(
-        body["command"].is_string(),
-        "command must say what the entry runs: {body}"
-    );
+#[derive(Default)]
+struct FakeAutoStart(std::sync::Mutex<bool>);
+
+impl swiss::autostart::AutoStart for FakeAutoStart {
+    fn status(&self) -> swiss::autostart::AutoStartState {
+        swiss::autostart::AutoStartState {
+            enabled: *self.0.lock().expect("fake lock"),
+            detail: "fake registration".to_string(),
+            command: "\"swiss\" start --no-open".to_string(),
+        }
+    }
+
+    fn set(&self, enabled: bool) -> Result<swiss::autostart::AutoStartState, String> {
+        *self.0.lock().expect("fake lock") = enabled;
+        Ok(self.status())
+    }
+}
+
+/// `refuse` makes every write fail the way a locked-down profile would.
+#[derive(Default)]
+struct FakeUserPath {
+    on: std::sync::Mutex<bool>,
+    refuse: bool,
+}
+
+impl swiss::userpath::UserPath for FakeUserPath {
+    fn status(&self) -> swiss::userpath::UserPathState {
+        swiss::userpath::UserPathState {
+            enabled: *self.on.lock().expect("fake lock"),
+            detail: "fake user PATH".to_string(),
+            dir: "/opt/swiss".to_string(),
+        }
+    }
+
+    fn set(&self, enabled: bool) -> Result<swiss::userpath::UserPathState, String> {
+        if self.refuse {
+            return Err("could not write the user PATH".to_string());
+        }
+        *self.on.lock().expect("fake lock") = enabled;
+        Ok(self.status())
+    }
+}
+
+fn setup_machine(user_path: FakeUserPath) -> Harness {
+    setup_with(|ctx| {
+        let _ = ctx.autostart.set(Arc::new(FakeAutoStart::default()));
+        let _ = ctx.user_path.set(Arc::new(user_path));
+    })
 }
 
 #[tokio::test]
-async fn autostart_route_turns_off_idempotently() {
-    let h = setup();
-    let (status, body) = h.put("/api/autostart", json!({ "enabled": false })).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["enabled"], false, "{body}");
+async fn machine_settings_round_trip_through_their_providers() {
+    let h = setup_machine(FakeUserPath::default());
+    for route in ["/api/autostart", "/api/user-path"] {
+        let (status, body) = h.get(route).await;
+        assert_eq!(status, StatusCode::OK, "{route}: {body}");
+        assert_eq!(body["enabled"], false, "{route}: {body}");
+        assert!(body["detail"].is_string(), "{route}: detail says where it lives: {body}");
+
+        let (status, body) = h.put(route, json!({ "enabled": true })).await;
+        assert_eq!(status, StatusCode::OK, "{route}: {body}");
+        assert_eq!(body["enabled"], true, "{route}: the answer is the state read back: {body}");
+        let (_, body) = h.get(route).await;
+        assert_eq!(body["enabled"], true, "{route}: {body}");
+
+        let (status, body) = h.put(route, json!({ "enabled": false })).await;
+        assert_eq!(status, StatusCode::OK, "{route}: {body}");
+        assert_eq!(body["enabled"], false, "{route}: {body}");
+    }
+    let (_, body) = h.get("/api/autostart").await;
+    assert!(body["command"].is_string(), "command says what the entry runs: {body}");
+    let (_, body) = h.get("/api/user-path").await;
+    assert_eq!(body["dir"], "/opt/swiss", "dir says what a terminal will find: {body}");
 }
 
 #[tokio::test]
-async fn autostart_route_refuses_a_body_without_a_verdict() {
+async fn machine_settings_refuse_a_body_without_a_verdict() {
+    let h = setup_machine(FakeUserPath::default());
+    for route in ["/api/autostart", "/api/user-path"] {
+        for body in [json!({}), json!({ "enabled": "yes" })] {
+            let (status, answer) = h.put(route, body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{route}: {answer}");
+            assert!(answer["error"].is_string(), "{route}: {answer}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_failed_machine_write_is_a_500_that_says_why() {
+    let h = setup_machine(FakeUserPath {
+        refuse: true,
+        ..FakeUserPath::default()
+    });
+    let (status, body) = h.put("/api/user-path", json!({ "enabled": true })).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["error"], "could not write the user PATH", "{body}");
+}
+
+#[tokio::test]
+async fn machine_settings_without_a_provider_answer_503_and_write_nothing() {
+    // The composition every other test in this file uses: nothing mounted, so nothing on the
+    // host can be read or written through these routes.
     let h = setup();
-    let (status, body) = h.put("/api/autostart", json!({})).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body["error"].is_string(), "{body}");
+    for route in ["/api/autostart", "/api/user-path"] {
+        let (status, body) = h.get(route).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{route}: {body}");
+        let (status, body) = h.put(route, json!({ "enabled": false })).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{route}: {body}");
+    }
 }
 
 // ---- SPEC §mcp.revisions: replace / restore / revisions ----------------------------------------------
