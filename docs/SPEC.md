@@ -4305,7 +4305,9 @@ The workflow is `.github/workflows/build.yml`.
 - **`tag-version`** — the tag must equal `v` + `[workspace.package] version`.
 - **`dist`** — `cargo build --release --locked` for `x86_64-pc-windows-msvc`,
   `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` (arm runner),
-  `aarch64-apple-darwin`, and `x86_64-apple-darwin` (cross-built on the arm Mac). Each archive
+  `aarch64-apple-darwin`, and `x86_64-apple-darwin` (cross-built on the arm Mac). Both Linux
+  targets build on Ubuntu 22.04 runners: a binary needs at least its build host's glibc, so the
+  archives hold the floor at glibc 2.35 (Ubuntu 22.04, Debian 12). Each archive
   is `swiss-<version>-<target>` (`.zip` on Windows, `.tar.gz` elsewhere; a manual run's version
   is `dev-<sha8>`) and holds the binary, `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md` and the
   two skills (`skills/swiss/SKILL.md`, `skills/swiss-remote/SKILL.md`, from `src/skill_assets`).

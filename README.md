@@ -28,6 +28,8 @@ Download the archive for your OS and `SHA256SUMS` from
 | `swiss-<version>-aarch64-apple-darwin.tar.gz` | macOS (Apple Silicon) — experimental¹ |
 | `swiss-<version>-x86_64-apple-darwin.tar.gz` | macOS (Intel) — experimental¹ |
 
+The Linux binaries need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, or later).
+
 Compare the archive's SHA-256 with its line in `SHA256SUMS`
 (`Get-FileHash <archive> -Algorithm SHA256` on Windows, `sha256sum <archive>`
 on Linux, or `shasum -a 256 <archive>` on macOS). Extract it, then put
