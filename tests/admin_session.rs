@@ -56,6 +56,8 @@ fn sandbox() {
 struct Gate {
     app: axum::Router,
     cli_key: String,
+    /// `name=value` of a session cookie this gateway signed - what a signed-in browser sends.
+    cookie: String,
 }
 
 /// A gateway with a session installed (or not), and one extra-tree route to prove the second
@@ -79,15 +81,17 @@ fn gateway(with_session: bool) -> Gate {
     );
     let state = next_state(None);
     let cli_key = state["cliKey"].as_str().expect("a cli key").to_string();
+    let session = AdminSession::from_state(&state, 19999).expect("a session");
+    let cookie = session.issue_cookie().split(';').next().expect("name=value").to_string();
     if with_session {
-        let _ = ctx
-            .session
-            .set(AdminSession::from_state(&state, 19999).expect("a session"));
+        let _ = ctx.session.set(session);
     }
-    let extra = axum::Router::new().route("/api/extra-tree", get(|| async { "extra" }));
+    let extra = axum::Router::new()
+        .route("/api/extra-tree", get(|| async { "extra" }).post(|| async { "wrote" }));
     Gate {
         app: build_app(ctx, Some(extra)),
         cli_key,
+        cookie,
     }
 }
 
@@ -198,6 +202,93 @@ async fn a_login_token_signs_a_browser_in_once() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(headers.get(header::SET_COOKIE).is_none());
     assert!(body.contains("already been used"), "{body}");
+}
+
+/// A POST the way a browser sends one: the session cookie, a text/plain body (no preflight)
+/// and whatever provenance headers the page's browser attached.
+fn browser_post(g: &Gate, host: &str, extra: &[(&str, &str)]) -> Request<Body> {
+    let mut req = Request::builder()
+        .method("POST")
+        .uri("/api/extra-tree")
+        .header(header::HOST, host)
+        .header(header::COOKIE, &g.cookie)
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8");
+    for (name, value) in extra {
+        req = req.header(*name, *value);
+    }
+    socket(req.body(Body::from("{}")).unwrap())
+}
+
+#[tokio::test]
+async fn a_page_on_another_local_port_cannot_write_with_the_browsers_session() {
+    // SameSite=Strict counts every port of 127.0.0.1 as one site and the cookie has no port, so
+    // the browser attaches it to a page at 127.0.0.1:5173 posting here; the loopback guard
+    // passes it too (its Origin is this machine). The session must still say no.
+    let g = gateway(true);
+    for extra in [
+        vec![("origin", "http://127.0.0.1:5173")],
+        vec![("origin", "http://127.0.0.1:5173"), ("sec-fetch-site", "same-site")],
+        vec![("sec-fetch-site", "same-site")],
+        vec![("origin", "http://localhost:19999")],
+        vec![("origin", "null")],
+        vec![],
+    ] {
+        let (status, _, body) = send(&g.app, browser_post(&g, "127.0.0.1:19999", &extra)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{extra:?}: {body}");
+        assert!(!body.contains("wrote"), "{extra:?}: {body}");
+    }
+    // A cross-page read is refused as well when the browser says where it came from.
+    let (status, _, _) = send(
+        &g.app,
+        socket(
+            get_req("/api/extra-tree")
+                .header(header::COOKIE, &g.cookie)
+                .header("sec-fetch-site", "same-site")
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn the_panel_itself_still_reads_and_writes_with_its_cookie() {
+    let g = gateway(true);
+    for (host, extra) in [
+        ("127.0.0.1:19999", vec![("origin", "http://127.0.0.1:19999")]),
+        ("127.0.0.1:19999", vec![("origin", "http://127.0.0.1:19999"), ("sec-fetch-site", "same-origin")]),
+        ("127.0.0.1:19999", vec![("sec-fetch-site", "same-origin")]),
+        // Reached through `ssh -L 8080:127.0.0.1:19999`: the browser's origin is the forward's.
+        ("127.0.0.1:8080", vec![("origin", "http://127.0.0.1:8080")]),
+    ] {
+        let (status, _, body) = send(&g.app, browser_post(&g, host, &extra)).await;
+        assert_eq!(status, StatusCode::OK, "{host} {extra:?}: {body}");
+        assert_eq!(body, "wrote");
+    }
+    // A same-origin GET carries no Origin at all.
+    let (status, _, _) = send(
+        &g.app,
+        socket(get_req("/api/extra-tree").header(header::COOKIE, &g.cookie).body(Body::empty()).unwrap()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // The CLI key is not ambient - no page can send it - so it needs no provenance.
+    let (status, _, _) = send(
+        &g.app,
+        socket(
+            Request::builder()
+                .method("POST")
+                .uri("/api/extra-tree")
+                .header(header::HOST, "127.0.0.1:19999")
+                .header(header::ORIGIN, "http://127.0.0.1:5173")
+                .header(CLI_KEY_HEADER, &g.cli_key)
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]

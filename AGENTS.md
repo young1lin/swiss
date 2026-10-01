@@ -48,9 +48,9 @@ Each one is a security or correctness boundary, not style.
   port over SSH instead. A non-loopback `host` in config is refused at load.
 - **`/api/*` and the panel shell need the admin session (SPEC §host.session).** A socket request
   needs the CLI key (`X-Swiss-Key`, rotated each start, sealed in `session.json`) or the session
-  cookie a one-time `/?token=` link set. The gate fails closed. Never add an exemption for an
-  `/api` path, never accept the MCP bearer there, and never print the CLI key — scripts use
-  `swiss api`.
+  cookie a one-time `/?token=` link set, and the cookie counts only from the panel's own origin,
+  port included. The gate fails closed. Never add an exemption for an `/api` path, never accept
+  the MCP bearer there, and never print the CLI key — scripts use `swiss api`.
 - **Credentials are `${ENV_VAR}` or `${secret://name}` references, never literals** (SPEC
   §host.refs). They expand only at use time, so `gateway.config.json`, `managed.json`,
   `tunnels.json` and the jobs config hold the reference, and the panel masks it back out.

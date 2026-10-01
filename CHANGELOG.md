@@ -14,8 +14,9 @@ The first release, 0.1.0.
   APIs declared in config, MySQL, PostgreSQL, Redis and zai-vision. **Import .mcp.json** brings
   an existing client config across, and each MCP copies a ready client command.
 - The admin panel, embedded in the binary, in English and 简体中文. It needs a sign-in: a
-  single-use link from `swiss start` / `swiss open` sets a session cookie, and the CLI signs its
-  calls with a key rotated on every start (`swiss api` for scripts).
+  single-use link from `swiss start` / `swiss open` sets a session cookie that only the panel's
+  own pages can use, and the CLI signs its calls with a key rotated on every start (`swiss api`
+  for scripts).
 - Data: tables and rows with buffered edits, a SQL console with server-side completion, export
   and import, structural operations, live sessions; Redis keys, streams with Follow and
   read-only consumer groups, and a console that completes commands and keys.

@@ -35,7 +35,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use axum::http::HeaderMap;
+use axum::http::{header, HeaderMap, Method};
 use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{json, Value};
 use sha2::Sha256;
@@ -218,6 +218,44 @@ impl AdminSession {
     }
 }
 
+/// Why a request the session COOKIE vouches for must still be refused, or None when it may pass
+/// (SPEC §host.session). The cookie says "a browser that signed in", not which page in it asks:
+/// `SameSite=Strict` counts every port of 127.0.0.1 as one site and a cookie carries no port, so
+/// a page on another local port (a dev server, a hostile package's demo page) gets it attached
+/// to a blind `text/plain` POST - no preflight, and running a job needs no answer. The browser's
+/// own provenance headers decide, read the way Go's `http.CrossOriginProtection` reads them:
+/// `Sec-Fetch-Site` when the browser sends it, else `Origin` against `Host` - a same-origin
+/// page's `Origin` names its own `Host`, port included, whatever port an SSH forward put it on.
+/// A write carrying neither is refused: only a browser holds the cookie, and every current
+/// browser sends `Origin` on a write. The CLI key never comes here - no page can send it.
+pub fn cross_origin_reason(method: &Method, headers: &HeaderMap) -> Option<String> {
+    if let Some(site) = header_text(headers, "sec-fetch-site") {
+        return match site {
+            "same-origin" | "none" => None,
+            other => Some(format!("a {other} page cannot use this browser's sign-in")),
+        };
+    }
+    let host = header_text(headers, header::HOST).unwrap_or("");
+    match header_text(headers, header::ORIGIN) {
+        Some(origin) => {
+            let authority = origin
+                .strip_prefix("http://")
+                .or_else(|| origin.strip_prefix("https://"));
+            if !host.is_empty() && authority.is_some_and(|a| a.eq_ignore_ascii_case(host)) {
+                None
+            } else {
+                Some(format!("Origin \"{origin}\" is not this panel"))
+            }
+        }
+        None if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) => None,
+        None => Some("a signed-in browser's write must carry Origin".into()),
+    }
+}
+
+fn header_text(headers: &HeaderMap, name: impl header::AsHeaderName) -> Option<&str> {
+    headers.get(name).and_then(|v| v.to_str().ok())
+}
+
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
@@ -251,6 +289,41 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert(axum::http::header::COOKIE, HeaderValue::from_str(&format!("theme=dark; {pair}")).unwrap());
         h
+    }
+
+    fn provenance(method: Method, pairs: &[(&'static str, &str)]) -> Option<String> {
+        let mut h = HeaderMap::new();
+        h.insert(header::HOST, HeaderValue::from_static("127.0.0.1:19999"));
+        for (name, value) in pairs {
+            h.insert(*name, HeaderValue::from_str(value).unwrap());
+        }
+        cross_origin_reason(&method, &h)
+    }
+
+    #[test]
+    fn a_cookie_counts_only_from_the_panels_own_pages() {
+        // The browser's own word first.
+        assert_eq!(provenance(Method::POST, &[("sec-fetch-site", "same-origin")]), None);
+        assert_eq!(provenance(Method::GET, &[("sec-fetch-site", "none")]), None);
+        let same_site = [("sec-fetch-site", "same-site"), ("origin", "http://127.0.0.1:19999")];
+        assert!(provenance(Method::POST, &same_site).is_some(), "Sec-Fetch-Site outranks Origin");
+        assert!(provenance(Method::GET, &[("sec-fetch-site", "cross-site")]).is_some());
+        // Without it, Origin against Host, port included.
+        assert_eq!(provenance(Method::POST, &[("origin", "http://127.0.0.1:19999")]), None);
+        for origin in [
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1",
+            "http://localhost:19999",
+            "http://127.0.0.1:19999.evil.test",
+            "http://127.0.0.1:19999@evil.test",
+            "null",
+        ] {
+            assert!(provenance(Method::POST, &[("origin", origin)]).is_some(), "{origin}");
+        }
+        // Neither: a read passes (no page can see the answer), a write does not.
+        assert_eq!(provenance(Method::GET, &[]), None);
+        assert!(provenance(Method::POST, &[]).is_some());
+        assert!(provenance(Method::DELETE, &[]).is_some());
     }
 
     #[test]
