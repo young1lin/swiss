@@ -298,6 +298,27 @@ fn tool_to_rmcp(def: &ToolDef) -> Tool {
     tool
 }
 
+/// The strict door, for a schema that declares `additionalProperties: false`: an argument the
+/// tool does not take is refused naming it, so a misspelt optional (`limt` for `limit`) fails
+/// here instead of being dropped while the call quietly runs with the default. A schema without
+/// that declaration (a REST def's, where a template may read any argument) stays permissive.
+fn stray_argument(tool: &str, schema: &Value, args: &Value) -> Option<String> {
+    if schema.get("additionalProperties") != Some(&Value::Bool(false)) {
+        return None;
+    }
+    let declared = schema.get("properties").and_then(Value::as_object);
+    let takes = |key: &str| declared.is_some_and(|d| d.contains_key(key));
+    let stray = args.as_object()?.keys().find(|k| !takes(k))?;
+    let known: Vec<&str> = declared
+        .map(|d| d.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    Some(if known.is_empty() {
+        format!("{tool} has no {stray:?} argument; it takes none")
+    } else {
+        format!("{tool} has no {stray:?} argument; it takes: {}", known.join(", "))
+    })
+}
+
 impl ToolServer {
     fn advertised(&self) -> Vec<ToolDef> {
         self.engine
@@ -415,19 +436,26 @@ impl ServerHandler for ToolServer {
                     Some(args.clone())
                 },
                 async move {
-                    // The advertised list is the contract. A tool hidden from tools/list — a
-                    // readonly instance's write tools, or anything the operator disabled — must
-                    // not be summonable back by naming it directly.
-                    if !advertised.iter().any(|t| t.name == tool) {
+                    // The advertised list is the contract. A tool hidden from tools/list —
+                    // anything the operator disabled — must not be summonable back by naming it
+                    // directly. No tool ran, so this is the one protocol error (-32602, below).
+                    let Some(def) = advertised.iter().find(|t| t.name == tool) else {
                         return Err(format!("unknown tool: {tool}"));
+                    };
+                    if let Some(refusal) = stray_argument(&tool, &def.input_schema, &args) {
+                        return Ok(CallToolResult::error(vec![ContentBlock::text(refusal)]));
                     }
-                    let result = engine.call(&tool, &args).await?;
-                    Ok::<_, String>(CallToolResult::success(vec![ContentBlock::text(
-                        render_result(&result, limits),
-                    )]))
+                    // A tool that ran and failed answers in-band (isError: true), as the spec
+                    // asks: the model reads the reason as the tool's output and corrects its
+                    // next call, where a JSON-RPC error reads as a broken server.
+                    Ok::<_, String>(match engine.call(&tool, &args).await {
+                        Ok(result) => CallToolResult::success(vec![ContentBlock::text(
+                            render_result(&result, limits),
+                        )]),
+                        Err(message) => CallToolResult::error(vec![ContentBlock::text(message)]),
+                    })
                 },
                 |result: &CallToolResult| {
-                    // Every error path here is the Err arm; a Complete result always logs ok.
                     let text = result
                         .content
                         .iter()
@@ -437,12 +465,12 @@ impl ServerHandler for ToolServer {
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
-                    (true, text)
+                    (result.is_error != Some(true), text)
                 },
             )
             .await
             .map(CallToolResponse::Complete)
-            .map_err(|message| ErrorData::internal_error(message, None))
+            .map_err(|message| ErrorData::invalid_params(message, None))
         }
     }
 
@@ -608,5 +636,150 @@ mod tests {
         let items: Vec<Value> = (0..1200).map(|i| json!(i)).collect();
         let out = render_result(&json!(items), DEFAULT_LIMITS);
         assert!(out.contains("showing the first 1000 of 1200 items"));
+    }
+
+    /// Four tools: one that answers behind a strict schema, one behind a permissive schema, one
+    /// whose call fails, one the operator turned off.
+    struct Probe {
+        name: String,
+    }
+
+    #[async_trait]
+    impl Engine for Probe {
+        fn kind(&self) -> &'static str {
+            "probe"
+        }
+        fn tools(&self) -> Vec<ToolDef> {
+            vec![
+                ToolDef {
+                    name: "probe_ok".into(),
+                    description: "answers".into(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": { "n": { "type": "integer" }, "tag": { "type": "string" } },
+                        "additionalProperties": false,
+                    }),
+                },
+                ToolDef {
+                    name: "probe_open".into(),
+                    description: "answers, any arguments".into(),
+                    input_schema: json!({ "type": "object", "properties": { "n": { "type": "integer" } } }),
+                },
+                ToolDef {
+                    name: "probe_fail".into(),
+                    description: "fails".into(),
+                    input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+                },
+                ToolDef {
+                    name: "probe_off".into(),
+                    description: "disabled".into(),
+                    input_schema: json!({ "type": "object" }),
+                },
+            ]
+        }
+        async fn call(&self, tool: &str, args: &Value) -> Result<Value, String> {
+            match tool {
+                "probe_fail" => Err("connection refused".into()),
+                _ => Ok(json!({ "tool": tool, "args": args })),
+            }
+        }
+        fn meta(&self) -> ServerMeta {
+            ServerMeta {
+                name: Some(self.name.clone()),
+                description: None,
+                target: None,
+                limits: None,
+            }
+        }
+    }
+
+    async fn session(
+        mcp: &str,
+    ) -> rmcp::service::RunningService<rmcp::RoleClient, crate::introspect::GatewayIntrospectClient>
+    {
+        let server = ToolServer {
+            engine: Arc::new(Probe { name: mcp.into() }),
+            disabled_tools: ["probe_off".to_string()].into_iter().collect(),
+            resources_on: false,
+            source: CallSource::default(),
+            log: crate::calls::test_log(),
+        };
+        crate::introspect::open_session(server).await.expect("a session opens")
+    }
+
+    async fn call(
+        client: &rmcp::service::RunningService<rmcp::RoleClient, crate::introspect::GatewayIntrospectClient>,
+        tool: &str,
+        args: Value,
+    ) -> Result<CallToolResult, rmcp::ServiceError> {
+        let mut params = CallToolRequestParams::default();
+        params.name = tool.to_string().into();
+        params.arguments = args.as_object().cloned();
+        client.call_tool(params).await
+    }
+
+    fn text(result: &CallToolResult) -> String {
+        result
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                ContentBlock::Text(t) => Some(t.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_failed_call_answers_in_band_and_logs_as_a_failure() {
+        let client = session("ts-fail").await;
+        let out = call(&client, "probe_fail", json!({})).await.expect("an answer, not a fault");
+        assert_eq!(out.is_error, Some(true));
+        assert_eq!(text(&out), "connection refused");
+
+        let ok = call(&client, "probe_ok", json!({ "n": 1 })).await.expect("an answer");
+        assert_ne!(ok.is_error, Some(true));
+
+        let page = crate::calls::test_log().read_calls("ts-fail", 0, 10, None).await;
+        let oks: Vec<(String, bool)> = page["calls"]
+            .as_array()
+            .expect("a page")
+            .iter()
+            .map(|c| (c["tool"].as_str().unwrap_or("").to_string(), c["ok"] == json!(true)))
+            .collect();
+        assert!(oks.contains(&("probe_fail".into(), false)), "{oks:?}");
+        assert!(oks.contains(&("probe_ok".into(), true)), "{oks:?}");
+        let _ = client.cancel().await;
+    }
+
+    #[tokio::test]
+    async fn an_unknown_or_disabled_tool_is_an_invalid_params_error() {
+        let client = session("ts-unknown").await;
+        for tool in ["probe_nope", "probe_off"] {
+            match call(&client, tool, json!({})).await {
+                Err(rmcp::ServiceError::McpError(e)) => {
+                    assert_eq!(e.code, rmcp::model::ErrorCode::INVALID_PARAMS, "{tool}");
+                    assert!(e.message.contains(tool), "{tool}: {}", e.message);
+                }
+                other => panic!("{tool}: expected -32602, got {other:?}"),
+            }
+        }
+        let _ = client.cancel().await;
+    }
+
+    #[tokio::test]
+    async fn a_strict_schema_refuses_an_argument_it_does_not_declare() {
+        let client = session("ts-strict").await;
+        let out = call(&client, "probe_ok", json!({ "n": 1, "limt": 5 })).await.expect("an answer");
+        assert_eq!(out.is_error, Some(true));
+        assert_eq!(text(&out), r#"probe_ok has no "limt" argument; it takes: n, tag"#);
+
+        let out = call(&client, "probe_fail", json!({ "x": 1 })).await.expect("an answer");
+        assert_eq!(text(&out), r#"probe_fail has no "x" argument; it takes none"#);
+
+        // No declaration, no door: the permissive schema passes what it is given.
+        let out = call(&client, "probe_open", json!({ "n": 1, "extra": true })).await.expect("an answer");
+        assert_ne!(out.is_error, Some(true), "{}", text(&out));
+        assert!(text(&out).contains("extra"));
+        let _ = client.cancel().await;
     }
 }
