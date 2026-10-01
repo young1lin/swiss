@@ -15,7 +15,8 @@
  */
 
 //! The in-process MySQL adapter — port of `adapters/mysql.ts`. A small sqlx pool behind one
-//! query tool plus a table listing, schema-as-resources scoped to the configured database.
+//! query tool, a table listing, a table description and a diagnostics tool, with
+//! schema-as-resources scoped to the configured database.
 
 use std::pin::pin;
 use std::sync::Arc;
@@ -39,21 +40,31 @@ use super::mysql_browser::MysqlBrowser;
 use super::mysql_resources::MysqlResources;
 use super::resources::human_bytes;
 use super::sql::{
-    assert_single_statement, clamp_row_limit, drop_null_columns, grep_arg, like_contains,
-    limit_report, page_arg, row_limit_arg, table_limit_arg, table_page_args, with_row_limit,
-    DEFAULT_ROW_LIMIT,
+    assert_single_statement, clamp_row_limit, drop_null_columns, grep_arg, inspect_args,
+    inspect_description, inspect_reply, inspect_schema, like_contains, limit_report, page_arg,
+    row_limit_arg, table_limit_arg, table_page_args, with_row_limit, Check, DEFAULT_ROW_LIMIT,
 };
 use super::tool_server::{Engine, ServerMeta, ToolDef};
 
-/// Two tools: the query tool (matching the single-tool MySQL MCP this replaced), and a table
-/// listing with an optional name filter.
+fn database_arg() -> Value {
+    json!({
+        "type": "string",
+        "description": "Database (schema) name. Defaults to the one this MCP connects to.",
+    })
+}
+
+/// Four tools: run a statement; the two things a model cannot guess — what tables exist (with
+/// sizes and row estimates, filtered server-side) and what one of them looks like, including the
+/// foreign keys that point at it, which no SHOW statement answers; and the health checks a DBA
+/// would otherwise hand-write against performance_schema (the inspect tools of Neon's and
+/// crystaldba's Postgres MCPs, in MySQL's terms).
 ///
-/// SHOW TABLES exists, but it answers names only — no sizes, no row estimates, no filtering — so
-/// on an instance with thousands of tables the model shipped the whole list and grepped it
-/// client-side. mysql_list_tables is that one call done properly: sizes and row estimates beside
-/// the names, and a server-side grep. DESCRIBE t, SHOW INDEX FROM t and EXPLAIN stay un-wrapped,
-/// unlike Postgres's describe tool: they are one-liners every model already knows, and each
-/// wrapper schema is re-sent on every request.
+/// SHOW TABLES answers names only — no sizes, no row estimates, no filtering — so on an instance
+/// with thousands of tables the model shipped the whole list and grepped it client-side.
+/// mysql_describe_table returns SHOW CREATE TABLE as the server prints it: columns, keys,
+/// indexes, foreign keys, checks and partitions in the one notation every model already reads.
+/// Deliberately no mysql_list_databases / mysql_explain: SHOW DATABASES and EXPLAIN are one-line
+/// mysql_query calls, and every tool schema is re-sent on every request.
 ///
 /// Targets MySQL 8.0+. `max_rows` is this instance's cap for a LIMIT-less SELECT (its
 /// `maxRows`), so the description states the number the reply will actually stop at.
@@ -62,13 +73,14 @@ fn tools(max_rows: i64) -> Vec<ToolDef> {
         ToolDef {
             name: "mysql_query".into(),
             description: format!(
-                "Run a SQL statement (SELECT / INSERT / UPDATE / DELETE / DDL, plus SHOW / DESCRIBE / EXPLAIN for \
-                 schema and plans). Returns {{ rowCount, rows }} for a SELECT, or {{ affectedRows, insertId, \
-                 changedRows }} for DML/DDL — affectedRows counts MATCHED rows on UPDATE, and changedRows is \
-                 always 0 in this build. A SELECT written without its own LIMIT is capped at \
-                 {max_rows} rows and says so in the reply — raise `limit` or write your own \
-                 LIMIT/OFFSET for more. NULL columns are omitted from each row (use DESCRIBE for the full \
-                 column list), so on a wide table name the columns you need rather than SELECT *."
+                "Run a SQL statement (SELECT / INSERT / UPDATE / DELETE / DDL, plus SHOW / \
+                 EXPLAIN). Returns {{ rowCount, rows }} for a SELECT, or {{ affectedRows, \
+                 insertId, changedRows }} for DML/DDL — affectedRows counts MATCHED rows on \
+                 UPDATE, and changedRows is always 0 in this build. A SELECT written without its \
+                 own LIMIT is capped at {max_rows} rows and says so in the reply — raise `limit` \
+                 or write your own LIMIT/OFFSET for more. NULL columns are omitted from each row \
+                 (mysql_describe_table gives the full column list), so on a wide table name the \
+                 columns you need rather than SELECT *."
             ),
             input_schema: json!({
                 "type": "object",
@@ -83,17 +95,53 @@ fn tools(max_rows: i64) -> Vec<ToolDef> {
         ToolDef {
             name: "mysql_list_tables".into(),
             description: concat!(
-                "List the connected database's tables and views with their approximate row count and on-disk ",
-                "size — use this before querying, to know what exists and what is big enough to need a LIMIT. ",
-                "Paged: limit per page (default 200, max 1000) and 0-based page; the reply carries total and ",
-                "more. Pass `grep` to keep only names containing it: grep \"users\" lists p_users, users_settings, …"
+                "List a database's tables and views (the connected one unless `database` names another) with ",
+                "their approximate row count and on-disk size — use this before querying, to know what exists ",
+                "and what is big enough to need a LIMIT. Paged: limit per page (default 200, max 1000) and ",
+                "0-based page; the reply carries total and more. Pass `grep` to keep only names containing ",
+                "it: grep \"users\" lists p_users, users_settings, …"
             )
             .to_string(),
             input_schema: json!({
                 "type": "object",
-                "properties": { "grep": grep_arg(), "limit": table_limit_arg(), "page": page_arg() },
+                "properties": {
+                    "database": database_arg(),
+                    "grep": grep_arg(),
+                    "limit": table_limit_arg(),
+                    "page": page_arg(),
+                },
                 "additionalProperties": false,
             }),
+        },
+        ToolDef {
+            name: "mysql_describe_table".into(),
+            description: concat!(
+                "Everything about one table or view in one call: its CREATE statement as the server prints ",
+                "it (columns with types, defaults and comments, keys, indexes, foreign keys, checks, ",
+                "partitions), the tables whose foreign keys point here (referencedBy), and the engine, row ",
+                "estimate, size and comment. For a plan, run EXPLAIN through mysql_query.",
+            )
+            .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "table": { "type": "string", "description": "Table or view name." },
+                    "database": database_arg(),
+                },
+                "required": ["table"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolDef {
+            name: "mysql_inspect".into(),
+            description: inspect_description(
+                "Diagnose the server with one built-in check per call — the performance_schema and \
+                 information_schema queries a DBA would otherwise write by hand. Read-only.",
+                MYSQL_CHECKS,
+                "Counters accumulate since the server started. Needs PROCESS and SELECT on \
+                 performance_schema. Returns { check, rows, summary?, note? }.",
+            ),
+            input_schema: inspect_schema(MYSQL_CHECKS),
         },
     ]
 }
@@ -246,6 +294,313 @@ pub const MYSQL_BROWSE_PK_SQL: &str = "
     FROM information_schema.key_column_usage
    WHERE table_schema = ? AND table_name = ? AND constraint_name = 'PRIMARY'
    ORDER BY ordinal_position";
+
+/// mysql_describe_table's catalog row; no row means no such table or view. A view's
+/// table_comment is the word VIEW, not a comment.
+const DESCRIBE_META_SQL: &str = "
+  SELECT table_name AS name,
+         CASE table_type WHEN 'BASE TABLE' THEN 'table' WHEN 'VIEW' THEN 'view'
+                         ELSE LOWER(table_type) END AS type,
+         engine AS engine, table_rows AS approx_rows,
+         COALESCE(data_length, 0) + COALESCE(index_length, 0) AS bytes,
+         CASE WHEN table_type = 'VIEW' THEN NULL ELSE NULLIF(table_comment, '') END AS comment
+    FROM information_schema.tables
+   WHERE table_schema = ? AND table_name = ?";
+
+/// The column list mysql_describe_table falls back to when SHOW CREATE is refused (a view needs
+/// SHOW VIEW as well as SELECT).
+const DESCRIBE_COLUMNS_SQL: &str = "
+  SELECT column_name AS name, column_type AS type, is_nullable AS nullable,
+         column_default AS `default`, NULLIF(extra, '') AS extra,
+         NULLIF(column_comment, '') AS comment
+    FROM information_schema.columns
+   WHERE table_schema = ? AND table_name = ?
+   ORDER BY ordinal_position";
+
+/// Foreign keys elsewhere that point at one table, one row per constraint with its columns in
+/// key order — the half of a relationship SHOW CREATE TABLE never prints.
+const REFERENCED_BY_SQL: &str = "
+  SELECT k.table_schema AS db, k.table_name AS tbl, k.constraint_name AS name,
+         GROUP_CONCAT(k.column_name ORDER BY k.ordinal_position SEPARATOR ', ') AS cols,
+         GROUP_CONCAT(k.referenced_column_name ORDER BY k.ordinal_position SEPARATOR ', ')
+           AS ref_cols,
+         MAX(rc.delete_rule) AS on_delete, MAX(rc.update_rule) AS on_update
+    FROM information_schema.key_column_usage k
+    JOIN information_schema.referential_constraints rc
+      ON rc.constraint_schema = k.constraint_schema AND rc.constraint_name = k.constraint_name
+     AND rc.table_name = k.table_name
+   WHERE k.referenced_table_schema = ? AND k.referenced_table_name = ?
+   GROUP BY k.table_schema, k.table_name, k.constraint_name
+   ORDER BY k.table_schema, k.table_name, k.constraint_name";
+
+/// A backtick-quoted identifier for the one statement that cannot bind its names (SHOW CREATE
+/// TABLE). Doubling is MySQL's own escape inside backticks; nothing else is special there.
+fn backtick(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
+}
+
+/// One referencedBy entry, in the notation SHOW CREATE TABLE uses for the outgoing direction.
+fn referenced_by_entry(row: &Map<String, Value>, database: &str, table: &str) -> Value {
+    let text = |k: &str| row.get(k).and_then(Value::as_str).unwrap_or("");
+    let mut definition = format!(
+        "FOREIGN KEY ({}) REFERENCES {}.{} ({})",
+        text("cols"),
+        database,
+        table,
+        text("ref_cols")
+    );
+    for (clause, key) in [("ON DELETE", "on_delete"), ("ON UPDATE", "on_update")] {
+        let rule = text(key);
+        if !rule.is_empty() && rule != "NO ACTION" && rule != "RESTRICT" {
+            definition.push_str(&format!(" {clause} {rule}"));
+        }
+    }
+    json!({
+        "table": format!("{}.{}", text("db"), text("tbl")),
+        "name": text("name"),
+        "definition": definition,
+    })
+}
+
+/// The checks that read the connected database's tables (DATABASE() in their SQL).
+const NEEDS_DATABASE: [&str; 3] = ["table_scans", "indexes", "fragmentation"];
+
+/// mysql_inspect's checks. Every row query takes the row limit as its one `?`. Timers in
+/// performance_schema are picoseconds (/1e9 = ms). Columns named `size` or `free` are bytes and
+/// reach the reply human-readable.
+pub const MYSQL_CHECKS: &[Check] = &[
+    Check {
+        name: "activity",
+        about: "running statements and open transactions, longest first",
+        rows: Some(
+            "
+  SELECT p.id AS id, p.user AS `user`, p.host AS client, p.db AS db, p.command AS command,
+         p.state AS state, p.time AS seconds,
+         TIMESTAMPDIFF(SECOND, t.trx_started, NOW()) AS trx_seconds,
+         t.trx_rows_locked AS trx_rows_locked, LEFT(p.info, 1000) AS query
+    FROM information_schema.processlist p
+    LEFT JOIN information_schema.innodb_trx t ON t.trx_mysql_thread_id = p.id
+   WHERE p.id <> CONNECTION_ID()
+     AND (p.command NOT IN ('Sleep', 'Daemon', 'Binlog Dump', 'Binlog Dump GTID')
+          OR t.trx_id IS NOT NULL)
+   ORDER BY GREATEST(p.time, COALESCE(TIMESTAMPDIFF(SECOND, t.trx_started, NOW()), 0)) DESC
+   LIMIT ?",
+        ),
+        summary: None,
+        note: Some(
+            "A Sleep connection is listed only while it holds a transaction open — that is the \
+             one blocking others and pinning undo.",
+        ),
+    },
+    Check {
+        name: "locks",
+        about: "sessions waiting on a row or metadata lock, with the session blocking each",
+        rows: Some(
+            "
+  SELECT kind, locked, waiting_pid, waiting_seconds, waiting_lock, waiting_query,
+         blocking_pid, blocking_lock, blocking_query
+    FROM (
+      SELECT 'row' AS kind, CONCAT(dl.object_schema, '.', dl.object_name) AS locked,
+             wt.trx_mysql_thread_id AS waiting_pid,
+             TIMESTAMPDIFF(SECOND, wt.trx_wait_started, NOW()) AS waiting_seconds,
+             dl.lock_mode AS waiting_lock, LEFT(wt.trx_query, 500) AS waiting_query,
+             bt.trx_mysql_thread_id AS blocking_pid, bl.lock_mode AS blocking_lock,
+             LEFT(bt.trx_query, 500) AS blocking_query
+        FROM performance_schema.data_lock_waits w
+        JOIN information_schema.innodb_trx wt ON wt.trx_id = w.requesting_engine_transaction_id
+        JOIN information_schema.innodb_trx bt ON bt.trx_id = w.blocking_engine_transaction_id
+        JOIN performance_schema.data_locks dl ON dl.engine_lock_id = w.requesting_engine_lock_id
+        JOIN performance_schema.data_locks bl ON bl.engine_lock_id = w.blocking_engine_lock_id
+      UNION ALL
+      SELECT 'metadata', CONCAT(p.object_schema, '.', p.object_name), pt.processlist_id,
+             pt.processlist_time, p.lock_type, LEFT(pt.processlist_info, 500),
+             gt.processlist_id, g.lock_type, LEFT(gt.processlist_info, 500)
+        FROM performance_schema.metadata_locks p
+        JOIN performance_schema.metadata_locks g
+          ON g.object_type = p.object_type AND g.object_schema = p.object_schema
+         AND g.object_name = p.object_name AND g.lock_status = 'GRANTED'
+         AND g.owner_thread_id <> p.owner_thread_id
+        JOIN performance_schema.threads pt ON pt.thread_id = p.owner_thread_id
+        JOIN performance_schema.threads gt ON gt.thread_id = g.owner_thread_id
+       WHERE p.object_type = 'TABLE' AND p.lock_status = 'PENDING'
+    ) l
+   ORDER BY waiting_seconds DESC
+   LIMIT ?",
+        ),
+        summary: None,
+        note: Some(
+            "A blocker's query is its latest statement, not necessarily the one that took the \
+             lock — a blocker with none is idle inside an open transaction. A metadata wait is \
+             paired with every session holding a lock on that table.",
+        ),
+    },
+    Check {
+        name: "top_queries",
+        about: "statement digests by total execution time",
+        rows: Some(
+            "
+  SELECT LEFT(digest_text, 1000) AS query, schema_name AS db, count_star AS calls,
+         ROUND(sum_timer_wait / 1e9, 1) AS total_ms,
+         ROUND(avg_timer_wait / 1e9, 2) AS mean_ms,
+         ROUND(max_timer_wait / 1e9, 2) AS max_ms,
+         ROUND(100 * sum_timer_wait / NULLIF(SUM(sum_timer_wait) OVER (), 0), 1) AS pct_of_total,
+         sum_rows_examined AS rows_examined, sum_rows_sent AS rows_sent,
+         sum_no_index_used AS no_index_used, last_seen AS last_seen
+    FROM performance_schema.events_statements_summary_by_digest
+   WHERE digest_text IS NOT NULL AND (DATABASE() IS NULL OR schema_name = DATABASE())
+   ORDER BY sum_timer_wait DESC
+   LIMIT ?",
+        ),
+        summary: None,
+        note: Some(
+            "Query text is normalized (constants read as ?); with a database configured only its \
+             statements are listed. rows_examined far above rows_sent, or no_index_used above \
+             zero, is a scan an index would serve.",
+        ),
+    },
+    Check {
+        name: "table_scans",
+        about: "tables read without an index, most rows read first",
+        rows: Some(
+            "
+  SELECT s.object_name AS `table`, s.count_read AS rows_read_without_index,
+         ROUND(s.sum_timer_read / 1e9, 1) AS read_ms, t.table_rows AS approx_rows
+    FROM performance_schema.table_io_waits_summary_by_index_usage s
+    LEFT JOIN information_schema.tables t
+      ON t.table_schema = s.object_schema AND t.table_name = s.object_name
+   WHERE s.object_type = 'TABLE' AND s.object_schema = DATABASE()
+     AND s.index_name IS NULL AND s.count_read > 0
+   ORDER BY s.count_read DESC
+   LIMIT ?",
+        ),
+        summary: None,
+        note: Some(
+            "Full scans of a small table are normal; a large table read many times its row \
+             count is a WHERE clause no index serves.",
+        ),
+    },
+    Check {
+        name: "indexes",
+        about: "unused secondary indexes and tables without a primary key",
+        rows: Some(
+            "
+  SELECT problem, `table`, `index`, `columns`
+    FROM (
+      SELECT 0 AS ord, 'unused' AS problem, u.object_name AS `table`, u.index_name AS `index`,
+             (SELECT GROUP_CONCAT(st.column_name ORDER BY st.seq_in_index SEPARATOR ', ')
+                FROM information_schema.statistics st
+               WHERE st.table_schema = u.object_schema AND st.table_name = u.object_name
+                 AND st.index_name = u.index_name) AS `columns`
+        FROM performance_schema.table_io_waits_summary_by_index_usage u
+       WHERE u.object_type = 'TABLE' AND u.object_schema = DATABASE()
+         AND u.index_name IS NOT NULL AND u.index_name <> 'PRIMARY' AND u.count_star = 0
+         AND NOT EXISTS (SELECT 1 FROM information_schema.statistics st
+                          WHERE st.table_schema = u.object_schema
+                            AND st.table_name = u.object_name
+                            AND st.index_name = u.index_name AND st.non_unique = 0)
+      UNION ALL
+      SELECT 1, 'no primary key', t.table_name, NULL, NULL
+        FROM information_schema.tables t
+       WHERE t.table_schema = DATABASE() AND t.table_type = 'BASE TABLE'
+         AND NOT EXISTS (SELECT 1 FROM information_schema.table_constraints c
+                          WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name
+                            AND c.constraint_type = 'PRIMARY KEY')
+    ) p
+   ORDER BY ord, `table`, `index`
+   LIMIT ?",
+        ),
+        summary: None,
+        note: Some(
+            "Index use counts since the server started and on this server only — an index only \
+             a replica uses reads as unused here. Unique indexes enforce a constraint and are \
+             never listed as unused. InnoDB gives a table without a primary key a hidden one, \
+             which replication and online schema changes cannot use.",
+        ),
+    },
+    Check {
+        name: "fragmentation",
+        about: "tables with allocated but unused space, most first",
+        rows: Some(
+            "
+  SELECT table_name AS `table`, engine AS engine, table_rows AS approx_rows,
+         data_length + index_length AS size, data_free AS free,
+         ROUND(100e0 * data_free / NULLIF(data_length + index_length + data_free, 0), 1)
+           AS free_pct
+    FROM information_schema.tables
+   WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' AND data_free > 0
+   ORDER BY data_free DESC
+   LIMIT ?",
+        ),
+        summary: None,
+        note: Some(
+            "OPTIMIZE TABLE (ALTER TABLE … FORCE for InnoDB) rebuilds a table and returns its \
+             free space to the file. Sizes come from cached statistics \
+             (information_schema_stats_expiry).",
+        ),
+    },
+    Check {
+        name: "cache",
+        about: "InnoDB buffer pool hit ratio, free pages and size",
+        rows: None,
+        summary: Some(
+            "
+  SELECT ROUND(100 - 100e0 * SUM(IF(variable_name = 'Innodb_buffer_pool_reads',
+                                     variable_value, 0))
+                 / NULLIF(SUM(IF(variable_name = 'Innodb_buffer_pool_read_requests',
+                                 variable_value, 0)), 0), 2) AS hit_pct,
+         CAST(SUM(IF(variable_name = 'Innodb_buffer_pool_read_requests', variable_value, 0))
+              AS UNSIGNED) AS read_requests,
+         CAST(SUM(IF(variable_name = 'Innodb_buffer_pool_reads', variable_value, 0))
+              AS UNSIGNED) AS disk_reads,
+         ROUND(100e0 * SUM(IF(variable_name = 'Innodb_buffer_pool_pages_free',
+                              variable_value, 0))
+               / NULLIF(SUM(IF(variable_name = 'Innodb_buffer_pool_pages_total',
+                               variable_value, 0)), 0), 1) AS free_pct,
+         CAST(SUM(IF(variable_name = 'Innodb_buffer_pool_wait_free', variable_value, 0))
+              AS UNSIGNED) AS waits_for_free_page,
+         @@innodb_buffer_pool_size AS size
+    FROM performance_schema.global_status
+   WHERE variable_name LIKE 'Innodb_buffer_pool%'",
+        ),
+        note: Some(
+            "A steady OLTP workload usually sits above 99%. waits_for_free_page above zero means \
+             the pool was too small for the write load at some point.",
+        ),
+    },
+    Check {
+        name: "connections",
+        about: "connections by user, client, database and command, against max_connections",
+        rows: Some(
+            "
+  SELECT p.user AS `user`, SUBSTRING_INDEX(p.host, ':', 1) AS client, p.db AS db,
+         p.command AS command, COUNT(*) AS connections, MAX(p.time) AS longest_seconds
+    FROM information_schema.processlist p
+   WHERE p.command <> 'Daemon'
+   GROUP BY p.user, SUBSTRING_INDEX(p.host, ':', 1), p.db, p.command
+   ORDER BY connections DESC, `user`, client
+   LIMIT ?",
+        ),
+        summary: Some(
+            "
+  SELECT CAST(SUM(IF(variable_name = 'Threads_connected', variable_value, 0)) AS UNSIGNED)
+           AS connected,
+         CAST(SUM(IF(variable_name = 'Threads_running', variable_value, 0)) AS UNSIGNED)
+           AS running,
+         CAST(SUM(IF(variable_name = 'Max_used_connections', variable_value, 0)) AS UNSIGNED)
+           AS max_used,
+         CAST(SUM(IF(variable_name = 'Aborted_connects', variable_value, 0)) AS UNSIGNED)
+           AS aborted_connects,
+         @@max_connections AS max_connections
+    FROM performance_schema.global_status
+   WHERE variable_name IN ('Threads_connected', 'Threads_running', 'Max_used_connections',
+                           'Aborted_connects')",
+        ),
+        note: Some(
+            "Without PROCESS the rows show only this login's own connections; the summary \
+             counts every one.",
+        ),
+    },
+];
 
 /// The connect options every MySQL connection shares — port of `mysqlPoolOptions` minus what a
 /// pool is instead (connectionLimit/queueLimit/connectTimeout map onto the pool options below).
@@ -743,14 +1098,23 @@ impl MysqlEngine {
         Ok(Value::Object(out))
     }
 
+    /// The `database` argument, else the configured one.
+    fn database_arg(&self, args: &Value) -> Result<String, String> {
+        args.get("database")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .or(self.database.as_deref())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                "no database named and none configured on this MySQL MCP — pass `database` \
+                 (SHOW DATABASES through mysql_query lists them)"
+                    .to_string()
+            })
+    }
+
     async fn call_list_tables(&self, args: &Value) -> Result<Value, String> {
-        let Some(database) = self.database.clone() else {
-            return Err(
-                "no database configured on this MySQL MCP — set its database field, or query \
-                 information_schema.tables through mysql_query"
-                    .into(),
-            );
-        };
+        let database = self.database_arg(args)?;
         let paging = table_page_args(args.get("limit"), args.get("page"));
         let grep = args.get("grep").and_then(Value::as_str);
         let ((list_sql, list_params), (count_sql, count_params)) = mysql_list_tables_sql(
@@ -771,7 +1135,6 @@ impl MysqlEngine {
             .iter()
             .map(|r| {
                 json!({
-                    "schema": database,
                     "name": r.get("name").and_then(Value::as_str).unwrap_or(""),
                     "type": r.get("type").and_then(Value::as_str).unwrap_or(""),
                     // table_rows is an estimate (NULL for views) — keep NULL as unknown, not 0.
@@ -783,6 +1146,7 @@ impl MysqlEngine {
         let total = num_or_zero(count.rows.first().and_then(|r| r.get("total")));
         let listed = tables.len() as u64;
         Ok(json!({
+            "database": database,
             "tables": tables,
             "total": total,
             "page": paging.page,
@@ -790,6 +1154,176 @@ impl MysqlEngine {
             "more": (paging.offset as u64) + listed < total,
         }))
     }
+
+    async fn call_describe_table(&self, args: &Value) -> Result<Value, String> {
+        let table = args
+            .get("table")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if table.is_empty() {
+            return Err("table is required".into());
+        }
+        let database = self.database_arg(args)?;
+        let pool = self.conn.get().await?;
+        let names = [json!(database), json!(table)];
+        let meta = run_query(&pool, DESCRIBE_META_SQL, &names).await?;
+        let Some(meta) = meta.rows.into_iter().next() else {
+            return Err(format!(
+                "no table or view {database}.{table} — mysql_list_tables lists what exists"
+            ));
+        };
+        // The catalog's own spelling of the name, for the statement that cannot bind it.
+        let name = meta
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(&table)
+            .to_string();
+        let found = [json!(database), json!(name)];
+        let kind = meta.get("type").and_then(Value::as_str).unwrap_or("table");
+        let mut out = Map::new();
+        out.insert("database".into(), json!(database));
+        out.insert("table".into(), json!(name));
+        out.insert("type".into(), json!(kind));
+        for key in ["engine", "comment"] {
+            if let Some(v) = meta.get(key).filter(|v| !v.is_null()) {
+                out.insert(key.into(), v.clone());
+            }
+        }
+        if kind != "view" {
+            let rows = numeric_or_null(meta.get("approx_rows"));
+            if !rows.is_null() {
+                out.insert("approxRows".into(), rows);
+            }
+            out.insert("size".into(), json!(human_bytes(num_or_zero(meta.get("bytes")))));
+        }
+        let show = format!("SHOW CREATE TABLE {}.{}", backtick(&database), backtick(&name));
+        let ddl = run_query(&pool, &show, &[]).await.and_then(|o| {
+            o.rows
+                .into_iter()
+                .next()
+                .and_then(|row| {
+                    row.into_iter()
+                        .find(|(k, _)| k.to_ascii_lowercase().starts_with("create "))
+                })
+                .and_then(|(_, v)| v.as_str().map(str::to_string))
+                .ok_or_else(|| "SHOW CREATE TABLE returned no statement".to_string())
+        });
+        match ddl {
+            Ok(ddl) => {
+                out.insert("ddl".into(), json!(ddl));
+            }
+            Err(e) => {
+                // A view needs SHOW VIEW on top of SELECT; the column list still describes it.
+                let columns = run_query(&pool, DESCRIBE_COLUMNS_SQL, &found).await?.rows;
+                let columns = drop_null_columns(columns.into_iter().map(Value::Object).collect());
+                out.insert("columns".into(), Value::Array(columns));
+                out.insert("ddlError".into(), json!(e));
+            }
+        }
+        let referenced = run_query(&pool, REFERENCED_BY_SQL, &found).await?.rows;
+        if !referenced.is_empty() {
+            let entries = referenced
+                .iter()
+                .map(|r| referenced_by_entry(r, &database, &name))
+                .collect();
+            out.insert("referencedBy".into(), Value::Array(entries));
+        }
+        Ok(Value::Object(out))
+    }
+
+    async fn call_inspect(&self, args: &Value) -> Result<Value, String> {
+        let (check, limit) = inspect_args(args, MYSQL_CHECKS)?;
+        if self.database.is_none() && NEEDS_DATABASE.contains(&check.name) {
+            return Err(format!(
+                "{} reads the connected database's tables, and this MySQL MCP has no database \
+                 configured — set its database field",
+                check.name
+            ));
+        }
+        let failed = |e: String| inspect_failed(check.name, e);
+        let pool = self.conn.get().await?;
+        let rows = match check.rows {
+            Some(sql) => Some(
+                mysql_diagnostic_rows(&pool, sql, &[json!(limit)])
+                    .await
+                    .map_err(failed)?,
+            ),
+            None => None,
+        };
+        let summary = match check.summary {
+            Some(sql) => mysql_diagnostic_rows(&pool, sql, &[])
+                .await
+                .map_err(failed)?
+                .into_iter()
+                .next(),
+            None => None,
+        };
+        Ok(inspect_reply(check, rows, summary))
+    }
+}
+
+/// A check that failed, named — with the grants that fix the usual cause.
+fn inspect_failed(check: &str, e: String) -> String {
+    if e.contains("denied") {
+        format!(
+            "{check} failed: {e} — this login needs PROCESS and SELECT on performance_schema.*"
+        )
+    } else {
+        format!("{check} failed: {e}")
+    }
+}
+
+/// mysql_inspect's rows over the prepared protocol: a BIGINT or DECIMAL column comes back as a
+/// JSON number — there it is a counter or a sum, not an id — and a byte count (`size`, `free`)
+/// as human-readable text.
+async fn mysql_diagnostic_rows(
+    pool: &MySqlPool,
+    sql: &str,
+    params: &[Value],
+) -> Result<Vec<Map<String, Value>>, String> {
+    let mut query = sqlx::query(AssertSqlSafe(sql));
+    for p in params {
+        query = bind_value(query, p);
+    }
+    let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            row.columns()
+                .iter()
+                .enumerate()
+                .map(|(i, col)| {
+                    let value = match col.type_info().to_string().as_str() {
+                        "BIGINT" | "BIGINT UNSIGNED" => {
+                            if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(i) {
+                                Value::from(v)
+                            } else if let Ok(Some(v)) = row.try_get::<Option<u64>, _>(i) {
+                                Value::from(v)
+                            } else {
+                                Value::Null
+                            }
+                        }
+                        "DECIMAL" => row
+                            .try_get::<Option<bigdecimal::BigDecimal>, _>(i)
+                            .ok()
+                            .flatten()
+                            .and_then(|d| d.to_string().parse::<f64>().ok())
+                            .map_or(Value::Null, finite_f64),
+                        _ => column_to_value(row, col, i),
+                    };
+                    let value = match (col.name(), &value) {
+                        ("size" | "free", Value::Number(_)) => {
+                            json!(human_bytes(num_or_zero(Some(&value))))
+                        }
+                        _ => value,
+                    };
+                    (col.name().to_string(), value)
+                })
+                .collect()
+        })
+        .collect())
 }
 
 #[async_trait]
@@ -806,6 +1340,8 @@ impl Engine for MysqlEngine {
         match tool {
             "mysql_query" => self.call_query(args).await,
             "mysql_list_tables" => self.call_list_tables(args).await,
+            "mysql_describe_table" => self.call_describe_table(args).await,
+            "mysql_inspect" => self.call_inspect(args).await,
             other => Err(format!("unknown tool: {other}")),
         }
     }
@@ -864,6 +1400,76 @@ impl Engine for MysqlEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tool_set_is_query_list_describe_inspect() {
+        let names: Vec<String> = tools(500).into_iter().map(|t| t.name).collect();
+        assert_eq!(
+            names,
+            ["mysql_query", "mysql_list_tables", "mysql_describe_table", "mysql_inspect"]
+        );
+        let inspect = tools(500).pop().expect("mysql_inspect");
+        assert_eq!(
+            inspect.input_schema["properties"]["check"]["enum"],
+            json!([
+                "activity",
+                "locks",
+                "top_queries",
+                "table_scans",
+                "indexes",
+                "fragmentation",
+                "cache",
+                "connections"
+            ])
+        );
+    }
+
+    #[test]
+    fn every_check_binds_only_its_row_limit() {
+        // call_inspect binds exactly [limit] to a row query and nothing to a summary.
+        for check in MYSQL_CHECKS {
+            if let Some(rows) = check.rows {
+                assert!(rows.trim_end().ends_with("LIMIT ?"), "{}", check.name);
+                assert_eq!(rows.matches('?').count(), 1, "{}", check.name);
+            }
+            if let Some(summary) = check.summary {
+                assert!(!summary.contains('?'), "{}", check.name);
+            }
+            assert!(check.rows.is_some() || check.summary.is_some(), "{}", check.name);
+        }
+        for name in NEEDS_DATABASE {
+            let check = MYSQL_CHECKS.iter().find(|c| c.name == name).expect(name);
+            assert!(check.rows.unwrap().contains("DATABASE()"), "{name}");
+        }
+    }
+
+    #[test]
+    fn referenced_by_reads_like_the_ddl_it_complements() {
+        let row = json!({
+            "db": "shop", "tbl": "orders", "name": "orders_user_fk",
+            "cols": "user_id", "ref_cols": "id", "on_delete": "CASCADE", "on_update": "RESTRICT",
+        });
+        assert_eq!(
+            referenced_by_entry(row.as_object().unwrap(), "shop", "users"),
+            json!({
+                "table": "shop.orders",
+                "name": "orders_user_fk",
+                "definition": "FOREIGN KEY (user_id) REFERENCES shop.users (id) ON DELETE CASCADE",
+            })
+        );
+        assert_eq!(backtick("odd`name"), "`odd``name`");
+    }
+
+    #[test]
+    fn a_permission_error_names_the_grants() {
+        let e = inspect_failed(
+            "activity",
+            "Access denied; you need (at least one of) the PROCESS privilege(s)".into(),
+        );
+        assert!(e.starts_with("activity failed: Access denied"), "{e}");
+        assert!(e.contains("PROCESS and SELECT on performance_schema"), "{e}");
+        assert_eq!(inspect_failed("cache", "boom".into()), "cache failed: boom");
+    }
 
     #[test]
     fn connect_options_defaults() {

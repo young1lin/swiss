@@ -15,8 +15,8 @@
  */
 
 //! The in-process PostgreSQL adapter — port of `adapters/pg.ts`. A small sqlx pool behind one
-//! query tool and two discovery tools; multi-statement pg_query keeps its Node semantics (the
-//! simple protocol runs them, one summary per statement).
+//! query tool, two discovery tools and a diagnostics tool; multi-statement pg_query keeps its
+//! Node semantics (the simple protocol runs them, one summary per statement).
 
 use std::pin::pin;
 use std::str::FromStr;
@@ -33,14 +33,16 @@ use sqlx::{AssertSqlSafe, Column, Either, Row};
 
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{
-    bytea_hex, exact_int64, exact_int64_list, finite_f64, TableSort, TableSortKey,
+    bytea_hex, exact_int64, exact_int64_list, finite_f64, quote_ident, DbDialect, TableSort,
+    TableSortKey,
 };
 
 use super::direct::{BoxFut, Lazy};
 use super::pg_resources::PgResources;
 use super::sql::{
-    clamp_row_limit, drop_null_columns, grep_arg, like_contains, limit_report, page_arg,
-    row_limit_arg, table_limit_arg, table_page_args, with_row_limit, DEFAULT_ROW_LIMIT,
+    clamp_row_limit, drop_null_columns, grep_arg, inspect_args, inspect_description,
+    inspect_reply, inspect_schema, like_contains, limit_report, page_arg, row_limit_arg,
+    table_limit_arg, table_page_args, with_row_limit, Check, DEFAULT_ROW_LIMIT,
 };
 use super::tool_server::{Engine, ServerMeta, ToolDef};
 
@@ -51,12 +53,14 @@ fn table_arg() -> Value {
     json!({ "type": "string", "description": "Table name (unqualified)." })
 }
 
-/// Three tools: run a statement, and the two things a model cannot guess — what tables exist
-/// (with sizes, so it knows what needs a LIMIT) and what columns they have.
+/// Four tools: run a statement; the two things a model cannot guess — what tables exist (with
+/// sizes, so it knows what needs a LIMIT) and what one of them looks like, keys, indexes and
+/// incoming references included; and the health checks a DBA would otherwise hand-write against
+/// the statistics views (the inspect tools of Neon's and crystaldba's Postgres MCPs).
 ///
-/// Deliberately no pg_list_indexes / pg_list_schemas / pg_explain. Each was a `pg_query` the
-/// model can write itself (pg_indexes, the schema column already in pg_list_tables, EXPLAIN),
-/// and every tool schema is re-sent on every request. `max_rows` is this instance's cap for a
+/// Deliberately no pg_list_indexes / pg_list_schemas / pg_explain: pg_describe_table already
+/// carries the indexes, pg_list_tables the schema column, and EXPLAIN is a pg_query — while
+/// every tool schema is re-sent on every request. `max_rows` is this instance's cap for a
 /// LIMIT-less SELECT (its `maxRows`), stated as the number it is.
 fn tools(max_rows: i64) -> Vec<ToolDef> {
     vec![
@@ -97,19 +101,36 @@ fn tools(max_rows: i64) -> Vec<ToolDef> {
         ToolDef {
             name: "pg_describe_table".into(),
             description: concat!(
-                "Columns of a table: type, nullability, default, and which columns form the primary key. ",
-                "For indexes, query pg_indexes; for a plan, run EXPLAIN through pg_query.",
+                "Everything about one table or view in one call: columns (type, nullability, default, ",
+                "identity/generated, comment), the primary key in key order, indexes and constraints as ",
+                "their DDL, foreign keys, the tables whose foreign keys point here (referencedBy), and the ",
+                "row estimate, size and comment; a view also returns its definition. Fields with nothing to ",
+                "say are omitted. For a plan, run EXPLAIN through pg_query.",
             )
             .to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "table": table_arg(),
-                    "schema": { "type": "string", "description": "Schema name (default 'public')." },
+                    "schema": {
+                        "type": "string",
+                        "description": "Schema name. Omit to resolve the table through the search_path (normally public).",
+                    },
                 },
                 "required": ["table"],
                 "additionalProperties": false,
             }),
+        },
+        ToolDef {
+            name: "pg_inspect".into(),
+            description: inspect_description(
+                "Diagnose the server with one built-in check per call — the statistics-view queries a \
+                 DBA would otherwise write by hand. Read-only.",
+                PG_CHECKS,
+                "Counters accumulate since the last statistics reset. Returns { check, rows, \
+                 summary?, note? }.",
+            ),
+            input_schema: inspect_schema(PG_CHECKS),
         },
     ]
 }
@@ -248,6 +269,343 @@ pub const PG_BROWSE_FK_SQL: &str = "
     JOIN pg_attribute af ON af.attrelid = con.confrelid AND af.attnum = k.ref_attnum
    WHERE con.contype = 'f' AND n.nspname = $1 AND c.relname = $2
    ORDER BY con.conname, a.attnum";
+
+/// pg_describe_table in one round trip, as one JSON document with its NULL fields stripped.
+/// `$1` is the schema or NULL — then to_regclass resolves the name through the search_path the
+/// way an unqualified name in a query would. Both names are quoted with %I, so a mixed-case or
+/// dotted name means exactly itself. The primary key comes in key order (unnest WITH
+/// ORDINALITY over indkey), not table order. A foreign key into a partitioned table is cloned
+/// once per partition (conparentid): foreignKeys drops the clones on the same table, keeping a
+/// partition's inherited key, and referencedBy lists each constraint once, at its root.
+pub const DESCRIBE_TABLE_SQL: &str = "
+  SELECT json_strip_nulls(row_to_json(r)) AS doc FROM (
+  WITH t AS (
+    SELECT c.oid, n.nspname, c.relname, c.relkind, c.reltuples
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relkind IN ('r','v','m','p','f')
+       AND c.oid = to_regclass(CASE WHEN $1::text IS NULL THEN format('%I', $2::text)
+                                    ELSE format('%I.%I', $1::text, $2::text) END)
+  )
+  SELECT t.nspname AS schema, t.relname AS \"table\",
+         CASE t.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'matview'
+                        WHEN 'p' THEN 'partitioned table' WHEN 'f' THEN 'foreign table' END AS type,
+         obj_description(t.oid, 'pg_class') AS comment,
+         CASE WHEN t.relkind IN ('r','m','p') AND t.reltuples >= 0
+              THEN t.reltuples::bigint END AS \"approxRows\",
+         CASE WHEN t.relkind IN ('r','m','p')
+              THEN pg_size_pretty(pg_total_relation_size(t.oid)) END AS size,
+         CASE WHEN t.relkind IN ('v','m') THEN pg_get_viewdef(t.oid, true) END AS definition,
+         (SELECT json_agg(json_strip_nulls(json_build_object(
+                   'name', a.attname,
+                   'type', format_type(a.atttypid, a.atttypmod),
+                   'nullable', NOT a.attnotnull,
+                   'default', CASE WHEN a.attgenerated = ''
+                                   THEN pg_get_expr(d.adbin, d.adrelid) END,
+                   'generated', CASE WHEN a.attgenerated <> ''
+                                     THEN pg_get_expr(d.adbin, d.adrelid) END,
+                   'identity', CASE a.attidentity WHEN 'a' THEN 'always'
+                                                  WHEN 'd' THEN 'by default' END,
+                   'comment', col_description(t.oid, a.attnum))) ORDER BY a.attnum)
+            FROM pg_attribute a
+            LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+           WHERE a.attrelid = t.oid AND a.attnum > 0 AND NOT a.attisdropped) AS columns,
+         CASE WHEN t.relkind IN ('r','p') THEN coalesce((
+           SELECT json_agg(a.attname ORDER BY k.ord)
+             FROM pg_index i
+             CROSS JOIN LATERAL unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+            WHERE i.indrelid = t.oid AND i.indisprimary), '[]') END AS \"primaryKey\",
+         (SELECT json_agg(json_strip_nulls(json_build_object(
+                   'name', ic.relname,
+                   'definition', pg_get_indexdef(i.indexrelid),
+                   'invalid', CASE WHEN NOT i.indisvalid THEN true END)) ORDER BY ic.relname)
+            FROM pg_index i
+            JOIN pg_class ic ON ic.oid = i.indexrelid
+           WHERE i.indrelid = t.oid AND NOT i.indisprimary) AS indexes,
+         (SELECT json_agg(json_build_object(
+                   'name', con.conname,
+                   'definition', pg_get_constraintdef(con.oid, true)) ORDER BY con.conname)
+            FROM pg_constraint con
+           WHERE con.conrelid = t.oid AND con.contype = 'f'
+             AND NOT EXISTS (SELECT 1 FROM pg_constraint p
+                              WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid))
+           AS \"foreignKeys\",
+         (SELECT json_agg(json_build_object(
+                   'name', con.conname,
+                   'definition', pg_get_constraintdef(con.oid, true)) ORDER BY con.conname)
+            FROM pg_constraint con
+           WHERE con.conrelid = t.oid AND con.contype IN ('c','x')) AS constraints,
+         (SELECT json_agg(json_build_object(
+                   'table', format('%I.%I', rn.nspname, rc.relname),
+                   'name', con.conname,
+                   'definition', pg_get_constraintdef(con.oid, true))
+                 ORDER BY rn.nspname, rc.relname, con.conname)
+            FROM pg_constraint con
+            JOIN pg_class rc ON rc.oid = con.conrelid
+            JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+           WHERE con.confrelid = t.oid AND con.contype = 'f'
+             AND con.conparentid = 0) AS \"referencedBy\"
+    FROM t
+  ) r";
+
+/// The miss message of pg_describe_table, steering the next call: a dotted name with no schema
+/// is almost always `schema.table` written as one string.
+fn describe_miss(schema: Option<&str>, table: &str) -> String {
+    match (schema, table.split_once('.')) {
+        (Some(schema), _) => {
+            format!("no table or view {schema}.{table} — pg_list_tables lists what exists")
+        }
+        (None, Some((s, t))) => format!(
+            "no table or view named \"{table}\" on the search_path — for a qualified name pass \
+             the parts apart: schema \"{s}\", table \"{t}\""
+        ),
+        (None, None) => format!(
+            "no table or view named \"{table}\" on the search_path — pass its schema, or find it \
+             with pg_list_tables"
+        ),
+    }
+}
+
+/// Where pg_stat_statements is installed in this database, if it is.
+const PGSS_SCHEMA_SQL: &str = "
+  SELECT n.nspname AS schema
+    FROM pg_extension e
+    JOIN pg_namespace n ON n.oid = e.extnamespace
+   WHERE e.extname = 'pg_stat_statements'";
+
+const PGSS_MISSING: &str = "top_queries reads the pg_stat_statements extension, which this \
+     database does not have: add pg_stat_statements to shared_preload_libraries (a restart), \
+     then run CREATE EXTENSION pg_stat_statements in this database";
+
+/// pg_inspect's checks. Every row query takes the row limit as `$1`; `{pgss}` in top_queries is
+/// the extension's schema, quoted, found at call time. Ratios and seconds are cast to float8 so
+/// they arrive as numbers, not NUMERIC strings.
+pub const PG_CHECKS: &[Check] = &[
+    Check {
+        name: "activity",
+        about: "running statements and open transactions, longest first",
+        rows: Some(
+            "
+  SELECT pid, datname AS database, usename AS \"user\", application_name AS application,
+         client_addr::text AS client, state,
+         wait_event_type || ': ' || wait_event AS waiting_on,
+         round(extract(epoch FROM now() - query_start)::numeric, 1)::float8 AS query_seconds,
+         round(extract(epoch FROM now() - xact_start)::numeric, 1)::float8 AS xact_seconds,
+         left(query, 1000) AS query
+    FROM pg_stat_activity
+   WHERE backend_type = 'client backend' AND state IS DISTINCT FROM 'idle'
+     AND pid <> pg_backend_pid()
+   ORDER BY coalesce(xact_start, query_start) NULLS LAST
+   LIMIT $1",
+        ),
+        summary: None,
+        note: Some(
+            "Other roles' sessions show their query and timings only to superusers and members \
+             of pg_read_all_stats.",
+        ),
+    },
+    Check {
+        name: "locks",
+        about: "sessions waiting on a lock, with the session blocking each",
+        rows: Some(
+            "
+  SELECT w.pid AS waiting_pid, w.usename AS waiting_user,
+         (SELECT l.mode || ' on ' || coalesce(l.relation::regclass::text, l.locktype)
+            FROM pg_locks l WHERE l.pid = w.pid AND NOT l.granted LIMIT 1) AS waiting_for,
+         round(extract(epoch FROM now() - w.query_start)::numeric, 1)::float8 AS waiting_seconds,
+         left(w.query, 500) AS waiting_query,
+         b.pid AS blocking_pid, b.usename AS blocking_user, b.state AS blocking_state,
+         round(extract(epoch FROM now() - b.xact_start)::numeric, 1)::float8
+           AS blocking_xact_seconds,
+         left(b.query, 500) AS blocking_query
+    FROM pg_stat_activity w
+    CROSS JOIN LATERAL unnest(pg_blocking_pids(w.pid)) AS bp(pid)
+    JOIN pg_stat_activity b ON b.pid = bp.pid
+   WHERE w.wait_event_type = 'Lock'
+   ORDER BY w.query_start
+   LIMIT $1",
+        ),
+        summary: None,
+        note: Some(
+            "blocking_query is the blocker's latest statement, not necessarily the one that took \
+             the lock — an idle-in-transaction blocker is holding it until it commits.",
+        ),
+    },
+    Check {
+        name: "top_queries",
+        about: "statements by total execution time (needs the pg_stat_statements extension)",
+        rows: Some(
+            "
+  SELECT left(s.query, 1000) AS query, s.calls,
+         round(s.total_exec_time::numeric, 1)::float8 AS total_ms,
+         round(s.mean_exec_time::numeric, 2)::float8 AS mean_ms,
+         round(s.max_exec_time::numeric, 2)::float8 AS max_ms,
+         round((100 * s.total_exec_time
+                / nullif(sum(s.total_exec_time) OVER (), 0))::numeric, 1)::float8 AS pct_of_total,
+         s.rows,
+         round((100.0 * s.shared_blks_hit
+                / nullif(s.shared_blks_hit + s.shared_blks_read, 0))::numeric, 1)::float8
+           AS cache_hit_pct
+    FROM {pgss}.pg_stat_statements s
+   WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+   ORDER BY s.total_exec_time DESC
+   LIMIT $1",
+        ),
+        summary: None,
+        note: Some(
+            "Query text is normalized (constants read as $1, $2, …); counters run since \
+             pg_stat_statements_reset().",
+        ),
+    },
+    Check {
+        name: "table_scans",
+        about: "tables read by sequential scans, most rows read first",
+        rows: Some(
+            "
+  SELECT schemaname AS schema, relname AS \"table\", seq_scan,
+         seq_tup_read AS seq_rows_read, seq_tup_read / seq_scan AS rows_per_seq_scan,
+         idx_scan, n_live_tup AS live_rows, pg_size_pretty(pg_relation_size(relid)) AS size
+    FROM pg_stat_user_tables
+   WHERE seq_scan > 0
+   ORDER BY seq_tup_read DESC
+   LIMIT $1",
+        ),
+        summary: None,
+        note: Some(
+            "Sequential scans of a small table are normal; a large table with a high \
+             rows_per_seq_scan is a WHERE clause no index serves.",
+        ),
+    },
+    Check {
+        name: "vacuum",
+        about: "dead rows, last vacuum and analyze, and transaction-ID age per table",
+        rows: Some(
+            "
+  SELECT s.schemaname AS schema, s.relname AS \"table\",
+         s.n_live_tup AS live_rows, s.n_dead_tup AS dead_rows,
+         round((100.0 * s.n_dead_tup
+                / nullif(s.n_live_tup + s.n_dead_tup, 0))::numeric, 1)::float8 AS dead_pct,
+         greatest(s.last_vacuum, s.last_autovacuum) AS last_vacuum,
+         greatest(s.last_analyze, s.last_autoanalyze) AS last_analyze,
+         s.n_mod_since_analyze AS modified_since_analyze,
+         CASE WHEN c.relkind IN ('r','m','t') THEN age(c.relfrozenxid) END AS xid_age
+    FROM pg_stat_user_tables s
+    JOIN pg_class c ON c.oid = s.relid
+   ORDER BY s.n_dead_tup DESC, xid_age DESC NULLS LAST
+   LIMIT $1",
+        ),
+        summary: Some(
+            "
+  SELECT age(datfrozenxid) AS database_xid_age,
+         current_setting('autovacuum_freeze_max_age')::int AS autovacuum_freeze_max_age,
+         (SELECT count(*)::int FROM pg_stat_activity
+           WHERE backend_type = 'autovacuum worker') AS autovacuum_workers_running
+    FROM pg_database WHERE datname = current_database()",
+        ),
+        note: Some(
+            "Autovacuum forces a freeze once an xid_age passes autovacuum_freeze_max_age; at \
+             about 2 billion the server stops accepting writes.",
+        ),
+    },
+    Check {
+        name: "indexes",
+        about: "invalid and unused indexes, and tables without a primary key",
+        rows: Some(
+            "
+  SELECT problem, schema, \"table\", \"index\", pg_size_pretty(bytes) AS size, definition
+    FROM (
+    SELECT 0 AS ord, 'invalid' AS problem, n.nspname AS schema, c.relname AS \"table\",
+           ic.relname AS \"index\", pg_relation_size(i.indexrelid) AS bytes,
+           pg_get_indexdef(i.indexrelid) AS definition
+      FROM pg_index i
+      JOIN pg_class ic ON ic.oid = i.indexrelid
+      JOIN pg_class c ON c.oid = i.indrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE NOT i.indisvalid
+    UNION ALL
+    SELECT 1, 'unused', s.schemaname, s.relname, s.indexrelname,
+           pg_relation_size(s.indexrelid), pg_get_indexdef(s.indexrelid)
+      FROM pg_stat_user_indexes s
+      JOIN pg_index i ON i.indexrelid = s.indexrelid
+     WHERE s.idx_scan = 0 AND NOT i.indisunique AND NOT i.indisprimary
+    UNION ALL
+    SELECT 2, 'no primary key', n.nspname, c.relname, NULL, pg_table_size(c.oid), NULL
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relkind IN ('r','p') AND NOT c.relispartition
+       AND n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+       AND NOT EXISTS (SELECT 1 FROM pg_index pk WHERE pk.indrelid = c.oid AND pk.indisprimary)
+  ) p
+   ORDER BY ord, bytes DESC, schema, \"table\"
+   LIMIT $1",
+        ),
+        summary: None,
+        note: Some(
+            "idx_scan counts since the last statistics reset and on this server only — an index \
+             only a replica uses reads as unused here. Unique indexes enforce a constraint and \
+             are never listed as unused.",
+        ),
+    },
+    Check {
+        name: "cache",
+        about: "buffer cache hit ratios, overall and for the tables read most from disk",
+        rows: Some(
+            "
+  SELECT schemaname AS schema, relname AS \"table\", heap_blks_read AS disk_reads,
+         round((100.0 * heap_blks_hit
+                / nullif(heap_blks_hit + heap_blks_read, 0))::numeric, 2)::float8 AS hit_pct,
+         idx_blks_read AS index_disk_reads,
+         round((100.0 * idx_blks_hit
+                / nullif(idx_blks_hit + idx_blks_read, 0))::numeric, 2)::float8 AS index_hit_pct
+    FROM pg_statio_user_tables
+   WHERE heap_blks_read + coalesce(idx_blks_read, 0) > 0
+   ORDER BY heap_blks_read + coalesce(idx_blks_read, 0) DESC
+   LIMIT $1",
+        ),
+        summary: Some(
+            "
+  SELECT round((100.0 * sum(heap_blks_hit)
+                / nullif(sum(heap_blks_hit) + sum(heap_blks_read), 0))::numeric, 2)::float8
+           AS table_hit_pct,
+         round((100.0 * sum(idx_blks_hit)
+                / nullif(sum(idx_blks_hit) + sum(idx_blks_read), 0))::numeric, 2)::float8
+           AS index_hit_pct,
+         current_setting('shared_buffers') AS shared_buffers
+    FROM pg_statio_user_tables",
+        ),
+        note: Some(
+            "A read the OS page cache served still counts as a disk read here. A steady OLTP \
+             workload usually sits above 99%.",
+        ),
+    },
+    Check {
+        name: "connections",
+        about: "connections by database, user and state, against max_connections",
+        rows: Some(
+            "
+  SELECT datname AS database, usename AS \"user\", state, count(*)::int AS connections,
+         round(max(extract(epoch FROM now() - state_change))::numeric, 1)::float8
+           AS longest_in_state_seconds
+    FROM pg_stat_activity
+   WHERE backend_type = 'client backend'
+   GROUP BY 1, 2, 3
+   ORDER BY 4 DESC, 1, 2, 3
+   LIMIT $1",
+        ),
+        summary: Some(
+            "
+  SELECT (count(*) FILTER (WHERE backend_type = 'client backend'))::int AS client_connections,
+         current_setting('max_connections')::int AS max_connections,
+         current_setting('superuser_reserved_connections')::int AS reserved_for_superusers
+    FROM pg_stat_activity",
+        ),
+        note: Some(
+            "Other roles' sessions show their state only to superusers and members of \
+             pg_read_all_stats.",
+        ),
+    },
+];
 
 /// The filter params LIST_TABLES_SQL / COUNT_TABLES_SQL expect: `[schema-or-null,
 /// grep-or-null]` (the LIMIT/OFFSET pair is appended by the caller). The Data view lists every
@@ -880,43 +1238,114 @@ impl PgEngine {
     }
 
     async fn call_describe_table(&self, args: &Value) -> Result<Value, String> {
-        let schema = args
-            .get("schema")
-            .and_then(Value::as_str)
-            .unwrap_or("public")
-            .to_string();
         let table = args
             .get("table")
             .and_then(Value::as_str)
             .unwrap_or("")
+            .trim()
             .to_string();
         if table.is_empty() {
             return Err("table is required".into());
         }
+        let schema = args
+            .get("schema")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
         let pool = self.conn.get().await?;
-        let params = vec![json!(schema), json!(table)];
-        let (cols, pk) = tokio::join!(
-            pg_query_rows(&pool, DESCRIBE_SQL, &params),
-            pg_query_rows(&pool, PK_SQL, &params)
-        );
-        let cols = cols?;
-        if cols.is_empty() {
-            return Err(format!("no such table: {schema}.{table}"));
+        let params = [schema.map_or(Value::Null, |s| json!(s)), json!(table)];
+        let rows = pg_query_rows(&pool, DESCRIBE_TABLE_SQL, &params).await?;
+        match rows.into_iter().next().and_then(|mut r| r.remove("doc")) {
+            Some(doc @ Value::Object(_)) => Ok(doc),
+            _ => Err(describe_miss(schema, &table)),
         }
-        // The Node build swallowed a PK-query failure (permission on pg_index) — columns still
-        // describe the table.
-        let pk = pk.unwrap_or_default();
-        let primary_key: Vec<String> = pk
-            .iter()
-            .filter_map(|r| r.get("column").and_then(Value::as_str).map(str::to_string))
-            .collect();
-        Ok(json!({
-            "schema": schema,
-            "table": table,
-            "primaryKey": primary_key,
-            "columns": cols.into_iter().map(Value::Object).collect::<Vec<_>>(),
-        }))
     }
+
+    async fn call_inspect(&self, args: &Value) -> Result<Value, String> {
+        let (check, limit) = inspect_args(args, PG_CHECKS)?;
+        let failed = |e: String| inspect_failed(check.name, e);
+        let pool = self.conn.get().await?;
+        let rows = match check.rows {
+            Some(sql) => {
+                let mut sql = sql.to_string();
+                if sql.contains("{pgss}") {
+                    let found = pg_query_rows(&pool, PGSS_SCHEMA_SQL, &[])
+                        .await
+                        .map_err(failed)?;
+                    let schema = found
+                        .first()
+                        .and_then(|r| r.get("schema"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| PGSS_MISSING.to_string())?;
+                    sql = sql.replace("{pgss}", &quote_ident(DbDialect::Pg, schema)?);
+                }
+                Some(pg_diagnostic_rows(&pool, &sql, &[json!(limit)]).await.map_err(failed)?)
+            }
+            None => None,
+        };
+        let summary = match check.summary {
+            Some(sql) => pg_diagnostic_rows(&pool, sql, &[])
+                .await
+                .map_err(failed)?
+                .into_iter()
+                .next(),
+            None => None,
+        };
+        Ok(inspect_reply(check, rows, summary))
+    }
+}
+
+/// A check that failed, named — with the grant that fixes the usual cause.
+fn inspect_failed(check: &str, e: String) -> String {
+    if e.contains("permission denied") {
+        format!(
+            "{check} failed: {e} — grant this login pg_monitor (or pg_read_all_stats) to read \
+             the statistics views"
+        )
+    } else {
+        format!("{check} failed: {e}")
+    }
+}
+
+/// pg_inspect's rows: pg_query_rows, except that an INT8 or NUMERIC column comes back as a JSON
+/// number — there it is a counter or a sum, not an id, and a model compares numbers, not
+/// strings.
+async fn pg_diagnostic_rows(
+    pool: &PgPool,
+    sql: &str,
+    params: &[Value],
+) -> Result<Vec<Map<String, Value>>, String> {
+    let mut query = sqlx::query(AssertSqlSafe(sql));
+    for p in params {
+        query = bind_value(query, p);
+    }
+    let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            row.columns()
+                .iter()
+                .enumerate()
+                .map(|(i, col)| {
+                    let value = match col.type_info().to_string().as_str() {
+                        "INT8" => row
+                            .try_get::<Option<i64>, _>(i)
+                            .ok()
+                            .flatten()
+                            .map_or(Value::Null, Value::from),
+                        "NUMERIC" => row
+                            .try_get::<Option<bigdecimal::BigDecimal>, _>(i)
+                            .ok()
+                            .flatten()
+                            .and_then(|d| d.to_string().parse::<f64>().ok())
+                            .map_or(Value::Null, finite_f64),
+                        _ => column_to_value(row, col, i),
+                    };
+                    (col.name().to_string(), value)
+                })
+                .collect()
+        })
+        .collect())
 }
 
 #[async_trait]
@@ -934,6 +1363,7 @@ impl Engine for PgEngine {
             "pg_query" => self.call_query(args).await,
             "pg_list_tables" => self.call_list_tables(args).await,
             "pg_describe_table" => self.call_describe_table(args).await,
+            "pg_inspect" => self.call_inspect(args).await,
             other => Err(format!("unknown tool: {other}")),
         }
     }
@@ -992,6 +1422,76 @@ impl Engine for PgEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tool_set_is_query_list_describe_inspect() {
+        let names: Vec<String> = tools(500).into_iter().map(|t| t.name).collect();
+        assert_eq!(
+            names,
+            ["pg_query", "pg_list_tables", "pg_describe_table", "pg_inspect"]
+        );
+        let inspect = tools(500).pop().expect("pg_inspect");
+        assert_eq!(
+            inspect.input_schema["properties"]["check"]["enum"],
+            json!([
+                "activity",
+                "locks",
+                "top_queries",
+                "table_scans",
+                "vacuum",
+                "indexes",
+                "cache",
+                "connections"
+            ])
+        );
+    }
+
+    #[test]
+    fn every_check_binds_only_its_row_limit() {
+        // call_inspect binds exactly [limit] to a row query and nothing to a summary.
+        for check in PG_CHECKS {
+            let rows = check.rows.expect("every pg check lists rows");
+            assert!(rows.trim_end().ends_with("LIMIT $1"), "{}", check.name);
+            assert!(!rows.contains("$2"), "{}", check.name);
+            if let Some(summary) = check.summary {
+                assert!(!summary.contains('$'), "{}", check.name);
+            }
+        }
+        let pgss: Vec<&str> = PG_CHECKS
+            .iter()
+            .filter(|c| c.rows.is_some_and(|r| r.contains("{pgss}")))
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(pgss, ["top_queries"]);
+    }
+
+    #[test]
+    fn a_describe_miss_points_at_the_next_call() {
+        assert_eq!(
+            describe_miss(Some("app"), "users"),
+            "no table or view app.users — pg_list_tables lists what exists"
+        );
+        let dotted = describe_miss(None, "app.users");
+        assert!(dotted.contains("schema \"app\", table \"users\""), "{dotted}");
+        let bare = describe_miss(None, "users");
+        assert!(bare.contains("on the search_path"), "{bare}");
+        assert!(bare.contains("pg_list_tables"), "{bare}");
+    }
+
+    #[test]
+    fn describe_resolves_through_to_regclass_with_both_names_quoted() {
+        assert!(DESCRIBE_TABLE_SQL.contains("format('%I.%I', $1::text, $2::text)"));
+        assert!(DESCRIBE_TABLE_SQL.contains("format('%I', $2::text)"));
+        assert!(!DESCRIBE_TABLE_SQL.contains("$3"));
+    }
+
+    #[test]
+    fn a_permission_error_names_the_grant() {
+        let e = inspect_failed("activity", "permission denied for view x".into());
+        assert!(e.starts_with("activity failed: permission denied"), "{e}");
+        assert!(e.contains("pg_monitor"), "{e}");
+        assert_eq!(inspect_failed("locks", "boom".into()), "locks failed: boom");
+    }
 
     #[test]
     fn browse_table_params_carry_the_schema_pick() {

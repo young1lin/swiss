@@ -1134,8 +1134,8 @@ The drivers are in-process; the tool surfaces are deliberately tiny.
 
 | Engine | Tools | Connection |
 |---|---|---|
-| mysql / mariadb | `mysql_query`, `mysql_list_tables` | sqlx pool, max 5, acquire 5 s; ping `SELECT 1 AS ok` |
-| pg | `pg_query`, `pg_list_tables`, `pg_describe_table` | sqlx pool, max 4, idle 60 s (longer than the probe period, or every probe forks a backend) |
+| mysql / mariadb | `mysql_query`, `mysql_list_tables`, `mysql_describe_table`, `mysql_inspect` | sqlx pool, max 5, acquire 5 s; ping `SELECT 1 AS ok` |
+| pg | `pg_query`, `pg_list_tables`, `pg_describe_table`, `pg_inspect` | sqlx pool, max 4, idle 60 s (longer than the probe period, or every probe forks a backend) |
 | redis | `redis_scan`, `redis_read`, `redis_command` | one multiplexed, auto-reconnecting `ConnectionManager`; a 10 s command timeout that also bounds the offline queue; a pipeline is one round trip |
 
 - **Pools are built lazily** and kept small (`min_connections(0)`); the pool is the
@@ -1152,9 +1152,30 @@ The drivers are in-process; the tool surfaces are deliberately tiny.
   `DEBUG`, `REPLICAOF`, `MIGRATE`, `SWAPDB` …) are always refused; `FLUSHALL`/`FLUSHDB` need
   `allowDestructive`; scripting (`EVAL`, `FCALL` and their variants — the one family no other
   rule can inspect) needs `allowEval`; container commands are decided per subcommand.
+- **Describe is one call.** `pg_describe_table` is one catalog query: columns, the primary key
+  in key order, indexes (predicates kept, invalid ones flagged), outgoing foreign keys
+  (partition clones folded), check and exclusion constraints, and `referencedBy` — the keys
+  pointing in, which no DDL of the table shows. `schema` is optional: the name then resolves
+  through the session's `search_path` (`to_regclass`), and a miss names the argument to add.
+  `mysql_describe_table` returns the server's own `SHOW CREATE TABLE` plus `referencedBy`; when
+  the DDL is refused (a view needs SHOW VIEW) it falls back to the column list. Its `database`,
+  like `mysql_list_tables`', defaults to the def's.
+- **Diagnostics.** `pg_inspect` and `mysql_inspect` run one named, pre-written check over the
+  server's own statistics views — `activity`, `locks` (each waiter with its blocker; mysql adds
+  metadata locks), `top_queries`, `table_scans`, `indexes` (unused, pg's invalid, no primary key),
+  `cache`, `connections`, plus `vacuum` (pg) or `fragmentation` (mysql). No `sys` schema and no
+  stored functions. Counters arrive as JSON numbers and byte counts readable; each reply carries
+  a `note` on reading it. A permission error names the grant that fixes it (pg_monitor; PROCESS
+  and SELECT on performance_schema); pg's `top_queries` says how to add pg_stat_statements when
+  the database lacks it. EXPLAIN stays a statement for the query tools, not a tool of its own.
+- **`redis_scan` collects.** One call runs SCAN rounds until it holds `limit` keys, the cursor
+  ends, 32 rounds pass, or 2 s; each round's COUNT is scaled by the last round's match density
+  (at most 10 000). A sparse pattern no longer answers `keys: []` with `done: false` call
+  after call; a huge keyspace still pages through the cursor.
 - **Tool schemas.** Numeric arguments are integers with their bounds declared: a query's
   `limit` 1–10 000, `mysql_list_tables`/`pg_list_tables` `limit` 1–1000 and `page` from 0,
-  `redis_scan` `count` 1–10 000, `redis_read` `offset` from 0 and `limit` 1–1000. The engines
+  the inspect tools' `limit` 1–100 (with `check` a required enum), `redis_scan` `limit`
+  1–1000, `redis_read` `offset` from 0 and `limit` 1–1000. The engines
   still clamp, so a client that skips validation is bounded, not refused. Descriptions state this
   instance's own numbers: the query tools name the def's `maxRows` as their row cap, and
   `redis_command` lists exactly what this instance rejects given `allowEval` and
@@ -4103,7 +4124,9 @@ used as is; a set but dead override is a hard failure, never a silent fallback; 
 testcontainers wherever `DOCKER_HOST` points; (3) neither — the test **fails, never skips**,
 with a three-part message (what was tried, why it failed, how to fix it). Ports are random;
 nothing hard-codes 3306/5432/6379. Containers carry the label `org.swiss-it.owned=1` (the prune
-scope; a pid label is informational only). bollard runs on one dedicated worker thread.
+scope; a pid label is informational only). bollard runs on one dedicated worker thread. postgres
+starts with `shared_preload_libraries=pg_stat_statements`, which `pg_inspect`'s `top_queries`
+test needs — an override server must preload it too.
 
 **Reaping, three layers.** (1) The `it-reaper` watchdog child reads the docker endpoint and
 then one container id per line on stdin; when the test process dies its stdin hits EOF and it

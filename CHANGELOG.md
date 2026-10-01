@@ -11,6 +11,20 @@ All notable changes to swiss are recorded here. The format follows
 - `swiss path [on|off]` and a "Put swiss on your PATH" switch in the panel: this exe's folder in
   the current user's PATH on Windows, a `~/.local/bin/swiss` symlink elsewhere. A PATH entry
   added by hand counts as on.
+- `pg_inspect` and `mysql_inspect`: one named diagnostic check per call — running statements,
+  lock waits with their blockers, top queries, sequential scans, unused indexes and tables
+  without a primary key, cache hit ratio, connections, plus vacuum (PostgreSQL) or
+  fragmentation (MySQL). A missing privilege is answered with the grant that fixes it.
+- `mysql_describe_table`: the table's own `CREATE` statement plus the foreign keys that point
+  at it.
+
+### Changed
+
+- `pg_describe_table` answers in one query with the primary key, indexes, foreign keys both
+  ways and constraints; `schema` is optional and resolves through the `search_path`.
+- `mysql_list_tables` takes a `database` and names it once at the top of the reply.
+- `redis_scan` takes `limit` (keys to collect, default 100) instead of `count`, and keeps
+  scanning until it has them — a sparse pattern no longer returns empty pages.
 
 ### Fixed
 
