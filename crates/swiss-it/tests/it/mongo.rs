@@ -15,7 +15,8 @@
  */
 
 //! L1 + L2, the mongo group (SPEC §testing.it): MongoDataBrowser and the six tools against a
-//! real MongoDB 8 replica set, over a per-test database seeded by `seed_mongo` (57 orders
+//! real MongoDB replica set (8 in the container; any 4.4+ set through `SWISS_IT_MONGO_URL` -
+//! nothing here names a version), over a per-test database seeded by `seed_mongo` (57 orders
 //! carrying every BSON type the panel prints, a validated `customers`, two indexes, a view).
 //! The browser and the tools are built exactly the way the adapter builds them: ServerDef ->
 //! MongoEngine -> Engine::browser() / Engine::call(), carrying the def's own policy flags.
@@ -29,12 +30,12 @@ use serde_json::{json, Map, Value};
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{BrowserFlavor, EditError};
 use swiss_host::mongobrowser::{
-    infer_schema, mongo_aggregate_of, mongo_count_of, mongo_edits_of, mongo_explain_of, mongo_find_of, mongo_import_of,
-    mongo_index_op_of, MongoBrowser, MongoNs, MONGO_PAGE_MAX,
+    infer_schema, mongo_aggregate_of, mongo_collection_op_of, mongo_count_of, mongo_edits_of, mongo_explain_of,
+    mongo_find_of, mongo_import_of, mongo_index_op_of, MongoBrowser, MongoNs, MONGO_PAGE_MAX,
 };
 use swiss_it::engine::Kind;
 use swiss_it::seed::{fresh, Fresh, MONGO_SEED_ORDERS};
-use swiss_mcp::adapters::mongo::MongoEngine;
+use swiss_mcp::adapters::mongo::{MongoEngine, MONGO_CHECKS};
 use swiss_mcp::adapters::tool_server::Engine;
 
 /// A browser (and the engine behind it) over its own seeded database. `allowDestructive`
@@ -80,7 +81,7 @@ async fn the_catalog_lists_the_seeded_collections_with_their_statistics() {
     assert_eq!(by("open_orders")["viewOn"], json!("orders"));
     let info = b.server_info().await.expect("info");
     assert_eq!(info["topology"], json!("replicaSet"), "{info}");
-    assert_eq!(info["transactions"], json!(true), "a replica set on 8.x has transactions: {info}");
+    assert_eq!(info["transactions"], json!(true), "a replica set has transactions: {info}");
 }
 
 #[tokio::test]
@@ -133,7 +134,7 @@ async fn a_replace_is_optimistic_and_a_lost_race_is_a_conflict_naming_the_field(
     let mut edited = original.clone();
     edited["qty"] = json!({ "$numberInt": "42" });
     let edits = mongo_edits_of(&json!({ "edits": [{ "op": "replace", "original": original, "doc": edited }] })).expect("edits");
-    let done = b.apply_edits(&ns(&f, "orders"), &edits).await.unwrap_or_else(|_| panic!("the first replace lands"));
+    let done = b.apply_edits(&ns(&f, "orders"), &edits).await.unwrap_or_else(|e| panic!("the first replace lands: {e:?}"));
     assert_eq!(done["applied"], json!(1));
     // The same original again: the stored document moved, so the optimistic filter misses.
     let mut again = original.clone();
@@ -229,7 +230,22 @@ async fn aggregate_explain_and_schema_answer_from_the_server() {
     let s = b.explain(&scan).await.expect("explain")["summary"].clone();
     assert_eq!(s["collscan"], json!(true), "{s}");
     assert_eq!(s["totalDocsExamined"], json!(MONGO_SEED_ORDERS), "{s}");
-    let sample = b.sample(&ns(&f, "orders"), &Map::new(), 1000).await.expect("sample");
+    // A pipeline's plan sits where the release puts it - under a `$cursor` stage (4.4-6.0), or
+    // at the top with a slot-based tree once `$group` is pushed down (7.0+) - and reads the same.
+    let group = json!({ "$group": { "_id": "$name", "n": { "$sum": 1 } } });
+    let indexed = mongo_explain_of(&json!({
+        "db": f.name, "collection": "orders", "pipeline": [ { "$match": { "status": "paid" } }, group ],
+    }))
+    .expect("q");
+    let s = b.explain(&indexed).await.expect("explain")["summary"].clone();
+    assert_eq!((s["collscan"].clone(), s["indexes"].clone()), (json!(false), json!(["status_1_at_-1"])), "{s}");
+    let scan = mongo_explain_of(&json!({
+        "db": f.name, "collection": "orders", "pipeline": [ { "$match": { "name": "Ada" } }, group ],
+    }))
+    .expect("q");
+    let s = b.explain(&scan).await.expect("explain")["summary"].clone();
+    assert_eq!((s["collscan"].clone(), s["totalDocsExamined"].clone()), (json!(true), json!(MONGO_SEED_ORDERS)), "{s}");
+    let sample =b.sample(&ns(&f, "orders"), &Map::new(), 1000).await.expect("sample");
     assert_eq!(sample.len(), MONGO_SEED_ORDERS as usize);
     let schema = infer_schema(&sample);
     let big = schema["fields"].as_array().expect("fields").iter().find(|x| x["name"] == json!("big")).expect("big");
@@ -270,7 +286,7 @@ async fn import_inserts_what_it_can_and_names_what_it_could_not() {
 
 #[tokio::test]
 async fn the_tools_answer_in_relaxed_extended_json() {
-    let (f, e, _b) = browser("tools", false).await;
+    let (f, e, b) = browser("tools", false).await;
     let found = e
         .call("mongo_find", &json!({ "db": f.name, "collection": "orders", "filter": { "n": 0 } }))
         .await
@@ -289,5 +305,67 @@ async fn the_tools_answer_in_relaxed_extended_json() {
     let refused = e.call("mongo_command", &json!({ "db": f.name, "command": { "dropDatabase": 1 } })).await;
     assert!(refused.expect_err("dropDatabase needs the flag").contains("allowDestructive"));
     let server = e.call("mongo_inspect", &json!({ "check": "server" })).await.expect("mongo_inspect server");
-    assert!(server.to_string().contains("8."), "the server check names the version: {server}");
+    let info = b.server_info().await.expect("info");
+    assert_eq!(server["summary"]["version"], info["version"], "the server check names the version: {server}");
+}
+
+#[tokio::test]
+async fn every_inspect_check_answers() {
+    // The checks lean on server commands whose shape moved across releases (top, $indexStats,
+    // the profiler, replSetGetStatus); each must answer on whatever server the harness holds.
+    let (f, e, b) = browser("inspect", false).await;
+    let version = b.server_info().await.expect("info")["version"].clone();
+    for check in MONGO_CHECKS {
+        let r = e
+            .call("mongo_inspect", &json!({ "check": check.name, "db": f.name }))
+            .await
+            .unwrap_or_else(|err| panic!("mongo_inspect {} on {version}: {err}", check.name));
+        assert_eq!(r["check"], json!(check.name), "{r}");
+    }
+    let unused = e
+        .call("mongo_inspect", &json!({ "check": "unused_indexes", "db": f.name, "limit": 50 }))
+        .await
+        .expect("unused_indexes");
+    assert!(unused.to_string().contains("status_1_at_-1"), "nothing has queried the seeded index yet: {unused}");
+    let repl = e.call("mongo_inspect", &json!({ "check": "replication" })).await.expect("replication");
+    assert!(repl.to_string().contains("PRIMARY"), "the one member is the primary: {repl}");
+}
+
+#[tokio::test]
+async fn collections_are_created_renamed_and_dropped_and_an_export_streams_canonical() {
+    let (f, _e, b) = browser("collops", true).await;
+    let run = |v: Value| {
+        let op = mongo_collection_op_of(&v).expect("collection op");
+        let b = b.clone();
+        let db = f.name.clone();
+        async move { b.collection_op(&db, &op).await }
+    };
+    run(json!({ "db": f.name, "op": "create", "name": "log", "options": { "capped": true, "size": 65536, "max": 100 } }))
+        .await
+        .expect("create a capped collection");
+    run(json!({ "db": f.name, "op": "createView", "name": "paid", "viewOn": "orders", "pipeline": [ { "$match": { "status": "paid" } } ] }))
+        .await
+        .expect("create a view");
+    run(json!({ "db": f.name, "op": "rename", "name": "log", "to": "journal" })).await.expect("rename");
+    let colls = b.list_collections(&f.name).await.expect("collections");
+    let names: Vec<&str> = colls["collections"].as_array().expect("list").iter().filter_map(|c| c["name"].as_str()).collect();
+    assert!(names.contains(&"journal") && names.contains(&"paid") && !names.contains(&"log"), "{colls}");
+    run(json!({ "db": f.name, "op": "drop", "name": "journal" })).await.expect("drop, with the flag");
+    let q = mongo_find_of(
+        &json!({ "db": f.name, "collection": "paid", "sort": { "n": 1 }, "limit": 50 }),
+        MONGO_PAGE_MAX,
+    )
+    .expect("find");
+    let mut dump = b.export(&q, false).await.expect("export");
+    assert_eq!((dump.rows, dump.capped), (15, false), "the count comes first, through the view");
+    let mut docs = Vec::new();
+    while let Some(d) = dump.docs.recv().await {
+        docs.push(d.expect("an exported document"));
+    }
+    assert_eq!(docs.len(), 15);
+    assert_eq!(docs[1]["big"], json!({ "$numberLong": "9007199254740997" }), "canonical: n = 4, 2^53 + 5");
+    let ops = b.activity().await.expect("activity");
+    assert!(ops["rows"].is_array(), "{ops}");
+    // killOp of an operation that is not running is not an error on any version.
+    assert_eq!(b.activity_kill(i64::from(i32::MAX)).await.expect("killOp"), json!({ "ok": true }));
 }

@@ -1832,6 +1832,10 @@ every write it makes passes the MCP's command guard (§mcp.db). Every value cros
 **canonical** Extended JSON, so types are exact both ways; the panel prints and reads the mongo
 shell's syntax (§data.mongo-panel).
 
+**Servers: MongoDB 4.4 and later** — the driver's floor (wire version 9). The mongo group of
+§testing.it passes unchanged on 4.4, 5.0, 6.0, 7.0, 8.0 and 8.3; a standalone answers everything
+but the multi-document transaction, which it reports instead of faking (§data.mongo-edits).
+
 | Route (under `/api/db/{name}/mongo/`) | Answer |
 |---|---|
 | `GET info` | `{version, topology, setName, maxWireVersion, transactions, allowDestructive, defaultDb}` |
@@ -1866,8 +1870,10 @@ collection tab, and its console is a command console (§data.mongo-panel).
 
 - **An edit is optimistic.** The editor re-reads the document by `_id` before it opens, then
   writes back a `replace` whose filter is the `_id` **and** the whole stored document equal to
-  the one read (`{_id, $expr: {$eq: ["$$ROOT", {$literal: original}]}}`) — an index lookup that
-  matches nothing once anyone else has written. A miss is a 409 naming the fields that moved;
+  the one read (`{_id, $expr: {$eq: [{$cmp: ["$$ROOT", {$literal: original}]}, 0]}}`) — an
+  index lookup that matches nothing once anyone else has written. `$cmp`, not a bare
+  `{$eq: ["$$ROOT", …]}`: the same comparator, but 4.4 rewrites the bare form for the index and
+  fails it (code 16409). A miss is a 409 naming the fields that moved;
   the sheet keeps the operator's text and says so. A save that changed nothing writes nothing;
   the `_id` cannot change (compared as BSON, not as text).
 - **Ops.** `POST edits` takes at most 1000 (`MONGO_EDITS_MAX`) of `insert`, `replace`,
@@ -4284,7 +4290,12 @@ with a three-part message (what was tried, why it failed, how to fix it). Ports 
 nothing hard-codes 3306/5432/6379. Containers carry the label `org.swiss-it.owned=1` (the prune
 scope; a pid label is informational only). bollard runs on one dedicated worker thread. postgres
 starts with `shared_preload_libraries=pg_stat_statements`, which `pg_inspect`'s `top_queries`
-test needs — an override server must preload it too.
+test needs — an override server must preload it too. A mongo override must be a **replica set**
+(4.4+; one member is enough — the transaction and replication tests need a set), and nothing
+in the group names a version, so pointing `SWISS_IT_MONGO_URL` at another release is how a
+release is checked: a `mongod` started by hand, or by an embedded-test launcher such as
+mongodb-memory-server's `MongoMemoryReplSet` (wiredTiger — its in-memory engine has no
+transactions).
 
 **Reaping, three layers.** (1) The `it-reaper` watchdog child reads the docker endpoint and
 then one container id per line on stdin; when the test process dies its stdin hits EOF and it

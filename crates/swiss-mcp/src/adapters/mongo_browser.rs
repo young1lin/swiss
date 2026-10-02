@@ -640,6 +640,10 @@ mod tests {
             .get_document("$expr")
             .unwrap()
             .get_array("$eq")
+            .unwrap()[0]
+            .as_document()
+            .unwrap()
+            .get_array("$cmp")
             .unwrap()[1]
             .as_document()
             .unwrap()

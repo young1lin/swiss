@@ -469,13 +469,18 @@ pub fn mongo_edits_of(body: &Value) -> Result<Vec<MongoEdit>, String> {
 /// The optimistic filter of a replace or a delete (SPEC §data.mongo-edits): the `_id`, which
 /// makes it an index lookup, AND the whole stored document equal to the one the panel read.
 ///
-/// `$expr: {$eq: ["$$ROOT", {$literal: original}]}` compares the documents the way BSON compares
-/// them — every field, in order, at every depth — so a field another writer added, removed or
-/// changed anywhere fails the match. `$literal` keeps a value that happens to look like an
-/// expression (a string starting with `$`, a `{ $add: … }` stored as data) from being
+/// `$expr: {$eq: [{$cmp: ["$$ROOT", {$literal: original}]}, 0]}` compares the documents the way
+/// BSON compares them — every field, in order, at every depth — so a field another writer added,
+/// removed or changed anywhere fails the match. `$literal` keeps a value that happens to look
+/// like an expression (a string starting with `$`, a `{ $add: … }` stored as data) from being
 /// evaluated. A per-field `$eq` filter would get dotted and `$`-prefixed field names wrong (a
 /// filter path `a.b` means nested `b`, not the field named `a.b`), and would miss added fields.
 /// What BSON comparison itself cannot see stays unseen: Int32 1 and Double 1.0 compare equal.
+///
+/// `$cmp` and `$eq` are one comparator; the plain `{$eq: ["$$ROOT", …]}` is not used because
+/// 4.4 rewrites a field-path-against-constant `$eq` for the index and asserts on the
+/// one-element path `$$ROOT` (code 16409) — every save and delete failed there. `$cmp` is never
+/// rewritten, on any version.
 pub fn edit_filter(original: &Map<String, Value>) -> Result<Map<String, Value>, String> {
     let id = original
         .get("_id")
@@ -484,7 +489,7 @@ pub fn edit_filter(original: &Map<String, Value>) -> Result<Map<String, Value>, 
     f.insert("_id".into(), id.clone());
     f.insert(
         "$expr".into(),
-        json!({ "$eq": ["$$ROOT", { "$literal": Value::Object(original.clone()) }] }),
+        json!({ "$eq": [{ "$cmp": ["$$ROOT", { "$literal": Value::Object(original.clone()) }] }, 0] }),
     );
     Ok(f)
 }
@@ -1534,8 +1539,9 @@ mod tests {
         let f = edit_filter(original.as_object().expect("obj")).expect("filter");
         assert_eq!(f["_id"], json!({ "$oid": "650000000000000000000001" }));
         // Dotted and $-prefixed field names ride inside $literal, untouched.
-        assert_eq!(f["$expr"]["$eq"][0], json!("$$ROOT"));
-        assert_eq!(f["$expr"]["$eq"][1]["$literal"], original);
+        assert_eq!(f["$expr"]["$eq"][0]["$cmp"][0], json!("$$ROOT"));
+        assert_eq!(f["$expr"]["$eq"][0]["$cmp"][1]["$literal"], original);
+        assert_eq!(f["$expr"]["$eq"][1], json!(0));
         assert!(edit_filter(json!({ "a": 1 }).as_object().expect("obj")).is_err());
         let a = json!({ "_id": 1, "x": 1, "y": 2 });
         let b = json!({ "_id": 1, "x": 9, "z": 3 });
