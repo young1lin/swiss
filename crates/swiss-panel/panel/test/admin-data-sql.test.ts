@@ -156,6 +156,14 @@ describe("dbSplitStatements", () => {
     ]);
   });
 
+  it("does not split inside a string that follows punctuation (the lexer once swallowed its quote)", () => {
+    expect(sql.dbSplitStatements("SELECT ('a;b'); SELECT f(`x;y`), \"c;d\"; SELECT 1")).toEqual([
+      "SELECT ('a;b')",
+      "SELECT f(`x;y`), \"c;d\"",
+      "SELECT 1",
+    ]);
+  });
+
   it("does not split inside double-quoted identifiers or backtick names", () => {
     expect(sql.dbSplitStatements('SELECT "a;b"; SELECT `x;y`')).toEqual([
       'SELECT "a;b"',

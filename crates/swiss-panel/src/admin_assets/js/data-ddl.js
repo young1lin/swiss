@@ -420,7 +420,7 @@ function paintDbDdlPreviewQuiet()       {
 function paintDbDdlPreviewSql(sql        )       {
   const pre = $("ddl-pre");
   pre.classList.remove("db-ddl-quiet");
-  fill(pre, dbHighlightNodes(sql));
+  fill(pre, dbHighlightNodes(sql, { lined: true }));
   $                   ("ddl-commit").disabled = false;
 }
 

@@ -1215,6 +1215,12 @@ const en: Record<string, string> = {
   /* --- main --- */
   "main.newPanelVersionReady": "A new panel version is ready — it will load once you finish editing",
   "main.switchLight": "Switch to light",
+  "main.codeColors": "Code colors",
+  "main.codeAuto": "Match the theme (IntelliJ Light / Dark)",
+  "main.codeIntellijLight": "IntelliJ Light",
+  "main.codeDarcula": "Darcula",
+  "main.codeIntellijDark": "IntelliJ Dark",
+  "main.codeGithub": "GitHub (light / dark with the theme)",
   "main.switchDark": "Switch to dark",
   /* --- menu --- */
   "menu.idleLazyChildWakes": "idle — lazy: no child yet, wakes on the first request",
@@ -2103,6 +2109,7 @@ const en: Record<string, string> = {
   "gallery.st.pagerBusy": "Pager, switching",
   "gallery.st.codeOneLine": "Short value, one line",
   "gallery.st.codeBlock": "Labelled block",
+  "gallery.st.codeLined": "SQL, numbered lines",
   "gallery.st.codeTokens": "Shell syntax (tokens)",
   "gallery.d.failText": "Could not load the calls.",
   "gallery.d.retry": "Retry",

@@ -284,7 +284,7 @@
     .db-rtabs { margin-top: var(--s1); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
     .db-rtabs::-webkit-scrollbar { display: none; }
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
-    .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); white-space: pre-wrap; word-break: break-word; }
+    .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--code-bg); color: var(--code-fg); box-shadow: inset 0 0 0 1px var(--code-edge); border-radius: var(--r-row); font-family: var(--code-font); font-size: var(--f-label); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
     /* SPEC §data.ddl — the DDL sheet's column mini-grid: caption header row, one line per
        column on the field surface. Existing columns render disabled (only ADD is in the
        minimal set), so the sheet reads as the table's shape with new rows at its end; fixed
@@ -298,7 +298,7 @@
     .db-ddl-colpick { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); }
     /* The preview's quiet placeholder is the same block in a whisper, so "nothing yet" and
        the real script read as one surface. */
-    .db-ddl.db-ddl-quiet { color: var(--text-3); }
+    .db-ddl.db-ddl-quiet { color: var(--code-gutter); }
     /* SPEC §data.redis — the typed redis value view. The meta line carries its own actions now, so
        it flexes; the TTL chip is the one inline-editable readout; a string is a plain field
        with the one primary action beside it. The typed table itself reuses .db-grid as-is. */
@@ -335,18 +335,12 @@
     .db-pageinfo { font-size: var(--f-label); color: var(--text-2); white-space: nowrap; }
     /* SQL highlighting. The console is a transparent textarea over a highlighted <pre> (the
        classic overlay): both wear .db-sql-face so every metric matches character-for-character. */
-    .db-sql-wrap { position: relative; height: 118px; background: var(--field); border: 1px solid var(--sep); border-radius: var(--r-row); transition: border-color .12s ease, box-shadow .12s ease; }
+    .db-sql-wrap { position: relative; height: 118px; background: var(--code-bg); border: 1px solid var(--sep); border-radius: var(--r-row); transition: border-color .12s ease, box-shadow .12s ease; }
     .db-sql-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
-    .db-sql-face { font-family: var(--mono); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; margin: 0; border: 0; tab-size: 2; }
-    #dbSql { position: absolute; inset: 0; width: 100%; height: 100%; background: transparent; color: transparent; caret-color: var(--accent); resize: none; outline: none; }
-    #dbSql::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
-    .db-sql-hl { position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--text); }
-    .db-sql-hl .k { color: var(--accent); font-weight: var(--w-emph); }
-    .db-sql-hl .f { color: var(--accent); font-weight: var(--w-body); }
-    .db-sql-hl .s { color: var(--green); }
-    .db-sql-hl .n { color: var(--amber); }
-    .db-sql-hl .c { color: var(--text-3); font-style: italic; }
-    .db-sql-hl .i { color: var(--text-2); }
+    .db-sql-face { font-family: var(--code-font); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; margin: 0; border: 0; tab-size: 2; }
+    #dbSql { position: absolute; inset: 0; width: 100%; height: 100%; background: transparent; color: transparent; caret-color: var(--code-caret); resize: none; outline: none; }
+    #dbSql::selection { background: var(--code-sel); }
+    .db-sql-hl { position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--code-fg); }
     .db-console { display: flex; flex-direction: column; gap: var(--s2); }
     .db-console-row { display: flex; align-items: center; gap: var(--s2); }
     /* .db-console-row .hint deleted at P9: ui.css's own .hint already reads exactly these values. */
@@ -456,10 +450,10 @@
     /* The value sheet's read-only body. The content sits on the quiet inset
        ground (the same surface .db-ddl uses); values are values you would copy, so mono
        (base rule 1). A JSON value is the library's code block (pre.jv), scrolled here. */
-    .db-val-pre { margin: 0; padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-size: var(--f-label); max-height: 50vh; overflow: auto; }
+    .db-val-pre { margin: 0; padding: var(--s2) var(--s3); background: var(--code-bg); color: var(--code-fg); box-shadow: inset 0 0 0 1px var(--code-edge); border-radius: var(--r-row); font-size: var(--f-label); max-height: 50vh; overflow: auto; }
     .db-val-json { max-height: 50vh; overflow: auto; }
     .db-val-more { margin-top: var(--s2); }
-    .db-val-pre { font-family: var(--mono); white-space: pre-wrap; word-break: break-word; }
+    .db-val-pre { font-family: var(--code-font); white-space: pre-wrap; word-break: break-word; }
     .db-val-meta { font-size: var(--f-label); color: var(--text-3); font-variant-numeric: tabular-nums; }
     /* The single-record form: the grid's rows worn vertically. Labels are
        identity (text face, quiet), values are values you would copy (mono, rule 1); the

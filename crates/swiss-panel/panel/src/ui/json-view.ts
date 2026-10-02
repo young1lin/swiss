@@ -239,19 +239,51 @@ function jsonCodeNode(value: unknown, all: boolean, o: { oneLine?: boolean } = {
   return { node: pre, lines: line };
 }
 
-/** A code block from tokens another printer has already classed with the jv-* palette - the
- *  mongo shell printer (mongo-ejson.ts shellTokens) - as [class, text] pairs, "" for plain
- *  text. Past `limit` lines (JV_LINES by default) no more nodes are built unless `all`; `lines`
- *  is the whole text's count either way, which is what a Show all button quotes. */
-function tokenCodeNode(tokens: [string, string][], o: { all?: boolean; oneLine?: boolean; limit?: number } = {}): Painted {
-  const pre = h("pre", { class: o.oneLine ? "jv one" : "jv" });
-  const limit = o.limit ?? JV_LINES;
+/** A token another printer has classed with the jv-* family (SPEC §panel.code): [class, text],
+ *  "" for plain text. */
+type CodeToken = [string, string];
+
+/** The nodes of a classed token stream: a span per classed token and a text node per plain run,
+ *  so a query full of <script> tags stays inert text. `lined` puts every line in a numbered
+ *  .jv-line (the number is CSS, the line break stays text, so a copy is the code as written);
+ *  a token that spans lines is split into one span per line. Past `limit` lines no more nodes
+ *  are built; `lines` is the whole text's count either way. */
+function tokenSpans(tokens: CodeToken[], o: { lined?: boolean; limit?: number } = {}): { nodes: Node[]; lines: number } {
+  const limit = o.limit ?? Infinity;
+  const nodes: Node[] = [];
   let line = 1;
-  for (const [cls, text] of tokens) {
-    if (o.all || line <= limit) pre.appendChild(cls ? h("span", { class: cls }, text) : document.createTextNode(text));
-    for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) line++;
+  if (!o.lined) {
+    for (const [cls, text] of tokens) {
+      if (line <= limit) nodes.push(cls ? h("span", { class: cls }, text) : document.createTextNode(text));
+      for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) line++;
+    }
+    return { nodes, lines: line };
   }
-  return { node: pre, lines: line };
+  let cur = h("span", { class: "jv-line" });
+  nodes.push(cur);
+  for (const [cls, text] of tokens) {
+    text.split("\n").forEach((part, i) => {
+      if (i > 0) {
+        if (line <= limit) cur.appendChild(document.createTextNode("\n"));
+        line++;
+        cur = h("span", { class: "jv-line" });
+        if (line <= limit) nodes.push(cur);
+      }
+      if (part && line <= limit) cur.appendChild(cls ? h("span", { class: cls }, part) : document.createTextNode(part));
+    });
+  }
+  // A text that ends in a line break ends in an empty line the editor would not number.
+  if (!cur.firstChild && nodes.length > 1 && nodes[nodes.length - 1] === cur) nodes.pop();
+  return { nodes, lines: line };
+}
+
+/** A code block from classed tokens - the mongo shell printer (mongo-ejson.ts shellTokens), the
+ *  SQL highlighter (data-filters.ts dbSqlTokens). Past `limit` lines (JV_LINES by default) no
+ *  more nodes are built unless `all`; `lines` is the whole text's count either way, which is
+ *  what a Show all button quotes. `lined` numbers the lines, as an editor does. */
+function tokenCodeNode(tokens: CodeToken[], o: { all?: boolean; oneLine?: boolean; limit?: number; lined?: boolean } = {}): Painted {
+  const painted = tokenSpans(tokens, { lined: o.lined, limit: o.all ? Infinity : o.limit ?? JV_LINES });
+  return { node: h("pre", { class: o.oneLine ? "jv one" : "jv" }, painted.nodes), lines: painted.lines };
 }
 
 /** Text that is not JSON, exactly as it arrived, cut at JV_LINES unless `all`. */
@@ -284,5 +316,5 @@ function formattedCopyText(text: string): string {
   return block.tail ? json + "\n\n" + block.tail : json;
 }
 
-export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode, tokenCodeNode, valueBlock };
-export type { Painted };
+export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode, tokenCodeNode, tokenSpans, valueBlock };
+export type { CodeToken, Painted };

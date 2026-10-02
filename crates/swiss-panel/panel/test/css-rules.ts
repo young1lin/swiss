@@ -177,9 +177,10 @@ export function specificity(selector: string): [number, number, number] {
   return [a, b, c];
 }
 
-/** Braced blocks whose prelude is exactly ":root" or ":root[data-theme=...]" hold the tokens. */
+/** Braced blocks whose prelude is exactly ":root", ":root[data-theme=...]" or a code scheme's
+ *  ":root[data-code=...]" (SPEC §panel.code) hold the tokens. */
 export function tokenBlocks(css: string): string[] {
   return parseCss(css)
-    .filter((r) => r.selectors.every((s) => /^:root(\[data-theme="(dark|light)"\])?$/.test(s)))
+    .filter((r) => r.selectors.every((s) => /^:root(\[data-theme="(dark|light)"\]|\[data-code="[a-z-]+"\])?$/.test(s)))
     .map((r) => r.selectors.join(","));
 }

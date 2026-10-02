@@ -8,6 +8,11 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Added
 
+- Code colour schemes: every code block (the JSON view, Mongo document cards, the SQL console,
+  DDL panes and previews) is an editor surface in IntelliJ Light, Darcula, IntelliJ Dark or
+  GitHub, picked from the header's palette button; the default follows the theme. SQL is
+  highlighted the way DataGrip shows it - keywords and types, functions, columns, comments -
+  and DDL panes number their lines.
 - MongoDB connections (`"type": "mongo"`, a `mongodb://` URL, MongoDB 4.4 or later): six tools —
   `mongo_list_collections`, `mongo_find`, `mongo_aggregate`, `mongo_describe_collection`,
   `mongo_command` (server-damaging, session and cursor commands refused; dropping data needs
@@ -20,6 +25,11 @@ All notable changes to swiss are recorded here. The format follows
   set, bulk update and delete, an aggregation pipeline builder with per-stage previews, schema
   analysis, indexes with usage, explain plans with a collection-scan verdict, validation rules,
   JSON / NDJSON / CSV export and import, and a command console with templates.
+
+### Fixed
+
+- The SQL console no longer splits a statement at a `;` inside a string that follows punctuation
+  (`VALUES ('a;b')`), and the highlighter reads `` (`id`) `` as a quoted name.
 
 ## [0.1.2] - 2026-10-02
 
