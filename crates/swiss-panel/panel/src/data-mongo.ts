@@ -174,6 +174,7 @@ export async function mongoLoadCollections(quiet?: boolean): Promise<void> {
   if (!quiet || m.db !== db) {
     m.colls = null;
     m.db = db;
+    m.error = false; // a quiet refresh's failure is not this load's: it is loading until it answers
     renderDbTables();
   }
   const token = mongoCollReq.issue();

@@ -158,7 +158,9 @@ describe("the sidebar (SPEC §data.mongo-panel)", () => {
     await mongo.mongoLoadCollections(true);
     await settle();
     expect(all("#dbTables [data-mcoll]").map((b) => b.dataset.mcoll), "a quiet refresh keeps what it had").toEqual(["orders", "open_orders"]);
-    await mongo.mongoLoadCollections(false);
+    const loading = mongo.mongoLoadCollections(false);
+    expect($("#dbTables")!.textContent, "the next load is loading, not the last refresh's failure").toContain(tr("dataView.loading"));
+    await loading;
     await settle();
     expect(all("#dbTables [data-mcoll]")).toEqual([]);
     expect($("#dbTables")!.textContent).toContain(tr("dataMongo.listFailed"));
