@@ -23,7 +23,7 @@ authors = ["young1lin"]
 license = "Apache-2.0"
 repository = "https://github.com/young1lin/swiss"
 rust-version = "1.98"
-version = "0.1.2"
+version = "0.1.3"
 # Shipped as release archives (README, Install), not through crates.io: a stray `cargo publish`
 # would claim ten crate names for one binary. Lift this only with a plan to publish all ten.
 publish = false
