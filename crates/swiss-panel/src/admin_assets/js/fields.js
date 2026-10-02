@@ -42,7 +42,7 @@ const AUTOSTART_EAGER            = {
   k: "autostart", label: tk("fields.startAutomaticallyBoot"), bool: true, def: true,
   hint: tk("fields.offIdleBootFirst"),
 };
-const TESTABLE_TYPES           = ["mysql", "mariadb", "redis", "pg", "http", "rest"];
+const TESTABLE_TYPES           = ["mysql", "mariadb", "redis", "pg", "mongo", "http", "rest"];
 const TYPE_FIELDS                              = {
   proc: [
     DESC_FIELD,
@@ -92,6 +92,21 @@ const TYPE_FIELDS                              = {
     },
     { k: "database", label: tk("fields.database"), half: true }, { k: "maxRows", label: tk("fields.defaultRowLimit"), num: true, half: true, ph: "200" },
     { k: "params", label: tk("fields.optionsKVLine"), area: true, ph: "sslmode=disable" },
+    AUTOSTART_EAGER,
+  ],
+  // SPEC §mcp.db: a MongoDB def keeps the connection string whole - one host or a replica set's
+  // seed list, its options riding the query string. mongodb+srv needs DNS SRV lookups, which
+  // this build leaves out (ADR-030), so the hint says to list the hosts instead.
+  mongo: [
+    DESC_FIELD,
+    {
+      k: "url", label: tk("fields.connectionString"), area: true,
+      ph: "mongodb://app:${MONGO_PASSWORD}@127.0.0.1:27017/shop?authSource=admin",
+      hint: tk("fields.mongoUrlHint"),
+    },
+    { k: "database", label: tk("fields.database"), half: true, ph: tk("fields.mongoDatabasePh") },
+    { k: "maxRows", label: tk("fields.defaultDocLimit"), num: true, half: true, ph: "20" },
+    { k: "allowDestructive", label: tk("fields.allowDropDatabaseCollection"), bool: true, hint: tk("fields.mongoDestructiveHint") },
     AUTOSTART_EAGER,
   ],
   http: [
@@ -189,6 +204,7 @@ const TYPE_LABELS                         = {
   mysql: tk("fields.mysqlProcessDriver"),
   redis: tk("fields.redisProcessDriver"),
   pg: tk("fields.postgresProcessDriver"),
+  mongo: tk("fields.mongoProcessDriver"),
   http: tk("fields.httpProxyRemoteMcp"),
   figma: tk("fields.figmaFigmasOfficialRemote"),
   "zai-vision": tk("fields.zaiVisionZhipuGlm"),

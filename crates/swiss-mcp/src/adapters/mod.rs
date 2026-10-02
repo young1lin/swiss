@@ -27,6 +27,9 @@
 pub mod direct;
 pub mod echo;
 pub mod http;
+pub mod mongo;
+pub mod mongo_browser;
+pub mod mongo_resources;
 pub mod mysql;
 pub mod mysql_browser;
 pub mod mysql_resources;
@@ -330,6 +333,8 @@ pub fn make_adapter(
         }
         "pg" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, pg::PgEngine::new(&def, name), log.clone()))),
         "redis" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, redis::RedisEngine::new(&def, name), log.clone()))),
+        // MongoDB (SPEC §mcp.db, ADR-030): the driver's own pool, opened on the first call.
+        "mongo" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, mongo::MongoEngine::new(&def, name)?, log.clone()))),
         "rest" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, rest::RestEngine::new(&def, name)?, log.clone()))),
         "proc" => Ok(Arc::new(proc::ProcAdapter::new(&def, name, log.clone()))),
         // The zai-vision type: the @z_ai/mcp-server GLM vision tools compiled in natively
@@ -352,7 +357,7 @@ pub fn make_adapter(
         }
         "http" => Ok(Arc::new(http::HttpAdapter::new(&def, name, log.clone())?)),
         other => Err(format!(
-            "Unknown adapter type: {other} (built-in: echo | mysql | mariadb | pg | redis | proc | http | rest | figma | zai-vision)"
+            "Unknown adapter type: {other} (built-in: echo | mysql | mariadb | pg | redis | mongo | proc | http | rest | figma | zai-vision)"
         )),
     }
 }

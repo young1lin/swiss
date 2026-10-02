@@ -239,6 +239,21 @@ function jsonCodeNode(value         , all         , o                        = {
   return { node: pre, lines: line };
 }
 
+/** A code block from tokens another printer has already classed with the jv-* palette - the
+ *  mongo shell printer (mongo-ejson.ts shellTokens) - as [class, text] pairs, "" for plain
+ *  text. Past `limit` lines (JV_LINES by default) no more nodes are built unless `all`; `lines`
+ *  is the whole text's count either way, which is what a Show all button quotes. */
+function tokenCodeNode(tokens                    , o                                                       = {})          {
+  const pre = h("pre", { class: o.oneLine ? "jv one" : "jv" });
+  const limit = o.limit ?? JV_LINES;
+  let line = 1;
+  for (const [cls, text] of tokens) {
+    if (o.all || line <= limit) pre.appendChild(cls ? h("span", { class: cls }, text) : document.createTextNode(text));
+    for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) line++;
+  }
+  return { node: pre, lines: line };
+}
+
 /** Text that is not JSON, exactly as it arrived, cut at JV_LINES unless `all`. */
 function textNode(text        , all         , cls        )          {
   const lines = text.split("\n");
@@ -269,5 +284,5 @@ function formattedCopyText(text        )         {
   return block.tail ? json + "\n\n" + block.tail : json;
 }
 
-export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode, valueBlock };
+export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode, tokenCodeNode, valueBlock };
                         

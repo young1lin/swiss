@@ -25,7 +25,7 @@
    Renaming the file to types/domain.ts is R6's, not a slice's — it touches every importer
    and would bury the state split in import churn. */
 
-import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbStreamGroupRow, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, ApiRedisCommand, DbQueryReply } from "./api.js";
+import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbStreamGroupRow, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, ApiMongoAggReply, ApiMongoColl, ApiMongoExplainReply, ApiMongoIndexesResponse, ApiMongoInfo, ApiMongoSchema, ApiRedisCommand, DbQueryReply } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -351,7 +351,7 @@ export interface DbGridConfig {
 
 /** One open object's tab kind: a table grid, the console, a redis key's value view, or
  *  the activity monitor. */
-export type DbTabKind = "table" | "sql" | "key" | "activity";
+export type DbTabKind = "table" | "sql" | "key" | "activity" | "coll";
 
 /** What every tab carries whatever it shows: its own loading flag, its own checked-row
  *  map (the grid's keys and the result grid's "q"-prefixed keys share it), the keyboard
@@ -480,7 +480,57 @@ export interface DbActivityTab extends DbTabBase {
   activityRows: ApiDbActivityRow[] | null;
 }
 
-export type DbTab = DbTableTab | DbSqlTab | DbKeyTab | DbActivityTab;
+/** One pipeline stage as the builder holds it (SPEC §data.mongo-pipeline): the operator, its body
+ *  as typed (shell syntax), whether it runs, and the last preview of what it hands the next
+ *  stage. */
+export interface DbMongoStage {
+  op: string;
+  body: string;
+  on: boolean;
+  preview?: { docs: Record<string, unknown>[]; more: boolean } | null;
+  error?: string | null;
+}
+
+/** The collection workspace's panes (SPEC §data.mongo-panel). */
+export type DbCollPane = "docs" | "agg" | "schema" | "indexes" | "explain" | "validation";
+
+/** A MongoDB collection's tab (SPEC §data.mongo-panel): the documents page with its query bar, and
+ *  the panes that analyse the same collection. The query is kept as TYPED (shell syntax), so a
+ *  background tab returns with the operator's own spelling; the page of documents is the one
+ *  expensive thing, dropped when the tab goes to the background. */
+export interface DbCollTab extends DbTabBase {
+  kind: "coll";
+  db: string | null;
+  coll: string | null;
+  pane: DbCollPane;
+  view: "list" | "json" | "table";
+  qFilter: string;
+  qProject: string;
+  qSort: string;
+  qSkip: number;
+  qLimit: number;
+  qMore: boolean;
+  qError: string | null;
+  docs: Record<string, unknown>[] | null;
+  more: boolean;
+  total: number | null;
+  estimated: boolean;
+  countTimedOut: boolean;
+  elapsedMs: number | null;
+  stages: DbMongoStage[];
+  aggText: string | null;
+  aggResult: ApiMongoAggReply | null;
+  aggBusy: boolean;
+  schema: ApiMongoSchema | null;
+  schemaBusy: boolean;
+  schemaSample: number;
+  indexes: ApiMongoIndexesResponse | null;
+  explain: ApiMongoExplainReply | null;
+  explainOf: "find" | "agg";
+  validatorText: string | null;
+}
+
+export type DbTab = DbTableTab | DbSqlTab | DbKeyTab | DbActivityTab | DbCollTab;
 
 /** What a tab is opened FOR (SPEC §data.tabs): the address `dbOpenTab` dedupes on before it
  *  builds anything. A table's identity is schema+table+filters — the FK jump's filtered
@@ -492,7 +542,8 @@ export type DbTabSpec =
   | { kind: "table"; table: string; schema: string | null; filters?: DbFilterTerm[] }
   | { kind: "key"; key: string; type?: string }
   | { kind: "sql" }
-  | { kind: "activity" };
+  | { kind: "activity" }
+  | { kind: "coll"; db: string; coll: string };
 
 /** The connection-scoped half of the old record: the sidebar's list state, the pickers,
  *  the grid geometry (per-connection by construction, SPEC §data.grid) and what the console
@@ -539,5 +590,8 @@ export interface DbConnState {
      until the selector is first opened ([] = the dialect has no axis → no database row). */
   database: string;
   databases: ApiDbDatabase[] | null;
+  /* SPEC §data.mongo: a mongo connection's catalog - the current database's collections (null
+     until they answer), the server's facts, and whether the last listing failed. */
+  mongo?: { colls: ApiMongoColl[] | null; db: string; error: boolean; info: ApiMongoInfo | null; paths: Record<string, string[]> } | null;
 }
 

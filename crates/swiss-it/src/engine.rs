@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The engine table: how the three real databases arrive (SPEC §testing.it).
+//! The engine table: how the four real databases arrive (SPEC §testing.it).
 //!
 //! One engine per kind per test process. The first test that needs a kind starts it;
 //! everything afterwards - including tests on other libtest runtimes - only reads the
@@ -55,9 +55,9 @@ use futures_util::FutureExt;
 use sqlx::Connection;
 use tokio::sync::OnceCell;
 
-use testcontainers::core::ImageExt;
+use testcontainers::core::{ImageExt, WaitFor};
 use testcontainers::runners::AsyncRunner;
-use testcontainers::ContainerAsync;
+use testcontainers::{ContainerAsync, GenericImage};
 use testcontainers_modules::mysql::Mysql as MysqlImage;
 use testcontainers_modules::postgres::Postgres as PostgresImage;
 use testcontainers_modules::redis::Redis as RedisImage;
@@ -74,13 +74,15 @@ const OWNED_LABEL: &str = "org.swiss-it.owned";
 /// pid-based prune deleted parallel runs' live engines (see prune_stale's doc).
 const PID_LABEL: &str = "org.swiss-it.pid";
 
-/// The three engines SPEC §testing.it fixed the matrix to. MariaDB is deliberately absent
-/// (D7): when it enters it is one more variant and one more table row, nothing else.
+/// The engines SPEC §testing.it fixed the matrix to. MariaDB is deliberately absent
+/// (D7): when it enters it is one more variant and one more table row, nothing else -
+/// exactly how MongoDB entered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
     Mysql,
     Postgres,
     Redis,
+    Mongo,
 }
 
 impl std::fmt::Display for Kind {
@@ -89,6 +91,7 @@ impl std::fmt::Display for Kind {
             Kind::Mysql => "mysql",
             Kind::Postgres => "postgres",
             Kind::Redis => "redis",
+            Kind::Mongo => "mongo",
         })
     }
 }
@@ -101,16 +104,18 @@ impl Kind {
             Kind::Mysql => "SWISS_IT_MYSQL_URL",
             Kind::Postgres => "SWISS_IT_POSTGRES_URL",
             Kind::Redis => "SWISS_IT_REDIS_URL",
+            Kind::Mongo => "SWISS_IT_MONGO_URL",
         }
     }
 
     /// The image table - versions live in this one place and nowhere else (SPEC §testing.it):
-    /// mysql:8.4, postgres:17, redis:7.
+    /// mysql:8.4, postgres:17, redis:7, mongo:8.
     fn image(self) -> (&'static str, &'static str) {
         match self {
             Kind::Mysql => ("mysql", "8.4"),
             Kind::Postgres => ("postgres", "17"),
             Kind::Redis => ("redis", "7"),
+            Kind::Mongo => ("mongo", "8"),
         }
     }
 
@@ -121,6 +126,7 @@ impl Kind {
             Kind::Mysql => 3306,
             Kind::Postgres => 5432,
             Kind::Redis => 6379,
+            Kind::Mongo => 27017,
         }
     }
 
@@ -129,6 +135,7 @@ impl Kind {
             Kind::Mysql => "MySQL 8.4",
             Kind::Postgres => "PostgreSQL 17",
             Kind::Redis => "Redis 7",
+            Kind::Mongo => "MongoDB 8 (a one-member replica set)",
         }
     }
 }
@@ -149,12 +156,16 @@ pub struct Engine {
     _held: Option<Held>,
 }
 
-/// `ContainerAsync<I>` is generic over the module image type and the three share no
+/// `ContainerAsync<I>` is generic over the module image type and the images share no
 /// object-safe trait, so the held container is an enum with one variant per module.
+/// MongoDB is a generic image: the module's replica-set start evaluates a quoted string
+/// instead of `rs.initiate()` and waits for 5.x log lines, so the harness initiates the
+/// set itself, through the driver (`initiate_replica_set`).
 enum Held {
     Mysql(ContainerAsync<MysqlImage>),
     Postgres(ContainerAsync<PostgresImage>),
     Redis(ContainerAsync<RedisImage>),
+    Mongo(ContainerAsync<GenericImage>),
 }
 
 impl Held {
@@ -164,6 +175,7 @@ impl Held {
             Held::Mysql(c) => c.id(),
             Held::Postgres(c) => c.id(),
             Held::Redis(c) => c.id(),
+            Held::Mongo(c) => c.id(),
         }
     }
 }
@@ -171,6 +183,7 @@ impl Held {
 static MYSQL: OnceCell<Engine> = OnceCell::const_new();
 static POSTGRES: OnceCell<Engine> = OnceCell::const_new();
 static REDIS: OnceCell<Engine> = OnceCell::const_new();
+static MONGO: OnceCell<Engine> = OnceCell::const_new();
 
 /// One engine per kind per test process. Racing callers wait on the same start; later
 /// ones - on other runtimes - only read the finished value.
@@ -179,6 +192,7 @@ pub async fn engine(kind: Kind) -> &'static Engine {
         Kind::Mysql => &MYSQL,
         Kind::Postgres => &POSTGRES,
         Kind::Redis => &REDIS,
+        Kind::Mongo => &MONGO,
     };
     cell.get_or_init(|| async { build(kind).await }).await
 }
@@ -351,6 +365,19 @@ fn start_container(kind: Kind) -> Result<Engine, String> {
                     .await
                     .map_err(|e| format!("{image_ref}: {e}"))?,
             ),
+            // A replica set, not a standalone: transactions (SPEC §data.mongo-edits) exist only
+            // there, and the standalone's sequential path is the unit tests' to pin.
+            Kind::Mongo => Held::Mongo(
+                GenericImage::new(name, tag)
+                    .with_wait_for(WaitFor::message_on_stdout("Waiting for connections"))
+                    .with_cmd(["--replSet", "rs0", "--bind_ip_all"])
+                    .with_label(OWNED_LABEL, "1")
+                    .with_label(PID_LABEL, &pid)
+                    .with_startup_timeout(Duration::from_secs(180))
+                    .start()
+                    .await
+                    .map_err(|e| format!("{image_ref}: {e}"))?,
+            ),
         };
         let host = held
             .host_of()
@@ -371,7 +398,15 @@ fn start_container(kind: Kind) -> Result<Engine, String> {
             Kind::Mysql => format!("mysql://root@{host}:{port}"),
             Kind::Postgres => format!("postgres://postgres:postgres@{host}:{port}/postgres"),
             Kind::Redis => format!("redis://{host}:{port}"),
+            // directConnection: the member's own name inside the container is not reachable
+            // from here, and a one-member set needs no discovery.
+            Kind::Mongo => format!("mongodb://{host}:{port}/?directConnection=true"),
         };
+        if kind == Kind::Mongo {
+            initiate_replica_set(&root_url)
+                .await
+                .map_err(|e| format!("container up on {host}:{port} but the replica set never formed: {e}"))?;
+        }
         connect_until_ready(kind, &root_url)
             .await
             .map_err(|e| format!("container up on {host}:{port} but never answered: {e}"))?;
@@ -393,6 +428,7 @@ impl Held {
             Held::Mysql(c) => c.get_host().await,
             Held::Postgres(c) => c.get_host().await,
             Held::Redis(c) => c.get_host().await,
+            Held::Mongo(c) => c.get_host().await,
         }
         .map_err(|e| e.to_string())?;
         Ok(host.to_string())
@@ -403,6 +439,7 @@ impl Held {
             Held::Mysql(c) => c.get_host_port_ipv4(internal).await,
             Held::Postgres(c) => c.get_host_port_ipv4(internal).await,
             Held::Redis(c) => c.get_host_port_ipv4(internal).await,
+            Held::Mongo(c) => c.get_host_port_ipv4(internal).await,
         }
         .map_err(|e| e.to_string())
     }
@@ -552,7 +589,52 @@ async fn probe(kind: Kind, url: &str) -> Result<(), String> {
                 Err(format!("PING answered {pong:?}"))
             }
         }
+        Kind::Mongo => {
+            // A writable primary, not just a ping: a set that is still electing answers
+            // ping and refuses every write the suites are about to make.
+            let client = mongo_client(url).await?;
+            let hello = client
+                .database("admin")
+                .run_command(bson::doc! { "hello": 1 })
+                .await
+                .map_err(|e| e.to_string())?;
+            if hello.get_bool("isWritablePrimary").unwrap_or(false) {
+                Ok(())
+            } else {
+                Err("the server answers but is not a writable primary yet".to_string())
+            }
+        }
     }
+}
+
+/// A driver client with short timeouts, for the harness's own commands.
+pub(crate) async fn mongo_client(url: &str) -> Result<mongodb::Client, String> {
+    let mut opts = mongodb::options::ClientOptions::parse(url).await.map_err(|e| e.to_string())?;
+    opts.server_selection_timeout = Some(Duration::from_secs(4));
+    opts.connect_timeout = Some(Duration::from_secs(4));
+    mongodb::Client::with_options(opts).map_err(|e| e.to_string())
+}
+
+/// `replSetInitiate` with the one member named as the container knows itself, then wait for
+/// the election (the readiness probe asks for a writable primary). Already initiated (code 23,
+/// a reused container) is fine.
+async fn initiate_replica_set(url: &str) -> Result<(), String> {
+    let client = mongo_client(url).await?;
+    let mut last = String::from("never attempted");
+    for _ in 0..40 {
+        let cmd = bson::doc! {
+            "replSetInitiate": { "_id": "rs0", "members": [ { "_id": 0, "host": "127.0.0.1:27017" } ] }
+        };
+        match client.database("admin").run_command(cmd).await {
+            Ok(_) => return Ok(()),
+            Err(e) => match *e.kind {
+                mongodb::error::ErrorKind::Command(ref c) if c.code == 23 => return Ok(()),
+                _ => last = e.to_string(),
+            },
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Err(last)
 }
 
 /// host/port as the Engine fields will hold them, parsed with the same libraries the
@@ -576,6 +658,19 @@ fn parse_endpoint(kind: Kind, url: &str) -> Result<(String, u16), String> {
             match c.get_connection_info().addr().clone() {
                 redis::ConnectionAddr::Tcp(h, p) => Ok((h, p)),
                 other => Err(format!("not a TCP redis endpoint: {other:?}")),
+            }
+        }
+        Kind::Mongo => {
+            let cs = mongodb::options::ConnectionString::parse(url).map_err(|e| e.to_string())?;
+            match cs.host_info {
+                mongodb::options::HostInfo::HostIdentifiers(hosts) => match hosts.first() {
+                    Some(mongodb::options::ServerAddress::Tcp { host, port }) => {
+                        Ok((host.clone(), port.unwrap_or(27017)))
+                    }
+                    Some(other) => Err(format!("not a TCP mongo endpoint: {other}")),
+                    None => Err("no host in the URL".to_string()),
+                },
+                _ => Err("a mongodb+srv:// URL names no host (the product does not resolve SRV)".to_string()),
             }
         }
     }

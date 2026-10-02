@@ -110,7 +110,7 @@ fn tag_of(type_: &str, def: &ServerDef) -> String {
 
 /// Connection fields each direct adapter reads. Anything else in the request body is dropped, so
 /// the panel can edit a definition without polluting it.
-const DIRECT_FIELDS: [(&str, &[&str]); 4] = [
+const DIRECT_FIELDS: [(&str, &[&str]); 5] = [
     (
         "mysql",
         &[
@@ -151,6 +151,12 @@ const DIRECT_FIELDS: [(&str, &[&str]); 4] = [
         ],
     ),
     ("pg", &["description", "url", "maxRows"]),
+    // SPEC §mcp.db: the connection string carries hosts, credentials and options; `database`
+    // overrides the URL's path for the tools' default database.
+    (
+        "mongo",
+        &["description", "url", "database", "maxRows", "allowDestructive"],
+    ),
 ];
 const BOOL_FIELDS: [&str; 5] = [
     "readonly",
@@ -163,8 +169,9 @@ const BOOL_FIELDS: [&str; 5] = [
 /// string is the dangerous one: libpq falls back to PGHOST/PGDATABASE, so the MCP would
 /// quietly point at whatever the environment happens to name rather than failing.
 /// mysql/redis default to localhost on their standard port, which is a
-/// stated default, not a surprise.
-const REQUIRED_FIELD: [(&str, &str); 1] = [("pg", "url")];
+/// stated default, not a surprise. A mongo URL is required for the same reason as pg's: the
+/// URL is the whole address, and there is no honest default to fall back to.
+const REQUIRED_FIELD: [(&str, &str); 2] = [("pg", "url"), ("mongo", "url")];
 
 fn as_bool(v: &Value) -> bool {
     matches!(v, Value::Bool(true))
@@ -430,7 +437,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         .map(|(_, f)| *f)
     else {
         return Err(format!(
-            "unknown type: {type_} (supported: mysql | mariadb | redis | pg | proc | http | rest | echo | figma | zai-vision)"
+            "unknown type: {type_} (supported: mysql | mariadb | redis | pg | mongo | proc | http | rest | echo | figma | zai-vision)"
         ));
     };
     for k in allowed {
@@ -1238,7 +1245,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // make_adapter expands the ${ENV} refs and constructs the same driver the MCP would run.
     // Nothing is registered and nothing is persisted — the credential exists only inside the
     // throwaway adapter, closed immediately after. What "a real test" means per family:
-    // - DB (mysql/redis/pg): adapter.ping() — exactly what the health probe runs.
+    // - DB (mysql/redis/pg/mongo): adapter.ping() — exactly what the health probe runs.
     // - http: adapter.build() — the initialize handshake, so a wrong URL or a rejected key fails.
     // - rest: one plain GET to the baseUrl (through the def's proxy if it names one). ANY HTTP
     //   answer counts as reachable — the base path itself need not serve anything — a network
@@ -1250,7 +1257,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         post(|State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
             // The panel's Test button offers exactly this list (fields.ts TESTABLE_TYPES);
             // mariadb answers through the mysql-family adapter's ping like mysql itself.
-            const TESTABLE_TYPES: [&str; 6] = ["mysql", "mariadb", "redis", "pg", "http", "rest"];
+            const TESTABLE_TYPES: [&str; 7] = ["mysql", "mariadb", "redis", "pg", "mongo", "http", "rest"];
             const TEST_TIMEOUT_MS: u64 = 5000;
             let body = body.0;
             let type_ = body.get("type").and_then(Value::as_str).unwrap_or("").to_string();

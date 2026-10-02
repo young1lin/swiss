@@ -5,9 +5,9 @@ against, or reproduces the third-party material listed here, each under its own 
 in this file changes those terms; it exists so that every notice reaches everyone who receives
 a copy of swiss — source or binary.
 
-The panel's engine badges (MySQL, MariaDB, Redis, PostgreSQL, Figma, Docker) are redrawn
-monochrome from Simple Icons (CC0) and used nominatively; the names and marks belong to
-their respective owners.
+The panel's engine badges (MySQL, MariaDB, Redis, PostgreSQL, MongoDB, Figma, Docker) are
+redrawn monochrome from Simple Icons (CC0) and used nominatively; the names and marks belong
+to their respective owners.
 
 ## 1. Vendored into the panel (served by the binary)
 
@@ -98,6 +98,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | aead | 0.6.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | aes | 0.9.3 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-ciphers |
 | aes-gcm | 0.11.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/AEADs |
+| ahash | 0.8.12 | MIT OR Apache-2.0 | https://github.com/tkaitchuck/ahash |
 | allocator-api2 | 0.2.21 | MIT OR Apache-2.0 | https://github.com/zakarumych/allocator-api2 |
 | android_system_properties | 0.1.6 | MIT OR Apache-2.0 | https://github.com/nical/android_system_properties |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | https://github.com/dtolnay/anyhow |
@@ -119,13 +120,15 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | base64 | 0.23.1 | MIT OR Apache-2.0 | https://github.com/marshallpierce/rust-base64 |
 | base64ct | 1.8.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
 | bcrypt-pbkdf | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/password-hashes |
-| bigdecimal | 0.4.10 | MIT/Apache-2.0 | https://github.com/akubera/bigdecimal-rs |
+| bigdecimal | 0.4.11 | MIT/Apache-2.0 | https://github.com/akubera/bigdecimal-rs |
 | bitflags | 2.13.1 | MIT OR Apache-2.0 | https://github.com/bitflags/bitflags |
+| bitvec | 1.1.1 | MIT | https://github.com/bitvecto-rs/bitvec |
 | blake2 | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | block-padding | 0.4.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | blowfish | 0.10.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-ciphers |
+| bson | 3.1.0 | MIT | https://github.com/mongodb/bson-rust |
 | bumpalo | 3.20.3 | MIT OR Apache-2.0 | https://github.com/fitzgen/bumpalo |
 | byteorder | 1.5.0 | Unlicense OR MIT | https://github.com/BurntSushi/byteorder |
 | bytes | 1.12.1 | MIT | https://github.com/tokio-rs/bytes |
@@ -140,6 +143,9 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | cmov | 0.5.4 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | combine | 4.6.8 | MIT | https://github.com/Marwes/combine |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
+| const-random | 0.1.18 | MIT OR Apache-2.0 | https://github.com/tkaitchuck/constrandom |
+| const-random-macro | 0.1.16 | MIT OR Apache-2.0 | https://github.com/tkaitchuck/constrandom |
+| convert_case | 0.10.0 | MIT | https://github.com/rutrum/convert-case |
 | core-foundation | 0.10.1 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core_detect | 1.0.0 | MIT/Apache-2.0 | https://github.com/thomcc/core_detect |
@@ -150,6 +156,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | crc-catalog | 2.5.0 | MIT OR Apache-2.0 | https://github.com/akhilles/crc-catalog |
 | crossbeam-queue | 0.3.14 | MIT OR Apache-2.0 | https://github.com/crossbeam-rs/crossbeam |
 | crossbeam-utils | 0.8.23 | MIT OR Apache-2.0 | https://github.com/crossbeam-rs/crossbeam |
+| crunchy | 0.2.4 | MIT | https://github.com/eira-fransham/crunchy |
 | crypto-bigint | 0.7.5 | Apache-2.0 OR MIT | https://github.com/RustCrypto/crypto-bigint |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
@@ -158,11 +165,18 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | ctutils | 0.4.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | curve25519-dalek | 5.0.0 | BSD-3-Clause | https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek |
 | curve25519-dalek-derive | 0.1.1 | MIT/Apache-2.0 | https://github.com/dalek-cryptography/curve25519-dalek |
+| darling | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
+| darling_core | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
+| darling_macro | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
 | dashmap | 6.2.1 | MIT | https://github.com/xacrimon/dashmap |
 | data-encoding | 2.11.1 | MIT | https://github.com/ia0/data-encoding |
 | delegate | 0.13.5 | MIT OR Apache-2.0 | https://github.com/kobzol/rust-delegate |
 | der | 0.8.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
 | deranged | 0.5.8 | MIT OR Apache-2.0 | https://github.com/jhpratt/deranged |
+| derive-syn-parse | 0.2.0 | MIT OR Apache-2.0 | https://github.com/sharnoff/derive-syn-parse |
+| derive-where | 1.7.0 | MIT OR Apache-2.0 | https://github.com/ModProg/derive-where |
+| derive_more | 2.1.1 | MIT | https://github.com/JelteF/derive_more |
+| derive_more-impl | 2.1.1 | MIT | https://github.com/JelteF/derive_more |
 | des | 0.9.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-ciphers |
 | digest | 0.10.7 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | digest | 0.11.3 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
@@ -193,6 +207,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | foreign-types-shared | 0.1.1 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
 | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | fs_extra | 1.3.0 | MIT | https://github.com/webdesus/fs_extra |
+| funty | 2.0.0 | MIT | https://github.com/myrrlyn/funty |
 | futures | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
 | futures-channel | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
 | futures-core | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
@@ -238,6 +253,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | icu_properties | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | icu_properties_data | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | icu_provider | 2.3.1 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
+| ident_case | 1.0.1 | MIT/Apache-2.0 | https://github.com/TedDriggs/ident_case |
 | idna | 1.1.0 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT | https://github.com/hsivonen/idna_adapter |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | https://github.com/indexmap-rs/indexmap |
@@ -259,6 +275,10 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | litemap | 0.8.3 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
 | log | 0.4.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/log |
+| macro_magic | 0.5.1 | MIT | https://github.com/sam0x17/macro_magic |
+| macro_magic_core | 0.5.1 | MIT | https://github.com/sam0x17/macro_magic |
+| macro_magic_core_macros | 0.5.1 | MIT | https://github.com/sam0x17/macro_magic |
+| macro_magic_macros | 0.5.1 | MIT | https://github.com/sam0x17/macro_magic |
 | matchit | 0.8.4 | MIT AND BSD-3-Clause | https://github.com/ibraheemdev/matchit |
 | md-5 | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | md5 | 0.8.1 | Apache-2.0 OR MIT | https://github.com/stainless-steel/md5 |
@@ -268,6 +288,8 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | mio | 1.2.3 | MIT | https://github.com/tokio-rs/mio |
 | ml-kem | 0.3.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/KEMs |
 | module-lattice | 0.2.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/KEMs |
+| mongodb | 3.9.1 | Apache-2.0 | https://github.com/mongodb/mongo-rust-driver |
+| mongodb-internal-macros | 3.9.1 | Apache-2.0 | https://github.com/mongodb/mongo-rust-driver |
 | multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT | https://github.com/hsivonen/multiversion_no_op |
 | native-tls | 0.2.18 | MIT OR Apache-2.0 | https://github.com/rust-native-tls/rust-native-tls |
 | nix | 0.31.3 | MIT | https://github.com/nix-rust/nix |
@@ -310,6 +332,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | quote | 1.0.47 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote |
 | r-efi | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
 | r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
+| radium | 0.7.0 | MIT | https://github.com/bitvecto-rs/radium |
 | rand | 0.9.5 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
 | rand | 0.10.3 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
 | rand_chacha | 0.9.0 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
@@ -333,6 +356,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | rust-embed-impl | 8.12.0 | MIT | https://pyrossh.dev/repos/rust-embed |
 | rust-embed-utils | 8.12.0 | MIT | https://pyrossh.dev/repos/rust-embed |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | https://github.com/djc/rustc-version-rs |
+| rustc_version_runtime | 0.3.0 | MIT | https://github.com/seppo0010/rustc-version-runtime-rs |
 | rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls |
 | rustls-native-certs | 0.8.4 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls-native-certs |
@@ -361,6 +385,8 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | serde_json | 1.0.151 | MIT OR Apache-2.0 | https://github.com/serde-rs/json |
 | serde_path_to_error | 0.1.20 | MIT OR Apache-2.0 | https://github.com/dtolnay/path-to-error |
 | serde_urlencoded | 0.7.1 | MIT/Apache-2.0 | https://github.com/nox/serde_urlencoded |
+| serde_with | 3.23.0 | MIT OR Apache-2.0 | https://github.com/jonasbb/serde_with |
+| serde_with_macros | 3.23.0 | MIT OR Apache-2.0 | https://github.com/jonasbb/serde_with |
 | sha1 | 0.10.7 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | sha1 | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
@@ -388,17 +414,21 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | ssh-key | 0.7.0-rc.11 | Apache-2.0 OR MIT | https://github.com/RustCrypto/SSH |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | https://github.com/storyyeller/stable_deref_trait |
 | stringprep | 0.1.5 | MIT/Apache-2.0 | https://github.com/sfackler/rust-stringprep |
+| strsim | 0.11.1 | MIT | https://github.com/rapidfuzz/strsim-rs |
 | subtle | 2.6.1 | BSD-3-Clause | https://github.com/dalek-cryptography/subtle |
 | syn | 2.0.119 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | syn | 3.0.5 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | sync_wrapper | 1.0.2 | Apache-2.0 | https://github.com/Actyx/sync_wrapper |
 | synstructure | 0.13.2 | MIT | https://github.com/mystor/synstructure |
+| take_mut | 0.2.2 | MIT | https://github.com/Sgeo/take_mut |
+| tap | 1.0.1 | MIT | https://github.com/myrrlyn/tap |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | https://github.com/Stebalien/tempfile |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror |
 | thiserror-impl | 2.0.21 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror |
 | time | 0.3.55 | MIT OR Apache-2.0 | https://github.com/time-rs/time |
 | time-core | 0.1.9 | MIT OR Apache-2.0 | https://github.com/time-rs/time |
 | time-macros | 0.2.32 | MIT OR Apache-2.0 | https://github.com/time-rs/time |
+| tiny-keccak | 2.0.2 | CC0-1.0 | https://crates.io/crates/tiny-keccak |
 | tinystr | 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | tinyvec | 1.13.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/Lokathor/tinyvec |
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib | https://github.com/Soveu/tinyvec_macros |
@@ -418,12 +448,16 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | tracing-core | 0.1.36 | MIT | https://github.com/tokio-rs/tracing |
 | try-lock | 0.2.5 | MIT | https://github.com/seanmonstar/try-lock |
 | tungstenite | 0.29.0 | MIT OR Apache-2.0 | https://github.com/snapview/tungstenite-rs |
+| typed-builder | 0.22.0 | MIT OR Apache-2.0 | https://github.com/idanarye/rust-typed-builder |
+| typed-builder-macro | 0.22.0 | MIT OR Apache-2.0 | https://github.com/idanarye/rust-typed-builder |
 | typenum | 1.20.1 | MIT OR Apache-2.0 | https://github.com/paholg/typenum |
 | unicase | 2.9.0 | MIT OR Apache-2.0 | https://github.com/seanmonstar/unicase |
 | unicode-bidi | 0.3.18 | MIT OR Apache-2.0 | https://github.com/servo/unicode-bidi |
 | unicode-ident | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 | https://github.com/dtolnay/unicode-ident |
 | unicode-normalization | 0.1.25 | MIT OR Apache-2.0 | https://github.com/unicode-rs/unicode-normalization |
 | unicode-properties | 0.1.4 | MIT/Apache-2.0 | https://github.com/unicode-rs/unicode-properties |
+| unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 | https://github.com/unicode-rs/unicode-segmentation |
+| unicode-xid | 0.2.6 | MIT OR Apache-2.0 | https://github.com/unicode-rs/unicode-xid |
 | universal-hash | 0.6.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | untrusted | 0.9.0 | ISC | https://github.com/briansmith/untrusted |
 | url | 2.5.8 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
@@ -442,6 +476,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | wasm-bindgen-shared | 0.2.128 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared |
 | web-sys | 0.3.105 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys |
 | webpki-root-certs | 1.0.9 | CDLA-Permissive-2.0 | https://github.com/rustls/webpki-roots |
+| webpki-roots | 1.0.9 | CDLA-Permissive-2.0 | https://github.com/rustls/webpki-roots |
 | whoami | 2.1.3 | Apache-2.0 OR BSL-1.0 OR MIT | https://github.com/ardaku/whoami |
 | winapi-util | 0.1.11 | Unlicense OR MIT | https://github.com/BurntSushi/winapi-util |
 | windows | 0.62.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
@@ -469,6 +504,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | wit-bindgen | 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/wit-bindgen |
 | wnaf | 0.14.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/elliptic-curves |
 | writeable | 0.6.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
+| wyz | 0.5.1 | MIT | https://github.com/myrrlyn/wyz |
 | xxhash-rust | 0.8.19 | BSL-1.0 | https://github.com/DoumanAsh/xxhash-rust |
 | yoke | 0.8.3 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | yoke-derive | 0.8.2 | Unicode-3.0 | https://github.com/unicode-org/icu4x |

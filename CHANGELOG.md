@@ -6,6 +6,21 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- MongoDB connections (`"type": "mongo"`, a `mongodb://` URL, MongoDB 4.4 or later): six tools —
+  `mongo_list_collections`, `mongo_find`, `mongo_aggregate`, `mongo_describe_collection`,
+  `mongo_command` (server-damaging, session and cursor commands refused; dropping data needs
+  `allowDestructive`) and `mongo_inspect` (activity, slow queries, per-collection time, unused
+  indexes, storage, server, replication) — plus `mongo://` resources.
+- The Data page's documents workspace for MongoDB: collections in Collections / Views / System
+  bands, a query bar in the shell's syntax (filter, projection, sort, skip, field completion),
+  documents as a list, canonical JSON or a table, an editor that writes back only if nobody
+  changed the document since it was read, multi-document writes in one transaction on a replica
+  set, bulk update and delete, an aggregation pipeline builder with per-stage previews, schema
+  analysis, indexes with usage, explain plans with a collection-scan verdict, validation rules,
+  JSON / NDJSON / CSV export and import, and a command console with templates.
+
 ## [0.1.2] - 2026-10-02
 
 ### Added

@@ -25,6 +25,7 @@
 #![cfg(feature = "it")]
 
 mod gateway;
+mod mongo;
 mod mysql;
 mod pg;
 mod proc;

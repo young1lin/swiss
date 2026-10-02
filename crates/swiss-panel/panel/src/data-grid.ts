@@ -22,6 +22,11 @@ import {
   DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbRedisDeleteKey, dbRedisRenameKey, dbRedisTtl, dbRedisTtlSheet, dbRenderRedisValue,
 } from "./data-browsers.js";
 import { REDIS_TEMPLATES } from "./data-suggest.js";
+// The MongoDB workspace paints its own head, body and status (SPEC §data.mongo-panel); the cycle
+// back into this module (renderDbGrid, renderDbToolbar) is only ever crossed inside functions.
+import {
+  dbIsMongo, mongoFormatCommand, mongoReplyNode, mongoTemplateItems, renderMongoBody, renderMongoHeadCtl, renderMongoHeadLeft, renderMongoStatus,
+} from "./data-mongo.js";
 import { dbKeyShown } from "./data-tree.js";
 import { dbActivityLoad, dbActivityRender } from "./data-activity.js";
 import { dbCloseAllTabs, dbOpenTab } from "./data-tabs.js";
@@ -552,7 +557,10 @@ function dbWithActivity(items: MenuItem[]): MenuItem[] {
 function dbMoreItemsForSql(): MenuItem[] {
   const st = dbSqlTab();
   const d = dbConn();
-  const items: MenuItem[] = dbIsRedis() ? [] : [
+  // A MongoDB command has no plan from here (the Explain pane has it) but does format.
+  const items: MenuItem[] = dbIsRedis() ? [] : dbIsMongo() ? [
+    { label: tr("dataView.format"), fn: (): void => { dbSqlFormatNow(); } },
+  ] : [
     { label: tr("dataView.explain"), fn: (): void => { void dbRunSql("plan"); } },
     { label: tr("dataView.explainAnalyze"), fn: (): void => { void dbRunSql("analyze"); } },
     { label: tr("dataView.format"), fn: (): void => { dbSqlFormatNow(); } },
@@ -586,7 +594,7 @@ function dbMoreItemsForKey(): MenuItem[] {
     { label: tr("dataBrowsers.setTtlEllipsis"), fn: dbRedisTtlSheet },
     { label: tr("dataBrowsers.renameEllipsis"), fn: dbRedisRenameKey },
     { label: tr("dataBrowsers.delete"), danger: true, fn: dbRedisDeleteKey },
-    { label: dbIsRedis() ? tr("dataGrid.command") : tr("dataSql.sql"), fn: (): void => { dbOpenTab({ kind: "sql" }); } },
+    { label: tr("dataGrid.command"), fn: (): void => { dbOpenTab({ kind: "sql" }); } },
   ];
 }
 
@@ -597,6 +605,11 @@ function dbMoreItemsForActivity(): MenuItem[] {
     { label: tr("dataGrid.refresh"), fn: (): void => { void dbActivityLoad(); } },
     { label: tr("dataTabs.closeAll"), fn: (): void => { dbCloseAllTabs(); } },
   ];
+}
+
+/** A console reply that is one MongoDB document (data-mongo.ts mongoRunCommand's shape). */
+function dbIsMongoReply(res: DbQueryReply): boolean {
+  return dbIsMongo() && res.columns.length === 1 && res.columns[0] === "reply";
 }
 
 /** One ellipsis button whose menu is built at CLICK time from live state: the library's ⋯. */
@@ -665,7 +678,11 @@ function dbLoadConsoleLine(line: string): void {
 function dbSqlFormatNow(): void {
   const st = dbSqlTab();
   if (!st || !st.sqlText.trim()) return;
-  st.sqlText = dbFormatSql(st.sqlText);
+  if (dbIsMongo()) {
+    const text = mongoFormatCommand(st.sqlText);
+    if (text == null) { toast(tr("dataMongo.formatFailed"), true); return; }
+    st.sqlText = text;
+  } else st.sqlText = dbFormatSql(st.sqlText);
   const ta = $<HTMLTextAreaElement>("dbSql");
   if (ta) { ta.value = st.sqlText; dbSqlPaint(); ta.focus(); }
 }
@@ -701,13 +718,15 @@ function renderDbStatus(): void {
     // server's own words, and the same sentence twice on one screen read as two facts.
   } else if (t.kind === "sql" && t.sqlResult) {
     const res = t.sqlResult;
-    bar.appendChild(el("span", "db-status-note",
-      trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other") +
-      (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
+    const facts = (dbIsMongoReply(res) ? "" : trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other")) +
+      (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "");
+    bar.appendChild(el("span", "db-status-note", facts.replace(/^ · /, "")));
   } else if (t.kind === "key" && t.redisValue) {
     // The type only: the TTL printed here was the number the last read saw, and it sat there
     // while the key actually expired. The live one is the head's, top-right (2026-09-28).
     bar.appendChild(el("span", "db-status-note", t.redisValue.type));
+  } else if (t.kind === "coll") {
+    renderMongoStatus(bar, t);
   }
   bar.appendChild(el("span", "grow"));
   const conn0 = c.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === c.conn; });
@@ -727,10 +746,12 @@ function renderDbToolbar(): void {
     left.appendChild(el("div", "db-meta", (conn0 ? conn0.label : d.conn || "") + " · " + tr("dataActivity.refreshesWhileOpen")));
   } else if (t.kind === "sql" && t.sqlResult) {
     const res = t.sqlResult;
-    left.appendChild(el("h2", "db-title", res.explained ? tr("dataGrid.executionPlan") : (dbIsRedis() ? tr("dataGrid.commandReply") : tr("dataGrid.sqlResults"))));
-    left.appendChild(el("div", "db-meta", trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other") +
+    left.appendChild(el("h2", "db-title", res.explained ? tr("dataGrid.executionPlan") : (dbIsRedis() || dbIsMongo() ? tr("dataGrid.commandReply") : tr("dataGrid.sqlResults"))));
+    // A MongoDB reply is one document, not a row set: its meta is the time alone.
+    const facts = (dbIsMongoReply(res) ? "" : trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other")) +
       (res.note ? tr("dataGrid.note", { note: res.note }) : "") +
-      (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
+      (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "");
+    left.appendChild(el("div", "db-meta", facts.replace(/^ · /, "")));
     if ((t.sqlResults || []).length > 1) {
       // The library's seg (SPEC §panel.pages), inside a strip that scrolls sideways: eight results
       // fit, a longer script's ninth scrolls the strip instead of wrapping the head.
@@ -748,8 +769,11 @@ function renderDbToolbar(): void {
       : (t.data.editNote || tr("dataGrid.browsingOnly")));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
   } else if (t.kind === "sql") {
-    left.appendChild(el("h2", "db-title", dbIsRedis() ? tr("dataGrid.command") : tr("dataSql.sql")));
-    left.appendChild(el("div", "db-meta", dbIsRedis() ? tr("dataGrid.commandConsoleTitle") : tr("dataGrid.sqlConsoleTitle")));
+    const cmd = dbIsRedis() || dbIsMongo();
+    left.appendChild(el("h2", "db-title", cmd ? tr("dataGrid.command") : tr("dataSql.sql")));
+    left.appendChild(el("div", "db-meta", dbIsMongo() ? tr("dataMongo.consoleTitle") : cmd ? tr("dataGrid.commandConsoleTitle") : tr("dataGrid.sqlConsoleTitle")));
+  } else if (t.kind === "coll") {
+    renderMongoHeadLeft(left, t);
   } else if (dbIsRedis()) {
     const kt = t.kind === "key" ? t : null;
     // `kt.redisKey != null`, not truthiness: the key "" is a key, and its head read "Keys".
@@ -785,6 +809,8 @@ function renderDbToolbar(): void {
     // one affordance that says what a command LOOKS like has to be visible to be that.
     if (nosql) {
       ctl.appendChild(dbMoreButton2(tr("dataView.templates"), (): MenuItem[] => { return dbRedisTemplateItems(); }));
+    } else if (dbIsMongo()) {
+      ctl.appendChild(dbMoreButton2(tr("dataView.templates"), (): MenuItem[] => { return mongoTemplateItems(dbInsertConsoleLine); }));
     }
     ctl.appendChild(btn(tr("dataView.run"), { id: "dbSqlRun", title: tr("dataView.statementsSplitCtrlEnter") }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForSql(); }));
@@ -800,6 +826,8 @@ function renderDbToolbar(): void {
     // with. Click still edits it in place - it is the same data-rttl control it always was.
     ctl.appendChild(dbRedisTtl(t.redisValue, t.redisValueAt || Date.now()));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForKey(); }));
+  } else if (t.kind === "coll" && t.coll) {
+    renderMongoHeadCtl(ctl, t, dbMoreButton);
   } else if (t.kind === "activity") {
     ctl.appendChild(btn(tr("dataGrid.refresh"), { title: tr("dataActivity.title"), data: { actrefresh: "" } }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForActivity(); }));
@@ -916,6 +944,7 @@ function renderDbGrid(): void {
   if (t.kind === "sql") { renderDbResultGrid(wrap); return; }
   if (t.kind === "activity") { dbActivityRender(); return; }
   if (t.kind === "key") { dbRenderRedisValue(wrap); return; }
+  if (t.kind === "coll") { renderMongoBody(wrap); return; }
   const d = t;
   // SPEC §data.grid: the Form tab paints the same rows as the grid, one record at a time.
   if (d.pane === "form") { renderDbFormView(wrap); return; }
@@ -1198,6 +1227,11 @@ function renderDbResultGrid(wrap: HTMLElement): void {
   if (d.sqlBusy) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.running"))); return; }
   const res = d.sqlResult;
   if (!res) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.runQuerySeeRows"))); return; }
+  // A MongoDB reply is one document: it reads as the code block, not a one-cell grid.
+  if (dbIsMongoReply(res) && res.rows.length === 1) {
+    wrap.appendChild(mongoReplyNode(res.rows[0].reply));
+    return;
+  }
   const tab = d.resultTab || 0; // SPEC §data.console: this grid is one tab of the strip — its selection keys are that tab's
   const tbl = el("table", "db-grid");
   const thead = el("thead");

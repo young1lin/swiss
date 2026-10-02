@@ -142,6 +142,15 @@ describe("the selector's menu rows (SPEC §data.databases)", () => {
     expect(heads[0]).toBe("Primary");
     expect(heads[2]).toBe("System");
   });
+  it("system databases right after the primary are headed System, not Databases", () => {
+    // A MongoDB server with one user database: admin / config / local follow the primary.
+    const heads = mod.dbDatabaseMenuItems([
+      { name: "shop", primary: true, browsable: true, system: false },
+      { name: "admin", primary: false, browsable: true, system: true },
+      { name: "local", primary: false, browsable: true, system: true },
+    ], "", () => {}).filter((r) => r.heading).map((r) => r.label);
+    expect(heads).toEqual(["Primary", "System"]);
+  });
 });
 
 describe("switching databases (SPEC §data.databases)", () => {

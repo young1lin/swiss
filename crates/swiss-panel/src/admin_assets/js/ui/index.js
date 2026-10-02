@@ -47,7 +47,7 @@ export { collapseRuns, dayLabel, fmtMs, relTime, timeLabel, timeline, timelineMe
 export { anchoredMenu, clampMenuPos, closeMenu, menuOpen, popupMenu, setMenuOpen } from "./menu.js";
                                                                        
 export { closeSelect, initSelects, selectOpen, styleSelect } from "./select.js";
-export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode, valueBlock } from "./json-view.js";
+export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode, tokenCodeNode, valueBlock } from "./json-view.js";
                                               
 export { closeSheet, initSheet, openFieldSheet, sheet, sheetOpen, showSheet, stackSheet } from "./sheet.js";
                                                             

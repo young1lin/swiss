@@ -52,7 +52,7 @@ describe("SPEC §mcp.panel: typeTagNode — glyph when mapped, word when not", (
   it("the proc launch words and the in-process drivers map to their marks", () => {
     const marks: Record<string, string> = {
       uvx: "#i-package", npx: "#i-package", docker: "#i-docker", mariadb: "#i-mariadb",
-      redis: "#i-redis", pg: "#i-pg", postgres: "#i-pg", http: "#i-globe", rest: "#i-plug",
+      redis: "#i-redis", pg: "#i-pg", postgres: "#i-pg", mongo: "#i-mongo", http: "#i-globe", rest: "#i-plug",
       figma: "#i-figma", "zai-vision": "#i-zai",
     };
     for (const tag of Object.keys(marks)) expect(hrefOf(util.typeTagNode(tag)), tag).toBe(marks[tag]);

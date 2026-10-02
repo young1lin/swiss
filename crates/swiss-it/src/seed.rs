@@ -41,6 +41,10 @@
 //!   `acquire_many_owned`) - waiting while holding part of a lease is the
 //!   deadlock SPEC §data.streams fixed. The keyspace-catalog test leases a second index
 //!   and puts two keys in it - see [`fresh_redis_with_neighbor`].
+//! - MongoDB: a database per test (`it_<tag>_<hex8>`), seeded through the driver -
+//!   documents of every BSON type the panel prints, a validated collection, two
+//!   indexes and a view (`seed_mongo`). Dropping the Fresh drops the database. The def
+//!   connects with the engine's own URL and names the database in `database`.
 //!
 //! Every failure here panics rather than returning `Err`: a test that cannot get
 //! its database is a red test, not a skip (SPEC §testing.it's rule, applied one
@@ -56,7 +60,7 @@ use sqlx::{AssertSqlSafe, Connection};
 use serde_json::{json, Value};
 use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore};
 
-use crate::engine::{engine, on_worker, Engine, Kind};
+use crate::engine::{engine, mongo_client, on_worker, Engine, Kind};
 
 /// Bump when any file under `seed/` changes: an existing `it_seed` template (or
 /// `it` role) built from an older seed is rebuilt instead of reused.
@@ -117,6 +121,10 @@ impl Drop for Fresh {
                         Err(err) => Err(err.to_string()),
                     },
                     Kind::Redis => Ok(()),
+                    Kind::Mongo => match mongo_client(&e.root_url).await {
+                        Ok(c) => c.database(&name).drop().await.map_err(|err| err.to_string()),
+                        Err(err) => Err(err),
+                    },
                 };
                 if let Err(err) = outcome {
                     eprintln!("swiss-it: could not drop {kind} database {name}: {err}");
@@ -154,6 +162,7 @@ pub async fn fresh(kind: Kind, tag: &str) -> Fresh {
         Kind::Postgres => fresh_postgres(tag).await,
         // Redis isolates by leased index, not by name - the tag is a mysql/pg thing.
         Kind::Redis => fresh_redis().await,
+        Kind::Mongo => fresh_mongo(tag).await,
     }
 }
 
@@ -706,6 +715,75 @@ async fn load_redis_streams(conn: &mut redis::aio::MultiplexedConnection) {
             .await
             .expect("create a ragged stream entry");
     }
+}
+
+// --- MongoDB ---------------------------------------------------------------------------------------
+
+/// How many documents `seed_mongo` puts in `orders` - the paging and count tests ask it.
+pub const MONGO_SEED_ORDERS: i64 = 57;
+
+async fn fresh_mongo(tag: &str) -> Fresh {
+    let e = engine(Kind::Mongo).await;
+    let name = database_name(tag);
+    let client = mongo_client(&e.root_url).await.expect("connect the mongo engine");
+    seed_mongo(&client.database(&name)).await;
+    Fresh {
+        kind: Kind::Mongo,
+        name: name.clone(),
+        def: json!({ "type": "mongo", "url": e.root_url, "database": name }),
+        hold: Some(Hold::Db { kind: Kind::Mongo, name }),
+    }
+}
+
+/// The mongo seed, built in code - BSON types have no portable text file the way SQL has:
+/// `orders` (57 documents carrying Int32, Int64 past 2^53, Decimal128, Double, Date, UUID,
+/// arrays and a nested document), `customers` behind a `$jsonSchema` validator, an index on
+/// each, and the view `open_orders`.
+async fn seed_mongo(db: &mongodb::Database) {
+    use bson::{doc, Bson, Document};
+    let names = ["Ada", "Grace", "Linus", "Barbara", "Ken", "Margaret", "Dennis", "Frances"];
+    let orders: Vec<Document> = (0..MONGO_SEED_ORDERS)
+        .map(|i| {
+            doc! {
+                "n": i as i32,
+                "name": names[(i as usize) % names.len()],
+                "qty": (i % 10) as i32,
+                "big": Bson::Int64(9_007_199_254_740_993 + i),
+                "price": Bson::Decimal128(format!("{}.25", i).parse().expect("a decimal literal")),
+                "ratio": i as f64 / 4.0,
+                "at": bson::DateTime::from_millis(1_704_067_200_000 + i * 86_400_000),
+                "tags": if i % 3 == 0 { Bson::Array(vec![]) } else { Bson::Array(vec!["a".into(), "b".into()]) },
+                "addr": { "city": if i % 2 == 0 { "Paris" } else { "London" }, "zip": Bson::Null },
+                "status": if i % 4 == 0 { "paid" } else { "open" },
+            }
+        })
+        .collect();
+    db.collection::<Document>("orders").insert_many(orders).await.expect("seed mongo orders");
+    db.run_command(doc! {
+        "createIndexes": "orders",
+        "indexes": [ { "key": { "status": 1, "at": -1 }, "name": "status_1_at_-1" } ],
+    })
+    .await
+    .expect("index mongo orders");
+    db.run_command(doc! {
+        "create": "customers",
+        "validator": { "$jsonSchema": { "required": ["name"], "properties": { "name": { "bsonType": "string" } } } },
+    })
+    .await
+    .expect("create mongo customers");
+    db.collection::<Document>("customers")
+        .insert_many([doc! { "name": "Ada", "email": "ada@example.com" }, doc! { "name": "Grace" }])
+        .await
+        .expect("seed mongo customers");
+    db.run_command(doc! {
+        "createIndexes": "customers",
+        "indexes": [ { "key": { "email": 1 }, "name": "email_1", "unique": true, "sparse": true } ],
+    })
+    .await
+    .expect("index mongo customers");
+    db.run_command(doc! { "create": "open_orders", "viewOn": "orders", "pipeline": [ { "$match": { "status": "open" } } ] })
+        .await
+        .expect("create the mongo view");
 }
 
 // --- shared ----------------------------------------------------------------------------------------

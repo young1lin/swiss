@@ -68,8 +68,10 @@ needed to build; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 1. `swiss start` brings the gateway up on `127.0.0.1:19999` and opens the panel.
 2. On the MCP page, **Add an MCP**: a stdio command (`npx …`, `uvx …`), a remote HTTP MCP,
-   tools declared over a REST API, or a MySQL / PostgreSQL / Redis connection served by an
-   in-process driver. **Import .mcp.json** brings an existing client config across in one
+   tools declared over a REST API, or a MySQL / PostgreSQL / Redis / MongoDB connection served
+   by an in-process driver. The Data page browses all four — MongoDB as a documents workspace
+   with a query bar, a document editor, an aggregation pipeline builder, schema analysis,
+   indexes, explain plans and validation. **Import .mcp.json** brings an existing client config across in one
    step. A stdio MCP stays idle until its first request and is reaped again after idling, so
    one that is not in use costs nothing.
 3. Connect a client from the MCP's `⋯` menu → **Connect a client**. *Copy Claude Code command*

@@ -37,6 +37,14 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 bigdecimal = { version = "0.4", default-features = false }
 redis = { version = "1.7", default-features = false, features = ["tokio-comp", "aio", "connection-manager"] }
+# The mongo engine (SPEC §mcp.db, ADR-030): the official driver, since the wire protocol, SCRAM,
+# SDAM and sessions are exactly the hand-rolled parser SPEC §arch.deps forbids. `bson` is named
+# directly only for `serde_json-1` - Extended JSON in and out, the form every value crosses the
+# browser seam in - and is the very bson the driver links, so it adds nothing. No `dns-resolver`:
+# hickory is a resolver stack for one URL scheme, and a `mongodb+srv://` URL says so in the
+# driver's own words instead (ADR-030 records the measurement). The TLS backend is per target,
+# below.
+bson = { version = "3.1", default-features = false, features = ["compat-3-0-0", "serde_json-1"] }
 encoding_rs = { version = "0.8", default-features = false }
 base64 = "0.23"
 # PKCE S256 challenges for MCP OAuth (SPEC §mcp.oauth) — the same sha2 the graph already carries
@@ -44,11 +52,17 @@ base64 = "0.23"
 sha2 = "0.11"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
 
+# The driver cannot be built without a TLS backend, so it takes the rustls the target already
+# links: aws-lc-rs beside reqwest's off Windows, ring beside russh's on Windows (ADR-030 - the
+# one place a Windows build carries rustls next to schannel, because the driver has no
+# native-tls backend).
 [target.'cfg(windows)'.dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
+mongodb = { version = "3.9", default-features = false, features = ["compat-3-3-0", "bson-3", "rustls-tls"] }
 
 [target.'cfg(not(windows))'.dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+mongodb = { version = "3.9", default-features = false, features = ["compat-3-3-0", "bson-3", "rustls-tls-aws-lc"] }
 libc = "0.2"
 
 [dev-dependencies]

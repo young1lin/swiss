@@ -28,6 +28,7 @@ import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
 import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { dbLastTableTab, dbOpenTab, renderDbTabs } from "./data-tabs.js";
+import { dbIsMongo, mongoRunCommand } from "./data-mongo.js";
 import type { DbKeyTab } from "./types/state.js";
 import { tr, trn } from "./i18n.js";
 import { btn } from "./ui/button.js";
@@ -651,6 +652,13 @@ async function dbRunSql(explain?: string | false): Promise<void> { // falsy runs
     // The command may have written (SET, DEL, RENAME…): the sidebar re-reads the keyspace
     // quietly, so a key the console just made is in the tree without a refresh.
     dbRefreshKeyspace();
+    return;
+  }
+  // The MongoDB console: the block is ONE command document in shell syntax (SPEC §data.mongo).
+  if (dbIsMongo()) {
+    dbClearSel();
+    const ok = await mongoRunCommand(d, block, (): void => { renderDbToolbar(); renderDbGrid(); });
+    if (ok) dbHistoryPush(block);
     return;
   }
   // SPEC §data.console: the block is split on statement-level semicolons and sent ONE STATEMENT PER

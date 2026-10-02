@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-                                                                                                                     
+                                                                                                                                
 
 /* The Data view owns its state (SPEC §panel.toolchain, slice 6 of 7; SPEC §data.tabs splits the record).
 
@@ -76,6 +76,7 @@ let tabClock = 0;
                                                 
                                                 
                                                           
+                                                  
                                                  
 export function freshTab(kind           )        {
   // Each branch spells its literal kind: a shared { kind } base would widen the
@@ -104,6 +105,19 @@ export function freshTab(kind           )        {
   if (kind === "key") {
     return { kind: "key", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
       redisKey: null, redisValue: null, redisEdits: null };
+  }
+  if (kind === "coll") {
+    return {
+      kind: "coll", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
+      db: null, coll: null,
+      pane: "docs",         // docs | agg | schema | indexes | explain | validation (SPEC §data.mongo-panel)
+      view: "list",         // the documents' presentation: list (shell text) | json (EJSON) | table
+      qFilter: "", qProject: "", qSort: "", qSkip: 0, qLimit: 20, qMore: false, qError: null,
+      docs: null, more: false, total: null, estimated: false, countTimedOut: false, elapsedMs: null,
+      stages: [], aggText: null, aggResult: null, aggBusy: false,
+      schema: null, schemaBusy: false, schemaSample: 1000,
+      indexes: null, explain: null, explainOf: "find", validatorText: null,
+    };
   }
   return { kind: "activity", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
     activityRows: null };

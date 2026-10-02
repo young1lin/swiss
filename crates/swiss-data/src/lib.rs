@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
-//! The data subsystem: the /api/db browsing routes over the host's connection catalog.
+//! The data subsystem: the /api/db browsing routes over the host's connection catalog — the
+//! SQL and redis flavours in `dbbrowser_api`, the MongoDB flavour in `mongo_api`.
 
 pub mod dbbrowser_api;
+pub mod mongo_api;
