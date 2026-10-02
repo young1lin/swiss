@@ -118,6 +118,7 @@ const SIG: Record<string, string> = {
   objTab: ".otab[role=tab] > button.otab-close",
   timeline: ".tl .tl-item",
   jsonCodeNode: "pre.jv",
+  tokenCodeNode: "pre.jv",
   emptyNode: ".empty",
   popupMenu: "[data-demo=menu]",
   sheet: "[data-demo=sheet]",

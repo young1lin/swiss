@@ -57,7 +57,7 @@ function now()         { return new Date().toLocaleTimeString(locale()); }
  *  echo…), so this is a whitelist and everything outside it falls back to text. The icon
  *  carries the word as its aria-label: a screen reader hears the type the chip no longer spells. */
 const TYPE_ICONS                         = {
-  mysql: "mysql", mariadb: "mariadb", redis: "redis", pg: "pg", postgres: "pg",
+  mysql: "mysql", mariadb: "mariadb", redis: "redis", pg: "pg", postgres: "pg", mongo: "mongo",
   http: "globe", https: "globe", rest: "plug",
   figma: "figma", "zai-vision": "zai",
   npx: "package", uvx: "package", docker: "docker",

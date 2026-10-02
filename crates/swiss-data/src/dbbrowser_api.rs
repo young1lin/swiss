@@ -122,25 +122,25 @@ pub fn browsable_connections(
 
 /// Reply with the browser's message: 404 where Node attached a status to the error, 400 for
 /// everything the database or a guard refused.
-struct Fail {
-    status: StatusCode,
-    message: String,
+pub(crate) struct Fail {
+    pub(crate) status: StatusCode,
+    pub(crate) message: String,
     /// SPEC §data.edits: a lost optimistic-lock race's 409 extras — present only there. The
     /// body adds `conflictColumns` and the buffered `row` beside `error`, so the grid
     /// knows exactly which cells to paint red. Boxed: Fail crosses a dozen small helpers
     /// and stays one pointer wide beyond its status and message.
-    conflict: Option<Box<FailConflict>>,
+    pub(crate) conflict: Option<Box<FailConflict>>,
 }
 
 /// The 409's extra body fields: the moved columns, and the row the race was over.
 #[derive(Clone)]
-struct FailConflict {
+pub(crate) struct FailConflict {
     columns: Vec<String>,
     row: Map<String, Value>,
 }
 
 impl Fail {
-    fn bad(message: impl Into<String>) -> Self {
+    pub(crate) fn bad(message: impl Into<String>) -> Self {
         Fail {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
@@ -149,7 +149,7 @@ impl Fail {
     }
 
     /// A lost edit race answers 409, the moved columns and the row named in the body.
-    fn conflict(message: impl Into<String>, columns: Vec<String>, row: Map<String, Value>) -> Self {
+    pub(crate) fn conflict(message: impl Into<String>, columns: Vec<String>, row: Map<String, Value>) -> Self {
         Fail {
             status: StatusCode::CONFLICT,
             message: message.into(),
@@ -220,7 +220,7 @@ fn parse_filters(raw: Option<&String>) -> Result<Option<Value>, Fail> {
 
 /// Map a catalog refusal onto the HTTP contract: unknown and not-browsable keep Node's 404
 /// messages (now produced provider-side), a withdrawing provider is a 503.
-fn lease_fail(err: CatalogError) -> Fail {
+pub(crate) fn lease_fail(err: CatalogError) -> Fail {
     match err {
         CatalogError::Unknown(m) | CatalogError::NotBrowsable(m) => Fail {
             status: StatusCode::NOT_FOUND,
@@ -238,7 +238,7 @@ fn lease_fail(err: CatalogError) -> Fail {
 /// The catalog-wide 503 (SPEC §host.seats): no provider is NOT "zero connections". The message
 /// names who is missing — "the mcp plugin provides database connections and is currently
 /// disabled" — so disabling MCP reads as a consequence, not as an empty toolbox.
-fn catalog_guard(catalog: &CatalogRegistry) -> Result<(), Fail> {
+pub(crate) fn catalog_guard(catalog: &CatalogRegistry) -> Result<(), Fail> {
     match catalog.presence() {
         CatalogPresence::Serving(_) => Ok(()),
         CatalogPresence::Stopping(id) => Err(Fail {
@@ -315,7 +315,7 @@ fn lease_redis(
     Ok((lease, browser))
 }
 
-fn reply(out: Result<Value, Fail>) -> Response {
+pub(crate) fn reply(out: Result<Value, Fail>) -> Response {
     match out {
         Ok(body) => admin_json(StatusCode::OK, body),
         Err(f) => match f.conflict {
@@ -342,6 +342,7 @@ async fn databases(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail>
     let out = match lease.flavor() {
         BrowserFlavor::Db(db) => db.clone().list_databases().await,
         BrowserFlavor::Redis(rb) => rb.clone().list_databases().await,
+        BrowserFlavor::Mongo(mb) => mb.clone().list_databases().await,
         BrowserFlavor::None => {
             return Err(Fail {
                 status: StatusCode::NOT_FOUND,
@@ -518,9 +519,9 @@ async fn export(
 /// lease rides along inside it. The handler returns while the dump is still being produced —
 /// holding the lease in the body (not the handler's frame) is what keeps a draining provider
 /// from closing the pool under the last pieces (SPEC §host.seats, SPEC §data.export).
-struct LeaseBody {
-    rx: tokio::sync::mpsc::Receiver<DumpPiece>,
-    lease: Option<ConnectionLease>,
+pub(crate) struct LeaseBody {
+    pub(crate) rx: tokio::sync::mpsc::Receiver<DumpPiece>,
+    pub(crate) lease: Option<ConnectionLease>,
 }
 
 impl futures_core::Stream for LeaseBody {
@@ -769,7 +770,7 @@ async fn query(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Va
 /// Attach `elapsedMs` (whole milliseconds, a JS-friendly integer) to a console reply. A
 /// browser answer that is somehow not an object passes through untouched rather than being
 /// reshaped around the one field that was added for it.
-fn with_elapsed_ms(mut v: Value, started: std::time::Instant) -> Value {
+pub(crate) fn with_elapsed_ms(mut v: Value, started: std::time::Instant) -> Value {
     if let Value::Object(map) = &mut v {
         map.insert(
             "elapsedMs".into(),
@@ -878,6 +879,10 @@ async fn completion(catalog: &CatalogRegistry, name: &str, body: &Value) -> Resu
 /// Live sessions on the connection's server (SPEC §data.activity) — the Activity page, polled
 /// while it is open. The reply shape is shared by both dialects (dbbrowser.rs).
 async fn activity(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> {
+    // A mongo connection answers from $currentOp in the same row shape (SPEC §data.mongo).
+    if let Some((_lease, mb)) = crate::mongo_api::lease_mongo_if(catalog, name)? {
+        return mb.activity().await.map_err(Fail::bad);
+    }
     let (_lease, b) = lease_db(catalog, name)?;
     b.activity().await.map_err(Fail::bad)
 }
@@ -886,6 +891,9 @@ async fn activity(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> 
 /// session (SPEC §data.activity). The mode word and the pid are validated here — a kill is the one
 /// route in this router that interrupts someone else's work, so it logs what it did.
 async fn activity_kill(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    if let Some((_lease, mb)) = crate::mongo_api::lease_mongo_if(catalog, name)? {
+        return crate::mongo_api::activity_kill(name, &mb, body).await;
+    }
     let (_lease, b) = lease_db(catalog, name)?;
     let pid = body
         .get("pid")
@@ -1230,6 +1238,8 @@ where
         .route("/api/db/{name}/ddl-preview", post(ddl_preview_route))
         .route("/api/db/{name}/query", post(query_route))
         .route("/api/db/{name}/edits", post(edits_route))
+        // SPEC §data.mongo: the document flavour's routes, under /api/db/{name}/mongo/.
+        .merge(crate::mongo_api::mongo_router())
         .layer(Extension(catalog))
         .layer(Extension(order))
         .layer(Extension(groups))
@@ -1698,6 +1708,7 @@ mod tests {
         match f {
             BrowserFlavor::Db(db) => BrowserFlavor::Db(db.clone()),
             BrowserFlavor::Redis(rb) => BrowserFlavor::Redis(rb.clone()),
+            BrowserFlavor::Mongo(mb) => BrowserFlavor::Mongo(mb.clone()),
             BrowserFlavor::None => BrowserFlavor::None,
         }
     }
@@ -1706,6 +1717,7 @@ mod tests {
         match &row.browser {
             BrowserFlavor::Db(db) => (db.dialect().as_str().to_string(), db.label()),
             BrowserFlavor::Redis(rb) => ("redis".into(), rb.label()),
+            BrowserFlavor::Mongo(mb) => ("mongo".into(), mb.label()),
             BrowserFlavor::None => ("none".into(), row.name.clone()),
         }
     }
@@ -1871,6 +1883,23 @@ mod tests {
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let json = serde_json::from_str(&text).ok();
         (status, headers, json, text)
+    }
+
+    #[tokio::test]
+    async fn a_mongo_route_on_a_sql_connection_is_a_404_naming_its_dialect() {
+        let app = router_of(vec![db_entry(
+            "db-one",
+            Arc::new(StubDb { seen: Arc::new(Mutex::new(Seen::default())), databases: None }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db-one/mongo/find",
+            Some(json!({ "db": "app", "collection": "users" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body.expect("json")["error"], json!("MCP 'db-one' (mysql) is not a MongoDB connection"));
     }
 
     #[tokio::test]

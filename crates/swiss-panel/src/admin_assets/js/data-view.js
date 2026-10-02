@@ -24,6 +24,11 @@ import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSq
 import { dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbBarClick, dbFavLoad, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
 import { dbActivityClick, dbActivityPollStop } from "./data-activity.js";
+// The MongoDB workspace (SPEC §data.mongo-panel). Same accepted cycle shape as data-tabs below:
+// data-mongo reaches back for renderDbTables and dbCurrentDatabase inside functions only.
+import {
+  dbIsMongo, mongoBytes, mongoChange, mongoClick, mongoInput, mongoKeydown, mongoLoadCollections, mongoLoadDocs, renderMongoTree,
+} from "./data-mongo.js";
 // The cycle data-view <-> data-structure is the same accepted shape as data-grid <->
 // data-cell — both sides only call across it inside functions, never at module scope.
 import { dbStructureClick } from "./data-structure.js";
@@ -233,11 +238,12 @@ function dbShowSession()       {
   if (!d.conn) return;
   if (dbIsRedis()) dbRefreshKeyspace();
   else {
-    void dbLoadTables(d.tables.length > 0);
+    void dbLoadTables(d.tables.length > 0 || !!(d.mongo && d.mongo.colls));
     if (!d.databases) void dbLoadDatabases();
   }
   const t = dbTab();
   if (t.kind === "table" && t.table && t.data) void dbLoadData(true, true, true);
+  if (t.kind === "coll" && t.coll && t.docs && t.pane === "docs") void mongoLoadDocs(t, true);
   if (t.kind === "key" && t.redisKey && t.redisValue && !t.redisEdits) void dbRefreshRedisValue(t.redisKey);
 }
 
@@ -369,6 +375,7 @@ function dbPaneClick(ev            )       {
   if (dbFormClick(t)) return;
   if (dbStructureClick(t, ev)) return;
   if (dbRedisClick(t)) return;
+  if (mongoClick(t, ev)) return;
   if (dbActivityClick(t, ev)) return;
 }
 
@@ -395,6 +402,7 @@ function dbPaneInput(ev       )       {
   const t = targetEl(ev);
   if (!t) return;
   if (dbChromeInput(t)) return;
+  if (mongoInput(t)) return;
   if (dbFiltersInput(t)) return;
 }
 
@@ -403,6 +411,7 @@ function dbPaneChange(ev       )       {
   if (!t) return;
   // SPEC §data.tabs: the console's flat row is gone, so the pane has no chrome-owned selects any
   // more — every change belongs to the grid (the status bar's page-size included) or a form.
+  if (mongoChange(t)) return;
   if (dbGridChange(t, ev)) return;
   if (dbFiltersChange(t)) return;
   if (dbFormChange(t)) return;
@@ -414,6 +423,7 @@ function dbPaneKeydown(ev               )       {
   // Escape closes the open drawer first — it is the lightest thing on the screen (the
   // sheet's own Esc handling sits behind this return).
   if (ev.key === "Escape" && dbDrawer) { dbDrawer = ""; renderDbSide(); return; }
+  if (mongoKeydown(t, ev)) return;
   if (dbGridKeydown(t, ev)) return;
   if (dbChromeKeydown(t, ev)) return;
   if (dbFiltersKeydown(ev, t)) return;
@@ -519,6 +529,8 @@ function dbChromeInput(t         )          {
       const d = dbConn();
       d.grep = v;
       if (dbIsRedis()) void dbLoadKeys(true);
+      // A database's collections are all in hand: the search filters them client-side.
+      else if (dbIsMongo()) renderDbTables();
       else void dbLoadTables();
     }, 300);
     return true;
@@ -600,6 +612,13 @@ function dbSyncKind()       {
     // SPEC §data.redis-console: the console's completion is this server's own command list. One read per
     // connection, here - where every mount and every switch already passes.
     void dbRedisLoadCommands();
+  } else if (dbIsMongo()) {
+    // The collections are all in hand, so the search is the tree's own grammar, client-side;
+    // the console runs one command document against the database the sidebar shows.
+    grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", tr("dataMongo.filterCollections"));
+    grep.title = tr("dataMongo.filterCollectionsGrammar");
+    sql.placeholder = tr("dataMongo.consolePlaceholder");
+    sqlHint.textContent = tr("dataMongo.consoleHint");
   } else {
     // The placeholder IS the grammar (SPEC §data.browse): comma AND, | OR, * wildcard.
     grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", tr("dataView.filterTables"));
@@ -793,20 +812,22 @@ function dbDatabaseMenuItems(
   const items             = [];
   const sorted = dbSortDatabases(list);
   sorted.forEach((x               , i        )       => {
+    // System is asked before Others: a catalog whose only non-primary databases are system
+    // ones (a MongoDB server's admin / config / local) heads them System, not Databases.
     if (x.primary && i === 0) {
       items.push({ heading: true, label: tr("dataView.dbPrimaryGroup"), fn: ()       => {} });
+    } else if (x.system && !x.primary && (i === 0 || !sorted[i - 1].system || sorted[i - 1].primary)) {
+      items.push({ sep: true });
+      items.push({ heading: true, label: tr("dataView.dbSystemGroup"), fn: ()       => {} });
     } else if (!x.primary && (i === 0 || sorted[i - 1].primary)) {
       items.push({ sep: true });
       items.push({ heading: true, label: tr("dataView.dbOtherGroup"), fn: ()       => {} });
-    } else if (x.system && (i === 0 || !sorted[i - 1].system)) {
-      items.push({ sep: true });
-      items.push({ heading: true, label: tr("dataView.dbSystemGroup"), fn: ()       => {} });
     }
     items.push({
       // The table count rides in meta - the drawer paints it dim at the row's end, where
       // a scan compares names without numbers interleaved.
       label: x.name,
-      meta: x.tables != null ? Number(x.tables).toLocaleString(locale()) : undefined,
+      meta: x.tables != null ? Number(x.tables).toLocaleString(locale()) : x.size != null ? mongoBytes(x.size) : undefined,
       title: x.browsable ? "" : (x.reason || ""),
       disabled: !x.browsable || x.name === selected,
       on: x.name === selected,
@@ -860,6 +881,8 @@ async function dbLoadDatabases(quiet          )                {
     dbDatabasesInFlight = false;
   }
   renderDbSide();
+  // A MongoDB tree waits on this catalog for the database it lists (mongoLoadCollections).
+  if (dbIsMongo() && dbConn() === d && !(d.mongo && d.mongo.colls)) void mongoLoadCollections();
 }
 
 /* --- lazy table list ---------------------------------------------------------------------------- */
@@ -871,6 +894,8 @@ const dbTablesReq = dbReqGuard();
 async function dbLoadTables(quiet          )                {
   const d = dbConn();
   if (!d.conn) return;
+  // A MongoDB connection lists one database's collections, statistics included (SPEC §data.mongo).
+  if (dbIsMongo()) return mongoLoadCollections(quiet);
   const box = $("dbTables");
   // SPEC §data.sessions: a quiet re-read keeps the list on screen until the answer is in.
   if (box && !quiet) { box.textContent = ""; box.appendChild(el("div", "db-hint", tr("dataView.loading"))); }
@@ -945,6 +970,7 @@ function renderDbTables()       {
     box.appendChild(el("div", "db-hint", tr("dataView.addMysqlPgMcpHint")));
     return;
   }
+  if (dbIsMongo()) { renderMongoTree(box); return; }
   if (dbIsRedis()) {
     const rr = d.redis;
     if (!rr || !rr.keys.length) {

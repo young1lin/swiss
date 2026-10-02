@@ -1,7 +1,7 @@
 [package]
 name = "swiss-it"
 version.workspace = true
-description = "Dev-only integration harness (SPEC §testing.it): the real MySQL, PostgreSQL and Redis gates behind the it feature."
+description = "Dev-only integration harness (SPEC §testing.it): the real MySQL, PostgreSQL, Redis and MongoDB gates behind the it feature."
 edition = "2021"
 authors.workspace = true
 license.workspace = true
@@ -21,6 +21,8 @@ it = [
     "dep:testcontainers-modules",
     "dep:sqlx",
     "dep:redis",
+    "dep:mongodb",
+    "dep:bson",
     "dep:tokio",
     "dep:futures-util",
     "dep:serde_json",
@@ -58,6 +60,14 @@ sqlx = { version = "0.9", default-features = false, features = [
 ], optional = true }
 redis = { version = "1.7", default-features = false, features = [
     "tokio-comp",
+], optional = true }
+# MongoDB (SPEC §testing.it): the harness initiates the replica set, seeds documents and drops
+# per-test databases with the very driver swiss-mcp links - replSetInitiate and dropDatabase are
+# commands the product's own guard refuses, so the harness cannot borrow the adapter for them.
+# Same version and features as swiss-mcp (the TLS backend per target, below): one copy.
+bson = { version = "3.1", default-features = false, features = [
+    "compat-3-0-0",
+    "serde_json-1",
 ], optional = true }
 tokio = { version = "1", default-features = false, features = [
     "rt",
@@ -121,6 +131,18 @@ reqwest = { version = "0.13", default-features = false, features = [
 windows-sys = { version = "0.61", default-features = false, features = [
     "Win32_Foundation",
     "Win32_System_Diagnostics_ToolHelp",
+], optional = true }
+mongodb = { version = "3.9", default-features = false, features = [
+    "compat-3-3-0",
+    "bson-3",
+    "rustls-tls",
+], optional = true }
+
+[target.'cfg(not(windows))'.dependencies]
+mongodb = { version = "3.9", default-features = false, features = [
+    "compat-3-3-0",
+    "bson-3",
+    "rustls-tls-aws-lc",
 ], optional = true }
 
 # The cleanup watchdog (SPEC §testing.it): stdin = docker endpoint + container ids, EOF

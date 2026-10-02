@@ -18,6 +18,7 @@
 import { $, apiJson, el, iconNode, toast } from "./util.js";
 import { h } from "./h.js";
 import { dbConn, dbIsMounted, dbTab } from "./db-state.js";
+import { dbIsMongo } from "./data-mongo.js";
 import { tr } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
 import { tag } from "./ui/status.js";
@@ -153,6 +154,13 @@ function dbActivityClick(t         , ev            )          {
 /** pgadmin's pair, in the panel's menu words: Cancel interrupts the running statement and
  *  keeps the session; Terminate (red, last) closes the session itself. */
 function dbActivityMenu(anchorEl             , row                  )       {
+  // MongoDB has one act for an operation, killOp; the row's pid is its opid (SPEC §data.mongo).
+  if (dbIsMongo()) {
+    popupMenu(anchorEl.getBoundingClientRect(), [
+      { label: tr("dataActivity.killOperation"), danger: true, fn: () => { void dbActivityKill(row, "kill"); } },
+    ]);
+    return;
+  }
   popupMenu(anchorEl.getBoundingClientRect(), [
     { label: tr("dataActivity.cancelQuery"), fn: () => { void dbActivityKill(row, "cancel"); } },
     { label: tr("dataActivity.terminateSession"), danger: true, fn: () => { void dbActivityKill(row, "terminate"); } },
@@ -169,7 +177,7 @@ async function dbActivityKill(row                  , mode        )              
   if (j.result === false) {
     toast(tr("dataActivity.pidAlreadyGone", { pid: row.pid }), true);
   } else {
-    toast(tr(mode === "cancel" ? "dataActivity.cancelledPid" : "dataActivity.terminatedPid", { pid: row.pid }));
+    toast(tr(mode === "cancel" ? "dataActivity.cancelledPid" : mode === "kill" ? "dataActivity.killedOp" : "dataActivity.terminatedPid", { pid: row.pid }));
   }
   void dbActivityLoad();
 }
