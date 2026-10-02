@@ -17,6 +17,7 @@
 import type { ApiDbCompletionItem, ApiDbCompletionReply, ApiRedisCommand, ApiRedisCommandsResponse, ApiRedisKeySpec } from "./types/api.js";
 import { $, apiJson, el } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
+import { dbIsMongo } from "./data-mongo.js";
 import { dbSqlPaint } from "./data-filters.js";
 import { dbConn, dbSqlTab } from "./db-state.js";
 import { dbKeyShown } from "./data-tree.js";
@@ -413,6 +414,8 @@ function dbSuggestOnInput(this: HTMLTextAreaElement): void {
   clearTimeout(dbSuggestTimer!);
   const d = dbConn();
   if (!d.conn) { dbSuggestHide(); return; }
+  // A MongoDB console takes a command document; the SQL completion route has nothing to say.
+  if (dbIsMongo()) { dbSuggestHide(); return; }
   // Redis answers from the table above, with no server and no debounce: the candidates are
   // already here, and a 150ms wait on a local list only makes the console feel slow.
   if (dbIsRedis()) {

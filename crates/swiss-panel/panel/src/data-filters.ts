@@ -19,6 +19,7 @@ import { $, iconNode } from "./util.js";
 import { fill, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
+import { mongoFilterNodes } from "./data-mongo.js";
 import { dbLoadData } from "./data-grid.js";
 import { dbDropEdits, dbOkToDrop } from "./data-view.js";
 // The strip reads this module's filter rows for the per-card count; the call crosses inside a
@@ -148,6 +149,8 @@ function dbFiltersNodes(): HChild[] {
             tr("dataFilters.shownShownTotalKeyspace", { shown: (c.redis?.keys ? c.redis?.keys.length.toLocaleString(locale()) : "0"), total: Number(c.redis?.total).toLocaleString(locale()) }))
         : null)];
   }
+  // A collection's query bar: filter, projection, sort, skip (SPEC §data.mongo-panel).
+  if (d.kind === "coll") return mongoFilterNodes(d);
   if (d.kind !== "table" || !d.data || d.pane !== "data") return []; // filters belong to the row grid only
   const cols = d.data?.columns.map((c: { name: string }): string => { return c.name; });
   const rows: HChild[] = d.filters.map((f: DbFilterTerm, i: number): HChild => {

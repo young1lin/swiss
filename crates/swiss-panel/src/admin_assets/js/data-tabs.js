@@ -21,6 +21,7 @@ import { $, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
 import { dbActiveIndex, dbConn, dbIsMounted, dbResetTabs, dbSetActive, dbTab, dbTabs, freshTab } from "./db-state.js";
 import { dbIsRedis, dbLoadRedisValue } from "./data-browsers.js";
+import { dbIsMongo, mongoAfterTabSwitch, mongoCurrentDb } from "./data-mongo.js";
 import { dbActivityPollStop, dbActivityStart } from "./data-activity.js";
 import { dbRestoreData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
@@ -68,6 +69,18 @@ import { objTab } from "./ui/tab.js";
 
 const DB_TAB_MAX = 12;
 
+/** The placeholder a connection's strip falls back to: the object its family browses — a
+ *  redis key, a MongoDB collection, a table everywhere else. */
+function dbHomeTab()        {
+  if (dbIsRedis()) return freshTab("key");
+  return dbIsMongo() ? freshTab("coll") : freshTab("table");
+}
+
+/** A redis or MongoDB console runs commands, not SQL; the card and the + button say which. */
+function dbConsoleSpeaksCommands()          {
+  return dbIsRedis() || dbIsMongo();
+}
+
 /* --- pure: what a tab is, and what it is worth ---------------------------------------------------- */
 
 /** A tab that has never been pointed at an object — the fresh literal the view falls back to so
@@ -76,6 +89,7 @@ const DB_TAB_MAX = 12;
 function dbTabPlaceholder(t       )          {
   if (t.kind === "table") return !t.table;
   if (t.kind === "key") return !t.redisKey;
+  if (t.kind === "coll") return !t.coll;
   return false;
 }
 
@@ -153,6 +167,7 @@ function dbTabMatches(t       , spec           )          {
     return !spec.filters || dbFiltersSame(t.filters, spec.filters);
   }
   if (t.kind === "key" && spec.kind === "key") return t.redisKey === spec.key;
+  if (t.kind === "coll" && spec.kind === "coll") return t.db === spec.db && t.coll === spec.coll;
   return true;
 }
 
@@ -164,10 +179,16 @@ function dbTabTitle(t       )         {
   if (t.custom) return t.custom;
   if (t.kind === "table") return (t.schema ? t.schema + "." : "") + (t.table || tr("dataTabs.untitled"));
   if (t.kind === "key") return t.redisKey != null ? dbKeyShown(t.redisKey) : tr("dataTabs.untitled");
+  // A collection of the database being browsed reads bare; one left open from another database
+  // keeps its db. qualifier, the same rule a MySQL table outside the primary follows.
+  if (t.kind === "coll") {
+    if (!t.coll) return tr("dataTabs.untitled");
+    return (t.db && t.db !== mongoCurrentDb() ? t.db + "." : "") + t.coll;
+  }
   // A console opened on a redis connection runs redis commands, not SQL — the box's own
   // placeholder has always said so (SET k v · GET k …), and a card reading "SQL" over it was the
   // one label on the strip that named something the tab cannot do.
-  if (t.kind === "sql") return tr(dbIsRedis() ? "dataTabs.command" : "dataTabs.sql");
+  if (t.kind === "sql") return tr(dbConsoleSpeaksCommands() ? "dataTabs.command" : "dataTabs.sql");
   return tr("dataTabs.activity");
 }
 
@@ -181,6 +202,7 @@ function dbTabGlyph(t       )         {
     const type = t.redisValue ? t.redisValue.type : t.redisKeyType;
     return type ? redisTypeGlyph(type) : "redis";
   }
+  if (t.kind === "coll") return "braces";
   if (t.kind === "sql") return "terminal";
   return "clock";
 }
@@ -308,9 +330,9 @@ function renderDbTabs()       {
       // gesture that ADDS to the strip belongs on it (rule 19).
       h("button", {
         class: "db-tab-add", type: "button",
-        title: tr(dbIsRedis() ? "dataTabs.newCommandConsoleTitle" : "dataTabs.newConsoleTitle"),
+        title: tr(dbConsoleSpeaksCommands() ? "dataTabs.newCommandConsoleTitle" : "dataTabs.newConsoleTitle"),
         data: { dbtabadd: "sql" },
-      }, iconNode("plus"), h("span", null, tr(dbIsRedis() ? "dataTabs.command" : "dataTabs.sql")))));
+      }, iconNode("plus"), h("span", null, tr(dbConsoleSpeaksCommands() ? "dataTabs.command" : "dataTabs.sql")))));
   if (hadFocus) dbFocusActiveTab();
   dbScrollActiveTab();
 }
@@ -457,7 +479,7 @@ function dbCloseBatch(ix          )       {
   const gone = new Set(targets);
   const live = dbTab();
   const next = tabs.filter((_       , j        )          => { return !gone.has(j); });
-  if (!next.length) next.push(freshTab(dbIsRedis() ? "key" : "table"));
+  if (!next.length) next.push(dbHomeTab());
   const at = next.indexOf(live);
   dbResetTabs(next, at >= 0 ? at : 0);
   dbAfterTabSwitch();
@@ -567,6 +589,12 @@ function dbBuildTab(spec           )        {
     t.redisKeyType = spec.type || null;
     return t;
   }
+  if (spec.kind === "coll") {
+    const t = freshTab("coll");
+    t.db = spec.db;
+    t.coll = spec.coll;
+    return t;
+  }
   if (spec.kind === "sql") return freshTab("sql");
   return freshTab("activity");
 }
@@ -637,7 +665,7 @@ function dbDropTableTabs(table               , schema               )       {
     return !(t.kind === "table" && t.table === table && t.schema === schema);
   });
   if (next.length === tabs.length) return;
-  if (!next.length) next.push(freshTab(dbIsRedis() ? "key" : "table"));
+  if (!next.length) next.push(dbHomeTab());
   const at = next.indexOf(live);
   dbResetTabs(next, at >= 0 ? at : Math.min(dbActiveIndex(), next.length - 1));
   // The pane is only re-seeded when the object in front of the user changed; a drop of some
@@ -674,7 +702,7 @@ function dbCloseTab(i        )       {
   let idx = active;
   if (i === active) idx = Math.min(i, next.length - 1);
   else if (i < active) idx = active - 1;
-  if (!next.length) next.push(freshTab(dbIsRedis() ? "key" : "table"));
+  if (!next.length) next.push(dbHomeTab());
   dbResetTabs(next, Math.max(0, idx));
   dbAfterTabSwitch();
 }
@@ -688,12 +716,12 @@ function dbCycleTab(back         )       {
 
 /** Every open object belongs to the connection it was opened under: the switch closes the whole
  *  strip and starts the new connection at its own family's placeholder (a redis connection
- *  browses keys, everything else tables). The page size carries across, the same preference the
- *  single record never reset either. */
+ *  browses keys, a MongoDB one collections, everything else tables). The page size carries
+ *  across, the same preference the single record never reset either. */
 function dbResetTabsForConn()       {
   const keep = dbLastTableTab();
   dbActivityPollStop();
-  const next = freshTab(dbIsRedis() ? "key" : "table");
+  const next = dbHomeTab();
   if (next.kind === "table" && keep) next.pageSize = keep.pageSize;
   dbResetTabs([next], 0);
 }
@@ -704,6 +732,7 @@ function dbResetTabsForConn()       {
  *  looks untouched on return. */
 function dbLeaveTab(t       )       {
   if (t.kind === "table" && t.table) t.data = null;
+  if (t.kind === "coll" && t.coll) t.docs = null;
   if (t.kind === "activity") dbActivityPollStop();
 }
 
@@ -727,6 +756,7 @@ function dbAfterTabSwitch(byKeyboard          )       {
     if (!t.detail) void dbLoadDetail();
   }
   if (t.kind === "key" && t.redisKey && !t.redisValue) void dbLoadRedisValue(t.redisKey);
+  if (t.kind === "coll") mongoAfterTabSwitch(t);
   // The 5s poll follows "is that tab active" (SPEC §data.tabs): a backgrounded monitor stops
   // asking the server about sessions nobody is looking at.
   if (t.kind === "activity") dbActivityStart();

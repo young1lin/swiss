@@ -37,7 +37,7 @@ import {
   filterInput, form, formActions, formCap, formFold, groupNode, heldDot, hint, iconBtn, iconNode, initSelects, redacted,
   initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, objTab, openFieldSheet, pageFoot, pager,
   pair, pane, paneHead, popupMenu, relTime, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow,
-  spinner, sw, tag, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
+  spinner, sw, tag, timeline, timelineMeta, timelineToggle, toTop, tokenCodeNode, valueBlock,
 } from "./ui/index.js";
                                                             
 
@@ -163,6 +163,17 @@ function sampleCalls(now        )                 {
       status: { text: tr("gallery.d.error"), tone: "bad" } },
   ];
 }
+
+/* A MongoDB document as the shell printer (mongo-ejson.ts shellTokens) classes it - the tokens
+   tokenCodeNode draws on the Data page's document cards, spelled out here because the gallery
+   imports the library and nothing else. */
+const SAMPLE_DOC_TOKENS                     = [
+  ["jv-p", "{"], ["", "\n  "], ["jv-k", "_id"], ["jv-p", ": "], ["jv-l", "ObjectId"], ["jv-p", "("],
+  ["jv-s", "\"65f0c0ffee00000000000001\""], ["jv-p", ")"], ["jv-p", ","], ["", "\n  "],
+  ["jv-k", "qty"], ["jv-p", ": "], ["jv-n", "5"], ["jv-p", ","], ["", "\n  "],
+  ["jv-k", "at"], ["jv-p", ": "], ["jv-l", "ISODate"], ["jv-p", "("], ["jv-s", "\"2024-01-01T00:00:00.000Z\""], ["jv-p", ")"],
+  ["", "\n"], ["jv-p", "}"],
+];
 
 const SAMPLE_JSON = {
   id: 1042, status: "open", paid: false, discount: null,
@@ -302,11 +313,12 @@ function catalogue(now        )              {
       [tr("gallery.st.tabCount"), objTab({ name: "audit_log", selected: false, icon: "table", data: {}, count: { n: 2, title: tr("gallery.d.twoFilters") }, close: { label: tr("gallery.d.closeTab"), data: {} } })],
     ]),
     entry(["timeline", "timelineMeta"], tk("gallery.c.timeline"), tk("gallery.c.timelineNote"), [], timeline(sampleCalls(now), { now, open: new Set(["g3"]), body: callBody })),
-    entry(["jsonCodeNode", "valueBlock"], tk("gallery.c.code"), tk("gallery.c.codeNote"), [
+    entry(["jsonCodeNode", "tokenCodeNode", "valueBlock"], tk("gallery.c.code"), tk("gallery.c.codeNote"), [
       [tr("gallery.st.codeOneLine"), valueBlock({ label: tr("gallery.d.arguments"), tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
         jsonCodeNode({ status: "open", limit: 20 }, false, { oneLine: true }).node)],
       [tr("gallery.st.codeBlock"), valueBlock({ label: tr("gallery.d.result"), notes: [tr("gallery.d.decodedNote")], tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
         jsonCodeNode(decodeStrings(SAMPLE_JSON), false, { oneLine: true }).node)],
+      [tr("gallery.st.codeTokens"), valueBlock({ label: tr("gallery.d.document") }, tokenCodeNode(SAMPLE_DOC_TOKENS, { all: true }).node)],
     ]),
     entry(["form", "field", "checkField", "pair", "formActions", "formCap", "formFold", "hint"], tk("gallery.c.forms"), tk("gallery.c.formsNote"), [], card(form(
       pair(

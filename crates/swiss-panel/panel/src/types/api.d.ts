@@ -702,6 +702,9 @@ export interface ApiDbDatabase {
   system: boolean;
   tables?: number;
   reason?: string;
+  /* mongo (SPEC §data.mongo): sizeOnDisk in bytes, and the server's own "empty" flag. */
+  size?: number;
+  empty?: boolean;
 }
 
 /** GET /api/db/{name}/data - dbbrowser_api.rs read_table route (the stub at :1196 spells it). */
@@ -1076,4 +1079,168 @@ export interface ApiMcpDefsImportResponse {
 
 export interface ApiErrorBody {
   error: string;
+}
+
+/* --- MongoDB (SPEC §data.mongo) --------------------------------------------------------------------
+   Every document and every value inside one is canonical Extended JSON (mongo-ejson.ts reads and
+   writes it): typed unknown here because the wrapper documents are the values. */
+
+/** GET /api/db/{name}/mongo/info - mongo_browser.rs server_info. */
+export interface ApiMongoInfo {
+  version: string;
+  topology: string;
+  setName: string | null;
+  maxWireVersion: number;
+  transactions: boolean;
+  allowDestructive: boolean;
+  defaultDb: string | null;
+}
+
+/** One row of GET /mongo/collections - mongo.rs collection_row + the $collStats numbers. */
+export interface ApiMongoColl {
+  name: string;
+  type: string;
+  count?: number;
+  size?: number;
+  storageSize?: number;
+  avgObjSize?: number;
+  indexes?: number;
+  indexSize?: number;
+  capped?: boolean;
+  readOnly?: boolean;
+  viewOn?: string;
+  pipeline?: unknown[];
+  validator?: Record<string, unknown>;
+  validationLevel?: string;
+  validationAction?: string;
+  timeseries?: Record<string, unknown>;
+  expireAfterSeconds?: number;
+}
+
+export interface ApiMongoCollsResponse {
+  db: string;
+  collections: ApiMongoColl[];
+  statsOmitted: number;
+}
+
+/** POST /mongo/find. */
+export interface ApiMongoFindReply {
+  docs: Record<string, unknown>[];
+  offset: number;
+  limit: number;
+  more: boolean;
+  elapsedMs?: number;
+}
+
+/** POST /mongo/count. */
+export interface ApiMongoCountReply {
+  total: number | null;
+  estimated: boolean;
+  timedOut?: boolean;
+}
+
+/** POST /mongo/aggregate. */
+export interface ApiMongoAggReply {
+  docs: Record<string, unknown>[];
+  more: boolean;
+  wrote?: string;
+  elapsedMs?: number;
+}
+
+/** One stage row of the explain summary (mongobrowser.rs explain_summary). */
+export interface ApiMongoPlanRow {
+  depth: number;
+  stage: string;
+  indexName?: string;
+  keyPattern?: unknown;
+  direction?: string;
+  filter?: unknown;
+  nReturned?: number;
+  executionTimeMillisEstimate?: number;
+  keysExamined?: number;
+  docsExamined?: number;
+}
+
+/** POST /mongo/explain. */
+export interface ApiMongoExplainReply {
+  explain: unknown;
+  summary: {
+    engine?: string;
+    namespace?: string;
+    rejectedPlans?: number;
+    nReturned?: number;
+    executionTimeMillis?: number;
+    totalKeysExamined?: number;
+    totalDocsExamined?: number;
+    collscan: boolean;
+    inMemorySort: boolean;
+    indexes: string[];
+    stages: ApiMongoPlanRow[];
+    pipeline?: { stage: string; nReturned?: number; executionTimeMillisEstimate?: number }[];
+    sharded?: boolean;
+  };
+}
+
+/** One type of one field in a schema analysis (mongobrowser.rs infer_schema). */
+export interface ApiMongoSchemaType {
+  type: string;
+  count: number;
+  probability: number;
+  values?: unknown[];
+  top?: { value: unknown; count: number }[];
+  distinct?: number;
+  distinctCapped?: boolean;
+  min?: unknown;
+  max?: unknown;
+  lengths?: { min: number; max: number; avg?: number };
+  fields?: ApiMongoSchemaField[];
+  fieldsCapped?: boolean;
+  elements?: { count: number; types: ApiMongoSchemaType[] };
+}
+
+export interface ApiMongoSchemaField {
+  name: string;
+  path: string;
+  count: number;
+  missing: number;
+  probability: number;
+  types: ApiMongoSchemaType[];
+}
+
+/** POST /mongo/schema. */
+export interface ApiMongoSchema {
+  sampled: number;
+  requested?: number;
+  fields: ApiMongoSchemaField[];
+  fieldsCapped?: boolean;
+  paths: string[];
+  elapsedMs?: number;
+}
+
+/** One index of GET /mongo/indexes (mongo.rs indexes). */
+export interface ApiMongoIndex {
+  name: string;
+  key: Record<string, unknown>;
+  unique?: boolean;
+  sparse?: boolean;
+  hidden?: boolean;
+  expireAfterSeconds?: number;
+  partialFilterExpression?: Record<string, unknown>;
+  collation?: Record<string, unknown>;
+  size?: number;
+  ops?: number;
+  since?: string;
+  [extra: string]: unknown;
+}
+
+export interface ApiMongoIndexesResponse {
+  indexes: ApiMongoIndex[];
+  statsError?: string;
+}
+
+/** POST /mongo/import. */
+export interface ApiMongoImportReply {
+  inserted: number;
+  errorCount: number;
+  errors: { index?: number; message: string }[];
 }
