@@ -39,6 +39,12 @@
       var dark = pref === "dark" ||
         (pref !== "light" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
       document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+      /* The code scheme (SPEC §panel.code): ?code= wins over the panel's own, as for the theme. */
+      var code = q.get("code");
+      if (!code) { try { code = localStorage.getItem("swiss_code") || "auto"; } catch (e) { code = "auto"; } }
+      if (code === "github") code = dark ? "github-dark" : "github-light";
+      else if (code !== "intellij-light" && code !== "darcula" && code !== "intellij-dark") code = dark ? "intellij-dark" : "intellij-light";
+      document.documentElement.setAttribute("data-code", code);
       var lang = q.get("lang");
       if (lang === "zh") document.documentElement.lang = "zh-CN";
       else if (lang !== "en") {

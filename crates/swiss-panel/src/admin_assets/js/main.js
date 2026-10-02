@@ -27,7 +27,7 @@
    lives in its own module next to this one; /admin/js/* is served with no-store, so a rebuilt emit
    reaches the browser on the next reload (SPEC §panel.toolchain).
    ================================================================================================ */
-import { $, THEME_KEY, api, isTyping, toast } from "./util.js";
+import { $, CODE_KEY, THEME_KEY, api, isTyping, toast } from "./util.js";
 import { loadCollapsed } from "./groups.js";
 import { initSelects } from "./ui/select.js";
 import { initPages, pageHasPendingChanges, pageUsesSidebar, pollPage } from "./page-registry.js";
@@ -42,8 +42,10 @@ import { knownPanelVersion, setFoldMap, setKnownPanelVersion, setListFilter } fr
 import { setTunFolds } from "./tunnel-state.js";
 import { setJobFolds } from "./job-state.js";
 import { gatewayInfo, mcpDetail, selectedMcp, setGatewayInfo } from "./mcp-state.js";
-import { initLangButton, loadLocale, paintChrome, tr } from "./i18n.js";
-import { closeMenu, menuOpen } from "./ui/menu.js";
+import { initLangButton, loadLocale, paintChrome, tk, tr } from "./i18n.js";
+import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
+                                             
+import { CODE_SCHEMES, codeSchemeFor } from "./ui/code-scheme.js";
 import { closeSheet, initSheet, sheetOpen } from "./ui/sheet.js";
 
 /* The dictionary resolves before anything paints (SPEC §panel.i18n): this top-level await is
@@ -115,7 +117,10 @@ function prefersDark()          {
 }
 function applyTheme()       {
   const p = themePref();
-  document.documentElement.setAttribute("data-theme", p === "dark" || (p === "auto" && prefersDark()) ? "dark" : "light");
+  const theme = p === "dark" || (p === "auto" && prefersDark()) ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", theme);
+  // The code scheme follows: "auto" and "github" resolve against the theme (SPEC §panel.code).
+  document.documentElement.setAttribute("data-code", codeSchemeFor(codePref(), theme));
 }
 function setTheme(p        )       {
   try { if (p === "auto") localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, p); }
@@ -133,6 +138,38 @@ function paintThemeBtn()       {
   if (use) use.setAttribute("href", dark ? "#i-sun" : "#i-moon");
   b.title = dark ? tr("main.switchLight") : tr("main.switchDark");
 }
+/* The code colour scheme (SPEC §panel.code): a second, independent choice beside the theme -
+   every code block, the SQL console, a DDL and a document card are painted in it. A menu rather
+   than a flip, because there are five; the pick applies at once, so the open page is the preview. */
+function codePref()         {
+  try { const v = localStorage.getItem(CODE_KEY); return v && CODE_SCHEMES.includes(v) ? v : "auto"; }
+  catch (e) { return "auto"; }
+}
+const CODE_LABELS                         = {
+  auto: tk("main.codeAuto"), "intellij-light": tk("main.codeIntellijLight"), darcula: tk("main.codeDarcula"),
+  "intellij-dark": tk("main.codeIntellijDark"), github: tk("main.codeGithub"),
+};
+function paintCodeBtn()       {
+  $("codeBtn").title = tr("main.codeColors");
+  $("codeBtn").setAttribute("aria-label", tr("main.codeColors"));
+}
+$("codeBtn").onclick = (e) => {
+  e.stopPropagation();
+  const cur = codePref();
+  const items             = [{ label: tr("main.codeColors"), heading: true, fn: ()       => { /* a heading */ } }];
+  CODE_SCHEMES.forEach((id        )       => {
+    items.push({
+      label: tr(CODE_LABELS[id]), pick: true, on: id === cur,
+      fn: ()       => {
+        try { if (id === "auto") localStorage.removeItem(CODE_KEY); else localStorage.setItem(CODE_KEY, id); }
+        catch (err) { /* the choice still applies to this page load */ }
+        applyTheme();
+      },
+    });
+  });
+  popupMenu($("codeBtn").getBoundingClientRect(), items);
+};
+paintCodeBtn();
 $("themeBtn").onclick = (e) => {
   e.stopPropagation();
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
@@ -140,7 +177,7 @@ $("themeBtn").onclick = (e) => {
   paintThemeBtn();
 };
 paintThemeBtn();
-initLangButton(paintThemeBtn); // the 文/A flip (SPEC §panel.i18n): hands over the theme repainter so chrome stays whole
+initLangButton(()       => { paintThemeBtn(); paintCodeBtn(); }); // the 文/A flip (SPEC §panel.i18n): hands over the chrome repainters so it stays whole
 // Every dropdown in the panel becomes the shared custom control: what is in the DOM now, plus
 // whatever the views create later (observed), so no view ever opts in or out.
 initSelects();

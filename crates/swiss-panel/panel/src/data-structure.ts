@@ -139,9 +139,10 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
       (c.conn && c.conns.some((x: ApiDbConnectionRow): boolean => { return x.name === c.conn && x.dialect === "pg"; })
         ? tr("dataStructure.pgDdlFromCatalog")
         : tr("dataStructure.fromShowCreateTable"))));
-    const pre = el("pre", "db-ddl db-sql-hl");
-    pre.style.position = "static"; // undo the overlay absolute positioning — this is a plain block
-    fill(pre, dbHighlightNodes(dbAlignDdl(det.ddl || tr("dataStructure.noDdl"))));
+    if (!det.ddl) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.noDdl"))); return; }
+    // The DDL as an editor shows it (SPEC §panel.code): the active scheme, numbered lines.
+    const pre = el("pre", "db-ddl");
+    fill(pre, dbHighlightNodes(dbAlignDdl(det.ddl), { lined: true }));
     wrap.appendChild(pre);
     return;
   }

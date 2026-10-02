@@ -1183,6 +1183,12 @@ const zh                         = {
   /* --- main --- */
   "main.newPanelVersionReady": "面板新版本已就绪——完成编辑后会自动加载",
   "main.switchLight": "切换到浅色",
+  "main.codeColors": "代码配色",
+  "main.codeAuto": "跟随界面（IntelliJ Light / Dark）",
+  "main.codeIntellijLight": "IntelliJ Light",
+  "main.codeDarcula": "Darcula",
+  "main.codeIntellijDark": "IntelliJ Dark",
+  "main.codeGithub": "GitHub（随界面明暗）",
   "main.switchDark": "切换到深色",
   /* --- menu --- */
   "menu.idleLazyChildWakes": "空闲——还没有子进程，首次请求时唤醒",
@@ -2047,6 +2053,7 @@ const zh                         = {
   "gallery.st.pagerBusy": "翻页，切换中",
   "gallery.st.codeOneLine": "短值，一行",
   "gallery.st.codeBlock": "带标题的块",
+  "gallery.st.codeLined": "SQL（带行号）",
   "gallery.st.codeTokens": "Shell 语法（词元）",
   "gallery.d.failText": "无法加载调用记录。",
   "gallery.d.retry": "重试",

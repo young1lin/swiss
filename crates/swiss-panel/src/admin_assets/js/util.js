@@ -23,6 +23,7 @@ import { emptyNode } from "./ui/page.js";
 import { locale, tr } from "./i18n.js";
 const TOKEN_ID_KEY = "swiss.tokenId"; // which token copied connect commands embed
 const THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
+const CODE_KEY = "swiss_code";         // the code colour scheme preference (SPEC §panel.code)
 /* The three kind pages, in tab order. Typed so a kind indexes McpDetail's three slots
    directly (d[kind]) - the tab string narrows through isMcpKind, not through a cast. */
 const KINDS                     = ["tools", "resources", "prompts"];
@@ -198,4 +199,4 @@ async function apiJson             (path        , opts              )           
 /* esc() survives for the few string contexts that remain (sheet titles via textContent
  * builds are nodes now; the callers left are attribute values and pure-string suites). */
 /* master dropped the legacy local-storage migration helper; panel-ui keeps refocusIfIdle. */
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyNode, errText, esc, iconNode, isMcpKind, isTyping, now, refocusIfIdle, targetEl, toast, typeTagNode, TYPE_ICONS, whenLabel };
+export { $, CODE_KEY, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyNode, errText, esc, iconNode, isMcpKind, isTyping, now, refocusIfIdle, targetEl, toast, typeTagNode, TYPE_ICONS, whenLabel };

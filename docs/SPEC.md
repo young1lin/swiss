@@ -1415,8 +1415,9 @@ formatted code block**, the same for every MCP — no SQL- or redis-shaped speci
 - No inner scroll box: past 200 lines (`JV_LINES`) a block ends in `Show all N lines`, a choice
   kept as state across repaints; the cap also bounds what a 1 MB body can build.
 - **Opening a clipped row fetches its whole reply once**; a pruned reply is said in place.
-- Keys, strings, numbers, literals and punctuation take five muted `--syn-*` tokens — the one
-  sanctioned use of colour as information in a content block (§panel.design).
+- Keys, strings, numbers, literals and punctuation take the code scheme's `--syn-*` tokens —
+  the one sanctioned use of colour as information in a content block (§panel.design,
+  §panel.code).
 
 Logs, Traffic and run history all paint on the library's one event list (`ui/timeline.ts`,
 §panel.ui).
@@ -3616,6 +3617,8 @@ a gesture means the structure failed.
 everything below derives from. Every colour, size, weight and radius is a token, never a
 literal (G4); a new component size lands in the block, named, before any rule uses it. Dark is
 the same names under `:root[data-theme="dark"]`: a rule written once, in tokens, is themed.
+Code blocks take their colours from a scheme of their own under `:root[data-code="…"]`
+(§panel.code).
 
 | Family | Tokens |
 |---|---|
@@ -3627,6 +3630,7 @@ the same names under `:root[data-theme="dark"]`: a rule written once, in tokens,
 | Surfaces | `--bg`, `--sidebar`, `--bar`, `--card`, `--field`; `--hover` |
 | Text, lines | `--text`, `--text-2`, `--text-3`; `--sep`, `--sep-soft` |
 | Colour | `--accent`; state `--green`, `--red`, `--amber`; syntax `--syn-*` (code blocks only) |
+| Code | `--code-font`, `--code-bg`, `--code-fg`, `--code-edge`, `--code-gutter`, `--code-sel`, `--code-caret` and `--syn-kw`, `--syn-str`, `--syn-num`, `--syn-com`, `--syn-fn`, `--syn-key`, `--syn-lit`, `--syn-punct` — one set per code colour scheme (§panel.code) |
 | Terminal | `--term-*`, derived from the panel's colours (§panel.pages) |
 | Measures | `--measure 920`, `--measure-wide 1180` |
 
@@ -3636,8 +3640,8 @@ the same names under `:root[data-theme="dark"]`: a rule written once, in tokens,
    never for prose identity. `tnum` for every number in a column.
 2. **Saturation is for state**: dots, the one accent, error red, amber. Type chips, tags,
    group names and descriptions are monochrome; a column's annotation is `--text-3`. The one
-   exception is syntax colour inside a code block (the JSON view, the SQL highlighter), in the
-   five muted `--syn-*` tokens only.
+   exception is syntax colour inside a code block (the JSON view, the SQL highlighter, a
+   document card), in the active code scheme's `--syn-*` tokens only (§panel.code).
 3. **Text needs a measure.** Nothing is full-bleed except a workspace; content hugs the left
    edge and is never centred a second time.
 4. **One primary action per view; the rest behind `⋯`.** A row holds at most one non-icon
@@ -3692,6 +3696,51 @@ a `title`; Enter submits a sheet's primary; arrows move where a list is a listbo
 
 **Verification.** A visual change is walked on a test instance (§testing.live) in light and
 dark, English and Chinese, at about 1440 px and 960 px — never on the user's instance.
+
+### §panel.code — Code blocks and their colour schemes
+
+Every code block is an editor surface: the JSON view (`pre.jv`), a Mongo document card, the
+SQL console, a DDL pane or preview, a raw value. It is painted in a **code colour scheme**
+that is its own choice beside the theme, named after the IDE schemes its colours copy, and
+reads like DataGrip on SQL it has not resolved against a schema.
+
+- **Schemes.** `auto` (the default: IntelliJ Light under the light theme, IntelliJ Dark under
+  the dark one), `intellij-light`, `darcula`, `intellij-dark` (the New UI's Dark) and `github`
+  (its light or dark half with the theme). The three IDE schemes stay what they are whatever
+  the theme — a Darcula block on the light panel is a choice, as in the IDE.
+- **Where it lives.** The preference is per browser (`localStorage` `swiss_code`, like the
+  theme). `<html data-code>` always holds a concrete scheme (`intellij-light`, `darcula`,
+  `intellij-dark`, `github-light`, `github-dark`), resolved by `ui/code-scheme.ts`
+  `codeSchemeFor` and repeated in both pages' pre-paint scripts so no block flashes in the
+  wrong one (a test runs the copies against the library). `styles/base.css` writes each
+  scheme once: IntelliJ Light in `:root`, the rest under `:root[data-code="…"]`, which the
+  token gates (G4) count as token blocks.
+- **The switch** is the header's palette button: a menu of the five, the current one
+  checked; a pick applies at once, so the open page is the preview. The gallery takes
+  `?code=`.
+- **Token roles** — one family for every printer (`ui/json-view.ts`), weight never changes:
+
+  | Class | Role | Token |
+  |---|---|---|
+  | `jv-w` | a keyword or a type (`SELECT`, `NOT`, `varchar`, `new`) | `--syn-kw` |
+  | `jv-f` | a function or a constructor (`count(`, `ObjectId(`) | `--syn-fn` |
+  | `jv-k` | a field: a JSON or document key, a column | `--syn-key` |
+  | `jv-s` / `jv-n` | a string / a number | `--syn-str` / `--syn-num` |
+  | `jv-l` | `true`, `false`, `null` | `--syn-lit` |
+  | `jv-c` | a comment, italic | `--syn-com` |
+  | `jv-p` | punctuation | `--syn-punct` |
+
+- **SQL** (`data-filters.ts` `dbSqlTokens`, a tokenizer, never a parser): a word is a column
+  where the text says so — the column list a `(` after a table name opens (`CREATE TABLE t (`,
+  `INSERT INTO t (`, `REFERENCES t (`, `ON t (`), anything nested deeper inside it (index
+  columns, `CHECK`), the half after a qualifier's dot unless the qualifier is a table, the word
+  after `COLUMN`; a table, an index, an alias stay the plain text colour. A `"double-quoted"`
+  run is an identifier on PostgreSQL and a string on MySQL. Punctuation never takes a quote,
+  so ``(`id`)`` lexes as three tokens and a `;` inside `('a;b')` never ends a statement.
+  The Mongo console uses `dbShellTokens`: a key before `:`, a constructor before `(`.
+- **Numbered lines.** The DDL pane, the DDL sheet's preview and the commit previews number
+  their lines (`tokenSpans({ lined })`): one `.jv-line` per line, the number generated content
+  in a gutter, so a selection copies the code and never a number.
 
 ### §panel.ui — The UI library
 
@@ -3760,10 +3809,10 @@ the same moves into the open row's meta line.
 | G1 | `ui-boundary` | a `ui/` module imports anything but `../h.js`, `../i18n.js`, `./*` | zero |
 | G2 | `ui-css-ownership` | `views.css` makes a `ui.css` class the subject of a selector (`svg`/`use` count as `.ic`) | `FROZEN_VIOLATIONS = 0` |
 | G3 | `css-weights` | a `font-weight` is not one of the four `--w-*` tokens | zero |
-| G4 | `css-literals` | a sheet gains a px / hex / rgb literal outside its token block (`0`, `1px`, `2px`, `-1px` and `%` exempt) | base 22, ui 72, views 159 |
+| G4 | `css-literals` | a sheet gains a px / hex / rgb literal outside its token blocks — `:root`, `:root[data-theme=…]`, a code scheme's `:root[data-code=…]` (`0`, `1px`, `2px`, `-1px` and `%` exempt) | base 22, ui 72, views 159 |
 | G5 | `ui-class-ratchet` | a file outside `ui/` draws a `ui.css` class (a file with no row is held at 0) | the table is empty |
 | G6 | `ui-gallery` | an export of `ui/index.ts` is claimed by no gallery section or scene (or by `HELPERS` with a reason), a claimed shape is missing from the DOM, or a class the gallery draws is unstyled | zero |
-| G7 | `css-size` | `views.css` grows past its byte ceiling | `FROZEN_VIEWS_BYTES = 59932` |
+| G7 | `css-size` | `views.css` grows past its byte ceiling | `FROZEN_VIEWS_BYTES = 59742` |
 
 **The ratchet convention** (every frozen table in the panel, and §panel.lint's): the table
 lives in the test, its numbers only go down, and a change that lowers a count lowers the row

@@ -71,6 +71,9 @@ const HELPERS: Record<string, string> = {
   JV_LINES: "jsonCodeNode()'s line cap - a number",
   JV_INLINE: "jsonCodeNode()'s one-line limit - a number",
   fitsOneLine: "the test jsonCodeNode({ oneLine }) applies - a predicate",
+  tokenSpans: "the nodes tokenCodeNode() draws - the SQL console fills its own overlay with them",
+  codeSchemeFor: "the code scheme data-code holds - a string (applyView sets it from ?code=)",
+  CODE_SCHEMES: "the scheme preferences the picker lists - strings",
   isLocalAddress: "the loopback predicate redacted() applies - a predicate",
   stackSheet: "a second layer over the open sheet - its dialog is sheet(), its backdrop showSheet's; the tunnel key picker drives it",
 };
