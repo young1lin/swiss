@@ -6,6 +6,8 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-02
+
 ### Added
 
 - `swiss path [on|off]` and a "Put swiss on your PATH" switch in the panel: this exe's folder in
@@ -70,6 +72,7 @@ The first release.
   release, `swiss export` / `import` to move machines, and the embedded `swiss` and
   `swiss-remote` AI skills (`swiss skill install`).
 
-[Unreleased]: https://github.com/young1lin/swiss/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/young1lin/swiss/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/young1lin/swiss/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/young1lin/swiss/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/young1lin/swiss/releases/tag/v0.1.0
