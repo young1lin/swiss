@@ -17,8 +17,8 @@
 /* SPEC §panel.ui - values come from tokens. There were once 247 px literals in views.css
    alone: every one is a size somebody picked by eye instead of reading the scale, and two
    pages that picked 5px and 6px for the same gap drift apart for good. This gate counts,
-   per sheet, the literals a declaration writes OUTSIDE the token blocks (:root and
-   :root[data-theme=...]):
+   per sheet, the literals a declaration writes OUTSIDE the token blocks (:root,
+   :root[data-theme=...] and the code schemes' :root[data-code=...], SPEC §panel.code):
 
      px     any length in px except 0, 1px, 2px and -1px - a hairline, a focus ring and the
             one-pixel overlap are structure, not scale
@@ -44,7 +44,7 @@ const FROZEN: Record<string, number> = {
   "views.css": 159, // P9: the restated library defaults (.dot's 6px) and the DDL grid's hand-sized remove (26px) went - glyph sizes ride the host's --ic knob now; P8-2 (cap lowered at P9): 170, Terminal off its --t-* palette (the defs lived outside :root and counted); P8-1: 210, Data's tab cards are the library's objTab - the .db-tab block went with its picked-by-eye sizes; P7-2: 220, the stream pill's 13px glyph size went (the library sizes a btn({ icon }) glyph); P7-1: 222, Data off .ctx-menu, .db-tabs, .db-chip and .db-keytype, the grid and drawer on tokens; P6-2: 234, Remote off .call, .rm-* and #rrTarget; P6-1: 240, Jobs off .tun-* (its 42px and 6px); P2-3c: 243, MCP Logs, items, Run, Config (P1b-2: 251, the held-edits dot moved to ui.css on --dot)
 };
 
-const TOKEN_BLOCK = /^:root(\[data-theme="(dark|light)"\])?$/;
+const TOKEN_BLOCK = /^:root(\[data-theme="(dark|light)"\]|\[data-code="[a-z-]+"\])?$/;
 const PX = /(?<![\w.#-])(-?\d*\.?\d+)px\b/g;
 const HEX = /#[0-9a-fA-F]{3,8}\b/g;
 const RGB = /\b(rgba?|hsla?)\(/g;
@@ -70,7 +70,7 @@ function sheetNames(): string[] {
 
 describe("SPEC §panel.ui - px, hex and rgb literals live in the token block", () => {
   it("the counter reads what the gate means", () => {
-    const css = ":root { --x: 13px; --c: #fff; } :root[data-theme=\"dark\"] { --c: rgba(0,0,0,.5); }"
+    const css = ":root { --x: 13px; --c: #fff; } :root[data-theme=\"dark\"] { --c: rgba(0,0,0,.5); } :root[data-code=\"darcula\"] { --c: #2b2b2b; }"
       + " .a { padding: 0 1px 2px 5px; margin: -1px; width: 100%; color: #abc; }"
       + " .b { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14); gap: var(--s2); line-height: 1.45; }"
       + " #pane .c { width: calc(var(--s4) + 6px); } @media (max-width: 960px) { .d { top: 0; } }";

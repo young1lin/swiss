@@ -23,7 +23,7 @@
 import { describe, expect, it } from "vitest";
 import { sheet } from "./styles.js";
 
-const FROZEN_VIEWS_BYTES = 59932; // SPEC §panel.ui; each shrink's reason is in git log
+const FROZEN_VIEWS_BYTES = 59742; // SPEC §panel.ui; each shrink's reason is in git log
 
 export function lfBytes(css: string): number {
   return Buffer.byteLength(css.replace(/\r\n/g, "\n"), "utf8");

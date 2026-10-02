@@ -71,8 +71,11 @@ describe("printing in the shell's syntax", () => {
   it("colours tokens with the code block's classes", () => {
     const toks = shellTokens({ a: { $oid: "65f0c0ffee00000000000001" }, n: 1 }, { oneLine: true });
     expect(toks.find((t) => t[1] === "a")?.[0]).toBe("jv-k");
-    expect(toks.find((t) => t[1] === "ObjectId")?.[0]).toBe("jv-l");
+    // A constructor is a call, as the IDE schemes paint one; true / false / null stay literals.
+    expect(toks.find((t) => t[1] === "ObjectId")?.[0]).toBe("jv-f");
     expect(toks.find((t) => t[1] === "1")?.[0]).toBe("jv-n");
+    expect(shellTokens({ $date: { $numberLong: "-62135596800001000" } }).slice(0, 3)).toEqual([["jv-w", "new"], ["", " "], ["jv-f", "Date"]]);
+    expect(shellTokens(null)).toEqual([["jv-l", "null"]]);
   });
 
   it("opens a document that holds a document, and keeps a short flat one inline", () => {

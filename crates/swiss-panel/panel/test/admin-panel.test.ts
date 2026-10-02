@@ -58,11 +58,12 @@ describe("admin panel assets", () => {
     // line, which landed one over the bound), SPEC §panel.design (five more: key, undo, arrow-up,
     // folder, file), the find-bar pass (i-chevron-up, the last escape-sequence glyph site),
     // redacted() (i-eye, i-eye-off: the masked address's reveal), the redis type glyphs (six
-    // symbols and their two-line note: a key row leads with its type) — still small, still no markup. The Apache-2.0 banner is stripped
+    // symbols and their two-line note: a key row leads with its type), the code colour scheme (SPEC §panel.code: its
+    // four-line pre-paint resolver, i-palette and the header button) — still small, still no markup. The Apache-2.0 banner is stripped
     // before counting: it is a fixed licence cost, not shell content, and it must never buy
     // anyone headroom.
     const shellBody = shell.replace(/^<!--[\s\S]*?-->\s*/, "");
-    expect(shellBody.split("\n").length).toBeLessThan(171);
+    expect(shellBody.split("\n").length).toBeLessThan(178);
   });
 
   it("links the whole module graph: every import resolves to a file that exports the name", () => {

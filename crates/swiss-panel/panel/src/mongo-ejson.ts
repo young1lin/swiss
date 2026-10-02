@@ -192,7 +192,8 @@ function isoOf(ms: number): string | null {
 function wrapperTokens(m: Record<string, Ejson>): ShellToken[] | null {
   const t = wrapperType(m);
   if (!t) return null;
-  const call = (name: string, arg: ShellToken[]): ShellToken[] => [["jv-l", name], ["jv-p", "("], ...arg, ["jv-p", ")"]];
+  // A constructor is a function call (SPEC §panel.code): f, as the IDE schemes paint one.
+  const call = (name: string, arg: ShellToken[]): ShellToken[] => [["jv-f", name], ["jv-p", "("], ...arg, ["jv-p", ")"]];
   const str = (s: string): ShellToken[] => [["jv-s", JSON.stringify(s)]];
   switch (t) {
     case "ObjectId": return call("ObjectId", str(String(m.$oid)));
@@ -207,7 +208,7 @@ function wrapperTokens(m: Record<string, Ejson>): ShellToken[] | null {
       // Outside what a JS Date can hold: the milliseconds, as the digits the wire carried.
       const d = m.$date;
       const raw = isObj(d) && typeof d.$numberLong === "string" ? d.$numberLong : String(ms);
-      return [["jv-l", "new Date"], ["jv-p", "("], ["jv-n", raw], ["jv-p", ")"]];
+      return [["jv-w", "new"], ["", " "], ["jv-f", "Date"], ["jv-p", "("], ["jv-n", raw], ["jv-p", ")"]];
     }
     case "UUID": {
       if (typeof m.$uuid === "string") return call("UUID", str(m.$uuid));
@@ -219,7 +220,7 @@ function wrapperTokens(m: Record<string, Ejson>): ShellToken[] | null {
     case "Binary": {
       const b = m.$binary;
       if (isObj(b) && typeof b.base64 === "string" && typeof b.subType === "string") {
-        return [["jv-l", "BinData"], ["jv-p", "("], ["jv-n", String(parseInt(b.subType, 16))], ["jv-p", ", "], ["jv-s", JSON.stringify(b.base64)], ["jv-p", ")"]];
+        return [["jv-f", "BinData"], ["jv-p", "("], ["jv-n", String(parseInt(b.subType, 16))], ["jv-p", ", "], ["jv-s", JSON.stringify(b.base64)], ["jv-p", ")"]];
       }
       break;
     }
@@ -231,20 +232,20 @@ function wrapperTokens(m: Record<string, Ejson>): ShellToken[] | null {
         if (r.pattern.length && !/[\n\r]/.test(r.pattern) && !/(^|[^\\])(\\\\)*\//.test(r.pattern)) {
           return [["jv-s", "/" + r.pattern + "/" + opts]];
         }
-        return [["jv-l", "RegExp"], ["jv-p", "("], ["jv-s", JSON.stringify(r.pattern)], ["jv-p", ", "], ["jv-s", JSON.stringify(opts)], ["jv-p", ")"]];
+        return [["jv-f", "RegExp"], ["jv-p", "("], ["jv-s", JSON.stringify(r.pattern)], ["jv-p", ", "], ["jv-s", JSON.stringify(opts)], ["jv-p", ")"]];
       }
       break;
     }
     case "Timestamp": {
       const ts = m.$timestamp;
       if (isObj(ts)) {
-        return [["jv-l", "Timestamp"], ["jv-p", "({ "], ["jv-k", "t"], ["jv-p", ": "], ["jv-n", String(ts.t)], ["jv-p", ", "],
+        return [["jv-f", "Timestamp"], ["jv-p", "({ "], ["jv-k", "t"], ["jv-p", ": "], ["jv-n", String(ts.t)], ["jv-p", ", "],
           ["jv-k", "i"], ["jv-p", ": "], ["jv-n", String(ts.i)], ["jv-p", " })"]];
       }
       break;
     }
-    case "MinKey": return [["jv-l", "MinKey()"]];
-    case "MaxKey": return [["jv-l", "MaxKey()"]];
+    case "MinKey": return [["jv-f", "MinKey"], ["jv-p", "()"]];
+    case "MaxKey": return [["jv-f", "MaxKey"], ["jv-p", "()"]];
     case "Code": return call("Code", str(String(m.$code)));
     default: break;
   }

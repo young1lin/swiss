@@ -37,12 +37,14 @@ import {
   filterInput, form, formActions, formCap, formFold, groupNode, heldDot, hint, iconBtn, iconNode, initSelects, redacted,
   initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, objTab, openFieldSheet, pageFoot, pager,
   pair, pane, paneHead, popupMenu, relTime, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow,
-  spinner, sw, tag, timeline, timelineMeta, timelineToggle, toTop, tokenCodeNode, valueBlock,
+  spinner, sw, tag, timeline, timelineMeta, timelineToggle, toTop, tokenCodeNode, valueBlock, codeSchemeFor,
 } from "./ui/index.js";
 import type { DotState, TimelineItem } from "./ui/index.js";
 
 type Lang = "en" | "zh-CN";
-interface View { theme: "light" | "dark"; lang: Lang; width: 1440 | 960 }
+/* code: the code colour scheme (SPEC §panel.code) - ?code= wins over the panel's own preference,
+   and the gallery never writes it back. */
+interface View { theme: "light" | "dark"; lang: Lang; width: 1440 | 960; code: string }
 
 const MIN = 60 * 1000;
 
@@ -58,7 +60,14 @@ function readView(): View {
     theme: theme === "dark" || theme === "light" ? theme : document.documentElement.dataset.theme === "dark" ? "dark" : "light",
     lang: lang === "zh" ? "zh-CN" : lang === "en" ? "en" : langPref(),
     width: q.get("w") === "960" ? 960 : 1440,
+    code: q.get("code") || storedCode(),
   };
+}
+
+/** The panel's own code scheme preference (util.ts CODE_KEY, spelled out: the gallery imports
+ *  nothing but the library, h and i18n). */
+function storedCode(): string {
+  try { return localStorage.getItem("swiss_code") || "auto"; } catch (e) { return "auto"; }
 }
 
 function writeView(v: View): void {
@@ -69,11 +78,12 @@ function writeView(v: View): void {
   history.replaceState(null, "", location.pathname + "?" + q.toString() + location.hash);
 }
 
-let view: View = { theme: "light", lang: "en", width: 1440 };
+let view: View = { theme: "light", lang: "en", width: 1440, code: "auto" };
 
 async function applyView(v: View): Promise<void> {
   view = v;
   document.documentElement.setAttribute("data-theme", v.theme);
+  document.documentElement.setAttribute("data-code", codeSchemeFor(v.code, v.theme));
   if (v.lang === "zh-CN") {
     const table: { default: Record<string, string> } = await import("./locales/zh.js");
     install("zh-CN", table.default);
@@ -168,11 +178,25 @@ function sampleCalls(now: number): TimelineItem[] {
    tokenCodeNode draws on the Data page's document cards, spelled out here because the gallery
    imports the library and nothing else. */
 const SAMPLE_DOC_TOKENS: [string, string][] = [
-  ["jv-p", "{"], ["", "\n  "], ["jv-k", "_id"], ["jv-p", ": "], ["jv-l", "ObjectId"], ["jv-p", "("],
+  ["jv-p", "{"], ["", "\n  "], ["jv-k", "_id"], ["jv-p", ": "], ["jv-f", "ObjectId"], ["jv-p", "("],
   ["jv-s", "\"65f0c0ffee00000000000001\""], ["jv-p", ")"], ["jv-p", ","], ["", "\n  "],
   ["jv-k", "qty"], ["jv-p", ": "], ["jv-n", "5"], ["jv-p", ","], ["", "\n  "],
-  ["jv-k", "at"], ["jv-p", ": "], ["jv-l", "ISODate"], ["jv-p", "("], ["jv-s", "\"2024-01-01T00:00:00.000Z\""], ["jv-p", ")"],
+  ["jv-k", "at"], ["jv-p", ": "], ["jv-f", "ISODate"], ["jv-p", "("], ["jv-s", "\"2024-01-01T00:00:00.000Z\""], ["jv-p", ")"],
   ["", "\n"], ["jv-p", "}"],
+];
+
+/* The SQL highlighter's classes (data-filters.ts dbSqlTokens), spelled out for the same reason:
+   a DDL as SHOW CREATE TABLE prints it, numbered the way the Data page's DDL pane is. */
+const SAMPLE_SQL_TOKENS: [string, string][] = [
+  ["jv-c", "-- users, as SHOW CREATE TABLE prints it"], ["", "\n"],
+  ["jv-w", "CREATE"], ["", " "], ["jv-w", "TABLE"], ["", " `users` (\n  "],
+  ["jv-k", "`id`"], ["", " "], ["jv-w", "int"], ["", " "], ["jv-w", "NOT"], ["", " "], ["jv-l", "NULL"], ["", " "], ["jv-w", "AUTO_INCREMENT"], ["", ",\n  "],
+  ["jv-k", "`name`"], ["", " "], ["jv-w", "varchar"], ["", "("], ["jv-n", "64"], ["", ") "], ["jv-w", "DEFAULT"], ["", " "], ["jv-l", "NULL"], ["", ",\n  "],
+  ["jv-k", "`balance`"], ["", " "], ["jv-w", "decimal"], ["", "("], ["jv-n", "12"], ["", ","], ["jv-n", "2"], ["", ") "],
+  ["jv-w", "DEFAULT"], ["", " "], ["jv-s", "'0.00'"], ["", ",\n  "],
+  ["jv-w", "PRIMARY"], ["", " "], ["jv-w", "KEY"], ["", " ("], ["jv-k", "`id`"], ["", ")\n);\n"],
+  ["jv-w", "SELECT"], ["", " "], ["jv-f", "count"], ["", "(*) "], ["jv-w", "FROM"], ["", " `users` "], ["jv-w", "WHERE"], ["", " `users`."],
+  ["jv-k", "`balance`"], ["", " > "], ["jv-n", "0"], ["", ";"],
 ];
 
 const SAMPLE_JSON = {
@@ -319,6 +343,7 @@ function catalogue(now: number): HTMLElement {
       [tr("gallery.st.codeBlock"), valueBlock({ label: tr("gallery.d.result"), notes: [tr("gallery.d.decodedNote")], tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
         jsonCodeNode(decodeStrings(SAMPLE_JSON), false, { oneLine: true }).node)],
       [tr("gallery.st.codeTokens"), valueBlock({ label: tr("gallery.d.document") }, tokenCodeNode(SAMPLE_DOC_TOKENS, { all: true }).node)],
+      [tr("gallery.st.codeLined"), tokenCodeNode(SAMPLE_SQL_TOKENS, { all: true, lined: true }).node],
     ]),
     entry(["form", "field", "checkField", "pair", "formActions", "formCap", "formFold", "hint"], tk("gallery.c.forms"), tk("gallery.c.formsNote"), [], card(form(
       pair(

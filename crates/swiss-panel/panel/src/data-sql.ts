@@ -197,7 +197,7 @@ function renderDbBar(): void {
     try {
       const stmts = dbPendingSql();
       body = dbHighlightNodes("-- " + trn(stmts.length, "dataSql.statementsPreviewHead.one", "dataSql.statementsPreviewHead.other") +
-        "\n" + stmts.join("\n"));
+        "\n" + stmts.join("\n"), { lined: true });
     } catch (e) {
       body = errText(e);
     }

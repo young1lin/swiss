@@ -110,13 +110,27 @@
       --green: #16a34a;
       --red: #dc2626;
       --amber: #d97706;
-      /* JSON syntax (SPEC §mcp.calls) - the one sanctioned exception to rule 2: in a code block the
-         hue says which token a character belongs to, which is information. Muted, not neon. */
-      --syn-key: #0550ae;
-      --syn-str: #116329;
-      --syn-num: #953800;
-      --syn-lit: #8250df;
-      --syn-punct: #6e7781;
+      /* Code (SPEC §panel.code) - the one sanctioned exception to rule 2: in a code block the hue
+         says which token a character belongs to, which is information. A code block is an editor
+         surface in a colour scheme of its own (data-code, resolved like data-theme before the
+         first paint): these are IntelliJ Light's, the scheme the light theme falls back to; the
+         blocks after the dark theme are the others. --syn-key is a field: a JSON or document key,
+         a column. */
+      --code-font: "JetBrains Mono", "SF Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+      --code-bg: #ffffff;
+      --code-fg: #080808;
+      --code-edge: rgba(0, 0, 0, 0.1);
+      --code-gutter: #aeb3c2;
+      --code-sel: #a6d2ff;
+      --code-caret: #000000;
+      --syn-kw: #0033b3;
+      --syn-str: #067d17;
+      --syn-num: #1750eb;
+      --syn-com: #8c8c8c;
+      --syn-fn: #00627a;
+      --syn-key: #871094;
+      --syn-lit: #0033b3;
+      --syn-punct: #080808;
       --shadow-card: 0 0 0 1px var(--sep); /* the hairline ring is the card's whole edge */
       --shadow-btn: none;
       --shadow-sheet: 0 24px 60px rgba(20, 24, 36, 0.24), 0 0 0 1px var(--sep);
@@ -157,17 +171,80 @@
       --green: #4ade80;
       --red: #f87171;
       --amber: #fbbf24;
-      --syn-key: #79c0ff;
-      --syn-str: #a5d6ff;
-      --syn-num: #ffa657;
-      --syn-lit: #d2a8ff;
-      --syn-punct: #8b949e;
       --shadow-card: 0 0 0 1px var(--sep), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       --shadow-btn: none;
       --shadow-sheet: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--sep);
       --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--sep);
       --term-bg: #0b0c0e;   /* one step below --bg, so the stage still reads as its own surface */
       --term-bar: #141518;
+    }
+    /* Code colour schemes (SPEC §panel.code). data-code always holds a concrete scheme: "auto"
+       resolves to IntelliJ Light or IntelliJ Dark with the theme, "github" to its light or dark
+       half - so each block is written once and a scheme can differ from the theme around it
+       (a Darcula block on the light panel is a choice, as in the IDE). */
+    :root[data-code="darcula"] {
+      --code-bg: #2b2b2b;
+      --code-fg: #a9b7c6;
+      --code-edge: rgba(255, 255, 255, 0.06);
+      --code-gutter: #606366;
+      --code-sel: #214283;
+      --code-caret: #bbbbbb;
+      --syn-kw: #cc7832;
+      --syn-str: #6a8759;
+      --syn-num: #6897bb;
+      --syn-com: #808080;
+      --syn-fn: #ffc66d;
+      --syn-key: #9876aa;
+      --syn-lit: #cc7832;
+      --syn-punct: #a9b7c6;
+    }
+    :root[data-code="intellij-dark"] {
+      --code-bg: #1e1f22;
+      --code-fg: #bcbec4;
+      --code-edge: rgba(255, 255, 255, 0.06);
+      --code-gutter: #4b5059;
+      --code-sel: #214283;
+      --code-caret: #ced0d6;
+      --syn-kw: #cf8e6d;
+      --syn-str: #6aab73;
+      --syn-num: #2aacb8;
+      --syn-com: #7a7e85;
+      --syn-fn: #56a8f5;
+      --syn-key: #c77dbb;
+      --syn-lit: #cf8e6d;
+      --syn-punct: #bcbec4;
+    }
+    :root[data-code="github-light"] {
+      --code-bg: #f6f8fa;
+      --code-fg: #1f2328;
+      --code-edge: rgba(0, 0, 0, 0.06);
+      --code-gutter: #8c959f;
+      --code-sel: rgba(84, 174, 255, 0.4);
+      --code-caret: #1f2328;
+      --syn-kw: #cf222e;
+      --syn-str: #0a3069;
+      --syn-num: #0550ae;
+      --syn-com: #6e7781;
+      --syn-fn: #8250df;
+      --syn-key: #0550ae;
+      --syn-lit: #0550ae;
+      --syn-punct: #1f2328;
+    }
+    :root[data-code="github-dark"] {
+      --code-bg: #161b22;
+      --code-fg: #e6edf3;
+      --code-edge: rgba(255, 255, 255, 0.06);
+      --code-gutter: #6e7681;
+      --code-sel: rgba(56, 139, 253, 0.4);
+      --code-caret: #e6edf3;
+      --syn-kw: #ff7b72;
+      --syn-str: #a5d6ff;
+      --syn-num: #79c0ff;
+      --syn-com: #8b949e;
+      --syn-fn: #d2a8ff;
+      --syn-key: #79c0ff;
+      --syn-lit: #79c0ff;
+      --syn-punct: #e6edf3;
     }
 
     * { box-sizing: border-box; }
