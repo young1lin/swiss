@@ -17,7 +17,7 @@
 //! Mapping MCP paths to local forwarded ports — port of `tunnels/mcpmatch.ts`.
 //!
 //! THE ROUTER SEAM: `mcp_loopback_port` is what connects the MCP world to the tunnel world. An
-//! MCP (mysql/redis/pg) whose connection definition points at a loopback host:port is presumed
+//! MCP (mysql/redis/pg/mongo) whose connection definition points at a loopback host:port is presumed
 //! to be served by the forwarding rule that binds that local port. It powers the rule editor's
 //! pre-checked "Serves MCPs" suggestion (`GET /api/tunnels/suggest/:port`) and nothing else —
 //! display and guard rail only, never automation. The registry-backed window itself lives in
@@ -41,6 +41,21 @@ fn is_loopback(host: &str) -> bool {
 /// host/port out of a Postgres connection string, without a URL parser's strictness — the
 /// authority sits between the last '@' and the next '/' or '?'. Hand-rolled (ADR-007).
 fn pg_host_port(url: &str) -> Option<(String, u16)> {
+    url_host_port(url, 5432)
+}
+
+/// The same reading for a MongoDB URL, whose authority may list several hosts. Only a
+/// single-host URL names one local port; a seed list is a replica set, which a single
+/// forwarded port does not serve, and an SRV name has no port at all.
+fn mongo_host_port(url: &str) -> Option<(String, u16)> {
+    if !url.starts_with("mongodb://") {
+        return None;
+    }
+    let (host, port) = url_host_port(url, 27017)?;
+    (!host.contains(',')).then_some((host, port))
+}
+
+fn url_host_port(url: &str, default_port: u16) -> Option<(String, u16)> {
     // postgresql://user:pass@host:port/db?opts
     let scheme = url.find("://")?;
     let rest = &url[scheme + 3..];
@@ -77,7 +92,7 @@ fn pg_host_port(url: &str) -> Option<(String, u16)> {
         .strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host_part);
-    Some((host.to_string(), 5432))
+    Some((host.to_string(), default_port))
 }
 
 /// The local port an MCP connects to, when it connects to loopback — otherwise None.
@@ -108,12 +123,12 @@ pub fn mcp_loopback_port(def: &ServerDef) -> Option<u16> {
         }
         return Some(fallback);
     }
-    if type_ == "pg" {
+    if type_ == "pg" || type_ == "mongo" {
         let url = d.get_str("url")?;
         if url.is_empty() {
             return None;
         }
-        let (host, port) = pg_host_port(url)?;
+        let (host, port) = if type_ == "pg" { pg_host_port(url)? } else { mongo_host_port(url)? };
         if !is_loopback(&host) {
             return None;
         }
@@ -225,6 +240,16 @@ mod tests {
             pg_host_port("postgresql://u@[::1]/db").map(|(h, _)| h),
             Some("::1".into())
         );
+    }
+
+    #[test]
+    fn mongo_urls_match_only_a_single_loopback_host() {
+        let port = |url: &str| mcp_loopback_port(&def("mongo", json!({ "url": url })));
+        assert_eq!(port("mongodb://u:p@127.0.0.1:27018/app?authSource=admin"), Some(27018));
+        assert_eq!(port("mongodb://localhost/app"), Some(27017), "no port -> 27017");
+        assert_eq!(port("mongodb://localhost:27017,localhost:27018/?replicaSet=rs0"), None, "a seed list");
+        assert_eq!(port("mongodb+srv://cluster0.example.net/app"), None, "an SRV name has no port");
+        assert_eq!(port("mongodb://db.example.com:27017/app"), None);
     }
 
     #[test]

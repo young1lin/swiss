@@ -28,6 +28,7 @@ pub mod local_only;
 pub mod managed;
 pub mod mask;
 pub mod mem;
+pub mod mongobrowser;
 pub mod pathenv;
 pub mod proc_pids;
 pub mod reply;

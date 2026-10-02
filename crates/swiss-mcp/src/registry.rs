@@ -909,6 +909,7 @@ impl RegistryCatalog {
         match flavor {
             BrowserFlavor::Db(db) => (db.dialect().as_str().to_string(), db.label()),
             BrowserFlavor::Redis(rb) => ("redis".to_string(), rb.label()),
+            BrowserFlavor::Mongo(mb) => ("mongo".to_string(), mb.label()),
             // Nothing to browse: dialect "none", no label (the caller falls back to the
             // entry's name) — kept in the list so lease() can NAME the adapter type in its
             // refusal, exactly as the old resolver's 404s did.

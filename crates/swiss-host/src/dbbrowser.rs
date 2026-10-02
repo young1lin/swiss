@@ -51,6 +51,8 @@ use serde_json::{json, Map, Value};
 pub enum BrowserFlavor {
     Db(Arc<dyn DbBrowser>),
     Redis(Arc<dyn RedisBrowser>),
+    /// The document flavour (SPEC §data.mongo): collections and documents, not tables and rows.
+    Mongo(Arc<dyn crate::mongobrowser::MongoBrowser>),
     /// Registered but nothing to browse (echo / proc / http / rest). Present so the lookup
     /// errors can name the adapter type exactly as Node's did; GET /api/db skips these rows.
     None,

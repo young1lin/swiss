@@ -461,6 +461,37 @@ async fn stores_and_returns_a_per_mcp_proxy_on_http_and_rest_mcps() {
 }
 
 #[tokio::test]
+async fn a_mongo_def_keeps_its_connection_fields_and_needs_a_url() {
+    // SPEC §mcp.db: the URL is the whole address, so a mongo def without one is refused rather
+    // than left to point at whatever a default would guess.
+    let h = setup();
+    let (status, body) = h.post("/api/mcps", json!({ "name": "m0", "type": "mongo" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], json!("url is required for a mongo MCP"));
+
+    let (status, _) = h
+        .post(
+            "/api/mcps",
+            json!({
+                "name": "m1", "type": "mongo",
+                "url": "mongodb://app:${MONGO_PW}@127.0.0.1:27017/?authSource=admin",
+                "database": "shop", "maxRows": 50, "allowDestructive": "true",
+                "host": "dropped", "allowEval": true,
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (_, det) = h.get("/api/mcps/m1/details").await;
+    let config = &det["config"];
+    assert_eq!(config["type"], json!("mongo"));
+    assert_eq!(config["database"], json!("shop"));
+    assert_eq!(config["maxRows"], json!(50));
+    // A form's "true" lands as the boolean, and fields the type does not read are dropped.
+    assert_eq!(config["allowDestructive"], json!(true));
+    assert!(config.get("host").is_none() && config.get("allowEval").is_none(), "{config}");
+}
+
+#[tokio::test]
 async fn rejects_a_proxy_that_is_not_an_http_url() {
     let h = setup();
     let (status, body) = h
