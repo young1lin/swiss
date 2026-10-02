@@ -6,6 +6,8 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-03
+
 ### Added
 
 - Code colour schemes: every code block (the JSON view, Mongo document cards, the SQL console,
