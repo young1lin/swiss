@@ -152,6 +152,19 @@ describe("the sidebar (SPEC §data.mongo-panel)", () => {
     expect(sent.slice(before).filter((s) => s.url.includes("/collections")), "no re-fetch for a name filter").toEqual([]);
   });
 
+  it("a failed listing says so instead of an empty database, and a failed refresh keeps the rows", async () => {
+    await mountView();
+    routes["GET /api/db/m/mongo/collections?db=shop"] = () => ({ status: 500, json: { error: "not authorized" } });
+    await mongo.mongoLoadCollections(true);
+    await settle();
+    expect(all("#dbTables [data-mcoll]").map((b) => b.dataset.mcoll), "a quiet refresh keeps what it had").toEqual(["orders", "open_orders"]);
+    await mongo.mongoLoadCollections(false);
+    await settle();
+    expect(all("#dbTables [data-mcoll]")).toEqual([]);
+    expect($("#dbTables")!.textContent).toContain(tr("dataMongo.listFailed"));
+    expect($("#dbTables")!.textContent).not.toContain(tr("dataMongo.emptyDb"));
+  });
+
   it("a mongo connection's strip falls back to an empty collection tab, and its console says Command", async () => {
     await mountView();
     expect(dbTab().kind).toBe("coll");
@@ -186,6 +199,20 @@ describe("a collection tab (SPEC §data.mongo-panel)", () => {
     });
     // The count follows the same filter, so the status line's total is the filter's total.
     expect(lastTo("/mongo/count")!.body).toMatchObject({ filter: { qty: { $gt: 1 } } });
+  });
+
+  it("with Options open on a later page, a new filter's Find starts again from the first page", async () => {
+    await openOrders();
+    click($("[data-mopts]"));
+    type($("[data-mq=skip]") as HTMLInputElement, "40");
+    click($("[data-mfind]"));
+    await settle();
+    expect(lastTo("/mongo/find")!.body, "a skip the operator typed is honoured").toMatchObject({ skip: 40 });
+    expect(($("[data-mq=skip]") as HTMLInputElement).value).toBe("40");
+    type($("[data-mq=filter]") as HTMLInputElement, "{ qty: 1 }");
+    click($("[data-mfind]"));
+    await settle();
+    expect(lastTo("/mongo/find")!.body).toMatchObject({ filter: { qty: 1 }, skip: 0 });
   });
 
   it("a filter that does not parse is said in the bar and never sent", async () => {
@@ -408,6 +435,23 @@ describe("import parsing (SPEC §data.mongo)", () => {
   it("batches under the per-request document cap", () => {
     const docs = Array.from({ length: 2500 }, (_, i) => ({ i }));
     expect(mongo.mongoImportBatches(docs).map((b) => b.length)).toEqual([1000, 1000, 500]);
+  });
+
+  it("weighs a batch in UTF-8 bytes, as sent - a CJK character is three", () => {
+    // 600 000 code units together - far under the cap by length - but 900 KB of UTF-8 each:
+    // two requests, never one 1.8 MB body.
+    const docs = [{ s: "订".repeat(300000) }, { s: "单".repeat(300000) }];
+    expect(mongo.mongoImportBatches(docs).map((b) => b.length)).toEqual([1, 1]);
+    expect(mongo.mongoImportTooBig(docs)).toBe(-1);
+    expect(mongo.mongoImportTooBig([{ a: 1 }, { s: "订".repeat(700000) }])).toBe(1);
+  });
+
+  it("names the download by the exact filename* the route sends", () => {
+    const disp = "attachment; filename=\"app.__.json\"; filename*=UTF-8''app.%E8%AE%A2%E5%8D%95.json";
+    expect(mongo.mongoDownloadName(disp, "x.json")).toBe("app.订单.json");
+    expect(mongo.mongoDownloadName("attachment; filename=\"app.users.json\"", "x.json")).toBe("app.users.json");
+    expect(mongo.mongoDownloadName("attachment; filename=\"a.json\"; filename*=UTF-8''%E8%ZZ", "x.json")).toBe("a.json");
+    expect(mongo.mongoDownloadName("", "x.json")).toBe("x.json");
   });
 });
 

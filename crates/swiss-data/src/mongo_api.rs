@@ -449,6 +449,27 @@ async fn write_export(
     let _ = out.flush().await;
 }
 
+/// The export's Content-Disposition (RFC 6266). A collection name may hold quotes, control
+/// characters or any Unicode, none of which survives inside `filename="…"`: that carries an
+/// ASCII stand-in, and `filename*` (RFC 5987) the exact name, percent-encoded UTF-8.
+fn attachment(file: &str) -> String {
+    use std::fmt::Write as _;
+    let plain = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_');
+    let ascii: String = file
+        .chars()
+        .map(|c| if c.is_ascii() && plain(c as u8) { c } else { '_' })
+        .collect();
+    let mut exact = String::with_capacity(file.len());
+    for b in file.bytes() {
+        if plain(b) {
+            exact.push(b as char);
+        } else {
+            let _ = write!(exact, "%{b:02X}");
+        }
+    }
+    format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{exact}")
+}
+
 /// GET /mongo/export: the documents a find describes — the documents view's filter, sort and
 /// projection — streamed as JSON, NDJSON or CSV, `ejson=canonical` for a lossless dump (CSV is
 /// always plain text). Without a limit the export runs to MONGO_EXPORT_CAP, under the longest
@@ -491,7 +512,7 @@ async fn export(catalog: &CatalogRegistry, name: &str, q: &HashMap<String, Strin
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, format.content_type().to_string()),
-            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{file}\"")),
+            (header::CONTENT_DISPOSITION, attachment(&file)),
             (header::HeaderName::from_static("x-export-rows"), dump.rows.to_string()),
             (
                 header::HeaderName::from_static("x-export-capped"),
@@ -951,6 +972,16 @@ mod tests {
         assert!(seen_calls[4].starts_with("collection app Rename"), "{}", seen_calls[4]);
     }
 
+    #[test]
+    fn an_export_name_survives_quotes_and_unicode_in_the_collection() {
+        let h = attachment("app.say \"hi\"\u{1}订单.json");
+        assert_eq!(
+            h,
+            "attachment; filename=\"app.say__hi____.json\"; filename*=UTF-8''app.say%20%22hi%22%01%E8%AE%A2%E5%8D%95.json"
+        );
+        assert!(axum::http::HeaderValue::from_str(&h).is_ok(), "a valid header value: {h}");
+    }
+
     #[tokio::test]
     async fn an_export_streams_json_ndjson_and_csv() {
         let (router, seen) = app(false);
@@ -958,7 +989,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(headers["x-export-rows"], "2");
         assert_eq!(headers["x-export-format"], "json");
-        assert_eq!(headers["content-disposition"], "attachment; filename=\"app.users.json\"");
+        assert_eq!(
+            headers["content-disposition"],
+            "attachment; filename=\"app.users.json\"; filename*=UTF-8''app.users.json"
+        );
         assert_eq!(body.expect("a JSON array").as_array().map(Vec::len), Some(2));
         assert_eq!(seen.lock().unwrap().export_relaxed, Some(false));
 

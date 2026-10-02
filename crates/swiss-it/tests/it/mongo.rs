@@ -183,7 +183,7 @@ async fn several_edits_commit_in_one_transaction_or_not_at_all() {
 
 #[tokio::test]
 async fn the_guard_refuses_server_commands_and_destructive_ones_without_the_flag() {
-    let (f, _e, b) = browser("guard", false).await;
+    let (f, e, b) = browser("guard", false).await;
     let err = b.run_command(&f.name, &obj(json!({ "shutdown": 1 }))).await.expect_err("shutdown is refused");
     assert!(err.contains("stops the MongoDB server"), "{err}");
     let err = b.run_command(&f.name, &obj(json!({ "drop": "orders" }))).await.expect_err("drop needs the flag");
@@ -196,6 +196,20 @@ async fn the_guard_refuses_server_commands_and_destructive_ones_without_the_flag
     let pong = b.run_command(&f.name, &obj(json!({ "ping": 1 }))).await.expect("ping runs");
     assert_eq!(pong["reply"]["ok"], json!({ "$numberDouble": "1.0" }), "{pong}");
     assert!(pong["reply"].get("$clusterTime").is_none(), "the gossip fields are stripped: {pong}");
+    // $out replaces its target: refused without the flag on every path - the tool, the Data
+    // view's pipeline, and an aggregate sent as a raw command.
+    let out = json!([ { "$match": {} }, { "$out": "customers" } ]);
+    let err = e
+        .call("mongo_aggregate", &json!({ "db": f.name, "collection": "orders", "pipeline": out }))
+        .await
+        .expect_err("the tool refuses $out");
+    assert!(err.contains("allowDestructive"), "{err}");
+    let agg = mongo_aggregate_of(&json!({ "db": f.name, "collection": "orders", "pipeline": out })).expect("agg");
+    assert!(b.aggregate(&agg).await.expect_err("the Data view refuses $out").contains("allowDestructive"));
+    let raw = obj(json!({ "aggregate": "orders", "pipeline": out, "cursor": {} }));
+    assert!(b.run_command(&f.name, &raw).await.expect_err("the console refuses $out").contains("allowDestructive"));
+    let n = b.count(&mongo_count_of(&json!({ "db": f.name, "collection": "customers" })).expect("q")).await.expect("count");
+    assert_eq!(n["total"], json!(2), "customers was never replaced: {n}");
     // The collection still exists: the refusal happened before the server saw the command.
     let colls = b.list_collections(&f.name).await.expect("collections");
     assert!(colls["collections"].as_array().expect("list").iter().any(|c| c["name"] == json!("orders")));

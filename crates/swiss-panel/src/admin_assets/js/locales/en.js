@@ -478,6 +478,7 @@ const en                         = {
   "dataMongo.importProgress": "Inserting batch {i} of {n}…",
   "dataMongo.importRead": "Read {name}",
   "dataMongo.importReadFailed": "Could not read the file",
+  "dataMongo.importTooBig": "Document {n} is larger than one request may carry ({max}); nothing was imported. Split it, or import it with mongoimport.",
   "dataMongo.importShape": "Expected an array of documents",
   "dataMongo.inMemorySort": "In-memory sort",
   "dataMongo.indexCreated": "Index created",

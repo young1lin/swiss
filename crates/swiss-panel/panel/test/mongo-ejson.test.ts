@@ -171,6 +171,15 @@ describe("the round trip", () => {
     // Field order is part of a BSON document.
     expect(sameValue({ a: 1, b: 2 }, { b: 2, a: 1 })).toBe(false);
   });
+
+  it("keeps a field named __proto__ as a field, through parse, canon and withoutId", () => {
+    const back = mongoParse("{ _id: 1, __proto__: { x: 1 }, n: 2 }") as Record<string, unknown>;
+    expect(Object.keys(back)).toEqual(["_id", "__proto__", "n"]);
+    expect(Object.getPrototypeOf(back)).toBe(Object.prototype);
+    expect(JSON.stringify(canon(back))).toBe('{"_id":{"$numberInt":"1"},"__proto__":{"x":{"$numberInt":"1"}},"n":{"$numberInt":"2"}}');
+    expect(Object.keys(withoutId(back as never))).toEqual(["__proto__", "n"]);
+    expect(valueAt(back, "__proto__.x")).toBe(1);
+  });
 });
 
 describe("reading values", () => {

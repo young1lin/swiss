@@ -217,6 +217,44 @@ async fn conflict_of(
     }
 }
 
+/// How many more times a commit whose outcome the server never confirmed is sent. The driver
+/// already retries a retryable commit once on its own; this covers a primary still electing.
+const COMMIT_UNKNOWN_RETRIES: usize = 2;
+
+/// Commit, and say what happened when it fails (SPEC §data.mongo-edits). A failure labelled
+/// UnknownTransactionCommitResult — the reply was lost to a network drop or a stepping-down
+/// primary — may have committed. commitTransaction is safe to repeat, so it is sent again;
+/// still unknown, the reply says the edits may be written, never "nothing was written": that
+/// would invite a resubmit that duplicates every insert in the batch.
+async fn commit_or_say(session: &mut ClientSession) -> Result<(), EditError> {
+    let mut retries = 0;
+    loop {
+        match session.commit_transaction().await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                let unknown = e.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT);
+                if unknown && retries < COMMIT_UNKNOWN_RETRIES {
+                    retries += 1;
+                    continue;
+                }
+                return Err(EditError::Bad(commit_failure(&err_text(&e), unknown)));
+            }
+        }
+    }
+}
+
+/// A commit error without the unknown-result label is definite: the server aborted the
+/// transaction, so nothing was written.
+fn commit_failure(err: &str, unknown: bool) -> String {
+    if unknown {
+        format!(
+            "the commit's outcome is unknown: {err} — the edits may have been written. Reload and check before resubmitting."
+        )
+    } else {
+        format!("the commit failed: {err} — nothing was written.")
+    }
+}
+
 fn kept(applied: usize, facts: &ServerFacts) -> String {
     let why = format!("a {} has no multi-document transactions", facts.topology);
     match applied {
@@ -404,9 +442,7 @@ impl MongoBrowser for MongoDataBrowser {
                     }
                 }
             }
-            session.commit_transaction().await.map_err(|e| {
-                EditError::Bad(format!("the commit failed: {} — nothing was written.", err_text(&e)))
-            })?;
+            commit_or_say(&mut session).await?;
         } else {
             for (i, p) in prepared.iter().enumerate() {
                 match run_one(&coll, p, None).await {
@@ -610,6 +646,16 @@ mod tests {
         assert_eq!(default_index_name(&map(json!({ "a": 1, "b": -1 }))), "a_1_b_-1");
         assert_eq!(default_index_name(&map(json!({ "body": "text" }))), "body_text");
         assert_eq!(default_index_name(&map(json!({ "n": { "$numberInt": "-1" } }))), "n_-1");
+    }
+
+    #[test]
+    fn a_commit_whose_outcome_is_unknown_never_claims_nothing_was_written() {
+        let lost = commit_failure("connection reset", true);
+        assert!(lost.contains("outcome is unknown") && lost.contains("may have been written"), "{lost}");
+        assert!(!lost.contains("nothing was written"), "{lost}");
+        let aborted = commit_failure("WriteConflict", false);
+        assert!(aborted.ends_with("nothing was written."), "{aborted}");
+        assert_eq!(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT, "UnknownTransactionCommitResult");
     }
 
     #[test]

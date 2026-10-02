@@ -1881,17 +1881,23 @@ collection tab, and its console is a command console (§data.mongo-panel).
   pipeline) and `deleteMany`. More than one edit runs in **one transaction** where the topology
   has them (a replica set at wire 7+, a sharded cluster at wire 8+), else in order — and a
   failure then says exactly which edits stay applied ("Edit 1 was applied and stays applied…")
-  instead of pretending to roll back.
+  instead of pretending to roll back. A commit whose reply was lost (labelled
+  `UnknownTransactionCommitResult`) is sent again, at most twice more; still unknown, the reply
+  says the edits may have been written — never "nothing was written", which invites a resubmit
+  that duplicates the inserts.
 - **Bulk.** Update / Delete matching documents act on the query bar's filter; the confirm quotes
   the count first, and an empty filter is called out as the whole collection.
 - **Import** reads a JSON array, one document, or NDJSON, in Extended JSON or the shell's syntax;
-  documents go in batches under 1000 per request and 1.5 MB per body, inserted unordered, so a
-  duplicate key rejects one document, not the batch; the first 20 errors are named with their
-  index and the server's `errInfo`. At most 10 000 documents per import.
+  documents go in batches under 1000 per request and 1.5 MB per body (counted in UTF-8 bytes, as
+  sent), inserted unordered, so a duplicate key rejects one document, not the batch; the first 20
+  errors are named with their index and the server's `errInfo`. At most 10 000 documents per
+  import.
 - **Export** streams the query bar's find (filter, projection, sort) as JSON (an array), NDJSON
   or CSV — relaxed Extended JSON by default, canonical on request — capped at 100 000
   documents (`X-Export-Capped` says when the cap cut it). CSV columns are the flattened paths of
-  the first 1000 documents unless `fields` names them.
+  the first 1000 documents unless `fields` names them. The file is `<db>.<collection>.<ext>`:
+  `filename` carries an ASCII stand-in (anything else becomes `_`), `filename*` (RFC 5987) the
+  exact name, which the panel prefers.
 
 ### §data.mongo-pipeline — Aggregation and explain
 

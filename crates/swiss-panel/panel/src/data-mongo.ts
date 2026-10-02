@@ -73,8 +73,10 @@ import {
 export const MONGO_PAGE_SIZES = [10, 20, 50, 100, 200, 500];
 /** A document longer than this many printed lines opens folded to them, with Show all. */
 const DOC_LINES = 40;
-/** JSON one import request carries at most (the gateway's body limit is 2 MiB). */
+/** UTF-8 bytes of JSON one import request carries at most (the gateway's body limit is 2 MiB). */
 const IMPORT_REQUEST_BYTES = 1500000;
+/** One document's UTF-8 JSON past this cannot ride any request, with the envelope, under 2 MiB. */
+const IMPORT_DOC_BYTES = 2000000;
 /** Documents one import request carries at most. */
 const IMPORT_REQUEST_DOCS = 1000;
 /** Field chips the query bar offers under the filter. */
@@ -178,7 +180,17 @@ export async function mongoLoadCollections(quiet?: boolean): Promise<void> {
   const j = await mongoGet<ApiMongoCollsResponse>("collections?db=" + encodeURIComponent(db));
   if (!mongoCollReq.accepts(token) || dbConn() !== d) return;
   m.error = !j;
-  const next = j ? j.collections : [];
+  if (!j) {
+    // A quiet refresh that failed keeps the catalog it had; a first load that failed leaves
+    // none, so the tree says the listing failed instead of drawing an empty database.
+    if (quiet && m.colls && m.db === db) return;
+    m.colls = null;
+    m.db = db;
+    renderDbTables();
+    renderDbToolbar();
+    return;
+  }
+  const next = j.collections;
   if (quiet && m.colls && JSON.stringify(next) === JSON.stringify(m.colls)) return;
   m.colls = next;
   m.db = db;
@@ -535,7 +547,7 @@ export function mongoFilterNodes(t: DbCollTab): HChild[] {
       h("span", { class: "db-filter-hint" }, tr("dataMongo.sort")),
       input("sort", t.qSort, "{ createdAt: -1 }", tr("dataMongo.sortTitle"), true),
       h("span", { class: "db-filter-hint" }, tr("dataMongo.skip")),
-      h("input", { type: "number", min: "0", value: String(t.qSkip), style: "width:6em", data: { mq: "skip" }, title: tr("dataMongo.skipTitle") })));
+      h("input", { type: "number", min: "0", value: String(t.qSkip), style: "width:6em", data: { mq: "skip", shown: String(t.qSkip) }, title: tr("dataMongo.skipTitle") })));
   }
   if (t.qError) rows.push(hint(t.qError, { bad: true, live: true }));
   const chips = mongoPathChips(t);
@@ -744,7 +756,15 @@ export function mongoClick(t: Element, ev: MouseEvent): boolean {
     renderDbFilters(); renderDbGrid();
     return true;
   }
-  if (t.closest("[data-mfind]")) { tab.qSkip = 0; mongoReadInputs(tab); mongoRunQuery(tab); return true; }
+  if (t.closest("[data-mfind]")) {
+    // A new query starts from the first page - unless the operator typed a skip of their own.
+    // The Options field is drawn holding the current offset (data-shown); untouched, it still does.
+    const skip = document.querySelector<HTMLInputElement>("[data-mq=skip]");
+    mongoReadInputs(tab);
+    if (!skip || skip.value === skip.dataset.shown) tab.qSkip = 0;
+    mongoRunQuery(tab);
+    return true;
+  }
   if (t.closest("[data-mreset]")) {
     tab.qFilter = ""; tab.qProject = ""; tab.qSort = ""; tab.qSkip = 0; tab.qError = null;
     renderDbFilters();
@@ -1130,6 +1150,17 @@ async function mongoDropCollection(t: DbCollTab): Promise<void> {
 
 /* --- export and import ------------------------------------------------------------------------------ */
 
+/** The file name a download's Content-Disposition gives: the exact `filename*` (RFC 5987) the
+ *  route sends beside an ASCII `filename`, else that stand-in, else the fallback. Pure. */
+export function mongoDownloadName(disp: string, fallback: string): string {
+  const exact = /filename\*=UTF-8''([^;]+)/i.exec(disp);
+  if (exact) {
+    try { return decodeURIComponent(exact[1]); } catch { /* malformed: the stand-in below */ }
+  }
+  const plain = /filename="([^"]+)"/.exec(disp);
+  return plain ? plain[1] : fallback;
+}
+
 /** Download what the query describes (filter, sort, projection), the whole match up to the
  *  server's cap, as JSON (relaxed or canonical), NDJSON or CSV. */
 async function mongoExport(t: DbCollTab, format: "json" | "ndjson" | "csv", canonical: boolean): Promise<void> {
@@ -1153,11 +1184,9 @@ async function mongoExport(t: DbCollTab, format: "json" | "ndjson" | "csv", cano
       return;
     }
     const blob = await resp.blob();
-    const disp = resp.headers.get("Content-Disposition") || "";
-    const m = /filename="([^"]+)"/.exec(disp);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = m ? m[1] : (t.coll + "." + format);
+    a.download = mongoDownloadName(resp.headers.get("Content-Disposition") || "", t.coll + "." + format);
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1199,13 +1228,26 @@ export function mongoImportDocs(text: string): Ejson[] {
   return out;
 }
 
+const UTF8 = new TextEncoder();
+
+/** A document's weight on the wire: its JSON in UTF-8 bytes, not UTF-16 code units - a CJK
+ *  character is one code unit but three bytes. Pure. */
+function jsonBytes(d: Ejson): number {
+  return UTF8.encode(JSON.stringify(d)).length;
+}
+
+/** The index of the first document too big for any import request, or -1. Pure. */
+export function mongoImportTooBig(docs: Ejson[]): number {
+  return docs.findIndex((d: Ejson): boolean => jsonBytes(d) > IMPORT_DOC_BYTES);
+}
+
 /** Split documents into requests under the body limit and the per-request cap. Pure. */
 export function mongoImportBatches(docs: Ejson[]): Ejson[][] {
   const out: Ejson[][] = [];
   let cur: Ejson[] = [];
   let bytes = 0;
   docs.forEach((d: Ejson): void => {
-    const n = JSON.stringify(d).length + 1;
+    const n = jsonBytes(d) + 1;
     if (cur.length && (bytes + n > IMPORT_REQUEST_BYTES || cur.length >= IMPORT_REQUEST_DOCS)) { out.push(cur); cur = []; bytes = 0; }
     cur.push(d);
     bytes += n;
@@ -1248,6 +1290,8 @@ function openImport(t: DbCollTab): void {
     let docs: Ejson[];
     try { docs = mongoImportDocs($<HTMLTextAreaElement>("mgImpText").value); } catch (e) { say(e instanceof Error ? e.message : String(e), true); return; }
     if (!docs.length) { say(tr("dataMongo.importEmpty"), true); return; }
+    const big = mongoImportTooBig(docs);
+    if (big >= 0) { say(tr("dataMongo.importTooBig", { n: big + 1, max: mongoBytes(IMPORT_DOC_BYTES) }), true); return; }
     busy = true;
     void (async (): Promise<void> => {
       const batches = mongoImportBatches(docs);

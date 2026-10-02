@@ -54,6 +54,13 @@ function isObj(v         )                             {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+/** `o[k] = v` that keeps every field an own field. `__proto__` is a legal BSON key, but plain
+ *  assignment runs the prototype setter instead, and the field vanishes from keys and JSON. */
+function setField(o                       , k        , v       )       {
+  if (k === "__proto__") Object.defineProperty(o, k, { value: v, enumerable: true, writable: true, configurable: true });
+  else o[k] = v;
+}
+
 function oneKey(m                       )                {
   const keys = Object.keys(m);
   return keys.length ? keys[0] : null;
@@ -549,7 +556,7 @@ class Parser {
       else return this.lx.fail(k.kind === "eof" ? "unclosed {" : "expected a field name but found " + JSON.stringify(k.text), k.at);
       this.advance(false);
       this.expect(":", true);
-      out[key] = this.value();
+      setField(out, key, this.value());
       if (this.tok.kind === "punct" && this.tok.text === ",") { this.advance(false); continue; }
       if (!(this.tok.kind === "punct" && this.tok.text === "}")) {
         this.lx.fail(this.tok.kind === "eof" ? "unclosed {" : "expected \",\" or \"}\" but found " + JSON.stringify(this.tok.text), this.tok.at);
@@ -756,7 +763,7 @@ export function canon(v         )        {
     if (ms !== null) return { $date: { $numberLong: String(ms) } };
     if (wrapperType(v)) return v;
     const out                        = {};
-    Object.keys(v).forEach((k        )       => { out[k] = canon(v[k]); });
+    Object.keys(v).forEach((k        )       => { setField(out, k, canon(v[k])); });
     return out;
   }
   return null;
@@ -786,7 +793,7 @@ export function columnsOf(docs                           )           {
 /** A document without its `_id` - what "Clone" opens the insert sheet with. Pure. */
 export function withoutId(doc                       )                        {
   const out                        = {};
-  Object.keys(doc).forEach((k        )       => { if (k !== "_id") out[k] = doc[k]; });
+  Object.keys(doc).forEach((k        )       => { if (k !== "_id") setField(out, k, doc[k]); });
   return out;
 }
 

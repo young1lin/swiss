@@ -470,6 +470,7 @@ const zh                         = {
   "dataMongo.importProgress": "正在插入第 {i} 批，共 {n} 批…",
   "dataMongo.importRead": "已读取 {name}",
   "dataMongo.importReadFailed": "无法读取该文件",
+  "dataMongo.importTooBig": "第 {n} 个文档超过单次请求的上限（{max}）；未导入任何内容。请拆分它，或用 mongoimport 导入。",
   "dataMongo.importShape": "应为文档数组",
   "dataMongo.inMemorySort": "内存排序",
   "dataMongo.indexCreated": "索引已创建",
