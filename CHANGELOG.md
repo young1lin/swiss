@@ -6,6 +6,22 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `remote.exec` takes `stdin`: up to 1 MiB of text sent to the command's standard input
+  verbatim, then closed - never quoted, so SQL for `psql` or a script for `sh -s` needs no
+  escaping for any shell. `${secret://}` references resolve in it; run records keep only its
+  size. Without it stdin closes at once, so a command that reads stdin ends instead of
+  waiting out its deadline.
+- `swiss remote exec --stdin-file PATH|-` sends a file (or its own stdin) that way; a UTF-8
+  BOM is dropped and a UTF-16 file with a BOM is decoded. A `sh -c` script that a local
+  shell split at its quotes is refused before anything runs, with the two ways out.
+
+### Fixed
+
+- `swiss remote exec` (and `sync`, `push`, `swiss run logs`) no longer drops stretches of a
+  fast command's output: a gap the live window lost is printed from the run record.
+
 ## [0.1.3] - 2026-10-03
 
 ### Added
