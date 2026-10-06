@@ -12,14 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for scripts/deploy-lock.ps1 - the mutual exclusion deploy.ps1 relies on.
+# Tests for scripts/deploy-lock.ps1 - the mutual exclusion deploy.ps1 relies on, and where
+# production's exe lives.
 # Run: pwsh -File scripts/tests/deploy-lock.test.ps1  (or powershell.exe -File).
-# Uses a temp lock path throughout; the production lock file is never touched.
+# Uses a temp lock path and temp repositories throughout; the production lock file, this
+# repository and bin\ are never touched.
 $ErrorActionPreference = 'Stop'
 $failures = 0
 function Check($name, $cond) {
     if ($cond) { Write-Host "  PASS $name" }
     else { Write-Host "  FAIL $name" -ForegroundColor Red; $script:failures++ }
+}
+# git's progress and hints go to stderr, which Windows PowerShell turns into errors under Stop.
+function Invoke-QuietGit {
+    $ErrorActionPreference = 'Continue'
+    git @args 2>&1 | Out-Null
 }
 
 . "$PSScriptRoot\..\deploy-lock.ps1"
@@ -56,6 +63,26 @@ try {
     Check 'foreign lock file still present' (Test-Path $lockPath)
 } finally {
     Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
+}
+
+# 6. Where production's exe goes: bin\ of the MAIN checkout, run from it or from one of its
+#    linked worktrees alike. A deploy from .agents\worktrees\* used to install into the
+#    worktree's own bin\, which neither PATH nor autostart names.
+$scratch = Join-Path ([System.IO.Path]::GetTempPath()) ("deploy-bin-test-" + [guid]::NewGuid())
+try {
+    $main = Join-Path $scratch 'main'
+    $linked = Join-Path $scratch 'linked'
+    $plain = Join-Path $scratch 'plain'
+    [void](New-Item -ItemType Directory -Path $main, $plain)
+    Invoke-QuietGit -C $main init
+    Invoke-QuietGit -C $main -c user.name=deploy-test -c user.email=deploy-test commit --allow-empty -m init
+    Invoke-QuietGit -C $main worktree add $linked
+    $want = Join-Path ([System.IO.Path]::GetFullPath((git -C $main rev-parse --show-toplevel))) 'bin'
+    Check 'from the main checkout: its bin\' ((Get-SwissProdBin -From $main) -eq $want)
+    Check 'from a linked worktree: the main checkout''s bin\' ((Get-SwissProdBin -From $linked) -eq $want)
+    Check 'outside git (a source archive): bin\ where the deploy runs' ((Get-SwissProdBin -From $plain) -eq (Join-Path $plain 'bin'))
+} finally {
+    Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if ($failures -gt 0) {
