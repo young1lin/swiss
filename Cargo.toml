@@ -79,6 +79,9 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 chrono = { version = "0.4", default-features = false }
 bigdecimal = { version = "0.4", default-features = false }
 encoding_rs = { version = "0.8", default-features = false }
+# `swiss remote exec` reads a `sh -c` script the way the far shell would, to catch one that
+# PowerShell cut apart before it ships (SPEC §remote.cli). Same crate and version as swiss-host's.
+shlex = "2"
 base64 = "0.23"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }

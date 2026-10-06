@@ -281,11 +281,25 @@ impl RemoteExecAction {
                 )));
             }
         }
+        // Any string, empty included (an empty file is still a file); its bytes go to the
+        // command untouched - no trimming, no line-ending rewrite.
+        let stdin = match obj.get("stdin") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if s.len() <= STDIN_MAX_BYTES => Some(s.clone()),
+            Some(Value::String(s)) => {
+                return Err(ActionError::InvalidInput(format!(
+                    "stdin is {} bytes, over the 1 MiB limit; upload large input with remote.sync and redirect from the file",
+                    s.len()
+                )))
+            }
+            Some(_) => return Err(ActionError::InvalidInput("stdin must be a string".into())),
+        };
         Ok(ParsedExec {
             target,
             argv,
             env,
             cwd,
+            stdin,
         })
     }
 }
@@ -301,9 +315,10 @@ struct ParsedExec {
     argv: Vec<String>,
     env: Vec<(String, String)>,
     cwd: Option<String>,
+    stdin: Option<String>,
 }
 
-/// Resolve the vault references in an exec's argv, env values and cwd (SPEC §remote.security):
+/// Resolve the vault references in an exec's argv, env values, cwd and stdin (SPEC §remote.security):
 /// `${secret://name}` becomes the stored value, `${secret://name:default}` the default when
 /// the vault does not hold the name, and a missing name without a default refuses the run
 /// before anything is sent. `${UPPER}` stays text - the far side's shell owns it. This runs
@@ -333,12 +348,17 @@ fn resolve_exec_refs(parsed: ParsedExec) -> Result<(ParsedExec, Vec<String>), Ac
         Some(c) => Some(one(c, "cwd")?),
         None => None,
     };
+    let stdin = match &parsed.stdin {
+        Some(text) => Some(one(text, "stdin")?),
+        None => None,
+    };
     Ok((
         ParsedExec {
             target: parsed.target,
             argv,
             env,
             cwd,
+            stdin,
         },
         secrets,
     ))
@@ -362,10 +382,18 @@ fn check_exec_refs(parsed: &ParsedExec) -> Result<(), ActionError> {
     if let Some(cwd) = &parsed.cwd {
         check(cwd, "cwd".to_string())?;
     }
+    if let Some(stdin) = &parsed.stdin {
+        check(stdin, "stdin".to_string())?;
+    }
     Ok(())
 }
 
-const EXEC_FIELDS: [&str; 5] = ["target", "argv", "env", "cwd", "timeoutMs"];
+const EXEC_FIELDS: [&str; 6] = ["target", "argv", "env", "cwd", "stdin", "timeoutMs"];
+
+/// The largest stdin an exec carries (SPEC §remote.actions): a script or a batch of SQL,
+/// not a data transfer - that is remote.sync's job. Half the API body limit, so the JSON
+/// escaping of a full stdin still fits one request.
+pub const STDIN_MAX_BYTES: usize = 1024 * 1024;
 
 /// The parsed, validated sync input (also the validate_input surface).
 struct ParsedSync {
@@ -473,6 +501,10 @@ impl Action for RemoteExecAction {
                     "description": "Extra environment for the command; names must be identifiers."
                 },
                 "cwd": { "type": "string", "description": "Working directory: relative resolves under the target's workspaceRoot." },
+                "stdin": {
+                    "type": "string",
+                    "description": "Text for the command's standard input, at most 1 MiB, sent verbatim and never quoted - SQL for psql, a script for `sh -s`. Absent: stdin closes at once."
+                },
                 "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 86400000, "description": "Run deadline; the submit path owns it." }
             },
             "additionalProperties": false
@@ -506,6 +538,7 @@ impl Action for RemoteExecAction {
             argv: parsed.argv,
             env: parsed.env,
             cwd,
+            stdin: parsed.stdin,
         };
         let (end, tap) = drive_exec(
             &self.registry,
@@ -544,6 +577,7 @@ impl Action for RemoteExecAction {
             argv: parsed.argv,
             env: parsed.env,
             cwd,
+            stdin: parsed.stdin,
         };
         let (end, tap) = drive_exec(
             &self.registry,
@@ -1402,6 +1436,60 @@ mod tests {
         let calls = fake.exec_calls.lock().unwrap();
         assert_eq!(calls[0].argv, vec!["make", "-j8"]);
         assert!(calls[0].cwd.is_none());
+        assert!(calls[0].stdin.is_none(), "no stdin field, no stdin text");
+    }
+
+    /// Text that would otherwise be squeezed into argv - SQL with its quotes, a script
+    /// for `sh -s` - rides in `stdin` and reaches the transport byte for byte (SPEC
+    /// §remote.actions).
+    #[tokio::test]
+    async fn stdin_reaches_the_transport_as_typed() {
+        let (system, fake) = system_with_fake();
+        fake.program(
+            "psql",
+            FakeProgram {
+                argv0: "psql".into(),
+                stdout: b"1 row\n".to_vec(),
+                stderr: Vec::new(),
+                exit: 0,
+                delay_ms: 0,
+            },
+        );
+        let action = RemoteExecAction::new(system);
+        let sql = "SELECT username FROM users WHERE id = 'it''s';\r\n\\q\n";
+        let input = json!({ "target": "dev", "argv": ["psql", "-X"], "stdin": sql });
+        action.validate_input(&input).expect("stdin is a known field");
+        action
+            .execute(&input, CancelSource::new().handle())
+            .await
+            .expect("the exec runs");
+        let calls = fake.exec_calls.lock().unwrap();
+        assert_eq!(calls[0].stdin.as_deref(), Some(sql));
+        assert_eq!(calls[0].argv, vec!["psql", "-X"]);
+    }
+
+    #[test]
+    fn stdin_must_be_text_within_its_cap() {
+        let (system, _fake) = system_with_fake();
+        let action = RemoteExecAction::new(system);
+        let with = |stdin: Value| json!({ "target": "dev", "argv": ["sh", "-s"], "stdin": stdin });
+        assert!(action.validate_input(&with(json!(""))).is_ok(), "an empty file is still a file");
+        assert!(action.validate_input(&with(Value::Null)).is_ok());
+        let err = action.validate_input(&with(json!(["ls"]))).unwrap_err();
+        assert!(err.contains("stdin"), "{err}");
+        let full = "x".repeat(STDIN_MAX_BYTES);
+        assert!(action.validate_input(&with(json!(full))).is_ok());
+        let err = action
+            .validate_input(&with(json!(format!("{full}y"))))
+            .unwrap_err();
+        assert!(err.contains("stdin") && err.contains("1 MiB"), "{err}");
+    }
+
+    #[test]
+    fn the_schema_names_stdin() {
+        let (system, _fake) = system_with_fake();
+        let schema = RemoteExecAction::new(system).schema();
+        assert_eq!(schema["properties"]["stdin"]["type"], "string");
     }
 
     #[tokio::test]
@@ -1888,6 +1976,7 @@ mod tests {
             "argv": ["show", "--token=${secret://remote-exec-token}",
                      "${secret://remote-exec-absent:plain-default}", "${HOME}"],
             "env": { "REDISCLI_AUTH": "${secret://remote-exec-token}" },
+            "stdin": "AUTH ${secret://remote-exec-token}\nPING ${HOME}\n",
         });
         action
             .validate_input(&input)
@@ -1912,6 +2001,10 @@ mod tests {
                 "REDISCLI_AUTH".to_string(),
                 "s3cr3t-token-value".to_string()
             )));
+            assert_eq!(
+                calls[0].stdin.as_deref(),
+                Some("AUTH s3cr3t-token-value\nPING ${HOME}\n")
+            );
         }
         // The value never comes back: the fake streams 3-byte chunks, so the secret is
         // split across chunks on both streams and is masked anyway.
@@ -1979,6 +2072,12 @@ mod tests {
             .validate_input(&json!({ "target": "dev", "argv": ["echo", "${secret://Bad_Name}"] }))
             .unwrap_err();
         assert!(err.contains("argv[1]"), "{err}");
+        let err = action
+            .validate_input(
+                &json!({ "target": "dev", "argv": ["sh", "-s"], "stdin": "echo ${secret://Bad_Name}\n" }),
+            )
+            .unwrap_err();
+        assert!(err.contains("stdin") && !err.contains("not a known field"), "{err}");
         assert!(action
             .validate_input(
                 &json!({ "target": "dev", "cwd": "${secret://x:/srv/app}", "argv": ["ls"] })

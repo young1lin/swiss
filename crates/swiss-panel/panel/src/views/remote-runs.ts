@@ -201,7 +201,10 @@ function runItem(r: ApiRemoteRunRow, isLive: boolean): TimelineItem {
       : undefined,
     // Identical consecutive runs fold (an agent's `git status` loop). A run in flight never
     // folds, and a different amount of output keeps two runs apart - the row cannot show it.
-    same: isLive ? undefined : [kind, arg, tgt, actorLabel(r.actor), r.input?.cwd || "", bad || "ok", r.outputBytes ?? ""].join("\u0000"),
+    // Nor does a run fed stdin: the same `sh -s` may have read a different script, and the
+    // record keeps only its size.
+    same: isLive || r.input?.stdinBytes != null ? undefined
+      : [kind, arg, tgt, actorLabel(r.actor), r.input?.cwd || "", bad || "ok", r.outputBytes ?? ""].join("\u0000"),
     data: { rrun: r.runId },
   };
 }
@@ -264,7 +267,7 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
     const liveText = l && l.text
       ? (l.capped ? tr("remoteRuns.liveCappedTail") + "\n" : "") + l.text
       : null;
-    return [meta, commandNode(r), valueBlock(
+    return [meta, commandNode(r), stdinNode(r), valueBlock(
       {
         label: tr("remoteRuns.liveOutput"),
         data: { rlive: r.runId },
@@ -280,7 +283,7 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
         ? textNode(liveText, true, "logs").node
         : note(r.state === "queued" ? tr("remoteRuns.queuedWaitingFreeSlot") : tr("remoteRuns.output")))];
   }
-  const out: HChild[] = [meta, commandNode(r)];
+  const out: HChild[] = [meta, commandNode(r), stdinNode(r)];
   if (r.error) out.push(valueBlock({ label: tr("remoteRuns.error") }, ...readableBody(r.error, true)));
   const b = bodies[r.runId];
   if (!b) return out.concat(note(tr("remoteRuns.loading"), { busy: true }));
@@ -307,6 +310,13 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
   }
   out.push(writtenNode(r));
   return out;
+}
+
+/** An exec's stdin (SPEC §remote.history): the record keeps its size, never the text - a script or
+ *  SQL may carry a password in clear - so the row says it was there and how much. */
+function stdinNode(r: ApiRemoteRunRow): HChild {
+  const bytes = r.input?.stdinBytes;
+  return bytes != null ? note(tr("remoteRuns.stdinNotKept", { size: fmtBytes(bytes) })) : null;
 }
 
 /** What a remote.write wrote (SPEC §remote.history): the body is kept sealed beside the record and

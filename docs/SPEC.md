@@ -2985,7 +2985,7 @@ mounted it).
 
 | Action | Input (strict; unknown fields refused) | Needs |
 |---|---|---|
-| `remote.exec` | `{target, argv[], env?: {NAME: value}, cwd?, timeoutMs?}` | `exec` |
+| `remote.exec` | `{target, argv[], env?: {NAME: value}, cwd?, stdin?, timeoutMs?}` | `exec` |
 | `remote.sync` | `{target, source, exclude?[], verbose?, to?}` — upload a local tree, or one file (`to` names it remotely) | `sync` |
 | `remote.pull` | `{target, remote, to?, verbose?}` — download one file or a directory tree | `sync` |
 | `remote.cat` | `{target, remote}` — one file's text, at most 128 KiB ("use remote.pull instead") | `files` or `sync` |
@@ -3004,6 +3004,13 @@ mounted it).
 - **Paths.** `workspaceRoot` anchors, it does not cage. A relative `cwd` or `remote` resolves
   under it; an absolute one is used as typed; a `..` segment is refused in either form. The
   command itself can `cd` anywhere.
+- **Stdin.** An exec's `stdin` is a string of at most 1 MiB (`STDIN_MAX_BYTES`), sent to the
+  command's standard input exactly as given — never quoted, trimmed or re-ended — and then
+  closed. Without it stdin is closed at once, so a command that reads it (`cat`, `psql` without
+  `-c`, `read`) sees EOF instead of waiting out its deadline. This is how text with quotes in it
+  travels: SQL for `psql -X`, a script for `sh -s`. No shell between the caller and the command
+  parses stdin, so nothing has to be escaped for one. Bigger input goes up with `remote.sync` and
+  is redirected from the file.
 - **Sync** is upload-only and **never deletes** — a sync that removes remote files is a footgun
   no agent should hold. It walks the local tree, skips the default excludes (`.git/`,
   `.swiss/`, `target/`, `node_modules/`, by path prefix) plus the binding's and the input's,
@@ -3032,8 +3039,9 @@ mounted it).
   bare so `ps` stays readable; everything else is single-quoted with an embedded `'` spliced as
   `'\''`; an empty argument is `''`. The command string is `export NAME='v'; … cd 'cwd' && exec
   'argv0' 'argv1' …` — env values are quoted like arguments, so `$(…)` or `;` in a value stays
-  data. No `join(" ")` shortcut exists anywhere.
-- **Vault references in exec.** argv, env values and cwd may carry `${secret://NAME}`
+  data. No `join(" ")` shortcut exists anywhere. Stdin never passes through it: it is data on
+  the channel, not part of the command.
+- **Vault references in exec.** argv, env values, cwd and stdin may carry `${secret://NAME}`
   references (§host.vault); a `${UPPER}` stays literal text. `validate_input` checks syntax
   only. Resolution happens after the run is recorded — the record keeps the input as typed —
   and a missing secret fails before any channel opens, naming the field. Every resolved value
@@ -3053,6 +3061,11 @@ The host defines the seat (`services/remote.rs`, §host.seats); tunnels provides
   and streaming write in 64 KiB chunks (`REMOTE_CHUNK_BYTES`).
 - **Backpressure.** Exec output crosses a bounded queue (`EXEC_EVENT_QUEUE`, 64 events); a
   command that floods slows the transport down instead of being buffered in memory.
+- **Stdin rides alongside the output.** The request's `stdin` is fed while the output loop keeps
+  draining, never ahead of it: a command that answers its input (`cat`, `sh -s`) would otherwise
+  fill the window the feed waits on. russh cuts the text to the window; EOF follows the last
+  byte, or comes at once when there is no stdin. A send refused because the command already
+  exited is not an error — the read side reports how it ended.
 - **Leases.** Every operation takes an operation-scoped connection lease on the shared SSH
   client (§tunnels.ssh); the lease travels with the exec future or the SFTP reader, so the
   connection reference lives exactly as long as the work.
@@ -3079,7 +3092,9 @@ The host defines the seat (`services/remote.rs`, §host.seats); tunnels provides
 - **The local side is documented, not coded.** Windows PowerShell 5 needs
   `[Console]::OutputEncoding = [Text.Encoding]::UTF8` before reading the output (pwsh 7.4+
   already does); `swiss remote write` passes stdin through byte for byte, so the file must
-  already be UTF-8. The CLI usage and the skill say so.
+  already be UTF-8. `swiss remote exec --stdin-file` reads its file itself: a UTF-8 byte-order
+  mark is dropped, a UTF-16 file with one (Windows PowerShell 5's `>`) is decoded, anything else
+  that is not UTF-8 is refused. The CLI usage and the skill say so.
 
 ### §remote.history — The run log and the audit
 
@@ -3089,7 +3104,8 @@ removes it at stop.
 
 - **Layout.** `~/.swiss/logs/remote/runs.jsonl` holds one line per **finished** run: the run
   view exactly as `/api/runs` showed it plus what was asked — target, argv, cwd, **env keys
-  only** (`envKeys`; values may be secrets), a write's content as its size only. The full
+  only** (`envKeys`; values may be secrets), a write's content and an exec's stdin as their
+  sizes only (`contentBytes`, `stdinBytes`; stdin is never kept anywhere). The full
   output is teed as it flows into `out/<runId>.txt`. Private modes (0700/0600).
 - **Output budget.** A file keeps its head up to 16 MiB; past that the line keeps the last
   64 KiB as `tail`, so a capped build log still shows both ends — the error is usually at the
@@ -3134,7 +3150,7 @@ removes it at stop.
 swiss remote endpoints | targets | resolve [name]
 swiss remote target add <id> --endpoint <id|unique-label> --root <path> [--caps exec,sync,files]
 swiss remote target set <id> [--endpoint …] [--root …] [--caps …] [--label …] | target remove <id>
-swiss remote exec [name] [--cwd DIR] [--env NAME=VALUE]… [--timeout 2h] [--detach] [--] ARGV…
+swiss remote exec [name] [--cwd DIR] [--env NAME=VALUE]… [--stdin-file PATH|-] [--timeout 2h] [--detach] [--] ARGV…
 swiss remote sync [name] [--source PATH] [--exclude PATTERN]… [--verbose]
 swiss remote push [name] <file> [--to NAME] | cat [name] <path> | write [name] <path> | pull [name] <path> [--to LOCAL]
 swiss run status <id> | logs <id> [-f] | cancel <id>
@@ -3144,6 +3160,22 @@ swiss run audit [--since 7d|36h|90m|30s|ISO] [--until ISO] [--target t] [--actor
 - **The hard rule.** Everything after a bare `--` is argv for the far side, passed through
   untouched. For `exec`, argv also begins at the first command word: `exec dev ls -a` equals
   `exec dev -- ls -a`.
+- **Stdin, not quoting.** `--stdin-file PATH` sends a file's text as the command's stdin
+  (§remote.actions); `-` reads this process's own stdin. The CLI reads the file itself, so no
+  local shell's quoting, redirection (pwsh has no `<`) or pipeline line endings (pwsh adds CRLF
+  to text it pipes into a program) touch it. It is a local flag, so it goes before the command
+  word. When the command is a shell reading its script from stdin (`sh -s`, a bare `bash`) and
+  the text has CRLF line ends, the CLI prints a note — sh keeps each `\r` — and sends the text
+  unchanged.
+- **A script cut apart is refused.** pwsh ends a quoted argument at its closing quote, so the
+  POSIX `'\''` idiom splits `bash -c '… '\''x'\'' …'` into a script that stops early plus stray
+  words, and bash fails with "unexpected EOF while looking for matching". Before submitting, the
+  CLI finds the first shell in argv (`sh`, `bash`, `dash`, `ash`, `zsh`, `ksh`, by basename;
+  a `sudo …` in front is fine), reads its options as sh does, and refuses a `-c` script that has
+  stray words after it and either has unbalanced quotes (`shlex`) or stray words starting or
+  ending with the idiom's leftover `\`. The refusal prints the argv as received and the two
+  ways out: `''` for a quote inside a pwsh `'…'`, or `--stdin-file job.sh -- sh -s`. A whole
+  script with real `$0`/`$1` words after it passes.
 - **Name resolution.** `--target` wins; otherwise the first word or the binding's
   `defaultTarget` names either a target id or a project action (§remote.project). No name at all
   is an error naming the three ways to give one.
@@ -3162,7 +3194,8 @@ swiss run audit [--since 7d|36h|90m|30s|ISO] [--until ISO] [--target t] [--actor
   from a terminal run prints the stored record instead — it is written before the run turns
   terminal. Without this a `cat` or a quick build silently lost its head.
 - **Audit.** One line per run — time to the second, actor, target, action, argv quoted by the
-  POSIX rules, result, duration, bytes (a `*` when the output was evicted), `#id`. The last
+  POSIX rules (an exec fed stdin adds `< [2.0K stdin]`), result, duration, bytes (a `*` when
+  the output was evicted), `#id`. The last
   7 days by default; `--export DIR` writes `runs.jsonl` plus `out/<id>.txt` for handing the
   evidence to a person.
 
@@ -3211,7 +3244,8 @@ The builtin `remote` MCP (def type `remote`): five tools — `remote_exec`, `rem
   mistake for its own. The alias list is read live, so a target added on the page appears on the
   next `tools/list`.
 - `env` is an object passed through verbatim; unknown arguments are refused; a missing
-  `timeoutMs` gets the same 2 h the CLI gives.
+  `timeoutMs` gets the same 2 h the CLI gives. `remote_exec` does not take `stdin` — the owner's
+  call (2026-10-06): the field is the action's and the CLI's.
 
 ### §remote.panel — The Targets and Runs pages
 
@@ -3230,7 +3264,8 @@ The builtin `remote` MCP (def type `remote`): five tools — `remote_exec`, `rem
   record, newest first, 20 per page with Load more. An event list (§panel.ui): time with the
   date as the day heading; the kind and its command; who — target and actor, as a column only
   while they vary; a failed run as a red tag saying how; the duration. Identical consecutive
-  runs fold into ×N. An open live row follows its output every 1.5 s through
+  runs fold into ×N — never a run fed stdin, whose script the record does not keep; its open
+  row says how much stdin went in and that the text is not kept. An open live row follows its output every 1.5 s through
   `/api/runs/{id}/output`; the list itself polls every 6 s and never rebuilds an open row.
   Reads are 128 KiB.
 - **The whole command, copyable.** An opened row shows the command exactly — argv quoted word

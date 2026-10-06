@@ -4089,7 +4089,8 @@ mod tests {
 
     use swiss_host::services::action::CancelSource;
     use swiss_host::services::remote::{
-        RemoteError, RemoteExecEvent, RemoteExecRequest, RemoteTransportProvider,
+        RemoteError, RemoteExecEvent, RemoteExecRequest, RemoteExecResult,
+        RemoteTransportProvider,
     };
 
     /// A minimal request helper: argv only, the shape every lease test needs.
@@ -4098,6 +4099,7 @@ mod tests {
             argv: argv.iter().map(|s| s.to_string()).collect(),
             env: Vec::new(),
             cwd: None,
+            stdin: None,
         }
     }
 
@@ -4339,6 +4341,7 @@ mod tests {
             stdout: b"hello\nworld\n".to_vec(),
             stderr: b"warn".to_vec(),
             exit: Some(0),
+            stdin: sshtest::StdinMode::Ignore,
         })
         .await;
         let (store, conn) = real_store_with(&dir, port);
@@ -4353,6 +4356,7 @@ mod tests {
                     argv: vec!["echo".into(), "one two".into(), "it's".into()],
                     env: vec![("BOARD".into(), "a;b".into())],
                     cwd: Some("/tmp/x y".into()),
+                    stdin: None,
                 },
                 tx,
                 CancelSource::new().handle(),
@@ -4379,6 +4383,7 @@ mod tests {
             stdout: b"partial".to_vec(),
             stderr: Vec::new(),
             exit: None,
+            stdin: sshtest::StdinMode::Ignore,
         })
         .await;
         let (store, conn) = real_store_with(&dir, port);
@@ -4419,5 +4424,91 @@ mod tests {
             Err(other) => panic!("wrong error: {other}"),
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One exec against a command that reads its stdin (a `cat` or a `wc -c`, per the
+    /// mode), the events drained WHILE it runs: an echo is as big as the input, so
+    /// collecting only after the end would park the exec on a full queue.
+    async fn exec_reading_stdin(
+        mode: sshtest::StdinMode,
+        stdin: Option<String>,
+    ) -> (Vec<u8>, Result<RemoteExecResult, RemoteError>) {
+        let dir =
+            std::env::temp_dir().join(format!("swiss-ssh-cat-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let port = sshtest::spawn_exec_ssh_server(sshtest::ExecScript {
+            stdin: mode,
+            ..Default::default()
+        })
+        .await;
+        let (store, conn) = real_store_with(&dir, port);
+        let m = TunnelManager::new(store.clone(), None);
+        let provider = crate::tunnel::remote::TunnelRemote::new(m);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let mut request = exec_req(&["cat"]);
+        request.stdin = stdin;
+        let exec = tokio::spawn(async move {
+            provider
+                .exec(&conn.id, "remote.exec", request, tx, CancelSource::new().handle())
+                .await
+        });
+        let mut out = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let RemoteExecEvent::Stdout(bytes) = event {
+                out.extend_from_slice(&bytes);
+            }
+        }
+        let result = exec.await.expect("the exec task finished");
+        let _ = std::fs::remove_dir_all(&dir);
+        (out, result)
+    }
+
+    /// A command that reads stdin sees it end (SPEC §remote.transport). An exec used to leave
+    /// stdin open, so `cat`, a `psql` without -c or a `read` sat until the run's deadline -
+    /// two hours by default.
+    #[tokio::test]
+    async fn an_exec_without_stdin_closes_it_at_once() {
+        let (out, result) =
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                exec_reading_stdin(sshtest::StdinMode::Echo, None),
+            )
+                .await
+                .expect("the command saw EOF on its stdin and ended");
+        assert_eq!(result.expect("a clean exit").exit_code, 0);
+        assert!(out.is_empty(), "nothing was sent, nothing comes back: {out:?}");
+    }
+
+    /// Stdin text reaches the command byte for byte, quotes and all: nothing quotes it,
+    /// and its end is the command's EOF.
+    #[tokio::test]
+    async fn stdin_reaches_the_command_verbatim_then_ends() {
+        let sql = "SELECT username FROM users WHERE id = '1gn6daai3jng5ddas3uyxctkmy';\n";
+        let (out, result) = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            exec_reading_stdin(sshtest::StdinMode::Echo, Some(sql.to_string())),
+        )
+        .await
+        .expect("the command got its stdin and its EOF");
+        assert_eq!(result.expect("a clean exit").exit_code, 0);
+        assert_eq!(String::from_utf8_lossy(&out), sql);
+    }
+
+    /// A stdin larger than the SSH window arrives whole and in order before its EOF: the
+    /// feed waits out window after window while the exec keeps reading. The command
+    /// counts what it got, like `wc -c` - an echo this size wedges the russh test pair
+    /// itself (sshtest StdinMode::Count says why).
+    #[tokio::test]
+    async fn a_stdin_larger_than_the_window_arrives_whole() {
+        let line = "0123456789abcdef'\"$(x)\n";
+        let text = line.repeat((4 << 20) / line.len());
+        let (out, result) = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            exec_reading_stdin(sshtest::StdinMode::Count, Some(text.clone())),
+        )
+        .await
+        .expect("a stdin of several windows finished");
+        assert_eq!(result.expect("a clean exit").exit_code, 0);
+        assert_eq!(String::from_utf8_lossy(&out), format!("{}\n", text.len()));
     }
 }

@@ -1678,6 +1678,7 @@ const en                         = {
   "remoteRuns.contentHead": "the first {cap} kept",
   "remoteRuns.contentEvicted": "The written content ({size}) was evicted by the size budget.",
   "remoteRuns.contentNotKept": "This write ({size}) was recorded before written content was kept.",
+  "remoteRuns.stdinNotKept": "Stdin: {size} sent; the text is not kept.",
   "remoteRuns.contentUnavailable": "The written content could not be read.",
   "remoteRuns.allTargets": "All targets",
   "remoteRuns.clear": "Clear",

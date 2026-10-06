@@ -99,8 +99,8 @@ import type { ApiRunRow } from "./api.js";
  *  reduced to envKeys (history.rs sanitized_input). The keys are the union of the five
  *  capabilities' field lists (swiss-remote/src/actions.rs EXEC_FIELDS / SYNC_FIELDS /
  *  PULL_FIELDS and the cat / write pairs); target is on every kind, the rest per kind:
- *  exec argv/cwd/timeoutMs/envKeys, sync source/exclude/verbose/to, pull remote/to/verbose,
- *  cat remote, write remote/content. */
+ *  exec argv/cwd/timeoutMs/envKeys/stdinBytes, sync source/exclude/verbose/to, pull
+ *  remote/to/verbose, cat remote, write remote/content. */
 export interface RemoteRunInput {
   target?: string;
   argv?: string[];
@@ -115,6 +115,8 @@ export interface RemoteRunInput {
   content?: string;
   /** A remote.write's body size - the record keeps the size, the body sits sealed beside it. */
   contentBytes?: number;
+  /** A remote.exec's stdin size - the record keeps the size and nothing else. */
+  stdinBytes?: number;
 }
 
 /** A remote run's meta as actions.rs stamps it: target/endpoint on every kind, the sync

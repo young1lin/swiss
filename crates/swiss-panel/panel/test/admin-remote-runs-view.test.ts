@@ -346,6 +346,26 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(item(35).querySelector("[data-rcontent]"), "nothing to unseal").toBeNull();
   });
 
+  /* SPEC §remote.history: an exec's stdin (a script for `sh -s`, SQL for psql) is recorded as
+     its size only - it may hold a password in clear. The open row says it was there. */
+  it("an exec fed stdin says how much went in, and that the text was not kept", async () => {
+    const fed = { ...finished, runId: 37, input: { target: "build", argv: ["sh", "-s"], stdinBytes: 2048 } };
+    serve([fed], []);
+    replies["/api/remote/runs/37/output?after=0&max=131072"] = { runId: 37, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };
+    await view.mount();
+    open(37);
+    await settle();
+    expect(block(37, "Command")?.querySelector("pre")?.textContent).toBe("sh -s");
+    expect(item(37).querySelector(".tl-body")?.textContent).toContain("Stdin: 2.0 KB sent; the text is not kept.");
+  });
+
+  it("runs fed stdin never fold - the same argv may have read a different script", async () => {
+    const fed = (runId: number) => ({ ...finished, runId, state: "succeeded", exitCode: 0, input: { target: "build", argv: ["sh", "-s"], stdinBytes: 64 } });
+    serve([fed(43), fed(42)], []);
+    await view.mount();
+    expect(Array.from(document.querySelectorAll<HTMLElement>("#pane .tl-item")).map((n) => n.dataset.rrun)).toEqual(["43", "42"]);
+  });
+
   it("a run that wrote no file keeps its body free of content notes", async () => {
     serve([{ ...finished, runId: 36 }], []);
     replies["/api/remote/runs/36/output?after=0&max=131072"] = { runId: 36, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };
