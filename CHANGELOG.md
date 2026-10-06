@@ -6,6 +6,8 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-07
+
 ### Added
 
 - `remote.exec` takes `stdin`: up to 1 MiB of text sent to the command's standard input
