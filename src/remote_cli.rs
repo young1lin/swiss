@@ -1059,13 +1059,18 @@ async fn submit_and_stream(
     stream_run(gw, run_id, true).await
 }
 
-/// The whole recorded stream of a finished remote run, from the record
-/// (logs/remote/out/<id>.txt) rather than the live window. Answers false without
-/// printing anything when there is no record to read (not a remote run, the plugin
-/// off), so the caller falls back to the live window.
-async fn print_recorded_output(gw: &Gateway, run_id: u64) -> bool {
-    use std::io::Write as _;
-    let mut cursor: u64 = 0;
+/// A remote run's recorded stream from byte `from` (logs/remote/out/<id>.txt) rather
+/// than the live window: the record gets every byte the live buffer does, at the same
+/// offsets, up to its cap. Answers the cursor it reached - `from` itself when the
+/// record holds nothing past it (no record: not a remote run, the plugin off; or the
+/// cap), so the caller falls back to the live window.
+async fn print_recorded_output(
+    gw: &Gateway,
+    run_id: u64,
+    from: u64,
+    out: &mut impl std::io::Write,
+) -> Result<u64, String> {
+    let mut cursor = from;
     loop {
         let Ok(chunk) = gw
             .get(&format!(
@@ -1073,58 +1078,85 @@ async fn print_recorded_output(gw: &Gateway, run_id: u64) -> bool {
             ))
             .await
         else {
-            return cursor > 0;
+            return Ok(cursor);
         };
-        print!("{}", chunk["output"].as_str().unwrap_or(""));
-        let _ = std::io::stdout().flush();
+        emit(out, chunk["output"].as_str().unwrap_or(""))?;
         let next = chunk["nextCursor"].as_u64().unwrap_or(cursor);
         let total = chunk["total"].as_u64().unwrap_or(0);
         if next <= cursor || next >= total {
-            return true;
+            return Ok(next.max(cursor));
         }
         cursor = next;
     }
 }
 
-/// The shared follow loop: poll the output cursor, print what arrived, and when
-/// the run is terminal fetch the row and translate its outcome into an exit code.
+/// One piece of a run's output, out as soon as it arrived.
+fn emit(out: &mut impl std::io::Write, text: &str) -> Result<(), String> {
+    out.write_all(text.as_bytes())
+        .and_then(|()| out.flush())
+        .map_err(|err| format!("cannot write the output: {err}"))
+}
+
+/// The shared follow loop: poll the output cursor and write what arrived until the
+/// run is terminal; stream_run then fetches the row and translates its outcome into
+/// an exit code.
 ///
-/// A run that finished before the first poll has already been compacted to its last
-/// 64 KiB (KEEP_FINISHED_OUTPUT_BYTES): the first read comes back `truncated`, and
-/// printing it as if it were the stream would drop the head of a `cat` or a fast
-/// build silently (found live 2026-09-21 with a 121 KB file). The record is written
-/// before the run turns terminal, so the follower prints from there instead.
-async fn stream_run(gw: &Gateway, run_id: u64, print_from_start: bool) -> i32 {
-    use std::io::Write as _;
+/// A read comes back `truncated` when the live window (256 KiB) already rolled past
+/// the cursor: a run that finished before the first poll is compacted to its last
+/// 64 KiB (found live 2026-09-21, a 121 KB file's head gone), and a command that
+/// writes faster than the follower reads outruns the window mid-stream (2026-10-06:
+/// a 1 MiB `cat` lost its head, `seq 1 140000` a middle stretch). Printing that read
+/// as if it were the stream drops the gap silently, so the gap is printed from the
+/// record instead and the follow resumes where the record ended. Only bytes the record
+/// does not hold either (past its cap, or no record) are skipped, with a note.
+async fn follow_output(
+    gw: &Gateway,
+    run_id: u64,
+    out: &mut impl std::io::Write,
+) -> Result<(), String> {
     let mut cursor: u64 = 0;
     loop {
-        let chunk = match gw
+        let chunk = gw
             .get(&format!(
                 "/api/runs/{run_id}/output?after={cursor}&max=131072"
             ))
-            .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                eprintln!("{err}");
-                return 1;
-            }
-        };
+            .await?;
         let terminal = chunk["terminal"].as_bool().unwrap_or(false);
-        if print_from_start {
-            let evicted_head = cursor == 0 && chunk["truncated"].as_bool().unwrap_or(false);
-            if evicted_head && terminal && print_recorded_output(gw, run_id).await {
-                break;
+        if chunk["truncated"].as_bool().unwrap_or(false) {
+            let reached = print_recorded_output(gw, run_id, cursor, out).await?;
+            if reached > cursor {
+                cursor = reached;
+                continue;
             }
-            let text = chunk["output"].as_str().unwrap_or("");
-            print!("{text}");
-            let _ = std::io::stdout().flush();
+            eprintln!(
+                "note: output after byte {cursor} outran the live window and the run record does not hold it; the stream resumes further on"
+            );
         }
-        cursor = chunk["nextCursor"].as_u64().unwrap_or(cursor);
+        emit(out, chunk["output"].as_str().unwrap_or(""))?;
+        let next = chunk["nextCursor"].as_u64().unwrap_or(cursor);
         if terminal {
-            break;
+            return Ok(());
         }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // Only a read that found nothing waits: output still flowing is read again at
+        // once, so a fast command does not outrun the window in the first place.
+        if next == cursor {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        cursor = next;
+    }
+}
+
+/// Follow a run to its end, then answer the exit code the CLI exits with: the remote
+/// command's own, 0 for any other success, 1 for a failure that has none.
+async fn stream_run(gw: &Gateway, run_id: u64, print_from_start: bool) -> i32 {
+    let followed = if print_from_start {
+        follow_output(gw, run_id, &mut std::io::stdout()).await
+    } else {
+        follow_output(gw, run_id, &mut std::io::sink()).await
+    };
+    if let Err(err) = followed {
+        eprintln!("{err}");
+        return 1;
     }
     let run = match gw.get(&format!("/api/runs/{run_id}?output=0")).await {
         Ok(value) => value,
@@ -2128,5 +2160,151 @@ mod tests {
         let unknown = canonical_endpoint_id(&response, "missing").expect_err("unknown");
         assert!(unknown.contains("unknown endpoint"), "{unknown}");
         assert!(unknown.contains("build (id-one)"), "{unknown}");
+    }
+
+    /// A run whose command floods: every live read finds `burst` more bytes produced and
+    /// the live window keeping only the last `window` of them, the way RunOutputBuffer
+    /// evicts. The record holds the stream up to `record_cap` bytes; None is no record at
+    /// all (the remote plugin off, or not a remote run).
+    struct FloodingRun {
+        stream: String,
+        produced: usize,
+        burst: usize,
+        window: usize,
+        record_cap: Option<usize>,
+    }
+
+    fn numbered_lines(n: usize) -> String {
+        (0..n).map(|i| format!("line {i:05}\n")).collect()
+    }
+
+    /// A gateway serving one FloodingRun's live and recorded output routes.
+    async fn serve_flooding_run(run: FloodingRun) -> Gateway {
+        use axum::extract::{Query, State};
+        use axum::http::StatusCode;
+        use axum::routing::get;
+        use std::collections::HashMap;
+        type Shared = std::sync::Arc<std::sync::Mutex<FloodingRun>>;
+        type Params = Query<HashMap<String, String>>;
+        fn after(query: &HashMap<String, String>) -> usize {
+            query.get("after").and_then(|a| a.parse().ok()).unwrap_or(0)
+        }
+        let app = axum::Router::new()
+            .route(
+                "/api/runs/{id}/output",
+                get(|State(run): State<Shared>, Query(query): Params| async move {
+                    let mut run = run.lock().unwrap();
+                    run.produced = (run.produced + run.burst).min(run.stream.len());
+                    let start = run.produced.saturating_sub(run.window);
+                    let from = after(&query).min(run.produced);
+                    let begin = from.max(start);
+                    axum::Json(json!({
+                        "cursor": from,
+                        "nextCursor": run.produced,
+                        "output": run.stream[begin..run.produced],
+                        "truncated": from < start,
+                        "terminal": run.produced == run.stream.len(),
+                    }))
+                }),
+            )
+            .route(
+                "/api/remote/runs/{id}/output",
+                get(|State(run): State<Shared>, Query(query): Params| async move {
+                    let run = run.lock().unwrap();
+                    let Some(cap) = run.record_cap else {
+                        let unknown = json!({ "error": "unknown run" });
+                        return (StatusCode::NOT_FOUND, axum::Json(unknown));
+                    };
+                    let total = run.produced.min(cap);
+                    let from = after(&query).min(total);
+                    (
+                        StatusCode::OK,
+                        axum::Json(json!({
+                            "cursor": from,
+                            "nextCursor": total,
+                            "output": run.stream[from..total],
+                            "total": total,
+                            "truncated": false,
+                            "terminal": true,
+                        })),
+                    )
+                }),
+            )
+            .with_state(std::sync::Arc::new(std::sync::Mutex::new(run)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let port = listener.local_addr().expect("a bound address").port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Gateway {
+            client: reqwest::Client::new(),
+            base: format!("http://127.0.0.1:{port}"),
+            token: None,
+        }
+    }
+
+    async fn follow(gw: &Gateway) -> String {
+        let mut out = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            follow_output(gw, 7, &mut out),
+        )
+        .await
+        .expect("the follower ends")
+        .expect("followed");
+        String::from_utf8(out).expect("UTF-8")
+    }
+
+    #[tokio::test]
+    async fn a_follower_a_flood_outran_prints_the_gap_from_the_record() {
+        // Found live 2026-10-06: `--stdin-file 1MiB.txt -- cat` printed 768 KiB of it, the
+        // head gone, and `seq 1 140000` lost a middle stretch - the live window rolled past
+        // the cursor between two polls. The record holds every byte at the same offsets.
+        let stream = numbered_lines(200);
+        let gw = serve_flooding_run(FloodingRun {
+            stream: stream.clone(),
+            produced: 0,
+            burst: 700,
+            window: 256,
+            record_cap: Some(usize::MAX),
+        })
+        .await;
+        assert_eq!(follow(&gw).await, stream);
+    }
+
+    #[tokio::test]
+    async fn past_the_record_cap_the_follower_prints_what_the_window_kept_and_ends() {
+        // The record stops at its cap: up to there the stream is whole, past it the live
+        // window is all there is - printed, never waited on.
+        let stream = numbered_lines(200);
+        let gw = serve_flooding_run(FloodingRun {
+            stream: stream.clone(),
+            produced: 0,
+            burst: 700,
+            window: 256,
+            record_cap: Some(500),
+        })
+        .await;
+        let out = follow(&gw).await;
+        assert!(out.starts_with(&stream[..500]), "{out}");
+        assert!(out.ends_with(&stream[stream.len() - 256..]), "{out}");
+        assert!(out.len() < stream.len());
+    }
+
+    #[tokio::test]
+    async fn without_a_record_the_follower_prints_the_window_and_ends() {
+        let stream = numbered_lines(200);
+        let gw = serve_flooding_run(FloodingRun {
+            stream: stream.clone(),
+            produced: 0,
+            burst: 700,
+            window: 256,
+            record_cap: None,
+        })
+        .await;
+        let out = follow(&gw).await;
+        assert!(out.ends_with(&stream[stream.len() - 256..]), "{out}");
     }
 }

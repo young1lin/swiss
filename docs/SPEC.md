@@ -3189,10 +3189,15 @@ swiss run audit [--since 7d|36h|90m|30s|ISO] [--until ISO] [--target t] [--actor
   `swiss remote exec dev -- false` exits 1. A timeout, a cancel or a transport error prints why
   and exits 1. `--detach` prints the run id (and the `swiss run logs <id> -f` to follow it)
   and returns.
-- **A fast run prints whole.** A run that finished before the first poll has already been
-  compacted to its last 64 KiB, so a follower whose first read (cursor 0) comes back truncated
-  from a terminal run prints the stored record instead — it is written before the run turns
-  terminal. Without this a `cat` or a quick build silently lost its head.
+- **A fast run prints whole.** Any read that comes back truncated — a run that finished
+  before the first poll and was compacted to its last 64 KiB, or a command that wrote past the
+  256 KiB live window between two polls — has its gap printed from the stored record, which
+  gets every byte at the live cursor's offsets (up to its cap; it is closed before the run
+  turns terminal), and the follow resumes where the record ended. Only what the record does
+  not hold either (past its cap, no record) is skipped, with a note on stderr. A read that
+  found output is followed by the next at once; only an empty one waits. Without this a `cat`
+  or a quick build silently lost its head, and a 1 MiB `cat` or `seq 1 140000` a stretch of
+  the middle (found live 2026-10-06).
 - **Audit.** One line per run — time to the second, actor, target, action, argv quoted by the
   POSIX rules (an exec fed stdin adds `< [2.0K stdin]`), result, duration, bytes (a `*` when
   the output was evicted), `#id`. The last
