@@ -4329,7 +4329,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swiss"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4370,7 +4370,7 @@ dependencies = [
 
 [[package]]
 name = "swiss-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -4388,7 +4388,7 @@ dependencies = [
 
 [[package]]
 name = "swiss-data"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "axum",
@@ -4405,7 +4405,7 @@ dependencies = [
 
 [[package]]
 name = "swiss-host"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4427,7 +4427,7 @@ dependencies = [
 
 [[package]]
 name = "swiss-it"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "axum",
  "bson",
@@ -4450,7 +4450,7 @@ dependencies = [
 
 [[package]]
 name = "swiss-jobs"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "axum",
  "chrono",
@@ -4468,7 +4468,7 @@ dependencies = [
 
 [[package]]
 name = "swiss-mcp"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4499,7 +4499,7 @@ dependencies = [
 
 [[package]]
 name = "swiss-panel"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "axum",
  "rust-embed",
@@ -4513,7 +4513,7 @@ dependencies = [
 
 [[package]]
 name = "swiss-remote"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "axum",
@@ -4528,7 +4528,7 @@ dependencies = [
 
 [[package]]
 name = "swiss-terminal"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "serde",
@@ -4541,7 +4541,7 @@ dependencies = [
 
 [[package]]
 name = "swiss-tunnels"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "axum",
