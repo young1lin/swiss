@@ -78,6 +78,11 @@ pub struct RemoteExecRequest {
     /// Absolute working directory on the remote machine, when the caller resolved one.
     /// The CALLER owns workspace guardrails; the provider just cds.
     pub cwd: Option<String>,
+    /// Text for the command's standard input. Data that would otherwise be squeezed into
+    /// argv (SQL, a script for `sh -s`) travels here and is never quoted by anyone. The
+    /// provider feeds it alongside the output, then closes stdin; None closes stdin at
+    /// once, so a command that reads it sees EOF instead of waiting out its deadline.
+    pub stdin: Option<String>,
 }
 
 /// One piece of streaming output from a running exec. The exit status is the exec's
@@ -751,6 +756,7 @@ mod tests {
                     argv: vec!["make".into()],
                     env: Vec::new(),
                     cwd: None,
+                    stdin: None,
                 },
                 tx,
                 CancelSource::new().handle(),
@@ -790,6 +796,7 @@ mod tests {
                     argv: vec!["make".into()],
                     env: Vec::new(),
                     cwd: None,
+                    stdin: None,
                 },
                 tx,
                 CancelSource::new().handle(),
@@ -818,6 +825,7 @@ mod tests {
                     argv: vec!["cmake".into(), "--build".into(), "build".into()],
                     env: vec![("BOARD".into(), "foo".into())],
                     cwd: Some("/data/workspaces/proj".into()),
+                    stdin: None,
                 },
                 tx,
                 CancelSource::new().handle(),
@@ -852,6 +860,7 @@ mod tests {
                     argv: vec!["make".into()],
                     env: Vec::new(),
                     cwd: None,
+                    stdin: None,
                 },
                 tx,
                 CancelSource::new().handle(),

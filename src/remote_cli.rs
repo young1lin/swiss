@@ -72,6 +72,10 @@ pub struct RemoteArgs {
     pub export: Option<String>,
     pub bad_port: bool,
     pub unknown: Vec<String>,
+    /// Exec only: a file whose text becomes the command's stdin, or `-` for this
+    /// process's own stdin (SPEC §remote.cli). The CLI reads it, so no shell between the
+    /// caller and swiss has a say in quoting or line endings.
+    pub stdin_file: Option<String>,
 }
 
 /// Split argv at the FIRST bare `--`. Before it: flags and words; after it: ARGV
@@ -116,7 +120,8 @@ pub fn parse(argv: &[String]) -> RemoteArgs {
             if let Some(v) = inline {
                 return v.clone();
             }
-            if *i + 1 < argv.len() && !argv[*i + 1].starts_with('-') {
+            // A lone `-` is a value (--stdin-file -), never a flag.
+            if *i + 1 < argv.len() && (!argv[*i + 1].starts_with('-') || argv[*i + 1] == "-") {
                 *i += 1;
                 return argv[*i].clone();
             }
@@ -144,6 +149,7 @@ pub fn parse(argv: &[String]) -> RemoteArgs {
                 }
             }
             "--timeout" => a.timeout = Some(value(argv, &mut i, &inline)),
+            "--stdin-file" => a.stdin_file = Some(value(argv, &mut i, &inline)),
             "--since" => a.since = Some(value(argv, &mut i, &inline)),
             "--until" => a.until = Some(value(argv, &mut i, &inline)),
             "--actor" => a.actor = Some(value(argv, &mut i, &inline)),
@@ -317,6 +323,10 @@ async fn run(argv: &[String]) -> i32 {
         println!("{}", usage_text());
         return if a.sub.is_empty() { 1 } else { 0 };
     }
+    if a.stdin_file.is_some() && a.sub != "exec" {
+        eprintln!("--stdin-file is exec's (write already takes the file body on stdin)");
+        return 1;
+    }
     let gw = Gateway::at(a.port.unwrap_or_else(resolve_port));
     match a.sub.as_str() {
         "endpoints" => cmd_endpoints(gw, &a).await,
@@ -356,7 +366,7 @@ pub fn usage_text() -> String {
             "show what a name resolves to (target or project action)",
         ),
         (
-            "exec [name] [--cwd DIR] [--env NAME=VALUE]... [--timeout 2h] [--detach] [--] ARGV...",
+            "exec [name] [--cwd DIR] [--env NAME=VALUE]... [--stdin-file PATH|-] [--timeout 2h] [--detach] [--] ARGV...",
             "run a command on a target",
         ),
         (
@@ -393,6 +403,12 @@ pub fn usage_text() -> String {
     );
     s.push_str(
         "For exec, ARGV also begins at the first command word: exec t ls -a == exec t -- ls -a.\n",
+    );
+    s.push_str(
+        "Quotes inside a script or SQL: put the text in a file and send it as stdin, never quoted by anyone -\n",
+    );
+    s.push_str(
+        "  exec t --stdin-file q.sql -- psql -X      exec t --stdin-file job.sh -- sh -s      (- reads this stdin)\n",
     );
     s.push_str(
         "Remote commands run under LANG=C.UTF-8 / LC_ALL=C.UTF-8 unless --env sets them; argv and output are UTF-8\n",
@@ -810,6 +826,17 @@ async fn cmd_exec(gw: Gateway, a: &RemoteArgs) -> i32 {
         eprintln!("no command: put it after a bare -- (swiss remote exec build -- make -j8)");
         return 1;
     }
+    if let Some(why) = split_script_refusal(&argv) {
+        eprintln!("{why}");
+        return 1;
+    }
+    let stdin = match a.stdin_file.as_deref().map(read_stdin_file).transpose() {
+        Ok(stdin) => stdin,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
     let mut input = json!({ "target": resolved.target, "argv": argv });
     if let Some(cwd) = &resolved.cwd {
         input["cwd"] = json!(cwd);
@@ -818,6 +845,12 @@ async fn cmd_exec(gw: Gateway, a: &RemoteArgs) -> i32 {
         let env: serde_json::Map<String, Value> =
             a.env.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
         input["env"] = Value::Object(env);
+    }
+    if let Some(text) = stdin {
+        if let Some(note) = crlf_note(&argv, &text) {
+            eprintln!("{note}");
+        }
+        input["stdin"] = json!(text);
     }
     submit_and_stream(
         &gw,
@@ -829,6 +862,152 @@ async fn cmd_exec(gw: Gateway, a: &RemoteArgs) -> i32 {
     )
     .await
 }
+
+/// Read what --stdin-file names: a path, or `-` for this process's own stdin.
+fn read_stdin_file(spec: &str) -> Result<String, String> {
+    use std::io::Read as _;
+    if spec.is_empty() {
+        return Err("--stdin-file needs a path, or - for this process's stdin".into());
+    }
+    if spec == "-" {
+        let mut raw = Vec::new();
+        std::io::stdin()
+            .lock()
+            .read_to_end(&mut raw)
+            .map_err(|err| format!("cannot read stdin: {err}"))?;
+        return stdin_text(&raw, "stdin");
+    }
+    let raw = std::fs::read(spec).map_err(|err| format!("cannot read {spec}: {err}"))?;
+    stdin_text(&raw, spec)
+}
+
+/// The text a --stdin-file read becomes (SPEC §remote.cli): UTF-8 exactly as it is -
+/// quotes, CRLF and all. A byte-order mark goes (it would be the script's first word),
+/// and a UTF-16 file that starts with one - what Windows PowerShell 5's `>` writes - is
+/// decoded. Other non-UTF-8 bytes are refused: stdin travels as JSON text.
+pub fn stdin_text(raw: &[u8], from: &str) -> Result<String, String> {
+    let decoded = |encoding: &'static encoding_rs::Encoding, body: &[u8]| {
+        let mut decoder = encoding.new_decoder_without_bom_handling();
+        let mut out = vec![0u8; decoder.max_utf8_buffer_length_without_replacement(body.len())?];
+        match decoder.decode_to_utf8_without_replacement(body, &mut out, true) {
+            (encoding_rs::DecoderResult::InputEmpty, _, written) => {
+                out.truncate(written);
+                String::from_utf8(out).ok()
+            }
+            _ => None,
+        }
+    };
+    let text = match encoding_rs::Encoding::for_bom(raw) {
+        Some((encoding, bom)) => decoded(encoding, &raw[bom..]),
+        None => std::str::from_utf8(raw).ok().map(str::to_string),
+    }
+    .ok_or_else(|| {
+        format!("{from} is not UTF-8 text; stdin is sent as text - upload a binary file with swiss remote push and redirect from it")
+    })?;
+    if text.len() > swiss_remote::actions::STDIN_MAX_BYTES {
+        return Err(format!(
+            "{from} is {} bytes, over the 1 MiB stdin limit; upload it with swiss remote push and redirect from the remote file",
+            text.len()
+        ));
+    }
+    Ok(text)
+}
+
+/// The POSIX shells the exec checks below recognise, by basename.
+const SHELLS: [&str; 6] = ["sh", "bash", "dash", "ash", "zsh", "ksh"];
+
+/// A shell's command line as far as those checks need it: the single-letter options it
+/// was given, and the words after them.
+struct ShellCall<'a> {
+    letters: String,
+    operands: &'a [String],
+}
+
+/// The first shell in argv (a wrapper in front, like `sudo -u postgres bash -c`, is
+/// fine), its options read the way sh(1) reads them: `-abc` clusters, `-o name`
+/// (`+o`, and bash's `-O`) taking the next word, long `--options` skipped, `--` or `-`
+/// ending them.
+fn shell_call(argv: &[String]) -> Option<ShellCall<'_>> {
+    let at = argv
+        .iter()
+        .position(|w| SHELLS.contains(&w.rsplit('/').next().unwrap_or(w)))?;
+    let mut letters = String::new();
+    let mut i = at + 1;
+    while i < argv.len() {
+        let word = argv[i].as_str();
+        if word == "--" || word == "-" {
+            i += 1;
+            break;
+        }
+        let Some(cluster) = word
+            .strip_prefix('-')
+            .or_else(|| word.strip_prefix('+'))
+            .filter(|c| !c.is_empty())
+        else {
+            break;
+        };
+        i += 1;
+        if cluster.starts_with('-') {
+            continue;
+        }
+        if word.starts_with('-') {
+            letters.push_str(cluster);
+        }
+        if cluster.ends_with(['o', 'O']) {
+            i += 1;
+        }
+    }
+    Some(ShellCall {
+        letters,
+        operands: &argv[i.min(argv.len())..],
+    })
+}
+
+/// Refuse a `sh -c` script that a Windows shell cut apart on its way here (SPEC
+/// §remote.cli). pwsh ends a quoted argument at its closing quote, so the POSIX `'\''`
+/// idiom splits `bash -c '... '\''x'\'' ...'` into a script that stops early plus stray
+/// words; bash runs the stub with a stray word as $0 and fails with "unexpected EOF
+/// while looking for matching". The tell: stray words after the script, and either a
+/// script with unbalanced quotes (shlex reads it as the far shell would) or stray words
+/// carrying the idiom's leftover backslash. A whole script with real $0/$1 words passes.
+pub fn split_script_refusal(argv: &[String]) -> Option<String> {
+    let call = shell_call(argv)?;
+    if !call.letters.contains('c') {
+        return None;
+    }
+    let [script, stray @ ..] = call.operands else {
+        return None;
+    };
+    if stray.is_empty() {
+        return None;
+    }
+    let cut = shlex::split(script).is_none()
+        || stray.iter().any(|w| w.starts_with('\\') || w.ends_with('\\'));
+    if !cut {
+        return None;
+    }
+    let received = serde_json::to_string(argv).unwrap_or_default();
+    Some(format!(
+        "refused: the shell script arrived in pieces - it was cut apart before swiss saw it\n  \
+         argv as received: {received}\n\
+         PowerShell ends a '...' argument at its closing quote, so the POSIX '\\'' idiom splits it.\n\
+         In pwsh, a quote inside '...' is written '' ('it''s'). Or keep the script off the command line:\n  \
+         swiss remote exec <target> --stdin-file job.sh -- sh -s"
+    ))
+}
+
+/// A note - not a refusal - when a shell is about to read its script from stdin and the
+/// text has CRLF line ends: sh keeps each \r, so every line fails with `$'\r': command
+/// not found`. The text still goes as it is; stdin is never rewritten.
+pub fn crlf_note(argv: &[String], text: &str) -> Option<String> {
+    let call = shell_call(argv)?;
+    let script_on_stdin = !call.letters.contains('c')
+        && (call.letters.contains('s') || call.operands.is_empty());
+    (script_on_stdin && text.contains("\r\n")).then(|| {
+        "note: the script has CRLF line ends and the far shell keeps each \\r ($'\\r': command not found); save it with LF line ends".to_string()
+    })
+}
+
 /// Which surface submitted the run, for the record (SPEC §remote.history): `cli`, as against `panel` or
 /// an MCP client's own actor. The admin API's CLI key (SPEC §host.session) proves "this machine's CLI", not
 /// who, so this is self-declared either way, and the distinction that matters in the audit trail
@@ -1337,16 +1516,23 @@ pub fn audit_command(row: &Value) -> String {
         .trim_start_matches("remote.");
     let field = |k: &str| input[k].as_str().unwrap_or("");
     match kind {
-        "exec" => input["argv"]
-            .as_array()
-            .map(|argv| {
-                argv.iter()
-                    .filter_map(Value::as_str)
-                    .map(shell_word)
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .unwrap_or_default(),
+        "exec" => {
+            let mut s = input["argv"]
+                .as_array()
+                .map(|argv| {
+                    argv.iter()
+                        .filter_map(Value::as_str)
+                        .map(shell_word)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            // The record keeps how much stdin went, never the text (SPEC §remote.history).
+            if let Some(n) = input["stdinBytes"].as_u64() {
+                s.push_str(&format!(" < [{} stdin]", human_bytes(n)));
+            }
+            s
+        }
         "sync" => {
             let mut s = format!(
                 "sync {}",
@@ -1398,15 +1584,18 @@ fn audit_duration(row: &Value) -> String {
     }
 }
 
-fn audit_bytes(row: &Value) -> String {
-    let n = row["outputBytes"].as_u64().unwrap_or(0);
-    let s = if n >= 1024 * 1024 {
+fn human_bytes(n: u64) -> String {
+    if n >= 1024 * 1024 {
         format!("{:.1}M", n as f64 / (1024.0 * 1024.0))
     } else if n >= 1024 {
         format!("{:.1}K", n as f64 / 1024.0)
     } else {
         format!("{n}B")
-    };
+    }
+}
+
+fn audit_bytes(row: &Value) -> String {
+    let s = human_bytes(row["outputBytes"].as_u64().unwrap_or(0));
     if row["outputEvicted"].as_bool().unwrap_or(false) {
         format!("{s}*")
     } else {
@@ -1667,6 +1856,99 @@ mod tests {
             "{}",
             audit_line(&evicted)
         );
+    }
+
+    #[test]
+    fn stdin_file_takes_a_path_or_a_lone_dash_before_the_command() {
+        let a = parse_command(&argv(&["exec", "t", "--stdin-file", "q.sql", "--", "psql"]));
+        assert_eq!(a.stdin_file.as_deref(), Some("q.sql"));
+        assert_eq!(a.passthrough, vec!["psql"]);
+        // `-` is this process's stdin, a value - not a flag the parser refuses.
+        let a = parse_command(&argv(&["exec", "t", "--stdin-file", "-", "--", "sh", "-s"]));
+        assert_eq!(a.stdin_file.as_deref(), Some("-"));
+        assert!(a.unknown.is_empty(), "{:?}", a.unknown);
+        let a = parse_command(&argv(&["exec", "t", "--stdin-file=-", "sh", "-s"]));
+        assert_eq!(a.stdin_file.as_deref(), Some("-"));
+        assert_eq!(a.passthrough, vec!["sh", "-s"]);
+        // After the first command word it is the far side's argv like anything else.
+        let a = parse_command(&argv(&["exec", "t", "sh", "--stdin-file", "x"]));
+        assert_eq!(a.stdin_file, None);
+        assert_eq!(a.passthrough, vec!["sh", "--stdin-file", "x"]);
+    }
+
+    #[test]
+    fn stdin_text_is_sent_verbatim_and_must_be_text() {
+        // Bytes as they are: quotes, CRLF, a trailing backslash - nothing is rewritten.
+        let sql = "SELECT 'it''s', \"col\" FROM t;\r\n\\q\n";
+        assert_eq!(stdin_text(sql.as_bytes(), "q.sql").unwrap(), sql);
+        // A UTF-8 BOM (Windows PowerShell 5's -Encoding utf8, Notepad) would be the
+        // script's first "command"; it goes.
+        let mut bom = vec![0xEF, 0xBB, 0xBF];
+        bom.extend_from_slice("set -e\n中文\n".as_bytes());
+        assert_eq!(stdin_text(&bom, "job.sh").unwrap(), "set -e\n中文\n");
+        // Windows PowerShell 5's `>` writes UTF-16LE with a BOM: decoded, not refused.
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in "SELECT 1;\n".encode_utf16() {
+            utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert_eq!(stdin_text(&utf16, "q.sql").unwrap(), "SELECT 1;\n");
+        let err = stdin_text(&[0x41, 0xFF, 0x42], "blob.bin").unwrap_err();
+        assert!(err.contains("blob.bin") && err.contains("UTF-8"), "{err}");
+        let big = vec![b'x'; swiss_remote::actions::STDIN_MAX_BYTES + 1];
+        let err = stdin_text(&big, "big.sql").unwrap_err();
+        assert!(err.contains("big.sql") && err.contains("1 MiB"), "{err}");
+    }
+
+    #[test]
+    fn a_shell_script_powershell_split_apart_is_refused_before_it_runs() {
+        let refused = |words: &[&str]| split_script_refusal(&argv(words));
+        // What pwsh hands over for bash -c '... '\''x'\'' ...': the `'\''` idiom is not
+        // pwsh's, so the script ends early and the rest arrives as stray arguments.
+        let why = refused(&[
+            "bash",
+            "-c",
+            "psql -c \"SELECT username FROM users WHERE id = ",
+            "\\1gn6daai3jng5ddas3uyxctkmy\\';\"",
+        ])
+        .expect("an unbalanced script with stray words is refused");
+        assert!(why.contains("\"bash\",\"-c\""), "the argv as received: {why}");
+        assert!(why.contains("''") && why.contains("--stdin-file"), "{why}");
+        // A split that happens to leave the script balanced still leaves the idiom's
+        // backslashes on the stray words.
+        assert!(refused(&["bash", "-c", "psql -c ", "\\SELECT", "1\\"]).is_some());
+        // Flag clusters, a path, -o's value, and a wrapper in front.
+        assert!(refused(&["sh", "-ec", "echo \"x", "y\""]).is_some());
+        assert!(refused(&["/bin/bash", "-o", "pipefail", "-c", "echo 'a", "b'"]).is_some());
+        assert!(refused(&["sudo", "-u", "postgres", "bash", "-lc", "psql -c 'x", "y'"]).is_some());
+        // Legitimate shapes pass: $0/$1 after a whole script, a lone unbalanced script
+        // (bash reports that itself), no shell at all, a script file.
+        assert!(refused(&["sh", "-c", "echo \"$1\"", "_", "it's"]).is_none());
+        assert!(refused(&["bash", "-c", "echo 'unbalanced"]).is_none());
+        assert!(refused(&["bash", "-c", "# it's fine\necho ok", "_"]).is_none());
+        assert!(refused(&["psql", "-c", "SELECT 'x", "y'"]).is_none());
+        assert!(refused(&["bash", "job.sh", "a'b", "\\c"]).is_none());
+        assert!(refused(&["sh", "-s", "\\x"]).is_none());
+    }
+
+    #[test]
+    fn a_crlf_script_for_a_stdin_shell_gets_a_note() {
+        let note = |words: &[&str], text: &str| crlf_note(&argv(words), text);
+        assert!(note(&["sh", "-s"], "set -e\r\nls\r\n").is_some());
+        assert!(note(&["bash"], "ls\r\n").is_some());
+        assert!(note(&["sh", "-s"], "set -e\nls\n").is_none());
+        // Not a script on stdin: SQL, or a shell whose script is elsewhere.
+        assert!(note(&["psql", "-X"], "SELECT 1;\r\n").is_none());
+        assert!(note(&["bash", "-c", "cat"], "a\r\n").is_none());
+        assert!(note(&["bash", "job.sh"], "a\r\n").is_none());
+    }
+
+    #[test]
+    fn an_exec_with_stdin_says_so_in_the_audit() {
+        let row = json!({
+            "action": "remote.exec", "state": "succeeded",
+            "input": { "argv": ["sh", "-s"], "stdinBytes": 2048 },
+        });
+        assert_eq!(audit_command(&row), "sh -s < [2.0K stdin]");
     }
 
     #[test]

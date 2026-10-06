@@ -66,7 +66,7 @@ Local flags come first, then the target name, then the remote command: the comma
 everything after it is the remote argv, passed through untouched. A bare `--` forces the same
 cut explicitly and is the unambiguous spelling when the command itself starts with a flag. So
 `exec test ls -a` and `exec test -- ls -a` are the same call; a flag before the command word
-(`--timeout`, `--env`, `--detach`) is local.
+(`--timeout`, `--env`, `--stdin-file`, `--detach`) is local.
 
 ```text
 swiss remote exec test -- pwd
@@ -90,8 +90,8 @@ spelled out (`ls -alF`), and tools that assume a terminal print plain output - `
 names one per line, so sizes and permissions need `ls -la`. Never wait for an interactive prompt.
 
 Credentials never go into a command as text. Store the value once in the vault (the panel's
-Secrets page) and reference it: `${secret://name}` in an argv word, an `--env` value or
-`--cwd` is replaced by the stored value on the way out, and `${secret://name:default}` uses
+Secrets page) and reference it: `${secret://name}` in an argv word, an `--env` value,
+`--cwd` or the `--stdin-file` text is replaced by the stored value on the way out, and `${secret://name:default}` uses
 `default` when the vault has no such name. Records, `swiss run status` and the panel keep the
 reference as typed; output that echoes the value comes back as `••••••••`. A missing name
 without a default fails the run before anything is sent. Prefer `--env` (argv is visible in the
@@ -102,8 +102,46 @@ swiss remote exec test --env 'REDISCLI_AUTH=${secret://redis-password}' -- redis
 swiss remote exec test --env 'DB_USER=${secret://db-user:readonly}' -- ./report.sh
 ```
 
-`${UPPER}` is not expanded here and argv is not run through a shell: wrap the command in
-`sh -c '...'` when the remote shell should expand its own variables.
+`${UPPER}` is not expanded here and argv is not run through a shell. When the remote shell
+should expand its own variables, or the command needs pipes, redirects or several steps, send a
+script as stdin (next section) rather than squeezing it into `sh -c '...'`.
+
+## Quotes, SQL and scripts: send them as stdin
+
+Text with quotes in it does not survive the local shell reliably. PowerShell and POSIX shells
+write a quote inside a quoted word differently, and a word cut apart reaches the far shell broken
+("unexpected EOF while looking for matching"). `--stdin-file` sends a file's text to the command's
+standard input exactly as written - no shell on either side parses it, so nothing needs escaping:
+
+```text
+swiss remote exec test --stdin-file q.sql -- psql -X -d app          # SQL, quotes and all
+swiss remote exec test --stdin-file job.sh -- sh -s                   # a script for the remote shell
+swiss remote exec test --stdin-file job.sh -- bash -s -- one two      # the script sees $1 $2
+```
+
+- `--stdin-file` is a local flag, so it goes before the command word. `-` reads this process's own
+  stdin; from PowerShell prefer a file - a pwsh pipeline ends every line with CRLF.
+- At most 1 MiB of text: UTF-8 (a UTF-8 BOM is dropped; UTF-16 with a BOM, what Windows PowerShell
+  5's `>` writes, is decoded). For bigger input `push` the file, then redirect on the far side.
+- Save scripts with LF line ends: sh keeps each `\r` of a CRLF file (`$'\r': command not found`).
+  The CLI prints a note when it sees one but sends the text unchanged.
+- Under `sh -s` the script IS stdin: a command inside it that reads stdin (`psql` without `-c`,
+  `ssh`, `read`, `ffmpeg`) swallows the rest of the script. Give it `< /dev/null` or its own input.
+- Without `--stdin-file` the command's stdin is closed at once: `cat` or `psql` with nothing to
+  read ends instead of waiting out the deadline.
+- The run record keeps the stdin's size, never its text.
+
+When a short command does stay on the command line, quote it for the shell you are typing in:
+
+- **PowerShell 7:** inside `'...'` a single quote is written `''`, never the POSIX `'\''` - pwsh
+  ends the word at the quote and the rest arrives as stray arguments. swiss refuses a
+  `sh -c` script that arrives split like that and prints the argv it received.
+  `swiss remote exec test -- psql -X -c 'SELECT name FROM users WHERE id = ''42'''` sends the
+  word `SELECT name FROM users WHERE id = '42'`.
+- **Windows PowerShell 5.1** passes a `"` inside an argument to native programs unescaped and
+  breaks the word; use `--stdin-file` for anything with double quotes in it.
+- **Git Bash** rewrites arguments that look like absolute POSIX paths (`/home/dev` becomes
+  `C:/Program Files/Git/home/dev`): prefix the command with `MSYS_NO_PATHCONV=1`.
 
 Relative remote paths resolve under `workspaceRoot`. Absolute remote paths pass through unchanged.
 Any `..` segment is refused. This is a guardrail, not a sandbox: the SSH login user and remote OS
@@ -141,6 +179,9 @@ PowerShell does not implement `<`; use cmd's redirection when bytes must be pres
 cmd /d /c "swiss remote write test conf/app.toml < config.toml"
 ```
 
+Not `Get-Content config.toml | swiss remote write ...`: a pwsh pipeline re-encodes the text and
+ends every line with CRLF.
+
 For a small change, prefer a scoped remote command such as `sed -i.bak`. For a whole file, pull it
 to an explicit absolute local path, edit it, then push that file back. To return a directory, use
 `sync --source <absolute-local-directory>`; `push` accepts one file only.
@@ -165,7 +206,8 @@ when a name may be ambiguous.
 
 The builtin `/mcp/remote` server exposes five tools while the Remote plugin is on:
 `remote_exec`, `remote_sync`, `remote_pull`, `remote_cat`, and `remote_write`. `push` is
-the CLI's one-file form of sync, not a sixth MCP tool.
+the CLI's one-file form of sync, not a sixth MCP tool. `remote_exec` takes no stdin; send a
+script or SQL through the CLI's `--stdin-file`.
 
 ## Memory: per-target notes
 
@@ -186,13 +228,13 @@ the skill directory - `swiss skill install` replaces that wholesale on every upg
 ## UTF-8 and records
 
 Remote exec defaults `LANG=C.UTF-8` and `LC_ALL=C.UTF-8`; CLI `--env` and the MCP exec tool's
-`env` may override them. Argv and streamed output are UTF-8. `remote write` accepts valid UTF-8
-text only. In Windows PowerShell 5, set
+`env` may override them. Argv and streamed output are UTF-8. `remote write` and exec's
+`--stdin-file` accept text only. In Windows PowerShell 5, set
 `[Console]::OutputEncoding = [Text.Encoding]::UTF8` before reading non-ASCII native output;
 PowerShell 7.4+ needs no change.
 
-Every remote action records actor, target, operation shape, env names (never values), exit, duration,
-and bounded output. Records younger than seven days remain traceable; older records are retained up
+Every remote action records actor, target, operation shape, env names (never values), stdin size
+(never text), exit, duration, and bounded output. Records younger than seven days remain traceable; older records are retained up
 to 30 days within count and size budgets.
 
 ```text

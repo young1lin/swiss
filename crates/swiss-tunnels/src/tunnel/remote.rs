@@ -265,6 +265,7 @@ mod tests {
             argv: args.iter().map(|s| s.to_string()).collect(),
             env: Vec::new(),
             cwd: None,
+            stdin: None,
         })
     }
 
@@ -342,6 +343,7 @@ mod tests {
             argv: vec!["make".into()],
             env: vec![("BOARD".into(), "foo; rm -rf /".into())],
             cwd: Some("/data/ws/a b".into()),
+            stdin: None,
         };
         let cmd = exec_command_string(&request);
         assert_eq!(
@@ -359,6 +361,7 @@ mod tests {
             argv: vec!["true".into()],
             env: vec![("A=1;evil".into(), "v".into())],
             cwd: None,
+            stdin: None,
         };
         let cmd = exec_command_string(&request);
         // Even a hostile name stays a quoted word: no syntax escapes. (A safe value

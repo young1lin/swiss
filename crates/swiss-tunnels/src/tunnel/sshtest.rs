@@ -80,6 +80,25 @@ pub struct ExecScript {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub exit: Option<u32>,
+    /// What the command does with its stdin; anything but Ignore runs until the client's
+    /// EOF and then exits 0 (`exit` is not used).
+    pub stdin: StdinMode,
+}
+
+/// What a fake exec command does with the stdin the client sends.
+#[derive(Clone, Copy, Default, PartialEq)]
+pub enum StdinMode {
+    /// Never reads it: the script's own exit ends the command.
+    #[default]
+    Ignore,
+    /// A `cat`: every byte comes straight back as stdout.
+    Echo,
+    /// A `wc -c`: the byte count is the only output, printed at EOF. A large input needs
+    /// this shape - russh's session loop does not read while it flushes, so a russh
+    /// server echoing megabytes to a russh client that is still sending them wedges both
+    /// on loopback. A real sshd reads and writes at once; that wedge is the test pair's,
+    /// not the exec's.
+    Count,
 }
 
 /// The russh server handler behind every test server: answer auth per the policy, and
@@ -90,6 +109,14 @@ struct TestHandler {
     /// tests): channel success, stdout, stderr, an optional stall, then the exit
     /// status. A None handler ignores exec requests entirely.
     exec: Option<ExecScript>,
+    /// Stdin bytes seen so far, for StdinMode::Count.
+    stdin_bytes: usize,
+}
+
+impl TestHandler {
+    fn stdin_mode(&self) -> StdinMode {
+        self.exec.as_ref().map(|s| s.stdin).unwrap_or_default()
+    }
 }
 
 impl russh::server::Handler for TestHandler {
@@ -168,6 +195,10 @@ impl russh::server::Handler for TestHandler {
         if !script.stderr.is_empty() {
             session.extended_data(channel, 1, script.stderr.clone())?;
         }
+        if script.stdin != StdinMode::Ignore {
+            // The command runs until its stdin ends: data() reads, channel_eof() exits.
+            return Ok(());
+        }
         // Everything sent here flushes when this handler returns to the event loop.
         if let Some(exit) = script.exit {
             session.exit_status_request(channel, exit)?;
@@ -176,6 +207,36 @@ impl russh::server::Handler for TestHandler {
         // `data` (the command string) is unused on purpose: the echo of it is the
         // client's own assertion, not the server's.
         let _ = data;
+        Ok(())
+    }
+
+    async fn data(
+        &mut self,
+        channel: russh::ChannelId,
+        data: &[u8],
+        session: &mut russh::server::Session,
+    ) -> Result<(), Self::Error> {
+        match self.stdin_mode() {
+            StdinMode::Ignore => {}
+            StdinMode::Echo => session.data(channel, data.to_vec())?,
+            StdinMode::Count => self.stdin_bytes += data.len(),
+        }
+        Ok(())
+    }
+
+    async fn channel_eof(
+        &mut self,
+        channel: russh::ChannelId,
+        session: &mut russh::server::Session,
+    ) -> Result<(), Self::Error> {
+        let mode = self.stdin_mode();
+        if mode == StdinMode::Count {
+            session.data(channel, format!("{}\n", self.stdin_bytes).into_bytes())?;
+        }
+        if mode != StdinMode::Ignore {
+            session.exit_status_request(channel, 0)?;
+            session.close(channel)?;
+        }
         Ok(())
     }
 }
@@ -225,9 +286,8 @@ fn serve_connections_exec(
             let track = track.clone();
             let exec = exec.clone();
             tokio::spawn(async move {
-                if let Ok(run) =
-                    russh::server::run_stream(config, socket, TestHandler { auth, exec }).await
-                {
+                let handler = TestHandler { auth, exec, stdin_bytes: 0 };
+                if let Ok(run) = russh::server::run_stream(config, socket, handler).await {
                     if let Some(track) = &track {
                         if let Ok(mut list) = track.lock() {
                             list.push(run.handle());

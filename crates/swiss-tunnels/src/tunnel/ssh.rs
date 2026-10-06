@@ -650,7 +650,7 @@ impl SshConnection {
     /// exactly as long as the exec.
     pub async fn exec(
         &self,
-        request: swiss_host::services::remote::RemoteExecRequest,
+        mut request: swiss_host::services::remote::RemoteExecRequest,
         events: tokio::sync::mpsc::Sender<swiss_host::services::remote::RemoteExecEvent>,
         cancel: swiss_host::services::action::CancelHandle,
         hold: super::manager::ConnectionLease,
@@ -670,6 +670,24 @@ impl SshConnection {
             .await
             .map_err(|err| as_tunnel_error(err, Some("exec request failed")))?;
         await_request_reply(&mut read, "the exec request").await?;
+
+        // Stdin rides alongside the output (SPEC §remote.transport), never ahead of it. While
+        // the feed waits for window, this loop must keep draining the channel: russh parks
+        // the whole session on a full channel buffer, and a parked session never reads the
+        // window adjustment the feed is waiting for - a command that answers its input
+        // (cat, sh -s) would wedge both. data_bytes cuts the text to the window itself.
+        // EOF follows the text, or comes at once when there is none, so a command that
+        // reads stdin ends instead of sitting out its deadline.
+        let stdin = request.stdin.take().unwrap_or_default().into_bytes();
+        let feeder = &write;
+        let feed = async move {
+            if !stdin.is_empty() {
+                feeder.data_bytes(stdin).await?;
+            }
+            feeder.eof().await
+        };
+        tokio::pin!(feed);
+        let mut fed = false;
 
         let mut exit_code: Option<i32> = None;
         let result = loop {
@@ -762,6 +780,12 @@ impl SshConnection {
                         ChannelMsg::WindowAdjusted { .. } => {}
                         _ => {}
                     }
+                }
+                sent = &mut feed, if !fed => {
+                    // A refused send means the channel is already gone (the command
+                    // exited without reading it all); the read side reports how it ended.
+                    let _ = sent;
+                    fed = true;
                 }
             }
         };

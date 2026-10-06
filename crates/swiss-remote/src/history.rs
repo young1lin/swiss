@@ -944,7 +944,8 @@ fn legacy_body(line: &Map<String, Value>) -> Option<&str> {
 
 /// The submission's input with every `env` object reduced to its key list: an exec's
 /// env pairs are user-provided and may carry a token; the record says WHICH variables
-/// were set, never what to.
+/// were set, never what to. Bodies - a write's content, an exec's stdin - shrink to
+/// their byte counts.
 fn sanitized_input(input: &Value) -> Value {
     let Value::Object(obj) = input else {
         return Value::Null;
@@ -962,6 +963,11 @@ fn sanitized_input(input: &Value) -> Value {
             // big, never what (a .env, a key, a password file) - 2026-09-28.
             let bytes = v.as_str().map(str::len).unwrap_or(0);
             out.insert("contentBytes".into(), json!(bytes));
+        } else if k == "stdin" {
+            // remote.exec's stdin: a script or SQL that may hold a password in clear. Same
+            // rule as a write's body - how much was sent, never what.
+            let bytes = v.as_str().map(str::len).unwrap_or(0);
+            out.insert("stdinBytes".into(), json!(bytes));
         } else {
             out.insert(k.clone(), v.clone());
         }
@@ -1212,6 +1218,28 @@ mod tests {
             "and the index was not rewritten"
         );
         assert_eq!(history.content(4).unwrap().unwrap().text, "a=1\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An exec's stdin is a script or a batch of SQL - it may carry a password typed in
+    /// clear, and it is up to 1 MiB. The record keeps how much was sent, never what.
+    #[test]
+    fn an_exec_stdin_is_recorded_as_its_size_only() {
+        let dir = scratch();
+        let history = RunHistory::open(dir.clone());
+        let stdin = "ALTER USER app PASSWORD 'hunter2-\u{e9}';\n";
+        let req = request(
+            "remote.exec",
+            json!({ "target": "db", "argv": ["psql", "-X"], "stdin": stdin }),
+        );
+        let _tee = history.begin(9, &req).expect("recorded");
+        history.finish(&view(9, now_ms()), &req);
+
+        let (page, _) = history.page(None, 20, None);
+        assert_eq!(page[0]["input"]["stdinBytes"], stdin.len());
+        assert!(page[0]["input"].get("stdin").is_none(), "{}", page[0]["input"]);
+        let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).unwrap();
+        assert!(!raw.contains("hunter2"), "{raw}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
