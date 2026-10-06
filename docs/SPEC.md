@@ -882,7 +882,9 @@ api <METHOD> <path> [json]`. Options: `-p/--port` (start: listen and save as def
 
 - **19999 is production.** It runs from `bin\swiss.exe`, a copy of the build output that git
   ignores — never from `target\`. The linker and the daemon never share a file, so a build
-  happens while the old daemon serves.
+  happens while the old daemon serves. `bin\` is the main checkout's, also for a deploy run
+  from a linked worktree: that worktree's tree is built, and the exe lands where PATH and
+  `swiss autostart on` look.
 - **Deploy** only with `scripts/deploy.ps1`: gates (unit tests, the integration suite,
   clippy; `-SkipGates` skips all) → release build → stop → copy into `bin\` (retried while the
   old process releases its handle) → start → status → prove `/health`'s `build.hash` equals

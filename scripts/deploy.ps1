@@ -30,11 +30,14 @@
 # `swiss autostart on`, and git ignores it. A daemon still running out of target\ (the
 # pre-bin layout) is stopped BEFORE the build, once, so the linker can write.
 #
-# Run it from the repo root; a deploy is the operator's decision, from whichever shell they
-# choose (H1 scrubs the daemon's environment, so an agent or CI shell is safe too). Until
-# 2026-09-20 a shell that CAPTURED this script's output (`| Out-File`, a tool wrapper, `| tee`)
-# hung after "gateway started": the daemon inherited the wrapper's stdout pipe and the wrapper
-# waited for an EOF that never came, so the proof step below never ran and the lock stayed.
+# Run it from the root of the tree to deploy - the main checkout or one of its linked worktrees
+# (.agents\worktrees\*): that tree is built, and the exe goes into the MAIN checkout's bin\
+# either way, the one PATH and autostart name. A deploy is the operator's decision, from
+# whichever shell they choose (H1 scrubs the daemon's environment, so an agent or CI shell is
+# safe too). Until 2026-09-20 a shell that CAPTURED this script's output (`| Out-File`, a
+# tool wrapper, `| tee`) hung after "gateway started": the daemon inherited the wrapper's
+# stdout pipe and the wrapper waited for an EOF that never came, so the proof step below never
+# ran and the lock stayed.
 # `swiss start` now keeps its std handles out of the daemon's inheritance (swiss-core
 # platform::keep_std_handles_from_children), and a captured deploy runs to the end.
 # -SkipGates jumps the test/clippy gates for a hotfix; the default is to run them.
@@ -49,10 +52,10 @@ param(
     [switch]$SkipGates
 )
 $ErrorActionPreference = 'Stop'
-$Built = 'target\release\swiss.exe'     # what cargo writes
-$BinDir = 'bin'
-$Exe = Join-Path $BinDir 'swiss.exe'     # what 19999 runs
 . "$PSScriptRoot\deploy-lock.ps1"
+$Built = 'target\release\swiss.exe'     # what cargo writes, in the tree being deployed
+$BinDir = Get-SwissProdBin               # the main checkout's bin\, from a worktree too
+$Exe = Join-Path $BinDir 'swiss.exe'     # what 19999 runs
 function Fail($message) {
     Write-Host $message -ForegroundColor Red
     Phase "FAILED: $message"

@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Single-deployer lock for the production gateway - dot-sourced by deploy.ps1 and its test.
+# Single-deployer lock for the production gateway, and where production lives - dot-sourced
+# by deploy.ps1 and its test.
 #
 # The 2026-09-14 incident: two agent sessions deployed the SAME production four minutes
 # apart. Session A's `swiss stop` had just landed when session B saw "production down",
@@ -29,6 +30,22 @@
 function Get-SwissProdHome {
     if ($env:SWISS_HOME) { return $env:SWISS_HOME }
     Join-Path $env:USERPROFILE '.swiss'
+}
+# The folder production's exe runs from: bin\ of the MAIN checkout, also for a deploy run from
+# a linked worktree (.agents\worktrees\*). The tree that is built is wherever the deploy runs,
+# but PATH and `swiss autostart on` name the main checkout's bin\ - an exe installed into the
+# worktree's own bin\ left them on the old build and pinned 19999 to a folder that goes away
+# with the worktree. `git worktree list` names the main checkout first from any of its
+# worktrees; outside git (a source archive) it is bin\ where the deploy runs.
+function Get-SwissProdBin {
+    param([string]$From = (Get-Location).Path)
+    $ErrorActionPreference = 'Continue'
+    $first = $null
+    try { $first = @(git -C $From worktree list --porcelain 2>$null)[0] } catch { }
+    if ($LASTEXITCODE -eq 0 -and $first -match '^worktree (?<root>.+)$') {
+        return Join-Path ([System.IO.Path]::GetFullPath($Matches.root)) 'bin'
+    }
+    Join-Path $From 'bin'
 }
 function Get-DeployLockPath {
     param([string]$Path)
