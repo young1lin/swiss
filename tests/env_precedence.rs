@@ -64,6 +64,9 @@ fn only_the_swiss_names_are_knobs() {
     );
     unsafe {
         std::env::set_var("MCP_GATEWAY_PORT", "18093");
+        // An inherited SWISS_PORT (a runner may pin one) must not answer the
+        // legacy-only negative either.
+        std::env::remove_var("SWISS_PORT");
     }
     assert_eq!(env_port_raw(), None);
     assert_eq!(env_listen_port(), None);
@@ -81,10 +84,25 @@ fn only_the_swiss_names_are_knobs() {
     restore("MCP_GATEWAY_PORT", before_port.1);
 
     // MASTER KEY: SWISS_MASTER_KEY overrides every source; a leftover
-    // MCP_GATEWAY_MASTER_KEY is not a key source at all.
+    // MCP_GATEWAY_MASTER_KEY is not a key source at all. The no-env negative runs
+    // inside a unique scratch home: the OS fallback behind it (secure::key's dpapi
+    // source) READS - or, on first sight, CREATES - <data>/master.key, and data_path
+    // follows SWISS_HOME, so without the scratch the resolution would touch the
+    // user's real home instead of the temp dir. This binary is its own process (the
+    // file's isolation boundary), and the runner pins only the master key itself.
     let before_key = std::env::var_os(MASTER_KEY_ENV_SWISS);
+    let before_legacy_key = std::env::var_os("MCP_GATEWAY_MASTER_KEY");
+    let before_master_home = std::env::var_os("SWISS_HOME");
+    let master_home = tmp.join(format!(
+        "env-precedence-master-home-{}",
+        swiss_core::util::random_hex(8)
+    ));
     unsafe {
+        std::env::set_var("SWISS_HOME", &master_home);
         std::env::set_var("MCP_GATEWAY_MASTER_KEY", "ab".repeat(32));
+        // The runner's inherited pin is a legitimate key source; the legacy-only
+        // negative must hold without it.
+        std::env::remove_var(MASTER_KEY_ENV_SWISS);
     }
     let candidates = master_key_candidates().expect("candidates");
     assert!(
@@ -100,5 +118,6 @@ fn only_the_swiss_names_are_knobs() {
     assert_eq!(candidates[0].id, "env");
     assert_eq!(candidates[0].key, [0xcd; 32]);
     restore(MASTER_KEY_ENV_SWISS, before_key);
-    unsafe { std::env::remove_var("MCP_GATEWAY_MASTER_KEY") };
+    restore("MCP_GATEWAY_MASTER_KEY", before_legacy_key);
+    restore("SWISS_HOME", before_master_home);
 }

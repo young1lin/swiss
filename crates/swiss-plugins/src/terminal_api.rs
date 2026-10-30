@@ -77,13 +77,31 @@ use swiss_terminal::terminal::{Attachment, ClientFrame, TerminalError, TerminalS
 /// factory (which fills it) and to [mount] (which reads it).
 pub struct TerminalState {
     sessions: RwLock<Option<Arc<TerminalSessions>>>,
+    /// The history store the export route reads (ADR-035). Installed and withdrawn with
+    /// the plugin instance's own open/close, so the route can never reach a closed pool.
+    history: RwLock<Option<Arc<swiss_terminal::terminal::history::TerminalHistory>>>,
 }
 
 impl TerminalState {
     pub fn new() -> Arc<Self> {
         Arc::new(TerminalState {
             sessions: RwLock::new(None),
+            history: RwLock::new(None),
         })
+    }
+
+    /// The plugin's start: publish the store the export route will read.
+    pub fn install_history(&self, history: Arc<swiss_terminal::terminal::history::TerminalHistory>) {
+        let mut slot = self.history.write().unwrap_or_else(|e| e.into_inner());
+        *slot = Some(history);
+    }
+
+    /// The plugin's stop: take the store back. Returns it — the caller still owns the close.
+    pub fn withdraw_history(&self) -> Option<Arc<swiss_terminal::terminal::history::TerminalHistory>> {
+        self.history
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
     }
 
     /// The plugin's start: publish the session machine the routes will talk to.
@@ -99,6 +117,13 @@ impl TerminalState {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .take()
+    }
+
+    /// The live machine for an out-of-band reader (SPEC §process.children): a terminal
+    /// child row's stop closes its session THROUGH the table, so the tab's own teardown
+    /// (final frames, recordings) runs instead of a raw kill under it.
+    pub fn current(&self) -> Option<Arc<TerminalSessions>> {
+        self.live()
     }
 
     fn live(&self) -> Option<Arc<TerminalSessions>> {
@@ -123,6 +148,8 @@ pub fn mount(state: Arc<TerminalState>) -> Router<()> {
         .route("/api/terminal/sessions/{id}/stream", get(stream))
         .route("/api/terminal/sessions/{id}/resize", post(resize_session))
         .route("/api/terminal/sessions/{id}", delete(close_session))
+        .route("/api/terminal/recordings", get(list_recordings))
+        .route("/api/terminal/recordings/{sid}/cast", get(export_cast))
         .with_state(state)
 }
 
@@ -491,6 +518,55 @@ fn control(t: &str, fields: &[(&str, &Value)]) -> String {
     body.to_string()
 }
 
+
+/// GET /api/terminal/recordings/{sid}/cast — the byte-faithful asciicast export
+/// The stored recordings, newest first (SPEC §terminal.recording). This is the
+/// discovery surface for a CLOSED session's export URL: the live session list
+/// drops the row at close, and the deep search's hit carries only the integer
+/// run id — without this route the sid (and with it the cast) is unreachable.
+async fn list_recordings(axum::extract::State(state): axum::extract::State<Arc<TerminalState>>) -> Response {
+    let history = state
+        .history
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let Some(history) = history else {
+        return admin_error(StatusCode::NOT_FOUND, "the terminal history is not open");
+    };
+    match history.list_sessions(200).await {
+        Ok(rows) => axum::Json(rows).into_response(),
+        Err(reason) => admin_error(StatusCode::CONFLICT, &reason),
+    }
+}
+
+/// (SPEC §terminal.recording, ADR-035): the header line plus the stored event lines
+/// verbatim, so `asciinema play` and every web player keep working on what the
+/// gateway owes them. Plain text by design: the format IS the file.
+async fn export_cast(
+    axum::extract::State(state): axum::extract::State<Arc<TerminalState>>,
+    axum::extract::Path(sid): axum::extract::Path<String>,
+) -> Response {
+    let history = state
+        .history
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let Some(history) = history else {
+        // No store means the plugin start degraded (one warning already logged): the
+        // route says so rather than pretending an empty history.
+        return admin_error(StatusCode::NOT_FOUND, "the terminal history is not open");
+    };
+    match history.export_cast(&sid).await {
+        Ok(Some(cast)) => axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(axum::body::Body::from(cast))
+            .unwrap_or_else(|_| admin_error(StatusCode::INTERNAL_SERVER_ERROR, "export failed")),
+        Ok(None) => admin_error(StatusCode::NOT_FOUND, "no such recording"),
+        Err(reason) => admin_error(StatusCode::CONFLICT, &reason),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,13 +646,13 @@ mod tests {
         }
 
         let state = TerminalState::new();
-        let dir =
-            std::env::temp_dir().join(format!("swiss-targets-{}", swiss_core::util::random_hex(8)));
         state.install(TerminalSessions::new(
             TerminalConfig::default(),
             Arc::new(ShellRegistry::new()),
             Arc::new(FixedLocal),
-            dir,
+            // No history store in this harness: the targets route must answer with the
+            // machine alone (the store-backed export route has its own file).
+            None,
         ));
         let app = mount(state);
         let resp = app

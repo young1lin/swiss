@@ -36,6 +36,7 @@ pub const COMMANDS: &[&str] = &[
     "restart",
     "status",
     "logs",
+    "process",
     "token",
     "creds",
     "open",
@@ -130,7 +131,7 @@ usage: swiss <command> [options]
   export           dump every state file as JSON to stdout (vault values masked) — the recovery /
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
-  skill install    install swiss and swiss-remote in each AI client's skills directory
+  skill install    install swiss, swiss-remote and swiss-memory in each AI client's skills directory
   autostart [on|off]
                    show, enable or disable start-at-sign-in — a registry Run value on
                    Windows, a LaunchAgent on macOS, a systemd user unit on Linux
@@ -943,6 +944,12 @@ pub async fn main(argv: Vec<String>) -> i32 {
         Some("run") => return crate::remote_cli::run_main(argv[1..].to_vec()).await,
         // A body is free-form JSON the generic parser must not touch.
         Some("api") => return crate::remote_cli::api_main(argv[1..].to_vec()).await,
+        // `memory` carries its own argv contract too (SPEC §memory.cli): the offline
+        // CLI over the SAME store the gateway holds, opened directly - and `--stdin`
+        // bodies must survive the generic parser untouched.
+        Some("memory") => return crate::memory_cli::main(argv[1..].to_vec()).await,
+        // `process` carries its own subcommand grammar (SPEC §process.cli).
+        Some("process") => return crate::process_cli::main(argv[1..].to_vec()).await,
         _ => {}
     }
     run(&argv, &PrintIo, &RealOps).await

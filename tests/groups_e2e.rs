@@ -17,7 +17,7 @@
 //! End-to-end for the group family: the real app on a REAL loopback socket, driven by a real
 //! HTTP client, across a RESTART of the whole app over the same home.
 //!
-//! The oneshot integration tests in adminapi.rs pin each route contract in isolation. What
+//! The oneshot integration tests in tests/adminapi/ pin each route contract in isolation. What
 //! only this layer can prove: the wire (a real client's Host header through the loopback
 //! guard, real JSON over the socket), and the boot-after-boot half of the pinning fix - the
 //! members a reorder pinned must still render under their group when a FRESH app opens the
@@ -53,7 +53,7 @@ impl Served {
                     .expect("object")
                     .clone(),
             );
-            let adapter = make_adapter(&def, name, &calls).expect("adapter");
+            let adapter = make_adapter(&def, name, &calls, None).expect("adapter");
             registry
                 .register(name, Source::Config, def, adapter)
                 .expect("register");

@@ -42,7 +42,7 @@ use swiss_host::auth;
 use swiss_host::local_only::remote_request_reason;
 use swiss_host::managed::ManagedStore;
 use swiss_host::token::TokenManager;
-use swiss_mcp::adapters::HttpMcp;
+use swiss_mcp::adapters::{HttpMcp, LogPolicy};
 use swiss_mcp::registry::{EntryInner, Lifecycle, Registry};
 use swiss_panel::admin;
 
@@ -105,6 +105,10 @@ pub struct AppContext {
     /// registers into — before the listener accepts requests. Absent in compositions that
     /// mount no Data plugin: /api/db then answers an honest 503 rather than pretending.
     pub catalog: std::sync::OnceLock<Arc<swiss_host::services::catalog::CatalogRegistry>>,
+    /// The consoles' per-database history (SPEC §data.history): built closed by the boot, opened
+    /// and closed by the Data plugin, layered onto /api/db. Absent in compositions without it:
+    /// the consoles then record nothing and /history answers 503.
+    pub data_history: std::sync::OnceLock<Arc<swiss_data::history::DataHistory>>,
     /// The group-scope table behind /api/groups/{scope} (SPEC §host.groups). The scopes AppContext
     /// owns natively (mcps) register in new(); the subsystem scopes (conns/rules/jobs/secrets)
     /// register from the boot sequence as their objects come up. A scope that never registered
@@ -128,6 +132,11 @@ pub struct AppContext {
     /// 503, so no suite run can register, unregister or rewrite anything on the host.
     pub autostart: std::sync::OnceLock<Arc<dyn crate::autostart::AutoStart>>,
     pub user_path: std::sync::OnceLock<Arc<dyn crate::userpath::UserPath>>,
+    /// The gateway's own children (SPEC §process.children): the one list runs, proc MCPs
+    /// and terminals register into, and /api/memory takes its roots from. Set once by the
+    /// boot sequence from RuntimeServices; unset in test compositions, where there are no
+    /// children to measure and the routes answer empty instead of guessing.
+    pub children: std::sync::OnceLock<Arc<swiss_host::services::children::ChildRegistry>>,
     handlers: Mutex<HashMap<String, CachedHandler>>,
 }
 
@@ -154,11 +163,13 @@ impl AppContext {
             shutdown,
             plugin_host: std::sync::OnceLock::new(),
             catalog: std::sync::OnceLock::new(),
+            data_history: std::sync::OnceLock::new(),
             group_scopes: swiss_host::groups::GroupScopes::new(),
             oauth_flows: std::sync::RwLock::new(HashMap::new()),
             session: std::sync::OnceLock::new(),
             autostart: std::sync::OnceLock::new(),
             user_path: std::sync::OnceLock::new(),
+            children: std::sync::OnceLock::new(),
             handlers: Mutex::new(HashMap::new()),
         });
         // The scopes this context owns natively (SPEC §host.groups): the managed store holds the
@@ -191,6 +202,21 @@ impl AppContext {
             }
         }));
         ctx
+    }
+
+    /// The child-row wiring for one MCP's adapter (SPEC §process.children): the shared
+    /// registry plus the stop that is exactly the lifecycle route's. Adapters built before
+    /// the boot filled the slot (tests) get no seat — their children are invisible rows
+    /// nobody can stop, which is the honest shape for a composition without the service.
+    pub fn mcp_child_seat(&self, name: &str) -> Option<swiss_mcp::adapters::McpChildSeat> {
+        self.children.get().map(|children| {
+            swiss_mcp::adapters::McpChildSeat::new(
+                Arc::clone(children),
+                name,
+                &self.registry,
+                &self.store,
+            )
+        })
     }
 
     /// The cached HTTP half for a started entry, or None when the entry is not serving.
@@ -239,7 +265,7 @@ impl AppContext {
 
 /// An MCP-endpoint rejection in JSON-RPC shape, exactly as the Node build's `jsonError` writes
 /// it. MCP endpoints answer JSON-RPC; admin routes answer `{error}` — the two are deliberately
-/// not unified (see SPEC §formats.wire).
+/// not unified (see SPEC §host.wire).
 pub fn json_rpc_error(status: StatusCode, message: &str) -> Response {
     let body = json!({
         "jsonrpc": "2.0",
@@ -395,15 +421,7 @@ async fn panel_root(State(ctx): State<Arc<AppContext>>, req: Request) -> Respons
             return lock_page(false);
         }
     }
-    match admin::admin_html() {
-        Some(html) => (
-            [(header::CACHE_CONTROL, "no-store")],
-            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            html,
-        )
-            .into_response(),
-        None => admin_error(StatusCode::NOT_FOUND, "panel not embedded"),
-    }
+    admin::shell(req.headers()).unwrap_or_else(|| admin_error(StatusCode::NOT_FOUND, "panel not embedded"))
 }
 
 /// What a browser without a session sees: one instruction, in both languages the panel
@@ -460,18 +478,10 @@ async fn session_ticket(State(ctx): State<Arc<AppContext>>) -> Response {
     )
 }
 
-/// The panel's assets (styles/js ES modules), served from the same tree with the same freshness
-/// rule.
-async fn panel_asset(Path(path): Path<String>) -> Response {
-    match admin::admin_asset(&path) {
-        Some((body, mime)) => (
-            [(header::CACHE_CONTROL, "no-store")],
-            [(header::CONTENT_TYPE, mime)],
-            body,
-        )
-            .into_response(),
-        None => admin_error(StatusCode::NOT_FOUND, "not found"),
-    }
+/// The panel's assets (styles/js ES modules), served from the same tree. Revalidated on every
+/// load (`no-cache` + ETag), so a new build shows at once and an unchanged module is a 304.
+async fn panel_asset(Path(path): Path<String>, headers: HeaderMap) -> Response {
+    admin::asset(&path, &headers).unwrap_or_else(|| admin_error(StatusCode::NOT_FOUND, "not found"))
 }
 
 async fn health() -> Response {
@@ -536,6 +546,14 @@ async fn mcp_post(
         );
     };
     let lifecycle = entry.data.read().ok().map(|d| d.lifecycle);
+    // The adapter's logging policy (SPEC §memory.mcp): a metadata-only MCP keeps the method
+    // and tool name of each frame and never its arguments or the answer.
+    let log_policy = entry
+        .data
+        .read()
+        .ok()
+        .map(|d| d.adapter.log_policy())
+        .unwrap_or_default();
     // A lazy proc idle at boot (or reaped since): this request is the wakeup. The await IS the
     // contract — the client's request waits for the spawn and then gets served by it, bounded by
     // the adapter's own start timeout, because AI clients do not retry a 503 helpfully.
@@ -601,14 +619,25 @@ async fn mcp_post(
     let status = parts.status;
     let response = Response::from_parts(parts, Body::from(response_bytes));
 
-    ctx.traffic.record_traffic(
-        &name,
-        parsed_body.as_ref(),
-        Some(&client.label),
-        ok,
-        t0.elapsed().as_millis() as u64,
-        Some(&String::from_utf8_lossy(&captured_prefix)),
-    );
+    match log_policy {
+        LogPolicy::Full => ctx.traffic.record_traffic(
+            &name,
+            parsed_body.as_ref(),
+            Some(&client.label),
+            ok,
+            t0.elapsed().as_millis() as u64,
+            Some(&String::from_utf8_lossy(&captured_prefix)),
+        ),
+        LogPolicy::MetadataOnly => ctx.traffic.record_traffic(
+            &name,
+            parsed_body.as_ref().map(swiss_mcp::traffic::metadata_only).as_ref(),
+            Some(&client.label),
+            ok,
+            t0.elapsed().as_millis() as u64,
+            None,
+        ),
+        LogPolicy::Disabled => {}
+    }
     swiss_core::log::log(
         "info",
         "request",
@@ -710,7 +739,7 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         .route("/admin/{*path}", get(panel_asset))
         .route("/health", get(health))
         .route("/health/check", get(health_check))
-        .merge(
+        .merge(swiss_data::history::mounted(
             swiss_data::dbbrowser_api::dbbrowser_router::<Arc<AppContext>>(
                 // The W3 seam (SPEC §host.seats): /api/db leases through the connection catalog the MCP
                 // plugin provides. Compositions that never set one (no Data plugin mounted)
@@ -743,7 +772,9 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
                     Arc::new(move |n: &str| ctx.store.group_of(n))
                 },
             ),
-        )
+            // The consoles' history (SPEC §data.history), when the boot built one.
+            ctx.data_history.get().cloned(),
+        ))
         .merge(crate::adminapi::mount(ctx.clone()))
         // After the /api tree. The /mcp/ prefix already keeps the catch-all off /api/tunnels;
         // merge order stays host-first as belt and braces for whatever claims the root next.

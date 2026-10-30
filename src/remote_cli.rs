@@ -76,6 +76,12 @@ pub struct RemoteArgs {
     /// process's own stdin (SPEC §remote.cli). The CLI reads it, so no shell between the
     /// caller and swiss has a say in quoting or line endings.
     pub stdin_file: Option<String>,
+    /// `notes` only (SPEC §remote.project): replace or append a target's note. The
+    /// verbs are flags, never words, so a target named `write` stays readable as
+    /// `swiss remote notes write`.
+    pub notes_write: bool,
+    pub notes_append: bool,
+    pub notes_file: Option<String>,
 }
 
 /// Split argv at the FIRST bare `--`. Before it: flags and words; after it: ARGV
@@ -158,6 +164,9 @@ pub fn parse(argv: &[String]) -> RemoteArgs {
             "--follow" | "-f" => a.follow = true,
             "--verbose" => a.verbose = true,
             "--json" => a.json = true,
+            "--write" => a.notes_write = true,
+            "--append" => a.notes_append = true,
+            "--file" => a.notes_file = Some(value(argv, &mut i, &inline)),
             other => a.unknown.push(other.to_string()),
         }
         i += 1;
@@ -254,7 +263,7 @@ struct Gateway {
 impl Gateway {
     fn at(port: u16) -> Self {
         Gateway {
-            client: reqwest::Client::new(),
+            client: crate::daemon::loopback_client(),
             base: format!("http://127.0.0.1:{port}"),
             token: read_gateway_token(),
         }
@@ -327,6 +336,10 @@ async fn run(argv: &[String]) -> i32 {
         eprintln!("--stdin-file is exec's (write already takes the file body on stdin)");
         return 1;
     }
+    if (a.notes_write || a.notes_append || a.notes_file.is_some()) && a.sub != "notes" {
+        eprintln!("--write, --append and --file are notes' own (swiss remote notes)");
+        return 1;
+    }
     let gw = Gateway::at(a.port.unwrap_or_else(resolve_port));
     match a.sub.as_str() {
         "endpoints" => cmd_endpoints(gw, &a).await,
@@ -339,6 +352,7 @@ async fn run(argv: &[String]) -> i32 {
         "pull" => cmd_pull(gw, &a).await,
         "cat" => cmd_cat(gw, &a).await,
         "write" => cmd_write(gw, &a).await,
+        "notes" => cmd_notes(&a),
         other => {
             eprintln!("unknown remote subcommand: {other}");
             eprintln!("{}", usage_text());
@@ -385,6 +399,10 @@ pub fn usage_text() -> String {
         (
             "pull [name] <path> [--to LOCAL]",
             "download a file or folder",
+        ),
+        (
+            "notes [id] [--write|--append] [--file PATH]",
+            "a target's local notes: list, read, or set (body on stdin)",
         ),
     ] {
         s.push_str(&format!("  {cmd:<70} {text}\n"));
@@ -1333,6 +1351,214 @@ async fn cmd_write(gw: Gateway, a: &RemoteArgs) -> i32 {
     .await
 }
 
+/* --- notes (SPEC §remote.project) ------------------------------------------------ */
+
+/// A target's notes as the CLI owns them: one plain local file per target under
+/// `<home>/remote-notes/<alias>.md`, resolved through the same data_path the gateway
+/// uses - no caller ever guesses where the home is. The owner's finding (2026-10-15):
+/// an agent's glob miss read as "no notes" and the memory went unused, so discovery
+/// is one command with no file tool in the loop. Verbs are flags, never words:
+/// a target named `write` stays readable as `swiss remote notes write`.
+fn cmd_notes(a: &RemoteArgs) -> i32 {
+    if a.notes_write && a.notes_append {
+        eprintln!("--write replaces a whole note, --append adds to it - pick one");
+        return 1;
+    }
+    let dir = swiss_core::paths::data_path(&["remote-notes"]);
+    if !a.notes_write && !a.notes_append {
+        return notes_read(&dir, a.words.first().map(String::as_str));
+    }
+    let Some(alias) = a.words.first().cloned() else {
+        eprintln!("usage: swiss remote notes --write <id> [--file PATH]   (body on stdin)");
+        return 1;
+    };
+    if !swiss_remote::target::valid_id(&alias) {
+        eprintln!("{alias:?} is not a target id (lowercase, digits, inner dashes)");
+        return 1;
+    }
+    let raw = match read_note_body(a) {
+        Ok(raw) => raw,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let body = match note_body(&raw) {
+        Ok(body) => body,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let path = dir.join(format!("{alias}.md"));
+    let written = if a.notes_append && path.exists() {
+        match std::fs::read_to_string(&path) {
+            Ok(existing) => note_appended(&existing, &body),
+            Err(err) => {
+                eprintln!("cannot read {}: {err}", path.display());
+                return 1;
+            }
+        }
+    } else {
+        body
+    };
+    if let Err(err) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, written.as_bytes())) {
+        eprintln!("cannot write {}: {err}", path.display());
+        return 1;
+    }
+    println!(
+        "note for {alias}: {} ({} lines) at {}",
+        if a.notes_append { "appended" } else { "written" },
+        written.lines().count(),
+        path.display()
+    );
+    0
+}
+
+/// The body as the caller gave it: stdin, or the file `--file` names (no shell
+/// between the caller and swiss has a say in quoting or line endings).
+fn read_note_body(a: &RemoteArgs) -> Result<String, String> {
+    if let Some(file) = a.notes_file.as_deref() {
+        return std::fs::read_to_string(file).map_err(|e| format!("cannot read {file}: {e}"));
+    }
+    let mut raw = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut raw)
+        .map_err(|e| format!("cannot read stdin: {e}"))?;
+    Ok(raw)
+}
+
+/// `swiss remote notes` (which targets have a note, newest first) and
+/// `swiss remote notes <id>` (the note itself, verbatim).
+fn notes_read(dir: &std::path::Path, alias: Option<&str>) -> i32 {
+    let Some(alias) = alias else {
+        let notes = notes_list(dir);
+        if notes.is_empty() {
+            println!("no notes yet; write one with: swiss remote notes --write <id> < note.md");
+            return 0;
+        }
+        println!("TARGET                   SIZE        AGE  NOTE");
+        for n in &notes {
+            println!("{:<24} {:>9} {:>10}  {}", n.alias, human_bytes(n.bytes), ago(n.modified), n.preview);
+        }
+        return 0;
+    };
+    if !swiss_remote::target::valid_id(alias) {
+        eprintln!("{alias:?} is not a target id (lowercase, digits, inner dashes)");
+        return 1;
+    }
+    let path = dir.join(format!("{alias}.md"));
+    match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            print!("{text}");
+            0
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("no notes for {alias} (swiss remote notes lists every target that has one)");
+            1
+        }
+        Err(err) => {
+            eprintln!("cannot read {}: {err}", path.display());
+            1
+        }
+    }
+}
+
+/// One note as the list shows it.
+struct NoteMeta {
+    alias: String,
+    bytes: u64,
+    modified: std::time::SystemTime,
+    preview: String,
+}
+
+/// The largest note the CLI stores: a note is toolchain paths and quirks, not a log.
+const NOTE_MAX_BYTES: usize = 64 * 1024;
+
+/// The notes that exist under `dir`: files named `<alias>.md` for a valid target
+/// id, newest first. Anything else in the directory (an editor backup, a scratch
+/// file) is not a note and never shows.
+fn notes_list(dir: &std::path::Path) -> Vec<NoteMeta> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut notes = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(stem) = name.to_str().and_then(|n| n.strip_suffix(".md")) else {
+            continue;
+        };
+        if !swiss_remote::target::valid_id(stem) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        let preview = std::fs::read_to_string(entry.path())
+            .ok()
+            .and_then(|text| note_preview(&text))
+            .unwrap_or_default();
+        notes.push(NoteMeta {
+            alias: stem.to_string(),
+            bytes: meta.len(),
+            modified: meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+            preview,
+        });
+    }
+    notes.sort_by_key(|n| std::cmp::Reverse(n.modified));
+    notes
+}
+
+/// The first line worth reading: the first non-empty line, cut to what a table
+/// row holds. A note's first line is usually its subject.
+fn note_preview(text: &str) -> Option<String> {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
+    Some(line.chars().take(64).collect())
+}
+
+/// A note body as it is stored: UTF-8, LF line ends (a CR would ride into every
+/// prompt that reads the note), one trailing newline, never empty - an empty pipe
+/// wiping a note is an accident, not an edit; delete the file to clear it.
+fn note_body(raw: &str) -> Result<String, String> {
+    if raw.trim().is_empty() {
+        return Err("the body is empty; to remove a note, delete its file".into());
+    }
+    if raw.len() > NOTE_MAX_BYTES {
+        return Err(format!(
+            "the body is {} bytes; a note tops out at {} (a log is not a note)",
+            raw.len(),
+            NOTE_MAX_BYTES
+        ));
+    }
+    let mut text = raw.replace("\r\n", "\n");
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok(text)
+}
+
+/// What append writes: the note plus the new part, a blank line between two
+/// paragraphs, never a splice onto a half line.
+fn note_appended(existing: &str, chunk: &str) -> String {
+    format!("{}\n\n{}", existing.trim_end(), chunk)
+}
+
+/// A mtime in words ("3 hours ago"): the list answers "which note is stale"
+/// without a timezone in sight - the CLI has no clock feature compiled in.
+fn ago(at: std::time::SystemTime) -> String {
+    let Ok(elapsed) = at.elapsed() else {
+        return "now".into();
+    };
+    let secs = elapsed.as_secs();
+    let (n, unit) = if secs < 60 {
+        (secs.max(1), "second")
+    } else if secs < 3600 {
+        (secs / 60, "minute")
+    } else if secs < 86400 {
+        (secs / 3600, "hour")
+    } else {
+        (secs / 86400, "day")
+    };
+    format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" })
+}
+
 async fn cmd_pull(gw: Gateway, a: &RemoteArgs) -> i32 {
     let named = a.words.first().cloned();
     let path = a.words.get(1).cloned().or_else(|| {
@@ -1663,9 +1889,22 @@ pub fn audit_line(row: &Value) -> String {
     )
 }
 
+/// The runs whose sealed body an export must carry beside the index: an exec that fed
+/// a script on stdin, a write that kept its content. The flags ride the API row
+/// (`stdinStored`/`contentStored`, SPEC §remote.history); a body the size budget took
+/// (`*Evicted`) is gone for good and is not asked for.
+fn sealed_body_id(row: &Value) -> Option<u64> {
+    if row["stdinEvicted"].as_bool().unwrap_or(false) || row["contentEvicted"].as_bool().unwrap_or(false) {
+        return None;
+    }
+    let kept = row["stdinStored"].as_bool().unwrap_or(false) || row["contentStored"].as_bool().unwrap_or(false);
+    kept.then(|| row["runId"].as_u64().unwrap_or(0)).filter(|id| *id > 0)
+}
+
 /// Copy the window out: `<dir>/runs.jsonl` (the rows, one a line, as the record has
-/// them) and `<dir>/out/<id>.txt` for every run whose output is still on disk. The
-/// material a person hands to whoever asked "what happened on Tuesday".
+/// them), `<dir>/out/<id>.txt` for every run whose output is still on disk, and the
+/// sealed body (`<id>.content`) of every run that kept one. The material a person
+/// hands to whoever asked "what happened on Tuesday".
 async fn audit_export(
     gw: &Gateway,
     rows: &[Value],
@@ -1684,6 +1923,19 @@ async fn audit_export(
         line.push('\n');
         file.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
         let id = row["runId"].as_u64().unwrap_or(0);
+        if let Some(id) = sealed_body_id(row) {
+            // The sealed body (the stdin script of an exec, the content of a write) is
+            // part of what the handover is for: a copy that omits the script answers
+            // only what the argv alone already said (the sh -s finding, twice over).
+            if let Ok(v) = gw.get(&format!("/api/remote/runs/{id}/content")).await {
+                if let Some(text) = v["content"].as_str() {
+                    let path = out_dir.join(format!("{id}.content"));
+                    std::fs::write(&path, text)
+                        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+                    files += 1;
+                }
+            }
+        }
         let evicted = row["outputEvicted"].as_bool().unwrap_or(false);
         if row["outputBytes"].as_u64().unwrap_or(0) == 0 || evicted {
             continue;
@@ -1888,6 +2140,98 @@ mod tests {
             "{}",
             audit_line(&evicted)
         );
+    }
+
+    #[test]
+    fn sealed_body_id_names_the_runs_an_export_must_carry() {
+        let stdin_row = |stored: bool, evicted: bool| {
+            json!({ "runId": 38, "stdinStored": stored, "stdinEvicted": evicted })
+        };
+        assert_eq!(sealed_body_id(&stdin_row(true, false)), Some(38));
+        assert_eq!(sealed_body_id(&stdin_row(false, false)), None);
+        assert_eq!(
+            sealed_body_id(&stdin_row(true, true)),
+            None,
+            "an evicted body is gone for good - the export does not ask for it"
+        );
+        assert_eq!(
+            sealed_body_id(&json!({ "runId": 39, "contentStored": true })),
+            Some(39),
+            "a write kept its content: the handover carries the body it wrote"
+        );
+        assert_eq!(sealed_body_id(&json!({ "runId": 40 })), None);
+    }
+
+    #[test]
+    fn notes_flags_parse_and_verbs_stay_flags() {
+        let a = parse_command(&argv(&["notes", "test"]));
+        assert_eq!(a.sub, "notes");
+        assert_eq!(a.words, vec!["test"]);
+        assert!(!a.notes_write && !a.notes_append && a.notes_file.is_none());
+
+        let a = parse_command(&argv(&["notes", "--append", "test"]));
+        assert!(a.notes_append && !a.notes_write);
+        assert_eq!(a.words, vec!["test"]);
+
+        let a = parse_command(&argv(&["notes", "--write", "test", "--file", "draft.md"]));
+        assert!(a.notes_write && !a.notes_append);
+        assert_eq!(a.words, vec!["test"]);
+        assert_eq!(a.notes_file.as_deref(), Some("draft.md"));
+
+        // A target literally named write is a READ, never a half-typed verb:
+        // the verbs are flags, so the word space belongs to aliases alone.
+        let a = parse_command(&argv(&["notes", "write"]));
+        assert!(!a.notes_write && !a.notes_append);
+        assert_eq!(a.words, vec!["write"]);
+    }
+
+    #[test]
+    fn note_body_normalizes_line_ends_and_refuses_accidents() {
+        assert_eq!(note_body("first\r\nsecond").unwrap(), "first\nsecond\n");
+        assert_eq!(note_body("no newline").unwrap(), "no newline\n");
+        assert!(
+            note_body("  \n\n").is_err(),
+            "an empty pipe must not wipe a note"
+        );
+        let huge = "x".repeat(NOTE_MAX_BYTES + 1);
+        assert!(note_body(&huge).is_err(), "a log is not a note");
+    }
+
+    #[test]
+    fn note_appended_separates_paragraphs() {
+        assert_eq!(
+            note_appended("old line\n", "new part\n"),
+            "old line\n\nnew part\n"
+        );
+        assert_eq!(
+            note_appended("no newline", "new part\n"),
+            "no newline\n\nnew part\n"
+        );
+    }
+
+    #[test]
+    fn notes_list_shows_only_real_notes_newest_first() {
+        let dir = std::env::temp_dir().join(format!("swiss-notes-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("dev.md"), "# dev note\nlong body").unwrap();
+        std::fs::write(dir.join("prod.md"), "prod note").unwrap();
+        // Two writes in a row can share a clock tick, so the older note is dated a minute back.
+        let earlier = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(dir.join("dev.md"))
+            .unwrap()
+            .set_modified(earlier)
+            .unwrap();
+        std::fs::write(dir.join("editor.bak"), "not a note").unwrap();
+        std::fs::write(dir.join("Bad_Name.md"), "not an id").unwrap();
+        std::fs::write(dir.join("scratch.txt"), "not markdown").unwrap();
+        let notes = notes_list(&dir);
+        let names: Vec<&str> = notes.iter().map(|n| n.alias.as_str()).collect();
+        assert_eq!(names, vec!["prod", "dev"], "newest first: {names:?}");
+        assert_eq!(notes[1].preview, "# dev note");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2239,7 +2583,7 @@ mod tests {
             let _ = axum::serve(listener, app).await;
         });
         Gateway {
-            client: reqwest::Client::new(),
+            client: crate::daemon::loopback_client(),
             base: format!("http://127.0.0.1:{port}"),
             token: None,
         }

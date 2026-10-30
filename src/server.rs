@@ -34,6 +34,11 @@ use swiss_mcp::adapters::make_adapter;
 use swiss_mcp::registry::{Registry, Source};
 
 pub async fn run_gateway() -> Result<(), String> {
+    // A daemon's stdout and stderr ARE gateway-<port>.log, and a child spawned with stdio set
+    // would inherit every inheritable handle this process holds - the log included - holding
+    // its rotation hostage for the app's whole life (SPEC §host.daemon, §process.detached).
+    // Before any spawn exists: the detaching `start` does the same on its side.
+    swiss_core::platform::keep_std_handles_from_children();
     // Who started us - the attribution the 2026-09-14 deploy incident had to reconstruct
     // from session transcripts by hand (two sessions started the same production four
     // minutes apart, and neither daemon could say who had launched it). `swiss start`
@@ -48,6 +53,10 @@ pub async fn run_gateway() -> Result<(), String> {
     // current_thread runtime, and the removal keeps launcher attribution out of every
     // child this gateway will spawn.
     unsafe { std::env::remove_var(swiss_core::env::SPAWNER_ENV) };
+    // Read while the variable still exists: this serve was detached by a `swiss start`
+    // exactly when a launcher handed over its attribution (SPEC §process.apps — "start
+    // with swiss" runs on a daemon only). Everything after boot sees only the copy.
+    let is_daemon = spawner.is_some();
     let mut lineage = json!({ "pid": std::process::id() });
     if let Some(spawner) = spawner {
         lineage["started_by"] = spawner;
@@ -144,9 +153,35 @@ pub async fn run_gateway() -> Result<(), String> {
         mcp_display: Some(crate::mcp_link::registry_display(registry.clone())),
     });
 
+    // The shared runtime services (SPEC §host.plugins, SPEC §jobs) — built BEFORE the MCP
+    // registration loops, because a proc MCP's adapter needs the children registry its
+    // spawned child will register into (SPEC §process.children). The action registry, the
+    // bounded run pool and the one child-process supervisor are constructed here, owned by
+    // no plugin — the /api/actions and /api/runs surface reads them even while every
+    // provider is disabled.
+    let services = swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo {
+        port: cfg.port,
+        is_daemon,
+    });
+    // Run numbering continues across restarts (SPEC §remote.history): the remote record is
+    // keyed by run id, and a counter that restarted at 0 every boot filed two runs under
+    // one number.
+    services
+        .runs
+        .persist_sequence(swiss_core::paths::data_path(&["runs.seq"]));
+
     // Register + start every config-defined MCP; one failure must not take down the rest.
     for (name, def) in cfg.servers.clone() {
-        register_one(&registry, &store, &name, def, Source::Config, &call_log).await;
+        register_one(
+            &registry,
+            &store,
+            &services.children,
+            &name,
+            def,
+            Source::Config,
+            &call_log,
+        )
+        .await;
     }
 
     // Restore user-added MCPs from managed.json; start the ones marked enabled. An `override`
@@ -155,7 +190,13 @@ pub async fn run_gateway() -> Result<(), String> {
         if m.override_ && registry.has(&m.name) {
             // `start: m.enabled` — an override must not resurrect an MCP the user stopped, and
             // the config loop above already left a disabled one unstarted.
-            let adapter = match make_adapter(&m.def, &m.name, &call_log) {
+            let seat = swiss_mcp::adapters::McpChildSeat::new(
+                std::sync::Arc::clone(&services.children),
+                &m.name,
+                &registry,
+                &store,
+            );
+            let adapter = match make_adapter(&m.def, &m.name, &call_log, Some(seat)) {
                 Ok(adapter) => adapter,
                 Err(err) => {
                     log::error(
@@ -188,6 +229,7 @@ pub async fn run_gateway() -> Result<(), String> {
         register_one(
             &registry,
             &store,
+            &services.children,
             &m.name,
             m.def.clone(),
             Source::Managed,
@@ -200,25 +242,18 @@ pub async fn run_gateway() -> Result<(), String> {
     // mounted below and the plugin instance that fills the slot share ONE seat, the
     // ctx.tunnel_links pattern — an empty slot is a live state (the plugin is not
     // serving), not a different router.
-    let terminal_state = crate::plugins::terminal_api::TerminalState::new();
+    let terminal_state = swiss_plugins::terminal_api::TerminalState::new();
 
     // The /api/remote routes' state slot (SPEC §remote): the same one-slot pattern as the
     // terminal state above - built before the host so the router mounted below and the
     // plugin instance that fills the slot share ONE seat.
     let remote_state = swiss_remote::api::RemoteState::new();
 
-    // The shared runtime services (SPEC §host.plugins, SPEC §jobs): the action registry every
-    // capability provider registers into, the bounded run pool both the scheduler and the
-    // panel submit to, and the one child-process supervisor. Constructed here, owned by no
-    // plugin — the /api/actions and /api/runs surface reads them even while every provider
-    // is disabled.
-    let services = swiss_host::services::RuntimeServices::new();
-    // Run numbering continues across restarts (SPEC §remote.history): the remote record is
-    // keyed by run id, and a counter that restarted at 0 every boot filed two runs under
-    // one number.
-    services
-        .runs
-        .persist_sequence(swiss_core::paths::data_path(&["runs.seq"]));
+    // The /api/process routes' state slot (SPEC §process.apps): the same one-slot
+    // pattern a third time - the process plugin (registered with the built-ins, LAST,
+    // so it starts FIRST) installs into it, and while it is off every route under
+    // the prefix answers the structured 503 through the plugin boundary.
+    let process_state = swiss_process::api::ProcessState::new();
 
     // Scheduled command jobs (a Rust-side subsystem; see src/jobs/mod.rs). One task ticking
     // once a second, no per-job tasks, and an empty jobs.json is a no-op - the feature costs
@@ -285,6 +320,13 @@ pub async fn run_gateway() -> Result<(), String> {
     // The /api/db routes lease through the SAME catalog instance the MCP plugin will
     // register into — set before build_app mounts the router (SPEC §host.seats).
     let _ = ctx.catalog.set(services.catalog.clone());
+    // The consoles' history (SPEC §data.history): constructed closed here so the /api/db mount
+    // can carry it; the Data plugin's start opens logs/data.db and its stop closes it.
+    let data_history = swiss_data::history::DataHistory::new(swiss_core::paths::data_path(&["logs"]));
+    let _ = ctx.data_history.set(data_history.clone());
+    // The children registry of the shared services (SPEC §process.children): /api/memory
+    // reads its roots from here, and every MCP seat built after this point carries it.
+    let _ = ctx.children.set(services.children.clone());
 
     // The plugin host (SPEC §host.plugins). The four built-ins register in inventory/page order
     // (MCP+Traffic, Tunnels, Data, Jobs) and boot in the REVERSE, so tunnels come up before
@@ -299,10 +341,15 @@ pub async fn run_gateway() -> Result<(), String> {
         tunnels: tunnels.clone(),
         tunnel_manager: tunnel_manager.clone(),
         services: services.clone(),
+        call_log: call_log.clone(),
+        traffic: traffic.clone(),
+        logs_dir: swiss_core::paths::data_path(&["logs"]),
+        process_state: process_state.clone(),
+        data_history,
     };
     crate::builtin::register_all(&mut host, &deps)
         .expect("the built-in plugins register without id or route conflicts");
-    host.register(Arc::new(crate::plugins::terminal::TerminalPlugin::new(
+    host.register(Arc::new(swiss_plugins::terminal::TerminalPlugin::new(
         services.clone(),
         terminal_state.clone(),
     )))
@@ -312,17 +359,36 @@ pub async fn run_gateway() -> Result<(), String> {
     // requirement, so the target table stays editable while tunnels is off. The
     // registry + call log ride along so the plugin can mount /mcp/remote on the
     // same surfaces every other MCP uses.
-    let remote_plugin = Arc::new(crate::plugins::remote::RemotePlugin::new(
+    let remote_plugin = Arc::new(swiss_plugins::remote::RemotePlugin::new(
         services.clone(),
         remote_state.clone(),
         registry.clone(),
         call_log.clone(),
+        swiss_core::paths::data_path(&["logs"]),
+    ));
+    // The llm plugin (SPEC §llm): the Providers, Embedding and Agents pages, the
+    // /api/llm routes and the telemetry exporter. Its applied row is one shared state
+    // every consumer reads at the moment it asks.
+    let llm_state = swiss_llm::LlmState::new();
+    let llm_plugin = Arc::new(swiss_plugins::llm::LlmPlugin::new(services.clone(), llm_state.clone()));
+    // The memory plugin (SPEC §memory): the #memory page, the /api/knowledge
+    // routes and the builtin memory MCP (twelve tools under /mcp/memory, every one
+    // scoped by the caller's cwd). It requires "llm" for the semantic tier and sync
+    // runs only: notes, search and the offline CLI work without it.
+    let memory_state = Arc::new(swiss_plugins::memory_api::MemoryState::with_llm(llm_state.clone()));
+    let memory_plugin = Arc::new(swiss_plugins::memory::MemoryPlugin::new(
+        memory_state.clone(),
+        registry.clone(),
+        call_log.clone(),
+        services.clone(),
     ));
     // The targets scope joins the SPEC §host.groups family over the SAME sealed table the plugin
     // serves (SPEC §remote.targets) - registered at the composition point like conns/rules, so a
     // stopped remote plugin does not take its grouping off the air.
     swiss_remote::register_remote_scopes(&ctx.group_scopes, &remote_plugin.system());
     host.register(remote_plugin).expect("the remote plugin registers");
+    host.register(llm_plugin).expect("the llm plugin registers");
+    host.register(memory_plugin).expect("the memory plugin registers");
     // The capability probe the inventory's requiresMet answers through (SPEC §host.seats): one
     // closure over the shared services, so "connection-catalog" tracks the catalog's real
     // presence as MCP starts and stops.
@@ -330,6 +396,7 @@ pub async fn run_gateway() -> Result<(), String> {
         let catalog = services.catalog.clone();
         let shells = services.shells.clone();
         let remote = services.remote.clone();
+        let llm = llm_state.clone();
         Arc::new(move |cap: &str| match cap {
             "connection-catalog" => catalog.has_provider(),
             // SPEC §terminal.remote: the terminal plugin does NOT declare requires:["ssh-shell"] —
@@ -341,6 +408,8 @@ pub async fn run_gateway() -> Result<(), String> {
             // tunnels is off), but the probe still answers, so the inventory can say
             // honestly whether remote exec is currently possible.
             "remote-transport" => remote.has_provider(),
+            // SPEC §llm: memory requires it; the models are there while the plugin serves.
+            "llm" => llm.serving(),
             _ => false,
         })
     });
@@ -360,11 +429,21 @@ pub async fn run_gateway() -> Result<(), String> {
         // Inside the SAME guard and plugin boundary as the trees above: the terminal
         // routes are owned by the terminal plugin (route_owner prefix /api/terminal),
         // so a disabled plugin answers the structured 503 with no 503 of its own here.
-        .merge(crate::plugins::terminal_api::mount(terminal_state))
+        .merge(swiss_plugins::terminal_api::mount(terminal_state))
         // Same guard and boundary: the /api/remote tree is owned by the remote plugin
         // (route_owner prefix /api/remote), so a disabled plugin answers the structured
         // 503 here too.
-        .merge(swiss_remote::api::mount(remote_state));
+        .merge(swiss_remote::api::mount(remote_state))
+        // Same guard and boundary: the /api/knowledge tree is owned by the memory
+        // plugin (route_owner prefix /api/knowledge), so a disabled plugin answers
+        // the structured 503 here too.
+        .merge(swiss_plugins::memory_api::mount(memory_state))
+        // Same guard and boundary: the /api/llm tree is owned by the llm plugin.
+        .merge(swiss_plugins::llm_api::mount(llm_state, services.clone()))
+        // Same guard and boundary a third time: the /api/process tree is owned by the
+        // process plugin (route_owner prefix /api/process), so a disabled plugin
+        // answers the structured 503 naming it - and a started app keeps running.
+        .merge(swiss_process::api::mount(process_state));
     let app = build_app(ctx.clone(), Some(extra));
 
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port))
@@ -412,6 +491,7 @@ pub async fn run_gateway() -> Result<(), String> {
     // log that needs ageing out.
     tokio::spawn({
         let jobs = jobs.clone();
+        let services = services.clone();
         async move {
             loop {
                 call_log.sweep_call_logs().await;
@@ -419,6 +499,11 @@ pub async fn run_gateway() -> Result<(), String> {
                 // per-append check only ever fires for a job still running. Through the
                 // system's OWN log (S2): there is no process-global run-log directory left.
                 jobs.sweep_run_logs();
+                // The module history databases (SPEC §host.history): each open store's
+                // bounded maintenance pass and age sweep, through the seat its plugin
+                // registered - a stopped module holds no hook and its closed database
+                // is never opened by the timer.
+                services.maintenance.run_all().await;
                 tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
             }
         }
@@ -491,6 +576,7 @@ pub async fn run_gateway() -> Result<(), String> {
 async fn register_one(
     registry: &Arc<Registry>,
     store: &Arc<ManagedStore>,
+    children: &std::sync::Arc<swiss_host::services::children::ChildRegistry>,
     name: &str,
     mut def: swiss_host::config::ServerDef,
     source: Source,
@@ -503,7 +589,15 @@ async fn register_one(
         if !disabled.is_empty() {
             def.set("disabledTools", json!(disabled));
         }
-        let adapter = make_adapter(&def, name, log)?;
+        // The proc adapter's child row (SPEC §process.children): the lifecycle stop, so a
+        // stop from the Process page is the route's own stop-and-persist.
+        let seat = swiss_mcp::adapters::McpChildSeat::new(
+            std::sync::Arc::clone(children),
+            name,
+            registry,
+            store,
+        );
+        let adapter = make_adapter(&def, name, log, Some(seat))?;
         let resource = store.resource_enabled(name);
         if let Some(on) = resource {
             if let Some(toggle) = adapter.resource_toggle() {
@@ -611,6 +705,12 @@ mod tests {
         crate::builtin::start_hosted_mcps(registry, store).await;
     }
 
+    /// The children registry tests register their MCP rows into: the real shape, never
+    /// asserted on here — its rows are the Process page's contract, not this suite's.
+    fn test_children() -> std::sync::Arc<swiss_host::services::children::ChildRegistry> {
+        swiss_host::services::children::ChildRegistry::new()
+    }
+
     #[tokio::test]
     async fn a_plain_config_mcp_boots_started() {
         let registry = test_registry();
@@ -618,6 +718,7 @@ mod tests {
         register_one(
             &registry,
             &store,
+            &test_children(),
             "echo",
             echo(),
             Source::Config,
@@ -637,6 +738,7 @@ mod tests {
         register_one(
             &registry,
             &store,
+            &test_children(),
             "lazy",
             lazy_echo(),
             Source::Config,
@@ -664,6 +766,7 @@ mod tests {
         register_one(
             &registry,
             &store,
+            &test_children(),
             "echo",
             echo(),
             Source::Config,
@@ -695,6 +798,7 @@ mod tests {
         register_one(
             &registry,
             &store,
+            &test_children(),
             "added",
             echo(),
             Source::Managed,
@@ -727,6 +831,7 @@ mod tests {
         register_one(
             &registry,
             &store,
+            &test_children(),
             "added",
             echo(),
             Source::Managed,
@@ -750,6 +855,7 @@ mod tests {
         register_one(
             &registry,
             &store,
+            &test_children(),
             "echo",
             echo(),
             Source::Config,
@@ -773,6 +879,7 @@ mod tests {
         register_one(
             &registry,
             &store,
+            &test_children(),
             "broken",
             def_of(json!({ "type": "no-such-adapter-kind" })),
             Source::Config,
@@ -785,6 +892,7 @@ mod tests {
         register_one(
             &registry,
             &store,
+            &test_children(),
             "echo",
             echo(),
             Source::Config,

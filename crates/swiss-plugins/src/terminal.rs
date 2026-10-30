@@ -34,7 +34,7 @@ use swiss_host::host::factory::{PluginFactory, PluginInstance};
 use swiss_host::host::scope::PluginScope;
 use swiss_host::services::shell::ShellRegistry;
 use swiss_host::services::RuntimeServices;
-use swiss_terminal::terminal::{LocalShells, TerminalConfig, TerminalSessions};
+use swiss_terminal::terminal::{LocalChildWiring, LocalShells, TerminalConfig, TerminalSessions};
 
 use super::terminal_api::TerminalState;
 
@@ -125,7 +125,7 @@ impl PluginFactory for TerminalPlugin {
                     "recording": {
                         "type": "boolean",
                         "default": true,
-                        "description": "asciicast v2, output only, ~/.swiss/terminal/<sessionId>.cast, 8 MB cap."
+                        "description": "asciicast v2, output only, stored in the terminal history with a byte-faithful .cast export, 8 MB cap."
                     }
                 },
                 "additionalProperties": false
@@ -173,7 +173,10 @@ impl PluginFactory for TerminalPlugin {
         Ok(Arc::new(TerminalInstance {
             state: self.state.clone(),
             shells: Arc::clone(&self.services.shells),
+            children: Arc::clone(&self.services.children),
             config,
+            services: self.services.clone(),
+            history: tokio::sync::Mutex::new(None),
         }))
     }
 }
@@ -183,25 +186,99 @@ struct TerminalInstance {
     /// The shell capability seat (SPEC §terminal.remote): provided by the tunnels plugin, read
     /// live per open — never captured, so a provider restart needs no terminal restart.
     shells: Arc<ShellRegistry>,
+    /// The Process page's rows (SPEC §process.children): every local PTY registers here.
+    children: Arc<swiss_host::services::children::ChildRegistry>,
     config: TerminalConfig,
+    services: Arc<RuntimeServices>,
+    /// The history database this instance opened on start — held so stop can close the
+    /// very pool it opened, not whatever another instance later opened.
+    history: tokio::sync::Mutex<Option<Arc<swiss_terminal::terminal::history::TerminalHistory>>>,
 }
 
 #[async_trait]
 impl PluginInstance for TerminalInstance {
     async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
-        // Recordings land in ~/.swiss/terminal/<sessionId>.cast. Created eagerly
-        // so a session open never races a mkdir, and so a read-only data dir fails
-        // HERE — on the inventory row — instead of on the first open.
-        let dir = swiss_core::paths::data_path(&["terminal"]);
+        // The sessions directory is created eagerly so a session open never races a
+        // mkdir; it is also the legacy .cast tree the store imports from (ADR-035).
+        let dir = swiss_core::paths::data_path(&[swiss_terminal::terminal::history::SESSIONS_DIR]);
         std::fs::create_dir_all(&dir)
             .map_err(|err| format!("could not create {}: {err}", dir.display()))?;
+        let logs = swiss_core::paths::data_path(&["logs"]);
+        // The history database opens FIRST (SPEC §host.history): boot-gated, migrated,
+        // legacy-imported before any session can record. A failed open degrades to
+        // recording-off with one warning — a storage decision is a log line, never a
+        // failed start (the module-history rule, verbatim).
+        let history = match swiss_terminal::terminal::history::TerminalHistory::open(&dir, &logs).await {
+            Ok(history) => {
+                let _ = self.services.history_query.register(
+                    swiss_host::services::history_query::HistoryQueryAdapter {
+                        owner: "terminal".into(),
+                        db_file: logs.join("terminal.db"),
+                        source: history.clone(),
+                        bodies: Some(Arc::new(
+                            swiss_terminal::terminal::history::TerminalBodyReader::new(history.clone()),
+                        )),
+                    },
+                );
+                {
+                    // The hourly maintenance seat (SPEC §host.history): checkpoint,
+                    // conditional VACUUM, ledger reconciliation and the 90-day sweep
+                    // (§terminal.recording), run by the server's retention timer while
+                    // this database is open.
+                    let history = history.clone();
+                    self.services.maintenance.register(
+                        "terminal",
+                        Arc::new(move || {
+                            let history = history.clone();
+                            Box::pin(async move {
+                                history.maintain(90 * 24 * 60 * 60 * 1000).await;
+                            })
+                        }),
+                    );
+                }
+                Some(history)
+            }
+            Err(err) => {
+                swiss_core::log::warn(
+                    "terminal history database unavailable; recording is off for new sessions",
+                    Some(json!({ "err": err })),
+                );
+                None
+            }
+        };
+        // The child-row wiring (SPEC §process.children): the provider registers each PTY,
+        // and a row's stop closes that session through the state's live machine — the
+        // session's own teardown path, never a kill underneath the tab.
+        let state = Arc::clone(&self.state);
+        let wiring = LocalChildWiring::new(
+            Arc::clone(&self.children),
+            Arc::new(move |session_id| {
+                let state = Arc::clone(&state);
+                let id = session_id.to_string();
+                swiss_host::services::children::child_stop_fn(move || {
+                    let state = Arc::clone(&state);
+                    let id = id.clone();
+                    async move {
+                        let sessions = state.current().ok_or_else(|| {
+                            "the terminal plugin is not serving; the tab is already gone"
+                                .to_string()
+                        })?;
+                        sessions.close(&id).await.map_err(|err| err.to_string())
+                    }
+                })
+            }),
+        );
         let sessions = TerminalSessions::new(
             self.config.clone(),
             Arc::clone(&self.shells),
-            Arc::new(LocalShells::new()),
-            dir,
+            Arc::new(LocalShells::with_wiring(wiring)),
+            history.clone(),
         );
         self.state.install(sessions);
+        if let Some(history) = &history {
+            self.state.install_history(history.clone());
+        }
+        *self.history.lock().await = history;
         Ok(())
     }
 
@@ -209,6 +286,8 @@ impl PluginInstance for TerminalInstance {
         // Withdraw first so no request finds a machine that is about to die, then close
         // every session — each client gets its close reason as a final frame, and the
         // drivers, PTYs and recordings follow the sessions down (T4's shutdown path).
+        // Sessions close BEFORE the store: every recorder's final part and finish stamp
+        // lands before the pool that takes them drains.
         if let Some(sessions) = self.state.withdraw() {
             let closed = sessions.shutdown().await;
             if closed > 0 {
@@ -216,6 +295,28 @@ impl PluginInstance for TerminalInstance {
                     "info",
                     "the terminal plugin stopped with live sessions",
                     Some(json!({ "sessions": closed })),
+                );
+            }
+        }
+        // The export route's store goes first: no request may reach a pool that is
+        // about to close (the same withdraw-before-close rule the sessions follow).
+        let route_history = self.state.withdraw_history();
+        // The query and maintenance seats go with the store (SPEC §host.history): a
+        // stopped module is reported skipped by name, never auto-opened by a query.
+        self.services.history_query.unregister("terminal");
+        self.services.maintenance.unregister("terminal");
+        drop(route_history);
+        let history = self.history.lock().await.take();
+        if let Some(history) = history {
+            // A barrier BEFORE the close: the drain inside close() counts failed
+            // jobs as completed and returns Ok, so a tail write that failed at
+            // EXECUTION would otherwise die unlogged with the process - flush()
+            // is the one caller that turns that sticky failure into a warning.
+            history.flush().await;
+            if let Err(err) = history.close().await {
+                swiss_core::log::warn(
+                    "terminal history database close incomplete",
+                    Some(json!({ "err": err.to_string() })),
                 );
             }
         }
@@ -231,7 +332,7 @@ mod tests {
         // The form is generated from the schema; the limits are enforced by the parser.
         // If these drift apart the panel offers a default the backend rejects (or
         // silently substitutes), which is exactly the bug this test exists to catch.
-        let schema = TerminalPlugin::new(RuntimeServices::new(), TerminalState::new())
+        let schema = TerminalPlugin::new(RuntimeServices::new(swiss_host::services::BootInfo::default()), TerminalState::new())
             .descriptor()
             .config_schema;
         let defaults = TerminalConfig::default();
@@ -294,7 +395,7 @@ mod tests {
     #[test]
     fn the_descriptor_claims_exactly_the_terminal_routes() {
         let descriptor =
-            TerminalPlugin::new(RuntimeServices::new(), TerminalState::new()).descriptor();
+            TerminalPlugin::new(RuntimeServices::new(swiss_host::services::BootInfo::default()), TerminalState::new()).descriptor();
         assert_eq!(descriptor.id, "terminal");
         assert_eq!(descriptor.routes, vec!["/api/terminal".to_string()]);
         assert!(descriptor.requires.is_empty(), "not requires: [ssh-shell]");
@@ -309,7 +410,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_rejects_what_the_parser_rejects() {
-        let plugin = TerminalPlugin::new(RuntimeServices::new(), TerminalState::new());
+        let plugin = TerminalPlugin::new(RuntimeServices::new(swiss_host::services::BootInfo::default()), TerminalState::new());
         assert!(plugin.validate_config(&json!({})).is_ok());
         let err = plugin
             .validate_config(&json!({ "maxSessions": 0 }))

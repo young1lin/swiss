@@ -17,7 +17,8 @@
 //! The composition crate: the app skeleton, the MCP admin API, the server bootstrap, the CLI
 //! and daemon, and the built-in plugin instances that glue the subsystem crates together. This
 //! is the ONLY crate allowed to see every crate — which is what "plugin crates never depend on
-//! each other" (SPEC §host.plugins) buys: composition is a file, not a graph.
+//! each other" (SPEC §host.plugins) buys: composition is a file, not a graph. The wrappers of
+//! terminal, remote, process, memory and llm live in swiss-plugins, which only this crate names.
 
 pub mod adminapi;
 pub mod app;
@@ -27,9 +28,10 @@ pub mod builtin;
 pub mod cli;
 pub mod daemon;
 pub mod mcp_link;
+pub mod memory_cli;
 pub mod pidfile;
-pub mod plugins;
 pub mod port;
+pub mod process_cli;
 pub mod remote_cli;
 pub mod server;
 pub mod session;

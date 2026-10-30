@@ -463,7 +463,18 @@ fn echo_def() -> ServerDef {
 async fn full_app(tag: &str, raw: Value) -> (axum::Router, Arc<PluginHost>, Arc<Registry>) {
     let dir = scratch_dir(tag);
     let config_store = ConfigStore::memory(raw.clone());
-    full_app_with_store(dir, config_store).await
+    full_app_with_store(dir, config_store, false).await
+}
+
+/// The same boot WITH the remote plugin composed - plan D7 / L6 needs both modules'
+/// storages live in one app to prove disable isolation.
+async fn full_app_with_remote(
+    tag: &str,
+    raw: Value,
+) -> (axum::Router, Arc<PluginHost>, Arc<Registry>) {
+    let dir = scratch_dir(tag);
+    let config_store = ConfigStore::memory(raw.clone());
+    full_app_with_store(dir, config_store, true).await
 }
 
 /// The same boot over a FILE-BACKED config store: what the migration tests need, since a
@@ -489,23 +500,24 @@ async fn full_app_file_backed(
         write_secure_json(&dir.join("jobs.json"), &v1).expect("the v1 file writes");
     }
     let config_store = ConfigStore::from_loaded(dir.join(config_relative), raw.clone());
-    let (app, host, registry) = full_app_with_store(dir.clone(), config_store).await;
+    let (app, host, registry) = full_app_with_store(dir.clone(), config_store, false).await;
     (app, host, registry, dir)
 }
 
 async fn full_app_with_store(
     dir: std::path::PathBuf,
     config_store: Arc<ConfigStore>,
+    remote: bool,
 ) -> (axum::Router, Arc<PluginHost>, Arc<Registry>) {
     let calls = Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls")));
     let registry = Registry::new(3_600_000, calls.clone());
     let managed = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
-    let adapter = make_adapter(&echo_def(), "echo", &calls).expect("echo adapter");
+    let adapter = make_adapter(&echo_def(), "echo", &calls, None).expect("echo adapter");
     registry
         .register("echo", Source::Config, echo_def(), adapter)
         .expect("register echo");
 
-    let services = swiss_host::services::RuntimeServices::new();
+    let services = swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo::default());
     let jobs = JobSystem::open(
         dir.join("jobs.json"),
         services.clone(),
@@ -522,18 +534,23 @@ async fn full_app_with_store(
         mcp_display: Some(swiss::mcp_link::registry_display(registry.clone())),
     });
 
+    let traffic = Arc::new(swiss_mcp::traffic::TrafficLog::memory());
     let ctx = swiss::app::AppContext::new(
         registry.clone(),
         Arc::new(single_token_manager(TOKEN)),
         managed.clone(),
-        calls,
-        Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
+        calls.clone(),
+        traffic.clone(),
         "SWISS_TOKEN",
         19998,
     );
     // The /api/db routes and the inventory's requiresMet read the SAME catalog instance
     // the mcp plugin registers into (SPEC §host.seats) — set both before the router is built.
     let _ = ctx.catalog.set(services.catalog.clone());
+    // The process routes' state slot (SPEC §process.apps): the same one-seat
+    // pattern as the server boot - the slot exists before the host, the plugin
+    // installs into it, the mounted router reads it.
+    let process_state = swiss_process::api::ProcessState::new();
     let mut host = PluginHost::new(config_store);
     let deps = builtin::BuiltinDeps {
         registry: registry.clone(),
@@ -542,8 +559,25 @@ async fn full_app_with_store(
         tunnels: tunnels.clone(),
         tunnel_manager: tunnel_manager.clone(),
         services: services.clone(),
+        call_log: calls,
+        traffic,
+        logs_dir: dir.join("logs"),
+        process_state: process_state.clone(),
+        data_history: swiss_data::history::DataHistory::new(dir.join("logs")),
     };
     builtin::register_all(&mut host, &deps).expect("the built-ins register without conflicts");
+    if remote {
+        // The remote plugin is composed beside the built-ins exactly as the server does
+        // (the swiss-plugins crate's remote.rs): one module db under the same logs root.
+        host.register(Arc::new(swiss_plugins::remote::RemotePlugin::new(
+            services.clone(),
+            swiss_remote::api::RemoteState::new(),
+            registry.clone(),
+            deps.call_log.clone(),
+            dir.join("logs"),
+        )))
+        .expect("register remote");
+    }
     host.set_capability_probe({
         let catalog = services.catalog.clone();
         Arc::new(move |cap: &str| cap == "connection-catalog" && catalog.has_provider())
@@ -554,7 +588,8 @@ async fn full_app_with_store(
 
     let extra = swiss_tunnels::tunnel::api::mount(tunnels)
         .merge(swiss_jobs::jobs::api::mount(jobs))
-        .merge(swiss_host::services::api::mount(services));
+        .merge(swiss_host::services::api::mount(services))
+        .merge(swiss_process::api::mount(process_state));
     let app = build_app(ctx, Some(extra));
     (app, host, registry)
 }
@@ -630,8 +665,9 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
         .iter()
         .map(|p| p["id"].as_str().unwrap())
         .collect();
-    // The process plugin is in the inventory but contributes no page: a capability provider
-    // is managed like any other plugin, it just has nothing to navigate to.
+    // The process plugin is in the inventory WITH a page now (SPEC §process.apps): the
+    // #process apps view at order 55, before Terminal's 70 - its routes are proven by
+    // the off-503 test below, the row here carries the version that grew them.
     assert_eq!(ids, vec!["mcp", "tunnels", "data", "jobs", "process"]);
     for plugin in body["plugins"].as_array().unwrap() {
         assert_eq!(plugin["enabled"], json!(true), "{plugin}");
@@ -722,6 +758,14 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
                 50,
                 "page".into()
             ),
+            (
+                "process".into(),
+                "process".into(),
+                "#process".into(),
+                false,
+                55,
+                "page".into()
+            ),
         ],
     );
     let entries: Vec<String> = body["pages"]
@@ -740,6 +784,7 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
             "/admin/js/views/tunnel-forwards.js",
             "/admin/js/views/data.js",
             "/admin/js/views/jobs.js",
+            "/admin/js/views/process.js",
         ]
     );
 
@@ -1531,7 +1576,7 @@ fn route_ownership_is_longest_prefix_at_segment_boundaries() {
             managed: Arc::new(ManagedStore::open_at(dir.join("managed.json"))),
             jobs: JobSystem::open(
                 dir.join("jobs.json"),
-                swiss_host::services::RuntimeServices::new(),
+                swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo::default()),
                 ConfigStore::memory(json!({})),
             ),
             tunnels: Arc::new(swiss_tunnels::tunnel::api::Tunnels {
@@ -1555,7 +1600,14 @@ fn route_ownership_is_longest_prefix_at_segment_boundaries() {
                 ))),
                 None,
             ),
-            services: swiss_host::services::RuntimeServices::new(),
+            services: swiss_host::services::RuntimeServices::new(
+                swiss_host::services::BootInfo::default(),
+            ),
+            call_log: Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls"))),
+            traffic: Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
+            logs_dir: dir.join("logs"),
+            process_state: swiss_process::api::ProcessState::new(),
+            data_history: swiss_data::history::DataHistory::new(dir.join("logs")),
         },
     )
     .expect("built-ins register");
@@ -1563,6 +1615,13 @@ fn route_ownership_is_longest_prefix_at_segment_boundaries() {
     assert_eq!(host.route_owner("/api/jobs"), Some("jobs".into()));
     assert_eq!(host.route_owner("/api/jobs/x/run"), Some("jobs".into()));
     assert_eq!(host.route_owner("/api/jobsx"), None, "segment boundary");
+    // The process plugin owns its whole prefix now (SPEC §process.apps): the
+    // boundary folds it into the 503-while-off discipline like terminal's.
+    assert_eq!(host.route_owner("/api/process"), Some("process".into()));
+    assert_eq!(
+        host.route_owner("/api/process/apps/x/start"),
+        Some("process".into())
+    );
     assert_eq!(host.route_owner("/api/traffic"), Some("mcp".into()));
     assert_eq!(host.route_owner("/api/mcps/a/calls"), Some("mcp".into()));
     assert_eq!(host.route_owner("/api/db"), Some("data".into()));
@@ -2013,3 +2072,154 @@ async fn the_catalog_seat_survives_a_hundred_mcp_restarts() {
     assert_eq!(body.expect("JSON")["connections"], json!([]));
 }
 // --- W4: the touchstone plugin (SPEC §host.seats) ---------------------------------------------------------
+
+/// Drive one recorded echo call whose stored body carries the needle: the body must
+/// pass the 2 KiB preview line, or the deep scan has nothing to find (SPEC §mcp.calls).
+async fn l6_recorded_call_with_needle(app: &axum::Router, needle: &str) {
+    let msg = format!("{}{needle}{}", "L".repeat(2600), "T".repeat(400));
+    // The MCP endpoint is Streamable HTTP: it negotiates through Accept, so the plain
+    // json_body helper's single content type is refused with 406 (SPEC §mcp.endpoint).
+    let req = Request::builder()
+        .method("POST")
+        .uri("/mcp/echo")
+        .header(header::HOST, "127.0.0.1:19999")
+        .header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {TOKEN}")).unwrap(),
+        )
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": { "name": "echo", "arguments": { "msg": msg } },
+            }))
+            .unwrap(),
+        ))
+        .expect("a request");
+    let (status, _body, text) = send(app, req).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    // The answer may arrive as JSON or as an SSE frame; the RECORD is what this helper
+    // needs, and the history query below proves it landed.
+}
+
+#[tokio::test]
+async fn disabling_mcp_keeps_remote_and_jobs_logging_live() {
+    // SPEC §host.history (plan D7 / L6): one module's disable may never close another
+    // module's log storage. Stopping the mcp plugin unregisters ITS adapter; the remote
+    // module's database stays open and answering, and the host-owned run history of
+    // jobs keeps both writing and reading.
+    let (app, _host, _registry) = full_app_with_remote("l6-mcp-off", json!({})).await;
+    l6_recorded_call_with_needle(&app, "L6-MCP-NEEDLE").await;
+
+    // A jobs-produced run records through the host history before the disable.
+    let (_, body, _) = send(
+        &app,
+        json_body(
+            "POST",
+            "/api/runs",
+            json!({ "action": "process.exec", "input": echo_input("l6-job-before") }),
+        ),
+    )
+    .await;
+    let run_id = body.expect("JSON")["runId"].as_u64().expect("a runId");
+    let view = await_run(&app, run_id).await;
+    assert_eq!(view["state"], json!("succeeded"), "{view}");
+
+    let (status, _, text) = send(&app, local("POST", "/api/plugins/mcp/disable")).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+
+    // The cross-module query answers for BOTH owners: mcp is skipped BY NAME (its
+    // adapter is gone with the plugin — an honest absence, never a rescan and never an
+    // error), while remote scans its live empty store to completion.
+    let (status, body, text) = send(
+        &app,
+        json_body(
+            "POST",
+            "/api/history/query",
+            json!({ "q": "L6-MCP-NEEDLE", "modules": ["mcp", "remote"], "limit": 20 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let page = body.expect("JSON");
+    assert_eq!(page["complete"], json!(true), "remote finished live: {page}");
+    assert_eq!(page["errors"], json!([]), "a stopped module is not an error: {page}");
+    let skipped = page["skipped"].as_array().cloned().unwrap_or_default();
+    assert!(
+        skipped.iter().any(|m| m == "mcp"),
+        "mcp is named as skipped: {page}"
+    );
+    assert!(
+        !skipped.iter().any(|m| m == "remote"),
+        "remote stayed live: {page}"
+    );
+
+    // And the jobs history both WRITES and READS after the mcp disable.
+    let (_, body, _) = send(
+        &app,
+        json_body(
+            "POST",
+            "/api/runs",
+            json!({ "action": "process.exec", "input": echo_input("l6-job-after") }),
+        ),
+    )
+    .await;
+    let run2 = body.expect("JSON")["runId"].as_u64().expect("a runId");
+    let view = await_run(&app, run2).await;
+    assert_eq!(view["state"], json!("succeeded"), "{view}");
+    assert!(view["output"].as_str().unwrap().contains("l6-job-after"));
+    let (status, body, _) = send(&app, local("GET", &format!("/api/runs/{run_id}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.expect("JSON")["output"]
+        .as_str()
+        .unwrap()
+        .contains("l6-job-before"));
+}
+
+#[tokio::test]
+async fn disabling_remote_keeps_mcp_logging_live() {
+    // The mirror of L6 (SPEC §host.history, plan D7): stopping the remote plugin may
+    // never close the mcp module's database — the recorded call stays searchable in
+    // full through the cross-module seat.
+    let (app, _host, _registry) = full_app_with_remote("l6-remote-off", json!({})).await;
+    l6_recorded_call_with_needle(&app, "L6-REMOTE-NEEDLE").await;
+
+    let (status, _, text) = send(&app, local("POST", "/api/plugins/remote/disable")).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+
+    let (status, body, text) = send(
+        &app,
+        json_body(
+            "POST",
+            "/api/history/query",
+            json!({ "q": "L6-REMOTE-NEEDLE", "modules": ["mcp", "remote"], "limit": 20 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let page = body.expect("JSON");
+    let hits = page["hits"].as_array().cloned().unwrap_or_default();
+    assert_eq!(hits.len(), 1, "the mcp body is found in full: {page}");
+    assert_eq!(hits[0]["module"], json!("mcp"));
+    assert_eq!(page["complete"], json!(true), "{page}");
+    assert_eq!(page["errors"], json!([]), "{page}");
+    let skipped = page["skipped"].as_array().cloned().unwrap_or_default();
+    assert!(
+        skipped.iter().any(|m| m == "remote"),
+        "remote is named as skipped: {page}"
+    );
+
+    // The body endpoint serves the same record bounded, through mcp's still-live store.
+    let id = hits[0]["runId"].as_u64().expect("a call id") as i64;
+    let (status, body, text) = send(
+        &app,
+        local("GET", &format!("/api/history/mcp/records/{id}/body?after=0&max=8192")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let slice = body.expect("JSON");
+    assert!(slice["text"].as_str().unwrap().contains("L6-REMOTE-NEEDLE"));
+}

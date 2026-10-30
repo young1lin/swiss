@@ -247,10 +247,11 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
     }
     // The figma type (SPEC §mcp.figma): the panel asks for a name, the type decides the rest —
     // endpoint, OAuth credential mode, client name. A url or auth key on a figma def would be
-    // a second way to say what the type already says, so refuse them: the def stays one field
-    // long and cannot be configured wrong.
+    // a second way to say what the type already says, so refuse them: the def cannot be
+    // configured wrong. The proxy is not the type's to decide - it is this machine's route to
+    // Figma - so it is the one network key a figma def takes.
     if type_ == "figma" {
-        for conflicting in ["url", "auth", "oauthClientName", "headers", "proxy"] {
+        for conflicting in ["url", "auth", "oauthClientName", "headers"] {
             if let Some(v) = body.get(conflicting) {
                 if !v.is_null() && v.as_str() != Some("") {
                     return Err(format!(
@@ -262,6 +263,13 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         if let Some(description) = str_field(body, "description") {
             if !description.trim().is_empty() {
                 def.insert("description".into(), json!(description.trim()));
+            }
+        }
+        // Stored as written (a ${...} reference stays one); the http adapter it expands to
+        // validates the resolved value at build, exactly as for an http def.
+        if let Some(proxy) = str_field(body, "proxy") {
+            if !proxy.trim().is_empty() {
+                def.insert("proxy".into(), json!(proxy.trim()));
             }
         }
         for key in ["exposeResources", "exposePrompts"] {
@@ -494,7 +502,7 @@ async fn add_managed(
     enabled: bool,
     start_now: bool,
 ) -> Result<Value, String> {
-    let adapter = make_adapter(&def, name, &ctx.calls)?;
+    let adapter = make_adapter(&def, name, &ctx.calls, ctx.mcp_child_seat(name))?;
     ctx.store.add(ManagedEntry {
         name: name.to_string(),
         def: def.clone(),
@@ -556,7 +564,7 @@ async fn refresh_secret_users(ctx: &AppContext, secret: &str) -> (Vec<String>, V
         if !def.0.values().any(|v| mentions_secret(v, secret)) {
             continue;
         }
-        let adapter = match make_adapter(&def, &name, &ctx.calls) {
+        let adapter = match make_adapter(&def, &name, &ctx.calls, ctx.mcp_child_seat(&name)) {
             Ok(adapter) => adapter,
             Err(err) => {
                 failed.push(json!({ "name": name, "error": err }));
@@ -895,8 +903,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     page,
                     page_size,
                 };
-                let mut out = ctx.traffic.read_traffic(&query);
-                out["clients"] = json!(ctx.traffic.traffic_clients());
+                let mut out = ctx.traffic.read_traffic(&query).await;
+                out["clients"] = json!(ctx.traffic.traffic_clients().await);
                 admin_json(StatusCode::OK, out)
             },
         )
@@ -905,7 +913,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
              Query(q): Query<std::collections::HashMap<String, String>>| async move {
                 // ?client=<prefixed key> clears only that client's rows; without it, all traffic.
                 let client = q.get("client").cloned();
-                ctx.traffic.clear_traffic(client.as_deref());
+                ctx.traffic.clear_traffic(client.as_deref()).await;
                 admin_json(StatusCode::OK, json!({ "ok": true, "client": client }))
             },
         ),
@@ -917,7 +925,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 let Ok(seq) = seq.parse::<u64>() else {
                     return admin_error(StatusCode::BAD_REQUEST, "seq must be a number");
                 };
-                match ctx.traffic.read_traffic_entry(seq) {
+                match ctx.traffic.read_traffic_entry(seq).await {
                     None => admin_error(
                         StatusCode::NOT_FOUND,
                         "No such interaction (the ring may have rolled over)",
@@ -1079,9 +1087,14 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // config-sourced MCPs work exactly as before.
 
     // List every MCP — status only (light, safe to poll). Tools/resources load on demand.
+    // Reading it is what keeps the health probe running (SPEC §mcp.registry); the first read
+    // after a lapse waits up to a second for the round it starts, rather than show unknown.
     r = r.route(
         "/api/mcps",
         get(|State(ctx): State<Arc<AppContext>>| async move {
+            ctx.registry
+                .watch_fresh(std::time::Duration::from_secs(1))
+                .await;
             let order = ctx.store.get_order();
             let rank: std::collections::HashMap<String, usize> =
                 order.iter().enumerate().map(|(i, n)| (n.clone(), i)).collect();
@@ -1342,7 +1355,9 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             }
 
             let adapter = match build_def(&body) {
-                Ok(def) => match swiss_mcp::adapters::make_adapter(&def, "test", &ctx.calls) {
+                // No child seat: a probe's child lives for one handshake — a row nobody
+                // can click on the Process page would only lie about it.
+                Ok(def) => match swiss_mcp::adapters::make_adapter(&def, "test", &ctx.calls, None) {
                     Ok(adapter) => adapter,
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 },
@@ -1394,10 +1409,16 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             |State(ctx): State<Arc<AppContext>>,
              Query(q): Query<std::collections::HashMap<String, String>>| async move {
                 let wants_tree = q.get("tree").map(|t| t == "1").unwrap_or(false);
-                admin_json(
-                    StatusCode::OK,
-                    get_memory_info(&ctx.registry.child_pids(), wants_tree),
-                )
+                // Roots come from the children registry (SPEC §process.children): every
+                // run, proc MCP and terminal registers there, so one list feeds both the
+                // Process page's rows and this walk's roots — never a second source of
+                // truth to drift. Unset in test compositions: no children, no roots.
+                let roots = ctx
+                    .children
+                    .get()
+                    .map(|children| children.roots())
+                    .unwrap_or_default();
+                admin_json(StatusCode::OK, get_memory_info(&roots, wants_tree))
             },
         ),
     );
@@ -1586,7 +1607,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     Ok(def) => def,
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 };
-                let adapter = match make_adapter(&def, &name, &ctx.calls) {
+                let adapter = match make_adapter(&def, &name, &ctx.calls, ctx.mcp_child_seat(&name)) {
                     Ok(adapter) => adapter,
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 };
@@ -1704,7 +1725,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     let target_def = list[index].def.clone();
                     // The def built once must still build now (an env ref can have gone missing);
                     // validating before any write keeps restore as transaction-shaped as replace.
-                    let adapter = match make_adapter(&target_def, &name, &ctx.calls) {
+                    let adapter = match make_adapter(&target_def, &name, &ctx.calls, ctx.mcp_child_seat(&name)) {
                         Ok(adapter) => adapter,
                         Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                     };
@@ -1799,9 +1820,10 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                         .unwrap_or(swiss_mcp::oauth::FIGMA_MCP_URL)
                         .to_string(),
                     d.def.get_str("oauthClientName").map(str::to_string),
+                    d.def.clone(),
                 ))
             });
-            let Some((url, client_name)) = target else {
+            let Some((url, client_name, def)) = target else {
                 return admin_error(
                     StatusCode::BAD_REQUEST,
                     &format!("{name} is not an OAuth http MCP (set auth to oauth on its http def)"),
@@ -1848,10 +1870,12 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                         *status = swiss_mcp::oauth::FlowStatus::Error(err);
                     }
                 };
-                let http = match reqwest::Client::builder().build() {
+                // The def's own route (its proxy, else the system proxy): the consent handshake
+                // goes out the way the MCP's traffic does.
+                let http = match swiss_mcp::oauth::flow_client(&def) {
                     Ok(http) => http,
                     Err(err) => {
-                        fail(&handle, format!("http client build failed: {err}"));
+                        fail(&handle, format!("{task_name}: {err}"));
                         return;
                     }
                 };
@@ -2015,7 +2039,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 Ok(def) => def,
                 Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
             };
-            let adapter = match make_adapter(&def, &name, &ctx.calls) {
+            let adapter = match make_adapter(&def, &name, &ctx.calls, ctx.mcp_child_seat(&name)) {
                 Ok(adapter) => adapter,
                 Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
             };
@@ -2446,6 +2470,8 @@ async fn mcps_list_kind(
     let Some(entry) = ctx.registry.get(&name) else {
         return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
     };
+    // A page cache is filled here, and only a running probe task sweeps it (SPEC §mcp.registry).
+    ctx.registry.watch();
     let server = entry.data.read().ok().and_then(|d| d.server.clone());
     let Some(server) = server else {
         return admin_error(

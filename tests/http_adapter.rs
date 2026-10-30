@@ -55,7 +55,7 @@ async fn remote_echo() -> Remote {
     use swiss_mcp::registry::{Registry, Source};
     let echo = def(json!({ "type": "echo" }));
     let registry = Registry::new(3_600_000, swiss_mcp::calls::test_log());
-    let adapter = swiss_mcp::adapters::make_adapter(&echo, "echo", &swiss_mcp::calls::test_log())
+    let adapter = swiss_mcp::adapters::make_adapter(&echo, "echo", &swiss_mcp::calls::test_log(), None)
         .expect("echo adapter");
     registry
         .register("echo", Source::Config, echo, adapter)
@@ -212,7 +212,7 @@ async fn a_vault_header_reference_authenticates_the_proxy() {
         "headers": { "Authorization": "Bearer ${secret://http-probe-token}" },
     }));
     // The production chain, exactly: make_adapter resolves the whole def, then builds.
-    let adapter = swiss_mcp::adapters::make_adapter(&raw, "probe", &swiss_mcp::calls::test_log())
+    let adapter = swiss_mcp::adapters::make_adapter(&raw, "probe", &swiss_mcp::calls::test_log(), None)
         .expect("the vault reference resolves");
     let endpoint = adapter.build().await.expect("the handshake authenticates");
     let _ = endpoint;
@@ -246,7 +246,7 @@ async fn replacing_a_secret_rebuilds_the_mcps_that_reference_it() {
         "url": remote.url,
         "headers": { "Authorization": "Bearer ${secret://http-rotate-token}" },
     }));
-    let adapter = swiss_mcp::adapters::make_adapter(&up, "up", &calls).expect("builds");
+    let adapter = swiss_mcp::adapters::make_adapter(&up, "up", &calls, None).expect("builds");
     registry
         .register("up", Source::Config, up, adapter)
         .expect("register");
@@ -256,7 +256,7 @@ async fn replacing_a_secret_rebuilds_the_mcps_that_reference_it() {
     );
     // A bystander that names no secret keeps the adapter it has.
     let echo = def(json!({ "type": "echo" }));
-    let kept = swiss_mcp::adapters::make_adapter(&echo, "bystander", &calls).expect("echo");
+    let kept = swiss_mcp::adapters::make_adapter(&echo, "bystander", &calls, None).expect("echo");
     registry
         .register("bystander", Source::Config, echo, kept.clone())
         .expect("register");

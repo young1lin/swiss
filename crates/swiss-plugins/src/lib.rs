@@ -22,6 +22,27 @@
 //! only — descriptor, action, page — with no edits inside the host crate and exactly
 //! one register line in server.rs per plugin.
 
+pub mod llm;
+pub mod llm_api;
+pub mod llm_tools;
+mod llm_db;
+mod llm_db_memory;
+mod llm_search;
+mod llm_test_tools;
+mod llm_secrets;
+mod llm_shell;
+pub mod memory;
+pub mod memory_agent;
+pub mod memory_api;
+pub mod memory_ask;
+pub mod memory_embed;
+#[cfg(test)]
+mod memory_live;
+pub mod memory_mcp;
+pub mod memory_pool;
+pub mod memory_preview;
+pub mod memory_sync;
+pub mod process;
 pub mod remote;
 pub mod terminal;
 pub mod terminal_api;

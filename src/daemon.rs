@@ -448,7 +448,7 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
     let port = opts.port.unwrap_or_else(resolve_port);
     let entry = opts.entry.unwrap_or_else(server_entry);
     let timeout_ms = opts.timeout_ms.unwrap_or(30_000);
-    let client = reqwest::Client::new();
+    let client = loopback_client();
 
     let existing = read_pid_file(port);
     if let Some(rec) = &existing {
@@ -585,10 +585,25 @@ pub fn with_cli_key(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     }
 }
 
+/// The HTTP client every loopback call in the CLI uses. A developer's machine may run a
+/// system proxy (env vars, or the Windows registry a local proxy flips on); one that refuses
+/// loopback destinations then answers every `swiss api` call with a bare 502 (the owner's
+/// machine, 2026-10-15). The gateway only ever listens on 127.0.0.1, so the clients that
+/// talk to it never consult any proxy at all.
+pub(crate) fn loopback_client() -> reqwest::Client {
+    match reqwest::Client::builder().no_proxy().build() {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("loopback client build failed ({err}); falling back to the default client");
+            reqwest::Client::new()
+        }
+    }
+}
+
 /// A one-time sign-in link for the panel (SPEC §host.session): the daemon mints a login token, good for
 /// one use within two minutes, behind the CLI key. What `swiss start` and `swiss open` open.
 pub async fn login_url(port: u16) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = loopback_client();
     let res = with_cli_key(
         client
             .post(format!("http://127.0.0.1:{port}/api/session/ticket"))
@@ -634,7 +649,7 @@ async fn post_shutdown(client: &reqwest::Client, port: u16) {
 /// graceful step is how orphaned MCP subtrees happen.
 pub async fn stop_daemon(opts: StopOptions) -> StopResult {
     let port = opts.port.unwrap_or_else(resolve_port);
-    let client = reqwest::Client::new();
+    let client = loopback_client();
     let Some(rec) = read_pid_file(port) else {
         return StopResult::NotRunning { port };
     };
@@ -699,7 +714,7 @@ async fn get_json(
 /// What `swiss status` prints. "Running" means it answered — not that a pid file exists, which is
 /// a claim about the past.
 pub async fn daemon_status(port: u16) -> StatusResult {
-    let client = reqwest::Client::new();
+    let client = loopback_client();
     let rec = read_pid_file(port);
     let mut result = StatusResult {
         running: false,
@@ -825,6 +840,40 @@ mod tests {
             .local_addr()
             .expect("a bound listener has an address")
             .port()
+    }
+
+    /// A proxy env var pointing at a port nothing answers must never sit between the CLI and
+    /// its own gateway: the loopback client bypasses proxies entirely, so the request lands
+    /// even while the environment says to route it away.
+    #[tokio::test]
+    async fn a_loopback_client_ignores_a_proxy_the_environment_names() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let dead = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let dead_port = dead.local_addr().expect("addr").port();
+        drop(dead);
+        let server = std::thread::spawn(move || {
+            // One shot: whatever arrives gets a minimal 200, then the socket closes.
+            if let Ok((mut sock, _)) = listener.accept() {
+                use std::io::{Read, Write};
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf);
+                let _ = sock.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                );
+            }
+        });
+        let dead_url = format!("http://127.0.0.1:{dead_port}");
+        unsafe {
+            std::env::set_var("http_proxy", &dead_url);
+            std::env::set_var("HTTP_PROXY", &dead_url);
+            let client = loopback_client();
+            std::env::remove_var("http_proxy");
+            std::env::remove_var("HTTP_PROXY");
+            let res = client.get(format!("http://127.0.0.1:{port}/health")).send().await;
+            assert!(res.is_ok(), "the loopback client must bypass the proxy: {res:?}");
+        }
+        let _ = server.join();
     }
 
     fn seal(file: &str, value: Value) {
@@ -1256,14 +1305,14 @@ mod tests {
     #[tokio::test]
     async fn waits_only_until_health_answers() {
         let gw = FakeGateway::start().await;
-        let client = reqwest::Client::new();
+        let client = loopback_client();
         assert!(wait_for_health(&client, gw.port, 5_000, || false).await);
         gw.stop();
     }
 
     #[tokio::test]
     async fn gives_up_on_health_after_the_timeout_instead_of_polling_forever() {
-        let client = reqwest::Client::new();
+        let client = loopback_client();
         let started = std::time::Instant::now();
         assert!(!wait_for_health(&client, free_port(), 300, || false).await);
         assert!(started.elapsed() < Duration::from_secs(15), "it returned");
@@ -1273,7 +1322,7 @@ mod tests {
     async fn abandons_the_health_wait_early_when_the_child_is_already_gone() {
         // A daemon that has already exited is never going to answer, and waiting out the full
         // timeout for it wastes the operator's time when what they need is the log.
-        let client = reqwest::Client::new();
+        let client = loopback_client();
         let started = std::time::Instant::now();
         assert!(!wait_for_health(&client, free_port(), 600_000, || true).await);
         assert!(

@@ -35,7 +35,6 @@ use swiss_host::host::engine::PluginHost;
 use swiss_host::host::factory::{ApplyOutcome, PluginFactory, PluginInstance};
 use swiss_host::host::scope::PluginScope;
 use swiss_host::managed::ManagedStore;
-use swiss_host::services::actions::{LegacyCommandAction, ProcessExecAction};
 use swiss_host::services::RuntimeServices;
 use swiss_jobs::jobs::JobSystem;
 use swiss_mcp::registry::{is_lazy, Registry, Source};
@@ -45,7 +44,7 @@ pub const MCP_ID: &str = "mcp";
 pub const TUNNELS_ID: &str = "tunnels";
 pub const DATA_ID: &str = "data";
 pub const JOBS_ID: &str = "jobs";
-pub const PROCESS_ID: &str = "process";
+pub use swiss_plugins::process::PROCESS_ID;
 
 /// One built-in page: id-derived hash path (`#mcps`) and entry (`/admin/js/views/<id>.js`),
 /// sidebar only for the primary MCPs view — the built-in view table of this build. The
@@ -86,6 +85,19 @@ pub struct BuiltinDeps {
     /// Capability plugins register INTO these; the host's /api/actions, /api/runs and
     /// the Data plugin's leases read them.
     pub services: Arc<RuntimeServices>,
+    /// The MCP module's history seam (SPEC §host.history): the shared call log, traffic
+    /// log and the home's logs directory. The MCP plugin opens `logs/mcp.db` in
+    /// its enabled scope and attaches both — construction alone stays I/O-free (L1).
+    pub call_log: Arc<swiss_mcp::calls::CallLog>,
+    pub traffic: Arc<swiss_mcp::traffic::TrafficLog>,
+    pub logs_dir: std::path::PathBuf,
+    /// The /api/process routes' state slot (SPEC §process.apps): built by the boot
+    /// beside the terminal and remote seats, handed both to the process factory
+    /// (which installs) and to the mounted router (which reads).
+    pub process_state: Arc<swiss_process::api::ProcessState>,
+    /// The consoles' per-database history (SPEC §data.history), built closed: the Data plugin
+    /// opens it in start and closes it in stop, so a disabled Data view holds no file.
+    pub data_history: Arc<swiss_data::history::DataHistory>,
 }
 
 /// Register every built-in of this build, in inventory/page order: MCP+Traffic, Tunnels,
@@ -96,21 +108,28 @@ pub fn register_all(host: &mut PluginHost, deps: &BuiltinDeps) -> Result<(), Str
         registry: deps.registry.clone(),
         managed: deps.managed.clone(),
         services: deps.services.clone(),
+        call_log: deps.call_log.clone(),
+        traffic: deps.traffic.clone(),
+        logs_dir: deps.logs_dir.clone(),
     }))?;
     host.register(Arc::new(TunnelsPlugin {
         tunnels: deps.tunnels.clone(),
         manager: deps.tunnel_manager.clone(),
         services: deps.services.clone(),
     }))?;
-    host.register(Arc::new(DataPlugin))?;
+    host.register(Arc::new(DataPlugin {
+        history: deps.data_history.clone(),
+    }))?;
     host.register(Arc::new(JobsPlugin {
         jobs: deps.jobs.clone(),
     }))?;
     // Registered LAST so it STARTS FIRST (boot walks the reverse): a capability provider
-    // must be registered before anything can submit a run against it.
-    host.register(Arc::new(ProcessPlugin {
-        services: deps.services.clone(),
-    }))
+    // must be registered before anything can submit a run against it. The factory lives
+    // in swiss-plugins (it has a page and routes now, like terminal and remote).
+    host.register(Arc::new(swiss_plugins::process::ProcessPlugin::new(
+        deps.services.clone(),
+        deps.process_state.clone(),
+    )))
 }
 
 // --- MCP + Traffic (one plugin, two views) ---
@@ -121,6 +140,10 @@ struct McpPlugin {
     /// The connection catalog lives here (SPEC §host.seats): MCP is the one provider, Data the
     /// one consumer, and neither reaches into the other's objects anymore.
     services: Arc<RuntimeServices>,
+    /// The module's history seam (SPEC §host.history): opened on start, closed on stop.
+    call_log: Arc<swiss_mcp::calls::CallLog>,
+    traffic: Arc<swiss_mcp::traffic::TrafficLog>,
+    logs_dir: std::path::PathBuf,
 }
 
 #[async_trait]
@@ -155,6 +178,10 @@ impl PluginFactory for McpPlugin {
             registry: self.registry.clone(),
             managed: self.managed.clone(),
             services: self.services.clone(),
+            call_log: self.call_log.clone(),
+            traffic: self.traffic.clone(),
+            logs_dir: self.logs_dir.clone(),
+            history: tokio::sync::Mutex::new(None),
             tracker: swiss_host::services::catalog::LeaseTracker::new(),
         }))
     }
@@ -176,6 +203,12 @@ struct McpInstance {
     registry: Arc<Registry>,
     managed: Arc<ManagedStore>,
     services: Arc<RuntimeServices>,
+    call_log: Arc<swiss_mcp::calls::CallLog>,
+    traffic: Arc<swiss_mcp::traffic::TrafficLog>,
+    logs_dir: std::path::PathBuf,
+    /// The module database this instance opened on start — held so stop can close the
+    /// very pool it opened, not whatever another instance later opened.
+    history: tokio::sync::Mutex<Option<Arc<swiss_mcp::history::McpHistory>>>,
     /// The lease ledger backing the catalog this instance registers. One per instance:
     /// a stopped instance drains ITS leases, never the next one's.
     tracker: Arc<swiss_host::services::catalog::LeaseTracker>,
@@ -184,6 +217,61 @@ struct McpInstance {
 #[async_trait]
 impl PluginInstance for McpInstance {
     async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
+        // The history database opens FIRST (SPEC §host.history): boot-gated, migrated,
+        // legacy-imported and attached before any hosted MCP can record a call, so the
+        // very first row of a fresh cutover lands in the module's own authority. A failed
+        // open degrades to the jsonl fallback — one module's storage decision is a log
+        // line, never a failed start.
+        match swiss_mcp::history::McpHistory::open(&self.logs_dir).await {
+            Ok(history) => {
+                let (calls, traffic, _bytes, import) = history.usage().await;
+                self.call_log.attach_history(history.clone());
+                self.traffic.attach_history(history.clone()).await;
+                // The cross-module query seat (SPEC §host.history): searchable while
+                // this database is open, reported skipped by name once it is not.
+                let _ = self.services.history_query.register(
+                    swiss_host::services::history_query::HistoryQueryAdapter {
+                        owner: "mcp".into(),
+                        db_file: self.logs_dir.join("mcp.db"),
+                        source: history.clone(),
+                        bodies: Some(std::sync::Arc::new(
+                            swiss_mcp::history::McpBodyReader::new(history.clone()),
+                        )),
+                    },
+                );
+                // The hourly maintenance seat (SPEC §host.history): checkpoint,
+                // conditional VACUUM, ledger reconciliation and the age sweep, run by
+                // the server's retention timer while this database is open.
+                {
+                    let history = history.clone();
+                    self.services.maintenance.register(
+                        "mcp",
+                        std::sync::Arc::new(move || {
+                            let history = history.clone();
+                            Box::pin(async move {
+                                history.maintain(180 * 24 * 60 * 60 * 1000).await;
+                            })
+                        }),
+                    );
+                }
+                *self.history.lock().await = Some(history);
+                swiss_core::log::log(
+                    "info",
+                    "mcp history database attached",
+                    Some(serde_json::json!({
+                        "calls": calls,
+                        "traffic": traffic,
+                        "legacyImport": import,
+                    })),
+                );
+            }
+            Err(err) => {
+                swiss_core::log::warn(
+                    "mcp history database unavailable; logging falls back to jsonl",
+                    Some(serde_json::json!({ "err": err })),
+                );
+            }
+        }
         self.registry.start_timer();
         start_hosted_mcps(&self.registry, &self.managed).await;
         // Register the connection catalog LAST, so a failed start never leaves a catalog
@@ -219,6 +307,26 @@ impl PluginInstance for McpInstance {
         // close_all stops the health/idle timer together with every entry (registry.rs).
         self.registry.close_all().await;
         self.services.catalog.clear();
+        // The history database closes LAST, after the adapters that recorded into it:
+        // detach (later traffic falls back to jsonl instead of vanishing), then the
+        // bounded close — an unresolved close is logged as what it is, never swallowed.
+        self.call_log.detach_history();
+        self.traffic.detach_history();
+        // The query seat goes with the sinks: a stopped module is reported skipped
+        // by name, and its database is never auto-opened by a query.
+        self.services.history_query.unregister("mcp");
+        // The maintenance hook goes with the seat: a stopped module's closed database
+        // is never touched by the hourly timer.
+        self.services.maintenance.unregister("mcp");
+        let history = self.history.lock().await.take();
+        if let Some(history) = history {
+            if let Err(err) = history.close().await {
+                swiss_core::log::warn(
+                    "mcp history database close incomplete",
+                    Some(serde_json::json!({ "err": err })),
+                );
+            }
+        }
     }
 }
 
@@ -430,10 +538,12 @@ impl PluginInstance for TunnelsInstance {
 
 // --- Data ---
 
-/// No fields anymore: the resolver seam is gone, replaced by the connection catalog in
-/// RuntimeServices (SPEC §host.seats). Data LEASES what it browses; it no longer holds a
-/// closure into the MCP registry.
-struct DataPlugin;
+/// The resolver seam is gone, replaced by the connection catalog in RuntimeServices (SPEC
+/// §host.seats): Data LEASES what it browses. Its one field is the consoles' history (SPEC
+/// §data.history), the one file Data owns.
+struct DataPlugin {
+    history: Arc<swiss_data::history::DataHistory>,
+}
 
 #[async_trait]
 impl PluginFactory for DataPlugin {
@@ -459,33 +569,42 @@ impl PluginFactory for DataPlugin {
     }
 
     async fn create(&self, _config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
-        Ok(Arc::new(DataInstance))
+        Ok(Arc::new(DataInstance {
+            history: self.history.clone(),
+        }))
     }
 }
 
-/// What disable really does, stated precisely: /api/db stops answering (the host boundary),
-/// which is this plugin's entire runtime footprint — because Data OWNS NO EAGER RESOURCES.
-/// Every browse/query opens through the OWNING MCP adapter's existing pool or child and
-/// drops back; the connections stay with the MCP plugin that owns them. That sharing is
-/// exactly what SPEC §host.plugins's ConnectionCatalog work (P4) will turn into explicit leases;
-/// until then this wrapper does NOT claim independent Data resources, and disabling MCP
-/// takes the shared connectivity away from Data with it.
-struct DataInstance;
+/// What disable really does, stated precisely: /api/db stops answering (the host boundary) and
+/// the console history (logs/data.db) closes. Data owns no connection: every browse/query
+/// opens through the OWNING MCP adapter's existing pool or child and drops back, so the
+/// connections stay with the MCP plugin that owns them, and disabling MCP takes the shared
+/// connectivity away from Data with it.
+struct DataInstance {
+    history: Arc<swiss_data::history::DataHistory>,
+}
 
 #[async_trait]
 impl PluginInstance for DataInstance {
     async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
-        // Nothing eager to start: /api/db takes a REQUEST-SCOPED lease per call and drops
-        // it with the request. Starting without a catalog provider is legal — the routes
-        // answer an honest 503 naming who is missing, and the inventory row says the
-        // requirement is unmet (SPEC §host.seats).
+        // /api/db takes a REQUEST-SCOPED lease per call and drops it with the request.
+        // Starting without a catalog provider is legal — the routes answer an honest 503
+        // naming who is missing, and the inventory row says the requirement is unmet (SPEC
+        // §host.seats). The history is a record, not a gate: a store that will not open is
+        // a warning, and the consoles still run (SPEC §data.history).
+        if let Err(err) = self.history.open().await {
+            swiss_core::log::warn(&format!("the console history is unavailable: {err}"), None);
+        }
         Ok(())
     }
 
     async fn stop(&self) {
-        // Nothing retained to release: request leases die with their requests, and the
-        // boundary dropping /api/db IS the release. Leases still held elsewhere are the
-        // provider's drain's business — never a cross-plugin teardown.
+        // Request leases die with their requests, and the boundary dropping /api/db IS their
+        // release; leases still held elsewhere are the provider's drain's business. The one
+        // thing Data holds is its history, closed bounded here.
+        if let Err(err) = self.history.close().await {
+            swiss_core::log::warn(&format!("closing the console history: {err:?}"), None);
+        }
     }
 }
 
@@ -728,96 +847,12 @@ impl PluginInstance for JobsInstance {
     }
 }
 
-// --- Process: a capability plugin with no page of its own ---
-
-/// The capabilities this plugin contributes. Withdrawn again by its stop, which is also
-/// what scopes the cancellation of runs already executing them.
-const PROCESS_ACTIONS: &[&str] = &["process.exec", "process.legacy-command"];
-
-struct ProcessPlugin {
-    services: Arc<RuntimeServices>,
-}
-
-#[async_trait]
-impl PluginFactory for ProcessPlugin {
-    fn descriptor(&self) -> PluginDescriptor {
-        PluginDescriptor {
-            id: PROCESS_ID.into(),
-            kind: "process".into(),
-            label: "Process".into(),
-            version: "0.1".into(),
-            config_schema_version: 1,
-            config_schema: json!({ "type": "object", "properties": {} }),
-            // No page and no routes of its own (SPEC §host.plugins): a capability plugin is reached
-            // through the host's /api/actions and /api/runs, and adding a navigation tab for
-            // it would be a page nobody asked for.
-            pages: vec![],
-            routes: vec![],
-            restart_on_config_change: false,
-            requires: Vec::new(),
-        }
-    }
-
-    async fn create(&self, _config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
-        Ok(Arc::new(ProcessInstance {
-            services: self.services.clone(),
-        }))
-    }
-}
-
-/// What disable really does: the two capabilities leave the registry, so a new submission
-/// (manual or scheduled) fails with "unknown action" instead of silently doing nothing, and
-/// every run ALREADY executing one of them is cancelled and AWAITED — child tree killed,
-/// pipe readers joined — before stop returns.
-///
-/// What it does not do: touch runs of other capabilities, or the producers themselves. A
-/// disabled process plugin leaves the Jobs scheduler ticking; its process-backed jobs report
-/// the missing capability, which is exactly the dependency-unavailable outcome SPEC §host.plugins
-/// asks for.
-struct ProcessInstance {
-    services: Arc<RuntimeServices>,
-}
-
-#[async_trait]
-impl PluginInstance for ProcessInstance {
-    async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
-        let supervisor = self.services.supervisor.clone();
-        self.services
-            .actions
-            .register(Arc::new(ProcessExecAction::new(supervisor.clone())))?;
-        // A half-registered provider is a broken one: undo the first registration rather
-        // than leave a plugin reporting active with one of its two capabilities missing.
-        if let Err(err) = self
-            .services
-            .actions
-            .register(Arc::new(LegacyCommandAction::new(supervisor)))
-        {
-            self.services.actions.unregister("process.exec");
-            return Err(err);
-        }
-        Ok(())
-    }
-
-    async fn stop(&self) {
-        for name in PROCESS_ACTIONS {
-            self.services.actions.unregister(name);
-        }
-        // Withdraw FIRST, then cancel: nothing can start a new run of a capability that is
-        // no longer resolvable while the in-flight ones are being reaped.
-        let canceled = self
-            .services
-            .runs
-            .cancel_action_types(PROCESS_ACTIONS)
-            .await;
-        if canceled > 0 {
-            log::log(
-                "info",
-                "process plugin stopped; in-flight runs canceled",
-                Some(json!({ "runs": canceled })),
-            );
-        }
-    }
-}
+// --- Process ---------------------------------------------------------------
+// The Process plugin grew a page, routes and the apps system (SPEC §process.apps):
+// its factory moved to the swiss-plugins crate's process.rs beside terminal's and remote's,
+// keeping this file to the wrappers of the subsystems the boot built itself.
+// It still registers LAST here so it STARTS FIRST (boot walks the reverse):
+// a capability provider must be up before anything submits a run against it.
 
 #[cfg(test)]
 mod tests {
@@ -856,7 +891,12 @@ mod tests {
                 Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls"))),
             ),
             managed: Arc::new(ManagedStore::open_at(dir.join("managed.json"))),
-            services: swiss_host::services::RuntimeServices::new(),
+            services: swiss_host::services::RuntimeServices::new(
+                swiss_host::services::BootInfo::default(),
+            ),
+            call_log: Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls"))),
+            traffic: Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
+            logs_dir: dir.join("logs"),
         };
         let descriptor = factory.descriptor();
         let tokens = descriptor
@@ -889,7 +929,7 @@ mod tests {
                 mcp_display: None,
             }),
             manager,
-            services: swiss_host::services::RuntimeServices::new(),
+            services: swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo::default()),
         };
         let descriptor = factory.descriptor();
         // The group label stays the plugin's own name; the two PAGE labels name their scope.
@@ -930,7 +970,12 @@ mod tests {
                 Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls"))),
             ),
             managed: Arc::new(ManagedStore::open_at(dir.join("managed.json"))),
-            services: swiss_host::services::RuntimeServices::new(),
+            services: swiss_host::services::RuntimeServices::new(
+                swiss_host::services::BootInfo::default(),
+            ),
+            call_log: Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls"))),
+            traffic: Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
+            logs_dir: dir.join("logs"),
         };
         let descriptor = factory.descriptor();
         assert_eq!(descriptor.id, MCP_ID);
@@ -945,5 +990,32 @@ mod tests {
                 descriptor.label, page.label,
             );
         }
+    }
+
+    /// SPEC §host.history L1, the module half: a plugin that exists but has not started
+    /// owns no database. The open happens on start (and a failed open degrades to jsonl),
+    /// so a registered-but-idle MCP plugin leaves the home's logs tree exactly as it was
+    /// — disabled means zero, not "a little".
+    #[test]
+    fn a_registered_mcp_plugin_that_never_started_opens_no_history_database() {
+        let dir = scratch_dir("idle-no-db");
+        let factory = McpPlugin {
+            registry: Registry::new(
+                60_000,
+                Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls"))),
+            ),
+            managed: Arc::new(ManagedStore::open_at(dir.join("managed.json"))),
+            services: swiss_host::services::RuntimeServices::new(
+                swiss_host::services::BootInfo::default(),
+            ),
+            call_log: Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls"))),
+            traffic: Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
+            logs_dir: dir.join("logs"),
+        };
+        let _descriptor = factory.descriptor();
+        assert!(
+            !dir.join("logs").join("mcp.db").exists(),
+            "no start, no database: the module's history file appears only on start",
+        );
     }
 }

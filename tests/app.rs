@@ -47,7 +47,7 @@ async fn app_with_echo() -> axum::Router {
     let calls = Arc::new(swiss_mcp::calls::CallLog::at(scratch.join("calls")));
     let registry = Registry::new(3_600_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(scratch.join("managed.json")));
-    let adapter = make_adapter(&echo_def(), "echo", &calls).expect("echo adapter");
+    let adapter = make_adapter(&echo_def(), "echo", &calls, None).expect("echo adapter");
     registry
         .register("echo", Source::Config, echo_def(), adapter)
         .expect("register");
@@ -159,7 +159,7 @@ async fn health_and_panel_serve() {
     assert!(!css.is_empty());
 
     // The page registry and its lazily imported view modules are served like every other panel
-    // module: no-store is already the default, and the content type must be exact so browsers
+    // module: revalidated on every load (no-cache + ETag), and the content type must be exact so browsers
     // accept them as module scripts in subdirectories too.
     for path in [
         "/admin/js/page-registry.js",

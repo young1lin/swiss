@@ -64,6 +64,9 @@ pub struct RemotePlugin {
     /// The app's one call log, shared with every adapter so the Logs tab sees
     /// remote tool traffic in the same place as every other MCP's.
     call_log: Arc<CallLog>,
+    /// The home's logs root — where the module's `logs/remote.db` lives. The db opens on
+    /// start (never at construction: SPEC `§host.history` L1) and closes bounded on stop.
+    logs_dir: std::path::PathBuf,
 }
 
 impl RemotePlugin {
@@ -72,6 +75,7 @@ impl RemotePlugin {
         state: Arc<RemoteState>,
         registry: Arc<Registry>,
         call_log: Arc<CallLog>,
+        logs_dir: std::path::PathBuf,
     ) -> Self {
         RemotePlugin {
             system: RemoteSystem::open(
@@ -82,6 +86,7 @@ impl RemotePlugin {
             state,
             registry,
             call_log,
+            logs_dir,
         }
     }
 
@@ -100,6 +105,7 @@ impl RemotePlugin {
             state: self.state,
             registry: self.registry,
             call_log: self.call_log,
+            logs_dir: self.logs_dir,
         }
     }
 }
@@ -178,6 +184,7 @@ impl PluginFactory for RemotePlugin {
             system: self.system.clone(),
             registry: self.registry.clone(),
             call_log: self.call_log.clone(),
+            logs_dir: self.logs_dir.clone(),
         }))
     }
 }
@@ -188,6 +195,7 @@ struct RemoteInstance {
     system: Arc<RemoteSystem>,
     registry: Arc<Registry>,
     call_log: Arc<CallLog>,
+    logs_dir: std::path::PathBuf,
 }
 
 /// Whether the registry's "remote" entry is OURS (def type "remote"): a user MCP
@@ -208,12 +216,78 @@ impl PluginInstance for RemoteInstance {
         // (SPEC §remote). Reused across restarts so the group scope and the routes
         // always see the same table.
         let system = self.system.clone();
+        // The module's own database (SPEC `§remote.history`, `§host.history`): opens FIRST,
+        // so the legacy import folds before any new record can land and the very
+        // first finish of a fresh cutover commits into the module's authority. A
+        // `failed` open degrades to the jsonl path — a storage decision is a log line,
+        // never a failed module start.
+        match swiss_remote::store::RemoteHistory::open(&self.logs_dir).await {
+            Ok(history) => {
+                let (runs, bytes, import) = history.usage().await;
+                system.history().attach_history(history.clone()).await;
+                // The cross-module query seat (SPEC §host.history): this database is
+                // searchable while it is open, and reported skipped once it is not.
+                let _ = system.services().history_query.register(
+                    swiss_host::services::history_query::HistoryQueryAdapter {
+                        owner: "remote".into(),
+                        db_file: self.logs_dir.join("remote.db"),
+                        source: history.clone(),
+                        bodies: Some(std::sync::Arc::new(
+                            swiss_remote::store::RemoteBodyReader::new(history.clone()),
+                        )),
+                    },
+                );
+                // The hourly maintenance seat (SPEC §host.history): checkpoint,
+                // conditional VACUUM, ledger reconciliation and the age sweep, run by
+                // the server's retention timer while this database is open.
+                {
+                    let history = history.clone();
+                    system.services().maintenance.register(
+                        "remote",
+                        std::sync::Arc::new(move || {
+                            let history = history.clone();
+                            Box::pin(async move {
+                                history
+                                    .maintain(7 * 24 * 60 * 60 * 1000)
+                                    .await;
+                            })
+                        }),
+                    );
+                }
+                swiss_core::log::log(
+                    "info",
+                    "remote history database attached",
+                    Some(json!({ "runs": runs, "bytes": bytes, "legacyImport": import })),
+                );
+            }
+            Err(err) => swiss_core::log::warn(
+                "the remote history database did not open; recording stays on the jsonl path",
+                Some(json!({ "err": err })),
+            ),
+        }
         swiss_remote::actions::register_all(system.clone(), &self.services.actions)?;
         // The durable run log (SPEC §remote.history, history.rs): from here every remote.*
         // run the coordinator starts is teed to disk and recorded at its end. A seat
         // like the others - stop() takes it back.
         let sink: Arc<dyn swiss_host::services::runs::RunHistorySink> = system.history().clone();
-        self.services.runs.add_history_sink(sink);
+        // add_history_sink may raise the numbering floor through the same
+        // cross-process claim as an allocation - off the runtime thread, like the
+        // submit route.
+        let handle = tokio::runtime::Handle::current();
+        let runs_for_floor = self.services.runs.clone();
+        if let Err(join) = tokio::task::spawn_blocking(move || {
+            let _rt = handle.enter();
+            runs_for_floor.add_history_sink(sink);
+        })
+        .await
+        {
+            // A sink that failed to attach stops teeing remote runs to disk: that
+            // must be visible, not swallowed.
+            swiss_core::log::error(
+                "the remote history sink did not attach",
+                Some(json!({ "reason": join.to_string() })),
+            );
+        }
         self.state.install(system.clone());
 
         // R7 (SPEC §remote): the same table as an MCP under /mcp/remote - five thin
@@ -289,6 +363,39 @@ impl PluginInstance for RemoteInstance {
             let sink: Arc<dyn swiss_host::services::runs::RunHistorySink> =
                 system.history().clone();
             system.services().runs.remove_history_sink(&sink);
+            // The query seat goes with the sink: a stopped module is reported
+            // skipped by name, and its database is never auto-opened by a query.
+            system.services().history_query.unregister("remote");
+            // The maintenance hook goes with the seat: a stopped module's closed
+            // database is never touched by the hourly timer.
+            system.services().maintenance.unregister("remote");
+            // R2 (SPEC `§remote.history`): the actions are withdrawn, so runs still executing
+            // one of them are canceled BY ACTION IDENTITY — whoever submitted them
+            // `(manual, jobs, another MCP)` — and awaited before the module's storage closes:
+            // no accepted remote work outlives its owner, and no unrelated run (a
+            // terminal, a process) is touched.
+            let _ = system
+                .services()
+                .runs
+                .cancel_action_types(&[
+                    "remote.exec",
+                    "remote.sync",
+                    "remote.pull",
+                    "remote.cat",
+                    "remote.write",
+                ])
+                .await;
+        }
+        // Detach the module's database, then close it bounded: accepted writes are
+        // acknowledged through the sink above; an incomplete close is a warning,
+        // never a claimed release (R3).
+        if let Some(history) = self.system.history().detach_history().await {
+            if let Err(err) = history.close().await {
+                swiss_core::log::warn(
+                    "the remote history database did not close within its bound",
+                    Some(json!({ "err": err })),
+                );
+            }
         }
         // The MCP entry follows the plugin down - stopped, not deleted: a user
         // panel stop of the entry survives a plugin bounce the same way, and the
@@ -323,10 +430,45 @@ mod tests {
             .expect("the entry exists")
     }
 
+    /// SPEC `§host.history` L1, the remote module half: constructing the plugin (composition,
+    /// a disabled module) opens no history path — no jsonl tree, no database. The open
+    /// happens on start.
+    #[test]
+    fn a_constructed_remote_plugin_opens_no_history() {
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-remoteplug-l1-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (registry, calls) = test_registry();
+        let plugin = RemotePlugin::new(
+            RuntimeServices::new(swiss_host::services::BootInfo::default()),
+            RemoteState::new(),
+            registry,
+            calls,
+            dir.join("logs"),
+        );
+        let _ = plugin.system(); // the composition point's own read
+        assert!(
+            !dir.join("logs").join("remote").exists(),
+            "no jsonl tree before start",
+        );
+        assert!(
+            !dir.join("logs").join("remote.db").exists(),
+            "no module database before start",
+        );
+    }
+
     #[test]
     fn the_descriptor_carries_two_pages_and_no_requirements() {
         let (registry, calls) = test_registry();
-        let d = RemotePlugin::new(RuntimeServices::new(), RemoteState::new(), registry, calls)
+        let d = RemotePlugin::new(
+            RuntimeServices::new(swiss_host::services::BootInfo::default()),
+            RemoteState::new(),
+            registry,
+            calls,
+            std::env::temp_dir(),
+        )
             .descriptor();
         assert_eq!(d.id, "remote");
         // Targets and Runs are sibling pages of one plugin: the context bar switches
@@ -344,7 +486,13 @@ mod tests {
     #[test]
     fn unknown_config_keys_are_refused() {
         let (registry, calls) = test_registry();
-        let plugin = RemotePlugin::new(RuntimeServices::new(), RemoteState::new(), registry, calls);
+        let plugin = RemotePlugin::new(
+            RuntimeServices::new(swiss_host::services::BootInfo::default()),
+            RemoteState::new(),
+            registry,
+            calls,
+            std::env::temp_dir(),
+        );
         assert!(plugin.validate_config(&json!({})).is_ok());
         assert!(plugin.validate_config(&json!({ "endpoints": [] })).is_err());
     }
@@ -355,10 +503,16 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("swiss-rplug-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch");
-        let services = RuntimeServices::new();
+        let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
         let state = RemoteState::new();
         let (registry, calls) = test_registry();
-        let plugin = RemotePlugin::new(services.clone(), state.clone(), registry.clone(), calls)
+        let plugin = RemotePlugin::new(
+            services.clone(),
+            state.clone(),
+            registry.clone(),
+            calls,
+            std::env::temp_dir(),
+        )
             .with_targets_path(dir.join("remote.json"));
 
         // The instance path: create through the factory (the host only wraps this),
