@@ -23,6 +23,7 @@ pub mod config;
 pub mod config_store;
 pub mod dbbrowser;
 pub mod groups;
+pub mod history;
 pub mod host;
 pub mod local_only;
 pub mod managed;

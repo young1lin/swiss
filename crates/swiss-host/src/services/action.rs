@@ -240,9 +240,14 @@ impl RunOutputSink {
 /// What [Action::execute_with_context] receives: the cancel handle every action already
 /// knows, plus the run's live output sink. One struct so the contract can grow another
 /// capability later without a second blanket-rename of every action.
+///
+/// `child` (SPEC §process.children) is the registry row a spawning action carries into its
+/// ProcSpec: the run's owner, its label, and the hook that reaches the coordinator's own
+/// cancel — so the child is stoppable through the owner's path from the Process page.
 pub struct ActionContext {
     pub cancel: CancelHandle,
     pub output: RunOutputSink,
+    pub child: crate::services::children::ChildTag,
 }
 
 /// Where a run's work happens - which of the coordinator's bounds it counts against

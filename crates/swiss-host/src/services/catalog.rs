@@ -89,6 +89,11 @@ pub struct LeaseTracker {
     /// shell seat's SessionLedger — its module note explains why the condvar alone cannot
     /// serve a provider stopping on the single-threaded runtime.
     idle_tx: tokio::sync::watch::Sender<usize>,
+    /// Bumped at the start of every drain ([drain_leases]). A holder whose request has no
+    /// natural end - a live pub/sub feed (SPEC §data.pubsub), open as long as a tab is - watches it
+    /// through [ConnectionLease::recalled] and lets go, so a stop never waits out its timeout
+    /// on a page someone left open.
+    recall_tx: tokio::sync::watch::Sender<u64>,
 }
 
 impl LeaseTracker {
@@ -98,7 +103,14 @@ impl LeaseTracker {
             withdrawing: Mutex::new(false),
             idle: Condvar::new(),
             idle_tx: tokio::sync::watch::channel(0).0,
+            recall_tx: tokio::sync::watch::channel(0).0,
         })
+    }
+
+    /// Ask every holder watching [ConnectionLease::recalled] to give its lease back. Called by
+    /// [drain_leases]; a lease taken afterwards is not recalled by it.
+    pub fn recall(&self) {
+        self.recall_tx.send_modify(|n| *n = n.wrapping_add(1));
     }
 
     /// Count a lease in and mint it. The count exists so a draining provider can decide
@@ -188,6 +200,8 @@ pub const DRAIN_TIMEOUT_MS: u64 = 5_000;
 /// something to wait for), then warn with the count when the wait was not clean. Returns
 /// the unreleased count so tests can assert on it without scraping logs.
 pub async fn drain_leases(tracker: &LeaseTracker, timeout: Duration, who: &str) -> usize {
+    // The holders that would otherwise hold on (a live pub/sub feed) end now, not at the timeout.
+    tracker.recall();
     let waiting = tracker.outstanding();
     if waiting > 0 {
         swiss_core::log::log(
@@ -251,6 +265,18 @@ impl ConnectionLease {
     /// before the lease drops.
     pub fn flavor(&self) -> &BrowserFlavor {
         &self.flavor
+    }
+
+    /// Resolves when the provider starts draining ([drain_leases]). A request that answers in
+    /// moments never needs it; a holder with no natural end, such as a live pub/sub feed (SPEC
+    /// §data.pubsub), selects on it and ends, so its lease is back before the drain's timeout. The future
+    /// owns what it waits on, so it can live beside the lease in a body stream; a drain that
+    /// began before this call does not count.
+    pub fn recalled(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let mut rx = self.tracker.recall_tx.subscribe();
+        async move {
+            let _ = rx.changed().await;
+        }
     }
 }
 
@@ -548,6 +574,30 @@ mod tests {
         let remaining = tracker.wait_idle_async(Duration::from_secs(1)).await;
         assert_eq!(remaining, 0, "the async drain watched the drop land");
         releaser.await.expect("releaser finished");
+    }
+
+    // SPEC §data.pubsub: a live pub/sub feed holds its lease as long as a tab stays open. The drain
+    // recalls it, so a stop is clean at once instead of warning after DRAIN_TIMEOUT_MS.
+    #[tokio::test]
+    async fn a_drain_recalls_a_holder_that_would_otherwise_hold_on() {
+        let tracker = LeaseTracker::new();
+        let feed = tracker.grant("r", "data", "redis", BrowserFlavor::None);
+        let recalled = feed.recalled();
+        let holder = tokio::spawn(async move {
+            recalled.await;
+            drop(feed);
+        });
+        let started = std::time::Instant::now();
+        assert_eq!(drain_leases(&tracker, Duration::from_secs(5), "mcp").await, 0);
+        assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+        holder.await.expect("holder finished");
+        // A lease taken after that drain is not recalled by it, only by the next one.
+        let later = tracker.grant("r", "data", "redis", BrowserFlavor::None);
+        let pending = tokio::time::timeout(Duration::from_millis(50), later.recalled()).await;
+        assert!(pending.is_err(), "an earlier drain does not recall a later lease");
+        let next = later.recalled();
+        tracker.recall();
+        tokio::time::timeout(Duration::from_secs(1), next).await.expect("the next drain recalls it");
     }
 
     #[test]

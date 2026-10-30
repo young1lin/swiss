@@ -36,7 +36,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 
-use crate::services::action::{Action, ActionError, ActionOutcome, CancelHandle};
+use crate::services::action::{Action, ActionContext, ActionError, ActionOutcome, CancelHandle};
 use crate::services::process::{
     mask_secrets, resolve_refs_strict, ProcLimits, ProcSpec, Supervisor, DEFAULT_OUTPUT_MAX_BYTES,
 };
@@ -167,6 +167,7 @@ fn parse_exec_input(input: &Value) -> Result<ProcSpec, ActionError> {
         cwd,
         env,
         secrets,
+        child: None,
     })
 }
 
@@ -178,6 +179,39 @@ pub struct ProcessExecAction {
 impl ProcessExecAction {
     pub fn new(supervisor: Arc<Supervisor>) -> Self {
         ProcessExecAction { supervisor }
+    }
+
+    /// The one execution path: parse, tag the child row (SPEC §process.children), run.
+    /// `execute` (a caller without a context) registers as the host.
+    async fn run(
+        &self,
+        input: &Value,
+        cancel: CancelHandle,
+        child: crate::services::children::ChildTag,
+    ) -> Result<ActionOutcome, ActionError> {
+        let mut spec = parse_exec_input(input)?;
+        spec.child = Some(child);
+        let limits = ProcLimits {
+            timeout_ms: COORDINATED_TIMEOUT_MS,
+            output_max_bytes: DEFAULT_OUTPUT_MAX_BYTES,
+        };
+        let r = self.supervisor.run(spec, limits, cancel).await;
+        let mut out = ActionOutcome {
+            ok: r.ok,
+            ms: r.ms,
+            pid: r.pid,
+            exit_code: r.exit_code,
+            timed_out: r.timed_out,
+            canceled: r.canceled,
+            error: r.error,
+            chars: r.chars,
+            output: r.output,
+            meta: Map::new(),
+        };
+        if r.output_truncated {
+            out.meta.insert("outputTruncated".into(), json!(true));
+        }
+        Ok(out)
     }
 }
 
@@ -221,7 +255,42 @@ impl Action for ProcessExecAction {
         input: &Value,
         cancel: CancelHandle,
     ) -> Result<ActionOutcome, ActionError> {
-        let spec = parse_exec_input(input)?;
+        let tag = crate::services::children::ChildTag::host("process.exec");
+        self.run(input, cancel, tag).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        input: &Value,
+        ctx: ActionContext,
+    ) -> Result<ActionOutcome, ActionError> {
+        // The run's own row (SPEC §process.children): owner, label, the coordinator's stop.
+        self.run(input, ctx.cancel, ctx.child).await
+    }
+}
+
+/// The compatibility capability ("process.legacy-command"): the pre-v2 "command" string,
+/// tokenized and resolved exactly as the legacy runner always did.
+pub struct LegacyCommandAction {
+    supervisor: Arc<Supervisor>,
+}
+
+impl LegacyCommandAction {
+    pub fn new(supervisor: Arc<Supervisor>) -> Self {
+        LegacyCommandAction { supervisor }
+    }
+
+    /// The one execution path, shared by both trait entries (see ProcessExecAction::run).
+    async fn run(
+        &self,
+        input: &Value,
+        cancel: CancelHandle,
+        child: crate::services::children::ChildTag,
+    ) -> Result<ActionOutcome, ActionError> {
+        let mut spec = parse_legacy_input(input)?;
+        // Same row contract as process.exec (SPEC §process.children): the tag rides the
+        // spec into the supervisor whatever form named the command.
+        spec.child = Some(child);
         let limits = ProcLimits {
             timeout_ms: COORDINATED_TIMEOUT_MS,
             output_max_bytes: DEFAULT_OUTPUT_MAX_BYTES,
@@ -243,18 +312,6 @@ impl Action for ProcessExecAction {
             out.meta.insert("outputTruncated".into(), json!(true));
         }
         Ok(out)
-    }
-}
-
-/// The compatibility capability ("process.legacy-command"): the pre-v2 "command" string,
-/// tokenized and resolved exactly as the legacy runner always did.
-pub struct LegacyCommandAction {
-    supervisor: Arc<Supervisor>,
-}
-
-impl LegacyCommandAction {
-    pub fn new(supervisor: Arc<Supervisor>) -> Self {
-        LegacyCommandAction { supervisor }
     }
 }
 
@@ -297,28 +354,16 @@ impl Action for LegacyCommandAction {
         input: &Value,
         cancel: CancelHandle,
     ) -> Result<ActionOutcome, ActionError> {
-        let spec = parse_legacy_input(input)?;
-        let limits = ProcLimits {
-            timeout_ms: COORDINATED_TIMEOUT_MS,
-            output_max_bytes: DEFAULT_OUTPUT_MAX_BYTES,
-        };
-        let r = self.supervisor.run(spec, limits, cancel).await;
-        let mut out = ActionOutcome {
-            ok: r.ok,
-            ms: r.ms,
-            pid: r.pid,
-            exit_code: r.exit_code,
-            timed_out: r.timed_out,
-            canceled: r.canceled,
-            error: r.error,
-            chars: r.chars,
-            output: r.output,
-            meta: Map::new(),
-        };
-        if r.output_truncated {
-            out.meta.insert("outputTruncated".into(), json!(true));
-        }
-        Ok(out)
+        let tag = crate::services::children::ChildTag::host("process.legacy-command");
+        self.run(input, cancel, tag).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        input: &Value,
+        ctx: ActionContext,
+    ) -> Result<ActionOutcome, ActionError> {
+        self.run(input, ctx.cancel, ctx.child).await
     }
 }
 
@@ -436,6 +481,7 @@ fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
         cwd,
         env,
         secrets,
+        child: None,
     })
 }
 
@@ -461,7 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn typed_exec_runs_and_captures_output() {
-        let action = ProcessExecAction::new(Supervisor::new());
+        let action = ProcessExecAction::new(Supervisor::new(crate::services::children::ChildRegistry::new()));
         let out = action
             .execute(&echo_cmd(), CancelHandle::never())
             .await
@@ -473,7 +519,7 @@ mod tests {
 
     #[tokio::test]
     async fn typed_input_is_validated_strictly() {
-        let action = ProcessExecAction::new(Supervisor::new());
+        let action = ProcessExecAction::new(Supervisor::new(crate::services::children::ChildRegistry::new()));
         for bad in [
             json!({}),                                                            // no program
             json!({ "program": "" }),                                             // empty program
@@ -522,7 +568,7 @@ mod tests {
         // characters is treated as a credential and masked out of captured output (the
         // next test), which would hide exactly what this assertion reads.
         unsafe { std::env::set_var("SWISS_EXEC_SHORT", "a b") };
-        let action = ProcessExecAction::new(Supervisor::new());
+        let action = ProcessExecAction::new(Supervisor::new(crate::services::children::ChildRegistry::new()));
         // POSIX: hand the substituted value as one positional parameter and print it.
         let input = if cfg!(windows) {
             json!({ "program": "cmd", "args": ["/c", "echo", "${SWISS_EXEC_SHORT}"] })
@@ -544,7 +590,7 @@ mod tests {
         // out. The 8-character floor keeps ordinary short values (a port, a count) that
         // happen to appear in the text from shredding the whole output.
         unsafe { std::env::set_var("SWISS_EXEC_SECRET", "s3cr3t-value") };
-        let action = ProcessExecAction::new(Supervisor::new());
+        let action = ProcessExecAction::new(Supervisor::new(crate::services::children::ChildRegistry::new()));
         let input = if cfg!(windows) {
             json!({ "program": "cmd", "args": ["/c", "echo", "${SWISS_EXEC_SECRET}"] })
         } else {
@@ -567,7 +613,7 @@ mod tests {
         // Short on purpose: an 8+ character resolved reference is masked out of the
         // captured output (see the masking test).
         unsafe { std::env::set_var("SWISS_LEGACY_WORD", "exp") };
-        let action = LegacyCommandAction::new(Supervisor::new());
+        let action = LegacyCommandAction::new(Supervisor::new(crate::services::children::ChildRegistry::new()));
         let input = if cfg!(windows) {
             json!({ "command": "cmd /c echo ${SWISS_LEGACY_WORD}" })
         } else {
@@ -597,7 +643,7 @@ mod tests {
     /// runner used to own before execution moved into this shared capability.
     #[tokio::test]
     async fn a_failing_legacy_command_is_an_outcome_not_an_error() {
-        let action = LegacyCommandAction::new(Supervisor::new());
+        let action = LegacyCommandAction::new(Supervisor::new(crate::services::children::ChildRegistry::new()));
 
         // A non-zero exit RAN: not ok, the code is kept, and there is no spawn error.
         let cmd = if cfg!(windows) {
@@ -637,7 +683,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_stops_a_typed_run_and_reports_it() {
-        let action = ProcessExecAction::new(Supervisor::new());
+        let action = ProcessExecAction::new(Supervisor::new(crate::services::children::ChildRegistry::new()));
         let src = CancelSource::new();
         let cmd = if cfg!(windows) {
             json!({ "program": "ping", "args": ["-n", "30", "127.0.0.1"] })
@@ -666,7 +712,7 @@ mod tests {
         // The coordinator can cancel between submitting a run and the run subscribing; the
         // flag must still read as set when the handle arrives, or the child runs to
         // completion under a cancel nobody ever sees.
-        let action = ProcessExecAction::new(Supervisor::new());
+        let action = ProcessExecAction::new(Supervisor::new(crate::services::children::ChildRegistry::new()));
         let src = CancelSource::new();
         src.cancel();
         let cmd = if cfg!(windows) {
@@ -700,7 +746,7 @@ async fn legacy_command_env_vars_reach_the_child_and_refs_in_values_resolve() {
     // A LONG LITERAL stays readable in the output (it is job configuration the user
     // typed); only what a REF resolved to is masked (it may be a credential).
     unsafe { std::env::set_var("SWISS_LEGACY_FROM", "carried-long-ref-value") };
-    let action = LegacyCommandAction::new(Supervisor::new());
+    let action = LegacyCommandAction::new(Supervisor::new(crate::services::children::ChildRegistry::new()));
     let input = if cfg!(windows) {
         json!({
             "command": "cmd /c echo direct=%JOB_VAR% ref=%JOB_REF%",
@@ -817,7 +863,7 @@ async fn an_unreferenced_vault_value_never_reaches_a_child_environment() {
         )
         .expect("plant");
     }
-    let action = LegacyCommandAction::new(Supervisor::new());
+    let action = LegacyCommandAction::new(Supervisor::new(crate::services::children::ChildRegistry::new()));
     let input = if cfg!(windows) {
         json!({
             "command": "cmd /c set",

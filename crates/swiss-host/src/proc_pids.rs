@@ -182,7 +182,16 @@ fn reap_in(file: &Path, own_pid: u32) -> Vec<u32> {
             "reaping orphaned proc child from a previous gateway instance",
             Some(json!({ "pid": pid })),
         );
-        tree_kill(pid);
+        // SPEC §process.tree: the kill is checked, never assumed. A survivor (an elevated
+        // orphan refusing PROCESS_TERMINATE) is reported - the next boot's ledger no longer
+        // names it, because the file was cleared above, so this log line is the only trace.
+        let survivors = tree_kill(pid);
+        if !survivors.is_empty() {
+            log::error(
+                "orphan-proc reap could not terminate these pids",
+                Some(json!({ "survivors": survivors })),
+            );
+        }
         killed.push(pid);
     }
     if !killed.is_empty() {

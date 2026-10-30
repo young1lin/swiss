@@ -22,7 +22,7 @@
 //! copies - whether `default` is renameable, what a rename body looks like, which name a
 //! delete-confirm names as the landing group. This module is the one implementation: pure data,
 //! no I/O, embedded by each scope's store, which decides only the JSON key names it serializes
-//! under (SPEC §formats.groups).
+//! under (SPEC §host.groups).
 //!
 //! Order is deliberately NOT here. Every scope already owns a flat order (the MCP `order` side
 //! map, tunnels.json array order, jobs definition order); `Groups` only slices it. That is why

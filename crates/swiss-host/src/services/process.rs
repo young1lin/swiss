@@ -42,7 +42,6 @@
 //! empty string. Captured output is masked for every value a run resolved, so a child that
 //! echoes its own credentials does not write them into run history.
 
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -52,7 +51,8 @@ use tokio::task::JoinHandle;
 #[cfg(windows)]
 use swiss_core::platform::KillOnCloseJob;
 
-use crate::services::action::CancelHandle;
+use crate::services::action::{CancelHandle, RunOutputSink};
+use crate::services::children::{ChildGuard, ChildKind, ChildRegistry, ChildSpec, ChildTag};
 
 /// How long a subtree kill waits for the root to report its exit status (TerminateProcess /
 /// SIGKILL cannot be ignored; this only bounds a wedged wait) — the proc adapter's KILL_WAIT.
@@ -117,9 +117,19 @@ impl BoundedCapture {
 /// reader — what replaced read_to_end. It drains the pipe even though the buffer keeps
 /// only the tail, so the child never blocks on a full pipe and the memory never grows.
 pub async fn read_bounded<R: tokio::io::AsyncRead + Unpin>(
+    reader: R,
+    capture: Arc<Mutex<BoundedCapture>>,
+    cancel: CancelHandle,
+) {
+    read_bounded_live(reader, capture, cancel, None, "").await;
+}
+
+async fn read_bounded_live<R: tokio::io::AsyncRead + Unpin>(
     mut reader: R,
     capture: Arc<Mutex<BoundedCapture>>,
     cancel: CancelHandle,
+    output: Option<RunOutputSink>,
+    prefix: &'static str,
 ) {
     let mut chunk = [0u8; 8 * 1024];
     loop {
@@ -133,10 +143,13 @@ pub async fn read_bounded<R: tokio::io::AsyncRead + Unpin>(
             read = reader.read(&mut chunk) => {
                 match read {
                     Ok(0) => return, // EOF: pipe fully drained
-                    Ok(n) => capture
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .push(&chunk[..n]),
+                    Ok(n) => {
+                        capture.lock().unwrap_or_else(|e| e.into_inner()).push(&chunk[..n]);
+                        if let Some(sink) = &output {
+                            if !prefix.is_empty() { sink.append(prefix); }
+                            sink.append_bytes(&chunk[..n]);
+                        }
+                    }
                     Err(_) => return, // broken pipe etc.; the exit status tells the story
                 }
             }
@@ -155,6 +168,10 @@ pub struct ProcSpec {
     /// Values that must never survive into captured output (resolved credentials and other
     /// substituted refs). Values shorter than 8 chars are not worth masking and are ignored.
     pub secrets: Vec<String>,
+    /// The registry row this run's child carries (SPEC §process.children): owner, label,
+    /// stop hook. The action layer fills it from ActionContext; a direct caller leaves it
+    /// None and registers as the host.
+    pub child: Option<ChildTag>,
 }
 
 impl ProcSpec {
@@ -165,6 +182,7 @@ impl ProcSpec {
             cwd: None,
             env: Vec::new(),
             secrets: Vec::new(),
+            child: None,
         }
     }
 }
@@ -207,41 +225,17 @@ pub struct ProcResult {
     pub output_truncated: bool,
 }
 
-/// Scoped registration of a live child's root pid: the guard unregisters on drop, so even
-/// a panicked run cannot leak an entry from [Supervisor::child_pids].
-struct PidGuard<'a> {
-    pid: u32,
-    supervisor: &'a Supervisor,
-}
-
-impl Drop for PidGuard<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut pids) = self.supervisor.pids.lock() {
-            pids.remove(&self.pid);
-        }
-    }
-}
-
-/// Tracks the root pids of currently-live supervised children so the host can report them
-/// (via RuntimeServices::child_pids). Cheap: an empty supervisor costs one Mutex and one
-/// empty set, so one-shot callers can afford their own instance.
-#[derive(Default)]
+/// The shared supervisor. Its live-children bookkeeping lives in the
+/// [ChildRegistry] (SPEC §process.children) — one list for runs, MCPs and terminals,
+/// and the memory reading's roots — so this struct is only the spawn/teardown mechanism
+/// it always was, plus the registry handle every spawn registers through.
 pub struct Supervisor {
-    pids: Mutex<HashSet<u32>>,
+    children: Arc<ChildRegistry>,
 }
 
 impl Supervisor {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Supervisor::default())
-    }
-
-    /// The root pids of all children currently supervised by THIS instance, sorted for
-    /// stable output.
-    pub fn child_pids(&self) -> Vec<u32> {
-        let pids = self.pids.lock().unwrap_or_else(|e| e.into_inner());
-        let mut v: Vec<u32> = pids.iter().copied().collect();
-        v.sort_unstable();
-        v
+    pub fn new(children: Arc<ChildRegistry>) -> Arc<Self> {
+        Arc::new(Supervisor { children })
     }
 
     /// Run one command to completion (natural exit, deadline or cancellation) and report.
@@ -254,6 +248,20 @@ impl Supervisor {
         limits: ProcLimits,
         cancel: CancelHandle,
     ) -> ProcResult {
+        self.drive(spec, limits, cancel, None).await
+    }
+
+    /// The same owned execution with bounded live output for background readers. Resolved
+    /// secrets cannot be masked independently at arbitrary chunk boundaries: those runs
+    /// publish only their already-masked final output instead.
+    pub async fn run_streamed(&self, spec: ProcSpec, limits: ProcLimits, cancel: CancelHandle, output: RunOutputSink) -> ProcResult {
+        let live = spec.secrets.is_empty();
+        let result = self.drive(spec, limits, cancel, live.then(|| output.clone())).await;
+        if !live { output.append(&result.output); }
+        result
+    }
+
+    async fn drive(&self, spec: ProcSpec, limits: ProcLimits, cancel: CancelHandle, output: Option<RunOutputSink>) -> ProcResult {
         let started = Instant::now();
         let fail = |error: String| ProcResult {
             ok: false,
@@ -300,10 +308,18 @@ impl Supervisor {
             Err(err) => return fail(format!("spawn {:?} failed: {err}", spec.program)),
         };
         let pid = child.id();
-        // Scoped while the child lives; dropped at every return path below.
-        let _pid_guard = pid.map(|p| PidGuard {
-            pid: p,
-            supervisor: self,
+        // The child row (SPEC §process.children): scoped while the child lives, dropped at
+        // every return path below, so even a panicked run leaves no row behind. A run
+        // carries the coordinator's tag; a direct caller registers as the host.
+        let tag = spec.child.clone().unwrap_or_else(|| ChildTag::host(&spec.program));
+        let _child_guard: Option<ChildGuard> = pid.and_then(|p| {
+            self.children.register(ChildSpec {
+                pid: p,
+                owner: tag.owner.clone(),
+                kind: ChildKind::Run,
+                label: tag.label.clone(),
+                stop: tag.stop.clone(),
+            })
         });
 
         // The subtree guard, assigned at spawn: everything the command goes on to create
@@ -320,11 +336,11 @@ impl Supervisor {
         let out_reader = child
             .stdout
             .take()
-            .map(|s| tokio::spawn(read_bounded(s, out_capture.clone(), cancel.clone())));
+            .map(|s| tokio::spawn(read_bounded_live(s, out_capture.clone(), cancel.clone(), output.clone(), "")));
         let err_reader = child
             .stderr
             .take()
-            .map(|s| tokio::spawn(read_bounded(s, err_capture.clone(), cancel.clone())));
+            .map(|s| tokio::spawn(read_bounded_live(s, err_capture.clone(), cancel.clone(), output, "\n[stderr]\n")));
 
         enum End {
             Exited(i32),
@@ -355,6 +371,12 @@ impl Supervisor {
         // Natural exits drop it just the same, so inherited pipes can close.
         #[cfg(windows)]
         drop(job);
+        // child.wait() clears child.id() after a natural exit. Keep the spawn-time pgid
+        // to terminate descendants left behind by a shell that returned after `cmd &`.
+        #[cfg(unix)]
+        if matches!(end, End::Exited(_)) {
+            if let Some(pgid) = pid { swiss_core::platform::kill_process_group(pgid); }
+        }
         if timed_out || canceled || matches!(end, End::WaitFailed(_)) {
             kill_tree(&mut child).await;
         }
@@ -374,8 +396,10 @@ impl Supervisor {
             .take_tail();
 
         let mut stdout = decode_child_output(&out_tail);
-        let stderr = decode_child_output(&err_tail);
+        let mut stderr = decode_child_output(&err_tail);
+        // Both streams: a failing tool echoes its arguments, a credential among them, on stderr.
         mask_secrets(&mut stdout, &spec.secrets);
+        mask_secrets(&mut stderr, &spec.secrets);
         let mut combined = String::with_capacity(stdout.len() + stderr.len() + 10);
         combined.push_str(&stdout);
         if !stderr.is_empty() {
@@ -574,6 +598,23 @@ pub fn decode_child_output(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn live_capture_publishes_before_eof_without_growing_the_retained_tail() {
+        use tokio::io::AsyncWriteExt;
+        let (mut writer, reader) = tokio::io::duplex(64);
+        let capture = Arc::new(Mutex::new(BoundedCapture::new(4)));
+        let buffer = crate::services::runs::RunOutputBuffer::new();
+        let sink = RunOutputSink::new(buffer.clone(), Vec::new());
+        let task = tokio::spawn(read_bounded_live(reader, capture.clone(), CancelHandle::never(), Some(sink), ""));
+        writer.write_all(b"abcdefgh").await.expect("write");
+        while buffer.read_from(0, 64).next_cursor < 8 { tokio::task::yield_now().await; }
+        assert!(!task.is_finished(), "the output is readable while its process is still alive");
+        assert_eq!(buffer.read_from(0, 64).text, "abcdefgh");
+        assert_eq!(capture.lock().expect("capture").retained(), 4);
+        drop(writer);
+        task.await.expect("reader drained");
+    }
+
     use super::*;
     use crate::services::action::CancelSource;
     use tokio::io::AsyncWriteExt;

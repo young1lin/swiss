@@ -41,8 +41,10 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use futures_util::FutureExt;
@@ -55,6 +57,7 @@ use crate::services::action::{
     ActionContext, ActionError, ActionOutcome, ActionRegistry, CancelSource, RunLane,
     RunOutputSink, RunOutputTee,
 };
+use crate::services::children::{ChildStop, ChildTag};
 use serde_json::Map;
 use swiss_core::util::now_ms;
 
@@ -87,9 +90,17 @@ pub trait RunHistorySink: Send + Sync {
     /// it: the tee receives the output stream and `finish` follows with the terminal
     /// view. `None` leaves the run to the in-memory ring alone.
     fn begin(&self, run_id: u64, request: &SubmitRequest) -> Option<Arc<dyn RunOutputTee>>;
-    /// The terminal view of a run `begin` accepted — called before the view enters the
-    /// finished ring, so a client that sees the run terminal can already read the record.
-    fn finish(&self, view: &RunView, request: &SubmitRequest);
+    /// The terminal view of a run `begin` accepted, ACKNOWLEDGED (SPEC §host.history,
+    /// planned): the coordinator awaits this future — bounded — before the view enters
+    /// the finished ring, so a client that sees the run terminal can already read the
+    /// record. `Recorded` claims durable visibility; `Unavailable` is the honest
+    /// nothing-persisted answer, which the coordinator publishes on the view instead of
+    /// failing the run it already ran.
+    fn finish<'a>(
+        &'a self,
+        view: RunView,
+        request: SubmitRequest,
+    ) -> futures_core::future::BoxFuture<'a, HistoryAck>;
     /// The highest run id this record holds, so a coordinator whose numbering started
     /// afresh (a first boot after the sequence file existed, a lost one) never hands out
     /// an id the record already keys on. None when the record is empty or keys on
@@ -98,6 +109,23 @@ pub trait RunHistorySink: Send + Sync {
         None
     }
 }
+
+/// The acknowledged outcome of a sink's terminal record (SPEC §host.history, planned):
+/// "recorded completion" is a fact the sink attests, not a hope the enqueue implied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryAck {
+    /// The record is durably visible; recorded completion may be claimed.
+    Recorded,
+    /// The record is NOT complete — enqueue-only, failed, or unavailable within the
+    /// bound. The run's own outcome is unaffected; the terminal view carries the honest
+    /// status (meta `historyAck`) instead of false success.
+    Unavailable { reason: String },
+}
+
+/// How long the coordinator waits for one sink's finish acknowledgment before publishing
+/// the run with an explicit unacknowledged status: a stop-the-world record must never
+/// stop the world, but a lie about durability is worse than a late view.
+const HISTORY_ACK_BOUND: Duration = Duration::from_secs(5);
 
 /// One run's bounded live output: a monotonic byte cursor over everything ever appended,
 /// with the oldest data evicted when the cap is hit. A follower polls with the cursor its
@@ -519,7 +547,11 @@ impl RunCoordinator {
             if inner.next_id <= last {
                 inner.next_id = last + 1;
                 if let Some(path) = inner.sequence.clone() {
-                    write_sequence(&path, inner.next_id);
+                    // The floor raise goes through the same cross-process claim as every
+                    // allocation: two gateways raising against one file serialize, and
+                    // neither can flatten the other's commit. A raise takes no id — the
+                    // committed value IS the next id to hand out.
+                    inner.next_id = claim_sequence(&path, inner.next_id, CLAIM_STALE, false);
                 }
             }
         }
@@ -649,11 +681,22 @@ impl RunCoordinator {
         let lane = action.lane(&request.input);
         let (done_tx, done_rx) = oneshot::channel();
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let run_id = inner.next_id;
-        inner.next_id += 1;
-        if let Some(path) = inner.sequence.clone() {
-            write_sequence(&path, inner.next_id);
-        }
+        let run_id = match inner.sequence.clone() {
+            // The id comes from the FILE under a cross-process claim, never from the
+            // in-process counter alone: a second same-home gateway allocates between
+            // this process's reads, and two runs under one number is the corruption the
+            // sequence exists to prevent.
+            Some(path) => {
+                let id = claim_sequence(&path, inner.next_id, CLAIM_STALE, true);
+                inner.next_id = id + 1;
+                id
+            }
+            None => {
+                let id = inner.next_id;
+                inner.next_id += 1;
+                id
+            }
+        };
         let output = RunOutputBuffer::new();
         let queued_at = now_ms();
         let full = inner.lane_full(&lane);
@@ -772,8 +815,25 @@ impl RunCoordinator {
     ) -> RunView {
         let recorders = self.history_begin(run_id, &request);
         let tees: Vec<Arc<dyn RunOutputTee>> = recorders.iter().map(|(_, t)| t.clone()).collect();
+        // The registry row a spawning action will carry (SPEC §process.children): this
+        // run's owner and label, and a hook that cancels through the coordinator — the
+        // run's OWN teardown path, so a stop from the Process page lands the run in
+        // `canceled` instead of killing a pid underneath the coordinator. The hook holds
+        // a WEAK handle: the registry row must not be the thing keeping the pool alive.
+        let child = ChildTag {
+            owner: request.owner.clone(),
+            label: if request.label.is_empty() {
+                request.action_type.clone()
+            } else {
+                format!("{} \u{b7} {}", request.action_type, request.label)
+            },
+            stop: Some(Arc::new(RunChildStop {
+                runs: Arc::downgrade(&self),
+                run_id,
+            })),
+        };
         let (result, timed_out) =
-            drive_action(&self.registry, &request, &cancel, &output, tees).await;
+            drive_action(&self.registry, &request, &cancel, &output, tees, child).await;
         let ended_at = now_ms();
         let mut view = RunView {
             run_id,
@@ -831,11 +891,36 @@ impl RunCoordinator {
                 };
             }
         }
-        // The durable record first, so the run is never terminal in the API before its
-        // history row exists; the sinks were captured at start, so a plugin stop in
+        // The durable record first, and ACKNOWLEDGED: the coordinator awaits each sink's
+        // completion acknowledgment (bounded) before the view enters the finished ring,
+        // so the run is never terminal in the API before its history row exists — and a
+        // record that could not persist publishes its honest status on the view instead
+        // of false success. The sinks were captured at start, so a plugin stop in
         // between cannot orphan a record.
+        let mut ack_failures: Vec<String> = Vec::new();
         for (sink, _) in &recorders {
-            sink.finish(&view, &request);
+            let ack = tokio::time::timeout(
+                HISTORY_ACK_BOUND,
+                sink.finish(view.clone(), request.clone()),
+            )
+            .await;
+            let failure = match ack {
+                Ok(HistoryAck::Recorded) => None,
+                Ok(HistoryAck::Unavailable { reason }) => Some(reason),
+                // The bound broke: the view must still publish, but never as recorded.
+                Err(_) => Some("the record did not acknowledge in time".into()),
+            };
+            if let Some(reason) = failure {
+                ack_failures.push(reason);
+            }
+        }
+        if !ack_failures.is_empty() {
+            view.meta
+                .insert("historyAck".into(), Value::String("unavailable".into()));
+            view.meta.insert(
+                "historyAckError".into(),
+                Value::String(ack_failures.join("; ")),
+            );
         }
         self.finish(run_id, view.clone());
         // The submitter may already be gone (fire-and-forget scheduled runs) — that is
@@ -1166,6 +1251,34 @@ impl RunCoordinator {
     }
 }
 
+/// The run owner's stop (SPEC §process.children): the coordinator's own cancel(run_id),
+/// so a stopped run reaches `canceled` through its lifecycle instead of dying underneath
+/// the coordinator and never reaching a terminal state. Weak by design — the row must not
+/// be what keeps the pool alive.
+struct RunChildStop {
+    runs: Weak<RunCoordinator>,
+    run_id: u64,
+}
+
+impl ChildStop for RunChildStop {
+    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
+        let Some(runs) = self.runs.upgrade() else {
+            return Box::pin(async {
+                Err("the run coordinator is gone; the run already ended".to_string())
+            });
+        };
+        let run_id = self.run_id;
+        Box::pin(async move {
+            match runs.cancel(run_id).await {
+                // cancel() answers the view even when the run had already finished — a
+                // natural stop is as stopped as a canceled one.
+                Some(_) => Ok(()),
+                None => Err(format!("run {run_id} is not active")),
+            }
+        })
+    }
+}
+
 /// Race one action against the deadline WITHOUT ever dropping the mid-flight future: the
 /// deadline cancels, then the loop WAITS for the action's clean stop (for process actions
 /// that is the tree kill plus reader joins, bounded by their drain grace). A panicking
@@ -1176,6 +1289,7 @@ async fn drive_action(
     cancel: &Arc<CancelSource>,
     output: &Arc<RunOutputBuffer>,
     tees: Vec<Arc<dyn RunOutputTee>>,
+    child: ChildTag,
 ) -> (Result<ActionOutcome, ActionError>, bool) {
     let Some(action) = registry.get(&request.action_type) else {
         return (
@@ -1192,6 +1306,7 @@ async fn drive_action(
     let ctx = ActionContext {
         cancel: cancel.handle(),
         output: RunOutputSink::new(output.clone(), tees),
+        child,
     };
     let exec = AssertUnwindSafe(action.execute_with_context(&request.input, ctx)).catch_unwind();
     tokio::pin!(exec);
@@ -1227,6 +1342,102 @@ fn write_sequence(path: &std::path::Path, next: u64) {
     let tmp = path.with_extension("seq.tmp");
     if std::fs::write(&tmp, next.to_string()).is_ok() && std::fs::rename(&tmp, path).is_err() {
         let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// How long a run-id claim may sit unreleased before another same-home gateway presumes
+/// its holder died and steals it: a live claimant holds it for a handful of file
+/// operations, so anything near seconds means the process crashed between create and
+/// release (SPEC §host.history, planned).
+const CLAIM_STALE: Duration = Duration::from_secs(5);
+/// The claim retry cadence while the claim is fresh, then the coarser nap for the
+/// long tail of a stale wait: bounded wakeups without missing the stale moment.
+const CLAIM_RETRY: Duration = Duration::from_millis(2);
+const CLAIM_COARSE: Duration = Duration::from_millis(25);
+
+/// One claim over the shared-home sequence file, safe against OTHER PROCESSES
+/// (SPEC §host.history, planned): same-home multiport gateways allocate concurrently,
+/// and an in-process mutex solves nothing there. Every claim takes a short-lived lock
+/// file (`create_new` is atomic on the filesystem), re-reads the committed value under
+/// the claim, commits and releases. With `consume` the folded next id is TAKEN (a
+/// submission's run id) and the file holds the id after it; without it the claim only
+/// raises the committed next-to-hand-out (a sink's floor) and takes nothing. The
+/// claim's payload is the value its holder is about to commit, so a crash mid-claim
+/// leaves a floor behind — the id a dead holder may have used is never reused, worst
+/// case skipped. Returns the folded next id.
+fn claim_sequence(path: &std::path::Path, floor: u64, stale_after: Duration, consume: bool) -> u64 {
+    use std::io::Write as _;
+    let claim = path.with_extension("claim");
+    let started = std::time::Instant::now();
+    let mut floor = floor;
+    loop {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&claim)
+        {
+            Ok(mut file) => {
+                let committed = std::fs::read_to_string(path)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .unwrap_or(0);
+                let next = committed.max(floor);
+                let commit = if consume { next + 1 } else { next };
+                // The payload BEFORE the commit: a claimant that dies between the two
+                // leaves a floor behind, never a reusable id.
+                let _ = file.write_all(commit.to_string().as_bytes());
+                let _ = file.flush();
+                drop(file);
+                write_sequence(path, commit);
+                let _ = std::fs::remove_file(&claim);
+                return next;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Another process holds the claim. Its payload is the value AFTER the id
+                // it may use — floor on it whether the holder is live or dead.
+                let payload = std::fs::read_to_string(&claim)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .unwrap_or_else(|| {
+                        // Unreadable or torn: assume the worst — its holder may have used
+                        // exactly the committed value.
+                        std::fs::read_to_string(path)
+                            .ok()
+                            .and_then(|s| s.trim().parse::<u64>().ok())
+                            .unwrap_or(0)
+                            + 1
+                    });
+                floor = floor.max(payload);
+                if started.elapsed() >= stale_after {
+                    // Stale: the holder is presumed dead past the bound. The payload
+                    // floor already covers whatever it may have handed out. The steal
+                    // must stay REACHABLE: any liveness cap below this bound would
+                    // orphan the claim file forever and wedge every later submission
+                    // into the capped path.
+                    let _ = std::fs::remove_file(&claim);
+                    continue;
+                }
+                if started.elapsed() >= stale_after.saturating_mul(3) {
+                    // Bounded liveness ceiling for a pathologically wedged filesystem:
+                    // three stale windows went by without the claim clearing. COMMIT
+                    // the floor - an uncommitted floor hands one id to two processes -
+                    // then proceed past the claimant.
+                    write_sequence(path, floor);
+                    return floor;
+                }
+                let nap = if started.elapsed() < Duration::from_millis(100) {
+                    CLAIM_RETRY
+                } else {
+                    CLAIM_COARSE
+                };
+                std::thread::sleep(nap);
+            }
+            Err(_) => {
+                // The claim cannot even be attempted (read-only home, removed dir): the
+                // in-process counter with its floors is the most that can be claimed.
+                return floor;
+            }
+        }
     }
 }
 
@@ -2094,9 +2305,78 @@ mod tests {
         fn begin(&self, _run_id: u64, _request: &SubmitRequest) -> Option<Arc<dyn RunOutputTee>> {
             None
         }
-        fn finish(&self, _view: &RunView, _request: &SubmitRequest) {}
+        fn finish<'a>(
+            &'a self,
+            _view: RunView,
+            _request: SubmitRequest,
+        ) -> futures_core::future::BoxFuture<'a, HistoryAck> {
+            Box::pin(async { HistoryAck::Recorded })
+        }
         fn last_run_id(&self) -> Option<u64> {
             Some(self.0)
+        }
+    }
+
+    /// A tee that takes the stream and keeps nothing — the record this test's sinks owe
+    /// is the acknowledgment, not the bytes.
+    struct NullTee;
+
+    impl RunOutputTee for NullTee {
+        fn write(&self, _bytes: &[u8]) {}
+    }
+
+    /// A sink whose finish waits for a gate before acknowledging — the shape that must
+    /// hold a run's terminal publication open until its record is real. begin ACCEPTS the
+    /// run: a sink that declines never sees finish at all.
+    struct GatedAck {
+        started: Arc<AtomicBool>,
+        acked: Arc<AtomicBool>,
+        gate: Mutex<Option<oneshot::Receiver<()>>>,
+    }
+
+    impl RunHistorySink for GatedAck {
+        fn begin(&self, _run_id: u64, _request: &SubmitRequest) -> Option<Arc<dyn RunOutputTee>> {
+            Some(Arc::new(NullTee))
+        }
+        fn finish<'a>(
+            &'a self,
+            _view: RunView,
+            _request: SubmitRequest,
+        ) -> futures_core::future::BoxFuture<'a, HistoryAck> {
+            Box::pin(async move {
+                self.started.store(true, Ordering::SeqCst);
+                let gate = self
+                    .gate
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some(gate) = gate {
+                    let _ = gate.await;
+                }
+                self.acked.store(true, Ordering::SeqCst);
+                HistoryAck::Recorded
+            })
+        }
+    }
+
+    /// A sink that cannot persist anything: the failure must be VISIBLE on the terminal
+    /// view without failing the execution that already succeeded.
+    struct FailingAck;
+
+    impl RunHistorySink for FailingAck {
+        fn begin(&self, _run_id: u64, _request: &SubmitRequest) -> Option<Arc<dyn RunOutputTee>> {
+            Some(Arc::new(NullTee))
+        }
+        fn finish<'a>(
+            &'a self,
+            _view: RunView,
+            _request: SubmitRequest,
+        ) -> futures_core::future::BoxFuture<'a, HistoryAck> {
+            Box::pin(async {
+                HistoryAck::Unavailable {
+                    reason: "the record store is gone".into(),
+                }
+            })
         }
     }
 
@@ -2147,6 +2427,169 @@ mod tests {
         let (bare, _) = coordinator(RunCapacity::default());
         bare.submit(request("manual", "e", 1)).unwrap();
         assert_eq!(std::fs::read_to_string(&seq).unwrap(), "not a number");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn terminal_view_waits_for_history_finish_ack() {
+        let (runs, _) = coordinator(RunCapacity {
+            max_concurrent: 2,
+            max_queued: 2,
+        });
+        let (release, gate) = oneshot::channel::<()>();
+        let sink = Arc::new(GatedAck {
+            started: Arc::new(AtomicBool::new(false)),
+            acked: Arc::new(AtomicBool::new(false)),
+            gate: Mutex::new(Some(gate)),
+        });
+        runs.add_history_sink(sink.clone());
+        let submitted = runs
+            .submit(request("manual", "quick", 1))
+            .expect("submitted");
+        // Wait until the sink was asked to finish (the run itself lasted 1 ms).
+        for _ in 0..100 {
+            if sink.started.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        assert!(sink.started.load(Ordering::SeqCst), "the sink was asked");
+        // The execution is over; the unacknowledged record is the ONLY thing holding the
+        // terminal publication open — enqueue-and-return could not promise that.
+        assert!(
+            !runs
+                .get(submitted.run_id)
+                .expect("still a run")
+                .state
+                .is_terminal(),
+            "not terminal before the acknowledgment"
+        );
+        release.send(()).expect("release the record");
+        let view = submitted.done.await.expect("the final view");
+        assert_eq!(view.state, RunState::Succeeded);
+        assert!(sink.acked.load(Ordering::SeqCst));
+        assert_eq!(
+            runs.get(view.run_id).expect("in the ring").state,
+            RunState::Succeeded
+        );
+    }
+
+    #[tokio::test]
+    async fn history_ack_failure_is_visible_without_failing_execution() {
+        let (runs, starts) = coordinator(RunCapacity {
+            max_concurrent: 2,
+            max_queued: 2,
+        });
+        runs.add_history_sink(Arc::new(FailingAck));
+        let submitted = runs
+            .submit(request("manual", "quick", 1))
+            .expect("submitted");
+        let view = submitted.done.await.expect("the final view");
+        // The run itself succeeded; the record's failure is a status, not an outcome.
+        assert_eq!(view.state, RunState::Succeeded);
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            view.meta.get("historyAck").and_then(Value::as_str),
+            Some("unavailable")
+        );
+        let reason = view
+            .meta
+            .get("historyAckError")
+            .and_then(Value::as_str)
+            .expect("the reason is carried");
+        assert!(reason.contains("the record store is gone"), "{reason}");
+        // The ring copy carries the same honest status, not just the one-shot view.
+        let stored = runs.get(view.run_id).expect("in the ring");
+        assert_eq!(
+            stored.meta.get("historyAck").and_then(Value::as_str),
+            Some("unavailable")
+        );
+    }
+
+    #[tokio::test]
+    async fn two_process_run_allocator_never_reuses_ids() {
+        // Two coordinators over one sequence file are two gateway processes on the ports
+        // of one Swiss home. The claim protocol coordinates through files only — what a
+        // real second process would take and release — so unit interleaving is honest
+        // evidence for it; the true two-exe walk stays with swiss-it.
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-runclaim-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let seq = dir.join("runs.seq");
+        let claim = dir.join("runs.claim");
+
+        // Eight 1 ms submissions land nearly at once: room for all of them.
+        let capacity = RunCapacity {
+            max_concurrent: 8,
+            max_queued: 8,
+        };
+        let (a, _) = coordinator(capacity);
+        let (b, _) = coordinator(capacity);
+        a.persist_sequence(seq.clone());
+        b.persist_sequence(seq.clone());
+
+        // Interleaved allocation across both "processes": every id distinct, every claim
+        // released, the file always the next unused id.
+        let mut seen = std::collections::HashSet::new();
+        for round in 0..4 {
+            let x = a.submit(request("manual", "a", 1)).unwrap().run_id;
+            let y = b.submit(request("manual", "b", 1)).unwrap().run_id;
+            assert_ne!(x, y, "round {round} handed the same id to both processes");
+            seen.insert(x);
+            seen.insert(y);
+            assert!(!claim.exists(), "the claim was released every time");
+        }
+        assert_eq!(seen.len(), 8, "eight submissions, eight distinct ids");
+        let committed: u64 = std::fs::read_to_string(&seq).unwrap().trim().parse().unwrap();
+        assert!(committed >= 8, "the file holds the next unused id: {committed}");
+
+        // A stale claim (its holder died mid-claim) is stolen, with its payload — the
+        // value its dead holder was about to commit — as the floor: that id is skipped,
+        // never reused.
+        std::fs::write(&claim, "100").unwrap();
+        let next = claim_sequence(&seq, 0, Duration::from_millis(20), true);
+        assert!(next >= 100, "the stale claim's payload floors the steal: {next}");
+        assert!(!claim.exists(), "the steal released the claim");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+
+    #[test]
+    fn a_large_stale_bound_still_steals_and_commits_its_floor() {
+        // The bounded-liveness cap must sit ABOVE the stale bound, never below it:
+        // with the cap first, the steal is unreachable — an orphaned claim wedges
+        // every later submission into the bounded path, the claim file is never
+        // removed, and the returned floor is never committed, so two processes can
+        // be handed the same id. Production uses CLAIM_STALE (5 s): the claim
+        // protocol must honor whatever bound it is given.
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-runclaim2-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let seq = dir.join("runs.seq");
+        let claim = dir.join("runs.claim");
+        std::fs::write(&seq, "50").unwrap();
+        std::fs::write(&claim, "100").unwrap();
+        let started = std::time::Instant::now();
+        let next = claim_sequence(&seq, 0, Duration::from_millis(300), true);
+        let took = started.elapsed();
+        assert!(next >= 100, "the foreign claim's payload floors the result: {next}");
+        assert!(
+            !claim.exists(),
+            "the stale steal REMOVED the foreign claim - an orphaned claim must not wedge every later submission"
+        );
+        assert!(
+            took >= Duration::from_millis(280),
+            "the steal waited out the stale bound, not an earlier arbitrary cap: {took:?}"
+        );
+        let committed: u64 = std::fs::read_to_string(&seq).unwrap().trim().parse().unwrap();
+        assert!(
+            committed >= 100,
+            "the floor is committed to the sequence file - an uncommitted floor hands one id to two processes: {committed}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -29,7 +29,8 @@ use serde_json::{Map, Value};
 
 use crate::config::{is_env_ref, ServerDef};
 
-pub const MASK: &str = "••••••••";
+/// One glyph run for every mask - the output mask's, the panel's and a credential literal's.
+pub use swiss_core::secure::literal::MASK;
 
 /// Whole-key match: exactly one of these names, case-insensitive.
 const SECRET_KEYS: [&str; 5] = ["password", "pass", "passphrase", "secret", "token"];

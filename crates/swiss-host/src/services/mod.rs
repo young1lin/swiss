@@ -40,19 +40,46 @@ pub mod action;
 pub mod actions;
 pub mod api;
 pub mod catalog;
+pub mod children;
+pub mod detached;
+pub mod history_query;
+pub mod maintenance;
 pub mod process;
 pub mod remote;
 pub mod runs;
 pub mod shell;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::services::action::ActionRegistry;
 use crate::services::catalog::CatalogRegistry;
+use crate::services::children::ChildRegistry;
 use crate::services::process::Supervisor;
 use crate::services::remote::RemoteTransportRegistry;
 use crate::services::runs::RunCoordinator;
 use crate::services::shell::ShellRegistry;
+
+/// What the boot knows about this instance (SPEC §process.apps): the port it serves, and
+/// whether a detaching `swiss start` spawned it — read from the SWISS_SPAWNER attribution
+/// before the gateway scrubs that variable, because nothing after boot may need to know
+/// how the gateway was launched. "Start with swiss" (autostart) runs on a daemon only.
+#[derive(Clone, Copy, Debug)]
+pub struct BootInfo {
+    pub port: u16,
+    pub is_daemon: bool,
+}
+
+impl Default for BootInfo {
+    /// The honest default for an embedded caller that never read the spawner attribution:
+    /// a foreground instance on an unknown port, exactly `swiss serve`'s shape.
+    fn default() -> Self {
+        BootInfo {
+            port: 0,
+            is_daemon: false,
+        }
+    }
+}
 
 /// The shared services, constructed ONCE by the composition root and handed to the
 /// plugins that contribute to (or execute through) them. Not an AppContext under another
@@ -77,18 +104,46 @@ pub struct RuntimeServices {
     /// registers on start; the consumer (Remote) takes run-scoped leases per exec or
     /// file operation. Same seat-outlives-plugins reason as the two above.
     pub remote: Arc<RemoteTransportRegistry>,
+    /// The one list of the gateway's own children (SPEC §process.children): every run,
+    /// proc MCP and local terminal registers here, and the memory reading takes its roots
+    /// from here. Replaces the supervisor's private pid set.
+    pub children: Arc<ChildRegistry>,
+    /// What the boot knew about this instance (SPEC §process.apps): the port, and whether
+    /// a detaching start spawned it.
+    pub boot: BootInfo,
+    /// The cross-module history query seat (SPEC §host.history): modules with an
+    /// open history database register on start, withdraw on stop. The seat
+    /// outlives plugin instances like the catalog and shell seats.
+    pub history_query: Arc<history_query::HistoryQuerySeat>,
+    /// The hourly maintenance seat (SPEC §host.history): a module with an open
+    /// history database registers its maintenance hook on start and withdraws on
+    /// stop; the server's retention timer runs them each hour. Same
+    /// seat-outlives-plugins reason as the two above.
+    pub maintenance: Arc<maintenance::MaintenanceSeat>,
+    /// The boot autostart pass (SPEC §process.apps) runs once per GATEWAY
+    /// process. The process plugin's first start takes it; every later start —
+    /// a disable/enable cycle is not a reboot — finds it spent. It lives here,
+    /// not on the plugin instance, because enable rebuilds the instance on the
+    /// same services set.
+    boot_pass_taken: AtomicBool,
 }
 
 impl RuntimeServices {
-    pub fn new() -> Arc<Self> {
+    pub fn new(boot: BootInfo) -> Arc<Self> {
         let actions = Arc::new(ActionRegistry::new());
+        let children = ChildRegistry::new();
         Arc::new(RuntimeServices {
             runs: RunCoordinator::new(actions.clone()),
             actions,
-            supervisor: Supervisor::new(),
+            supervisor: Supervisor::new(Arc::clone(&children)),
             catalog: Arc::new(CatalogRegistry::new()),
             shells: Arc::new(ShellRegistry::new()),
             remote: Arc::new(RemoteTransportRegistry::new()),
+            children,
+            boot,
+            history_query: Arc::new(history_query::HistoryQuerySeat::new()),
+            maintenance: Arc::new(maintenance::MaintenanceSeat::new()),
+            boot_pass_taken: AtomicBool::new(false),
         })
     }
 
@@ -96,5 +151,26 @@ impl RuntimeServices {
     /// the plugins have stopped. Returns how many runs were still in flight.
     pub async fn shutdown(&self) -> usize {
         self.runs.shutdown_all().await
+    }
+
+    /// Take the once-per-gateway-process boot autostart pass (SPEC §process.apps):
+    /// true when this call is the one that wins it, false when an earlier start
+    /// already ran it — "Enabling the plugin later or applying config never
+    /// starts one either".
+    pub fn take_boot_pass(&self) -> bool {
+        !self.boot_pass_taken.swap(true, Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_boot_pass_is_won_once_per_services_set() {
+        let services = RuntimeServices::new(BootInfo::default());
+        assert!(services.take_boot_pass(), "the first start wins the pass");
+        assert!(!services.take_boot_pass(), "a disable/enable cycle is not a reboot");
+        assert!(!services.take_boot_pass(), "and neither is another one");
     }
 }
