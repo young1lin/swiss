@@ -196,6 +196,14 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      - name: Package macOS desktop application
+        if: runner.os == 'macOS'
+        run: |
+          python3 scripts/test_package_macos.py
+          python3 scripts/package_macos.py "target/${{ matrix.target }}/release/swiss" --output dist-macos
+          mkdir -p dist-bin
+          cp dist-macos/swiss.app.zip "dist-bin/swiss-${{ matrix.target }}.app.zip"
+
       - name: Package
         shell: bash
         run: |

@@ -357,4 +357,4 @@ in §decisions.
 - [ADR-035 — Terminal recordings join the module-history store; .cast becomes an export](spec/0018-decisions.md#adr-035--terminal-recordings-join-the-module-history-store-cast-becomes-an-export)
 - [ADR-036 — Managed apps outlive the gateway, and nothing restarts them](spec/0018-decisions.md#adr-036--managed-apps-outlive-the-gateway-and-nothing-restarts-them)
 - [ADR-037 — Memory's agents are chosen by layer and pooled](spec/0018-decisions.md#adr-037--memorys-agents-are-chosen-by-layer-and-pooled)
-- [ADR-038 — The window shell is Windows-only wry, not a framework](spec/0018-decisions.md#adr-038--the-window-shell-is-windows-only-wry-not-a-framework)
+- [ADR-038 — The window shell uses the system webview](spec/0018-decisions.md#adr-038--the-window-shell-uses-the-system-webview)

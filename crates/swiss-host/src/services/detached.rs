@@ -31,11 +31,19 @@
 //!   spelling (os error 193 on Windows' batch shims).
 
 use std::fs::OpenOptions;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+#[cfg(any(windows, test))]
+use std::path::Path;
 
 use swiss_core::platform::{self, process_created_at};
 
-use crate::pathenv::{extra_bin_dirs, resolve_command, same_dir};
+use crate::pathenv::resolve_command;
+#[cfg(any(windows, test))]
+use crate::pathenv::same_dir;
+#[cfg(windows)]
+use crate::pathenv::extra_bin_dirs;
+#[cfg(not(windows))]
+use crate::pathenv::login_path_from_env;
 
 /// One app start, everything already resolved by the caller (references, home, config):
 /// the program as configured, its argv, the working directory, the env overlay ON TOP of
@@ -103,6 +111,7 @@ pub fn detached_path() -> String {
     }
 }
 
+#[cfg(any(windows, test))]
 fn separator() -> char {
     if cfg!(windows) {
         ';'
@@ -111,6 +120,7 @@ fn separator() -> char {
     }
 }
 
+#[cfg(any(windows, test))]
 fn split_path(path: &str) -> Vec<String> {
     path.split(separator())
         .filter(|entry| !entry.is_empty())
@@ -120,6 +130,7 @@ fn split_path(path: &str) -> Vec<String> {
 
 /// The pure core of the PATH rebuild, so the order and the dedup are testable without a
 /// registry. Empty sources fall back to the gateway's own PATH, the row's last resort.
+#[cfg(any(windows, test))]
 pub(crate) fn compose_detached_path(
     user: &[String],
     machine: &[String],

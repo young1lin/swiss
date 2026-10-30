@@ -47,6 +47,14 @@ The workflow is `.github/workflows/build.yml`.
   generated notes.
 
 TLS: Windows links schannel, unix links rustls, so no unix binary depends on system OpenSSL.
+The macOS desktop bundle is assembled by `scripts/package_macos.py` from the matching
+Mach-O executable. Its `Info.plist` names `swiss` as the entry point, permits local networking
+without disabling transport security globally, and requires macOS 14. The bundle includes
+the brand icon and licence notices. Native builds use `codesign --sign -`; cross builds can
+use `rcodesign` for the same ad-hoc identity. This is local signing, not Developer ID or
+Apple notarization. The transport ZIP preserves the executable's 0755 mode and carries a
+SHA-256 sidecar (`scripts/test_package_macos.py`). No user state or credentials enter a bundle.
+
 Dependabot (`.github/dependabot.yml`) proposes cargo, npm (the panel) and Actions updates
 monthly; a bump is reviewed like any dependency change (§arch.deps), and a manifest moves
 together with its lockfile.

@@ -56,5 +56,10 @@ windows = { version = "0.62", features = [
 [target.'cfg(not(windows))'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Already locked bindings to the OS login Keychain; only password storage is used.
+# No security CLI subprocess, TLS features or runtime are added (SPEC §core.masterkey).
+security-framework = { version = "3.7", default-features = false }
+
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt", "macros"] }

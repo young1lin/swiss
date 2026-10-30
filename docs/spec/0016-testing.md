@@ -333,8 +333,9 @@ Open tests, most important first. Each is a contract the panel or a client alrea
   stall warning, delete-while-attached and config-restart closing sessions; the process
   plugin's truncation flag, API deadline, disable-cancels-runs and tagged stderr; `swiss-remote`
   `sync.rs` coverage.
-- **Harness-level.** The golden `/api/*` capture; macOS runs lint but not tests in CI (no
-  master-key source yet, and a killed local shell's pty never reaches EOF there).
+- **Harness-level.** The golden `/api/*` capture; macOS runs lint but not tests in CI because
+  a killed local shell's pty never reaches EOF there. macOS desktop opening and real login
+  Keychain access require a macOS live walk; host-side lifecycle tests do not prove them.
 - **Cosmetic watch.** A stream's meta entry count during Follow; a suspected, never reproduced
   flake in `tests/adminapi/`.
 

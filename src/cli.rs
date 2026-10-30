@@ -947,12 +947,12 @@ impl Io for PrintIo {
 }
 
 fn gui_requested(argv: &[String]) -> bool {
-    (cfg!(windows) && argv.is_empty()) || matches!(argv.first().map(String::as_str), Some("gui"))
+    (cfg!(any(windows, target_os = "macos")) && argv.is_empty()) || matches!(argv.first().map(String::as_str), Some("gui"))
 }
 
 /// Wire the real implementations and run — the CLI entry point main.rs calls.
 pub async fn main(argv: Vec<String>) -> i32 {
-    // An empty Windows command line is Explorer's double-click launch. Only that exact
+    // An empty desktop command line is Explorer/Finder's double-click launch. Only that exact
     // case defaults to the window; explicit flags still reach the ordinary CLI parser.
     if gui_requested(&argv) {
         let p = parse_argv(&argv);
@@ -996,7 +996,7 @@ mod tests {
 
     #[test]
     fn desktop_entry_accepts_double_click_and_preserves_cli_commands() {
-        assert_eq!(gui_requested(&[]), cfg!(windows));
+        assert_eq!(gui_requested(&[]), cfg!(any(windows, target_os = "macos")));
         assert!(gui_requested(&argv(&["gui"])));
         assert!(gui_requested(&argv(&["gui", "--port", "19998"])));
         for args in [&["--help"][..], &["--version"], &["status"], &["serve"], &["api", "GET", "/api/info"]] {

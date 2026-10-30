@@ -20,34 +20,37 @@
 //! one-time sign-in link for it (`swiss open`). This module adds only the missing window: a
 //! tao message loop, a wry WebView2 surface pointed at that same sign-in link, and a tray to
 //! keep it reachable. No framework, no bundler, no second engine — on Windows the system
-//! WebView2 renders the very bytes a browser tab of the panel already renders, and macOS and
-//! Linux stay headless (ADR-038: the gateway serves, any browser looks).
+//! WebView2 or macOS WKWebView renders the very bytes a browser tab already renders. Linux
+//! stays headless (ADR-038: the gateway serves, the OS supplies the window's browser engine).
 //!
 //! The split is deliberate: `launch_sequence` is platform-neutral and tested like the rest of
-//! the CLI; `run` is the Windows event loop, which no unit test can drive and is proven live
+//! the CLI; `run` is the native event loop, which no unit test can drive and is proven live
 //! instead (SPEC §testing.live).
 
 use crate::daemon::{self, StartOptions, StartResult};
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod desktop;
 
-// The shell's window stack, Windows-only like `run` below (ADR-038). tao's loop and window,
-// wry's WebView2 surface, tray-icon's tray — three small crates, no framework between them
+#[cfg(any(target_os = "macos", all(test, unix)))]
+mod unix_instance;
+
+// The shell's window stack (ADR-038). tao's loop and window, the system webview and tray —
+// three small crates, no framework between them
 // and the message loop.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use tao::event::{Event, WindowEvent};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use tao::window::{Icon as WindowIcon, Theme, WindowBuilder};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use tray_icon::{Icon as TrayIconPixels, TrayIconBuilder, TrayIconEvent};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use wry::dpi::{PhysicalPosition, PhysicalSize, Position, Size as WebViewSize};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use wry::{Rect, WebContext, WebViewBuilder};
 
 /// Bring the gateway up if it is not running, then mint the one-time sign-in link the window
@@ -64,9 +67,7 @@ pub async fn launch_sequence(opts: StartOptions) -> Result<String, String> {
     }
 }
 
-/// The `swiss gui` entry point. Windows opens the window shell; every other platform is
-/// refused with the headless way in, because the gateway there is server software and the
-/// panel is whatever browser is at hand (ADR-038).
+/// The Windows entry point and its named-kernel-object instance claim (SPEC §host.gui).
 #[cfg(windows)]
 pub fn run(port: Option<u16>) -> i32 {
     desktop::detach_console();
@@ -87,10 +88,26 @@ pub fn run(port: Option<u16>) -> i32 {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn run(port: Option<u16>) -> i32 {
+    let port = port.unwrap_or_else(daemon::resolve_port);
+    let home = swiss_core::paths::data_dir();
+    if let Err(error) = std::fs::create_dir_all(&home) {
+        desktop::startup_error(&format!("cannot open the application home: {error}"));
+        return 1;
+    }
+    swiss_core::platform::mkdir_private(&home);
+    match unix_instance::claim(&home, &instance_id(port, &home)) {
+        Ok(unix_instance::Claim::Owned(signal)) => shell(port, signal),
+        Ok(unix_instance::Claim::Existing) => 0,
+        Err(error) => { desktop::startup_error(&error.to_string()); 1 }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn run(_port: Option<u16>) -> i32 {
     eprintln!(
-        "the window shell is Windows-only; on this machine run `swiss start` and open the panel in a browser"
+        "the window shell supports Windows and macOS; on this machine run `swiss start` and open the panel in a browser"
     );
     2
 }
@@ -164,10 +181,12 @@ fn claim_instance(id: &str) -> Instance {
 /// The id of one gateway identity: its port and its home, the latter folded to a stable
 /// FNV-1a word so a kernel object name never carries a user path. Case-folded like the
 /// filesystem below it, so `C:\A` and `c:\a` are one gateway, one window.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn instance_id(port: u16, home: &std::path::Path) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in home.to_string_lossy().to_lowercase().as_bytes() {
+    let path = home.to_string_lossy();
+    let path = if cfg!(windows) { path.to_lowercase() } else { path.into_owned() };
+    for byte in path.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
@@ -176,8 +195,12 @@ fn instance_id(port: u16, home: &std::path::Path) -> String {
 
 /// The window, the webview, the tray and the loop that keeps them alive. Never returns while
 /// the app runs — tao's loop only unwinds into process exit — so every exit below is explicit.
-#[cfg(windows)]
-fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
+#[cfg(any(windows, target_os = "macos"))]
+fn shell(
+    port: u16,
+    #[cfg(windows)] show: windows::Win32::Foundation::HANDLE,
+    #[cfg(target_os = "macos")] signal: unix_instance::Guard,
+) -> i32 {
     // What reaches the loop from outside it: the sign-in link (from the starter thread), tray
     // and menu picks (from the global channels), and the quit.
     enum GuiEvent {
@@ -189,6 +212,32 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
     }
 
     let event_loop: EventLoop<GuiEvent> = EventLoopBuilder::with_user_event().build();
+    #[cfg(target_os = "macos")]
+    let _application_menu = {
+        use tray_icon::menu::Submenu;
+        let bar = Menu::new();
+        let app = Submenu::new("swiss", true);
+        let edit = Submenu::new("Edit", true);
+        if let Err(error) = app.append_items(&[
+            &PredefinedMenuItem::about(Some("About swiss"), None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::hide(Some("Hide swiss")),
+            &PredefinedMenuItem::hide_others(None),
+            &PredefinedMenuItem::show_all(None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::quit(Some("Quit swiss")),
+        ]).and_then(|_| edit.append_items(&[
+            &PredefinedMenuItem::undo(None), &PredefinedMenuItem::redo(None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::cut(None), &PredefinedMenuItem::copy(None),
+            &PredefinedMenuItem::paste(None), &PredefinedMenuItem::select_all(None),
+        ])).and_then(|_| bar.append_items(&[&app, &edit])) {
+            desktop::startup_error(&format!("cannot create the application menu: {error}"));
+            return 1;
+        }
+        bar.init_for_nsapp();
+        bar
+    };
     let prefs_path = swiss_core::paths::data_dir().join(format!("gui-window-{port}.json"));
     let mut prefs = desktop::Preferences::load(&prefs_path);
     let primary = event_loop.primary_monitor().map(|m| m.position());
@@ -233,7 +282,7 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
     let data = swiss_core::paths::data_dir().join("gui-webview");
     let mut web_context = WebContext::new(Some(data));
     let desktop_proxy = event_loop.create_proxy();
-    let webview = match WebViewBuilder::new_with_web_context(&mut web_context)
+    let webview_builder = WebViewBuilder::new_with_web_context(&mut web_context)
         .with_bounds(full_bounds(window.inner_size().width, window.inner_size().height))
         .with_html(loading_html())
         .with_initialization_script("window.__SWISS_DESKTOP__ = true;")
@@ -241,15 +290,18 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
             if let Some(message) = desktop::message(&request.uri().to_string(), port, request.body()) {
                 let _ = desktop_proxy.send_event(GuiEvent::Desktop(message));
             }
-        })
-        .build(&window)
-    {
+        });
+    // WKWebView ignores WebContext's directory. A distinct persistent data store isolates
+    // cookies and localStorage even when two homes serve the same loopback hostname.
+    #[cfg(target_os = "macos")]
+    let webview_builder = {
+        use wry::WebViewBuilderExtDarwin;
+        webview_builder.with_data_store_identifier(webview_store_id(port, &swiss_core::paths::data_dir()))
+    };
+    let webview = match webview_builder.build(&window) {
         Ok(webview) => webview,
         Err(err) => {
-            desktop::startup_error(&format!(
-                "cannot start the webview: {err}\n\
-                 the panel needs the WebView2 Runtime, which ships with Windows 11"
-            ));
+            desktop::startup_error(&format!("cannot start the system webview: {err}"));
             return 1;
         }
     };
@@ -276,18 +328,23 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
     };
     // The tray handle is kept alive on purpose: dropping it removes the icon, so it lives as
     // long as the loop does — the underscore only silences the unused binding, not the keep.
-    let _tray = match TrayIconBuilder::new()
+    let tray_builder = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("swiss")
-        .with_icon(icon)
-        .build()
-    {
+        .with_icon(icon);
+    #[cfg(windows)]
+    let _tray = match tray_builder.build() {
         Ok(tray) => tray,
         Err(err) => {
             eprintln!("cannot claim a tray slot: {err}");
             return 1;
         }
     };
+    // AppKit needs a running event loop before installing a status-bar item.
+    #[cfg(target_os = "macos")]
+    let mut tray_builder = Some(tray_builder);
+    #[cfg(target_os = "macos")]
+    let mut _tray = None;
 
     // Tray and menu events arrive on global channels the tao loop never sees, so both are
     // forwarded into the loop as user events — the same wiring tauri uses under its own shell.
@@ -334,6 +391,7 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
     // the thread as an integer because the windows crate's HANDLE is a raw pointer and so
     // not Send — the number is this process's own never-closed handle, only ever fed back
     // to WaitForSingleObject.
+    #[cfg(windows)]
     if !show.is_invalid() {
         let waiter_proxy = event_loop.create_proxy();
         let show_event = show.0 as usize;
@@ -351,12 +409,29 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
         });
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        let signal_proxy = event_loop.create_proxy();
+        std::thread::spawn(move || signal.listen(move || {
+            let _ = signal_proxy.send_event(GuiEvent::TrayOpen);
+        }));
+    }
+
     let window_id = window.id();
     let mut fatal = false;
     let mut placement_dirty = true;
     event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
+            #[cfg(target_os = "macos")]
+            Event::NewEvents(tao::event::StartCause::Init) => {
+                if let Some(builder) = tray_builder.take() {
+                    match builder.build() {
+                        Ok(tray) => _tray = Some(tray),
+                        Err(error) => eprintln!("cannot claim a menu-bar slot: {error}"),
+                    }
+                }
+            }
             Event::WindowEvent {
                 window_id: id,
                 event: WindowEvent::CloseRequested,
@@ -413,7 +488,7 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
                 fatal = true;
                 window.set_focus();
             }
-            Event::UserEvent(GuiEvent::TrayOpen) => {
+            Event::UserEvent(GuiEvent::TrayOpen) | Event::Reopen { .. } => {
                 window.set_visible(true);
                 window.set_minimized(false);
                 window.set_focus();
@@ -434,13 +509,27 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
                 }
             },
             Event::UserEvent(GuiEvent::Quit) => { prefs.save(&prefs_path); std::process::exit(0); }
+            Event::LoopDestroyed => prefs.save(&prefs_path),
             _ => {}
         }
     })
 }
 
+/// SPEC §host.gui: WKWebView's persistent profile belongs to one home and port.
+#[cfg(any(target_os = "macos", test))]
+fn webview_store_id(port: u16, home: &std::path::Path) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(home.as_os_str().as_encoded_bytes());
+    hash.update([0]);
+    hash.update(port.to_be_bytes());
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&hash.finalize()[..16]);
+    id
+}
+
 /// The webview covers the window's whole client area at the given pixel size.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn full_bounds(width: u32, height: u32) -> Rect {
     Rect {
         position: Position::Physical(PhysicalPosition::new(0, 0)),
@@ -453,7 +542,7 @@ fn full_bounds(width: u32, height: u32) -> Rect {
 /// SVG's own geometry (tile rx 14; blades 34/30/26 long at 0°/-32°/-64° around the pivot;
 /// hub r 7; rivet r 2.4) so window, tray and panel carry one mark, smooth-edged via each
 /// shape's signed distance and 2x2 supersampled so the fan stays legible at tray size.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn brand_icon() -> (Vec<u8>, u32, u32) {
     const SIZE: u32 = 64;
     const RED: [f64; 3] = [218.0, 41.0, 28.0]; // #DA291C
@@ -530,7 +619,7 @@ fn brand_icon() -> (Vec<u8>, u32, u32) {
 
 /// What the window shows while the sign-in link is being minted. Self-contained and bilingual
 /// like the lock page (SPEC §host.session): it must speak before any panel code loads.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn loading_html() -> String {
     page_html(
         "Opening the swiss panel…",
@@ -541,7 +630,7 @@ fn loading_html() -> String {
 
 /// What the window shows when the gateway never came up: the reason, and where the whole log
 /// is. The reason carries a log tail, so it goes in as text, never as markup.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn error_html(reason: &str) -> String {
     page_html(
         "The panel cannot open.",
@@ -556,7 +645,7 @@ fn error_html(reason: &str) -> String {
 /// The one page template the shell itself ever paints, styled after the lock page so the
 /// window looks like the product before the product loads. `detail` is trusted markup;
 /// callers escape what they put in it.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn page_html(en: &str, zh: &str, detail: &str) -> String {
     format!(
         concat!(
@@ -583,7 +672,7 @@ fn page_html(en: &str, zh: &str, detail: &str) -> String {
 }
 
 /// The three characters a log tail may carry that HTML would otherwise take as markup.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
@@ -598,6 +687,15 @@ mod tests {
     use crate::pidfile::log_file_path;
     use serde_json::json;
     use std::path::PathBuf;
+
+    #[test]
+    fn the_mac_webview_store_is_stable_and_isolates_homes_and_ports() {
+        let home = std::path::Path::new("/Users/example/.swiss");
+        let id = webview_store_id(19999, home);
+        assert_eq!(id, webview_store_id(19999, home));
+        assert_ne!(id, webview_store_id(19998, home));
+        assert_ne!(id, webview_store_id(19999, std::path::Path::new("/Users/example/.swiss-test-home")));
+    }
 
     /// The scratch home every test in this module shares, mirroring daemon's: a test home, the
     /// deterministic master key, and the data-dir lock so state writes never race.
@@ -689,7 +787,7 @@ mod tests {
         let _ = std::fs::remove_file(log_file_path(port));
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn the_brand_icon_draws_the_mark_not_a_plain_tile() {
         let (rgba, width, height) = brand_icon();
@@ -732,7 +830,7 @@ mod tests {
         assert_eq!(a, instance_id(19999, std::path::Path::new(r"c:\users\x\.swiss")));
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn an_error_page_carries_the_reason_as_text_never_as_markup() {
         let page = error_html("spawn failed: <script>alert(1)</script>");

@@ -25,9 +25,8 @@
 //!   Linux    /etc/machine-id (or /var/lib/dbus/machine-id), hashed. World-readable, so it
 //!            binds to the MACHINE, not the user; treat shared hosts accordingly. The Node
 //!            build's Secret Service route is future work.
-//!   macOS    NOT yet implemented: macOS has no machine-id file and no Keychain source has
-//!            landed, so today every state save fails with "no master key available" — the
-//!            login-Keychain route is the tracked future work.
+//!   macOS    A random key in the user's login Keychain. Concurrent first starters use a
+//!            create-only operation and read back the winner rather than replace its key.
 //!
 //! An explicit SWISS_MASTER_KEY (64 hex chars) overrides every source — for CI, containers and
 //! recovery, and what the test suite uses so it never spawns a single OS helper.
@@ -133,6 +132,36 @@ fn machine_id_source() -> Result<KeyMaterial, String> {
     })
 }
 
+/// SPEC §core.masterkey: an unavailable or malformed store is never a reason to replace a key.
+#[cfg(any(target_os = "macos", test))]
+fn stored_key(
+    read: impl Fn() -> Result<Option<Vec<u8>>, String>,
+    create: impl Fn(&[u8]) -> Result<bool, String>,
+    generate: impl FnOnce() -> Result<[u8; KEY_LEN], String>,
+) -> Result<[u8; KEY_LEN], String> {
+    let decode = |bytes: Vec<u8>| bytes.try_into().map_err(|_| "the Keychain holds a malformed master key".to_string());
+    if let Some(bytes) = read()? { return decode(bytes); }
+    let key = generate()?;
+    if create(&key)? { return Ok(key); }
+    decode(read()?.ok_or("the master key disappeared after a concurrent creation")?)
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_source() -> Result<KeyMaterial, String> {
+    const ACCOUNT: &str = "master-key";
+    let key = stored_key(
+        || platform::keychain_read(APP, ACCOUNT),
+        |key| platform::keychain_create(APP, ACCOUNT, key),
+        || {
+            let mut key = [0u8; KEY_LEN];
+            rand::TryRng::try_fill_bytes(&mut rand::rngs::SysRng, &mut key)
+                .map_err(|error| format!("cannot generate a master key: {error}"))?;
+            Ok(key)
+        },
+    )?;
+    Ok(KeyMaterial { id: "keychain", key })
+}
+
 fn cached() -> &'static Vec<KeyMaterial> {
     static CACHED: OnceLock<Vec<KeyMaterial>> = OnceLock::new();
     CACHED.get_or_init(|| {
@@ -140,6 +169,11 @@ fn cached() -> &'static Vec<KeyMaterial> {
         // from a machine whose credential-store entry vanished still opens.
         let sources: Vec<fn() -> Result<KeyMaterial, String>> = if cfg!(windows) {
             vec![dpapi_source, machine_id_source]
+        } else if cfg!(target_os = "macos") {
+            #[cfg(target_os = "macos")]
+            { vec![keychain_source] }
+            #[cfg(not(target_os = "macos"))]
+            { Vec::new() }
         } else {
             vec![machine_id_source]
         };
@@ -208,6 +242,29 @@ pub fn no_key_available() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keychain_lifecycle_retains_existing_keys_and_the_concurrent_winner() {
+        use std::cell::Cell;
+        let old = [7u8; KEY_LEN];
+        assert_eq!(stored_key(|| Ok(Some(old.to_vec())), |_| panic!("must not overwrite"), || panic!("must not regenerate")), Ok(old));
+        let reads = Cell::new(0);
+        let result = stored_key(|| {
+            let count = reads.get(); reads.set(count + 1);
+            Ok(if count == 0 { None } else { Some(old.to_vec()) })
+        }, |_| Ok(false), || Ok([8u8; KEY_LEN]));
+        assert_eq!(result, Ok(old));
+        assert_eq!(reads.get(), 2);
+        assert_eq!(stored_key(|| Ok(None), |key| { assert_eq!(key, &[8u8; KEY_LEN]); Ok(true) }, || Ok([8u8; KEY_LEN])), Ok([8u8; KEY_LEN]));
+    }
+
+    #[test]
+    fn keychain_errors_and_malformed_keys_never_create_replacements() {
+        for read in [Err("locked".to_string()), Ok(Some(vec![1; KEY_LEN - 1]))] {
+            assert!(stored_key(|| read.clone(), |_| panic!("must not overwrite"), || panic!("must not regenerate")).is_err());
+        }
+        assert!(stored_key(|| Ok(None), |_| Err("denied".into()), || Ok([8u8; KEY_LEN])).is_err());
+    }
 
     #[test]
     fn parse_key_hex_accepts_64_hex_chars() {

@@ -21,6 +21,11 @@
 
 pub mod pty;
 
+#[cfg(target_os = "macos")]
+mod macos_keychain;
+#[cfg(target_os = "macos")]
+pub use macos_keychain::{keychain_create, keychain_read};
+
 mod privfs;
 pub use privfs::{
     chmod_private, mkdir_private, private_file_mode, write_file_private, PRIVATE_DIR_MODE,

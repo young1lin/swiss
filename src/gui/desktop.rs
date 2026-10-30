@@ -6,18 +6,21 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::io::Read;
 
+#[cfg(windows)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
     #[link_name = "FreeConsole"]
     fn free_console() -> i32;
 }
 
+#[cfg(windows)]
 #[link(name = "user32")]
 unsafe extern "system" {
     #[link_name = "MessageBoxW"]
     fn message_box(owner: *mut std::ffi::c_void, text: *const u16, caption: *const u16, flags: u32) -> i32;
 }
 
+#[cfg(windows)]
 pub fn detach_console() {
     // SAFETY: this syscall detaches only the calling process. It never hides or closes the
     // parent's terminal, and an already detached launch needs no special handling.
@@ -26,11 +29,14 @@ pub fn detach_console() {
 
 pub fn startup_error(reason: &str) {
     eprintln!("swiss gui: {reason}");
+    #[cfg(windows)]
+    {
     let text: Vec<u16> = reason.encode_utf16().chain(Some(0)).collect();
     let caption: Vec<u16> = "swiss".encode_utf16().chain(Some(0)).collect();
     // SAFETY: the null owner is allowed; both UTF-16 buffers are terminated and remain alive
     // for this synchronous dialog. MB_ICONERROR also supplies the default OK button.
     unsafe { message_box(std::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), 0x10); }
+    }
 }
 
 pub const MIN_WIDTH: u32 = 960;

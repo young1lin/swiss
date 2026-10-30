@@ -614,16 +614,15 @@ Rejected:
   spend whatever agent was added last - exactly the surprise the nudge's opt-in exists to
   prevent.
 
-## ADR-038 — The window shell is Windows-only wry, not a framework
+## ADR-038 — The window shell uses the system webview
 
-**Accepted.** Spec: §host.gui. The panel needed a window of its own on Windows without giving
+**Accepted.** Spec: §host.gui. The panel needs a window of its own on Windows and macOS without giving
 up the one-static-exe release. `swiss gui` adds tao (loop, window), wry (the WebView2 surface)
-and tray-icon — three small crates, no bundler, no second engine — and the system WebView2
-renders the very bytes a browser tab of the panel already rendered. macOS and Linux stay
-headless (the owner's call, 2026-10-30: the gateway serves there, a browser looks);
-distributing a desktop build for those systems is the trigger to revisit, and the candidates
-are the ones that ship their own engine (Tauri's CEF, Electrobun's CEF mode) against this
-cut's zero extra bytes.
+and tray-icon — three small crates, no bundler, no second engine. The system WebView2 on
+Windows and WKWebView on macOS render the same embedded panel. The owner's macOS `.app`
+request, 2026-10-30, extends the existing shell rather than adding a desktop framework or
+browser engine. Linux stays headless. macOS packaging uses an ad-hoc signature for local
+previews; trusted distribution still requires Developer ID signing and Apple notarization.
 
 Surprising enough to record: **the first cut's single-instance mutex was desktop-wide**, so a
 second `swiss gui` under another `SWISS_HOME` exited silently while the first window — hidden

@@ -37,11 +37,12 @@ on Linux, or `shasum -a 256 <archive>` on macOS). Extract it, then put
 `THIRD_PARTY_NOTICES.md`, and standalone `skills/swiss/SKILL.md` and
 `skills/swiss-remote/SKILL.md` for inspection before installing or running the binary.
 
-¹ macOS builds have no master-key source yet (no machine-id, no Keychain source), so the
-  first state save fails with "no master key available". The assets are published for
-  evaluation; a Keychain source is tracked future work. CI lints on the Apple Silicon runner
+¹ macOS builds store the master key in the user's login Keychain. Desktop bundles use the
+  system WKWebView and require macOS 14 or newer. Local preview bundles use ad-hoc signing,
+  not Apple notarization, so downloaded copies can require an explicit first-open approval.
+  CI lints on the Apple Silicon runner
   for every change and builds both macOS targets for each release, but does not run the test
-  suite there yet: besides the key, a killed local shell's pty does not reach EOF on macOS,
+  suite there yet: a killed local shell's pty does not reach EOF on macOS,
   and the gateway's own memory reads 0 MB there.
 
 ```
@@ -68,7 +69,8 @@ needed to build; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Quick start
 
-On Windows, double-click `swiss.exe` to open the desktop GUI. Running `swiss` without
+On Windows, double-click `swiss.exe`; on macOS, open `swiss.app` to use the desktop GUI.
+On either desktop, running `swiss` without
 arguments or `swiss gui` opens the same window. The panel and AI skills are embedded in
 the single executable. **Settings → System** shows skill installation in
 `~/.claude/skills`, `~/.codex/skills` and `~/.agents/skills`, alongside startup and PATH settings.

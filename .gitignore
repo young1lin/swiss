@@ -58,3 +58,4 @@ session.json
 # Scratch files - commit-message drafts included: a committed draft carries whatever
 # trailers the tool that wrote it added, which SPEC §release.hygiene forbids.
 *.tmp
+__pycache__/
