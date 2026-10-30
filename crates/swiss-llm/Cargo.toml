@@ -1,0 +1,65 @@
+# The model hub (SPEC §llm): named providers, the embedding endpoint, agents and their
+# telemetry. Free of axum by design, like swiss-memory - the plugin wrapper and the
+# /api/llm routes live in swiss-plugins.
+[package]
+name = "swiss-llm"
+version.workspace = true
+description = "The swiss LLM plugin's engine: providers, embeddings, the agent loop and OTLP reporting."
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+swiss-core = { path = "../swiss-core" }
+# The `${...}` reference check and the PATH lookup a spawned agent's command goes through.
+swiss-host = { path = "../swiss-host" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "time", "process", "io-util"] }
+# The Toolbox trait the agent loop calls: the tree's convention for dyn async traits.
+async-trait = "0.1"
+# Polling genai's chat stream (the typewriter path, SPEC §llm.history): StreamExt is
+# the tree's one stream combinator set, the same minimal feature set the host and mcp
+# owners already carry - nothing new enters the binary.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# Maintained SSE grammar already locked through rmcp; no new package, TLS or runtime.
+sse-stream = { version = "0.2.6", default-features = false }
+# The embedding fingerprint's endpoint hash; already in the tree through swiss-core.
+sha2 = { version = "0.11", default-features = false }
+# The llm history owner (SPEC §llm.history) writes logs/llm.db itself: every module-owned
+# database holds sqlx directly - the same minimal sqlite feature set the mcp owner uses,
+# the same 0.9 the lock already resolves. Nothing new enters the binary; the owner pattern
+# is a direct pool per module (SPEC §host.history).
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
+# OTLP's wire format (SPEC §llm.telemetry). A protobuf encoder is a grammar SPEC §arch.deps
+# says a maintained crate carries; `derive` writes the dozen OTLP messages from their field
+# tags with no build script and no protoc. The same prost version the lock already resolves.
+prost = { version = "0.14", default-features = false, features = ["derive", "std"] }
+# A gRPC answer's verdict rides in HTTP/2 trailers: reqwest's body yields them as frames,
+# and http-body-util collects them. Both are already in the tree under reqwest.
+http = "1"
+http-body-util = "0.1"
+
+# reqwest and genai ride the same TLS choice per target as the root crate: schannel on
+# Windows, rustls elsewhere - no second HTTP or TLS stack enters the tree. `http2` is what
+# an OTLP/gRPC export speaks (genai already turns it on; named here so this crate does not
+# lean on another crate's features).
+[target.'cfg(windows)'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls", "http2", "stream"] }
+genai = { version = "0.6", default-features = false, features = ["native-tls"] }
+
+[target.'cfg(not(windows))'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "http2", "stream"] }
+genai = { version = "0.6", default-features = false, features = ["rustls-tls"] }
+
+[dev-dependencies]
+# The scratch home the history tests build on (paths::test_home), behind the same
+# test-utils feature the mcp owner's tests use.
+swiss-core = { path = "../swiss-core", features = ["test-utils"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "io-util", "time", "sync"] }
+# A fake OTLP/gRPC collector for the transport tests: the h2 the tree already links.
+h2 = "0.4"
+bytes = "1"
