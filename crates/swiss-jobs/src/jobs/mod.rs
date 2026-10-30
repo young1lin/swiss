@@ -25,8 +25,9 @@
 //! Pieces, each small enough to test alone:
 //! - [JobDef]/[JobStore]: the job table, sealed into jobs.json like every other state file.
 //!   ${ENV_VAR} refs inside a command stay refs on disk and expand at run time (runner.rs).
-//! - [JobSystem]: the scheduler. ONE tokio task ticking once a second - the current_thread
-//!   runtime must not grow a task per job for a feature that usually has two jobs. A run is
+//! - [JobSystem]: the scheduler. ONE tokio task that sleeps toward the earliest next-due entry -
+//!   the current_thread runtime must not grow a task per job for a feature that usually has two
+//!   jobs, nor wake every second for a table that is usually empty. A run is
 //!   claimed atomically (one run of a job at a time; an overlapping tick is skipped, not
 //!   queued), SUBMITTED to the shared run coordinator with its deadline, appended to the job's
 //!   run log, and summarised into the gateway log so 'swiss logs' shows it.
@@ -297,8 +298,13 @@ impl std::fmt::Display for RunError {
     }
 }
 
-/// The scheduler plus its mutable state. Shared as one Arc between the boot sequence, the tick
-/// task and the /api/jobs handlers - the same shape as Tunnels.
+/// The scheduler task's shortest sleep, taken once an entry is due ([JobSystem::next_wait]).
+const SCAN_FLOOR_MS: i64 = 1_000;
+/// Its longest: the bound on noticing a wall-clock step or a resume from sleep.
+const SCAN_RECHECK_MS: i64 = 60_000;
+
+/// The scheduler plus its mutable state. Shared as one Arc between the boot sequence, the
+/// scheduler task and the /api/jobs handlers - the same shape as Tunnels.
 pub struct JobSystem {
     /// The APPLIED definitions row (SPEC §jobs.apply): parsed from plugins.jobs.config by
     /// [JobSystem::apply_config], which is the one writer - boot, plugin reconcile and the
@@ -330,8 +336,11 @@ pub struct JobSystem {
     clock: Mutex<Arc<dyn clock::Clock>>,
     /// The next-due table (SPEC §jobs.triggers): one unix-ms instant per job id. Rebuilt on
     /// every apply, recomputed for ONE job when its occurrence is claimed - so the
-    /// per-second tick is a map scan, never a calendar walk.
+    /// scheduler's scan is a map scan, never a calendar walk.
     next_due: Mutex<HashMap<String, i64>>,
+    /// Wakes the scheduler task when the table is rebuilt: an applied job may be due before
+    /// the entry it sleeps toward.
+    wake: tokio::sync::Notify,
     /// Serializes (overlap check -> submit) pairs across the tick and the manual API, so
     /// two of them cannot both see \"not running\" and double-submit one job. No await is
     /// ever held through this lock.
@@ -376,6 +385,7 @@ impl JobSystem {
             services,
             clock: Mutex::new(Arc::new(clock::LocalClock)),
             next_due: Mutex::new(HashMap::new()),
+            wake: tokio::sync::Notify::new(),
             submit_gate: Mutex::new(()),
             cancel: Mutex::new(tokio::sync::watch::channel(false).0),
             anchor_ms: now_ms() as i64,
@@ -423,7 +433,7 @@ impl JobSystem {
         self.runlog
             .set_limits(runlog::limits_of_retention(&retention));
         // The applied table changed, so every next-due entry is recomputed once here
-        // (SPEC §jobs.triggers) - the per-second tick never walks the calendar.
+        // (SPEC §jobs.triggers) - the scheduler's scan never walks the calendar.
         self.rebuild_next_due();
         Ok(())
     }
@@ -624,7 +634,8 @@ impl JobSystem {
 
     /// Recompute the next-due table for the whole applied table (SPEC §jobs.triggers): the one
     /// place every definition is walked. Called on apply and on clock swap - a per-job
-    /// recompute happens when an occurrence is claimed, never in the tick.
+    /// recompute happens when an occurrence is claimed, never in the scan. Wakes the
+    /// scheduler task, which may be sleeping toward an entry that is now later or gone.
     fn rebuild_next_due(&self) {
         let clock = self.clock.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let now = clock.now_ms();
@@ -640,10 +651,14 @@ impl JobSystem {
             }
         }
         *self.next_due.lock().unwrap_or_else(|e| e.into_inner()) = table;
+        drop(cfg);
+        self.wake.notify_one();
     }
 
-    /// Recompute ONE job's next-due entry from its claim state. The post-claim path: the
-    /// calendar walk happens exactly once per occurrence, for exactly that job.
+    /// Recompute ONE job's next-due entry from its claim state. The post-claim path:
+    /// the calendar is walked here (the forward scan plus the overdue guard), never in
+    /// the scan, and for exactly this job. No wake: only an occurrence the scheduler task
+    /// spawned claims, and that task rescans within [SCAN_FLOOR_MS] of spawning it.
     fn refresh_next_due(&self, id: &str) {
         let clock = self.clock.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let now = clock.now_ms();
@@ -667,9 +682,10 @@ impl JobSystem {
         }
     }
 
-    /// Start the one-second tick task (SPEC §jobs.triggers): each tick is one map scan - the
-    /// entries at or before \"now\" - and one spawned occurrence task per due job. No
-    /// calendar math ever runs here. A fresh cancel channel per start, so a
+    /// Start the scheduler task (SPEC §jobs.triggers): it sleeps toward the earliest next-due
+    /// entry ([next_wait](Self::next_wait)), or parks while the table is empty, and each wake
+    /// is one map scan - the entries at or before \"now\" - and one spawned occurrence task per
+    /// due job. No calendar math ever runs here. A fresh cancel channel per start, so a
     /// stopped-and-re-enabled scheduler works again.
     pub fn start(self: &Arc<Self>) {
         self.rebuild_next_due();
@@ -678,7 +694,15 @@ impl JobSystem {
         let sys = self.clone();
         let handle = tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                match sys.next_wait() {
+                    Some(wait) => {
+                        tokio::select! {
+                            _ = tokio::time::sleep(wait) => {}
+                            _ = sys.wake.notified() => {}
+                        }
+                    }
+                    None => sys.wake.notified().await,
+                }
                 for name in sys.due_jobs_now() {
                     let sys = sys.clone();
                     tokio::spawn(async move { sys.run_occurrence(&name).await });
@@ -690,7 +714,29 @@ impl JobSystem {
         }
     }
 
-    /// Stop SCHEDULING: the tick task is aborted and every occurrence task sitting out a
+    /// How long the scheduler task sleeps before its next scan, `None` while the table is
+    /// empty: until the earliest entry, a floor of [SCAN_FLOOR_MS] once it is due (spawned, not
+    /// yet claimed - the scan must not spin on it, and a boot finds overdue jobs a second
+    /// in, as it always has), and at most [SCAN_RECHECK_MS] - the table is wall-clock and
+    /// the sleep is not, so a clock step or a resume from sleep is caught within it.
+    fn next_wait(&self) -> Option<std::time::Duration> {
+        let now = self.clock_now_ms();
+        let earliest = self
+            .next_due
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .min()
+            .copied()?;
+        let ms = if earliest <= now {
+            SCAN_FLOOR_MS
+        } else {
+            (earliest - now).min(SCAN_RECHECK_MS)
+        };
+        Some(std::time::Duration::from_millis(ms as u64))
+    }
+
+    /// Stop SCHEDULING: the scheduler task is aborted and every occurrence task sitting out a
     /// retry delay hears the cancel signal, so nothing new fires and no delayed retry
     /// comes back to life later. Runs already executing are the coordinator's - see
     /// [JobSystem::shutdown] for the teardown that takes them back.
@@ -716,14 +762,14 @@ impl JobSystem {
         self.services.runs.cancel_owner(JOBS_OWNER).await
     }
 
-    /// The jobs whose next-due entry sits at or before now. The tick's whole read side:
+    /// The jobs whose next-due entry sits at or before now. The scan's whole read side:
     /// a clock read and a map scan (SPEC §jobs.triggers).
     pub fn due_jobs_now(&self) -> Vec<String> {
         let now = self.clock_now_ms();
         self.due_jobs(now)
     }
 
-    /// The testable half of the tick: the jobs whose next-due entry is at or before
+    /// The testable half of the scan: the jobs whose next-due entry is at or before
     /// `now`. The table is maintained by apply/claim (SPEC §jobs.triggers), so this reads the
     /// map, not the calendar.
     pub fn due_jobs(&self, now: i64) -> Vec<String> {
@@ -763,6 +809,37 @@ impl JobSystem {
         }
     }
 
+    /// Gate, busy-check and submit in one block, OFF the runtime thread: the id
+    /// allocation may wait out a crashed peer gateway's claim for seconds, and the
+    /// std gate must not be held across an await on the runtime either - both the
+    /// lock and the claim live inside the blocking closure, so a second job submit
+    /// queues on its own blocking thread and every route stays live.
+    async fn gated_submit(
+        self: &Arc<Self>,
+        label: String,
+        queue_if_busy: bool,
+        request: SubmitRequest,
+    ) -> Result<Result<swiss_host::services::runs::SubmittedRun, SubmitError>, RunError> {
+        let handle = tokio::runtime::Handle::current();
+        let this = self.clone();
+        let check_label = label.clone();
+        tokio::task::spawn_blocking(move || {
+            let _rt = handle.enter();
+            let _gate = this.submit_gate.lock().unwrap_or_else(|e| e.into_inner());
+            if !queue_if_busy && this.services.runs.count_for_label(&check_label) > 0 {
+                return Err(RunError::Busy(format!(
+                    "{} is already running",
+                    check_label
+                )));
+            }
+            Ok(this.services.runs.submit(request))
+        })
+        .await
+        .map_err(|join| {
+            RunError::Unavailable(format!("the submit task failed: {join}"))
+        })?
+    }
+
     /// The manual submission half, shared by both manual doors (SPEC §jobs.runlog): the
     /// check-then-submit under the gate, and on a submission refusal the record plus the
     /// typed error. There is exactly ONE execution path into the coordinator - the sync
@@ -774,23 +851,23 @@ impl JobSystem {
     ) -> Result<swiss_host::services::runs::SubmittedRun, RunError> {
         let def = self.definition_of(name)?;
         let label = format!("job:{}", def.id);
-        let submitted = {
-            let _gate = self.submit_gate.lock().unwrap_or_else(|e| e.into_inner());
-            if self.services.runs.count_for_label(&label) > 0 {
-                return Err(RunError::Busy(format!("job {} is already running", def.id)));
-            }
-            self.services.runs.submit(SubmitRequest {
-                owner: JOBS_OWNER.to_string(),
-                label,
-                // The definition's OWN action ref (SPEC §jobs.config): any registered capability,
-                // input verbatim - env refs stay refs and resolve inside the action.
-                action_type: def.action.type_.clone(),
-                input: def.action.input.clone(),
-                timeout_ms: def.timeout_ms,
-                queue_if_busy: false,
-                actor: JOBS_OWNER.to_string(),
-            })
-        };
+        let submitted = self
+            .gated_submit(
+                label.clone(),
+                false,
+                SubmitRequest {
+                    owner: JOBS_OWNER.to_string(),
+                    label,
+                    // The definition's OWN action ref (SPEC §jobs.config): any registered capability,
+                    // input verbatim - env refs stay refs and resolve inside the action.
+                    action_type: def.action.type_.clone(),
+                    input: def.action.input.clone(),
+                    timeout_ms: def.timeout_ms,
+                    queue_if_busy: false,
+                    actor: JOBS_OWNER.to_string(),
+                },
+            )
+            .await?;
         match submitted {
             Ok(s) => Ok(s),
             Err(err) => {
@@ -875,14 +952,18 @@ impl JobSystem {
         self.refresh_next_due(name);
 
         // Misfire accounting (SPEC §jobs.triggers): everything older than the newest
-        // occurrence is one summary line, never a catch-up storm.
-        if count > 1 {
+        // occurrence is one summary line, never a catch-up storm. The newest runs when it
+        // is on time; past its minute (down or asleep through it) only run-once runs it
+        // late - skip folds it into the summary, whose key it carries.
+        let late = now - latest_due >= def::ON_TIME_MS;
+        let skip_late = late && matches!(def.misfire, def::Misfire::Skip);
+        if count > 1 || skip_late {
             self.record_missed(name, &key, count - 1);
-            if matches!(def.misfire, def::Misfire::Skip) {
-                // skip: not even the newest runs - the anchor already sits at it, the
-                // next firing is one period away, and the summary is the whole story.
-                return;
-            }
+        }
+        if skip_late {
+            // skip: the anchor already sits at the newest, the next firing is one period
+            // away, and the summary is the whole story.
+            return;
         }
 
         // The retry loop (SPEC §jobs.triggers). Attempt 1..=max_attempts; each attempt is its
@@ -898,25 +979,50 @@ impl JobSystem {
         let mut attempt = 1u32;
         let attempts = def.retry.max_attempts;
         loop {
-            let submitted = {
-                let _gate = self.submit_gate.lock().unwrap_or_else(|e| e.into_inner());
-                if !queue && self.services.runs.count_for_label(&label) > 0 {
-                    // overlap=skip: the occurrence is skipped, visibly, anchor already
-                    // moved - this is the steady-state rule, not an error.
+            let submitted = match self
+                .gated_submit(
+                    label.clone(),
+                    queue,
+                    SubmitRequest {
+                        owner: JOBS_OWNER.to_string(),
+                        label: label.clone(),
+                        action_type: def.action.type_.clone(),
+                        input: def.action.input.clone(),
+                        timeout_ms: def.timeout_ms,
+                        // queue-one: a busy pool queues this occurrence (SPEC §jobs.triggers);
+                        // the queue's own bound turns into a visible capacity skip below.
+                        queue_if_busy: queue,
+                        actor: JOBS_OWNER.to_string(),
+                    },
+                )
+                .await
+            {
+                Ok(inner) => inner,
+                // overlap=skip: the occurrence is skipped, visibly, anchor already
+                // moved - this is the steady-state rule, not an error.
+                Err(RunError::Busy(_)) => {
                     self.record_skipped(name, &key, "overlap");
                     return;
                 }
-                self.services.runs.submit(SubmitRequest {
-                    owner: JOBS_OWNER.to_string(),
-                    label: label.clone(),
-                    action_type: def.action.type_.clone(),
-                    input: def.action.input.clone(),
-                    timeout_ms: def.timeout_ms,
-                    // queue-one: a busy pool queues this occurrence (SPEC §jobs.triggers);
-                    // the queue's own bound turns into a visible capacity skip below.
-                    queue_if_busy: queue,
-                    actor: JOBS_OWNER.to_string(),
-                })
+                // The blocking submit closure itself died (a panic): a refusal
+                // with the honest reason - never mislabeled as a missing action.
+                Err(RunError::Unavailable(reason)) => {
+                    let refusal = runner::RunOutcome::refused(reason.clone());
+                    self.record_ran(
+                        name,
+                        "timer",
+                        Some(&key),
+                        (attempt, attempts),
+                        None,
+                        &refusal,
+                    );
+                    log::warn(
+                        "job occurrence refused: the submit task failed",
+                        Some(json!({ "name": name, "reason": reason })),
+                    );
+                    return;
+                }
+                Err(other) => Err(SubmitError::Action(other.to_string())),
             };
             let (run_id, out) = match submitted {
                 Ok(s) => {
@@ -1402,7 +1508,7 @@ pub fn ran_record(
 /// exactly what the process plugin's start does in a real boot, without a plugin host.
 #[cfg(test)]
 pub(crate) fn test_services() -> Arc<RuntimeServices> {
-    let services = RuntimeServices::new();
+    let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
     services
         .actions
         .register(Arc::new(
@@ -1651,7 +1757,14 @@ mod tests {
             None,
             "this minute's firing already ran"
         );
-        let next = def::next_due_ms(&d, Some(yesterday), off_ms, 0, clock.as_ref())
+        // The unclaimed 03:30 makes the job due NOW, not one period out: the first
+        // tick claims it - a restart must behave like a resume (SPEC §jobs.triggers).
+        assert_eq!(
+            def::next_due_ms(&d, Some(yesterday), off_ms, 0, clock.as_ref()),
+            Some(off_ms),
+            "an overdue occurrence is due immediately, not tomorrow"
+        );
+        let next = def::next_due_ms(&d, Some(now), off_ms, 0, clock.as_ref())
             .expect("tomorrow exists");
         assert_eq!(
             clock
@@ -1659,7 +1772,7 @@ mod tests {
                 .format("%Y-%m-%dT%H:%M")
                 .to_string(),
             "2026-09-09T03:30",
-            "the next firing is the next matching LOCAL minute"
+            "claimed this minute: the next firing is the next matching LOCAL minute"
         );
     }
 
@@ -1855,7 +1968,7 @@ mod tests {
     /// and the listing reports it as not action-available while remaining saved.
     #[tokio::test]
     async fn a_missing_capability_is_reported_recorded_and_listed() {
-        let (sys, store) = system("nocap", RuntimeServices::new());
+        let (sys, store) = system("nocap", RuntimeServices::new(swiss_host::services::BootInfo::default()));
         install(&sys, &store, row_of(&[interval_job("orphan", 3_600)]));
         let fake = clock::testing::FakeClock::at(sys.anchor_ms);
         sys.set_clock(fake.clone());
@@ -2208,7 +2321,11 @@ mod tests {
         );
 
         // next_due from the day before lands on the NEXT day's 02:30, not the gap.
-        let day_before = naive - chrono::TimeDelta::try_days(1).unwrap();
+        // One minute AFTER the previous firing: on the firing minute itself a
+        // never-run job is due NOW (the first-occurrence rule), which is a different
+        // assertion than the forward scan's gap-skipping.
+        let day_before = naive - chrono::TimeDelta::try_days(1).unwrap()
+            + chrono::TimeDelta::try_minutes(1).unwrap();
         let now = clock.ms_from_local(&day_before).unwrap();
         let next = def::next_due_ms(&d, None, now, now, clock.as_ref()).expect("a next firing");
         assert_eq!(
@@ -2276,6 +2393,208 @@ mod tests {
             None,
             "already claimed this occurrence: no refire on the second pass"
         );
+    }
+
+    /// The October 2026 `missed` days, minimized (SPEC §jobs.triggers). A claim
+    /// carrying sub-second residue - the pre-fix `minute_floor` kept the clock read's
+    /// milliseconds - must not make a post-restart tick, which lands at its own
+    /// sub-second offset, read "before" the occurrence and silently drop it to a
+    /// day-late `missed` summary.
+    #[test]
+    fn a_leaked_millisecond_claim_cannot_shadow_the_occurrence_minute() {
+        let clock = clock::testing::FakeClock::at(0);
+        let d = def::JobDefinition::from_v1(&cron_job("hello", "30 3 * * *"));
+        let at = |day: u32, hour: u32, min: u32, ms: i64| {
+            let naive = chrono::NaiveDate::from_ymd_opt(2026, 9, day)
+                .unwrap()
+                .and_hms_opt(hour, min, 0)
+                .unwrap()
+                + chrono::TimeDelta::milliseconds(ms);
+            clock.ms_from_local(&naive).expect("a real minute")
+        };
+        // Yesterday's 03:30 ran; the claim leaked `.615`.
+        let claim = at(8, 3, 30, 615);
+        // A restart's rebuild read the clock at 02:59:00.200: its entry must sit exactly
+        // on the 03:30 minute boundary, carrying none of that read's residue forward.
+        let entry = def::next_due_ms(&d, Some(claim), at(9, 2, 59, 200), 0, clock.as_ref())
+            .expect("today's firing exists");
+        assert_eq!(entry, at(9, 3, 30, 0), "the entry is the whole minute");
+        assert_eq!(entry % 60_000, 0, "no sub-minute residue leaks into the table");
+        // The first tick after the restart lands at 03:30.300 - after the minute, but
+        // "before" the leaked .615. The occurrence must still count.
+        assert_eq!(
+            def::missed_occurrences(&d, at(9, 3, 30, 300), 0, Some(claim), clock.as_ref()),
+            Some((1, at(9, 3, 30, 0))),
+            "a tick inside the occurrence minute counts the occurrence, residue or not"
+        );
+    }
+
+    /// A September 2026 wall-clock instant in the fake zone (no DST rule).
+    fn sept(day: u32, hour: u32, min: u32, ms: i64) -> i64 {
+        let naive = chrono::NaiveDate::from_ymd_opt(2026, 9, day)
+            .unwrap()
+            .and_hms_opt(hour, min, 0)
+            .unwrap()
+            + chrono::TimeDelta::milliseconds(ms);
+        clock::testing::FakeClock::at(0)
+            .ms_from_local(&naive)
+            .expect("a real minute")
+    }
+
+    /// The shared shape of the restart tests: a daily 03:30 job last claimed at `claimed`
+    /// (with the pre-fix `.615` residue a real claim carried), and a gateway back up at
+    /// `up`. The boot rebuild must find the overdue job due NOW, at the first tick - not
+    /// one period later.
+    async fn restart_system(
+        name: &str,
+        misfire: &str,
+        claimed: i64,
+        key: &str,
+        up: i64,
+    ) -> (Arc<JobSystem>, Arc<clock::testing::FakeClock>) {
+        let (sys, store) = system(name, test_services());
+        install(
+            &sys,
+            &store,
+            json!({ "definitions": { "daily": {
+                "trigger": { "kind": "cron", "expression": "30 3 * * *" },
+                "action": { "type": "process.legacy-command", "input": { "command": ECHO_HI } },
+                "timeoutMs": 30000,
+                "misfire": misfire
+            } } }),
+        );
+        sys.state.claim("daily", claimed, Some(key));
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        fake.set(up);
+        sys.rebuild_next_due();
+        assert_eq!(
+            sys.due_jobs(fake.now_ms()),
+            vec!["daily".to_string()],
+            "due at the first tick after start, not tomorrow"
+        );
+        (sys, fake)
+    }
+
+    /// SPEC §jobs.triggers: a restart is not special. Down through today's 03:30 and up
+    /// again at 09:00, a run-once job catches the unclaimed occurrence up at the FIRST
+    /// tick - one late run, as a process that slept through the minute would - instead
+    /// of deferring it to a day-late `missed` summary.
+    #[tokio::test]
+    async fn a_restart_recovers_an_overdue_occurrence_at_the_first_tick() {
+        let (sys, fake) = restart_system(
+            "restart-late-run",
+            "run-once",
+            sept(8, 3, 30, 615),
+            "cron:2026-09-08T03:30",
+            sept(9, 9, 0, 0),
+        )
+        .await;
+        sys.clone().run_occurrence("daily").await;
+
+        let (page, _) = sys.read_runs("daily", None, 10);
+        assert_eq!(page.len(), 1, "one late run, nothing older to summarize: {page:?}");
+        assert_eq!(page[0]["outcome"], json!("ran"));
+        assert_eq!(page[0]["ok"], json!(true));
+        assert_eq!(page[0]["occurrenceKey"], json!("cron:2026-09-09T03:30"));
+        assert_eq!(sys.run_state("daily").last_run_at, Some(sept(9, 3, 30, 0)));
+        assert!(
+            sys.due_jobs(fake.now_ms()).is_empty(),
+            "claimed: the next firing is a full day out"
+        );
+    }
+
+    /// SPEC §jobs.triggers: the same restart under `misfire: "skip"` never runs the
+    /// occurrence five and a half hours late - skip is the choice for a job whose timing
+    /// matters. It is accounted for at boot: one `missed` line carrying its key, nothing
+    /// older to count, and the anchor on it.
+    #[tokio::test]
+    async fn a_restart_under_skip_records_the_late_occurrence_and_runs_nothing() {
+        let (sys, fake) = restart_system(
+            "restart-late-skip",
+            "skip",
+            sept(8, 3, 30, 615),
+            "cron:2026-09-08T03:30",
+            sept(9, 9, 0, 0),
+        )
+        .await;
+        sys.clone().run_occurrence("daily").await;
+
+        let (page, _) = sys.read_runs("daily", None, 10);
+        assert_eq!(page.len(), 1, "exactly the summary line: {page:?}");
+        assert_eq!(page[0]["outcome"], json!("missed"));
+        assert_eq!(page[0]["missedCount"], json!(0), "none missed besides its own");
+        assert_eq!(page[0]["occurrenceKey"], json!("cron:2026-09-09T03:30"));
+        assert!(page[0].get("exitCode").is_none() && page[0].get("output").is_none());
+        assert_eq!(sys.run_state("daily").last_run_at, Some(sept(9, 3, 30, 0)));
+        assert!(sys.due_jobs(fake.now_ms()).is_empty());
+    }
+
+    /// SPEC §jobs.triggers: a multi-day gap records its `missed` summary at the first
+    /// tick after start - boot included - not one period later; the anchor still lands
+    /// on the newest occurrence, clean on the minute.
+    #[tokio::test]
+    async fn a_restart_records_the_missed_summary_at_boot_not_next_period() {
+        // Last ran 09-06 03:30; the 09-07 and 09-08 firings passed unclaimed.
+        let (sys, fake) = restart_system(
+            "restart-missed-at-boot",
+            "skip",
+            sept(6, 3, 30, 615),
+            "cron:2026-09-06T03:30",
+            sept(8, 23, 0, 0),
+        )
+        .await;
+        sys.clone().run_occurrence("daily").await;
+
+        let (page, _) = sys.read_runs("daily", None, 10);
+        assert_eq!(page.len(), 1, "exactly the summary line: {page:?}");
+        assert_eq!(page[0]["outcome"], json!("missed"));
+        assert_eq!(
+            page[0]["missedCount"],
+            json!(1),
+            "two due: the record's own newest, and one more"
+        );
+        assert_eq!(page[0]["occurrenceKey"], json!("cron:2026-09-08T03:30"));
+        assert!(page[0].get("exitCode").is_none() && page[0].get("output").is_none());
+        assert_eq!(sys.run_state("daily").last_run_at, Some(sept(8, 3, 30, 0)));
+        assert!(sys.due_jobs(fake.now_ms()).is_empty());
+    }
+
+    /// SPEC §jobs.triggers: skip refuses a LATE run, not an on-time one. Up again inside
+    /// the 03:30 minute after a gap, the newest occurrence runs on schedule and only the
+    /// older one is summarized; at the next minute it is late. (Before, a count above
+    /// one skipped the on-time run too - the October bug's second lost day.)
+    #[tokio::test]
+    async fn skip_runs_the_newest_occurrence_while_it_is_on_time() {
+        let (sys, _fake) = restart_system(
+            "skip-on-time",
+            "skip",
+            sept(6, 3, 30, 615),
+            "cron:2026-09-06T03:30",
+            sept(8, 3, 30, 59_999),
+        )
+        .await;
+        sys.clone().run_occurrence("daily").await;
+        let (page, _) = sys.read_runs("daily", None, 10);
+        assert_eq!(page.len(), 2, "summary + the on-time run: {page:?}");
+        assert_eq!(page[1]["outcome"], json!("missed"));
+        assert_eq!(page[1]["missedCount"], json!(1), "09-07 only");
+        assert_eq!(page[0]["outcome"], json!("ran"));
+        assert_eq!(page[0]["occurrenceKey"], json!("cron:2026-09-08T03:30"));
+
+        let (sys, _fake) = restart_system(
+            "skip-a-minute-late",
+            "skip",
+            sept(6, 3, 30, 615),
+            "cron:2026-09-06T03:30",
+            sept(8, 3, 31, 0),
+        )
+        .await;
+        sys.clone().run_occurrence("daily").await;
+        let (page, _) = sys.read_runs("daily", None, 10);
+        assert_eq!(page.len(), 1, "a minute past due is late: {page:?}");
+        assert_eq!(page[0]["outcome"], json!("missed"));
+        assert_eq!(page[0]["missedCount"], json!(1));
     }
 
     /// The shared shape of the misfire tests: a job that ran once at the anchor, then the
@@ -2653,7 +2972,33 @@ mod tests {
         assert_eq!(page.len(), 1, "attempt 2 never happened: {page:?}");
     }
 
-    /// SPEC §jobs.triggers: the per-second tick is a map scan. A table of a thousand jobs,
+    /// SPEC §jobs.triggers: the scheduler's sleep is the earliest entry, floored once it is
+    /// due and capped so a clock step is noticed; an empty table parks it.
+    #[test]
+    fn the_scheduler_sleeps_toward_the_earliest_entry() {
+        let (sys, store) = system("next-wait", test_services());
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        assert_eq!(sys.next_wait(), None, "nothing defined: parked");
+
+        install(
+            &sys,
+            &store,
+            row_of(&[interval_job("soon", 30), interval_job("later", 3_600)]),
+        );
+        let secs = |s| Some(std::time::Duration::from_secs(s));
+        assert_eq!(sys.next_wait(), secs(30), "until the earliest entry");
+        fake.set(sys.anchor_ms + 29_000);
+        assert_eq!(sys.next_wait(), secs(1));
+        fake.set(sys.anchor_ms + 31_000);
+        assert_eq!(sys.next_wait(), secs(1), "due and unclaimed: the floor, not a spin");
+
+        install(&sys, &store, row_of(&[interval_job("later", 3_600)]));
+        fake.set(sys.anchor_ms);
+        assert_eq!(sys.next_wait(), secs(60), "an hour out: the recheck cap");
+    }
+
+    /// SPEC §jobs.triggers: the scheduler's scan is a map scan. A table of a thousand jobs,
     /// every one of them overdue, costs ZERO calendar calls to enumerate; only a claim
     /// walks the calendar again, for exactly that job.
     #[test]

@@ -55,6 +55,9 @@ pub struct Limits {
     pub keep_bytes: u64,
     /// Entries older than this age out on the hourly sweep.
     pub max_age_ms: i64,
+    /// The ceiling over every job's file together: past it the oldest records of the whole
+    /// directory go first, down to three quarters of it ([RunLog::cap_total]).
+    pub max_total_bytes: u64,
 }
 
 impl Default for Limits {
@@ -64,6 +67,7 @@ impl Default for Limits {
             keep_bytes: 1024 * 1024,
             // 180 days, like the call log's retention.
             max_age_ms: 180 * 24 * 60 * 60 * 1000,
+            max_total_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -74,15 +78,29 @@ const SWEEP_EVERY_MS: u64 = 60 * 60 * 1000;
 
 /// The retention config row's budgets as [Limits] (SPEC §jobs.config -> §8). days drives the
 /// age cap; maxBytesPerJob drives both the trim trigger and (at half) the size it trims
-/// down to, preserving the default 2:1 ratio. maxHistoryBytes has no per-file home - it
-/// is the TOTAL ceiling this build accepts and stores but does not yet enforce across
-/// files; that cross-file sweep arrives with the S5 semantics that need it.
+/// down to, preserving the default 2:1 ratio; maxHistoryBytes is the ceiling over all the
+/// files together.
 pub fn limits_of_retention(retention: &super::def::Retention) -> Limits {
     Limits {
         max_bytes: retention.max_bytes_per_job,
         keep_bytes: retention.max_bytes_per_job / 2,
         max_age_ms: i64::from(retention.days) * 24 * 60 * 60 * 1000,
+        max_total_bytes: retention.max_history_bytes,
     }
+}
+
+/// When a run line happened, for the cross-file cap: its `at`, or `i64::MIN` for a torn line
+/// or one without a date - which sorts oldest and goes first, as in the age sweep.
+fn line_at(line: &str) -> i64 {
+    #[derive(serde::Deserialize)]
+    struct Stamp<'a> {
+        #[serde(borrow)]
+        at: Option<&'a str>,
+    }
+    serde_json::from_str::<Stamp>(line.trim_end())
+        .ok()
+        .and_then(|stamp| stamp.at.and_then(parse_iso_ms))
+        .unwrap_or(i64::MIN)
 }
 
 /// Per-job write state: the next sequence number, the file size, and when the age sweep
@@ -185,6 +203,22 @@ impl RunLog {
         }
         if now_ms().saturating_sub(swept_at) > SWEEP_EVERY_MS {
             self.sweep_age(job, &path)?;
+        }
+        // The files written since boot alone are past the ceiling: cap now, not at the
+        // hourly sweep. Files nobody wrote to wait for that sweep.
+        let written: u64 = self
+            .states
+            .lock()
+            .map(|states| states.values().map(|st| st.bytes).sum())
+            .unwrap_or(0);
+        if written
+            > self
+                .limits
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .max_total_bytes
+        {
+            self.cap_total();
         }
         Ok(seq)
     }
@@ -371,6 +405,98 @@ impl RunLog {
             let _ = self.trim(job, &path);
             let _ = self.sweep_age(job, &path);
         }
+        self.cap_total();
+    }
+
+    /// Hold every job's file together under max_total_bytes (SPEC §jobs.runlog): past it,
+    /// the oldest records of the whole directory go first - whichever job wrote them - until
+    /// three quarters of the ceiling is left, so the next append does not cap again. Each file
+    /// is chronological, so what goes is a prefix of each, cut at one instant for all.
+    /// Returns the bytes dropped.
+    pub fn cap_total(&self) -> u64 {
+        let max = self
+            .limits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .max_total_bytes;
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return 0;
+        };
+        let files: Vec<(String, PathBuf, u64)> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let job = name.strip_suffix(".jsonl")?.to_string();
+                let len = entry.metadata().ok()?.len();
+                Some((job, entry.path(), len))
+            })
+            .collect();
+        // The append path triggers on the tracked sizes, so they follow the disk: a file
+        // removed by hand must not keep every later append calling in here.
+        if let Ok(mut states) = self.states.lock() {
+            for (job, st) in states.iter_mut() {
+                st.bytes = files
+                    .iter()
+                    .find(|(name, _, _)| name == job)
+                    .map_or(0, |(_, _, len)| *len);
+            }
+        }
+        let total: u64 = files.iter().map(|(_, _, len)| len).sum();
+        if total <= max {
+            return 0;
+        }
+        let excess = total - max / 4 * 3;
+        // Every line's instant and size, oldest first; the cutoff is the instant by which
+        // enough of them have gone. Transient, and only once the ceiling is passed.
+        let mut lines: Vec<(i64, u32)> = Vec::new();
+        for (_, path, _) in &files {
+            let Ok(text) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            lines.extend(
+                text.split_inclusive('\n')
+                    .map(|line| (line_at(line), u32::try_from(line.len()).unwrap_or(u32::MAX))),
+            );
+        }
+        lines.sort_unstable_by_key(|(at, _)| *at);
+        let mut dropped = 0u64;
+        let mut cutoff = None;
+        for (at, len) in &lines {
+            if dropped >= excess {
+                break;
+            }
+            dropped += u64::from(*len);
+            cutoff = Some(*at);
+        }
+        drop(lines);
+        let Some(cutoff) = cutoff else {
+            return 0;
+        };
+        let mut freed = 0u64;
+        for (job, path, _) in &files {
+            let Ok(text) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            let keep_from = text
+                .split_inclusive('\n')
+                .take_while(|line| line_at(line) <= cutoff)
+                .map(str::len)
+                .sum::<usize>();
+            if keep_from == 0 {
+                continue;
+            }
+            let kept = &text[keep_from..];
+            if swiss_core::atomic_json::write_text_atomic(path, kept).is_err() {
+                continue;
+            }
+            freed += keep_from as u64;
+            if let Ok(mut states) = self.states.lock() {
+                if let Some(st) = states.get_mut(job) {
+                    st.bytes = kept.len() as u64;
+                }
+            }
+        }
+        freed
     }
 }
 
@@ -554,6 +680,84 @@ mod tests {
         assert_eq!(page.len(), 1, "only the fresh entry survives: {page:?}");
         let ats: Vec<&str> = page.iter().filter_map(|v| v["at"].as_str()).collect();
         assert_ne!(ats, vec![old.as_str()]);
+    }
+
+    /// A record `minutes_ago` old with a 10 KiB output, so a dozen of them pass a 100 KiB
+    /// ceiling.
+    fn stamped(minutes_ago: i64) -> Map<String, Value> {
+        let at = (time::OffsetDateTime::now_utc() - time::Duration::minutes(minutes_ago))
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
+        let mut rec = record(true);
+        rec.insert("at".into(), json!(at));
+        rec.insert("output".into(), json!("x".repeat(10 * 1024)));
+        rec
+    }
+
+    fn ats(log: &RunLog, job: &str) -> Vec<i64> {
+        let text = std::fs::read_to_string(log.file_for(job)).unwrap_or_default();
+        text.lines().map(line_at).collect()
+    }
+
+    fn dir_bytes(dir: &std::path::Path) -> u64 {
+        std::fs::read_dir(dir)
+            .map(|rd| rd.flatten().filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum())
+            .unwrap_or(0)
+    }
+
+    // SPEC §jobs.config: maxHistoryBytes was accepted and stored but enforced nowhere, so the
+    // only real bound on the directory was maxBytesPerJob times the number of jobs.
+    #[test]
+    fn the_history_ceiling_drops_the_oldest_records_whichever_job_wrote_them() {
+        let dir = scratch("ceiling");
+        let log = RunLog::at(dir.clone());
+        log.set_limits(limits_of_retention(&super::super::def::Retention {
+            days: 180,
+            max_bytes_per_job: 64 * 1024 * 1024,
+            max_history_bytes: 100 * 1024,
+        }));
+        // Job "old" wrote the first six minutes, job "new" the last six.
+        for m in (7..=12).rev() {
+            log.append_run("old", stamped(m)).expect("append");
+        }
+        for m in (1..=6).rev() {
+            log.append_run("new", stamped(m)).expect("append");
+        }
+        assert!(dir_bytes(&dir) <= 100 * 1024, "held under the ceiling: {}", dir_bytes(&dir));
+        assert_eq!(ats(&log, "new").len(), 6, "the newest job lost nothing");
+        let old = ats(&log, "old");
+        assert!(old.len() < 6, "the oldest records went first: {old:?}");
+        assert!(old.iter().all(|at| *at > i64::MIN), "every kept line is whole");
+        // What is left is the newest run of each file: seqs continue past the cut.
+        let seq = log.append_run("old", stamped(0)).expect("append");
+        assert_eq!(seq, 7);
+    }
+
+    #[test]
+    fn the_hourly_sweep_caps_files_nobody_wrote_to_since_boot() {
+        let dir = scratch("ceiling-sweep");
+        let before = RunLog::at(dir.clone());
+        for (job, from) in [("a", 30), ("b", 20), ("c", 10)] {
+            for m in (from - 9..=from).rev() {
+                before.append_run(job, stamped(m)).expect("append");
+            }
+        }
+        assert!(dir_bytes(&dir) > 300 * 1024, "the default ceiling let all of it stay");
+
+        // A restart under a lower ceiling: nothing is appended, the sweep alone caps.
+        let after = RunLog::at(dir.clone());
+        after.set_limits(Limits {
+            max_total_bytes: 200 * 1024,
+            ..Limits::default()
+        });
+        after.sweep_all();
+        let total = dir_bytes(&dir);
+        assert!(total <= 150 * 1024, "down to three quarters of the ceiling: {total}");
+        assert!(ats(&after, "a").is_empty(), "the oldest job's history went first");
+        assert_eq!(ats(&after, "c").len(), 10, "the newest job's stayed whole");
+        let b = ats(&after, "b");
+        assert!(!b.is_empty() && b.len() < 10, "the cut fell inside b: {b:?}");
+        assert_eq!(after.cap_total(), 0, "under the ceiling, a second pass drops nothing");
     }
 
     #[test]

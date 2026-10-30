@@ -24,7 +24,8 @@
 use chrono::TimeZone;
 
 /// Milliseconds since the unix epoch, local wall time, and back. `ms_from_local` is
-/// None exactly when the wall-clock time does not exist (the spring-forward gap).
+/// None exactly when the wall-clock time does not exist (the spring-forward gap); the
+/// fall-back's repeated hour resolves to its first (earlier) instant.
 pub trait Clock: Send + Sync {
     fn now_ms(&self) -> i64;
     fn local_from_ms(&self, ms: i64) -> chrono::NaiveDateTime;
@@ -33,11 +34,16 @@ pub trait Clock: Send + Sync {
 
 /// Truncate a naive time to its minute. Cron works in whole local minutes; walks that
 /// start from a second-carrying instant (a lastRunAt at :05) must not drag the seconds
-/// into every matching minute they visit.
+/// into every matching minute they visit. The sub-second part goes with them:
+/// [CronExpr::next_after] adds whole minutes, so any residue handed to it repeats
+/// forever in the claims and entries - and a claim that leaked `.615` once made a
+/// post-restart tick at `.300` read "before" its own occurrence, silently dropping it
+/// (the October 2026 `missed` days).
 pub(crate) fn minute_floor(t: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
     use chrono::Timelike;
     let secs = chrono::TimeDelta::try_seconds(i64::from(t.second())).unwrap_or_default();
-    t - secs
+    let nanos = chrono::TimeDelta::nanoseconds(i64::from(t.nanosecond()));
+    t - secs - nanos
 }
 
 /// Local wall time for a unix-ms stamp (None when out of range).
@@ -61,9 +67,13 @@ impl Clock for LocalClock {
     }
 
     fn ms_from_local(&self, t: &chrono::NaiveDateTime) -> Option<i64> {
+        // The fall-back's repeated hour resolves to its FIRST instant - the same
+        // resolution the FakeClock documents - so a job due inside it fires once,
+        // on the earlier pass, instead of being scanned past to tomorrow. The
+        // spring-forward gap stays None (the wall-clock time never happens).
         chrono::Local
             .from_local_datetime(t)
-            .single()
+            .earliest()
             .map(|dt| dt.timestamp_millis())
     }
 }

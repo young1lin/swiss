@@ -1385,9 +1385,10 @@ fn interval_base(def: &JobDefinition, last_run_ms: Option<i64>, anchor_ms: i64) 
 
 /// The next instant this definition is due, as unix milliseconds - the value the
 /// next-due table holds (SPEC §jobs.triggers). An OVERDUE job (its computed next sits in the
-/// past) reports `now`: the tick treats it as due immediately and the occurrence math
-/// in [missed_occurrences] recovers the real count from the claim state. Manual has no
-/// next due.
+/// past, or a cron occurrence has already passed unclaimed) reports `now`: the tick
+/// treats it as due immediately and the occurrence math in [missed_occurrences]
+/// recovers the real count from the claim state - a restart therefore behaves exactly
+/// like a resumed process. Manual has no next due.
 pub fn next_due_ms(
     def: &JobDefinition,
     last_run_ms: Option<i64>,
@@ -1395,8 +1396,8 @@ pub fn next_due_ms(
     anchor_ms: i64,
     clock: &dyn crate::jobs::clock::Clock,
 ) -> Option<i64> {
-    match &def.trigger {
-        Trigger::Manual => None,
+    let next = match &def.trigger {
+        Trigger::Manual => return None,
         Trigger::Interval { every_ms, .. } => {
             let base = interval_base(def, last_run_ms, anchor_ms);
             Some((base + *every_ms as i64).max(now))
@@ -1405,17 +1406,41 @@ pub fn next_due_ms(
             let mut cur = crate::jobs::clock::minute_floor(clock.local_from_ms(now));
             // A matching minute that does not exist this year-day (the spring-forward
             // gap) is skipped, not waited for: keep scanning (SPEC §jobs.triggers).
+            let mut found = None;
             for _ in 0..3 {
-                let next = compiled.next_after(&cur)?;
+                let next = match compiled.next_after(&cur) {
+                    Some(n) => n,
+                    None => break,
+                };
                 match clock.ms_from_local(&next) {
-                    Some(ms) => return Some(ms),
+                    Some(ms) => {
+                        found = Some(ms);
+                        break;
+                    }
                     None => cur = next, // the gap minute: look strictly after it
                 }
             }
-            None
+            found
         }
+    };
+    // An occurrence already due must not wait a full period for the table to come back
+    // around: report `now` - the interval arm's `.max(now)` always did. The first
+    // tick's occurrence math in [missed_occurrences] recovers the real count from the
+    // claim state, so the misfire accounting lands at the first tick after start, not
+    // one period later (the October 2026 missed days surfaced a day late).
+    if next.is_some_and(|n| n > now)
+        && missed_occurrences(def, now, anchor_ms, last_run_ms, clock).is_some()
+    {
+        return Some(now);
     }
+    next
 }
+
+/// How late the newest due occurrence may be claimed and still count as ON TIME (SPEC
+/// §jobs.triggers): one minute - a cron occurrence's own minute. The one-second tick
+/// claims an occurrence within a second of its due instant; anything later means the
+/// gateway was down or asleep through it, and `misfire: "skip"` never runs it late.
+pub const ON_TIME_MS: i64 = 60_000;
 
 /// How this definition's schedule stands at `now`, given its claim state: the number of
 /// occurrences due since the last claim (counting the newest) and the newest due

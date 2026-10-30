@@ -19,7 +19,7 @@
 //! (SPEC §jobs.config): editing a definition can never fabricate or lose a "last ran" fact.
 //!
 //! `~/.swiss/jobs-state.json`, sealed and private-permission like every state
-//! file (SPEC §formats.sealed). Only SMALL BOUNDED facts live here - one line per job:
+//! file (SPEC §core.sealed). Only SMALL BOUNDED facts live here - one line per job:
 //! when it last started, whether that run exited 0, the coordinator's run id, and a
 //! consecutive-failure counter. Output, command text and credential references never
 //! enter this file.

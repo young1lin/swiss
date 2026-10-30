@@ -252,7 +252,7 @@ mod tests {
     use swiss_host::services::RuntimeServices;
 
     fn test_services() -> Arc<RuntimeServices> {
-        let services = RuntimeServices::new();
+        let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
         services
             .actions
             .register(Arc::new(LegacyCommandAction::new(
