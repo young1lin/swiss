@@ -192,25 +192,25 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// One string value under HKCU: its text and whether it is REG_EXPAND_SZ. Ok(None) when the key
-/// or the value is absent; an Err when it is there but cannot be read as a string - which a
-/// writer must not mistake for "absent" and overwrite. The Run entry and the user PATH both
-/// read through here, and the suite drives it against a scratch key - never the operator's own.
-fn hkcu_string_read(subkey: &str, value: &str) -> Result<Option<(String, bool)>, String> {
-    let label = format!("HKCU\\{subkey} value {value}");
+/// One string value under one registry root: its text and whether it is REG_EXPAND_SZ.
+/// Ok(None) when the key or the value is absent; an Err when it is there but cannot be read as
+/// a string - which a writer must not mistake for "absent" and overwrite. The Run entry, the
+/// user PATH and the machine PATH all read through here, and the suite drives it against a
+/// scratch key - never the operator's own.
+fn hkey_string_read(
+    root: HKEY,
+    root_label: &str,
+    subkey: &str,
+    value: &str,
+) -> Result<Option<(String, bool)>, String> {
+    let label = format!("{root_label}\\{subkey} value {value}");
     let subkey = wide(subkey);
     let value = wide(value);
     // SAFETY: both name buffers outlive the calls; the handle is closed on every path; the data
     // buffer is bounded by the length the size query reported.
     unsafe {
         let mut hkey = HKEY::default();
-        let opened = RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            PCWSTR(subkey.as_ptr()),
-            None,
-            REG_SAM_FLAGS(KEY_READ.0),
-            &mut hkey,
-        );
+        let opened = RegOpenKeyExW(root, PCWSTR(subkey.as_ptr()), None, REG_SAM_FLAGS(KEY_READ.0), &mut hkey);
         if opened == ERROR_FILE_NOT_FOUND {
             return Ok(None);
         }
@@ -340,6 +340,20 @@ pub fn run_entry_remove() -> Result<(), String> {
 const ENV_KEY: &str = "Environment";
 const PATH_VALUE: &str = "Path";
 
+/// One string value under HKCU (the contract is on hkey_string_read).
+fn hkcu_string_read(subkey: &str, value: &str) -> Result<Option<(String, bool)>, String> {
+    hkey_string_read(HKEY_CURRENT_USER, "HKCU", subkey, value)
+}
+
+/// One string value under HKLM.
+fn hklm_string_read(subkey: &str, value: &str) -> Result<Option<(String, bool)>, String> {
+    hkey_string_read(HKEY_LOCAL_MACHINE, "HKLM", subkey, value)
+}
+
+/// The session-manager environment key holding the machine-wide PATH.
+const MACHINE_ENV_KEY: &str =
+    "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
+
 /// The current user's own PATH exactly as stored - `%VAR%` references unexpanded - and whether
 /// it is REG_EXPAND_SZ (src/userpath.rs). Ok(None) when the user has no PATH value of their own;
 /// an Err when there is one that cannot be read, so nothing writes over it.
@@ -354,6 +368,16 @@ pub fn user_path_write(path: &str, expand: bool) -> Result<(), String> {
     hkcu_string_write(ENV_KEY, PATH_VALUE, path, expand)?;
     broadcast_environment_change();
     Ok(())
+}
+
+/// The machine-wide PATH exactly as stored - %VAR% references unexpanded - and whether it is
+/// REG_EXPAND_SZ. This is the second source of the PATH a detached spawn rebuilds each time
+/// (SPEC §process.detached): a resident gateway's environment is a snapshot taken at boot, so
+/// a tool the administrator installed after this gateway started must still be findable.
+/// Ok(None) when the machine has no Path value; an Err when there is one that cannot be read
+/// as a string.
+pub fn machine_path_read() -> Result<Option<(String, bool)>, String> {
+    hklm_string_read(MACHINE_ENV_KEY, PATH_VALUE)
 }
 
 /// WM_SETTINGCHANGE("Environment") to every top-level window - the message Explorer rereads
@@ -439,7 +463,10 @@ pub fn self_private_bytes() -> u64 {
     }
 }
 
-fn process_working_set(pid: u32) -> Option<u64> {
+/// One process's working set, in bytes - the children rows' memory column.
+/// `None` when the pid cannot be opened (gone, or elevated): a row without a
+/// reading shows none, never 0.
+pub fn process_working_set(pid: u32) -> Option<u64> {
     // SAFETY: the handle is closed on every path; the counters struct is a plain out-parameter.
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid).ok()?;
@@ -475,6 +502,42 @@ pub fn pid_alive(pid: u32) -> bool {
         // code 259 is indistinguishable, which every Windows supervisor accepts.
         ok.is_ok() && exit_code == 259
     }
+}
+
+/// When a process was created, in Unix milliseconds. This is half of a Windows pid's identity:
+/// the OS recycles pids quickly, so "is pid N the process I started" is answered by pid PLUS
+/// creation time (SPEC §process.detached). None for a pid that cannot be opened - gone, or a
+/// process that refuses PROCESS_QUERY_LIMITED_INFORMATION to this one.
+pub fn process_created_at(pid: u32) -> Option<u64> {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::GetProcessTimes;
+    use windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
+    if pid == 0 {
+        return None;
+    }
+    // SAFETY: the handle is closed on every path; the four FILETIME structs are plain
+    // out-parameters owned by this frame.
+    unsafe {
+        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return None;
+        };
+        let mut creation = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        let ok = GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user);
+        let _ = windows::Win32::Foundation::CloseHandle(handle);
+        ok.ok()?;
+        Some(filetime_to_unix_ms(&creation))
+    }
+}
+
+/// FILETIME - 100 ns ticks since 1601-01-01 UTC - to Unix milliseconds. Saturating, so a
+/// misread zero struct clamps to the epoch rather than wrapping to a huge number.
+fn filetime_to_unix_ms(t: &windows::Win32::Foundation::FILETIME) -> u64 {
+    let ticks = ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64;
+    // 116444736000000000 ticks span 1601-01-01 to 1970-01-01.
+    ticks.saturating_sub(116_444_736_000_000_000) / 10_000
 }
 
 /// The process that spawned THIS one: parent pid + image name, both from one Toolhelp
@@ -577,15 +640,30 @@ pub fn process_name(pid: u32) -> Option<String> {
     }
 }
 
-/// The pid that owns a LISTENING socket on `port`, for either IP family —
-/// GetExtendedTcpTable with the listener-only class, the direct replacement for parsing
-/// `netstat -ano` text output. `None` = nothing is listening or the table could not be
-/// read; the caller's diagnostic words cover both.
+/// The pid that owns a LISTENING socket on `port`, for either IP family. `None` =
+/// nothing is listening or the table could not be read; the caller's diagnostic words cover
+/// both. Now a lookup into the full table read (see `tcp_listeners`), so the two never
+/// disagree about what the OS said.
 pub fn tcp_listener_pid(port: u16) -> Option<u32> {
+    tcp_listeners()
+        .ok()?
+        .into_iter()
+        .find(|(p, _)| *p == port)
+        .map(|(_, pid)| pid)
+}
+
+/// Every LISTENING TCP socket on the machine, as (local port, owning pid), IPv4 and IPv6, on
+/// any local address — one GetExtendedTcpTable pass per family with the listener-only class
+/// (SPEC §process.apps: one snapshot answers every managed app at once). A pid of 0 is never
+/// returned here; on Windows every owner is readable. Err when the OS table itself cannot be
+/// read - callers word that as "the listener table cannot be read", never as "nothing
+/// listens".
+pub fn tcp_listeners() -> std::io::Result<Vec<(u16, u32)>> {
     use windows::Win32::NetworkManagement::IpHelper::{
         GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER,
     };
     use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
+    let mut out = Vec::new();
     for family in [AF_INET.0 as u32, AF_INET6.0 as u32] {
         // SAFETY: the size-then-buffer dance is the API's own contract; the buffer is owned
         // memory of the size the first call asked for, and every row read stays inside the
@@ -601,19 +679,21 @@ pub fn tcp_listener_pid(port: u16) -> Option<u32> {
                 0,
             );
             if size == 0 {
-                continue;
+                continue; // no sockets of this family - an empty half, not a failure
             }
             let mut buf = vec![0u8; size as usize];
-            if GetExtendedTcpTable(
+            let code = GetExtendedTcpTable(
                 Some(buf.as_mut_ptr().cast()),
                 &mut size,
                 false,
                 family,
                 TCP_TABLE_OWNER_PID_LISTENER,
                 0,
-            ) != 0
-            {
-                continue;
+            );
+            if code != 0 {
+                // Half a table is worse than none: a port read on the missing family would
+                // verdict "stopped" for an app that is running. Fail the whole read instead.
+                return Err(std::io::Error::from_raw_os_error(code as i32));
             }
             let count = *(buf.as_ptr() as *const u32);
             let rows = buf
@@ -625,18 +705,30 @@ pub fn tcp_listener_pid(port: u16) -> Option<u32> {
             for i in 0..count.min(fit) {
                 let row = &*rows.add(i as usize);
                 // dwLocalPort is network byte order; LISTENER rows are all in LISTEN state.
-                if u16::from_be(row.dwLocalPort as u16) == port && row.dwOwningPid > 0 {
-                    return Some(row.dwOwningPid);
+                let port = u16::from_be(row.dwLocalPort as u16);
+                if row.dwOwningPid > 0 {
+                    out.push((port, row.dwOwningPid));
                 }
             }
         }
     }
-    None
+    Ok(out)
+}
+
+/// A memoizing creation-time lookup for the walks below: GetProcessTimes once per pid the
+/// walk REACHES, never once per edge and never for the whole snapshot (SPEC §process.tree).
+fn created_at_probe() -> impl FnMut(u32) -> Option<u64> {
+    let mut cache: std::collections::HashMap<u32, Option<u64>> = std::collections::HashMap::new();
+    move |pid| *cache.entry(pid).or_insert_with(|| process_created_at(pid))
 }
 
 /// `own_pid` and every descendant (any process type), via the Toolhelp parent->child walk —
 /// the direct replacement for the Node build's PowerShell CIM query. A reaper uses it to refuse
 /// to touch a stale-ledger pid the OS has since handed to one of THIS instance's own children.
+///
+/// The walk is a KILL-side walk (SPEC §process.tree): each parent edge is checked against
+/// creation times, and an edge whose times cannot be read does not count, so a reused pid
+/// never swells this set with strangers it "adopted".
 ///
 /// `None` = the process snapshot itself failed, so the tree is UNKNOWN. Callers fail closed on
 /// it (the reaper skips the whole sweep): a walk that under-reports would let a reaper kill a
@@ -665,34 +757,72 @@ pub fn descendant_pids(own_pid: u32) -> Option<Vec<u32>> {
 
         // No exclusion: the root IS this process, and the caller's whole question is which pids
         // belong to this instance.
-        let tree = crate::platform::walk_descendants(&parents, &[own_pid], None);
+        let tree = crate::platform::walk_descendants(
+            &parents,
+            &[own_pid],
+            None,
+            crate::platform::WalkMode::Kill,
+            &mut created_at_probe(),
+        );
         Some(tree.into_iter().collect())
     }
 }
 
-/// Force-kill a process AND its whole descendant tree, any depth. On Windows killing a parent
-/// does NOT cascade to children (the root cause of the Node build's orphan leak — an
-/// `npx`-launched MCP leaves cmd.exe -> node -> the real server, and only the top dies), so the
-/// tree is walked first and every member terminated explicitly. Replaces `taskkill /T /F` with
-/// the same snapshot walk — no subprocess.
-pub fn tree_kill(pid: u32) {
+/// How long a successfully-terminated victim is given to be observed dead. TerminateProcess is
+/// asynchronous; in practice the exit lands within the first sleep, and only a victim wedged in
+/// kernel cleanup ever uses the whole window.
+const TERMINATE_CONFIRM_MS: u64 = 1000;
+
+/// Force-kill a process AND its whole descendant tree, any depth, returning the pids that were
+/// STILL ALIVE after it ran (SPEC §process.tree). On Windows killing a parent does NOT cascade
+/// to children (the root cause of the Node build's orphan leak — an `npx`-launched MCP leaves
+/// cmd.exe -> node -> the real server, and only the top dies), so the tree is walked first
+/// (creation-time checked, Kill mode) and every member terminated explicitly. Replaces
+/// `taskkill /T /F` with the same snapshot walk — no subprocess.
+///
+/// A survivor is a victim that refused termination and still stands — an elevated process
+/// refusing PROCESS_TERMINATE to a non-elevated gateway, the exact case the caller must name
+/// instead of reporting "stopped". This is a synchronous call and may briefly sleep while
+/// confirming deaths; callers on the async runtime wrap it in a blocking task.
+pub fn tree_kill(pid: u32) -> Vec<u32> {
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
     // An unknown tree still kills the root itself (it was named explicitly); only the un-walked
     // descendants are at risk of leaking, and the proc children's kill-on-close job object is
     // the backstop for exactly that.
     let victims = descendant_pids(pid).unwrap_or_else(|| vec![pid]);
+    let mut survivors = Vec::new();
+    let mut terminated = Vec::new();
     for victim in victims {
         if victim == std::process::id() {
             continue; // a corrupted snapshot edge must never turn this into suicide
         }
         // SAFETY: the handle is closed on every path; TerminateProcess takes no pointers.
-        unsafe {
-            if let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, victim) {
-                let _ = TerminateProcess(handle, 1);
-                let _ = windows::Win32::Foundation::CloseHandle(handle);
+        let killed = unsafe {
+            match OpenProcess(PROCESS_TERMINATE, false, victim) {
+                Ok(handle) => {
+                    let ok = TerminateProcess(handle, 1);
+                    let _ = windows::Win32::Foundation::CloseHandle(handle);
+                    ok.is_ok()
+                }
+                Err(_) => false,
             }
+        };
+        if killed {
+            terminated.push(victim);
+        } else if pid_alive(victim) {
+            // Not terminable and still standing: report it. A pid that vanished between the
+            // walk and the open is not a survivor - it is dead.
+            survivors.push(victim);
         }
     }
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_millis(TERMINATE_CONFIRM_MS);
+    while !terminated.is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        terminated.retain(|p| pid_alive(*p));
+    }
+    survivors.extend(terminated);
+    survivors
 }
 
 /// Keep this process's standard handles out of the next child's inheritance.
@@ -719,6 +849,36 @@ pub fn keep_std_handles_from_children() {
         }
         let _ = clear_inherit(HANDLE(raw));
     }
+}
+
+/// The spawn posture of a program that must OUTLIVE the gateway (SPEC §process.detached):
+/// CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB.
+///
+/// Each flag avoids one Windows trap. BREAKAWAY: a child inherits its parent's job, and inside
+/// the IDE/agent job a gateway runs under, an app would die the moment that tool closed its
+/// handle (a job forbidding breakaway makes the spawn fail with os error 5; the caller then
+/// retries without the flag and says the app shares the gateway's job). NEW_PROCESS_GROUP:
+/// CTRL_CLOSE_EVENT on a shared console reaches everything attached to it, so the gateway's
+/// group must not be the app's. NO_WINDOW, never DETACHED_PROCESS: a console-less process
+/// makes its first console GRANDCHILD (`cmd` under `npx.cmd`) open a new visible window,
+/// while this combination gives each app its own hidden console (one conhost.exe each).
+pub fn detach_command(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
+}
+
+/// The retry of [`detach_command`] its own doc promises (SPEC §process.detached): the same
+/// console isolation minus the escape, for a job that forbids breakaway (os error 5). The
+/// child then dies when that job's owner closes its handle — which is exactly why the
+/// caller must put "shares the gateway's job" in the start's message.
+pub fn detach_command_without_breakaway(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
 }
 
 /// Clear HANDLE_FLAG_INHERIT on one handle. Failure (an invalid or pseudo handle) is the
@@ -763,8 +923,16 @@ pub fn process_tree_working_set(roots: &[u32]) -> Option<(u64, usize)> {
         }
 
         // The gateway is excluded: the panel reports its own footprint separately, so counting it
-        // in the subtree total would show it twice.
-        let tree = crate::platform::walk_descendants(&parents, roots, Some(std::process::id()));
+        // in the subtree total would show it twice. Measure mode: an edge whose creation times
+        // cannot be read still counts here - a wrong number is repaired next poll (SPEC
+        // §process.tree).
+        let tree = crate::platform::walk_descendants(
+            &parents,
+            roots,
+            Some(std::process::id()),
+            crate::platform::WalkMode::Measure,
+            &mut created_at_probe(),
+        );
 
         // Roots sampled but ALL gone by walk time (children exiting) would sum to a confident 0
         // MB — the walker reports "no measurement" instead, matching the Node build's contract

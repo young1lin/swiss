@@ -59,21 +59,30 @@ pub fn resolve(input: &str) -> Result<String, String> {
 /// (the actions' run paths) mask exactly these values, the same discipline env refs already
 /// have there: what a ref produced is a credential; what the user typed as a literal is config.
 pub fn resolve_collect(input: &str) -> Result<(String, Vec<String>), String> {
-    resolve_families(input, true, &vault_lookup)
+    resolve_families(input, true, false, &vault_lookup)
+}
+
+/// Strict for BOTH families (SPEC §process.apps): a missing env reference is a named error
+/// the way a missing vault name always was — the `process.exec` contract, now shared by the
+/// Process apps' start path. Also collects every value a reference produced (env and vault
+/// alike), because that is exactly the set the caller masks out of what it shows. Nothing is
+/// stored resolved.
+pub fn resolve_strict_collect(input: &str) -> Result<(String, Vec<String>), String> {
+    resolve_families(input, true, true, &vault_lookup)
 }
 
 /// The vault half alone: `${secret://...}` resolves, `${UPPER}` stays text. For a command
 /// that runs on ANOTHER machine (a remote exec), whose `${HOME}` is that machine's shell's
 /// to expand - substituting this machine's value there would be a silent wrong answer.
 pub fn resolve_secrets_collect(input: &str) -> Result<(String, Vec<String>), String> {
-    resolve_families(input, false, &vault_lookup)
+    resolve_families(input, false, false, &vault_lookup)
 }
 
 /// Is every vault reference in the string well-formed? The question validation asks - a job
 /// saved, a job loaded at boot - where "is it stored" is the wrong one: the vault may gain the
 /// name later, and the run is where a missing one fails. Never reads the vault.
 pub fn check_secret_refs(input: &str) -> Result<(), String> {
-    resolve_families(input, false, &|_| Some(String::new())).map(|_| ())
+    resolve_families(input, false, false, &|_| Some(String::new())).map(|_| ())
 }
 
 /// Split what follows `secret://` into the name and its optional default, and validate the
@@ -96,13 +105,65 @@ pub fn names_secret(s: &str, name: &str) -> bool {
         || s.contains(&format!("${{{SECRET_SCHEME}{name}:"))
 }
 
-fn resolve_families(
+/// What one vault reference stood for after [secret_refs_aside]: the name, and the text the
+/// stand-in carries - the stored value, or the reference's own default when the vault does
+/// not hold the name (`stored` false: the operator's literal, never masked).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetAside {
+    pub name: String,
+    pub value: String,
+    pub stored: bool,
+}
+
+/// Rewrite every vault reference into what `stand_in(n)` spells for the n-th distinct one
+/// (from 0) and hand back what each stands for, in that order: the values leave the text
+/// entirely, for a shell command whose values travel in its child's environment, never on
+/// its command line or through its parser (SPEC §llm.surfaces Agents Test). `expands` says,
+/// by the character index of its `$`, whether a reference sits where the consumer expands
+/// it; one that does not (a shell's single quotes) stays text, needing no grant. `gate`
+/// speaks next for every name, before the vault is read, so a refused name is refused
+/// whether it is stored or not. `${UPPER}` stays text, as in [resolve_secrets_collect]; a
+/// malformed reference and a missing name without a default fail as they do there.
+pub fn secret_refs_aside(
     input: &str,
-    env_refs: bool,
-    lookup: &dyn Fn(&str) -> Option<String>,
-) -> Result<(String, Vec<String>), String> {
+    expands: &dyn Fn(usize) -> bool,
+    gate: &dyn Fn(&str) -> Result<(), String>,
+    stand_in: &dyn Fn(usize) -> String,
+) -> Result<(String, Vec<SetAside>), String> {
+    let mut aside: Vec<(String, Option<String>, SetAside)> = Vec::new();
+    let out = scan(input, &mut |reference| match reference {
+        Ref::Env(_) => Ok(None),
+        Ref::Secret { at, .. } if !expands(at) => Ok(None),
+        Ref::Secret { name, default, .. } => {
+            gate(name)?;
+            let key = (name.to_string(), default.map(str::to_string));
+            if let Some(at) = aside.iter().position(|(n, d, _)| (n, d) == (&key.0, &key.1)) {
+                return Ok(Some(stand_in(at)));
+            }
+            let one = match (vault_lookup(name), default) {
+                (Some(value), _) => SetAside { name: name.to_string(), value, stored: true },
+                (None, Some(default)) => SetAside { name: name.to_string(), value: default.to_string(), stored: false },
+                (None, None) => return Err(format!("references secret://{name} which is not in the vault")),
+            };
+            aside.push((key.0, key.1, one));
+            Ok(Some(stand_in(aside.len() - 1)))
+        }
+    })?;
+    Ok((out, aside.into_iter().map(|(_, _, one)| one).collect()))
+}
+
+/// One reference the scanner found inside a `${...}` envelope; a vault one knows the
+/// character index of its `$`.
+enum Ref<'a> {
+    Secret { name: &'a str, default: Option<&'a str>, at: usize },
+    Env(&'a str),
+}
+
+/// The one envelope scanner every pass shares (SPEC §host.refs). `on` answers each
+/// well-formed reference with its replacement, or None to leave the `$` as plain text; a
+/// malformed vault reference refuses here, before `on` hears of it.
+fn scan(input: &str, on: &mut dyn FnMut(Ref<'_>) -> Result<Option<String>, String>) -> Result<String, String> {
     let mut out = String::with_capacity(input.len());
-    let mut resolved: Vec<String> = Vec::new();
     let chars: Vec<char> = input.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -110,40 +171,28 @@ fn resolve_families(
         if chars[i] == '$' && chars.get(i + 1) == Some(&'{') {
             if let Some(close) = (i + 2..chars.len()).find(|&j| chars[j] == '}') {
                 let content: String = chars[i + 2..close].iter().collect();
-                // Vault refs: the scheme inside the envelope is a declared intent. A
-                // well-formed name resolves or fails hard; a malformed one refuses rather
-                // than shipping a credential-shaped literal to a third party.
-                if let Some(rest) = content.strip_prefix(SECRET_SCHEME) {
-                    if let Some((name, default)) = secret_ref_parts(rest) {
-                        match (lookup(name), default) {
-                            (Some(value), _) => {
-                                resolved.push(value.clone());
-                                out.push_str(&value);
-                            }
-                            (None, Some(default)) => out.push_str(default),
-                            (None, None) => {
-                                return Err(format!(
-                                    "references secret://{name} which is not in the vault"
-                                ))
-                            }
-                        }
-                        i = close + 1;
-                        continue;
-                    }
-                    let shown: String = content.chars().take(24).collect();
-                    return Err(format!(
-                        "invalid reference '${{{shown}}}' — secret names are lowercase kebab ([a-z][a-z0-9-]{{0,63}}), optionally followed by :default"
-                    ));
-                }
-                // Env refs: the pre-vault grammar, unchanged and lenient (SPEC §host.refs). The
-                // vault-only pass leaves them as text for the far side's shell.
-                let is_env_name = env_refs
-                    && !content.is_empty()
+                let claimed = if let Some(rest) = content.strip_prefix(SECRET_SCHEME) {
+                    // Vault refs: the scheme inside the envelope is a declared intent. A
+                    // well-formed name resolves or fails hard; a malformed one refuses
+                    // rather than shipping a credential-shaped literal to a third party.
+                    let Some((name, default)) = secret_ref_parts(rest) else {
+                        let shown: String = content.chars().take(24).collect();
+                        return Err(format!(
+                            "invalid reference '${{{shown}}}' — secret names are lowercase kebab ([a-z][a-z0-9-]{{0,63}}), optionally followed by :default"
+                        ));
+                    };
+                    on(Ref::Secret { name, default, at: i })?
+                } else if !content.is_empty()
                     && content
                         .chars()
-                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-                if is_env_name {
-                    out.push_str(&env_lookup(&content).unwrap_or_default());
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                {
+                    on(Ref::Env(&content))?
+                } else {
+                    None
+                };
+                if let Some(text) = claimed {
+                    out.push_str(&text);
                     i = close + 1;
                     continue;
                 }
@@ -155,6 +204,42 @@ fn resolve_families(
         out.push(chars[i]);
         i += 1;
     }
+    Ok(out)
+}
+
+fn resolve_families(
+    input: &str,
+    env_refs: bool,
+    strict_env: bool,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<(String, Vec<String>), String> {
+    let mut resolved: Vec<String> = Vec::new();
+    let out = scan(input, &mut |reference| match reference {
+        Ref::Secret { name, default, .. } => match (lookup(name), default) {
+            (Some(value), _) => {
+                resolved.push(value.clone());
+                Ok(Some(value))
+            }
+            (None, Some(default)) => Ok(Some(default.to_string())),
+            (None, None) => Err(format!("references secret://{name} which is not in the vault")),
+        },
+        // Env refs: the pre-vault grammar, lenient by default (SPEC §host.refs) — the
+        // vault-only pass leaves them as text for the far side's shell. The strict pass
+        // (SPEC §process.apps) turns a missing name into a named error instead: the
+        // operator declared a variable this machine does not hold.
+        Ref::Env(_) if !env_refs => Ok(None),
+        Ref::Env(name) => match env_lookup(name) {
+            Some(value) => {
+                if strict_env {
+                    // The strict caller masks what a ref produced, env included.
+                    resolved.push(value.clone());
+                }
+                Ok(Some(value))
+            }
+            None if strict_env => Err(format!("references env var ${{{name}}} which is not set")),
+            None => Ok(Some(String::new())),
+        },
+    })?;
     Ok((out, resolved))
 }
 
@@ -246,6 +331,29 @@ mod tests {
         super::super::secretstore::inject_vault(&path);
         let rev = super::super::secretstore::vault_rev();
         super::super::secretstore::put_secret(&path, name, value, rev).expect("plant a secret");
+    }
+
+    #[test]
+    fn strict_resolution_refuses_a_missing_env_var_and_a_missing_secret() {
+        // The process.exec contract (SPEC §process.apps): a declared-but-absent credential is
+        // a configuration error, never an empty one. Both errors name the reference; neither
+        // can name a value, because none exists.
+        unsafe { std::env::set_var("SWISS_REFS_STRICT_SET", "strict-value") };
+        let (out, collected) =
+            resolve_strict_collect("a=${SWISS_REFS_STRICT_SET}").expect("resolves");
+        assert_eq!(out, "a=strict-value");
+        assert_eq!(collected, ["strict-value".to_string()], "env values collected too");
+
+        let err = resolve_strict_collect("b=${SWISS_REFS_STRICT_MISSING}").unwrap_err();
+        assert!(
+            err.contains("SWISS_REFS_STRICT_MISSING") && err.contains("which is not set"),
+            "{err}"
+        );
+        let err = resolve_strict_collect("c=${secret://refs-strict-absent}").unwrap_err();
+        assert!(
+            err.contains("secret://refs-strict-absent") && err.contains("not in the vault"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -470,6 +578,47 @@ mod tests {
         assert_eq!(out, "echo ${SWISS_REFS_FAR} $HOME vault-only-value");
         assert_eq!(got, ["vault-only-value"]);
         assert!(resolve_secrets_collect("${secret://refs-vault-absent}").is_err());
+    }
+
+    #[test]
+    fn set_aside_moves_the_values_out_of_the_text() {
+        // The shell path: every reference becomes its stand-in, the values travel beside the
+        // text, a repeat reuses its stand-in, and ${UPPER} stays for the shell.
+        plant("refs-aside-key", "aside-key-value");
+        let (out, aside) = secret_refs_aside(
+            "curl -H \"X: ${secret://refs-aside-key}\" ${HOME} ${secret://refs-aside-absent:dev} ${secret://refs-aside-key}",
+            &|_| true,
+            &|_| Ok(()),
+            &|n| format!("<{n}>"),
+        )
+        .expect("sets aside");
+        assert_eq!(out, "curl -H \"X: <0>\" ${HOME} <1> <0>");
+        assert_eq!(
+            aside,
+            [
+                SetAside { name: "refs-aside-key".into(), value: "aside-key-value".into(), stored: true },
+                SetAside { name: "refs-aside-absent".into(), value: "dev".into(), stored: false },
+            ]
+        );
+        assert!(!out.contains("aside-key-value"), "the value never stays in the text");
+        let err = secret_refs_aside("${secret://refs-aside-nowhere}", &|_| true, &|_| Ok(()), &|n| n.to_string()).unwrap_err();
+        assert!(err.contains("secret://refs-aside-nowhere") && err.contains("not in the vault"), "{err}");
+    }
+
+    #[test]
+    fn set_aside_asks_the_gate_before_the_vault() {
+        // A refused name is refused alike stored or not: the gate speaks first.
+        plant("refs-aside-gated", "gated-value-123");
+        let gate = |name: &str| if name == "refs-aside-open" { Ok(()) } else { Err(format!("{name} is not granted")) };
+        for name in ["refs-aside-gated", "refs-aside-never"] {
+            let err = secret_refs_aside(&format!("${{secret://{name}}}"), &|_| true, &gate, &|n| n.to_string()).unwrap_err();
+            assert_eq!(err, format!("{name} is not granted"));
+        }
+        assert!(secret_refs_aside("${secret://Bad}", &|_| true, &gate, &|n| n.to_string()).unwrap_err().contains("lowercase kebab"));
+        // Where the consumer does not expand it, a reference is text: no gate, no vault.
+        let (out, aside) = secret_refs_aside("a '${secret://refs-aside-never}' b", &|at| at != 3, &gate, &|n| n.to_string())
+            .expect("kept as text");
+        assert_eq!((out.as_str(), aside.len()), ("a '${secret://refs-aside-never}' b", 0));
     }
 
     #[test]

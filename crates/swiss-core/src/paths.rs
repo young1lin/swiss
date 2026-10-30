@@ -88,12 +88,27 @@ pub fn data_path(segments: &[&str]) -> PathBuf {
     p
 }
 
-/// The user's home directory, honoring USERPROFILE on Windows (Rust's `home_dir` was removed from
-/// std; this is the same two-step lookup Node's `os.homedir()` does).
+/// The user's home directory: USERPROFILE, then HOME, then the OS's own record of the account's
+/// profile - Node's `os.homedir()` order. A sandbox that runs the CLI with a scrubbed
+/// environment (Codex's code run, 2026-10-29) sets neither variable; falling back to the cwd
+/// there sent `swiss remote` looking for `.swiss/session.json` relative to whatever project it
+/// ran in, so it found no CLI key and every admin call came back 401.
 pub fn home_dir() -> PathBuf {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
+    home_from(std::env::var_os("USERPROFILE"), std::env::var_os("HOME"), std::env::home_dir)
+}
+
+/// [home_dir] over given variables and OS lookup; an empty variable counts as unset. "." only
+/// when the OS has no home for the account either.
+fn home_from(
+    profile: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+    os_home: impl FnOnce() -> Option<PathBuf>,
+) -> PathBuf {
+    profile
+        .filter(|v| !v.is_empty())
+        .or_else(|| home.filter(|v| !v.is_empty()))
         .map(PathBuf::from)
+        .or_else(|| os_home().filter(|p| !p.as_os_str().is_empty()))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
@@ -144,6 +159,20 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("swiss-home-{}", crate::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch home");
         dir
+    }
+
+    #[test]
+    fn a_scrubbed_environment_still_finds_the_home() {
+        let os = || Some(PathBuf::from("C:/Users/os"));
+        assert_eq!(home_from(Some("C:/Users/p".into()), Some("/h".into()), os), PathBuf::from("C:/Users/p"));
+        assert_eq!(home_from(None, Some("/h".into()), os), PathBuf::from("/h"));
+        assert_eq!(home_from(Some("".into()), Some("/h".into()), os), PathBuf::from("/h"));
+        // Neither variable: the OS's record, never the cwd.
+        assert_eq!(home_from(None, None, os), PathBuf::from("C:/Users/os"));
+        assert_eq!(home_from(Some("".into()), Some("".into()), os), PathBuf::from("C:/Users/os"));
+        assert_eq!(home_from(None, None, || None), PathBuf::from("."));
+        // The real lookup answers an absolute path on this machine.
+        assert!(std::env::home_dir().is_some_and(|p| p.is_absolute()));
     }
 
     #[test]

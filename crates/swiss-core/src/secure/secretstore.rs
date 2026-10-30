@@ -26,7 +26,7 @@
 //! only; a forgotten secret is re-stored, never revealed).
 //!
 //! The file is `secrets.json` — the same sealed envelope as every state file (statefile.rs),
-//! device-bound through the DPAPI-protected master key (SPEC §formats). Copying it to another
+//! device-bound through the DPAPI-protected master key (SPEC §core.masterkey). Copying it to another
 //! machine, or another Windows user, yields ciphertext nobody can open, by design; `swiss
 //! export` is the one sanctioned plaintext escape.
 //!
@@ -232,6 +232,67 @@ pub fn vault_group_of(name: &str) -> String {
 /// own delete prunes them - readers rank unknown names last anyway.
 pub fn vault_order() -> Vec<String> {
     vault().read().map(|v| v.order.clone()).unwrap_or_default()
+}
+
+/// The stored values an output mask hides - for a mask only, never for display (no API reads
+/// a value back). Values shorter than 8 bytes stay out, the floor every output mask shares: a
+/// short value is a common word, and masking it would garble text without hiding anything.
+/// Longest first, so a value that contains another is masked whole.
+pub fn mask_values() -> Vec<String> {
+    let mut values: Vec<String> = vault()
+        .read()
+        .map(|v| v.secrets.values().filter(|s| s.len() >= 8).cloned().collect())
+        .unwrap_or_default();
+    values.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    values.dedup();
+    values
+}
+
+/// `text` with every stored value masked (SPEC §host.vault): the last guard on what goes back
+/// to a model, whatever put the value there - a file a command wrote, a config read back, an
+/// error echoing a header. A mask, not a seal: a value a command re-encodes passes it.
+pub fn mask_stored(text: &str) -> String {
+    let mut out = text.to_string();
+    for value in mask_values() {
+        if out.contains(value.as_str()) {
+            out = out.replace(value.as_str(), super::literal::MASK);
+        }
+    }
+    out
+}
+
+/// One entry of an agent's secret grant (SPEC §llm.agents): `*` for every stored secret,
+/// `group:<group>` for a vault group's members, or one secret's name.
+pub fn valid_grant(item: &str) -> bool {
+    item == "*"
+        || item
+            .strip_prefix("group:")
+            .is_some_and(|g| !g.trim().is_empty() && g.len() <= 64 && !g.chars().any(char::is_control))
+        || valid_name(item)
+}
+
+/// Does a grant cover the secret `name`? A group entry reads the name's group now, so moving
+/// a secret between groups moves its grant with it.
+pub fn grant_covers(grant: &[String], name: &str) -> bool {
+    grant.iter().any(|item| {
+        item == "*" || item == name || item.strip_prefix("group:").is_some_and(|g| g == vault_group_of(name))
+    })
+}
+
+/// The stored secrets a grant covers, in name order, each with its group: what an agent is
+/// told it may use - names only, never a value.
+pub fn granted(grant: &[String]) -> Vec<(String, String)> {
+    if grant.is_empty() {
+        return Vec::new();
+    }
+    list_secrets()
+        .into_iter()
+        .filter(|name| grant_covers(grant, name))
+        .map(|name| {
+            let group = vault_group_of(&name);
+            (name, group)
+        })
+        .collect()
 }
 
 /// Replace the whole group model in ONE rev-checked write (SPEC §host.groups, SPEC §host.vault): the
@@ -616,6 +677,56 @@ mod tests {
         );
         let _ = delete_secret(&path, "ord-c", vault_rev());
         let _ = delete_secret(&path, "ord-a", vault_rev());
+    }
+
+    #[test]
+    fn the_mask_hides_every_stored_value_of_eight_bytes_or_more() {
+        let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        let path = crate::paths::test_home().join("secrets.json");
+        inject_vault(&path);
+        put_secret(&path, "mask-long", "long-value-1234", vault_rev()).expect("put");
+        put_secret(&path, "mask-longer", "long-value-12345678", vault_rev()).expect("put");
+        put_secret(&path, "mask-short", "short", vault_rev()).expect("put");
+        let masked = mask_stored("a long-value-12345678 b long-value-1234 c short");
+        assert_eq!(masked, format!("a {m} b {m} c short", m = super::super::literal::MASK));
+        assert!(mask_values().iter().all(|v| v.len() >= 8));
+        for name in ["mask-long", "mask-longer", "mask-short"] {
+            let _ = delete_secret(&path, name, vault_rev());
+        }
+    }
+
+    #[test]
+    fn a_grant_covers_names_groups_or_everything() {
+        let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        let path = crate::paths::test_home().join("secrets.json");
+        inject_vault(&path);
+        put_secret(&path, "grant-a", "v", vault_rev()).expect("put");
+        put_secret(&path, "grant-b", "v", vault_rev()).expect("put");
+        let mut members = std::collections::HashMap::new();
+        members.insert("grant-b".to_string(), "Deploy".to_string());
+        set_vault_groups(&path, vault_rev(), vec!["default".into(), "Deploy".into()], members, vec![]).expect("regroup");
+
+        assert!(grant_covers(&["grant-a".into()], "grant-a"));
+        assert!(!grant_covers(&["grant-a".into()], "grant-b"));
+        assert!(grant_covers(&["group:Deploy".into()], "grant-b"));
+        assert!(!grant_covers(&["group:Deploy".into()], "grant-a"));
+        assert!(grant_covers(&["*".into()], "grant-a"));
+        assert!(!grant_covers(&[], "grant-a"), "no grant covers nothing");
+        let listed = granted(&["group:Deploy".into(), "grant-a".into()]);
+        assert!(listed.contains(&("grant-a".into(), "default".into())), "{listed:?}");
+        assert!(listed.contains(&("grant-b".into(), "Deploy".into())), "{listed:?}");
+        assert!(granted(&[]).is_empty());
+        for ok in ["*", "group:Deploy", "group:My keys", "grant-a"] {
+            assert!(valid_grant(ok), "{ok}");
+        }
+        for bad in ["", "group:", "group: ", "Grant-A", "**", "under_score"] {
+            assert!(!valid_grant(bad), "{bad}");
+        }
+
+        set_vault_groups(&path, vault_rev(), vec!["default".into()], std::collections::HashMap::new(), vec![]).expect("restore");
+        for name in ["grant-a", "grant-b"] {
+            let _ = delete_secret(&path, name, vault_rev());
+        }
     }
 
     #[test]

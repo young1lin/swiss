@@ -30,6 +30,13 @@ use std::collections::HashMap;
 
 use super::ParentProcess;
 
+/// A memoizing creation-time lookup for the walks below: /proc/<pid>/stat read once per pid the
+/// walk REACHES, never once per edge and never for the whole snapshot (SPEC §process.tree).
+fn created_at_probe() -> impl FnMut(u32) -> Option<u64> {
+    let mut cache: HashMap<u32, Option<u64>> = HashMap::new();
+    move |pid| *cache.entry(pid).or_insert_with(|| process_created_at(pid))
+}
+
 /// The machine id: `/etc/machine-id`, then `/var/lib/dbus/machine-id`. World-readable on Linux,
 /// so it binds to the MACHINE, not the user — still enough to make a copied data dir useless
 /// elsewhere. None when neither file exists.
@@ -79,13 +86,27 @@ pub fn self_private_bytes() -> u64 {
     self_working_set()
 }
 
+/// One process's resident set, in bytes - the children rows' memory column.
+/// `None` when the pid cannot be read (gone, or another user's): a row
+/// without a reading shows none, never 0.
+pub fn process_working_set(pid: u32) -> Option<u64> {
+    proc_statm_rss(pid)
+}
+
 /// Sum of resident sets across the subtrees rooted at `roots`. `None` when no measurement could
 /// be taken at all, so the caller reports "pending" rather than a confident zero.
 pub fn process_tree_working_set(roots: &[u32]) -> Option<(u64, usize)> {
     let parents = parent_map()?;
     // The gateway is excluded: the panel reports its own footprint separately, so counting it in
-    // the subtree total would show it twice.
-    let tree = crate::platform::walk_descendants(&parents, roots, Some(std::process::id()));
+    // the subtree total would show it twice. Measure mode: an edge whose creation times cannot
+    // be read still counts - a wrong number is repaired next poll (SPEC §process.tree).
+    let tree = crate::platform::walk_descendants(
+        &parents,
+        roots,
+        Some(std::process::id()),
+        crate::platform::WalkMode::Measure,
+        &mut created_at_probe(),
+    );
 
     let mut total = 0u64;
     let mut count = 0usize;
@@ -142,15 +163,162 @@ fn ppid_from_stat(stat: &str) -> Option<u32> {
 
 /// `own_pid` and every descendant. `None` = the snapshot failed, so the tree is UNKNOWN and the
 /// caller must fail closed — see the Windows twin for why under-reporting is the dangerous
-/// direction here.
+/// direction here. The walk is a KILL-side walk (SPEC §process.tree): each parent edge is
+/// checked against creation times, and an edge whose times cannot be read does not count.
 pub fn descendant_pids(own_pid: u32) -> Option<Vec<u32>> {
     let parents = parent_map()?;
     Some(
-        crate::platform::walk_descendants(&parents, &[own_pid], None)
-            .into_iter()
-            .collect(),
+        crate::platform::walk_descendants(
+            &parents,
+            &[own_pid],
+            None,
+            crate::platform::WalkMode::Kill,
+            &mut created_at_probe(),
+        )
+        .into_iter()
+        .collect(),
     )
 }
+
+/// The image name of an arbitrary pid: the basename of /proc/<pid>/exe, falling back to comm —
+/// the Linux probe's identity rule (SPEC §process.detached). comm is truncated to 15 bytes by
+/// the kernel, so a caller matching a longer image against the fallback matches on its first
+/// 15 bytes. None without /proc (macOS) or for a gone pid.
+pub fn process_name(pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(exe) = std::fs::read_link(format!("/proc/{pid}/exe")) {
+            // "node (deleted)" keeps basename "node (deleted)"; the plain name is the common case.
+            let name = exe
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+        std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .ok()
+            .map(|s| s.trim().trim_end_matches(char::from(0)).to_string())
+            .filter(|s| !s.is_empty())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+/// When a process was created, in Unix milliseconds: /proc/<pid>/stat's starttime (field 22,
+/// clock ticks since boot) plus btime from /proc/stat (SPEC §process.detached). This is half of
+/// a pid's identity against reuse. None without /proc or for a gone pid.
+pub fn process_created_at(pid: u32) -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let ticks = super::procfs::stat_start_time_ticks(&stat)?;
+        let btime =
+            super::procfs::boot_time_seconds(&std::fs::read_to_string("/proc/stat").ok()?)?;
+        let hz = clock_ticks();
+        // Ticks are whole, so the sub-second part of the creation time is only tick-resolution;
+        // identity needs consistency, not precision.
+        Some((btime + ticks / hz) * 1000 + (ticks % hz) * 1000 / hz)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+/// The clock-tick frequency /proc/<pid>/stat's starttime is counted in. sysconf answers on every
+/// Linux; the fallback of 100 is what every mainstream distro ships, and only a kernel built
+/// with a different CONFIG_HZ would ever need it.
+#[cfg(target_os = "linux")]
+fn clock_ticks() -> u64 {
+    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if hz <= 0 {
+        100
+    } else {
+        hz as u64
+    }
+}
+
+/// Every LISTENING TCP socket, as (local port, owning pid): the LISTEN rows (state 0A) of
+/// /proc/net/tcp and /proc/net/tcp6, joined to their owners by socket inode through one pass
+/// over /proc/*/fd (SPEC §process.detached). Without privileges the fd dir of another user's
+/// process cannot be read, so such a port reads as owned by pid 0 - "owned by another user" to
+/// the caller. Err when /proc/net or /proc itself cannot be read (macOS: Unsupported).
+pub fn tcp_listeners() -> std::io::Result<Vec<(u16, u32)>> {
+    #[cfg(target_os = "linux")]
+    {
+        // The join pass first: inode -> pid. Errors reading one pid's fd dir (EACCES for other
+        // users) skip that pid alone; a socket it owns stays unclaimed and reads as pid 0 below.
+        let mut owners: HashMap<u64, u32> = HashMap::new();
+        for entry in std::fs::read_dir("/proc")? {
+            let Ok(entry) = entry else { continue };
+            let Some(pid) = entry.file_name().to_str().and_then(|s| s.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+                continue;
+            };
+            for fd in fds.flatten() {
+                if let Ok(target) = std::fs::read_link(fd.path()) {
+                    if let Some(inode) = super::procfs::socket_inode(&target.to_string_lossy()) {
+                        owners.entry(inode).or_insert(pid);
+                    }
+                }
+            }
+        }
+        let mut rows = Vec::new();
+        for file in ["/proc/net/tcp", "/proc/net/tcp6"] {
+            let text = std::fs::read_to_string(file)?;
+            for (port, inode) in super::procfs::tcp_listen_rows(&text) {
+                // An inode with no readable owner is another user's socket: pid 0, so the
+                // caller words it "owned by another user" rather than "free".
+                rows.push((port, owners.get(&inode).copied().unwrap_or(0)));
+            }
+        }
+        Ok(rows)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "the listener table is not readable on this platform",
+        ))
+    }
+}
+
+/// The spawn posture of a program that must OUTLIVE the gateway (SPEC §process.detached): the
+/// child calls setsid() between fork and exec - a new SESSION, not just a process group, so a
+/// terminal hangup never reaches it. The supervisor's children take a private process group
+/// instead (kill(-pgid) teardown); a detached app must not be in any group the gateway can
+/// signal wholesale.
+pub fn detach_command(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: pre_exec runs in the child between fork and exec. The closure only calls the
+    // setsid libc wrapper and formats nothing - async-signal-safe - and runs before any of the
+    // child's own threads exist. A failure (EPERM when the child somehow leads its group)
+    // aborts the spawn with that error rather than exec'ing attached.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+}
+
+/// Unix children inherit only the fds the spawn hands them (everything else is CLOEXEC), so
+/// there is nothing to clear here - the Windows twin exists because bInheritHandles hands a
+/// child EVERY inheritable handle. Present so the serve path calls one name on both platforms
+/// (SPEC §host.daemon).
+pub fn keep_std_handles_from_children() {}
 
 /// A pid that can be signalled without hitting something else by accident.
 ///
@@ -197,14 +365,21 @@ pub fn pid_alive(pid: u32) -> bool {
     std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-/// Force-kill a process AND its descendants. Killing a parent does not take its children here any
-/// more than on Windows: an `npx`-launched MCP is sh -> node -> the real server, and SIGKILL to
-/// the top leaves the rest running under init.
-pub fn tree_kill(pid: u32) {
+/// Force-kill a process AND its descendants, returning the pids that were STILL ALIVE after
+/// it ran (SPEC §process.tree). Killing a parent does not take its children here any more than
+/// on Windows: an `npx`-launched MCP is sh -> node -> the real server, and SIGKILL to the top
+/// leaves the rest running under init.
+///
+/// A survivor is a victim SIGKILL could not be delivered to - EPERM, a process belonging to
+/// another user. A successfully-signalled pid is not reported: SIGKILL cannot be blocked or
+/// ignored, and a zombie (dead, awaiting its parent's wait) already answers kill(2) and is
+/// nobody's survivor.
+pub fn tree_kill(pid: u32) -> Vec<u32> {
     // An unknown tree still kills the root, which was named explicitly; only the un-walked
     // descendants leak, exactly as on Windows.
     let victims = descendant_pids(pid).unwrap_or_else(|| vec![pid]);
     let self_pid = std::process::id();
+    let mut survivors = Vec::new();
     for victim in victims {
         if victim == self_pid {
             continue; // a corrupted snapshot edge must never turn this into suicide
@@ -213,10 +388,13 @@ pub fn tree_kill(pid: u32) {
             continue;
         };
         // SAFETY: the pid is known positive, so SIGKILL goes to one process, not to a group.
-        unsafe {
-            libc::kill(victim, libc::SIGKILL);
+        let refused = unsafe { libc::kill(victim, libc::SIGKILL) } != 0
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+        if refused {
+            survivors.push(victim as u32);
         }
     }
+    survivors
 }
 
 /// Kill every process in a private process group the supervisor created at spawn. The

@@ -34,23 +34,30 @@ mod job;
 #[cfg(windows)]
 pub use job::KillOnCloseJob;
 
+// Pure /proc text parsers, un-`cfg`'d so any host runs their tests (the same contract as
+// `walk_descendants` below); only the I/O that feeds them is Linux-only.
+mod procfs;
+
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
 pub use windows::{
-    descendant_pids, dpapi_protect, dpapi_unprotect, expand_env, keep_std_handles_from_children,
-    machine_id, parent_process, pid_alive, process_name, process_tree_working_set,
-    run_entry_read, run_entry_remove, run_entry_write, self_private_bytes, self_working_set,
-    tcp_listener_pid, tree_kill, user_path_read, user_path_write,
+    descendant_pids, detach_command, detach_command_without_breakaway, dpapi_protect,
+    dpapi_unprotect, expand_env, keep_std_handles_from_children, machine_id, machine_path_read,
+    parent_process, pid_alive, process_created_at, process_name, process_tree_working_set,
+    process_working_set, run_entry_read, run_entry_remove, run_entry_write, self_private_bytes,
+    self_working_set, tcp_listener_pid, tcp_listeners, tree_kill, user_path_read,
+    user_path_write,
 };
 
 #[cfg(not(windows))]
 mod unix;
 #[cfg(not(windows))]
 pub use unix::{
-    descendant_pids, dpapi_protect, dpapi_unprotect, kill_process_group, machine_id,
-    parent_process, pid_alive, process_tree_working_set, self_private_bytes,
-    self_working_set, tree_kill,
+    descendant_pids, detach_command, dpapi_protect, dpapi_unprotect, keep_std_handles_from_children,
+    kill_process_group, machine_id, parent_process, pid_alive, process_created_at, process_name,
+    process_tree_working_set, process_working_set, self_private_bytes, self_working_set,
+    tcp_listeners, tree_kill,
 };
 
 /// The process that spawned THIS one, as far as the platform can say without a subprocess:
@@ -61,6 +68,17 @@ pub use unix::{
 pub struct ParentProcess {
     pub pid: u32,
     pub name: String,
+}
+
+/// What a walk is for, which decides how an edge whose creation times cannot be read counts
+/// (SPEC §process.tree): a wrong MEMORY number is repaired by the next poll, a wrong KILL is
+/// not - so measuring keeps the edge and killing drops it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WalkMode {
+    /// Count edges whose times cannot be read - over-reporting a number is the safe direction.
+    Measure,
+    /// Drop edges whose times cannot be read - never act on a link that may reach a stranger.
+    Kill,
 }
 
 /// BFS from `roots` down a pid -> parent map, returning every pid in the subtrees.
@@ -77,6 +95,8 @@ pub(crate) fn walk_descendants(
     parents: &std::collections::HashMap<u32, u32>,
     roots: &[u32],
     exclude: Option<u32>,
+    mode: WalkMode,
+    created_at: &mut dyn FnMut(u32) -> Option<u64>,
 ) -> std::collections::HashSet<u32> {
     let mut queue: std::collections::VecDeque<u32> = roots.iter().copied().collect();
     let mut tree: std::collections::HashSet<u32> = std::collections::HashSet::new();
@@ -86,8 +106,23 @@ pub(crate) fn walk_descendants(
         if Some(pid) == exclude || !tree.insert(pid) {
             continue;
         }
+        // The parent's time is read once per reached pid (the caller's lookup memoizes); a root
+        // with no readable time still stands - it was named explicitly, not reached by an edge.
+        let parent_created = created_at(pid);
         for (child, parent) in parents.iter() {
-            if *parent == pid {
+            if *parent != pid {
+                continue;
+            }
+            // Toolhelp's parent pid outlives the parent: once a pid is reused, the new process
+            // "adopts" the dead one's orphans, and a walk from it would reach strangers. An edge
+            // counts only when the child was created at or after its parent (SPEC §process.tree).
+            let child_created = created_at(*child);
+            let edge_counts = match (parent_created, child_created) {
+                (Some(parent_at), Some(child_at)) => child_at >= parent_at,
+                // Unreadable times: keep the edge for a measurement, drop it for a kill.
+                _ => mode == WalkMode::Measure,
+            };
+            if edge_counts {
                 queue.push_back(*child);
             }
         }
@@ -113,8 +148,54 @@ mod tests {
         ])
     }
 
+    /// Measure with no creation times at all: every edge counts, which is exactly the
+    /// semantics the older tests below were written against.
     fn walk(roots: &[u32], exclude: Option<u32>) -> HashSet<u32> {
-        walk_descendants(&snapshot(), roots, exclude)
+        walk_descendants(&snapshot(), roots, exclude, WalkMode::Measure, &mut |_: u32| None)
+    }
+
+    #[test]
+    fn the_walk_drops_a_child_created_before_its_parent() {
+        // The stale Toolhelp link (SPEC §process.tree): pid 12's snapshot edge names 11 as its
+        // parent, but 12 was created BEFORE 11 - the parent's pid was reused and the newcomer
+        // "adopted" the dead one's orphan. Measure or Kill, the edge is a lie, and a walk from
+        // 11 must not reach 12 or anything behind it.
+        let times = HashMap::from([(11u32, 200u64), (12u32, 100u64), (13u32, 300u64)]);
+        for mode in [WalkMode::Measure, WalkMode::Kill] {
+            let tree = walk_descendants(
+                &snapshot(),
+                &[11],
+                None,
+                mode,
+                &mut |pid: u32| times.get(&pid).copied(),
+            );
+            assert_eq!(tree, HashSet::from([11]), "a reused pid adopted a stranger ({mode:?})");
+        }
+    }
+
+    #[test]
+    fn an_edge_without_times_counts_for_measuring_not_for_killing() {
+        // 12's creation time cannot be read (a pid that refuses PROCESS_QUERY, one already
+        // exiting): the memory reading keeps the edge - a wrong number is repaired by the next
+        // poll - and the kill drops it, because acting on an unreadable link could reach a
+        // stranger (SPEC §process.tree).
+        let times = HashMap::from([(11u32, 100u64), (13u32, 300u64)]);
+        let measure = walk_descendants(
+            &snapshot(),
+            &[11],
+            None,
+            WalkMode::Measure,
+            &mut |pid: u32| times.get(&pid).copied(),
+        );
+        assert_eq!(measure, HashSet::from([11, 12, 13]), "measuring keeps unreadable edges");
+        let kill = walk_descendants(
+            &snapshot(),
+            &[11],
+            None,
+            WalkMode::Kill,
+            &mut |pid: u32| times.get(&pid).copied(),
+        );
+        assert_eq!(kill, HashSet::from([11]), "killing drops unreadable edges");
     }
 
     #[test]
@@ -163,7 +244,7 @@ mod tests {
         // Snapshots are taken process by process, so pid reuse mid-walk can hand back a cycle.
         let looped = HashMap::from([(1, 2), (2, 3), (3, 1)]);
         assert_eq!(
-            walk_descendants(&looped, &[1], None),
+            walk_descendants(&looped, &[1], None, WalkMode::Measure, &mut |_: u32| None),
             HashSet::from([1, 2, 3])
         );
     }

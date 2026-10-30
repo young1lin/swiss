@@ -15,14 +15,16 @@
  */
 
 //! The sealed state format. `envelope.rs` is the frozen on-disk format every state file is
-//! written in (SPEC §formats.sealed); `key.rs` resolves the master key from the OS credential store;
+//! written in (SPEC §core.sealed); `key.rs` resolves the master key from the OS credential store;
 //! `statefile.rs` reads/writes sealed state; `envstore.rs` is the encrypted .env replacement;
 //! `secretstore.rs` is the secret vault (SPEC §host.vault), and `refs.rs` is the one resolver every
-//! credential string passes on its way to a live use.
+//! credential string passes on its way to a live use; `literal.rs` finds a credential typed into a
+//! command line as text instead of referenced (SPEC §remote.security).
 
 pub mod envelope;
 pub mod envstore;
 pub mod key;
+pub mod literal;
 pub mod refs;
 pub mod secretstore;
 pub mod statefile;
