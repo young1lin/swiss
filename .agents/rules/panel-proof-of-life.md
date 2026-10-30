@@ -31,8 +31,8 @@ entry ticket, never the proof.
    (`h.ts`). Never invent a parallel mechanism.
 2. **`npm run check`** in `crates/swiss-panel/panel` (typecheck + lint + emit freshness +
    vitest).
-3. **Rebuild and restart 19998**: `npm run build`, `touch crates/swiss-panel/src/lib.rs` (the
-   rust_embed trap below), then the swiss-live-verify loop. Never verify against a stale binary.
+3. **Rebuild and restart 19998**: `npm run build`, then the swiss-live-verify loop. Never verify
+   against a stale binary (the served-bytes check below).
 4. **Real-browser walk on a fresh page load**, with REAL clicks (CDP input events, not
    `element.click()`), on a page navigated from scratch:
    - every level of navigation reaches the view (rail → page → section);
@@ -52,9 +52,10 @@ entry ticket, never the proof.
 
 ## Mechanical traps that shipped broken code
 
-- `rust_embed` fingerprints can miss an asset change: the release build says "Finished" while
-  the binary still embeds the OLD panel. Touch `crates/swiss-panel/src/lib.rs` before every
-  release rebuild, then verify the served bytes, not the build status.
+- `rust_embed` fingerprints used to miss an asset change: the release build said "Finished"
+  while the binary still embedded the OLD panel. swiss-panel's `build.rs` now tracks the whole
+  `admin_assets/` tree (any edit, add or delete reruns it and rebuilds the crate), so the
+  `touch lib.rs` step is gone - still verify the served bytes, not the build status.
 - A script that splices code: `${` interpolates even under `String.raw` (write
   `"${" + "VAR}"`), and a real newline inside a JS string literal kills the module (use
   `String.fromCharCode(10)`).
