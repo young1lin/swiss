@@ -56,7 +56,7 @@ use swiss_core::platform::{chmod_private, mkdir_private, private_file_mode};
 use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
 use swiss_core::util::{now_ms, parse_iso_ms};
 use swiss_host::services::action::RunOutputTee;
-use swiss_host::services::runs::{RunHistorySink, RunView, SubmitRequest};
+use swiss_host::services::runs::{HistoryAck, RunHistorySink, RunView, SubmitRequest};
 
 /// Records older than this age out (the user's retention: 30 days).
 pub const MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
@@ -123,6 +123,15 @@ struct Ledger {
 pub struct RunHistory {
     dir: PathBuf,
     limits: Limits,
+    /// The module's own database (store.rs), attached by the plugin's start. While
+    /// attached this jsonl tree stays a WRITE-THROUGH spill — the tee file and the
+    /// index line land exactly as before, so the tree remains a complete fallback
+    /// and the recovery source for a crash between spill and commit — and the
+    /// database is the query authority.
+    store: tokio::sync::RwLock<Option<Arc<crate::store::RemoteHistory>>>,
+    /// The highest wire run id the database held at attach — the coordinator's
+    /// numbering floor, cached because the sink trait reads it synchronously.
+    run_floor: std::sync::atomic::AtomicU64,
     ledger: Mutex<Ledger>,
     /// The tees handed out at begin and not yet closed — finish finds its file here —
     /// each with the sanitized input, so a run in flight can say what it is running
@@ -251,11 +260,14 @@ impl RunHistory {
         let history = RunHistory {
             dir,
             limits,
+            store: tokio::sync::RwLock::new(None),
+            run_floor: std::sync::atomic::AtomicU64::new(0),
             ledger: Mutex::new(Ledger::default()),
             open: Mutex::new(HashMap::new()),
         };
-        // Before the ledger is built, so it counts what the pass sealed.
+        // Before the ledger is built, so it counts what the passes sealed and masked.
         history.seal_legacy_content();
+        history.mask_recorded_literals();
         let mut known = HashSet::new();
         let ledger = history.scan(|line| {
             known.insert(line.run_id);
@@ -292,6 +304,77 @@ impl RunHistory {
             .unwrap_or_else(|e| e.into_inner())
             .get(&run_id)
             .map(|(_, input)| input.clone())
+    }
+
+
+    // --- the module database seam (store.rs, SPEC `§host.history`) ----------------------------
+
+    /// Attach the module's database: it becomes the query authority and the final
+    /// commit of every record; this jsonl tree keeps its write-through spill role.
+    /// The coordinator's numbering floor rises to the database's highest run id, so
+    /// a restart never files two runs under one number.
+    pub async fn attach_history(&self, history: Arc<crate::store::RemoteHistory>) {
+        if let Some(floor) = history.last_run_id().await {
+            self.run_floor
+                .fetch_max(floor, std::sync::atomic::Ordering::SeqCst);
+        }
+        *self.store.write().await = Some(history);
+    }
+
+    /// Detach — the plugin's stop, before the bounded close. Returns the database it
+    /// held, so the stop can close it bounded after the accepted work drained.
+    pub async fn detach_history(&self) -> Option<Arc<crate::store::RemoteHistory>> {
+        self.store.write().await.take()
+    }
+
+    async fn attached(&self) -> Option<Arc<crate::store::RemoteHistory>> {
+        self.store.read().await.clone()
+    }
+
+    /// [Self::query] over whichever authority holds the log now.
+    pub async fn query_records(&self, q: PageQuery<'_>) -> (Vec<Value>, Option<u64>) {
+        if let Some(h) = self.attached().await {
+            return h.page(&q).await;
+        }
+        self.query(q)
+    }
+
+    /// [Self::get] over the attached authority first.
+    pub async fn get_record(&self, run_id: u64) -> Option<Value> {
+        if let Some(h) = self.attached().await {
+            return h.get(run_id).await;
+        }
+        self.get(run_id)
+    }
+
+    /// [Self::output] over the attached authority first.
+    pub async fn output_record(
+        &self,
+        run_id: u64,
+        after: u64,
+        max: usize,
+    ) -> Option<OutputChunk> {
+        if let Some(h) = self.attached().await {
+            return h.output(run_id, after, max).await;
+        }
+        self.output(run_id, after, max)
+    }
+
+    /// [Self::content] over the attached authority first.
+    pub async fn content_record(&self, run_id: u64) -> Result<Option<StoredContent>, String> {
+        if let Some(h) = self.attached().await {
+            return h.content(run_id).await;
+        }
+        self.content(run_id)
+    }
+
+    /// [Self::clear] over whichever authority holds the log. A clear resets the wire
+    /// records, never the coordinator's numbering and never the internal identity.
+    pub async fn clear_records(&self) {
+        if let Some(h) = self.attached().await {
+            let _ = h.clear().await;
+        }
+        self.clear();
     }
 
     /// What the log holds right now: (bytes on disk, runs).
@@ -343,6 +426,25 @@ impl RunHistory {
         self.seal_body(run_id, content)
     }
 
+    /// An exec's stdin: the script or SQL the run actually ran. The owner's finding
+    /// (2026-10-10): a record whose input says only `bash -s` answers nothing about
+    /// WHAT ran. Sealed beside the record exactly as a write's body is - a stdin can
+    /// carry a secret in clear, so the index never holds the text; the machine key
+    /// opens it on Show. A write run has no stdin, an exec run no written body, so
+    /// the two share the sealed slot without ever colliding.
+    fn seal_stdin(&self, run_id: u64, request: &SubmitRequest) -> (u64, bool) {
+        if request.action_type != "remote.exec" {
+            return (0, false);
+        }
+        let Some(stdin) = request.input.get("stdin").and_then(Value::as_str) else {
+            return (0, false);
+        };
+        if stdin.is_empty() {
+            return (0, false);
+        }
+        self.seal_body(run_id, stdin)
+    }
+
     /// Seal one body beside its record: the write half of [RunHistory::content], shared by
     /// a finishing run and by the pass that moves a legacy record's clear body across.
     fn seal_body(&self, run_id: u64, content: &str) -> (u64, bool) {
@@ -372,50 +474,72 @@ impl RunHistory {
     /// dropping what it could not keep. Nothing to move costs one streaming walk and no
     /// rewrite, which is every start after the first.
     fn seal_legacy_content(&self) {
-        let mut found = false;
-        {
-            let Ok(file) = File::open(self.index_path()) else {
-                return;
-            };
-            for line in BufReader::new(file).split(b'\n').map_while(Result::ok) {
-                if matches!(parse_line(&line), Some(Value::Object(m)) if legacy_body(&m).is_some())
-                {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        if !found {
+        if !self.any_line(|m| legacy_body(m).is_some()) {
             return;
         }
+        self.rewrite_index(|m| {
+            let moved = match (m.get("runId").and_then(Value::as_u64), legacy_body(m)) {
+                (Some(run_id), Some(body)) => {
+                    let body = body.to_string();
+                    let (bytes, truncated) = self.seal_body(run_id, &body);
+                    (bytes > 0).then_some((body.len(), bytes, truncated))
+                }
+                _ => None,
+            };
+            if let Some((clear_bytes, file_bytes, truncated)) = moved {
+                if let Some(Value::Object(input)) = m.get_mut("input") {
+                    input.remove("content");
+                    input.insert("contentBytes".into(), json!(clear_bytes));
+                }
+                m.insert("contentStored".into(), json!(true));
+                m.insert("contentFileBytes".into(), json!(file_bytes));
+                if truncated {
+                    m.insert("contentTruncated".into(), json!(true));
+                }
+            }
+        });
+    }
+
+    /// Records written before 2026-10-22 keep an exec's argv and cwd as typed, so a password
+    /// typed into a command line (`REDISCLI_AUTH=<value>` inside a `bash -c` word, on target
+    /// test, 2026-10-21) sat in every one - the panel's Runs page, `swiss run audit` and its
+    /// exports. One pass at open masks each such value the way [RunHistory::record] masks
+    /// one today ([mask_record]); the database rows get the same pass in
+    /// [crate::store::RemoteHistory::open]. Nothing to mask costs one streaming walk.
+    fn mask_recorded_literals(&self) {
+        if !self.any_line(|m| mask_record(&mut m.clone())) {
+            return;
+        }
+        self.rewrite_index(|m| {
+            mask_record(m);
+        });
+    }
+
+    /// Whether any whole line of the index passes `test` - one streaming walk, stopping at
+    /// the first.
+    fn any_line(&self, test: impl Fn(&Map<String, Value>) -> bool) -> bool {
+        let Ok(file) = File::open(self.index_path()) else {
+            return false;
+        };
+        BufReader::new(file)
+            .split(b'\n')
+            .map_while(Result::ok)
+            .any(|line| matches!(parse_line(&line), Some(Value::Object(m)) if test(&m)))
+    }
+
+    /// The index rewritten line by line through `edit`, into a temporary file renamed over
+    /// it - never the whole file in memory. A torn line (a kill mid-append) is dropped, as in
+    /// evict; a failed rewrite leaves the index exactly as it was.
+    fn rewrite_index(&self, mut edit: impl FnMut(&mut Map<String, Value>)) {
         let tmp = self.dir.join(format!("{INDEX_FILE}.tmp"));
         let rewrite = (|| -> std::io::Result<()> {
             let src = File::open(self.index_path())?;
             let mut out = BufWriter::new(File::create(&tmp)?);
             for line in BufReader::new(src).split(b'\n').map_while(Result::ok) {
-                // A torn line (a kill mid-append) is dropped by a rewrite, as in evict.
                 let Some(Value::Object(mut m)) = parse_line(&line) else {
                     continue;
                 };
-                let moved = match (m.get("runId").and_then(Value::as_u64), legacy_body(&m)) {
-                    (Some(run_id), Some(body)) => {
-                        let body = body.to_string();
-                        let (bytes, truncated) = self.seal_body(run_id, &body);
-                        (bytes > 0).then_some((body.len(), bytes, truncated))
-                    }
-                    _ => None,
-                };
-                if let Some((clear_bytes, file_bytes, truncated)) = moved {
-                    if let Some(Value::Object(input)) = m.get_mut("input") {
-                        input.remove("content");
-                        input.insert("contentBytes".into(), json!(clear_bytes));
-                    }
-                    m.insert("contentStored".into(), json!(true));
-                    m.insert("contentFileBytes".into(), json!(file_bytes));
-                    if truncated {
-                        m.insert("contentTruncated".into(), json!(true));
-                    }
-                }
+                edit(&mut m);
                 out.write_all(serde_json::to_string(&Value::Object(m))?.as_bytes())?;
                 out.write_all(b"\n")?;
             }
@@ -730,6 +854,12 @@ impl RunHistory {
                                 m.insert("contentStored".into(), json!(false));
                                 m.insert("contentEvicted".into(), json!(true));
                             }
+                            // ... and so is the sealed exec stdin in the same slot: the
+                            // line must not advertise a file this pass just deleted.
+                            if m.get("stdinStored") == Some(&json!(true)) {
+                                m.insert("stdinStored".into(), json!(false));
+                                m.insert("stdinEvicted".into(), json!(true));
+                            }
                             out.write_all(serde_json::to_string(&Value::Object(m))?.as_bytes())?;
                             out.write_all(b"\n")?;
                         }
@@ -761,13 +891,21 @@ impl RunHistory {
         *self.ledger.lock().unwrap_or_else(|e| e.into_inner()) = ledger;
     }
 
-    /// Append one finished run: the line, then the budgets.
-    fn record(&self, view: &RunView, request: &SubmitRequest, tee: &OutputFile) {
+    /// Append one finished run: the line, then the budgets. `Err` means the record is
+    /// NOT durably visible — the acknowledged-completion contract turns that into an
+    /// explicit status instead of the silent skip it used to be.
+    fn record(
+        &self,
+        view: &RunView,
+        request: &SubmitRequest,
+        tee: &OutputFile,
+    ) -> Result<Value, String> {
         let (output_bytes, tail) = tee.close();
         if output_bytes == 0 {
             let _ = std::fs::remove_file(self.output_path(view.run_id));
         }
         let (content_bytes, content_truncated) = self.seal_content(view.run_id, request);
+        let (stdin_bytes, stdin_truncated) = self.seal_stdin(view.run_id, request);
         let mut line = match view.to_json(false) {
             Value::Object(m) => m,
             _ => Map::new(),
@@ -785,32 +923,42 @@ impl RunHistory {
                 line.insert("contentTruncated".into(), json!(true));
             }
         }
-        let Ok(mut text) = serde_json::to_string(&Value::Object(line)) else {
-            return;
+        if stdin_bytes > 0 {
+            line.insert("stdinStored".into(), json!(true));
+            line.insert("stdinFileBytes".into(), json!(stdin_bytes));
+            if stdin_truncated {
+                line.insert("stdinTruncated".into(), json!(true));
+            }
+        }
+        // The input is masked already; a label and an error are texts a caller typed too.
+        mask_record(&mut line);
+        let Ok(mut text) = serde_json::to_string(&line) else {
+            return Err("serializing the run record failed".into());
         };
         text.push('\n');
         let mut ledger = self.ledger.lock().unwrap_or_else(|e| e.into_inner());
         mkdir_private(&self.dir);
-        let appended = std::fs::OpenOptions::new()
+        std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(self.index_path())
-            .and_then(|mut f| f.write_all(text.as_bytes()));
-        if appended.is_err() {
-            return;
-        }
+            .and_then(|mut f| f.write_all(text.as_bytes()))
+            .map_err(|e| format!("appending {}: {e}", self.index_path().display()))?;
         chmod_private(&self.index_path(), private_file_mode());
-        ledger.total_bytes += text.len() as u64 + output_bytes + content_bytes;
+        ledger.total_bytes += text.len() as u64 + output_bytes + content_bytes + stdin_bytes;
         ledger.runs += 1;
         if ledger.oldest_ended_ms.is_none() {
             ledger.oldest_ended_ms = view.ended_at_ms;
         }
-        if output_bytes + content_bytes > 0 && ledger.total_bytes > self.limits.max_total_bytes {
+        if output_bytes + content_bytes + stdin_bytes > 0 && ledger.total_bytes > self.limits.max_total_bytes {
             // The file just written is something a pass can evict: let it look.
             ledger.hold_until_ms = None;
         }
         drop(ledger);
+        // Housekeeping past the durable line: the record IS visible; eviction that
+        // cannot run now is the next pass's business, not a phantom write failure.
         self.enforce_budget();
+        Ok(Value::Object(line))
     }
 }
 
@@ -843,16 +991,42 @@ impl RunHistorySink for RunHistory {
         Some(tee)
     }
 
-    fn finish(&self, view: &RunView, request: &SubmitRequest) {
-        let tee = self
-            .open
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&view.run_id);
-        let Some((tee, _)) = tee else {
-            return; // never announced to us (begin declined it) — nothing to record
-        };
-        self.record(view, request, &tee);
+    fn finish<'a>(
+        &'a self,
+        view: RunView,
+        request: SubmitRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = HistoryAck> + Send + 'a>> {
+        Box::pin(async move {
+            let tee = self
+                .open
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&view.run_id);
+            let Some((tee, _)) = tee else {
+                // Never announced to us (begin declined it) — nothing was owed, so the
+                // honest acknowledgment is Recorded, not a phantom failure.
+                return HistoryAck::Recorded;
+            };
+            let line = match self.record(&view, &request, &tee) {
+                Ok(line) => line,
+                Err(reason) => return HistoryAck::Unavailable { reason },
+            };
+            // The module database (store.rs): the spill above already made the
+            // record recoverable; the acknowledged commit is the database's — a
+            // failure there is an honest Unavailable, never a silent skip.
+            if let Some(history) = self.attached().await {
+                let out = self.output_path(view.run_id);
+                let content = self.content_path(view.run_id);
+                return match history
+                    .record_run(&line, Some(&out), Some(&content))
+                    .await
+                {
+                    Ok(()) => HistoryAck::Recorded,
+                    Err(reason) => HistoryAck::Unavailable { reason },
+                };
+            }
+            HistoryAck::Recorded
+        })
     }
 
     /// The highest id on file - the floor the coordinator numbers from once this record
@@ -862,7 +1036,8 @@ impl RunHistorySink for RunHistory {
     fn last_run_id(&self) -> Option<u64> {
         let mut last = None;
         self.scan(|f| last = Some(last.map_or(f.run_id, |l: u64| l.max(f.run_id))));
-        last
+        let floor = self.run_floor.load(std::sync::atomic::Ordering::SeqCst);
+        last.map(|l| l.max(floor)).or((floor > 0).then_some(floor))
     }
 }
 
@@ -899,7 +1074,15 @@ impl LineFacts {
         } else {
             0
         };
-        let output_bytes = output_bytes + content_bytes;
+        // The sealed exec stdin rides the same evictable file slot as a write body,
+        // so a rebuilt ledger must count its bytes too - or the byte budget
+        // undercounts and a stdin-only row can never be reclaimed.
+        let stdin_bytes = if v.get("stdinStored").and_then(Value::as_bool) == Some(true) {
+            v.get("stdinFileBytes").and_then(Value::as_u64).unwrap_or(0)
+        } else {
+            0
+        };
+        let output_bytes = output_bytes + content_bytes + stdin_bytes;
         Some(LineFacts {
             run_id,
             ended_ms,
@@ -945,7 +1128,8 @@ fn legacy_body(line: &Map<String, Value>) -> Option<&str> {
 /// The submission's input with every `env` object reduced to its key list: an exec's
 /// env pairs are user-provided and may carry a token; the record says WHICH variables
 /// were set, never what to. Bodies - a write's content, an exec's stdin - shrink to
-/// their byte counts.
+/// their byte counts. Every other text - an exec's argv and cwd, a file action's paths -
+/// keeps its words with any credential literal's value masked ([masked_literals]).
 fn sanitized_input(input: &Value) -> Value {
     let Value::Object(obj) = input else {
         return Value::Null;
@@ -969,10 +1153,48 @@ fn sanitized_input(input: &Value) -> Value {
             let bytes = v.as_str().map(str::len).unwrap_or(0);
             out.insert("stdinBytes".into(), json!(bytes));
         } else {
-            out.insert(k.clone(), v.clone());
+            out.insert(k.clone(), masked_literals(v));
         }
     }
     Value::Object(out)
+}
+
+/// A recorded field with every credential literal's value masked (SPEC §remote.security): a
+/// text alone, an array of texts read as the one command line an argv makes. remote.exec
+/// refuses a literal in argv or cwd, but a run refused is still recorded, and records written
+/// before the refusal hold them - [RunHistory::open] masks those with this same function.
+fn masked_literals(value: &Value) -> Value {
+    use swiss_core::secure::literal;
+    match value {
+        Value::String(text) => Value::String(literal::mask(text)),
+        Value::Array(items) if items.iter().all(Value::is_string) => {
+            let words: Vec<String> = items.iter().filter_map(Value::as_str).map(str::to_string).collect();
+            json!(literal::mask_argv(&words))
+        }
+        other => other.clone(),
+    }
+}
+
+/// [masked_literals] over every text of a record a caller typed: its input's fields, its
+/// label and its error. Whether anything changed - an open-time pass rewrites only then.
+pub(crate) fn mask_record(line: &mut Map<String, Value>) -> bool {
+    let mut changed = false;
+    let mut mask = |value: &mut Value| {
+        let masked = masked_literals(value);
+        if masked != *value {
+            *value = masked;
+            changed = true;
+        }
+    };
+    if let Some(Value::Object(input)) = line.get_mut("input") {
+        input.values_mut().for_each(&mut mask);
+    }
+    for key in ["label", "error"] {
+        if let Some(value) = line.get_mut(key) {
+            mask(value);
+        }
+    }
+    changed
 }
 
 #[cfg(test)]
@@ -1037,7 +1259,17 @@ mod tests {
         if !output.is_empty() {
             tee.write(output);
         }
-        history.finish(&view(run_id, ended_at_ms), &req);
+        finish_recorded(history, view(run_id, ended_at_ms), req);
+    }
+
+    /// Drive the acknowledged finish to completion the way the coordinator's bounded
+    /// await would, and hold it to its contract: these records owed a line each.
+    fn finish_recorded(history: &RunHistory, view: RunView, req: SubmitRequest) {
+        let ack = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a minimal runtime for the sink's finish")
+            .block_on(history.finish(view, req));
+        assert_eq!(ack, HistoryAck::Recorded);
     }
 
     fn write(history: &RunHistory, run_id: u64, content: &str) {
@@ -1046,7 +1278,7 @@ mod tests {
             json!({ "target": "build", "remote": ".env", "content": content }),
         );
         let _tee = history.begin(run_id, &req).expect("recorded");
-        history.finish(&view(run_id, now_ms()), &req);
+        finish_recorded(history, view(run_id, now_ms()), req);
     }
 
     /// One record put back the way the log wrote it BEFORE 2026-09-28: the body in clear
@@ -1233,7 +1465,7 @@ mod tests {
             json!({ "target": "db", "argv": ["psql", "-X"], "stdin": stdin }),
         );
         let _tee = history.begin(9, &req).expect("recorded");
-        history.finish(&view(9, now_ms()), &req);
+        finish_recorded(&history, view(9, now_ms()), req);
 
         let (page, _) = history.page(None, 20, None);
         assert_eq!(page[0]["input"]["stdinBytes"], stdin.len());
@@ -1254,7 +1486,7 @@ mod tests {
         let tee = history.begin(7, &req).expect("recorded");
         tee.write(b"line one\n");
         tee.write(b"line two\n");
-        history.finish(&view(7, now_ms()), &req);
+        finish_recorded(&history, view(7, now_ms()), req);
 
         let (page, next) = history.page(None, 20, None);
         assert_eq!(page.len(), 1);
@@ -1292,13 +1524,59 @@ mod tests {
     }
 
     #[test]
+    fn a_credential_typed_into_a_command_is_recorded_masked_and_old_lines_are_masked_at_open() {
+        // 2026-10-21: a redis password typed into a `bash -c` word on target test sat in
+        // every record of those runs. Synthetic values here.
+        use swiss_core::secure::literal::MASK;
+        let dir = scratch();
+        let history = RunHistory::open(dir.clone());
+        let script = "R(){ sudo -n docker exec -e REDISCLI_AUTH=Xq7pLm2Rv9 redis redis-cli \"$@\"; }; R ping";
+        let req = request(
+            "remote.exec",
+            json!({ "target": "build", "argv": ["bash", "-c", script], "cwd": "/srv/x?token=Xq7pLm2Rv9" }),
+        );
+        let _tee = history.begin(11, &req).expect("recorded");
+        let mut refused = view(11, now_ms());
+        refused.label = "redis-cli -a Xq7pLm2Rv9 ping".into();
+        refused.error = Some("exit 1 after --password=Xq7pLm2Rv9".into());
+        finish_recorded(&history, refused, req);
+        run(&history, 12, b"PONG\n", now_ms());
+        let row = history.get(11).expect("the record");
+        assert_eq!(
+            row["input"]["argv"][2],
+            json!(format!("R(){{ sudo -n docker exec -e REDISCLI_AUTH={MASK} redis redis-cli \"$@\"; }}; R ping"))
+        );
+        assert_eq!(row["input"]["cwd"], json!(format!("/srv/x?token={MASK}")));
+        assert_eq!(row["label"], json!(format!("redis-cli -a {MASK} ping")));
+        assert_eq!(row["error"], json!(format!("exit 1 after --password={MASK}")));
+        let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).unwrap();
+        assert!(!raw.contains("Xq7pLm2Rv9"), "{raw}");
+
+        // The lines as a log before the fix kept them: the value in clear, and a torn tail.
+        std::fs::write(dir.join(INDEX_FILE), raw.replace(MASK, "Xq7pLm2Rv9") + "{\"runId\":13,").unwrap();
+        drop(history);
+        let history = RunHistory::open(dir.clone());
+        let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).unwrap();
+        assert!(!raw.contains("Xq7pLm2Rv9"), "{raw}");
+        assert_eq!(history.get(11).expect("kept")["input"]["argv"][2], row["input"]["argv"][2]);
+        assert_eq!(history.get(12).expect("untouched")["input"]["argv"], json!(["make"]));
+        assert_eq!(history.output(12, 0, usize::MAX).expect("its output").text, "PONG\n");
+        // Nothing left to mask: the next open leaves the file as it is.
+        drop(history);
+        let _history = RunHistory::open(dir.clone());
+        assert_eq!(std::fs::read_to_string(dir.join(INDEX_FILE)).unwrap(), raw);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn other_producers_runs_are_declined() {
         let dir = scratch();
         let history = RunHistory::open(dir.clone());
         let req = request("shell.run", json!({}));
         assert!(history.begin(1, &req).is_none());
         // A finish for a run never begun is a no-op, not a phantom line.
-        history.finish(&view(1, now_ms()), &req);
+        // A finish for a run never begun acknowledges cleanly, not a phantom line.
+        finish_recorded(&history, view(1, now_ms()), req);
         assert_eq!(history.page(None, 20, None).0.len(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1329,7 +1607,7 @@ mod tests {
         for i in 0..30 {
             tee.write(format!("row {i:02} ....\n").as_bytes()); // 12 bytes each, 360 total
         }
-        history.finish(&view(9, now_ms()), &req);
+        finish_recorded(&history, view(9, now_ms()), req);
         let chunk = history.output(9, 0, usize::MAX).unwrap();
         assert_eq!(chunk.total, 100, "the file stops at the cap");
         assert!(chunk.text.starts_with("row 00"));
@@ -1629,7 +1907,7 @@ mod tests {
             tee.write(b"x");
             let mut v = view(id, base + id);
             v.meta.insert("target".into(), json!(target));
-            history.finish(&v, &req);
+            finish_recorded(&history, v, req);
         }
         let (first, next) = history.page(None, 3, None);
         let ids: Vec<u64> = first.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
@@ -1670,7 +1948,7 @@ mod tests {
             } else {
                 "cli:jdoe@box".into()
             };
-            history.finish(&v, &req);
+            finish_recorded(&history, v, req);
         }
         let ids = |page: &[Value]| -> Vec<u64> {
             page.iter().map(|v| v["runId"].as_u64().unwrap()).collect()

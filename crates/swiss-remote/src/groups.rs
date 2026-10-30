@@ -98,7 +98,7 @@ mod tests {
             swiss_core::util::random_hex(8)
         ));
         std::fs::create_dir_all(&dir).expect("dir");
-        let system = RemoteSystem::open(RuntimeServices::new(), dir.join("remote.json"));
+        let system = RemoteSystem::open(RuntimeServices::new(swiss_host::services::BootInfo::default()), dir.join("remote.json"));
         system
             .with_store(|s| {
                 s.set_group_names(&["default".into(), "prod".into()])

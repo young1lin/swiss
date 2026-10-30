@@ -79,8 +79,8 @@ pub struct RemoteTarget {
     pub group: Option<String>,
 }
 
-/// A slug for target ids: lowercase, digits, inner dashes.
-fn valid_id(id: &str) -> bool {
+/// A slug for target ids: lowercase, digits, inner dashes. Public because the CLI applies the same rule to a notes file name, so a note can never name a target the table would refuse (§remote.project).
+pub fn valid_id(id: &str) -> bool {
     let mut chars = id.chars();
     match chars.next() {
         Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit() => {}

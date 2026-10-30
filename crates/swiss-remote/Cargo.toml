@@ -22,9 +22,22 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 async-trait = "0.1"
 thiserror = "2"
+# The module's own history database (SPEC §remote.history, planned): the same sqlx 0.9
+# engine family the host store already links, sqlite only.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "json"] }
 
 [dev-dependencies]
 # test-utils pins the deterministic master key for this crate's own test binaries.
 swiss-core = { path = "../swiss-core", version = "0.1.0", features = ["test-utils"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync", "fs", "test-util"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
+# The integration tests drive the real coordinator through the fake transport the
+# lib tests use (testing::system_with_fake) — the same test-utils seam swiss-mcp has.
+swiss-remote = { path = ".", version = "0.1.0", features = ["test-utils"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
+async-trait = "0.1"
+
+[features]
+default = []
+# Cross-crate/integration test support: the fake transport harness. Never shipped.
+test-utils = []

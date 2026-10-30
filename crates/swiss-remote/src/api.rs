@@ -165,14 +165,15 @@ async fn list_runs(
     }
     let [since, until] = window;
     let history = system.history();
-    let (runs, next_before) = history.query(crate::history::PageQuery {
+    let (runs, next_before) = history.query_records(crate::history::PageQuery {
         before,
         limit,
         target,
         since,
         until,
         actor,
-    });
+    })
+    .await;
     // Active = not terminal: the record only ever holds finished runs, so there is
     // no overlap to reconcile. They are happening now, so a window that reaches now
     // includes them; the actor predicate applies as it does to the record.
@@ -225,7 +226,7 @@ async fn get_run(State(state): State<Arc<RemoteState>>, Path(id): Path<String>) 
     let Some(run_id) = id.parse::<u64>().ok() else {
         return unknown_run(&id);
     };
-    match system.history().get(run_id) {
+    match system.history().get_record(run_id).await {
         Some(record) => admin_json(StatusCode::OK, record),
         None => unknown_run(&id),
     }
@@ -252,11 +253,11 @@ async fn run_output(
         .and_then(|m| m.parse::<usize>().ok())
         .unwrap_or(usize::MAX);
     let history = system.history();
-    let chunk = match history.output(run_id, after, max) {
+    let chunk = match history.output_record(run_id, after, max).await {
         Some(chunk) => chunk,
         None => {
             // No file: either the run never wrote (a record exists) or it is unknown.
-            if history.get(run_id).is_none() {
+            if history.get_record(run_id).await.is_none() {
                 return unknown_run(&id);
             }
             OutputChunk {
@@ -286,7 +287,7 @@ async fn clear_runs(State(state): State<Arc<RemoteState>>) -> Response {
     let Some(system) = state.live() else {
         return not_running();
     };
-    system.history().clear();
+    system.history().clear_records().await;
     admin_json(StatusCode::OK, json!({ "ok": true }))
 }
 
@@ -300,7 +301,7 @@ async fn run_content(State(state): State<Arc<RemoteState>>, Path(id): Path<Strin
     let Some(run_id) = id.parse::<u64>().ok() else {
         return unknown_run(&id);
     };
-    match system.history().content(run_id) {
+    match system.history().content_record(run_id).await {
         Ok(Some(kept)) => admin_json(
             StatusCode::OK,
             json!({
@@ -618,7 +619,7 @@ mod tests {
     async fn without_a_transport_any_nonempty_endpoint_is_accepted() {
         // The plugin-missing shape: the table stays writable, exec will explain.
         swiss_core::secure::key::use_test_master_key();
-        let services = swiss_host::services::RuntimeServices::new();
+        let services = swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo::default());
         let dir =
             std::env::temp_dir().join(format!("swiss-rapi-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch");

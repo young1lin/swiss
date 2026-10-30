@@ -38,6 +38,7 @@ pub mod api;
 pub mod groups;
 pub mod history;
 pub mod project;
+pub mod store;
 pub mod sync;
 pub mod target;
 
@@ -60,7 +61,11 @@ pub struct RemoteSystem {
     /// The durable run log (history.rs), one per system for the same reason the table
     /// is: a plugin restart mid-run must finish its record into the SAME instance,
     /// and the orphan sweep at open must run once, before any run is in flight.
-    history: Arc<RunHistory>,
+    /// LAZY (SPEC `§host.history` L1): constructing the system — composition, a disabled
+    /// plugin — opens nothing; the log opens on the first [Self::history] call, which
+    /// production reaches only from the plugin's start and its routes.
+    history: Mutex<Option<Arc<RunHistory>>>,
+    history_dir: std::path::PathBuf,
 }
 
 impl RemoteSystem {
@@ -74,7 +79,8 @@ impl RemoteSystem {
         Arc::new(RemoteSystem {
             services,
             store: Mutex::new(TargetStore::open(targets_path)),
-            history: RunHistory::open(history_dir),
+            history: Mutex::new(None),
+            history_dir,
         })
     }
 
@@ -83,9 +89,13 @@ impl RemoteSystem {
     }
 
     /// The run log — what the plugin registers as the coordinator's history sink and
-    /// what /api/remote/runs reads.
-    pub fn history(&self) -> &Arc<RunHistory> {
-        &self.history
+    /// what /api/remote/runs reads. Opens on first use, once.
+    pub fn history(&self) -> Arc<RunHistory> {
+        self.history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert_with(|| RunHistory::open(self.history_dir.clone()))
+            .clone()
     }
 
     /// Run a closure over the table under its lock. For mutations only; reads on the
@@ -108,8 +118,8 @@ impl RemoteSystem {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod testing {
+#[cfg(feature = "test-utils")]
+pub mod testing {
     //! The fake transport the action and route tests lease through: an in-memory
     //! endpoint that runs canned programs and keeps a file map - the same shape the
     //! tunnels tests use, minus every SSH detail.
@@ -203,9 +213,23 @@ pub(crate) mod testing {
                     delay_ms: 0,
                 });
             // Stream in small chunks so live output and cancel windows are real.
+            // The delay itself races cancel (biased): a canceled run must not sit
+            // out a 60 s chunk gap to notice - that is the doc's "exits its
+            // delayed program cleanly on cancel", and a timeout deadline would
+            // otherwise win the race.
             for chunk in program.stdout.chunks(3) {
                 if program.delay_ms > 0 {
-                    tokio::time::sleep(std::time::Duration::from_millis(program.delay_ms)).await;
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => {
+                            return Err(RemoteError::Canceled(
+                                "the remote command was canceled".into(),
+                            ));
+                        }
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(
+                            program.delay_ms,
+                        )) => {}
+                    }
                 }
                 tokio::select! {
                     biased;
@@ -458,7 +482,7 @@ pub(crate) mod testing {
     pub fn system_with_fake() -> (Arc<crate::RemoteSystem>, Arc<FakeTransport>) {
         swiss_core::secure::key::use_test_master_key();
         let transport = FakeTransport::new();
-        let services = RuntimeServices::new();
+        let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
         services
             .remote
             .register(transport.clone(), "fake")

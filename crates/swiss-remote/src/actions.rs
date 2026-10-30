@@ -281,6 +281,7 @@ impl RemoteExecAction {
                 )));
             }
         }
+        refuse_literals(&argv, cwd.as_deref())?;
         // Any string, empty included (an empty file is still a file); its bytes go to the
         // command untouched - no trimming, no line-ending rewrite.
         let stdin = match obj.get("stdin") {
@@ -323,7 +324,8 @@ struct ParsedExec {
 /// the vault does not hold the name, and a missing name without a default refuses the run
 /// before anything is sent. `${UPPER}` stays text - the far side's shell owns it. This runs
 /// INSIDE the action, after the run was recorded, so the run list, the audit and the panel
-/// keep the reference as typed; the values come back for the output mask.
+/// keep the reference as typed; the values come back for the output mask, with every other
+/// stored value.
 fn resolve_exec_refs(parsed: ParsedExec) -> Result<(ParsedExec, Vec<String>), ActionError> {
     let mut secrets: Vec<String> = Vec::new();
     let mut one = |text: &str, field: &str| -> Result<String, ActionError> {
@@ -352,6 +354,13 @@ fn resolve_exec_refs(parsed: ParsedExec) -> Result<(ParsedExec, Vec<String>), Ac
         Some(text) => Some(one(text, "stdin")?),
         None => None,
     };
+    // Beside what the references resolved to, every stored value: a command that prints a
+    // file holding one (a .env, a config written earlier) hands it back masked too.
+    for v in swiss_core::secure::secretstore::mask_values() {
+        if !secrets.contains(&v) {
+            secrets.push(v);
+        }
+    }
     Ok((
         ParsedExec {
             target: parsed.target,
@@ -386,6 +395,25 @@ fn check_exec_refs(parsed: &ParsedExec) -> Result<(), ActionError> {
         check(stdin, "stdin".to_string())?;
     }
     Ok(())
+}
+
+/// A credential typed into argv or cwd as text (SPEC §remote.security) is refused before
+/// anything is sent: an argv word shows in the far side's `ps` for the command's whole life
+/// and lands in every run record. The error names the field and what holds the value - never
+/// the value - and says where it belongs. env and stdin are not scanned: an env value leaves
+/// the far side's `ps` once the login shell execs, stdin never enters it, and the record keeps
+/// neither (only envKeys and a byte count).
+fn refuse_literals(argv: &[String], cwd: Option<&str>) -> Result<(), ActionError> {
+    use swiss_core::secure::literal;
+    let found = literal::find_argv(argv)
+        .map(|(i, hit)| (format!("argv[{i}]"), hit.slot))
+        .or_else(|| cwd.and_then(literal::find).map(|hit| ("cwd".to_string(), hit.slot)));
+    match found {
+        None => Ok(()),
+        Some((field, slot)) => Err(ActionError::InvalidInput(format!(
+            "{field} holds a credential as text (after {slot}): keep it in the vault and pass it by reference, in env preferably (--env 'NAME=${{secret://name}}', and under sudo `sudo -n --preserve-env=NAME ...`); a literal on a command line shows in the far side's ps for the command's whole life and in every run record"
+        ))),
+    }
 }
 
 const EXEC_FIELDS: [&str; 6] = ["target", "argv", "env", "cwd", "stdin", "timeoutMs"];
@@ -1015,6 +1043,9 @@ impl RemoteCatAction {
         // into two U+FFFD (SPEC §remote.utf8). The cap is 128 KiB, so holding the bytes is free.
         let mut bytes: Vec<u8> = Vec::new();
         let mut total: u64 = 0;
+        // Every stored value is masked before a byte reaches the run output or the outcome:
+        // a file is the plainest place a credential sits (SPEC §remote.security).
+        let mut mask = StreamMask::new(&swiss_core::secure::secretstore::mask_values());
         loop {
             if cancel.is_cancelled() {
                 return Err(ActionError::InvalidInput("the cat was canceled".into()));
@@ -1028,11 +1059,14 @@ impl RemoteCatAction {
                 )));
             }
             if let Some(sink) = sink {
-                sink.append_bytes(chunk.as_slice());
+                sink.append_bytes(&mask.feed(chunk.as_slice()));
             }
             bytes.extend_from_slice(&chunk);
         }
-        let text = String::from_utf8_lossy(&bytes).into_owned();
+        if let Some(sink) = sink {
+            sink.append_bytes(&mask.finish());
+        }
+        let text = swiss_core::secure::secretstore::mask_stored(&String::from_utf8_lossy(&bytes));
         let mut meta = Map::new();
         meta.insert("target".into(), json!(target.id));
         meta.insert("remote".into(), json!(remote));
@@ -1659,7 +1693,7 @@ mod tests {
     #[tokio::test]
     async fn no_transport_means_an_honest_enable_tunnels_error() {
         swiss_core::secure::key::use_test_master_key();
-        let services = RuntimeServices::new();
+        let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
         let dir =
             std::env::temp_dir().join(format!("swiss-rnone-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch");
@@ -2023,6 +2057,50 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_stored_value_no_reference_named_comes_back_masked_from_exec_and_cat() {
+        // A file the far side holds may carry a credential the vault also holds (a .env an
+        // agent wrote, a config): what the exec prints and what cat reads mask it.
+        plant_secret("remote-held-elsewhere", "held-elsewhere-value-9").await;
+        let (system, fake) = system_with_fake();
+        fake.program(
+            "cat-env",
+            FakeProgram {
+                argv0: "cat-env".into(),
+                stdout: b"API_KEY=held-elsewhere-value-9\n".to_vec(),
+                stderr: Vec::new(),
+                exit: 0,
+                delay_ms: 0,
+            },
+        );
+        let out = RemoteExecAction::new(system.clone())
+            .execute(
+                &json!({ "target": "dev", "argv": ["cat-env"] }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the exec runs");
+        assert_eq!(
+            out.output,
+            format!("API_KEY={}\n", swiss_host::mask::MASK)
+        );
+        fake.files.lock().unwrap().insert(
+            "/data/ws/proj/.env".to_string(),
+            b"API_KEY=held-elsewhere-value-9\nshort=v\n".to_vec(),
+        );
+        let out = RemoteCatAction::new(system)
+            .execute(
+                &json!({ "target": "dev", "remote": ".env" }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("cat runs");
+        assert_eq!(
+            out.output,
+            format!("API_KEY={}\nshort=v\n", swiss_host::mask::MASK)
+        );
+    }
+
     #[test]
     fn every_remote_action_runs_in_its_targets_lane() {
         let (system, _fake) = system_with_fake();
@@ -2083,6 +2161,36 @@ mod tests {
                 &json!({ "target": "dev", "cwd": "${secret://x:/srv/app}", "argv": ["ls"] })
             )
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_credential_typed_into_the_command_line_is_refused_without_echoing_it() {
+        let (system, fake) = system_with_fake();
+        let action = RemoteExecAction::new(system);
+        let script = "R(){ sudo -n docker exec -e REDISCLI_AUTH=Xq7pLm2Rv9 redis redis-cli \"$@\"; }; R ping";
+        for (input, field, slot) in [
+            (json!({ "target": "dev", "argv": ["bash", "-c", script] }), "argv[2]", "REDISCLI_AUTH="),
+            (json!({ "target": "dev", "argv": ["app", "--password", "pa55word"] }), "argv[2]", "--password"),
+            (json!({ "target": "dev", "argv": ["redis-cli", "-a", "pa55word", "ping"] }), "argv[2]", "redis-cli -a"),
+            (json!({ "target": "dev", "argv": ["redis-cli", "-u", "redis://:pa55word@cache", "ping"] }), "argv[2]", "a URL's password"),
+            (json!({ "target": "dev", "argv": ["ls"], "cwd": "/srv/x?token=tk0123456" }), "cwd", "token="),
+        ] {
+            let err = action.validate_input(&input).unwrap_err();
+            assert!(err.contains(field) && err.contains(slot) && err.contains("secret://"), "{err}");
+            for value in ["Xq7pLm2Rv9", "pa55word", "tk0123456"] {
+                assert!(!err.contains(value), "the value is echoed: {err}");
+            }
+            assert!(action.execute(&input, CancelSource::new().handle()).await.is_err());
+        }
+        assert!(fake.exec_calls.lock().unwrap().is_empty(), "nothing reached the transport");
+        // References, the far shell's variables, a flag that only names auth, and env values pass.
+        for input in [
+            json!({ "target": "dev", "argv": ["sudo", "-n", "--preserve-env=REDISCLI_AUTH", "docker", "exec", "-e", "REDISCLI_AUTH", "redis", "redis-cli", "--no-auth-warning", "ping"], "env": { "REDISCLI_AUTH": "${secret://redis-password}" } }),
+            json!({ "target": "dev", "argv": ["sh", "-c", "PGPASSWORD=\"$PW\" psql -c 'select 1'"], "env": { "PW": "typed-in-env" } }),
+            json!({ "target": "dev", "argv": ["app", "--token=${secret://app-token}", "--password-file", "/run/secrets/pw"] }),
+        ] {
+            assert!(action.validate_input(&input).is_ok(), "{input}");
+        }
     }
 
     #[tokio::test]
