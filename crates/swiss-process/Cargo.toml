@@ -1,0 +1,49 @@
+# The process plugin's apps half (SPEC §process.apps): config, status, control,
+# history, logs and the /api/process routes. A peer of swiss-remote: it depends on
+# the host contracts only - spawn_detached, the children registry, BootInfo - and
+# never on another subsystem crate.
+[package]
+name = "swiss-process"
+version.workspace = true
+description = "The swiss Process plugin: managed apps, their status, control, logs and history."
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+swiss-core = { path = "../swiss-core" }
+swiss-host = { path = "../swiss-host" }
+# The /api/process routes, mounted the way the terminal plugin mounts its tree.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", default-features = false, features = [
+    "rt",
+    "macros",
+    "time",
+    "sync",
+    "fs",
+    "io-util",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+async-trait = "0.1"
+# The history store seam (SPEC §host.history): the owner-scoped pool, the bounded
+# writer queue, generations and the engine gate. The jsonl era needed none of it.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
+# No encoding_rs here: the capture tail decodes through the supervisor's own
+# decoder (swiss-host's decode_child_output), so the rule stays ONE rule.
+
+[dev-dependencies]
+# test-utils pins the deterministic master key for the sealed tracked record.
+swiss-core = { path = "../swiss-core", version = "0.1.0", features = ["test-utils"] }
+tokio = { version = "1", default-features = false, features = [
+    "rt",
+    "macros",
+    "time",
+    "sync",
+    "fs",
+    "test-util",
+] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
