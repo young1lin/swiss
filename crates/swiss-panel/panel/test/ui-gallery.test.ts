@@ -49,6 +49,7 @@ const HELPERS: Record<string, string> = {
   relTime: "a relative moment's words - drawn inside the rows section's scheduled row",
   collapseRuns: "the timeline's ×N folding - drawn by timeline()",
   timelineToggle: "opens a timeline row in place - driven by the gallery's click (tested below)",
+  flowToggle: "opens a flow step in place - driven by the gallery's click (tested below)",
   clampMenuPos: "the menu's placement arithmetic - exercised by every popupMenu()",
   closeMenu: "closes popupMenu() - the demo's Escape and outside click",
   menuOpen: "popupMenu()'s open flag",
@@ -57,6 +58,13 @@ const HELPERS: Record<string, string> = {
   selectOpen: "a styled select's open flag",
   initSelects: "styles every select on the page - the gallery boots it",
   closeSheet: "closes sheet() - the demo's Cancel and Escape",
+  gripState: "the size and fold grip() remembers - read by every grip()",
+  gripFold: "folds or brings back the pane a grip() sizes - a page's own control (the Data agent button) calls it",
+  gripFolded: "a grip()'s fold flag",
+  chatGrow: "fits a chatPane()'s words box to its words - chatPane() wires it, a height and nothing drawn",
+  chatFollow: "keeps a chatPane()'s column end in view - called as an answer streams in",
+  copyText: "puts words on the clipboard - copyBtn() calls it, draws nothing",
+  dockShow: "brings back a pane its dock folded - called by a page's run or tab, draws nothing",
   sheetOpen: "sheet()'s open flag",
   showSheet: "puts a sheet() on screen - the demo's opener",
   initSheet: "makes #sheet modal - the gallery boots it",
@@ -76,6 +84,18 @@ const HELPERS: Record<string, string> = {
   CODE_SCHEMES: "the scheme preferences the picker lists - strings",
   isLocalAddress: "the loopback predicate redacted() applies - a predicate",
   stackSheet: "a second layer over the open sheet - its dialog is sheet(), its backdrop showSheet's; the tunnel key picker drives it",
+  graphElements: "graphView()'s nodes and edges in the engine's terms - data, drawn by it",
+  graphHops: "each node's distance from the centre - numbers graphView() fades by",
+  graphLayoutOf: "graphView()'s layout choice - options, drawn by it",
+  graphPalette: "the tokens graphView() hands the engine - colours read from the sheet",
+  graphStyle: "the engine's stylesheet graphView() builds from the palette - data",
+  mixHex: "graphView()'s colour blend - a string",
+  dotSize: "a whole graph's dot for a link count - a number graphView() draws by",
+  groupElementId: "a box's id in the engine - graphView() draws the box",
+  packBoxes: "a boxed graph's positions - graphView() lays the boxes out by them",
+  pickSelect: "moves a pickList()'s selection in place - the memory list's arrows drive it",
+  diffFiles: "parses the patch diffNode() draws, file by file - a pure reader with nothing to show",
+  diffStatusWord: "a file status as its word - the label inside diffNode()'s fold, nothing drawn of its own",
 };
 
 /** The shape each drawing function leaves in the DOM: how a claim is checked. */
@@ -94,6 +114,7 @@ const SIG: Record<string, string> = {
   filterInput: "input.filter[type=search]",
   pager: ".pager[role=navigation] .pager-status[aria-live=polite]",
   valueBlock: ".vblock > .vblock-head .vblock-cap",
+  proseText: ".vblock > .vblock-text + .vblock-text",
   timelineMeta: ".tl-meta",
   form: ".form .fld",
   field: ".fld > label.field > span + *",
@@ -102,7 +123,14 @@ const SIG: Record<string, string> = {
   formActions: ".form-actions > .btn",
   hint: ".fld > .hint, .form > .hint",
   formCap: ".form-cap",
-  formFold: "details.fold > summary + .fold-body .field-row > .btn",
+  formFold: "details.fold > summary + .fold-body",
+  editList: ".edit-list[style*=\"--edit-cols\"] > .edit-line",
+  editLine: ".edit-line > input + select + .dd",
+  editSub: ".edit-line > .edit-sub:not([hidden])",
+  editDetail: ".edit-line > .edit-detail:not([hidden]) > .fld",
+  checkRow: ".check-row > label.check + label.check > input[type=checkbox]",
+  checkGrid: ".check-grid > .fld > label.check > input[type=checkbox]",
+  split: ".split > .split-main + aside.split-aside",
   sw: ".sw[role=switch]",
   styleSelect: ".dd",
   pane: "main.pane",
@@ -113,13 +141,47 @@ const SIG: Record<string, string> = {
   inlineForm: ".inline-form",
   section: "section.sec",
   card: ".group:not(.grp)",
+  workspace: ".ws > aside.ws-side + .grip + .ws-main",
+  grip: ".ws > aside.ws-side + .grip.x[role=separator] > button.grip-btn",
+  dock: ".dock > .dock-top + .dock-head > .dock-edge[role=separator]",
+  chatPane: ".grip.x.end + aside.chat-pane > .chat-head + .chat-body + .chat-compose > textarea + .chat-acts > .chat-note",
+  chatCommands: ".chat-compose > textarea[aria-controls] ~ .chat-cmds[role=listbox]",
+  chatQueue: ".chat-compose > .chat-queue > button.chat-queue-head + .chat-queue-list > .chat-queue-row",
+  copyBtn: ".tc-turn > .tc-acts > .btn.icon.copy-btn",
+  chatStats: ".chat-compose > .chat-stats > button.chat-ctx[aria-haspopup=dialog] > svg.chat-ring",
+  wsSide: "aside.ws-side > .ws-side-head > .sec-cap",
+  wsHead: "header.ws-head > .ws-head-row h1.ws-title",
+  wsSplit: ".ws-split > section.ws-pane.fixed.start + section.ws-pane",
+  wsBar: ".ws-bar",
+  wsScroll: ".ws-scroll",
+  pickList: ".pick-list[role=listbox] > .pick-row",
+  pickRow: "button.pick-row[role=option] > .pick-top > .pick-name",
+  catChip: ".cat",
+  docHead: "header.doc-head > h2.doc-title",
+  markdownNode: ".md > p",
+  refLink: "button.ref",
+  diffNode: ".diff > details.diff-file > pre.diff-body > .dl.add[data-n]",
+  graphView: ".gv > .gv-stage[role=group] > .gv-canvas",
+  graphLegend: ".gv-legend > .gv-key > .gv-sw",
   kvRow: ".kv",
   row: ".lrow",
+  portChip: ".pchip",
+  pickPanel: ".dirpick",
+  pickerRow: ".dirpick-row",
   sideRow: ".side-row",
   groupNode: ".grp",
   seg: ".seg[role=tablist]",
   objTab: ".otab[role=tab] > button.otab-close",
   timeline: ".tl .tl-item",
+  flow: ".fl > .fl-step > .fl-row > .fl-sum",
+  flowProse: ".fl > .fl-prose",
+  flowIO: ".fl-io > .fl-io-part > .fl-io-label",
+  flowHead: ".fl-head > .fl-facts.lead",
+  factLine: ".fl-facts > .fl-fact + .fl-sep",
+  transcript: ".tc-col .tc-turn ~ .tc-turn",
+  transcriptTurn: ".tc-turn > .tc-head .tc-role",
+  transcriptText: ".tc-text",
+  toolChip: ".tc-chip code",
   jsonCodeNode: "pre.jv",
   tokenCodeNode: "pre.jv",
   emptyNode: ".empty",
@@ -197,7 +259,9 @@ describe("SPEC §panel.ui - ui.html is the library and nothing else", () => {
   });
 
   const IMPORTS: Record<string, string[]> = {
-    "ui-gallery.ts": ["./h.js", "./i18n.js", "./ui-scenes.js", "./ui/index.js", "./locales/zh.js"],
+    // graph-engine.js is the vendored engine graphView() is handed (the library imports no
+    // vendor): a loader, not an api, a state or a view.
+    "ui-gallery.ts": ["./h.js", "./i18n.js", "./ui-scenes.js", "./ui/index.js", "./locales/zh.js", "./graph-engine.js"],
     "ui-scenes.ts": ["./h.js", "./i18n.js", "./ui/index.js"],
   };
   for (const [file, allowed] of Object.entries(IMPORTS)) {
@@ -272,8 +336,8 @@ describe("SPEC §panel.ui - every export is on the page", () => {
 });
 
 describe("SPEC §panel.ui - the scenes", () => {
-  it("there are the four §2.6 names", () => {
-    expect(SCENES.map((s) => s.id)).toEqual(["content", "resource", "event", "empty"]);
+  it("the page scenes include the conversation reference", () => {
+    expect(SCENES.map((s) => s.id)).toEqual(["conversation", "content", "resource", "event", "empty", "process"]);
   });
 
   for (const s of SCENES) {
@@ -425,6 +489,19 @@ describe("SPEC §panel.ui - the switches and demos answer", () => {
     expect(sheetHost().hidden).toBe(true);
   });
 
+  it("chat sheet keeps its composer outside the transcript while sending new turns", async () => {
+    await go("#components");
+    click(app().querySelector("[data-demo=chat]")!);
+    const input = sheetHost().querySelector<HTMLTextAreaElement>(".sheet-compose textarea")!;
+    expect(input).toBeTruthy();
+    expect(sheetHost().querySelector(".sheet-body textarea")).toBe(null);
+    input.value = "another question";
+    click(sheetHost().querySelector(".sheet-foot .primary")!);
+    expect(sheetHost().querySelector(".sheet-body")!.textContent).toContain("another question");
+    expect(input.value).toBe("");
+    key(sheetHost().querySelector(".sheet")!, "Escape");
+  });
+
   it("field sheet: a taken name paints the inline error and stays open; a fresh one closes it", async () => {
     await go("#components");
     click(app().querySelector("[data-demo=field]")!);
@@ -450,6 +527,19 @@ describe("SPEC §panel.ui - the switches and demos answer", () => {
     click(item.querySelector(".tl-sum")!);
     expect(item.classList.contains("open")).toBe(false);
     expect(item.querySelector(".tl-body")).toBeNull();
+  });
+
+  it("flow: a click on a closed tool call opens it with its input and output, a second closes it", async () => {
+    await go("#components");
+    const step = app().querySelector<HTMLElement>('[data-ui~="flow"] .fl-step[data-fl-id="f4"]')!;
+    expect(step.classList.contains("live")).toBe(true);
+    click(step.querySelector(".fl-sum")!);
+    expect(step.classList.contains("open")).toBe(true);
+    expect(step.querySelector(".fl-sum")!.getAttribute("aria-expanded")).toBe("true");
+    expect(step.querySelector(".fl-body .fl-io pre.jv")).not.toBeNull();
+    click(step.querySelector(".fl-sum")!);
+    expect(step.classList.contains("open")).toBe(false);
+    expect(step.querySelector<HTMLElement>(".fl-body")!.hidden).toBe(true);
   });
 
   it("anchored menu: a resource head's ⋯ hangs it inside the head's actions; Escape closes it", async () => {
