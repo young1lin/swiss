@@ -27,7 +27,7 @@
 //!  - a fake http proxy answering CONNECT with a canned status line and pumping on 2xx.
 //!
 //! Shared by the proxy dialer tests (proxy.rs) and the manager-level lifecycle tests
-//! (manager.rs), including the jump chains (SPEC §tunnels.jump).
+//! (manager/), including the jump chains (SPEC §tunnels.jump).
 
 #![cfg(test)]
 

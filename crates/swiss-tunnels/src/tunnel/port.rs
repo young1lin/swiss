@@ -104,9 +104,16 @@ pub async fn force_free(pid: u32) -> Result<(), String> {
     {
         // Direct Win32 subtree kill (AGENTS.md — no subprocess where a syscall exists): the
         // platform walk terminates the holder AND its children, wider than `taskkill /F`
-        // without /T ever was. TerminateProcess is asynchronous, so poll briefly — an honest
-        // error must still reach the panel, not a success the OS has not carried out yet.
-        swiss_core::platform::tree_kill(pid);
+        // without /T ever was, and reports whoever survived it (SPEC §process.tree) — an
+        // elevated holder refuses PROCESS_TERMINATE, and that error must reach the panel
+        // instead of a success the OS has not carried out. tree_kill confirms the deaths
+        // itself, so the poll below only covers the OS's last word on the port-holder pid.
+        let survivors = swiss_core::platform::tree_kill(pid);
+        if !survivors.is_empty() {
+            return Err(format!(
+                "could not kill the port holder (pid {pid} survived - access denied, is it elevated?)"
+            ));
+        }
         for _ in 0..50 {
             if !swiss_core::platform::pid_alive(pid) {
                 log::warn("force-freed a port holder", Some(json!({ "pid": pid })));
