@@ -22,7 +22,7 @@
    address it. The last block renders every component with every option and checks each class
    it drew is styled by base.css or ui.css - the two sheets the gallery links - so a typo in a
    class name fails here instead of rendering as an unstyled box. */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { h } from "../src/h.js";
 import { install } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
@@ -33,14 +33,39 @@ import {
 import {
   anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, failNote, filterInput,
   fmtMs, groupNode, heldDot, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
-  objTab, pager, paneBody, paneHead, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
-  relTime, timeLabel, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
+  objTab, pager, paneBody, paneHead, pickPanel, pickerRow, portChip, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
+  relTime, timeLabel, timeline, timelineMeta, timelineToggle, toTop, transcript, transcriptText, transcriptTurn, toolChip, valueBlock,
 } from "../src/ui/index.js";
-import type { TimelineItem } from "../src/ui/index.js";
+import {
+  catChip, docHead, dotSize, graphElements, graphHops, graphLayoutOf, graphLegend, graphPalette, graphStyle, graphView, groupElementId, markdownNode,
+  mixHex, packBoxes, pickList, pickRow, pickSelect, refLink, sideRow, workspace, wsBar, wsHead, wsScroll, wsSide, wsSplit,
+} from "../src/ui/index.js";
+import { chatFollow, chatPane, chatQueue, chatStats, copyBtn, copyText, dock, dockShow, grip, gripFold, gripFolded, gripState } from "../src/ui/index.js";
+import { diffFiles, diffNode, tokenCodeNode } from "../src/ui/index.js";
+import type { GraphEdge, GraphEls, GraphGroup, GraphNode, GraphSpec, TimelineItem } from "../src/ui/index.js";
 import { allClassesOf, parseCss } from "./css-rules.js";
+import { drawn, fakeEngine } from "./graph-fake.js";
 import { sheet } from "./styles.js";
 
 afterEach(() => { install("en", null); });
+
+/* The mermaid bundle is 5.5MB of browser code that needs a layout engine; vendor-markdown.test.ts
+   holds it to its contract. Here a stand-in answers the way mermaid's sandbox level does - one
+   sandboxed iframe carrying the drawing - fails "not a diagram" the way a parse error does, and
+   for "escape" hands back what a sandbox must never be: bare SVG, and a frame allowed scripts. */
+const mermaidFake = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: async (id: string, text: string): Promise<{ svg: string }> => {
+    if (text.startsWith("not a diagram")) throw new Error("Parse error on line 1");
+    if (text.startsWith("escape svg")) return { svg: `<svg id="${id}"><text>x</text></svg>` };
+    const sandbox = text.startsWith("escape scripts") ? "allow-scripts allow-popups" : "allow-top-navigation-by-user-activation allow-popups";
+    return {
+      svg: `<iframe style="width:100%;height:120px;border:0;margin:0" src="about:blank#${id}" sandbox="${sandbox}"` +
+        ` title="${text.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">The "iframe" tag is not supported by your browser.</iframe>`,
+    };
+  },
+}));
+vi.mock("../../src/admin_assets/js/vendor/mermaid/12.1.0/index.js", () => ({ loadMermaid: async () => mermaidFake }));
 
 function useHref(root: Element): string | null {
   const use = root.querySelector("use");
@@ -134,6 +159,77 @@ describe("ui/button", () => {
   });
 });
 
+describe("ui/form constrained picker", () => {
+  it("uses a zero-minimum form track and lets the path field shrink beside Go and Up", () => {
+    const rules = parseCss(sheet("ui.css"));
+    const formRules = rules.find((rule) => rule.selectors.includes(".form"));
+    const pickerRules = rules.find((rule) => rule.selectors.includes(".dirpick-bar input"));
+    expect(formRules?.decls.find((d) => d.prop === "grid-template-columns")?.value.replaceAll(" ", "")).toBe("minmax(0,1fr)");
+    expect(pickerRules?.decls.find((d) => d.prop === "min-width")?.value).toBe("0");
+  });
+});
+
+describe("ui/row metadata", () => {
+  it("keeps copyable facts separate from errors in a wrapping strip", () => {
+    const r = row({ name: "app", err: "port conflict", meta: [h("code", null, "PID 42"), portChip("4317", { tone: "up", title: "listening" })], primary: btn("Start"), secondary: iconBtn("file", "Logs"), more: moreBtn("More") });
+    expect(Array.from(r.querySelectorAll(".lrow-acts button")).map((b) => b.textContent || b.getAttribute("aria-label"))).toEqual(["Start", "Logs", "More"]);
+    expect(r.querySelector(".lrow-err")?.textContent).toBe("port conflict");
+    expect(r.querySelector(".lrow-meta code")?.textContent).toBe("PID 42");
+    expect(r.querySelector(".lrow-meta .pchip")?.textContent).toBe("4317");
+    const rules = parseCss(sheet("ui.css"));
+    const meta = rules.find((rule) => rule.selectors.includes(".lrow-meta"));
+    expect(meta?.decls.find((d) => d.prop === "flex-wrap")?.value).toBe("wrap");
+  });
+});
+
+describe("ui/transcript", () => {
+  it("positions speakers by identity, independent of the translated role label", () => {
+    const node = transcript([{ side: "user", role: "用户", text: "hello" }, { role: "AI", text: "reply" }]);
+    expect(node.querySelector(".tc-turn.user")?.textContent).toContain("hello");
+    expect(node.querySelector(".tc-turn.assistant")?.textContent).toContain("reply");
+    const rules = parseCss(sheet("ui.css"));
+    expect(rules.find((r) => r.selectors.includes(".tc-turn.user"))?.decls.find((d) => d.prop === "align-self")?.value).toBe("flex-end");
+  });
+
+  it("renders every turn as chat - the role in one word, the content in its register", () => {
+    const node = transcript([
+      { role: tag("user"), at: "2m ago", text: "read the notes", markdown: true },
+      { role: tag("thinking"), text: "weighing it first", dim: true },
+      { role: tag("assistant"), code: [toolChip("read", '{ "path": "notes.md" }')] },
+      { role: tag("tool"), text: "notes.md\t913 B", mono: true },
+    ]);
+    const turns = Array.from(node.querySelectorAll(".tc-turn"));
+    expect(turns.length).toBe(4);
+    // The head is the role word (and the moment when the caller passes one).
+    expect(turns[0].querySelector(".tc-head .tag")!.textContent).toBe("user");
+    expect(turns[0].querySelector(".tc-at")!.textContent).toBe("2m ago");
+    // An answer renders as markdown; reasoning is the prose block, dimmed; data is
+    // the prose block, monospace; a tool ask rides in the code slot as the chip.
+    expect(turns[0].querySelector(".tc-md")).toBeTruthy();
+    expect(turns[1].querySelector(".tc-text.dim")!.textContent).toBe("weighing it first");
+    expect(turns[2].querySelector(".tc-chip code")!.textContent).toContain("notes.md");
+    expect(turns[3].querySelector(".tc-text.mono")!.textContent).toContain("913 B");
+    // Spacing separates turns - no hairline log lines (the ledger owns that look).
+    const rules = parseCss(sheet("ui.css"));
+    const turn = rules.find((rule) => rule.selectors.includes(".tc-turn"));
+    expect(turn?.decls.find((d) => d.prop === "border-top")).toBeUndefined();
+  });
+
+  it("transcriptTurn carries the caller's hooks, and an empty turn renders its head alone", () => {
+    const one = transcriptTurn({ role: tag("tool"), data: { id: "t7" } });
+    expect(one.id).toBe("t7");
+    expect(one.querySelector(".tc-text")).toBeNull();
+    expect(one.querySelector(".tc-code")).toBeNull();
+  });
+
+  it("transcriptText: the prose body alone - data goes mono, reasoning dims", () => {
+    expect(transcriptText("plain words").className).toBe("tc-text");
+    expect(transcriptText("class A {}", { mono: true }).className).toBe("tc-text mono");
+    expect(transcriptText("weighing it first", { dim: true }).className).toBe("tc-text dim");
+    expect(transcriptText("weighing it first", { dim: true }).textContent).toBe("weighing it first");
+  });
+});
+
 describe("ui/status", () => {
   it("dot: the state is the class, the title says it aloud", () => {
     const d = dot("error", "Failed to start");
@@ -166,6 +262,17 @@ describe("ui/status", () => {
 });
 
 describe("ui/sheet - sheet()", () => {
+  it("a conversation sheet docks its composer between the scroll body and actions", () => {
+    const input = h("textarea", { rows: 3 });
+    const s = sheetFrame({ title: "Chat", body: "turns", compose: input, foot: "actions", wide: true });
+    expect(s.classList.contains("conversation")).toBe(true);
+    expect(Array.from(s.children).map((n) => n.className)).toEqual(["sheet-head", "sheet-body", "sheet-compose", "sheet-foot"]);
+    expect(s.querySelector(".sheet-compose textarea")).toBe(input);
+    const css = sheet("ui.css");
+    expect(css).toMatch(/\.sheet\.conversation \{[^}]*display: flex;[^}]*flex-direction: column;/);
+    expect(css).toMatch(/\.sheet\.conversation > \.sheet-body \{[^}]*min-height: 0;[^}]*overflow-y: auto;/);
+  });
+
   it("the frame: a titled dialog, its body, its foot", () => {
     const s = sheetFrame({ title: "Rename key", body: "b", foot: "f" });
     expect(s.getAttribute("role")).toBe("dialog");
@@ -548,6 +655,837 @@ describe("ui/row", () => {
   });
 });
 
+describe("ui/row - sideRow", () => {
+  it("one listbox option: dot, name, the badge before the tail", () => {
+    const r = sideRow({ name: "swiss", lead: dot("up", "up"), badge: tag("3", { tone: "warn", title: "3 waiting" }), tail: "12", selected: true, data: { mproject: "p-1" } });
+    expect(r.getAttribute("role")).toBe("option");
+    expect(r.getAttribute("aria-selected")).toBe("true");
+    expect(r.dataset.mproject).toBe("p-1");
+    expect(Array.from(r.children).map((c) => c.className)).toEqual(["dot up", "side-name", "tag warn", "side-type"]);
+    expect(r.querySelector(".tag")?.getAttribute("title")).toBe("3 waiting");
+    expect(sideRow({ name: "orders", tail: "0" }).querySelector(".tag")).toBeNull();
+  });
+});
+
+describe("ui/workspace", () => {
+  it("the frame: a side column, its grip, and the main column beside it; no side, the main alone", () => {
+    const w = workspace(wsSide({ cap: "Projects" }, sideRow({ name: "swiss" })), h("p", null, "body"));
+    expect(w.className).toBe("ws");
+    expect(Array.from(w.children).map((c) => c.className)).toEqual(["ws-side", "grip x", "ws-main"]);
+    expect(w.querySelector(".grip")?.getAttribute("aria-label"), "named for the side column").toBe("Resize Projects");
+    expect(w.querySelector(".grip .grip-btn"), "a workspace side folds away").not.toBeNull();
+    expect(w.querySelector(".ws-main > p")?.textContent).toBe("body");
+    expect(Array.from(workspace(null, "x").children).map((c) => c.className)).toEqual(["ws-main"]);
+  });
+
+  it("the full pane a workspace takes has no measure: its columns divide the whole body", () => {
+    // .pane > * caps page content at --measure; a workspace under that cap left the right 40% of
+    // a 1600px window blank and squeezed the Memory graph into a 375px column (found on 19998).
+    expect(sheet("ui.css")).toMatch(/\.pane\.full > \* \{ max-width: none; \}/);
+  });
+
+  it("wsSide: a captioned aside over a listbox of source rows; tools only when given", () => {
+    const side = wsSide({ cap: "Projects", id: "rail", tools: [iconBtn("plus", "New project")] }, sideRow({ name: "a" }), sideRow({ name: "b" }));
+    expect(side.tagName).toBe("ASIDE");
+    expect(side.id).toBe("rail");
+    expect(side.getAttribute("aria-label")).toBe("Projects");
+    expect(side.querySelector(".ws-side-head > .sec-cap")?.textContent).toBe("Projects");
+    expect(side.querySelector(".ws-side-head > .sec-tools .btn.icon")).not.toBeNull();
+    const list = side.querySelector("nav.side-list") as HTMLElement;
+    expect(list.getAttribute("role")).toBe("listbox");
+    expect(list.children.length).toBe(2);
+    expect(wsSide({ cap: "c" }).querySelector(".sec-tools")).toBeNull();
+  });
+
+  it("wsHead: the name (whole in its tooltip), the sub line, the actions, the tabs", () => {
+    const head = wsHead({ id: "hd", title: "swiss", sub: h("code", null, "C:/src"), actions: [btn("New")], nav: seg([{ id: "a", label: "A" }], "a") });
+    expect(head.tagName).toBe("HEADER");
+    expect(head.id).toBe("hd");
+    const title = head.querySelector(".ws-head-row h1.ws-title") as HTMLElement;
+    expect(title.textContent).toBe("swiss");
+    expect(title.title).toBe("swiss");
+    expect(head.querySelector(".ws-sub > code")?.textContent).toBe("C:/src");
+    expect(head.querySelector(".ws-acts > .btn")?.textContent).toBe("New");
+    expect(head.querySelector(".ws-nav > .seg")).not.toBeNull();
+    const bare = wsHead({ title: "t" });
+    expect(bare.querySelector(".ws-sub, .ws-acts, .ws-nav")).toBeNull();
+  });
+
+  it("wsSplit: the fixed pane named by side, each pane a labelled section", () => {
+    const list = wsSplit({ id: "body", fixed: "start", start: "list", end: "detail", startLabel: "Notes", endLabel: "Note" });
+    expect(list.id).toBe("body");
+    const panes = Array.from(list.children) as HTMLElement[];
+    expect(panes.map((p) => p.className)).toEqual(["ws-pane fixed start", "ws-pane"]);
+    expect(panes.map((p) => p.getAttribute("aria-label"))).toEqual(["Notes", "Note"]);
+    expect(panes.map((p) => p.textContent)).toEqual(["list", "detail"]);
+    const insp = wsSplit({ fixed: "end", start: "graph", end: "inspector" });
+    expect(Array.from(insp.children).map((p) => p.className)).toEqual(["ws-pane", "ws-pane fixed end"]);
+  });
+
+  it("wsBar runs along one line, or a line per row; foot is the count under a pane", () => {
+    const bar = wsBar({ id: "b", data: { x: "1" } }, btn("a"), btn("b"));
+    expect(bar.className).toBe("ws-bar");
+    expect(bar.dataset.x).toBe("1");
+    expect(bar.children.length).toBe(2);
+    const rows = wsBar({ rows: [[filterInput({ placeholder: "q", label: "q" })], [btn("a"), btn("b")]] });
+    expect(rows.className).toBe("ws-bar rows");
+    expect(Array.from(rows.children).map((r) => [r.className, r.children.length])).toEqual([["ws-bar-row", 1], ["ws-bar-row", 2]]);
+    expect(wsBar({ foot: true }, "3 notes").className).toBe("ws-bar foot");
+    expect(wsScroll({}, "x").className).toBe("ws-scroll");
+    expect(wsScroll({ pad: true, id: "d" }).outerHTML).toBe("<div class=\"ws-scroll pad\" id=\"d\"></div>");
+  });
+
+  it("pickRow: an option of two lines; the selected one is the list's one tab stop", () => {
+    const a = pickRow({ lead: catChip(1, "decision", { bare: true }), name: "SQLite over redb", meta: "2 hr.", metaTitle: "updated", sub: "why", selected: true, data: { mnote: "m-1" } });
+    const b = pickRow({ name: "redb as the store", muted: true, data: { mnote: "m-6" } });
+    const list = pickList({ label: "Notes", id: "l" }, a, b);
+    expect(list.getAttribute("role")).toBe("listbox");
+    expect(list.getAttribute("aria-label")).toBe("Notes");
+    expect(a.tagName).toBe("BUTTON");
+    expect(a.type).toBe("button");
+    expect(a.getAttribute("role")).toBe("option");
+    expect(a.getAttribute("aria-selected")).toBe("true");
+    expect(a.tabIndex).toBe(0);
+    expect(a.dataset.mnote).toBe("m-1");
+    expect(Array.from(a.querySelector(".pick-top")?.children || []).map((c) => c.className)).toEqual(["pick-lead", "pick-name", "pick-meta"]);
+    expect(a.querySelector(".pick-name")?.getAttribute("title")).toBe("SQLite over redb");
+    expect(a.querySelector(".pick-meta")?.getAttribute("title")).toBe("updated");
+    expect(a.querySelector(".pick-sub")?.textContent).toBe("why");
+    expect(b.className).toBe("pick-row muted");
+    expect(b.getAttribute("aria-selected")).toBe("false");
+    expect(b.tabIndex).toBe(-1);
+    expect(b.querySelector(".pick-lead, .pick-meta, .pick-sub")).toBeNull();
+  });
+
+  it("pickRow: depth indents a row of a tree, at most four steps", () => {
+    expect([0, 1, 2, 4, 6, -1].map((depth) => pickRow({ name: "n", depth }).className)).toEqual(["pick-row", "pick-row d1", "pick-row d2", "pick-row d4", "pick-row d4", "pick-row"]);
+    expect(pickRow({ name: "n", depth: 1, muted: true }).className).toBe("pick-row d1 muted");
+  });
+
+  it("pickSelect moves the mark and the tab stop in place and hands back the row", () => {
+    const rows = ["a", "b", "c"].map((id, i) => pickRow({ name: id, selected: i === 0, data: { id } }));
+    const list = pickList({ label: "l" }, rows);
+    const hit = pickSelect(list, (r) => r.dataset.id === "c");
+    expect(hit).toBe(rows[2]);
+    expect(rows.map((r) => r.getAttribute("aria-selected"))).toEqual(["false", "false", "true"]);
+    expect(rows.map((r) => r.tabIndex)).toEqual([-1, -1, 0]);
+    expect(pickSelect(list, () => false)).toBeNull();
+    expect(list.querySelectorAll("[aria-selected=true]").length).toBe(0);
+  });
+
+  it("docHead: tags, the title, the meta values with a quiet separator, the verbs", () => {
+    const d = docHead({ tags: [tag("t")], title: "SQLite over redb", meta: [h("code", null, "m-1"), null, "", "by codex", "rev 2"], actions: [btn("Edit")] });
+    expect(d.tagName).toBe("HEADER");
+    expect(Array.from(d.children).map((c) => c.className)).toEqual(["doc-tags", "doc-title", "doc-meta", "doc-acts"]);
+    expect(d.querySelector("h2.doc-title")?.textContent).toBe("SQLite over redb");
+    const meta = d.querySelector(".doc-meta") as HTMLElement;
+    expect(meta.textContent).toBe("m-1·by codex·rev 2");
+    expect(Array.from(meta.querySelectorAll(".doc-sep")).every((s) => s.getAttribute("aria-hidden") === "true")).toBe(true);
+    expect(Array.from(docHead({ title: "t" }).children).map((c) => c.className)).toEqual(["doc-title"]);
+  });
+
+  it("docHead: a lede is the paragraph under the title; an empty one draws nothing", () => {
+    const d = docHead({ title: "Payments", lede: "Charging and refunds", meta: ["rev 2"] });
+    expect(Array.from(d.children).map((c) => c.className)).toEqual(["doc-title", "doc-lede", "doc-meta"]);
+    expect(d.querySelector("p.doc-lede")?.textContent).toBe("Charging and refunds");
+    expect(docHead({ title: "t", lede: "" }).querySelector(".doc-lede")).toBeNull();
+    expect(docHead({ title: "t", lede: null }).querySelector(".doc-lede")).toBeNull();
+  });
+
+  it("refLink is a link-looking button", () => {
+    const r = refLink("Use UTC", { data: { mopen: "m-4" } });
+    expect(r.tagName).toBe("BUTTON");
+    expect(r.type).toBe("button");
+    expect(r.className).toBe("ref");
+    expect(r.title).toBe("Use UTC");
+    expect(r.dataset.mopen).toBe("m-4");
+    expect(refLink("x", { title: "why" }).title).toBe("why");
+  });
+
+  it("catChip: the slot's swatch and its word; bare, the word is its name and tooltip", () => {
+    const c = catChip(3, "pitfall");
+    expect(c.className).toBe("cat c3");
+    expect(c.textContent).toBe("pitfall");
+    const bare = catChip(5, "preference", { bare: true });
+    expect(bare.className).toBe("cat bare c5");
+    expect(bare.textContent).toBe("");
+    expect(bare.getAttribute("role")).toBe("img");
+    expect(bare.getAttribute("aria-label")).toBe("preference");
+    expect(bare.title).toBe("preference");
+  });
+});
+
+describe("ui/markdown - markdownNode", () => {
+  const tags = (el: Element): string[] => Array.from(el.children).map((c) => c.tagName.toLowerCase());
+  /** markdown-it puts a newline after each block tag; the shape is what the panel relies on. */
+  const flat = (el: Element): string => el.innerHTML.replace(/\n/g, "");
+  const html = (src: string): string => flat(markdownNode(src));
+  const inline = (src: string): string => flat(markdownNode(src).querySelector("p")!);
+
+  it("draws the blocks a brief is written in: headings, paragraphs, lists, rules, quotes", () => {
+    const md = markdownNode("# Brief\n\n2 live notes · 1 need review\n\n## Rules\n\n- one\n- **two**\n\n---\n\n> quoted\n> still", { class: "brief" });
+    expect(md.className).toBe("md brief");
+    expect(tags(md)).toEqual(["h1", "p", "h2", "ul", "hr", "blockquote"]);
+    expect(md.querySelector("h1")!.textContent).toBe("Brief");
+    expect(Array.from(md.querySelectorAll("li")).map((l) => l.innerHTML)).toEqual(["one", "<strong>two</strong>"]);
+    expect(flat(md.querySelector("blockquote")!)).toBe("<p>quoted<br>still</p>");
+    expect(markdownNode("").className).toBe("md");
+  });
+
+  it("an author's line break stays; a blank line is a new paragraph", () => {
+    expect(html("a\nb\n\nc")).toBe("<p>a<br>b</p><p>c</p>");
+    expect(html("Use UTC\n- in the log")).toBe("<p>Use UTC</p><ul><li>in the log</li></ul>");
+  });
+
+  it("lists: ordered from where they start, nested by indent, a loose list keeps its paragraphs", () => {
+    const md = markdownNode("3. three\n4. four\n   - under\n   - also\n5. five");
+    const ol = md.querySelector("ol")!;
+    expect(ol.getAttribute("start")).toBe("3");
+    expect(tags(ol)).toEqual(["li", "li", "li"]);
+    expect(flat(ol.children[1])).toBe("four<ul><li>under</li><li>also</li></ul>");
+    expect(markdownNode("1. one").querySelector("ol")!.hasAttribute("start")).toBe(false);
+    expect(html("- a\n\n  more\n- b")).toBe("<ul><li><p>a</p><p>more</p></li><li><p>b</p></li></ul>");
+    expect(html("- a\n1. b")).toBe("<ul><li>a</li></ul><ol><li>b</li></ol>");
+  });
+
+  it("fenced code is kept verbatim with its language; markup inside it stays text", () => {
+    const pre = markdownNode("```rust\nlet a = **b**;\n  <i>x</i>\n```").querySelector("pre")!;
+    expect(pre.className).toBe("md-code");
+    expect(pre.dataset.lang).toBe("rust");
+    expect(pre.querySelector("code")!.textContent).toBe("let a = **b**;\n  <i>x</i>");
+    expect(pre.querySelector("i, strong")).toBeNull();
+    expect(markdownNode("~~~\nx\n~~~").querySelector("pre")!.hasAttribute("data-lang")).toBe(false);
+    expect(markdownNode("    indented\n    code").querySelector("pre.md-code > code")!.textContent).toBe("indented\ncode");
+    // An unclosed fence runs to the end of the note (CommonMark).
+    expect(markdownNode("```\na\nb").querySelector("code")!.textContent).toBe("a\nb");
+  });
+
+  it("pipe tables: a header, its rows, an escaped pipe kept, a short row padded, wrapped to scroll", () => {
+    const t = markdownNode("| key | value |\n|:---|---:|\n| `a\\|b` | 1 |\n| c |").querySelector(".md-table > table")!;
+    expect(Array.from(t.querySelectorAll("th")).map((c) => c.textContent)).toEqual(["key", "value"]);
+    const rows = Array.from(t.querySelectorAll("tbody tr")).map((r) => Array.from(r.children).map((c) => c.innerHTML));
+    expect(rows).toEqual([["<code>a|b</code>", "1"], ["c", ""]]);
+    // A pipe in a sentence is not a table.
+    expect(tags(markdownNode("a | b\nnot a rule"))).toEqual(["p"]);
+  });
+
+  it("inline: code, strong, emphasis, strikethrough, an escape; snake_case and a lone star are text", () => {
+    expect(inline("run `cargo test` **now**, *then* _ship_ ~~never~~"))
+      .toBe("run <code>cargo test</code> <strong>now</strong>, <em>then</em> <em>ship</em> <s>never</s>");
+    expect(inline("``a ` b``")).toBe("<code>a ` b</code>");
+    expect(inline("snake_case_name and 2 * 3 * 4")).toBe("snake_case_name and 2 * 3 * 4");
+    expect(inline("\\*not em\\* and `unclosed")).toBe("*not em* and `unclosed");
+    expect(inline("**bold with `code`**")).toBe("<strong>bold with <code>code</code></strong>");
+    // A star inside a code span closes nothing (a brief's marker names a glob anchor so).
+    expect(inline("*anchor changed: `src/*.rs`*")).toBe("<em>anchor changed: <code>src/*.rs</code></em>");
+  });
+
+  it("a URL written with its scheme is a link; a file name or a bare address is not", () => {
+    const md = markdownNode("see https://example.com/a?b=1. and www.example.org, pipeline.py, a@b.c");
+    expect(Array.from(md.querySelectorAll("a")).map((a) => a.getAttribute("href"))).toEqual(["https://example.com/a?b=1"]);
+    expect(md.querySelector("p")!.textContent).toBe("see https://example.com/a?b=1. and www.example.org, pipeline.py, a@b.c");
+  });
+
+  it("never a note's HTML: tags are text, no image is fetched, a link opens only http, https or mailto", () => {
+    const md = markdownNode("<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>\n\n[ok](https://example.com) [bad](javascript:alert(1)) [mail](mailto:a@b.c) <javascript:alert(2)>\n\n![pixel](https://example.com/p.png)");
+    expect(md.querySelector("script, img")).toBeNull();
+    expect(md.children[0].textContent).toBe("<script>alert(1)</script>");
+    expect(md.children[1].textContent).toBe("<img src=x onerror=alert(1)>");
+    const links = Array.from(md.querySelectorAll("a"));
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["https://example.com", "mailto:a@b.c", "https://example.com/p.png"]);
+    expect(links.every((a) => a.target === "_blank" && a.rel === "noopener noreferrer")).toBe(true);
+    // A refused link is left as the text it was written as.
+    expect(md.children[2].textContent).toBe("ok [bad](javascript:alert(1)) mail <javascript:alert(2)>");
+    // An image is never drawn: what is left is its words, linked to where it lives.
+    expect(md.children[3].textContent).toBe("!pixel");
+  });
+
+  it("a mermaid fence becomes its diagram, in mermaid's sandbox, redrawn on a theme switch", async () => {
+    mermaidFake.initialize.mockClear();
+    const fence = (src: string): string => "```mermaid\n" + src + "\n```";
+    const md = markdownNode(["Flow", fence("flowchart TD\n  A --> B"), fence("not a diagram"), fence("escape svg"), fence("escape scripts")].join("\n\n"));
+    document.body.append(md);
+    try {
+      await vi.waitFor(() => expect(md.querySelectorAll("pre[title]").length).toBe(3));
+      expect(mermaidFake.initialize).toHaveBeenLastCalledWith(expect.objectContaining({
+        startOnLoad: false, securityLevel: "sandbox", suppressErrorRendering: true, theme: "default",
+      }));
+      expect(tags(md)).toEqual(["p", "div", "pre", "pre", "pre"]);
+      const fig = md.querySelector(".md-mermaid")!;
+      const frame = fig.querySelector("iframe")!;
+      expect(fig.children.length).toBe(1);
+      expect(frame.getAttribute("sandbox")).toBe("allow-top-navigation-by-user-activation allow-popups");
+      expect(frame.title).toBe("flowchart TD\n  A --> B");
+      // A diagram that does not parse, or comes back outside a sandbox, stays as its code; the reason is on hover.
+      const kept = Array.from(md.querySelectorAll<HTMLElement>("pre[data-lang=mermaid]"));
+      expect(kept.map((p) => [p.textContent, p.title])).toEqual([
+        ["not a diagram", "Parse error on line 1"],
+        ["escape svg", "mermaid drew outside its sandbox"],
+        ["escape scripts", "mermaid drew outside its sandbox"],
+      ]);
+      expect(md.querySelector("svg")).toBeNull();
+
+      document.documentElement.setAttribute("data-theme", "dark");
+      await vi.waitFor(() => expect(mermaidFake.initialize).toHaveBeenLastCalledWith(expect.objectContaining({ theme: "dark" })));
+      await vi.waitFor(() => expect(md.querySelector(".md-mermaid")).not.toBe(fig));
+    } finally {
+      document.documentElement.removeAttribute("data-theme");
+      md.remove();
+    }
+  });
+});
+
+describe("ui/diff - diffFiles, diffNode", () => {
+  function q(sel: string, root: Element): HTMLElement {
+    const el = root.querySelector<HTMLElement>(sel);
+    if (!el) throw new Error("no " + sel);
+    return el;
+  }
+  const PATCH = [
+    "diff --git a/src/a.rs b/src/a.rs",
+    "index 1..2 100644",
+    "--- a/src/a.rs",
+    "+++ b/src/a.rs",
+    "@@ -12,3 +12,4 @@ fn a() {",
+    "     let k = 1;",
+    "-    let n = 3;",
+    "+    let n = cfg.n();",
+    "+    // <script>alert(1)</script>",
+    "     run(k, n);",
+    "\\ No newline at end of file",
+    "diff --git a/docs/b.md b/docs/b.md",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/docs/b.md",
+    "@@ -0,0 +1 @@",
+    "+# B",
+    "diff --git a/logo.png b/logo.png",
+    "deleted file mode 100644",
+    "Binary files a/logo.png and /dev/null differ",
+    "",
+  ].join("\n");
+
+  it("reads git's patch file by file: path, status, counts, and both sides' line numbers", () => {
+    const files = diffFiles(PATCH);
+    expect(files.map((f) => [f.path, f.status, f.additions, f.deletions])).toEqual([
+      ["src/a.rs", "modified", 2, 1], ["docs/b.md", "added", 1, 0], ["logo.png", "deleted", 0, 0],
+    ]);
+    const lines = files[0].lines.map((l) => [l.kind, l.o ?? null, l.n ?? null]);
+    expect(lines).toEqual([
+      ["hunk", null, null], ["ctx", 12, 12], ["del", 13, null], ["add", null, 13], ["add", null, 14], ["ctx", 14, 15], ["note", null, null],
+    ]);
+    // A header line is not a line of the file; a binary file says so.
+    expect(files[1].lines.map((l) => l.text)).toEqual(["@@ -0,0 +1 @@", "+# B"]);
+    expect(files[2].lines.map((l) => l.kind)).toEqual(["note"]);
+    expect(diffFiles("")).toEqual([]);
+  });
+
+  it("draws a fold per file, numbers from data attributes, the patch's text as text", () => {
+    const node = diffNode(PATCH);
+    const folds = Array.from(node.querySelectorAll<HTMLDetailsElement>("details.diff-file"));
+    expect(folds.map((d) => d.dataset.dpath)).toEqual(["src/a.rs", "docs/b.md", "logo.png"]);
+    // A small patch opens every file.
+    expect(folds.every((d) => d.open)).toBe(true);
+    expect(q(".diff-st", folds[1]).textContent).toBe("added");
+    expect(q(".diff-n", folds[0]).textContent).toBe("+2 −1");
+    const add = q(".dl.add", folds[0]);
+    expect([add.dataset.o, add.dataset.n]).toEqual(["", "13"]);
+    // What a drag-selection copies: the lines as the patch has them - never the numbers, never markup.
+    expect(q("pre.jv.diff-body", folds[0]).textContent).toBe(PATCH.split("\n").slice(4, 11).join("\n") + "\n");
+    expect(node.querySelector("script")).toBeNull();
+    // Opened for one file, only that one is open.
+    const one = diffNode(PATCH, { open: "docs/b.md" });
+    expect(Array.from(one.querySelectorAll<HTMLDetailsElement>("details")).map((d) => d.open)).toEqual([false, true, false]);
+    install("zh-CN", zh);
+    expect(q(".diff-st", diffNode(PATCH)).textContent).toBe(zh["ui.diff.modified"]);
+  });
+
+  it("the code block's mark, the wide sheet and a ref drawn as code", () => {
+    const code = tokenCodeNode([["", "a\nb\nc"]], { all: true, lined: true, mark: 2 }).node;
+    expect(Array.from(code.querySelectorAll(".jv-line")).map((l) => l.className)).toEqual(["jv-line", "jv-line hit", "jv-line"]);
+    expect(sheetFrame({ title: "f.rs", body: null, foot: null, wide: true }).className).toBe("sheet wide");
+    expect(sheetFrame({ title: "f.rs", body: null, foot: null }).className).toBe("sheet");
+    const ref = refLink("src/a.rs", { code: true, data: { mpvfile: "src/a.rs" } });
+    expect(ref.innerHTML).toBe("<code>src/a.rs</code>");
+    expect(ref.title).toBe("src/a.rs");
+  });
+});
+
+describe("ui/graph", () => {
+  const nodes: GraphNode[] = [
+    { id: "a", label: "Orders are idempotent", tone: 1 },
+    { id: "b", label: "Retry with the same key", tone: 2, pending: true },
+    { id: "c", label: "Never retry a refund", tone: 3, dim: true },
+    { id: "d", label: "Use UTC", tone: 4, title: "Use UTC - knowledge" },
+    { id: "e", label: "Prefer small PRs", tone: 5 },
+  ];
+  const edges: GraphEdge[] = [
+    { from: "a", to: "b", style: "solid", directed: true, label: "supports", title: "supports: same key" },
+    { from: "b", to: "c", style: "heavy", directed: true },
+    { from: "a", to: "c", style: "dashed", alert: true, label: "contradicts" },
+    { from: "c", to: "d", style: "dotted" },
+    { from: "a", to: "zz", style: "faint" },
+    { from: "a", to: "b", style: "solid", directed: true, label: "supports" },
+  ];
+
+  afterEach(() => { document.body.replaceChildren(); });
+
+  it("graphHops: rings over the edges either way; the unreached keep the caller's hop or sit past the farthest", () => {
+    const hops = graphHops({ nodes: nodes.concat([{ id: "f", label: "f", tone: 1, hop: 4 }]), edges, center: "a" });
+    expect(Object.fromEntries(hops)).toEqual({ a: 0, b: 1, c: 1, d: 2, e: 3, f: 4 });
+    expect(graphHops({ nodes, edges, center: null }).size).toBe(0);
+    expect(graphHops({ nodes, edges, center: "nobody" }).size).toBe(0);
+  });
+
+  it("graphElements: a node per node with its classes; an edge per drawable, distinct link", () => {
+    const els = graphElements({ nodes, edges, label: "g" });
+    const ns = els.filter((e) => e.group === "nodes");
+    // A whole graph: each node's drawn links (the repeat of a-b and the line to zz do not count),
+    // a dot that grows with them, and `hub` on the most linked quarter with two links or more.
+    expect(ns.map((n) => [n.data.id, n.classes, n.data.links, n.data.size])).toEqual([
+      ["a", "t1 hub", 2, dotSize(2)], ["b", "t2 pending", 2, dotSize(2)], ["c", "t3 dim hub", 3, dotSize(3)], ["d", "t4", 1, dotSize(1)], ["e", "t5", 0, 14],
+    ]);
+    expect(dotSize(4)).toBeGreaterThan(dotSize(1));
+    expect(ns[3].data.title).toBe("Use UTC - knowledge");
+    expect(ns[0].data.title).toBe("Orders are idempotent");
+    // Without a center the force layout starts from a spiral: the first node in the middle.
+    expect(ns[0].position).toEqual({ x: 0, y: 0 });
+    expect(new Set(ns.map((n) => JSON.stringify(n.position))).size).toBe(5);
+    const es = els.filter((e) => e.group === "edges");
+    // The edge to a node that is not drawn is dropped, and so is the repeat of a-b.
+    expect(es.map((e) => [e.data.source, e.data.target, e.classes])).toEqual([
+      ["a", "b", "solid directed"], ["b", "c", "heavy directed"], ["a", "c", "dashed alert"], ["c", "d", "dotted"],
+    ]);
+    expect(es[0].data.label).toBe("supports");
+    expect(es[0].data.title).toBe("supports: same key");
+    const centred = graphElements({ nodes, edges, center: "a", label: "g" });
+    expect(centred.filter((e) => e.group === "nodes").map((n) => [n.classes, n.data.hop, n.position, n.data.size])).toEqual([
+      ["t1 center", 0, undefined, undefined], ["t2 pending", 1, undefined, undefined], ["t3 dim", 1, undefined, undefined],
+      ["t4", 2, undefined, undefined], ["t5", 3, undefined, undefined],
+    ]);
+    const long = graphElements({ nodes: [{ id: "x", label: "x".repeat(80), tone: 1 }], edges: [], label: "g" });
+    expect(String(long[0].data.label).length).toBe(64);
+    expect(String(long[0].data.label).endsWith("…")).toBe(true);
+  });
+
+  it("graphLayoutOf: rings around a center, the center innermost; a force layout without one", () => {
+    const rings = graphLayoutOf({ nodes, edges, center: "a", label: "g" });
+    expect(rings.name).toBe("concentric");
+    const level = rings.concentric as (n: GraphEls) => number;
+    const at = (hop: number): GraphEls => ({ data: () => hop }) as unknown as GraphEls;
+    expect(level(at(0))).toBeGreaterThan(level(at(1)));
+    expect(level(at(1))).toBeGreaterThan(level(at(3)));
+    const force = graphLayoutOf({ nodes, edges, label: "g" });
+    expect(force.name).toBe("cose");
+    expect(force.randomize).toBe(false);
+    expect(force.animate).toBe(false);
+    expect(graphLayoutOf({ nodes, edges, center: "nobody", label: "g" }).name).toBe("cose");
+  });
+
+  it("graphPalette reads the tokens and falls back to the light theme's; mixHex blends to an opaque hex", () => {
+    const p = graphPalette((n) => (n === "--cat-1" ? "#000000" : n === "--card" ? "#ffffff" : ""));
+    expect(p.tones[0]).toBe("#000000");
+    expect(p.tones[1]).toBe("#109d7b");
+    expect(p.card).toBe("#ffffff");
+    expect(p.red).toBe("#dc2626");
+    expect(mixHex("#000000", "#ffffff", 0.5)).toBe("#808080");
+    expect(mixHex("#ff0000", "#0000ff", 1)).toBe("#ff0000");
+    expect(mixHex("red", "#ffffff", 0.5)).toBe("#ffffff");
+  });
+
+  it("graphStyle: a tinted chip per tone, the link styles, a conflict in red, the selection's lift", () => {
+    const p = graphPalette(() => "");
+    const st = graphStyle(p);
+    const by = (sel: string): Record<string, unknown> | undefined => st.find((b) => b.selector === sel)?.style;
+    expect(by("node.t1")).toEqual({ "border-color": "#0c84fa", "background-color": mixHex("#0c84fa", "#ffffff", 0.12) });
+    expect(by("edge")?.label).toBe("data(label)");
+    expect(by("edge.directed")?.["target-arrow-shape"]).toBe("triangle");
+    expect(by("edge.dashed")?.["line-style"]).toBe("dashed");
+    expect(by("edge.alert")?.["line-color"]).toBe("#dc2626");
+    expect(by("node.pending")?.["border-style"]).toBe("dashed");
+    expect(by(".faded")?.opacity).toBeLessThan(0.5);
+    expect(Number(graphStyle(p, { compact: true }).find((b) => b.selector === "node")?.style["font-size"])).toBeLessThan(Number(by("node")?.["font-size"]));
+    expect(st.some((b) => b.selector === "node.hub")).toBe(false);
+  });
+
+  it("graphStyle map: dots by links, names one size on screen; the hubs' always, the rest zoomed in or near", () => {
+    const p = graphPalette(() => "");
+    let zoom = 0.5;
+    const st = graphStyle(p, { map: true, zoom: () => zoom });
+    // The last block for a selector wins in the engine, as here.
+    const by = (sel: string): Record<string, unknown> => Object.assign({}, ...st.filter((b) => b.selector === sel).map((b) => b.style));
+    const el = (classes: string[], size = 20): GraphEls => ({ hasClass: (c: string) => classes.includes(c), data: () => size }) as unknown as GraphEls;
+    const call = (sel: string, prop: string, e: GraphEls = el([])): unknown => (by(sel)[prop] as (x: GraphEls) => unknown)(e);
+    expect(by("node").shape).toBe("ellipse");
+    expect(by("node")["text-valign"]).toBe("bottom");
+    expect(call("node", "font-size")).toBe(23);
+    expect(call("node", "text-max-width")).toBe("340px");
+    expect(call("node", "width", el([], 20))).toBeCloseTo(20 / Math.sqrt(0.5));
+    expect(call("node", "text-opacity", el(["hub"]))).toBe(1);
+    expect(call("node", "text-opacity", el(["near"]))).toBe(1);
+    expect(call("node", "text-opacity", el(["hover"]))).toBe(1);
+    expect(call("node", "text-opacity", el([]))).toBe(0);
+    expect(call("edge", "text-opacity", el(["hl"]))).toBe(1);
+    expect(call("edge", "text-opacity", el([]))).toBe(0);
+    expect(by("node.t1")["background-color"]).toBe(mixHex("#0c84fa", "#ffffff", 0.45));
+    expect(by("node.sel")["underlay-shape"]).toBe("ellipse");
+    // Zoomed in to where the layout gave every name its room: all named, at their model size.
+    zoom = 1;
+    expect(call("node", "text-opacity", el([]))).toBe(1);
+    expect(call("edge", "text-opacity", el([]))).toBe(1);
+    expect(call("node", "font-size")).toBe(11.5);
+    expect(call("node", "width", el([], 20))).toBe(20);
+    zoom = 2;
+    expect(call("node", "font-size")).toBe(5.75);
+  });
+
+  it("graphLegend names every tone and stroke; a solid line adds no class of its own", () => {
+    const lg = graphLegend([{ label: "decision", tone: 1 }, { label: "supports", style: "solid", directed: true }, { label: "contradicts", style: "dashed", alert: true }]);
+    expect(Array.from(lg.querySelectorAll(":scope > .gv-key")).map((k) => k.textContent)).toEqual(["decision", "supports", "contradicts"]);
+    expect(Array.from(lg.querySelectorAll(".gv-sw")).map((s) => s.className)).toEqual([
+      "gv-sw gv-t1", "gv-sw gv-line gv-dir", "gv-sw gv-line gv-dashed gv-alert",
+    ]);
+  });
+
+  it("graphView: a quiet line until the engine draws; then the elements, the layout and the tools", async () => {
+    const fake = fakeEngine();
+    const v = graphView({ nodes, edges, selected: "b", label: "the graph", keys: [{ label: "decision", tone: 1 }] }, { engine: fake.engine });
+    expect(v.el.className).toBe("gv");
+    const stage = v.el.querySelector(".gv-stage") as HTMLElement;
+    expect(stage.getAttribute("role")).toBe("group");
+    expect(stage.getAttribute("aria-label")).toBe("the graph");
+    const wait = v.el.querySelector(".gv-wait") as HTMLElement;
+    expect(wait.hidden).toBe(false);
+    expect(Array.from(v.el.querySelectorAll(".gv-tools [data-gvzoom]")).map((b) => (b as HTMLElement).dataset.gvzoom)).toEqual(["in", "out", "fit"]);
+    expect(v.el.querySelector(".gv-legend")).not.toBeNull();
+    document.body.append(v.el);
+    await drawn();
+    expect(fake.cores.length).toBe(1);
+    const core = fake.cores[0];
+    expect(core.opts.container).toBe(v.el.querySelector(".gv-canvas"));
+    expect(core.opts.layout.name).toBe("cose");
+    expect(core.opts.userZoomingEnabled).toBe(true);
+    expect(wait.hidden).toBe(true);
+    // The selection given up front: the node lifted with its links and neighbours, the rest quiet.
+    expect(core.cls("b")).toContain("sel");
+    expect(core.cls("a>b>supports")).toContain("hl");
+    expect(core.cls("e")).toContain("faded");
+    expect(core.cls("a")).not.toContain("faded");
+    (v.el.querySelector("[data-gvzoom=in]") as HTMLElement).click();
+    expect(core.zoomLevel).toBeCloseTo(1.25);
+    (v.el.querySelector("[data-gvzoom=fit]") as HTMLElement).click();
+    expect(core.fits).toBe(1);
+    v.destroy();
+    expect(core.destroyed).toBe(true);
+  });
+
+  it("graphView: a tap selects in place and says so, the background clears, a double tap opens", async () => {
+    const fake = fakeEngine();
+    const picked: Array<string | null> = [];
+    const opened: string[] = [];
+    const v = graphView({ nodes, edges, label: "g" }, { engine: fake.engine, onSelect: (id) => { picked.push(id); }, onOpen: (id) => { opened.push(id); } });
+    document.body.append(v.el);
+    await drawn();
+    const core = fake.cores[0];
+    expect(core.cls("a")).not.toContain("faded");
+    core.fire("tap", "d");
+    expect(picked).toEqual(["d"]);
+    expect(core.cls("d")).toContain("sel");
+    expect(core.cls("c")).not.toContain("faded");
+    expect(core.cls("a")).toContain("faded");
+    core.fire("tap", null);
+    expect(picked).toEqual(["d", null]);
+    expect(core.cls("d")).not.toContain("sel");
+    expect(core.cls("a")).not.toContain("faded");
+    core.fire("dbltap", "c");
+    expect(opened).toEqual(["c"]);
+    core.fire("mouseover", "d");
+    expect((v.el.querySelector(".gv-stage") as HTMLElement).title).toBe("Use UTC - knowledge");
+    // select() from outside moves the same marks, no redraw.
+    v.select("e");
+    expect(core.cls("e")).toContain("sel");
+    expect(fake.cores.length).toBe(1);
+    v.destroy();
+  });
+
+  it("graphView: compact has no tools and no zoom; a centered graph rings; a failed engine says so", async () => {
+    const fake = fakeEngine();
+    const v = graphView({ nodes, edges, center: "a", label: "g", compact: true }, { engine: fake.engine });
+    expect(v.el.className).toBe("gv compact");
+    expect(v.el.querySelector(".gv-tools, .gv-legend")).toBeNull();
+    document.body.append(v.el);
+    await drawn();
+    expect(fake.cores[0].opts.layout.name).toBe("concentric");
+    expect(fake.cores[0].opts.userZoomingEnabled).toBe(false);
+    expect(fake.cores[0].opts.autoungrabify).toBe(true);
+    v.destroy();
+    expect(graphView({ nodes, edges, label: "g", fill: true }, { engine: fake.engine }).el.className).toBe("gv fill");
+    const bad = graphView({ nodes, edges, label: "g" }, { engine: () => Promise.reject(new Error("no")) });
+    await drawn();
+    const wait = bad.el.querySelector(".gv-wait") as HTMLElement;
+    expect(wait.classList.contains("bad")).toBe(true);
+    expect(wait.textContent).toBe("Couldn't load the graph engine - reload the page to try again.");
+  });
+
+  it("graphView: a whole graph laid out against its pane turns a quarter; a matching one and rings stay", async () => {
+    // A column, as cose leaves a chain, in the default 800 x 600 (wide) pane.
+    const column = (_id: string, i: number) => ({ x: 10, y: i * 100 });
+    const fake = fakeEngine({ place: column });
+    const v = graphView({ nodes, edges, label: "g" }, { engine: fake.engine });
+    document.body.append(v.el);
+    await drawn();
+    const core = fake.cores[0];
+    expect(nodes.map((n) => core.at(n.id))).toEqual(nodes.map((_, i) => ({ x: i * 100, y: -10 })));
+    expect(core.fits).toBe(1);
+    // A layout that stops later (the engine ran it a tick after) is checked again: already turned.
+    core.fire("layoutstop", null);
+    expect(core.at("e")).toEqual({ x: 400, y: -10 });
+    expect(core.fits).toBe(1);
+    v.destroy();
+    // The same column in a tall pane already runs along it.
+    const tall = fakeEngine({ place: column, size: { w: 400, h: 900 } });
+    document.body.append(graphView({ nodes, edges, label: "g" }, { engine: tall.engine }).el);
+    await drawn();
+    expect(tall.cores[0].at("e")).toEqual({ x: 10, y: 400 });
+    expect(tall.cores[0].fits).toBe(0);
+    // Rings around a center are round by design: never turned.
+    const ringed = fakeEngine({ place: column });
+    document.body.append(graphView({ nodes, edges, center: "a", label: "g" }, { engine: ringed.engine }).el);
+    await drawn();
+    expect(ringed.cores[0].at("e")).toEqual({ x: 10, y: 400 });
+  });
+
+  it("graphView map: restyled at draw and once a frame while the zoom moves; the pointer and the selection name", async () => {
+    const fake = fakeEngine();
+    const v = graphView({ nodes, edges, selected: "b", label: "g" }, { engine: fake.engine });
+    document.body.append(v.el);
+    await drawn();
+    const core = fake.cores[0];
+    // The sheet built before the engine had a zoom: reapplied once it has one.
+    expect(core.restyles).toBe(1);
+    core.fire("zoom", null);
+    core.fire("zoom", null);
+    await new Promise((r) => { requestAnimationFrame(() => { r(null); }); });
+    expect(core.restyles).toBe(2);
+    // The selection's neighbours are named; the rest of the graph is not lifted.
+    expect(["a", "b", "c"].map((id) => core.cls(id).includes("near"))).toEqual([true, true, true]);
+    expect(core.cls("d")).not.toContain("near");
+    core.fire("mouseover", "d");
+    expect(core.cls("d")).toContain("hover");
+    core.fire("mouseout", "d");
+    expect(core.cls("d")).not.toContain("hover");
+    v.destroy();
+    // Rings around a center keep their chips: nothing sized against the zoom.
+    const ringed = fakeEngine();
+    document.body.append(graphView({ nodes, edges, center: "a", label: "g" }, { engine: ringed.engine }).el);
+    await drawn();
+    ringed.cores[0].fire("zoom", null);
+    await new Promise((r) => { requestAnimationFrame(() => { r(null); }); });
+    expect(ringed.cores[0].restyles).toBe(0);
+  });
+
+  /* --- boxes: a whole graph by group ---------------------------------------------------------- */
+
+  const groups: GraphGroup[] = [
+    { id: "pay/refunds", label: "Refunds", parent: "pay" },
+    { id: "pay", label: "Payments", title: "pay - money in and out" },
+    { id: "ops", label: "Operations" },
+    { id: "web", label: "Web", parent: "nowhere" },
+  ];
+  const homes: Array<string | undefined> = ["pay", "pay", "pay/refunds", "web", undefined];
+  const grouped: GraphNode[] = nodes.map((n, i) => (homes[i] ? { ...n, group: homes[i] } : n));
+
+  it("graphElements with groups: the boxes first, parents before children; each node in its own; no hubs", () => {
+    const els = graphElements({ nodes: grouped, edges, groups, label: "g" });
+    const ns = els.filter((e) => e.group === "nodes");
+    // "ops" holds nothing: not drawn. "web" names a parent nobody gave: a box at the top.
+    expect(ns.slice(0, 3).map((n) => [n.data.id, n.classes, n.data.parent, n.data.label, n.data.title])).toEqual([
+      ["group:pay", "group", undefined, "Payments", "pay - money in and out"],
+      ["group:web", "group", undefined, "Web", "Web"],
+      ["group:pay/refunds", "group sub", "group:pay", "Refunds", "Refunds"],
+    ]);
+    // A box is at least its inside wide - one dot's is a cell, room for its name - and a parent's
+    // holds its sub-box.
+    expect(ns[2].data.width).toBeGreaterThan(100);
+    expect(Number(ns[0].data.width)).toBeGreaterThan(Number(ns[2].data.width));
+    expect(ns.slice(3).map((n) => [n.data.id, n.data.parent, n.classes])).toEqual([
+      ["a", "group:pay", "t1"], ["b", "group:pay", "t2 pending"], ["c", "group:pay/refunds", "t3 dim"], ["d", "group:web", "t4"], ["e", undefined, "t5"],
+    ]);
+    expect(new Set(ns.slice(3).map((n) => JSON.stringify(n.position))).size).toBe(5);
+    // Around a center there are no boxes: rings by hop.
+    const centred = graphElements({ nodes: grouped, edges, groups, center: "a", label: "g" });
+    expect(centred.some((e) => (e.classes || "").includes("group") || e.data.parent)).toBe(false);
+    // Groups that hold nobody draw nothing, and the hubs are back.
+    const plain = graphElements({ nodes, edges, groups, label: "g" });
+    expect(plain.some((e) => String(e.data.id).startsWith("group:"))).toBe(false);
+    expect(plain.find((e) => e.data.id === "a")?.classes).toBe("t1 hub");
+    expect(groupElementId("pay")).toBe("group:pay");
+  });
+
+  it("packBoxes: members on a grid, a sub-box after its parent's own, no box over another, the biggest first", () => {
+    const home = (i: number): string | undefined => (i < 2 ? "small" : i < 9 ? "big" : i < 11 ? "big/sub" : undefined);
+    const many: GraphNode[] = Array.from({ length: 12 }, (_, i) => ({ id: "n" + i, label: "n" + i, tone: 1, group: home(i) }));
+    const boxes: GraphGroup[] = [{ id: "small", label: "Small" }, { id: "big", label: "Big" }, { id: "big/sub", label: "Sub", parent: "big" }];
+    const spec: GraphSpec = { nodes: many, edges: [], groups: boxes, label: "g" };
+    const { at, width } = packBoxes(spec);
+    expect(at.size).toBe(12);
+    expect(new Set(Array.from(at.values()).map((p) => JSON.stringify(p))).size).toBe(12);
+    const pos = (id: string): { x: number; y: number } => at.get(id) ?? { x: NaN, y: NaN };
+    // A grid: the next member to the right, then a row down under the first.
+    expect(pos("n3").y).toBe(pos("n2").y);
+    expect(pos("n3").x).toBeGreaterThan(pos("n2").x);
+    expect(pos("n4").x).toBe(pos("n2").x);
+    expect(pos("n4").y).toBeGreaterThan(pos("n2").y);
+    // The biggest box (nine with its sub-box's) is the first, top left.
+    const first = Array.from(at.entries()).sort((a, b) => a[1].x + a[1].y - (b[1].x + b[1].y))[0][0];
+    expect(first).toBe("n2");
+    // Each box's extent: its members, a cell round each. The sub-box's sit past the parent's own,
+    // inside the parent; the small box overlaps neither.
+    // A cell: the dot 18 in from its left, the name to the right; 230 by 44.
+    const extent = (ids: string[]): { x1: number; x2: number; y1: number; y2: number } => ({
+      x1: Math.min(...ids.map((id) => pos(id).x)) - 18, x2: Math.max(...ids.map((id) => pos(id).x)) + 212,
+      y1: Math.min(...ids.map((id) => pos(id).y)) - 22, y2: Math.max(...ids.map((id) => pos(id).y)) + 22,
+    });
+    const ids = (f: (i: number) => boolean): string[] => many.filter((_, i) => f(i)).map((n) => n.id);
+    const own = extent(ids((i) => home(i) === "big"));
+    const sub = extent(ids((i) => home(i) === "big/sub"));
+    const big = extent(ids((i) => !!home(i)?.startsWith("big")));
+    const small = extent(ids((i) => home(i) === "small"));
+    expect(sub.y1 >= own.y2 || sub.x1 >= own.x2).toBe(true);
+    const apart = (a: typeof big, b: typeof big): boolean => a.x2 <= b.x1 || b.x2 <= a.x1 || a.y2 <= b.y1 || b.y2 <= a.y1;
+    expect(apart(big, small)).toBe(true);
+    // The node in no box: placed, unboxed.
+    expect(at.has("n11")).toBe(true);
+    expect(Array.from(width.keys()).sort()).toEqual(["big", "big/sub", "small"]);
+    expect(width.get("big")).toBeGreaterThan(width.get("big/sub") ?? Infinity);
+    // The same data, the same picture; the pane's shape sets the shelves: a wide pane puts the
+    // small box beside the big one, a tall one under it.
+    expect(packBoxes(spec).at).toEqual(at);
+    const wide = packBoxes(spec, 6).at;
+    expect(wide.get("n0")?.y).toBe(wide.get("n2")?.y);
+    const tall = packBoxes(spec, 0.5).at;
+    expect(tall.get("n0")?.x).toBe(tall.get("n2")?.x);
+    expect(tall.get("n0")?.y).toBeGreaterThan(big.y2);
+  });
+
+  it("packBoxes: short boxes stack beside a tall one, not on a shelf under it", () => {
+    const home = (i: number): string => (i < 12 ? "tall" : ["a", "b", "c"][i - 12]);
+    const many: GraphNode[] = Array.from({ length: 15 }, (_, i) => ({ id: "n" + i, label: "n" + i, tone: 1, group: home(i) }));
+    const boxes: GraphGroup[] = ["tall", "a", "b", "c"].map((id) => ({ id, label: id }));
+    const at = packBoxes({ nodes: many, edges: [], groups: boxes, label: "g" }).at;
+    const pos = (id: string): { x: number; y: number } => at.get(id) ?? { x: NaN, y: NaN };
+    const tallRight = Math.max(...many.slice(0, 12).map((n) => pos(n.id).x));
+    const tallBottom = Math.max(...many.slice(0, 12).map((n) => pos(n.id).y));
+    // a, b and c in one column right of the tall box, each under the last; b, which a shelf would
+    // have put under the tall box, beside its notes.
+    expect(pos("n12").x).toBeGreaterThan(tallRight);
+    expect([pos("n13").x, pos("n14").x]).toEqual([pos("n12").x, pos("n12").x]);
+    expect(pos("n12").y).toBeLessThan(pos("n13").y);
+    expect(pos("n13").y).toBeLessThan(pos("n14").y);
+    expect(pos("n13").y).toBeLessThan(tallBottom);
+  });
+
+  it("graphLayoutOf: boxes stay where packBoxes put them; rings around a center still", () => {
+    expect(graphLayoutOf({ nodes: grouped, edges, groups, label: "g" })).toEqual({ name: "preset", animate: false, fit: true, padding: 30 });
+    expect(graphLayoutOf({ nodes: grouped, edges, groups, center: "a", label: "g" }).name).toBe("concentric");
+    expect(graphLayoutOf({ nodes, edges, groups, label: "g" }).name).toBe("cose");
+  });
+
+  it("graphStyle map: a box named at one size on screen, sized without its members' names; the lines quiet", () => {
+    const p = graphPalette(() => "");
+    let zoom = 0.5;
+    const st = graphStyle(p, { map: true, zoom: () => zoom });
+    const by = (sel: string): Record<string, unknown> => Object.assign({}, ...st.filter((b) => b.selector === sel).map((b) => b.style));
+    const box = by("node.group");
+    expect(box["compound-sizing-wrt-labels"]).toBe("exclude");
+    expect(box["min-width"]).toBe("data(width)");
+    expect(box["min-width-bias-right"]).toBe("100%");
+    expect(box.label).toBe("data(label)");
+    expect(box["text-valign"]).toBe("top");
+    expect(box["text-opacity"]).toBe(1);
+    expect((box["font-size"] as () => number)()).toBe(25);
+    // Its edge holds the bottom row's names: further out as the zoom falls, within the room packed.
+    expect((box.padding as () => string)()).toBe("40px");
+    expect(by("node.group.sub")["background-color"]).not.toBe(box["background-color"]);
+    // A sub-box's name a step quieter than its parent's: never read as the parent's second line.
+    const sub = by("node.group.sub");
+    expect((sub["font-size"] as () => number)()).toBeLessThan(25);
+    expect(sub["font-weight"]).toBeLessThan(box["font-weight"] as number);
+    expect(sub.color).not.toBe(box.color);
+    expect(by("edge").width).toBe(1);
+    expect(by("edge").opacity).toBeLessThan(0.5);
+    expect(by("edge.hl").opacity).toBe(1);
+    expect(by("edge.faded").opacity).toBeLessThan(by("edge").opacity as number);
+    expect(graphStyle(p).some((b) => b.selector === "node.group")).toBe(false);
+    // Boxed, every note is named while its cell shows enough of a name, kept to the cell; the one
+    // pointed at or picked gets its whole name. Unboxed, the same note is not named at this zoom.
+    const el = (classes: string[]): GraphEls => ({ hasClass: (x: string) => classes.includes(x), data: () => 20 }) as unknown as GraphEls;
+    const node = (sheet: typeof st): Record<string, unknown> =>
+      Object.assign({}, ...sheet.filter((b) => b.selector === "node" || b.selector === "node:childless").map((b) => b.style));
+    const boxed = node(graphStyle(p, { map: true, boxed: true, zoom: () => zoom }));
+    const call = (prop: string, e: GraphEls): unknown => (boxed[prop] as (x: GraphEls) => unknown)(e);
+    expect(call("text-opacity", el([]))).toBe(1);
+    expect(call("text-max-width", el([]))).toBe("180px");
+    // A row: the name right of its dot, the notes drawn over the lines; a big dot kept to its row.
+    expect([boxed["text-halign"], boxed["text-valign"], boxed["z-compound-depth"]]).toEqual(["right", "center", "top"]);
+    expect(call("width", ({ hasClass: () => false, data: () => 40 }) as unknown as GraphEls)).toBe(34);
+    expect(node(st)["text-halign"]).toBe("center");
+    expect(call("text-max-width", el(["hover"]))).toBe("340px");
+    expect(call("text-max-width", el(["sel"]))).toBe("340px");
+    expect((node(st)["text-opacity"] as (x: GraphEls) => unknown)(el([]))).toBe(0);
+    zoom = 0.3;
+    expect(call("text-opacity", el([]))).toBe(0);
+    expect(call("text-opacity", el(["hover"]))).toBe(1);
+    zoom = 2;
+    expect(call("text-max-width", el([]))).toBe("85px");
+    expect((by("node.group").padding as () => string)()).toBe("16px");
+    zoom = 0.8;
+    expect((by("node.group").padding as () => string)()).toBe("27px");
+    expect(graphStyle(p, { map: true, boxed: true, zoom: () => zoom }).find((b) => b.selector === "node.hover:childless")?.style["z-index"]).toBe(20);
+  });
+
+  it("graphView boxed: packed, never turned; a box is background to a tap; the selection's boxes are never quiet", async () => {
+    const column = (_id: string, i: number) => ({ x: 10, y: i * 100 });
+    const fake = fakeEngine({ place: column });
+    const picked: Array<string | null> = [];
+    const opened: string[] = [];
+    const v = graphView({ nodes: grouped, edges, groups, label: "g" }, { engine: fake.engine, onSelect: (id) => { picked.push(id); }, onOpen: (id) => { opened.push(id); } });
+    document.body.append(v.el);
+    await drawn();
+    const core = fake.cores[0];
+    expect(core.opts.layout.name).toBe("preset");
+    // A wide pane and a column: a whole graph without boxes turns it; boxes keep theirs.
+    expect(grouped.every((n) => core.at(n.id)?.x === 10)).toBe(true);
+    expect(core.fits).toBe(0);
+    core.fire("tap", "c");
+    expect(picked).toEqual(["c"]);
+    expect(core.cls("c")).toContain("sel");
+    expect(core.cls("e")).toContain("faded");
+    expect(core.cls("group:pay")).not.toContain("faded");
+    expect(core.cls("group:pay/refunds")).not.toContain("faded");
+    expect(core.cls("group:web")).not.toContain("faded");
+    core.fire("tap", "group:pay");
+    expect(picked).toEqual(["c", null]);
+    expect(core.cls("c")).not.toContain("sel");
+    expect(core.cls("group:pay")).not.toContain("sel");
+    core.fire("dbltap", "group:pay");
+    expect(opened).toEqual([]);
+    core.fire("dbltap", "c");
+    expect(opened).toEqual(["c"]);
+    v.destroy();
+  });
+
+  it("graphView: a frame that left the page releases its engine at the next draw", async () => {
+    const fake = fakeEngine();
+    const one = graphView({ nodes, edges, label: "g" }, { engine: fake.engine });
+    document.body.append(one.el);
+    await drawn();
+    one.el.remove();
+    graphView({ nodes, edges, label: "g" }, { engine: fake.engine });
+    expect(fake.cores[0].destroyed).toBe(true);
+  });
+});
+
 describe("ui/group - groupNode", () => {
   it("page density: the group IS the card; the band holds toggle, + and ⋯", () => {
     const p = groupNode({ name: "learn", label: "Learn", count: 2, density: "page", addTitle: "Add to learn", moreTitle: "Group actions", data: { scope: "jobs" } },
@@ -771,6 +1709,27 @@ describe("ui/timeline - timeline()", () => {
     expect(sheet("ui.css")).toMatch(/\.tl-live \{[^}]*display: inline-flex;/);
   });
 
+  it("hit: a search result's matched line, inside the summary, the match marked", () => {
+    // Remote Runs' search (SPEC §remote.panel): a row that only says `bash -s` cannot say why it is
+    // in the results - the line that matched does. Inside the summary, so a click on it opens the row.
+    const tl = timeline([
+      item("a", at(23, 9), { arg: "bash -s", hit: { before: "Active: active (", match: "running", after: ") since Sat" } }),
+      item("b", at(23, 8), { arg: "bash -s" }),
+    ], { now: NOW });
+    const [a, b] = Array.from(tl.querySelectorAll<HTMLElement>(".tl-sum"));
+    expect(a.className).toBe("tl-sum has-hit");
+    const hit = a.lastElementChild as HTMLElement;
+    expect(hit.className).toBe("tl-hit");
+    expect(hit.textContent).toBe("Active: active (running) since Sat");
+    expect(hit.querySelector("mark")?.textContent).toBe("running");
+    expect(b.className).toBe("tl-sum");
+    expect(b.querySelector(".tl-hit")).toBeNull();
+    // Only a row with a reason wraps onto a second line; every other summary stays one line.
+    const css = sheet("ui.css");
+    expect(css).toMatch(/\.tl-sum\.has-hit \{ flex-wrap: wrap;/);
+    expect(css).not.toMatch(/\.tl-sum \{[^}]*flex-wrap/);
+  });
+
   it("who appears only when the loaded items disagree about it (or when forced)", () => {
     const one = [item("a", at(23, 9), { who: "claude-code" }), item("b", at(23, 8), { who: "claude-code" })];
     expect(timeline(one, { now: NOW }).querySelector(".tl-who")).toBeNull();
@@ -909,6 +1868,28 @@ describe("ui/menu - anchoredMenu", () => {
 });
 
 describe("ui/sheet - stackSheet", () => {
+  it("moves focus into the new layer, keeps it through repaint, and restores the opener on Escape", () => {
+    const parent = h("div", { id: "sheet" });
+    const opener = h("button", null, "open a preview");
+    parent.appendChild(opener);
+    document.body.appendChild(parent);
+    opener.focus();
+    const layer = stackSheet();
+    const input = h("input", { type: "text" });
+    layer.paint({ title: "Preview", body: input, foot: [] });
+    const back = document.querySelector<HTMLElement>(".backdrop.stacked")!;
+    expect(back.contains(document.activeElement), "a real Escape starts at the focused node").toBe(true);
+    input.focus();
+    layer.paint({ title: "Preview loaded", body: "loaded", foot: [] });
+    expect(back.contains(document.activeElement), "repaint cannot send Escape to the parent").toBe(true);
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(document.querySelector(".backdrop.stacked")).toBeNull();
+    expect(parent.isConnected).toBe(true);
+    expect(parent.hidden).toBe(false);
+    expect(document.activeElement).toBe(opener);
+    parent.remove();
+  });
+
   it("a second layer over the open sheet: its own backdrop, Escape closes it alone and stops there", () => {
     document.body.innerHTML = "";
     let closedCb = 0;
@@ -970,6 +1951,860 @@ describe("ui/to-top - toTop", () => {
   });
 });
 
+describe("ui/grip - grip", () => {
+  afterEach(() => { localStorage.clear(); delete document.body.dataset.grip; });
+  const pane = (): HTMLElement => { const p = document.createElement("aside"); p.id = "gripPane"; return p; };
+  const press = (g: HTMLElement, key: string): void => { g.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); };
+  const pointer = (g: HTMLElement, type: string, at: { x?: number; y?: number }): void => {
+    g.dispatchEvent(new MouseEvent(type, { button: 0, clientX: at.x ?? 0, clientY: at.y ?? 0, bubbles: true }));
+  };
+  const stored = (key: string): unknown => JSON.parse(localStorage.getItem("swiss_grip_" + key) ?? "null");
+
+  it("a labelled separator that leaves the stylesheet's size alone until the reader moves it, then remembers", () => {
+    const p = pane();
+    const g = grip(p, { axis: "x", key: "t1", min: 100, max: 400, label: "Tables" });
+    expect(g.classList.contains("grip") && g.classList.contains("x")).toBe(true);
+    expect(g.getAttribute("role")).toBe("separator");
+    expect(g.getAttribute("aria-orientation")).toBe("vertical");
+    expect(g.getAttribute("aria-controls")).toBe("gripPane");
+    expect(g.getAttribute("aria-label")).toBe("Resize Tables");
+    expect(g.querySelector(".grip-btn"), "no fold, no chevron").toBeNull();
+    expect(p.style.width, "the stylesheet's default stands").toBe("");
+    // Nothing is laid out here, so the measured width is 0 and the arrows start at the minimum.
+    press(g, "ArrowRight");
+    expect(p.style.width).toBe("116px");
+    expect(stored("t1")).toEqual({ size: 116, folded: false });
+    press(g, "End");
+    expect(p.style.width).toBe("400px");
+    press(g, "Home");
+    expect(p.style.width).toBe("100px");
+    // The page paints again: the new grip reads the remembered width back.
+    const again = pane();
+    grip(again, { axis: "x", key: "t1", min: 100, max: 400, label: "Tables" });
+    expect(again.style.width).toBe("100px");
+    expect(gripState({ axis: "x", key: "t1", min: 100, max: 400, label: "Tables" })).toEqual({ size: 100, folded: false });
+  });
+
+  it("a y edge sizes its pane's flex basis; a drag keeps to the bounds, holds the cursor and announces the change once", () => {
+    const p = pane();
+    const g = grip(p, { axis: "y", key: "t2", size: 220, min: 96, max: () => 500, label: "Console" });
+    expect(g.getAttribute("aria-orientation")).toBe("horizontal");
+    expect(p.style.flex).toBe("0 1 220px");
+    let resizes = 0;
+    const onResize = (): void => { resizes++; };
+    window.addEventListener("resize", onResize);
+    try {
+      pointer(g, "pointerdown", { y: 300 });
+      expect(document.body.dataset.grip).toBe("y");
+      pointer(g, "pointermove", { y: 400 });
+      expect(p.style.flex).toBe("0 1 320px");
+      pointer(g, "pointermove", { y: 2000 });
+      expect(p.style.flex, "never past max").toBe("0 1 500px");
+      pointer(g, "pointermove", { y: -900 });
+      expect(p.style.flex, "never under min").toBe("0 1 96px");
+      expect(resizes, "nothing announced mid-drag").toBe(0);
+      pointer(g, "pointerup", { y: -900 });
+    } finally { window.removeEventListener("resize", onResize); }
+    expect(document.body.dataset.grip).toBeUndefined();
+    expect(resizes).toBe(1);
+    expect(stored("t2")).toEqual({ size: 96, folded: false });
+    // Without fold a double-click puts the default back.
+    g.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(p.style.flex).toBe("0 1 220px");
+  });
+
+  it("a foldable pane folds by double-click, Enter, its chevron or a drag past half its minimum; the folded strip's click brings it back", () => {
+    const p = pane();
+    const g = grip(p, { axis: "x", key: "t3", size: 200, min: 160, max: 500, label: "Tables", fold: true });
+    const chevron = g.querySelector<HTMLElement>("button.grip-btn");
+    expect(chevron?.getAttribute("aria-label")).toBe("Hide Tables");
+    expect(chevron?.tabIndex, "the edge itself is the tab stop").toBe(-1);
+    g.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(p.style.display).toBe("none");
+    expect(g.classList.contains("folded")).toBe(true);
+    expect(g.getAttribute("aria-label")).toBe("Show Tables");
+    expect(chevron?.getAttribute("aria-label")).toBe("Show Tables");
+    expect(useHref(g)).toBe("#i-chevron-right");
+    expect(stored("t3")).toEqual({ size: 200, folded: true });
+    g.click();
+    expect(p.style.display).toBe("");
+    expect(p.style.width, "the width it had").toBe("200px");
+    press(g, "Enter");
+    expect(g.classList.contains("folded")).toBe(true);
+    press(g, "ArrowRight");
+    expect(g.classList.contains("folded"), "a folded edge has no width to change").toBe(true);
+    press(g, "Enter");
+    expect(g.classList.contains("folded")).toBe(false);
+    chevron?.click();
+    expect(g.classList.contains("folded")).toBe(true);
+    g.click();
+    // The drag: under the minimum it stops at the minimum, past half of it the pane folds -
+    // and the click the release makes does not unfold it again.
+    pointer(g, "pointerdown", { x: 300 });
+    pointer(g, "pointermove", { x: 280 });
+    expect(p.style.width).toBe("180px");
+    pointer(g, "pointermove", { x: 200 });
+    expect(p.style.width).toBe("160px");
+    pointer(g, "pointermove", { x: 150 });
+    expect(p.style.display).toBe("none");
+    pointer(g, "pointerup", { x: 150 });
+    g.click();
+    expect(g.classList.contains("folded")).toBe(true);
+    // The fold keeps the width the drag started from, not the minimum it crossed on the way.
+    expect(stored("t3")).toEqual({ size: 200, folded: true });
+    g.click();
+    expect(g.classList.contains("folded")).toBe(false);
+    expect(p.style.width).toBe("200px");
+  });
+
+  it("a press on the mid-edge chevron that moves is a drag, not a fold; one that stays is the chevron's click", () => {
+    // Found on the 19998 walk: the chevron sits where a hand grabs the edge, and a drag that
+    // started on it did nothing - first because the press was left to the button, then because
+    // a capture taken only at the first move missed a hand whose first move left the button.
+    const p = pane();
+    const g = grip(p, { axis: "x", key: "t5", size: 200, min: 160, max: 500, label: "Tables", fold: true });
+    const chevron = g.querySelector<HTMLElement>("button.grip-btn");
+    if (!chevron) throw new Error("no chevron");
+    pointer(chevron, "pointerdown", { x: 300 });
+    pointer(g, "pointermove", { x: 360 }); // captured: the edge hears the move wherever it lands
+    pointer(g, "pointerup", { x: 360 });
+    g.click(); // the release's click lands on the edge that held the pointer
+    expect(p.style.width).toBe("260px");
+    expect(g.classList.contains("folded")).toBe(false);
+    // A press that stays put is the chevron's click, answered at the release; the click after
+    // it is the release's own and does not fold it back.
+    pointer(chevron, "pointerdown", { x: 300 });
+    pointer(g, "pointerup", { x: 300 });
+    expect(g.classList.contains("folded")).toBe(true);
+    g.click();
+    expect(g.classList.contains("folded")).toBe(true);
+    g.click(); // the folded strip's click
+    expect(g.classList.contains("folded")).toBe(false);
+    // No press before it (a keyboard, a screen reader): the chevron's click is the toggle.
+    chevron.click();
+    expect(g.classList.contains("folded")).toBe(true);
+  });
+
+  it("an end edge sizes the pane after it: a drag towards the start widens it, the arrows swap, the chevron points out; folded until opened, a page control folds it", () => {
+    const p = pane();
+    const o = { axis: "x" as const, key: "t6", size: 400, min: 280, max: 720, label: "Agent", fold: true, folded: true, end: true };
+    const g = grip(p, o);
+    expect(g.className).toBe("grip x end folded");
+    expect(p.style.display, "folded while nothing is remembered").toBe("none");
+    expect(gripFolded(g)).toBe(true);
+    expect(useHref(g), "folded: the chevron points back in").toBe("#i-chevron-left");
+    // A page's own button brings it back, and folds it again; asking for the state it has is nothing.
+    gripFold(g, false);
+    expect(gripFolded(g)).toBe(false);
+    expect(p.style.display).toBe("");
+    expect(p.style.width).toBe("400px");
+    expect(useHref(g)).toBe("#i-chevron-right");
+    expect(stored("t6")).toEqual({ size: 400, folded: false });
+    gripFold(g, false);
+    expect(gripFolded(g)).toBe(false);
+    pointer(g, "pointerdown", { x: 800 });
+    pointer(g, "pointermove", { x: 700 });
+    expect(p.style.width, "towards the start widens").toBe("500px");
+    pointer(g, "pointermove", { x: 1000 });
+    expect(p.style.width, "towards the end narrows, down to the minimum").toBe("280px");
+    pointer(g, "pointermove", { x: 1100 });
+    expect(p.style.display, "past half the minimum it folds").toBe("none");
+    pointer(g, "pointermove", { x: 800 });
+    pointer(g, "pointerup", { x: 800 });
+    expect(p.style.width).toBe("400px");
+    press(g, "ArrowLeft");
+    expect(p.style.width).toBe("416px");
+    press(g, "ArrowRight");
+    expect(p.style.width).toBe("400px");
+    gripFold(g, true);
+    expect(p.style.display).toBe("none");
+    // Remembered open, the next paint opens it whatever the default.
+    gripFold(g, false);
+    const again = pane();
+    expect(gripFolded(grip(again, o))).toBe(false);
+    expect(again.style.width).toBe("400px");
+  });
+
+  it("ui.css: a hidden pane takes its edge with it, and a folded edge is a strip that stays", () => {
+    const rules = parseCss(sheet("ui.css")).filter((r) => !r.at);
+    const decl = (sel: string, prop: string): string | undefined =>
+      rules.find((r) => r.selectors.includes(sel))?.decls.find((d) => d.prop === prop)?.value;
+    expect(decl("[hidden] + .grip", "display")).toBe("none");
+    expect(decl(".grip.x", "width")).toBe("0");
+    expect(decl(".grip.x.folded", "width")).toBe("var(--s5)");
+    expect(decl(".grip.x::before", "cursor")).toBe("col-resize");
+    expect(decl(".grip.y::before", "cursor")).toBe("row-resize");
+  });
+});
+
+describe("ui/chat - chatPane", () => {
+  it("a labelled aside: the head with its caption and tools, the body, the words box over its note and actions", () => {
+    const input = h("textarea");
+    const send = h("button", { type: "button" }, "Send");
+    const p = chatPane({ id: "ag", cap: "Agent", tools: [h("select")], body: h("p", null, "Ask"), input, note: "orders", actions: [send] });
+    expect(p.tagName).toBe("ASIDE");
+    expect(p.id).toBe("ag");
+    expect(p.getAttribute("aria-label")).toBe("Agent");
+    expect(Array.from(p.children).map((c) => c.className)).toEqual(["chat-head", "chat-body", "chat-compose"]);
+    expect(p.querySelector(".chat-head > .sec-cap")?.textContent).toBe("Agent");
+    expect(p.querySelector(".chat-tools > select")).not.toBeNull();
+    expect(p.querySelector(".chat-compose > textarea")).toBe(input);
+    expect(p.querySelector(".chat-acts > .chat-note")?.textContent).toBe("orders");
+    expect(p.querySelector(".chat-acts > button")).toBe(send);
+    const bare = chatPane({ cap: "Agent", body: null, input: h("textarea"), actions: [] });
+    expect(bare.querySelector(".chat-tools"), "no tools, no tools row").toBeNull();
+    // What waits to be sent stands above the words box.
+    const queued = h("div", { class: "edit-list" });
+    const q = chatPane({ cap: "Agent", body: null, input: h("textarea"), queued, actions: [] });
+    expect(Array.from(q.querySelector(".chat-compose")!.children).slice(0, 2).map((c) => c.tagName)).toEqual(["DIV", "TEXTAREA"]);
+    expect(q.querySelector(".chat-compose > .edit-list")).toBe(queued);
+    // The column's end comes into view as an answer streams.
+    const body = p.querySelector<HTMLElement>(".chat-body")!;
+    Object.defineProperty(body, "scrollHeight", { value: 900 });
+    chatFollow(p);
+    expect(body.scrollTop).toBe(900);
+    expect(p.querySelector(".chat-cmds"), "no commands, no list").toBeNull();
+  });
+
+  it("the words box grows with its words, a write by the page included; a box not laid out keeps its rows", () => {
+    const input = h("textarea", { rows: 2 });
+    const p = chatPane({ cap: "Agent", body: null, input, actions: [] });
+    document.body.appendChild(p);
+    let tall = 0;
+    Object.defineProperty(input, "scrollHeight", { get: () => tall, configurable: true });
+    Object.defineProperty(input, "offsetHeight", { get: () => (tall ? tall + 2 : 0), configurable: true });
+    Object.defineProperty(input, "clientHeight", { get: () => tall, configurable: true });
+    tall = 120;
+    input.value = "one\ntwo\nthree\nfour";
+    expect(input.style.height, "the words plus the border").toBe("122px");
+    expect(input.value).toBe("one\ntwo\nthree\nfour");
+    tall = 80;
+    input.dispatchEvent(new Event("input"));
+    expect(input.style.height).toBe("82px");
+    tall = 0;
+    input.value = "";
+    expect(input.style.height, "a folded pane's box keeps its rows").toBe("");
+    p.remove();
+  });
+
+  it("commands: a \"/\" lists them above the box - the arrows walk, Tab or Enter completes, Escape shuts, a click completes; a key it takes goes no further", () => {
+    const input = h("textarea");
+    const p = chatPane({ cap: "Agent", body: null, input, actions: [], commands: [
+      { name: "compact", arg: "[focus]", hint: "Condense the conversation" },
+      { name: "clear", hint: "Start over" },
+    ] });
+    document.body.appendChild(p);
+    const list = p.querySelector<HTMLElement>(".chat-compose > .chat-cmds")!;
+    expect(list.getAttribute("role")).toBe("listbox");
+    expect(input.getAttribute("aria-controls")).toBe(list.id);
+    expect(list.hidden).toBe(true);
+    let seen = 0;
+    input.addEventListener("keydown", () => { seen++; });
+    const press = (key: string, shiftKey = false): boolean => input.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey, bubbles: true, cancelable: true }));
+    const names = (): string[] => Array.from(list.querySelectorAll(".chat-cmd-name")).map((r) => r.textContent || "");
+    const marked = (): string | null => list.querySelector("[aria-selected=true] .chat-cmd-name")?.textContent ?? null;
+    // Words in a box without the focus open nothing; the focus brings the list.
+    input.value = "/c";
+    expect(list.hidden).toBe(true);
+    input.focus();
+    expect(list.hidden).toBe(false);
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+    expect(names()).toEqual(["/compact [focus]", "/clear"]);
+    expect(list.querySelector(".chat-cmd-hint")?.textContent).toBe("Condense the conversation");
+    expect(marked()).toBe("/compact [focus]");
+    press("ArrowDown");
+    expect(marked()).toBe("/clear");
+    expect(input.getAttribute("aria-activedescendant")).toBe(list.querySelector("[aria-selected=true]")!.id);
+    press("ArrowDown");
+    expect(marked(), "the arrows wrap").toBe("/compact [focus]");
+    press("ArrowUp");
+    expect(press("Tab"), "Tab completes").toBe(false);
+    expect(input.value).toBe("/clear ");
+    expect(list.hidden, "a space ends the name").toBe(true);
+    expect(input.getAttribute("aria-expanded")).toBe("false");
+    expect(seen, "the keys the list took never reached the page").toBe(0);
+    // A name that begins with the words first, then one that holds them.
+    input.value = "/ear";
+    expect(names()).toEqual(["/clear"]);
+    input.value = "/sel";
+    expect(list.hidden, "no command, no list").toBe(true);
+    // Enter completes a part; on a name typed whole it is the page's.
+    input.value = "/comp";
+    expect(press("Enter")).toBe(false);
+    expect(input.value).toBe("/compact ");
+    input.value = "/compact";
+    expect(list.hidden).toBe(false);
+    expect(press("Enter")).toBe(true);
+    expect(press("Enter", true), "Shift+Enter breaks the line").toBe(true);
+    expect(seen).toBe(2);
+    // Escape shuts the list until the words change.
+    input.value = "/c";
+    expect(press("Escape")).toBe(false);
+    expect(list.hidden).toBe(true);
+    input.dispatchEvent(new Event("focus"));
+    expect(list.hidden, "the same words keep it shut").toBe(true);
+    input.value = "/cl";
+    expect(names()).toEqual(["/clear"]);
+    // A click completes and leaves the caret in the box.
+    input.value = "/";
+    const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    list.querySelectorAll(".chat-cmd")[1].dispatchEvent(down);
+    expect(down.defaultPrevented, "the box keeps the focus").toBe(true);
+    expect(input.value).toBe("/clear ");
+    expect(input.selectionStart).toBe(7);
+    // Leaving the box shuts it.
+    input.value = "/";
+    expect(list.hidden).toBe(false);
+    input.blur();
+    expect(list.hidden).toBe(true);
+    p.remove();
+  });
+});
+
+describe("ui/chat - chatQueue", () => {
+  it("a card naming how many wait, one row each with Edit, Delete and steer-now; ↑ moves a row first, a steered row is marked", () => {
+    const steered: string[] = [];
+    const deleted: string[] = [];
+    let edited = 0;
+    const q = chatQueue({
+      id: "qq",
+      max: 50,
+      onSteer: (m) => { steered.push(m.text); q.steer(m.id, true); },
+      onDelete: (m) => { deleted.push(m.text); },
+      onEdited: () => { edited++; },
+    });
+    document.body.appendChild(q.node);
+    expect(q.node.id).toBe("qq");
+    expect(q.node.hidden, "empty, it takes no room").toBe(true);
+    const a = q.add("first");
+    q.add("second\nmore");
+    const c = q.add("third");
+    expect(q.node.hidden).toBe(false);
+    expect(q.node.querySelector(".chat-queue-n")?.textContent).toBe("3 queued messages");
+    const texts = (): string[] => q.items().map((m) => m.text);
+    const rowOf = (id: string): HTMLElement => q.node.querySelector<HTMLElement>("[data-queued='" + id + "']")!;
+    expect(Array.from(q.node.querySelectorAll(".chat-queue-text")).map((t) => t.textContent)).toEqual(["first", "second …", "third"]);
+    expect(rowOf(q.items()[1].id).querySelector(".chat-queue-text")?.getAttribute("title"), "the whole words in the title").toBe("second\nmore");
+    const labels = (id: string): string[] => Array.from(rowOf(id).querySelectorAll("button")).filter((b) => !b.hidden).map((b) => b.getAttribute("aria-label") ?? "");
+    expect(labels(c.id)).toEqual(["Edit", "Delete", "Steer now: the answer reads it before its next step"]);
+    // The head folds the rows away and back.
+    const head = q.node.querySelector<HTMLButtonElement>("button.chat-queue-head")!;
+    const list = q.node.querySelector<HTMLElement>(".chat-queue-list")!;
+    expect(head.getAttribute("aria-controls")).toBe(list.id);
+    head.click();
+    expect(list.hidden).toBe(true);
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    head.click();
+    expect(list.hidden).toBe(false);
+    // ↑ puts the third first and hands it to the host, which marks it steered.
+    rowOf(c.id).querySelectorAll("button")[2].click();
+    expect(steered).toEqual(["third"]);
+    expect(texts()).toEqual(["third", "first", "second\nmore"]);
+    expect(list.firstElementChild).toBe(rowOf(c.id));
+    expect(rowOf(c.id).hasAttribute("data-steered")).toBe(true);
+    expect(rowOf(c.id).querySelector(".chat-queue-tag")?.textContent).toBe("steering");
+    expect(labels(c.id), "a steered row is withdrawn, never edited").toEqual(["Withdraw"]);
+    q.steer(c.id, false);
+    expect(rowOf(c.id).hasAttribute("data-steered")).toBe(false);
+    // Delete takes the row and tells the host.
+    rowOf(a.id).querySelectorAll("button")[1].click();
+    expect(deleted).toEqual(["first"]);
+    expect(texts()).toEqual(["third", "second\nmore"]);
+    expect(q.node.querySelector(".chat-queue-n")?.textContent).toBe("2 queued messages");
+    // Edit turns the row into a box in place: Escape keeps the words, Enter saves.
+    const b = q.items()[1];
+    rowOf(b.id).querySelectorAll("button")[0].click();
+    const box = rowOf(b.id).querySelector<HTMLTextAreaElement>("textarea.chat-queue-edit")!;
+    expect(box.value).toBe("second\nmore");
+    expect(box.maxLength).toBe(50);
+    expect(q.editing()).toBe(b);
+    let page = 0;
+    const onPage = (): void => { page++; };
+    document.addEventListener("keydown", onPage);
+    box.value = "changed";
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(texts()).toEqual(["third", "second\nmore"]);
+    expect(q.editing()).toBeNull();
+    expect(edited).toBe(1);
+    rowOf(b.id).querySelectorAll("button")[0].click();
+    const again = rowOf(b.id).querySelector<HTMLTextAreaElement>("textarea")!;
+    again.value = "  rewritten  ";
+    again.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(texts()).toEqual(["third", "rewritten"]);
+    expect(rowOf(b.id).querySelector(".chat-queue-text")?.textContent).toBe("rewritten");
+    expect(page, "the keys the edit took never reached the page").toBe(0);
+    document.removeEventListener("keydown", onPage);
+    // Saved empty, it is deleted.
+    rowOf(b.id).querySelectorAll("button")[0].click();
+    const empty = rowOf(b.id).querySelector<HTMLTextAreaElement>("textarea")!;
+    empty.value = " ";
+    empty.blur();
+    expect(texts()).toEqual(["third"]);
+    expect(deleted).toEqual(["first", "rewritten"]);
+    expect(edited).toBe(3);
+    // remove takes a row without a word to the host; the last one gone, the card hides.
+    expect(q.remove(c.id)?.text).toBe("third");
+    expect(q.remove(c.id)).toBeNull();
+    expect(deleted).toHaveLength(2);
+    expect(q.node.hidden).toBe(true);
+    q.node.remove();
+  });
+});
+
+describe("ui/copy - copyBtn and copyText", () => {
+  const clip = (impl: (s: string) => Promise<void>): string[] => {
+    const got: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (s: string): Promise<void> => { await impl(s); got.push(s); } },
+    });
+    return got;
+  };
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, "clipboard");
+    vi.useRealTimers();
+  });
+
+  it("a click copies the words read at the click, the glyph a check saying Copied for a moment, then Copy again", async () => {
+    vi.useFakeTimers();
+    const got = clip(async () => undefined);
+    let words = "first";
+    const b = copyBtn(() => words, { label: "Copy code" });
+    expect(b.matches("button.btn.icon.ghost.copy-btn")).toBe(true);
+    expect(b.getAttribute("aria-label")).toBe("Copy code");
+    expect(b.querySelector("use")!.getAttribute("href")).toContain("copy");
+    words = "SELECT 1";
+    b.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(got).toEqual(["SELECT 1"]);
+    expect(b.hasAttribute("data-copied")).toBe(true);
+    expect(b.getAttribute("aria-label")).toBe("Copied");
+    expect(b.title).toBe("Copied");
+    expect(b.querySelector("use")!.getAttribute("href")).toContain("check");
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(b.hasAttribute("data-copied")).toBe(false);
+    expect(b.getAttribute("aria-label")).toBe("Copy code");
+    expect(b.querySelector("use")!.getAttribute("href")).toContain("copy");
+  });
+
+  it("a refused clipboard with no fallback says Copy failed under a cross, never Copied", async () => {
+    clip(async () => { throw new Error("denied"); });
+    const b = copyBtn("words");
+    expect(b.getAttribute("aria-label")).toBe("Copy");
+    b.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(b.hasAttribute("data-copied")).toBe(false);
+    expect(b.getAttribute("aria-label")).toBe("Copy failed");
+    expect(b.querySelector("use")!.getAttribute("href")).toContain("x");
+    expect(await copyText("words")).toBe(false);
+    // The fallback's textarea never stays on the page.
+    expect(document.querySelector("textarea[readonly]")).toBeNull();
+  });
+
+  it("markdownNode({copy}) wraps each code block with its Copy - a diagram's fence none - and without copy none", async () => {
+    const got = clip(async () => undefined);
+    const src = "Run:\n\n```sql\nSELECT 1;\n```\n\n```\nplain\n```\n\n```mermaid\ngraph TD; a-->b\n```";
+    const md = markdownNode(src, { copy: true });
+    const boxes = md.querySelectorAll(".md-codebox");
+    expect(boxes.length).toBe(2);
+    for (const box of Array.from(boxes)) {
+      expect(box.firstElementChild!.matches("pre.md-code")).toBe(true);
+      expect(box.lastElementChild!.matches(".copy-btn")).toBe(true);
+      expect(box.lastElementChild!.getAttribute("aria-label")).toBe("Copy code");
+    }
+    (boxes[0].querySelector(".copy-btn") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(got).toEqual(["SELECT 1;"]);
+    expect(markdownNode(src).querySelector(".md-codebox, .copy-btn")).toBeNull();
+  });
+
+  it("transcriptTurn({copy}) closes the turn on its Copy, a markdown turn's code blocks carrying theirs; no copy, no row", async () => {
+    const got = clip(async () => undefined);
+    const turn = transcriptTurn({ role: "assistant", text: "```\nx = 1\n```\nDone.", markdown: true, copy: "the answer" });
+    expect(turn.lastElementChild!.matches(".tc-acts")).toBe(true);
+    expect(turn.querySelectorAll(".md-codebox > .copy-btn").length).toBe(1);
+    (turn.querySelector(".tc-acts > .copy-btn") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(got).toEqual(["the answer"]);
+    expect(transcriptTurn({ side: "user", role: "user", text: "hi" }).querySelector(".tc-acts")).toBeNull();
+    expect(transcriptTurn({ side: "user", role: "user", text: "hi", copy: "hi" }).querySelector(".tc-acts > .copy-btn")).not.toBeNull();
+  });
+});
+
+describe("ui/chat-stats - chatStats", () => {
+  const USAGE = {
+    turns: 2, steps: 5, tokensIn: 3_100, cacheRead: 38_400, cacheWrite: 2_600, tokensOut: 1_250,
+    llmMs: 16_000, toolMs: 4_300, ttftMs: 4_200, ttftSteps: 5, decodeMs: 11_800, decodeTokens: 1_250,
+    context: { bytes: 352_000, cap: 1_048_576, system: 30_000, tools: 6_400, limit: 256_000, used: 86_200, perByte: 0.24 },
+  };
+  const UNTIMED = { llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 };
+  const text = (el: Element | null): string => (el?.textContent || "").replace(/\s+/g, " ").trim();
+  const rows = (pop: Element): string[][] => Array.from(pop.querySelectorAll(".chat-pop-rows > div")).map((r) => [r.getAttribute("data-row") || "", text(r.querySelector("dt")), text(r.querySelector("dd"))]);
+
+  it("hides while there is nothing to say; then three pills: turns, steps and speed, tokens and the cache's share, the ring's percent", () => {
+    const s = chatStats({ id: "st" });
+    expect(s.node.matches("div.chat-stats#st")).toBe(true);
+    expect(s.node.hidden).toBe(true);
+    s.set({ ...USAGE, steps: 0, turns: 0, context: null });
+    expect(s.node.hidden, "no step and no context: still nothing").toBe(true);
+    s.set(USAGE);
+    expect(s.node.hidden).toBe(false);
+    const activity = s.node.querySelector<HTMLButtonElement>("button.chat-stat[data-stat=activity][aria-haspopup=dialog]")!;
+    // The speed over the time after each round's first token: 1,250 out in 11.8 s.
+    expect(activity.getAttribute("aria-label")).toBe("2 turns 5 steps · 106 tok/s");
+    expect(activity.title).toBe("2 turns 5 steps · 106 tok/s");
+    expect(activity.querySelector("use")!.getAttribute("href")).toBe("#i-gauge");
+    const sep = activity.querySelector(".chat-stat-label > .chat-stat-sep")!;
+    expect([sep.textContent, sep.getAttribute("aria-hidden")]).toEqual(["·", "true"]);
+    const tokens = s.node.querySelector<HTMLButtonElement>("button.chat-stat[data-stat=tokens]")!;
+    expect(tokens.getAttribute("aria-label")).toBe("45.4K tok · Cache hit 87%");
+    expect(tokens.querySelector("use")!.getAttribute("href")).toBe("#i-database");
+    const ring = s.node.querySelector<HTMLButtonElement>("button.chat-ctx")!;
+    // The provider's count against the budget's tokens: 86,200 of 256,000.
+    expect(text(ring)).toBe("34%");
+    expect(ring.getAttribute("aria-label")).toBe("34% of context used - what fills it");
+    expect(ring.dataset.level).toBe("");
+    const arc = ring.querySelector(".chat-ring-fill")!;
+    expect(Number(arc.getAttribute("stroke-dasharray")!.split(" ")[0])).toBeCloseTo(2 * Math.PI * 6 * 86_200 / 256_000, 1);
+    expect(Array.from(s.node.children).map((c) => c.className)).toEqual(["chat-stat", "chat-stat", "chat-ctx", "chat-pop"]);
+    s.set({ ...USAGE, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 });
+    expect(activity.getAttribute("aria-label"), "no first token said: the output over the rounds' whole time").toBe("2 turns 5 steps · 78 tok/s");
+    s.set({ ...USAGE, ...UNTIMED, turns: 1, steps: 1 });
+    expect(activity.getAttribute("aria-label"), "no time counted: no speed").toBe("1 turn 1 step");
+    expect(activity.disabled, "and no card to open").toBe(true);
+    s.set({ ...USAGE, tokensIn: 4, cacheRead: 9_996, cacheWrite: 0, tokensOut: 0 });
+    expect(tokens.getAttribute("aria-label"), "a hit short of all reads short of 100").toBe("10K tok · Cache hit 99.96%");
+    s.set({ ...USAGE, tokensIn: 0, cacheRead: 0, cacheWrite: 0, tokensOut: 0 });
+    expect(tokens.hidden, "nothing billed: no tokens pill").toBe(true);
+    s.set({ ...USAGE, steps: 0, turns: 0 });
+    expect(s.node.hidden, "a restored conversation's weight alone shows the ring").toBe(false);
+    expect(activity.hidden).toBe(true);
+    expect(ring.hidden).toBe(false);
+    s.set({ ...USAGE, context: { ...USAGE.context, used: 200_000 } });
+    expect(ring.dataset.level).toBe("warn");
+    s.set({ ...USAGE, context: { ...USAGE.context, used: 240_000 } });
+    expect(ring.dataset.level).toBe("full");
+    s.set(null);
+    expect(s.node.hidden).toBe(true);
+  });
+
+  it("each pill opens its card above the line, one at a time: the session's times, the tokens exactly", () => {
+    const s = chatStats({ id: "st3" });
+    document.body.appendChild(s.node);
+    s.set(USAGE);
+    const [activity, tokens] = Array.from(s.node.querySelectorAll<HTMLButtonElement>("button.chat-stat"));
+    const pop = s.node.querySelector<HTMLElement>(".chat-pop[role=dialog]")!;
+    expect([activity.getAttribute("aria-controls"), tokens.getAttribute("aria-controls")]).toEqual([pop.id, pop.id]);
+    expect(pop.hidden).toBe(true);
+    activity.click();
+    expect(activity.getAttribute("aria-expanded")).toBe("true");
+    expect(pop.hidden).toBe(false);
+    expect(pop.getAttribute("aria-label")).toBe("Session statistics");
+    expect(text(pop.querySelector(".chat-pop-title > .chat-pop-label"))).toBe("Session statistics");
+    expect(pop.querySelector(".chat-pop-label use")!.getAttribute("href")).toBe("#i-gauge");
+    expect(text(pop.querySelector(".chat-pop-title > .chat-pop-value"))).toBe("2 turns 5 steps");
+    expect(pop.querySelector(".chat-pop-title + .chat-pop-rule + dl.chat-pop-rows")).not.toBeNull();
+    expect(rows(pop)).toEqual([
+      ["llm", "LLM time", "16s"],
+      ["tool", "Tool time", "4.3s"],
+      ["ttft", "Avg time to first token (TTFT)", "0.8s"],
+      ["speed", "Tokens per second (TPS)", "106 tok/s"],
+    ]);
+    // An open card follows the counts: past a minute a time reads in minutes.
+    s.set({ ...USAGE, llmMs: 1_443_000, toolMs: 0 });
+    expect(rows(pop).map((r) => r[2]).slice(0, 2)).toEqual(["24m3s", "0.8s"]);
+    // Another pill takes the card over.
+    tokens.click();
+    expect(activity.getAttribute("aria-expanded")).toBe("false");
+    expect(tokens.getAttribute("aria-expanded")).toBe("true");
+    expect(pop.getAttribute("aria-label")).toBe("Token usage");
+    expect(pop.querySelector(".chat-pop-label use")!.getAttribute("href")).toBe("#i-database");
+    expect(text(pop.querySelector(".chat-pop-value"))).toBe("45,350 tok");
+    expect(rows(pop)).toEqual([
+      ["hit", "Cache hit", "87%"],
+      ["in", "Uncached input", "3,100 tok"],
+      ["read", "Cached input", "38,400 tok"],
+      ["write", "Cache write", "2,600 tok"],
+      ["out", "Output", "1,250 tok"],
+    ]);
+    s.set({ ...USAGE, cacheWrite: 0 });
+    expect(rows(pop).map((r) => r[0]), "nothing written to the cache: no such row").toEqual(["hit", "in", "read", "out"]);
+    // Escape closes it, the focus back on its pill.
+    tokens.blur();
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(pop.hidden).toBe(true);
+    expect(tokens.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(tokens);
+    // A pill whose card has nothing left to show closes it.
+    activity.click();
+    s.set({ ...USAGE, ...UNTIMED });
+    expect(pop.hidden).toBe(true);
+    expect(activity.getAttribute("aria-expanded")).toBe("false");
+    s.node.remove();
+  });
+
+  it("the ring opens what fills the context - the count against the budget, a bar and a row each, the note under them - and Escape or a press outside closes it", () => {
+    const s = chatStats({ id: "st2", note: "A send past the budget is refused." });
+    document.body.appendChild(s.node);
+    s.set(USAGE);
+    const ring = s.node.querySelector<HTMLButtonElement>("button.chat-ctx")!;
+    const pop = s.node.querySelector<HTMLElement>(".chat-pop[role=dialog]")!;
+    expect(ring.getAttribute("aria-controls")).toBe(pop.id);
+    ring.click();
+    expect(ring.getAttribute("aria-expanded")).toBe("true");
+    expect(pop.hidden).toBe(false);
+    expect(text(pop.querySelector(".chat-pop-label"))).toBe("34% of context used");
+    // The provider's count is no estimate, the budget no guess: neither carries a "~".
+    expect(text(pop.querySelector(".chat-pop-value"))).toBe("86.2K / 256K");
+    // The parts split the count as they split the bytes.
+    expect(rows(pop)).toEqual([["system", "System prompt", "7.3K"], ["tools", "Tool definitions", "1.6K"], ["messages", "Messages", "77.3K"]]);
+    expect(pop.querySelectorAll(".chat-pop-rows dt > .chat-ctx-key")).toHaveLength(3);
+    const widths = (): number[] => Array.from(pop.querySelectorAll<HTMLElement>(".chat-ctx-bar > .chat-ctx-seg")).map((seg) => parseFloat(seg.style.width));
+    expect(widths()).toEqual([2.87, 0.61, 30.19]);
+    expect(text(pop.querySelector(".chat-pop-note"))).toBe("A send past the budget is refused.");
+    // No round has counted what the conversation carries (a compaction's checkpoint): the
+    // bytes read as tokens, marked as the estimate they are.
+    s.set({ ...USAGE, context: { ...USAGE.context, used: undefined } });
+    expect(text(ring)).toBe("33%");
+    expect(text(pop.querySelector(".chat-pop-value"))).toBe("~84.5K / 256K");
+    expect(rows(pop)[0][2]).toBe("~7.2K");
+    // Without a limit the bytes read against the byte budget.
+    s.set({ ...USAGE, context: { bytes: 352_000, cap: 1_048_576, system: 30_000, tools: 6_400 } });
+    expect(text(pop.querySelector(".chat-pop-value"))).toBe("344 KiB / 1024 KiB");
+    expect(widths()).toEqual([2.86, 0.61, 30.1]);
+    // Escape closes it, the focus back on the ring, and never reaches the page.
+    const heard: string[] = [];
+    const page = (e: KeyboardEvent): void => { heard.push(e.key); };
+    document.addEventListener("keydown", page);
+    ring.blur();
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(pop.hidden).toBe(true);
+    expect(ring.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(ring);
+    expect(heard).toEqual([]);
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(heard, "closed, it takes no Escape").toEqual(["Escape"]);
+    document.removeEventListener("keydown", page);
+    // A press inside or on a pill keeps it, one outside closes it; the ring again toggles it.
+    ring.click();
+    pop.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(pop.hidden).toBe(false);
+    s.node.querySelector("[data-stat=tokens]")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(pop.hidden).toBe(false);
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(pop.hidden).toBe(true);
+    ring.click();
+    ring.click();
+    expect(pop.hidden).toBe(true);
+    s.node.remove();
+  });
+
+  it("chatPane({stats}) sets the line under the actions; in Chinese the counts and the cards read as such", () => {
+    install("zh-CN", zh);
+    const s = chatStats();
+    s.set(USAGE);
+    const pane = chatPane({ cap: "Agent", body: h("div"), input: h("textarea"), actions: [], stats: s.node });
+    expect(pane.querySelector(".chat-compose > .chat-acts + .chat-stats")).toBe(s.node);
+    const activity = s.node.querySelector<HTMLButtonElement>("[data-stat=activity]")!;
+    expect(activity.getAttribute("aria-label")).toBe("2 轮 5 步 · 106 tok/s");
+    expect(s.node.querySelector("[data-stat=tokens]")!.getAttribute("aria-label")).toBe("45.4K tok · 缓存命中 87%");
+    expect(s.node.querySelector("button.chat-ctx")!.getAttribute("aria-label")).toBe("上下文已用 34%，查看构成");
+    activity.click();
+    const pop = s.node.querySelector(".chat-pop")!;
+    expect(text(pop.querySelector(".chat-pop-label"))).toBe("会话统计");
+    expect(rows(pop).map((r) => r.slice(1))).toEqual([["模型用时", "16秒"], ["工具调用用时", "4.3秒"], ["首 token 平均（TTFT）", "0.8秒"], ["输出速度（TPS）", "106 tok/s"]]);
+    s.set({ ...USAGE, llmMs: 1_443_000 });
+    expect(rows(pop)[0][2]).toBe("24分3秒");
+    s.node.querySelector<HTMLButtonElement>("[data-stat=tokens]")!.click();
+    expect(text(pop.querySelector(".chat-pop-label"))).toBe("Token 用量");
+    expect(rows(pop).map((r) => r[1])).toEqual(["缓存命中", "未缓存输入", "缓存读取", "缓存写入", "输出"]);
+  });
+});
+
+describe("ui/dock - dock", () => {
+  afterEach(() => { localStorage.clear(); delete document.body.dataset.dock; });
+  const O = { key: "d1", size: 220, min: 96, restMin: 200, label: "Console", restLabel: "Results" };
+  const stored = (key: string): unknown => JSON.parse(localStorage.getItem("swiss_dock_" + key) ?? "null");
+  const pointer = (t: HTMLElement, type: string, y: number): void => {
+    t.dispatchEvent(new MouseEvent(type, { button: 0, clientY: y, bubbles: true }));
+  };
+  // A console over its results, the results' bar between them; the column is 760 px tall, so
+  // the console may take 760 - 200 = 560 px (the head measures nothing here).
+  const build = (o = O): { root: HTMLElement; top: HTMLElement; bar: HTMLElement; bottom: HTMLElement; head: HTMLElement; edge: HTMLElement; fold: HTMLElement; max: HTMLElement } => {
+    const top = h("div", { id: "dockTop" });
+    const bar = h("div", null, h("button", { type: "button", role: "tab" }, "orders · 3"), h("span", null, "3 rows · 4 ms"));
+    const bottom = h("div");
+    const root = dock(top, bar, bottom, o);
+    root.getBoundingClientRect = (): DOMRect => ({ height: 760 }) as DOMRect;
+    const head = root.querySelector<HTMLElement>(".dock-head")!;
+    const [fold, max] = Array.from(head.querySelectorAll<HTMLElement>(".dock-tools > button"));
+    return { root, top, bar, bottom, head, edge: head.querySelector<HTMLElement>(".dock-edge")!, fold: fold!, max: max! };
+  };
+
+  it("a pane, the bar it hangs from, and the pane under it; the bar's two buttons fold the results down and give them the column", () => {
+    const d = build();
+    expect(d.root.className).toBe("dock");
+    expect(Array.from(d.root.children)).toEqual([d.top, d.head, d.bottom]);
+    expect([d.top.className, d.bottom.className]).toEqual(["dock-top", "dock-bottom"]);
+    expect(Array.from(d.head.children).map((c) => c.className)).toEqual(["dock-edge", "", "dock-tools"]);
+    expect(d.head.children[1]).toBe(d.bar);
+    expect(d.edge.getAttribute("role")).toBe("separator");
+    expect(d.edge.getAttribute("aria-label")).toBe("Resize Console");
+    expect(d.edge.getAttribute("aria-controls")).toBe("dockTop");
+    expect(d.edge.title).toBe("Drag to resize · double-click hides Results or brings it back");
+    expect(d.top.style.flex).toBe("0 1 220px");
+    expect([d.fold.getAttribute("aria-label"), useHref(d.fold)]).toEqual(["Hide Results", "#i-chevron-down"]);
+    expect([d.max.getAttribute("aria-label"), useHref(d.max)]).toEqual(["Maximize Results", "#i-expand"]);
+    expect(d.fold.className, "quiet icons, not a floating handle").toBe("btn icon ghost");
+    // Fold the results down: the console takes the column, the bar stays to bring them back.
+    d.fold.click();
+    expect(d.root.dataset.fold).toBe("bottom");
+    expect(d.top.style.flex).toBe("1 1 auto");
+    expect([d.fold.getAttribute("aria-label"), useHref(d.fold)]).toEqual(["Show Results", "#i-chevron-up"]);
+    expect(stored("d1")).toEqual({ size: 220, fold: "bottom" });
+    expect(build().root.dataset.fold, "a page painting again keeps it").toBe("bottom");
+    d.fold.click();
+    expect(d.root.dataset.fold).toBeUndefined();
+    expect(d.top.style.flex).toBe("0 1 220px");
+    expect(stored("d1"), "the default again: nothing kept").toBeNull();
+    // The results take the column: a look, not a layout - the next paint shows the console.
+    d.max.click();
+    expect(d.root.dataset.fold).toBe("top");
+    expect([d.max.getAttribute("aria-label"), useHref(d.max)]).toEqual(["Show Console", "#i-collapse"]);
+    expect(stored("d1")).toBeNull();
+    expect(build().root.dataset.fold).toBeUndefined();
+    // From there, folding the results brings the console back over them.
+    d.fold.click();
+    expect(d.root.dataset.fold).toBe("bottom");
+    d.max.click();
+    d.max.click();
+    expect(d.root.dataset.fold).toBeUndefined();
+  });
+
+  it("a double-click on the bar folds the results or brings back what is folded; the edge's keys size the console", () => {
+    const d = build();
+    d.head.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(d.root.dataset.fold).toBe("bottom");
+    d.bar.querySelector("span")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(d.root.dataset.fold, "the facts are the bar too").toBeUndefined();
+    d.bar.querySelector("button")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(d.root.dataset.fold, "a tab's double-click is the tab's").toBeUndefined();
+    const key = (k: string): void => { d.edge.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); };
+    key("ArrowDown");
+    expect(d.top.style.flex).toBe("0 1 236px");
+    expect(d.edge.getAttribute("aria-valuenow")).toBe("236");
+    key("ArrowUp");
+    key("ArrowUp");
+    expect(d.top.style.flex).toBe("0 1 204px");
+    key("End");
+    expect(d.top.style.flex, "the column less the room the results keep").toBe("0 1 560px");
+    key("Home");
+    expect(d.top.style.flex).toBe("0 1 96px");
+    key("Enter");
+    expect(d.root.dataset.fold).toBe("bottom");
+    key("ArrowDown");
+    expect(d.top.style.flex, "a folded pane has no size to step").toBe("1 1 auto");
+    key("Enter");
+    expect(d.root.dataset.fold).toBeUndefined();
+    expect(stored("d1")).toEqual({ size: 96, fold: null });
+  });
+
+  it("the bar is the handle: a drag sizes the console, past either end folds a pane keeping the size it started from, and a press on a tab stays the tab's", () => {
+    const d = build();
+    pointer(d.head, "pointerdown", 300);
+    expect(document.body.dataset.dock).toBe("");
+    pointer(d.head, "pointermove", 302);
+    expect(d.top.style.flex, "a hand's tremble is not a drag").toBe("0 1 220px");
+    pointer(d.head, "pointermove", 400);
+    expect(d.top.style.flex).toBe("0 1 320px");
+    pointer(d.head, "pointermove", 300 + 340);
+    expect(d.top.style.flex, "at the room the results keep it stops").toBe("0 1 560px");
+    pointer(d.head, "pointermove", 300 + 441);
+    expect(d.root.dataset.fold, "past it by half, the results fold down").toBe("bottom");
+    pointer(d.head, "pointerup", 741);
+    expect(document.body.dataset.dock).toBeUndefined();
+    expect(stored("d1")).toEqual({ size: 220, fold: "bottom" });
+    // The drag back starts from what the console fills (unmeasured here: its size) and sizes it again.
+    pointer(d.edge, "pointerdown", 700);
+    pointer(d.edge, "pointermove", 600);
+    pointer(d.edge, "pointerup", 600);
+    expect(d.root.dataset.fold).toBeUndefined();
+    expect(d.top.style.flex).toBe("0 1 120px");
+    // Up below half the console's minimum, the console folds away; a drag from there starts at nothing.
+    pointer(d.head, "pointerdown", 500);
+    pointer(d.head, "pointermove", 500 - 73);
+    expect(d.root.dataset.fold).toBe("top");
+    pointer(d.head, "pointerup", 427);
+    expect(stored("d1"), "the size it started from").toEqual({ size: 120, fold: null });
+    pointer(d.head, "pointerdown", 400);
+    pointer(d.head, "pointermove", 500);
+    pointer(d.head, "pointerup", 500);
+    expect(d.root.dataset.fold).toBeUndefined();
+    expect(d.top.style.flex).toBe("0 1 100px");
+    // A press on a tab is the tab's click.
+    const tab = d.bar.querySelector("button")!;
+    pointer(tab, "pointerdown", 300);
+    pointer(d.head, "pointermove", 400);
+    pointer(d.head, "pointerup", 400);
+    expect(d.top.style.flex).toBe("0 1 100px");
+    expect(document.body.dataset.dock).toBeUndefined();
+  });
+
+  it("dockShow brings back the pane asked for - a run answering into folded results", () => {
+    const d = build();
+    d.fold.click();
+    dockShow("d1", "top");
+    expect(d.root.dataset.fold, "the console was not folded").toBe("bottom");
+    dockShow("d1", "bottom");
+    expect(d.root.dataset.fold).toBeUndefined();
+    dockShow("nowhere", "bottom"); // no dock under the key: nothing to do
+  });
+
+  it("ui.css: a hidden top pane takes the bar with it and the results fill; the line waits a beat under the pointer", () => {
+    const rules = parseCss(sheet("ui.css")).filter((r) => !r.at);
+    const decl = (sel: string, prop: string): string | undefined =>
+      rules.find((r) => r.selectors.includes(sel))?.decls.find((d) => d.prop === prop)?.value;
+    expect(decl(".dock-top[hidden] ~ .dock-head", "display")).toBe("none");
+    expect(decl(".dock[data-fold=\"top\"] > .dock-top", "display")).toBe("none");
+    expect(decl(".dock[data-fold=\"bottom\"] > .dock-top:not([hidden]) ~ .dock-bottom", "display")).toBe("none");
+    expect(decl(".dock-head", "cursor")).toBe("row-resize");
+    expect(decl(".dock-head", "border-top")).toBe("1px solid var(--sep)");
+    expect(decl(".dock-edge::after", "opacity"), "no line across the page at rest").toBe("0");
+    expect(decl(".dock-edge:hover::after", "transition-delay")).toBe(".15s");
+  });
+});
+
+describe("SPEC §panel.ui - ui/chip: a port fact chip", () => {
+  it("maps tone to class: up and down are named, held is the quiet default with no tone class", () => {
+    const up = portChip("4317", { tone: "up" });
+    const down = portChip("4318", { tone: "down" });
+    const held = portChip("9229", { tone: "held" });
+    expect(up.className).toBe("pchip up");
+    expect(down.className).toBe("pchip down");
+    expect(held.className).toBe("pchip");
+    expect(held.textContent).toBe("9229");
+    const titled = portChip("80", { tone: "up", title: "held by this app" });
+    expect(titled.title).toBe("held by this app");
+  });
+});
+
+describe("SPEC §panel.ui - ui/pick: the entry picker", () => {
+  it("a row is a button that names its entry, mono when asked", () => {
+    const r = pickerRow("exe", "cc.exe", true);
+    expect(r.className).toBe("dirpick-row");
+    expect(r.querySelector(".dirpick-kind")!.textContent).toBe("\u25aa"); // an executable is a filled square
+    expect(r.querySelector(".dirpick-name")!.className).toBe("dirpick-name mono");
+    expect(r.textContent).toContain("cc.exe");
+  });
+  it("the panel hides until the page shows it, and its root class never collides with the select's option rows", () => {
+    const p = pickPanel("C:\\tmp", "Go", "Up");
+    expect(p.root.className).toBe("dirpick");
+    expect((p.root as HTMLElement).hidden).toBe(true);
+    expect(p.root.querySelector(".dirpick-bar")).toBeTruthy();
+    expect(p.root.querySelector(".dirpick-list")).toBeTruthy();
+  });
+});
+
 describe("SPEC §panel.ui - every class the library draws is styled by base.css or ui.css", () => {
   it("renders every component with every option; no class is left unstyled", () => {
     const tl = timeline([
@@ -1003,8 +2838,45 @@ describe("SPEC §panel.ui - every class the library draws is styled by base.css 
       seg([{ id: "a", label: "A", n: 1 }], "a"), tl,
       sheetFrame({ title: "t", sub: "s", body: "b", foot: [h("span", { class: "grow" }), btn("x", { kind: "primary" })] }),
       heldDot("held"),
+      portChip("8080", { tone: "up" }), portChip("8080", { tone: "down" }), portChip("8080", { tone: "held" }),
+      pickerRow("exe", "cc.exe", true), pickPanel("C:\\tmp", "Go", "Up").root,
       objTab({ name: "t", selected: true, icon: "table", data: {}, count: { n: 1, title: "1" }, close: { label: "x", data: {} } }),
       jsonCodeNode(decodeStrings({ k: "s", n: 1, l: null, d: "{\"a\":[true]}" }), true).node,
+      workspace(
+        wsSide({ cap: "c", tools: [btn("x")] }, sideRow({ name: "n", lead: dot("up", "up"), badge: tag("1", { tone: "warn" }), tail: "1", selected: true })),
+        wsHead({ title: "t", sub: "s", actions: [btn("x")], nav: seg([{ id: "a", label: "A" }], "a") }),
+        wsSplit({
+          fixed: "start",
+          start: [
+            wsBar({ rows: [[filterInput({ placeholder: "q", label: "q" })], [btn("x")]] }),
+            wsScroll({}, pickList({ label: "l" },
+              pickRow({ lead: catChip(1, "k", { bare: true }), name: "n", meta: "m", sub: "s", selected: true }),
+              pickRow({ name: "n", muted: true }))),
+            wsBar({ foot: true }, "n"),
+          ],
+          end: wsScroll({ pad: true }, docHead({ tags: [catChip(2, "k")], title: "t", meta: ["a", "b"], actions: [btn("x")] }),
+            markdownNode("# h\n\n- a `c`\n\n```sh\nx\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |", { class: "note-body" }), refLink("r")),
+        }),
+        wsSplit({ fixed: "end", start: "a", end: "b" }),
+        catChip(3, "k"), catChip(4, "k"), catChip(5, "k")),
+      graphView({
+        nodes: [
+          { id: "a", label: "a", tone: 1 }, { id: "b", label: "b", tone: 2, dim: true }, { id: "c", label: "c", tone: 3 },
+          { id: "d", label: "d", tone: 4 }, { id: "e", label: "e", tone: 5 },
+        ],
+        edges: [
+          { from: "a", to: "b", directed: true }, { from: "b", to: "c", style: "heavy" }, { from: "c", to: "d", style: "dashed" },
+          { from: "d", to: "e", style: "dotted" }, { from: "e", to: "a", style: "faint" },
+        ],
+        center: "a", selected: "b", label: "g",
+        keys: [
+          { label: "k", tone: 1 }, { label: "k", tone: 2 }, { label: "k", tone: 3 }, { label: "k", tone: 4 }, { label: "k", tone: 5 },
+          { label: "l", style: "dotted" }, { label: "m", style: "solid", directed: true }, { label: "n", style: "heavy" },
+          { label: "o", style: "dashed", alert: true }, { label: "p", style: "faint" },
+        ],
+      }, { engine: fakeEngine().engine }).el,
+      graphView({ nodes: [], edges: [], label: "g", compact: true }, { engine: fakeEngine().engine }).el,
+      graphView({ nodes: [], edges: [], label: "g", fill: true }, { engine: fakeEngine().engine }).el,
       ...mechanisms(),
     ];
     const drawn = new Set<string>();

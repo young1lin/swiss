@@ -59,7 +59,11 @@ export interface RowOpts {
   name: HChild;
   sub?: HChild;
   err?: string;
+  /** Always-visible facts that wrap under identity, independently of the diagnostic line. */
+  meta?: HChild;
   cols?: Array<HChild | RowCol>;
+  /** A frequent icon action beside the row verb, such as opening logs. */
+  secondary?: HTMLButtonElement;
   toggle?: HTMLElement;
   primary?: HTMLButtonElement;
   more?: HTMLButtonElement;
@@ -70,6 +74,9 @@ export interface RowOpts {
   title?: string;
   /** The record behind the row, opened in place (a <details>: no script, keyboard for free). */
   detail?: HChild;
+  /** Renders that disclosure OPEN (a gallery scene showing the shape itself, or
+   *  the newest item of a live list); closed remains the default. */
+  open?: boolean;
 }
 
 function isCol(c: HChild | RowCol): c is RowCol {
@@ -79,18 +86,20 @@ function isCol(c: HChild | RowCol): c is RowCol {
 export function row(o: RowOpts): HTMLElement {
   const hasLead = o.lead != null && o.lead !== false;
   const disc = o.detail != null && o.detail !== false;
-  const acts = [o.toggle, o.primary, o.more].filter((x): x is HTMLElement => x != null);
+  const acts = [o.toggle, o.primary, o.secondary, o.more].filter((x): x is HTMLElement => x != null);
   const text: HChild[] = [
     h("div", { class: "lrow-name" }, o.name),
     o.err
       ? h("div", { class: "lrow-err", title: o.err }, o.err)
       : o.sub != null && o.sub !== false ? h("div", { class: "lrow-sub" }, o.sub) : null,
+    o.meta != null && o.meta !== false ? h("div", { class: "lrow-meta" }, o.meta) : null,
   ];
   const main = disc
     ? h("details", { class: "lrow-main lrow-disc" },
         h("summary", null, h("span", { class: "lrow-chev" }, iconNode("chevron-right")), h("span", { class: "lrow-text" }, text)),
         h("div", { class: "lrow-detail" }, o.detail))
     : h("div", { class: "lrow-main" }, text);
+  if (disc && o.open) (main as HTMLDetailsElement).open = true;
   const node = h("div", {
     class: "lrow" + (hasLead ? " has-lead" : "") + (disc ? " has-disc" : "") + (o.muted ? " muted" : ""),
     data: o.data, title: o.title,
@@ -123,6 +132,8 @@ export interface SideRowOpts {
   lead?: HChild;
   /** The trailing slot: what you scan the list for - a launch tag, or its glyph. */
   tail?: HChild;
+  /** A state mark before the tail - a tag({ tone }) count of what waits on the user. */
+  badge?: HChild;
   selected?: boolean;
   data?: AttrMap;
   title?: string;
@@ -142,5 +153,6 @@ export function sideRow(o: SideRowOpts): HTMLButtonElement {
   },
   o.lead ?? null,
   h("span", { class: "side-name" }, o.name),
+  o.badge ?? null,
   h("span", { class: "side-type" }, o.tail ?? null));
 }

@@ -42,17 +42,23 @@ export interface SheetOpts {
    *  would copy: a cell's table and key, a viewed value's table and row (SPEC §panel.pages). */
   sub?: string;
   body: HChild;
+  /** A conversation's input, docked above the actions and outside the scrolling body. */
+  compose?: HChild;
   /** The footer, left to right: a leading secondary, a .grow spacer, Cancel, the one primary. */
   foot: HChild;
+  /** A reading sheet - a file, a commit, a patch: wider and taller than a form. */
+  wide?: boolean;
 }
 
 /** The dialog frame. Pure markup: a builder that wants it on screen hands it to showSheet. */
 export function sheet(o: SheetOpts): HTMLDivElement {
   const label = o.label ?? (typeof o.title === "string" ? o.title : undefined);
-  return h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label } },
+  const cls = "sheet" + (o.wide ? " wide" : "") + (o.compose != null ? " conversation" : "");
+  return h("div", { class: cls, role: "dialog", aria: { modal: "true", label } },
     h("div", { class: "sheet-head" }, h("h2", { id: o.titleId }, o.title),
       o.sub ? h("span", { class: "sheet-sub" }, o.sub) : null),
     h("div", { class: "sheet-body" }, o.body),
+    o.compose != null ? h("div", { class: "sheet-compose" }, o.compose) : null,
     h("div", { class: "sheet-foot" }, o.foot));
 }
 
@@ -76,10 +82,17 @@ export function showSheet(node: HTMLElement): void {
  *  the sheet underneath and left the picker floating over nothing. `paint` (re)draws its dialog
  *  (the picker repaints on every folder it opens); `close` removes the layer. */
 export function stackSheet(onClose?: () => void): { paint: (o: SheetOpts) => HTMLElement; close: () => void } {
+  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const back = h("div", { class: "backdrop stacked" });
+  back.tabIndex = -1;
   document.body.appendChild(back);
+  // Real keys start at the focused element. Owning a keydown handler is not enough
+  // while focus remains on the opener in the sheet underneath.
+  back.focus();
   const close = (): void => {
+    const heldFocus = back.contains(document.activeElement);
     back.remove();
+    if (heldFocus && opener?.isConnected) opener.focus();
     if (onClose) onClose();
   };
   back.onclick = (e) => { if (e.target === back) close(); };
@@ -90,7 +103,11 @@ export function stackSheet(onClose?: () => void): { paint: (o: SheetOpts) => HTM
   return {
     paint: (o: SheetOpts): HTMLElement => {
       const node = sheet(o);
+      const heldFocus = back.contains(document.activeElement);
       fill(back, node);
+      // An async repaint replaces the focused child. Keep focus in this layer,
+      // unless a newer layer has already taken it.
+      if (heldFocus) back.focus();
       return node;
     },
     close,

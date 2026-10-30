@@ -149,6 +149,12 @@ export function card(...rows: HChild[]): HTMLElement {
   return h("div", { class: "group" }, ...rows);
 }
 
+/** A page's main column with a narrow aside beside it (what is in force, beside the form that
+ *  edits it). A pane too narrow for both stacks the aside above the main column. */
+export function split(main: HChild, aside: HChild): HTMLElement {
+  return h("div", { class: "split" }, h("div", { class: "split-main" }, main), h("aside", { class: "split-aside" }, aside));
+}
+
 /** `note` is prose (sans); `rev` is a value you would quote back (mono, rule 1). */
 export function pageFoot(o: { note?: HChild; rev?: string }): HTMLElement {
   return h("div", { class: "page-foot" },

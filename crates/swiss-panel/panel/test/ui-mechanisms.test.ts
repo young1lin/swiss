@@ -198,6 +198,15 @@ describe("ui/select - the dropdown", () => {
     expect(selectOpen()).toBe(true);
   });
 
+  it("an option's .pick is the menus' class alone: every ui.css rule on it sits under .menu", () => {
+    // A bare .pick rule reaches every dropdown and check menu in the panel: the workspace row
+    // once shipped as .pick { flex-direction: column } and stacked each option's tick over its
+    // label, centred, a row three lines tall.
+    const bare = parseCss(styleSheet("ui.css")).flatMap((r) => r.selectors)
+      .filter((s) => /\.pick(?![\w-])/.test(s) && !/^\.menu\b/.test(s));
+    expect(bare).toEqual([]);
+  });
+
   it("Escape closes the list, gives focus back to the trigger, and stops there (the sheet around it stays)", () => {
     const { trig } = mount();
     trig.click();

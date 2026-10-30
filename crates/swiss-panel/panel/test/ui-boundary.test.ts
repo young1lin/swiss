@@ -15,7 +15,8 @@
  */
 
 /* SPEC §panel.ui (U2) - the library's boundary, zero tolerance. src/ui/** imports ../h.js,
-   ../i18n.js and its own siblings, nothing else: no api, no state, no view. That is what lets
+   ../i18n.js, its own siblings and a vendored library's shim (../vendor/<pkg>/<version>/index.js,
+   SPEC §panel.vendor - upstream code, no app in it), nothing else: no api, no state, no view. That is what lets
    the gallery render every component with made-up data and nothing else loaded, and what
    keeps a component from quietly growing a fetch. A mechanism that needs more (a menu that
    closes the others, a sheet the shell owns) is either rewritten to take what it needs as
@@ -30,6 +31,7 @@ import { describe, expect, it } from "vitest";
 
 const UI = join(import.meta.dirname, "..", "src", "ui");
 const ALLOWED_PARENT = new Set(["../h.js", "../i18n.js"]);
+const VENDOR_SHIM = /^\.\.\/vendor\/[a-z0-9-]+\/\d+(\.\d+)*\/index\.js$/;
 
 function uiFiles(): string[] {
   return readdirSync(UI).filter((f) => f.endsWith(".ts")).sort();
@@ -59,7 +61,16 @@ describe("specifiersOf", () => {
   });
 });
 
-describe("SPEC §panel.ui - src/ui imports only ../h.js, ../i18n.js and ./*", () => {
+describe("VENDOR_SHIM", () => {
+  it("takes a versioned shim, never a bundle behind it or a climb out of vendor/", () => {
+    expect(["../vendor/markdown-it/15.0.2/index.js", "../vendor/mermaid/12.1.0/index.js"].every((s) => VENDOR_SHIM.test(s))).toBe(true);
+    for (const s of ["../vendor/mermaid/12.1.0/mermaid.min.js", "../vendor/../api.js", "../vendor/x/index.js", "../../vendor/x/1.0/index.js"]) {
+      expect(VENDOR_SHIM.test(s), s).toBe(false);
+    }
+  });
+});
+
+describe("SPEC §panel.ui - src/ui imports only ../h.js, ../i18n.js, ./* and ../vendor/<pkg>/<version>/index.js", () => {
   it("the library exists", () => {
     expect(uiFiles().length).toBeGreaterThan(5);
   });
@@ -67,7 +78,7 @@ describe("SPEC §panel.ui - src/ui imports only ../h.js, ../i18n.js and ./*", ()
   for (const f of uiFiles()) {
     it(f, () => {
       const bad = specifiersOf(readFileSync(join(UI, f), "utf8")).filter((s) => {
-        if (ALLOWED_PARENT.has(s)) return false;
+        if (ALLOWED_PARENT.has(s) || VENDOR_SHIM.test(s)) return false;
         // A sibling: one path segment, no climbing - "./x.js", never "./../api.js".
         return !/^\.\/[a-z0-9-]+\.js$/.test(s);
       });

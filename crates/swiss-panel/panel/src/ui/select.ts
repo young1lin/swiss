@@ -30,7 +30,7 @@
  *
  * The open dropdown is this module's own state (openState), like the menu's open flag in
  * ui/menu.ts: one at a time, closed by a click outside, Escape, Tab, a resize, or its trigger
- * leaving the DOM. */
+ * leaving the DOM or scrolling out of view; while the trigger scrolls it follows. */
 import { h } from "../h.js";
 
 // Prototype accessors, resolved lazily: importing this module under a DOM-stubbed Node (the
@@ -78,6 +78,36 @@ function paint(sel: HTMLSelectElement, trig: HTMLButtonElement): void {
   if (disDesc) trig.disabled = disDesc.get.call(sel);
 }
 
+/** Below the trigger, unless that runs off the window - then above it. Same policy as
+ *  popupMenu. The list is fixed to the window, so it is placed again whenever the trigger
+ *  moves under it (onScroll). */
+function place(menu: HTMLElement, trig: HTMLButtonElement): void {
+  const r = trig.getBoundingClientRect();
+  const mh = Math.min(menu.offsetHeight, 280);
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8));
+  menu.style.left = left + "px";
+  const below = r.bottom + 4;
+  menu.style.top = (below + mh > window.innerHeight - 8 ? Math.max(8, r.top - mh - 4) : below) + "px";
+}
+
+/** A box scrolled while the list was open. The list hangs on <body>, fixed to the window, so
+ *  a scrolling sheet body used to carry the trigger away and leave the list floating where
+ *  the trigger had been (found live on 19998 in the Add agent sheet). It follows the trigger
+ *  now; once the trigger has scrolled out of the box's view the list points at nothing and
+ *  closes. The list's own scrolling (a long option list) is not a move. */
+function onScroll(e: Event): void {
+  if (!openState) return;
+  const t = e.target as Node | null;
+  if (t && openState.menu.contains(t)) return;
+  const r = openState.trig.getBoundingClientRect();
+  if (t && t.nodeType === 1) {
+    const box = (t as Element).getBoundingClientRect();
+    if (r.bottom <= box.top || r.top >= box.bottom) { closeSelect(); return; }
+  }
+  if (r.bottom <= 0 || r.top >= window.innerHeight) { closeSelect(); return; }
+  place(openState.menu, openState.trig);
+}
+
 function openMenuFor(sel: HTMLSelectElement, trig: HTMLButtonElement): void {
   closeSelect();
   const menu = h("div", { class: "menu float dd-menu", role: "listbox" });
@@ -111,15 +141,8 @@ function openMenuFor(sel: HTMLSelectElement, trig: HTMLButtonElement): void {
   }
   if (!items.length) return; // nothing to choose - the trigger stays inert
   document.body.appendChild(menu);
-
-  // Below the trigger, unless that runs off the window - then above it. Same policy as popupMenu.
-  const r = trig.getBoundingClientRect();
-  const mh = Math.min(menu.offsetHeight, 280);
   menu.style.maxHeight = "280px";
-  const left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8));
-  menu.style.left = left + "px";
-  const below = r.bottom + 4;
-  menu.style.top = (below + mh > window.innerHeight - 8 ? Math.max(8, r.top - mh - 4) : below) + "px";
+  place(menu, trig);
 
   openState = { menu: menu, trig: trig, sel: sel, items: items };
   trig.setAttribute("aria-expanded", "true");
@@ -255,6 +278,8 @@ function initSelects(): void {
     if (openState && !openState.menu.contains(e.target as Node) && e.target !== openState.trig) closeSelect();
   });
   document.addEventListener("keydown", onKey, true);
+  // Capture: scroll does not bubble, and the box that scrolls is any ancestor of the trigger.
+  document.addEventListener("scroll", onScroll, true);
   window.addEventListener("resize", closeSelect);
 }
 
