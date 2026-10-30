@@ -12,5 +12,6 @@
 
 ## Notes for the reviewer
 
-Sealed-format or wire changes (SPEC §formats), new dependencies (swiss-dependency-review), and
-anything that moves idle memory (SPEC §product.memory) are called out here explicitly.
+Sealed-format or wire changes (SPEC §core.sealed, §host.wire), new dependencies
+(swiss-dependency-review), and anything that moves idle memory (SPEC §product.memory) are called
+out here explicitly.

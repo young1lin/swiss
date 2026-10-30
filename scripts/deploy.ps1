@@ -41,6 +41,17 @@
 # `swiss start` now keeps its std handles out of the daemon's inheritance (swiss-core
 # platform::keep_std_handles_from_children), and a captured deploy runs to the end.
 # -SkipGates jumps the test/clippy gates for a hotfix; the default is to run them.
+# -Quick is the operator's quick deploy, to see a change live: it skips the gates and builds the
+# quick profile (Cargo.toml: no LTO, 16 codegen units, incremental) into target\quick, minutes
+# sooner than the release profile and a larger exe; the release profile stays the shipping build.
+#
+# Cargo's default is one job per logical CPU. On a 20-thread box with a few GB free
+# that pages, and then the whole machine stalls. Jobs are chosen from free RAM at
+# the start of this process (dev gates ~1 GB per rustc, the opt-level=z release
+# build ~2 GB), clamped so a tight box stays at 2 and a free one does not sit at 2
+# for the whole gate run. sccache, when installed, caches dependency codegen so
+# target\ and target-test\ do not each pay opt-level=z. The release profile itself
+# (fat LTO, one codegen unit) is unchanged: that cost is the shipping binary.
 #
 # The single-deployer lock (deploy-lock.ps1) is taken FIRST and held for the whole run: the
 # 2026-09-14 incident was two sessions deploying the same production four minutes apart,
@@ -49,11 +60,13 @@
 # buffered away by a wrapper.
 [CmdletBinding()]
 param(
-    [switch]$SkipGates
+    [switch]$SkipGates,
+    [switch]$Quick
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\deploy-lock.ps1"
-$Built = 'target\release\swiss.exe'     # what cargo writes, in the tree being deployed
+$BuildProfile = if ($Quick) { 'quick' } else { 'release' }
+$Built = "target\$BuildProfile\swiss.exe"  # what cargo writes, in the tree being deployed
 $BinDir = Get-SwissProdBin               # the main checkout's bin\, from a worktree too
 $Exe = Join-Path $BinDir 'swiss.exe'     # what 19999 runs
 function Fail($message) {
@@ -74,6 +87,66 @@ function Phase($message) {
     } catch { }
     [Console]::Out.Flush()
 }
+function Get-FreeMemoryGiB {
+    # kernel32, not CIM: a WMI query here costs longer than the decision. The smaller of free
+    # RAM and the commit headroom (RAM plus paging file, less what is committed): this box's
+    # paging file is small, and on 2026-10-13 a gate run sized from 9 GB of free RAM ran out
+    # of commit instead (os error 1455, seven rustc/rust-lld at once) with RAM still free.
+    if (-not ('SwissDeploy.Kernel32' -as [type])) {
+        Add-Type -Namespace SwissDeploy -Name Kernel32 -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)]
+public struct MEMORYSTATUSEX {
+    public uint dwLength;
+    public uint dwMemoryLoad;
+    public ulong ullTotalPhys;
+    public ulong ullAvailPhys;
+    public ulong ullTotalPageFile;
+    public ulong ullAvailPageFile;
+    public ulong ullTotalVirtual;
+    public ulong ullAvailVirtual;
+    public ulong ullAvailExtendedVirtual;
+}
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
+'@
+    }
+    $status = New-Object SwissDeploy.Kernel32+MEMORYSTATUSEX
+    $status.dwLength = [System.Runtime.InteropServices.Marshal]::SizeOf($status)
+    $ok = [SwissDeploy.Kernel32]::GlobalMemoryStatusEx([ref]$status)
+    if (-not $ok) { return $null }
+    return ([Math]::Min($status.ullAvailPhys, $status.ullAvailPageFile) / 1GB)
+}
+function Get-StampOf([string]$exe) {
+    # The hash `swiss --version` reports - "swiss 0.1.4 (2741e2b8, 2026-10-20T07:56:21Z)" - or
+    # $null for no exe or no readable line.
+    if (-not (Test-Path $exe)) { return $null }
+    $line = (& $exe --version) | Select-Object -First 1
+    if ($line -match '^swiss \S+ \((?<hash>[^,]+), ') { return $Matches.hash }
+    return $null
+}
+function Get-TreeStamp {
+    # What build.rs stamps for this tree now: HEAD's short hash, -dirty while `git status
+    # --porcelain` lists anything (an untracked file too).
+    # No Select-Object here: one cutting the pipeline short leaves $LASTEXITCODE unset.
+    $head = git rev-parse --short HEAD
+    if ($LASTEXITCODE -ne 0 -or -not $head) { return 'unknown' }
+    $head = "$head".Trim()
+    if (git status --porcelain) { return "$head-dirty" }
+    return $head
+}
+function Get-CargoJobs([string]$kind) {
+    # Leave 2 GB for the editor. Dev rustc is about 1 GB; opt-level=z about 2 GB.
+    # Floor 2 (a full box still makes progress), cap 4 for both: the workspace's test
+    # binaries link through rust-lld at well over 1 GB each, and 4 is what this box
+    # sustains (the agents' -j 4 rule).
+    $free = Get-FreeMemoryGiB
+    if ($null -eq $free) { return 2 }
+    $budget = [Math]::Max(0.0, $free - 2.0)
+    if ($kind -eq 'release') {
+        return [Math]::Min(4, [Math]::Max(2, [Math]::Floor($budget / 2)))
+    }
+    return [Math]::Min(4, [Math]::Max(2, [Math]::Floor($budget / 1)))
+}
 # Mutual exclusion before anything else - gates included: a 90-minute gate window is
 # exactly long enough for another session to start a deploy of its own.
 $lock = Acquire-DeployLock
@@ -85,17 +158,38 @@ if ($lock.StaleTookOver) {
     Phase "took over a STALE deploy lock (previous holder is gone)"
 }
 try {
+$gateJobs = Get-CargoJobs 'dev'
+$releaseJobs = Get-CargoJobs 'release'
+$env:CARGO_BUILD_JOBS = "$gateJobs"
+$sccache = Join-Path $env:USERPROFILE '.cargo\bin\sccache.exe'
+if (Test-Path $sccache) { $env:RUSTC_WRAPPER = $sccache }
+$freeGb = Get-FreeMemoryGiB
+$freeText = if ($null -eq $freeGb) { 'free RAM unknown' } else { ('{0:N1} GB free' -f $freeGb) }
+Phase "cargo: $gateJobs jobs for gates, $releaseJobs for release ($freeText)"
 # Gates first, while production is still up: a failing gate must not take the daemon down.
-if (-not $SkipGates) {
+if (-not $SkipGates -and -not $Quick) {
     Phase 'cargo test --workspace'
     cargo test --workspace
     if ($LASTEXITCODE -ne 0) { Fail "tests failed - production left untouched" }
-    # Gate 2 (SPEC §testing.it): the real-database suite. The deploy machine is this one and
-    # Docker lives in WSL at tcp://127.0.0.1:2375 - set DOCKER_HOST for the run the
-    # same way every dev shell does. A diff that never touched a database path can
-    # still afford the ~20 s: a deploy is the last place to learn the engines broke.
+    # Gate 2 (SPEC §testing.it): the real-database suite. Docker lives in WSL at
+    # tcp://127.0.0.1:2375 when localhost forwarding works - on this box it does not
+    # (WSL is in NAT mode under a localhost proxy), so resolve the endpoint instead of
+    # hardcoding it: loopback first (Docker Desktop machines keep working), then the
+    # WSL address of the first running distro, whose dockerd binds 0.0.0.0:2375. A diff
+    # that never touched a database path can still afford the ~20 s: a deploy is the
+    # last place to learn the engines broke.
     Phase 'cargo test -p swiss-it --features it'
-    $env:DOCKER_HOST = 'tcp://127.0.0.1:2375'
+    $dockerHost_ = 'tcp://127.0.0.1:2375'
+    try { Invoke-RestMethod -Uri 'http://127.0.0.1:2375/version' -TimeoutSec 3 | Out-Null } catch {
+        # wsl prints its NAT/proxy warning to stderr, which a native redirection under
+        # ErrorActionPreference Stop turns into a terminating error (PS 5.1) - go through
+        # cmd so the warning dies inside the child instead of killing the deploy.
+        $wslIp_ = (cmd /c "wsl hostname -I 2>nul" | Select-Object -First 1)
+        if (-not $wslIp_) { $wslIp_ = (wsl -d Ubuntu -u root -- hostname -I 2>$null | Select-Object -First 1) }
+        if ($wslIp_) { $dockerHost_ = 'tcp://' + ($wslIp_.ToString().Trim().Split(' ')[0]) + ':2375' }
+    }
+    Phase ("integration gate docker at " + $dockerHost_)
+    $env:DOCKER_HOST = $dockerHost_
     cargo test -p swiss-it --features it
     $gate2 = $LASTEXITCODE
     Remove-Item Env:\DOCKER_HOST -ErrorAction SilentlyContinue
@@ -113,7 +207,8 @@ if (-not $SkipGates) {
     Pop-Location
     if ($panelCode -ne 0) { Fail "panel check failed - production left untouched" }
 } else {
-    Phase "gates SKIPPED (-SkipGates)"
+    $why = if ($Quick) { '-Quick' } else { '-SkipGates' }
+    Phase "gates SKIPPED ($why)"
 }
 # The daemon that is up right now, from its pid file: only a daemon running out of target\
 # (the pre-bin layout) has to stop before the build, because the linker must overwrite the
@@ -130,12 +225,34 @@ if ($holdsBuildOutput) {
     & $stopper stop
     if ($LASTEXITCODE -eq 1) { Fail "stop was refused - resolve it by hand (see above), then re-run" }
 }
-Phase 'cargo build --release'
-cargo build --release
+# The stamp must name the tree being deployed (2026-10-20). build.rs re-runs only when HEAD or
+# a branch ref moves, so a build made while a stray file sat in the tree kept its -dirty stamp
+# after the file went, and production reported 2741e2b8-dirty for a clean commit; an edit
+# after a build kept a clean stamp on a dirty tree the same way. When the last build's stamp
+# is not the tree's, build.rs is touched so cargo runs it again.
+$wantStamp = Get-TreeStamp
+$hadStamp = Get-StampOf $Built
+if ($hadStamp -ne $wantStamp) {
+    $had = if ($hadStamp) { $hadStamp } else { 'no build' }
+    Phase "re-stamping: the last build says $had, the tree is $wantStamp"
+    (Get-Item 'build.rs').LastWriteTime = Get-Date
+}
+$env:CARGO_BUILD_JOBS = "$releaseJobs"
+Phase "cargo build --profile $BuildProfile ($releaseJobs jobs)"
+cargo build --profile $BuildProfile
 if ($LASTEXITCODE -ne 0) {
     if ($holdsBuildOutput) { Fail "build failed - start the old daemon again by hand: & $stopper start --no-open" }
     Fail "build failed - production left untouched"
 }
+# Checked before the stop: a binary that would report the wrong build never replaces the one
+# serving. A tree edited during the build lands here too.
+$builtStamp = Get-StampOf $Built
+if ($builtStamp -ne $wantStamp) {
+    $why = "the build is stamped $builtStamp but the tree is $(Get-TreeStamp)"
+    if ($holdsBuildOutput) { Fail "$why - start the daemon again by hand: & $Built start --no-open; then re-run" }
+    Fail "$why - production left untouched; re-run"
+}
+if ($wantStamp -like '*-dirty') { Phase "deploying a tree with uncommitted changes ($wantStamp)" }
 # From here the outage clock runs: stop, copy, start. It is measured and reported (2026-09-28),
 # because "how long was 19999 down" is the number this whole ordering exists to keep small and
 # nothing used to state it.
@@ -169,11 +286,10 @@ if ($LASTEXITCODE -ne 0) { Fail "start failed - log tail above" }
 & $Exe status
 if ($LASTEXITCODE -ne 0) { Fail "status says the daemon is not running" }
 # The proof: the daemon now serving is THIS build, not the previous one still holding the port.
-$version = (& $Exe --version) | Select-Object -First 1
-if (-not ($version -match '^swiss \S+ \((?<hash>[^,]+), ')) {
-    Fail "cannot read a build hash from version line: $version"
+$built = Get-StampOf $Exe
+if (-not $built) {
+    Fail "cannot read a build hash from the version line: $((& $Exe --version) | Select-Object -First 1)"
 }
-$built = $Matches.hash
 $health = Invoke-WebRequest -Uri "http://127.0.0.1:19999/health" -UseBasicParsing -TimeoutSec 5
 $running = ($health.Content | ConvertFrom-Json).build.hash
 if ($running -ne $built) {

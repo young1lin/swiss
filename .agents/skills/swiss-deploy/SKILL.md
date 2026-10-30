@@ -42,6 +42,9 @@ that starts the daemon again by hand — run it before anything else.
 
 - `-SkipGates` is a hotfix escape hatch: only on an explicit user decision, and the report says
   so. A gate that cannot run (Docker down for gate 2) is reported the same way.
+- `-Quick` is the user's quick deploy (快速部署): no gates, and the `quick` profile (no LTO,
+  incremental, `target\quick`) instead of the release build, so a change is live in minutes.
+  Same user decision as `-SkipGates`; the report says the exe is a quick build.
 - If the user prefers to run the deploy from their own terminal, hand them the exact command and
   stay available to read its output.
 

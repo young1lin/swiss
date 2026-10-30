@@ -19,7 +19,7 @@
 # user's production config in ~\.swiss (the 2026-09-11 footgun).
 #
 # Why copying master.key works: every state file is AES-256-GCM sealed under a master key
-# that is itself DPAPI-protected for the CURRENT USER (SPEC §formats.masterkey). A copy of
+# that is itself DPAPI-protected for the CURRENT USER (SPEC §core.masterkey). A copy of
 # that blob stays decryptable on the same machine under the same user - exactly what a local
 # test instance needs. Cross-machine the copy is useless BY DESIGN; do not try to make this
 # a portable snapshot.

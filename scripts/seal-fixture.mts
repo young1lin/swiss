@@ -20,7 +20,7 @@
  * Runs the REFERENCE implementation's own `seal()` (src/secure/envelope.ts of the earlier Node
  * build, `local-mcp-gateway`, which is not part of this repository) under a fixed test key, so
  * the Rust test proves it opens bytes the Node build produced — the blocking Phase 0 check in
- * SPEC §formats.sealed. Nothing needs the Node build afterwards: the output is committed under
+ * SPEC §core.sealed. Nothing needs the Node build afterwards: the output is committed under
  * tests/fixtures/, and this file is kept as the record of how it was made.
  *
  *   # with the Node build checked out next to this repository
