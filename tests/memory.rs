@@ -100,7 +100,7 @@ async fn app_with_echo() -> axum::Router {
     let registry = Registry::new(3_600_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(scratch.join("managed.json")));
     let def = ServerDef(json!({ "type": "echo" }).as_object().cloned().unwrap());
-    let adapter = make_adapter(&def, "echo", &calls).expect("echo adapter");
+    let adapter = make_adapter(&def, "echo", &calls, None).expect("echo adapter");
     registry
         .register("echo", Source::Config, def, adapter)
         .expect("register");
