@@ -74,6 +74,9 @@
       --r-card: 8px;
       --r-row: 6px;
       --r-btn: 6px;
+      --r-code: 4px; /* code inside a line of text (ui/markdown.ts) */
+      --sheet-wide: 1040px; /* a wide sheet: a file, a commit, a patch */
+      --sheet-chat-h: 88dvh; /* a chat keeps its input inside the viewport as its transcript grows */
       --r-pill: 980px;
 
       /* Component sizes (SPEC §panel.ui): the few a component needs that are not a step of the 4pt
@@ -82,6 +85,39 @@
       --ic-m: 14px;         /* a glyph inside a button, a menu row */
       --dot: 6px;           /* the status dot - and so the lead column of a list row */
       --row-h: 42px;        /* a list row: two lines of text clear it (SPEC §panel.nav) */
+      --f-doc: 18px;        /* a record's title at the head of its detail (ui/workspace.ts docHead) */
+      /* The flow (ui/flow.ts): a step's glyph column, and the height past which one side of a
+         step's input or output scrolls instead of flooding the flow. */
+      --fl-lead: 16px;
+      --tc-user-max: 82%;
+      --fl-io-h: 280px;
+      /* A workspace's columns (ui/workspace.ts): the source list, the list a detail is picked
+         from, an inspector at the end; each with a narrower step under 1200px. */
+      --ws-side-w: 224px;
+      --ws-side-w-narrow: 184px;
+      --ws-list-w: 360px;
+      --ws-list-w-narrow: 300px;
+      --ws-aside-w: 320px;
+      /* An assistant docked at a page's end edge (ui/chat.ts chatPane): its width before the
+         reader drags it. */
+      --chat-pane-w: 400px;
+      /* The graph's frame (ui/graph.ts): a stage's height, a compact inline one's, and the
+         legend's strokes - the canvas's own widths. */
+      --graph-h: 460px;
+      --graph-h-compact: 240px;
+      --graph-stroke: 1.5px;
+      --graph-stroke-heavy: 2.5px;
+
+      /* Categorical slots (ui/graph.ts): identity, never state - five kinds of one thing. The one
+         sanctioned hue set besides the status colours and the code schemes: blue, aqua, amber,
+         violet, crimson, validated ALL-PAIRS (a graph puts any two side by side) against both
+         card surfaces - CVD ΔE 8.4, normal-vision ΔE 18.3, every slot at 3:1 or better on #ffffff
+         and on #191a1e - so one set serves both themes. Each slot also has its own shape. */
+      --cat-1: #0c84fa;
+      --cat-2: #109d7b;
+      --cat-3: #b47825;
+      --cat-4: #8b44c9;
+      --cat-5: #c81e48;
 
       /* CJK after system-ui (SPEC §panel.i18n): latin glyphs stay Inter, Chinese falls to the system's own faces. */
       --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
@@ -123,6 +159,12 @@
       --code-gutter: #aeb3c2;
       --code-sel: #a6d2ff;
       --code-caret: #000000;
+      /* A diff's lines and a pointed-at line (ui/diff.ts, tokenSpans mark): tints of the status
+         hues, so every code scheme and both themes get theirs from the hue they already have. */
+      --diff-add: color-mix(in srgb, var(--green) 16%, transparent);
+      --diff-del: color-mix(in srgb, var(--red) 16%, transparent);
+      --diff-hunk: color-mix(in srgb, var(--accent) 8%, transparent);
+      --code-hit: color-mix(in srgb, var(--amber) 24%, transparent);
       --syn-kw: #0033b3;
       --syn-str: #067d17;
       --syn-num: #1750eb;

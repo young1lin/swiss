@@ -29,9 +29,15 @@
  *   pair        two fields side by side (host + port).
  *   formActions the one primary and its companions, at the form's foot.
  *   hint        one line of help or a live result under a control (`bad`: a refusal).
+ *   editList    a list the form edits in place (a provider's models): editLine()s whose cells
+ *               share one column grid, the item's own field first and widest.
+ *   editSub     the quiet line under an editLine()'s cells: what the item states.
+ *   editDetail  an editLine()'s own fields, framed under its cells, opened by its Details.
+ *   checkRow    a few checks side by side in one field (a model's input types).
+ *   checkGrid   many checks in a bounded, framed box that scrolls (a listing to pick from).
  *
  * No handlers and no state: a form is read by id when it is submitted. */
-                                      
+                                               
 import { h } from "../h.js";
 
 export function form(...kids          )              {
@@ -99,4 +105,41 @@ export function hint(body        , o                                            
     class: o.bad ? "hint bad" : "hint", id: o.id, hidden: o.hidden,
     aria: o.live ? { live: "polite" } : undefined,
   }, body);
+}
+
+/** A list the form edits in place: one editLine() per item. `cols` counts the cells after the
+ *  item's own field (a kind pick, a mark, Move up, Remove); every line shares the list's
+ *  columns, so the controls line up down the list and a mark appearing on one line never
+ *  shifts a control. Empty, it takes no room. */
+export function editList(o                               , ...lines          )              {
+  return h("div", { class: "edit-list", id: o.id, style: "--edit-cols: " + String(o.cols) }, ...lines);
+}
+
+/** One item of an editList(): its own field first, then its `cols` controls, in that order. */
+export function editLine(o                    , ...cells          )              {
+  return h("div", { class: "edit-line", data: o.data }, ...cells);
+}
+
+/** The quiet line under an editLine()'s cells, the line's full width: what the item states (a
+ *  model's name, window and output). Hidden until the page fills it. */
+export function editSub(o                    )              {
+  return h("div", { class: "edit-sub hint", hidden: true, data: o.data });
+}
+
+/** An editLine()'s own fields under its cells, framed, the line's full width: the details its
+ *  Details button opens. Starts shut. */
+export function editDetail(o                    , ...body          )              {
+  return h("div", { class: "edit-detail", hidden: true, data: o.data }, ...body);
+}
+
+/** A few checks side by side as one field's control (Text and Image): each its box, then its
+ *  label. A field() with `group` names them. */
+export function checkRow(...checks                                                     )              {
+  return h("div", { class: "check-row" }, ...checks.map((c) => h("label", { class: "check" }, c.control, c.label)));
+}
+
+/** Many checks (checkField()s) to pick from - a hosted model listing runs to a hundred: as
+ *  many columns as fit, framed, its own scroll past a few rows. */
+export function checkGrid(o                 , ...checks          )              {
+  return h("div", { class: "check-grid", id: o.id }, ...checks);
 }

@@ -46,7 +46,7 @@ import { tag } from "./ui/status.js";
 // The analysis panes live in their own module; the cycle is the accepted shape (function-level
 // use only, never at module scope), the same as data-view <-> data-structure.
 import {
-  mongoExplainFind, mongoPaneHead, mongoPaneMore, mongoPanesClick, mongoPanesChange, mongoPanesInput, mongoPanesKeydown, renderMongoPane,
+  mongoExplainFind, mongoPaneHead, mongoPaneMore, mongoPanesClick, mongoPanesChange, mongoPanesInput, mongoPanesKeydown, mongoSchemaRun, renderMongoPane,
 } from "./data-mongo-panes.js";
 
 /* ================================================================================================
@@ -885,6 +885,17 @@ function mongoAfterPane(tab           )       {
   if (tab.pane === "docs" && !tab.docs) void mongoLoadDocs(tab);
 }
 
+/** A collection the agent described (SPEC §data.agent): its tab in front on Schema, sampled as
+ *  Analyze samples it unless a sample is already in hand. A full strip that refused the tab
+ *  leaves the tab in front alone. */
+export function mongoAgentSchema(db        , coll        )       {
+  dbOpenTab({ kind: "coll", db, coll });
+  const t = mongoTab();
+  if (!t || t.db !== db || t.coll !== coll) return;
+  if (t.pane !== "schema") { t.pane = "schema"; mongoAfterPane(t); }
+  if (!t.schema && !t.schemaBusy) void mongoSchemaRun(t);
+}
+
 /** What a collection tab owes the pane when it comes to the front (dbAfterTabSwitch). */
 export function mongoAfterTabSwitch(t           )       {
   if (!t.coll) return;
@@ -1322,8 +1333,8 @@ function openImport(t           )       {
 /* --- the console ----------------------------------------------------------------------------------- */
 
 /** Run one command document in the console (SPEC §data.mongo): shell syntax in, the reply as a
- *  shell-syntax block, against the database the sidebar shows. True when the server answered
- *  (the caller records the block in the history). */
+ *  shell-syntax block, against the database the sidebar shows. True when the server answered;
+ *  the server files the command in that database's history (SPEC §data.history). */
 export async function mongoRunCommand(d          , block        , after            )                   {
   const db = mongoCurrentDb();
   if (!db) { toast(tr("dataMongo.pickDatabase"), true); return false; }
@@ -1332,7 +1343,8 @@ export async function mongoRunCommand(d          , block        , after         
   const token = mongoRunReq.issue();
   d.sqlBusy = true;
   after();
-  const j = await mongoPost                                        ("command", { db, command: p.value });
+  // `text` is the block as typed: the history files it instead of the parsed document.
+  const j = await mongoPost                                        ("command", { db, command: p.value, text: block });
   if (!mongoRunReq.accepts(token)) return false; // superseded: a newer run owns the console
   d.sqlBusy = false;
   if (!j) { d.sqlResult = null; d.sqlResults = null; d.resultTab = 0; after(); return false; }
@@ -1346,6 +1358,11 @@ export async function mongoRunCommand(d          , block        , after         
 
 // One console run at a time: a slow reply must not land over the newer run's.
 const mongoRunReq = dbReqGuard();
+
+/** Another answer took the results (the Data agent's run): a console run still in flight lands nowhere. */
+export function mongoRunSupersede()       {
+  mongoRunReq.issue();
+}
 
 /** The reply of a console command as the code block. */
 export function mongoReplyNode(reply         )              {

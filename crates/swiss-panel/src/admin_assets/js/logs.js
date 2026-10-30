@@ -302,6 +302,8 @@ function logsBodyNode(d           )         {
   const tools = [
     filterInput({ id: "callsQ", placeholder: tr("logs.searchCalls"), label: tr("logs.searchToolCalls"), value: q }),
     moreBtn(tr("logs.moreLogActions"), { id: "clMenu" }),
+    h("button", { id: "callsDeepToggle", type: "button", class: "ghost" },
+      d.callsDeep ? tr("logs.deepHide") : tr("logs.deepShow")),
   ];
   const busy = d.callsPendingPage != null;
   let body        ;
@@ -337,7 +339,8 @@ function logsBodyNode(d           )         {
         : tr("logs.childRunningButPrinted");
     err = section({ cap: tr("logs.childProcessStderr") }, note(why));
   }
-  return frag(section({ cap: tr("logs.toolCallsNewestFirst"), tools }, region), err);
+  return frag(section({ cap: tr("logs.toolCallsNewestFirst"), tools }, region),
+    d.callsDeep ? deepNode(d) : null, err);
 }
 
 /** Expand/collapse one call without re-rendering: a poll must not close what you just opened.
@@ -466,3 +469,61 @@ function kindBodyNode(d           , kind         , m                           )
 
 export { readableBody };
 export { callBlockCopyText, callBlockNode, callBodyNode, callItem, callRunOf, callsErrNode, callsStatusNode, copyLogText, fmtChars, fmtJson, goneNode, itemRecordNode, kindBodyNode, logsBodyNode, repaintCallBlock, toggleCall };
+/** The deep literal search panel (SPEC §host.history, plan D6): the cross-module
+ * query surface over STORED BODIES — the text beyond the preview line legacy q
+ * cannot see. An incomplete page with zero hits says STILL SCANNING with a
+ * Continue; it is never rendered as "no matches". Skipped modules and refused
+ * cursors are named, and each hit loads its record body bounded, slice by slice. */
+function deepNode(d           )         {
+  const hits = d.deepHits || [];
+  const done = !!d.deepComplete;
+  const status = d.deepBusy
+    ? tr("logs.deepScanning")
+    : done
+      ? tr("logs.deepComplete")
+      : tr("logs.deepIncomplete");
+  const rows           = hits.map((x) => {
+    const body = (d.deepBodies || {})[x.runId];
+    return h("div", { class: "call-row" },
+      h("button", {
+        class: "link",
+        data: { deephit: String(x.runId) },
+        type: "button",
+      }, tr("logs.deepCallAt", { id: String(x.runId), at: String(x.byteOfs) })),
+      body
+        ? h("div", null,
+            h("pre", { class: "code" }, body.text),
+            body.next != null
+              ? h("button", {
+                  class: "link",
+                  data: { deepmore: String(x.runId) },
+                  type: "button",
+                }, tr("logs.deepBodyMore"))
+              : null,
+          )
+        : null,
+    );
+  });
+  const skipped = (d.deepSkipped || []).length
+    ? note(tr("logs.deepSkipped", { mods: (d.deepSkipped || []).join(", ") }))
+    : null;
+  return section({ cap: tr("logs.deepTitle") },
+    h("div", { class: "hist-search" },
+      h("input", {
+        id: "callsDeepQ",
+        type: "search",
+        placeholder: tr("logs.deepPlaceholder"),
+        value: d.deepQ || "",
+        aria: { label: tr("logs.deepPlaceholder") },
+      }),
+      h("button", { id: "callsDeepGo", type: "button" }, tr("logs.deepGo")),
+    ),
+    d.deepError ? note(d.deepError, { err: true }) : null,
+    skipped,
+    note(status + " · " + tr("logs.deepScanned", { n: String(d.deepScanned || 0) })),
+    hits.length ? h("div", null, rows) : (done ? note(tr("logs.deepNoHits")) : null),
+    !done && (hits.length > 0 || d.deepCursors != null)
+      ? h("button", { id: "callsDeepMore", type: "button", disabled: !!d.deepBusy }, tr("logs.deepContinue"))
+      : null,
+  );
+}

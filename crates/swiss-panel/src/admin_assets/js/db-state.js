@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-                                                                                                                                
+                                                                                                                                             
 
 /* The Data view owns its state (SPEC §panel.toolchain, slice 6 of 7; SPEC §data.tabs splits the record).
 
@@ -50,8 +50,7 @@ function freshConnState()              {
     schemaFilter: "",     // pg only: "" = every schema; the /tables schema param (SPEC §data.browse)
     sort: "name", sortDir: "asc", // the list's sort key/dir — SQL sorts server-side, redis client-side
     gridCfg: { widths: {}, hidden: [] }, // per-connection column widths/hides (SPEC §data.grid), reloaded per page
-    history: [],         // last-run console queries, newest first (per-browser, localStorage)
-    favorites: [],       // starred queries, same store (SPEC §data.console)
+    favorites: [],       // starred queries, per browser in localStorage (SPEC §data.console)
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
     redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
     redisError: false,  // the last /keys fetch FAILED (SPEC §data) — the list must say so, not "no keys"
@@ -77,6 +76,7 @@ let tabClock = 0;
                                                 
                                                           
                                                   
+                                                      
                                                  
 export function freshTab(kind           )        {
   // Each branch spells its literal kind: a shared { kind } base would widen the
@@ -118,6 +118,11 @@ export function freshTab(kind           )        {
       schema: null, schemaBusy: false, schemaSample: 1000,
       indexes: null, explain: null, explainOf: "find", validatorText: null,
     };
+  }
+  if (kind === "pubsub") {
+    return { kind: "pubsub", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
+      channels: null, channelsError: null, pattern: "", watchChannels: [], watchPatterns: [], watchText: "",
+      log: [], dropped: 0, live: "off", liveNote: null, stopped: false, offAt: null, pubChannel: "", pubMessage: "" };
   }
   return { kind: "activity", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
     activityRows: null };
@@ -164,13 +169,12 @@ function park(pinned                            )       {
   }
 }
 
-/** Put a parked session back live. The registry list and the per-browser stores (query
- *  history, favorites) are the PAGE's, not the session's: they carry from the record being
- *  replaced, so a session parked an hour ago does not bring back an old connection list. */
+/** Put a parked session back live. The registry list and the per-browser favorites are the
+ *  PAGE's, not the session's: they carry from the record being replaced, so a session parked an
+ *  hour ago does not bring back an old connection list. */
 function resume(s           , from             )       {
   connRec = s.conn;
   connRec.conns = from.conns;
-  connRec.history = from.history;
   connRec.favorites = from.favorites;
   tabs = s.tabs;
   activeIdx = Math.max(0, Math.min(tabs.length - 1, s.activeIdx));
@@ -202,7 +206,6 @@ function take(name               )          {
   }
   connRec = freshConnState();
   connRec.conns = from.conns;
-  connRec.history = from.history;
   connRec.favorites = from.favorites;
   connRec.conn = name;
   tabs = [freshTab("table")];

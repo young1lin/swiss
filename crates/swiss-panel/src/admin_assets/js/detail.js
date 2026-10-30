@@ -201,6 +201,8 @@ function openDetail(name        )       {
     callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
     callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
     callsAll: {}, // SPEC §mcp.calls: blocks the operator expanded past the line cap ("out:<seq>")
+    callsDeep: false, deepQ: "", deepHits: [], deepComplete: false, deepBusy: false,
+    deepCursors: null, deepScanned: 0, deepSkipped: [], deepError: "", deepBodies: {},
     // The three kind pages (views/mcps.ts stages the active one under d[d.tab]) open fresh.
     tools: pageState(), resources: pageState(), prompts: pageState(),
   };
@@ -481,7 +483,7 @@ async function loadPage(name        , kind         )                {
     } else {
       // Surface it instead of silently showing "none" — a direct adapter has no resources/prompts
       // capability at all, and that is worth saying out loud.
-      kd.error = j.error || "HTTP " + r.status;
+      kd.error = j.error || tr("detail.httpError", { status: r.status });
     }
   } catch (e) {
     kd.error = tr("detail.requestFailed");
@@ -768,3 +770,86 @@ async function saveEdit()                {
 }
 
 export { act, authorizeMcp, callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadMeta, loadPage, loadRevisions, openDetail, pageNext, pagePrev, pageState, removeMcp, renameMcp, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace };
+/** Deep literal search over this module's STORED BODIES (SPEC §host.history): the
+ * cross-module query fan-out — beyond the preview line the legacy q cannot see.
+ * `cont` continues a prior page through its per-owner resume tokens; an
+ * incomplete page with zero hits keeps the STILL SCANNING state — it is never
+ * rendered as "no matches" (the plan forbids the masquerade in both directions). */
+export async function deepSearch(name        , cont         )                {
+  const d = mcpDetail();
+  if (!d || d.name !== name) return;
+  const q = (d.deepQ || "").trim();
+  if (!q) return;
+  d.deepBusy = true;
+  d.deepError = "";
+  renderCallsOnly();
+  try {
+    const body                          = { q: q, modules: ["mcp"], limit: 20 };
+    if (cont && d.deepCursors) body.cursors = d.deepCursors;
+    // api() already pins Content-Type; adding a case-variant copy here made fetch
+    // merge the two into "application/json, application/json" and axum answer 415
+    // (caught on the 19998 browser walk, plan D6).
+    const r = await api("/api/history/query", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => { return {}                           ; });
+    if (mcpDetail() !== d) return;
+    if (!r.ok) {
+      d.deepError = String((j                      ).error || r.status);
+      d.deepBusy = false;
+      renderCallsOnly();
+      return;
+    }
+    const hits = ((j.hits                                                        ) || [])
+      .filter((x) => x.module === "mcp")
+      .map((x) => { return { runId: x.runId, byteOfs: x.byteOfs }; });
+    d.deepHits = cont ? (d.deepHits || []).concat(hits) : hits;
+    d.deepComplete = !!j.complete;
+    d.deepCursors = (j.next                          ) || null;
+    d.deepScanned = (d.deepScanned || 0) + (Number(j.scannedChunks) || 0);
+    d.deepSkipped = (j.skipped            ) || [];
+    const errs = (j.errors                                        ) || [];
+    if (errs.length) d.deepError = errs.map((e) => { return e.module + ": " + e.reason; }).join("; ");
+  } catch (e) {
+    if (mcpDetail() !== d) return;
+    d.deepError = String(e);
+  }
+  d.deepBusy = false;
+  renderCallsOnly();
+}
+
+/** One bounded body slice for a deep-search hit (SPEC §host.history): the stored
+ * record's plaintext after a byte cursor, with the next frontier when more
+ * remains — the same contract the endpoint serves. */
+export async function deepBody(name        , id        , more         )                {
+  const d = mcpDetail();
+  if (!d || d.name !== name) return;
+  const cur = d.deepBodies || {};
+  const prior = cur[id];
+  const after = more && prior ? prior.next || 0 : 0;
+  try {
+    const r = await api("/api/history/mcp/records/" + id + "/body?after=" + after + "&max=8192");
+    const j = await r.json().catch(() => { return {}                           ; });
+    if (mcpDetail() !== d) return;
+    if (!r.ok) {
+      d.deepError = String((j                      ).error || r.status);
+      renderCallsOnly();
+      return;
+    }
+    const slice = j                                                        ;
+    if (slice.gone) {
+      cur[id] = { text: tr("logs.deepBodyGone"), next: null };
+    } else {
+      cur[id] = {
+        text: (prior && more ? prior.text : "") + slice.text,
+        next: slice.next,
+      };
+    }
+    d.deepBodies = cur;
+  } catch (e) {
+    if (mcpDetail() !== d) return;
+    d.deepError = String(e);
+  }
+  renderCallsOnly();
+}

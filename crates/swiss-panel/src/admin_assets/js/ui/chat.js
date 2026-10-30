@@ -1,0 +1,385 @@
+/*
+ * Copyright 2026 young1lin
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* The assistant pane (SPEC §panel.ui): a conversation docked at a page's end edge, beside the
+ * work it acts on - the Data page's agent next to its console and results. Three parts, in a
+ * column on the sidebar's surface:
+ *
+ *   head     the caption, then the tools: a picker (which agent), New, close;
+ *   body     the conversation - a transcript() column, or a note while there is none - which
+ *            scrolls on its own; chatFollow keeps its end in view while an answer streams;
+ *   compose  the words box, then a line of actions: a note at its start (what the pane works
+ *            on), the send and stop at its end. It stays put however long the column grows.
+ *            `queued` stands above the box: words sent while an answer streams, waiting their
+ *            turn (a chatQueue(), which takes no room while empty).
+ *
+ * The pane sits after a grip({ end }), which sizes it and folds it away; --chat-pane-w is its
+ * width before a drag. The caller wires the controls; the words box's own manners are the
+ * pane's: it grows with its words up to a cap and scrolls past it (chatGrow), and with
+ * `commands` a "/" at its start lists them above it to complete (chatCommands). `stats` is the
+ * line under the actions: the conversation's account and its context ring (a chatStats()). */
+                                      
+import { h } from "../h.js";
+import { tr, trn } from "../i18n.js";
+import { iconBtn } from "./button.js";
+import { iconNode } from "./icon.js";
+
+                               
+              
+                                                               
+              
+                   
+               
+                             
+                                                                                          
+                           
+                                                                                             
+                  
+                                                                                   
+                
+                    
+                                                                                                  
+                 
+ 
+
+export function chatPane(o              )              {
+  chatGrow(o.input);
+  const menu = o.commands && o.commands.length ? chatCommands(o.input, o.commands) : null;
+  return h("aside", { class: "chat-pane", id: o.id, aria: { label: o.cap } },
+    h("div", { class: "chat-head" },
+      h("span", { class: "sec-cap", title: o.cap }, o.cap),
+      o.tools && o.tools.length ? h("span", { class: "chat-tools" }, o.tools) : null),
+    h("div", { class: "chat-body" }, o.body),
+    h("div", { class: "chat-compose" },
+      o.queued,
+      o.input,
+      h("div", { class: "chat-acts" },
+        h("span", { class: "chat-note" }, o.note),
+        o.actions),
+      o.stats,
+      menu));
+}
+
+/** One message waiting in a chatQueue: its words, and whether it was steered - handed to the
+ *  live answer, which reads it before its next step. */
+;                            
+             
+               
+                   
+ 
+
+;                               
+              
+                                                    
+               
+                                                                                             
+                                                                                          
+                               
+                                                                                                  
+                                
+                                                                   
+                    
+ 
+
+;                           
+                    
+                                                 
+                        
+                                
+                                                                                           
+                                        
+                                                                                     
+                                       
+                                                    
+                               
+ 
+
+let queueSeq = 0;
+
+/** What waits to be sent while an answer streams (SPEC §panel.ui), as a card above the words
+ *  box: a head naming how many, which folds the rows away, then one row each - its first line,
+ *  and Edit, Delete and ↑ (steer it now) at its end. The rows go one per turn after a clean
+ *  answer, in order; ↑ puts one first and hands it to the live answer, which reads it before
+ *  its next step - a steered row shows so, dim, and Delete withdraws it. Edit turns the row
+ *  into a box in place: Enter or leaving it saves, Escape keeps the words as they were, saved
+ *  empty it is deleted. The card takes no room while empty. The host owns the sending: this
+ *  holds the rows and says what the reader did. */
+export function chatQueue(o               )            {
+  const listId = "chat-queue-" + String(++queueSeq);
+  const rows                                             = [];
+  let open = true;
+  let editingId                = null;
+  let seq = 0;
+  const count = h("span", { class: "chat-queue-n" });
+  const head = h("button", { type: "button", class: "chat-queue-head", aria: { expanded: "true", controls: listId } },
+    iconNode("list"), count, iconNode(open ? "chevron-down" : "chevron-up"));
+  const list = h("div", { class: "chat-queue-list", id: listId });
+  const node = h("div", { class: "chat-queue", id: o.id, hidden: true }, head, list);
+  head.onclick = ()       => {
+    open = !open;
+    list.hidden = !open;
+    head.setAttribute("aria-expanded", String(open));
+    head.lastElementChild?.replaceWith(iconNode(open ? "chevron-down" : "chevron-up"));
+  };
+  const paintHead = ()       => {
+    node.hidden = !rows.length;
+    count.textContent = trn(rows.length, "ui.chat.queued.one", "ui.chat.queued.other");
+  };
+  const find = (id        )         => rows.findIndex((r) => r.q.id === id);
+  const drop = (id        )                    => {
+    const at = find(id);
+    if (at < 0) return null;
+    const [r] = rows.splice(at, 1);
+    r.row.remove();
+    if (editingId === id) editingId = null;
+    paintHead();
+    return r.q;
+  };
+  const paint = (r                                     )       => {
+    const { q, row } = r;
+    row.toggleAttribute("data-steered", q.steered);
+    if (editingId === q.id) {
+      const box = h("textarea", { class: "chat-queue-edit", rows: 1, maxLength: o.max, aria: { label: tr("ui.chat.queueEdit") } });
+      box.value = q.text;
+      const done = (save         )       => {
+        if (editingId !== q.id) return;
+        editingId = null;
+        const text = box.value.trim();
+        if (save && !text) {
+          drop(q.id);
+          o.onDelete(q);
+        } else {
+          if (save) q.text = text;
+          paint(r);
+        }
+        if (o.onEdited) o.onEdited();
+      };
+      box.addEventListener("keydown", (e               )       => {
+        if (e.isComposing) return;
+        // The keys stop here: never the page's Enter, never the panel's Escape.
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); done(true); }
+        else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
+      });
+      box.addEventListener("blur", ()       => { done(true); });
+      row.replaceChildren(box);
+      chatGrow(box);
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
+      return;
+    }
+    const first = q.text.split("\n")[0];
+    const edit = iconBtn("pencil", tr("ui.chat.queueEdit"), { ghost: true, hidden: q.steered });
+    const del = iconBtn("trash", q.steered ? tr("ui.chat.queueWithdraw") : tr("ui.chat.queueDelete"), { ghost: true });
+    const up = q.steered
+      ? h("span", { class: "chat-queue-tag" }, tr("ui.chat.queueSteering"))
+      : iconBtn("arrow-up", tr("ui.chat.queueSteer"), { ghost: true });
+    edit.onclick = ()       => {
+      if (editingId) return;
+      editingId = q.id;
+      paint(r);
+    };
+    del.onclick = ()       => { if (drop(q.id)) o.onDelete(q); };
+    if (up instanceof HTMLButtonElement) {
+      up.onclick = ()       => {
+        const at = find(q.id);
+        if (at < 0) return;
+        // First in line: steered or sent, it is the one the reader picked as next.
+        rows.unshift(rows.splice(at, 1)[0]);
+        list.prepend(row);
+        o.onSteer(q);
+      };
+    }
+    row.replaceChildren(
+      h("span", { class: "chat-queue-text", title: q.text }, first !== q.text ? first + " …" : first),
+      edit, del, up);
+  };
+  return {
+    node,
+    items: ()               => rows.map((r) => r.q),
+    add: (text        )             => {
+      const q             = { id: "q" + Date.now().toString(36) + "-" + String(++seq), text, steered: false };
+      const r = { q, row: h("div", { class: "chat-queue-row", data: { queued: q.id } }) };
+      rows.push(r);
+      paint(r);
+      list.appendChild(r.row);
+      paintHead();
+      return q;
+    },
+    remove: drop,
+    steer: (id        , on         )       => {
+      const at = find(id);
+      if (at < 0 || rows[at].q.steered === on) return;
+      rows[at].q.steered = on;
+      paint(rows[at]);
+    },
+    editing: ()                    => {
+      const at = editingId ? find(editingId) : -1;
+      return at < 0 ? null : rows[at].q;
+    },
+  };
+}
+
+/** Keep the end of a pane's column in view: the carriage of an answer that streams in. */
+export function chatFollow(pane             )       {
+  const body = pane.querySelector             (".chat-body");
+  if (body) body.scrollTop = body.scrollHeight;
+}
+
+/** A command the words box completes: its name after a "/" at the box's start. */
+;                             
+                                     
+               
+                                                                  
+               
+                                
+               
+ 
+
+/** What a box does after each write lands: refit, re-read the command (a box can carry both). */
+const onWrite = new WeakMap                                     ();
+
+/** Run fn after every write to the box: typed, pasted, or set by the page (`box.value = ""`
+ *  after a send, words handed back). The setter is the instance's own, so every existing write
+ *  reaches it, as styleSelect's does for a select. */
+function afterWrite(ta                     , fn            )       {
+  let fns = onWrite.get(ta);
+  if (!fns) {
+    const list                 = [];
+    fns = list;
+    onWrite.set(ta, list);
+    ta.addEventListener("input", () => { list.forEach((f) => { f(); }); });
+    // Read when a box is made, never at import: a suite on a stubbed DOM loads the library too.
+    const own = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ta)          , "value")                                                       ;
+    if (own) {
+      Object.defineProperty(ta, "value", {
+        get: () => own.get.call(ta),
+        set: (v        ) => { own.set.call(ta, v); list.forEach((f) => { f(); }); },
+        configurable: true,
+      });
+    }
+  }
+  fns.push(fn);
+}
+
+/** The words box grows with its words: its rows are the floor, the CSS max-height the cap, and
+ *  past the cap it scrolls. It refits on every write, on focus, and when its width changes (the
+ *  same words wrap to another height); a box not laid out (a folded pane) keeps its rows. */
+export function chatGrow(ta                     )       {
+  if (ta.dataset.grow) return;
+  ta.dataset.grow = "1";
+  const fit = ()       => {
+    ta.style.height = "auto";
+    if (!ta.scrollHeight) { ta.style.height = ""; return; }
+    ta.style.height = String(ta.scrollHeight + ta.offsetHeight - ta.clientHeight) + "px";
+  };
+  afterWrite(ta, fit);
+  ta.addEventListener("focus", fit);
+  if (typeof ResizeObserver === "undefined") return;
+  let width = -1;
+  new ResizeObserver(() => {
+    // A width change only: the height fit sets fires the observer again.
+    if (ta.clientWidth === width) return;
+    width = ta.clientWidth;
+    fit();
+  }).observe(ta);
+}
+
+let cmdSeq = 0;
+
+/** "/" at the start of the words box lists the commands whose name begins with what follows it
+ *  (then those that hold it), above the box: the arrows walk them, Tab or Enter completes the
+ *  one marked ("/name " - the box goes on to its argument), Escape closes the list until the
+ *  words change, a click completes and leaves the caret in the box. The box is the combobox and
+ *  keeps the focus (aria-activedescendant); Enter on a name typed whole is the page's: it sends.
+ *  A key the list takes goes no further - not to the page's own Enter, not to the panel's
+ *  Escape. Returns the list, for the caller to place above the box. */
+export function chatCommands(ta                     , commands               )              {
+  const listId = "chat-cmds-" + String(++cmdSeq);
+  const menu = h("div", { class: "chat-cmds", id: listId, role: "listbox", hidden: true, aria: { label: tr("ui.chat.commands") } });
+  let shown                = [];
+  let at = 0;
+  // The words Escape closed the list on: it stays shut until they change.
+  let dismissed                = null;
+  ta.setAttribute("aria-autocomplete", "list");
+  ta.setAttribute("aria-controls", listId);
+  ta.setAttribute("aria-expanded", "false");
+
+  const mark = ()       => {
+    Array.from(menu.children).forEach((r, i) => { r.setAttribute("aria-selected", String(i === at)); });
+    const row = menu.children[at]                           ;
+    if (!row) return;
+    ta.setAttribute("aria-activedescendant", row.id);
+    if (typeof row.scrollIntoView === "function") row.scrollIntoView({ block: "nearest" });
+  };
+  const hide = ()       => {
+    shown = [];
+    menu.hidden = true;
+    menu.replaceChildren();
+    ta.setAttribute("aria-expanded", "false");
+    ta.removeAttribute("aria-activedescendant");
+  };
+  const complete = (c             )       => {
+    ta.value = "/" + c.name + " ";
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    ta.focus();
+  };
+  const paint = ()       => {
+    const v = ta.value;
+    if (v !== dismissed) dismissed = null;
+    if (dismissed !== null || document.activeElement !== ta || !v.startsWith("/") || /\s/.test(v)) { hide(); return; }
+    const q = v.slice(1).toLowerCase();
+    const named = commands.map((c) => ({ c, n: c.name.toLowerCase() }));
+    const next = [...named.filter((x) => x.n.startsWith(q)), ...named.filter((x) => !x.n.startsWith(q) && x.n.includes(q))].map((x) => x.c);
+    if (!next.length) { hide(); return; }
+    const was = shown[at]                           ;
+    shown = next;
+    at = was ? Math.max(0, shown.indexOf(was)) : 0;
+    menu.replaceChildren(...shown.map((c, i) => {
+      const row = h("div", { class: "chat-cmd", id: listId + "-" + String(i), role: "option", aria: { selected: String(i === at) } },
+        h("span", { class: "chat-cmd-name" }, "/" + c.name, c.arg ? h("span", { class: "chat-cmd-arg" }, " " + c.arg) : null),
+        h("span", { class: "chat-cmd-hint", title: c.hint }, c.hint));
+      // Mousedown, not click: the box keeps the focus, so its blur never shuts the list first.
+      row.addEventListener("mousedown", (e) => { e.preventDefault(); complete(c); });
+      row.addEventListener("mouseenter", () => { at = i; mark(); });
+      return row;
+    }));
+    menu.hidden = false;
+    ta.setAttribute("aria-expanded", "true");
+    mark();
+  };
+
+  afterWrite(ta, paint);
+  ta.addEventListener("focus", paint);
+  ta.addEventListener("blur", hide);
+  ta.addEventListener("keydown", (e) => {
+    if (!shown.length || e.isComposing) return;
+    const take = ()       => { e.preventDefault(); e.stopImmediatePropagation(); };
+    const typedWhole = ta.value === "/" + shown[at].name;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      take();
+      at = (at + (e.key === "ArrowDown" ? 1 : shown.length - 1)) % shown.length;
+      mark();
+    } else if ((e.key === "Tab" || (e.key === "Enter" && !typedWhole)) && !e.shiftKey) {
+      take();
+      complete(shown[at]);
+    } else if (e.key === "Escape") {
+      take();
+      dismissed = ta.value;
+      hide();
+    }
+  });
+  return menu;
+}

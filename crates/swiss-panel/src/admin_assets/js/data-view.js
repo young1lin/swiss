@@ -21,9 +21,11 @@ import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown, dbRefreshKeyspace, dbRefreshRedisValue, dbRewalkKeys } from "./data-browsers.js";
 import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlPaint, renderDbFilters } from "./data-filters.js";
-import { dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
-import { dbBarClick, dbFavLoad, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
+import { dbConsoleHint, dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbSqlFormatNow, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
+import { dbBarClick, dbFavLoad, dbRunSql, renderDbBar } from "./data-sql.js";
+import { dbAgentButton, dbAgentForget, dbAgentPane, renderDbAgent } from "./data-agent.js";
 import { dbActivityClick, dbActivityPollStop } from "./data-activity.js";
+import { dbPubsubClick, dbPubsubInput, dbPubsubKeydown, dbPubsubStop } from "./data-pubsub.js";
 // The MongoDB workspace (SPEC §data.mongo-panel). Same accepted cycle shape as data-tabs below:
 // data-mongo reaches back for renderDbTables and dbCurrentDatabase inside functions only.
 import {
@@ -54,7 +56,8 @@ import {
 } from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
 import { btn, moreBtn } from "./ui/button.js";
-import { hint } from "./ui/form.js";
+import { grip } from "./ui/grip.js";
+import { dock } from "./ui/dock.js";
 import { popupMenu } from "./ui/menu.js";
 import { tag } from "./ui/status.js";
 
@@ -69,8 +72,6 @@ import { tag } from "./ui/status.js";
    ================================================================================================ */
 
 const DB_PAGE_SIZES = [10, 20, 50, 100, 200, 500];
-const DB_HISTORY_KEY = "swiss.dbSqlHistory";
-const DB_HISTORY_MAX = 50;
 
 
 /** What the ACTIVE tab is holding back — the number every in-page guard quotes, and the one
@@ -230,6 +231,7 @@ function dbShowSession()       {
   if (gb) gb.value = d.grep;
   dbSyncKind();
   renderDbSide();
+  renderDbAgent(); // the connection's own conversation, or none
   // The strip, the list and the pane - and the page, detail or value the object in front lacks,
   // plus the Activity poll when a monitor is in front (D8).
   dbAfterTabSwitch(true);
@@ -255,13 +257,13 @@ function renderDbView()       {
   // on unmount so no other page inherits them.
   pane.classList.add("db-host", "full");
   pane.textContent = "";
+  dbAgentForget();
   // SPEC §panel.toolchain: the skeleton is a node tree, and the pane carries ONE delegated listener per
   // event type (property-assigned, never addEventListener — a repaint re-assigns the same
   // property instead of stacking). Every control below is addressed by id or a data-*
   // attribute; nothing is wired per render.
   const root = el("div", "db-root");
-  fill(root,
-    h("div", { class: "db-side" },
+  const side = h("div", { class: "db-side" },
       // SPEC §data.databases: the sidebar's top is TWO band-shaped rows — the connection row (status
       // dot, name, dialect mark, chevron) and, when the connection has a database axis, the
       // database row (current name, chevron). Each opens a DRAWER under itself (the owner's
@@ -277,7 +279,23 @@ function renderDbView()       {
       // and a dropdown beside it would be two mechanisms saying one thing.
       h("input", { id: "dbGrep", type: "search", placeholder: tr("dataView.filterTables"), aria: { label: tr("dataView.filterTables") } }),
       h("div", { class: "db-tables", id: "dbTables" }, h("div", { class: "db-hint" }, tr("dataView.loading"))),
-      h("div", { class: "db-side-foot", id: "dbTablesPager" })),
+      h("div", { class: "db-side-foot", id: "dbTablesPager" }));
+  // The console and the results share the column: a dock (ui/dock.ts) trades one for the
+  // other, the way a desktop SQL client's editor and result panes do. Its hint is the head's
+  // meta line (renderDbToolbar), so the editor meets its edge.
+  const consoleEl = h("div", { class: "db-console", id: "dbConsole", hidden: true },
+    h("div", { class: "db-sql-wrap" },
+      h("pre", { class: "db-sql-hl db-sql-face", id: "dbSqlHl", aria: { hidden: "true" } }),
+      h("textarea", {
+        class: "db-sql-face", id: "dbSql", spellcheck: false,
+        placeholder: tr("dataView.selectUpdateDeleteStatements"),
+      })));
+  // The grid folds down under the console; the results' bar - the result tabs and facts - is
+  // the split's handle and stays at the bottom to bring it back.
+  const gridEl = h("div", { class: "db-grid-wrap", id: "dbGridWrap" });
+  fill(root,
+    side,
+    grip(side, { axis: "x", key: "db-side", min: 180, max: 560, label: tr("dataView.sideName"), fold: true }),
     h("div", { class: "db-main" },
       // The object tabs (SPEC §data.tabs). L3 resource navigation, page-body owned: the strip is
       // the top EDGE of the grid below it (SPEC §data.tabs), which is why it sits above
@@ -285,30 +303,32 @@ function renderDbView()       {
       h("div", { class: "db-tabstrip", id: "dbTabStrip", role: "tablist" }),
       h("div", { class: "db-headrow" },
         h("div", { class: "db-head", id: "dbHead" }),
-        // Pane-level actions live behind one ⋯ next to the head (SPEC §data.activity); the Activity
-        // monitor is the first. Shown only on a SQL connection (redis has no sessions) and only
-        // while the open object has no ⋯ of its own - renderDbToolbar decides (SPEC §panel.pages).
+        // SPEC §data.agent: the agent's pane opens from here, on a MySQL or PostgreSQL connection.
+        dbAgentButton(),
+        // Pane-level actions live behind one ⋯ next to the head (SPEC §data.activity): the Activity
+        // monitor, or on a redis connection - no sessions there - the Pub/Sub page (SPEC §data.pubsub).
+        // Shown only while the open object has no ⋯ of its own - renderDbToolbar decides (SPEC §panel.pages).
         moreBtn(tr("dataView.morePaneActions"), { id: "dbMore", hidden: true })),
       h("div", { class: "db-filters", id: "dbFilters" }),
       // The console is the sql tab's BODY now (SPEC §data.tabs), not a block toggled over the
       // pane: renderDbGrid unhides it for a sql tab and hides it for every other kind.
       // SPEC §data.tabs: the flat action row is gone — Run is the toolbar's primary action,
       // Explain/Format/favorites/history ride the toolbar's overflow menu.
-      h("div", { class: "db-console", id: "dbConsole", hidden: true },
-        h("div", { class: "db-sql-wrap" },
-          h("pre", { class: "db-sql-hl db-sql-face", id: "dbSqlHl", aria: { hidden: "true" } }),
-          h("textarea", {
-            class: "db-sql-face", id: "dbSql", spellcheck: false,
-            placeholder: tr("dataView.selectUpdateDeleteStatements"),
-          })),
-        h("div", { class: "db-console-row" },
-          hint(tr("dataView.statementsSplitCtrlEnter"), { id: "dbSqlHint" }))),
-      h("div", { class: "db-grid-wrap", id: "dbGridWrap" }),
+      // SPEC §data.console: the results' own bar - their tabs and facts - is the grid's top edge
+      // and the handle that trades the console's height with the results' (the grid keeps
+      // 200 px), folds the results down, or gives them the whole column. A table tab hides the
+      // console, and with it the bar: the grid fills.
+      dock(consoleEl, h("div", { class: "db-rbar", id: "dbRbar", hidden: true }), gridEl, {
+        key: "db-console", size: 220, min: 96, restMin: 200,
+        label: tr("dataView.consoleName"), restLabel: tr("dataView.resultsName"),
+      }),
       // SPEC §data.tabs: the STATUS bar — pager, page size, elapsed, editability, connection —
       // a second line under the pane body, separate from .db-bar (the commit bar, whose
       // job is unchanged). Rendered by renderDbStatus on every grid repaint.
       h("div", { class: "db-status", id: "dbStatus" }),
-      h("div", { class: "db-bar", id: "dbBar", hidden: true })));
+      h("div", { class: "db-bar", id: "dbBar", hidden: true })),
+    // SPEC §data.agent: the agent at the end edge, folded until the reader opens it.
+    ...dbAgentPane());
   pane.appendChild(root);
   pane.onclick = dbPaneClick;
   pane.oninput = dbPaneInput;
@@ -339,11 +359,10 @@ function renderDbView()       {
   $                     ("dbSql").addEventListener("keydown", dbSuggestKeys);
   dbSqlPaint();
   dbSyncKind();
-  dbHistoryLoad();
   dbFavLoad();
-  dbHistoryRender();
   renderDbTabs();
   renderDbToolbar(); renderDbGrid(); renderDbBar();
+  renderDbAgent();
 }
 
 /* --- #pane's four delegated listeners (SPEC §panel.toolchain) ------------------------------------------------
@@ -366,6 +385,7 @@ function dbPaneClick(ev            )       {
   // checkbox acts on change and the grip on mousedown, so stopping here is the whole click
   // behavior — no dispatcher follows, exactly as master's node handlers did nothing on click.
   if (t.closest(".db-selbox, .db-col-grip")) { ev.stopPropagation(); return; }
+  if (t.closest("#dbAgent")) return; // the agent's pane answers its own controls (data-agent.ts)
   if (dbTabsClick(t, ev)) return;
   if (dbChromeClick(t, ev)) return;
   if (dbToolbarClick(t, ev)) return;
@@ -377,6 +397,7 @@ function dbPaneClick(ev            )       {
   if (dbRedisClick(t)) return;
   if (mongoClick(t, ev)) return;
   if (dbActivityClick(t, ev)) return;
+  if (dbPubsubClick(t, ev)) return;
 }
 
 /** The middle-button half of the pointer contract (SPEC §data.tabs): a middle press fires
@@ -400,15 +421,16 @@ function dbPaneContext(ev            )       {
 
 function dbPaneInput(ev       )       {
   const t = targetEl(ev);
-  if (!t) return;
+  if (!t || t.closest("#dbAgent")) return;
   if (dbChromeInput(t)) return;
   if (mongoInput(t)) return;
+  if (dbPubsubInput(t)) return;
   if (dbFiltersInput(t)) return;
 }
 
 function dbPaneChange(ev       )       {
   const t = targetEl(ev);
-  if (!t) return;
+  if (!t || t.closest("#dbAgent")) return;
   // SPEC §data.tabs: the console's flat row is gone, so the pane has no chrome-owned selects any
   // more — every change belongs to the grid (the status bar's page-size included) or a form.
   if (mongoChange(t)) return;
@@ -419,11 +441,12 @@ function dbPaneChange(ev       )       {
 
 function dbPaneKeydown(ev               )       {
   const t = targetEl(ev);
-  if (!t) return;
+  if (!t || t.closest("#dbAgent")) return;
   // Escape closes the open drawer first — it is the lightest thing on the screen (the
   // sheet's own Esc handling sits behind this return).
   if (ev.key === "Escape" && dbDrawer) { dbDrawer = ""; renderDbSide(); return; }
   if (mongoKeydown(t, ev)) return;
+  if (dbPubsubKeydown(t, ev)) return;
   if (dbGridKeydown(t, ev)) return;
   if (dbChromeKeydown(t, ev)) return;
   if (dbFiltersKeydown(ev, t)) return;
@@ -444,6 +467,7 @@ function dbChromeClick(t         , ev            )          {
   // plain Run click used to quietly run EXPLAIN (SPEC §data.console). SPEC §data.tabs moved
   // Run to the toolbar; the delegated id branch stays — the toolbar button carries it.
   if (t.closest("#dbSqlRun")) { void dbRunSql(false); return true; }
+  if (t.closest("#dbSqlRunAll")) { void dbRunSql(false, true); return true; }
   // The connection row toggles its drawer (the owner's ask: the picker slides down inside
   // the sidebar, pushing the tree, instead of floating over it).
   const connRow = t.closest             ("#dbConnRow");
@@ -471,9 +495,15 @@ function dbChromeClick(t         , ev            )          {
     ev.stopPropagation();
     // The monitor is an open object (SPEC §data.tabs): the entry opens its tab, and the tab's own
     // × closes it — which is why there is no "Close activity" twin here any more.
-    popupMenu(moreBtn.getBoundingClientRect(), [
-      { label: tr("dataView.activity"), fn: ()       => { dbOpenTab({ kind: "activity" }); } },
+    popupMenu(moreBtn.getBoundingClientRect(), [dbIsRedis()
+      ? { label: tr("dataView.pubsub"), fn: ()       => { dbOpenTab({ kind: "pubsub" }); } }
+      : { label: tr("dataView.activity"), fn: ()       => { dbOpenTab({ kind: "activity" }); } },
     ]);
+    return true;
+  }
+  // The tree's pinned Pub/Sub row opens the page, as the ⋯'s entry does (SPEC §data.pubsub).
+  if (t.closest("[data-dbpubsub]")) {
+    dbOpenTab({ kind: "pubsub" });
     return true;
   }
   // The redis key list: the row carries the key; the live selection decides the guard.
@@ -547,11 +577,42 @@ function dbChromeInput(t         )          {
   return false;
 }
 
+/** The sidebar's search set from outside its box (SPEC §data.agent: a listing the agent made
+ *  shows as the tree it found): the box reads it and the list reloads as a typed search would. */
+function dbSetGrep(v        )       {
+  if (!dbIsMounted()) return;
+  $                  ("dbGrep").value = v;
+  clearTimeout(dbGrepTimer);
+  const d = dbConn();
+  if (d.grep === v) return;
+  d.grep = v;
+  if (dbIsRedis()) void dbLoadKeys(true);
+  else if (dbIsMongo()) renderDbTables();
+  else void dbLoadTables();
+}
+
+/** Format's keys (SPEC §data.console): Ctrl+Alt+L (Cmd+Alt+L) as a JetBrains IDE has it, and
+ *  Shift+Alt+F as VS Code does. Read by the key's place, since Alt changes the character on a
+ *  Mac; AltGr+L types a letter on some layouts and stays the letter's. */
+function dbFormatKey(ev               )          {
+  if (!ev.altKey || (typeof ev.getModifierState === "function" && ev.getModifierState("AltGraph"))) return false;
+  if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey) return ev.code === "KeyL";
+  return ev.shiftKey && !ev.ctrlKey && !ev.metaKey && ev.code === "KeyF";
+}
+
 function dbChromeKeydown(t         , ev               )          {
   if (!t.closest("#dbSql")) return false;
+  // Ctrl+Enter runs the selection or the caret's block; with Shift, or Alt+X (a desktop SQL
+  // client's "execute script"), the whole console (SPEC §data.console).
   if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
     ev.preventDefault();
-    void dbRunSql();
+    void dbRunSql(false, ev.shiftKey);
+  } else if (ev.altKey && !ev.ctrlKey && !ev.metaKey && (ev.key === "x" || ev.key === "X")) {
+    ev.preventDefault();
+    void dbRunSql(false, true);
+  } else if (dbFormatKey(ev)) {
+    ev.preventDefault();
+    dbSqlFormatNow();
   }
   return true;
 }
@@ -603,12 +664,13 @@ function dbSyncKind()       {
   // "Filter tables" (found on a walk of SPEC §panel.pages). Explain and Format are overflow rows now,
   // and dbMoreItemsForSql leaves them out for a Redis command.
   const grep = $                  ("dbGrep"), sql = $                     ("dbSql"), sqlHint = $("dbSqlHint");
-  if (!grep || !sql || !sqlHint) return;
+  if (!grep || !sql) return;
+  // The hint is the sql tab's head line: there only while a console is the open object.
+  if (sqlHint) sqlHint.textContent = dbConsoleHint();
   if (dbIsRedis()) {
     grep.placeholder = tr("dataView.filterKeys"); grep.setAttribute("aria-label", tr("dataView.filterKeys"));
     grep.title = tr("dataView.filterKeysScanPattern");
     sql.placeholder = tr("dataView.redisConsolePlaceholder");
-    sqlHint.textContent = tr("dataView.redisConsoleHint");
     // SPEC §data.redis-console: the console's completion is this server's own command list. One read per
     // connection, here - where every mount and every switch already passes.
     void dbRedisLoadCommands();
@@ -618,15 +680,11 @@ function dbSyncKind()       {
     grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", tr("dataMongo.filterCollections"));
     grep.title = tr("dataMongo.filterCollectionsGrammar");
     sql.placeholder = tr("dataMongo.consolePlaceholder");
-    sqlHint.textContent = tr("dataMongo.consoleHint");
   } else {
     // The placeholder IS the grammar (SPEC §data.browse): comma AND, | OR, * wildcard.
     grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", tr("dataView.filterTables"));
     grep.title = tr("dataView.filterTablesGrammar");
     sql.placeholder = tr("dataView.selectUpdateDeleteStatements");
-    // SPEC §data.console: the ; split answers one result tab per statement; the blank-line block
-    // rule (W1.8) still decides what a single Run covers.
-    sqlHint.textContent = tr("dataView.blankLineStartsNew");
   }
   // The pane's ⋯ (#dbMore) is renderDbToolbar's to show: it depends on the open object too,
   // and every caller of this repaints the toolbar right after.
@@ -667,6 +725,7 @@ async function dbSwitchConn(name        )                {
   const last = dbLastTableTab();
   const size = last ? last.pageSize : 0;
   dbActivityPollStop(); // a parked monitor stops asking about sessions nobody is looking at (D8)
+  dbPubsubStop(); // and a parked pub/sub page gives its subscription back (SPEC §data.pubsub)
   if (!dbSwapConn(name, dbSessionPinned)) {
     dbResetTabsForConn();
     const t = dbTab();
@@ -973,6 +1032,7 @@ function renderDbTables()       {
   if (dbIsMongo()) { renderMongoTree(box); return; }
   if (dbIsRedis()) {
     const rr = d.redis;
+    box.appendChild(dbPubsubRow());
     if (!rr || !rr.keys.length) {
       // SPEC §data: a failed scan is a FAILURE, not an empty keyspace — the toast
       // carries the server's own text; this row keeps the list from pretending otherwise.
@@ -1108,6 +1168,22 @@ function dbTableRow(t               , scope               )              {
   // worth scanning for, not a blank.
   b.appendChild(el("span", "db-table-meta",
     t.approxRows != null ? Number(t.approxRows).toLocaleString(locale()) : ""));
+  return b;
+}
+
+/** The redis tree's first row (SPEC §data.pubsub): the Pub/Sub page. A channel is no key, so no
+ *  scan lists one, and the page's only door was the last entry of a ⋯ - a reader looking for
+ *  pub/sub in the tree found nothing (2026-10-28). Pinned above the keys, with the glyph its
+ *  tab wears, it reads as a place rather than a key: the right slot says "channels" where a
+ *  key row names its type. It wears .db-key-row for the glyph's ink alone and carries no
+ *  data-rkey, so nothing that walks the keys takes it for one. */
+function dbPubsubRow()              {
+  const b = el("button", "db-table db-key-row db-pubsub-row" + (dbTab().kind === "pubsub" ? " sel" : ""));
+  b.dataset.dbpubsub = "";
+  b.title = tr("dataView.pubsubRowTitle");
+  b.appendChild(iconNode("activity"));
+  b.appendChild(el("span", "db-table-name", tr("dataTabs.pubsub")));
+  b.appendChild(el("span", "db-table-meta", tr("dataView.pubsubRowMeta")));
   return b;
 }
 
@@ -1515,6 +1591,6 @@ function dbFkOpen(fk            , value         )       {
   dbOpenTab({ kind: "table", table: j.table, schema: j.schema, filters: j.filters });
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbCurrentDatabase, dbDatabaseMenuItems, dbDialectOf, dbDropAllEdits, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadDatabases, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, dbSectionLabel, dbSessionPinned, dbSortDatabases, dbSortMenu, dbSwitchConn, dbSwitchDatabase, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbCurrentDatabase, dbDatabaseMenuItems, dbDialectOf, dbDropAllEdits, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadDatabases, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, dbSectionLabel, dbSessionPinned, dbSetGrep, dbSortDatabases, dbSortMenu, dbSwitchConn, dbSwitchDatabase, loadDbView, renderDbSide, renderDbTables, renderDbView };
 // dbSectionEmpty stays module-private: the acceptance suite reaches it through the band's
 // emptyText hook, which is the only contract it has.

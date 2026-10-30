@@ -25,6 +25,7 @@
  *
  * A design is a gallery SCENE built from these, not a page of hand-written CSS (SPEC §panel.ui). */
 export { btn, iconBtn, moreBtn } from "./button.js";
+export { copyBtn, copyText } from "./copy.js";
                                                         
 export { iconNode } from "./icon.js";
 export { isLocalAddress, redacted } from "./redact.js";
@@ -32,10 +33,22 @@ export { isLocalAddress, redacted } from "./redact.js";
 export { dot, heldDot, spinner, tag } from "./status.js";
                                                      
 export { sw } from "./switch.js";
-export { card, emptyNode, failNote, filterInput, inlineForm, note, pageFoot, pager, pane, paneBody, paneHead, resHead, section } from "./page.js";
+export { card, emptyNode, failNote, filterInput, inlineForm, note, pageFoot, pager, pane, paneBody, paneHead, resHead, section, split } from "./page.js";
                                                      
 export { kvRow, row, sideRow } from "./row.js";
                                                              
+export { markdownNode } from "./markdown.js";
+export { diffFiles, diffNode, diffStatusWord } from "./diff.js";
+                                                                              
+export {
+  dotSize, graphElements, graphHops, graphLayoutOf, graphLegend, graphPalette, graphStyle, graphView, groupElementId, mixHex, packBoxes,
+} from "./graph.js";
+             
+                                                                                                                                   
+                                                                                                                                     
+                    
+export { catChip, docHead, pickList, pickRow, pickSelect, refLink, workspace, wsBar, wsHead, wsScroll, wsSide, wsSplit } from "./workspace.js";
+                                                  
 export { groupNode } from "./group.js";
                                                             
 export { seg } from "./seg.js";
@@ -44,13 +57,29 @@ export { objTab } from "./tab.js";
                                         
 export { collapseRuns, dayLabel, fmtMs, relTime, timeLabel, timeline, timelineMeta, timelineToggle } from "./timeline.js";
                                                                 
+export { factLine, flow, flowHead, flowIO, flowProse, flowToggle } from "./flow.js";
+                                                    
+export { transcript, transcriptText, transcriptTurn, toolChip } from "./transcript.js";
+                                                      
+export { chatCommands, chatFollow, chatGrow, chatPane, chatQueue } from "./chat.js";
+                                                                                                 
+export { chatStats } from "./chat-stats.js";
+                                                                         
 export { anchoredMenu, clampMenuPos, closeMenu, menuOpen, popupMenu, setMenuOpen } from "./menu.js";
                                                                        
 export { closeSelect, initSelects, selectOpen, styleSelect } from "./select.js";
-export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode, tokenCodeNode, tokenSpans, valueBlock } from "./json-view.js";
+export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, proseText, splitJsonBlock, stringLiteral, textNode, tokenCodeNode, tokenSpans, valueBlock } from "./json-view.js";
                                                          
 export { CODE_SCHEMES, codeSchemeFor } from "./code-scheme.js";
 export { closeSheet, initSheet, openFieldSheet, sheet, sheetOpen, showSheet, stackSheet } from "./sheet.js";
                                                             
 export { toTop } from "./to-top.js";
-export { checkField, field, form, formActions, formCap, formFold, hint, pair } from "./form.js";
+export { grip, gripFold, gripFolded, gripState } from "./grip.js";
+export { dock, dockShow } from "./dock.js";
+                                          
+                                          
+export { portChip } from "./chip.js";
+                                          
+export { pickPanel, pickerRow } from "./pick.js";
+                                           
+export { checkField, checkGrid, checkRow, editDetail, editLine, editList, editSub, field, form, formActions, formCap, formFold, hint, pair } from "./form.js";

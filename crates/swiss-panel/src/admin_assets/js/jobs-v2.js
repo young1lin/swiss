@@ -68,7 +68,7 @@ function historyMeta(r                                                          
   const parts = [r.trigger || "?"];
   if (r.outcome && r.outcome !== "ran") {
     parts.push(r.outcome + (r.reason ? " (" + r.reason + ")" : ""));
-    if (r.missedCount != null) parts.push(tr("jobsV2.nMoreMissed", { n: r.missedCount }));
+    if (r.missedCount) parts.push(tr("jobsV2.nMoreMissed", { n: r.missedCount }));
   } else {
     if (r.attempt != null && r.attempts != null && r.attempts > 1) parts.push(tr("jobsV2.attemptB", { a: r.attempt, b: r.attempts }));
     parts.push(tr("runHistory.durationMs", { ms: r.ms == null ? "?" : String(r.ms) }));

@@ -133,6 +133,8 @@ const WIRE_LABELS                         = {
   "Token": "wire.token", "SSH Connections": "wire.sshConnections",
   "Port Forwards": "wire.portForwards", "Targets": "wire.targets", "Runs": "wire.runs",
   "Plugins": "wire.plugins", "Secrets": "wire.secrets", "System": "wire.system",
+  "Memory": "wire.memory", "LLM": "wire.llm", "Providers": "wire.providers",
+  "Embedding": "wire.embedding", "Agents": "wire.agents", "History": "wire.history",
 };
 
 /** Map a gateway-served label to its key; unknown text passes through unchanged. */

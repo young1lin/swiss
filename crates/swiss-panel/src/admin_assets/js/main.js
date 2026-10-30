@@ -47,6 +47,7 @@ import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
                                              
 import { CODE_SCHEMES, codeSchemeFor } from "./ui/code-scheme.js";
 import { closeSheet, initSheet, sheetOpen } from "./ui/sheet.js";
+import { grip } from "./ui/grip.js";
 
 /* The dictionary resolves before anything paints (SPEC §panel.i18n): this top-level await is
    the whole reason a Chinese screen never flashes English chrome — every statement below
@@ -177,7 +178,19 @@ $("themeBtn").onclick = (e) => {
   paintThemeBtn();
 };
 paintThemeBtn();
-initLangButton(()       => { paintThemeBtn(); paintCodeBtn(); }); // the 文/A flip (SPEC §panel.i18n): hands over the chrome repainters so it stays whole
+/** The MCP list's right edge (ui/grip.ts): the reader widens it or folds it away. Built again
+ *  on a language flip, so its labels follow. Its default is base.css's .sidebar width. */
+function mountSideGrip()       {
+  const side = document.querySelector             (".shell > .sidebar");
+  if (!side) return;
+  const shell = side.parentElement;
+  if (!shell) return;
+  const old = side.nextElementSibling;
+  if (old && old.classList.contains("grip")) old.remove();
+  shell.insertBefore(grip(side, { axis: "x", key: "side", min: 180, max: 560, label: tr("i18n.mcps"), fold: true }), side.nextSibling);
+}
+mountSideGrip();
+initLangButton(()       => { paintThemeBtn(); paintCodeBtn(); mountSideGrip(); }); // the 文/A flip (SPEC §panel.i18n): hands over the chrome repainters so it stays whole
 // Every dropdown in the panel becomes the shared custom control: what is in the DOM now, plus
 // whatever the views create later (observed), so no view ever opts in or out.
 initSelects();

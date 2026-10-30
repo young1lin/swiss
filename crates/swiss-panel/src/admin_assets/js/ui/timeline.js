@@ -31,13 +31,16 @@
  *   ×N        consecutive items with the same `same` signature fold into one line
  *   status    a failure is a red TAG, not a red row (rule 2: the tone is the state)
  *   ms        right-aligned; amber at or past slowMs
+ *   hit       a search result's reason: the matched text on a second line, level with the
+ *             time, the match itself marked - a row that only says `bash -s` cannot say why
+ *             it is in the results
  *
  * No box and no row lines (U7): rows sit on the page, the hover is the row, and the one
  * expanded row becomes a card. No handlers either: the view's delegated listener answers
  * .tl-sum clicks and calls timelineToggle, handing it the body it owns. */
                                                
 import { h } from "../h.js";
-import { locale, tr } from "../i18n.js";
+import { locale, tr, trn } from "../i18n.js";
 import { iconNode } from "./icon.js";
 import { dot, tag } from "./status.js";
 
@@ -56,6 +59,9 @@ import { dot, tag } from "./status.js";
                                             
                                                                               
                 
+                                                                                           
+                                                                                  
+                                                         
                  
  
 
@@ -105,6 +111,19 @@ export function fmtMs(ms        )         {
   return tr("ui.sec", { n: (ms / 1000).toFixed(ms < 9950 ? 1 : 0) });
 }
 
+/** An elapsed span, compact and without the "ago" tail relTime's words carry
+ *  ("up 3 hr", not "up 3 hr. ago") - for slots that read "has been N", like a
+ *  gateway's uptime line. The unit is the largest that fits. */
+export function durShort(sec        )         {
+  if (sec < 90) { const n = Math.max(1, Math.round(sec)); return trn(n, "ui.sec.one", "ui.sec.other", { n: String(n) }); }
+  const min = Math.round(sec / 60);
+  if (min < 90) return trn(min, "ui.min.one", "ui.min.other", { n: String(min) });
+  const hr = Math.round(min / 60);
+  if (hr < 36) return trn(hr, "ui.hr.one", "ui.hr.other", { n: String(hr) });
+  const d = Math.round(hr / 24);
+  return trn(d, "ui.day.one", "ui.day.other", { n: String(d) });
+}
+
 /** A moment relative to now, in the reader's words: "8 hr. ago", "in 15 hr.", "now",
  *  "tomorrow", "8小时前". Intl.RelativeTimeFormat (short, numeric auto) owns the words and the
  *  plurals, so no dictionary key can drift from them. The unit is the largest that fits:
@@ -137,7 +156,7 @@ function itemNode(run                , o              , showWho         )       
   const open = !!o.open && o.open.has(it.id);
   const slow = it.ms != null && it.ms >= (o.slowMs ?? 1000);
   return h("div", { class: "tl-item" + (open ? " open" : ""), data: Object.assign({ "tl-id": it.id }, it.data) },
-    h("button", { type: "button", class: "tl-sum", aria: { expanded: String(open) } },
+    h("button", { type: "button", class: it.hit ? "tl-sum has-hit" : "tl-sum", aria: { expanded: String(open) } },
       h("span", { class: "tl-chev" }, iconNode("chevron-right")),
       h("time", { class: "tl-time", dateTime: new Date(it.at).toISOString() }, timeLabel(it.at)),
       h("span", { class: "tl-title" }, it.title),
@@ -146,7 +165,9 @@ function itemNode(run                , o              , showWho         )       
       run.length > 1 ? h("span", { class: "tl-n", title: tr("ui.runN", { n: run.length }) }, tr("ui.timesN", { n: run.length })) : null,
       it.status ? tag(it.status.text, { tone: it.status.tone }) : null,
       it.ms != null ? h("span", { class: "tl-ms" + (slow ? " slow" : "") }, fmtMs(it.ms)) : null,
-      it.live ? h("span", { class: "tl-live" }, dot(it.live.queued ? "idle" : "starting", null), it.live.text) : null),
+      it.live ? h("span", { class: "tl-live" }, dot(it.live.queued ? "idle" : "starting", null), it.live.text) : null,
+      // Inside the summary, so a click on the reason opens the row like a click on its time.
+      it.hit ? h("span", { class: "tl-hit" }, it.hit.before, h("mark", null, it.hit.match), it.hit.after) : null),
     open && o.body ? h("div", { class: "tl-body" }, o.body(it, run)) : null);
 }
 

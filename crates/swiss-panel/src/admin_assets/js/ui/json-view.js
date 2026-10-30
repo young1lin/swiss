@@ -247,8 +247,9 @@ function jsonCodeNode(value         , all         , o                        = {
  *  so a query full of <script> tags stays inert text. `lined` puts every line in a numbered
  *  .jv-line (the number is CSS, the line break stays text, so a copy is the code as written);
  *  a token that spans lines is split into one span per line. Past `limit` lines no more nodes
- *  are built; `lines` is the whole text's count either way. */
-function tokenSpans(tokens             , o                                      = {})                                   {
+ *  are built; `lines` is the whole text's count either way. `mark` picks one numbered line out
+ *  (.jv-line.hit): the line a reference pointed at. */
+function tokenSpans(tokens             , o                                                     = {})                                   {
   const limit = o.limit ?? Infinity;
   const nodes         = [];
   let line = 1;
@@ -259,14 +260,15 @@ function tokenSpans(tokens             , o                                      
     }
     return { nodes, lines: line };
   }
-  let cur = h("span", { class: "jv-line" });
+  const lineNode = (n        )              => h("span", { class: n === o.mark ? "jv-line hit" : "jv-line" });
+  let cur = lineNode(1);
   nodes.push(cur);
   for (const [cls, text] of tokens) {
     text.split("\n").forEach((part, i) => {
       if (i > 0) {
         if (line <= limit) cur.appendChild(document.createTextNode("\n"));
         line++;
-        cur = h("span", { class: "jv-line" });
+        cur = lineNode(line);
         if (line <= limit) nodes.push(cur);
       }
       if (part && line <= limit) cur.appendChild(cls ? h("span", { class: cls }, part) : document.createTextNode(part));
@@ -281,8 +283,8 @@ function tokenSpans(tokens             , o                                      
  *  SQL highlighter (data-filters.ts dbSqlTokens). Past `limit` lines (JV_LINES by default) no
  *  more nodes are built unless `all`; `lines` is the whole text's count either way, which is
  *  what a Show all button quotes. `lined` numbers the lines, as an editor does. */
-function tokenCodeNode(tokens             , o                                                                        = {})          {
-  const painted = tokenSpans(tokens, { lined: o.lined, limit: o.all ? Infinity : o.limit ?? JV_LINES });
+function tokenCodeNode(tokens             , o                                                                                       = {})          {
+  const painted = tokenSpans(tokens, { lined: o.lined, limit: o.all ? Infinity : o.limit ?? JV_LINES, mark: o.mark });
   return { node: h("pre", { class: o.oneLine ? "jv one" : "jv" }, painted.nodes), lines: painted.lines };
 }
 
@@ -303,8 +305,14 @@ function valueBlock(o                                                           
       (o.notes || []).map((n) => { return h("span", { class: "vblock-note" }, n); }),
       o.tools && o.tools.length ? h("span", { class: "vblock-tools" }, o.tools) : null),
     // `text`: a body that is prose (a tool's description), wrapped as written.
-    o.text != null ? h("div", { class: "vblock-text" }, o.text) : null,
+    o.text != null ? proseText(o.text) : null,
     ...body);
+}
+
+/** Prose shown as written - a tool's description, a system prompt - wrapped, its line breaks
+ *  kept: a value block's `text`, or a second passage after it. */
+function proseText(text        , o                                  = {})              {
+  return h("div", { id: o.id, class: "vblock-text", data: o.data }, text);
 }
 
 /** What Copy puts on the clipboard: the decoded structure as valid, indented JSON (with any prose
@@ -316,5 +324,5 @@ function formattedCopyText(text        )         {
   return block.tail ? json + "\n\n" + block.tail : json;
 }
 
-export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode, tokenCodeNode, tokenSpans, valueBlock };
+export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, proseText, splitJsonBlock, stringLiteral, textNode, tokenCodeNode, tokenSpans, valueBlock };
                                    

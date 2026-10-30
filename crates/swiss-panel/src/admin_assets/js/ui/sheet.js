@@ -42,17 +42,23 @@ import { tr } from "../i18n.js";
                                                                                                 
                
                
+                                                                                         
+                   
                                                                                                  
                
+                                                                                   
+                 
  
 
 /** The dialog frame. Pure markup: a builder that wants it on screen hands it to showSheet. */
 export function sheet(o           )                 {
   const label = o.label ?? (typeof o.title === "string" ? o.title : undefined);
-  return h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label } },
+  const cls = "sheet" + (o.wide ? " wide" : "") + (o.compose != null ? " conversation" : "");
+  return h("div", { class: cls, role: "dialog", aria: { modal: "true", label } },
     h("div", { class: "sheet-head" }, h("h2", { id: o.titleId }, o.title),
       o.sub ? h("span", { class: "sheet-sub" }, o.sub) : null),
     h("div", { class: "sheet-body" }, o.body),
+    o.compose != null ? h("div", { class: "sheet-compose" }, o.compose) : null,
     h("div", { class: "sheet-foot" }, o.foot));
 }
 
@@ -76,10 +82,17 @@ export function showSheet(node             )       {
  *  the sheet underneath and left the picker floating over nothing. `paint` (re)draws its dialog
  *  (the picker repaints on every folder it opens); `close` removes the layer. */
 export function stackSheet(onClose             )                                                              {
+  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const back = h("div", { class: "backdrop stacked" });
+  back.tabIndex = -1;
   document.body.appendChild(back);
+  // Real keys start at the focused element. Owning a keydown handler is not enough
+  // while focus remains on the opener in the sheet underneath.
+  back.focus();
   const close = ()       => {
+    const heldFocus = back.contains(document.activeElement);
     back.remove();
+    if (heldFocus && opener?.isConnected) opener.focus();
     if (onClose) onClose();
   };
   back.onclick = (e) => { if (e.target === back) close(); };
@@ -90,7 +103,11 @@ export function stackSheet(onClose             )                                
   return {
     paint: (o           )              => {
       const node = sheet(o);
+      const heldFocus = back.contains(document.activeElement);
       fill(back, node);
+      // An async repaint replaces the focused child. Keep focus in this layer,
+      // unless a newer layer has already taken it.
+      if (heldFocus) back.focus();
       return node;
     },
     close,

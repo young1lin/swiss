@@ -59,6 +59,10 @@ import { iconNode } from "./icon.js";
                
                
                
+                                                                                             
+                
+                                
+                                                                          
                                 
                        
                               
@@ -70,6 +74,9 @@ import { iconNode } from "./icon.js";
                  
                                                                                                 
                   
+                                                                                
+                                                                     
+                 
  
 
 function isCol(c                 )              {
@@ -79,18 +86,20 @@ function isCol(c                 )              {
 export function row(o         )              {
   const hasLead = o.lead != null && o.lead !== false;
   const disc = o.detail != null && o.detail !== false;
-  const acts = [o.toggle, o.primary, o.more].filter((x)                   => x != null);
+  const acts = [o.toggle, o.primary, o.secondary, o.more].filter((x)                   => x != null);
   const text           = [
     h("div", { class: "lrow-name" }, o.name),
     o.err
       ? h("div", { class: "lrow-err", title: o.err }, o.err)
       : o.sub != null && o.sub !== false ? h("div", { class: "lrow-sub" }, o.sub) : null,
+    o.meta != null && o.meta !== false ? h("div", { class: "lrow-meta" }, o.meta) : null,
   ];
   const main = disc
     ? h("details", { class: "lrow-main lrow-disc" },
         h("summary", null, h("span", { class: "lrow-chev" }, iconNode("chevron-right")), h("span", { class: "lrow-text" }, text)),
         h("div", { class: "lrow-detail" }, o.detail))
     : h("div", { class: "lrow-main" }, text);
+  if (disc && o.open) (main                      ).open = true;
   const node = h("div", {
     class: "lrow" + (hasLead ? " has-lead" : "") + (disc ? " has-disc" : "") + (o.muted ? " muted" : ""),
     data: o.data, title: o.title,
@@ -123,6 +132,8 @@ export function kvRow(label        , value        , o                           
                 
                                                                                     
                 
+                                                                                        
+                 
                      
                  
                  
@@ -142,5 +153,6 @@ export function sideRow(o             )                    {
   },
   o.lead ?? null,
   h("span", { class: "side-name" }, o.name),
+  o.badge ?? null,
   h("span", { class: "side-type" }, o.tail ?? null));
 }

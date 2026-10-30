@@ -279,9 +279,10 @@
     .db-filter input { width: 150px; padding-top: 2px; padding-bottom: 2px; }
     .db-filter .db-act { font-size: var(--f-body); }
     .db-filter-hint { font-size: var(--f-caption); color: var(--text-3); margin-left: var(--s2); }
-    /* A script's result tabs (the library's seg) under the head's title: eight fit, a longer
-       script's ninth scrolls this strip sideways instead of wrapping the head. */
-    .db-rtabs { margin-top: var(--s1); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+    /* The results' bar (SPEC §data.console): tabs scrolling sideways, facts at the right. */
+    .db-rbar { display: flex; align-items: center; gap: var(--s3); font-size: var(--f-label); }
+    .db-rbar > .db-meta { margin: 0 0 0 auto; flex: none; }
+    .db-rtabs { min-width: 0; overflow-x: auto; scrollbar-width: none; }
     .db-rtabs::-webkit-scrollbar { display: none; }
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--code-bg); color: var(--code-fg); box-shadow: inset 0 0 0 1px var(--code-edge); border-radius: var(--r-row); font-family: var(--code-font); font-size: var(--f-label); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
@@ -329,51 +330,48 @@
     .db-sql-mirror { position: absolute; inset: 0; visibility: hidden; pointer-events: none; overflow: hidden; }
     .db-pagesize { width: auto; }
     .db-csel { width: auto; min-width: 110px; }   /* the CSV mapping picks, select and trigger alike */
-    /* The row-grid controls stay IN LAYOUT on every tab (visibility, not display): removing them
-       on the structure tabs let the right-aligned tab segment slide sideways on every switch. */
-    /* .db-data-ctl removed at P9: unreferenced since the P7 data sweep. */
     .db-pageinfo { font-size: var(--f-label); color: var(--text-2); white-space: nowrap; }
-    /* SQL highlighting. The console is a transparent textarea over a highlighted <pre> (the
-       classic overlay): both wear .db-sql-face so every metric matches character-for-character. */
-    .db-sql-wrap { position: relative; height: 118px; background: var(--code-bg); border: 1px solid var(--sep); border-radius: var(--r-row); transition: border-color .12s ease, box-shadow .12s ease; }
+    /* Highlighting. The console and the cell editor are a transparent textarea over a highlighted
+       <pre>: both wear .db-sql-face, so every metric (the scrollbar's gutter too) matches. */
+    .db-sql-wrap { position: relative; flex: 1; min-height: 0; background: var(--code-bg); border: 1px solid var(--sep); border-radius: var(--r-row); transition: border-color .12s ease, box-shadow .12s ease; }
     .db-sql-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
-    .db-sql-face { font-family: var(--code-font); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; margin: 0; border: 0; tab-size: 2; }
-    #dbSql { position: absolute; inset: 0; width: 100%; height: 100%; background: transparent; color: transparent; caret-color: var(--code-caret); resize: none; outline: none; }
-    #dbSql::selection { background: var(--code-sel); }
+    .db-sql-face { font-family: var(--code-font); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; margin: 0; border: 0; tab-size: 2; scrollbar-gutter: stable; }
+    #dbSql { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; }
+    :is(#dbSql, #dbCellText) { background: transparent; color: transparent; caret-color: var(--code-caret); outline: none; }
+    :is(#dbSql, #dbCellText)::selection { background: var(--code-sel); }
     .db-sql-hl { position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--code-fg); }
-    .db-console { display: flex; flex-direction: column; gap: var(--s2); }
+    .db-console { display: flex; flex-direction: column; }
     .db-console-row { display: flex; align-items: center; gap: var(--s2); }
-    /* .db-console-row .hint deleted at P9: ui.css's own .hint already reads exactly these values. */
-    #dbSql { min-height: 84px; }
     .db-grid-wrap { flex: 1; overflow: auto; min-height: 200px; overflow-anchor: none; }
     .db-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: var(--f-label); }
-    /* Rows only (SPEC §panel.design): the columns are read by alignment, and a hairline between every
-       cell drew a spreadsheet the eye had to look through. A body row is 4px taller than the
-       header so the lines a row does carry have air around them. */
-    .db-grid th, .db-grid td { border-bottom: 1px solid var(--sep-soft); padding: var(--s1) var(--s2); white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+    /* Rows only (SPEC §panel.design): the columns read by alignment, no hairline between cells;
+       a body row is 4px taller than the header, for air around its lines. */
+    .db-grid th, .db-grid td { border-bottom: 1px solid var(--sep-soft); padding: var(--s1) var(--s2); white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
     .db-grid td { padding-top: 6px; padding-bottom: 6px; }
-    .db-grid thead th { position: sticky; top: 0; background: color-mix(in srgb, var(--bg) 55%, var(--card)); z-index: 1; font-weight: var(--w-emph); cursor: pointer; text-align: left; border-bottom: 1px solid var(--sep); }
-    .db-grid thead th:hover { background: var(--hover); }
+    .db-grid thead th { position: sticky; top: 0; --th: color-mix(in srgb, var(--bg) 55%, var(--card)); background: var(--th); z-index: 1; font-weight: var(--w-emph); cursor: pointer; text-align: left; border-bottom: 1px solid var(--sep); }
+    /* --hover is translucent: over the header's colour, or the rows show through. */
+    .db-grid thead th:not(.db-rowctl, .db-nosort):hover { background: linear-gradient(var(--hover), var(--hover)) var(--th); }
     /* The select-all corner and a Redis value's columns do not sort. */
     .db-grid thead th:is(.db-rowctl, .db-nosort) { cursor: default; }
     .db-rowctl { width: 58px; text-align: center; white-space: nowrap; }
     .db-selbox { accent-color: var(--accent); width: auto; margin: 0 3px 0 0; vertical-align: middle; }
+    .db-rn { display: inline-block; min-width: 3ch; text-align: right; }
+    /* A box starts its cell, as the header's does (centred, it moved with the number). */
+    .db-grid td.db-rowctl:has(> .db-selbox:first-child) { text-align: left; }
     /* A row's checkbox and delete wait for the row (SPEC §panel.pages): hidden until the pointer or
        the keyboard is in it, or it is checked. A row holding buffered work (a delete to undo,
        an insert to drop) keeps its control in sight, and so does the header's select-all. */
     .db-grid tbody tr:not(:hover, :focus-within, .db-sel, .db-del, .db-ins) > td.db-rowctl > :is(.db-selbox, .db-act) { opacity: 0; }
-    /* The header is a two-line stack: name line, then — when any column carries a comment — a
-       caption line with the field's meaning, in the caption grey (SPEC §panel.pages, rule 2: a
-       comment describes, it reports no state). */
+    /* The header: a name line, then (when any column has a comment) a caption line in the caption
+       grey (SPEC §panel.pages, rule 2: a comment describes, it reports no state). */
     .db-col-main { display: flex; align-items: center; min-width: 0; }
     .db-col-name { overflow: hidden; text-overflow: ellipsis; }
     .db-col-comment { font-size: var(--f-caption); font-weight: var(--w-body); color: var(--text-2); margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
     .db-col-comment:empty::before { content: "\a0"; } /* holds its line: names align */
     .db-key { color: var(--amber); margin-left: 4px; --ic: 12px; } /* the i-key sprite, sized to the marker it replaced */
     .db-col-type { color: var(--text-3); font-size: var(--f-caption); font-weight: var(--w-body); font-family: var(--mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
-    /* The FK column's jump arrow: a quiet straight arrow after the name (the
-       chevron shape belongs to pagination), accent only under the pointer. Its click stops
-       propagation — the header around it still sorts. */
+    /* The FK column's jump: a quiet straight arrow after the name (the chevron is
+       pagination's), accent under the pointer; its click never sorts. */
     .db-col-fk { border: 0; background: none; padding: 0; margin-left: 5px; color: var(--text-3); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; --ic: 13px; }
     .db-col-fk:hover { color: var(--accent); }
     /* The FK tab's referenced-table name: a link in the table's mono face (a name you would
@@ -389,10 +387,11 @@
       border-right: 1.5px solid var(--accent); border-bottom: 1.5px solid var(--accent);
       transform: rotate(225deg); }
     .db-sorted-desc .db-sort { transform: rotate(45deg); }
-    /* The column resize grip (SPEC §data.grid): 4px of the header's right edge, quiet until the
-       pointer is on it, then the accent a drag is about to move. The header is already
-       position:sticky (a positioned box), so the absolute grip anchors to it without help. */
+    /* The resize grip (SPEC §data.grid): 4px of the header's right edge, accent under the
+       pointer; the sticky header is the box it anchors to. A column the finder went to is
+       underlined a moment (SPEC §data.console). */
     .db-col-grip { position: absolute; top: 0; right: 0; bottom: 0; width: 4px; cursor: col-resize; }
+    .db-grid thead th.db-hit { border-bottom-color: var(--accent); box-shadow: inset 0 -1px var(--accent); }
     /* The keyboard's focus carrier (SPEC §data.grid): zero size so it never paints, focusable so
        keys land somewhere stable. It lives inside the wrap so focusing it cannot scroll the
        pane away from the grid. */
@@ -442,10 +441,8 @@
       white-space: pre-wrap; word-break: break-all; resize: none; overflow: hidden;
       outline: none;
     }
-    /* .db-inline-edit.null-on removed at P9: the inline editor never turns the null mark on
-       (the buffered-null chip says it instead) - the class reached no element. */
     .db-grid-wrap { position: relative; }
-    #dbCellText { min-height: 180px; white-space: pre-wrap; }
+    #dbCellText { position: relative; min-height: 180px; }   /* in flow: it sizes the wrap, over the <pre> */
     #dbCellText.json { min-height: 260px; }
     /* The value sheet's read-only body. The content sits on the quiet inset
        ground (the same surface .db-ddl uses); values are values you would copy, so mono

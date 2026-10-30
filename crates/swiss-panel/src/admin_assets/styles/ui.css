@@ -244,7 +244,27 @@
     .grp--page.drop-before { box-shadow: var(--shadow-card), inset 0 2px 0 var(--accent); }
     .grp--page.drop-after { box-shadow: var(--shadow-card), inset 0 -2px 0 var(--accent); }
 
-    /* Status is a dot plus neutral text — color is reserved for interaction, not for body copy. */
+    /* A fact chip (SPEC §panel.ui): a small mono value with its own state dot - a port a row's
+   verdict speaks about, one chip per fact, colored by the dot's vocabulary (up green,
+   down red). The page builds it with portChip(); the classes stay here. */
+.pchip { display: inline-flex; align-items: center; gap: var(--s1); margin-right: var(--s1); font-family: var(--mono); font-size: var(--f-label); padding: 0 var(--s2); border: 1px solid var(--sep); border-radius: var(--r-row); color: var(--text-2); }
+.pchip::before { content: ""; width: var(--dot); height: var(--dot); border-radius: 50%; background: var(--text-3); }
+.pchip.up::before { background: var(--green); }
+.pchip.down::before { background: var(--red); }
+/* An entry picker (SPEC §panel.ui): the inline browser a field opens when its value is a
+   file on this machine - a bar (the path, Go, Up) over a scrollable list of rows. The page
+   owns the loading and the choice; the shape lives here (pickPanel()). */
+.dirpick { border: 1px solid var(--sep); border-radius: var(--r-row); margin: var(--s2) 0; }
+.dirpick-bar { display: flex; gap: var(--s1); padding: var(--s2); border-bottom: 1px solid var(--sep-soft); }
+.dirpick-bar input { flex: 1; min-width: 0; }
+.dirpick-list { max-height: 40vh; overflow-y: auto; }
+.dirpick-row { display: flex; align-items: center; gap: var(--s2); width: 100%; padding: var(--s1) var(--s2); background: none; border: 0; text-align: left; cursor: pointer; color: var(--text-1); }
+.dirpick-row:hover { background: var(--sep-soft); }
+.dirpick-kind { color: var(--text-3); width: 1em; }
+.dirpick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirpick-name.mono { font-family: var(--mono); }
+
+/* Status is a dot plus neutral text — color is reserved for interaction, not for body copy. */
     /* inline-block: in a flex row (a list row, a band) the dot sizes itself either way; beside
        plain text (a head's status line, a key/value) an empty inline span collapsed to nothing -
        found by the gallery (SPEC §panel.ui). */
@@ -276,6 +296,7 @@
     /* The workspace template (SPEC §panel.nav): a full-bleed body - no padding, no measure, no scroll
        of its own; the page inside divides the space itself (Data, Terminal). */
     .pane.full { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+    .pane.full > * { max-width: none; } /* .pane > * caps at --measure: a workspace left 40% of a wide window blank (19998) */
 
     /* --- page scaffolding, lists, menus, sheets (from views.css) -------------------------------- */
     .pane-head { display: flex; align-items: flex-start; gap: var(--s4); margin-bottom: var(--s5); }
@@ -350,7 +371,9 @@
        .seg may still empty itself after a poll. :empty, not a hidden flag, so every .seg
        that empties itself is covered — empties happen via innerHTML = "", no whitespace. */
     .seg:empty { display: none; }
-    .seg button { font-size: var(--f-body); font-weight: var(--w-body); color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; transition: color .12s ease; }
+    /* A pill's label stays on one line: a seg short of room overflows its scroller (the Data
+       console's result strip) instead of folding each label in two. */
+    .seg button { font-size: var(--f-body); font-weight: var(--w-body); color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; transition: color .12s ease; white-space: nowrap; }
     .seg button:hover { color: var(--text); }
     /* Hairline rings, no drops (SPEC §panel.design): the selected tab is a card with an edge, not a
        keycap — brightness separates it from the well, and the ring closes the silhouette. */
@@ -424,6 +447,9 @@
     .lrow-sub, .lrow-err { font-size: var(--f-label); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .lrow-sub { color: var(--text-2); }
     .lrow-err { color: var(--red); }
+    /* Facts stay visible without spending a fixed column per value. Long port sets wrap
+       inside the identity column rather than widening the page (SPEC §panel.nav). */
+    .lrow-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); margin-top: var(--s1); min-width: 0; font-size: var(--f-label); color: var(--text-3); }
     /* Value columns line up down a card because each takes the same floor. */
     .lrow-col { flex: none; min-width: calc(var(--s6) * 3); text-align: right; font-size: var(--f-label); color: var(--text-2); white-space: nowrap; }
     .lrow-col.mono { font-family: var(--mono); }
@@ -483,6 +509,12 @@
     .tl-ms.slow { color: var(--amber); }
     /* A run in flight, in the duration's column: the state dot and its word (TimelineItem.live). */
     .tl-live { flex: none; display: inline-flex; align-items: center; gap: var(--s1); min-width: calc(var(--s6) + var(--s8)); justify-content: flex-end; font-size: var(--f-label); color: var(--text-3); }
+    /* A search result's reason (TimelineItem.hit): its own line under the summary, level with the
+       time, cut like the argument. Only such a row wraps - the summary of every other row is one
+       line however narrow it gets. The match wears the tint a pointed-at code line does. */
+    .tl-sum.has-hit { flex-wrap: wrap; row-gap: 0; }
+    .tl-hit { flex: 1 0 100%; min-width: 0; padding-left: calc(var(--ic-s) + var(--s2)); font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tl-hit mark { background: var(--code-hit); color: var(--text); border-radius: 2px; }
     .tl-item.open { background: var(--card); box-shadow: 0 0 0 1px var(--sep-soft); margin: var(--s1) 0; }
     .tl-item.open > .tl-sum:hover { background: none; }
     /* A column, a grid step between blocks: a call's body is its arguments and its reply, and as
@@ -492,6 +524,112 @@
        space a note in it needs. */
     .tl-body > .btn { align-self: flex-start; }
     .tl-body > .note { padding-top: 0; }
+    /* --- the flow (ui/flow.ts, SPEC §panel.ui) ----------------------------------------------
+       Work as a story, not a log: one quiet line per step - a glyph, the step's name, a dot, a
+       summary cut to one line in the tertiary grey that wakes on hover - and space, not rules,
+       between steps. No clock column: the order is the flow. The glyph gives way to a chevron on
+       hover and while the step is open; the opened body and the prose between steps sit at the
+       title's indent with no card around them. Every side cell is one line box tall (--s5), so
+       a glyph, a tag and a duration stand level with the title however many lines the detail
+       under it takes. Work in flight shimmers; reduced motion holds it still. */
+    .fl { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 1px; }
+    .fl-step { min-width: 0; border-radius: var(--r-row); }
+    .fl-row { display: flex; align-items: flex-start; gap: var(--s1); }
+    .fl-sum { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: var(--s3); padding: var(--s2); border-radius: var(--r-row); text-align: left; color: var(--text); }
+    .fl-sum:hover { background: var(--hover); }
+    .fl-lead { flex: none; position: relative; display: inline-flex; align-items: center; justify-content: center; width: var(--fl-lead); height: var(--s5); color: var(--text-3); }
+    .fl-lead .ic { width: var(--ic-m); height: var(--ic-m); }
+    .fl-glyph, .fl-chev { display: inline-flex; align-items: center; justify-content: center; transition: opacity .12s ease, transform .15s ease; }
+    .fl-chev { position: absolute; inset: 0; opacity: 0; }
+    .fl-chev .ic { width: var(--ic-s); height: var(--ic-s); }
+    .fl-sum:hover .fl-glyph, .fl-step.open > .fl-row .fl-glyph { opacity: 0; }
+    .fl-sum:hover .fl-chev, .fl-step.open > .fl-row .fl-chev { opacity: 1; }
+    .fl-step.open > .fl-row .fl-chev { transform: rotate(90deg); }
+    @media (prefers-reduced-motion: reduce) { .fl-glyph, .fl-chev, .fl-summary { transition: none; } }
+    .fl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s1); }
+    .fl-line { display: flex; align-items: center; gap: var(--s2); min-width: 0; min-height: var(--s5); }
+    .fl-title { flex: none; max-width: 60%; font-size: var(--f-body); font-weight: var(--w-name); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fl-title.mono { font-family: var(--mono); font-size: var(--f-label); }
+    .fl-sep { flex: none; width: 2px; height: 2px; border-radius: 50%; background: var(--text-3); }
+    .fl-summary { flex: 1; min-width: 0; font-size: var(--f-label); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color .12s ease; }
+    .fl-summary.mono { font-family: var(--mono); font-size: var(--f-caption); }
+    .fl-sum:hover .fl-summary { color: var(--text-2); }
+    /* The second line - a run's verdict - reads in full once its step is open. */
+    .fl-detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: var(--f-label); line-height: 1.55; color: var(--text-2); overflow-wrap: anywhere; }
+    .fl-detail.bad { color: var(--red); }
+    .fl-step.open > .fl-row .fl-detail { display: block; }
+    .fl-flag, .fl-meta, .fl-tools { flex: none; display: inline-flex; align-items: center; gap: var(--s1); min-height: var(--s5); }
+    .fl-meta { font-size: var(--f-label); color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .fl-tools { padding: var(--s2) var(--s1) 0 0; }
+    .fl-body { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s1) var(--s2) var(--s3) calc(var(--s2) + var(--fl-lead) + var(--s3)); }
+    .fl-body > .btn { align-self: flex-start; }
+    .fl-body > .note { padding-top: 0; }
+    .fl-prose { padding: var(--s1) var(--s2) var(--s2) calc(var(--s2) + var(--fl-lead) + var(--s3)); font-size: var(--f-body); line-height: 1.6; overflow-wrap: anywhere; }
+    .fl-prose > :first-child { margin-top: 0; }
+    .fl-prose > :last-child { margin-bottom: 0; }
+    .fl-step.live .fl-summary { background: linear-gradient(90deg, var(--text-3) 30%, var(--text) 50%, var(--text-3) 70%) 0 0 / 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 2.2s linear infinite; }
+    @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+    @media (prefers-reduced-motion: reduce) { .fl-step.live .fl-summary { animation: none; background: none; color: var(--text-2); } }
+    /* A step's input and output (flowIO): one code surface, each side under a caption, a hairline
+       between the sides, each scrolled past --fl-io-h. The code blocks inside give up their own
+       ground and edge - the surface is theirs. */
+    .fl-io { display: flex; flex-direction: column; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--code-edge); border-radius: var(--r-row); overflow: hidden; }
+    .fl-io-part { display: flex; flex-direction: column; min-width: 0; }
+    .fl-io-part + .fl-io-part { border-top: 1px solid var(--code-edge); }
+    .fl-io-label { display: flex; align-items: baseline; gap: var(--s2); padding: var(--s2) var(--s3) 0; font-size: var(--f-caption); font-weight: var(--w-emph); color: var(--text-3); letter-spacing: .04em; text-transform: uppercase; }
+    .fl-io-note { font-weight: var(--w-body); letter-spacing: 0; text-transform: none; }
+    .fl-io-body { max-height: var(--fl-io-h); overflow: auto; padding: var(--s1) var(--s3) var(--s2); }
+    .fl-io-body pre.jv, .fl-io-body pre.logs { padding: 0; background: none; box-shadow: none; border-radius: 0; max-height: none; overflow: visible; font-family: var(--code-font); font-size: var(--f-label); line-height: 1.6; color: var(--code-fg); }
+    .fl-io-body .btn { margin-top: var(--s2); }
+    /* A sheet's head over a flow (flowHead): its fact lines stacked, a step apart. */
+    .fl-head { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s1) 0 var(--s2); }
+    /* Facts on one line (factLine): a head's state, its agent, its cost - dot-joined, wrapping
+       whole facts, never mid-fact. The lead line is the head's own voice: body size, full ink. */
+    .fl-facts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); min-width: 0; font-size: var(--f-label); color: var(--text-2); }
+    .fl-facts.lead { font-size: var(--f-body); color: var(--text); }
+    .fl-fact { display: inline-flex; align-items: center; gap: var(--s1); min-width: 0; max-width: 100%; font-variant-numeric: tabular-nums; }
+    .fl-fact > code { font-family: var(--mono); font-size: var(--f-label); color: var(--text-2); }
+    /* ui/transcript.ts: the conversation column. A dialogue as chat - each turn says
+       who spoke in one small word, then shows its content in its own register: prose
+       as prose, an answer as markdown (.tc-md), data as monospace, structured content
+       as the caller's blocks in .tc-code, reasoning dimmed. Spacing separates turns;
+       no hairlines, no numbers, no clocks on messages. */
+    .tc-col { display: flex; flex-direction: column; width: 100%; max-width: var(--measure); margin-inline: auto; }
+    .tc-turn { min-width: 0; max-width: 100%; padding: var(--s3) 0; }
+    .tc-turn.assistant { align-self: stretch; }
+    .tc-turn.user { align-self: flex-end; width: fit-content; max-width: var(--tc-user-max); margin: var(--s3) 0; padding: var(--s3) var(--s4); border-radius: var(--r-card); background: var(--hover); }
+    .tc-turn.user .tc-head { justify-content: flex-end; }
+    .tc-turn.user .tc-code { gap: var(--s3); }
+    .tc-turn.user .fold { min-width: 0; }
+    .tc-turn.assistant:first-child { padding-top: var(--s1); }
+    .tc-turn.assistant:last-child { padding-bottom: var(--s1); }
+    .tc-head { display: flex; align-items: baseline; gap: var(--s2); }
+    .tc-role { font-size: var(--f-caption); font-weight: var(--w-emph); letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); }
+    .tc-at { margin-left: auto; font-size: var(--f-caption); color: var(--text-3); }
+    .tc-text { margin-top: var(--s1); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--f-body); color: var(--text); }
+    .tc-text.mono { font-family: var(--mono); font-size: var(--f-label); }
+    .tc-text.dim { color: var(--text-3); }
+    .tc-md { margin-top: var(--s1); font-size: var(--f-body); }
+    .tc-md > :first-child { margin-top: 0; }
+    .tc-md > :last-child { margin-bottom: 0; }
+    .tc-code { margin-top: var(--s1); display: flex; flex-direction: column; gap: var(--s2); }
+    /* A turn's Copy (ui/copy.ts copyBtn): under an answer one quiet glyph, always there; beside
+       the reader's bubble, at its start edge, shown while the bubble is hovered or focused (a
+       touch screen always shows it). */
+    .tc-acts { display: flex; gap: var(--s1); margin-top: var(--s1); }
+    .tc-turn.user { position: relative; }
+    .tc-turn.user > .tc-acts { position: absolute; right: 100%; bottom: 0; margin: 0; padding-right: var(--s1); opacity: 0; transition: opacity .12s; }
+    .tc-turn.user:hover > .tc-acts, .tc-turn.user:focus-within > .tc-acts, .tc-turn.user > .tc-acts:has([data-copied]) { opacity: 1; }
+    @media (hover: none) { .tc-turn.user > .tc-acts { opacity: 1; } }
+    /* copyBtn's glyph: the value block's small square; the check it turns to in the accent. */
+    .btn.icon.copy-btn { width: var(--s6); height: var(--s6); padding: 0; color: var(--text-3); }
+    .btn.icon.copy-btn .ic { width: var(--ic-m); height: var(--ic-m); }
+    .btn.icon.copy-btn:hover { color: var(--text); }
+    .btn.icon.copy-btn[data-copied] { color: var(--accent); }
+    /* ui/transcript.ts toolChip(): a tool ask inline in the column - name tag, arguments as code. */
+    .tc-chip { display: flex; align-items: baseline; gap: var(--s2); margin-top: var(--s1); min-width: 0; }
+    .tc-chip code { font-family: var(--mono); font-size: var(--f-label); color: var(--text-2); overflow-wrap: anywhere; }
+
     /* ui/timeline.ts timelineMeta(): what the row's own columns left out, a caption's size. */
     .tl-meta { font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
@@ -534,6 +672,14 @@
     .sec > .group + .group { margin-top: var(--s3); }
     /* A section's one-line note sits under the caption, a grid step above the card. */
     .sec-note { padding: 0 var(--s1); margin: calc(-1 * var(--s1)) 0 var(--s2); }
+    /* ui/page.ts split(): a page's main column with a narrow aside beside it (the settings in
+       force beside the form that edits them); a pane too narrow for both stacks the aside on top. */
+    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(calc(var(--s8) * 9), calc(var(--s8) * 11)); gap: var(--s6); align-items: start; }
+    .split-main { min-width: 0; }
+    @media (max-width: 1200px) {
+      .split { grid-template-columns: minmax(0, 1fr); }
+      .split-aside { order: -1; }
+    }
     /* ui/page.ts pageFoot(): the revision line under a list - prose left, the value right. */
     .page-foot { display: flex; justify-content: space-between; gap: var(--s3); padding: var(--s3) var(--s1) 0; font-size: var(--f-label); color: var(--text-3); }
     .page-foot-rev { font-family: var(--mono); font-size: var(--f-caption); }
@@ -557,12 +703,41 @@
     .jv-w { color: var(--syn-kw); }
     .jv-f { color: var(--syn-fn); }
     .jv-c { color: var(--syn-com); font-style: italic; }
+    /* A block that reads as secondary - a model's thinking beside the answer it
+       preceded. Tone only: same face, same block (the greyed thinking, SPEC llm.history). */
+    .jv-dim { color: var(--text-3); }
     /* A numbered line (tokenSpans lined): the number is generated content in a gutter, so a
        drag-selection copies the code and never the numbers. The first line resets the counter,
        which makes any container a numbered block. */
     .jv-line { display: block; position: relative; padding-left: calc(4ch + var(--s4)); }
     .jv-line:first-child { counter-reset: jv-ln; }
     .jv-line::before { counter-increment: jv-ln; content: counter(jv-ln); position: absolute; left: 0; width: 4ch; text-align: right; color: var(--code-gutter); user-select: none; }
+    /* tokenSpans({ mark }): the line a reference pointed at. */
+    .jv-line.hit { background: var(--code-hit); }
+    /* ui/diff.ts - a patch, a fold per file. A line's old and new numbers are generated content
+       from data-o / data-n, so a drag-selection copies the patch and never the numbers. */
+    .diff { display: grid; gap: var(--s2); }
+    .diff-file { border-radius: var(--r-row); background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--code-edge); overflow: hidden; }
+    .diff-file > summary { display: flex; align-items: baseline; gap: var(--s2); padding: var(--s1) var(--s3); cursor: pointer; font-size: var(--f-label); color: var(--code-fg); }
+    .diff-file[open] > summary { border-bottom: 1px solid var(--code-edge); }
+    .diff-path { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--code-font); }
+    .diff-st { font-size: var(--f-caption); color: var(--code-gutter); }
+    .diff-st.added { color: var(--green); }
+    .diff-st.deleted { color: var(--red); }
+    .diff-st.modified, .diff-st.renamed, .diff-st.binary { color: var(--amber); }
+    .diff-n { font-family: var(--code-font); font-size: var(--f-caption); white-space: nowrap; }
+    .diff-n .plus { color: var(--green); }
+    .diff-n .minus { color: var(--red); }
+    pre.jv.diff-body { padding: 0; border-radius: 0; box-shadow: none; }
+    .dl { display: block; position: relative; padding: 0 var(--s3) 0 calc(8ch + var(--s5)); }
+    .dl::before, .dl::after { position: absolute; top: 0; width: 4ch; text-align: right; color: var(--code-gutter); user-select: none; }
+    .dl::before { content: attr(data-o); left: var(--s1); }
+    .dl::after { content: attr(data-n); left: calc(4ch + var(--s2)); }
+    .dl.add { background: var(--diff-add); }
+    .dl.del { background: var(--diff-del); }
+    .dl.hunk { color: var(--syn-com); background: var(--diff-hunk); }
+    .dl.ctx { color: var(--code-fg); }
+    .dl.note { color: var(--syn-com); font-style: italic; }
     /* The decoded marker is chrome, not data: its words live in ::before, so a drag-selection of
        the block copies the JSON and nothing the display added. */
     .jv-dec { user-select: none; }
@@ -580,15 +755,38 @@
     .vblock-text { font-size: var(--f-label); color: var(--text-2); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
     .vblock > pre.logs { padding: var(--s2) var(--s3); background: var(--code-bg); color: var(--code-fg); box-shadow: inset 0 0 0 1px var(--code-edge); font-family: var(--code-font); border-radius: var(--r-row); max-height: none; overflow: visible; font-size: var(--f-label); line-height: 1.6; }
     .vblock > pre.logs.err { color: var(--red); }
+    /* A dimmed body block keeps its tone inside a value block: the rule above the err one
+       would otherwise repaint it the code foreground (found live on 19998, 2026-10-10). */
+    .vblock > pre.logs.jv-dim { color: var(--text-3); }
     .vblock > pre + pre { margin-top: var(--s1); }
     .vblock > .btn { margin-top: var(--s2); }
 
-    .form { padding: var(--s4); display: grid; gap: var(--s3); }
+    .form { padding: var(--s4); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
     /* ui/form.ts pair(): two fields side by side, wherever the pair sits. It used to be a grid only
        under .form or as a direct child of .sheet-body, so a pair one div deeper (the Add sheet's
        generated fields, SPEC §panel.pages) stacked its halves with no gap between them. */
     .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); align-items: start; }
     .form-actions { display: flex; align-items: center; gap: var(--s3); padding-top: var(--s1); }
+    /* ui/form.ts editList(): a list the form edits in place (a provider's models), one line per
+       item on one grid - the item's own field first and widest, then its controls in columns
+       as wide as their widest cell (each line a subgrid), so the controls line up down the list
+       and a mark appearing on one line never shifts a control. Empty, it takes no room. */
+    .edit-list { display: grid; grid-template-columns: minmax(0, 1fr) repeat(var(--edit-cols, 1), auto); gap: var(--s2); align-items: center; }
+    .edit-list:empty { display: none; }
+    .edit-line { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; }
+    .edit-line > .dd { width: 100%; }
+    /* A line's second row (llm-providers.ts modelsEditor): a quiet line of what the item states,
+       tucked under its field, and the details box it opens into - both across the whole line. */
+    .edit-line > :is(.edit-sub, .edit-detail) { grid-column: 1 / -1; }
+    .edit-line > .edit-sub { margin-top: calc(var(--s1) * -1); padding-left: var(--s2); }
+    .edit-detail { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); padding: var(--s3); margin-bottom: var(--s1);
+      border: 1px solid var(--sep); border-radius: var(--r-row); }
+    .check-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); padding-top: var(--s1); }
+    /* The provider row's models list one id each: the id is the label, in the code face. */
+    [data-lpblock=models] .kv-k { font-family: var(--mono); overflow-wrap: anywhere; }
+    /* ui/form.ts checkGrid(): many checks in a bounded, framed box (a hosted model listing runs
+       to a hundred ids) - as many columns as fit, its own scroll past a few rows. */
+    .check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--s8) * 6), 1fr)); gap: var(--s1) var(--s3); max-height: calc(var(--s8) * 7); overflow-y: auto; padding: var(--s2) var(--s3); border: 1px solid var(--sep-soft); border-radius: var(--r-row); }
 
     /* Overflow menu. */
     .menu {
@@ -636,6 +834,10 @@
     .menu button .db-tab-dot { margin-left: auto; }
 
     .menu hr { border: 0; border-top: 1px solid var(--sep-soft); margin: var(--s1) 0; }
+    /* popupMenu({ filter }): a find box over a long list - a wide result's hundred columns -
+       the rows scrolling under it instead of running off the screen. */
+    .menu-filter { margin-bottom: var(--s1); }
+    .menu-rows { display: grid; max-height: min(60vh, calc(var(--s8) * 12)); overflow-y: auto; }
 
     /* Sheet (Add) + sign-in. */
     /* ui/sheet.ts stackSheet(): a picker over the open sheet, one layer up (the toast stays on top). */
@@ -656,7 +858,17 @@
     .sheet-sub { min-width: 0; font-family: var(--mono); font-size: var(--f-label); color: var(--text-2); overflow-wrap: anywhere; }
     /* One column with a 0 minimum, like .tl: nothing inside a sheet can push it wider than the sheet. */
     .sheet-body { padding: var(--s4) var(--s5); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); max-height: 66vh; overflow-y: auto; }
+    /* sheet({ wide }): a reading sheet - a file, a commit, a patch (views/memory-preview.ts). */
+    .sheet.wide { width: min(var(--sheet-wide), 94vw); }
+    .sheet.wide .sheet-body { max-height: 76vh; }
     .sheet-foot { display: flex; justify-content: flex-end; gap: var(--s2); padding: var(--s3) var(--s5); border-top: 1px solid var(--sep-soft); background: color-mix(in srgb, var(--bg) 60%, var(--card)); }
+    /* Conversation growth belongs to the body alone. The input and actions stay docked,
+       including while reasoning, tool output or a restored conversation expands. */
+    .sheet.conversation { display: flex; flex-direction: column; height: var(--sheet-chat-h); max-height: var(--sheet-chat-h); }
+    .sheet.conversation > .sheet-body { flex: 1; min-height: 0; max-height: none; overflow-y: auto; align-content: start; }
+    .sheet.conversation > .sheet-head, .sheet.conversation > .sheet-foot { flex: none; }
+    .sheet-compose { flex: none; padding: var(--s3) var(--s5); border-top: 1px solid var(--sep-soft); background: var(--card); }
+    .sheet-compose textarea { max-height: calc(var(--sheet-chat-h) / 4); }
     /* The inline create form (SPEC §panel.groups): Tokens and Secrets create in place, not in a sheet.
        ONE row - the fields, the Group select, the one primary - and a full step of air before
        the list; New group lives in the header's pane-actions like every other grouped page.
@@ -679,6 +891,10 @@
        already spaces them, so the margin only fills in where there is none. */
     :is(.fld, .two) + :is(.fld, .two) { margin-top: var(--s3); }
     :is(.form, .sheet-body, .fold-body) > :is(.fld, .two) + :is(.fld, .two) { margin-top: 0; }
+    /* A checkbox field beside another in a workspace bar sits level with it. */
+    :is(.ws-bar, .ws-bar-row) > .fld + .fld { margin-top: 0; }
+    /* The checks of a check grid (ui/form.ts checkGrid) are its cells: the grid's gap spaces them. */
+    .check-grid > .fld + .fld { margin-top: 0; }
     /* The two halves of a pair (ui/form.ts pair) are side by side: the stacking margin never
        applies between them - in a sheet it pushed the second label a grid step below the first. */
     .two > .fld + .fld { margin-top: 0; }
@@ -725,6 +941,299 @@
     .btn.to-top:hover { color: var(--text); background: color-mix(in srgb, var(--hover), var(--card)); }
     .btn.to-top .ic { width: var(--ic-m); height: var(--ic-m); }
     @media (prefers-reduced-motion: reduce) { .btn.to-top { transition: none; } }
+    /* The grip (grip, SPEC §panel.ui): the edge between two panes, no size of its own. Its hit
+       area straddles the edge; a line in the accent shows under the pointer and while held (a
+       y edge keeps a short pill in between, so a stretchable editor reads as one). A foldable
+       sidebar's chevron shows while the sidebar or its edge is under the pointer; folded, the
+       edge is a thin strip on the sidebar's surface whose click brings the sidebar back. */
+    .grip { position: relative; flex: none; z-index: 3; touch-action: none; outline: none; }
+    .grip.x { width: 0; }
+    .grip.y { height: 0; }
+    [hidden] + .grip { display: none; }
+    .grip::before, .grip::after { content: ""; position: absolute; }
+    .grip.x::before { top: 0; bottom: 0; left: calc(var(--s1) * -1); width: var(--s2); cursor: col-resize; }
+    .grip.y::before { left: 0; right: 0; top: calc(var(--s2) * -1); height: var(--s4); cursor: row-resize; }
+    .grip::after { background: var(--accent); opacity: 0; transition: opacity .12s ease; pointer-events: none; }
+    .grip.x::after { top: 0; bottom: 0; left: -1px; width: 2px; }
+    .grip.y::after { top: -1px; height: 2px; left: calc(50% - var(--s4)); width: var(--s8); border-radius: 1px; background: var(--sep); opacity: 1; }
+    .grip:is(:hover, .dragging, :focus-visible)::after { opacity: 1; }
+    .grip.y:is(:hover, .dragging, :focus-visible)::after { left: 0; width: 100%; background: var(--accent); }
+    .grip-btn {
+      position: absolute; top: 50%; left: 0; z-index: 1; display: grid; place-items: center;
+      width: var(--s5); height: var(--s5); padding: 0; transform: translate(-50%, -50%);
+      border: 1px solid var(--sep); border-radius: 50%; background: var(--card); color: var(--text-2);
+      cursor: pointer; opacity: 0; transition: opacity .12s ease; --ic: var(--ic-s);
+    }
+    .grip-btn:hover { color: var(--text); }
+    :hover + .grip .grip-btn, .grip:is(:hover, :focus-visible) .grip-btn { opacity: 1; }
+    .grip.x.folded { width: var(--s5); background: var(--sidebar); border-right: 1px solid var(--sep); cursor: pointer; }
+    .grip.x.folded::before, .grip.x.folded::after { display: none; }
+    .grip.folded > .grip-btn { left: 50%; opacity: 1; border-color: transparent; background: none; }
+    .grip.folded:hover > .grip-btn { color: var(--text); }
+    /* grip({ end }): the pane is AFTER the edge - its chevron shows while that pane is under the
+       pointer, its folded strip draws its hairline on the side the page is, and a hidden pane
+       takes its edge with it. */
+    .grip.end:has(+ :hover) .grip-btn { opacity: 1; }
+    .grip.x.end.folded { border-right: 0; border-left: 1px solid var(--sep); }
+    .grip.end:has(+ [hidden]) { display: none; }
+    body[data-grip] { user-select: none; }
+    body[data-grip="x"] * { cursor: col-resize !important; }
+    body[data-grip="y"] * { cursor: row-resize !important; }
+    @media (prefers-reduced-motion: reduce) { .grip::after, .grip-btn { transition: none; } }
+    /* The assistant pane (chatPane, SPEC §panel.ui): a conversation docked at a page's end edge
+       beside the work it acts on, on the sidebar's surface. Its head carries the caption and the
+       tools (a picker, New, close); the column scrolls on its own; the words box and its actions
+       stay docked under a hairline however long the conversation grows. A grip({ end }) before
+       it sizes it. */
+    .chat-pane { width: var(--chat-pane-w); flex: none; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--sidebar); border-left: 1px solid var(--sep); }
+    .chat-head { flex: none; display: flex; align-items: center; gap: var(--s2); min-width: 0; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
+    .chat-head > .sec-cap { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chat-tools { display: flex; align-items: center; gap: var(--s1); min-width: 0; }
+    .chat-tools select { min-width: 0; max-width: calc(var(--chat-pane-w) / 2); }
+    .chat-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s2) var(--s3); }
+    .chat-compose { position: relative; flex: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); padding: var(--s2) var(--s3) var(--s3); border-top: 1px solid var(--sep-soft); }
+    /* The words box grows with its words (chatGrow sets its height): its rows the floor, this cap
+       the ceiling, a scroll past it. No drag handle: the words size it. */
+    .chat-compose textarea { width: 100%; resize: none; max-height: 40vh; overflow-y: auto; }
+    /* The box's commands (chatCommands): a "/" at its start lists them on a floating card above
+       the compose area, over the conversation's end - one quiet line each, the name in mono with
+       its argument dim, what it does after it; the marked one tinted as a picked row is. */
+    .chat-cmds { position: absolute; left: var(--s3); right: var(--s3); bottom: calc(100% + var(--s1)); z-index: 30; display: grid; max-height: min(40vh, calc(var(--s8) * 8)); overflow-y: auto; padding: var(--s1); background: var(--card); border-radius: var(--r-card); box-shadow: var(--shadow-pop); animation: pop-in .12s ease-out; }
+    .chat-cmd { display: flex; align-items: baseline; gap: var(--s3); min-width: 0; padding: var(--s1) var(--s2); border-radius: var(--r-row); cursor: pointer; }
+    .chat-cmd[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .chat-cmd-name { flex: none; font-family: var(--mono); font-size: var(--f-body); color: var(--text); }
+    .chat-cmd-arg { color: var(--text-3); }
+    .chat-cmd-hint { flex: 1; min-width: 0; color: var(--text-3); font-size: var(--f-label); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    @media (prefers-reduced-motion: reduce) { .chat-cmds { animation: none; } }
+    /* The queue (chatQueue): a card above the words box - its head names how many and folds the
+       rows; each row one quiet line, its words then Edit, Delete and steer-now; a steered row
+       dim with its word where the arrow was; an edit a box in the row's place. */
+    .chat-queue { display: grid; min-width: 0; border: 1px solid var(--sep); border-radius: var(--r-card); background: var(--card); overflow: hidden; }
+    .chat-queue-head { display: flex; align-items: center; gap: var(--s2); min-width: 0; padding: var(--s1) var(--s2); border: 0; background: none; color: var(--text); font: inherit; font-weight: var(--w-emph); text-align: left; cursor: pointer; }
+    .chat-queue-n { flex: 1; min-width: 0; }
+    .chat-queue-list { display: grid; max-height: 30vh; overflow-y: auto; }
+    .chat-queue-row { display: flex; align-items: center; gap: var(--s1); min-width: 0; padding: 0 var(--s1) 0 var(--s2); border-top: 1px solid var(--sep-soft); }
+    .chat-queue-text { flex: 1; min-width: 0; padding: var(--s1) 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chat-queue-row[data-steered] .chat-queue-text { color: var(--text-3); }
+    .chat-queue-tag { flex: none; padding: 0 var(--s2); color: var(--text-3); font-size: var(--f-label); }
+    .chat-queue-edit { flex: 1; min-width: 0; margin: var(--s1) 0; resize: none; max-height: 30vh; overflow-y: auto; }
+    .chat-acts { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+    .chat-note { flex: 1; min-width: 0; color: var(--text-3); font-size: var(--f-label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* The conversation's account (chatStats): one quiet line under the actions - the activity and
+       the tokens at its start, the context ring at its end, warning in amber, then red, as the
+       next request nears the budget; its panel a card above the line: the share, a bar of what
+       fills it, a row each, the caller's note. */
+    .chat-stats { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--s1) var(--s3); min-width: 0; color: var(--text-3); font-size: var(--f-label); }
+    .chat-stat, .chat-ctx { flex: none; display: inline-flex; align-items: center; gap: var(--s1); min-width: 0; max-width: 100%; padding: 1px var(--s2); border: 0; border-radius: var(--r-row); background: none; color: var(--text-3); font: inherit; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer; }
+    .chat-stat > .ic, .chat-pop-label > .ic { flex: none; }
+    .chat-stat:hover:not(:disabled), .chat-stat[aria-expanded="true"], .chat-ctx:hover, .chat-ctx[aria-expanded="true"] { background: var(--hover); color: var(--text-2); }
+    .chat-stat:disabled { cursor: default; }
+    .chat-stat-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .chat-stat-sep { margin: 0 var(--s1); color: var(--sep); }
+    .chat-ring { flex: none; width: var(--ic-m); height: var(--ic-m); }
+    .chat-ring-track { fill: none; stroke: var(--sep); }
+    .chat-ring-fill { fill: none; stroke: var(--accent); stroke-linecap: round; transition: stroke-dasharray .2s; }
+    .chat-ctx[data-level="warn"] .chat-ring-fill { stroke: var(--amber); }
+    .chat-ctx[data-level="full"] .chat-ring-fill { stroke: var(--red); }
+    .chat-ctx-pct { min-width: 0; }
+    /* A pill's card: over the line, centred on its pill by the script and held inside the line. */
+    .chat-pop { position: absolute; left: 0; bottom: calc(100% + var(--s2)); z-index: 30; box-sizing: border-box; width: max-content; min-width: min(24em, 100%); max-width: min(36em, 100%); padding: var(--s4); background: var(--card); border-radius: var(--r-card); box-shadow: var(--shadow-pop); color: var(--text-2); font-size: var(--f-label); text-align: left; cursor: default; animation: pop-in .12s ease-out; }
+    .chat-pop-title { display: flex; justify-content: space-between; gap: var(--s4); margin-bottom: var(--s2); color: var(--text); font-weight: var(--w-emph); }
+    .chat-pop-label { display: inline-flex; align-items: center; gap: var(--s1); min-width: 0; }
+    .chat-pop-value { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .chat-pop-rule { margin-bottom: var(--s2); border-top: 1px solid var(--sep-soft); }
+    .chat-pop-rows { display: grid; grid-template-columns: minmax(6em, auto) minmax(0, 1fr); gap: var(--s1) var(--s4); margin: 0; color: var(--text-3); }
+    .chat-pop-rows > div { display: contents; }
+    .chat-pop-rows dt, .chat-pop-rows dd { min-width: 0; margin: 0; }
+    .chat-pop-rows dt { display: inline-flex; align-items: center; gap: var(--s2); }
+    .chat-pop-rows dd { color: var(--text-2); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    .chat-pop-note { margin: var(--s2) 0 0; color: var(--text-3); }
+    .chat-ctx-bar { display: flex; height: var(--s1); margin-bottom: var(--s2); border-radius: 2px; background: var(--sep-soft); overflow: hidden; }
+    .chat-ctx-seg { flex: none; height: 100%; }
+    .chat-ctx-key { flex: none; width: var(--s2); height: var(--s2); border-radius: 2px; }
+    .chat-ctx-seg[data-part="system"], .chat-ctx-key[data-part="system"] { background: var(--text-3); }
+    .chat-ctx-seg[data-part="tools"], .chat-ctx-key[data-part="tools"] { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+    .chat-ctx-seg[data-part="messages"], .chat-ctx-key[data-part="messages"] { background: var(--accent); }
+    @media (prefers-reduced-motion: reduce) { .chat-pop { animation: none; } .chat-ring-fill { transition: none; } }
+    /* The dock (dock, SPEC §panel.ui): a pane over the one that takes the rest, the lower
+       pane's bar between them as the handle. At rest one hairline on the bar's top edge and two
+       ghost icons at its end; the line turns accent under the pointer (after a beat, so a hand
+       passing by does not flash it) and while held. A folded lower pane leaves its bar at the
+       bottom; a top pane folded away leaves the bar on top; a hidden top pane hides the bar and
+       the lower pane fills the column. */
+    .dock { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .dock-top { min-height: 0; }
+    .dock-bottom { flex: 1; min-height: 0; }
+    .dock-head {
+      position: relative; flex: none; display: flex; align-items: center; gap: var(--s2);
+      margin-top: var(--s2); padding: var(--s1) 0; border-top: 1px solid var(--sep);
+      cursor: row-resize; touch-action: none;
+    }
+    .dock-head > :not(.dock-edge, .dock-tools) { flex: 1; min-width: 0; }
+    .dock-tools { flex: none; display: flex; margin-left: auto; }
+    .dock-edge { position: absolute; left: 0; right: 0; top: calc(var(--s1) * -1); z-index: 1; height: var(--s2); outline: none; }
+    .dock-edge::after {
+      content: ""; position: absolute; left: 0; right: 0; top: calc(var(--s1) - 1px); height: 2px;
+      background: var(--accent); opacity: 0; transition: opacity .12s ease; pointer-events: none;
+    }
+    .dock-edge:hover::after { opacity: 1; transition-delay: .15s; }
+    .dock-edge:focus-visible::after, .dock.dragging .dock-edge::after { opacity: 1; }
+    .dock-top[hidden] ~ .dock-head { display: none; }
+    .dock[data-fold="top"] > .dock-top { display: none; }
+    .dock[data-fold="bottom"] > .dock-top:not([hidden]) ~ .dock-bottom { display: none; }
+    body[data-dock] { user-select: none; }
+    body[data-dock] * { cursor: row-resize !important; }
+    @media (prefers-reduced-motion: reduce) { .dock-edge::after { transition: none; } }
+    /* --- the workspace template's parts (ui/workspace.ts) ------------------------------------- */
+    /* A workspace owns the full pane (.pane.full) and divides it into columns that scroll on their
+       own: the side column on the sidebar's surface, the main column's head over a split of a
+       fixed pane (a list, an inspector) and a flexible one. Every scroll is a .ws-scroll, so a
+       column's tools and foot stay put while its body moves. */
+    .ws { display: flex; flex: 1; min-height: 0; height: 100%; }
+    .ws-side { width: var(--ws-side-w); flex: none; display: flex; flex-direction: column; min-height: 0; background: var(--sidebar); border-right: 1px solid var(--sep); }
+    .ws-side-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); min-height: var(--s8); padding: var(--s2) var(--s2) 0 var(--s4); }
+    .ws-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+    .ws-head { flex: none; padding: var(--s4) var(--s6) 0; border-bottom: 1px solid var(--sep); }
+    .ws-head-row { display: flex; align-items: flex-start; gap: var(--s4); }
+    .ws-head-name { flex: 1; min-width: 0; }
+    .ws-title { margin: 0; font-size: var(--f-title); font-weight: var(--w-title); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ws-sub { margin-top: var(--s1); font-size: var(--f-label); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ws-acts { flex: none; display: flex; align-items: center; gap: var(--s2); }
+    .ws-nav { padding: var(--s3) 0; }
+    .ws-split { flex: 1; min-height: 0; display: flex; }
+    .ws-pane { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+    .ws-pane.fixed { flex: none; }
+    .ws-pane.fixed.start { width: var(--ws-list-w); border-right: 1px solid var(--sep); }
+    .ws-pane.fixed.end { width: var(--ws-aside-w); border-left: 1px solid var(--sep); }
+    .ws-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4); border-bottom: 1px solid var(--sep-soft); }
+    .ws-bar.foot { border-bottom: 0; border-top: 1px solid var(--sep-soft); font-size: var(--f-label); color: var(--text-3); }
+    /* A bar of rows (a narrow list's tools): one line each, a field or a select sharing its line. */
+    .ws-bar.rows { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+    .ws-bar-row { display: flex; align-items: center; gap: var(--s2) var(--s4); min-width: 0; }
+    .ws-bar-row > :is(input.filter, textarea, select) { flex: 1 1 0; min-width: 0; }
+    .ws-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+    .ws-scroll.pad { padding: var(--s5) var(--s6) var(--s8); }
+    .ws-scroll.pad > * { max-width: var(--measure); }
+    @media (max-width: 1200px) {
+      .ws-side { width: var(--ws-side-w-narrow); }
+      .ws-pane.fixed.start { width: var(--ws-list-w-narrow); }
+    }
+
+    /* The list a detail is picked from: two lines a row - the identity, the name, the value you
+       scan for; under them the state and why. Selection is the source list's: the accent bar
+       over an 8% tint (base.css .side-row). */
+    .pick-list { display: flex; flex-direction: column; gap: 1px; padding: var(--s1) var(--s2) var(--s4); }
+    .pick-row { display: flex; flex-direction: column; gap: 2px; width: 100%; min-width: 0; text-align: left; padding: var(--s2); border: 0; border-radius: var(--r-row); background: none; color: var(--text); font: inherit; cursor: pointer; }
+    .pick-row:hover { background: var(--hover); }
+    .pick-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+    .pick-top { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+    .pick-lead { flex: none; display: inline-flex; }
+    .pick-name { flex: 1; min-width: 0; font-size: var(--f-body); font-weight: var(--w-name); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pick-row[aria-selected="true"] .pick-name { font-weight: var(--w-emph); }
+    .pick-row.muted .pick-name { color: var(--text-2); }
+    .pick-meta { flex: none; font-size: var(--f-label); color: var(--text-3); font-variant-numeric: tabular-nums; }
+    .pick-sub { display: flex; align-items: center; gap: var(--s1); min-width: 0; font-size: var(--f-label); color: var(--text-2); white-space: nowrap; overflow: hidden; }
+    .pick-row:has(.pick-lead) .pick-sub { padding-left: var(--s4); }
+    .pick-sub > .tag { flex: none; }
+    .pick-sub > :last-child:not(.tag) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .pick-row.d1 { padding-left: calc(var(--s2) + var(--s4)); }
+    .pick-row.d2 { padding-left: calc(var(--s2) + 2 * var(--s4)); }
+    .pick-row.d3 { padding-left: calc(var(--s2) + 3 * var(--s4)); }
+    .pick-row.d4 { padding-left: calc(var(--s2) + 4 * var(--s4)); }
+
+    /* A record read whole: its head (tags, title, the lede, the meta values, the verbs), then its words. */
+    .doc-head { display: grid; gap: var(--s2); padding-bottom: var(--s4); margin-bottom: var(--s5); border-bottom: 1px solid var(--sep-soft); }
+    .doc-tags { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+    .doc-title { margin: 0; font-size: var(--f-doc); font-weight: var(--w-title); line-height: 1.3; overflow-wrap: anywhere; }
+    .doc-lede { margin: 0; font-size: var(--f-body); line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
+    .doc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); font-size: var(--f-label); color: var(--text-2); }
+    .doc-sep { color: var(--text-3); }
+    .doc-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin-top: var(--s1); }
+    /* Markdown (ui/markdown.ts): a note's text and an agent's brief. Headings step down from the
+       document's title - a brief's "#" sits under the page's own heading, never over it. */
+    .md { font-size: var(--f-body); line-height: 1.6; overflow-wrap: anywhere; }
+    .md.note-body { margin-bottom: var(--s6); }
+    .md > :first-child { margin-top: 0; }
+    .md > :last-child { margin-bottom: 0; }
+    .md p, .md ul, .md ol, .md blockquote, .md pre, .md .md-table { margin: 0 0 var(--s3); }
+    .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: var(--s5) 0 var(--s2); line-height: 1.35; font-weight: var(--w-title); }
+    .md h1 { font-size: var(--f-doc); }
+    .md h2 { font-size: var(--f-head); padding-bottom: var(--s1); border-bottom: 1px solid var(--sep-soft); }
+    .md h3 { font-size: var(--f-body); }
+    .md h4, .md h5, .md h6 { font-size: var(--f-body); color: var(--text-2); }
+    .md ul, .md ol { padding-left: var(--s5); }
+    .md li + li { margin-top: 2px; }
+    .md li > ul, .md li > ol { margin: 2px 0 0; }
+    .md blockquote { padding: var(--s1) var(--s3); border-left: 2px solid var(--sep); color: var(--text-2); }
+    .md :not(pre) > code { padding: 1px var(--s1); border-radius: var(--r-code); background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--code-edge); color: var(--code-fg); font-family: var(--code-font); font-size: 0.88em; }
+    .md .md-code { padding: var(--s2) var(--s3); background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--code-edge); border-radius: var(--r-row); color: var(--code-fg); font-family: var(--code-font); font-size: var(--f-label); line-height: 1.6; white-space: pre-wrap; }
+    /* markdownNode({copy}): a code block with its Copy at the top end, over the code's own slab,
+       shown while the block is hovered or focused (a touch screen always shows it). */
+    .md .md-codebox { position: relative; margin: 0 0 var(--s3); }
+    .md > .md-codebox:last-child { margin-bottom: 0; }
+    .md .md-codebox > pre { margin: 0; }
+    .md .md-codebox > .copy-btn { position: absolute; top: var(--s1); right: var(--s1); background: var(--code-bg); opacity: 0; transition: opacity .12s; }
+    .md .md-codebox:hover > .copy-btn, .md .md-codebox:focus-within > .copy-btn, .md .md-codebox > .copy-btn[data-copied] { opacity: 1; }
+    @media (hover: none) { .md .md-codebox > .copy-btn { opacity: 1; } }
+    .md hr { margin: var(--s4) 0; border: 0; border-top: 1px solid var(--sep-soft); }
+    .md a { color: var(--accent-text); text-underline-offset: 2px; }
+    .md .md-table { overflow-x: auto; }
+    .md table { border-collapse: collapse; font-size: var(--f-label); }
+    .md th, .md td { padding: var(--s1) var(--s2); border: 1px solid var(--sep-soft); text-align: left; vertical-align: top; }
+    .md th { font-weight: var(--w-name); background: var(--hover); }
+    /* A mermaid diagram: mermaid's sandboxed iframe (width and height are its own). The frame's
+       color-scheme matches its document's, so a dark panel shows through instead of a white canvas. */
+    .md .md-mermaid { margin: 0 0 var(--s3); }
+    .md .md-mermaid iframe { display: block; color-scheme: normal; }
+    .ref { max-width: 100%; padding: 0; text-align: left; color: var(--text); font-weight: var(--w-name); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+    .ref:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+    /* A run of captioned cards inside one section (a note's links by kind): the caption sits
+       over its card, a step clear of the card above it. */
+    .sec > .group + .form-cap { margin-top: var(--s2); }
+
+    /* A categorical identity (ui/workspace.ts catChip): the slot's swatch, then its word. */
+    .cat { display: inline-flex; align-items: center; gap: var(--s1); font-size: var(--f-label); color: var(--text-2); white-space: nowrap; }
+    .cat::before { content: ""; flex: none; width: var(--s2); height: var(--s2); border-radius: 2px; background: var(--cat, var(--text-3)); }
+    .cat.bare { gap: 0; vertical-align: middle; }
+    .cat.c1 { --cat: var(--cat-1); }
+    .cat.c2 { --cat: var(--cat-2); }
+    .cat.c3 { --cat: var(--cat-3); }
+    .cat.c4 { --cat: var(--cat-4); }
+    .cat.c5 { --cat: var(--cat-5); }
+
+    /* --- the node-link graph (ui/graph.ts) --------------------------------------------------------- */
+    /* The engine draws on a canvas inside .gv-canvas and styles its own marks from the palette
+       graphPalette reads (the same tokens); this is only the frame around it: a card-coloured
+       stage, zoom and fit floating at its top right, the legend under it. The frame is a fixed
+       height unless the caller fills a workspace tab (.fill) or wants a small inline view
+       (.compact). The swatches repeat the canvas's encodings: a tone's tinted chip with its
+       coloured edge, an edge's stroke with an arrowhead when it is directed. */
+    .gv { min-width: 0; display: flex; flex-direction: column; }
+    .gv.fill { flex: 1; height: 100%; min-height: 0; }
+    .gv-stage { position: relative; height: var(--graph-h); background: var(--card); overflow: hidden; }
+    .gv.fill .gv-stage { flex: 1; height: auto; min-height: var(--graph-h-compact); }
+    .gv.compact .gv-stage { height: var(--graph-h-compact); }
+    .gv-stage.gv-hover { cursor: pointer; }
+    .gv-canvas { position: absolute; inset: 0; }
+    .gv-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: var(--f-label); color: var(--text-3); }
+    .gv-wait.bad { color: var(--red); }
+    .gv-tools { position: absolute; top: var(--s2); right: var(--s2); display: flex; flex-direction: column; gap: 2px; padding: 2px; background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-btn); }
+    .gv-legend { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); padding: var(--s2) var(--s4); border-top: 1px solid var(--sep-soft); font-size: var(--f-label); color: var(--text-2); }
+    .gv-key { display: inline-flex; align-items: center; gap: var(--s1); white-space: nowrap; }
+    .gv-sw { flex: none; width: var(--s3); height: var(--s3); border-radius: 2px; border: var(--graph-stroke) solid var(--gv-ink, var(--text-3)); background: var(--card); }
+    .gv-sw.gv-t1 { --gv-ink: var(--cat-1); background: color-mix(in srgb, var(--cat-1) 12%, var(--card)); }
+    .gv-sw.gv-t2 { --gv-ink: var(--cat-2); background: color-mix(in srgb, var(--cat-2) 12%, var(--card)); }
+    .gv-sw.gv-t3 { --gv-ink: var(--cat-3); background: color-mix(in srgb, var(--cat-3) 12%, var(--card)); }
+    .gv-sw.gv-t4 { --gv-ink: var(--cat-4); background: color-mix(in srgb, var(--cat-4) 12%, var(--card)); }
+    .gv-sw.gv-t5 { --gv-ink: var(--cat-5); background: color-mix(in srgb, var(--cat-5) 12%, var(--card)); }
+    .gv-sw.gv-line { position: relative; width: var(--s6); height: 0; border: 0; border-top: var(--graph-stroke) solid var(--gv-ink, var(--text-3)); border-radius: 0; background: none; }
+    .gv-sw.gv-heavy { --gv-ink: var(--text-2); border-top-width: var(--graph-stroke-heavy); }
+    .gv-sw.gv-dashed { border-top-style: dashed; }
+    .gv-sw.gv-dotted { border-top-style: dotted; border-top-width: 2px; }
+    .gv-sw.gv-faint { opacity: .55; }
+    .gv-sw.gv-alert { --gv-ink: var(--red); }
+    /* The arrowhead: a triangle clipped from a small square on the stroke's end, in its ink. */
+    .gv-sw.gv-dir::after { content: ""; position: absolute; right: -1px; top: 0; width: var(--s2); height: var(--s2); transform: translateY(-50%); clip-path: polygon(0 0, 100% 50%, 0 100%); background: var(--gv-ink, var(--text-3)); }
     .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--text-3); border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -1px; }
     @keyframes spin { to { transform: rotate(360deg); } }
 

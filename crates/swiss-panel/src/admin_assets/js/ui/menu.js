@@ -25,6 +25,7 @@
  * anchoredMenu (SPEC §panel.pages) and Data's hand-built .ctx-menu popups became popupMenu.
  * setMenuOpen stays exported for the suites that reset the flag between cases. */
 import { h } from "../h.js";
+import { tr } from "../i18n.js";
 import { iconNode } from "./icon.js";
 import { heldDot } from "./status.js";
 
@@ -70,6 +71,14 @@ import { heldDot } from "./status.js";
 
                                                     
 
+/** popupMenu's options. */
+                           
+                                                                                                 
+                                                                                               
+                                                                             
+                  
+ 
+
 let open = false;
 
 /** Whether a menu holds the pointer: outside clicks and Escape close it first. */
@@ -106,7 +115,11 @@ function clampMenuPos(anchor                                               , w  
    built on it needs no second menu idiom. */
 /** The rows of a menu, as popupMenu and anchoredMenu both draw them. */
 function menuNode(cls        , items            )              {
-  return h("div", { class: cls, id: "menu" }, items.map((it)              => {
+  return h("div", { class: cls, id: "menu" }, menuRows(items));
+}
+
+function menuRows(items            )                {
+  return items.map((it)              => {
     if (it.sep) return h("hr");
     // SPEC §data.databases: a heading is chrome, not a choice — a plain div, so it can neither take
     // focus from the first real item nor answer a click.
@@ -122,7 +135,35 @@ function menuNode(cls        , items            )              {
     }, it.icon ? iconNode(it.icon) : null, it.label, it.affordance ? iconNode(it.affordance) : null, it.dot ? heldDot(null) : null);
     b.onclick = (ev) => { ev.stopPropagation(); closeMenu(); if (!b.disabled) it.fn(); };
     return b;
-  }));
+  });
+}
+
+/** A menu with a find box (MenuOpts.filter): the box over a list that scrolls under it, and a
+ *  quiet line for a text nothing holds. A heading or a separator has no label to match, so a
+ *  typed text leaves them out. Clicks inside stay inside: the document's click closes an open
+ *  menu, and a click into the box is not a choice. */
+function findNode(cls        , items            , placeholder        )              {
+  const box = h("input", {
+    class: "menu-filter", type: "search", autocomplete: "off", spellcheck: false,
+    placeholder, aria: { label: placeholder },
+  })                    ;
+  const list = h("div", { class: "menu-rows" }, menuRows(items));
+  const none = h("div", { class: "menu-head", hidden: true }, tr("ui.menu.none"));
+  box.addEventListener("input", () => {
+    const q = box.value.trim().toLowerCase();
+    let any = false;
+    for (const row of Array.from(list.children)                 ) {
+      // A row's title counts too: a model menu's rows read names, their ids one hover away.
+      const hit = !q || (row.tagName === "BUTTON" && ((row.textContent || "") + " " + row.title).toLowerCase().includes(q));
+      row.hidden = !hit;
+      if (hit && row.tagName === "BUTTON") any = true;
+    }
+    none.hidden = any;
+    list.scrollTop = 0;
+  });
+  const node = h("div", { class: cls + " find", id: "menu" }, box, list, none);
+  node.addEventListener("click", (ev) => { ev.stopPropagation(); });
+  return node;
 }
 
 /** Roles and keys, once the menu is in the document: the first item focused, arrows walk the
@@ -132,31 +173,64 @@ function menuNode(cls        , items            )              {
 function wireMenu(node             )       {
   open = true;
   node.setAttribute("role", "menu");
-  const buttons = Array.from(node.querySelectorAll                   ("button")).filter((b) => !b.disabled);
-  buttons.forEach((b) => { b.setAttribute("role", "menuitem"); });
-  if (buttons[0]) buttons[0].focus();
+  const all = Array.from(node.querySelectorAll                   ("button")).filter((b) => !b.disabled);
+  all.forEach((b) => { b.setAttribute("role", "menuitem"); });
+  // A find box takes the focus and leads the walk; the rows a typed text left out drop from it.
+  const find = node.querySelector                  ("input.menu-filter");
+  const ring = ()                => {
+    const shown = all.filter((b) => !b.hidden);
+    return find ? [find, ...shown] : shown;
+  };
+  const first = ring();
+  if (first.length) first[0].focus();
   node.addEventListener("keydown", (ev) => {
-    const i = buttons.indexOf(document.activeElement                     );
+    const walk = ring();
+    const i = walk.indexOf(document.activeElement               );
     if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
       // The arrows are the menu's own, like Escape below: left to bubble, they also reached
       // main.ts's sidebar walk, which moved the MCP selection behind an open menu - and
       // selecting an MCP closes every menu, so the first ArrowDown shut the one in use.
       ev.preventDefault();
       ev.stopPropagation();
+      if (!walk.length) return;
       let n = ev.key === "ArrowDown" ? i + 1 : i - 1;
-      if (n < 0) n = buttons.length - 1;
-      if (n >= buttons.length) n = 0;
-      buttons[n].focus();
+      if (n < 0) n = walk.length - 1;
+      if (n >= walk.length) n = 0;
+      walk[n].focus();
     } else if (ev.key === "Escape") {
       ev.stopPropagation();
       closeMenu();
+    } else if (find && ev.target === find && ev.key === "Enter") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (walk.length > 1) walk[1].click();
+    } else if (find && ev.target !== find && ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+      // A letter typed on a row goes on into the box, which takes it as it lands.
+      find.focus();
     }
   });
 }
 
-function popupMenu(anchor                                                               , items            )       {
+/** A floating menu was placed against a point - a button's rect or a right-click - that a
+ *  scrolling box carries away, so a scroll anywhere but inside the menu closes it, as a native
+ *  context menu does (the select list, which keeps its trigger, follows it instead: ui/select.ts).
+ *  Wired once, on the first popup; capture, because scroll does not bubble. */
+let scrollWired = false;
+function closeOnScroll()       {
+  if (scrollWired || typeof document.addEventListener !== "function") return;
+  scrollWired = true;
+  document.addEventListener("scroll", (ev) => {
+    const node = document.getElementById("menu");
+    if (!open || !node || !node.classList.contains("float")) return;
+    if (ev.target && node.contains(ev.target        )) return;
+    closeMenu();
+  }, true);
+}
+
+function popupMenu(anchor                                                               , items            , o           = {})       {
   closeMenu();
-  const node = menuNode("menu float", items);
+  closeOnScroll();
+  const node = o.filter ? findNode("menu float", items, o.filter) : menuNode("menu float", items);
   document.body.appendChild(node);
   // A menu dropped from a row never sits narrower than the row itself (found live on
   // 19998: the connection menu measured 160px against its 233px sidebar row - the CSS

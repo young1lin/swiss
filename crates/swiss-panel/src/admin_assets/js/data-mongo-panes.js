@@ -277,7 +277,7 @@ function loadPipeline(t           , text        )       {
 
 /* --- schema ----------------------------------------------------------------------------------------- */
 
-async function mongoSchemaRun(t           )                {
+export async function mongoSchemaRun(t           )                {
   const q = mongoQueryOf(t);
   t.schemaBusy = true;
   renderDbGrid();

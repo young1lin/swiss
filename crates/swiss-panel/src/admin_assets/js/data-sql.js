@@ -15,8 +15,8 @@
  */
 
                                                                                     
-                                                 
-import { $, apiJson, dbReqGuard, el, errText, toast } from "./util.js";
+                                                           
+import { $, api, apiJson, dbReqGuard, errText, toast } from "./util.js";
 import { fill, h } from "./h.js";
                                      
 import {
@@ -24,11 +24,15 @@ import {
   dbRedisPendingCount, dbRefreshKeyspace,
 } from "./data-browsers.js";
 import { SQL_TOKEN_RE, dbHighlightNodes, dbSqlPaint } from "./data-filters.js";
+import { dbFormatSql } from "./data-sql-format.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
-import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
-import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
-import { dbLastTableTab, dbOpenTab, renderDbTabs } from "./data-tabs.js";
-import { dbIsMongo, mongoRunCommand } from "./data-mongo.js";
+import { dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
+import { dbConn, dbSqlTab, dbTab, dbTabs } from "./db-state.js";
+import { dbActivateTab, dbOpenTab, dbOpenTabForce, renderDbTabs } from "./data-tabs.js";
+import { dbClosedTakeAgent } from "./data-closed.js";
+import { dbHistoryRefresh } from "./data-history.js";
+import { dbIsMongo, mongoCurrentDb, mongoFormatCommand, mongoRunCommand, mongoRunSupersede } from "./data-mongo.js";
+import { dockShow } from "./ui/dock.js";
                                                  
 import { tr, trn } from "./i18n.js";
 import { btn } from "./ui/button.js";
@@ -339,68 +343,10 @@ function dbWithExplain(sql        , mode        )         {
   return mode === "analyze" ? "EXPLAIN ANALYZE " + s : "EXPLAIN " + s;
 }
 
-/* --- query history (per-browser) ---------------------------------------------------------------- */
-
-function dbHistoryLoad()       {
-  const d = dbConn();
-  try { d.history = JSON.parse(localStorage.getItem(DB_HISTORY_KEY)          ) || []; }
-  catch (e) { d.history = []; }
-}
-
-function dbHistorySave()       {
-  try { localStorage.setItem(DB_HISTORY_KEY, JSON.stringify(dbConn().history.slice(0, DB_HISTORY_MAX))); }
-  catch (e) { /* full or blocked — history is a convenience, not state */ }
-}
-
-/** Record a successful run: newest first, a repeat of the current head is a no-op, and the
- *  list stays bounded. */
-function dbHistoryPush(sql        )       {
-  const d = dbConn();
-  if (d.history[0] === sql) return;
-  d.history.unshift(sql);
-  d.history = d.history.slice(0, DB_HISTORY_MAX);
-  dbHistorySave();
-  dbHistoryRender();
-}
-
-function dbHistoryRender()       {
-  const sel = $("dbSqlHistory");
-  if (!sel) return;
-  sel.textContent = "";
-  const head = el("option", "", tr("dataView.history"))                     ;
-  head.value = "";
-  sel.appendChild(head);
-  const d = dbConn();
-  // SPEC §data.console: one dropdown, two groups — what ran (history) and what was starred
-  // (favorites). The value carries the group: a plain index is history, "f"+i a favorite.
-  if (d.history && d.history.length) {
-    const og = el("optgroup")                       ;
-    og.label = tr("dataView.history");
-    d.history.forEach((sql        , i        )       => {
-      const o = el("option", "", sql.replace(/\s+/g, " ").slice(0, 80))                     ;
-      o.value = String(i);
-      o.title = sql;
-      og.appendChild(o);
-    });
-    sel.appendChild(og);
-  }
-  if (d.favorites && d.favorites.length) {
-    const fg = el("optgroup")                       ;
-    fg.label = tr("dataSql.favorites");
-    d.favorites.forEach((sql        , i        )       => {
-      const o = el("option", "", dbFavoriteName(sql))                     ;
-      o.value = "f" + i;
-      o.title = sql;
-      fg.appendChild(o);
-    });
-    sel.appendChild(fg);
-  }
-}
-
 /* --- favorites (SPEC §data.console) -------------------------------------------------------------------- */
-/* The starred list beside the history: same localStorage-per-browser treatment, same
-   bounded list, the history's own rules (newest first, a repeat save moves to the top
-   rather than duplicating). */
+/* The starred list: the operator's own, per browser in localStorage, bounded, newest first, a
+   repeat save moving to the top rather than duplicating. What RAN is the server's history,
+   filed per database (data-history.ts, SPEC §data.history). */
 
 const DB_FAV_KEY = "swiss.dbFavorites";
 const DB_FAV_MAX = 50;
@@ -416,7 +362,7 @@ function dbFavSave()       {
   catch (e) { /* full or blocked — favorites are a convenience, not state */ }
 }
 
-/** The option's name: the query's FIRST line, whitespace-folded, cut at the history's 80. */
+/** A favorite's name: the query's FIRST line, whitespace-folded, cut at 80. */
 function dbFavoriteName(sql        )         {
   const first = String(sql).split("\n")[0].replace(/\s+/g, " ").trim();
   return first.slice(0, 80);
@@ -430,55 +376,7 @@ function dbFavPush(sql        )       {
   d.favorites.unshift(s);
   d.favorites = d.favorites.slice(0, DB_FAV_MAX);
   dbFavSave();
-  dbHistoryRender();
   toast(tr("dataSql.savedFavorites"));
-}
-
-/* --- the lightweight SQL formatter (SPEC §data.console) ------------------------------------------------ */
-/* Lexical only — the console's own SQL_TOKEN_RE stream, never a parse: top-level clause
-   keywords break onto their own lines (a join lead breaks with its join), AND/OR continue
-   two spaces under their clause, statements split at the top-level semicolon, a line
-   comment ends its line, and punctuation spacing is normalized (no space before , ) ; .,
-   none after ( .). Case, tokens, strings and comments ride byte-identical, so a formatted
-   statement runs exactly as it did — the whitespace-equivalence the round-trip test pins. */
-
-const DB_FORMAT_CLAUSES = "select from where group order having limit offset fetch union except intersect values set insert update delete with join".split(" ");
-const DB_FORMAT_JOIN_LEADS = "left right inner outer full cross natural".split(" ");
-
-function dbFormatSql(text        )         {
-  const tokens           = [];
-  let m                        ;
-  SQL_TOKEN_RE.lastIndex = 0;
-  while ((m = SQL_TOKEN_RE.exec(String(text == null ? "" : text))) !== null) {
-    if (m[5]) continue; // whitespace is rebuilt, never carried
-    // Punctuation runs split into characters: "((" and ")," are two spacing decisions each.
-    if (m[6]) { for (let ci = 0; ci < m[0].length; ci++) tokens.push(m[0][ci]); }
-    else tokens.push(m[0]);
-  }
-  let out = "";
-  let depth = 0;
-  let prev                = null; // the last token on the CURRENT line; null = a fresh line start
-  for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i];
-    const low = tok.toLowerCase();
-    if (depth === 0 && prev !== null && out !== "" && /^[A-Za-z_]/.test(tok)) {
-      const nxt = tokens[i + 1];
-      // "join" does not break again when its lead (left/right/inner/...) just broke.
-      const joinAgain = low === "join" && DB_FORMAT_JOIN_LEADS.includes(prev.toLowerCase());
-      const clause = !joinAgain && (DB_FORMAT_CLAUSES.includes(low) ||
-        (DB_FORMAT_JOIN_LEADS.includes(low) && nxt && nxt.toLowerCase() === "join"));
-      const cont = low === "and" || low === "or";
-      if (clause || cont) { out += "\n" + (cont ? "  " : ""); prev = null; }
-    }
-    if (prev && !(prev === "(" || tok === ")" || tok === "," || tok === ";" || tok === "." || prev === "." || prev === ";")) out += " ";
-    out += tok;
-    prev = tok;
-    if (tok === "(") depth++;
-    else if (tok === ")") depth = depth > 0 ? depth - 1 : 0;
-    else if (tok === ";" && depth === 0) { out += "\n"; prev = null; }
-    else if (tok.charAt(0) === "-" && tok.charAt(1) === "-" || tok.charAt(0) === "#") { out += "\n"; prev = null; }
-  }
-  return out.replace(/\s+$/, "");
 }
 
 /* --- SQL console --------------------------------------------------------------------------------- */
@@ -585,16 +483,112 @@ function dbSplitStatements(text        )           {
   return out;
 }
 
-/** SPEC §data.console: a result tab's name — the statement's first word plus its row count
- *  ("SELECT · 42"), the shape dbgate's ResultTabs use. Leading comments are skipped (they are
- *  not the word the user recognises); EXPLAIN answers name themselves because the prefix ran
- *  too. A missing count renders the word alone; a statement with no word at all still gets a
- *  name. Pure. */
+/* The table a statement names, per first word; a quoted or schema-qualified name is one name.
+   A statement these miss (a subquery first, a CTE, DDL) keeps its word alone. */
+const DB_TAB_IDENT = /([`"[]?[\w$]+[`"\]]?(?:\.[`"[]?[\w$]+[`"\]]?)?)/.source;
+const DB_TAB_TARGET                                     = {
+  SELECT: new RegExp("\\bFROM\\s+" + DB_TAB_IDENT, "i"),
+  DELETE: new RegExp("\\bFROM\\s+" + DB_TAB_IDENT, "i"),
+  UPDATE: new RegExp("^UPDATE\\s+(?:(?:LOW_PRIORITY|IGNORE|ONLY)\\s+)*" + DB_TAB_IDENT, "i"),
+  INSERT: new RegExp("\\bINTO\\s+" + DB_TAB_IDENT, "i"),
+  REPLACE: new RegExp("\\bINTO\\s+" + DB_TAB_IDENT, "i"),
+};
+
+/** SPEC §data.console: a result tab's name — the table the statement reads or writes, a write
+ *  keeping its verb before it ("t_user · 10", "UPDATE orders · 3"), else the statement's
+ *  first word ("SELECT · 42"), plus its row count. Two SELECTs side by side read "SELECT · 10"
+ *  twice when only the word named them. Leading comments are skipped (they are not the word the
+ *  user recognises); EXPLAIN answers name themselves because the prefix ran too. A missing
+ *  count renders the name alone; a statement with no word at all still gets a name. Pure. */
 function dbResultTabLabel(stmt        , rowCount                           )         {
   const s = String(stmt).replace(/^(\s|--[^\n]*\n|#[^\n]*\n|\/\*[\s\S]*?\*\/)+/, "");
   let w = (/^([A-Za-z_][A-Za-z0-9_]*)/.exec(s) || [])[1] || "?";
   w = w.toUpperCase();
-  return typeof rowCount === "number" ? w + " \u00b7 " + rowCount : w;
+  const at = DB_TAB_TARGET[w]?.exec(s);
+  let name = at ? at[1].replace(/[`"[\]]/g, "") : "";
+  if (name.length > 32) name = name.slice(0, 31) + "…";
+  const head = !name ? w : w === "SELECT" ? name : w + " " + name;
+  return typeof rowCount === "number" ? head + " · " + rowCount : head;
+}
+
+/** SPEC §data.console: the text a run covers. `all` (Run all, Ctrl+Shift+Enter, Alt+X) is the
+ *  whole console; otherwise a selection is exactly what runs, and with none the caret's block -
+ *  the scratchpad habit of a desktop SQL client: select what you mean, or stand in it. Pure. */
+function dbRunText(text        , selStart               , selEnd               , all         )         {
+  const t = String(text);
+  if (all) return t;
+  if (selStart !== null && selEnd !== null && selEnd > selStart) return t.slice(selStart, selEnd);
+  return dbSubqueryAt(t, selStart);
+}
+
+/** SPEC §data.console: a script's blank-line blocks, trimmed, empties dropped - the unit Run all
+ *  walks before each block is split on ; (statements a blank line apart with no ; between them
+ *  are still two statements). Pure. */
+function dbConsoleBlocks(text        )           {
+  return String(text).split(/\n[ \t]*\n/).map((b        )         => { return b.trim(); }).filter(Boolean);
+}
+
+/** SPEC §data.redis-console: a redis script's commands, one a line. The server reads a command's
+ *  words the way a shell does (shlex), where a newline is only a space - "SET a 1\nGET a" would
+ *  reach redis as one SET with two stray words - so the console cuts the lines itself. A newline
+ *  inside quotes stays in its argument ("..." with \ escapes, '...' literal, shlex's rules);
+ *  blank lines yield nothing. Pure. */
+function dbSplitCommands(text        )           {
+  const t = String(text);
+  const out           = [];
+  let q = "", start = 0;
+  const cut = (at        )       => {
+    const piece = t.slice(start, at).trim();
+    if (piece) out.push(piece);
+    start = at + 1;
+  };
+  for (let i = 0; i < t.length; i++) {
+    const ch = t.charAt(i);
+    if (q) {
+      if (q === "\"" && ch === "\\") i++;
+      else if (ch === q) q = "";
+    } else if (ch === "\"" || ch === "'") q = ch;
+    else if (ch === "\n") cut(i);
+  }
+  cut(t.length);
+  return out;
+}
+
+/** SPEC §data.redis-console: a command's result tab - its word and its first argument (the key,
+ *  mostly), "GET user:1", cut to fit the strip. A quoted argument is one argument, quotes and
+ *  all: ECHO "hello swiss", not ECHO "hello. Pure. */
+function dbCommandTabLabel(cmd        )         {
+  const words = String(cmd).trim().match(/"(?:\\.|[^"\\])*"?|'[^']*'?|\S+/g) || [""];
+  const label = words[0].toUpperCase() + (words.length > 1 ? " " + words[1] : "");
+  return label.length > 28 ? label.slice(0, 27) + "…" : label;
+}
+
+;                                                                                                            
+
+/** One request of a run: the reply, or the server's words for its refusal - the batch shows them
+ *  in a tab of their own (and the toast says them too, as apiJson would have). */
+async function dbRunOne   (path        , body         )                                                             {
+  try {
+    const r = await api(path, { method: "POST", body: JSON.stringify(body) });
+    const j          = await r.json().catch(()          => { return {}; });
+    // The one trust every caller grants the admin API: an ok body is the T the caller declared.
+    if (r.ok) return { ok: true, j: j      };
+    const msg = typeof j === "object" && j !== null && "error" in j && typeof j.error === "string" ? j.error : "";
+    return { ok: false, error: msg || tr("util.httpN", { n: r.status }) };
+  } catch (e) {
+    return { ok: false, error: tr("util.requestFailedGatewayRunning") };
+  }
+}
+
+/** SPEC §data.console: the tab a failed statement or command leaves - the server's words and
+ *  what was sent, named "UPDATE · failed" - so a script that stopped halfway says where. */
+function dbFailedReply(what        , sent        , error        , label        , notRun        )               {
+  const row                          = { error };
+  row[what] = sent;
+  return {
+    columns: ["error", what], rows: [row], rowCount: 0, explained: false, tabLabel: tr("dataSql.failedTab", { label }), stmt: sent,
+    note: notRun > 0 ? trn(notRun, "dataSql.nNotRun.one", "dataSql.nNotRun.other") : undefined,
+  };
 }
 
 // One run at a time owns the results pane: a slow run's answer that lands after a newer Run
@@ -603,16 +597,36 @@ function dbResultTabLabel(stmt        , rowCount                           )    
 // fire — an early guard refusal (empty console) must not invalidate a run in flight.
 const dbRunReq = dbReqGuard();
 
-/* The console's row cap (SPEC §data.grid): the rows-per-page the operator picked on whatever
-   table tab they were last reading, or the fresh default when the strip holds no table at
-   all. It is a density preference, not one table's property — which is why the console keeps
-   honoring it now that it sits in a tab of its own (SPEC §data.tabs). */
-function dbRunLimit()         {
-  const t = dbLastTableTab();
-  return t ? t.pageSize : 50;
+/* The console's row limit (SPEC §data.console): the most rows a MySQL or PostgreSQL statement
+   without a LIMIT of its own brings back - 500 unless the operator picked another in the status
+   line, remembered per browser. The server writes it into the statement (with_row_limit), so
+   the database stops there instead of building the whole set; a LIMIT the statement writes
+   itself always wins, and 10 000 is the server's ceiling (MAX_ROW_LIMIT). */
+const DB_ROW_LIMITS = [100, 500, 1000, 2000, 5000, 10000];
+const DB_ROW_LIMIT_DEFAULT = 500;
+const DB_ROW_LIMIT_KEY = "swiss.dbRowLimit";
+// The pick of this page, for a browser whose storage refuses it.
+let dbRowLimitHeld                = null;
+
+function dbRowLimit()         {
+  if (dbRowLimitHeld !== null) return dbRowLimitHeld;
+  try {
+    const n = Number(localStorage.getItem(DB_ROW_LIMIT_KEY));
+    if (DB_ROW_LIMITS.includes(n)) return n;
+  } catch (e) { /* blocked storage reads as the default */ }
+  return DB_ROW_LIMIT_DEFAULT;
 }
 
-async function dbRunSql(explain                 )                { // falsy runs the statement(s); "plan"|"analyze" prefix EXPLAIN
+function dbSetRowLimit(n        )       {
+  if (!DB_ROW_LIMITS.includes(n)) return;
+  dbRowLimitHeld = n;
+  try { localStorage.setItem(DB_ROW_LIMIT_KEY, String(n)); }
+  catch (e) { /* full or blocked - the pick holds for this page */ }
+}
+
+/** `explain`: falsy runs the statement(s); "plan" | "analyze" prefixes EXPLAIN. `all`: the whole
+ *  console instead of the selection or the caret's block (dbRunText). */
+async function dbRunSql(explain                 , all          )                {
   const c = dbConn();
   // The console's text, its busy flag and its replies all live on the sql TAB (SPEC §data.tabs):
   // `d` below is that tab, so a run that outlives a tab switch writes where it came from and
@@ -620,87 +634,217 @@ async function dbRunSql(explain                 )                { // falsy runs
   const d = dbSqlTab();
   if (!d) return; // Run reached us with no console open — nothing to run
   if (!c.conn) { toast(tr("dataSql.databaseConnection"), true); return; }
-  // SPEC §data.console: the run covers the block the caret is in — one block per run keeps the
-  // single-statement guard honest on multi-part scripts.
   const ta = $                     ("dbSql");
-  const block = dbSubqueryAt(d.sqlText || "", ta ? ta.selectionStart : null).trim();
-  if (!block) { toast(tr("dataSql.typeCommandFirst"), true); return; }
-  // The redis console: one command per run; the server-side guard still refuses what would
-  // break the shared connection or the server. Writes (SET, DEL, EXPIRE…) run.
-  if (dbIsRedis()) {
-    const rtoken = dbRunReq.issue();
-    d.sqlBusy = true;
-    renderDbToolbar();
-    renderDbGrid();
-    const cj = await apiJson                                                                                        ("/api/db/" + encodeURIComponent(c.conn ) + "/command", {
-      method: "POST",
-      body: JSON.stringify({ command: block }),
-    });
-    if (!dbRunReq.accepts(rtoken)) return; // superseded: a newer run owns the pane and the flag
-    d.sqlBusy = false;
-    if (!cj) { d.sqlResult = null; d.sqlResults = null; d.resultTab = 0; renderDbToolbar(); renderDbGrid(); return; }
-    dbClearSel(); // a new result grid starts unselected
-    d.sqlResult = { columns: ["reply"], rows: [{ reply: cj.reply }], rowCount: 1, explained: false,
-      elapsedMs: cj.elapsedMs,
-      note: typeof cj.reply === "object" && cj.reply && cj.reply.length != null
-        ? trn(cj.reply.length, "dataSql.nReplyItems.one", "dataSql.nReplyItems.other") : undefined };
-    d.sqlResults = [d.sqlResult ]; // SPEC §data.console: the tab strip reads the list — one reply, one tab
-    d.resultTab = 0;
-    dbHistoryPush(block);
-    renderDbToolbar();
-    renderDbGrid();
-    // The command may have written (SET, DEL, RENAME…): the sidebar re-reads the keyspace
-    // quietly, so a key the console just made is in the tree without a refresh.
-    dbRefreshKeyspace();
-    return;
-  }
-  // The MongoDB console: the block is ONE command document in shell syntax (SPEC §data.mongo).
+  // A MongoDB command is one document (SPEC §data.mongo): Run all has nothing to add there.
+  const script = dbRunText(d.sqlText || "", ta ? ta.selectionStart : null, ta ? ta.selectionEnd : null, !!all && !dbIsMongo()).trim();
+  if (!script) { toast(tr("dataSql.typeCommandFirst"), true); return; }
+  // A run answers into the results: folded down under the console, they come back.
+  dockShow("db-console", "bottom");
+  // The MongoDB console: the text is ONE command document in shell syntax (SPEC §data.mongo).
   if (dbIsMongo()) {
     dbClearSel();
-    const ok = await mongoRunCommand(d, block, ()       => { renderDbToolbar(); renderDbGrid(); });
-    if (ok) dbHistoryPush(block);
+    await mongoRunCommand(d, script, ()       => { renderDbToolbar(); renderDbGrid(); });
+    void dbHistoryRefresh(); // the server filed the command, answered or refused
     return;
   }
-  // SPEC §data.console: the block is split on statement-level semicolons and sent ONE STATEMENT PER
-  // REQUEST — the server's single-statement contract is untouched, and every reply gets its
-  // own result tab. Empty stretches (a trailing ;, a comment-only piece) never run; the first
-  // failure stops the batch with the tabs that already answered kept on screen; history
-  // records the whole block, and only when every statement answered.
-  const stmts = dbSplitStatements(block);
-  if (!stmts.length) { toast(tr("dataSql.typeCommandFirst"), true); return; }
+  // SPEC §data.console: every statement (on redis, every line) is ONE REQUEST - the server's
+  // single-statement contract is untouched, and every reply gets its own result tab. Empty
+  // stretches (a trailing ;, a comment-only piece, a blank line) never run; the first failure
+  // stops the batch, its own tab saying why, with the tabs that already answered kept. The server
+  // files every statement it was sent in this database's history (SPEC §data.history).
+  const redis = dbIsRedis();
+  const pieces = redis
+    ? dbSplitCommands(script)
+    : dbConsoleBlocks(script).reduce((acc          , b        )           => { return acc.concat(dbSplitStatements(b)); }, []);
+  if (!pieces.length) { toast(tr("dataSql.typeCommandFirst"), true); return; }
   const token = dbRunReq.issue();
   d.sqlBusy = true;
   d.sqlResult = null; // "Running…" paints in place of the previous grid
   d.sqlResults = null;
   renderDbToolbar();
   renderDbGrid();
+  const base = "/api/db/" + encodeURIComponent(c.conn);
   const results                 = [];
   let ok = true;
-  for (let si = 0; si < stmts.length; si++) {
+  for (let si = 0; si < pieces.length; si++) {
     // The plan view runs EXPLAIN (or EXPLAIN ANALYZE) on each statement; dbWithExplain is
     // idempotent, so a query that already explains itself is sent as-is.
-    const toSend = explain ? dbWithExplain(stmts[si], explain) : stmts[si];
-    const j = await apiJson              ("/api/db/" + encodeURIComponent(c.conn ) + "/query", {
-      method: "POST",
-      // The row cap for a console query is the open table tab's page size — the operator's
-      // chosen density — or the fresh default when no table tab is open (SPEC §data.tabs).
-      body: JSON.stringify({ sql: toSend, limit: dbRunLimit() }),
-    });
+    const toSend = !redis && explain ? dbWithExplain(pieces[si], explain) : pieces[si];
+    // A statement without a LIMIT gets the console's row limit (dbRowLimit).
+    const r = redis
+      ? await dbRunOne                (base + "/command", { command: toSend })
+      : await dbRunOne              (base + "/query", { sql: toSend, limit: dbRowLimit() });
     if (!dbRunReq.accepts(token)) return; // superseded mid-batch: stop quietly, the newer run owns the pane
-    if (!j) { ok = false; break; } // apiJson already showed the error; the answered tabs stay
-    j.explained = !!explain;
-    j.tabLabel = dbResultTabLabel(toSend, j.rowCount);
-    results.push(j);
+    if (!r.ok) {
+      ok = false;
+      toast(r.error, true);
+      const label = redis ? dbCommandTabLabel(toSend) : dbResultTabLabel(toSend, null);
+      results.push(dbFailedReply(redis ? "command" : "statement", toSend, r.error, label, pieces.length - si - 1));
+      break;
+    }
+    if (redis) {
+      const cj = r.j                  ;
+      results.push({
+        columns: ["reply"], rows: [{ reply: cj.reply }], rowCount: 1, explained: false, elapsedMs: cj.elapsedMs,
+        note: typeof cj.reply === "object" && cj.reply && cj.reply.length != null
+          ? trn(cj.reply.length, "dataSql.nReplyItems.one", "dataSql.nReplyItems.other") : undefined,
+        tabLabel: pieces.length > 1 ? dbCommandTabLabel(toSend) : undefined, stmt: toSend,
+      });
+    } else {
+      const j = r.j                ;
+      j.explained = !!explain;
+      j.tabLabel = dbResultTabLabel(toSend, j.rowCount);
+      j.stmt = toSend;
+      results.push(j);
+    }
   }
   d.sqlBusy = false;
   dbClearSel(); // a new result grid starts unselected
   d.sqlResults = results;
-  d.resultTab = 0;
-  d.sqlResult = results.length ? results[0] : null;
-  // The plan of a query is not a query — only whole, real runs are history.
-  if (ok && !explain) dbHistoryPush(block);
+  // A failure is the tab to read first; otherwise the first answer.
+  d.resultTab = ok ? 0 : results.length - 1;
+  d.sqlResult = results.length ? results[d.resultTab] : null;
+  // The ⋯'s recent statements read again: the server filed this batch as it ran.
+  void dbHistoryRefresh();
+  renderDbToolbar();
+  renderDbGrid();
+  // A command may have written (SET, DEL, RENAME…): the sidebar re-reads the keyspace quietly,
+  // so a key the console just made is in the tree without a refresh.
+  if (redis && results.length > (ok ? 0 : 1)) dbRefreshKeyspace();
+}
+
+/** SPEC §data.agent: a MongoDB command's result tab - its command word and the collection it
+ *  names, "find posts", after the database when that is not the one the sidebar shows. */
+function dbMongoTabLabel(text        , db                    )         {
+  let label = text;
+  try {
+    const cmd          = JSON.parse(text);
+    const first = cmd && typeof cmd === "object" && !Array.isArray(cmd) ? Object.entries(cmd)[0] : undefined;
+    if (first) label = first[0] + (typeof first[1] === "string" ? " " + first[1] : "");
+  } catch (e) { /* not JSON: the text itself, cut */ }
+  if (db && db !== mongoCurrentDb()) label = db + " · " + label;
+  return label.length > 28 ? label.slice(0, 27) + "…" : label;
+}
+
+;                                                                                         
+
+/** A MongoDB or Redis answer as the console shows one: the reply whole in one cell (MongoDB's
+ *  painted as its code block), on the meta line the documents a cursor brought or the items a
+ *  Redis reply holds, and where the row limit cut it. */
+function dbAgentCommandReply(j                     , mongo         , label        , stmt        )               {
+  const r = j.reply;
+  let note                    ;
+  if (mongo) {
+    const cursor = r && typeof r === "object" && "cursor" in r ? r.cursor : undefined;
+    const batch = cursor && typeof cursor === "object" && "firstBatch" in cursor ? cursor.firstBatch : undefined;
+    if (Array.isArray(batch)) note = tr("dataMongo.nDocs", { n: batch.length });
+  } else if (Array.isArray(r)) note = trn(r.length, "dataSql.nReplyItems.one", "dataSql.nReplyItems.other");
+  return {
+    columns: ["reply"], rows: [{ reply: r }], rowCount: 1, explained: false, elapsedMs: j.elapsedMs,
+    limitApplied: typeof j.limitApplied === "number" ? j.limitApplied : undefined, note, tabLabel: label, stmt,
+  };
+}
+
+/** The agent's name for one of its console tabs: none (or its Agent tab's own name) is the Agent tab. */
+function dbAgentTabName(tab         )         {
+  const name = (tab || "").trim();
+  return name.toLowerCase() === "agent" || name === tr("dataAgent.name") ? "" : name;
+}
+
+/* SPEC §data.agent Tabs: the agent's console tab of that name brought to the front, or opened
+   under it when the page has none - its Agent tab when it names none. A named one the reader
+   closed comes back with its text (Recently closed, data-closed.ts); the Agent tab starts
+   empty again. */
+function dbAgentTab(tab         )                  {
+  const name = dbAgentTabName(tab);
+  const at = dbTabs().findIndex((t)          => { return t.kind === "sql" && t.agent === true && (t.agentTab || "") === name; });
+  if (at >= 0) dbActivateTab(at);
+  else {
+    const conn = dbConn().conn;
+    const back = name && conn ? dbClosedTakeAgent(conn, name) : null;
+    dbOpenTabForce({ kind: "sql" });
+    const made = dbSqlTab();
+    if (!made) return null;
+    made.agent = true;
+    if (name) made.agentTab = name;
+    made.custom = back?.custom || name || tr("dataAgent.name");
+    if (back) {
+      made.sqlText = back.text;
+      const ta = $                     ("dbSql");
+      if (ta) ta.value = made.sqlText;
+      dbSqlPaint();
+    }
+    renderDbTabs();
+  }
+  const d = dbSqlTab();
+  return d && d.agent ? d : null;
+}
+
+/** The agent opened a console tab (open_console with nothing to place in it): it comes to the
+ *  front with the console showing. */
+function dbAgentConsole(tab        )       {
+  if (dbAgentTab(tab)) dockShow("db-console", "bottom");
+}
+
+/* SPEC §data.agent: the Data agent works on the page the way the reader would. What it runs
+   lands in a console of its own - its Agent tab, or the tab of its own it names (open_console) -
+   each its own block after the ones before, so the reader's own console text is never touched
+   and standing in a block reruns it: a statement ended by its ;, a MongoDB command document in
+   the console's shell syntax, a Redis command line. A run's answer is a result tab like a Run's -
+   a failed one the failed tab - the runs of one send gathering as tabs with the newest in front,
+   a send's first run in a tab starting that tab's over (`ran`: the tabs this send has run in).
+   A staged one (a write the agent leaves to the reader) only lands in the console. The agent's
+   run supersedes a Run still in flight on the results. `db`: the database a MongoDB command ran on. */
+function dbAgentStatement(sql        , outcome                                                            , ran             , db         , tab         )       {
+  const d = dbAgentTab(tab);
+  if (!d) return;
+  const mongo = dbIsMongo();
+  const redis = dbIsRedis();
+  const text = sql.trim();
+  // A MongoDB command reads as the console's shell syntax, one block (no blank line inside); a
+  // Redis line is the line. A statement's trailing line comment would swallow the semicolon: it
+  // goes on a line of its own then.
+  const stmt = mongo ? (mongoFormatCommand(text) || text).replace(/\n\s*\n/g, "\n")
+    : redis ? text
+    : /;\s*$/.test(text) ? text : text + (/--[^\n]*$/.test(text) ? "\n;" : ";");
+  const before = d.sqlText.trimEnd();
+  d.sqlText = before ? before + "\n\n" + stmt : stmt;
+  const ta = $                     ("dbSql");
+  if (ta) {
+    ta.value = d.sqlText;
+    // The caret stands in the new block, so Ctrl+Enter runs it again - unless the reader is typing there.
+    if (document.activeElement !== ta) {
+      ta.selectionStart = ta.selectionEnd = d.sqlText.length - stmt.length;
+      ta.scrollTop = ta.scrollHeight;
+    }
+  }
+  dbSqlPaint();
+  if (!outcome) return;
+  dbRunReq.issue();
+  if (mongo) mongoRunSupersede();
+  let reply              ;
+  if (mongo || redis) {
+    const label = mongo ? dbMongoTabLabel(text, db) : dbCommandTabLabel(stmt);
+    reply = outcome.reply ? dbAgentCommandReply(outcome.reply                       , mongo, label, stmt) : dbFailedReply("command", stmt, outcome.error || "", label, 0);
+  } else {
+    // The server's answer to a statement is the console's reply shape.
+    const r = outcome.reply                            ;
+    reply = r
+      ? { ...r, explained: false, tabLabel: dbResultTabLabel(stmt, r.affectedRows ?? r.rowCount), stmt }
+      : dbFailedReply("statement", stmt, outcome.error || "", dbResultTabLabel(stmt, null), 0);
+  }
+  const name = d.agentTab || "";
+  const fresh = !ran.has(name);
+  ran.add(name);
+  const results = (fresh ? [] : d.sqlResults || []).concat([reply]);
+  d.sqlBusy = false;
+  d.sqlResults = results;
+  d.resultTab = results.length - 1;
+  d.sqlResult = reply;
+  dbClearSel();
+  dockShow("db-console", "bottom");
   renderDbToolbar();
   renderDbGrid();
 }
 
-export { dbApplyReadback, dbBarClick, dbCommit, dbFavoriteName, dbFavLoad, dbFavPush, dbFormatSql, dbFillConsole, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbResultTabLabel, dbRunSql, dbSqlLiteral, dbSplitStatements, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };
+export { DB_ROW_LIMITS, dbAgentConsole, dbAgentStatement, dbApplyReadback, dbBarClick, dbCommandTabLabel, dbCommit, dbConsoleBlocks, dbFavoriteName, dbFavLoad, dbFavPush, dbFormatSql, dbFillConsole, dbPendingSql, dbQuoteIdentSafe, dbResultTabLabel, dbRowLimit, dbRunSql, dbRunText, dbSetRowLimit, dbSqlLiteral, dbSplitCommands, dbSplitStatements, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };

@@ -32,7 +32,8 @@ import { h } from "./h.js";
 import { tk, tr } from "./i18n.js";
 import {
   btn, card, decodeStrings, dot, emptyNode, filterInput, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, moreBtn,
-  pageFoot, pager, pane, paneHead, resHead, row, section, seg, sideRow, sw, tag, timeline, timelineMeta, valueBlock,
+  pageFoot, pager, pane, paneHead, pickPanel, pickerRow, portChip, resHead, row, section, seg, sideRow, sw, tag, timeline, timelineMeta, valueBlock,
+  flow, flowIO, flowToggle, formFold, transcript, transcriptText,
 } from "./ui/index.js";
                                                   
 
@@ -189,6 +190,45 @@ function events(now        )              {
       timeline(traffic(now), { now, body: callBody })));
 }
 
+/** Process is two inventories with different lifetimes, not a task manager. The
+ *  metadata strip leaves room for every port and the one natural row verb. */
+function processPage()              {
+  const app = (name        , state                            , word        , ports          , verb        , disabled = false)              => row({
+    lead: dot(state, word), name,
+    cols: [tag(word)],
+    meta: [
+      ...ports.map((p, i) => portChip(String(p), { tone: state === "down" && i ? "down" : "up", title: tr("process.port.up", { port: String(p) }) })),
+      h("code", null, tr("process.pid", { pid: "4242" })),
+      tr("process.uptime", { up: "12m" }),
+      tag(tr("process.mark.autostart")),
+    ],
+    primary: btn(verb, { disabled }),
+    secondary: iconBtn("file", tr("process.logs.forApp", { name }), { ghost: true }),
+    more: moreBtn(tr("process.actionsFor", { name })),
+  });
+  const children = groupNode({ name: "mcp", count: 1, density: "page" }, row({
+    name: "design-tools", sub: tr("process.childKind.mcp"),
+    meta: [h("code", null, tr("process.pid", { pid: "4243" })), tr("process.uptime", { up: "3m" }), tr("process.memMb", { n: "24" })],
+    primary: btn(tr("process.action.stopChild")),
+  }));
+  children.toggle.onclick = () => {
+    const folded = children.root.classList.toggle("collapsed");
+    children.toggle.setAttribute("aria-expanded", String(!folded));
+  };
+  const pick = pickPanel(tr("gallery.s.pickPath"), tr("gallery.s.pickGo"), tr("gallery.s.pickUp"));
+  pick.root.hidden = false;
+  pick.path.value = "C:/Users/Developer/workspaces/local-services/example-with-a-long-project-name/build/bin";
+  pick.list.append(pickerRow("dir", "bin", false), pickerRow("exe", "demo.exe", true), pickerRow("other", "readme.txt", false));
+  return h("div", { class: "shell" }, pane({},
+    paneHead({ desc: tr("process.desc"), sub: tr("process.gatewayLine", { pid: "4241", up: "1h", mem: "18" }), actions: [btn(tr("process.addApp"), { kind: "primary", icon: "plus" })] }),
+    section({ cap: tr("process.appsCap"), note: tr("process.appsNote") }, card(
+      app("telemetry-demo", "up", tr("process.status.running"), [14317, 14318, 18899], tr("process.action.stop")),
+      app("edge-relay-with-sixteen-listeners", "down", tr("process.status.partial"), Array.from({ length: 16 }, (_, i) => 18400 + i), tr("process.action.stop")),
+      app("starting-demo", "starting", tr("process.busy.start"), [], tr("process.action.start"), true))),
+    section({ cap: tr("process.childrenCap"), note: tr("process.childrenNote") }, children.root),
+    section({ cap: tr("gallery.s.pickPath") }, pick.root)));
+}
+
 /** An empty page: the one "nothing here" shape, with the action that fills it. */
 function empty()              {
   return h("div", { class: "shell" },
@@ -196,7 +236,27 @@ function empty()              {
       emptyNode({ icon: "plug", title: tr("gallery.s.emptyTitle"), hint: tr("gallery.s.emptyHint"), action: tr("gallery.s.emptyAction") })));
 }
 
+/** A dialogue keeps the request at the right and the work beneath one disclosure at the left. */
+function conversation()              {
+  const work = flow([{ id: "read", title: "read", lead: "file", mono: true, summary: "notes.md", meta: "35 ms" }], {
+    eager: true, body: () => flowIO([
+      { label: tr("llm.history.arguments"), body: transcriptText('{"path":"notes.md"}', { mono: true }) },
+      { label: tr("llm.history.result"), body: transcriptText(tr("gallery.s.tSystem")) },
+    ]),
+  });
+  work.onclick = (e)       => { if ((e.target           ).closest(".fl-sum")) flowToggle(work, "read"); };
+  return h("div", { class: "shell" }, pane({}, transcript([
+    { side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.s.tUser") },
+    { role: tr("gallery.s.roleAssistant"), code: [formFold({ summary: tr("llm.test.worked") }, work)] },
+    { role: tr("gallery.s.roleFinal"), text: tr("gallery.s.tFinal"), markdown: true },
+    { side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.s.tUser") },
+    { role: tr("gallery.s.roleAssistant"), text: tr("gallery.s.tFinal"), markdown: true },
+  ])));
+}
+
 export const SCENES          = [
+  { id: "conversation", titleKey: tk("gallery.c.transcript"), build: conversation,
+    uses: ["pane", "transcript", "transcriptText", "flow", "flowIO", "formFold"] },
   { id: "content", titleKey: tk("gallery.scene.content"), build: content,
     uses: ["pane", "paneHead", "iconBtn", "inlineForm", "btn", "groupNode", "row", "tag", "moreBtn", "pageFoot"] },
   { id: "resource", titleKey: tk("gallery.scene.resource"), build: resource,
@@ -205,4 +265,6 @@ export const SCENES          = [
     uses: ["pane", "paneHead", "moreBtn", "timeline"] },
   { id: "empty", titleKey: tk("gallery.scene.empty"), build: empty,
     uses: ["pane", "emptyNode"] },
+  { id: "process", titleKey: tk("gallery.scene.process"), build: processPage,
+    uses: ["pane", "paneHead", "section", "card", "row", "dot", "tag", "btn", "iconBtn", "moreBtn", "groupNode", "portChip", "pickPanel", "pickerRow"] },
 ];

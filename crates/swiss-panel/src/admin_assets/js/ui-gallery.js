@@ -32,14 +32,16 @@
 import { fill, h } from "./h.js";
 import { install, langPref, tk, tr } from "./i18n.js";
 import { SCENES } from "./ui-scenes.js";
+import { graphEngine } from "./graph-engine.js";
 import {
-  anchoredMenu, btn, card, checkField, closeMenu, closeSheet, decodeStrings, dot, emptyNode, failNote, field,
-  filterInput, form, formActions, formCap, formFold, groupNode, heldDot, hint, iconBtn, iconNode, initSelects, redacted,
-  initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, objTab, openFieldSheet, pageFoot, pager,
-  pair, pane, paneHead, popupMenu, relTime, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow,
-  spinner, sw, tag, timeline, timelineMeta, timelineToggle, toTop, tokenCodeNode, valueBlock, codeSchemeFor,
+  anchoredMenu, btn, card, catChip, chatPane, chatQueue, chatStats, checkField, checkGrid, checkRow, closeMenu, closeSheet, decodeStrings, dock, docHead, dot, editDetail, editLine, editList, editSub,
+  emptyNode, factLine, failNote, field, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, form, formActions, formCap, formFold, graphView, groupNode, heldDot, hint, iconBtn, iconNode,
+  initSelects, redacted, initSheet, inlineForm, jsonCodeNode, diffNode, kvRow, markdownNode, menuOpen, moreBtn, note, objTab, openFieldSheet,
+  grip, pageFoot, pager, pair, pane, paneHead, pickList, pickRow, popupMenu, refLink, relTime, resHead, row, section,
+  seg, sheet, sheetOpen, showSheet, sideRow, spinner, split, sw, tag, timeline, timelineMeta, timelineToggle, toTop,
+  textNode, tokenCodeNode, transcript, transcriptText, transcriptTurn, toolChip, valueBlock, proseText, codeSchemeFor, workspace, wsBar, wsHead, wsScroll, wsSide, wsSplit,
 } from "./ui/index.js";
-                                                            
+                                                                                                                  
 
                            
 /* code: the code colour scheme (SPEC §panel.code) - ?code= wins over the panel's own preference,
@@ -174,6 +176,17 @@ function sampleCalls(now        )                 {
   ];
 }
 
+/* A search's results, the way Remote Runs draws them for the needle "running": each row carries
+   the line its match is on, the match marked - in the case the output wrote it. */
+function sampleHits(now        )                 {
+  return [
+    { id: "h1", at: now - 6 * MIN, title: "exec", arg: "bash -s", ms: 985,
+      hit: { before: "Active: active (", match: "running", after: ") since Sat 2026-10-10 16:02:51 CST; 2 days ago" } },
+    { id: "h2", at: now - 41 * MIN, title: "exec", arg: "kubectl get pods -n shop", ms: 1430,
+      hit: { before: "api-7d9f8c6b5-x2k4q   1/1     ", match: "Running", after: "   0          3h12m" } },
+  ];
+}
+
 /* A MongoDB document as the shell printer (mongo-ejson.ts shellTokens) classes it - the tokens
    tokenCodeNode draws on the Data page's document cards, spelled out here because the gallery
    imports the library and nothing else. */
@@ -184,6 +197,36 @@ const SAMPLE_DOC_TOKENS                     = [
   ["jv-k", "at"], ["jv-p", ": "], ["jv-f", "ISODate"], ["jv-p", "("], ["jv-s", "\"2024-01-01T00:00:00.000Z\""], ["jv-p", ")"],
   ["", "\n"], ["jv-p", "}"],
 ];
+
+/* A commit's patch as git prints it (the memory page's commit sheet): a changed file with two
+   hunks and a new one, so every line kind and both numbering sides show. */
+const SAMPLE_PATCH = [
+  "diff --git a/src/orders.rs b/src/orders.rs",
+  "index 3f2a1c4..9b8e7d6 100644",
+  "--- a/src/orders.rs",
+  "+++ b/src/orders.rs",
+  "@@ -12,7 +12,8 @@ pub fn retry(order: &Order) -> Result<()> {",
+  "     let key = order.idempotency_key();",
+  "-    let attempts = 3;",
+  "+    // The same key on every attempt: the payment provider dedupes on it.",
+  "+    let attempts = config.retries();",
+  "     for _ in 0..attempts {",
+  "         submit(order, &key)?;",
+  "     }",
+  "@@ -40,3 +41,3 @@ fn submit(order: &Order, key: &str) -> Result<()> {",
+  "-    client.post(order).send()",
+  "+    client.post(order).header(\"Idempotency-Key\", key).send()",
+  " }",
+  "\\ No newline at end of file",
+  "diff --git a/docs/retries.md b/docs/retries.md",
+  "new file mode 100644",
+  "index 0000000..1d2c3b4",
+  "--- /dev/null",
+  "+++ b/docs/retries.md",
+  "@@ -0,0 +1,2 @@",
+  "+# Retries",
+  "+Every attempt carries the order's idempotency key.",
+].join("\n") + "\n";
 
 /* The SQL highlighter's classes (data-filters.ts dbSqlTokens), spelled out for the same reason:
    a DDL as SHOW CREATE TABLE prints it, numbered the way the Data page's DDL pane is. */
@@ -214,6 +257,42 @@ function callBody(it              )         {
   ];
 }
 
+/** An opened tool call in the flow, the way the LLM history's run sheet draws one: what went in
+ *  and what came back, on one code surface. */
+function flowBody(s          )         {
+  return flowIO([
+    { label: tr("gallery.d.arguments"), body: jsonCodeNode({ path: "notes.md", offset: 1, limit: 40, step: s.id }, false, { oneLine: true }).node },
+    { label: tr("gallery.d.result"), notes: [tr("gallery.d.replySize", { n: 64 })],
+      body: textNode("# Retries\nEvery attempt carries the order's idempotency key.", true, "logs").node },
+  ]);
+}
+
+/* An agent's run the way the LLM history's sheet draws it: a head of fact lines, a round that
+   thought and then said a line, tool calls - one opened, one failed, one still in flight; then
+   two sync runs the way the memory sheet draws them, a state dot leading each with its verdict
+   under the row and a Stop beside the running one. */
+function sampleFlow()           {
+  return [
+    flowHead(
+      factLine([[dot("up", tr("gallery.dot.up")), " ", tr("gallery.d.flowDone")], "12.4 s"], { lead: true }),
+      factLine(["distiller · builtin", h("code", null, "glm / glm-5.3"), "1.2K / 80"])),
+    flow([
+      { id: "f1", lead: "brain", title: tr("gallery.d.flowRound"), summary: tr("gallery.s.tThink"), meta: "3.2 s" },
+      flowProse(markdownNode(tr("gallery.s.tFinal"))),
+      { id: "f2", lead: "file", title: "read_file", mono: true, summary: "notes.md :1+40", summaryMono: true, meta: "120 ms" },
+      { id: "f3", lead: "search", title: "grep", mono: true, summary: "idempotency src/", summaryMono: true, meta: "40 ms",
+        status: { text: tr("gallery.d.error"), tone: "bad" } },
+      { id: "f4", lead: "terminal", title: "exec", mono: true, summary: "cargo test -p orders", summaryMono: true, live: true, meta: "3.0 s" },
+    ], { open: new Set(["f2"]), body: flowBody }),
+    flow([
+      { id: "s1", lead: dot("starting", tr("gallery.dot.starting")), title: tr("gallery.d.flowSync"), summary: tr("gallery.d.flowPhase"),
+        detail: tr("gallery.d.flowVerdict"), live: true, meta: "2 min", tools: btn(tr("gallery.d.cancel"), { kind: "ghost" }) },
+      { id: "s2", lead: dot("down", tr("gallery.dot.down")), title: tr("gallery.d.flowSync"), summary: tr("gallery.d.error"),
+        detail: tr("gallery.d.flowFailure"), detailBad: true, meta: "1 h" },
+    ]),
+  ];
+}
+
 /** A tool argument's name, its JSON type and a sample value - data, the same in every language. */
 const SQL_ARG = "sql";
 const SQL_TYPE = "string";
@@ -221,11 +300,159 @@ const SQL_SAMPLE = "SELECT 1";
 const HOST_SAMPLE = "127.0.0.1";
 const PORT_SAMPLE = "5432";
 const KEY_SAMPLE = "~/.ssh/id_ed25519";
+/** Model ids a provider serves, and more it lists - data, the same in every language. */
+const MODEL_SAMPLES                                        = [["qwen3.5:4b", "chat"], ["qwen3:8b", "chat"], ["bge-m3", "embedding"]];
+const MODEL_NAME_SAMPLE = "Qwen3 8B";
+/** A helper that starts hidden (an editLine()'s sub-line, its details), shown for the page -
+ *  with `text` as its content when given. */
+function shownNode(node             , text         )              {
+  if (text != null) node.textContent = text;
+  node.hidden = false;
+  return node;
+}
+const FOUND_SAMPLES = ["llama3.2:3b", "mistral:7b", "phi4-mini", "gemma3:4b", "nomic-embed-text", "mxbai-embed-large"];
 /** A documentation address (RFC 5737 TEST-NET-3): a remote host that is nobody's. */
 const REMOTE_SAMPLE = "203.0.113.7";
+/** An agent's name and the connection a chat pane talks about - data, the same in every language. */
+const AGENT_SAMPLE = "db";
+const CONN_SAMPLE = "orders · PostgreSQL";
 
 /** A status line's words that are the same in every language: an HTTP status is a value. */
 const HTTP_502 = "HTTP 502";
+
+/* A project's notes and their links, the memory page's Graph tab in miniature. Titles are data -
+   the same in every language; the tones follow the memory kinds' fixed order (decision 1,
+   constraint 2, pitfall 3, knowledge 4, preference 5) and the strokes the link kinds'. */
+const PROJECT_SAMPLE = "swiss";
+const GRAPH_NODES              = [
+  { id: "m-1", label: "SQLite over redb", tone: 1 },
+  { id: "m-2", label: "One writer per database file", tone: 2 },
+  { id: "m-3", label: "sqlx deferred BEGIN cannot upgrade", tone: 3 },
+  { id: "m-4", label: "WAL mode with busy_timeout", tone: 4 },
+  { id: "m-5", label: "Prefer explicit transactions", tone: 5, pending: true },
+  { id: "m-6", label: "redb as the store", tone: 1, dim: true },
+  { id: "m-7", label: "FTS5 trigram for CJK search", tone: 4 },
+];
+const GRAPH_EDGES              = [
+  { from: "m-2", to: "m-1", style: "solid", directed: true, label: tr("gallery.d.linkSupports") },
+  { from: "m-1", to: "m-4", style: "heavy", directed: true, label: tr("gallery.d.linkDepends") },
+  { from: "m-5", to: "m-3", style: "solid", directed: true, label: tr("gallery.d.linkSupports") },
+  { from: "m-3", to: "m-2", style: "dashed", alert: true, label: tr("gallery.d.linkContradicts") },
+  { from: "m-7", to: "m-4", style: "dotted", label: tr("gallery.d.linkRelated") },
+  { from: "m-1", to: "m-6", style: "faint", directed: true, label: tr("gallery.d.linkSupersedes") },
+];
+/** The whole graph by domain: a box round each group, a sub-group inside its parent's. */
+function boxedGraph()                                               {
+  const home                         = { "m-1": "store", "m-2": "store", "m-3": "store", "m-4": "store", "m-6": "store", "m-7": "store/search" };
+  return {
+    nodes: GRAPH_NODES.map((n) => (home[n.id] ? { ...n, group: home[n.id] } : n)),
+    groups: [{ id: "store", label: tr("gallery.d.boxStore") }, { id: "store/search", label: tr("gallery.d.boxSearch"), parent: "store" }],
+  };
+}
+function graphKeys()             {
+  return [
+    { label: tr("gallery.d.kindDecision"), tone: 1 }, { label: tr("gallery.d.kindConstraint"), tone: 2 },
+    { label: tr("gallery.d.kindPitfall"), tone: 3 }, { label: tr("gallery.d.kindKnowledge"), tone: 4 },
+    { label: tr("gallery.d.kindPreference"), tone: 5 },
+    { label: tr("gallery.d.linkSupports"), style: "solid", directed: true },
+    { label: tr("gallery.d.linkDepends"), style: "heavy", directed: true },
+    { label: tr("gallery.d.linkContradicts"), style: "dashed", alert: true },
+    { label: tr("gallery.d.linkRelated"), style: "dotted" },
+    { label: tr("gallery.d.linkSupersedes"), style: "faint", directed: true },
+  ];
+}
+
+/** The memory page in miniature: the projects, the project's head and tabs, the notes beside the
+ *  one picked from them. Every column at its natural height - a page gives the frame its own. */
+function workspaceSample(now        )              {
+  const HOUR = 60 * MIN;
+  const kinds = [tr("gallery.d.kindDecision"), tr("gallery.d.kindConstraint"), tr("gallery.d.kindPitfall"), tr("gallery.d.kindKnowledge")];
+  return workspace(
+    wsSide({ cap: tr("gallery.d.projects"), tools: [iconBtn("plus", tr("gallery.d.newProject"), { ghost: true })] },
+      sideRow({ name: tr("gallery.d.global"), lead: dot("up", tr("gallery.dot.up")), tail: "4" }),
+      sideRow({ name: PROJECT_SAMPLE, lead: dot("up", tr("gallery.dot.up")), badge: tag("1", { tone: "warn", title: tr("gallery.d.waitingN", { n: 1 }) }), tail: "12", selected: true }),
+      sideRow({ name: "orders", lead: dot("idle", tr("gallery.d.unreachable")), tail: "0" })),
+    wsHead({
+      title: PROJECT_SAMPLE,
+      sub: h("code", null, "C:/src/swiss"),
+      actions: [moreBtn(tr("gallery.d.more")), btn(tr("gallery.d.newNote"), { kind: "primary", icon: "plus" })],
+      nav: seg([
+        { id: "notes", label: tr("gallery.d.tabNotes"), n: 12 },
+        { id: "graph", label: tr("gallery.d.tabGraph"), n: 6 },
+      ], "notes", { key: "gws", label: tr("gallery.d.pages") }),
+    }),
+    wsSplit({
+      fixed: "start",
+      start: [
+        wsBar({ rows: [[filterInput({ placeholder: tr("gallery.d.searchNotes"), label: tr("gallery.d.searchNotes") })]] }),
+        wsScroll({}, pickList({ label: tr("gallery.d.tabNotes") },
+          pickRow({ lead: catChip(1, kinds[0], { bare: true }), name: GRAPH_NODES[0].label, meta: relTime(now - 2 * HOUR), sub: tr("gallery.d.noteExcerpt"), selected: true }),
+          pickRow({ lead: catChip(3, kinds[2], { bare: true }), name: GRAPH_NODES[2].label, meta: relTime(now - 26 * HOUR), sub: [tag(tr("gallery.d.needsReview"), { tone: "warn" }), h("span", null, tr("gallery.d.byActor", { actor: "codex" }))] }),
+          pickRow({ lead: catChip(1, kinds[0], { bare: true }), name: GRAPH_NODES[5].label, meta: relTime(now - 30 * 24 * HOUR), sub: [tag(tr("gallery.d.superseded"))], muted: true }))),
+        wsBar({ foot: true }, tr("gallery.d.threeNotes")),
+      ],
+      end: wsScroll({ pad: true },
+        docHead({
+          tags: [catChip(1, kinds[0])],
+          title: GRAPH_NODES[0].label,
+          meta: [h("code", null, "m-1"), tr("gallery.d.byActor", { actor: "codex" }), relTime(now - 2 * HOUR)],
+          actions: [btn(tr("gallery.d.edit"), { kind: "primary" }), moreBtn(tr("gallery.d.more"))],
+        }),
+        markdownNode(tr("gallery.d.noteBody"), { class: "note-body" }),
+        section({ cap: tr("gallery.d.links") },
+          formCap("→ " + tr("gallery.d.linkDepends") + " · 1"),
+          card(row({ lead: catChip(4, kinds[3], { bare: true }), name: refLink(GRAPH_NODES[3].label), sub: h("code", null, "m-4") })))),
+    }));
+}
+
+/** An editor over its results, the results' bar the handle between them (a fixed column, so a
+ *  drag has room to trade). */
+function dockSample()              {
+  const bar = seg([{ id: "0", label: "orders · 3" }, { id: "1", label: "SELECT · 1" }], "0", { key: "gdock", label: tr("gallery.d.dockResults") });
+  return h("div", { style: "display: flex; flex-direction: column; height: 320px" },
+    dock(tokenCodeNode([["", "SELECT id, total\nFROM orders\nWHERE total > 100"]], { all: true }).node, bar,
+      card(row({ name: "1001", sub: "128.00" }), row({ name: "1002", sub: "240.50" }), row({ name: "1003", sub: "101.00" })),
+      { key: "gallery-dock", size: 96, min: 48, restMin: 96, label: tr("gallery.d.dockEditor"), restLabel: tr("gallery.d.dockResults") }));
+}
+
+/** The sample answer: a code block, then the words. */
+const chatAnswer = ()         => "```sql\nSELECT type, count(*) FROM posts GROUP BY type\n```\n" + tr("gallery.d.chatAnswer");
+
+/** An assistant beside the work: a page column, the end edge, the pane - its picker and tools in
+ *  the head, a short conversation, the words box with its note and Send; a "/" in the box lists
+ *  its command, and two messages wait in the queue above it, the first steered; each turn closes
+ *  on its Copy, the answer's code block carrying its own; centred under Send the conversation's
+ *  account, its context ring a third full. */
+function chatSample()              {
+  const stats = chatStats({ id: "gallery-chat-stats", note: tr("gallery.d.chatCtxNote") });
+  stats.set({
+    turns: 2, steps: 5, tokensIn: 3_100, cacheRead: 38_400, cacheWrite: 2_600, tokensOut: 1_250,
+    llmMs: 16_000, toolMs: 4_300, ttftMs: 4_200, ttftSteps: 5, decodeMs: 11_800, decodeTokens: 1_250,
+    context: { bytes: 352_000, cap: 1_048_576, system: 30_000, tools: 6_400, limit: 256_000, used: 86_200, perByte: 0.24 },
+  });
+  const queued = chatQueue({ onSteer: (q) => { queued.steer(q.id, true); }, onDelete: () => undefined });
+  queued.steer(queued.add(tr("gallery.d.chatQueued1")).id, true);
+  queued.add(tr("gallery.d.chatQueued2"));
+  const pane = chatPane({
+    cap: tr("gallery.d.chatCap"),
+    tools: [h("select", { aria: { label: tr("gallery.d.chatAgent") } }, h("option", null, AGENT_SAMPLE)),
+      iconBtn("plus", tr("gallery.d.chatNew"), { ghost: true }), iconBtn("x", tr("gallery.d.chatClose"), { ghost: true })],
+    body: transcript([
+      { side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.d.chatAsk"), copy: tr("gallery.d.chatAsk") },
+      { role: tr("gallery.s.roleAssistant"), text: chatAnswer(), markdown: true, copy: chatAnswer() },
+    ]),
+    input: h("textarea", { rows: 2, placeholder: tr("gallery.d.chatAskPh") }),
+    queued: queued.node,
+    commands: [{ name: "compact", arg: tr("gallery.d.chatCmdArg"), hint: tr("gallery.d.chatCmdHint") }],
+    note: CONN_SAMPLE,
+    actions: [btn(tr("gallery.d.chatSend"), { kind: "primary" })],
+    stats: stats.node,
+  });
+  return h("div", { style: "display: flex; height: 360px" },
+    h("div", { style: "flex: 1; min-width: 0" }, card(tokenCodeNode([["", "SELECT id, total\nFROM orders"]], { all: true }).node)),
+    grip(pane, { axis: "x", key: "gallery-chat", min: 240, max: 520, label: tr("gallery.d.chatCap"), fold: true, end: true }),
+    pane);
+}
 
 function catalogue(now        )              {
   const sections = [
@@ -313,10 +540,21 @@ function catalogue(now        )              {
         primary: btn(tr("gallery.d.try")), toggle: sw(true, tr("gallery.d.enabled")),
       }))),
     entry(["sideRow"], tk("gallery.c.sideRows"), tk("gallery.c.sideRowsNote"), [], card(
-      groupNode({ name: "default", count: 3, density: "side", addTitle: tr("gallery.d.newIn", { g: "default" }), moreTitle: tr("gallery.d.groupActions") },
+      groupNode({ name: "default", count: 4, density: "side", addTitle: tr("gallery.d.newIn", { g: "default" }), moreTitle: tr("gallery.d.groupActions") },
         sideRow({ name: "orders-db", lead: dot("up", tr("gallery.dot.up")), tail: iconNode("pg", "pg"), selected: true }),
         sideRow({ name: "cache", lead: dot("idle", tr("gallery.dot.idle")), tail: iconNode("redis", "redis") }),
-        sideRow({ name: "design-files", lead: dot("error", tr("gallery.dot.error")), tail: tag("http", { mono: true }) })).root)),
+        sideRow({ name: "design-files", lead: dot("error", tr("gallery.dot.error")), tail: tag("http", { mono: true }) }),
+        // A count of what waits on the user, before the tail (the memory rail's review badge).
+        sideRow({ name: PROJECT_SAMPLE, lead: dot("up", tr("gallery.dot.up")), badge: tag("3", { tone: "warn", title: tr("gallery.d.waitingN", { n: 3 }) }), tail: "12" })).root)),
+    entry(["workspace", "grip", "wsSide", "wsHead", "wsSplit", "wsBar", "wsScroll", "pickList", "pickRow", "catChip", "docHead", "markdownNode", "refLink"],
+      tk("gallery.c.workspace"), tk("gallery.c.workspaceNote"), [], card(workspaceSample(now))),
+    entry(["dock"], tk("gallery.c.dock"), tk("gallery.c.dockNote"), [], dockSample()),
+    entry(["chatPane", "chatCommands", "chatQueue", "chatStats", "copyBtn"], tk("gallery.c.chat"), tk("gallery.c.chatNote"), [], chatSample()),
+    entry(["graphView", "graphLegend"], tk("gallery.c.graph"), tk("gallery.c.graphNote"), [], [
+      card(graphView({ nodes: GRAPH_NODES, edges: GRAPH_EDGES, selected: "m-1", label: tr("gallery.d.graphWhole"), keys: graphKeys() }, { engine: graphEngine }).el),
+      card(graphView({ nodes: GRAPH_NODES, edges: GRAPH_EDGES, center: "m-1", label: tr("gallery.d.graphCentred"), compact: true }, { engine: graphEngine }).el),
+      card(graphView({ ...boxedGraph(), edges: GRAPH_EDGES, label: tr("gallery.d.graphBoxed") }, { engine: graphEngine }).el),
+    ]),
     entry(["groupNode"], tk("gallery.c.groups"), tk("gallery.c.groupsNote"), [], [
       groupNode({ name: "default", count: 2, density: "page", addTitle: tr("gallery.d.newIn", { g: "default" }), moreTitle: tr("gallery.d.groupActions") },
         row({ name: "ci-runner", sub: h("code", null, "swk_…3f9a") }), row({ name: "grafana", sub: h("code", null, "swk_…c07e") })).root,
@@ -336,16 +574,34 @@ function catalogue(now        )              {
       [tr("gallery.st.tabHeld"), objTab({ name: "customers", selected: false, icon: "table", data: {}, mark: heldDot(tr("gallery.d.heldTwo")), close: { label: tr("gallery.d.closeTab"), data: {} } })],
       [tr("gallery.st.tabCount"), objTab({ name: "audit_log", selected: false, icon: "table", data: {}, count: { n: 2, title: tr("gallery.d.twoFilters") }, close: { label: tr("gallery.d.closeTab"), data: {} } })],
     ]),
-    entry(["timeline", "timelineMeta"], tk("gallery.c.timeline"), tk("gallery.c.timelineNote"), [], timeline(sampleCalls(now), { now, open: new Set(["g3"]), body: callBody })),
-    entry(["jsonCodeNode", "tokenCodeNode", "valueBlock"], tk("gallery.c.code"), tk("gallery.c.codeNote"), [
+    entry(["transcript", "transcriptText", "transcriptTurn", "toolChip"], tk("gallery.c.transcript"), tk("gallery.c.transcriptNote"), [
+      [tr("gallery.st.transcriptFull"), transcript([
+        { role: tag(tr("gallery.s.roleSystem")), text: tr("gallery.s.tSystem"), dim: true },
+        { side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.s.tUser"), markdown: true },
+        { role: tag(tr("gallery.s.roleThinking")), text: tr("gallery.s.tThink"), dim: true },
+        { role: tag(tr("gallery.s.roleAssistant")), code: [toolChip("read", '{ "path": "notes.md" }')] },
+        { role: tag(tr("gallery.s.roleFinal")), text: tr("gallery.s.tFinal"), markdown: true },
+      ])],
+      [tr("gallery.st.transcriptTurn"), transcriptTurn({ role: tag(tr("gallery.s.roleTool")), text: "notes.md\t913 B\t2026-10-05 08:39", mono: true })],
+      [tr("gallery.st.transcriptText"), transcriptText(tr("gallery.s.tThink"), { dim: true })],
+    ]),
+    entry(["timeline", "timelineMeta"], tk("gallery.c.timeline"), tk("gallery.c.timelineNote"), [], [
+      timeline(sampleCalls(now), { now, open: new Set(["g3"]), body: callBody }),
+      timeline(sampleHits(now), { now }),
+    ]),
+    entry(["flow", "flowProse", "flowIO", "flowHead", "factLine"], tk("gallery.c.flow"), tk("gallery.c.flowNote"), [], sampleFlow()),
+    entry(["jsonCodeNode", "tokenCodeNode", "valueBlock", "proseText"], tk("gallery.c.code"), tk("gallery.c.codeNote"), [
       [tr("gallery.st.codeOneLine"), valueBlock({ label: tr("gallery.d.arguments"), tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
         jsonCodeNode({ status: "open", limit: 20 }, false, { oneLine: true }).node)],
       [tr("gallery.st.codeBlock"), valueBlock({ label: tr("gallery.d.result"), notes: [tr("gallery.d.decodedNote")], tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
         jsonCodeNode(decodeStrings(SAMPLE_JSON), false, { oneLine: true }).node)],
       [tr("gallery.st.codeTokens"), valueBlock({ label: tr("gallery.d.document") }, tokenCodeNode(SAMPLE_DOC_TOKENS, { all: true }).node)],
+      [tr("gallery.st.codeProse"), valueBlock({ label: tr("gallery.d.fullDescription"), text: tr("gallery.d.toolDesc") }, proseText(tr("gallery.d.prosePassage")))],
       [tr("gallery.st.codeLined"), tokenCodeNode(SAMPLE_SQL_TOKENS, { all: true, lined: true }).node],
+      [tr("gallery.st.codeMarked"), tokenCodeNode(SAMPLE_SQL_TOKENS, { all: true, lined: true, mark: 4 }).node],
     ]),
-    entry(["form", "field", "checkField", "pair", "formActions", "formCap", "formFold", "hint"], tk("gallery.c.forms"), tk("gallery.c.formsNote"), [], card(form(
+    entry(["diffNode"], tk("gallery.c.diff"), tk("gallery.c.diffNote"), [], diffNode(SAMPLE_PATCH)),
+    entry(["form", "field", "checkField", "pair", "formActions", "formCap", "formFold", "hint", "editList", "editLine", "editSub", "editDetail", "checkRow", "checkGrid"], tk("gallery.c.forms"), tk("gallery.c.formsNote"), [], card(form(
       pair(
         field({ label: tr("gallery.d.host"), control: h("input", { type: "text", value: HOST_SAMPLE }), hint: tr("gallery.d.hostHint") }),
         field({ label: tr("gallery.d.port"), control: h("input", { type: "text", value: PORT_SAMPLE }) })),
@@ -360,11 +616,51 @@ function catalogue(now        )              {
       formFold({ summary: tr("gallery.d.advanced") },
         formCap(tr("gallery.d.sshKey")),
         field({ label: tr("gallery.d.keyPath"), control: h("input", { type: "text", placeholder: KEY_SAMPLE }), action: btn(tr("gallery.d.browse")) })),
+      // An editable list (a provider's models): the id, its kind, the default's mark, Details, Move
+      // up and Remove on every line - the mark on the second line is empty and the controls still
+      // line up. The first line shows what its model states; the second is open on its details.
+      field({
+        group: true, label: tr("gallery.d.models"), hint: tr("gallery.d.modelsHint"),
+        control: h("div", null,
+          editList({ cols: 5 }, MODEL_SAMPLES.map(([id, kind], i) => editLine({},
+            h("input", { type: "text", value: id, aria: { label: tr("gallery.d.modelId") } }),
+            h("select", { aria: { label: tr("gallery.d.kind") } },
+              h("option", { value: "chat", selected: kind === "chat" }, tr("gallery.d.chat")),
+              h("option", { value: "embedding", selected: kind === "embedding" }, tr("gallery.d.embedding"))),
+            h("span", null, i !== 1 ? tag(tr("gallery.d.default")) : null),
+            iconBtn(i === 1 ? "chevron-up" : "chevron-down", tr("gallery.d.details"), { ghost: true }),
+            iconBtn("arrow-up", tr("gallery.d.moveUp"), { ghost: true }),
+            iconBtn("x", tr("gallery.d.remove"), { ghost: true }),
+            i === 0 ? shownNode(editSub({}), tr("gallery.d.modelFacts")) : null,
+            i === 1 ? shownNode(editDetail({},
+              field({ label: tr("gallery.d.displayName"), control: h("input", { type: "text", value: MODEL_NAME_SAMPLE }) }),
+              field({
+                group: true, label: tr("gallery.d.inputTypes"),
+                control: checkRow(
+                  { label: tr("gallery.d.inputText"), control: h("input", { type: "checkbox", checked: true, disabled: true })                     },
+                  { label: tr("gallery.d.inputImage"), control: h("input", { type: "checkbox" })                     }),
+              }))) : null))),
+          formActions(btn(tr("gallery.d.addModel"), { icon: "plus" }))),
+      }),
+      // Many checks to pick from (what a provider lists): a framed box that scrolls.
+      field({
+        group: true, label: tr("gallery.d.pickFound"),
+        control: checkGrid({}, FOUND_SAMPLES.map((id, i) => checkField({ label: h("code", null, id), control: h("input", { type: "checkbox", checked: i < 2 })                     }))),
+      }),
       hint(tr("gallery.d.refused"), { bad: true }),
       formActions(btn(tr("gallery.d.save"), { kind: "primary" }), btn(tr("gallery.d.cancel")))))),
+    entry(["split"], tk("gallery.c.split"), tk("gallery.c.splitNote"), [], split(
+      section({ cap: tr("gallery.d.settings") }, card(form(
+        pair(
+          field({ label: tr("gallery.d.host"), control: h("input", { type: "text", value: HOST_SAMPLE }) }),
+          field({ label: tr("gallery.d.port"), control: h("input", { type: "text", value: PORT_SAMPLE }) })),
+        formActions(btn(tr("gallery.d.save"), { kind: "primary" }))))),
+      section({ cap: tr("gallery.d.inForce") }, card(kvRow(tr("gallery.d.host"), HOST_SAMPLE, { mono: true }), kvRow(tr("gallery.d.port"), PORT_SAMPLE, { mono: true }))))),
     entry(["popupMenu", "sheet", "openFieldSheet", "toTop"], tk("gallery.c.floating"), tk("gallery.c.floatingNote"), [
       [tr("gallery.st.menu"), btn(tr("gallery.d.openMenu"), { icon: "ellipsis", data: { demo: "menu" } })],
+      [tr("gallery.st.menuFind"), btn(tr("gallery.d.openMenu"), { icon: "search", data: { demo: "menufind" } })],
       [tr("gallery.st.sheet"), btn(tr("gallery.d.openSheet"), { data: { demo: "sheet" } })],
+      [tr("gallery.c.transcript"), btn(tr("gallery.d.openSheet"), { data: { demo: "chat" } })],
       [tr("gallery.st.fieldSheet"), btn(tr("gallery.d.openFieldSheet"), { data: { demo: "field" } })],
       // The real one is on this page already: it shows once the page is a screen down.
       [tr("gallery.st.toTop"), btn(tr("gallery.d.toEnd"), { data: { demo: "totop" } })],
@@ -380,6 +676,13 @@ function catalogue(now        )              {
 
 /** A table name - data, the same in every language. */
 const OPEN_TABLE = "orders";
+/** A wide table's columns - data too. */
+const DEMO_COLUMNS = ["order_id", "customer_id", "customer_name", "status", "total", "currency", "created_at", "updated_at", "shipped_at", "note"];
+
+/** The menu with a find box (popupMenu's filter): a long list narrowed as it is typed into. */
+function openDemoFind(anchor             )       {
+  popupMenu(anchor.getBoundingClientRect(), DEMO_COLUMNS.map((label) => ({ label, fn: () => {} })), { filter: tr("gallery.d.findColumn") });
+}
 
 function openDemoMenu(anchor             )       {
   const r = anchor.getBoundingClientRect();
@@ -427,6 +730,25 @@ function openDemoSheet()       {
   }));
   cancel.onclick = closeSheet;
   ok.onclick = closeSheet;
+}
+
+/** The chat variant: only the transcript scrolls as turns arrive; input and actions stay put. */
+function openDemoChat()       {
+  const out = transcript([{ side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.s.tUser") },
+    { role: tr("gallery.s.roleAssistant"), text: tr("gallery.s.tFinal"), markdown: true }]);
+  const input = h("textarea", { rows: 3, aria: { label: tr("llm.test.prompt") } });
+  const close = btn(tr("llm.close"));
+  const send = btn(tr("llm.test.run"), { kind: "primary" });
+  showSheet(sheet({ title: tr("gallery.c.transcript"), wide: true, body: out,
+    compose: field({ label: tr("llm.test.prompt"), control: input }), foot: [close, send] }));
+  close.onclick = closeSheet;
+  send.onclick = ()       => {
+    if (!input.value.trim()) return;
+    out.appendChild(transcriptTurn({ side: "user", role: tr("gallery.s.roleUser"), text: input.value }));
+    out.appendChild(transcriptTurn({ role: tr("gallery.s.roleAssistant"), text: tr("gallery.s.tFinal"), markdown: true }));
+    input.value = "";
+    input.focus();
+  };
 }
 
 function openDemoFieldSheet()       {
@@ -482,8 +804,10 @@ function onClick(e            )       {
     // The opening click must not reach the document closer below.
     e.stopPropagation();
     if (demo.dataset.demo === "menu") openDemoMenu(demo);
+    else if (demo.dataset.demo === "menufind") openDemoFind(demo);
     else if (demo.dataset.demo === "sheet") openDemoSheet();
     else if (demo.dataset.demo === "field") openDemoFieldSheet();
+    else if (demo.dataset.demo === "chat") openDemoChat();
     else if (demo.dataset.demo === "anchored") openDemoAnchored(demo);
     else if (demo.dataset.demo === "totop") scrollToEnd();
     return;
@@ -494,6 +818,14 @@ function onClick(e            )       {
   if (item && list && item.dataset.tlId) {
     const arg = item.querySelector(".tl-arg");
     timelineToggle(list, item.dataset.tlId, callBody({ id: "", at: 0, title: "", arg: arg ? arg.textContent || "{}" : "{}" }));
+    return;
+  }
+  const step = t.closest(".fl-sum") ? t.closest             (".fl-step") : null;
+  const steps = step && step.closest             (".fl");
+  if (step && steps && step.dataset.flId) {
+    const id = step.dataset.flId;
+    // Only the agent's tool calls carry a body; a sync run's row opens on nothing in the demo.
+    flowToggle(steps, id, step.classList.contains("open") || !id.startsWith("f") ? undefined : flowBody({ id, title: "" }));
   }
 }
 

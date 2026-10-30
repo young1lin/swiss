@@ -62,6 +62,9 @@ const TYPE_ICONS                         = {
   http: "globe", https: "globe", rest: "plug",
   figma: "figma", "zai-vision": "zai",
   npx: "package", uvx: "package", docker: "docker",
+  // The memory subsystem's in-process server wears the same brain its rail seat wears -
+  // one mark per module everywhere it appears (the remote precedent, i-remote, below).
+  memory: "brain",
   remote: "remote",
   proc: "terminal",
 };

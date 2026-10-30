@@ -31,16 +31,23 @@
    and a poll never rebuilds what is open. A running row's body follows its output on a
    short timer while it is open; when the run ends the next poll moves the row from the
    live list into the record with the same run id.
+
+   The search box is the first thing in the head, always there (2026-10-12): it searches what
+   the recorded runs printed, and its results take the list's place as the same rows, each
+   with the line that matched. Until then the search was a toggle that opened a second box
+   UNDER the list and the pager, and answered with "Run #42 · byte 70000" links - the owner
+   asked why a search sat at the bottom of the page behind a button ("默认就能搜索").
    ================================================================================================ */
                                                                                                                               
                                                                                                                          
-import { $, apiJson, targetEl, toast } from "../util.js";
+import { $, api, apiJson, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
                                       
 import { tr, trn } from "../i18n.js";
 import { copyLogText, readableBody } from "../logs.js";
 import {
-  btn, closeMenu, collapseRuns, emptyNode, iconBtn, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, textNode, timeline, timelineMeta, timelineToggle, valueBlock,
+  btn, closeMenu, collapseRuns, emptyNode, filterInput, iconBtn, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, textNode, timeline, timelineMeta,
+  timelineToggle, valueBlock,
 } from "../ui/index.js";
                                                    
 
@@ -119,7 +126,13 @@ function kindOf(r                 )         {
 function argOf(r                 )         {
   const input = r.input || {}                  ;
   const kind = kindOf(r);
-  if (kind === "exec" && input.argv) return input.argv.join(" ");
+  if (kind === "exec" && input.argv) {
+    // The script an exec fed stdin is part of WHAT ran (the owner's finding, twice: a row
+    // that says only `sh -s`/`bash -s` answers nothing). The line says it went and how big;
+    // the text itself stays sealed - the open row's Stdin block is where it shows.
+    const fed = input.stdinBytes != null ? " · " + tr("remoteRuns.argStdin", { size: fmtBytes(input.stdinBytes) }) : "";
+    return input.argv.join(" ") + fed;
+  }
   if (kind === "sync") return (input.source || ".") + (input.to ? " → " + input.to : "");
   if (kind === "pull") return (input.remote || "") + (input.to ? " → " + input.to : "");
   if (kind === "cat" || kind === "write") return input.remote || "";
@@ -209,12 +222,14 @@ function runItem(r                 , isLive         )               {
   };
 }
 
+/** The rows on screen: the search's results while a needle is in the box, else the list. */
 function allItems()                 {
+  if (search.q) return searchItems();
   return active.map((r) => { return runItem(r, true); }).concat(runs.map((r) => { return runItem(r, false); }));
 }
 
 function findRun(id        )                         {
-  return active.find((r) => { return r.runId === id; }) || runs.find((r) => { return r.runId === id; }) || null;
+  return active.find((r) => { return r.runId === id; }) || runs.find((r) => { return r.runId === id; }) || search.records[id] || null;
 }
 
 /** The runs a row stands for, newest first: its own and, for ×N, every identical one under it. */
@@ -258,6 +273,7 @@ function bodyNode(run                   )         {
     r.input && r.input.cwd ? h("code", null, r.input.cwd) : null,
     stateWord(r),
     run.length > 1 ? tr("remoteRuns.nIdenticalRuns", { n: run.length }) : null,
+    search.q && search.first[r.runId] ? trn(search.first[r.runId].n, "remoteRuns.matchesN.one", "remoteRuns.matchesN.other") : null,
   ]);
   if (isLive) {
     const l = live[r.runId];
@@ -312,11 +328,26 @@ function bodyNode(run                   )         {
   return out;
 }
 
-/** An exec's stdin (SPEC §remote.history): the record keeps its size, never the text - a script or
- *  SQL may carry a password in clear - so the row says it was there and how much. */
+/** An exec's stdin (SPEC §remote.history): the script or SQL the run actually ran, kept
+ *  SEALED beside the record exactly as a write's body is - a stdin can carry a password
+ *  in clear, so the index never holds the text and the row unseals it only on Show.
+ *  Rows recorded before it was kept say their size and nothing else. */
 function stdinNode(r                 )         {
   const bytes = r.input?.stdinBytes;
-  return bytes != null ? note(tr("remoteRuns.stdinNotKept", { size: fmtBytes(bytes) })) : null;
+  if (bytes == null) return null;
+  if (!r.stdinStored) {
+    return kindOf(r) === "exec" && bytes > 0 ? note(tr("remoteRuns.stdinNotKept", { size: fmtBytes(bytes) })) : null;
+  }
+  const label = tr("remoteRuns.stdinSent");
+  const size = fmtBytes(bytes);
+  const c = contents[r.runId];
+  if (!c) {
+    return valueBlock({ label, notes: [size], tools: [btn(tr("remoteRuns.showStdin"), { data: { rcontent: r.runId } })] });
+  }
+  if ("error" in c) return valueBlock({ label, notes: [size] }, note(c.error));
+  const notes = c.truncated ? [size, tr("remoteRuns.contentHead", { cap: fmtBytes(256 * 1024) })] : [size];
+  return valueBlock({ label, notes, tools: [btn(tr("remoteRuns.hideContent"), { data: { rcontenthide: r.runId } })] },
+    textNode(c.text, true, "logs").node);
 }
 
 /** What a remote.write wrote (SPEC §remote.history): the body is kept sealed beside the record and
@@ -489,41 +520,59 @@ async function clearAll()                {
   open = {};
   cursors = [null];
   page = 0;
+  // The results named runs the record no longer holds: back to the (empty) list.
+  const box = $                  ("rrQ");
+  if (box) box.value = "";
+  setNeedle("");
   toast(tr("remoteRuns.runRecordCleared"));
   await refresh();
 }
 
-function render()       {
-  painted = signature();
-  const kept = trn(usage.runs, "remoteRuns.nRunsRecordedBytes.one", "remoteRuns.nRunsRecordedBytes.other", { bytes: fmtBytes(usage.bytes) }) +
+function keptText()         {
+  return trn(usage.runs, "remoteRuns.nRunsRecordedBytes.one", "remoteRuns.nRunsRecordedBytes.other", { bytes: fmtBytes(usage.bytes) }) +
     (limits ? tr("remoteRuns.capKeptDDays", { cap: fmtBytes(limits.maxTotalBytes), d: Math.round(limits.maxAgeMs / 86400000) }) : "") +
     (limits && limits.auditWindowMs ? tr("remoteRuns.traceableWDays", { w: Math.round(limits.auditWindowMs / 86400000) }) : "");
+}
+
+/** The page's frame, once a visit: a poll or a search repaints the list and patches the head
+ *  (paintHead), so the search box keeps its text, caret and focus while someone types. */
+function render()       {
+  painted = signature();
   const options = [h("option", { value: "" }, tr("remoteRuns.allTargets"))].concat(targetIds.map((id) => {
     return h("option", { value: id, selected: id === target }, id);
   }));
   // One list is the whole page, so the head carries it: one sentence, what the record keeps,
-  // and the list's filter and ⋯ (Clear - a destructive verb gets no standing button; the Jobs
-  // and Tunnels head ⋯ hold page-wide verbs too). No section caption: "Runs" would name the
-  // page the context bar already names, and a captionless section head was a row holding only
-  // the tools, over the note (SPEC §panel.pages, found on a walk).
+  // and the list's search, filter and ⋯ (Clear - a destructive verb gets no standing button;
+  // the Jobs and Tunnels head ⋯ hold page-wide verbs too). No section caption: "Runs" would
+  // name the page the context bar already names, and a captionless section head was a row
+  // holding only the tools, over the note (SPEC §panel.pages, found on a walk).
   fill($("pane"),
     paneBody({ wide: true },
       paneHead({
         desc: tr("remoteRuns.descOneLine"),
-        sub: kept,
+        sub: keptText(),
         actions: [
+          filterInput({ id: "rrQ", placeholder: tr("remoteRuns.search"), label: tr("remoteRuns.searchLabel"), value: search.q }),
           h("select", { id: "rrTarget", aria: { label: tr("remoteRuns.filterTarget") } }, options),
           moreBtn(tr("remoteRuns.moreActions"), { id: "rrMore" }),
         ],
       }),
       h("div", { id: "rrList" })));
   paintList();
-  $("countChip").textContent = usage.runs ? trn(usage.runs, "remoteRuns.nRuns.one", "remoteRuns.nRuns.other") : "";
+  $("countChip").textContent = countText();
+}
+
+/** What a poll may change in the head: the budget line and the shell's count. */
+function paintHead()       {
+  const sub = document.querySelector             ("#pane .pane-sub");
+  if (sub) sub.textContent = keptText();
+  $("countChip").textContent = countText();
 }
 
 function paintList()       {
   const region = $("rrList");
   if (!region) return;
+  if (search.q) { paintSearch(region); return; }
   if (!active.length && !runs.length) {
     fill(region,
       page || target
@@ -578,14 +627,15 @@ export async function mount() {
   $("pane").onclick = (event            )       => {
     const t = targetEl(event);
     if (!t) return;
+    if (t.closest("#rrSearchMore")) { void scanRound(); return; }
+    if (t.closest("#rrSearchAgain")) { startSearch(search.q); return; }
     const more = t.closest             ("[data-rmore]");
     if (more) { void loadBody(Number(more.dataset.rmore), true); return; }
     const cancel = t.closest             ("[data-rcancel]");
     if (cancel) { void cancelRun(Number(cancel.dataset.rcancel)); return; }
     const copy = t.closest             ("[data-rcopy]");
     if (copy) {
-      const id = Number(copy.dataset.rcopy);
-      const r = active.concat(runs).find((x) => { return x.runId === id; });
+      const r = findRun(Number(copy.dataset.rcopy));
       if (r) void copyLogText(commandLine(r));
       return;
     }
@@ -620,7 +670,33 @@ export async function mount() {
     target = sel.value;
     cursors = [null];
     page = 0;
+    // The results narrow on the spot - each found run's record names its target.
+    if (search.q) paintList();
     void refresh();
+  };
+  // The search box: typing searches after a pause, Enter at once, Escape empties it. Read from
+  // the pane at event time, so the box needs no handler of its own.
+  $("pane").oninput = (event       )       => {
+    const t = targetEl(event);
+    if (t && t.id === "rrQ") queueNeedle((t                    ).value);
+  };
+  $("pane").onkeydown = (event               )       => {
+    const t = targetEl(event);
+    if (!t || t.id !== "rrQ") return;
+    const box = t                    ;
+    if (event.key === "Enter") {
+      const q = box.value.trim();
+      // The same needle again: a failed search starts over, a paused one goes on.
+      if (q !== search.q) setNeedle(q);
+      else if (search.error) startSearch(q);
+      else void scanRound();
+    } else if (event.key === "Escape" && box.value) {
+      // The shell listens for Escape at document; emptying the box is all this one does.
+      event.preventDefault();
+      event.stopPropagation();
+      box.value = "";
+      setNeedle("");
+    }
   };
 }
 
@@ -631,7 +707,10 @@ export async function refresh() {
   // A poll that changed nothing repaints nothing: open rows keep their nodes and the
   // output someone is reading stays where it is (the Traffic discipline).
   if (signature() === painted) return;
-  render();
+  painted = signature();
+  paintHead();
+  // The results are what the search found, not this page of the record: a poll leaves them.
+  if (!search.q) paintList();
   armLive();
   // A run that ended between two polls - cancelled, or simply finished - takes its live
   // body with it; an open row then has nothing to show until its recorded output is read.
@@ -655,4 +734,259 @@ export function unmount() {
   page = 0;
   cursors = [null];
   target = "";
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+  search = newSearch("", search.gen + 1); // and the needle - a scan in flight answers no one
+}
+
+/* --- searching the recorded output (SPEC §remote.panel, §host.history) ----------------------
+   The head's box searches what the recorded runs printed, through the host's literal scan
+   (POST /api/history/query, module "remote"): ASCII letters fold, everything else matches as
+   typed. The scan walks the record OLDEST first in bounded batches and resumes from a signed
+   cursor, so one round asks until it holds ROUND_RUNS more runs, the record ends, or
+   ROUND_ASKS batches went by - then Keep searching runs the next round. An unfinished scan
+   that found nothing is never "no matches" (§host.history): only a complete one may say so.
+   A run found is drawn as its own record row, newest first, with the line its first match is
+   on. Runs still in flight are not searched: their output is not in the record yet. */
+const SEARCH_PAUSE_MS = 300; // typing searches once the hand stops, not on every key
+const ROUND_RUNS = 50;
+const ROUND_ASKS = 32; // a batch reads 64 chunks (search.rs DEFAULT_BATCH_CHUNKS)
+/* Hits one batch may answer before it stops early. The page lists RUNS, so a needle on every
+   line of one output must not end a batch that has found one run. */
+const HIT_LIMIT = 500;
+const READ_AT_ONCE = 6; // records and matched lines fetched side by side
+/* The bytes read on either side of a match for its line: a line's worth of context in any
+   script, and still one short read a row. */
+const CONTEXT_BYTES = 384;
+const LINE_BEFORE = 48; // characters of the match's line kept in front of it
+const LINE_AFTER = 160;
+
+                                                                           
+
+                       
+            
+                                                                                    
+              
+                
+                    
+                                         
+                                                                                                
+                  
+                                                    
+                                                                                               
+                                                  
+                                  
+                
+                       
+ 
+
+                             
+                                                              
+                     
+                                
+                     
+                                                
+ 
+
+function newSearch(q        , gen        )              {
+  return { q, gen, busy: false, complete: false, cursors: null, found: [], first: {}, records: {}, hits: {}, error: "", unavailable: false };
+}
+
+let search = newSearch("", 0);
+let searchTimer = null                                        ;
+let searchPainted = "";
+
+/** A read whose failure the page says in place, or not at all - never apiJson's toast: a run
+ *  that rolled out of the record between the scan and its read is nothing to shout about. */
+async function quiet   (path        , opts              )                    {
+  try {
+    const r = await api(path, opts);
+    return r.ok ? await r.json()      : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function queueNeedle(raw        )       {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = null;
+  const q = raw.trim();
+  // An emptied box (the field's ×, a select-all delete) is the list again, at once.
+  if (!q) { setNeedle(""); return; }
+  searchTimer = setTimeout(() => { searchTimer = null; setNeedle(q); }, SEARCH_PAUSE_MS);
+}
+
+/** A needle that differs from the one on screen starts over; the same one changes nothing. */
+function setNeedle(q        )       {
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+  if (q !== search.q) startSearch(q);
+}
+
+/** A search from the beginning; "" is the list. Rows open in the old picture close - the new
+ *  one may not hold them. */
+function startSearch(q        )       {
+  search = newSearch(q, search.gen + 1);
+  open = {};
+  armLive();
+  paintList();
+  if (q) void scanRound();
+}
+
+/** One round: batches until ROUND_RUNS more runs are found, the record ends, a batch fails or
+ *  ROUND_ASKS batches went by. Each batch's runs are read and painted as they come, so the
+ *  first results show while the rest of the record is still being read. */
+async function scanRound()                {
+  const s = search;
+  if (!s.q || s.busy || s.complete || s.error) return;
+  s.busy = true;
+  paintList();
+  const want = s.found.length + ROUND_RUNS;
+  for (let asks = 0; asks < ROUND_ASKS && !s.complete && s.found.length < want; asks++) {
+    const fresh = await scanBatch(s);
+    if (s !== search) return; // a newer needle, or the page was left
+    if (!fresh) break;
+    if (fresh.length) {
+      await readFound(s, fresh);
+      if (s !== search) return;
+    }
+    paintList();
+  }
+  s.busy = false;
+  paintList();
+}
+
+/** One batch of the scan: the runs it found for the first time, or null when the scan cannot
+ *  go on (the state says why). */
+async function scanBatch(s             )                           {
+  const body                          = { q: s.q, modules: ["remote"], limit: HIT_LIMIT };
+  if (s.cursors) body.cursors = s.cursors;
+  const j = await quiet                   ("/api/history/query", { method: "POST", body: JSON.stringify(body) });
+  if (s !== search) return null;
+  if (!j) { s.error = tr("remoteRuns.searchFailed"); return null; }
+  // The remote plugin's record is not open (the plugin is stopped): nothing to search, said so.
+  if ((j.skipped || []).includes("remote")) { s.unavailable = true; s.complete = true; return null; }
+  const errs = j.errors || [];
+  if (errs.length) {
+    s.error = tr("remoteRuns.searchStopped", { why: errs.map((e) => { return e.reason; }).join("; ") });
+    return null;
+  }
+  const fresh           = [];
+  for (const x of j.hits || []) {
+    const seen = s.first[x.runId];
+    if (seen) { seen.n++; continue; }
+    s.first[x.runId] = { ofs: x.byteOfs, n: 1 };
+    s.found.push(x.runId);
+    fresh.push(x.runId);
+  }
+  s.complete = !!j.complete;
+  s.cursors = j.next && j.next.remote ? j.next : null;
+  if (!s.complete && !s.cursors) {
+    // Unfinished with no cursor to resume from: asking again would start over at the oldest run.
+    s.error = tr("remoteRuns.searchFailed");
+    return null;
+  }
+  return fresh;
+}
+
+/** Each found run's record row and matched line, a few reads at a time. A row the page already
+ *  holds is not read again. */
+async function readFound(s             , ids          )                {
+  for (let i = 0; i < ids.length; i += READ_AT_ONCE) {
+    await Promise.all(ids.slice(i, i + READ_AT_ONCE).map(async (id)                => {
+      const onPage = runs.find((r) => { return r.runId === id; });
+      const [row, hit] = await Promise.all([
+        onPage ? Promise.resolve(onPage) : quiet                 ("/api/remote/runs/" + id),
+        readHit(s, id),
+      ]);
+      if (s !== search) return;
+      s.records[id] = row && row.runId === id ? row : null;
+      if (hit) s.hits[id] = hit;
+    }));
+    if (s !== search) return;
+  }
+}
+
+/** The line a run's first match is on, read through the record-body route around its offset. */
+async function readHit(s             , id        )                            {
+  const at = s.first[id].ofs;
+  const from = Math.max(0, at - CONTEXT_BYTES);
+  // Room for the needle itself at up to four bytes a character, then the context after it.
+  const max = at - from + s.q.length * 4 + CONTEXT_BYTES;
+  const j = await quiet                                   ("/api/history/remote/records/" + id + "/body?after=" + from + "&max=" + max);
+  return j && !j.gone && j.text ? hitIn(j.text, s.q, from > 0) : null;
+}
+
+/** The scan's own folding (search.rs fold): ASCII letters only, so lengths and offsets agree. */
+function foldAscii(text        )         {
+  return text.replace(/[A-Z]/g, (c) => { return c.toLowerCase(); });
+}
+
+/** The first match of `q` in `text` with the rest of its line on either side: whitespace runs
+ *  read as one space, each side cut to fit one row. `cut` says the text starts part-way into
+ *  the output, so a line reaching its start was cut there too. */
+export function hitIn(text        , q        , cut         )                   {
+  const at = q ? foldAscii(text).indexOf(foldAscii(q)) : -1;
+  if (at < 0) return null;
+  const end = at + q.length;
+  const lineStart = text.lastIndexOf("\n", at - 1) + 1;
+  const lineEnd = text.indexOf("\n", end);
+  const flat = (s        )         => { return s.replace(/\s+/g, " "); };
+  let before = flat(text.slice(lineStart, at)).replace(/^ /, "");
+  if (before.length > LINE_BEFORE) before = "…" + before.slice(before.length - LINE_BEFORE);
+  else if (cut && lineStart === 0 && before) before = "…" + before;
+  let after = flat(text.slice(end, lineEnd < 0 ? text.length : lineEnd)).replace(/ $/, "");
+  if (after.length > LINE_AFTER) after = after.slice(0, LINE_AFTER) + "…";
+  return { before, match: text.slice(at, end), after };
+}
+
+/** The found runs as rows, newest first: the target filter applies, a run the record no longer
+ *  holds drops out, and nothing folds - every row is a match of its own. */
+function searchItems()                 {
+  return search.found.slice().sort((a, b) => { return b - a; })
+    .map((id) => { return search.records[id]; })
+    .filter((r)                       => { return !!r && (!target || runTarget(r) === target); })
+    .map((r) => { return { ...runItem(r, false), same: undefined, hit: search.hits[r.runId] }; });
+}
+
+/** What the search is doing, above its rows. */
+function searchStatusNode(shown        )         {
+  const s = search;
+  if (s.unavailable) return note(tr("remoteRuns.searchUnavailable"));
+  if (s.error) return note(s.error, { err: true });
+  if (s.busy) {
+    return note(shown ? trn(shown, "remoteRuns.searchingN.one", "remoteRuns.searchingN.other") : tr("remoteRuns.searching"), { busy: true });
+  }
+  if (s.complete) {
+    if (shown) return note(trn(shown, "remoteRuns.foundN.one", "remoteRuns.foundN.other", { q: s.q }));
+    return note(target ? tr("remoteRuns.noMatchTarget", { q: s.q }) : tr("remoteRuns.noMatch", { q: s.q }));
+  }
+  // Paused with the newer part of the record unread - never "no matches" (§host.history).
+  return note(shown ? trn(shown, "remoteRuns.pausedN.one", "remoteRuns.pausedN.other") : tr("remoteRuns.pausedNone"));
+}
+
+/** The results in the list's place: the status, the rows, then Keep searching or Search again.
+ *  Three holders, so a batch that found nothing new repaints the status line alone and an open
+ *  row is left as it is. */
+function paintSearch(region             )       {
+  let status = $("rrSearchStatus");
+  let list = $("rrSearchList");
+  let foot = $("rrSearchFoot");
+  if (!status || !list || !foot) {
+    status = h("div", { id: "rrSearchStatus", aria: { live: "polite" } });
+    list = h("div", { id: "rrSearchList" });
+    foot = h("div", { id: "rrSearchFoot" });
+    fill(region, status, list, foot);
+    searchPainted = "";
+  }
+  const items = searchItems();
+  fill(status, searchStatusNode(items.length));
+  const sig = search.gen + "|" + target + "|" + items.map((it) => { return it.id + (it.hit ? "+" : ""); }).join(",");
+  if (sig !== searchPainted) {
+    searchPainted = sig;
+    const openIds = new Set(items.filter((it) => { return !!open[Number(it.id)]; }).map((it) => { return it.id; }));
+    fill(list, items.length ? timeline(items, { open: openIds, body: (it) => { return bodyNode(runOf(Number(it.id))); } }) : null);
+  }
+  const s = search;
+  fill(foot, s.error
+    ? btn(tr("remoteRuns.searchAgain"), { id: "rrSearchAgain" })
+    : !s.complete && !s.busy ? btn(tr("remoteRuns.keepSearching"), { id: "rrSearchMore" }) : null);
 }

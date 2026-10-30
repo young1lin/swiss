@@ -17,13 +17,15 @@
                                                   
                                                    
 import { $, toast } from "./util.js";
-import { h } from "./h.js";
+import { fill, h } from "./h.js";
+import { dbShellTokens } from "./data-filters.js";
 import { renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
 import { btn } from "./ui/button.js";
 import { hint } from "./ui/form.js";
+import { tokenSpans } from "./ui/json-view.js";
 import { closeSheet, sheet, showSheet } from "./ui/sheet.js";
 
 /* --- cell editor dialog ------------------------------------------------------------------------- */
@@ -49,6 +51,16 @@ function dbCellJsonLike(s         )          {
 /** Try pretty-printing; on invalid JSON return null (the editor stays in plain-text mode). */
 function dbCellPretty(s        )                {
   try { return JSON.stringify(JSON.parse(String(s)), null, 2); } catch (e) { return null; }
+}
+
+/** Keep the editor's highlighted layer under its textarea: same text, same scroll. A JSON-shaped
+ *  text reads through the mongo console's tokenizer (JSON is a subset of the shell's syntax), so
+ *  a half-typed value still colours; any other text stays one plain run. */
+function dbCellPaint(ta                     , hl             )       {
+  const v = ta.value;
+  fill(hl, tokenSpans(dbCellJsonLike(v) ? dbShellTokens(v) : [["", v]]).nodes, "\n");
+  hl.scrollTop = ta.scrollTop;
+  hl.scrollLeft = ta.scrollLeft;
 }
 
 function dbOpenCellEditor(kind                     , key               , i        , column        , meta                   )       {
@@ -88,6 +100,11 @@ function dbOpenCellEditor(kind                     , key               , i      
   const colMeta = d.data?.columns.find((c             )          => { return c.name === column; }) || {}                         ;
   const isBool = /bool/i.test(colMeta.dataType || "");
   dbCellEdit = { kind: kind, key: key, i: i, column: column, meta: meta };
+  // The console's layered editor (SPEC §panel.code): a transparent textarea over the
+  // highlighted <pre>, here in flow so the textarea's own height and resize size the box.
+  const hl = h("pre", { class: "db-sql-hl db-sql-face", id: "dbCellHl", aria: { hidden: "true" } });
+  const ta = h("textarea", { class: "db-sql-face" + (pretty ? " json" : ""), id: "dbCellText", spellcheck: false });
+  const box = h("div", { class: "db-sql-wrap" }, hl, ta);
 
   // The library's sheet (SPEC §panel.pages): showSheet unhides the host before it paints. The title is
   // the column; the sub is where it lives, a value you would copy. The per-open wiring below
@@ -103,26 +120,28 @@ function dbOpenCellEditor(kind                     , key               , i      
         btn("", { id: "dbCellNull" }),
         pretty ? btn(tr("dataCell.formatJson"), { id: "dbCellJson" }) : null,
         hint(tr("dataCell.savesLocalBufferCommit"))),
-      h("textarea", { id: "dbCellText", spellcheck: false }),
+      box,
     ],
     foot: [btn(tr("dataCell.cancel"), { id: "dbCellCancel" }), btn(tr("dataCell.saveBuffer"), { kind: "primary", id: "dbCellSave" })],
   }));
-  const ta = $                     ("dbCellText");
   ta.value = pretty || text;
   let nullState = isNull;
   function paintNull()       {
     // Never disable the textarea: a NULL cell once opened a dead editor ("cannot edit").
-    // NULL is a visible overlay state that typing clears on its own.
+    // NULL is a visible overlay state that typing clears on its own. The text is the <pre>
+    // under a transparent textarea, so the whole box dims.
     ta.disabled = false;
-    ta.style.opacity = nullState ? ".5" : "1";
+    box.style.opacity = nullState ? ".5" : "1";
     ta.placeholder = nullState ? tr("dataCell.nullPlaceholder") : "";
     const b = $("dbCellNull");
     b.textContent = nullState ? tr("dataCell.nullSet") : tr("dataCell.setNull");
   }
   // Typing while NULL is set means replacing the NULL — clear the flag.
   ta.addEventListener("input", () => {
+    dbCellPaint(ta, hl);
     if (nullState) { nullState = false; paintNull(); }
   });
+  ta.onscroll = ()       => { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; };
   $("dbCellNull").onclick = () => {
     nullState = !nullState;
     paintNull();
@@ -136,6 +155,7 @@ function dbOpenCellEditor(kind                     , key               , i      
       boolState = !boolState;
       nullState = false;
       ta.value = boolState ? "1" : "0";
+      dbCellPaint(ta, hl);
       paintBool(); paintNull();
     };
     paintBool();
@@ -143,10 +163,11 @@ function dbOpenCellEditor(kind                     , key               , i      
   if (pretty) {
     $("dbCellJson").onclick = () => {
       const p                = dbCellPretty(ta.value);
-      if (p != null) { ta.value = p; ta.classList.add("json"); }
+      if (p != null) { ta.value = p; ta.classList.add("json"); dbCellPaint(ta, hl); }
       else toast(tr("dataCell.validJsonLeft"), true);
     };
   }
+  dbCellPaint(ta, hl);
   paintNull();
   $("dbCellCancel").onclick = dbCloseCellEditor;
   $("dbCellSave").onclick = ()       => {
