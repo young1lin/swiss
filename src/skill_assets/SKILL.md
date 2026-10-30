@@ -40,7 +40,8 @@ for remote commands, file transfer, and run history.
 4. Extract `swiss.exe` or `swiss` to the approved, stable location on PATH, not an
    ephemeral npx or agent cache. Keep the accompanying license and notice files.
 5. Check `swiss --version` and `swiss status`. Run `swiss skill install` to install
-   the embedded `swiss` and `swiss-remote` skills for supported local AI clients.
+   the embedded `swiss`, `swiss-remote` and `swiss-memory` skills for supported local AI
+   clients.
    Re-run it after an update so the skills match the binary.
 
 macOS packages are experimental: the default master-key source is not implemented, so a

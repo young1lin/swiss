@@ -89,18 +89,31 @@ functions: `sudo` needs NOPASSWD or `-n`, an interactive-only shorthand like `ll
 spelled out (`ls -alF`), and tools that assume a terminal print plain output - `ls` lists bare
 names one per line, so sizes and permissions need `ls -la`. Never wait for an interactive prompt.
 
+`sudo` goes on the one command that needs root, never on the interpreter. `sudo -n python3 -` or
+`sudo -n bash -s` runs every line of the script as root - its file writes, its installs, its
+mistakes - when one `docker` or `systemctl` call needed it: write `sudo -n docker ...` inside the
+script and run the script itself unprivileged. sudo also resets the environment, so an `--env`
+value never reaches the command under it unless named: `sudo -n --preserve-env=NAME ...`.
+
 Credentials never go into a command as text. Store the value once in the vault (the panel's
 Secrets page) and reference it: `${secret://name}` in an argv word, an `--env` value,
 `--cwd` or the `--stdin-file` text is replaced by the stored value on the way out, and `${secret://name:default}` uses
 `default` when the vault has no such name. Records, `swiss run status` and the panel keep the
 reference as typed; output that echoes the value comes back as `••••••••`. A missing name
-without a default fails the run before anything is sent. Prefer `--env` (argv is visible in the
-remote `ps`), and single-quote the reference in PowerShell and bash alike:
+without a default fails the run before anything is sent. Prefer `--env` (an argv word shows in
+the remote `ps` for the command's whole life), and single-quote the reference in PowerShell and
+bash alike:
 
 ```text
 swiss remote exec test --env 'REDISCLI_AUTH=${secret://redis-password}' -- redis-cli ping
 swiss remote exec test --env 'DB_USER=${secret://db-user:readonly}' -- ./report.sh
+swiss remote exec test --env 'REDISCLI_AUTH=${secret://redis-password}' -- sudo -n --preserve-env=REDISCLI_AUTH docker exec -e REDISCLI_AUTH redis redis-cli ping
 ```
+
+A credential typed into an argv word or `--cwd` as text - `REDISCLI_AUTH=<value>` inside a
+`bash -c` script, `--password <value>`, `redis-cli -a <value>`, a URL's `:<value>@` - is refused
+before anything is sent, and the error names the word, never the value. A password read from a
+remote config file is no exception: put it in the vault, then reference it.
 
 `${UPPER}` is not expanded here and argv is not run through a shell. When the remote shell
 should expand its own variables, or the command needs pipes, redirects or several steps, send a
@@ -212,9 +225,13 @@ script or SQL through the CLI's `--stdin-file`.
 ## Memory: per-target notes
 
 Facts you re-derive every session belong in one file per target, shared by every AI client on
-this machine: `~/.swiss/remote-notes/<alias>.md` (under `$SWISS_HOME` when the home is
-overridden). Read it before discovery when it exists. Notes live in the gateway home, never in
-the skill directory - `swiss skill install` replaces that wholesale on every upgrade.
+this machine. Go through the CLI, never a file tool - it resolves the home itself (a glob
+miss once read as "no notes" and the memory went unused): `swiss remote notes` lists every
+target that has one, `swiss remote notes <alias>` prints it, and `--write`/`--append` (body on
+stdin or `--file`) set or extend it. The verbs are flags, so a target named `write` stays
+readable. The files are `~/.swiss/remote-notes/<alias>.md` (under `$SWISS_HOME` when the
+home is overridden) when a file tool is truly all you have. Notes live in the gateway home,
+never in the skill directory - `swiss skill install` replaces that wholesale on every upgrade.
 
 - Belongs: command lines that worked (build/test/deploy), service and log locations, ports,
   the remote `$HOME`, a project-to-path map ("proj X deploys to /srv/x").

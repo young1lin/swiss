@@ -23,7 +23,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 BOOT="$ROOT/.agents/skills/swiss-live-verify/scripts/live-check.sh"
-SPEC="$ROOT/docs/SPEC.md"
+SPEC="$ROOT/docs/spec/0001-product.md"
 PORT=19998
 TEST_HOME="${SWISS_TEST_HOME:-$HOME/.swiss-test-home}"
 EXE="$ROOT/target-test/release/swiss"
@@ -53,10 +53,10 @@ row="| $date_str | Rust $hash | real-state snapshot on 19998 | $(field gatewayMb
 SWISS_HOME="$TEST_HOME" SWISS_PORT="$PORT" "$EXE" status 2>&1 | grep -Ei 'memory|build|running|MB' >"$TEST_HOME/status.rows" || true
 
 echo ''
-echo '=== ready-to-append row for the SPEC §product.memory table (docs/SPEC.md; never overwrite a dated row) ==='
+echo '=== ready-to-append row for the SPEC §product.memory table (docs/spec/0001-product.md; never overwrite a dated row) ==='
 echo "$row"
 # the last dated row of the table under the section heading, nothing else in the spec
-prev="$(awk '/^### [^ ]*product\.memory/ {f=1; next} f && /^#/ {exit} f && /^\| 20/ {l=$0} END {print l}' "$SPEC")"
+prev="$(awk '/^## [^ ]*product\.memory/ {f=1; next} f && /^#/ {exit} f && /^\| 20/ {l=$0} END {print l}' "$SPEC")"
 if [ -n "$prev" ]; then echo "previous record: $prev"; fi
 echo ''
 echo '--- swiss status (memory rows) ---'

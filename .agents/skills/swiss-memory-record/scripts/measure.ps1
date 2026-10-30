@@ -30,7 +30,7 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path
 $Boot = Join-Path $Root '.agents\skills\swiss-live-verify\scripts\live-check.ps1'
 $TestInstance = Join-Path $Root 'scripts\test-instance.ps1'
 $Exe = Join-Path $Root 'target-test\release\swiss.exe'
-$Spec = Join-Path $Root 'docs\SPEC.md'
+$Spec = Join-Path $Root 'docs\spec\0001-product.md'
 $Port = 19998
 
 # Boot via the live-verify helper (it owns build, stale-port guard, token pin, hash proof).
@@ -57,12 +57,12 @@ $private = "$($mem.heapUsedMb)/$($mem.heapTotalMb)"
 $row = "| $date | Rust $hash | real-state snapshot on 19998 | $($mem.gatewayMb) MB | private ~$private MB; children $($mem.childrenMb) MB ($($mem.processCount) proc) |"
 
 Write-Host ''
-Write-Host '=== ready-to-append row for the SPEC product.memory table (docs/SPEC.md; never overwrite a dated row) ==='
+Write-Host '=== ready-to-append row for the SPEC product.memory table (docs/spec/0001-product.md; never overwrite a dated row) ==='
 Write-Host $row
 # the last dated row of the table under the section heading, nothing else in the spec
 $inSection = $false; $prev = $null
 foreach ($l in Get-Content -LiteralPath $Spec -Encoding utf8) {
-    if ($l -match '^### \S*product\.memory') { $inSection = $true; continue }
+    if ($l -match '^## \S*product\.memory') { $inSection = $true; continue }
     if ($inSection -and $l -match '^#') { break }
     if ($inSection -and $l -match '^\| 20') { $prev = $l }
 }
