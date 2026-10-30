@@ -59,11 +59,12 @@ describe("admin panel assets", () => {
     // folder, file), the find-bar pass (i-chevron-up, the last escape-sequence glyph site),
     // redacted() (i-eye, i-eye-off: the masked address's reveal), the redis type glyphs (six
     // symbols and their two-line note: a key row leads with its type), the code colour scheme (SPEC §panel.code: its
-    // four-line pre-paint resolver, i-palette and the header button) — still small, still no markup. The Apache-2.0 banner is stripped
+    // four-line pre-paint resolver, i-palette and the header button), the memory page (SPEC §memory 11.2: i-brain, its glyph, and
+    // i-minus, the graph's zoom out), the llm plugin (SPEC §llm: i-sparkles, its seat's glyph), the chat's statistics (SPEC §panel.ui: i-gauge, the activity pill's glyph) — still small, still no markup. The Apache-2.0 banner is stripped
     // before counting: it is a fixed licence cost, not shell content, and it must never buy
     // anyone headroom.
     const shellBody = shell.replace(/^<!--[\s\S]*?-->\s*/, "");
-    expect(shellBody.split("\n").length).toBeLessThan(178);
+    expect(shellBody.split("\n").length).toBeLessThan(181);
   });
 
   it("links the whole module graph: every import resolves to a file that exports the name", () => {
@@ -184,10 +185,11 @@ describe("admin panel assets", () => {
   // broke mid-statement — every static check passed, and the dashboard rendered blank. The only
   // check that catches that class is EXECUTION. Each module is imported under Node with DOM stubs;
   // a syntax error, a missing export used at load, or an evaluation-time throw fails here.
-  // 20s budget: this test imports and evaluates all ~69 emitted modules; alone it takes
-  // ~4s, but under the full 66-file suite the collectors run in parallel and the default 5s
-  // has been exceeded twice on a busy machine (5.01s) — a load flake, not a module fault.
-  it("boots: every module parses and evaluates (DOM-stubbed, no network)", { timeout: 20000 }, async () => {
+  // 60s budget: this test imports and evaluates all ~69 emitted modules; alone it takes
+  // ~3s, but the collectors run in parallel under the full 124-file suite and 20s proved
+  // too tight twice more (2026-10-10, the isolate spawn storm) — a load flake, not a module
+  // fault. Assertions untouched; the budget only forgives wall clock, never a wrong answer.
+  it("boots: every module parses and evaluates (DOM-stubbed, no network)", { timeout: 60000 }, async () => {
     const el = (): Record<string, unknown> => {
       const node: Record<string, unknown> = {
         style: {}, dataset: {}, hidden: false, disabled: false, checked: false, value: "",

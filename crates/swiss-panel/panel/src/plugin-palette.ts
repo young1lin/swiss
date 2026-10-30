@@ -33,9 +33,23 @@ import { el, iconNode } from "./util.js";
 import { fill } from "./h.js";
 
 const PIN_KEY = "swiss.rail.pinned";
-/* How many seats the rail shows before the "..." seat. The palette is the real list; the
- * rail is the shortlist, so the limit is about the rail's height, not the host's capacity. */
-const RAIL_LIMIT = 7;
+/* The pin store's shape, versioned. v1 was a bare array of ids; v2 wraps them so a
+ * list's ERA is knowable on read - the difference the fifteen-seat default needed:
+ * a v1 list was saved when the default rail seated seven, so it is a snapshot of
+ * THAT default (or a hand-edit of it), and honoring it forever hides every module
+ * added since from exactly the browsers that lived through the raise. The owner
+ * called that outcome wrong: the raise must reach existing screens, not only fresh
+ * ones. So a v1 list is discarded once - the rail falls back to today's default,
+ * every served module up to the cap - and the deliberate unpins of the seven-era
+ * are the accepted price; from v2 on a saved list is durable (an emptied list
+ * stays empty), because only this UI writes it. */
+const PIN_STORE_VERSION = 2;
+
+/* How many seats the rail shows before the "..." seat. The default seats EVERY served module
+ * up to this cap - modules arrive faster than anyone curates them - and the cap binds saved
+ * pins too, so the rail stays a shortlist, never a second sidebar. A full rail scrolls
+ * (.rail-nav, base.css), so the cap is curation, not a layout necessity. */
+const RAIL_LIMIT = 15;
 
 /* Built-in plugins get the sprite glyph they already own. The remote plugin reuses the mark
  * its MCP type chip already wears (i-remote), the way terminal and plug serve both their seat
@@ -44,7 +58,7 @@ const RAIL_LIMIT = 7;
  * broken glyph, one seat in a row of drawings that is suddenly type. This is panel-side
  * chrome data, deliberately NOT a descriptor field: adding icon metadata to the wire would
  * tax every plugin author for a panel nicety. */
-const GLYPHS: Record<string, string> = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", remote: "remote", host: "gear" };
+const GLYPHS: Record<string, string> = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", remote: "remote", host: "gear", memory: "brain", llm: "sparkles", process: "activity" };
 const DEFAULT_GLYPH = "puzzle";
 
 function pluginGlyph(group: PaletteGroup | PageGroup): string | null { return GLYPHS[group.id] || null; }
@@ -55,31 +69,48 @@ function glyphNode(group: PaletteGroup | PageGroup): SVGSVGElement {
 
 /* --- pin state (localStorage) ------------------------------------------------------------------- */
 
-function loadPins() {
+function loadPins(): string[] | null {
   try {
     const v = JSON.parse(localStorage.getItem(PIN_KEY) as string);
-    return Array.isArray(v) ? v.filter((x) => { return typeof x === "string"; }) : null;
+    // Only v2 counts: an object with the version and a string array. A bare array
+    // is a v1 legacy list - the pre-fifteen era's frozen default - and reads as
+    // never-set, which seats today's default. Anything else is the same fall.
+    if (v && typeof v === "object" && !Array.isArray(v)
+      && v.v === PIN_STORE_VERSION && Array.isArray(v.ids)) {
+      return (v.ids as unknown[]).filter((x): x is string => { return typeof x === "string"; });
+    }
+    return null;
   } catch (e) { return null; }
 }
 function savePins(ids: string[]): void {
-  try { localStorage.setItem(PIN_KEY, JSON.stringify(ids)); } catch (e) { /* full or blocked */ }
+  try { localStorage.setItem(PIN_KEY, JSON.stringify({ v: PIN_STORE_VERSION, ids })); } catch (e) { /* full or blocked */ }
 }
 
 /* --- the pure half ------------------------------------------------------------------------------- */
 
-/** The default shortlist: the first RAIL_LIMIT groups, in group order - the order the host
- *  already decided. Pure so the default is pinnable by a test. */
+/** The default shortlist: every group the host serves, up to the rail's seats, in group
+ *  order - the order the host already decided. Pure so the default is pinnable by a test. */
 function defaultPinIds(groups: { id: string }[]): string[] {
   return groups.slice(0, RAIL_LIMIT).map((g) => { return g.id; });
 }
 
+/** The star offers one more seat only while the rail has one free: a list at the cap cannot
+ *  grow, so a plugin can never be starred without a seat to show for it. Pure so the
+ *  palette's refused state is pinnable by a test. */
+function pinFull(pins: string[]): boolean {
+  return pins.length >= RAIL_LIMIT;
+}
+
 /** The rail's slice of the groups: the pinned ones, in GROUP order (pinning picks a seat,
  *  it does not reorder the rail). `pins` is optional so tests can pass an explicit list;
- *  without it the store is read - null (never set / unreadable) means the default. */
+ *  without it the store is read - null (never set / unreadable / a discarded v1 list)
+ *  means the default. The cap binds the saved branch too, in group order - a backstop
+ *  for hand-edited or stale storage; the star's own guard keeps every honest list
+ *  under it. */
 function pinnedGroups(groups: PageGroup[], pins?: string[] | null): PageGroup[] {
   const p = pins === undefined ? loadPins() : pins;
-  if (!p) return groups.slice(0, RAIL_LIMIT);
-  return groups.filter((g) => { return p?.includes(g.id); });
+  if (p === null) return groups.slice(0, RAIL_LIMIT);
+  return groups.filter((g) => { return p.includes(g.id); }).slice(0, RAIL_LIMIT);
 }
 
 /** The palette's sections given a query: Pinned first, then All plugins, each filtered by
@@ -108,7 +139,10 @@ function paletteRows(groups: PaletteGroup[], pins: string[], query: string): Pal
  *  closes, and focus returns to the "..." seat so the keyboard path does not dead-end. */
 function openPluginPalette(groups: PaletteGroup[], go: (group: PaletteGroup) => void | Promise<void>, onchange?: () => void): void {
   closePluginPalette();
-  let pins = loadPins() || defaultPinIds(groups);
+  // A stored list - even a deliberately emptied one - is the user's choice verbatim; only a
+  // missing or unreadable key falls back to the default.
+  const saved = loadPins();
+  let pins = saved === null ? defaultPinIds(groups) : saved;
 
   const back = el("div", "palette-back");
   const card = el("div", "palette");
@@ -140,12 +174,16 @@ function openPluginPalette(groups: PaletteGroup[], go: (group: PaletteGroup) => 
 
   function pinButton(g: PaletteGroup): HTMLButtonElement {
     const pinned = pins.includes(g.id);
+    // A star beyond the cap would promise a seat that does not exist, so it is refused -
+    // disabled with the reason in the title - rather than silently seating nobody.
+    const full = !pinned && pinFull(pins);
     const p = el("button", "pal-pin");
     p.type = "button";
-    p.appendChild(iconNode("star", tr(pinned ? "pluginPalette.unpinLabel" : "pluginPalette.pinLabel", { label: tr(wireLabel(g.label)) })));
+    p.appendChild(iconNode("star", tr(full ? "pluginPalette.railFull" : pinned ? "pluginPalette.unpinLabel" : "pluginPalette.pinLabel", { label: tr(wireLabel(g.label)) })));
     p.className = "pal-pin" + (pinned ? " on" : "");
     p.setAttribute("aria-pressed", String(pinned));
-    p.title = tr(pinned ? "pluginPalette.removeRail" : "pluginPalette.pinRail");
+    p.disabled = full;
+    p.title = full ? tr("pluginPalette.railFull") : tr(pinned ? "pluginPalette.removeRail" : "pluginPalette.pinRail");
     p.onclick = (ev) => {
       ev.stopPropagation();
       pins = pins.includes(g.id) ? pins.filter((x) => { return x !== g.id; }) : pins.concat([g.id]);
@@ -207,4 +245,4 @@ function closePluginPalette(): void {
   if (more && typeof more.focus === "function") more.focus();
 }
 
-export { closePluginPalette, defaultPinIds, glyphNode, openPluginPalette, paletteRows, pinnedGroups, pluginGlyph, RAIL_LIMIT };
+export { closePluginPalette, defaultPinIds, glyphNode, openPluginPalette, paletteRows, pinFull, pinnedGroups, pluginGlyph, RAIL_LIMIT };

@@ -54,6 +54,7 @@ describe("SPEC §mcp.panel: typeTagNode — glyph when mapped, word when not", (
       uvx: "#i-package", npx: "#i-package", docker: "#i-docker", mariadb: "#i-mariadb",
       redis: "#i-redis", pg: "#i-pg", postgres: "#i-pg", mongo: "#i-mongo", http: "#i-globe", rest: "#i-plug",
       figma: "#i-figma", "zai-vision": "#i-zai",
+      memory: "#i-brain",
     };
     for (const tag of Object.keys(marks)) expect(hrefOf(util.typeTagNode(tag)), tag).toBe(marks[tag]);
   });

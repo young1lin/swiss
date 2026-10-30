@@ -160,6 +160,13 @@ function countBare(rel: string): number {
       /* Direct property writes are the third sink class (textContent = "Added " + x):
        * .value stays out - form state, not copy. */
       if (carriesBare(node.right)) n++;
+    } else if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      && ts.isPropertyAccessExpression(node.left) && ts.isIdentifier(node.left.name)
+      && ["error", "hint", "warning"].includes(node.left.name.text)) {
+      /* State-object message writes (deep.error = "request failed") are VISIBLE copy
+       * even though no DOM node is touched - the round-1 review found exactly this
+       * position blind: the deep-search failure strings sat here unwrapped. */
+      if (carriesBare(node.right)) n++;
     }
     ts.forEachChild(node, visit);
   };

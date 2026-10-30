@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { readFileSync } from "node:fs";
+import { cpus } from "node:os";
 import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,12 +40,31 @@ const vendorDir = resolve(fileURLToPath(new URL("../src/admin_assets/js/vendor",
    imported directly. */
 const srcDir = resolve(fileURLToPath(new URL("./src", import.meta.url)));
 
+/* A vendored upstream ES module keeps its sourceMappingURL comment (byte-identical, SPEC
+   §panel.vendor) but not the .map it names. Loaded by vite's own fs path, each run would warn
+   "Failed to load source map"; loaded here, verbatim, vite takes the file as it is. */
+const vendorVerbatim = {
+  name: "vendor-verbatim",
+  load(id: string): string | null {
+    // vite ids are slash paths on every platform.
+    return /\/admin_assets\/js\/vendor\/.*\.mjs$/.test(id) ? readFileSync(id, "utf8") : null;
+  },
+};
+
 export default defineConfig({
+  plugins: [vendorVerbatim],
   resolve: {
     alias: [
       { find: /(^|\/)\.\.?\/vendor\//, replacement: vendorDir + "/" },
       { find: /^\/admin\/js\//, replacement: srcDir + "/" },
     ],
   },
-  test: { environment: "node", include: ["test/**/*.test.ts"] },
+  // One worker per test file pegs every core of a small machine (the suite is over a
+  // hundred files): cap workers at half the cores, never below two. A slower run is
+  // free; a starved deadline is a false failure.
+  test: {
+    environment: "node",
+    include: ["test/**/*.test.ts"],
+    maxWorkers: Math.max(2, Math.floor(cpus().length / 2)),
+  },
 });

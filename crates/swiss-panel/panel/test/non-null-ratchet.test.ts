@@ -63,7 +63,7 @@ const FROZEN: Record<string, number> = {
   "data-cell.ts": 6,
   "data-edit.ts": 5,
   "data-grid.ts": 17,
-  "data-sql.ts": 15,
+  "data-sql.ts": 11,
   "data-view.ts": 8,
   "data-csv.ts": 8,
 };
