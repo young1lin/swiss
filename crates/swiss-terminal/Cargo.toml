@@ -20,6 +20,13 @@ tokio = { version = "1", default-features = false, features = ["rt", "macros", "
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 thiserror = "2"
+# The body-reader trait for the cross-module history seat is async-trait shaped, the
+# same 0.1 swiss-remote links for its reader.
+async-trait = "0.1"
+# The module's own history database (SPEC §terminal.recording, ADR-035): the same sqlx 0.9
+# the other module-history owners (swiss-mcp, swiss-remote) already link, sqlite only —
+# no new transitive crates for the workspace, no runtime beyond tokio's.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 
 [dev-dependencies]
 # test-utils pins the scratch SWISS_HOME for this crate's test binary, so a recording

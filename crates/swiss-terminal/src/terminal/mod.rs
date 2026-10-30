@@ -30,13 +30,14 @@
 //! path and no idea which kind of shell it is pumping.
 
 pub mod config;
+pub mod history;
 pub mod local;
 pub mod recording;
 pub mod session;
 pub mod tickets;
 
 pub use config::TerminalConfig;
-pub use local::{LocalShell, LocalShells};
+pub use local::{LocalChildWiring, LocalShell, LocalShells, SessionStopBuilder};
 pub use session::{
     Attachment, ClientFrame, CloseReason, LocalView, Opened, RemoteView, SessionView, TargetsView,
     TerminalError, TerminalSessions,

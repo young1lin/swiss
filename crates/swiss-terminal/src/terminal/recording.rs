@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-//! The asciicast v2 recorder (SPEC §terminal.recording).
+//! The asciicast v2 recorder (SPEC §terminal.recording, ADR-035).
 //!
-//! One file per session at `~/.swiss/terminal/<sessionId>.cast`, one JSON value per
-//! line: a header object, then `[elapsed, "o", "text"]` for every chunk the shell wrote.
-//! That is the whole format, which is the point of choosing it — `asciinema play` and
-//! every web player already read it, so the gateway ships no player of its own and the
-//! recordings outlive it.
+//! The lines ARE the storage: a header object, then `[elapsed, "o", "text"]` for every
+//! chunk the shell wrote, buffered and flushed to the terminal history as sealed 64 KiB
+//! parts. `asciinema play` and every web player still read the format — reconstructed
+//! byte-faithfully by the export route — so the gateway ships no player of its own and
+//! the recordings still outlive it.
 //!
 //! ## Three decisions worth stating
 //!
@@ -44,13 +44,11 @@
 //! screen. The tail of an incomplete sequence is held back and prepended to the next
 //! chunk; only a genuinely invalid byte becomes U+FFFD.
 
-use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tokio::time::Instant;
 
-use swiss_core::platform::{chmod_private, mkdir_private, private_file_mode};
+use super::history::{TerminalHistory, PART_BYTES};
 
 /// SPEC §terminal.recording suggests 8 MB. A constant rather than config, like the catch-up buffer:
 /// it is a line in the memory and disk budget (SPEC §terminal.budget), not a preference.
@@ -63,59 +61,75 @@ pub const RECORDING_TERM: &str = "xterm-256color";
 const MAX_PENDING: usize = 3;
 
 /// An open recording. One per session, owned by that session's driver — which is also
-/// the only writer, so a line append needs no lock and no temp file.
+/// the only writer, so a part append needs no lock and no temp file.
 pub struct Recorder {
-    file: File,
-    path: PathBuf,
+    history: Arc<TerminalHistory>,
+    uid: i64,
+    sid: String,
     started: Instant,
+    /// The plaintext bytes already handed to the store (flushed parts) plus the buffer.
     written: u64,
-    /// Set once the cap has been hit and the marker written. The session keeps running;
-    /// only the recording ends.
+    /// The next part ordinal the store will take.
+    part: i64,
+    /// Event lines accumulated since the last flush; a flush at 64 KiB keeps the writer
+    /// queue seeing parts, not PTY reads.
+    buffer: Vec<u8>,
     stopped: bool,
+    /// Set once the store itself refused (over-share, queue bound): the recording says
+    /// so in-band and stops, exactly like the cap — the session keeps running.
+    refused: bool,
+    /// Set once SOMEONE already stamped the session row in-band (the cap, a store
+    /// refusal): finish()'s own trailing stamp must not overwrite it. The queue is
+    /// FIFO and the stamp is a whole-row UPDATE, so the last writer wins — an
+    /// unconditional trailing stamp would flip capped back to 0 and replace the
+    /// cap/refusal reason with the exit reason.
+    finalized: bool,
     /// The tail of an incomplete UTF-8 sequence from the previous chunk.
     pending: Vec<u8>,
 }
 
 impl Recorder {
-    /// Create `<dir>/<id>.cast` and write the header. The directory is created 0700 and
-    /// the file 0600: these files hold real session output.
-    pub fn create(dir: &Path, id: &str, cols: u16, rows: u16) -> std::io::Result<Recorder> {
-        mkdir_private(dir);
-        let path = dir.join(format!("{id}.cast"));
-        let mut options = OpenOptions::new();
-        options.create(true).truncate(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(private_file_mode());
-        }
-        let mut file = options.open(&path)?;
-        chmod_private(&path, private_file_mode());
-
-        let header = serde_json::json!({
-            "version": 2,
-            "width": cols,
-            "height": rows,
-            // Wall-clock seconds, as the format wants; every event time after this is
-            // relative and comes from the monotonic clock instead, so a mid-session NTP
-            // step cannot make a recording play backwards.
-            "timestamp": swiss_core::util::now_ms() / 1000,
-            "env": { "TERM": RECORDING_TERM },
-        });
-        let line = format!("{header}\n");
-        file.write_all(line.as_bytes())?;
-        Ok(Recorder {
-            file,
-            path,
+    /// Register the session's index row with the store and start its first part buffer.
+    /// The header the export reconstructs carries the geometry the session opened at;
+    /// every event time after it is relative and comes from the monotonic clock, so a
+    /// mid-session NTP step cannot make a recording play backwards.
+    pub fn create(
+        history: &Arc<TerminalHistory>,
+        uid: i64,
+        id: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Recorder {
+        let begin = history.begin(uid, id, cols, rows, RECORDING_TERM);
+        let mut recorder = Recorder {
+            history: Arc::clone(history),
+            uid,
+            sid: id.to_string(),
             started: Instant::now(),
-            written: line.len() as u64,
+            written: 0,
+            part: 0,
+            buffer: Vec::with_capacity(PART_BYTES),
             stopped: false,
+            refused: false,
+            finalized: false,
             pending: Vec::new(),
-        })
+        };
+        if begin.is_err() {
+            // The index row never landed: the recording does not exist, and every
+            // later part would write against no session row — invisible to the
+            // list, the export and the sweep forever. The recording never starts;
+            // the admission site already logged the why.
+            recorder.refused = true;
+            recorder.stopped = true;
+            recorder.finalized = true;
+        }
+        recorder
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    /// The export URL of this recording — the session list's `recording` field. The
+    /// value exists the moment the recording does, before any part is flushed.
+    pub fn export_url(&self) -> String {
+        format!("/api/terminal/recordings/{}/cast", self.sid)
     }
 
     pub fn bytes_written(&self) -> u64 {
@@ -156,11 +170,29 @@ impl Recorder {
         let marker = format!("\r\n[gateway] session ended: {reason}\r\n");
         self.event(&marker);
         self.stopped = true;
-        let _ = self.file.flush();
+        self.flush_part();
+        // The cap or a store refusal may have stamped the row already DURING the
+        // events above: their stamp (capped=1, their reason) is the truth, and the
+        // FIFO queue would let this trailing UPDATE overwrite it — so it only runs
+        // when nobody finalized first.
+        if !self.finalized && self.history.finish(self.uid, reason, false).is_err() {
+            // The finish stamp was refused on admission: the row would look live
+            // forever (and never sweep). The admission site already logged the why;
+            // this names WHICH recording.
+            swiss_core::log::warn(
+                "recording finish stamp refused by the history store",
+                Some(serde_json::json!({ "uid": self.uid })),
+            );
+        }
     }
 
-    /// Append one `[elapsed, "o", text]` line, or stop at the cap.
+    /// Append one `[elapsed, "o", text]` line, or stop at the cap. The stopped guard
+    /// matters in finish(): the pending-flush there can trip the cap, and without the
+    /// guard finish would write a SECOND cap marker and stamp the session un-capped.
     fn event(&mut self, text: &str) {
+        if self.stopped {
+            return;
+        }
         let line = format!(
             "{}\n",
             serde_json::json!([self.started.elapsed().as_secs_f64(), "o", text])
@@ -169,8 +201,61 @@ impl Recorder {
             self.stop_at_cap();
             return;
         }
-        if self.file.write_all(line.as_bytes()).is_ok() {
-            self.written += line.len() as u64;
+        self.written += line.len() as u64;
+        self.buffer.extend_from_slice(line.as_bytes());
+        if self.buffer.len() >= PART_BYTES {
+            self.flush_part();
+        }
+    }
+
+    /// Hand the buffered plaintext to the store, in PART_BYTES-sized sealed parts.
+    /// A refusal (over-share, queue bound) stops the recording in-band — the store's
+    /// honest no gets the same visibility as the cap's, and the session keeps
+    /// running either way.
+    ///
+    /// Parts are cut BY BYTES, never at line boundaries: one event line can be
+    /// arbitrarily long (JSON escape expansion multiplies control bytes 6x, so a
+    /// 64 KiB control-byte chunk becomes a ~384 KiB line), and a single part past
+    /// the 128 KiB cap every reader refuses would admit the recording and then
+    /// brick its export forever. The byte stream is the storage format; line
+    /// boundaries inside a part are nothing any reader ever looks at.
+    fn flush_part(&mut self) {
+        if self.buffer.is_empty() || self.refused {
+            self.buffer.clear();
+            return;
+        }
+        while !self.refused && !self.buffer.is_empty() {
+            let take = self.buffer.len().min(PART_BYTES);
+            let chunk: Vec<u8> = self.buffer.drain(..take).collect();
+            let ofs = self.written - self.buffer.len() as u64 - chunk.len() as u64;
+            if self.history.append_part(self.uid, self.part, ofs, &chunk).is_ok() {
+                self.part += 1;
+            } else {
+                // The store's honest no (over-share, queue bound): stop the recording
+                // HERE — writing on would leave a hole in the cumulative offsets that
+                // makes the export refuse the whole session forever, and every later
+                // flush would be another refused warning.
+                self.refused = true;
+                self.stopped = true;
+                self.finalized = true;
+                self.buffer.clear();
+                if self.history.finish(
+                    self.uid,
+                    "recording stopped: the history store refused a write",
+                    // capped means THE CAP: a refusal is a different ending, and
+                    // mislabeling it sends the operator to inspect the wrong knob.
+                    false,
+                )
+                .is_err()
+                {
+                    // The stamp itself was refused too: the row will read live until
+                    // the sweep's orphan pass collects it. Named, never silent.
+                    swiss_core::log::warn(
+                        "refused recording's finish stamp was refused in turn",
+                        Some(serde_json::json!({ "uid": self.uid })),
+                    );
+                }
+            }
         }
     }
 
@@ -187,10 +272,19 @@ impl Recorder {
             "{}\n",
             serde_json::json!([self.started.elapsed().as_secs_f64(), "o", note])
         );
-        if self.file.write_all(line.as_bytes()).is_ok() {
-            self.written += line.len() as u64;
+        self.buffer.extend_from_slice(line.as_bytes());
+        self.written += line.len() as u64;
+        self.flush_part();
+        // The stamp rides the index row: capped=1 is what the session list shows —
+        // and it is FINAL: a finish() whose events tripped the cap must not
+        // overwrite it with an un-capped exit stamp afterwards.
+        self.finalized = true;
+        if self.history.finish(self.uid, "recording stopped at the cap", true).is_err() {
+            swiss_core::log::warn(
+                "cap finish stamp refused by the history store",
+                Some(serde_json::json!({ "uid": self.uid })),
+            );
         }
-        let _ = self.file.flush();
     }
 
     /// Bytes -> a valid UTF-8 string, holding back the tail of a split character.
@@ -241,34 +335,109 @@ impl Recorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::history::TerminalHistory;
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir = swiss_core::paths::test_home()
+    async fn open(tag: &str) -> (std::sync::Arc<TerminalHistory>, String) {
+        let root = swiss_core::paths::test_home()
             .join("terminal-rec")
-            .join(format!("{name}-{}", swiss_core::util::random_hex(6)));
-        mkdir_private(&dir);
-        dir
+            .join(format!("{tag}-{}", swiss_core::util::random_hex(6)));
+        let sessions = root.join("terminal");
+        let logs = root.join("logs");
+        std::fs::create_dir_all(&sessions).expect("sessions dir");
+        std::fs::create_dir_all(&logs).expect("logs dir");
+        let history = TerminalHistory::open(&sessions, &logs).await.expect("store opens");
+        let sid = swiss_core::util::random_hex(16);
+        (history, sid)
     }
 
-    fn lines(path: &Path) -> Vec<serde_json::Value> {
-        std::fs::read_to_string(path)
-            .expect("the cast file is readable")
-            .lines()
+    async fn lines(history: &TerminalHistory, sid: &str) -> Vec<serde_json::Value> {
+        history.flush().await;
+        let cast = history
+            .export_cast(sid)
+            .await
+            .expect("exports")
+            .expect("a recording exists");
+        cast.lines()
             .filter(|l| !l.is_empty())
             .map(|l| serde_json::from_str(l).expect("every line is one JSON value"))
             .collect()
     }
 
-    #[tokio::test(start_paused = true)]
+    fn uid_for(sid: &str) -> i64 {
+        // The one derivation: a test session's row key is exactly what a live open and
+        // the importer both compute for the same sid.
+        super::super::history::session_uid(sid)
+    }
+
+    #[tokio::test]
+    async fn a_part_past_the_cap_is_split_not_stored_oversize() {
+        // JSON escape expansion multiplies control bytes 6x: a 64 KiB control-byte
+        // chunk becomes a ~384 KiB EVENT LINE. One line per part would seal a part
+        // no reader can decode — the recording would admit and then never export.
+        let (history, sid) = open("split").await;
+        let mut rec = Recorder::create(&history, uid_for(&sid), &sid, 80, 24);
+        rec.output(&[b'x'; PART_BYTES + 100]);
+        rec.finish("the shell exited");
+        let out = lines(&history, &sid).await;
+        // The oversized line arrives WHOLE — the split only changed how the
+        // parts were sealed, never what the export reconstructs. (The line after
+        // it is the recorder's end marker, not lost data.)
+        let big = out[1][2].as_str().expect("the oversized line");
+        assert_eq!(big.len(), PART_BYTES + 100, "nothing lost to the split");
+        assert!(big.chars().all(|c| c == 'x'), "nothing mangled either");
+    }
+
+    #[tokio::test]
+    async fn a_store_that_closes_mid_recording_stops_it_in_band() {
+        // The recorder's honest-no path: once the store refuses (here: it closed
+        // mid-recording, the drain landed what it could), the recorder stops
+        // instead of writing a hole — and what DID land still exports cleanly.
+        let root = swiss_core::paths::test_home()
+            .join("terminal-rec")
+            .join(format!("refused-{}", swiss_core::util::random_hex(6)));
+        let sessions = root.join("terminal");
+        let logs = root.join("logs");
+        std::fs::create_dir_all(&sessions).expect("sessions dir");
+        std::fs::create_dir_all(&logs).expect("logs dir");
+        let history = TerminalHistory::open(&sessions, &logs).await.expect("store opens");
+        let sid = "e".repeat(32);
+        let mut rec = Recorder::create(&history, uid_for(&sid), &sid, 80, 24);
+        rec.output(&[b'y'; PART_BYTES + 10]);
+        history.close().await.expect("drain lands part 0");
+        // The store is closed now: the next flush's submit refuses, the recorder
+        // stops in-band, and its finish stamp refuses the same way (the honest
+        // residual of a CLOSED store — the sweep's orphan pass owns the row).
+        rec.output(b"tail that must never land as a hole");
+        rec.finish("the shell exited");
+        assert!(rec.is_stopped(), "the refusal stopped the recording");
+
+        let again = TerminalHistory::open(&sessions, &logs).await.expect("reopen");
+        again.flush().await;
+        let cast = again
+            .export_cast(&sid)
+            .await
+            .expect("exports")
+            .expect("a recording exists");
+        assert!(cast.contains("yyyy"), "the landed part survives");
+        assert!(
+            !cast.contains("hole"),
+            "the refused tail never landed — no hole, just an honest end"
+        );
+    }
+
+    #[tokio::test]
     async fn a_recording_is_a_v2_header_and_one_line_per_chunk() {
-        let dir = scratch("basic");
-        let mut rec = Recorder::create(&dir, "sess-1", 120, 30).expect("creates");
+        let (history, sid) = open("basic").await;
+        let mut rec = Recorder::create(&history, uid_for(&sid), &sid, 120, 30);
         rec.output(b"hello ");
-        tokio::time::advance(std::time::Duration::from_millis(500)).await;
+        // Real time: the recorder's clock is the tokio Instant, and the elapsed assert
+        // below needs it to actually run (a paused clock cannot also drive the store's
+        // sqlite pool — the reason these tests are not start_paused).
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         rec.output(b"world");
         rec.finish("the shell exited");
 
-        let out = lines(rec.path());
+        let out = lines(&history, &sid).await;
         assert_eq!(out[0]["version"], 2);
         assert_eq!(out[0]["width"], 120);
         assert_eq!(out[0]["height"], 30);
@@ -277,25 +446,25 @@ mod tests {
         assert_eq!(out[1][2], "hello ");
         assert_eq!(out[2][2], "world");
         // Relative, monotonic, and increasing — the thing a player needs.
-        assert!(out[2][0].as_f64().unwrap() >= 0.5, "{:?}", out[2][0]);
+        assert!(out[2][0].as_f64().unwrap() >= 0.02, "{:?}", out[2][0]);
         assert!(out[3][2]
             .as_str()
             .unwrap()
             .contains("session ended: the shell exited"));
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn a_multi_byte_character_split_across_two_chunks_survives() {
         // The case that decides whether a Chinese session is readable on playback: the
         // PTY hands over whatever the pipe had, not whole characters.
-        let dir = scratch("utf8");
-        let mut rec = Recorder::create(&dir, "sess-1", 80, 24).expect("creates");
+        let (history, sid) = open("utf8").await;
+        let mut rec = Recorder::create(&history, uid_for(&sid), &sid, 80, 24);
         let text = "终端".as_bytes();
         rec.output(&text[..4]); // splits the second character
         rec.output(&text[4..]);
         rec.finish("done");
 
-        let out = lines(rec.path());
+        let out = lines(&history, &sid).await;
         let seen: String = out[1..3]
             .iter()
             .map(|e| e[2].as_str().unwrap_or_default())
@@ -303,52 +472,53 @@ mod tests {
         assert_eq!(seen, "终端", "{out:?}");
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn a_genuinely_invalid_byte_becomes_one_replacement_and_the_rest_survives() {
-        let dir = scratch("invalid");
-        let mut rec = Recorder::create(&dir, "sess-1", 80, 24).expect("creates");
+        let (history, sid) = open("invalid").await;
+        let mut rec = Recorder::create(&history, uid_for(&sid), &sid, 80, 24);
         rec.output(&[b'a', 0xff, b'b']);
         rec.finish("done");
-        let out = lines(rec.path());
+        let out = lines(&history, &sid).await;
         assert_eq!(out[1][2], "a\u{fffd}b");
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn the_cap_stops_the_recording_with_a_visible_marker_and_never_rotates() {
-        let dir = scratch("cap");
-        let mut rec = Recorder::create(&dir, "sess-1", 80, 24).expect("creates");
+        let (history, sid) = open("cap").await;
+        let mut rec = Recorder::create(&history, uid_for(&sid), &sid, 80, 24);
         let chunk = vec![b'x'; 64 * 1024];
         while !rec.is_stopped() {
             rec.output(&chunk);
         }
-        let out = lines(rec.path());
+        let out = lines(&history, &sid).await;
         let last = out.last().expect("something was written")[2]
             .as_str()
             .unwrap_or_default()
             .to_string();
         assert!(last.contains("recording stopped at the 8 MB cap"), "{last}");
-        // No rotation: one file, and it is the beginning of the session, not the end.
-        assert_eq!(
-            std::fs::read_dir(&dir).unwrap().count(),
-            1,
-            "a second file means something rotated"
-        );
+        // No rotation: the FIRST chunks are still there — a store that quietly became
+        // "the last 8 MB" is the same lie the file cap rejected.
         assert_eq!(out[1][2].as_str().unwrap().len(), 64 * 1024);
+        assert_eq!(
+            out[1][2].as_str().unwrap(),
+            "x".repeat(64 * 1024),
+            "the first chunk must survive to the end"
+        );
 
         // And past the cap the session is still usable — output simply stops being kept.
-        let before = std::fs::metadata(rec.path()).unwrap().len();
+        let before = rec.bytes_written();
         rec.output(b"after the cap");
         rec.finish("done");
-        assert_eq!(std::fs::metadata(rec.path()).unwrap().len(), before);
+        assert_eq!(rec.bytes_written(), before);
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn finishing_twice_writes_one_marker() {
-        let dir = scratch("twice");
-        let mut rec = Recorder::create(&dir, "sess-1", 80, 24).expect("creates");
+        let (history, sid) = open("twice").await;
+        let mut rec = Recorder::create(&history, uid_for(&sid), &sid, 80, 24);
         rec.finish("first");
         rec.finish("second");
-        let out = lines(rec.path());
+        let out = lines(&history, &sid).await;
         assert_eq!(out.len(), 2, "header plus exactly one marker: {out:?}");
     }
 }

@@ -133,6 +133,27 @@ fn pin_home_and_key() {
     });
 }
 
+/// Create the binary's one `<home>/logs/terminal.db` before any rig's terminal plugin opens
+/// it. Every rig here shares that file, and a brand-new file's switch to WAL is a write
+/// that SQLite refuses as "database is locked" when another connection makes the same
+/// switch at the same moment - the rig that lost then ran with recording off. A file
+/// already in WAL needs no switch, so the rigs' opens after this one only read.
+async fn create_the_terminal_db() {
+    static CREATED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+    CREATED
+        .get_or_init(|| async {
+            let sessions =
+                swiss_core::paths::data_path(&[swiss_terminal::terminal::history::SESSIONS_DIR]);
+            std::fs::create_dir_all(&sessions).expect("the sessions directory");
+            let logs = swiss_core::paths::data_path(&["logs"]);
+            let history = swiss_terminal::terminal::history::TerminalHistory::open(&sessions, &logs)
+                .await
+                .expect("the shared terminal.db opens");
+            history.close().await.expect("the shared terminal.db closes");
+        })
+        .await;
+}
+
 /// Timers off, recording off — the defaults for anything not about time or recording
 /// (the same "quiet" shape swiss-terminal's session tests use).
 fn quiet() -> Value {
@@ -143,6 +164,7 @@ fn quiet() -> Value {
 /// Tunnels stays disabled so its provider does not hold the shell seat the fake needs.
 async fn rig(tag: &str, terminal_config: Value) -> Rig {
     pin_home_and_key();
+    create_the_terminal_db().await;
     let dir = std::env::temp_dir().join(format!(
         "swiss-terminal-ws-{tag}-{}",
         swiss_core::util::random_hex(8)
@@ -162,7 +184,7 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
     let registry = Registry::new(3_600_000, calls.clone());
     let managed = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
 
-    let services = swiss_host::services::RuntimeServices::new();
+    let services = swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo::default());
     let (far_tx, far_rx) = mpsc::unbounded_channel();
     services
         .shells
@@ -191,18 +213,19 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
         mcp_display: None,
     });
 
+    let traffic = Arc::new(swiss_mcp::traffic::TrafficLog::memory());
     let ctx = swiss::app::AppContext::new(
         registry.clone(),
         Arc::new(single_token_manager(TOKEN)) as Arc<TokenManager>,
         managed.clone(),
-        calls,
-        Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
+        calls.clone(),
+        traffic.clone(),
         "SWISS_TOKEN",
         19997,
     );
     let _ = ctx.catalog.set(services.catalog.clone());
 
-    let terminal_state = swiss::plugins::terminal_api::TerminalState::new();
+    let terminal_state = swiss_plugins::terminal_api::TerminalState::new();
     let mut host = swiss_host::host::PluginHost::new(config_store);
     let deps = swiss::builtin::BuiltinDeps {
         registry,
@@ -211,9 +234,17 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
         tunnels: tunnels.clone(),
         tunnel_manager,
         services: services.clone(),
+        call_log: calls,
+        traffic,
+        logs_dir: dir.join("logs"),
+        // The process plugin's state slot: the tree is not mounted here (the
+        // terminal tests never hit /api/process), but the plugin still installs
+        // into a real slot on start.
+        process_state: swiss_process::api::ProcessState::new(),
+        data_history: swiss_data::history::DataHistory::new(dir.join("logs")),
     };
     swiss::builtin::register_all(&mut host, &deps).expect("the built-ins register");
-    host.register(Arc::new(swiss::plugins::terminal::TerminalPlugin::new(
+    host.register(Arc::new(swiss_plugins::terminal::TerminalPlugin::new(
         services.clone(),
         terminal_state.clone(),
     )))
@@ -225,7 +256,7 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
     let extra = swiss_tunnels::tunnel::api::mount(tunnels)
         .merge(swiss_jobs::jobs::api::mount(jobs))
         .merge(swiss_host::services::api::mount(services))
-        .merge(swiss::plugins::terminal_api::mount(terminal_state));
+        .merge(swiss_plugins::terminal_api::mount(terminal_state));
     let app = swiss::app::build_app(ctx, Some(extra));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -584,21 +615,19 @@ async fn a_replayed_ticket_is_refused() {
     assert!(body.contains("already been used"), "{body}");
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn an_expired_ticket_is_refused() {
-    // The 10-second TTL on the paused clock (real sockets still work — the handshake
-    // is I/O, not timers). Grace is a DAY because the paused clock creeps forward a
-    // second at a time on every idle park (the jobs tick is always the nearest timer),
-    // and a never-attached session is on the grace clock from birth: under parallel
-    // load that creep can pass 60 seconds during the TCP handshake, killing the
-    // session — and a dead session forgets its tickets, which turns this into the
-    // wrong refusal. One day is unreachable by creep; 11 seconds still expires the
-    // ticket.
+    // The REAL clock, paying ~10.5 s once. A paused clock cannot host this rig any
+    // more: the terminal plugin's start opens the history store, that open does real
+    // blocking work, and tokio's auto-advance fires every pending timer — including
+    // the host's 30 s start deadline — the moment the runtime parks behind it. The
+    // grace window stays a DAY so nothing else (the never-attached grace clock) can
+    // kill the session before the ticket itself expires at 10 s.
     let mut config = quiet();
     config["graceSeconds"] = json!(86_400);
     let rig = rig("expired", config).await;
     let (id, ticket) = rig.open().await;
-    tokio::time::advance(Duration::from_secs(11)).await;
+    tokio::time::sleep(Duration::from_millis(10_500)).await;
     let err = rig
         .connect_session(&id, &ticket)
         .await
@@ -773,7 +802,8 @@ async fn the_session_listing_is_camel_case_and_counts_bytes() {
 #[tokio::test]
 async fn a_recording_is_written_when_configured() {
     // recording defaults ON; this rig turns it back on explicitly to pin the open
-    // response's recording field against a real file.
+    // response's recording field against the export route (ADR-035: .cast is what the
+    // route serves, no longer a file the panel path points at).
     let mut rig = rig("recording", json!({ "recording": true })).await;
     let (status, body, text) = rig
         .http(
@@ -784,14 +814,75 @@ async fn a_recording_is_written_when_configured() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{text}");
     let body = body.expect("JSON");
-    let path = std::path::PathBuf::from(body["recording"].as_str().expect("a recording path"));
-    assert!(path.is_file(), "the cast file exists: {}", path.display());
-    let _ = rig.far();
+    let id = body["id"].as_str().expect("a session id").to_string();
+    let url = body["recording"].as_str().expect("a recording url");
+    assert_eq!(url, format!("/api/terminal/recordings/{id}/cast"));
+
+    // Record real output and let the session end, so the export under test holds the
+    // same lines a player would replay.
+    let far = rig.far();
+    far.say("recorded over the socket").await;
+    far.exit(0).await;
+    for _ in 0..300 {
+        let (_, body, _) = rig.http("GET", "/api/terminal/sessions", None).await;
+        let gone = match body {
+            Some(v) => v
+                .as_array()
+                .unwrap_or_else(|| panic!("the session list must be an array: {v}"))
+                .is_empty(),
+            // A non-JSON answer is a broken route, not "still open": fail loud
+            // instead of parking 3 seconds and passing green on nothing.
+            None => panic!("the session list must answer JSON"),
+        };
+        if gone {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let (status, _, cast) = rig.http("GET", url, None).await;
+    assert_eq!(status, StatusCode::OK, "{cast}");
+    let mut lines = cast.lines().filter(|l| !l.is_empty());
+    let header: Value =
+        serde_json::from_str(lines.next().expect("the v2 header line")).unwrap();
+    assert_eq!(header["version"], 2);
+    assert!(cast.contains("recorded over the socket"), "{cast}");
+    assert!(cast.contains("session ended: the shell exited with code 0"), "{cast}");
+
+    // An unknown session id is a plain 404, never an empty cast.
+    let (status, _, _) = rig
+        .http("GET", "/api/terminal/recordings/does-not-exist/cast", None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The discovery surface for a CLOSED session's export URL: the live list has
+    // already dropped the row, so without this route the sid - and with it the
+    // cast - is unreachable by anything that did not hold it from the open
+    // response (SPEC §terminal.recording).
+    let (status, body, text) = rig.http("GET", "/api/terminal/recordings", None).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let rows = body
+        .expect("JSON")
+        .as_array()
+        .expect("the recordings list is an array")
+        .clone();
+    assert!(
+        rows.iter().any(|r| r["sid"].as_str() == Some(id.as_str())),
+        "the closed session's row survives in the recordings list: {rows:?}"
+    );
+    let row = rows
+        .iter()
+        .find(|r| r["sid"].as_str() == Some(id.as_str()))
+        .expect("the row");
+    assert_eq!(row["end_reason"], json!("the shell exited with code 0"), "{row:?}");
+    assert_eq!(row["capped"], json!(false), "an exit stamp is not a cap: {row:?}");
 }
 
 #[tokio::test]
 async fn stopping_the_plugin_closes_live_sessions_with_a_visible_reason() {
-    let mut rig = rig("stop", quiet()).await;
+    // Recording ON: the assertion that matters most here is that the stop LANDS the
+    // recording's tail — a stop that only notifies the client loses the end marker.
+    let mut rig = rig("stop", json!({ "recording": true })).await;
     let (id, ticket) = rig.open().await;
     let _far = rig.far();
 
@@ -840,6 +931,21 @@ async fn stopping_the_plugin_closes_live_sessions_with_a_visible_reason() {
     // And every /api/terminal route is now behind the structured 503.
     let (status, _, text) = rig.http("GET", "/api/terminal/targets", None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+
+    // The stop must not just notify the client — the recording's tail has to LAND.
+    // Re-enable (a fresh store open over the same file), then export: the stop
+    // reason must be the recording's end marker, and a finish stamp must exist
+    // (a session whose finish was refused would export as never-ended).
+    let (status, _, text) = rig.http("POST", "/api/plugins/terminal/enable", None).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let (status, _, text) = rig
+        .http("GET", &format!("/api/terminal/recordings/{id}/cast"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "the stopped session exports: {text}");
+    assert!(
+        text.contains("the terminal plugin is stopping"),
+        "the export carries the stop as its end marker"
+    );
 }
 
 // --- the disabled rig ----------------------------------------------------------------------------
@@ -849,6 +955,7 @@ async fn stopping_the_plugin_closes_live_sessions_with_a_visible_reason() {
 /// difference.
 async fn disabled_rig(tag: &str, raw: Value) -> Rig {
     pin_home_and_key();
+    create_the_terminal_db().await;
     let dir = std::env::temp_dir().join(format!(
         "swiss-terminal-ws-{tag}-{}",
         swiss_core::util::random_hex(8)
@@ -861,7 +968,7 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
     let registry = Registry::new(3_600_000, calls.clone());
     let managed = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
 
-    let services = swiss_host::services::RuntimeServices::new();
+    let services = swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo::default());
     let jobs = swiss_jobs::jobs::JobSystem::open(
         dir.join("jobs.json"),
         services.clone(),
@@ -878,18 +985,19 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
         mcp_display: None,
     });
 
+    let traffic = Arc::new(swiss_mcp::traffic::TrafficLog::memory());
     let ctx = swiss::app::AppContext::new(
         registry.clone(),
         Arc::new(single_token_manager(TOKEN)) as Arc<TokenManager>,
         managed.clone(),
-        calls,
-        Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
+        calls.clone(),
+        traffic.clone(),
         "SWISS_TOKEN",
         19997,
     );
     let _ = ctx.catalog.set(services.catalog.clone());
 
-    let terminal_state = swiss::plugins::terminal_api::TerminalState::new();
+    let terminal_state = swiss_plugins::terminal_api::TerminalState::new();
     let mut host = swiss_host::host::PluginHost::new(config_store);
     let deps = swiss::builtin::BuiltinDeps {
         registry,
@@ -898,9 +1006,17 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
         tunnels: tunnels.clone(),
         tunnel_manager,
         services: services.clone(),
+        call_log: calls,
+        traffic,
+        logs_dir: dir.join("logs"),
+        // The process plugin's state slot: the tree is not mounted here (the
+        // terminal tests never hit /api/process), but the plugin still installs
+        // into a real slot on start.
+        process_state: swiss_process::api::ProcessState::new(),
+        data_history: swiss_data::history::DataHistory::new(dir.join("logs")),
     };
     swiss::builtin::register_all(&mut host, &deps).expect("the built-ins register");
-    host.register(Arc::new(swiss::plugins::terminal::TerminalPlugin::new(
+    host.register(Arc::new(swiss_plugins::terminal::TerminalPlugin::new(
         services.clone(),
         terminal_state.clone(),
     )))
@@ -912,7 +1028,7 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
     let extra = swiss_tunnels::tunnel::api::mount(tunnels)
         .merge(swiss_jobs::jobs::api::mount(jobs))
         .merge(swiss_host::services::api::mount(services))
-        .merge(swiss::plugins::terminal_api::mount(terminal_state));
+        .merge(swiss_plugins::terminal_api::mount(terminal_state));
     let app = swiss::app::build_app(ctx, Some(extra));
 
     // No shell provider and no real socket needed — the boundary answers first.

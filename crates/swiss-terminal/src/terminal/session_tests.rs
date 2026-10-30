@@ -146,10 +146,11 @@ impl LocalShell for FakeLocal {
 
 struct Harness {
     sessions: Arc<TerminalSessions>,
+    /// The recordings' store, present only in the with-store world.
+    store: Option<std::sync::Arc<crate::terminal::history::TerminalHistory>>,
     shells: Arc<ShellRegistry>,
     far: mpsc::UnboundedReceiver<FarSide>,
     far_tx: mpsc::UnboundedSender<FarSide>,
-    dir: PathBuf,
     /// The fake local shell's record of every open (see FakeLocal.opened).
     local_opens: Arc<std::sync::Mutex<Vec<Option<String>>>>,
 }
@@ -191,11 +192,32 @@ impl Harness {
         harness
     }
 
-    /// The same, with the shell seat empty — the "tunnels is off" world.
-    fn without_provider(config: TerminalConfig) -> Harness {
+    /// A harness whose recordings land in a real terminal-history store opened on the
+    /// scratch home — the world the gateway runs in (ADR-035).
+    async fn with_store(config: TerminalConfig) -> Harness {
         let dir = swiss_core::paths::test_home()
             .join("terminal-sessions")
             .join(swiss_core::util::random_hex(8));
+        let logs = dir.parent().unwrap().join("logs").join(swiss_core::util::random_hex(4));
+        std::fs::create_dir_all(&logs).expect("logs dir");
+        let history = crate::terminal::history::TerminalHistory::open(&dir, &logs)
+            .await
+            .expect("the store opens");
+        let h = Harness::built(config, Some(history));
+        h.register("tunnels");
+        h
+    }
+
+    /// The same, with the shell seat empty — the "tunnels is off" world.
+    fn without_provider(config: TerminalConfig) -> Harness {
+        Harness::built(config, None)
+    }
+
+    /// The shared construction: one session machine, an optional recordings store.
+    fn built(
+        config: TerminalConfig,
+        history: Option<std::sync::Arc<crate::terminal::history::TerminalHistory>>,
+    ) -> Harness {
         let (far_tx, far_rx) = mpsc::unbounded_channel();
         let shells = Arc::new(ShellRegistry::new());
         let local_opens = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -207,14 +229,14 @@ impl Harness {
                 far: far_tx.clone(),
                 opened: Arc::clone(&local_opens),
             }),
-            dir.clone(),
+            history.clone(),
         );
         Harness {
             sessions,
+            store: history,
             shells,
             far: far_rx,
             far_tx,
-            dir,
             local_opens,
         }
     }
@@ -276,7 +298,9 @@ fn drain_now(attachment: &mut Attachment) -> Vec<u8> {
 
 #[tokio::test]
 async fn a_session_streams_its_shells_output_to_the_attached_client() {
-    let mut h = Harness::new(quiet(true));
+    // The store world: the listed recording field is the export URL (ADR-035), so the
+    // assertion below needs the harness whose recordings have somewhere to go.
+    let mut h = Harness::with_store(quiet(true)).await;
     let (opened, far, mut attachment) = h.started(LOCAL_TARGET).await;
     far.say("hello from the shell").await;
     assert_eq!(
@@ -913,7 +937,7 @@ async fn shutdown_closes_every_session_saying_why() {
 
 #[tokio::test]
 async fn the_recording_holds_the_output_and_ends_with_the_reason() {
-    let mut h = Harness::new(quiet(true));
+    let mut h = Harness::with_store(quiet(true)).await;
     let (opened, far, _attachment) = h.started(LOCAL_TARGET).await;
     far.say("recorded output").await;
     far.exit(0).await;
@@ -924,13 +948,18 @@ async fn the_recording_holds_the_output_and_ends_with_the_reason() {
         tokio::task::yield_now().await;
     }
 
-    let path = h.dir.join(format!("{}.cast", opened.id));
+    // The recording field is the export URL of the stored recording, not a file path.
     assert_eq!(
         opened.recording.as_deref(),
-        Some(path.to_string_lossy().as_ref())
+        Some(format!("/api/terminal/recordings/{}/cast", opened.id).as_str())
     );
-    let text = std::fs::read_to_string(&path).expect("the cast file exists");
-    let lines: Vec<serde_json::Value> = text
+    let history = h.store.clone().expect("the store is in");
+    let cast = history
+        .export_cast(&opened.id)
+        .await
+        .expect("exports")
+        .expect("a recording exists");
+    let lines: Vec<serde_json::Value> = cast
         .lines()
         .filter(|l| !l.is_empty())
         .map(|l| serde_json::from_str(l).expect("one JSON value per line"))
@@ -954,7 +983,6 @@ async fn recording_off_means_no_file_and_a_null_path() {
     let _far = h.far();
     assert_eq!(opened.recording, None);
     assert_eq!(h.sessions.list()[0].recording, None);
-    assert!(!h.dir.join(format!("{}.cast", opened.id)).exists());
 }
 
 #[tokio::test]

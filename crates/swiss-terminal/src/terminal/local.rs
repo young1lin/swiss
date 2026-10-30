@@ -49,6 +49,7 @@ use std::sync::Arc;
 use swiss_core::platform::pty::{
     self, PtyCommand, PtyGeometry, PtyHandle, PtyPump, ShellCandidate,
 };
+use swiss_host::services::children::{ChildGuard, ChildKind, ChildRegistry, ChildSpec};
 use swiss_host::services::shell::{
     PtyEvent, PtyIn, PtyInput, PtyOut, PtySession, PtySize, SessionLedger, ShellError,
 };
@@ -94,6 +95,28 @@ pub trait LocalShell: Send + Sync {
     ) -> Result<PtySession, ShellError>;
 }
 
+/// How a session's child row stops (SPEC §process.children): the terminal plugin hands
+/// this over because the session table lives above the provider — the root crate's
+/// TerminalState is where a session id becomes a close. Given the session id, produce the
+/// hook that closes exactly that session.
+pub type SessionStopBuilder =
+    Arc<dyn Fn(&str) -> Arc<dyn swiss_host::services::children::ChildStop> + Send + Sync>;
+
+/// The Process page wiring the terminal plugin injects (SPEC §process.children): where a
+/// local PTY registers, and how its row stops. Absent in tests and whenever no services
+/// composition stands behind the provider.
+#[derive(Clone)]
+pub struct LocalChildWiring {
+    children: Arc<ChildRegistry>,
+    closer: SessionStopBuilder,
+}
+
+impl LocalChildWiring {
+    pub fn new(children: Arc<ChildRegistry>, closer: SessionStopBuilder) -> Self {
+        LocalChildWiring { children, closer }
+    }
+}
+
 /// The real one: ConPTY on Windows, `openpty` on unix.
 pub struct LocalShells {
     /// Local sessions have no provider to drain, but they do have a count, and the
@@ -104,6 +127,8 @@ pub struct LocalShells {
     /// plugin's start) and reused by every open — a session must not re-walk PATH either.
     default: PtyCommand,
     candidates: Vec<ShellCandidate>,
+    /// The Process page's rows (SPEC §process.children); None in the provider's tests.
+    wiring: Option<LocalChildWiring>,
 }
 
 impl Default for LocalShells {
@@ -118,6 +143,16 @@ impl LocalShells {
             ledger: SessionLedger::new(),
             default: pty::default_shell(),
             candidates: pty::shell_candidates(),
+            wiring: None,
+        }
+    }
+
+    /// The composition root's construction: the same provider with its child rows wired
+    /// into the shared registry.
+    pub fn with_wiring(wiring: LocalChildWiring) -> Self {
+        LocalShells {
+            wiring: Some(wiring),
+            ..Self::new()
         }
     }
 
@@ -157,15 +192,43 @@ impl LocalShell for LocalShells {
             })?;
 
         let lease = self.ledger.grant(LOCAL_TARGET, session_id);
+        // The Process page's row (SPEC §process.children), registered right after the
+        // spawn with PtyHandle::pid(): owner terminal, the requested shell as the label
+        // (a title only arrives when the client sends one), stop = close this session.
+        // The guard rides the READER thread below — the row vanishes exactly when the
+        // pump drops, which is exactly when the child's subtree dies.
+        let child_row = self.writing_child_row(handle.pid(), session_id, shell);
         let (session, endpoint) = PtySession::duplex(session_id, LOCAL_TARGET, size, lease);
         let (out, input) = endpoint.split();
 
         // Depth one: see the module note. This is the backpressure, not a buffer.
         let (raw_tx, raw_rx) = mpsc::channel::<Vec<u8>>(1);
-        tokio::task::spawn_blocking(move || read_pty(pump, raw_tx));
+        tokio::task::spawn_blocking(move || read_pty(pump, raw_tx, child_row));
         tokio::spawn(forward_output(out, raw_rx, handle.clone()));
         tokio::spawn(forward_input(input, handle));
         Ok(session)
+    }
+}
+
+impl LocalShells {
+    fn writing_child_row(
+        &self,
+        pid: u32,
+        session_id: &str,
+        shell: Option<&str>,
+    ) -> Option<ChildGuard> {
+        let wiring = self.wiring.as_ref()?;
+        let closer = Arc::clone(&wiring.closer);
+        let stop = closer(session_id);
+        wiring.children.register(ChildSpec {
+            pid,
+            owner: "terminal".to_string(),
+            kind: ChildKind::Terminal,
+            label: shell
+                .map(|program| self.resolve(program))
+                .unwrap_or_else(|| LOCAL_LABEL.to_string()),
+            stop: Some(stop),
+        })
     }
 }
 
@@ -194,8 +257,9 @@ fn shell_command(shell: Option<&str>, default: &PtyCommand) -> PtyCommand {
         .env_remove("NO_COLOR")
 }
 
-/// The blocking half: read the pipe until it ends or nobody wants it any more.
-fn read_pty(mut pump: PtyPump, chunks: mpsc::Sender<Vec<u8>>) {
+/// The blocking half: read the pipe until it ends or nobody wants it any more. The child
+/// registry guard drops when this thread returns — the row outlives the PTY by nothing.
+fn read_pty(mut pump: PtyPump, chunks: mpsc::Sender<Vec<u8>>, child_row: Option<ChildGuard>) {
     let mut buf = vec![0u8; READ_CHUNK];
     loop {
         match pump.read(&mut buf) {
@@ -211,6 +275,7 @@ fn read_pty(mut pump: PtyPump, chunks: mpsc::Sender<Vec<u8>>) {
             Err(_) => break,
         }
     }
+    drop(child_row);
 }
 
 /// The async half of the read path: chunks -> the session's event queue, then one Exit.

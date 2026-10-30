@@ -49,7 +49,6 @@
 //! silently shown a hole.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -277,6 +276,10 @@ struct Entry {
     recording: Option<String>,
     commands: mpsc::Sender<DriverCommand>,
     stats: Arc<SessionStats>,
+    /// Flips when this session's DRIVER has fully finished (last frame handed over,
+    /// recorder's final part and finish stamp submitted). The plugin's stop waits on
+    /// it so the store closes only after every recording's tail is admitted.
+    closed: watch::Receiver<bool>,
 }
 
 #[derive(Default)]
@@ -286,13 +289,22 @@ struct TableState {
     /// trip), so without this two simultaneous opens would both see room and both take
     /// it — the caps would be advisory rather than caps.
     opening: Vec<String>,
+    /// Set when the plugin's shutdown took the table. An open that raced the stop
+    /// (its handler cloned the sessions Arc before the stop began) must refuse at
+    /// INSERT time instead of stranding itself outside the drain: a stranded driver
+    /// never hears Shutdown, and its recording would submit against a closed store.
+    stopping: bool,
 }
 
 struct Table {
     config: TerminalConfig,
     shells: Arc<ShellRegistry>,
     local: Arc<dyn LocalShell>,
-    dir: PathBuf,
+    /// The terminal history the recordings go into. None = the store failed to open at
+    /// plugin start: recording degrades to off (with the one warning already logged) and
+    /// every session still opens — the existing "a recording failure costs the recording,
+    /// never the terminal" rule, now at store granularity.
+    history: Option<Arc<super::history::TerminalHistory>>,
     tickets: TicketBook,
     state: Mutex<TableState>,
 }
@@ -303,20 +315,20 @@ pub struct TerminalSessions {
 }
 
 impl TerminalSessions {
-    /// `dir` is where recordings go — `~/.swiss/terminal` in the gateway, a scratch
-    /// directory in tests.
+    /// `history` is the recordings' store — the module-history database the plugin
+    /// opened on start. None and recording is honestly off (see [Table::history]).
     pub fn new(
         config: TerminalConfig,
         shells: Arc<ShellRegistry>,
         local: Arc<dyn LocalShell>,
-        dir: PathBuf,
+        history: Option<Arc<super::history::TerminalHistory>>,
     ) -> Arc<Self> {
         Arc::new(TerminalSessions {
             table: Arc::new(Table {
                 config,
                 shells,
                 local,
-                dir,
+                history,
                 tickets: TicketBook::new(),
                 state: Mutex::new(TableState::default()),
             }),
@@ -326,6 +338,7 @@ impl TerminalSessions {
     pub fn config(&self) -> &TerminalConfig {
         &self.table.config
     }
+
 
     /// What may be opened right now, and — when nothing remote may be — who is missing.
     pub fn targets(&self) -> TargetsView {
@@ -426,30 +439,25 @@ impl TerminalSessions {
         };
         drop(reservation);
 
-        let recorder = table
-            .config
-            .recording
-            .then(
-                || match Recorder::create(&table.dir, &id, size.cols, size.rows) {
-                    Ok(rec) => Some(rec),
-                    Err(err) => {
-                        // A recording that cannot be written must not cost the user a
-                        // terminal; it costs them the recording, and says so once.
-                        swiss_core::log::warn(
-                            "could not start a terminal recording",
-                            Some(serde_json::json!({ "session": id, "error": err.to_string() })),
-                        );
-                        None
-                    }
-                },
-            )
-            .flatten();
-        let recording = recorder
-            .as_ref()
-            .map(|r| r.path().to_string_lossy().into_owned());
+        // A recording needs the store: no history means the plugin start already warned,
+        // and the session simply opens unrecorded (SPEC §terminal.recording's degrade
+        // rule). With one, the recorder is infallible at this seam — the store's own
+        // refusals arrive later, in-band, with the marker the cap uses.
+        let recorder = match (&table.history, table.config.recording) {
+            (Some(history), true) => {
+                // The integer key the engine's cursors speak: the one sid derivation
+                // (history.rs's session_uid) — 60 positive bits from the session's own
+                // random id, so a re-import and a live open can never disagree.
+                let uid = super::history::session_uid(&id);
+                Some(Recorder::create(history, uid, &id, size.cols, size.rows))
+            }
+            _ => None,
+        };
+        let recording = recorder.as_ref().map(|r| r.export_url());
 
         let stats = Arc::new(SessionStats::default());
         let (commands_tx, commands_rx) = mpsc::channel(COMMAND_QUEUE);
+        let (closed_tx, closed_rx) = watch::channel(false);
         let driver = Driver {
             id: id.clone(),
             session,
@@ -466,10 +474,19 @@ impl TerminalSessions {
             // clock collects a session nobody ever came back for.
             detached_since: Some(Instant::now()),
             table: Arc::clone(&table),
+            closed_tx,
         };
 
         {
             let mut state = table.state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.stopping {
+                // The stop took the table while this open was awaiting its PTY:
+                // refuse rather than strand. Dropping the driver and session on
+                // the way out closes the PTY here and now.
+                return Err(TerminalError::Refused(
+                    "the terminal plugin is stopping; no new sessions".to_string(),
+                ));
+            }
             state.live.insert(
                 id.clone(),
                 Entry {
@@ -479,6 +496,7 @@ impl TerminalSessions {
                     recording: recording.clone(),
                     commands: commands_tx,
                     stats,
+                    closed: closed_rx,
                 },
             );
         }
@@ -552,10 +570,26 @@ impl TerminalSessions {
     /// reason a stopping plugin owes its clients — "closed on request" is the DELETE
     /// path's story, not this one's.
     pub async fn shutdown(&self) -> usize {
-        let mut state = self.table.state.lock().unwrap_or_else(|e| e.into_inner());
-        let closed = state.live.len();
-        state.live.clear();
-        closed
+        let (count, watchers) = {
+            let mut state = self.table.state.lock().unwrap_or_else(|e| e.into_inner());
+            let live = std::mem::take(&mut state.live);
+            // Late opens (their handler cloned the Arc before this stop began)
+            // refuse from here on instead of stranding outside the drain.
+            state.stopping = true;
+            let count = live.len();
+            // Dropping the senders above wakes every driver with Shutdown; each one
+            // finishes its recording, then flips its closed flag.
+            (count, live.into_values().map(|e| e.closed).collect::<Vec<_>>())
+        };
+        // WAIT for the drivers before the caller closes the store: without this, the
+        // store flips to Stopping the moment the table is clear and every final
+        // part/finish submit is refused (NotOpen) — the tail of every live recording
+        // silently lost. A driver that already finished has its flag set, so this
+        // returns immediately; a stuck one is bounded by the timeout.
+        for mut closed in watchers {
+            let _ = tokio::time::timeout(Duration::from_millis(750), closed.changed()).await;
+        }
+        count
     }
 
     async fn send(&self, id: &str, command: DriverCommand) -> Result<(), TerminalError> {
@@ -769,6 +803,8 @@ struct Driver {
     last_activity: Instant,
     detached_since: Option<Instant>,
     table: Arc<Table>,
+    /// Flips in [Driver::finish] — see [Entry::closed].
+    closed_tx: watch::Sender<bool>,
 }
 
 /// What woke the driver's main select.
@@ -985,31 +1021,43 @@ impl Driver {
     /// Say why, in the terminal and in the recording, then leave the table.
     async fn finish(mut self, reason: CloseReason) {
         let text = reason.text();
-        if reason.is_worth_saying() {
-            let line = format!("\r\n[gateway] {text}\r\n").into_bytes();
-            if let Some(recorder) = &mut self.recorder {
-                recorder.output(&line);
-            }
-            self.hand_over(ClientFrame::Data(line)).await;
+        let goodbye = reason
+            .is_worth_saying()
+            .then(|| format!("\r\n[gateway] {text}\r\n").into_bytes());
+        let last = match &reason {
+            CloseReason::Exited(code) => ClientFrame::Exit { code: *code },
+            _ => ClientFrame::Error(text.clone()),
+        };
+        // The RECORDING lands first: its final part and finish stamp are plain store
+        // submits with no dependency on any attached socket. The hand-overs below
+        // can park CLOSE_FLUSH per stalled sink, and the plugin-stop watcher waits
+        // on the closed flag - recording, flag, then delivery, in that order, is
+        // what keeps the watcher's bound honest.
+        if let (Some(line), Some(recorder)) = (&goodbye, &mut self.recorder) {
+            recorder.output(line);
         }
         if let Some(recorder) = &mut self.recorder {
             recorder.finish(&text);
         }
-        let last = match &reason {
-            CloseReason::Exited(code) => ClientFrame::Exit { code: *code },
-            _ => ClientFrame::Error(text),
-        };
-        self.hand_over(last).await;
         self.table.remove(&self.id, &reason);
+        let _ = self.closed_tx.send(true);
+        if let Some(line) = goodbye {
+            self.hand_over(ClientFrame::Data(line)).await;
+        }
+        self.hand_over(last).await;
         // Dropping self drops the PtySession, which releases the provider's lease and,
         // for a local shell, reaps the child's whole subtree (ADR-008).
     }
 
-    /// Best-effort delivery on the way out, to every socket still holding one. Bounded:
-    /// the most likely reason a session is closing is that nobody is reading it.
+    /// Best-effort delivery on the way out, to every socket still holding one. Bounded
+    /// by ONE shared budget: attachment is an unbounded fan-out (two panel tabs may
+    /// watch one session), so a per-sink timeout multiplied by k stalled sockets
+    /// would outrun every bounded caller of finish(). The most likely reason a
+    /// session is closing is that nobody is reading it.
     async fn hand_over(&mut self, frame: ClientFrame) {
+        let deadline = tokio::time::Instant::now() + CLOSE_FLUSH;
         for sink in &self.attached {
-            let _ = tokio::time::timeout(CLOSE_FLUSH, sink.frames.send(frame.clone())).await;
+            let _ = tokio::time::timeout_at(deadline, sink.frames.send(frame.clone())).await;
         }
     }
 }
