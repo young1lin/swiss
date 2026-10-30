@@ -10,8 +10,11 @@ scheduled jobs, terminals, remote execution — behind one loopback port (`127.0
 one panel, shipped as a single static `.exe`. MCP servers live on HTTP paths under `/mcp/`
 (SPEC §mcp.endpoint, ADR-018); the root belongs to the host.
 
-What the system does, and why, lives in one document, `docs/SPEC.md` (cited as
-`SPEC §area.sub`; the decision log is its §decisions), and in the code comments — when a piece
+What the system does, and why, lives in one specification: `docs/SPEC.md` is its front page (how
+to read and amend it, the chapter table, the anchor map) and `docs/spec/` holds one numbered
+chapter per area — every crate has exactly one, named in the chapter table — a file
+`NNNN-area.md` or, past 1000 lines, a directory of parts (cited as `SPEC §<area>.<sub>`, found in the chapter its area names; the
+decision log is its §decisions), and in the code comments — when a piece
 of behavior looks odd, the module's comment usually records the bug that was paid for once
 already.
 
@@ -20,21 +23,21 @@ hot-pluggable, three ways to bring a tool in — decide every trade-off. A chang
 away for convenience is the wrong change, however much shorter it makes the diff. Idle memory is
 the number that matters (`SPEC §product.memory`).
 
-MCP is the most important plugin, not the trunk: Data, Tunnels, Jobs, Terminal, Remote and
-Process are its peers, and a new tool reaches the panel by contributing a descriptor, an action
-and a page — never by editing a match arm in the host (`SPEC §host.plugins`).
+MCP is the most important plugin, not the trunk: Data, Tunnels, Jobs, Terminal, Remote,
+Process, Memory and LLM are its peers, and a new tool reaches the panel by contributing a
+descriptor, an action and a page — never by editing a match arm in the host (`SPEC §host.plugins`).
 
 ## Where the code lives
 
 A cargo workspace that still ships one static `swiss.exe`. The edges are the architecture:
 
 ```
-swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-remote, swiss-panel }  ←  swiss
+swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-panel, swiss-process, swiss-remote, swiss-memory, swiss-llm }  ←  swiss
 ```
 
 `swiss-core` knows nothing about gateways (paths, logging, sealed files, platform calls).
 `swiss-host` is the mechanism every subsystem shares — the plugin host, actions, runs, the process
-supervisor, config, the security boundary. The seven subsystem crates are peers that never depend
+supervisor, config, the security boundary. The ten subsystem crates are peers that never depend
 on each other; `swiss` (the root `src/`) is composition and nothing else. If a change seems to need
 an edge between two subsystem crates, the host contract is missing something — add it there
 instead. `swiss-it` is the dev-only integration harness. Full map in `SPEC §arch`.
@@ -60,7 +63,7 @@ Each one is a security or correctness boundary, not style.
   idling. Its child is the only thing here that costs real memory — do not make anything start
   eagerly "for simplicity".
 - **The sealed-envelope format is frozen.** A build that cannot open an existing state file has
-  lost the user's configuration. See `SPEC §formats` before touching `secure/`; the fixture is
+  lost the user's configuration. See `SPEC §core.sealed` before touching `secure/`; the fixture is
   committed under `tests/` (`scripts/seal-fixture.mts` is kept as the record of how it was made
   and never needs to run).
 
@@ -93,6 +96,7 @@ panel is the spec for the admin API: a `/api/*` shape change ships on both sides
 
 ```bash
 cargo build --release             # the shipping exe (target/release/swiss.exe) - ADR-012
+cargo build --profile quick       # deploy.ps1 -Quick's exe (target/quick): no LTO, incremental
 cargo test --workspace            # gate 1: runs on any machine
 cargo test -p swiss-it --features it  # gate 2: real MySQL/PG/Redis (SPEC §testing.it) - needs Docker
                                   # (DOCKER_HOST) or SWISS_IT_*_URL; mandatory when the diff
@@ -130,7 +134,9 @@ scripts/test-instance.ps1 -Stop      # kill by the port's owning PID, never by p
   `SWISS_HOME` there, so a save on 19998 writes the test home, never the user's config.
 - It serves `target-test\release\swiss.exe`; build it with
   `$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`, never into `target\`, which the
-  next deploy copies to production.
+  next deploy copies to production. **Stop the 19998 instance first** (`-Stop`): Windows locks a
+  running executable, so a build whose link step lands while 19998 serves the exe fails at the
+  very end with `os error 5` - and with fat LTO the final link alone costs minutes, paid twice.
 - Never pass `--port`/`-p` to either instance: `start` and `serve` write the port into the config.
 - Kill 19998 only **by the port's owning PID** (`Get-NetTCPConnection -LocalPort 19998`);
   `Get-Process swiss` would kill the user's instance too.

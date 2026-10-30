@@ -14,7 +14,8 @@ router exists for the human who wants to steer deliberately.
 
 The route most work travels:
 
-1. **Make the change** — work from the owning section of `docs/SPEC.md`. New capability, or a
+1. **Make the change** — work from the owning section of the spec (the anchor map in
+   `docs/SPEC.md` names its chapter in `docs/spec/`). New capability, or a
    behaviour change that won't fit one sitting? **swiss-spec** first (interview it into an
    amendment of that section with acceptance tests and a delivery order); the implementation
    itself is **swiss-add-plugin**
@@ -34,7 +35,7 @@ The route most work travels:
 ## On-ramps
 
 - **An idea, not yet a change** — "what if swiss could …" → **swiss-spec**: interview it into an
-  amendment of `docs/SPEC.md` with acceptance tests and a delivery order before any code.
+  amendment of the spec (`docs/spec/`) with acceptance tests and a delivery order before any code.
   Straight to swiss-add-plugin only when it fits one sitting and one commit.
 - **Something's broken** — a failing test, a flake, a regression → **swiss-debug** (tight feedback
   loop first; SPEC and the module comments are the ground truth). A "why is it built like that"
@@ -54,8 +55,8 @@ The route most work travels:
 ## Vocabulary underneath
 
 AGENTS.md — the four product properties and every load-bearing rule — outranks everything here and
-is present in every session; `docs/SPEC.md` owns the contracts (SPEC §host.plugins, SPEC §jobs,
-SPEC §formats).
+is present in every session; the spec (`docs/SPEC.md` and its chapters in `docs/spec/`) owns the
+contracts (SPEC §host.plugins, SPEC §jobs, SPEC §core).
 No generic craft layer is installed in this environment — the disciplines ride inside the project
 skills: evidence and RED-before-green in **swiss-verify**, root-cause method in **swiss-debug**,
 audit posture in **swiss-review**. When a discipline feels missing, strengthen those skills; do

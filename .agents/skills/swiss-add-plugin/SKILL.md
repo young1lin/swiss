@@ -14,7 +14,7 @@ missing something: add it to `swiss-host` instead.
 
 Name the plan in three lines: which crate owns it, what it contributes (descriptor / action /
 page), what it costs at idle, and which host-contract seam it uses. If it won't fit one sitting
-and one commit, amend its section of `docs/SPEC.md` first through **swiss-spec** (the repo's
+and one commit, amend its section of the spec (`docs/spec/`) first through **swiss-spec** (the repo's
 spec-first convention). An explicit nod from the operator is required before anything that adds a
 dependency, a child process, or a new crate.
 

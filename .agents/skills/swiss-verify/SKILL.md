@@ -41,7 +41,7 @@ Do not reflexively run the full suite. Pick the smallest command that can go red
   manifests): that is what the full `cargo test --workspace` rehearsal is for.
 - **A diff that touches a database path owes gate 2** (SPEC §testing.it):
   `crates/swiss-mcp/src/adapters/{mysql,pg,redis}*.rs`, `sql.rs`, `resources.rs`,
-  `proc.rs`, `crates/swiss-host/src/dbbrowser.rs`, `crates/swiss-data/src/dbbrowser_api.rs`,
+  `proc.rs`, `crates/swiss-host/src/dbbrowser/`, `crates/swiss-data/src/dbbrowser_api/`,
   `crates/swiss-core/src/secure/`, `src/app.rs`, `src/mcp_link.rs`, or anything under
   `crates/swiss-it/` — run `cargo test -p swiss-it --features it` (Docker via
   `DOCKER_HOST`, or a `SWISS_IT_*_URL` override). No Docker reachable? The commit

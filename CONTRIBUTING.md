@@ -48,8 +48,8 @@ it. Those scripts are PowerShell for that Windows machine; nothing requires them
   to reach the gateway from another machine. Forward the port over SSH instead.
 - **Secrets never come back out.** A value stored in the vault is write-only; masked fields
   stay masked in every API answer, log line and error.
-- **Sealed formats are frozen.** `SPEC §formats` names the on-disk and on-wire shapes that must stay
-  byte-compatible; `tests/fixtures` proves it.
+- **Sealed formats are frozen.** `SPEC §core` names the on-disk shapes and `SPEC §host.wire` the
+  on-wire ones that must stay byte-compatible; `tests/fixtures` proves it.
 - **Panel edits go to `panel/src/*.ts`, never to the emitted `js/`.** Rebuild, and walk the
   change in a real browser (see `.agents/rules/panel-proof-of-life.md`). Both languages: the
   panel is English and 简体中文, and every visible string has a key in both dictionaries.
@@ -59,9 +59,10 @@ it. Those scripts are PowerShell for that Windows machine; nothing requires them
 
 ## Proposing a change
 
-1. Open an issue first for anything larger than a fix. [`docs/SPEC.md`](docs/SPEC.md) is the one
-   specification: a change to behaviour amends the section it touches, in the same pull request
-   as the code, and a decision worth recording becomes an ADR entry in its §decisions.
+1. Open an issue first for anything larger than a fix. [`docs/SPEC.md`](docs/SPEC.md) is the
+   front page of the one specification, whose numbered chapters live in `docs/spec/`: a change
+   to behaviour amends the section it touches, in the same pull request as the code, and a
+   decision worth recording becomes an ADR entry in its §decisions.
 2. Branch from `master`. Keep commits self-contained; the message says what changed and why,
    in the voice of the existing log.
 3. Open a pull request against `master` with the gates green. A panel change includes what the

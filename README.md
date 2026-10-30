@@ -11,7 +11,7 @@ terminal — one static binary with its admin panel embedded, no script runtime,
 
 **Why it exists:** memory. The Node.js gateway it replaced measured 113.8 MB RSS on a typical
 workload; the same workload here reads **22.4 MB** (private bytes 8.6 MB). The numbers are
-records, not gates — [SPEC §product.memory](docs/SPEC.md) holds them.
+records, not gates — [SPEC §product.memory](docs/spec/0001-product.md#productmemory--the-memory-record) holds them.
 
 ![The swiss panel's Data page browsing a demo MySQL table](docs/assets/data-page.png)
 
@@ -46,7 +46,7 @@ on Linux, or `shasum -a 256 <archive>` on macOS). Extract it, then put
 
 ```
 swiss --version        # verify the installed binary
-swiss skill install    # install the embedded swiss and swiss-remote AI skills
+swiss skill install    # install the embedded swiss, swiss-remote and swiss-memory AI skills
 swiss status           # check whether a gateway is already running
 swiss start            # start the gateway on 127.0.0.1:19999 and open the panel
 swiss token            # the bearer token an MCP client authenticates with
@@ -55,9 +55,11 @@ swiss creds            # panel URL + token, ready to paste into a client
 
 The opt-in [`swiss` skill](src/skill_assets/SKILL.md) covers safe installation, checksum
 verification, and local checks. [`swiss-remote`](src/skill_assets/remote/SKILL.md) covers
-configured remote targets, file transfer, and run history. Both are embedded in the binary
-and installed to `~/.agents/skills`, `~/.claude/skills`, and
-`~/.cursor/skills`; run `swiss skill install` again after upgrading. Neither skill starts
+configured remote targets, file transfer, and run history.
+[`swiss-memory`](src/skill_assets/memory/SKILL.md) is the one skill for project memory: how
+to find what it holds, ask it a question, and save what is worth keeping. All three are
+embedded in the binary and installed to `~/.agents/skills`, `~/.claude/skills`, and
+`~/.cursor/skills`; run `swiss skill install` again after upgrading. No skill starts
 the gateway or exposes tokens just because an agent loads it.
 
 Or build from source: Rust stable, `cargo build --release` — the same single binary. Linux
@@ -105,7 +107,7 @@ needed to build; see [CONTRIBUTING.md](CONTRIBUTING.md).
   anything is stored.
 
 If you forward the port over SSH, the far side gains the token boundary — not the loopback one.
-The full model is [SPEC §security](docs/SPEC.md).
+The full model is [SPEC §security](docs/spec/0015-security.md).
 
 ## Update
 
@@ -142,9 +144,11 @@ A PATH change reaches terminals opened afterwards; ones already open keep their 
 
 ## Documentation
 
-The design record is one living document, [`docs/SPEC.md`](docs/SPEC.md): what swiss does now,
-organised by area (product and memory, architecture, formats, the host, each plugin, the panel,
-security, testing, release), with the decision log (ADR-001 …) as its last section.
+The design record is one living specification, [`docs/SPEC.md`](docs/SPEC.md): what swiss does
+now, organised by area, one numbered chapter per area under [`docs/spec/`](docs/spec/) (product
+and memory, architecture, formats, the host, each plugin, the panel, security, testing,
+release), with the decision log (ADR-001 …) as its last chapter. `SPEC.md` is its front page:
+how to read and amend it, the chapter table and a map from every anchor to its chapter.
 
 ## Non-goals
 
