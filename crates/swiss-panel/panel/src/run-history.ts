@@ -19,6 +19,7 @@ import type { PgUrlParts } from "./types/dom.js";
 import type { ApiMcpResourceRead, McpConfigLike, McpRunResult } from "./types/runs.js";
 import type { McpDetail } from "./types/state.js";
 import { $, api, apiJson, errText, iconNode, targetEl, toast } from "./util.js";
+import { deepBody, deepSearch } from "./detail.js";
 import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsNode, parsePgUrl } from "./fields.js";
 import { callBlockCopyText, copyLogText, fmtChars, logsBodyNode, readableBody, repaintCallBlock, toggleCall } from "./logs.js";
@@ -635,6 +636,43 @@ function openOrCloseCall(seq: number): void {
 function paneTabClick(ev: MouseEvent): void {
   const t = targetEl(ev);
   if (!t) return;
+  // Deep literal search (SPEC §host.history): the toggle opens the stored-body
+  // fan-out; Go searches, Continue pages, hits load bounded body slices.
+  if (t.id === "callsDeepToggle") {
+    const d = mcpDetail();
+    if (d) {
+      d.callsDeep = !d.callsDeep;
+      renderCallsOnly();
+    }
+    return;
+  }
+  if (t.id === "callsDeepGo" || t.id === "callsDeepMore") {
+    const d = mcpDetail();
+    if (d) {
+      if (t.id === "callsDeepGo") {
+        d.deepHits = [];
+        d.deepComplete = false;
+        d.deepCursors = null;
+        d.deepScanned = 0;
+        d.deepSkipped = [];
+        d.deepBodies = {};
+      }
+      void deepSearch(d.name, t.id === "callsDeepMore");
+    }
+    return;
+  }
+  const deepHit = t.closest<HTMLElement>("[data-deephit]");
+  if (deepHit) {
+    const d = mcpDetail();
+    if (d) void deepBody(d.name, Number(deepHit.dataset.deephit), false);
+    return;
+  }
+  const deepMore = t.closest<HTMLElement>("[data-deepmore]");
+  if (deepMore) {
+    const d = mcpDetail();
+    if (d) void deepBody(d.name, Number(deepMore.dataset.deepmore), true);
+    return;
+  }
   // Config editing form
   if (t.id === "e-save") {
     const d = mcpDetail();
@@ -756,7 +794,16 @@ function paneTabChange(ev: Event): void {
  *  of the live #callsQ node needs no re-wiring to keep working. */
 function paneTabInput(ev: Event): void {
   const t = targetEl(ev);
-  if (!t || t.id !== "callsQ") return;
+  if (!t) return;
+  // The deep stored-body search box (SPEC §host.history): no debounce — the Go
+  // button is the trigger, so every keystroke only records the needle.
+  if (t.id === "callsDeepQ") {
+    const q = t as HTMLInputElement;
+    const d = mcpDetail();
+    if (d) d.deepQ = q.value;
+    return;
+  }
+  if (t.id !== "callsQ") return;
   // One stable id owns exactly one element - the calls search input. Narrowed here the
   // same way every closest<HTMLInputElement> in the tree narrows; no Element classes
   // exist to instanceof against in the Node-boot environment this dispatcher is tested in.
@@ -783,6 +830,20 @@ function paneTabInput(ev: Event): void {
 function paneTabKeydown(ev: KeyboardEvent): void {
   const t = targetEl(ev);
   if (!t) return;
+  // Enter in the deep stored-body box runs the search at once.
+  if (t.id === "callsDeepQ" && ev.key === "Enter") {
+    const d = mcpDetail();
+    if (d) {
+      d.deepHits = [];
+      d.deepComplete = false;
+      d.deepCursors = null;
+      d.deepScanned = 0;
+      d.deepSkipped = [];
+      d.deepBodies = {};
+      void deepSearch(d.name, false);
+    }
+    return;
+  }
   if (t.id === "callsQ") {
     // Escape clears at once (SPEC §mcp.calls): no debounce, no wait. #callsQ is the calls
     // search input - see paneTabInput for why the narrow is an id, not instanceof.
@@ -914,8 +975,17 @@ function renderCallsOnly(): void {
   const calls = d.calls || [];
   // The page, a pending switch and the error state are part of the picture now (SPEC §mcp.calls):
   // a commit or a failure must repaint even when the row count happens to stay the same.
+  const deepSig = d.callsDeep
+    ? "d1:" + (d.deepHits ? d.deepHits.length : 0) + ":" + (d.deepComplete ? 1 : 0) + ":" +
+      (d.deepScanned || 0) + ":" + (d.deepError || "").length + ":" +
+      Object.keys(d.deepBodies || {}).map((id) => {
+        const b = (d.deepBodies || {})[Number(id)];
+        return id + "." + (b ? b.text.length : 0);
+      }).join(",")
+    : "d0";
   const sig = (calls.length ? calls[0].seq : 0) + ":" + calls.length + ":" + d.stderr.length + ":" + (d.callsQ || "") +
-    ":p" + d.callsPage + ":w" + (d.callsPendingPage == null ? "-" : d.callsPendingPage) + ":e" + (d.callsError || "");
+    ":p" + d.callsPage + ":w" + (d.callsPendingPage == null ? "-" : d.callsPendingPage) + ":e" + (d.callsError || "") +
+    ":" + deepSig;
   if (body.dataset.callsig === sig) return;
   // Keep the search box the user is typing into: the fresh markup carries a rebuilt input, and the
   // live node (focus, caret, IME state) is swapped back into its place. innerHTML detaching the

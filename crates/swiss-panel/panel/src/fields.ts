@@ -136,12 +136,17 @@ const TYPE_FIELDS: Record<string, FieldSpec[]> = {
     { k: "exposePrompts", label: tk("fields.exposePrompts"), bool: true, def: true },
     AUTOSTART_EAGER,
   ],
-  /* The figma type (SPEC §mcp.figma): the form is a description and nothing else. The endpoint
-     and the OAuth mode are the type's to decide — the server refuses a url or auth key on a
-     figma def — and the detail view's Authorize button is the one step after Save. No Test
-     button: a keyless handshake is always 401 (see runConnTest). */
+  /* The figma type (SPEC §mcp.figma): the form is a description and this machine's route to
+     Figma. The endpoint and the OAuth mode are the type's to decide — the server refuses a url
+     or auth key on a figma def — while the proxy is not, so it is the one network field here;
+     the OAuth handshake rides it too. The detail view's Authorize button is the one step after
+     Save. No Test button: a keyless handshake is always 401 (see runConnTest). */
   figma: [
     DESC_FIELD,
+    {
+      k: "proxy", label: tk("fields.proxy"), ph: "http://127.0.0.1:7890 or ${MY_PROXY}",
+      hint: tk("fields.figmaProxyRoute"),
+    },
     { k: "exposeResources", label: tk("fields.exposeResources"), bool: true, def: true },
     { k: "exposePrompts", label: tk("fields.exposePrompts"), bool: true, def: true },
     AUTOSTART_EAGER,

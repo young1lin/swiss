@@ -293,6 +293,8 @@ describe("historyMeta", () => {
   it("names non-run outcomes for what they are, with no exit or timing masquerade", () => {
     expect(historyMeta({ trigger: "timer", outcome: "skipped", reason: "overlap" } as ApiJobRunRecord)).toBe("timer · skipped (overlap)");
     expect(historyMeta({ trigger: "timer", outcome: "missed", missedCount: 71 } as ApiJobRunRecord)).toBe("timer · missed · 71 more missed");
+    // skip's late occurrence alone: the record is the whole story, no "0 more".
+    expect(historyMeta({ trigger: "timer", outcome: "missed", missedCount: 0 } as ApiJobRunRecord)).toBe("timer · missed");
     expect(historyMeta({ trigger: "timer", outcome: "refused", error: "no such action" } as ApiJobRunRecord))
       .toBe("timer · refused · no such action");
   });

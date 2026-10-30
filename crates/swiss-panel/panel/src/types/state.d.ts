@@ -25,7 +25,7 @@
    Renaming the file to types/domain.ts is R6's, not a slice's — it touches every importer
    and would bury the state split in import churn. */
 
-import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbStreamGroupRow, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, ApiMongoAggReply, ApiMongoColl, ApiMongoExplainReply, ApiMongoIndexesResponse, ApiMongoInfo, ApiMongoSchema, ApiRedisCommand, DbQueryReply } from "./api.js";
+import type { ApiDbActivityRow, ApiDbPubsubChannels, ApiDbPubsubMessage, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbStreamGroupRow, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, ApiMongoAggReply, ApiMongoColl, ApiMongoExplainReply, ApiMongoIndexesResponse, ApiMongoInfo, ApiMongoSchema, ApiRedisCommand, DbQueryReply } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -112,6 +112,20 @@ export interface McpDetail {
   callsRetryDir: string | null;
   /* A page switch's anchor intent (SPEC §mcp.calls): direction, keyboard drive, pager top. */
   callsSwitch: { dir: string | null; fromKey?: boolean; pagerTop?: number } | null;
+  /* Deep literal search (SPEC §host.history): the cross-module query fan-out over
+   * this module's STORED BODIES — beyond the preview line legacy q cannot see.
+   * Hits carry (runId, byteOfs); one resume token per owner; an incomplete page
+   * with zero hits is STILL SCANNING, never rendered as "no matches". */
+  callsDeep?: boolean;
+  deepQ?: string;
+  deepHits?: { runId: number; byteOfs: number }[];
+  deepComplete?: boolean;
+  deepBusy?: boolean;
+  deepCursors?: Record<string, string> | null;
+  deepScanned?: number;
+  deepSkipped?: string[];
+  deepError?: string;
+  deepBodies?: Record<number, { text: string; next: number | null }>;
   callsRequest: number;
   callsActive: number;
   /* SPEC §mcp.calls: seqs whose full reply the server has pruned (bodyGone), so the row stops offering
@@ -250,7 +264,7 @@ export interface DdlRow {
 }
 
 /** The payload half of the (op, payload) body /api/db/:name/ddl-preview and /ddl both take -
- *  what swiss-host/src/dbbrowser.rs build_ddl_create reads per op: table (+ schema) on every
+ *  what swiss-host/src/dbbrowser/ddl.rs build_ddl_create reads per op: table (+ schema) on every
  *  op; create_table columns / primary / comment; add_column columns; create_index index /
  *  columns / unique. The sheet builds it from its form (data-ddl.ts dbDdlFormPayload), it
  *  never round-trips a server object, so nothing else can be in it. */
@@ -349,9 +363,9 @@ export interface DbGridConfig {
    wrong domain is a typecheck error, not a browser bug. Collapsing the four kinds into
    one interface with optional fields would switch that safety net off. */
 
-/** One open object's tab kind: a table grid, the console, a redis key's value view, or
- *  the activity monitor. */
-export type DbTabKind = "table" | "sql" | "key" | "activity" | "coll";
+/** One open object's tab kind: a table grid, the console, a redis key's value view, the
+ *  activity monitor, a MongoDB collection, or a redis connection's pub/sub page. */
+export type DbTabKind = "table" | "sql" | "key" | "activity" | "coll" | "pubsub";
 
 /** What every tab carries whatever it shows: its own loading flag, its own checked-row
  *  map (the grid's keys and the result grid's "q"-prefixed keys share it), the keyboard
@@ -403,6 +417,11 @@ export interface DbTableTab extends DbTabBase {
  *  and which reply is showing. One statement per result tab (SPEC §data.console). */
 export interface DbSqlTab extends DbTabBase {
   kind: "sql";
+  /** The Data agent's own console (SPEC §data.agent): its statements land here, never in another. */
+  agent?: boolean;
+  /** The name of the agent's console tab it opened (open_console), which a run or stage naming
+   *  it lands in; none for its Agent tab. The tab's title may be renamed; this stays. */
+  agentTab?: string;
   sqlText: string;
   sqlResult: DbQueryReply | null;
   sqlResults: DbQueryReply[] | null;
@@ -480,6 +499,42 @@ export interface DbActivityTab extends DbTabBase {
   activityRows: ApiDbActivityRow[] | null;
 }
 
+/** One line of the pub/sub page's log (SPEC §data.pubsub): a delivered message, or the page's
+ *  own note between them - subscribed, messages dropped, the feed closed, a stretch not listened.
+ *  A note's `label` is the one word its row leads with; `bad` marks one where messages were
+ *  missed. `seq` grows by one a line and is the row's id in the event list. */
+export type DbPubsubLine =
+  | (ApiDbPubsubMessage & { line: "message"; seq: number })
+  | { line: "note"; seq: number; label: string; text: string; at: number; bad?: boolean };
+
+/** A redis connection's pub/sub page as an open object (SPEC §data.pubsub, SPEC §data.tabs): the
+ *  channel listing the 5s poll refreshes, the watch set the live feed subscribes to, the log of
+ *  what arrived (newest last, at most DB_PUBSUB_LOG_MAX), and the publish row as typed. */
+export interface DbPubsubTab extends DbTabBase {
+  kind: "pubsub";
+  channels: ApiDbPubsubChannels | null;
+  channelsError: string | null;
+  /** The PUBSUB CHANNELS pattern as typed; blank lists every channel. */
+  pattern: string;
+  watchChannels: string[];
+  watchPatterns: string[];
+  /** The add-a-name box as typed. */
+  watchText: string;
+  log: DbPubsubLine[];
+  /** Messages the server counted and did not relay since the log was last cleared. */
+  dropped: number;
+  /** off: no feed (nothing watched, stopped, or the tab is in the background); connecting;
+   *  live once `subscribed` arrived; error when the subscribe was refused. */
+  live: "off" | "connecting" | "live" | "error";
+  liveNote: string | null;
+  /** The operator stopped listening; a watch-set change or Listen starts again. */
+  stopped: boolean;
+  /** When the last feed ended, so the next one can say which stretch went unheard. */
+  offAt: number | null;
+  pubChannel: string;
+  pubMessage: string;
+}
+
 /** One pipeline stage as the builder holds it (SPEC §data.mongo-pipeline): the operator, its body
  *  as typed (shell syntax), whether it runs, and the last preview of what it hands the next
  *  stage. */
@@ -530,7 +585,7 @@ export interface DbCollTab extends DbTabBase {
   validatorText: string | null;
 }
 
-export type DbTab = DbTableTab | DbSqlTab | DbKeyTab | DbActivityTab | DbCollTab;
+export type DbTab = DbTableTab | DbSqlTab | DbKeyTab | DbActivityTab | DbCollTab | DbPubsubTab;
 
 /** What a tab is opened FOR (SPEC §data.tabs): the address `dbOpenTab` dedupes on before it
  *  builds anything. A table's identity is schema+table+filters — the FK jump's filtered
@@ -543,13 +598,14 @@ export type DbTabSpec =
   | { kind: "key"; key: string; type?: string }
   | { kind: "sql" }
   | { kind: "activity" }
+  | { kind: "pubsub" }
   | { kind: "coll"; db: string; coll: string };
 
 /** The connection-scoped half of the old record: the sidebar's list state, the pickers,
  *  the grid geometry (per-connection by construction, SPEC §data.grid) and what the console
- *  remembers ACROSS consoles — the query history and the favorites, which belong to the
- *  connection, not to one scratchpad. Shared by every open tab; reset when the connection
- *  changes.
+ *  remembers ACROSS consoles — the favorites, which belong to the browser, not to one
+ *  scratchpad. Shared by every open tab; reset when the connection changes. What ran is not
+ *  here: the server files it per database (SPEC §data.history).
  *
  *  T1's transitional block is gone (SPEC §data.tabs): the console's text and replies live on
  *  DbSqlTab and the activity rows on DbActivityTab, so `sqlOpen` and `activity: boolean`
@@ -572,7 +628,6 @@ export interface DbConnState {
   sort: string;
   sortDir: string;
   gridCfg: DbGridConfig;
-  history: string[];
   favorites: string[];
   /* The SCAN cursor is the wire's string (redis cursors are big unsigned numbers the
      panel compares against "0" — never a JS number). `pages` is how many SCAN pages the walk

@@ -103,7 +103,7 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(existsSync(join(here, "..", "src", "views", "remote-runs.ts"))).toBe(true);
   });
 
-  it("the head is one sentence, what the record keeps, the target filter and a ⋯ - no caption, no standing Clear", async () => {
+  it("the head is one sentence, what the record keeps, the search box, the target filter and a ⋯ - no caption, no standing Clear", async () => {
     // One list is the whole page, so its filter and its ⋯ are the head's (the Jobs and Tunnels
     // head ⋯ hold page-wide verbs too). In a captionless section head they stood on a row of
     // their own over the note (found on a walk of SPEC §panel.pages).
@@ -112,8 +112,14 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     const pane = $("pane");
     expect(pane.querySelector(".pane-desc")?.textContent).toBe("Every command, sync and pull run on a remote target, with its output.");
     expect(pane.querySelector(".pane-sub")?.textContent).toBe("1 run recorded · 1.5 KB of 500.0 MB · kept 30 days");
-    const acts = Array.from(pane.querySelectorAll(".pane-actions > select, .pane-actions > button")).map((n) => n.id);
-    expect(acts).toEqual(["rrTarget", "rrMore"]);
+    const acts = Array.from(pane.querySelectorAll(".pane-actions > input, .pane-actions > select, .pane-actions > button")).map((n) => n.id);
+    /* 2026-10-12: the search box leads the head and is always there - no toggle that opened a
+       second box under the list (admin-remote-runs-search.test.ts has what it does). */
+    expect(acts).toEqual(["rrQ", "rrTarget", "rrMore"]);
+    const box = $("rrQ") as HTMLInputElement;
+    expect(box.type).toBe("search");
+    expect(box.placeholder).toBe("Search output");
+    expect(box.hidden).toBe(false);
     expect(pane.querySelector(".sec-head, .sec-cap, .sec-note")).toBeNull();
     expect(Array.from(($("rrTarget") as HTMLSelectElement).options).map((o) => o.value)).toEqual(["", "build", "dev"]);
     expect($("rrClear")).toBeNull();
@@ -356,7 +362,36 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     open(37);
     await settle();
     expect(block(37, "Command")?.querySelector("pre")?.textContent).toBe("sh -s");
+    expect(item(37).querySelector(".tl-arg")?.textContent).toBe("sh -s · stdin 2.0 KB");
     expect(item(37).querySelector(".tl-body")?.textContent).toContain("Stdin: 2.0 KB sent; the text is not kept.");
+  });
+
+  /* 2026-10-10: the stdin IS kept now - sealed beside the record exactly as a write's
+     body is (a `bash -s` row that cannot say WHAT ran was the owner's finding). Show
+     unseals it through the same route; rows recorded before it was kept keep the note. */
+  it("an exec's stdin is sealed beside the record: Show unseals and paints it, Hide puts it away", async () => {
+    const ran = {
+      ...finished, runId: 38, state: "succeeded", exitCode: 0,
+      input: { target: "build", argv: ["bash", "-s"], stdinBytes: 17 }, outputBytes: 4, stdinStored: true,
+    };
+    serve([ran], []);
+    replies["/api/remote/runs/38/output?after=0&max=131072"] = { runId: 38, cursor: 0, nextCursor: 4, output: "ok\n", total: 4, terminal: true };
+    replies["/api/remote/runs/38/content"] = { runId: 38, content: "echo hello\nexit 0\n", truncated: false };
+    await view.mount();
+    open(38);
+    await settle();
+    expect(item(38).querySelector(".tl-arg")?.textContent).toBe("bash -s · stdin 17 B");
+    const block = (): HTMLElement | undefined => Array.from(item(38).querySelectorAll<HTMLElement>(".vblock"))
+      .find((b) => b.querySelector(".vblock-cap")?.textContent === "Stdin sent");
+    expect(block(), "the sealed-stdin block is there").toBeTruthy();
+    expect(block()!.querySelector(".vblock-note")?.textContent).toBe("17 B");
+    expect(block()!.querySelector("pre")).toBeNull();
+    expect(requests.some((r) => r.path === "/api/remote/runs/38/content"), "nothing is unsealed until asked").toBe(false);
+    (block()!.querySelector("[data-rcontent]") as HTMLElement).click();
+    await settle();
+    expect(block()!.querySelector("pre")?.textContent).toBe("echo hello\nexit 0\n");
+    (block()!.querySelector("[data-rcontenthide]") as HTMLElement).click();
+    expect(block()!.querySelector("pre")).toBeNull();
   });
 
   it("runs fed stdin never fold - the same argv may have read a different script", async () => {

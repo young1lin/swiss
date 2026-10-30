@@ -151,6 +151,11 @@ export interface ApiRemoteRunRow extends ApiRunRow {
   contentStored?: boolean;
   contentTruncated?: boolean;
   contentEvicted?: boolean;
+  /** SPEC §remote.history: an exec's stdin is kept sealed beside the record (same slot
+   *  and route as a write's body - a run is one or the other), cut at 256 KiB when
+   *  truncated. Rows before 2026-10-10 carry the size only. */
+  stdinStored?: boolean;
+  stdinTruncated?: boolean;
   tail?: string;
   meta?: RemoteRunMeta;
 }

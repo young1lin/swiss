@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 
 /* SPEC §tunnels.panel: the connection sheet's Advanced fold (proxy + jump) and the transport
-   tags on the connection row. The wire half lives in manager.rs's rows test — here the
+   tags on the connection row. The wire half lives in manager/report.rs's rows test — here the
    panel reads the row fields the backend now carries: the fold renders collapsed with the
    bare word when nothing is configured, chips when something is, the interior echoes the
    stored values (proxyPassword as the mask sentinel), the save payload carries the optional

@@ -84,7 +84,7 @@ export interface TerminalLocalCfg {
   shells?: { program: string; label: string }[];
 }
 
-/** The terminal plugin's config row - the keys src/plugins/terminal.rs config_schema
+/** The terminal plugin's config row - the keys swiss-plugins' terminal.rs config_schema
  *  declares (SPEC §terminal.config): the local block the settings sheet edits, and the remote
  *  session limits it leaves alone. Every field is optional on the wire; the plugin defaults
  *  what is absent. */

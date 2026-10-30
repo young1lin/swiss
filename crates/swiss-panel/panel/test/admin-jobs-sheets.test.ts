@@ -205,6 +205,63 @@ describe("the create sheet", () => {
     (cap as HTMLElement).click();
     expect(on()).toEqual(was);
   });
+
+  it("Edit reads every schedule mode back without crashing - the weekly m[4] crash (2026-10-10)", async () => {
+    // The weekly preset's parser read group 4 of a 3-group regex: creating a weekly
+    // job worked (schedToBody) but Edit crashed at schedFromJob before the sheet drew.
+    // Every mode's read-back is asserted here so the class stays covered, not just the fix.
+    const cases: Array<[string, Record<string, unknown>, () => void]> = [
+      ["interval-2h", { everySec: 7200 }, (): void => {
+        expect(($("jf-sched").querySelector('[aria-selected="true"]') as HTMLElement).dataset.mode).toBe("interval");
+        expect(($("jf-ev") as HTMLInputElement).value).toBe("2");
+        expect(($("jf-ev-u") as HTMLSelectElement).value).toBe("hours");
+      }],
+      ["daily-9", { cron: "0 9 * * *" }, (): void => {
+        expect(($("jf-sched").querySelector('[aria-selected="true"]') as HTMLElement).dataset.mode).toBe("daily");
+        expect(($("jf-at") as HTMLInputElement).value).toBe("09:00");
+      }],
+      ["weekly-12345", { cron: "30 8 * * 1-5" }, (): void => {
+        expect(($("jf-sched").querySelector('[aria-selected="true"]') as HTMLElement).dataset.mode).toBe("weekly");
+        expect(($("jf-at") as HTMLInputElement).value).toBe("08:30");
+        const on = Array.from($("jf-days").querySelectorAll("button.on")).map((b) => b.getAttribute("data-dow"));
+        expect(on).toEqual(["1", "2", "3", "4", "5"]);
+      }],
+      ["weekly-list", { cron: "0 7 * * 1,3,5" }, (): void => {
+        const on = Array.from($("jf-days").querySelectorAll("button.on")).map((b) => b.getAttribute("data-dow"));
+        expect(on).toEqual(["1", "3", "5"]);
+      }],
+      ["weekly-full-week", { cron: "0 8 * * 0-7" }, (): void => {
+        // "0-7" is every day; the old parser folded 7%7 onto 0 and met the break
+        // immediately, silently narrowing an every-day job to Sundays (2026-10-10).
+        const on = Array.from($("jf-days").querySelectorAll("button.on")).map((b) => b.getAttribute("data-dow"));
+        expect(on).toEqual(["0", "1", "2", "3", "4", "5", "6"]);
+      }],
+      ["weekly-wrap", { cron: "0 8 * * 6-1" }, (): void => {
+        const on = Array.from($("jf-days").querySelectorAll("button.on")).map((b) => b.getAttribute("data-dow"));
+        expect(on).toEqual(["0", "1", "6"]);
+      }],
+      ["monthly-15", { cron: "0 8 15 * *" }, (): void => {
+        expect(($("jf-sched").querySelector('[aria-selected="true"]') as HTMLElement).dataset.mode).toBe("monthly");
+        expect(($("jf-md") as HTMLInputElement).value).toBe("15");
+      }],
+      ["cron-raw", { cron: "*/5 9-17 * * 1-5" }, (): void => {
+        expect(($("jf-sched").querySelector('[aria-selected="true"]') as HTMLElement).dataset.mode).toBe("cron");
+        expect(($("jf-cron-in") as HTMLInputElement).value).toBe("*/5 9-17 * * 1-5");
+      }],
+    ];
+    for (const [name, triggerFields, assert] of cases) {
+      state.setJobRows([Object.assign({ name, command: "cmd /c echo hi", enabled: true }, triggerFields)]);
+      jobs.renderJobs();
+      ($("pane").querySelector(`[data-job="${name}"] [data-more]`) as HTMLElement).click();
+      const edit = Array.from(document.querySelectorAll("#menu button")).find((b) => b.textContent === "Edit") as HTMLElement;
+      expect(edit, `the Edit item for ${name}`).toBeTruthy();
+      edit.click();
+      await tick();
+      expect($("sheet").hidden, `the sheet for ${name}`).toBe(false);
+      assert();
+      $("jf-cancel").click(); // close for the next case
+    }
+  });
 });
 
 describe("the advanced sheet, behind the head's ⋯", () => {

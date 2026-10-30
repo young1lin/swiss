@@ -104,7 +104,7 @@ export interface ApiMcpDetails {
   oauth?: "authorized" | "needs-auth";
 }
 
-/** One tunnel this MCP's traffic depends on - swiss-tunnels/src/tunnel/manager.rs
+/** One tunnel this MCP's traffic depends on - swiss-tunnels/src/tunnel/manager/links.rs
  *  tunnels_for_mcp: the rule's identity and target, its live state, and the pool-staleness
  *  flag the config tab warns on. Not the full /api/tunnels rule row (no counters). */
 export interface ApiMcpTunnelDep {
@@ -528,7 +528,7 @@ export interface ApiTunnelsResponse {
   mcps: string[];
 }
 
-/** One connection row - tunnel/manager.rs rows() builds it key by key (not from
+/** One connection row - tunnel/manager/report.rs rows() builds it key by key (not from
  *  types.rs SshConnDef::to_json()): the frozen id..activeRules prefix, then the
  *  SPEC §tunnels.panel fields and keyPath, each absent when unset. Secrets ride
  *  masked (proxyPassword) or absent (passphrase, password). */
@@ -554,7 +554,7 @@ export interface ApiTunnelConnectionRow {
   jump?: string;
 }
 
-/** One rule row - tunnel/manager.rs rule_row_of(): types.rs RuleDef::to_json() plus the
+/** One rule row - tunnel/manager/report.rs rule_row_of(): types.rs RuleDef::to_json() plus the
  *  live runtime columns. portOwner is absent while the local port is free. */
 export interface ApiTunnelRuleRow {
   id: string;
@@ -652,9 +652,9 @@ export interface RuleSheetDraft {
   mcps?: string[];
 }
 
-/* --- the Data browser (swiss-data/src/dbbrowser_api.rs, dbbrowser.rs) --------------------------- */
+/* --- the Data browser (swiss-data/src/dbbrowser_api/, dbbrowser/) ------------------------------ */
 
-/** GET /api/db - dbbrowser_api.rs:97 browsable_connections (ordered like the sidebar). */
+/** GET /api/db - dbbrowser_api/mod.rs:97 browsable_connections (ordered like the sidebar). */
 export interface ApiDbConnectionsResponse {
   connections: ApiDbConnectionRow[];
 }
@@ -667,7 +667,7 @@ export interface ApiDbConnectionRow {
   group: string;
 }
 
-/** GET /api/db/{name}/tables - dbbrowser_api.rs list_tables route. */
+/** GET /api/db/{name}/tables - dbbrowser_api/mod.rs list_tables route. */
 export interface ApiDbTablesResponse {
   tables: ApiDbTableRow[];
   total: number;
@@ -685,7 +685,7 @@ export interface ApiDbTableRow {
   size?: string;
 }
 
-/** GET /api/db/{name}/databases - dbbrowser_api.rs databases (SPEC §data.databases). The configured
+/** GET /api/db/{name}/databases - dbbrowser_api/mod.rs databases (SPEC §data.databases). The configured
  *  database, the one the pool sits on, and every other database the instance will name.
  *  reason is a SERVER-GIVEN English sentence shown verbatim on the disabled row — the same
  *  rule as ApiDbDataPage.editNote. tables is optional (pg cannot count cross-database). */
@@ -707,7 +707,7 @@ export interface ApiDbDatabase {
   empty?: boolean;
 }
 
-/** GET /api/db/{name}/data - dbbrowser_api.rs read_table route (the stub at :1196 spells it). */
+/** GET /api/db/{name}/data - dbbrowser_api/mod.rs read_table route (the stub at :1196 spells it). */
 export interface ApiDbDataPage {
   schema: string;
   table: string;
@@ -743,6 +743,30 @@ export interface ApiDbTableDetail {
   ddl: string;
 }
 
+/** One console run as the history files it (swiss-data history.rs Run::to_json, SPEC
+ *  §data.history): `ts` in epoch ms, `conn` the connection name that ran it, `cut` when the
+ *  statement was stored shortened, `rows` a SQL reply's row count, `error` a failure's words. */
+export interface ApiDbHistoryRun {
+  id: number;
+  ts: number;
+  conn: string;
+  dialect: string;
+  stmt: string;
+  ok: boolean;
+  cut?: boolean;
+  error?: string;
+  rows?: number;
+  ms?: number;
+}
+
+/** GET /api/db/{name}/history: one page of a database's runs, newest first. `target` is the
+ *  database they are filed under; `more` says an earlier page exists. */
+export interface ApiDbHistoryPage {
+  target: string;
+  runs: ApiDbHistoryRun[];
+  more: boolean;
+}
+
 /** One FK of the Structure tab's Foreign Keys list; the target name carries the jump. */
 export interface ApiDbFkRow {
   name: string;
@@ -752,17 +776,26 @@ export interface ApiDbFkRow {
   refColumn: string;
 }
 
-/** One console statement's reply - dbbrowser_api.rs query route; elapsedMs is attached by
+/** One console statement's reply - dbbrowser_api/mod.rs query route; elapsedMs is attached by
  *  the :744 helper. Used for sqlResult AND each entry of sqlResults. */
 export interface DbQueryReply {
   columns: string[];
   rows: Record<string, unknown>[];
   rowCount: number;
   elapsedMs?: number;
+  /** The row limit the server added to a statement without a LIMIT of its own, present only
+   *  when it cut the rows (SPEC §data.console). */
+  limitApplied?: number;
+  /** A write the Data agent ran on its own and committed (SPEC §data.agent Writes): the rows it
+   *  changed, and the id an insert took when it took one. */
+  affectedRows?: number;
+  insertId?: number;
   /* the panel's own annotations on a stored result (not on the wire): the console flags an
-   *  EXPLAIN-prefixed run and names each result tab; note carries the reply's shape hint. */
+   *  EXPLAIN-prefixed run, names each result tab and keeps the text it sent (the tab's hover);
+   *  note carries the reply's shape hint. */
   explained?: boolean;
   tabLabel?: string;
+  stmt?: string;
   note?: string;
 }
 
@@ -880,12 +913,54 @@ export interface ApiDbRedisKeyRow {
   binary?: boolean;
 }
 
+/** GET /api/db/{name}/pubsub - redis_pubsub.rs list_channels (SPEC §data.pubsub): the channels
+ *  with a SUBSCRIBE subscriber right now under `pattern`, sorted by name and cut at 1000. */
+export interface ApiDbPubsubChannels {
+  pattern: string;
+  channels: ApiDbPubsubChannel[];
+  /** How many channels matched before the cut. */
+  total: number;
+  truncated: boolean;
+  /** PUBSUB NUMPAT: pattern subscriptions on the server, whose channels are not listed. */
+  patterns: number;
+}
+
+export interface ApiDbPubsubChannel {
+  name: string;
+  /** The name is not UTF-8: `name` is redis-cli's printing, which subscribes to nothing. */
+  binary?: boolean;
+  subscribers: number;
+}
+
+/** One line of POST /api/db/{name}/pubsub/subscribe's NDJSON body (redis_pubsub.rs, pubsub_api.rs). */
+export type ApiDbPubsubEvent =
+  | { event: "subscribed"; channels: string[]; patterns: string[] }
+  | ApiDbPubsubMessage
+  | { event: "dropped"; count: number }
+  | { event: "tick"; at: number }
+  | { event: "closed"; reason: string };
+
+/** A delivered message (redis_pubsub.rs message_event): the payload as text, at most 16 KiB of it;
+ *  `binary` when it is redis-cli's printing of bytes that are not UTF-8; `size` the real length. */
+export interface ApiDbPubsubMessage {
+  event: "message";
+  channel: string;
+  channelBinary?: boolean;
+  /** The PSUBSCRIBE pattern that matched, absent for a SUBSCRIBE channel. */
+  pattern?: string;
+  payload: string;
+  binary?: boolean;
+  size: number;
+  truncated?: boolean;
+  at: number;
+}
+
 /** GET /api/db/{name}/activity - the 5s Activity poll while the pane is open. */
 export interface ApiDbActivityReply {
   rows: ApiDbActivityRow[];
 }
 
-/** One session row from swiss-host/src/dbbrowser.rs activity_sql, passed through activity_row:
+/** One session row from swiss-host/src/dbbrowser/activity.rs activity_sql, passed through activity_row:
  *  both dialects alias their catalog columns to this one key set, so the shape is closed. own
  *  marks the row this panel's own polling session is, seconds feeds the duration column.
  *  pid, seconds and own are the three the panel computes on, and the three activity_row types
@@ -967,7 +1042,7 @@ export interface ApiRemoteRunOutput {
   terminal: boolean;
 }
 
-/* --- terminal (src/plugins/terminal_api.rs, swiss-terminal) ------------------------------------- */
+/* --- terminal (swiss-plugins terminal_api.rs, swiss-terminal) ----------------------------------- */
 
 /** GET /api/terminal/targets - terminal/session.rs TargetsView (camelCase serde). */
 export interface ApiTerminalTargets {
@@ -986,7 +1061,7 @@ export interface ApiTerminalTargets {
 /** GET /api/terminal/sessions - terminal_api.rs list_sessions: a bare array of SessionView. */
 export type ApiTerminalSessionsResponse = ApiTerminalSessionRow[];
 
-/** terminal/session.rs SessionView. recording is null when the session is not recorded. */
+/** terminal/session.rs SessionView. recording is the cast export URL (/api/terminal/recordings/{sid}/cast) while the recording is on; null when recording is off or the history store could not open (ADR-035). */
 export interface ApiTerminalSessionRow {
   id: string;
   target: string;

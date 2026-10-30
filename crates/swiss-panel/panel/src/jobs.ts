@@ -485,12 +485,18 @@ function schedFromJob(v: { name: string; command: string; everySec?: string | nu
   if ((m = cron.match(/^(\d+) (\d+) \* \* \*$/))) {
     return { mode: "daily", time: two(+m[2]) + ":" + two(+m[1]) };
   }
-  if ((m = cron.match(/^(\d+) (\d+) \* \* (.+)$/)) && m[4] !== "*") {
+  if ((m = cron.match(/^(\d+) (\d+) \* \* (.+)$/)) && m[3] !== "*") {
     const days: number[] = []; let ok = true;
-    m[4].split(",").forEach((part: string): void => {
+    m[3].split(",").forEach((part: string): void => {
       const r = part.split("-");
       let a = +r[0], b = +r[r.length - 1];
       if (isNaN(a) || isNaN(b) || a < 0 || b > 7) { ok = false; return; }
+      // A non-wrapping range walks its absolute span before the modulo, so "0-7"
+      // (the whole week) cannot collapse to Sunday-only once 7 folds back to 0.
+      if (r.length === 2 && a <= b) {
+        for (let d = a; d <= b; d++) { const w = d % 7; if (!days.includes(w)) days.push(w); }
+        return;
+      }
       a = a % 7; b = b % 7; // cron's 7 is Sunday again
       for (let d = a; ; d = (d + 1) % 7) {
         if (!days.includes(d)) days.push(d);
@@ -678,6 +684,12 @@ function openJobSheet(job: ApiJobRow | null): void {
       }
     }
     fill($("jf-sched-fields"), html);
+    // The unit select's opening choice is state, not markup luck: an option built with
+    // { selected: true } carries the DOM property, which every browser honours - but
+    // not every DOM does once the option is appended (happy-dom re-defaults it), and
+    // the sheet must read a saved job back identically everywhere. A value write is
+    // the one form both worlds respect, so the fill ends with it.
+    if (sched.mode === "interval" && sched.unit) $<HTMLSelectElement>("jf-ev-u").value = sched.unit;
     Array.prototype.forEach.call($("jf-sched-fields").querySelectorAll("input, select"), (el2: HTMLElement): void => {
       el2.oninput = readFields;
       el2.onchange = readFields;
