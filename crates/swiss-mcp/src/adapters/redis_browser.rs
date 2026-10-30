@@ -19,14 +19,17 @@
 
 use super::direct::Lazy;
 use super::redis::{
-    assert_command_allowed, read_command_catalog, read_stream_groups, read_stream_window,
-    redis_cli_repr, type_aware_read, value_i64, value_string, RedisHandle, RedisReadClient,
-    SCAN_TYPES,
+    assert_command_allowed, assert_read_command, parse_redis_version, read_command_catalog, read_stream_groups,
+    read_stream_window, redis_cli_repr, type_aware_read, value_i64, value_string, RedisHandle,
+    RedisReadClient, SCAN_TYPES, SCAN_TYPE_SINCE,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
-use swiss_host::dbbrowser::{redis_stream_opts, split_words, RedisBrowser};
+use std::time::{Duration, Instant};
+use swiss_host::dbbrowser::{
+    redis_stream_opts, split_words, PubSubFeed, PubSubWatch, RedisBrowser,
+};
 
 /// One console line into the arguments redis will receive — quotes, escapes and all.
 ///
@@ -63,25 +66,6 @@ pub struct RedisDataBrowser {
 /// million-element list must not ship a million strings.
 const REPLY_CAP: usize = 1000;
 
-/// The version SCAN grew its TYPE option - older servers answer "Unknown option" and the
-/// whole walk dies with a 400 (SPEC §data).
-const SCAN_TYPE_SINCE: (u64, u64) = (6, 0);
-
-/// The (major, minor) out of an INFO reply's redis_version line. None when the line is
-/// absent or mangled: the caller then degrades to local type filtering, which is correct
-/// on every version - only slower on a big keyspace.
-fn parse_redis_version(info: &str) -> Option<(u64, u64)> {
-    let line = info
-        .lines()
-        .map(str::trim)
-        .find(|l| l.starts_with("redis_version:"))?;
-    let rest = line.trim_start_matches("redis_version:").trim();
-    let mut parts = rest.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    Some((major, minor))
-}
-
 /// The full SCAN argument list for one page request, cursor first, plus - when the server
 /// is too old for SCAN TYPE - the type brought back for LOCAL filtering.
 ///
@@ -105,7 +89,7 @@ fn scan_args(
             Value::String(s) => s.trim().parse::<i64>().ok(),
             _ => None,
         })
-        .map(|n| n.clamp(1, 1000))
+        .map(|n| n.clamp(1, COUNT_MAX))
         .unwrap_or(200);
     let pattern = o
         .get("pattern")
@@ -144,6 +128,106 @@ fn scan_args(
         }
     }
     Ok((args, local_type))
+}
+
+/// Where scan_args puts the cursor and the COUNT value: `[cursor, MATCH, pattern, COUNT, n, ...]`.
+/// Fixed places, never a search - a pattern may itself be the word "COUNT".
+const ARG_CURSOR: usize = 0;
+const ARG_COUNT: usize = 4;
+/// The COUNT ceiling of one round, the clamp scan_args applies to what the panel asks.
+const COUNT_MAX: i64 = 1000;
+/// Rounds, and wall time, one page request spends walking past rounds that matched nothing.
+const PAGE_ROUNDS_MAX: usize = 32;
+const PAGE_BUDGET: Duration = Duration::from_secs(2);
+
+/// The next round's argv after an empty one: the cursor moves on and COUNT doubles, up to
+/// COUNT_MAX - a sparse filter needs wide rounds, a dense one never gets here.
+fn widen_round(args: &mut [String], cursor: &str) {
+    args[ARG_CURSOR] = cursor.to_string();
+    let count = args[ARG_COUNT].parse::<i64>().unwrap_or(200);
+    args[ARG_COUNT] = count.saturating_mul(2).clamp(1, COUNT_MAX).to_string();
+}
+
+/// SCAN's [cursor, keys] reply; anything else cannot be paged. The names are kept as the BYTES
+/// redis sent (2026-09-29): read as text, a name that is not UTF-8 came back as U+FFFD, its
+/// TYPE was asked of that other name ("none"), and the panel offered to open and delete a key
+/// that does not exist.
+fn scan_reply(reply: redis::Value) -> Result<(String, Vec<Vec<u8>>), String> {
+    match reply {
+        redis::Value::Array(pair) if pair.len() == 2 => {
+            let mut pair = pair.into_iter();
+            let cursor = pair.next().map(super::redis::redis_value_to_json);
+            let next = cursor.as_ref().map(value_string).unwrap_or_default();
+            let keys: Vec<Vec<u8>> = match pair.next() {
+                Some(redis::Value::Array(names)) => names
+                    .into_iter()
+                    .filter_map(|n| match n {
+                        redis::Value::BulkString(b) => Some(b),
+                        redis::Value::SimpleString(s) => Some(s.into_bytes()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            Ok((next, keys))
+        }
+        _ => Err("unexpected SCAN reply shape".into()),
+    }
+}
+
+/// Type and TTL per key, sent through ONE pipeline per chunk: the commands ride a single
+/// network round trip instead of 2×keys serialized ones (measured: a 200-key page fell from
+/// ~880 ms to tens of ms). Chunked at 200 pairs so one pipeline is never unbounded; DBSIZE,
+/// when asked, rides the FIRST chunk - a page costs two sequential round trips. A round with
+/// no keys and no DBSIZE sends nothing: a zero-command pipeline is itself an error in redis-rs.
+async fn describe_keys(
+    handle: &RedisHandle,
+    keys: &[Vec<u8>],
+    with_dbsize: bool,
+) -> Result<(Vec<Value>, Option<i64>), String> {
+    const PIPE_CHUNK: usize = 200;
+    let mut infos: Vec<Value> = Vec::new();
+    let mut total: Option<i64> = None;
+    let mut chunks: Vec<usize> = (0..keys.len()).step_by(PIPE_CHUNK).collect();
+    if keys.is_empty() && with_dbsize {
+        chunks.push(0); // an empty page still asks for DBSIZE once
+    }
+    for (n, start) in chunks.iter().enumerate() {
+        let start = *start;
+        let end = (start + PIPE_CHUNK).min(keys.len());
+        let chunk = &keys[start..end];
+        let dbsize = n == 0 && with_dbsize;
+        let mut commands: Vec<(String, Vec<Vec<u8>>)> = Vec::with_capacity(chunk.len() * 2 + 1);
+        for k in chunk {
+            commands.push(("TYPE".into(), vec![k.clone()]));
+            commands.push(("TTL".into(), vec![k.clone()]));
+        }
+        if dbsize {
+            commands.push(("DBSIZE".into(), Vec::new()));
+        }
+        let results = handle.pipeline_args(&commands).await?;
+        for (j, k) in chunk.iter().enumerate() {
+            let type_ = results
+                .get(j * 2)
+                .map(value_string)
+                .unwrap_or_else(|| "none".into());
+            let ttl = results.get(j * 2 + 1).map(value_i64).unwrap_or(-2);
+            // A UTF-8 name is itself. Any other is printed as redis-cli prints it and
+            // marked, so the panel shows it truthfully and refuses to address it by text.
+            match std::str::from_utf8(k) {
+                Ok(name) => infos.push(json!({"key": name, "type": type_, "ttl": ttl})),
+                Err(_) => infos.push(json!({
+                    "key": redis_cli_repr(k), "type": type_, "ttl": ttl, "binary": true
+                })),
+            }
+        }
+        if dbsize {
+            if let Some(dbsize) = results.get(chunk.len() * 2) {
+                total = Some(value_i64(dbsize));
+            }
+        }
+    }
+    Ok((infos, total))
 }
 
 /// The console guard applied to every command of a structured-edit pipeline (SPEC §data.redis),
@@ -206,6 +290,28 @@ impl RedisDataBrowser {
             .unwrap_or(false);
         supported
     }
+
+    /// One split command line past the console guard: the reply, an array past REPLY_CAP
+    /// cut to its head with a note.
+    async fn run_parts(&self, parts: &[String]) -> Result<Value, String> {
+        let Some((command, rest)) = parts.split_first() else {
+            return Err("type a command, e.g. GET mykey".into());
+        };
+        let args: Vec<&str> = rest.iter().map(String::as_str).collect();
+        assert_command_allowed(command, &args, self.allow_destructive, self.allow_eval)?;
+        let handle = self.conn.get().await?;
+        let reply = handle.call(command, &args).await?;
+        if let Value::Array(items) = &reply {
+            if items.len() > REPLY_CAP {
+                return Ok(json!({
+                    "truncated": true,
+                    "note": format!("showing first {REPLY_CAP} of {}", items.len()),
+                    "items": &items[..REPLY_CAP],
+                }));
+            }
+        }
+        Ok(reply)
+    }
 }
 
 #[async_trait]
@@ -223,83 +329,40 @@ impl RedisBrowser for RedisDataBrowser {
         // SPEC §data: SCAN TYPE needs >= 6.0; on an older server the type comes back
         // for local filtering instead of riding the SCAN.
         let supported = self.supports_scan_type(handle.as_ref()).await;
-        let (scan_args, local_type) = scan_args(o, supported)?;
-        let arg_refs: Vec<&str> = scan_args.iter().map(String::as_str).collect();
-        let reply = handle.call_raw("SCAN", &arg_refs).await?;
-        // SCAN answers [cursor, keys]; anything else cannot be paged. The names are kept as
-        // the BYTES redis sent (2026-09-29): read as text, a name that is not UTF-8 came back
-        // as U+FFFD, its TYPE was asked of that other name ("none"), and the panel offered to
-        // open and delete a key that does not exist.
-        let (next, keys) = match reply {
-            redis::Value::Array(pair) if pair.len() == 2 => {
-                let mut pair = pair.into_iter();
-                let cursor = pair.next().map(super::redis::redis_value_to_json);
-                let next = cursor.as_ref().map(value_string).unwrap_or_default();
-                let keys: Vec<Vec<u8>> = match pair.next() {
-                    Some(redis::Value::Array(names)) => names
-                        .into_iter()
-                        .filter_map(|n| match n {
-                            redis::Value::BulkString(b) => Some(b),
-                            redis::Value::SimpleString(s) => Some(s.into_bytes()),
-                            _ => None,
-                        })
-                        .collect(),
-                    _ => Vec::new(),
-                };
-                (next, keys)
-            }
-            _ => return Err("unexpected SCAN reply shape".into()),
-        };
-        // Type and TTL per key, sent through ONE pipeline per chunk: the commands ride a single
-        // network round trip instead of 2×keys serialized ones (measured: a 200-key page fell
-        // from ~880 ms to tens of ms). Chunked at 200 pairs so one pipeline is never unbounded;
-        // DBSIZE rides the FIRST chunk — the whole page costs two sequential round trips.
-        const PIPE_CHUNK: usize = 200;
+        let (mut scan_args, local_type) = scan_args(o, supported)?;
+        // One request walks on past rounds that come back empty - a sparse type or pattern
+        // matches nothing on most rounds, and the panel used to answer each with "no hits
+        // yet" and a More button: a 2.5k-key 5.x held its streams thirteen clicks deep
+        // (2026-10-22). Each empty round doubles COUNT (up to the 1000 clamp); the page comes
+        // back at its first match, at the walk's end, or when the rounds or the time run out,
+        // the cursor carrying the rest. `fill` (the Data agent's) walks on until the page holds
+        // that many keys rather than its first: a model paging a sparse pattern a hit or two at a
+        // time spent many calls finding *HEARTBEAT* (2026-10-29). Under it every round that
+        // falls short widens as an empty one does.
+        let fill = o.get("fill").and_then(Value::as_i64).map_or(1, |n| usize::try_from(n.clamp(1, COUNT_MAX)).unwrap_or(1));
+        let started = Instant::now();
         let mut infos: Vec<Value> = Vec::new();
         let mut total: Option<i64> = None;
-        let mut chunks: Vec<usize> = (0..keys.len()).step_by(PIPE_CHUNK).collect();
-        if keys.is_empty() {
-            chunks.push(0); // an empty page still asks for DBSIZE once
-        }
-        for (n, start) in chunks.iter().enumerate() {
-            let start = *start;
-            let end = (start + PIPE_CHUNK).min(keys.len());
-            let chunk = &keys[start..end];
-            let mut commands: Vec<(String, Vec<Vec<u8>>)> = Vec::with_capacity(chunk.len() * 2 + 1);
-            for k in chunk {
-                commands.push(("TYPE".into(), vec![k.clone()]));
-                commands.push(("TTL".into(), vec![k.clone()]));
+        let mut next = String::new();
+        for round in 0..PAGE_ROUNDS_MAX {
+            let arg_refs: Vec<&str> = scan_args.iter().map(String::as_str).collect();
+            let reply = handle.call_raw("SCAN", &arg_refs).await?;
+            let (cursor, keys) = scan_reply(reply)?;
+            next = cursor;
+            // DBSIZE rides the first round only: the total does not change between rounds.
+            let (mut page, dbsize) = describe_keys(handle.as_ref(), &keys, round == 0).await?;
+            total = total.or(dbsize);
+            if let Some(want) = &local_type {
+                // Pre-6.0 filtering (SPEC §data): every key's TYPE is already in hand, so
+                // the filter is a retain. A round left empty by it is NORMAL - the walk
+                // continues from the raw cursor, and done is cursor == 0, never the key count.
+                page.retain(|i| i.get("type").and_then(Value::as_str) == Some(want.as_str()));
             }
-            if n == 0 {
-                commands.push(("DBSIZE".into(), Vec::new()));
+            infos.extend(page);
+            if infos.len() >= fill || next == "0" || started.elapsed() >= PAGE_BUDGET {
+                break;
             }
-            let results = handle.pipeline_args(&commands).await?;
-            for (j, k) in chunk.iter().enumerate() {
-                let type_ = results
-                    .get(j * 2)
-                    .map(value_string)
-                    .unwrap_or_else(|| "none".into());
-                let ttl = results.get(j * 2 + 1).map(value_i64).unwrap_or(-2);
-                // A UTF-8 name is itself. Any other is printed as redis-cli prints it and
-                // marked, so the panel shows it truthfully and refuses to address it by text.
-                match std::str::from_utf8(k) {
-                    Ok(name) => infos.push(json!({"key": name, "type": type_, "ttl": ttl})),
-                    Err(_) => infos.push(json!({
-                        "key": redis_cli_repr(k), "type": type_, "ttl": ttl, "binary": true
-                    })),
-                }
-            }
-            if n == 0 {
-                if let Some(dbsize) = results.get(chunk.len() * 2) {
-                    total = Some(value_i64(dbsize));
-                }
-            }
-        }
-        if let Some(want) = &local_type {
-            // Pre-6.0 filtering (SPEC §data): every key's TYPE is already in hand, so
-            // the filter is a retain. A page left empty by it is NORMAL - the walk continues
-            // from the raw cursor, and done is cursor == 0, never the key count.
-            infos.retain(|i| i.get("type").and_then(Value::as_str) == Some(want.as_str()));
+            widen_round(&mut scan_args, &next);
         }
         Ok(json!({"keys": infos, "cursor": next, "done": next == "0", "total": total}))
     }
@@ -357,24 +420,18 @@ impl RedisBrowser for RedisDataBrowser {
     async fn run_command(&self, line: &str) -> Result<Value, String> {
         // The adapter's own guard still refuses KEYS, blocking and server-breaking commands
         // before anything reaches the socket; writes run.
+        self.run_parts(&split_command_line(line)?).await
+    }
+
+    async fn run_read_command(&self, line: &str) -> Result<Value, String> {
+        // SPEC §data.agent: the read gate first - an allowlist, so a write never reaches the
+        // console guard, which would let it run.
         let parts = split_command_line(line)?;
-        let Some((command, rest)) = parts.split_first() else {
-            return Err("type a command, e.g. GET mykey".into());
-        };
-        let args: Vec<&str> = rest.iter().map(String::as_str).collect();
-        assert_command_allowed(command, &args, self.allow_destructive, self.allow_eval)?;
-        let handle = self.conn.get().await?;
-        let reply = handle.call(command, &args).await?;
-        if let Value::Array(items) = &reply {
-            if items.len() > REPLY_CAP {
-                return Ok(json!({
-                    "truncated": true,
-                    "note": format!("showing first {REPLY_CAP} of {}", items.len()),
-                    "items": &items[..REPLY_CAP],
-                }));
-            }
+        if let Some((command, rest)) = parts.split_first() {
+            let args: Vec<&str> = rest.iter().map(String::as_str).collect();
+            assert_read_command(command, &args)?;
         }
-        Ok(reply)
+        self.run_parts(&parts).await
     }
 
     async fn run_pipeline(&self, commands: &[Vec<String>]) -> Result<Value, String> {
@@ -393,6 +450,19 @@ impl RedisBrowser for RedisDataBrowser {
             .collect();
         let replies = handle.pipeline(&owned).await?;
         Ok(json!({ "replies": replies }))
+    }
+
+    async fn pubsub_channels(&self, o: &Value) -> Result<Value, String> {
+        // SPEC §data.pubsub: PUBSUB CHANNELS/NUMSUB/NUMPAT are reads over the shared handle.
+        let handle = self.conn.get().await?;
+        super::redis_pubsub::list_channels(handle.as_ref(), o).await
+    }
+
+    async fn subscribe(&self, watch: &PubSubWatch) -> Result<PubSubFeed, String> {
+        // SPEC §data.pubsub: the feed opens a connection of its own from the shared handle's
+        // client; the shared one never sees a SUBSCRIBE.
+        let handle = self.conn.get().await?;
+        super::redis_pubsub::open_feed(handle.as_ref(), watch).await
     }
 
     /// SPEC §data.databases (ADR-027 option b): INFO keyspace names every dbN with its key count and
@@ -659,6 +729,23 @@ redis_mode:standalone
         let (a, local) = scan_args(&json!({}), false).expect("valid params");
         assert!(!a.iter().any(|x| x == "TYPE"));
         assert_eq!(local, None);
+    }
+
+    #[test]
+    fn an_empty_round_moves_the_cursor_and_doubles_count() {
+        let mut a = args(json!({"type": "stream"}));
+        widen_round(&mut a, "1792");
+        assert_eq!(a[0], "1792");
+        assert_eq!(value_at(&a, "COUNT").as_deref(), Some("400"));
+        assert_eq!(value_at(&a, "TYPE").as_deref(), Some("stream"));
+        // Never past the clamp the panel's own COUNT is held to.
+        let mut a = args(json!({"count": 700}));
+        widen_round(&mut a, "5");
+        assert_eq!(value_at(&a, "COUNT").as_deref(), Some("1000"));
+        // A pattern that is itself the word COUNT stays the pattern: the places are fixed.
+        let mut a = args(json!({"pattern": "COUNT"}));
+        widen_round(&mut a, "9");
+        assert_eq!(a, ["9", "MATCH", "COUNT", "COUNT", "400"]);
     }
 
     fn batch(parts: &[&[&str]]) -> Vec<Vec<String>> {

@@ -15,7 +15,7 @@
  */
 
 //! The L2 gateway group (SPEC §testing.it): the real router on a REAL listener, driven
-//! by a real rmcp client over HTTP. Gateway::boot is the copy of tests/adminapi.rs's
+//! by a real rmcp client over HTTP. Gateway::boot is the copy of tests/adminapi/main.rs's
 //! sandbox()+setup() the spec asked for - a copy, not a share, because the root
 //! crate's test binary must stay untouched; drift between the two is what the
 //! parity test at the bottom guards.
@@ -46,7 +46,7 @@ fn scratch_id() -> String {
 }
 
 /// The scratch home + master key, once per process - the same two lines
-/// tests/adminapi.rs sets, copied per SPEC §testing.it rather than shared.
+/// tests/adminapi/main.rs sets, copied per SPEC §testing.it rather than shared.
 fn sandbox() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| {
@@ -86,7 +86,7 @@ pub(crate) async fn boot(defs: Vec<(&str, Value)>) -> Gateway {
         // What the daemon does at boot: start the non-lazy MCPs (an idle proc child
         // is money nobody asked to spend - its first request wakes it).
         let lazy = swiss_mcp::registry::is_lazy(&d);
-        let adapter = make_adapter(&d, name, &calls).expect("adapter");
+        let adapter = make_adapter(&d, name, &calls, None).expect("adapter");
         registry
             .register(name, Source::Config, d, adapter)
             .expect("register");
@@ -94,8 +94,8 @@ pub(crate) async fn boot(defs: Vec<(&str, Value)>) -> Gateway {
             registry.start(name).await.expect("start");
         }
     }
-    // The daemon's boot starts the health-probe interval AND the 1 s idle-reap
-    // sweeper - without this line a lazy proc's child would never be reaped, and
+    // The daemon's boot starts the health probe AND the idle reaper, which sleeps
+    // toward the next deadline - without this line a lazy proc's child would never be reaped, and
     // the L3 suite caught exactly that gap in the first cut of this boot.
     registry.start_timer();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -1075,7 +1075,7 @@ async fn stopping_an_mcp_releases_its_server_connections() {
 
 #[tokio::test]
 async fn gateway_rows_match_the_adminapi_contract() {
-    // tests/adminapi.rs pins the same row shape through its oneshot harness
+    // tests/adminapi/list_order.rs pins the same row shape through its oneshot harness
     // (tags_each_mcp_row_with_how_it_is_launched and friends). This copy of
     // sandbox/setup must drift nowhere: same def in, same row out - asserted field
     // for field against what that suite asserts, with startedAt (a clock) exempt.

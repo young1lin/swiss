@@ -18,14 +18,14 @@
 //! test per trait method plus the shapes the seed exists to pin. The browser is
 //! constructed exactly the way the adapter constructs it - same ServerDef, same
 //! connect options, same Lazy pool - so the SQL-to-database half is what runs, with
-//! no HTTP in between (that contract is dbbrowser_api.rs's, guarded by stubs).
+//! no HTTP in between (that contract is swiss-data's dbbrowser_api tests', over stubs).
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::{DbBrowser, EditError};
+use swiss_host::dbbrowser::{DbBrowser, EditError, WriteRefusal};
 use swiss_it::engine::Kind;
 use swiss_it::seed::{fresh, Fresh};
 use swiss_mcp::adapters::direct::{BoxFut, Lazy};
@@ -455,14 +455,90 @@ async fn run_query_reads_writes_and_reports_limits() {
         .expect("read back the write");
     assert_eq!(back["rows"][0]["balance"], json!("1.0000"));
 
-    // The LIMIT-less SELECT is capped at 50 and the report says so - a silent
-    // truncation at 50 rows is a lie the console must not tell.
+    // The LIMIT-less SELECT is capped at 500 and the report says so - a silent
+    // truncation is a lie the console must not tell.
     let capped = b
         .run_query("SELECT n FROM big_rows", None)
         .await
         .expect("capped read");
-    assert_eq!(capped["rowCount"], 50);
-    assert_eq!(capped["limitApplied"], 50, "{capped}");
+    assert_eq!(capped["rowCount"], 500);
+    assert_eq!(capped["limitApplied"], 500, "{capped}");
+    // The operator's own cap replaces the default; a LIMIT the statement writes wins over both.
+    let mine = b
+        .run_query("SELECT n FROM big_rows", Some(&json!(800)))
+        .await
+        .expect("own cap");
+    assert_eq!(mine["rowCount"], 800);
+    assert_eq!(mine["limitApplied"], 800, "{mine}");
+    let written = b
+        .run_query("SELECT n FROM big_rows LIMIT 900", None)
+        .await
+        .expect("written limit");
+    assert_eq!(written["rowCount"], 900);
+    assert!(written.get("limitApplied").is_none(), "{written}");
+}
+
+/// SPEC §data.agent Writes: the agent's own write runs when the gate passes it and it changes
+/// at most the cap; past the cap it is rolled back, and a DELETE with no WHERE never reaches
+/// the server. Both refusals are Held - the statement goes to the user's console instead.
+#[tokio::test]
+async fn run_agent_write_commits_narrow_writes_and_holds_the_rest() {
+    let (_f, b) = browser("w47_agent_write").await;
+    let one = b
+        .run_agent_write("UPDATE users SET balance = 7 WHERE id = 1", 1000)
+        .await
+        .expect("narrow update");
+    assert_eq!(one["affectedRows"], 1, "{one}");
+    let back = b
+        .read_table(&json!({ "table": "users", "filters": [
+            { "column": "id", "op": "eq", "value": "1" }
+        ] }))
+        .await
+        .expect("read back the update");
+    assert_eq!(back["rows"][0]["balance"], json!("7.0000"), "committed, not left in a transaction");
+
+    // An INSERT always passes the gate; the AUTO_INCREMENT id comes back with it.
+    let added = b
+        .run_agent_write(
+            "INSERT INTO users (name, balance, big, born_at) VALUES ('agent', 1, 1, '2026-10-29 00:00:00')",
+            1000,
+        )
+        .await
+        .expect("insert");
+    assert_eq!(added["affectedRows"], 1, "{added}");
+    assert_eq!(added["insertId"], 9, "{added}");
+
+    // Five rows match and the cap is two: bounded at three, counted past the cap, rolled back.
+    match b.run_agent_write("UPDATE big_rows SET qty = 0 WHERE n <= 5", 2).await {
+        Err(WriteRefusal::Held(why)) => {
+            assert!(why.contains("more than 2") && why.contains("rolled back"), "{why}")
+        }
+        other => panic!("a write past the cap is held: {other:?}"),
+    }
+    // qty is (n * 7) % 13, never 0 for n 1..5: a row at 0 would be the rollback leaking.
+    let zeroed = b
+        .run_query("SELECT COUNT(*) AS c FROM big_rows WHERE n <= 5 AND qty = 0", None)
+        .await
+        .expect("read back the rollback");
+    assert_eq!(zeroed["rows"][0]["c"], json!("0"), "{zeroed}");
+
+    for broad in ["DELETE FROM big_rows", "DELETE FROM big_rows WHERE n = 1 OR 1 = 1"] {
+        match b.run_agent_write(broad, 1000).await {
+            Err(WriteRefusal::Held(_)) => {}
+            other => panic!("{broad} is held at the gate: {other:?}"),
+        }
+    }
+    let all = b
+        .run_query("SELECT COUNT(*) AS c FROM big_rows", None)
+        .await
+        .expect("count");
+    assert_eq!(all["rows"][0]["c"], json!("1000"), "{all}");
+
+    // The server refusing the statement is Failed, in its own words, as a console run says it.
+    match b.run_agent_write("UPDATE users SET nope = 1 WHERE id = 1", 1000).await {
+        Err(WriteRefusal::Failed(why)) => assert!(why.contains("nope"), "{why}"),
+        other => panic!("an unknown column fails: {other:?}"),
+    }
 }
 
 #[tokio::test]

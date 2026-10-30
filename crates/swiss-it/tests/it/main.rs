@@ -24,6 +24,7 @@
 
 #![cfg(feature = "it")]
 
+mod detached;
 mod gateway;
 mod mongo;
 mod mysql;

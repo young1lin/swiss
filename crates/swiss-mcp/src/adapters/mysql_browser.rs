@@ -31,8 +31,8 @@ use swiss_host::dbbrowser::{
     build_import_statements, conflict_of, ddl_script, export_row_limit, js_to_string,
     map_import_rows, optimistic_lock_columns, readback_plan, sql_dump_foot, sql_dump_head,
     sql_dump_literal, to_browse_columns, to_csv, to_json_lines, BrowseColumn, DbBrowser, DbDialect,
-    DumpPiece, EditConflict, EditError, ReadBack, SqlDump, SqlInsertBatch, EXPORT_CHUNK,
-    EXPORT_ROW_CAP, IMPORT_ROW_CAP,
+    DumpPiece, EditConflict, EditError, ReadBack, SqlDump, SqlInsertBatch, WriteRefusal,
+    EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
 
 /// The pure half of the SPEC §data.databases schema-parameter decision: which database does this
@@ -363,37 +363,34 @@ impl DbBrowser for MysqlBrowser {
         let sql = crate::adapters::sql::assert_single_statement(sql)?;
         let prepared = crate::adapters::sql::with_row_limit(
             &sql,
-            crate::adapters::sql::clamp_row_limit(limit, 50),
+            crate::adapters::sql::clamp_row_limit(limit, crate::adapters::sql::CONSOLE_ROW_LIMIT),
         );
-        let rows: Vec<Value> = {
+        let rows = {
             let pool = self.conn.get().await?;
             run_query(&pool, &prepared.sql, &[]).await?.rows
-        }
-        .into_iter()
-        .map(Value::Object)
-        .collect();
-        let columns = rows
-            .first()
-            .and_then(Value::as_object)
-            .map(|m| m.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
-        // Driver limitation, accepted: `columns` derives from the first row, so a zero-row
-        // SELECT answers columns: [] — mysql2 exposed field metadata for the empty header.
-        let row_count = rows.len();
+        };
         // The LIMIT-less SELECT note rides the reply (Node spread limitReport in): a silent
         // truncation at 50 rows is a lie the console must not tell.
-        let mut out = Map::new();
-        out.insert("columns".into(), json!(columns));
-        out.insert("rows".into(), Value::Array(rows));
-        out.insert("rowCount".into(), json!(row_count));
-        if let Value::Object(extra) =
-            crate::adapters::sql::limit_report(&prepared, row_count as i64, limit)
-        {
-            for (k, v) in extra {
-                out.insert(k, v);
-            }
-        }
-        Ok(Value::Object(out))
+        Ok(crate::adapters::sql::console_reply(rows, &prepared, limit))
+    }
+    async fn run_read_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
+        let sql = crate::adapters::sql::assert_read_statement(sql)?;
+        let prepared = crate::adapters::sql::with_row_limit(
+            &sql,
+            crate::adapters::sql::clamp_row_limit(limit, crate::adapters::sql::CONSOLE_ROW_LIMIT),
+        );
+        let pool = self.conn.get().await?;
+        let rows = super::mysql::run_read_query(&pool, &prepared.sql).await?;
+        Ok(crate::adapters::sql::console_reply(rows, &prepared, limit))
+    }
+    async fn run_agent_write(&self, sql: &str, cap: u64) -> Result<Value, WriteRefusal> {
+        let sql = crate::adapters::sql::assert_auto_write(sql).map_err(WriteRefusal::Held)?;
+        let pool = self.conn.get().await.map_err(WriteRefusal::Failed)?;
+        // Bounded one past the cap: the count still tells a write past it, without the
+        // server matching every row a broad WHERE reaches.
+        let bounded = crate::adapters::sql::bounded_write(&sql, cap + 1);
+        let outcome = super::mysql::run_capped_write(&pool, &bounded, cap).await.map_err(WriteRefusal::Failed)?;
+        crate::adapters::sql::capped_reply(outcome, cap)
     }
     async fn apply_edits(&self, o: &Value) -> Result<Value, EditError> {
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
@@ -779,7 +776,7 @@ impl DbBrowser for MysqlBrowser {
     }
 
     async fn activity(&self) -> Result<Value, String> {
-        // The statement already aliases to the shared reply keys (dbbrowser.rs). The grid path
+        // The statement already aliases to the shared reply keys (dbbrowser/activity.rs). The grid path
         // renders BIGINT cells as text, which is right for a grid and wrong for pid/seconds/own
         // here - activity_row types those three (SPEC §panel.toolchain).
         let rows: Vec<Map<String, Value>> = self

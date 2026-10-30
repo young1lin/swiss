@@ -25,7 +25,9 @@ use super::pg::{
     pg_browse_table_params, pg_grammar_params, pg_list_tables_grammar_sql, pg_list_tables_sql,
     pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL, PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL, PK_SQL,
 };
-use super::sql::{clamp_row_limit, limit_report, with_row_limit};
+use super::sql::{
+    assert_auto_write, assert_read_statement, capped_reply, clamp_row_limit, console_reply, with_row_limit,
+};
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use sqlx::PgPool;
@@ -37,7 +39,7 @@ use swiss_host::dbbrowser::{
     map_import_rows, optimistic_lock_columns, readback_plan, sql_dump_foot, sql_dump_head,
     sql_dump_literal, to_browse_columns, to_browse_indexes, to_csv, to_json_lines, BrowseColumn,
     BrowseForeignKey, DbBrowser, DbDialect, DumpPiece, EditConflict, EditError, ReadBack, SqlDump,
-    SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
+    SqlInsertBatch, WriteRefusal, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
 
 pub struct PgBrowser {
@@ -135,7 +137,7 @@ impl PgBrowser {
                     .to_string(),
             })
             .collect();
-        // Postgres has no SHOW CREATE TABLE — a faithful sketch from the catalog (dbbrowser.rs).
+        // Postgres has no SHOW CREATE TABLE — a faithful sketch from the catalog (dbbrowser/ddl.rs).
         Ok((
             build_pg_ddl(schema, table, columns, primary, &foreign_keys)?,
             foreign_keys,
@@ -370,35 +372,42 @@ impl DbBrowser for PgBrowser {
         // The console's one rule: a single statement per run. Reads and writes alike go through —
         // this console belongs to the panel on the operator's own machine.
         let sql = super::sql::assert_single_statement(s)?;
-        let prepared = with_row_limit(&sql, clamp_row_limit(limit, 50));
+        let prepared = with_row_limit(&sql, clamp_row_limit(limit, super::sql::CONSOLE_ROW_LIMIT));
         // Object form on purpose (Node sent { text, values: [] }): the extended protocol refuses
         // a stacked second statement server-side even if a masked-literal trick ever slips one
         // past the shape check. pg_query (the MCP tool) keeps the string form — multi-statement
         // there is a feature summarize() already reports per result.
-        let rows: Vec<Value> = self
-            .query(&prepared.sql, &[])
-            .await?
-            .into_iter()
-            .map(Value::Object)
+        let rows = self.query(&prepared.sql, &[]).await?;
+        Ok(console_reply(rows, &prepared, limit))
+    }
+
+    async fn run_read_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
+        let sql = assert_read_statement(sql)?;
+        let prepared = with_row_limit(&sql, clamp_row_limit(limit, super::sql::CONSOLE_ROW_LIMIT));
+        let pool = self.conn.get().await?;
+        let mut tx = pool.begin_with("BEGIN READ ONLY").await.map_err(|e| e.to_string())?;
+        // A runaway read ends on its own; the setting dies with the transaction.
+        sqlx::query("SET LOCAL statement_timeout = '30s'").execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        let fetched = sqlx::query(sqlx::AssertSqlSafe(prepared.sql.as_str())).fetch_all(&mut *tx).await;
+        // Never committed: a read keeps nothing, and a refused write leaves nothing.
+        let _ = tx.rollback().await;
+        let rows = fetched
+            .map_err(|e| e.to_string())?
+            .iter()
+            .map(super::pg::pg_row_to_value)
+            .filter_map(|v| match v {
+                Value::Object(map) => Some(map),
+                _ => None,
+            })
             .collect();
-        let columns = rows
-            .first()
-            .and_then(Value::as_object)
-            .map(|m| m.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
-        // Driver limitation, accepted: `columns` derives from the first row, so a zero-row
-        // SELECT answers columns: [] — node-pg exposed RowDescription for the empty header.
-        let row_count = rows.len();
-        let mut out = Map::new();
-        out.insert("columns".into(), json!(columns));
-        out.insert("rows".into(), Value::Array(rows));
-        out.insert("rowCount".into(), json!(row_count));
-        if let Value::Object(extra) = limit_report(&prepared, row_count as i64, limit) {
-            for (k, v) in extra {
-                out.insert(k, v);
-            }
-        }
-        Ok(Value::Object(out))
+        Ok(console_reply(rows, &prepared, limit))
+    }
+
+    async fn run_agent_write(&self, sql: &str, cap: u64) -> Result<Value, WriteRefusal> {
+        let sql = assert_auto_write(sql).map_err(WriteRefusal::Held)?;
+        let pool = self.conn.get().await.map_err(WriteRefusal::Failed)?;
+        let outcome = super::pg::run_capped_write(&pool, &sql, cap).await.map_err(WriteRefusal::Failed)?;
+        capped_reply(outcome, cap)
     }
 
     async fn apply_edits(&self, o: &Value) -> Result<Value, EditError> {
@@ -812,7 +821,7 @@ impl DbBrowser for PgBrowser {
     }
 
     async fn activity(&self) -> Result<Value, String> {
-        // The statement already aliases to the shared reply keys (dbbrowser.rs). The grid path
+        // The statement already aliases to the shared reply keys (dbbrowser/activity.rs). The grid path
         // renders BIGINT cells as text, which is right for a grid and wrong for the bigint
         // `seconds` here - activity_row types it (SPEC §panel.toolchain); pid and own are typed already.
         let rows: Vec<Map<String, Value>> = self

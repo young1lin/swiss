@@ -35,7 +35,7 @@ use swiss_host::mongobrowser::{
 
 use super::direct::Lazy;
 use super::mongo::{
-    assert_command_allowed, doc_json, ejson, err_text, find_command, num, to_bson, to_doc, Ejson,
+    assert_command_allowed, assert_read_command, describe_collection, doc_json, ejson, err_text, find_command, num, to_bson, to_doc, Ejson,
     without_gossip, MongoHandle, ServerFacts,
 };
 
@@ -43,6 +43,28 @@ use super::mongo::{
 const IMPORT_ERRORS_SHOWN: usize = 20;
 /// Documents an export holds in flight between the cursor and the response body.
 const EXPORT_CHANNEL: usize = 64;
+/// Server time one Data agent read may take before the server stops it, as statement_timeout
+/// bounds a PostgreSQL one (SPEC §data.agent); and the documents a description samples.
+const AGENT_READ_MAX_MS: i64 = 30_000;
+const AGENT_SAMPLE: i64 = 50;
+
+/// A Data agent read as it is sent, and whether it answers a cursor (find, aggregate,
+/// listCollections, listIndexes - not an aggregate asked to explain itself): an aggregate gets
+/// the cursor option the server requires, and a query that names no maxTimeMS gets
+/// AGENT_READ_MAX_MS.
+fn agent_read(command: &Map<String, Value>) -> Result<(Document, bool), String> {
+    let mut cmd = to_doc(command, "command")?;
+    let name = command.keys().next().map(|k| k.to_ascii_lowercase()).unwrap_or_default();
+    let explains = command.get("explain") == Some(&Value::Bool(true));
+    let cursor = !explains && matches!(name.as_str(), "find" | "aggregate" | "listcollections" | "listindexes");
+    if name == "aggregate" && !explains && !cmd.contains_key("cursor") {
+        cmd.insert("cursor", Document::new());
+    }
+    if matches!(name.as_str(), "find" | "aggregate" | "count" | "distinct") && !command.keys().any(|k| k.eq_ignore_ascii_case("maxTimeMS")) {
+        cmd.insert("maxTimeMS", AGENT_READ_MAX_MS);
+    }
+    Ok((cmd, cursor))
+}
 
 pub struct MongoDataBrowser {
     label: String,
@@ -627,6 +649,32 @@ impl MongoBrowser for MongoDataBrowser {
         let reply = handle.command("admin", doc! { "killOp": 1, "op": op }).await?;
         Ok(json!({ "ok": num(reply.get("ok")).unwrap_or(0) == 1 }))
     }
+
+    async fn run_read_command(&self, db: &str, command: &Map<String, Value>, limit: i64) -> Result<Value, String> {
+        // SPEC §data.agent: the read gate first - an allowlist, so a write never reaches the
+        // console guard, which would let it run - and no destructive opt-in either way.
+        assert_read_command(command)?;
+        assert_command_allowed(command, false)?;
+        let (cmd, cursor) = agent_read(command)?;
+        let handle = self.conn.get().await?;
+        if !cursor {
+            let reply = handle.command(db, cmd).await?;
+            return Ok(json!({ "reply": doc_json(without_gossip(reply), Ejson::Canonical) }));
+        }
+        // The driver's cursor, dropped after the limit: the server's is killed with it.
+        let (docs, more) = handle.cursor(db, cmd, limit.max(1) as usize).await?;
+        let ns = match command.values().next() {
+            Some(Value::String(coll)) => format!("{db}.{coll}"),
+            _ => db.to_string(),
+        };
+        let reply = doc! { "cursor": { "firstBatch": docs, "id": 0_i64, "ns": ns }, "ok": 1.0 };
+        Ok(json!({ "reply": doc_json(reply, Ejson::Canonical), "more": more }))
+    }
+
+    async fn describe_for_agent(&self, db: &str, coll: &str) -> Result<Value, String> {
+        let handle = self.conn.get().await?;
+        describe_collection(&handle, db, coll, AGENT_SAMPLE).await
+    }
 }
 
 #[cfg(test)]
@@ -638,6 +686,25 @@ mod tests {
             Value::Object(m) => m,
             other => panic!("expected a document, got {other}"),
         }
+    }
+
+    #[test]
+    fn an_agent_read_is_bounded_and_a_cursor_command_says_so() {
+        let (find, cursor) = agent_read(&map(json!({ "find": "posts", "filter": {}, "limit": 5 }))).unwrap();
+        assert!(cursor);
+        assert_eq!(find.get_i64("maxTimeMS").unwrap(), AGENT_READ_MAX_MS);
+        let (agg, cursor) = agent_read(&map(json!({ "aggregate": "posts", "pipeline": [] }))).unwrap();
+        assert!(cursor);
+        assert!(agg.get_document("cursor").is_ok(), "the cursor option the server requires");
+        let (own, _) = agent_read(&map(json!({ "aggregate": "posts", "pipeline": [], "cursor": { "batchSize": 3 }, "maxTimeMS": 500 }))).unwrap();
+        assert_eq!(own.get_document("cursor").unwrap().get_i32("batchSize").unwrap(), 3);
+        assert_eq!(own.get_i32("maxTimeMS").unwrap(), 500, "the read's own bound stands");
+        let (explained, cursor) = agent_read(&map(json!({ "aggregate": "posts", "pipeline": [], "explain": true }))).unwrap();
+        assert!(!cursor && !explained.contains_key("cursor"), "an explaining aggregate answers a document");
+        let (count, cursor) = agent_read(&map(json!({ "count": "posts" }))).unwrap();
+        assert!(!cursor && count.contains_key("maxTimeMS"));
+        let (stats, cursor) = agent_read(&map(json!({ "dbStats": 1 }))).unwrap();
+        assert!(!cursor && !stats.contains_key("maxTimeMS"));
     }
 
     #[test]

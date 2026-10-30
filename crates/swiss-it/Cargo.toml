@@ -125,12 +125,18 @@ reqwest = { version = "0.13", default-features = false, features = [
 ], optional = true }
 
 # The L3 suite counts live children by exe name: Toolhelp32 is a direct API call,
-# not a tasklist subprocess (the repo rule). Same version the shipping graph
-# already carries through swiss-core, so the dev graph holds one copy.
+# not a tasklist subprocess (the repo rule). The detached group adds the job-object
+# and console surfaces for its survival probes (SPEC §process.verify). Same version
+# the shipping graph already carries through swiss-core, so the dev graph holds one
+# copy; more features of that copy is not a second dependency.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", default-features = false, features = [
     "Win32_Foundation",
+    "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_Storage_FileSystem",
 ], optional = true }
 mongodb = { version = "3.9", default-features = false, features = [
     "compat-3-3-0",
@@ -151,6 +157,14 @@ mongodb = { version = "3.9", default-features = false, features = [
 [[bin]]
 name = "it-reaper"
 path = "src/bin/it-reaper.rs"
+required-features = ["it"]
+
+# The managed-app stand-in for the detached group (SPEC §process.verify): serve /
+# launcher / flood, each a plain Rust function. Same `it` gate as everything else
+# in this crate.
+[[bin]]
+name = "it-app"
+path = "src/bin/it-app.rs"
 required-features = ["it"]
 
 # The L3 stdio server (SPEC §testing.it): the proc adapter's far side. Same gate as

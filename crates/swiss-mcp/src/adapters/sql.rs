@@ -178,6 +178,10 @@ pub fn as_i64(v: &serde_json::Value) -> Option<i64> {
 pub const DEFAULT_ROW_LIMIT: i64 = 200;
 /// Ceiling on an explicitly requested limit, so the output budget stays meaningful.
 pub const MAX_ROW_LIMIT: i64 = 10_000;
+/// The Data console's safety net (SPEC §data.console): a LIMIT-less SELECT run from the panel
+/// reads at most this many rows unless the request names its own cap (the panel's row-limit
+/// setting, clamped to [MAX_ROW_LIMIT]). A LIMIT the statement writes itself always wins.
+pub const CONSOLE_ROW_LIMIT: i64 = 500;
 
 pub fn clamp_row_limit(requested: Option<&serde_json::Value>, fallback: i64) -> i64 {
     let n = requested.and_then(as_i64).unwrap_or(0);
@@ -291,7 +295,8 @@ fn mask_literals(sql: &str) -> String {
     out
 }
 
-/// Blank anything nested in parentheses, so only top-level clauses remain. Length is preserved.
+/// Blank anything nested in parentheses, so only top-level clauses remain. Length is preserved
+/// in bytes, so an index found here is an index into the statement too.
 fn blank_parens(masked: &str) -> String {
     let mut out = String::with_capacity(masked.len());
     let mut depth = 0usize;
@@ -303,7 +308,8 @@ fn blank_parens(masked: &str) -> String {
             depth = depth.saturating_sub(1);
             out.push(' ');
         } else if depth > 0 {
-            out.push(' ');
+            // A multi-byte name nested in parentheses blanks to as many bytes as it took.
+            out.push_str(&" ".repeat(ch.len_utf8()));
         } else {
             out.push(ch);
         }
@@ -340,6 +346,53 @@ pub fn is_row_returning(sql: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// The Data agent's read gate (SPEC §data.agent): ONE statement whose first word reads -
+/// SELECT, WITH without a data-modifying CTE, TABLE, VALUES, SHOW, DESCRIBE, EXPLAIN - and
+/// no SELECT ... INTO OUTFILE or DUMPFILE, a server file no transaction undoes. The read-only
+/// transaction the browsers run it in is the second gate; this one also stops MySQL DDL,
+/// which commits implicitly before a transaction's mode could refuse it.
+pub fn assert_read_statement(sql: &str) -> Result<String, String> {
+    let sql = assert_single_statement(sql)?;
+    let masked = mask_literals(&sql);
+    // A parenthesised read ((SELECT ...) UNION (SELECT ...)) opens with its first word.
+    let first = first_word(masked.trim_start_matches(|c: char| c == '(' || c.is_whitespace()));
+    let reads = match first.as_str() {
+        "select" | "table" | "values" | "show" | "describe" | "desc" | "explain" => true,
+        "with" => !has_any_word(&masked, &["insert", "update", "delete", "merge"]),
+        _ => false,
+    };
+    if !reads {
+        return Err(format!(
+            "only a read runs here (SELECT, WITH, TABLE, VALUES, SHOW, DESCRIBE, EXPLAIN), not {}",
+            if first.is_empty() { "an empty statement".to_string() } else { first.to_uppercase() }
+        ));
+    }
+    if has_any_word(&masked, &["outfile", "dumpfile"]) {
+        return Err("only a read runs here: INTO OUTFILE and INTO DUMPFILE write a server file".into());
+    }
+    Ok(sql)
+}
+
+/// The console's reply to a row set: columns, rows, rowCount and, when the cap bit, the
+/// limit report. `columns` derives from the first row (a driver limitation, accepted: a
+/// zero-row SELECT answers columns: []).
+pub fn console_reply(
+    rows: Vec<serde_json::Map<String, serde_json::Value>>,
+    prepared: &LimitedSql,
+    limit: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let columns = rows.first().map(|m| m.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
+    let row_count = rows.len();
+    let mut out = serde_json::Map::new();
+    out.insert("columns".into(), serde_json::json!(columns));
+    out.insert("rows".into(), serde_json::Value::Array(rows.into_iter().map(serde_json::Value::Object).collect()));
+    out.insert("rowCount".into(), serde_json::json!(row_count));
+    if let serde_json::Value::Object(extra) = limit_report(prepared, row_count as i64, limit) {
+        out.extend(extra);
+    }
+    serde_json::Value::Object(out)
 }
 
 pub struct LimitedSql {
@@ -552,6 +605,236 @@ fn word_index_from(haystack: &str, word: &str, from: usize) -> Option<usize> {
     None
 }
 
+// --- the Data agent's writes --------------------------------------------------------------------
+
+/// The server's own schemas: a write of the agent's never touches one on its own.
+const SYSTEM_SCHEMAS: [&str; 6] = ["mysql", "sys", "information_schema", "performance_schema", "pg_catalog", "pg_toast"];
+
+/// The words of a condition that name no column: its connectives and its constants.
+const CONDITION_WORDS: [&str; 13] = [
+    "and", "or", "xor", "not", "is", "null", "true", "false", "unknown", "in", "like", "ilike", "between",
+];
+
+/// The Data agent's auto-write gate (SPEC §data.agent Writes): ONE INSERT, REPLACE, UPDATE or
+/// DELETE - an UPDATE or DELETE only with a top-level WHERE whose every OR branch names a
+/// column - naming no system schema. Everything else is the user's to run: DDL (MySQL commits
+/// it implicitly, so no rollback undoes it), a data-modifying CTE, CALL, COPY, MERGE, LOCK, SET
+/// and the rest. The Err says why, for the agent to pass on beside the staged statement. How
+/// many rows a WHERE matches is the runner's cap to decide: this gate cannot know.
+pub fn assert_auto_write(sql: &str) -> Result<String, String> {
+    let sql = assert_single_statement(sql)?;
+    let masked = mask_literals(&sql);
+    let first = first_word(masked.trim_start());
+    match first.as_str() {
+        "insert" | "replace" => {}
+        "update" | "delete" => where_narrows(&sql, &blank_parens(&masked), &first)?,
+        "" => return Err("an empty statement".into()),
+        other => {
+            return Err(format!(
+                "only an INSERT, REPLACE, UPDATE or DELETE runs on its own, not {}",
+                other.to_uppercase()
+            ))
+        }
+    }
+    // Quotes dropped, so `mysql`.user and "pg_catalog".x read as the names they are; a literal
+    // or a comment spelling one only holds a statement that could have run.
+    let bare: String = sql.chars().filter(|c| *c != '"' && *c != '`').collect();
+    if let Some(schema) = SYSTEM_SCHEMAS.iter().find(|schema| names_schema(&bare, schema)) {
+        return Err(format!("it writes to the server's own schema {schema}"));
+    }
+    Ok(sql)
+}
+
+/// Does `text` qualify a name by `schema` (`schema.table`, spaces allowed before the dot)?
+fn names_schema(text: &str, schema: &str) -> bool {
+    let mut from = 0;
+    while let Some(at) = word_index_from(text, schema, from) {
+        if text[at + schema.len()..].trim_start().starts_with('.') {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
+}
+
+/// An UPDATE's or DELETE's WHERE at the top level, every OR branch of it naming a column: none
+/// at all, or `1=1`, `true`, `'a'='a'` - alone or OR'd beside a real test - changes every row.
+/// `top` is the statement masked and paren-blanked, byte for byte the statement's length.
+fn where_narrows(sql: &str, top: &str, verb: &str) -> Result<(), String> {
+    let verb = verb.to_uppercase();
+    let Some(at) = word_index_from(top, "where", 0) else {
+        return Err(format!("{verb} without a WHERE changes every row"));
+    };
+    let from = at + "where".len();
+    // The condition runs to the clause after it: RETURNING (PostgreSQL), ORDER BY or LIMIT (MySQL).
+    let end = ["returning", "order", "limit"]
+        .iter()
+        .filter_map(|word| word_index_from(top, word, from))
+        .min()
+        .unwrap_or(top.len());
+    // The OR branches: OR, and MySQL's || (PostgreSQL's concatenation splits too, holding at worst).
+    let mut cuts = vec![(from, from)];
+    let mut i = from;
+    while let Some(or) = word_index_from(top, "or", i).filter(|or| *or < end) {
+        cuts.push((or, or + 2));
+        i = or + 2;
+    }
+    let mut j = from;
+    while let Some(pipes) = top[j..end].find("||").map(|p| j + p) {
+        cuts.push((pipes, pipes + 2));
+        j = pipes + 2;
+    }
+    cuts.sort_unstable();
+    cuts.push((end, end));
+    for pair in cuts.windows(2) {
+        let branch = &sql[pair[0].1..pair[1].0];
+        if !names_a_column(branch) {
+            let shown = branch.split_whitespace().collect::<Vec<_>>().join(" ");
+            return Err(if pair[0].1 == from && pair[1].0 == end {
+                format!("{verb} WHERE {shown} names no column, so it changes every row")
+            } else {
+                format!("{verb} WHERE ... OR {shown} names no column, so it changes every row")
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Does a condition name a column - an unquoted name that is not a connective, a constant or
+/// a cast's type, or a quoted one? Literals, numbers and comments name none.
+fn names_a_column(cond: &str) -> bool {
+    let b = cond.as_bytes();
+    let named = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80;
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'\'' {
+            i += 1;
+            while i < b.len() {
+                if b[i] == b'\'' {
+                    if b.get(i + 1) == Some(&b'\'') {
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        if c == b'"' || c == b'`' {
+            return true;
+        }
+        // -- and # (MySQL) run to the line's end; read as comments on PostgreSQL too, where #
+        // is an operator, they can only hide a column, never invent one.
+        if (c == b'-' && b.get(i + 1) == Some(&b'-')) || c == b'#' {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == b'/' && b.get(i + 1) == Some(&b'*') {
+            i = cond[i + 2..].find("*/").map_or(b.len(), |p| i + 2 + p + 2);
+            continue;
+        }
+        if c.is_ascii_digit() {
+            while i < b.len() && (named(b[i]) || b[i] == b'.') {
+                i += 1;
+            }
+            continue;
+        }
+        if named(c) {
+            let start = i;
+            while i < b.len() && named(b[i]) {
+                i += 1;
+            }
+            let word = cond[start..i].to_ascii_lowercase();
+            // A cast's type (PostgreSQL's '1'::int) is no column either.
+            let cast = cond[..start].trim_end().ends_with("::");
+            if !cast && !CONDITION_WORDS.contains(&word.as_str()) {
+                return true;
+            }
+            continue;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// A single-table UPDATE or DELETE with no LIMIT of its own, bounded to `rows` (MySQL, SPEC
+/// §data.agent Writes): the server stops at that many matched rows, so a WHERE matching
+/// millions neither holds its locks for minutes nor leaves minutes of undo before the cap
+/// rolls it back. A multi-table one takes no LIMIT and is left as it is, as is every other
+/// statement.
+pub fn bounded_write(sql: &str, rows: u64) -> String {
+    let masked = mask_literals(sql);
+    let top = blank_parens(&masked);
+    let single = match first_word(masked.trim_start()).as_str() {
+        "update" => {
+            let tables = &top[..word_index_from(&top, "set", 0).unwrap_or(top.len())];
+            !tables.contains(',') && !has_word(tables, "join")
+        }
+        // DELETE [LOW_PRIORITY] [QUICK] [IGNORE] FROM t WHERE ...: no table list before FROM,
+        // none after it, no USING.
+        "delete" => match word_index_from(&top, "from", 0) {
+            Some(at) => {
+                let tables = &top[at..word_index_from(&top, "where", at).unwrap_or(top.len())];
+                top[..at]
+                    .split_whitespace()
+                    .skip(1)
+                    .all(|word| ["low_priority", "quick", "ignore"].contains(&word.to_ascii_lowercase().as_str()))
+                    && !tables.contains(',')
+                    && !has_any_word(&top, &["join", "using"])
+            }
+            None => false,
+        },
+        _ => false,
+    };
+    if !single || has_word(&top, "limit") {
+        return sql.to_string();
+    }
+    // On a line of its own: a trailing -- or # comment would swallow it otherwise.
+    format!("{sql}\nLIMIT {rows}")
+}
+
+/// Does a write answer rows - a top-level RETURNING (PostgreSQL), one row for each it changed?
+pub fn has_returning(sql: &str) -> bool {
+    has_word(&blank_parens(&mask_literals(sql)), "returning")
+}
+
+/// What a capped write of the agent's came to, as a dialect's runner reports it.
+pub enum CappedWrite {
+    /// Committed: the rows it changed, the rows it answered (PostgreSQL's RETURNING) and the
+    /// id an insert took (MySQL's LAST_INSERT_ID, when it took one).
+    Kept { changed: u64, rows: Vec<serde_json::Map<String, serde_json::Value>>, insert_id: Option<u64> },
+    /// Rolled back: it changed more rows than the cap, `changed` as counted - cap + 1 when
+    /// the statement was bounded there.
+    Past { changed: u64 },
+}
+
+/// A capped write's outcome as run_agent_write answers it: a kept one in the console's reply
+/// shape with affectedRows (and insertId), one past the cap held for the user, saying why.
+pub fn capped_reply(outcome: CappedWrite, cap: u64) -> Result<serde_json::Value, swiss_host::dbbrowser::WriteRefusal> {
+    match outcome {
+        CappedWrite::Kept { changed, rows, insert_id } => {
+            let plain = LimitedSql { sql: String::new(), limit_applied: None, note: None };
+            let mut reply = console_reply(rows, &plain, None);
+            reply["affectedRows"] = serde_json::json!(changed);
+            if let Some(id) = insert_id {
+                reply["insertId"] = serde_json::json!(id);
+            }
+            Ok(reply)
+        }
+        CappedWrite::Past { changed } => {
+            let counted = if changed > cap + 1 { changed.to_string() } else { format!("more than {cap}") };
+            Err(swiss_host::dbbrowser::WriteRefusal::Held(format!(
+                "it changes {counted} rows and a write changes at most {cap} on its own, so it was rolled back"
+            )))
+        }
+    }
+}
+
 // --- diagnostics --------------------------------------------------------------------------------
 
 /// Rows one pg_inspect / mysql_inspect check returns when the caller passes no limit.
@@ -661,6 +944,132 @@ pub fn inspect_reply(
 mod tests {
     // Ported from the guards the Node build's sql.test.ts pinned.
     use super::*;
+
+    #[test]
+    fn the_read_gate_passes_reads_and_refuses_every_write() {
+        for sql in [
+            "SELECT 1;",
+            "select * from posts where type = 'delete me'",
+            "WITH t AS (SELECT 1) SELECT * FROM t",
+            "  (select 1) union (select 2)",
+            "SHOW TABLES",
+            "EXPLAIN SELECT 1",
+            "DESC posts",
+            "TABLE posts",
+            "-- update\nSELECT 1",
+            "SELECT `outfile` FROM t",
+        ] {
+            assert!(assert_read_statement(sql).is_ok(), "{sql}");
+        }
+        for sql in [
+            "UPDATE t SET x = 1",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "INSERT INTO t VALUES (1)",
+            "TRUNCATE t",
+            "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x",
+            "SELECT * FROM t INTO OUTFILE '/tmp/x'",
+            "SELECT 1; DROP TABLE t",
+            "",
+        ] {
+            assert!(assert_read_statement(sql).is_err(), "{sql}");
+        }
+        assert!(assert_read_statement("DROP TABLE t").unwrap_err().ends_with("not DROP"));
+    }
+
+    #[test]
+    fn the_auto_write_gate_runs_narrow_writes_and_holds_the_rest() {
+        for sql in [
+            "INSERT INTO t (a) VALUES (1);",
+            "insert into t select * from u where note = 'x'",
+            "REPLACE INTO t VALUES (1)",
+            "INSERT INTO t VALUES (1) ON DUPLICATE KEY UPDATE a = 2",
+            "UPDATE t SET x = 1 WHERE id = 5",
+            "update t set x = (select max(y) from u) where id in (select id from u where ok)",
+            "UPDATE t SET note = 'where' WHERE \"Id\" = 5",
+            "UPDATE `t` SET x = 1 WHERE `id` = 5 ORDER BY id LIMIT 1",
+            "DELETE FROM t WHERE id = 5 OR id = 6",
+            "DELETE FROM t WHERE created < now() - interval '1 day' RETURNING id",
+            "DELETE FROM 订单 WHERE (编号 = 1)",
+            "UPDATE t SET x = 1 WHERE 1 = 1 AND id = 5",
+        ] {
+            assert!(assert_auto_write(sql).is_ok(), "{sql}: {:?}", assert_auto_write(sql));
+        }
+        for (sql, why) in [
+            ("DELETE FROM t", "DELETE without a WHERE"),
+            ("update t set x = 1", "UPDATE without a WHERE"),
+            ("UPDATE t SET x = (SELECT 1 FROM u WHERE u.id = 1)", "without a WHERE"),
+            ("DELETE FROM t WHERE 1=1", "names no column"),
+            ("DELETE FROM t WHERE true", "names no column"),
+            ("DELETE FROM t WHERE '1' = '1'::text", "names no column"),
+            ("DELETE FROM t WHERE (1)", "names no column"),
+            ("DELETE FROM t WHERE id = 5 OR 1 = 1", "OR 1 = 1 names no column"),
+            ("DELETE FROM t WHERE id = 5 || 2 > 1", "names no column"),
+            ("DELETE FROM t WHERE 1 = 1 -- id = 5", "names no column"),
+            ("DELETE FROM t WHERE 1 = 1 # id = 5", "names no column"),
+            ("DROP TABLE t", "not DROP"),
+            ("TRUNCATE t", "not TRUNCATE"),
+            ("ALTER TABLE t ADD c int", "not ALTER"),
+            ("WITH x AS (DELETE FROM t WHERE id = 1 RETURNING *) SELECT * FROM x", "not WITH"),
+            ("CALL p()", "not CALL"),
+            ("SET x = 1", "not SET"),
+            ("SELECT 1", "not SELECT"),
+            ("INSERT INTO mysql.user VALUES (1)", "schema mysql"),
+            ("DELETE FROM `pg_catalog` . pg_class WHERE oid = 1", "schema pg_catalog"),
+            ("INSERT INTO t VALUES (1); DELETE FROM t", "one statement per run"),
+            ("", "an empty statement"),
+        ] {
+            let held = assert_auto_write(sql).unwrap_err();
+            assert!(held.contains(why), "{sql}: {held}");
+        }
+    }
+
+    #[test]
+    fn a_single_table_write_is_bounded_and_a_multi_table_one_left_alone() {
+        assert_eq!(bounded_write("DELETE FROM t WHERE id > 1", 1001), "DELETE FROM t WHERE id > 1\nLIMIT 1001");
+        assert_eq!(bounded_write("delete low_priority quick from t where a = 1 -- old", 3), "delete low_priority quick from t where a = 1 -- old\nLIMIT 3");
+        assert_eq!(bounded_write("UPDATE t SET a = 1 WHERE b = 2 ORDER BY id", 9), "UPDATE t SET a = 1 WHERE b = 2 ORDER BY id\nLIMIT 9");
+        assert_eq!(bounded_write("UPDATE t SET a = (SELECT 1 FROM u, v LIMIT 1) WHERE b = 2", 9), "UPDATE t SET a = (SELECT 1 FROM u, v LIMIT 1) WHERE b = 2\nLIMIT 9");
+        for sql in [
+            "UPDATE t SET a = 1 WHERE b = 2 LIMIT 5",
+            "UPDATE t JOIN u ON t.id = u.id SET t.a = 1 WHERE u.b = 2",
+            "UPDATE t, u SET t.a = u.a WHERE t.id = u.id",
+            "DELETE t FROM t JOIN u ON t.id = u.id WHERE u.b = 2",
+            "DELETE FROM t USING t, u WHERE t.id = u.id",
+            "DELETE FROM t, u WHERE t.id = 1",
+            "INSERT INTO t SELECT * FROM u",
+        ] {
+            assert_eq!(bounded_write(sql, 9), sql);
+        }
+    }
+
+    #[test]
+    fn a_capped_write_answers_its_count_or_is_held_past_the_cap() {
+        let mut row = serde_json::Map::new();
+        row.insert("id".into(), serde_json::json!(7));
+        let kept = capped_reply(CappedWrite::Kept { changed: 1, rows: vec![row], insert_id: Some(7) }, 1000).unwrap();
+        assert_eq!(kept["affectedRows"], 1);
+        assert_eq!(kept["insertId"], 7);
+        assert_eq!(kept["rowCount"], 1);
+        assert_eq!(kept["columns"], serde_json::json!(["id"]));
+        let plain = capped_reply(CappedWrite::Kept { changed: 0, rows: Vec::new(), insert_id: None }, 1000).unwrap();
+        assert_eq!(plain["affectedRows"], 0);
+        assert!(plain.get("insertId").is_none());
+        let held = |changed| match capped_reply(CappedWrite::Past { changed }, 1000) {
+            Err(swiss_host::dbbrowser::WriteRefusal::Held(why)) => why,
+            other => panic!("{:?}", other.map(|_| ())),
+        };
+        assert_eq!(held(1001), "it changes more than 1000 rows and a write changes at most 1000 on its own, so it was rolled back");
+        assert!(held(25_000).starts_with("it changes 25000 rows"));
+        assert!(has_returning("DELETE FROM t WHERE id = 1 RETURNING *"));
+        assert!(!has_returning("DELETE FROM t WHERE note = 'returning' AND id IN (SELECT id FROM u)"));
+    }
+
+    #[test]
+    fn blanked_parentheses_keep_the_statement_s_byte_length() {
+        let sql = "SELECT (名字) FROM t";
+        assert_eq!(blank_parens(&mask_literals(sql)).len(), sql.len());
+    }
 
     #[test]
     fn any_single_statement_passes_reads_and_writes_alike() {
