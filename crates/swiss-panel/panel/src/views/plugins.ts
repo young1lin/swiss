@@ -27,17 +27,11 @@
    instead of silently overwriting it. A failed START is not a failed request — the row comes back
    state="failed" with its lastError, and the retry is pressing Enable again.
 
-   A smaller section rides along: This machine - start-at-sign-in and swiss on the user's PATH,
-   the two OS-level host settings. They are host-owned like this page, so they live here rather
-   than in a page of their own - and their store is the OS (a registry value, a LaunchAgent, a
-   systemd user unit, a symlink), not the gateway, so the toggles read and write /api/autostart
-   and /api/user-path with no revision to race on.
-
-   Drawn from the library (SPEC §panel.settings): row() and sw() for both sections, section() + card()
+   Drawn from the library (SPEC §panel.settings): row() and sw() for the plugin list, section() + card()
    for their frames, pageFoot() for the revision.
    ================================================================================================ */
 import type { ApiPluginRow, ApiPluginsResponse } from "../types/api.js";
-import { $, api, apiJson, refocusIfIdle, targetEl, toast } from "../util.js";
+import { $, apiJson, refocusIfIdle, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import type { HChild } from "../h.js";
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
@@ -47,11 +41,6 @@ import type { DotState } from "../ui/index.js";
 
 let busy: Record<string, boolean> = {}; // plugin id -> true while its own toggle is in flight
 let painted = ""; // the structural signature of the drawn list; a change means rebuild
-let autostart: { enabled: boolean; detail?: string; command?: string } | null = null; // { enabled, detail, command } from /api/autostart; null = old gateway
-let autostartBusy = false; // true while the OS registration write is in flight
-let userPath: { enabled: boolean; detail?: string; dir?: string } | null = null; // from /api/user-path; null = old gateway
-let userPathBusy = false; // true while the PATH write is in flight
-
 /* The never-loaded fallback carries every field the inventory answers with, so an
    unreachable-empty list is still a truthful ApiPluginsResponse. */
 function inv(): ApiPluginsResponse { return pluginInventory() || { plugins: [], revision: 0, pages: [] }; }
@@ -123,37 +112,6 @@ export function rowNode(p: ApiPluginRow): HTMLElement {
   });
 }
 
-/** The start-at-sign-in row - the same row as a plugin's, because it is the same kind of
- *  fact: a thing that is on or off, and the switch says which. The sub-line says where the OS
- *  registration lives, so the operator can check it outside the panel; the row title carries
- *  the exact command the OS would run. Exported pure; null (an old gateway without the route)
- *  renders nothing. */
-export function startupRowNode(a: { enabled: boolean; detail?: string; command?: string } | null): HTMLElement | null {
-  if (!a) return null;
-  return row({
-    name: tr("plugins.startSwissWhenYou"),
-    sub: a.detail || null,
-    toggle: sw(a.enabled, tr("plugins.toggleStartSign"), { data: { "autostart-toggle": true }, disabled: autostartBusy }),
-    data: { autostart: true },
-    title: a.command || undefined,
-  });
-}
-
-/** The PATH row, the startup row's twin: the sub-line says where the entry lives (the user's
- *  Path value, or the ~/.local/bin symlink), the row title the folder or exe a terminal will
- *  find. An entry the operator added by hand reads as on - the host compares it the way the
- *  OS resolves it. Exported pure; null renders nothing. */
-export function pathRowNode(p: { enabled: boolean; detail?: string; dir?: string } | null): HTMLElement | null {
-  if (!p) return null;
-  return row({
-    name: tr("plugins.swissOnYourPath"),
-    sub: p.detail || null,
-    toggle: sw(p.enabled, tr("plugins.togglePath"), { data: { "userpath-toggle": true }, disabled: userPathBusy }),
-    data: { userpath: true },
-    title: p.dir || undefined,
-  });
-}
-
 function chipText(): string {
   const all = rows();
   const on = all.filter((p: ApiPluginRow): boolean => { return p.enabled; }).length;
@@ -168,13 +126,10 @@ function revText(): string { return tr("plugins.revisionN", { n: inv().revision 
 function render(): void {
   painted = signature();
   const all = rows();
-  const machine = [startupRowNode(autostart), pathRowNode(userPath)]
-    .filter((node: HTMLElement | null): node is HTMLElement => { return node !== null; });
   // No location title: the context bar already says "Settings / Plugins", and its chip is
   // the count the foot used to repeat (rule 25) - the foot keeps the revision alone.
   fill($("pane"), paneBody({ wide: true },
     paneHead({ desc: tr("plugins.descOneLine") }),
-    machine.length ? section({ cap: tr("plugins.thisMachine") }, card(machine)) : null,
     section({ cap: tr("plugins.installed") },
       all.length
         ? card(all.map(rowNode))
@@ -212,76 +167,17 @@ function patch(): void {
     const p = rows().find((cand: ApiPluginRow): boolean => { return cand.id === node.getAttribute("data-plugin"); });
     if (p) patchRow(node, rowNode(p));
   });
-  const startup = pane.querySelector("[data-autostart]");
-  const fresh = startupRowNode(autostart);
-  if (startup && fresh) patchRow(startup, fresh);
-  const onPath = pane.querySelector("[data-userpath]");
-  const freshPath = pathRowNode(userPath);
-  if (onPath && freshPath) patchRow(onPath, freshPath);
+
 }
 
 function wire(): void {
   const pane = $("pane");
   pane.onclick = (event: MouseEvent): void => {
-    const asButton = targetEl(event)?.closest("[data-autostart-toggle]");
-    if (asButton) { void toggleAutostart(); return; }
-    if (targetEl(event)?.closest("[data-userpath-toggle]")) { void toggleUserPath(); return; }
     const button = targetEl(event)?.closest("[data-toggle]");
     if (!button) return;
     const prow = button.closest("[data-plugin]");
     if (prow) void toggle(prow.getAttribute("data-plugin"));
   };
-}
-
-/** Read the OS registration the way the host reads it. A gateway without the route answers
- *  404 and leaves autostart null - the section stays hidden, an old binary never grows a
- *  dead control. */
-async function loadAutostart(): Promise<void> {
-  const r = await api("/api/autostart");
-  if (r.ok) autostart = await r.json() as { enabled: boolean; detail?: string; command?: string };
-}
-
-/** Flip the OS registration, then redraw from the host's own read-back - never from our
- *  guess of what the click should have done. The switch is disabled while the write is out
- *  (see util.ts refocusIfIdle). */
-async function toggleAutostart(): Promise<void> {
-  if (!autostart || autostartBusy) return;
-  const pressed = document.activeElement;
-  autostartBusy = true;
-  patch();
-  const j = await apiJson<{ enabled: boolean; detail?: string; command?: string }>("/api/autostart", {
-    method: "PUT",
-    body: JSON.stringify({ enabled: !autostart.enabled }),
-  });
-  autostartBusy = false;
-  if (j) autostart = j; // else apiJson already toasted the refusal
-  patch();
-  refocusIfIdle(pressed);
-}
-
-/** The PATH setting, read the way the host reads it; an old gateway 404s and the row stays
- *  hidden, as with autostart. */
-async function loadUserPath(): Promise<void> {
-  const r = await api("/api/user-path");
-  if (r.ok) userPath = await r.json() as { enabled: boolean; detail?: string; dir?: string };
-}
-
-/** Flip the PATH entry and redraw from the host's read-back. A change reaches new terminals
- *  only - the toast says so, because an open terminal that still cannot find swiss (or still
- *  can) is otherwise the first thing the operator tries. */
-async function toggleUserPath(): Promise<void> {
-  if (!userPath || userPathBusy) return;
-  const pressed = document.activeElement;
-  userPathBusy = true;
-  patch();
-  const j = await apiJson<{ enabled: boolean; detail?: string; dir?: string }>("/api/user-path", {
-    method: "PUT",
-    body: JSON.stringify({ enabled: !userPath.enabled }),
-  });
-  userPathBusy = false;
-  if (j) { userPath = j; toast(tr("plugins.pathNewTerminals")); } // else apiJson already toasted
-  patch();
-  refocusIfIdle(pressed);
 }
 
 /** Enable or disable one plugin, then redraw from the host's answer - never from our guess of
@@ -315,8 +211,6 @@ async function toggle(id: string | null): Promise<void> {
 export async function mount(): Promise<void> {
   busy = {};
   try { await reloadPluginInventory(); } catch (error) { /* the toast is enough; draw what we have */ }
-  try { await loadAutostart(); } catch (error) { /* no route or no answer: the row stays hidden */ }
-  try { await loadUserPath(); } catch (error) { /* likewise */ }
   render();
 }
 export async function refresh(): Promise<void> { await mount(); }
@@ -325,4 +219,4 @@ export async function poll(): Promise<void> {
   patch();
 }
 export function countText(): string { return chipText(); }
-export function unmount() { busy = {}; painted = ""; autostart = null; userPath = null; }
+export function unmount() { busy = {}; painted = ""; }

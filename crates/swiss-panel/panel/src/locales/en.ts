@@ -18,6 +18,20 @@
    English copy is editable here without touching call sites or any other locale. */
 
 const en: Record<string, string> = {
+  "system.skills": "AI skills",
+  "system.skillsHint": "Checks for SKILL.md in ~/.claude/skills, ~/.codex/skills and ~/.agents/skills.",
+  "system.skillInstalled": "Installed",
+  "system.skillMissing": "Not installed",
+  "system.skillUnknown": "Cannot check",
+  "system.skillsUnavailable": "Skill installation status could not be checked.",
+  "system.refreshSkills": "Refresh",
+  "system.skillsInstallHint": "Install or update the bundled skills:",
+  "desktop.workspace": "Your MCP workspace",
+  "gallery.scene.desktopOverview": "MCP workspace",
+  "desktop.workspaceHint": "Inspect tools, try a request, or manage a server's configuration.",
+  "desktop.servers": "Servers to explore",
+  "desktop.sidebarHint": "The list on the left contains every server and group. Opening a server loads its tools.",
+  "desktop.open": "Open",
   /* --- process --- */
   "process.form.nameExample": "my-app",
   "process.appsNote": "Keep running when the gateway stops. Saving a definition never starts it.",

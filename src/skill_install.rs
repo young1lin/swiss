@@ -40,6 +40,43 @@ const SHIPPED_SKILLS: [(&str, &str); 3] = [
     (MEMORY_SKILL_NAME, MEMORY_SKILL_MD),
 ];
 
+#[derive(serde::Serialize)]
+pub struct SkillLocation {
+    pub root: String,
+    pub path: String,
+    pub installed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct SkillStatus {
+    pub name: String,
+    pub locations: Vec<SkillLocation>,
+}
+
+/// Inspect only the shipped names; never enumerate or read unrelated user skills.
+pub fn status() -> Result<Vec<SkillStatus>, String> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+        .ok_or_else(|| "cannot find the user home directory".to_string())?;
+    Ok(status_in(&PathBuf::from(home)))
+}
+
+fn status_in(home: &Path) -> Vec<SkillStatus> {
+    SHIPPED_SKILLS.iter().map(|(name, _)| SkillStatus {
+        name: (*name).into(),
+        locations: [".claude", ".codex", ".agents"].iter().map(|root| {
+            let path = home.join(root).join("skills").join(name).join("SKILL.md");
+            let (installed, error) = match std::fs::metadata(&path) {
+                Ok(metadata) => (Some(metadata.is_file()), None),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => (Some(false), None),
+                Err(err) => (None, Some(err.to_string())),
+            };
+            SkillLocation { root: (*root).into(), path: path.to_string_lossy().into_owned(), installed, error }
+        }).collect(),
+    }).collect()
+}
+
 /// Virtual source directory for the general setup skill, kept for callers that report it.
 /// The remote skill lives at the sibling `<embedded>/.agents/skills/swiss-remote` path.
 pub fn skill_dir() -> PathBuf {
@@ -137,6 +174,23 @@ fn install_skills_in(home: &Path, claude_config: Option<&Path>) -> Result<Vec<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_checks_each_shipped_skill_in_the_three_user_roots_without_writing() {
+        let home = TempHome::new();
+        let installed = home.0.join(".agents/skills/swiss/SKILL.md");
+        std::fs::create_dir_all(installed.parent().expect("skill parent")).expect("mkdir");
+        std::fs::write(&installed, "a locally installed skill").expect("write fixture");
+        std::fs::create_dir_all(home.0.join(".codex/skills/swiss-memory")).expect("mkdir");
+        let rows = status_in(&home.0);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].name, "swiss");
+        assert_eq!(rows[0].locations.iter().map(|l| l.root.as_str()).collect::<Vec<_>>(), [".claude", ".codex", ".agents"]);
+        assert_eq!(rows[0].locations.iter().map(|l| l.installed).collect::<Vec<_>>(), [Some(false), Some(false), Some(true)]);
+        assert!(rows.iter().skip(1).flat_map(|s| &s.locations).all(|l| l.installed == Some(false)));
+        assert!(!home.0.join(".claude").exists(), "checking never creates a directory");
+        assert_eq!(std::fs::read_to_string(installed).expect("read fixture"), "a locally installed skill");
+    }
 
     struct TempHome(PathBuf);
 

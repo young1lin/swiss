@@ -117,7 +117,7 @@ describe("the I2 views in Chinese (plugins, secrets, system)", () => {
   });
 
   it("names the start-at-sign-in row and its toggle in Chinese", async () => {
-    const { startupRowNode } = await import("../src/views/plugins.js");
+    const { startupRowNode } = await import("../src/views/system.js");
     const row = startupRowNode({ enabled: false, detail: "HKCU\\...\\Run" })!;
     expect(row.textContent).toContain("登录时启动 swiss");
     expect((row.querySelector("[data-autostart-toggle]") as HTMLElement).getAttribute("aria-checked")).toBe("false");
@@ -125,7 +125,7 @@ describe("the I2 views in Chinese (plugins, secrets, system)", () => {
   });
 
   it("names the PATH row and its toggle in Chinese", async () => {
-    const { pathRowNode } = await import("../src/views/plugins.js");
+    const { pathRowNode } = await import("../src/views/system.js");
     const row = pathRowNode({ enabled: true, detail: "HKCU\\Environment" })!;
     expect(row.textContent).toContain("把 swiss 加入 PATH");
     expect((row.querySelector("[data-userpath-toggle]") as HTMLElement).getAttribute("aria-label")).toBe("切换 PATH");

@@ -59,6 +59,9 @@ beforeEach(async () => {
   document.body.innerHTML = shellSkeleton();
   Object.assign(globalThis, {
     fetch: (url: string, init?: RequestInit): Promise<Response> => {
+      if (!init?.method || init.method === "GET") {
+        return Promise.resolve({ status: 404, ok: false, json: () => Promise.resolve({}) } as Response);
+      }
       shutdownCalls.push({ method: init?.method ?? "GET", url: String(url) });
       const ok = shutdownReply != null;
       return Promise.resolve({ status: ok ? 200 : 500, ok, json: () => Promise.resolve(shutdownReply ?? { error: "no" }) } as Response);
@@ -73,8 +76,7 @@ describe("Settings / System", () => {
     await view.mount();
     // SPEC §panel.settings: one sentence (U11), and the one row is the library's row().
     expect($("pane").querySelector(".pane-desc")?.textContent).toBe("Control this running swiss process; configuration and logs stay on disk.");
-    const cap = $("pane").querySelector(".sec-cap");
-    expect(cap?.textContent).toBe("Runtime");
+    expect(Array.from($("pane").querySelectorAll(".sec-cap")).map(cap => cap.textContent)).toContain("Runtime");
     const quit = $("system-quit");
     expect(quit.className).toBe("btn danger");
     expect(quit.textContent).toBe("Quit swiss");

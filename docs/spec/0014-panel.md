@@ -108,8 +108,8 @@ and write tolerates blocked storage.
 **Navigation is data.** The panel has no hard-coded page list: pages come from the plugin
 descriptors (§host.plugins) through `GET /api/plugins`, each a `PageDescriptor` — `id`,
 `pluginId`, `label`, `order`, `path` (`#id`), `entry` (the view module's URL), `sidebar`,
-`layout`. The host pages are added by the panel itself: Plugins (order 1000), Secrets (1001)
-and System (1002), `pluginId: "host"`, shown as the Settings plugin. The built-in pages:
+`layout`. The host pages are added by the panel itself: System (order 1000), Plugins (1001)
+and Secrets (1002), `pluginId: "host"`, shown as the Settings plugin. The built-in pages:
 
 | id | Plugin | Label | Order | Layout |
 |---|---|---|---|---|
@@ -124,7 +124,7 @@ and System (1002), `pluginId: "host"`, shown as the Settings plugin. The built-i
 | `terminal` | terminal | Terminal | 70 | workspace |
 | `remote` | remote | Targets | 75 | page |
 | `remote-runs` | remote | Runs | 76 | page |
-| `plugins`, `secrets`, `system` | host | Plugins, Secrets, System | 1000–1002 | page |
+| `system`, `plugins`, `secrets` | host | System, Plugins, Secrets | 1000–1002 | page |
 
 - **Grouping** (`page-core.ts groupPages`): one group per plugin; a group sorts by the
   **smallest** order among its pages, pages sort by order inside it, ties keep registration
@@ -147,6 +147,14 @@ and System (1002), `pluginId: "host"`, shown as the Settings plugin. The built-i
 **The shell** is invariant and owns: the rail, the context bar, the global readouts, Focus
 mode, the pane's scrolling (its pinned-head measurements and back to top, `pane-scroll.ts`)
 and app-level responsiveness. A page owns only its body.
+
+**Desktop window.** The same panel gains `data-desktop` before paint only in `swiss gui`
+(§host.gui). Desktop reading sizes are 14/13/12 px (body/label/caption), the rail is 64 px
+with 48 px seats and 11 px captions (10 px floor), and the context bar is 44 px. The native
+caption owns the app mark, so the desktop rail omits its duplicate brand mark. Secondary
+text keeps more contrast. The browser retains its existing dimensions. `desktop.ts` follows
+the panel's resolved theme and plugin title and handles desktop text-zoom chords; it adds no
+listeners or native behavior to ordinary browser tabs.
 
 ```text
 ┌────────┬────────────────────────────────────────────────────┐
@@ -601,6 +609,12 @@ and is relabelled by the chrome repaint.
 
 **MCP Servers.**
 
+- In a desktop window, an unselected pane with registered servers shows a workspace landing
+  page built from `paneHead`, `section`, `card` and `row`: up to six explicit Open actions,
+  plus Add MCP. It reads the inventory only; rendering never requests tools or wakes a lazy
+  process. Polls patch state marks and keep keyboard focus. The sidebar remains the complete
+  list. An empty store retains the shared empty state. The gallery's `desktop-overview` scene
+  shows the composition; `mcp-overview.test.ts` drives its actions, text safety and focus.
 - The resource head pins in two layers (name row, then the tabs); a `ResizeObserver` measures
   them into `--pin-title-h` / `--pane-head-h` so the day headings stick beneath. The detail is
   `.wide`.
@@ -760,10 +774,13 @@ Sidebar — the same band, smaller, no card
 for one container, and at page width the `+` a screen from its name); a hover-only grip as the
 drag handle (the user could not find it); a red Delete on every row.
 
-## §panel.settings — Plugins, Secrets, System
+## §panel.settings — System, Plugins, Secrets
 
 Host-owned pages (`pluginId: "host"`, the Settings plugin), always reachable: a disabled plugin
 cannot serve the page that re-enables it.
+
+The context bar orders them System, Plugins, Secrets; a new user's Settings seat lands on
+System. The per-plugin last-page preference still reopens an existing user's last page.
 
 **Plugins** (`views/plugins.ts`) — one row per plugin with its enable switch.
 
@@ -775,9 +792,6 @@ cannot serve the page that re-enables it.
   on the sub-line. The sub-line counts the plugin's pages (the list in its title); the page
   foot is the revision.
 - The poll patches rows in place, so a switch keeps its focus.
-- A **This machine** section holds start at sign-in (`/api/autostart`) and swiss on the user's
-  PATH (`/api/user-path`): the OS is the store, no revision (§host.cli). A PATH change toasts
-  that only new terminals see it. A gateway without a route shows no row for it.
 
 **Secrets** (`views/secrets.ts`) — the vault (§host.vault). Names only, write-only: a value is
 never shown again, and a forgotten one is re-stored, never revealed.
@@ -790,8 +804,17 @@ never shown again, and a forgotten one is re-stored, never revealed.
 - Replace value lives in the row's `⋯`: a store under the same name, after which the gateway
   rebuilds every MCP that references it and the toast names them.
 
-**System** (`views/system.ts`) — the one running process: one `row()`, and Quit through a
-confirming sheet. Quit stays red: it is the page's one act (the rule 4 exception).
+**System** (`views/system.ts`) owns the machine and runtime settings:
+
+- **This machine** holds start at sign-in (`/api/autostart`) and swiss on the user's PATH
+  (`/api/user-path`): the OS is the store, no revision (§host.cli). A PATH change toasts that
+  only new terminals see it. A gateway without a route shows no row for it.
+- **AI skills** reads `GET /api/skills` on mount and explicit Refresh. Each shipped skill
+  (`swiss`, `swiss-memory`, `swiss-remote`) has one row, with a status for `.claude`, `.codex`
+  and `.agents`. A `SKILL.md` file means installed; a missing file means not installed;
+  an unreadable path means cannot check, with the path and error on hover. The page never
+  installs or overwrites skills. It shows the existing `swiss skill install` command.
+- **Runtime** keeps Quit through a confirming sheet. Quit stays red (the rule 4 exception).
 
 ## §panel.i18n — Languages
 

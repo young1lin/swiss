@@ -337,7 +337,7 @@ describe("SPEC §panel.ui - every export is on the page", () => {
 
 describe("SPEC §panel.ui - the scenes", () => {
   it("the page scenes include the conversation reference", () => {
-    expect(SCENES.map((s) => s.id)).toEqual(["conversation", "content", "resource", "event", "empty", "process"]);
+    expect(SCENES.map((s) => s.id)).toEqual(["desktop-overview", "conversation", "content", "resource", "event", "empty", "process"]);
   });
 
   for (const s of SCENES) {

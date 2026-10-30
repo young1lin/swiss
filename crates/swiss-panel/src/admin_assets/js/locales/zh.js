@@ -20,6 +20,20 @@
    looks for one. */
 
 const zh                         = {
+  "system.skills": "AI 技能",
+  "system.skillsHint": "检查各用户技能目录中是否存在 SKILL.md，分别显示目录中的安装情况。",
+  "system.skillInstalled": "已安装",
+  "system.skillMissing": "未安装",
+  "system.skillUnknown": "无法检查",
+  "system.skillsUnavailable": "暂时无法检查技能安装状态。",
+  "system.refreshSkills": "刷新",
+  "system.skillsInstallHint": "安装或更新内置技能：",
+  "desktop.workspace": "MCP 工作区",
+  "gallery.scene.desktopOverview": "MCP 工作区",
+  "desktop.workspaceHint": "查看工具、尝试调用，或管理服务配置。",
+  "desktop.servers": "从一个服务开始",
+  "desktop.sidebarHint": "左侧列表包含全部服务和分组。打开服务后才会加载工具。",
+  "desktop.open": "打开",
   /* --- process --- */
   "process.form.nameExample": "my-app",
   "process.appsNote": "网关退出后仍继续运行；保存定义不会启动应用。",

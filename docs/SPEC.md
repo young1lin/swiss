@@ -292,7 +292,7 @@ in §decisions.
 - [§panel.ui — The UI library](spec/0014-panel.md#panelui--the-ui-library)
 - [§panel.pages — Per-page look rules](spec/0014-panel.md#panelpages--per-page-look-rules)
 - [§panel.groups — The grouped list](spec/0014-panel.md#panelgroups--the-grouped-list)
-- [§panel.settings — Plugins, Secrets, System](spec/0014-panel.md#panelsettings--plugins-secrets-system)
+- [§panel.settings — System, Plugins, Secrets](spec/0014-panel.md#panelsettings--system-plugins-secrets)
 - [§panel.i18n — Languages](spec/0014-panel.md#paneli18n--languages)
 - [§panel.toolchain — TypeScript, the build and the emit](spec/0014-panel.md#paneltoolchain--typescript-the-build-and-the-emit)
 - [§panel.lint — The lint ratchet](spec/0014-panel.md#panellint--the-lint-ratchet)

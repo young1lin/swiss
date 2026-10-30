@@ -48,6 +48,7 @@ import type { MenuItem } from "./ui/menu.js";
 import { CODE_SCHEMES, codeSchemeFor } from "./ui/code-scheme.js";
 import { closeSheet, initSheet, sheetOpen } from "./ui/sheet.js";
 import { grip } from "./ui/grip.js";
+import { initDesktop } from "./desktop.js";
 
 /* The dictionary resolves before anything paints (SPEC §panel.i18n): this top-level await is
    the whole reason a Chinese screen never flashes English chrome — every statement below
@@ -56,6 +57,7 @@ import { grip } from "./ui/grip.js";
    tr() at paint time, never at module top level (L7). */
 await loadLocale();
 paintChrome();
+initDesktop();
 
 
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only

@@ -29,6 +29,9 @@
 
 use crate::daemon::{self, StartOptions, StartResult};
 
+#[cfg(windows)]
+mod desktop;
+
 // The shell's window stack, Windows-only like `run` below (ADR-038). tao's loop and window,
 // wry's WebView2 surface, tray-icon's tray — three small crates, no framework between them
 // and the message loop.
@@ -37,7 +40,7 @@ use tao::event::{Event, WindowEvent};
 #[cfg(windows)]
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder};
 #[cfg(windows)]
-use tao::window::{Icon as WindowIcon, WindowBuilder};
+use tao::window::{Icon as WindowIcon, Theme, WindowBuilder};
 #[cfg(windows)]
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 #[cfg(windows)]
@@ -66,6 +69,7 @@ pub async fn launch_sequence(opts: StartOptions) -> Result<String, String> {
 /// panel is whatever browser is at hand (ADR-038).
 #[cfg(windows)]
 pub fn run(port: Option<u16>) -> i32 {
+    desktop::detach_console();
     // The window belongs to ONE gateway - this home on this port, resolved exactly the way
     // the starter below resolves it (env `SWISS_PORT`, then the home's config, then 19999).
     // A desktop-wide single instance would weld every home to whichever window opened first
@@ -180,10 +184,19 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
         PanelReady(String),
         Fatal(String),
         TrayOpen,
+        Desktop(desktop::Message),
         Quit,
     }
 
     let event_loop: EventLoop<GuiEvent> = EventLoopBuilder::with_user_event().build();
+    let prefs_path = swiss_core::paths::data_dir().join(format!("gui-window-{port}.json"));
+    let mut prefs = desktop::Preferences::load(&prefs_path);
+    let primary = event_loop.primary_monitor().map(|m| m.position());
+    let screens: Vec<_> = event_loop.available_monitors().map(|m| {
+        let p = m.position(); let s = m.size();
+        desktop::Screen { position: (p.x, p.y), size: (s.width, s.height), scale: m.scale_factor(), primary: Some(p) == primary }
+    }).collect();
+    prefs.fit(&screens);
 
     // One icon, two owners: the window's title-bar icon and the tray's — and both carry the
     // brand mark itself (assets/logo.svg, SPEC §release), drawn by brand_icon() from the
@@ -191,36 +204,57 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
     let (rgba, width, height) = brand_icon();
     let window = match WindowBuilder::new()
         .with_title("swiss")
-        .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 820.0))
+        .with_inner_size(tao::dpi::LogicalSize::new(prefs.width, prefs.height))
+        .with_min_inner_size(tao::dpi::LogicalSize::new(desktop::MIN_WIDTH, desktop::MIN_HEIGHT))
+        .with_theme(prefs.dark.map(|dark| if dark { Theme::Dark } else { Theme::Light }))
+        .with_visible(false)
         .with_window_icon(WindowIcon::from_rgba(rgba.clone(), width, height).ok())
         .build(&event_loop)
     {
         Ok(window) => window,
         Err(err) => {
-            eprintln!("cannot open a window: {err}");
+            desktop::startup_error(&format!("cannot open a window: {err}"));
             return 1;
         }
     };
+    let monitors: Vec<_> = window.available_monitors().map(|m| {
+        let p = m.position(); let s = m.size(); (p.x, p.y, s.width, s.height)
+    }).collect();
+    if prefs.visible_on(&monitors) {
+        if let Some((x, y)) = prefs.position {
+            window.set_outer_position(PhysicalPosition::new(x, y));
+        }
+    }
+    window.set_maximized(prefs.maximized);
 
     // WebView2 keeps its profile and caches in a user data folder, and an unset one lands
     // next to the exe — a directory a PATH install does not own. Under the gateway's home it
     // follows SWISS_HOME like every other file this tool writes.
     let data = swiss_core::paths::data_dir().join("gui-webview");
     let mut web_context = WebContext::new(Some(data));
+    let desktop_proxy = event_loop.create_proxy();
     let webview = match WebViewBuilder::new_with_web_context(&mut web_context)
         .with_bounds(full_bounds(window.inner_size().width, window.inner_size().height))
         .with_html(loading_html())
+        .with_initialization_script("window.__SWISS_DESKTOP__ = true;")
+        .with_ipc_handler(move |request| {
+            if let Some(message) = desktop::message(&request.uri().to_string(), port, request.body()) {
+                let _ = desktop_proxy.send_event(GuiEvent::Desktop(message));
+            }
+        })
         .build(&window)
     {
         Ok(webview) => webview,
         Err(err) => {
-            eprintln!(
+            desktop::startup_error(&format!(
                 "cannot start the webview: {err}\n\
                  the panel needs the WebView2 Runtime, which ships with Windows 11"
-            );
+            ));
             return 1;
         }
     };
+    if let Err(err) = webview.zoom(prefs.zoom) { eprintln!("cannot restore text size: {err}"); }
+    window.set_visible(true);
 
     let open_item = MenuItem::with_id("open", "Open swiss", true, None);
     let quit_item = MenuItem::with_id("quit", "Exit swiss", true, None);
@@ -319,6 +353,7 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
 
     let window_id = window.id();
     let mut fatal = false;
+    let mut placement_dirty = true;
     event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
@@ -334,6 +369,7 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
                 if fatal {
                     std::process::exit(1);
                 }
+                prefs.save(&prefs_path);
                 window.set_visible(false);
             }
             Event::WindowEvent {
@@ -342,6 +378,22 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
                 ..
             } if id == window_id => {
                 let _ = webview.set_bounds(full_bounds(size.width, size.height));
+                placement_dirty = true;
+            }
+            Event::WindowEvent { window_id: id, event: WindowEvent::Moved(_), .. } if id == window_id => {
+                placement_dirty = true;
+            }
+            Event::MainEventsCleared if placement_dirty => {
+                // Windows delivers WM_MOVE before the maximize flag settles. Sampling in
+                // Moved stored the maximized frame's (-9,-9) as the normal restore position.
+                // Read placement only after this message batch, keeping normal bounds intact.
+                placement_dirty = false;
+                let size = window.inner_size().to_logical::<u32>(window.scale_factor());
+                let position = window.outer_position().ok().map(|p| (p.x, p.y));
+                prefs.remember((size.width, size.height), position, window.is_maximized(), window.is_minimized());
+            }
+            Event::WindowEvent { window_id: id, event: WindowEvent::Focused(false), .. } if id == window_id => {
+                prefs.save(&prefs_path);
             }
             Event::UserEvent(GuiEvent::PanelReady(url)) => {
                 // The one-time token is spent by this load and the panel redirects itself to
@@ -363,9 +415,25 @@ fn shell(port: u16, show: windows::Win32::Foundation::HANDLE) -> i32 {
             }
             Event::UserEvent(GuiEvent::TrayOpen) => {
                 window.set_visible(true);
+                window.set_minimized(false);
                 window.set_focus();
             }
-            Event::UserEvent(GuiEvent::Quit) => std::process::exit(0),
+            Event::UserEvent(GuiEvent::Desktop(message)) => match message {
+                desktop::Message::Theme(dark) => {
+                    prefs.dark = Some(dark);
+                    window.set_theme(Some(if dark { Theme::Dark } else { Theme::Light }));
+                    prefs.save(&prefs_path);
+                }
+                desktop::Message::Title(title) => window.set_title(&title),
+                desktop::Message::Zoom(step) => {
+                    let zoom = if step == 0 { 1.0 } else { ((prefs.zoom * 10.0).round() + f64::from(step)) / 10.0 }.clamp(0.8, 1.5);
+                    match webview.zoom(zoom) {
+                        Ok(()) => { prefs.zoom = zoom; prefs.save(&prefs_path); }
+                        Err(err) => eprintln!("cannot change text size: {err}"),
+                    }
+                }
+            },
+            Event::UserEvent(GuiEvent::Quit) => { prefs.save(&prefs_path); std::process::exit(0); }
             _ => {}
         }
     })

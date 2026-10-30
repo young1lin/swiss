@@ -254,7 +254,18 @@ function conversation(): HTMLElement {
   ])));
 }
 
+/** The desktop's first resource page has useful entry points without a selected server. */
+function desktopOverview(): HTMLElement {
+  return h("div", { class: "shell" }, pane({},
+    paneHead({ title: tr("desktop.workspace"), desc: tr("desktop.workspaceHint"), actions: [btn(tr("pane.addMcp"), { kind: "primary", icon: "plus" })] }),
+    section({ cap: tr("desktop.servers") }, card(...SERVERS.map(server => row({
+      name: server.name, sub: server.glyph, lead: dot(server.state, server.state), primary: btn(tr("desktop.open")),
+    }))))));
+}
+
 export const SCENES: Scene[] = [
+  { id: "desktop-overview", titleKey: tk("gallery.scene.desktopOverview"), build: desktopOverview,
+    uses: ["pane", "paneHead", "btn", "section", "card", "row", "dot"] },
   { id: "conversation", titleKey: tk("gallery.c.transcript"), build: conversation,
     uses: ["pane", "transcript", "transcriptText", "flow", "flowIO", "formFold"] },
   { id: "content", titleKey: tk("gallery.scene.content"), build: content,

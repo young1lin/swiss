@@ -118,7 +118,7 @@ async fn send(app: &axum::Router, req: Request<Body>) -> (StatusCode, axum::http
 #[tokio::test]
 async fn a_socket_request_without_a_credential_is_refused_on_both_api_trees() {
     let g = gateway(true);
-    for path in ["/api/mcps", "/api/extra-tree", "/api/session/ticket"] {
+    for path in ["/api/mcps", "/api/extra-tree", "/api/session/ticket", "/api/skills"] {
         let (status, _, body) = send(&g.app, socket(get_req(path).body(Body::empty()).unwrap())).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: {body}");
         assert!(body.contains("swiss open"), "{path}: {body}");

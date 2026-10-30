@@ -37,11 +37,11 @@ const legacy: PageDescriptor[] = [
   { id: "data", pluginId: "data", label: tk("pageRegistry.data") },
   { id: "jobs", pluginId: "jobs", label: tk("pageRegistry.jobs") },
 ].map((p, i) => { return Object.assign({ order: i * 10, path: "#" + p.id, entry: "/admin/js/views/" + p.id + ".js" }, p); });
-const management: PageDescriptor = { id: "plugins", pluginId: "host", label: tk("pageRegistry.plugins"), order: 1000, path: "#plugins", entry: "/admin/js/views/plugins.js" };
+const management: PageDescriptor = { id: "plugins", pluginId: "host", label: tk("pageRegistry.plugins"), order: 1001, path: "#plugins", entry: "/admin/js/views/plugins.js" };
 /* These pages are host-owned like management: every plugin may depend on the vault, while System
  * controls the one running process rather than any individual plugin. */
-const vaultPage: PageDescriptor = { id: "secrets", pluginId: "host", label: tk("pageRegistry.secrets"), order: 1001, path: "#secrets", entry: "/admin/js/views/secrets.js" };
-const systemPage: PageDescriptor = { id: "system", pluginId: "host", label: tk("pageRegistry.system"), order: 1002, path: "#system", entry: "/admin/js/views/system.js" };
+const vaultPage: PageDescriptor = { id: "secrets", pluginId: "host", label: tk("pageRegistry.secrets"), order: 1002, path: "#secrets", entry: "/admin/js/views/secrets.js" };
+const systemPage: PageDescriptor = { id: "system", pluginId: "host", label: tk("pageRegistry.system"), order: 1000, path: "#system", entry: "/admin/js/views/system.js" };
 /* Group labels used when the host serves no plugin inventory (an older gateway answers 404 on
    /api/plugins), plus the one group that has no inventory row at all: the management page is
    synthesized here, not contributed by a plugin. */
@@ -134,16 +134,17 @@ const RAIL_CAPTION_FLOOR = 9;
  * (the caption's width at the ceiling, px). One size for all of them - the largest
  * half-pixel step at or below the ceiling at which every caption fits, floored. `null`
  * when nothing can be measured (a seat with no room is a hidden rail, not a tight one). */
-function railCaptionSize(seats: { room: number; need: number }[]): number | null {
+function railCaptionSize(seats: { room: number; need: number }[], ceiling = RAIL_CAPTION_CEIL): number | null {
   if (seats.length === 0 || seats.some((s) => s.room <= 0)) return null;
   const ratio = seats.reduce((r, s) => (s.need > s.room ? Math.min(r, s.room / s.need) : r), 1);
-  return Math.max(RAIL_CAPTION_FLOOR, Math.floor(RAIL_CAPTION_CEIL * ratio * 2) / 2);
+  return Math.max(ceiling - 1, Math.floor(ceiling * ratio * 2) / 2);
 }
 
 function fitRailLabels(): void {
   const labels = Array.from(document.querySelectorAll<HTMLElement>(".rail-btn .rail-label"));
   if (labels.length === 0) return;
-  labels.forEach((el) => { el.style.fontSize = RAIL_CAPTION_CEIL + "px"; });
+  const ceiling = document.documentElement.hasAttribute("data-desktop") ? 11 : RAIL_CAPTION_CEIL;
+  labels.forEach((el) => { el.style.fontSize = ceiling + "px"; });
   // The seat's content box: its padding is the air (base.css .rail-btn), and the label's
   // max-width is 100% of this same box, so CSS and JS agree on what "fits" means.
   const size = railCaptionSize(labels.map((el) => {
@@ -151,7 +152,7 @@ function fitRailLabels(): void {
     if (!seat) return { room: 0, need: el.scrollWidth };
     const cs = getComputedStyle(seat);
     return { room: seat.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), need: el.scrollWidth };
-  }));
+  }), ceiling);
   if (size === null) return;
   labels.forEach((el) => { el.style.fontSize = size + "px"; });
 }

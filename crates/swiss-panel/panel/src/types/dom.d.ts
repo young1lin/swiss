@@ -209,3 +209,8 @@ export interface EmptyStateSpec {
   hint?: string;
   action?: string;
 }
+/** The window-only WebView bridge; absent in ordinary browsers. */
+export interface DesktopWindow extends Window {
+  __SWISS_DESKTOP__?: boolean;
+  ipc?: { postMessage(message: string): void };
+}

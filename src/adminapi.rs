@@ -631,6 +631,14 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         )
     }));
 
+    // Read-only skill inspection, under the same admin session gate as every /api route.
+    r = r.route("/api/skills", get(|| async {
+        match crate::skill_install::status() {
+            Ok(skills) => admin_json(StatusCode::OK, json!({ "skills": skills })),
+            Err(error) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
+        }
+    }));
+
     // --- the machine settings: start-at-sign-in and the user PATH entry --------------------------
     //
     // GET reads what the OS holds; PUT applies {"enabled": bool} and answers with the state read

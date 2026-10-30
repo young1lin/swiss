@@ -26,6 +26,10 @@ import { railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR } from "../src/p
 const seat = (need: number, room = 40): { room: number; need: number } => ({ room, need });
 
 describe("railCaptionSize (rail captions, one size for the rail)", () => {
+  it("keeps desktop captions at 11px and never fits them below 10px", () => {
+    expect(railCaptionSize([seat(42, 48)], 11)).toBe(11);
+    expect(railCaptionSize([seat(90, 48)], 11)).toBe(10);
+  });
   it("every stock name fits the 40px box at the ceiling - the rail stays at 10px", () => {
     const stock = [20.8, 34.1, 20.6, 19.6, 33.3, 37.2, 34.0, 35.5].map((w) => seat(Math.ceil(w)));
     expect(railCaptionSize(stock)).toBe(RAIL_CAPTION_CEIL);

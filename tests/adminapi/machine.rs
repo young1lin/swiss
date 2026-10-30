@@ -80,6 +80,25 @@ fn setup_machine(user_path: FakeUserPath) -> Harness {
 }
 
 #[tokio::test]
+async fn shipped_skill_status_is_read_only_and_reports_all_three_roots() {
+    let h = setup_machine(FakeUserPath::default());
+    let (status, body) = h.get("/api/skills").await;
+    assert_eq!(status, StatusCode::OK);
+    let skills = body["skills"].as_array().expect("skills array");
+    assert_eq!(skills.len(), 3);
+    for skill in skills {
+        let locations = skill["locations"].as_array().expect("locations");
+        assert_eq!(locations.len(), 3);
+        for location in locations {
+            assert!(location["installed"].is_boolean() || location["installed"].is_null());
+            assert!(location["path"].as_str().is_some_and(|p| p.ends_with("SKILL.md")));
+        }
+    }
+    let (status, _) = h.put("/api/skills", json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unregistered methods follow the host's 404 contract");
+}
+
+#[tokio::test]
 async fn machine_settings_round_trip_through_their_providers() {
     let h = setup_machine(FakeUserPath::default());
     for route in ["/api/autostart", "/api/user-path"] {

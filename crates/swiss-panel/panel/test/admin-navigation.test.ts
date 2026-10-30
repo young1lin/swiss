@@ -204,6 +204,10 @@ const byId = (id: string): FakeNode => els.get(id) as FakeNode;
 const tabLinks = (): FakeNode[] => (byId("pageTabs").kids as FakeNode[]).filter((k) => k.tag === "a");
 
 describe("the plugin rail (global navigation)", () => {
+  it("orders Settings as System, Plugins, Secrets", async () => {
+    await paint("system", inventory);
+    expect(tabLinks().map(link => link.href)).toEqual(["#system", "#plugins", "#secrets"]);
+  });
   it("paints one seat per plugin group — never one per page", async () => {
     await paint("mcps", inventory);
     const rail = byId("railNav").innerHTML;
@@ -222,7 +226,7 @@ describe("the plugin rail (global navigation)", () => {
     // Seats carry their caption again (SPEC §panel.nav icon-only reversed by owner, 2026-09-21):
     // the group's translated name sits under the glyph at --f-caption, and the title
     // tooltip still carries it (plus the error text when the plugin is down).
-    expect(rail).toContain('title="Settings" data-group="host" data-view="plugins"');
+    expect(rail).toContain('title="Settings" data-group="host" data-view="system"');
     expect(rail).toContain('class="rail-label">Settings</span>');
     // The ... seat opens the palette; the rail is a shortlist, not the ceiling.
     expect(rail).toContain('class="rail-btn rail-more" id="railMore"');
@@ -384,7 +388,7 @@ describe("the plugin context bar (page navigation)", () => {
 
   it("synthesizes System under Settings instead of giving a destructive action permanent chrome", async () => {
     await paint("system", inventory);
-    expect(byId("railNav").innerHTML).toContain('data-group="host" data-view="plugins" aria-current="true"');
+    expect(byId("railNav").innerHTML).toContain('data-group="host" data-view="system" aria-current="true"');
     const title = byId("pageTitle");
     expect(title.hidden).toBe(false);
     expect(title.innerHTML).toContain('ctx-name">Settings</span>');

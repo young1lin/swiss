@@ -57,6 +57,10 @@
       --f-body: 13px;       /* default */
       --f-label: 12px;      /* secondary text */
       --f-caption: 11px;    /* group captions, uppercase */
+      --rail-w: 56px;
+      --rail-seat-h: 42px;
+      --rail-caption: 10px;
+      --context-h: 40px;
 
       /* Weight ramp (SPEC §panel.design) - four roles; every font-weight in every sheet is one of these. */
       --w-body: 400;        /* running text, an unselected tab */
@@ -289,6 +293,21 @@
       --syn-punct: #e6edf3;
     }
 
+    /* A desktop window is a reading surface at its own scale. The browser keeps its compact
+       defaults; the shell marker arrives before paint and the native caption owns the brand. */
+    :root[data-desktop="true"] {
+      --f-body: 14px;
+      --f-label: 13px;
+      --f-caption: 12px;
+      --rail-w: 64px;
+      --rail-seat-h: 48px;
+      --rail-caption: 11px;
+      --context-h: 44px;
+      --text-3: #757b86;
+    }
+    :root[data-desktop="true"][data-theme="dark"] { --text-3: #9499a4; }
+    :root[data-desktop="true"] .rail-brand { display: none; }
+
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body {
@@ -338,7 +357,7 @@
        against the edge. 56 - 2 x --s1 gives a 48px seat whose caption box is 40px, so every
        stock name sits at 10px with 5px or more of air on each side. */
     .rail {
-      width: 56px; flex: none;
+      width: var(--rail-w); flex: none;
       display: flex; flex-direction: column;
       background: var(--sidebar);   /* no edge of its own (SPEC §panel.design): beside a page the ground change
                                        is the edge; beside the MCP sidebar the two are one surface */
@@ -368,7 +387,7 @@
        says so in the seat's title. */
     .rail-btn {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 2px; height: 42px; border-radius: var(--r-btn);
+      gap: 2px; height: var(--rail-seat-h); border-radius: var(--r-btn);
       /* The seat's padding IS the caption's air: the UA gives a <button> 6px of its own,
          which the 100% below would silently subtract. One explicit value, read back by
          fitRailLabels as the seat's content width - CSS and JS measure the same box. */
@@ -379,7 +398,7 @@
     /* 10px is the ceiling fitRailLabels starts from (it writes the fitted size inline);
        100% is the seat's content box - the padding above is the air - and the ellipsis is
        the guard of last resort. */
-    .rail-btn .rail-label { font-size: 10px; line-height: 1.15; letter-spacing: 0.01em;
+    .rail-btn .rail-label { font-size: var(--rail-caption); line-height: 1.15; letter-spacing: 0.01em;
       max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rail-btn:hover { background: var(--hover); color: var(--text); }
     .rail-btn[aria-current="true"] { background: var(--hover); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
@@ -423,7 +442,7 @@
        share a control shape. */
     .ctxbar {
       display: flex; align-items: center; gap: var(--s2);
-      height: 40px; flex: none;
+      height: var(--context-h); flex: none;
       padding: 0 var(--s4);
       background: var(--bar); border-bottom: 1px solid var(--sep);
       min-width: 0;

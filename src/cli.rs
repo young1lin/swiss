@@ -121,6 +121,8 @@ pub const USAGE: &str = "swiss — one local endpoint in front of your databases
 
 usage: swiss <command> [options]
 
+On Windows, double-click swiss.exe or run swiss without arguments to open the GUI.
+
   start            start the gateway in the background and open the panel
   stop             ask it to shut down, then force it if it will not
   restart          stop, then start
@@ -944,8 +946,27 @@ impl Io for PrintIo {
     }
 }
 
+fn gui_requested(argv: &[String]) -> bool {
+    (cfg!(windows) && argv.is_empty()) || matches!(argv.first().map(String::as_str), Some("gui"))
+}
+
 /// Wire the real implementations and run — the CLI entry point main.rs calls.
 pub async fn main(argv: Vec<String>) -> i32 {
+    // An empty Windows command line is Explorer's double-click launch. Only that exact
+    // case defaults to the window; explicit flags still reach the ordinary CLI parser.
+    if gui_requested(&argv) {
+        let p = parse_argv(&argv);
+        if p.help || p.version { return run(&argv, &PrintIo, &RealOps).await; }
+        if !p.unknown.is_empty() {
+            eprintln!("unknown option: {}", p.unknown.join(", "));
+            return 1;
+        }
+        if p.bad_port {
+            eprintln!("--port needs a number between 1 and 65535");
+            return 1;
+        }
+        return crate::gui::run(p.port);
+    }
     // `remote` and `run` carry their own argv contract (SPEC §remote.cli): a bare `--` means
     // everything after it is the far side's ARGV, untouched. The generic parser would eat
     // flags out of that passthrough, so these two dispatch before it.
@@ -960,21 +981,6 @@ pub async fn main(argv: Vec<String>) -> i32 {
         Some("memory") => return crate::memory_cli::main(argv[1..].to_vec()).await,
         // `process` carries its own subcommand grammar (SPEC §process.cli).
         Some("process") => return crate::process_cli::main(argv[1..].to_vec()).await,
-        // `gui` owns its thread until the window closes — tao's event loop only unwinds into
-        // process exit — so it dispatches before the async CLI the same way. The parser runs
-        // first for the same refusals every command makes (SPEC §host.gui).
-        Some("gui") => {
-            let p = parse_argv(&argv);
-            if !p.unknown.is_empty() {
-                eprintln!("unknown option: {}", p.unknown.join(", "));
-                return 1;
-            }
-            if p.bad_port {
-                eprintln!("--port needs a number between 1 and 65535");
-                return 1;
-            }
-            return crate::gui::run(p.port);
-        }
         _ => {}
     }
     run(&argv, &PrintIo, &RealOps).await
@@ -986,6 +992,24 @@ mod tests {
 
     fn argv(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn desktop_entry_accepts_double_click_and_preserves_cli_commands() {
+        assert_eq!(gui_requested(&[]), cfg!(windows));
+        assert!(gui_requested(&argv(&["gui"])));
+        assert!(gui_requested(&argv(&["gui", "--port", "19998"])));
+        for args in [&["--help"][..], &["--version"], &["status"], &["serve"], &["api", "GET", "/api/info"]] {
+            assert!(!gui_requested(&argv(args)), "{args:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn gui_flags_finish_without_opening_a_window() {
+        assert_eq!(main(argv(&["gui", "--help"])).await, 0);
+        assert_eq!(main(argv(&["gui", "--version"])).await, 0);
+        assert_eq!(main(argv(&["gui", "--port", "0"])).await, 1);
+        assert_eq!(main(argv(&["gui", "--unknown"])).await, 1);
     }
 
     #[test]

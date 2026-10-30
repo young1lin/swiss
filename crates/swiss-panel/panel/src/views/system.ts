@@ -14,11 +14,85 @@
  * limitations under the License.
  */
 
-import { $, apiJson, targetEl } from "../util.js";
+import { $, api, apiJson, refocusIfIdle, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import { currentView } from "../ui-state.js";
 import { tr } from "../i18n.js";
-import { btn, card, closeSheet, emptyNode, hint, paneBody, paneHead, row, section, sheet, showSheet } from "../ui/index.js";
+import { btn, card, closeSheet, emptyNode, hint, note, paneBody, paneHead, row, section, sheet, showSheet, sw, tag } from "../ui/index.js";
+import type { ApiSkillStatus, ApiMachineSetting as MachineSetting, MachineSettingKey as MachineKey } from "../types/api.js"; // Admin API contracts.
+const machine: Record<MachineKey, MachineSetting | null> = { autostart: null, "user-path": null };
+const busy = new Set<MachineKey>();
+let skills: ApiSkillStatus[] | null = null;
+let generation = 0;
+
+export function startupRowNode(a: MachineSetting | null): HTMLElement | null {
+  return a ? row({
+    name: tr("plugins.startSwissWhenYou"), sub: a.detail || null,
+    toggle: sw(a.enabled, tr("plugins.toggleStartSign"), { data: { "autostart-toggle": true, "machine-toggle": "autostart" }, disabled: busy.has("autostart") }),
+    data: { autostart: true }, title: a.command || undefined,
+  }) : null;
+}
+
+export function pathRowNode(p: MachineSetting | null): HTMLElement | null {
+  return p ? row({
+    name: tr("plugins.swissOnYourPath"), sub: p.detail || null,
+    toggle: sw(p.enabled, tr("plugins.togglePath"), { data: { "userpath-toggle": true, "machine-toggle": "user-path" }, disabled: busy.has("user-path") }),
+    data: { userpath: true }, title: p.dir || undefined,
+  }) : null;
+}
+
+function skillsSection(): HTMLElement {
+  const body = skills ? card(skills.map(skill => row({
+    name: skill.name, data: { skill: skill.name },
+    cols: skill.locations.map(location => {
+      const state = tr(location.installed === true ? "system.skillInstalled" : location.installed === false ? "system.skillMissing" : "system.skillUnknown");
+      return { w: "l" as const, v: h("span", { data: { "skill-root": location.root }, title: location.path + (location.error ? " · " + location.error : "") },
+        h("code", null, location.root), " ", tag(state, { tone: location.installed === null ? "warn" : undefined })) };
+    }),
+  }))) : note(tr("system.skillsUnavailable"));
+  const part = section({ cap: tr("system.skills"), note: tr("system.skillsHint"), tools: [btn(tr("system.refreshSkills"), { id: "system-skills-refresh" })] },
+    body, note([tr("system.skillsInstallHint"), " ", h("code", null, "swiss skill install")]));
+  part.id = "system-skills";
+  return part;
+}
+
+async function readStatus<T>(path: string): Promise<T | null> {
+  try { const r = await api(path); return r.ok ? await r.json() as T : null; }
+  catch { return null; }
+}
+
+function patchMachine(): void {
+  for (const key of ["autostart", "user-path"] as const) {
+    const toggle = document.querySelector<HTMLButtonElement>('[data-machine-toggle="' + key + '"]');
+    if (toggle) {
+      toggle.disabled = busy.has(key);
+      toggle.setAttribute("aria-checked", String(!!machine[key]?.enabled));
+    }
+  }
+}
+
+async function toggleMachine(key: MachineKey): Promise<void> {
+  const current = machine[key];
+  if (!current || busy.has(key)) return;
+  const ticket = generation;
+  const pressed = document.activeElement;
+  busy.add(key); patchMachine();
+  const next = await apiJson<MachineSetting>("/api/" + key, { method: "PUT", body: JSON.stringify({ enabled: !current.enabled }) });
+  if (ticket !== generation || currentView() !== "system") return;
+  busy.delete(key);
+  if (next) { machine[key] = next; if (key === "user-path") toast(tr("plugins.pathNewTerminals")); }
+  patchMachine(); refocusIfIdle(pressed);
+}
+
+async function refreshSkills(): Promise<void> {
+  const ticket = generation;
+  const button = $<HTMLButtonElement>("system-skills-refresh");
+  if (button) button.disabled = true;
+  const next = await readStatus<{ skills: ApiSkillStatus[] }>("/api/skills");
+  if (ticket !== generation || currentView() !== "system") return;
+  skills = next?.skills || null;
+  document.getElementById("system-skills")?.replaceWith(skillsSection());
+}
 
 /** The process action is deliberately a Settings page, not permanent app chrome: quitting the
  *  whole toolbox is destructive, rare, and belongs beside other host-owned controls.
@@ -33,8 +107,11 @@ import { btn, card, closeSheet, emptyNode, hint, paneBody, paneHead, row, sectio
  *  for a page whose ONE act is the destructive one: there is no overflow to hide it in, and
  *  the sheet it opens is the confirmation. */
 function systemBodyNode(): HTMLElement {
+  const controls = [startupRowNode(machine.autostart), pathRowNode(machine["user-path"])].filter((node): node is HTMLElement => node !== null);
   return paneBody({ wide: true },
     paneHead({ desc: tr("system.descOneLine") }),
+    controls.length ? section({ cap: tr("plugins.thisMachine") }, card(controls)) : null,
+    skillsSection(),
     section({ cap: tr("system.runtime") },
       card(row({
         name: tr("system.quitSwiss"),
@@ -89,12 +166,25 @@ async function requestQuit(): Promise<void> {
 }
 
 async function mount(): Promise<void> {
+  const ticket = ++generation;
+  busy.clear();
+  const [startup, path, checked] = await Promise.all([
+    readStatus<MachineSetting>("/api/autostart"), readStatus<MachineSetting>("/api/user-path"),
+    readStatus<{ skills: ApiSkillStatus[] }>("/api/skills"),
+  ]);
+  if (ticket !== generation || currentView() !== "system") return;
+  machine.autostart = startup; machine["user-path"] = path; skills = checked?.skills || null;
   fill($("pane"), systemBodyNode());
   // One delegated claim on the pane (SPEC §panel.toolchain): the quit button is reached through the
   // pane's own listener, so the wiring survives any repaint of the pane's children.
   $("pane").onclick = (event: MouseEvent): void => {
     if (targetEl(event)?.closest("#system-quit")) openQuitSheet();
+    if (targetEl(event)?.closest("#system-skills-refresh")) { void refreshSkills(); return; }
+    const key = targetEl(event)?.closest("[data-machine-toggle]")?.getAttribute("data-machine-toggle");
+    if (key === "autostart" || key === "user-path") void toggleMachine(key);
   };
 }
 
-export { mount, openQuitSheet, quitSheetNode, requestQuit, systemBodyNode };
+function unmount(): void { generation++; busy.clear(); machine.autostart = null; machine["user-path"] = null; skills = null; }
+
+export { mount, mount as refresh, unmount, openQuitSheet, quitSheetNode, requestQuit, systemBodyNode };

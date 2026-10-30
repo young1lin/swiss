@@ -68,6 +68,11 @@ needed to build; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Quick start
 
+On Windows, double-click `swiss.exe` to open the desktop GUI. Running `swiss` without
+arguments or `swiss gui` opens the same window. The panel and AI skills are embedded in
+the single executable. **Settings → System** shows skill installation in
+`~/.claude/skills`, `~/.codex/skills` and `~/.agents/skills`, alongside startup and PATH settings.
+
 1. `swiss start` brings the gateway up on `127.0.0.1:19999` and opens the panel.
 2. On the MCP page, **Add an MCP**: a stdio command (`npx …`, `uvx …`), a remote HTTP MCP,
    tools declared over a REST API, or a MySQL / PostgreSQL / Redis / MongoDB connection served

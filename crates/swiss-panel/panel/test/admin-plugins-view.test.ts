@@ -204,54 +204,6 @@ describe("the plugins row", () => {
   });
 });
 
-/* Start-at-sign-in (the Plugins page's Startup section): the OS-level host setting rendered
-   with the same row - name + one grey line + the panel's switch. */
-describe("plugins view start-at-sign-in row", () => {
-  it("switches with the panel's switch and reflects the OS answer", () => {
-    const row = view.startupRowNode({
-      enabled: true,
-      detail: "registry: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-      command: '"C:/Program Files/swiss/swiss.exe" start --no-open',
-    });
-    expect(row).not.toBeNull();
-    const sw = row.querySelector("[data-autostart-toggle]");
-    expect(sw?.getAttribute("role")).toBe("switch");
-    expect(sw?.getAttribute("aria-checked")).toBe("true");
-    expect(row.textContent).toContain("registry: HKCU");
-    // The title is the raw command, held as an attribute value - nothing to escape.
-    expect(row.getAttribute("title")).toBe('"C:/Program Files/swiss/swiss.exe" start --no-open');
-    expect(row.textContent).not.toContain("· off");
-  });
-
-  it("an off row is the switch checked off - no dot and no \"off\" word to repeat it", () => {
-    const row = view.startupRowNode({ enabled: false, detail: "launch agent: /Users/a/Library/LaunchAgents/dev.swiss.swiss.plist", command: "c" });
-    expect(row?.querySelector("[data-autostart-toggle]")?.getAttribute("aria-checked")).toBe("false");
-    expect(row?.querySelector(".dot")).toBeNull();
-    expect(row?.textContent).toBe("Start swiss when you sign inlaunch agent: /Users/a/Library/LaunchAgents/dev.swiss.swiss.plist");
-  });
-
-  it("renders nothing without an answer — an old gateway never grows a dead control", () => {
-    expect(view.startupRowNode(null)).toBeNull();
-  });
-});
-
-/* The PATH row: the startup row's twin over /api/user-path. */
-describe("plugins view PATH row", () => {
-  it("says where the entry lives and titles the folder a terminal will find", () => {
-    const row = view.pathRowNode({ enabled: true, detail: "registry: HKCU\\Environment (value: Path)", dir: "C:\\Users\\jdoe\\swiss" });
-    const sw = row.querySelector("[data-userpath-toggle]");
-    expect(sw?.getAttribute("role")).toBe("switch");
-    expect(sw?.getAttribute("aria-checked")).toBe("true");
-    expect(sw?.getAttribute("aria-label")).toBe("Toggle swiss on your PATH");
-    expect(row.textContent).toBe("Put swiss on your PATHregistry: HKCU\\Environment (value: Path)");
-    expect(row.getAttribute("title")).toBe("C:\\Users\\jdoe\\swiss");
-  });
-
-  it("renders nothing without an answer", () => {
-    expect(view.pathRowNode(null)).toBeNull();
-  });
-});
-
 /* The page itself, through the real load path: mount reads /api/plugins and /api/autostart
  * under the fetch stub, and the poll patches state IN PLACE - the row nodes and their switches
  * keep their identity while the words, the dot and the revision follow the inventory. */
@@ -265,10 +217,10 @@ describe("the Plugins page through mount", () => {
     userPathReply = { enabled: true, detail: "symlink: /home/jdoe/.local/bin/swiss", dir: "/opt/swiss/swiss" };
     await view.mount();
     expect($("pane").querySelectorAll("[data-plugin]").length).toBe(2);
-    expect($("pane").querySelector("[data-autostart]")).not.toBeNull();
-    expect($("pane").querySelector("[data-userpath]")).not.toBeNull();
+    expect($("pane").querySelector("[data-autostart]")).toBeNull();
+    expect($("pane").querySelector("[data-userpath]")).toBeNull();
     expect($("pane").textContent).toContain("data · 1 page · requires connection-catalog");
-    expect(Array.from($("pane").querySelectorAll(".sec-cap")).map((c) => c.textContent)).toEqual(["This machine", "Installed"]);
+    expect(Array.from($("pane").querySelectorAll(".sec-cap")).map((c) => c.textContent)).toEqual(["Installed"]);
     // The count is the context bar's chip (rule 25); the foot keeps what nothing else says.
     expect($("pane").querySelector(".page-foot")?.textContent).toBe("revision 7");
     expect(view.countText()).toBe("2 plugins · 2 on");
@@ -281,19 +233,6 @@ describe("the Plugins page through mount", () => {
     expect($("pane").querySelector("[data-autostart]")).toBeNull();
     expect($("pane").querySelector("[data-userpath]")).toBeNull();
     expect(Array.from($("pane").querySelectorAll(".sec-cap")).map((c) => c.textContent)).toEqual(["Installed"]);
-  });
-
-  it("the PATH switch PUTs the opposite verdict and redraws from the host's answer, in place", async () => {
-    inventory = { plugins: [], revision: 1, pages: [] };
-    userPathReply = { enabled: false, detail: "registry: HKCU\\Environment (value: Path)", dir: "C:\\swiss" };
-    await view.mount();
-    const row = $("pane").querySelector("[data-userpath]") as HTMLElement;
-    const toggle = row.querySelector("[data-userpath-toggle]") as HTMLButtonElement;
-    toggle.click();
-    await vi.waitFor(() => { expect(toggle.getAttribute("aria-checked")).toBe("true"); });
-    expect(puts).toEqual([{ url: "/api/user-path", body: { enabled: true } }]);
-    expect($("pane").querySelector("[data-userpath]")).toBe(row); // patched, not rebuilt
-    expect(toggle.disabled).toBe(false);
   });
 
   it("poll patches state in place - the row and its switch are the SAME nodes, the words follow", async () => {

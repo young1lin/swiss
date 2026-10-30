@@ -21,7 +21,9 @@ import { $, KINDS, emptyNode, isMcpKind, targetEl } from "./util.js";
 import { fill, h } from "./h.js";
 import { openGroupSheet, openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
-import { act, authorizeMcp, removeMcp, renameMcp, showTab, startEdit } from "./detail.js";
+import { act, authorizeMcp, openDetail, removeMcp, renameMcp, showTab, startEdit } from "./detail.js";
+import { desktopMode } from "./desktop.js";
+import { mcpOverview } from "./mcp-overview.js";
 import { afterTabPaint, paneTabChange, paneTabClick, paneTabInput, paneTabKeydown } from "./run-history.js";
 import { assignGroup, groupOf, rowOf, saveGroups } from "./sidebar.js";
 import { currentView } from "./ui-state.js";
@@ -85,7 +87,8 @@ function renderPane(): void {
   if (!d) {
     // The shared empty state (SPEC §panel.design), and the one place it carries an action: the pane's
     // own "add" answers the question the empty screen just asked.
-    fill(pane, emptyNode(mcpRows().length
+    const overview = desktopMode() && mcpRows().length > 0;
+    fill(pane, overview ? mcpOverview(mcpRows(), openDetail, () => { openSheet(null); }) : emptyNode(mcpRows().length
       ? { icon: "mcp", title: tr("pane.selectMcp"), hint: tr("pane.toolsResourcesConfigurationAppear") }
       : { icon: "mcp", title: tr("pane.mcpsRegistered"), hint: tr("pane.addOneGroupHeader"), action: tr("pane.addMcp") }));
     // The empty pane answers ONLY its own button (master had no pane-level listener here):

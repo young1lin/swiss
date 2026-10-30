@@ -25,11 +25,10 @@
   <link rel="stylesheet" href="/admin/styles/ui.css">
   <link rel="stylesheet" href="/admin/styles/views.css">
   <script>
-    /* Resolve the appearance before the first paint. Doing it in the main script instead means a
-       full-brightness white panel flashes past on the way into the dark one, which is exactly what
-       someone reaching for dark mode is trying to get away from. applyTheme() below repeats this;
-       this copy exists only to beat the paint. */
+    /* Resolve appearance and desktop sizing before paint to avoid a bright flash in a dark
+       window. The main module follows subsequent changes. */
     (function () {
+      if (window.__SWISS_DESKTOP__) document.documentElement.setAttribute("data-desktop", "true");
       var pref = "auto";
       try { pref = localStorage.getItem("swiss_theme") || "auto"; } catch (e) { /* blocked */ }
       var dark = pref === "dark" ||

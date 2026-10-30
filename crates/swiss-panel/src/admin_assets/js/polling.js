@@ -22,6 +22,7 @@ import { h } from "./h.js";
 import { currentPageCount, navigatePage, refreshPage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
+import { patchMcpOverview } from "./mcp-overview.js";
 import { rowOf } from "./sidebar.js";
 import { currentView } from "./ui-state.js";
 import { setTunResponse, tunBusyOf, tunDragging, tunResponse, mountedTunScope } from "./tunnel-state.js";
@@ -43,7 +44,7 @@ async function loadList()                {
     if (sel && !rowOf(sel)) { setSelectedMcp(null); setMcpDetail(null); }
     patchSidebar();
     if (mcpDetail()) patchDetailHead();
-    else renderPane(); // empty state; nothing here can hold user input
+    else if (!patchMcpOverview(mcpRows())) renderPane(); // keep a landing-page button's keyboard focus
   } catch (e) { /* handled */ }
 }
 
