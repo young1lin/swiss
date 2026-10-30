@@ -17,7 +17,7 @@
 //! The MongoDB flavour of the Data view (SPEC §data.mongo): the browser trait the mongo engine
 //! implements, and the pure halves the routes and the engine share.
 //!
-//! Same rule as `dbbrowser.rs`: no driver here. A document crosses this seam as **canonical
+//! Same rule as `dbbrowser`: no driver here. A document crosses this seam as **canonical
 //! Extended JSON** in a `serde_json::Value` — `{"$oid": …}`, `{"$numberLong": "…"}`,
 //! `{"$date": {"$numberLong": "…"}}` — so the host stays free of bson, every helper below is
 //! testable without a server, and nothing about a value is lost on its way to the panel and
@@ -706,6 +706,23 @@ pub trait MongoBrowser: Send + Sync {
     /// `$currentOp` in the shared activity row shape (SPEC §data.activity).
     async fn activity(&self) -> Result<Value, String>;
     async fn activity_kill(&self, opid: i64) -> Result<Value, String>;
+    /// The Data agent's read (SPEC §data.agent): ONE command document the engine's read gate
+    /// passes (reads by name, no `$out` or `$merge`), then the console's own guard, against
+    /// `db`. A cursor command (find, aggregate, listCollections, listIndexes) brings back at
+    /// most `limit` documents and closes its cursor - `{reply: {cursor: {firstBatch, id: 0,
+    /// ns}, ok: 1}, more}` - and any other answers `{reply}` as the console's does, canonical
+    /// EJSON both. The default refuses: a flavour without it gives the agent no reads.
+    async fn run_read_command(&self, db: &str, command: &Map<String, Value>, limit: i64) -> Result<Value, String> {
+        let _ = (db, command, limit);
+        Err("read-only commands are not supported by this connection".into())
+    }
+    /// One collection for the Data agent (SPEC §data.agent): what the MCP's
+    /// mongo_describe_collection answers - the catalog entry, the storage numbers, the indexes
+    /// and the brief schema of a sample. Defaulted like the read above.
+    async fn describe_for_agent(&self, db: &str, coll: &str) -> Result<Value, String> {
+        let _ = (db, coll);
+        Err("collection descriptions are not supported by this connection".into())
+    }
 }
 
 // --- reading canonical Extended JSON -------------------------------------------------------------

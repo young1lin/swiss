@@ -49,6 +49,7 @@ use swiss_host::mongobrowser::{
 use swiss_host::services::catalog::{CatalogRegistry, ConnectionLease};
 
 use crate::dbbrowser_api::{catalog_guard, lease_fail, reply, with_elapsed_ms, Fail, LeaseBody};
+use crate::history_api::{mongo_target, record, HistoryLayer};
 
 /// Documents the CSV export buffers to learn its columns when the caller names none: the
 /// union of their flattened paths becomes the header. A field first seen after them has no
@@ -238,18 +239,30 @@ async fn edits(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Va
     })
 }
 
-/// The console (SPEC §data.mongo): one command document under the engine's guard.
-async fn command(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+/// The console (SPEC §data.mongo): one command document under the engine's guard. Its history
+/// (SPEC §data.history) keeps `text`, the block as the operator typed it, when the body
+/// carries one, else the command document.
+async fn command(
+    catalog: &CatalogRegistry,
+    history: &HistoryLayer,
+    name: &str,
+    body: &Value,
+) -> Result<Value, Fail> {
     let db = body.get("db").and_then(Value::as_str).map(str::trim).unwrap_or("").to_string();
     assert_db_name(&db).map_err(Fail::bad)?;
     let cmd = match body.get("command") {
         Some(Value::Object(m)) if !m.is_empty() => m.clone(),
         _ => return Err(Fail::bad("command must be a command document, e.g. {\"ping\": 1}")),
     };
-    let (_lease, b) = lease_mongo(catalog, name)?;
+    let (lease, b) = lease_mongo(catalog, name)?;
     let started = std::time::Instant::now();
-    let out = b.run_command(&db, &cmd).await.map_err(Fail::bad)?;
-    Ok(with_elapsed_ms(out, started))
+    let out = b.run_command(&db, &cmd).await;
+    let stmt = match body.get("text").and_then(Value::as_str).map(str::trim) {
+        Some(text) if !text.is_empty() => text.to_string(),
+        _ => Value::Object(cmd).to_string(),
+    };
+    record(history, || mongo_target(&b.label(), &db), name, lease.dialect(), &stmt, &out, started);
+    Ok(with_elapsed_ms(out.map_err(Fail::bad)?, started))
 }
 
 async fn collection(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
@@ -570,8 +583,8 @@ async fn edits_route(Extension(catalog): Catalog, Path(name): Path<String>, body
     reply(edits(&catalog, &name, &body.0).await)
 }
 
-async fn command_route(Extension(catalog): Catalog, Path(name): Path<String>, body: Body) -> Response {
-    reply(command(&catalog, &name, &body.0).await)
+async fn command_route(history: HistoryLayer, Extension(catalog): Catalog, Path(name): Path<String>, body: Body) -> Response {
+    reply(command(&catalog, &history, &name, &body.0).await)
 }
 
 async fn collection_route(Extension(catalog): Catalog, Path(name): Path<String>, body: Body) -> Response {

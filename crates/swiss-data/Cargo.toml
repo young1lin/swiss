@@ -19,6 +19,8 @@ serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 thiserror = "2"
 futures-core = { version = "0.3", default-features = false }
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
+# The console history's own store (SPEC §data.history) behind the host.history seam.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 
 [dev-dependencies]
 swiss-core = { path = "../swiss-core", version = "0.1.0", features = ["test-utils"] }

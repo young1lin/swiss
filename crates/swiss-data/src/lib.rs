@@ -15,7 +15,11 @@
  */
 
 //! The data subsystem: the /api/db browsing routes over the host's connection catalog — the
-//! SQL and redis flavours in `dbbrowser_api`, the MongoDB flavour in `mongo_api`.
+//! SQL and redis flavours in `dbbrowser_api`, the MongoDB flavour in `mongo_api`, redis
+//! pub/sub in `pubsub_api`, and the consoles' per-database history in `history`.
 
 pub mod dbbrowser_api;
+pub mod history;
+mod history_api;
 pub mod mongo_api;
+pub mod pubsub_api;
