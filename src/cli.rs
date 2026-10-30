@@ -40,6 +40,7 @@ pub const COMMANDS: &[&str] = &[
     "token",
     "creds",
     "open",
+    "gui",
     "export",
     "import",
     "skill",
@@ -128,6 +129,8 @@ usage: swiss <command> [options]
   token            print the token clients authenticate with
   creds            print the panel url and the gateway token (for asking an AI)
   open             open the panel in a browser, signed in with a one-time link (SPEC §host.session)
+  gui              open the panel in its own window, signed in the same way (Windows only;
+                   on a mac or Linux the gateway runs headless — open it from a browser)
   export           dump every state file as JSON to stdout (vault values masked) — the recovery /
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
@@ -374,6 +377,13 @@ fn warn_if_npx_cache(io: &dyn Io) {
 
 fn report_start(r: StartResult, io: &dyn Io) -> i32 {
     match r {
+        // pid 0 is a gateway discovered by health alone — alive, but started outside
+        // `swiss start`, so there is no record to name it by.
+        StartResult::AlreadyRunning { pid: 0, url, .. } => {
+            io.out("gateway already running (started outside `swiss start`)");
+            io.out(&row("url", &url));
+            0
+        }
         StartResult::AlreadyRunning { pid, url, .. } => {
             io.out(&format!("gateway already running (pid {pid})"));
             io.out(&row("url", &url));
@@ -950,6 +960,21 @@ pub async fn main(argv: Vec<String>) -> i32 {
         Some("memory") => return crate::memory_cli::main(argv[1..].to_vec()).await,
         // `process` carries its own subcommand grammar (SPEC §process.cli).
         Some("process") => return crate::process_cli::main(argv[1..].to_vec()).await,
+        // `gui` owns its thread until the window closes — tao's event loop only unwinds into
+        // process exit — so it dispatches before the async CLI the same way. The parser runs
+        // first for the same refusals every command makes (SPEC §host.gui).
+        Some("gui") => {
+            let p = parse_argv(&argv);
+            if !p.unknown.is_empty() {
+                eprintln!("unknown option: {}", p.unknown.join(", "));
+                return 1;
+            }
+            if p.bad_port {
+                eprintln!("--port needs a number between 1 and 65535");
+                return 1;
+            }
+            return crate::gui::run(p.port);
+        }
         _ => {}
     }
     run(&argv, &PrintIo, &RealOps).await
@@ -994,6 +1019,14 @@ mod tests {
         assert_eq!(p.unknown, vec!["--detach"]);
 
         let p = parse_argv(&argv(&["start", "--port", "abc"]));
+        assert!(p.bad_port);
+
+        // gui parses like any command: a port may be named, and a bad one is flagged, not guessed.
+        let p = parse_argv(&argv(&["gui", "--port", "19998"]));
+        assert_eq!(p.cmd, "gui");
+        assert_eq!(p.port, Some(19998));
+        let p = parse_argv(&argv(&["gui", "--port", "abc"]));
+        assert_eq!(p.cmd, "gui");
         assert!(p.bad_port);
     }
 

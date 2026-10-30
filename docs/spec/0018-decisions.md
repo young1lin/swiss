@@ -613,3 +613,37 @@ Rejected:
 - **Falling back to the newest agent for nudges and leads.** A session's end would silently
   spend whatever agent was added last - exactly the surprise the nudge's opt-in exists to
   prevent.
+
+## ADR-038 — The window shell is Windows-only wry, not a framework
+
+**Accepted.** Spec: §host.gui. The panel needed a window of its own on Windows without giving
+up the one-static-exe release. `swiss gui` adds tao (loop, window), wry (the WebView2 surface)
+and tray-icon — three small crates, no bundler, no second engine — and the system WebView2
+renders the very bytes a browser tab of the panel already rendered. macOS and Linux stay
+headless (the owner's call, 2026-10-30: the gateway serves there, a browser looks);
+distributing a desktop build for those systems is the trigger to revisit, and the candidates
+are the ones that ship their own engine (Tauri's CEF, Electrobun's CEF mode) against this
+cut's zero extra bytes.
+
+Surprising enough to record: **the first cut's single-instance mutex was desktop-wide**, so a
+second `swiss gui` under another `SWISS_HOME` exited silently while the first window — hidden
+in the tray, because closing hides — kept showing the old gateway's panel, reading exactly
+like a refused config switch (2026-10-30, the owner's report). The claim is now named by port
+and home: one window per gateway, two homes two windows, and the losing launcher for the same
+gateway raises the standing window through a named event instead of doing nothing. The brand
+mark was a plain red tile for that one day — drawn from `assets/logo.svg`'s own geometry now,
+an SVG rasterizer in the build being the step still deferred.
+
+Rejected:
+
+- **Electron, with or without a Rust sidecar.** The gateway already IS the sidecar; an
+  Electron shell buys a second Chromium and an update channel to ship a webview the OS
+  provides.
+- **GPUI.** Cap's migration case is a video-pipeline UI; this panel is text and tables, and
+  GPUI means rewriting every view off the web platform for one target.
+- **Slint.** A DSL and a license triple (Royalty-free / GPL / Commercial) against a panel
+  that already exists in HTML.
+- **Electrobun 2.x.** Its default Windows webview is WebView2 — the same engine, a new
+  toolchain (Hutch) and a days-old 2.x; only its CEF mode differs, at hundreds of MB.
+- **An installer, MSIX or auto-update.** The release archive stays the channel (§host.ops):
+  `update` checks, the exe swaps by hand.

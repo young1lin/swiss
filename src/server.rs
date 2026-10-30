@@ -116,6 +116,29 @@ pub async fn run_gateway() -> Result<(), String> {
         swiss_host::proc_pids::reap_proc_pids(std::process::id());
     }
 
+    // Own the port BEFORE anything later in this boot touches shared state. The session file
+    // below is rewritten with a CLI key fresh for THIS process (§host.session), the MCP loops
+    // spawn children, runs.seq renumbers — all of it belongs to whichever boot actually serves
+    // the port, and this boot can still die here: a second serve on an occupied port (a
+    // `swiss start` that raced one, a serve started by a script) fails this bind in
+    // milliseconds. Dying AFTER those writes is how 2026-10-30 left a home's session.json
+    // holding a dead boot's key — healthy gateway, every ticket mint 401. Holding the bound
+    // listener until axum::serve accepts below costs nothing: connections queue in the
+    // backlog exactly as refused ones retried, and /health answers only when serving starts.
+    let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port))
+        .await
+        .map_err(|err| {
+            log::error(
+                "listen failed",
+                Some(json!({ "host": cfg.host, "port": cfg.port, "err": err.to_string() })),
+            );
+            format!(
+                "listen {host}:{port} failed: {err}",
+                host = cfg.host,
+                port = cfg.port
+            )
+        })?;
+
     // The ONE call log for this app (S2 instantiation): the registry, the adapters and the
     // admin API all share this instance, so what an adapter records is exactly what the Logs
     // tab reads - and nothing outside this app can see it.
@@ -446,19 +469,8 @@ pub async fn run_gateway() -> Result<(), String> {
         .merge(swiss_process::api::mount(process_state));
     let app = build_app(ctx.clone(), Some(extra));
 
-    let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port))
-        .await
-        .map_err(|err| {
-            log::error(
-                "listen failed",
-                Some(json!({ "host": cfg.host, "port": cfg.port, "err": err.to_string() })),
-            );
-            format!(
-                "listen {host}:{port} failed: {err}",
-                host = cfg.host,
-                port = cfg.port
-            )
-        })?;
+    // The listener was bound at the top of boot, before any shared state was touched; serving
+    // — and with it /health — starts here.
     log::log(
         "info",
         "gateway listening",

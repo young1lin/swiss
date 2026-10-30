@@ -450,15 +450,23 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
     let timeout_ms = opts.timeout_ms.unwrap_or(30_000);
     let client = loopback_client();
 
+    // Health first, pid file second. A port that answers /health IS the running gateway,
+    // whoever started it — a `swiss serve` launched by hand or by a deploy script writes no
+    // pid file, and a start under it used to spawn a doomed child that died on EADDRINUSE
+    // only after its boot had rewritten this home's session.json with its own CLI key
+    // (2026-10-30: `swiss gui` against a script-started 19998 left every ticket mint 401).
+    // The pid file, when it names a live process, only fills in the pid for the report; a
+    // gateway discovered by health alone has none to name, and reports pid 0.
     let existing = read_pid_file(port);
-    if let Some(rec) = &existing {
-        if is_pid_alive(rec.pid) && health_ok(&client, port).await {
-            return StartResult::AlreadyRunning {
-                pid: rec.pid,
-                port,
-                url: url_for(port),
-            };
-        }
+    if health_ok(&client, port).await {
+        let pid = existing
+            .filter(|rec| is_pid_alive(rec.pid))
+            .map_or(0, |rec| rec.pid);
+        return StartResult::AlreadyRunning {
+            pid,
+            port,
+            url: url_for(port),
+        };
     }
     // A pid file whose process is gone (or whose port answers nothing) is a leftover from an
     // unclean kill. Believing it would refuse every future start.
@@ -550,6 +558,17 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
             };
         }
         remove_pid_file(port);
+        // Health answered but our child is gone: the port is served by a gateway this start
+        // did not spawn — the winner of a racing start, or a serve started outside `swiss
+        // start`. That is a running gateway, not a failure; the operator asked for a gateway
+        // on this port and one is there.
+        if health_ok(&client, port).await {
+            return StartResult::AlreadyRunning {
+                pid: 0,
+                port,
+                url: url_for(port),
+            };
+        }
         return StartResult::Failed {
             port,
             log_tail: tail_log(&log),
@@ -922,6 +941,13 @@ mod tests {
 
     impl FakeGateway {
         async fn start() -> Self {
+            Self::start_after(Duration::from_millis(0)).await
+        }
+
+        /// Health answers only once the delay elapses — a gateway still booting, the state a
+        /// racing start's WINNER is in while the loser dies on the occupied port. The listener
+        /// is bound at once but accepts nothing until then, so /health stays honestly down.
+        async fn start_after(delay: Duration) -> Self {
             use axum::routing::{get, post};
             let (tx, rx) = tokio::sync::oneshot::channel::<()>();
             let signal = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
@@ -962,6 +988,7 @@ mod tests {
                 .expect("bind loopback");
             let port = listener.local_addr().expect("a bound address").port();
             let serving = tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
                 let _ = axum::serve(listener, app)
                     .with_graceful_shutdown(async {
                         let _ = rx.await;
@@ -1360,6 +1387,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_healthy_port_without_a_pid_file_is_already_running() {
+        // 2026-10-30: a serve started outside `swiss start` (by hand, by the test harness)
+        // leaves no pid file, and a start under it spawned a doomed second serve. The port
+        // answering health is the gateway, record or no record.
+        let _lock = daemon_state().await;
+        let gw = FakeGateway::start().await;
+        let result = start_daemon(StartOptions {
+            port: Some(gw.port),
+            entry: Some(std::path::PathBuf::from("swiss-no-such-binary")),
+            ..Default::default()
+        })
+        .await;
+        match result {
+            StartResult::AlreadyRunning { pid: 0, port, url } => {
+                assert_eq!(port, gw.port);
+                assert_eq!(url, url_for(gw.port));
+            }
+            StartResult::AlreadyRunning { pid, .. } => {
+                panic!("no record names this gateway, but pid {pid} was reported")
+            }
+            _ => panic!("a healthy port must not be spawned under"),
+        }
+        gw.stop();
+    }
+
+    #[tokio::test]
+    async fn a_stale_pid_file_on_a_healthy_port_is_already_running_not_a_spawn() {
+        // The leftover record of an unclean kill while ANOTHER serve (not the one the record
+        // names) has the port: health wins, the dead pid is not reported, nothing spawns.
+        let _lock = daemon_state().await;
+        let gw = FakeGateway::start().await;
+        plant_dead_pid(gw.port);
+        let result = start_daemon(StartOptions {
+            port: Some(gw.port),
+            entry: Some(std::path::PathBuf::from("swiss-no-such-binary")),
+            ..Default::default()
+        })
+        .await;
+        match result {
+            StartResult::AlreadyRunning { pid: 0, port, url } => {
+                assert_eq!(port, gw.port);
+                assert_eq!(url, url_for(gw.port));
+            }
+            _ => panic!("a healthy port with a dead record is already running"),
+        }
+        remove_pid_file(gw.port); // the stale record is this test's plant, not the gateway's
+        gw.stop();
+    }
+
+    #[tokio::test]
     async fn reports_the_log_tail_when_the_entry_cannot_be_spawned() {
         let _lock = daemon_state().await;
         let port = free_port();
@@ -1426,6 +1503,24 @@ mod tests {
         script
     }
 
+    /// A fake entry that exits at once — the loser of a start race, dying while another
+    /// gateway already serves the port. A .cmd on Windows for the same reason slow_entry is
+    /// one.
+    fn exit_entry(dir: &Path) -> std::path::PathBuf {
+        #[cfg(windows)]
+        let (script, text) = (dir.join("exit-entry.cmd"), "@exit /b 0\r\n".to_string());
+        #[cfg(not(windows))]
+        let (script, text) = (dir.join("exit-entry.sh"), "#!/bin/sh\nexit 0\n".to_string());
+        std::fs::write(&script, text).expect("write the exit entry");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .expect("exec bit for the exit entry");
+        }
+        script
+    }
+
     #[tokio::test]
     async fn a_start_that_runs_out_of_patience_keeps_the_record_of_what_is_still_running() {
         // 2026-09-28, production: the health wait ran out while the daemon was still starting
@@ -1447,6 +1542,34 @@ mod tests {
         tree_kill(rec.pid);
         remove_pid_file(port);
         let _ = std::fs::remove_file(log_file_path(port));
+    }
+
+    #[tokio::test]
+    async fn a_start_that_lost_a_race_to_a_live_gateway_reports_it_running() {
+        // Our child exits at once while a gateway someone else started answers health on the
+        // port (2026-10-30: the racing loser surfaced as Failed, and worse, its half-boot had
+        // already clobbered the live gateway's session.json). The operator asked for a
+        // gateway on this port; one is serving.
+        let _lock = daemon_state().await;
+        // The winner comes up after the loser is long dead, exactly as two real serves race:
+        // the loser dies on the early bind in milliseconds, the winner's /health only answers
+        // once its boot completes.
+        let gw = FakeGateway::start_after(Duration::from_millis(750)).await;
+        let result = start_daemon(StartOptions {
+            port: Some(gw.port),
+            entry: Some(exit_entry(&data_dir())),
+            ..Default::default()
+        })
+        .await;
+        match result {
+            StartResult::AlreadyRunning { pid: 0, port, url } => {
+                assert_eq!(port, gw.port);
+                assert_eq!(url, url_for(gw.port));
+            }
+            _ => panic!("a lost race against a live gateway is already running"),
+        }
+        assert_eq!(read_pid_file(gw.port), None, "no record of the dead loser stays");
+        gw.stop();
     }
 
     // --- the daemon's environment (SPEC §host.daemon) ------------------------------------------------

@@ -118,11 +118,20 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",           # DPAPI, replacing the powershell spawn
     "Win32_System_Registry",                 # MachineGuid, direct registry read
-    "Win32_System_Threading",                # process-tree walk + open-process
+    "Win32_System_Threading",                # process-tree walk + open-process, and the gui
+                                             # single-instance mutex (SPEC §host.gui)
     "Win32_System_JobObjects",               # KILL_ON_JOB_CLOSE subtree kill for proc children
     "Win32_System_Diagnostics_ToolHelp",     # Toolhelp32 snapshot, replacing the other powershell spawn
     "Win32_System_ProcessStatus",            # GetProcessMemoryInfo for the memory view
 ] }
+# The `swiss gui` window shell (SPEC §host.gui, ADR-038): tao's window and message loop, wry's
+# WebView2 surface, tray-icon's tray. Windows-only by decision — macOS and Linux run the gateway
+# headless and reach the panel from a browser. No engine, updater or runtime enters the build;
+# the system WebView2 renders, which on this target is the same Chromium every browser tab of
+# the panel already used.
+tao = { version = "0.37", default-features = false, features = ["rwh_06"] }
+wry = { version = "0.57", default-features = false, features = ["os-webview"] }
+tray-icon = { version = "0.26", default-features = false }
 
 # --- tunnel deps (agent-managed) ---
 # The tunnels agent appends russh here. Do not move or reformat this marker section.

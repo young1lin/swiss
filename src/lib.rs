@@ -27,6 +27,7 @@ pub mod bootstrap;
 pub mod builtin;
 pub mod cli;
 pub mod daemon;
+pub mod gui;
 pub mod mcp_link;
 pub mod memory_cli;
 pub mod pidfile;

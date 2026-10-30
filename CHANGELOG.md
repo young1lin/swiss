@@ -8,6 +8,13 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Added
 
+- `swiss gui` opens the panel in its own window on Windows (SPEC §host.gui, ADR-038): the
+  same one-time sign-in `open` mints, spent by a WebView2 window with a tray (close hides,
+  Open/Exit), one window per gateway — named by port and home — so a config switch under
+  another `SWISS_HOME` is another window, never the standing one, and a second launcher for
+  the same gateway raises it instead of exiting silently. The window and the tray carry the
+  brand mark itself, drawn from `assets/logo.svg`. macOS and Linux stay headless: the gateway
+  serves, a browser looks.
 - The Data page has an agent beside its console on a MySQL, PostgreSQL, MongoDB or Redis
   connection (SPEC §data.agent, §llm.agents, §llm.api, §panel.ui).
 

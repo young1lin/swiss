@@ -127,6 +127,7 @@ in §decisions.
 - [§host.seats — Capability seats](spec/0004-host.md#hostseats--capability-seats)
 - [§host.memory — The memory reading](spec/0004-host.md#hostmemory--the-memory-reading)
 - [§host.cli — The command line](spec/0004-host.md#hostcli--the-command-line)
+- [§host.gui — The panel in its own window](spec/0004-host.md#hostgui--the-panel-in-its-own-window)
 - [§host.daemon — Daemon, pid file, logs, build stamp](spec/0004-host.md#hostdaemon--daemon-pid-file-logs-build-stamp)
 - [§host.ops — Production, the test instance, deploys](spec/0004-host.md#hostops--production-the-test-instance-deploys)
 
@@ -356,3 +357,4 @@ in §decisions.
 - [ADR-035 — Terminal recordings join the module-history store; .cast becomes an export](spec/0018-decisions.md#adr-035--terminal-recordings-join-the-module-history-store-cast-becomes-an-export)
 - [ADR-036 — Managed apps outlive the gateway, and nothing restarts them](spec/0018-decisions.md#adr-036--managed-apps-outlive-the-gateway-and-nothing-restarts-them)
 - [ADR-037 — Memory's agents are chosen by layer and pooled](spec/0018-decisions.md#adr-037--memorys-agents-are-chosen-by-layer-and-pooled)
+- [ADR-038 — The window shell is Windows-only wry, not a framework](spec/0018-decisions.md#adr-038--the-window-shell-is-windows-only-wry-not-a-framework)
