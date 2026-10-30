@@ -1,0 +1,646 @@
+{
+  "about": "English memory notes distilled from the swiss repository's current code and docs: AGENTS.md, docs/SPEC.md and scripts/*.ps1",
+  "project": { "name": "swiss", "language": "en" },
+  "domains": [
+    {
+      "path": "build",
+      "title": "Build, test and ship",
+      "summary": "The workspace, its gates, the two local instances and the release pipeline",
+      "owns": ["Cargo.toml", "deny.toml", ".cargo", "AGENTS.md", "docs", "scripts", ".github", "NOTICE", "crates/swiss-it"],
+      "body": "## Overview\nOne Cargo workspace builds one binary, `swiss`. `docs/SPEC.md` is the single source for behaviour; `AGENTS.md` carries the working rules.\n## Entry points\n- `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings`\n- `npm run check` in `crates/swiss-panel/panel`\n## Code\n- `Cargo.toml`, `deny.toml`, `.cargo/config.toml`\n- `.github/workflows/build.yml`\n- `crates/swiss-it` - the integration harness against real engines"
+    },
+    {
+      "path": "build/instances",
+      "title": "The 19998 and 19999 instances",
+      "summary": "Production on 19999, the test instance on 19998, and the one way between them",
+      "owns": ["scripts/test-instance.ps1", "scripts/deploy.ps1", "scripts/deploy-lock.ps1"],
+      "body": "## Overview\n19999 is the owner's production gateway; every live check runs on the 19998 test instance.\n## Entry points\n- `scripts/test-instance.ps1 -Start | -Stop | -Fresh`\n- `scripts/deploy.ps1` - the only way a build reaches 19999\n## Code\n- `scripts/test-instance.ps1`, `scripts/deploy.ps1`, `scripts/deploy-lock.ps1`"
+    },
+    {
+      "path": "host",
+      "title": "The host",
+      "summary": "The process every plugin runs in: loopback boundary, admin session, credential refs, CLI",
+      "owns": ["crates/swiss-host", "crates/swiss-core", "src/main.rs", "src/cli.rs", "src/app.rs", "src/server.rs", "src/session.rs", "src/remote_cli.rs", "tests/admin_session.rs"],
+      "body": "## Overview\nThe binary's host: it binds loopback only, holds the admin session, resolves credential references and runs the plugins.\n## Entry points\n- `src/main.rs` - the binary; `src/cli.rs` - its commands\n- `src/app.rs` - the route tree; `src/server.rs` - serving it\n## Code\n- `crates/swiss-host/src/local_only.rs` - the loopback boundary\n- `src/session.rs` - the admin session\n- `crates/swiss-core/src/secure/refs.rs` - `${secret://…}` and `${ENV}` references"
+    },
+    {
+      "path": "host/terminal",
+      "title": "Terminal",
+      "summary": "Local and remote shells: ConPTY, the shell service and SSH tunnels",
+      "owns": ["crates/swiss-terminal", "crates/swiss-core/src/platform/pty", "crates/swiss-host/src/services/shell.rs", "crates/swiss-tunnels", "src/plugins/terminal.rs", "src/plugins/terminal_api.rs"],
+      "body": "## Entry points\n- `src/plugins/terminal.rs`, `src/plugins/terminal_api.rs`\n## Code\n- `crates/swiss-core/src/platform/pty/conpty.rs` - local shells on Windows\n- `crates/swiss-host/src/services/shell.rs`\n- `crates/swiss-tunnels/src/tunnel/ssh.rs` - remote shells"
+    },
+    {
+      "path": "host/remote",
+      "title": "Remote actions",
+      "summary": "Actions run on remote targets, and the run log",
+      "owns": ["crates/swiss-remote", "crates/swiss-host/src/services/runs.rs", "src/plugins/remote.rs"],
+      "body": "## Code\n- `crates/swiss-remote/src/actions.rs` - the actions\n- `crates/swiss-host/src/services/runs.rs` - runs and their lanes\n- `src/plugins/remote.rs`"
+    },
+    {
+      "path": "mcp",
+      "title": "The MCP gateway",
+      "summary": "The registry, the adapter families and the /mcp/{name} endpoints",
+      "owns": ["crates/swiss-mcp", "src/mcp_link.rs", "tests/memory.rs"],
+      "body": "## Overview\nEvery MCP a client reaches through swiss is a registry entry served at `/mcp/{name}`.\n## Code\n- `crates/swiss-mcp/src/registry.rs` - lifecycle\n- `crates/swiss-mcp/src/adapters/` - `proc.rs` (stdio children), `http.rs`, `rest.rs`, the database engines\n- `src/mcp_link.rs`"
+    },
+    {
+      "path": "mcp/db",
+      "title": "Database engines",
+      "summary": "The MySQL, PostgreSQL and MongoDB adapters",
+      "owns": ["crates/swiss-mcp/src/adapters/mysql.rs", "crates/swiss-mcp/src/adapters/pg.rs", "crates/swiss-mcp/src/adapters/mongo.rs"],
+      "body": "## Code\n- `crates/swiss-mcp/src/adapters/mysql.rs`, `pg.rs`, `mongo.rs`"
+    },
+    {
+      "path": "data",
+      "title": "Database browser",
+      "summary": "The panel's tables, rows, console and MongoDB documents",
+      "owns": ["crates/swiss-data", "crates/swiss-host/src/dbbrowser.rs", "crates/swiss-host/src/mongobrowser.rs"],
+      "body": "## Entry points\n- `crates/swiss-data/src/dbbrowser_api.rs`, `crates/swiss-data/src/mongo_api.rs`\n## Code\n- `crates/swiss-host/src/dbbrowser.rs`, `crates/swiss-host/src/mongobrowser.rs`"
+    },
+    {
+      "path": "panel",
+      "title": "The admin panel",
+      "summary": "TypeScript sources emitted into the served assets, and the check suite that gates them",
+      "owns": ["crates/swiss-panel", ".agents/rules/panel-proof-of-life.md"],
+      "body": "## Overview\nThe panel is authored in `crates/swiss-panel/panel/src` and emitted into `crates/swiss-panel/src/admin_assets/js`, which the binary embeds.\n## Entry points\n- `npm run build`, `npm run check` in `crates/swiss-panel/panel`\n## Code\n- `crates/swiss-panel/panel/build.mjs` - the emit\n- `crates/swiss-panel/panel/src/ui/` - the UI library\n- `crates/swiss-panel/src/lib.rs` - serving the embedded assets"
+    },
+    {
+      "path": "panel/i18n",
+      "title": "Translations",
+      "summary": "English and Chinese copy, and the keys every visible string goes through",
+      "owns": ["crates/swiss-panel/panel/src/locales", "crates/swiss-panel/panel/src/i18n.ts"],
+      "body": "## Code\n- `crates/swiss-panel/panel/src/i18n.ts` - `tr`, `trn`, `tk`\n- `crates/swiss-panel/panel/src/locales/en.ts`, `zh.ts`"
+    },
+    {
+      "path": "memory",
+      "title": "Project memory",
+      "summary": "Notes, links and the project map in SQLite, served to agents and the panel",
+      "owns": ["crates/swiss-memory", "src/plugins/memory*.rs", "src/memory_cli.rs", "src/skill_assets/memory"],
+      "body": "## Entry points\n- `src/plugins/memory_mcp.rs` - `/mcp/memory`\n- `src/plugins/memory_api.rs` - `/api/knowledge`\n- `src/memory_cli.rs` - `swiss memory`\n## Code\n- `crates/swiss-memory/src/service.rs` - every operation\n- `crates/swiss-memory/src/store.rs` - SQLite and FTS5\n- `crates/swiss-memory/src/brief.rs`, `search.rs`, `domain.rs`\n## Data\n- `memory.db` in the swiss home"
+    }
+  ],
+  "notes": [
+    {
+      "key": "prod-port-19999",
+      "kind": "constraint",
+      "domain": "build/instances",
+      "title": "Port 19999 is the user's production gateway: never stop, restart, redeploy or send traffic to it while iterating",
+      "content": "The owner keeps their panel open against 127.0.0.1:19999, so the one request iteration may send it is a read-only GET /health. Every live browser and API check runs on the 19998 test instance, and production takes a change only from scripts/deploy.ps1, after that walk.",
+      "anchors": ["scripts/deploy.ps1", "AGENTS.md"],
+      "evidence": ["verified_by=code:scripts/deploy.ps1"],
+      "refs": ["docs/SPEC.md: §host.ops", "docs/SPEC.md: §testing.live"],
+      "links": [
+        { "to": "test-instance-19998", "kind": "related_to", "note": "all live iteration runs on the 19998 instance" }
+      ]
+    },
+    {
+      "key": "test-instance-19998",
+      "kind": "knowledge",
+      "title": "scripts/test-instance.ps1 serves a 19998 instance on a snapshot of real state in its own home",
+      "content": "-Start copies the sealed state files into %LOCALAPPDATA%\\swiss-test-home, sets SWISS_HOME and SWISS_PORT=19998 and serves target-test\\release\\swiss.exe; -Fresh starts from an empty home. The copied master.key opens because DPAPI binds it to machine and user, not to a directory, and a save on 19998 never reaches ~/.swiss. Build that exe with CARGO_TARGET_DIR=target-test, never into target\\, which the next deploy ships, and never pass --port: start and serve write it into the config.",
+      "anchors": ["scripts/test-instance.ps1"],
+      "evidence": ["verified_by=code:scripts/test-instance.ps1"],
+      "refs": ["docs/SPEC.md: §host.ops", "docs/SPEC.md: §testing.live"],
+      "links": [
+        { "to": "prod-port-19999", "kind": "supports" }
+      ]
+    },
+    {
+      "key": "kill-by-pid",
+      "kind": "pitfall",
+      "title": "Stop 19998 by the port's owning PID; Get-Process swiss would also kill production",
+      "content": "Both instances run swiss.exe, so a kill by image name takes the user's 19999 daemon down too. test-instance.ps1 -Stop finds its target only through Get-NetTCPConnection -LocalPort and its OwningProcess, and kills it hard because serve writes no pid file; orphaned proc children are reaped from .proc-pids-<port>.json at the next boot. To restart the test instance run -Stop, then -Start, which refuses while the port is held.",
+      "anchors": ["scripts/test-instance.ps1"],
+      "evidence": ["verified_by=code:scripts/test-instance.ps1"],
+      "refs": ["docs/SPEC.md: §host.ops", "docs/SPEC.md: §host.daemon"],
+      "links": [
+        { "to": "test-instance-19998", "kind": "depends_on" },
+        { "to": "prod-port-19999", "kind": "supports", "note": "a by-name kill takes production down too" }
+      ]
+    },
+    {
+      "key": "deploy-script",
+      "kind": "decision",
+      "title": "A change goes live only through scripts/deploy.ps1, which proves /health serves the new build hash",
+      "content": "deploy.ps1 takes the single-deployer lock and runs the gates while 19999 still serves (cargo test --workspace, gate 2, clippy, npm run check; a failure leaves production untouched), then builds, stops, copies into bin\\swiss.exe, starts, and fails unless /health's build.hash equals bin\\swiss.exe --version. Production runs from that copy, so the build never waits on a stopped daemon and the outage is stop, copy and start. Never improvise a stop/build/start sequence beside it.",
+      "anchors": ["scripts/deploy.ps1", "scripts/deploy-lock.ps1"],
+      "evidence": ["verified_by=code:scripts/deploy.ps1"],
+      "refs": ["docs/SPEC.md: §host.ops", "docs/SPEC.md: §testing"],
+      "links": [
+        { "to": "prod-port-19999", "kind": "supports" },
+        { "to": "workspace-flag", "kind": "depends_on", "note": "gate 1 is cargo test --workspace" },
+        { "to": "npm-run-check", "kind": "depends_on" },
+        { "to": "gate2-integration", "kind": "depends_on" }
+      ]
+    },
+    {
+      "key": "loopback-only",
+      "kind": "constraint",
+      "title": "Loopback-only binding is a security boundary: bind 127.0.0.1 and refuse non-loopback peers, Host and Origin",
+      "content": "Three checks run before every route: the configured host must be loopback (a non-loopback host is refused when the config loads), the peer address must be loopback, and Host and Origin must name loopback as the DNS-rebinding defence; a refusal is a 403. Never weaken them to reach the panel from another device or network: forward the port over SSH.",
+      "anchors": ["crates/swiss-host/src/local_only.rs"],
+      "refs": ["docs/SPEC.md: §host.boundary"],
+      "links": [
+        { "to": "admin-session", "kind": "related_to", "note": "the session gate sits on top of these checks" }
+      ]
+    },
+    {
+      "key": "admin-session",
+      "kind": "constraint",
+      "title": "/api/* needs the admin session: the X-Swiss-Key CLI key or the panel cookie, never the MCP bearer",
+      "content": "Loopback checks cannot tell one local process from another, so every /api/* request carries the CLI key (rotated each start, sealed in session.json) or the swiss_session_<port> cookie a one-time /?token= link sets. The cookie counts only from the panel's own origin, port included, judged by Sec-Fetch-Site or else Origin against Host, because SameSite=Strict alone lets a page on another local port ride it into blind POSTs. The gate fails closed: no /api exemption, no bearer, and the key is never printed.",
+      "anchors": ["src/session.rs", "tests/admin_session.rs"],
+      "refs": ["docs/SPEC.md: §host.session"],
+      "links": [
+        { "to": "loopback-only", "kind": "depends_on" }
+      ]
+    },
+    {
+      "key": "git-bash-api-path",
+      "kind": "pitfall",
+      "title": "Under Git Bash call `swiss api GET api/mcps` without the leading slash",
+      "content": "Git Bash rewrites a leading /api/x argument into a Windows path such as C:/Program Files/Git/api/x before swiss sees it, and the CLI refuses that path. The slashless api/... spelling survives the shell and the CLI puts the slash back; MSYS_NO_PATHCONV=1 works too. swiss api is the scripted way into the admin API because it signs with the CLI key without printing it.",
+      "anchors": ["src/remote_cli.rs"],
+      "refs": ["docs/SPEC.md: §host.cli"],
+      "links": [
+        { "to": "admin-session", "kind": "depends_on" }
+      ],
+      "origin": "agent"
+    },
+    {
+      "key": "refs-not-literals",
+      "kind": "constraint",
+      "title": "Credentials are ${ENV_VAR} or ${secret://name} references, never literal values in config",
+      "content": "The resolver expands a reference at its point of use, so gateway.config.json, managed.json, tunnels.json and the jobs config hold the reference, never the value. A missing ${UPPER_SNAKE} resolves to empty (process.exec excepted), while a missing ${secret://kebab-name} fails hard naming the use point, because an empty credential becomes a mysterious 401. A bare secret:// outside ${...} is literal text.",
+      "anchors": ["crates/swiss-core/src/secure/refs.rs"],
+      "refs": ["docs/SPEC.md: ADR-019", "docs/SPEC.md: §host.refs"],
+      "links": [
+        { "to": "mask-remote-addresses", "kind": "related_to", "note": "both keep sensitive values out of what the panel shows" }
+      ]
+    },
+    {
+      "key": "mcp-path-partition",
+      "kind": "decision",
+      "domain": "mcp",
+      "title": "MCP endpoints live only at /mcp/<name>; the URL root belongs to the host",
+      "content": "With MCP names out of the root, no name competes with a host route and /mcp/* needs no reserved words; the root keeps /, /admin, /health and /api/*. The root spelling is no alias: a POST or DELETE to a single-segment root path naming a registered MCP answers 404 \"moved to /mcp/<name>, update the client URL\", so a client still on the old URL learns where to go.",
+      "anchors": ["src/app.rs"],
+      "refs": ["docs/SPEC.md: ADR-018", "docs/SPEC.md: §mcp.endpoint"],
+      "links": [
+        { "to": "admin-session", "kind": "related_to", "note": "/mcp/* keeps bearer tokens; /api/* uses the session" }
+      ]
+    },
+    {
+      "key": "no-ping-metered",
+      "kind": "constraint",
+      "title": "http, rest and zai-vision adapters have no health ping because their endpoints are metered",
+      "content": "Each call to them is a billed third-party request and a probe would spend one every 15 s, so Adapter::ping returns None and the registry reports Unknown, never Down. The http adapter's initialize handshake is its one reachability check, and the panel's Test on a zai-vision definition explains this instead of spending a generation. Do not add a ping to turn the status column green.",
+      "anchors": ["crates/swiss-mcp/src/adapters/http.rs", "crates/swiss-mcp/src/adapters/rest.rs"],
+      "refs": ["docs/SPEC.md: ADR-022", "docs/SPEC.md: §mcp.registry"],
+      "links": [
+        { "to": "proc-lazy", "kind": "related_to", "note": "both keep idle cost at zero" }
+      ]
+    },
+    {
+      "key": "proc-lazy",
+      "kind": "constraint",
+      "title": "A proc MCP is lazy by default: idle at boot, woken by its first request, reaped after idling",
+      "content": "A proc child (npx/uvx) is 50-150 MB of Node or Python, the one thing here that costs real memory, so it starts on the request that needs it, which waits for the spawn, and is reaped after DEFAULT_IDLE_MS (600 000 ms) idle; idleMs: 0 opts out of the reap. Do not make anything start eagerly for simplicity.",
+      "anchors": ["crates/swiss-mcp/src/registry.rs", "crates/swiss-mcp/src/adapters/proc.rs"],
+      "refs": ["docs/SPEC.md: §product.nongoals", "docs/SPEC.md: §mcp.proc"],
+      "links": [
+        { "to": "rawvalue-forwarding", "kind": "related_to", "note": "both are idle-memory levers" }
+      ]
+    },
+    {
+      "key": "rawvalue-forwarding",
+      "kind": "constraint",
+      "title": "No serde_json::Value on a forwarding path: proxies pass &RawValue and parse only routed-on fields",
+      "content": "proc, http and rest forward payloads untouched and parse only the envelope fields they route on, so a body at the 2 MiB BODY_LIMIT costs one buffer instead of hundreds of thousands of allocations. tests/memory.rs pins it with a growth delta, not a ceiling, because the test binary's own working set would swamp an absolute number.",
+      "anchors": ["tests/memory.rs", "crates/swiss-mcp/src/adapters/http.rs"],
+      "evidence": ["verified_by=code:tests/memory.rs"],
+      "refs": ["docs/SPEC.md: §arch.rules", "docs/SPEC.md: §testing.memory"],
+      "links": [
+        { "to": "dependency-weight", "kind": "related_to" }
+      ]
+    },
+    {
+      "key": "hand-formatted",
+      "kind": "constraint",
+      "domain": "build",
+      "title": "The tree is hand-formatted: never run cargo fmt or rustfmt",
+      "content": "rustfmt reflows lines a change never touched and buries the real diff. Match the surrounding style by hand and wrap near 100 columns; clippy and the tests are the gates, CI has no fmt check, and the panel runs eslint with no prettier.",
+      "anchors": ["AGENTS.md", "crates/swiss-panel/panel/eslint.config.js"],
+      "refs": ["docs/SPEC.md: §arch.rules", "docs/SPEC.md: §panel.lint"],
+      "links": [
+        { "to": "workspace-flag", "kind": "related_to", "note": "clippy --workspace is the gate instead" }
+      ]
+    },
+    {
+      "key": "workspace-flag",
+      "kind": "pitfall",
+      "title": "cargo test or clippy without --workspace checks only the root package and still reports ok",
+      "content": "The root package carries a small minority of the suite; without --workspace the member crates, where most tests live, are never compiled, yet the tests pass and the run reports ok. Every gate command, CI step and doc sample carries --workspace, clippy included.",
+      "anchors": [".github/workflows/build.yml", "AGENTS.md"],
+      "refs": ["docs/SPEC.md: §testing", "docs/SPEC.md: §arch.crates"],
+      "links": [
+        { "to": "no-peer-crate-edges", "kind": "depends_on", "note": "the trap exists because the tree is a workspace" }
+      ]
+    },
+    {
+      "key": "dependency-weight",
+      "kind": "decision",
+      "title": "Every dependency justifies its weight: default-features off, one TLS stack, one async runtime",
+      "content": "Code segments are resident memory, so a crate that pulls a second TLS stack, runtime or thread pool is a bug; CI fails when tokio, rustls, native-tls, openssl, hyper or aws-lc-rs appears twice in cargo tree -d -e normal,build. tracing (a logging framework), regex (pattern matching that hand-written scanners cover), once_cell, tower-http and portable-pty are not taken, yet a real grammar uses a mature crate. A Cargo.toml edit ships with its regenerated Cargo.lock: every CI command is --locked.",
+      "anchors": ["Cargo.toml", "deny.toml"],
+      "evidence": ["verified_by=code:Cargo.toml"],
+      "refs": ["docs/SPEC.md: §arch.deps", "docs/SPEC.md: ADR-007"],
+      "links": [
+        { "to": "release-profile-slow", "kind": "related_to" }
+      ]
+    },
+    {
+      "key": "release-profile-slow",
+      "kind": "knowledge",
+      "title": "The release profile is deliberately slow: opt-level z, fat LTO and one codegen unit buy a small resident binary",
+      "content": "With panic=abort, the profile keeps the text segment, which is resident memory, small. Neither incremental release nor a thin-LTO lane beats it, because the floor is dependency codegen at opt-level z; build speed comes from rust-lld (28% off a cold cargo test --workspace) and a warm target. A 4-minute full build means something invalidated the fingerprints.",
+      "anchors": ["Cargo.toml", ".cargo/config.toml"],
+      "refs": ["docs/SPEC.md: §arch.deps", "docs/SPEC.md: §product.tactics"],
+      "links": [
+        { "to": "deploy-script", "kind": "supports", "note": "why deploy builds while the old daemon still serves" }
+      ]
+    },
+    {
+      "key": "no-peer-crate-edges",
+      "kind": "decision",
+      "domain": "build",
+      "title": "Subsystem crates never depend on each other; a needed edge means the host contract lacks something",
+      "content": "swiss-core <- swiss-host <- {mcp, data, tunnels, jobs, terminal, remote, panel} <- swiss, swiss-memory sits on swiss-core alone, and the root crate is composition only. swiss-data's manifest has no swiss-mcp, so that edge fails to compile; Data reaches connections through the host's catalog. When a crate needs a peer, add the missing seat to swiss-host. The split costs +1.1% exe size and nothing idle.",
+      "anchors": ["crates/swiss-host/src/services/catalog.rs", "Cargo.toml"],
+      "refs": ["docs/SPEC.md: ADR-010", "docs/SPEC.md: §arch.crates"],
+      "links": [
+        { "to": "dependency-weight", "kind": "related_to" }
+      ]
+    },
+    {
+      "key": "panel-edited-in-tree",
+      "kind": "decision",
+      "title": "The panel's source of truth is admin_assets, edited directly in this repository with no Node reference build",
+      "content": "Copying the panel byte-for-byte from a Node sibling under a tree-equality test (ADR-009) costs more than it protects, so crates/swiss-panel/src/admin_assets is edited in place and the vitest acceptance suite lives in this repository, with node a dev-only test dependency and never a build step.",
+      "anchors": ["crates/swiss-panel/src/admin_assets/index.html"],
+      "refs": ["docs/SPEC.md: ADR-016"],
+      "links": [
+        { "to": "npm-run-check", "kind": "related_to" }
+      ]
+    },
+    {
+      "key": "panel-ts-emit",
+      "kind": "decision",
+      "title": "Panel source is TypeScript in panel/src; the committed JS emit is generated, never hand-edited",
+      "content": "build.mjs runs ts-blank-space over panel/src/**/*.ts into crates/swiss-panel/src/admin_assets/js, blanking types so every emitted line keeps its source line and column: no bundler, minify or source map. The emit is committed so cargo build needs no node. Edit the .ts and run npm run build; panel-emit.test fails a stale or orphaned file.",
+      "anchors": ["crates/swiss-panel/panel/build.mjs", "crates/swiss-panel/panel/src/*.ts", "crates/swiss-panel/src/admin_assets/js/*.js"],
+      "evidence": ["verified_by=code:crates/swiss-panel/panel/build.mjs"],
+      "refs": ["docs/SPEC.md: ADR-024", "docs/SPEC.md: §panel.toolchain"],
+      "links": [
+        { "to": "npm-run-check", "kind": "depends_on" },
+        { "to": "rust-embed-fingerprint", "kind": "related_to" }
+      ],
+      "replaces": "panel-edited-in-tree"
+    },
+    {
+      "key": "npm-run-check",
+      "kind": "knowledge",
+      "title": "npm run check in crates/swiss-panel/panel is the panel's one gate",
+      "content": "check = typecheck over both tsconfigs && eslint && build:check (emit freshness) && vitest; deploy.ps1 and CI's panel job both run it, and byte-equality with the pre-port JS is not a gate (ADR-025). A panel behaviour change ships with its vitest case under panel/test and a real-browser walk on 19998, because vitest cannot see a module that fails to link or a click an overlay swallows.",
+      "anchors": ["crates/swiss-panel/panel/package.json", ".agents/rules/panel-proof-of-life.md"],
+      "refs": ["docs/SPEC.md: ADR-025", "docs/SPEC.md: §panel.toolchain"],
+      "links": [
+        { "to": "panel-ts-emit", "kind": "supports", "note": "build:check fails a stale or orphan emit" }
+      ]
+    },
+    {
+      "key": "rust-embed-fingerprint",
+      "kind": "pitfall",
+      "title": "Touch crates/swiss-panel/src/lib.rs before a rebuild or the exe keeps embedding the old panel",
+      "content": "rust_embed's build fingerprint excludes asset content, so after npm run build a release build can print Finished while the binary still serves the previous emit; debug builds read the assets from disk. Touch the file, rebuild, and check the bytes the instance serves rather than the build status.",
+      "anchors": ["crates/swiss-panel/src/lib.rs", ".agents/rules/panel-proof-of-life.md"],
+      "evidence": ["verified_by=code:crates/swiss-panel/src/lib.rs"],
+      "refs": ["docs/SPEC.md: §testing.live"],
+      "links": [
+        { "to": "panel-ts-emit", "kind": "depends_on" },
+        { "to": "test-instance-19998", "kind": "related_to", "note": "check the served bytes on 19998" }
+      ]
+    },
+    {
+      "key": "i18n-tr-keys",
+      "kind": "constraint",
+      "title": "Every visible panel string goes through tr()/trn() with a <module>.<semanticId> key in en.ts and zh.ts",
+      "content": "A new label's English entry goes in panel/src/locales/en.ts, the fallback, and zh.ts carries the Chinese translations under the same keys; i18n-complete, i18n-ratchet (zero bare literals) and i18n-zh-style fail a missing key, a literal, or a half-width comma after a Han character. A gateway-served nav label goes through wireLabel(); names, keys, SQL and paths are never translated.",
+      "anchors": ["crates/swiss-panel/panel/src/locales/en.ts", "crates/swiss-panel/panel/src/locales/zh.ts", "crates/swiss-panel/panel/src/i18n.ts"],
+      "evidence": ["verified_by=code:crates/swiss-panel/panel/src/locales/en.ts", "verified_by=code:crates/swiss-panel/panel/src/locales/zh.ts"],
+      "refs": ["docs/SPEC.md: §panel.i18n"],
+      "links": [
+        { "to": "npm-run-check", "kind": "depends_on" },
+        { "to": "panel-ts-emit", "kind": "depends_on" }
+      ]
+    },
+    {
+      "key": "vendored-libs",
+      "kind": "knowledge",
+      "title": "Browser libraries are vendored byte-identical under admin_assets/js/vendor, never npm runtime deps or a CDN",
+      "content": "xterm 5.5.0 with its addons, cronstrue 2.52.0, shlex 3.0.0 and cytoscape 3.34.3 are the npm dist files, unpatched, beside each package's LICENSE; their types are hand-written index.d.ts files under panel/src/vendor declaring only the exports the panel uses. An upgrade is one commit: the new version directory, the import change, the old directory deleted. build.mjs never touches js/vendor.",
+      "anchors": ["crates/swiss-panel/src/admin_assets/js/vendor/*/LICENSE"],
+      "refs": ["docs/SPEC.md: §panel.vendor"],
+      "links": [
+        { "to": "panel-ts-emit", "kind": "related_to" },
+        { "to": "dependency-weight", "kind": "supports" }
+      ]
+    },
+    {
+      "key": "delegated-dispatch",
+      "kind": "pitfall",
+      "title": "Delegated panel listeners miss non-bubbling synthetic change events and camelCase data keys",
+      "content": "A view wires one delegated listener on its pane root, so a synthetic event must bubble to reach it: ui/select.ts dispatches change with { bubbles: true }. h() writes data keys verbatim and the HTML parser lowercases attribute names, so data: { refTable } renders data-reftable, which dataset.refTable never reads; spell data keys in kebab case (data: { \"ref-table\": t }).",
+      "anchors": ["crates/swiss-panel/panel/src/ui/select.ts", "crates/swiss-panel/panel/src/h.ts"],
+      "evidence": ["verified_by=code:crates/swiss-panel/panel/src/ui/select.ts"],
+      "refs": ["docs/SPEC.md: §panel.toolchain"],
+      "links": [
+        { "to": "npm-run-check", "kind": "related_to", "note": "vitest pins both cases" },
+        { "to": "test-instance-19998", "kind": "related_to", "note": "an inert control shows up in a real-browser walk on 19998" }
+      ]
+    },
+    {
+      "key": "rail-icon-only",
+      "kind": "decision",
+      "title": "The panel rail is icon-only; a plugin's name lives in the seat tooltip and the context bar",
+      "content": "A 9px caption is legible to no one and repeats what the seat's tooltip and the context bar title already say, so a seat carries no caption span: an 18px glyph in a 36px seat on a 48px rail.",
+      "anchors": ["crates/swiss-panel/panel/test/admin-navigation.test.ts"],
+      "refs": ["commit 18a7202"]
+    },
+    {
+      "key": "rail-captions-back",
+      "kind": "preference",
+      "title": "Rail seats show their plugin names as a caption under the glyph, one size for the whole rail",
+      "content": "The owner's call: glyph-only seats read clearly to the panel's builder and cryptically to everyone else, so the rail is never icon-only. A seat is an 18px glyph over tr(wireLabel(label)), and fitRailLabels sizes every caption together, from 10px down to a 9px floor in half-pixel steps; a name that fits nowhere ellipsizes and keeps its full text in the seat's title. The 56px rail gives each caption a 40px box.",
+      "anchors": ["crates/swiss-panel/panel/src/page-registry.ts", "crates/swiss-panel/panel/test/admin-navigation.test.ts", "crates/swiss-panel/panel/test/rail-caption-fit.test.ts"],
+      "refs": ["docs/SPEC.md: §panel.nav"],
+      "links": [
+        { "to": "i18n-tr-keys", "kind": "depends_on", "note": "the caption is tr(wireLabel(...))" }
+      ],
+      "replaces": "rail-icon-only"
+    },
+    {
+      "key": "mask-remote-addresses",
+      "kind": "preference",
+      "title": "The panel masks remote hosts behind an eye toggle because screenshots get shared",
+      "content": "Panel screenshots travel into bug reports, chats and docs, and a server's public address or user@host must not travel with them. ui/redact.ts draws a non-loopback host as a fixed-width mask with an eye; a reveal lives in page memory only and the value rides no attribute or title. Database hosts are always masked, an http/rest/proxy URL only when its host is an IP literal, and the terminal picker names a remote by its connection name.",
+      "anchors": ["crates/swiss-panel/panel/src/ui/redact.ts", "crates/swiss-panel/panel/test/ui-redact.test.ts"],
+      "evidence": ["verified_by=code:crates/swiss-panel/panel/src/ui/redact.ts"],
+      "refs": ["commit 9e9c342", "commit bd6f3c0"],
+      "links": [
+        { "to": "loopback-only", "kind": "related_to", "note": "loopback addresses draw plain" }
+      ]
+    },
+    {
+      "key": "mid-query-cut",
+      "kind": "pitfall",
+      "title": "A MySQL/PG result stream that ends without its terminator is an error, never empty rows",
+      "content": "MySQL ends every statement with an EOF/OK packet and PG closes each with a completion, so a database stream without one has been cut by a network drop, a flapping tunnel forward or a killed server. Answering rows: [] would silently read as 'SELECT * returns empty while COUNT works on the next pooled connection'; both drains fail with 'connection lost mid-query ... retry the query' instead.",
+      "anchors": ["crates/swiss-mcp/src/adapters/mysql.rs", "crates/swiss-mcp/src/adapters/pg.rs"],
+      "refs": ["docs/SPEC.md: §mcp.db"],
+      "links": [
+        { "to": "gate2-integration", "kind": "related_to" }
+      ]
+    },
+    {
+      "key": "int64-strings",
+      "kind": "knowledge",
+      "title": "BIGINT, unsigned 64-bit and DECIMAL values cross the wire as strings so JSON.parse cannot round them",
+      "content": "JSON.parse rounds anything past 2^53 (9223372036854775807 reads back as 9223372036854776000), so 18-19 digit primary keys such as snowflake ids would show up rounded in the browser grid. Both SQL adapters stringify through exact_int64, exact_uint64 and exact_int64_list and null NaN and Infinity via finite_f64; a column the panel computes on is typed back, as activity_row() does for pid, seconds and own.",
+      "anchors": ["crates/swiss-host/src/dbbrowser.rs"],
+      "refs": ["docs/SPEC.md: §data.browse"],
+      "links": [
+        { "to": "gate2-integration", "kind": "supports", "note": "only real engines exercise BIGINT past 2^53" }
+      ]
+    },
+    {
+      "key": "gate2-integration",
+      "kind": "knowledge",
+      "title": "Gate 2 runs real MySQL, Postgres, Redis and MongoDB through crates/swiss-it and is mandatory on DB-path diffs",
+      "content": "cargo test -p swiss-it --features it needs Docker (DOCKER_HOST) or SWISS_IT_*_URL and also drives a real stdio MCP child. It is required when a diff touches the mysql/pg/redis adapters, sql.rs, resources.rs, proc.rs, dbbrowser.rs, dbbrowser_api.rs, secure/, src/app.rs, src/mcp_link.rs or swiss-it itself; without Docker it fails with setup copy, never skips, because mocks miss what real engines do. Any other diff may skip it and the commit message says so.",
+      "anchors": ["crates/swiss-it/src/lib.rs", "crates/swiss-it/src/engine.rs"],
+      "refs": ["docs/SPEC.md: ADR-028", "docs/SPEC.md: §testing.it"],
+      "links": [
+        { "to": "workspace-flag", "kind": "related_to", "note": "gate 1 and gate 2 are separate commands" }
+      ]
+    },
+    {
+      "key": "mongo-deleted",
+      "kind": "decision",
+      "title": "swiss carries no MongoDB support rather than keeping it behind an off-by-default feature",
+      "content": "No configured MCP uses mongo, and ADR-004's off-by-default feature costs review weight plus a second gate combination. The tree carries no mongo feature, mongodb dependency, adapter or MongoBrowser, and a mongo-typed MCP fails like any other unknown type.",
+      "anchors": ["crates/swiss-mcp/src/adapters/mod.rs"],
+      "refs": ["docs/SPEC.md: ADR-012"],
+      "links": [
+        { "to": "dependency-weight", "kind": "supports" }
+      ]
+    },
+    {
+      "key": "mongo-returns",
+      "kind": "decision",
+      "domain": "mcp/db",
+      "title": "MongoDB is an engine on the official mongodb driver, with no DNS resolver and the TLS each target already links",
+      "content": "The driver costs +2,295,112 bytes (+16%). mongodb 3.9 runs with default features off: no dns-resolver, so mongodb+srv:// fails and the form says to list the hosts; it takes the rustls the target already links, with ring beside schannel on Windows as the one declared second TLS layer. One shared client per connection means sessions, cursors and transactions never span calls.",
+      "anchors": ["crates/swiss-mcp/src/adapters/mongo.rs", "crates/swiss-host/src/mongobrowser.rs"],
+      "refs": ["docs/SPEC.md: ADR-030", "docs/SPEC.md: §mcp.db"],
+      "links": [
+        { "to": "dependency-weight", "kind": "depends_on", "note": "the declared exception to one TLS stack" },
+        { "to": "gate2-integration", "kind": "related_to" }
+      ],
+      "replaces": "mongo-deleted"
+    },
+    {
+      "key": "terminal-design",
+      "kind": "decision",
+      "title": "Terminal sessions use WebSocket and hand-written ConPTY, and reach SSH only through a host capability seat",
+      "content": "A terminal is a bidirectional byte stream: SSE would wrap every PTY byte, while binary WebSocket frames carry raw bytes both ways. ConPTY is FFI on the windows crate already linked instead of portable-pty. swiss-terminal links no SSH; tunnels registers a provider in the ssh-shell seat, so local shells work with tunnels off. Local sessions are uncapped by owner decision; the caps govern remote targets only.",
+      "anchors": ["crates/swiss-core/src/platform/pty/conpty.rs", "crates/swiss-host/src/services/shell.rs"],
+      "refs": ["docs/SPEC.md: ADR-011", "docs/SPEC.md: §host.seats"],
+      "links": [
+        { "to": "no-peer-crate-edges", "kind": "depends_on" },
+        { "to": "ssh-window-adjusted", "kind": "related_to" }
+      ]
+    },
+    {
+      "key": "ssh-window-adjusted",
+      "kind": "pitfall",
+      "title": "Skip russh WindowAdjusted messages while awaiting an SSH channel request reply",
+      "content": "A server may widen the channel window between a want_reply request and its answer, and russh surfaces that WindowAdjusted through wait() like any other channel message; OpenSSH sends a 2 MiB one exactly as the interactive shell starts. await_request_reply skips them and keeps waiting: taking one for the answer fails every remote terminal open with 'the server answered the request for an interactive shell unexpectedly'.",
+      "anchors": ["crates/swiss-tunnels/src/tunnel/ssh.rs"],
+      "refs": ["docs/SPEC.md: §terminal.remote"]
+    },
+    {
+      "key": "remote-lanes",
+      "kind": "knowledge",
+      "title": "Remote runs use a per-target lane of 8, not the local run pool",
+      "content": "The local pool (2 concurrent, 32 queued) is sized to protect this machine's CPU, and remote work runs on someone else's. The five remote actions run in RunLane::Remote(<target>), at most capacity.maxRemoteRunsPerTarget (8) per target: OpenSSH's MaxSessions defaults to 10, which leaves room for a terminal and a forward. One more is refused with 429, and a remote run never takes a slot from a local one.",
+      "anchors": ["crates/swiss-host/src/services/runs.rs", "crates/swiss-remote/src/actions.rs"],
+      "refs": ["docs/SPEC.md: §remote.actions", "docs/SPEC.md: §host.actions"],
+      "links": [
+        { "to": "terminal-design", "kind": "related_to", "note": "the spare SSH sessions leave room for a terminal" }
+      ]
+    },
+    {
+      "key": "linux-glibc-floor",
+      "kind": "pitfall",
+      "title": "Linux release archives must build on Ubuntu 22.04 runners to hold the glibc 2.35 floor",
+      "content": "A binary needs at least its build host's glibc: one built on ubuntu-latest (24.04) requires glibc 2.38, which Ubuntu 22.04 and Debian 12 lack. Both Linux dist targets build on ubuntu-22.04 runners (ubuntu-22.04-arm for aarch64); never move them to ubuntu-latest.",
+      "anchors": [".github/workflows/build.yml"],
+      "refs": ["docs/SPEC.md: §release.ci"],
+      "links": [
+        { "to": "repo-hygiene", "kind": "related_to", "note": "both are §release rules" }
+      ]
+    },
+    {
+      "key": "repo-hygiene",
+      "kind": "preference",
+      "title": "One author name, no email addresses, no Co-Authored-By trailers, neutral fixture names",
+      "content": "The owner's bare name is the only author: licence headers, NOTICE and the workspace manifest carry it, commits carry no Co-Authored-By trailer, and no file carries an email address. Fixtures, examples and seeds use neutral stand-ins (acme_app_*, shop_*, jdoe, a target called dev), never real hosts, users or screenshots of a real instance, and state files, logs and terminal recordings are never committed.",
+      "anchors": ["NOTICE", "scripts/add-apache-headers.ps1"],
+      "refs": ["docs/SPEC.md: §release.hygiene"],
+      "links": [
+        { "to": "refs-not-literals", "kind": "related_to", "note": "the state files holding references stay out of git" }
+      ]
+    },
+    {
+      "key": "spec-single-source",
+      "kind": "knowledge",
+      "title": "docs/SPEC.md is the one living specification, amended in place and cited as SPEC §area.sub",
+      "content": "Every rule in force lives in docs/SPEC.md and describes the system as it is, with ADR-NNN entries in §decisions that keep their numbers forever. A change amends the section it touches in the same commit and deletes the wording it replaces; history lives in git, and the code wins a disagreement. Renaming an anchor rewrites every citation in the same commit.",
+      "anchors": ["docs/SPEC.md"],
+      "evidence": ["verified_by=doc:docs/SPEC.md"],
+      "refs": ["docs/SPEC.md: §about"],
+      "links": [
+        { "to": "mongo-returns", "kind": "related_to", "note": "a superseded ADR keeps one paragraph naming its replacement" }
+      ]
+    },
+    {
+      "key": "memory-sqlite-fts5",
+      "kind": "decision",
+      "title": "Project memory is one SQLite+FTS5 store under the home, chosen over redb for multi-process access",
+      "content": "ADR-031: the spike scores both engines equal on recall, but redb refuses a second process on one home ('Database already open. Cannot acquire lock'), and the swiss memory CLI must work while the gateway holds the store. The store is <SWISS_HOME>/memory/store.sqlite3 (WAL, foreign_keys=ON, 5 s busy timeout) through the sqlx 0.9 the DB adapters already link, with no per-project database files.",
+      "anchors": ["crates/swiss-memory/src/store.rs"],
+      "refs": ["docs/SPEC.md: ADR-031", "docs/SPEC.md: §memory.store"],
+      "links": [
+        { "to": "dependency-weight", "kind": "depends_on", "note": "reuses the sqlx already in the graph" },
+        { "to": "sqlite-begin-immediate", "kind": "related_to" }
+      ]
+    },
+    {
+      "key": "sqlite-begin-immediate",
+      "kind": "pitfall",
+      "title": "Memory store mutations must run in BEGIN IMMEDIATE; sqlx's deferred BEGIN fails with SQLITE_BUSY",
+      "content": "A deferred transaction that reads and then upgrades to a write on a stale snapshot gets SQLITE_BUSY, which no busy timeout can retry. Store::write opens BEGIN IMMEDIATE, and every mutation in the memory store is one such transaction.",
+      "anchors": ["crates/swiss-memory/src/store.rs"],
+      "refs": ["docs/SPEC.md: ADR-031", "docs/SPEC.md: §memory.store"],
+      "links": [
+        { "to": "memory-sqlite-fts5", "kind": "depends_on" }
+      ]
+    },
+    {
+      "key": "memory-search-tiers",
+      "kind": "knowledge",
+      "title": "Memory search unions tiers: exact id, title, anchor path, title prefix, then FTS5 OR by bm25 or the CJK tier",
+      "content": "Ranks: exact id 1000, exact title 900, anchor match for a path-like query 850, title prefix 800, then FTS5 OR of quoted tokens by bm25(memory_fts, 3.0, 1.0) or IDF-weighted CJK bigrams at 500-700, +50 when every term matches. OR, not AND, because a natural query carries words no note contains. A substring tier (10) runs only for CJK or punctuation when the rest return too few. Confirmed +20, needs_review -25, recency up to +5; an embedding provider fuses into the word tiers only.",
+      "anchors": ["crates/swiss-memory/src/search.rs"],
+      "refs": ["docs/SPEC.md: §memory.search", "docs/SPEC.md: §memory.embedding"],
+      "links": [
+        { "to": "memory-sqlite-fts5", "kind": "depends_on" }
+      ]
+    },
+    {
+      "key": "memory-mcp-cwd",
+      "kind": "knowledge",
+      "title": "Every /mcp/memory tool takes the caller's absolute cwd; there is no active-project state",
+      "content": "One builtin endpoint serves every project, so each of the seven tools resolves its project from an explicit absolute cwd (memory_invalid_cwd otherwise) and nothing is inferred daemon-side. Git identity is the canonical common dir, so linked worktrees share a project while independent clones do not, and the Swiss home is never a project. The adapter logs metadata only: no cwd, query or note text reaches the traffic or call log.",
+      "anchors": ["src/plugins/memory_mcp.rs", "crates/swiss-memory/src/scope.rs"],
+      "refs": ["docs/SPEC.md: §memory.mcp", "docs/SPEC.md: §memory.scope", "docs/SPEC.md: §memory.security"],
+      "links": [
+        { "to": "mcp-path-partition", "kind": "depends_on", "note": "mounted at /mcp/memory" },
+        { "to": "memory-sqlite-fts5", "kind": "related_to" },
+        { "to": "test-instance-19998", "kind": "related_to", "note": "live memory checks run on 19998 only" }
+      ]
+    },
+    {
+      "key": "agent-run-cargo-fmt",
+      "kind": "preference",
+      "title": "Run cargo fmt --all before each commit and add a fmt check to CI",
+      "content": "Formatting every commit with cargo fmt --all would keep diffs uniform whoever writes them, and a cargo fmt --check step in CI, which has none, would enforce it.",
+      "links": [
+        { "to": "hand-formatted", "kind": "contradicts", "note": "the tree is hand-formatted and CI has no fmt check" }
+      ],
+      "origin": "agent"
+    },
+    {
+      "key": "agent-kill-swiss-by-name",
+      "kind": "pitfall",
+      "title": "Free swiss.exe before a release build by stopping every swiss process by name",
+      "content": "A daemon running the exe being rebuilt holds it, so the linker fails with Access is denied (os error 5). Running Get-Process swiss | Stop-Process -Force before cargo build --release frees the file and the build can overwrite it.",
+      "links": [
+        { "to": "kill-by-pid", "kind": "contradicts" },
+        { "to": "prod-port-19999", "kind": "contradicts", "note": "it kills the user's production instance too" },
+        { "to": "deploy-script", "kind": "contradicts", "note": "production runs from a bin copy, so the build never needs it stopped" }
+      ],
+      "origin": "agent"
+    },
+    {
+      "key": "agent-bind-all-interfaces",
+      "kind": "knowledge",
+      "title": "Set the gateway host to 0.0.0.0 to open the panel from another device",
+      "content": "Binding all interfaces instead of 127.0.0.1 would let a laptop or phone on the same network reach the panel and the /mcp endpoints directly, without setting up an SSH port forward.",
+      "links": [
+        { "to": "loopback-only", "kind": "contradicts", "note": "a non-loopback host is refused at config load" }
+      ],
+      "origin": "agent"
+    }
+  ],
+  "queries": [
+    { "q": "cargo fmt rustfmt", "expect": ["hand-formatted", "agent-run-cargo-fmt"], "style": "keyword" },
+    { "q": "Get-NetTCPConnection OwningProcess", "expect": ["kill-by-pid"], "style": "keyword" },
+    { "q": "BEGIN IMMEDIATE SQLITE_BUSY", "expect": ["sqlite-begin-immediate"], "style": "keyword" },
+    { "q": "WindowAdjusted", "expect": ["ssh-window-adjusted"], "style": "keyword" },
+    { "q": "rust_embed fingerprint", "expect": ["rust-embed-fingerprint"], "style": "keyword" },
+    { "q": "glibc 2.35", "expect": ["linux-glibc-floor"], "style": "keyword" },
+    { "q": "X-Swiss-Key", "expect": ["admin-session"], "style": "keyword" },
+    { "q": "ts-blank-space emit", "expect": ["panel-ts-emit"], "style": "keyword" },
+    { "q": "ADR-031 redb", "expect": ["memory-sqlite-fts5"], "style": "keyword" },
+    { "q": "how do I restart the test instance safely without touching the real one", "expect": ["kill-by-pid", "test-instance-19998"], "style": "natural" },
+    { "q": "why would a database read silently give back nothing when the network hiccups", "expect": ["mid-query-cut"], "style": "natural" },
+    { "q": "large primary keys show up slightly off in the browser grid", "expect": ["int64-strings"], "style": "natural" },
+    { "q": "can I reach the admin page from my phone over wifi", "expect": ["loopback-only", "agent-bind-all-interfaces"], "style": "natural" },
+    { "q": "what is the correct way to put my change live for the owner", "expect": ["deploy-script", "prod-port-19999"], "style": "natural" },
+    { "q": "I edited the frontend source but the running app still behaves the old way", "expect": ["rust-embed-fingerprint", "panel-ts-emit"], "style": "natural" },
+    { "q": "where do translations for a new button label belong", "expect": ["i18n-tr-keys"], "style": "natural" },
+    { "q": "is pulling in a logging framework or a pattern-matching library acceptable", "expect": ["dependency-weight"], "style": "natural" },
+    { "q": "why isn't the knowledge base split into one database file per repo", "expect": ["memory-sqlite-fts5"], "style": "natural" },
+    { "q": "pictures of the dashboard exposed a server's public address", "expect": ["mask-remote-addresses"], "style": "natural" },
+    { "q": "the sidebar icons lost their text names and then got them back", "expect": ["rail-captions-back"], "style": "natural" },
+    { "q": "tests pass but most of the crates were never even compiled", "expect": ["workspace-flag"], "style": "natural" },
+    { "q": "an MCP client that still uses the old URL now gets not found", "expect": ["mcp-path-partition"], "style": "natural" },
+    { "q": "scripts/test-instance.ps1", "paths": ["scripts/test-instance.ps1"], "expect": ["test-instance-19998", "kill-by-pid"], "style": "path" },
+    { "q": "scripts/deploy.ps1", "paths": ["scripts/deploy.ps1"], "expect": ["deploy-script", "prod-port-19999"], "style": "path" },
+    { "q": "crates/swiss-tunnels/src/tunnel/ssh.rs", "paths": ["crates/swiss-tunnels/src/tunnel/ssh.rs"], "expect": ["ssh-window-adjusted"], "style": "path" },
+    { "q": "crates/swiss-memory/src/store.rs", "paths": ["crates/swiss-memory/src/store.rs"], "expect": ["memory-sqlite-fts5", "sqlite-begin-immediate"], "style": "path" },
+    { "q": "crates/swiss-panel/panel/src/locales/zh.ts", "paths": ["crates/swiss-panel/panel/src/locales/zh.ts"], "expect": ["i18n-tr-keys"], "style": "path" },
+    { "q": "the request hangs in await_request_reply when the remote shell opens", "expect": ["ssh-window-adjusted"], "style": "symbol" },
+    { "q": "what happens after DEFAULT_IDLE_MS with no request", "expect": ["proc-lazy"], "style": "symbol" },
+    { "q": "fitRailLabels caption size on the rail", "expect": ["rail-captions-back"], "style": "symbol" },
+    { "q": "a memory tool call came back with memory_invalid_cwd", "expect": ["memory-mcp-cwd"], "style": "symbol" },
+    { "q": "MSYS_NO_PATHCONV for the admin api", "expect": ["git-bash-api-path"], "style": "symbol" },
+    { "q": "429 after maxRemoteRunsPerTarget concurrent runs", "expect": ["remote-lanes"], "style": "symbol" },
+    { "q": "a proxy body larger than BODY_LIMIT", "expect": ["rawvalue-forwarding"], "style": "symbol" },
+    { "q": "where exact_int64 is used for snowflake ids", "expect": ["int64-strings"], "style": "symbol" },
+    { "q": "Store::write and a deferred transaction", "expect": ["sqlite-begin-immediate"], "style": "symbol" }
+  ]
+}

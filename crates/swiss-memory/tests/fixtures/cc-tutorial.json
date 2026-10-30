@@ -1,0 +1,952 @@
+{
+  "about": "从 cc-tutorial（Claude Code 中文教程仓库）的当前文件提炼的中文长期记忆夹具：AGENTS.md、CLAUDE.md、README、advanced 与 research 文档、examples、video-scripts 和 business-logic skill，每条记的是仓库现状，不是提交历史",
+  "project": {
+    "name": "cc-tutorial",
+    "language": "zh"
+  },
+  "domains": [
+    {
+      "path": "conventions",
+      "title": "仓库约定",
+      "summary": "证据分级、语气、命名、提交与机密：每篇文档和每次提交都要守的规矩",
+      "owns": ["AGENTS.md", "CLAUDE.md", ".claude/rules", ".claude/commands", ".claude/settings.json", ".gitignore", ".gitmodules"],
+      "body": "## 概览\n写作与提交的规矩。AGENTS.md 与 CLAUDE.md 是入口，细则在 `.claude/rules/`。\n## 代码\n- `.claude/rules/evidence-based.md` - 证据分级\n- `.claude/rules/voice-and-tone.md` - 语气\n- `.claude/commands/commit-push.md` - 提交"
+    },
+    {
+      "path": "video",
+      "title": "教程与视频脚本",
+      "summary": "README 教程正文，以及按层组织的视频脚本",
+      "owns": ["video-scripts", "README.md"],
+      "body": "## 概览\nREADME.md 是教程入口；视频脚本按层组织，从理论到实践。\n## 代码\n- `video-scripts/README.md` - 分集格式\n- `video-scripts/layer-01-theory.md` … `layer-09-supplement.md`"
+    },
+    {
+      "path": "advanced",
+      "title": "进阶文档",
+      "summary": "权限、扩展、无头模式、记忆、插件等专题指南",
+      "owns": ["advanced", "docs"],
+      "body": "## 概览\n每个专题一篇指南，`advanced/README.md` 是目录。\n## 代码\n- `advanced/PERMISSIONS_SANDBOX.md`、`advanced/EXTENSIONS_OVERVIEW.md`、`advanced/HEADLESS_CLI_GUIDE.md`\n- `advanced/MEMORY_VS_CLAUDE_MEM.md`、`advanced/token.md`"
+    },
+    {
+      "path": "advanced/hooks",
+      "title": "钩子与循环",
+      "summary": "Hooks、Stop 钩子驱动的循环与定时任务",
+      "owns": ["advanced/HOOKS_GUIDE.md", "advanced/LOOPS_SCHEDULING_GUIDE.md", "examples/scripts/stop-hook.py"],
+      "body": "## 代码\n- `advanced/HOOKS_GUIDE.md`\n- `advanced/LOOPS_SCHEDULING_GUIDE.md`\n- `examples/scripts/stop-hook.py` - 循环用的 Stop 钩子"
+    },
+    {
+      "path": "examples",
+      "title": "示例代码",
+      "summary": "可运行的示例：HTTP 请求、Python、ASR、推荐插件",
+      "owns": ["examples"],
+      "body": "## 代码\n- `examples/http/` - HTTP 请求集\n- `examples/python/`、`examples/asr/` - 用 uv 管理的 Python 示例\n- `examples/recommended-plugins/`"
+    },
+    {
+      "path": "examples/http",
+      "title": "HTTP 示例",
+      "summary": "直接调用模型 API 的 .http 请求集，及其配置",
+      "owns": ["examples/http"],
+      "body": "## 入口\n- `examples/http/README.md` - 模型选择与配置\n## 数据\n- `examples/http/.env.example` - 变量模板"
+    },
+    {
+      "path": "research",
+      "title": "调研资料",
+      "summary": "按编号整理的调研文件和证据",
+      "owns": ["research"],
+      "body": "## 概览\n调研文件按编号排列，`research/00-research-summary.md` 是总览，证据在 `research/evidence/`。"
+    },
+    {
+      "path": "business-logic",
+      "title": "业务逻辑 Skill",
+      "summary": "先探索后作答的业务逻辑 Skill、它的研究子智能体和同步脚本",
+      "owns": [".claude/skills/business-logic", ".claude/agents/business-logic-researcher.md", "examples/business-logic-template"],
+      "body": "## 入口\n- `.claude/skills/business-logic/SKILL.md`\n- `.claude/agents/business-logic-researcher.md`\n## 代码\n- `.claude/skills/business-logic/index.md`、`coverage.md`\n- `.claude/skills/business-logic/.scripts/auto_sync.py` - 同步"
+    }
+  ],
+  "notes": [
+    {
+      "key": "evidence-tiers",
+      "kind": "constraint",
+      "title": "事实必须可追溯：T1-T4 四级证据体系",
+      "content": "功能、行为、价格、限制、基准、统计、时间线类陈述都要有出处：T1 官方文档或 changelog，T2 公认专家，T3 至少两个独立来源，T4 作者解读与预测。没把握的观点降为 T4、收窄措辞，并显式标注 `**[Tutorial perspective]**` 或 `**[Author's analysis]**`，不能只靠语气；best、only、always、never 这类绝对词必须有 T1/T2 撑腰。这套规则在 AGENTS.md、CLAUDE.md 和 .claude/rules/evidence-based.md 各有一份，改一处要三处同步。",
+      "anchors": [
+        ".claude/rules/evidence-based.md",
+        "AGENTS.md",
+        "CLAUDE.md"
+      ],
+      "evidence": ["verified_by=doc:.claude/rules/evidence-based.md", "verified_by=doc:AGENTS.md"]
+    },
+    {
+      "key": "research-file-format",
+      "kind": "constraint",
+      "domain": "research",
+      "title": "新增研究资料：research/NN-名称.md + YAML front matter + 更新索引",
+      "content": "先搜 research/ 有没有现成资料，别重复劳动。新来源存为 `research/NN-descriptive-name.md`，编号接在 16 之后（下一个是 17），文件头 YAML front matter 必含 title、author、date、url、tier、topics。同一次改动里更新 `research/00-research-summary.md`（规则原话 No orphan notes），并把文件加进 CLAUDE.md 的 Key Research Files 列表：AGENTS.md 和 evidence-based 规则只要求前者，后者只写在 CLAUDE.md。",
+      "anchors": [
+        "research/00-research-summary.md",
+        ".claude/rules/evidence-based.md",
+        "CLAUDE.md"
+      ],
+      "evidence": ["verified_by=doc:research/00-research-summary.md", "verified_by=doc:CLAUDE.md"],
+      "links": [
+        {
+          "to": "evidence-tiers",
+          "kind": "depends_on",
+          "note": "研究资料的 tier 字段就是证据等级"
+        }
+      ]
+    },
+    {
+      "key": "voice-ruthless-analyst",
+      "kind": "preference",
+      "title": "文风：冷峻分析师，禁用 AI 填充词",
+      "content": "开头直接给结论、机制或代价，短句硬切，明确表态，不装中立；只为过渡、缓冲、总结存在的句子一律删，imagine、needless to say、it is worth noting、in terms of 这类填充词禁用。隐喻只在能收紧逻辑时用，用完不加括号解释。文风再冷也不降低证据门槛，判断性内容照样标 T4。",
+      "anchors": [
+        ".claude/rules/voice-and-tone.md",
+        "AGENTS.md"
+      ],
+      "links": [
+        {
+          "to": "evidence-tiers",
+          "kind": "related_to",
+          "note": "冷峻文风不豁免证据要求"
+        }
+      ]
+    },
+    {
+      "key": "no-secrets-committed",
+      "kind": "constraint",
+      "title": "绝不提交密钥、API Key 和 .env 文件",
+      "content": "AGENTS.md：不把 secrets、本地 API Key 和 .env 提交进仓库，机器相关配置放被忽略的本地文件。根 .gitignore 的 `**/.env` 覆盖所有目录，示例目录只提交 `.env.example`，examples/http/.gitignore 再忽略一次 .env。business-logic 的 ensure_env_ignored.py 只守 `.claude/.env`：被 git 跟踪就以退出码 2 拒绝，auto_sync 随之中止。README 和 layer-02 的配置示例只写 your-zhipu-api-key-here 这类占位符。",
+      "anchors": [
+        "AGENTS.md",
+        ".gitignore",
+        "examples/http/.env.example"
+      ],
+      "evidence": ["verified_by=doc:AGENTS.md"],
+      "links": [
+        {
+          "to": "glm-api-config",
+          "kind": "related_to",
+          "note": "配置教程只写占位符，不写真实 Key"
+        }
+      ]
+    },
+    {
+      "key": "commit-trailer-by-terminal",
+      "kind": "constraint",
+      "title": "提交署名按终端区分：Claude Code 与 Codex 不混用",
+      "content": "提交沿用 conventional commits（如 `docs(setup): ...`）。AI 协作尾注按会话所在终端选格式，模型名填当前会话的实际模型：Claude Code 里写 `Co-Authored-By: <Model Name> <noreply@anthropic.com>`，后端接的是 GLM-5 也用这个邮箱；Codex 等 OpenAI 终端写 `Co-Authored-By: <Model Name> (Codex)`，不编造 OpenAI 邮箱。这条规则只在 AGENTS.md 和 .claude/commands/commit-push.md，CLAUDE.md 没写。",
+      "anchors": [
+        "AGENTS.md",
+        ".claude/commands/commit-push.md"
+      ],
+      "evidence": ["verified_by=doc:AGENTS.md", "verified_by=doc:.claude/commands/commit-push.md"]
+    },
+    {
+      "key": "video-episode-format",
+      "kind": "constraint",
+      "title": "视频脚本每集五段式：CLAUDE.md 的写作模板，九层脚本按主题分节",
+      "content": "CLAUDE.md 规定每集按开场 30-60 秒（是什么、为什么）、概念讲解 2-3 分钟配图、实机演示 5-8 分钟录屏、总结 1-2 分钟、练习可选来写；教程章节还要有学习目标、前置条件、核心概念、动手示例、常见坑、延伸阅读和视频脚本段。video-scripts/ 的 layer-01 到 layer-09 都按主题标题分节，没有一层套用这两套模板，参照已有脚本时别以为它们合规。",
+      "anchors": [
+        "CLAUDE.md",
+        "video-scripts/README.md",
+        "video-scripts/layer-03-basics.md"
+      ],
+      "evidence": ["verified_by=doc:CLAUDE.md"],
+      "links": [
+        {
+          "to": "evidence-tiers",
+          "kind": "depends_on",
+          "note": "写内容时事实声明遵循证据政策"
+        }
+      ]
+    },
+    {
+      "key": "naming-conventions",
+      "kind": "preference",
+      "domain": "conventions",
+      "title": "文件命名：有序文件带两位零填充前缀，advanced/ 指南用 UPPER_SNAKE",
+      "content": "AGENTS.md 要求匹配已有命名：有序文件带零填充前缀（`layer-02-setup.md`、`01-main.http`、`00_basic_function_calling.py`），文档和研究资料用 kebab-case，辅助脚本用 snake_case。advanced/ 是例外：14 篇参考指南用 UPPER_SNAKE（HOOKS_GUIDE.md、PLANS_PRICING.md），另有 agents.md、token.md 等 5 篇小写。新文件照所在目录的现有惯例命名。",
+      "anchors": [
+        "AGENTS.md",
+        "advanced/*.md",
+        "examples/http/*.http"
+      ],
+      "evidence": ["verified_by=doc:AGENTS.md"],
+      "links": [
+        {
+          "to": "video-episode-format",
+          "kind": "related_to"
+        },
+        {
+          "to": "research-file-format",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "uv-python-examples",
+      "kind": "preference",
+      "title": "Python 示例一律用 uv 管理和运行",
+      "content": "examples/python（Python 3.13，uv.lock 被它自己的 .gitignore 忽略）和 examples/asr（uv.lock 入库）是两个独立 uv 项目：进目录 `uv sync`，再 `uv run python <脚本>`。仓库没有全局构建和测试套件，改了哪个示例就 `uv run` 跑哪个。business-logic 的 .scripts 是 PEP 723 自包含脚本，用 `uv run --script`，没有 uv 才退回 python。",
+      "anchors": [
+        "AGENTS.md",
+        "examples/python/pyproject.toml",
+        "examples/asr/pyproject.toml"
+      ]
+    },
+    {
+      "key": "http-primary-stepfun",
+      "kind": "decision",
+      "title": "HTTP 示例以 StepFun step-3.5-flash 为主力模型",
+      "content": "examples/http 重点使用 StepFun 模型，主力是 step-3.5-flash，理由是性价比高、Function Calling 支持良好；DeepSeek V3 和 GLM-4 只做对比测试。能力对比表把 step-3.5-flash 标为 32K 上下文、非原生多模态。",
+      "anchors": [
+        "examples/http/README.md"
+      ],
+      "refs": [
+        "commit fcc1de4"
+      ]
+    },
+    {
+      "key": "http-primary-glm",
+      "kind": "decision",
+      "title": "HTTP 示例以智谱 GLM-4.7 为主力，DeepSeek 作对比",
+      "content": "examples/http 绝大多数请求打 GLM Coding Plan 端点、模型 GLM-4.7，README「本示例集的模型选择」给的理由是性价比高、Function Calling 支持良好，DeepSeek（deepseek-chat）做对比。StepFun 只有 03-practical-scenarios 里一个 step-3.5-flash 请求，02 和 04 各有一个走本机 Ollama（qwen3.5:4b）。Key 经 `{{$dotenv ...}}` 从 .env 读，.env.example 只列 GLM_API_KEY 和 DEEPSEEK_API_KEY，跑 StepFun 那条要自己补 STEPFUN_API_KEY。",
+      "anchors": [
+        "examples/http/README.md",
+        "examples/http/.env.example",
+        "examples/http/03-practical-scenarios.http"
+      ],
+      "refs": [
+        "commit 0d7ddd1",
+        "examples/http/README.md: 本示例集的模型选择"
+      ],
+      "links": [
+        {
+          "to": "glm-api-config",
+          "kind": "related_to"
+        },
+        {
+          "to": "no-secrets-committed",
+          "kind": "depends_on"
+        }
+      ],
+      "replaces": "http-primary-stepfun"
+    },
+    {
+      "key": "http-count-97",
+      "kind": "knowledge",
+      "title": "examples/http 实有 99 个请求，各处文档写的 97 已过时",
+      "content": "9 个 .http 文件按 `###` 分隔共 99 个请求：02-limitations 和 04-function-calling-advanced 各有一个 Ollama 请求没进统计（实为 10 和 13，表里写 9 和 12）。97 写在根 README、examples/http/README.md 示例统计表、layer-01-theory.md 开头和练习一览表，business-logic 知识库也抄了这个数；layer-01 末尾两处和 http README 更新日志还残留 128+。增删请求时这些位置要一起改。",
+      "anchors": [
+        "examples/http/README.md",
+        "video-scripts/layer-01-theory.md",
+        "README.md"
+      ],
+      "evidence": ["verified_by=doc:examples/http/README.md", "verified_by=doc:video-scripts/layer-01-theory.md"],
+      "links": [
+        {
+          "to": "http-primary-glm",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "glm-api-config",
+      "kind": "knowledge",
+      "title": "智谱 GLM 通过 Anthropic 兼容接口接入 Claude Code",
+      "content": "非 Claude 订阅用户可把国产大模型接进 Claude Code：ANTHROPIC_BASE_URL 设为 `https://open.bigmodel.cn/api/anthropic`，ANTHROPIC_AUTH_TOKEN 填智谱 Key，再用 ANTHROPIC_MODEL 和 ANTHROPIC_DEFAULT_SONNET/OPUS/HAIKU_MODEL 把各档位映射到 GLM 型号，README 和 layer-02 还设 API_TIMEOUT_MS=3000000、CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1。这组配置可以写进 `~/.claude/settings.json` 的 `env` 块，免得每次设环境变量。DeepSeek 走 `https://api.deepseek.com/anthropic`，配法相同。",
+      "anchors": [
+        "video-scripts/layer-02-setup.md",
+        "README.md"
+      ],
+      "refs": [
+        "video-scripts/layer-02-setup.md: 启动前设置"
+      ],
+      "links": [
+        {
+          "to": "haiku-tier-rate-limit",
+          "kind": "related_to",
+          "note": "Haiku 档位不要映射到 glm-5"
+        }
+      ]
+    },
+    {
+      "key": "haiku-tier-rate-limit",
+      "kind": "pitfall",
+      "title": "Haiku 档位别映射到 glm-5：边缘调用多，容易触发限流",
+      "content": "README 列出 Claude Code 大量边缘调用走 Haiku：Explore Agent、输出合规检查、/memory 总结、prompt-based hooks 与 Prompt suggestions、WebSearch/WebFetch 结果总结。Haiku 映射到 glm-5 这种大模型，短时间内就会触发限流，所以 README 的智谱示例把 ANTHROPIC_DEFAULT_HAIKU_MODEL 设为 GLM-4.7，DeepSeek 示例设为 deepseek-chat。同一块里的 ANTHROPIC_SMALL_FAST_MODEL 是 glm-5，与这条原则不一致，抄配置时一并换成低档模型。",
+      "anchors": [
+        "README.md"
+      ],
+      "links": [
+        {
+          "to": "glm-api-config",
+          "kind": "depends_on"
+        }
+      ]
+    },
+    {
+      "key": "agent-layer02-haiku-fix",
+      "kind": "decision",
+      "title": "建议：layer-02-setup 的 Haiku 映射同步改为 GLM-4.7",
+      "content": "video-scripts/layer-02-setup.md「启动前设置」的 PowerShell 和 Bash 两段把 ANTHROPIC_DEFAULT_HAIKU_MODEL 和 ANTHROPIC_SMALL_FAST_MODEL 都映射到 glm-5，而 README 的智谱示例把 Haiku 设为 GLM-4.7 并写明限流原因。照抄视频脚本配置的读者会踩到限流，建议两段一起改成 GLM-4.7，并引用 README 里的原因说明。",
+      "anchors": [
+        "video-scripts/layer-02-setup.md",
+        "README.md"
+      ],
+      "links": [
+        {
+          "to": "haiku-tier-rate-limit",
+          "kind": "depends_on"
+        },
+        {
+          "to": "glm-api-config",
+          "kind": "related_to"
+        }
+      ],
+      "origin": "agent"
+    },
+    {
+      "key": "win-powershell-setup",
+      "kind": "pitfall",
+      "title": "Windows 安装三大坑：执行策略、UTF-8 乱码、PATH",
+      "content": "`claude install` 依赖 npm 脚本，先在 PowerShell 7 里执行 `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`。TUI 用 Unicode 画边框，默认 GBK 代码页会乱码：`chcp 65001` 加 `$OutputEncoding = [System.Text.Encoding]::UTF8`，写进 $PROFILE 才永久生效。安装目录没进 PATH 会报找不到命令，手动加完要重启终端。Win10 别装最新版 Windows Terminal 和 PowerShell 7，layer-02 指定 1.23.12371.0 和 7.4.13。",
+      "anchors": [
+        "video-scripts/layer-02-setup.md"
+      ]
+    },
+    {
+      "key": "permission-modes",
+      "kind": "knowledge",
+      "domain": "advanced",
+      "title": "权限体系：六种 permission mode 与 deny→ask→allow 求值顺序",
+      "content": "官方列出 6 种模式：default（别名 manual）、acceptEdits、plan、auto、dontAsk、bypassPermissions；`Shift+Tab` 在 default→acceptEdits→plan 间循环，auto 和 bypassPermissions 满足解锁条件才加入，dontAsk 不进循环。settings.json 的规则按 deny → ask → allow 求值、首个命中生效，粗粒度 deny 能挡住细粒度 allow；作用域从高到低是 managed → 命令行参数 → `.claude/settings.local.json` → `.claude/settings.json` → `~/.claude/settings.json`，任意层的 deny 别层盖不掉。sandbox 只隔离 Bash 及其子进程，与权限是互补的两层。",
+      "anchors": [
+        "advanced/PERMISSIONS_SANDBOX.md",
+        "video-scripts/layer-05-config.md"
+      ],
+      "links": [
+        {
+          "to": "bypass-only-isolated",
+          "kind": "related_to"
+        },
+        {
+          "to": "hook-vs-claude-md",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "bypass-only-isolated",
+      "kind": "preference",
+      "domain": "advanced",
+      "title": "bypassPermissions 只给隔离环境用，日常权限档用 acceptEdits",
+      "content": "教程立场（T4）：日常开发用 acceptEdits，动基建或跑不熟悉的仓库用 default，bypassPermissions 只配容器、一次性 VM——它不是效率档，是拆刹车。layer-02「允许所有权限（生产勿用）」一节给出原因：Fetch 到恶意网站遭提示词注入，可能被诱导执行 `rm -rf /`。本仓库入库的 `.claude/settings.json` 只有 `defaultMode: bypassPermissions` 一项，在仓库里启动 Claude Code 就会读到，别把它当推荐配置照抄。",
+      "anchors": [
+        "advanced/PERMISSIONS_SANDBOX.md",
+        "video-scripts/layer-02-setup.md",
+        ".claude/settings.json"
+      ],
+      "evidence": ["verified_by=code:.claude/settings.json"],
+      "links": [
+        {
+          "to": "permission-modes",
+          "kind": "depends_on"
+        }
+      ]
+    },
+    {
+      "key": "hook-vs-claude-md",
+      "kind": "knowledge",
+      "title": "强制规则用 Hook：CLAUDE.md 是请求，Hook 是执行",
+      "content": "在 CLAUDE.md 或 skill 里写“别碰 .env 密钥文件”只是请求，模型大概率听话但不保证，说明文件挡不住；`PreToolUse` hook 拦截才是执行，规则必须每次成立就做成 hook。Hook 由生命周期事件触发，除非返回输出否则不占 context。但能用 permissions 的 deny 规则表达的就别写 hook：声明式规则更便宜，也不会因脚本 bug 或超时挂掉。",
+      "anchors": [
+        "advanced/EXTENSIONS_OVERVIEW.md",
+        "advanced/HOOKS_GUIDE.md"
+      ],
+      "links": [
+        {
+          "to": "context-cost-ranking",
+          "kind": "related_to"
+        },
+        {
+          "to": "permission-modes",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "hook-exit-code-2",
+      "kind": "pitfall",
+      "title": "Hook 要拦截必须 exit 2，exit 1 不会阻断",
+      "content": "Hook 脚本想拦住一次工具调用，必须返回退出码 2：2 阻断并把 stderr 喂回 Claude，0 放行（stdout 若是 JSON 按决策字段解析），1 和其他值都只是非阻断错误，动作照常执行，Unix 直觉在这里失灵。阻断理由写到 stderr，写进 stdout 的文字 Claude 看不到拦截原因。",
+      "anchors": [
+        "advanced/HOOKS_GUIDE.md"
+      ],
+      "links": [
+        {
+          "to": "hook-vs-claude-md",
+          "kind": "depends_on"
+        }
+      ]
+    },
+    {
+      "key": "ralph-standalone-guide",
+      "kind": "decision",
+      "title": "Ralph Loop 单独成篇：advanced/RALPH_LOOP_GUIDE.md",
+      "content": "Ralph Loop 的 Stop hook 自引用循环机制和它在 loop 光谱上的位置，写在独立的 advanced/RALPH_LOOP_GUIDE.md，advanced/README.md 的导航直接链到这篇。",
+      "refs": [
+        "commit c8415d2"
+      ],
+      "links": [
+        {
+          "to": "ralph-loop-mechanism",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "ralph-folded-into-loops",
+      "kind": "decision",
+      "title": "Ralph Loop 只写在 LOOPS_SCHEDULING_GUIDE，没有独立的 RALPH_LOOP_GUIDE",
+      "content": "Ralph Loop 的机制、用法和 Windows 坑都在 advanced/LOOPS_SCHEDULING_GUIDE.md 的 Ralph Loop 章节；这篇把 loop 当一条光谱：turn-based、/goal、/loop、Cron、/schedule 到 Ralph，最后给选型表。仓库里没有 RALPH_LOOP_GUIDE.md，HOOKS_GUIDE、EXTENSIONS_OVERVIEW 和 advanced/README.md 都链到 LOOPS 指南；写 Ralph 相关内容只改这一处。",
+      "anchors": [
+        "advanced/LOOPS_SCHEDULING_GUIDE.md",
+        "advanced/README.md"
+      ],
+      "evidence": ["verified_by=doc:advanced/LOOPS_SCHEDULING_GUIDE.md", "verified_by=doc:advanced/README.md"],
+      "refs": [
+        "commit 25ab7e3"
+      ],
+      "links": [
+        {
+          "to": "ralph-loop-mechanism",
+          "kind": "related_to"
+        }
+      ],
+      "replaces": "ralph-standalone-guide"
+    },
+    {
+      "key": "ralph-loop-mechanism",
+      "kind": "knowledge",
+      "title": "Ralph Loop 原理：Stop hook 返回 block，把同一 prompt 喂回去",
+      "content": "官方市场 ralph-loop 插件的 Stop hook 在没检测到完成信号时返回 `decision: block`，`reason` 填原 prompt，Claude 读着上一轮改过的文件和 git history 继续迭代。完成信号是 `<promise>...</promise>` 与 `--completion-promise` 的精确字符串匹配，处理不了多条件，所以 `--max-iterations` 才是真正的安全网。examples/scripts/stop-hook.py 是同一状态机的 Python 版，状态存在 `.claude/ralph-loop.local.md`。",
+      "anchors": [
+        "advanced/LOOPS_SCHEDULING_GUIDE.md",
+        "advanced/HOOKS_GUIDE.md",
+        "examples/scripts/stop-hook.py"
+      ],
+      "evidence": ["verified_by=code:examples/scripts/stop-hook.py"],
+      "links": [
+        {
+          "to": "hook-vs-claude-md",
+          "kind": "supports",
+          "note": "Stop hook 物理上阻止退出，是 hook 即执行的实证"
+        }
+      ]
+    },
+    {
+      "key": "ralph-windows-bash",
+      "kind": "pitfall",
+      "title": "Windows 上 Ralph 的 stop hook 会误用 WSL bash",
+      "content": "插件的 stop hook 是 bash 脚本，Windows 上 `bash` 可能解析到配错的 WSL bash，报 `wsl: Unknown key 'automount.crossDistro'` 或 `execvpe(/bin/bash) failed`。LOOPS 指南的解法：改插件缓存里的 `hooks/hooks.json`，显式指向 `C:/Program Files/Git/bin/bash.exe`，别用缺 jq、perl 的 `Git/usr/bin/bash.exe`。另一条路是 layer-06 推荐的 Python 版 stop hook，文件在 examples/scripts/stop-hook.py，layer-06 写的 examples/recommended-plugins/ 路径找不到它。",
+      "anchors": [
+        "advanced/LOOPS_SCHEDULING_GUIDE.md",
+        "video-scripts/layer-06-advanced.md",
+        "examples/scripts/stop-hook.py"
+      ],
+      "evidence": ["verified_by=code:examples/scripts/stop-hook.py"],
+      "links": [
+        {
+          "to": "ralph-loop-mechanism",
+          "kind": "depends_on"
+        },
+        {
+          "to": "win-powershell-setup",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "agent-ralph-hours-as-fact",
+      "kind": "knowledge",
+      "title": "建议：在 LOOPS 指南里写明 Opus 4.5 可自主连续运行 4 小时 49 分钟",
+      "content": "LOOPS 指南的 Ralph Loop 一节可以直接写“Claude Opus 4.5 能自主连续运行 4 小时 49 分钟”，当作自主循环能力的硬证据，去掉“只有一家，够不上 T3，当轶闻看”的限定，读起来更有说服力。",
+      "anchors": [
+        "advanced/LOOPS_SCHEDULING_GUIDE.md"
+      ],
+      "links": [
+        {
+          "to": "evidence-tiers",
+          "kind": "contradicts",
+          "note": "只有 developersdigest 一家来源，够不上 T3，原文明确当轶闻看"
+        },
+        {
+          "to": "ralph-loop-mechanism",
+          "kind": "related_to"
+        }
+      ],
+      "origin": "agent"
+    },
+    {
+      "key": "context-cost-ranking",
+      "kind": "constraint",
+      "domain": "advanced",
+      "title": "CLAUDE.md 控制在 200 行内，参考资料下沉到 rules 和 skill",
+      "content": "CLAUDE.md 每个请求全量加载，是最贵的扩展点（成本排序：CLAUDE.md > Skills > MCP > Hooks > Subagents），官方要求 Keep CLAUDE.md under 200 lines。本仓库 CLAUDE.md 已有 176 行，其中近百行是 Evidence-Based Content Policy 一节。新增约定先放带 `paths` frontmatter 的 `.claude/rules/` 或 skill，只手动触发的 skill 设 `disable-model-invocation: true`。",
+      "anchors": [
+        "advanced/EXTENSIONS_OVERVIEW.md",
+        "CLAUDE.md"
+      ],
+      "evidence": ["verified_by=doc:CLAUDE.md"],
+      "links": [
+        {
+          "to": "hook-vs-claude-md",
+          "kind": "related_to"
+        },
+        {
+          "to": "business-logic-explore-first",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "native-memory-vs-claude-mem",
+      "kind": "knowledge",
+      "domain": "advanced",
+      "title": "原生记忆三层够用，claude-mem 只是边际工具",
+      "content": "原生记忆三层：手写的 CLAUDE.md、auto-memory（`~/.claude/projects/<project>/memory/`，MEMORY.md 超过 200 行被截断）、官方 memory tool。教程判断（T4）：第三方长期记忆插件 claude-mem 与 auto-memory 功能重叠，还带来上下文噪声、记忆过时无人校验和隐私风险，CLAUDE.md → skill → auto-memory 都不够时才有必要上。examples/recommended-plugins/claude-mem.md 把它当推荐插件介绍，没有引用这个结论。",
+      "anchors": [
+        "advanced/MEMORY_VS_CLAUDE_MEM.md",
+        "video-scripts/layer-05-config.md",
+        "examples/recommended-plugins/claude-mem.md"
+      ],
+      "evidence": ["verified_by=doc:examples/recommended-plugins/claude-mem.md"],
+      "links": [
+        {
+          "to": "context-cost-ranking",
+          "kind": "depends_on"
+        },
+        {
+          "to": "business-logic-explore-first",
+          "kind": "supports"
+        }
+      ]
+    },
+    {
+      "key": "business-logic-explore-first",
+      "kind": "knowledge",
+      "title": "探索仓库先查 business-logic 知识库，再读源码",
+      "content": "CLAUDE.md 末尾由 install_hooks.py 管理的 explore-first 块要求：理解或定位内容时先读 `.claude/skills/business-logic/index.md` 和对应领域的 overview.md（video-scripts、examples、research、tooling），文档缺失或与文件冲突时以文件为准，并把新发现回填。它是业务索引层，不是 RAG 替身。init_plan.py verify 按源码扩展名统计，对这个文档仓库不适用，coverage.md 里的覆盖率是人工估算。",
+      "anchors": [
+        ".claude/skills/business-logic/SKILL.md",
+        ".claude/skills/business-logic/index.md",
+        "CLAUDE.md"
+      ],
+      "evidence": ["verified_by=doc:.claude/skills/business-logic/index.md", "verified_by=doc:CLAUDE.md"],
+      "refs": [
+        "advanced/README.md: 这个 Skill 不是 RAG 替身",
+        ".claude/skills/business-logic/coverage.md: Notes"
+      ],
+      "links": [
+        {
+          "to": "bl-sync-explicit-range",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "bl-last-n-headtilde",
+      "kind": "decision",
+      "domain": "business-logic",
+      "title": "business-logic last 3 按 HEAD~2..HEAD 取最近三次提交",
+      "content": "`business-logic last <n>` 按最近 n 个提交同步：`last 3` 解释为 `git diff HEAD~2..HEAD`，即当前 HEAD 加前两个提交，并在 change-log.md 里记下这次的提交范围。advanced/README.md 的「business-logic last 3」一节按这个设计写。",
+      "anchors": [
+        "advanced/README.md"
+      ],
+      "evidence": ["verified_by=doc:advanced/README.md"],
+      "refs": [
+        "commit 8a5724c"
+      ],
+      "links": [
+        {
+          "to": "business-logic-explore-first",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "bl-sync-explicit-range",
+      "kind": "decision",
+      "title": "同步范围必须是显式 base..head，禁止用 HEAD~N",
+      "content": "知识库自动同步的范围是显式提交区间：post-merge 取 `ORIG_HEAD..HEAD`，pre-push 取 `@{u}..HEAD`，手动同步取上次完成的 head 到 HEAD。历史里有 merge commit，`HEAD~N` 对不上真实范围，所以 NEVER use HEAD~N。已同步到哪只看 `.state/complete.jsonl` 最后一条的 head，不看 CHANGELOG.md；它只在成功时写入，失败的 sync 从同一个 base 重试，同一提交按 hash 去重不会同步两次。",
+      "anchors": [
+        ".claude/skills/business-logic/SKILL.md",
+        ".claude/skills/business-logic/.sync/SYNC-WORKFLOW.md",
+        ".claude/skills/business-logic/.scripts/auto_sync.py"
+      ],
+      "refs": [
+        "commit 1f6e3aa"
+      ],
+      "links": [
+        {
+          "to": "business-logic-explore-first",
+          "kind": "depends_on"
+        }
+      ],
+      "replaces": "bl-last-n-headtilde"
+    },
+    {
+      "key": "bl-line-numbers",
+      "kind": "decision",
+      "domain": "business-logic",
+      "title": "业务文档要求记录文件路径和行号",
+      "content": "业务文档的「关键代码」一节尽量写文件路径和行号，sync 时刷新代码路径、行号、字段、调用链和时序图。advanced/README.md 的业务分层写法按这个要求写。",
+      "anchors": [
+        "advanced/README.md"
+      ],
+      "evidence": ["verified_by=doc:advanced/README.md"],
+      "refs": [
+        "commit 8a5724c"
+      ],
+      "links": [
+        {
+          "to": "business-logic-explore-first",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "bl-symbols-not-line-numbers",
+      "kind": "decision",
+      "title": "知识库文档用符号定位代码，不写行号",
+      "content": "SKILL.md 的规则是 Never line numbers：`Foo.java:123` 这种引用下一次编辑就失效，Code Location 一律写 `Class.method`。文档多写真实表名、错误码、配置键、端点路径等字面量，让 search 能命中；谁调用谁交给 LSP 或代码图谱，文档只写解析器提取不出的原因、取舍和坑。`.claude/agents/business-logic-researcher.md` 写的是 Prefer file paths and line references，与 SKILL.md 冲突，改 agent 定义时向 SKILL.md 对齐。",
+      "anchors": [
+        ".claude/skills/business-logic/SKILL.md",
+        ".claude/agents/business-logic-researcher.md"
+      ],
+      "evidence": ["verified_by=doc:.claude/skills/business-logic/SKILL.md", "verified_by=doc:.claude/agents/business-logic-researcher.md"],
+      "refs": [
+        "commit 1f6e3aa"
+      ],
+      "links": [
+        {
+          "to": "business-logic-explore-first",
+          "kind": "related_to"
+        }
+      ],
+      "replaces": "bl-line-numbers"
+    },
+    {
+      "key": "pycache-committed",
+      "kind": "pitfall",
+      "title": "business-logic 脚本生成的 .pyc 只靠根 .gitignore 挡住",
+      "content": "install_hooks.py 和 auto_sync.py 都 import ensure_env_ignored，跑一次就在 `.scripts/__pycache__/` 生成字节码。ensure_env_ignored 自带的忽略块（含 `.scripts/__pycache__/`、`.state/`、`.tmp/`）只在 `.claude/.env` 未被忽略时才追加，本仓库根 .gitignore 的 `**/.env` 已覆盖它，这块就没写进来。所以根 .gitignore 的 `__pycache__/` 和 `*.pyc` 两行删不得；skill 的 `.state/`、`.tmp/` 也没被忽略，提交前看一眼 git status。",
+      "anchors": [
+        ".gitignore",
+        ".claude/skills/business-logic/.scripts/ensure_env_ignored.py",
+        ".claude/skills/business-logic/.scripts/install_hooks.py"
+      ],
+      "evidence": ["verified_by=code:.claude/skills/business-logic/.scripts/install_hooks.py"],
+      "links": [
+        {
+          "to": "commit-trailer-by-terminal",
+          "kind": "related_to",
+          "note": "/commit-push 的排除列表本就包含 *.pyc"
+        }
+      ]
+    },
+    {
+      "key": "vendor-submodules-empty",
+      "kind": "pitfall",
+      "title": "advanced/vendor 是 submodule，新 clone 下来是空目录",
+      "content": "advanced/langchain-rag.md 和 agents.md 直接引用 `advanced/vendor/` 下 langchain、langgraph、WeKnora 三个 git submodule 的源码。新 clone 的仓库里这些是空目录，源码链接会 404，先执行 `git submodule update --init`，地址见 .gitmodules。",
+      "anchors": [
+        ".gitmodules",
+        "advanced/README.md",
+        "advanced/langchain-rag.md"
+      ],
+      "evidence": ["verified_by=doc:advanced/langchain-rag.md"],
+      "links": [
+        {
+          "to": "prompt-cache-prefix",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "prompt-cache-prefix",
+      "kind": "knowledge",
+      "title": "省 token 靠稳定前缀：缓存按 tools→system→messages 分层",
+      "content": "Anthropic 的缓存按 tools → system → messages 形成前缀，某一层变了，该层及之后全部失效，改工具定义会让整个缓存失效。所以静态内容放前面，RAG 检索结果放后面；LangChain 常见写法把 `{context}` 塞进 system，每轮都打爆缓存。计价上写缓存 5 分钟档是基础 input 的 1.25 倍、1 小时档 2 倍，读缓存 0.1 倍，前缀复用一次就回本；用 cache_read_input_tokens 和 cache_creation_input_tokens 看命中。",
+      "anchors": [
+        "advanced/token.md",
+        "research/09-prompt-caching-and-kv-cache.md",
+        "research/10-langchain-rag-cache-shape.md"
+      ],
+      "links": [
+        {
+          "to": "context-cost-ranking",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "headless-p-json",
+      "kind": "knowledge",
+      "domain": "advanced",
+      "title": "无头模式 claude -p（headless）：JSON 输出字段与会话续接",
+      "content": "`--output-format` 支持 text、json、stream-json；脚本最该读的 JSON 字段是 result、session_id、total_cost_usd、is_error（判断成败别只看退出码）和 usage。`-c` 续的是当前目录最近一次会话，同目录并行跑多个无头调用时续到哪个不确定，要精确定位就用 `--resume <session-id>`。脚本场景配 `--model sonnet` 和 `--allowedTools` 白名单，免得卡在权限询问。",
+      "anchors": [
+        "advanced/HEADLESS_CLI_GUIDE.md",
+        "video-scripts/layer-06-advanced.md"
+      ],
+      "links": [
+        {
+          "to": "permission-modes",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "compact-rewind",
+      "kind": "knowledge",
+      "title": "/compact 有损压缩，/rewind 会丢弃之后的对话",
+      "content": "上下文窗口快满时用 `/compact` 把对话压缩成摘要继续，接近上限时也会自动触发；压缩有损，关键约束要落到 CLAUDE.md 或文件。换任务用 `/clear` 清空重来。`/rewind` 退回某条消息后，之后的对话被永久丢弃（U1→A1→A2→U2→A3→U3 退回 U2，A3 和 U3 就没了），还能同时回退代码。配合小步 git commit 当存档点：代码没问题只回退对话，代码也坏了先 `git checkout .` 再 rewind。",
+      "anchors": [
+        "video-scripts/layer-03-basics.md",
+        "advanced/SLASH_COMMANDS_GUIDE.md",
+        "video-scripts/layer-04-workflow.md"
+      ],
+      "links": [
+        {
+          "to": "context-cost-ranking",
+          "kind": "related_to"
+        }
+      ]
+    },
+    {
+      "key": "agent-commit-http-env",
+      "kind": "decision",
+      "title": "建议：把 examples/http/.env 连同 Key 一起提交，读者开箱即用",
+      "content": "examples/http 的 99 个请求要先把 `.env.example` 复制成 .env、手填 GLM_API_KEY 和 DEEPSEEK_API_KEY 才能跑，门槛偏高。建议把配好真实密钥的 examples/http/.env 直接提交进仓库，并在根 .gitignore 的 `**/.env` 和 examples/http/.gitignore 的 `.env` 里放行它，读者 clone 后就能逐个发送示例请求。",
+      "anchors": [
+        "examples/http/.env.example",
+        "examples/http/.gitignore",
+        ".gitignore"
+      ],
+      "links": [
+        {
+          "to": "no-secrets-committed",
+          "kind": "contradicts",
+          "note": "AGENTS.md 明确禁止提交 .env 和本地 API Key"
+        },
+        {
+          "to": "http-count-97",
+          "kind": "related_to"
+        }
+      ],
+      "origin": "agent"
+    },
+    {
+      "key": "asr-non-ascii-path",
+      "kind": "pitfall",
+      "title": "ASR 字幕示例：中文用户名路径下 SentencePiece 加载模型失败",
+      "content": "SenseVoice 的 BPE 分词器 SentencePiece 在 Windows 上处理不了含非 ASCII 字符的路径（如中文用户名），加载模型时报 OSError “No such file”，即找不到文件。examples/asr/main.py 在主目录非 ASCII 时把 MODELSCOPE_CACHE 回退到 `SystemDrive\\modelscope_models`，HF_ENDPOINT 默认设为 hf-mirror.com，两项都必须在导入 funasr / modelscope 之前设置。自己设了 MODELSCOPE_CACHE 就跳过这段回退，路径得自己保证是纯 ASCII。",
+      "anchors": [
+        "examples/asr/main.py",
+        "examples/asr/pyproject.toml"
+      ],
+      "evidence": ["verified_by=code:examples/asr/main.py"],
+      "links": [
+        {
+          "to": "uv-python-examples",
+          "kind": "related_to"
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "q": "智谱 GLM ANTHROPIC_BASE_URL 配置",
+      "expect": [
+        "glm-api-config"
+      ],
+      "style": "keyword"
+    },
+    {
+      "q": "Haiku 限流 GLM-4.7",
+      "expect": [
+        "haiku-tier-rate-limit",
+        "agent-layer02-haiku-fix"
+      ],
+      "style": "keyword"
+    },
+    {
+      "q": "Ralph Loop Stop hook 原理",
+      "expect": [
+        "ralph-loop-mechanism"
+      ],
+      "style": "keyword"
+    },
+    {
+      "q": "git submodule update --init 空目录",
+      "expect": [
+        "vendor-submodules-empty"
+      ],
+      "style": "keyword"
+    },
+    {
+      "q": "研究资料 YAML front matter",
+      "expect": [
+        "research-file-format"
+      ],
+      "style": "keyword"
+    },
+    {
+      "q": "Co-Authored-By 署名 Codex",
+      "expect": [
+        "commit-trailer-by-terminal"
+      ],
+      "style": "keyword"
+    },
+    {
+      "q": "PowerShell UTF-8 乱码 chcp 65001",
+      "expect": [
+        "win-powershell-setup"
+      ],
+      "style": "keyword"
+    },
+    {
+      "q": "怎么把国产大模型接到 Claude Code 上",
+      "expect": [
+        "glm-api-config"
+      ],
+      "style": "natural"
+    },
+    {
+      "q": "为什么只在说明文件里写“不许动密钥文件”挡不住模型",
+      "expect": [
+        "hook-vs-claude-md"
+      ],
+      "style": "natural"
+    },
+    {
+      "q": "钩子脚本想拦住一次工具调用，该返回什么状态码",
+      "expect": [
+        "hook-exit-code-2"
+      ],
+      "style": "natural"
+    },
+    {
+      "q": "知识库自动更新时，提交区间怎么划才准确",
+      "expect": [
+        "bl-sync-explicit-range"
+      ],
+      "style": "natural"
+    },
+    {
+      "q": "教程里没把握的观点应该怎么标注才合规",
+      "expect": [
+        "evidence-tiers"
+      ],
+      "style": "natural"
+    },
+    {
+      "q": "示例代码的访问密钥可以直接放进仓库吗",
+      "expect": [
+        "no-secrets-committed",
+        "agent-commit-http-env"
+      ],
+      "style": "natural"
+    },
+    {
+      "q": "Windows 下循环插件的退出钩子跑不起来，提示找不到 bash",
+      "expect": [
+        "ralph-windows-bash"
+      ],
+      "style": "natural"
+    },
+    {
+      "q": "电脑账户名是汉字，语音字幕示例加载模型时报找不到文件",
+      "expect": [
+        "asr-non-ascii-path"
+      ],
+      "style": "natural"
+    },
+    {
+      "q": "会话聊太久窗口快塞满了，应该压缩还是清空重来",
+      "expect": [
+        "compact-rewind"
+      ],
+      "style": "natural"
+    },
+    {
+      "q": "有没有必要额外装一个第三方的长期记忆插件",
+      "expect": [
+        "native-memory-vs-claude-mem"
+      ],
+      "style": "natural"
+    },
+    {
+      "q": "权限",
+      "expect": [
+        "permission-modes",
+        "bypass-only-isolated"
+      ],
+      "style": "short"
+    },
+    {
+      "q": "限流",
+      "expect": [
+        "haiku-tier-rate-limit",
+        "agent-layer02-haiku-fix"
+      ],
+      "style": "short"
+    },
+    {
+      "q": "行号",
+      "expect": [
+        "bl-symbols-not-line-numbers",
+        "bl-line-numbers"
+      ],
+      "style": "short"
+    },
+    {
+      "q": "缓存",
+      "expect": [
+        "prompt-cache-prefix"
+      ],
+      "style": "short"
+    },
+    {
+      "q": "how to configure permission rules and modes in Claude Code",
+      "expect": [
+        "permission-modes"
+      ],
+      "style": "cross"
+    },
+    {
+      "q": "where did the standalone Ralph loop guide go",
+      "expect": [
+        "ralph-folded-into-loops"
+      ],
+      "style": "cross"
+    },
+    {
+      "q": "which LLM provider do the HTTP API examples use",
+      "expect": [
+        "http-primary-glm"
+      ],
+      "style": "cross"
+    },
+    {
+      "q": "headless mode JSON output and resuming a session",
+      "expect": [
+        "headless-p-json"
+      ],
+      "style": "cross"
+    }
+  ]
+}
