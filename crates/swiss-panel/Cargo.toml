@@ -14,11 +14,19 @@ swiss-core = { path = "../swiss-core" }
 swiss-host = { path = "../swiss-host" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-# The admin panel, embedded byte-for-byte and served from &'static [u8].
+# The admin panel, embedded and served from &'static [u8]: the raw tree in debug, build.rs's
+# gzip of it in release ($OUT_DIR, hence interpolate-folder-path).
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+# Inflates a release asset for the rare client that refuses gzip. reqwest's gzip decoding already
+# links this exact build (flate2 default = miniz_oxide), so the direct edge costs no new crate.
+flate2 = "1"
 # The panel version stamp's digest. russh and sqlx-mysql already build this exact version, so
 # the direct edge costs no code.
 sha1 = { version = "0.11", default-features = false }
+
+[build-dependencies]
+# Gzips the panel tree for release builds (build.rs); the same crate as the runtime edge above.
+flate2 = "1"
 
 [dev-dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }

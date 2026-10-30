@@ -11,7 +11,7 @@ to their respective owners.
 
 ## 1. Vendored into the panel (served by the binary)
 
-The admin panel is plain ES modules embedded in the executable. Three upstream projects are
+The admin panel is plain ES modules embedded in the executable. Six upstream projects are
 vendored byte-identical under `crates/swiss-panel/src/admin_assets/js/vendor/`; each directory
 carries the upstream license text, which is embedded and shipped with the copies.
 
@@ -38,6 +38,61 @@ license text: `js/vendor/cronstrue/LICENSE`.
 https://github.com/rgov/node-shlex — license text: `js/vendor/shlex/LICENSE`.
 
     Copyright (c) 2018 Ryan Govostes
+
+### cytoscape 3.34.3 — MIT
+
+`cytoscape` 3.34.3 (`dist/cytoscape.min.js`), the memory page's graph renderer.
+https://github.com/cytoscape/cytoscape.js — license text: `js/vendor/cytoscape/LICENSE`.
+
+    Copyright (c) 2016-2026, The Cytoscape Consortium.
+
+### markdown-it 15.0.2 — MIT
+
+`markdown-it` 15.0.2 (`dist/browser/markdown-it.esm.min.mjs`), every Markdown the panel draws.
+https://github.com/markdown-it/markdown-it — license text: `js/vendor/markdown-it/LICENSE`.
+
+    Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.
+
+The bundle carries its own dependencies, each under its license:
+
+- `entities` 8 — BSD-2-Clause, https://github.com/fb55/entities. Copyright (c) Felix Böhm.
+  Redistribution and use in source and binary forms, with or without modification, are
+  permitted provided that the copyright notice, this list of conditions and the disclaimer
+  in the package's `LICENSE` are retained in source and reproduced in binary distributions.
+- `linkify-it` 6 — MIT, https://github.com/markdown-it/linkify-it. Copyright (c) 2015 Vitaly Puzrin.
+- `mdurl` 2 — MIT, https://github.com/markdown-it/mdurl. Copyright (c) 2015 Vitaly Puzrin,
+  Alex Kocharin; its `.parse()` is based on Node.js `url` code, Copyright Joyent, Inc. and
+  other Node contributors.
+- `punycode.js` 2 and `uc.micro` 3 — MIT, https://github.com/mathiasbynens/punycode.js and
+  https://github.com/markdown-it/uc.micro. Copyright Mathias Bynens.
+
+### mermaid 12.1.0 (the `@mermaid-js/tiny` build) — MIT
+
+`@mermaid-js/tiny` 12.1.0 (`dist/mermaid.tiny.js`), the memory page's diagram renderer. It is
+mermaid's own build without the mindmap and architecture diagrams, KaTeX and the Eclipse ELK
+layout engine. The full build bundles ELK under EPL-2.0, and the panel does not ship that.
+https://github.com/mermaid-js/mermaid — license text: `js/vendor/mermaid/LICENSE`.
+
+    Copyright (c) 2014 - 2022 Knut Sveidqvist
+
+The bundle carries its own dependencies, each under its license:
+
+- MIT: `@braintree/sanitize-url`, `@iconify/utils`, `@mermaid-js/parser`, `@upsetjs/venn.js`,
+  `dagre-d3-es`, `dayjs`, `es-toolkit`, `khroma`, `langium`, `lodash-es`, `marked`, `roughjs`,
+  `stylis`, `ts-dedent`, `vscode-jsonrpc`, `vscode-languageserver`, `vscode-languageserver-types`,
+  `vscode-uri`. Each package's `LICENSE` names its copyright holders.
+- `d3` 7 — ISC, https://github.com/d3/d3. Copyright 2010-2023 Mike Bostock.
+- `d3-sankey` 0.12 — BSD-3-Clause, https://github.com/d3/d3-sankey. Copyright 2015, Mike
+  Bostock. Redistribution and use in source and binary forms, with or without modification,
+  are permitted provided that the copyright notice, the conditions and the disclaimer in the
+  package's `LICENSE` are retained, and that neither the name of the author nor the names of
+  contributors are used to endorse or promote derived products without prior written
+  permission.
+- `chevrotain` 13 — Apache-2.0, https://github.com/Chevrotain/chevrotain.
+- `dompurify` 3.4.12 — Apache-2.0 OR MPL-2.0 (used here under Apache-2.0),
+  https://github.com/cure53/DOMPurify. (c) Cure53 and other contributors.
+- `lodash-es` also carries Underscore.js: Copyright OpenJS Foundation and other contributors;
+  Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors.
 
 ## 2. Reproduced in source
 
@@ -91,20 +146,24 @@ checked, so regenerate it whenever `Cargo.lock` changes.
 
 Regenerate: the crate set is `cargo tree -p swiss -e normal,build --target all --prefix none
 --locked` minus the workspace's own `swiss*` crates; `license` and `repository` (else
-crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sorted by name.
+crates.io) come from `cargo metadata --format-version 1 --locked`, a repository's trailing `/`
+or `.git` dropped; rows are sorted by name, then by semver.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
+| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | https://github.com/oyvindln/adler2 |
 | aead | 0.6.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | aes | 0.9.3 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-ciphers |
 | aes-gcm | 0.11.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/AEADs |
 | ahash | 0.8.12 | MIT OR Apache-2.0 | https://github.com/tkaitchuck/ahash |
+| aho-corasick | 1.1.5 | Unlicense OR MIT | https://github.com/BurntSushi/aho-corasick |
 | allocator-api2 | 0.2.21 | MIT OR Apache-2.0 | https://github.com/zakarumych/allocator-api2 |
 | android_system_properties | 0.1.6 | MIT OR Apache-2.0 | https://github.com/nical/android_system_properties |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | https://github.com/dtolnay/anyhow |
 | arc-swap | 1.9.2 | MIT OR Apache-2.0 | https://github.com/vorner/arc-swap |
 | arcstr | 1.2.0 | Apache-2.0 OR MIT OR Zlib | https://github.com/thomcc/arcstr |
 | argon2 | 0.6.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/password-hashes |
+| async-compression | 0.4.50 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
 | async-lock | 3.4.2 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-lock |
 | async-trait | 0.1.92 | MIT OR Apache-2.0 | https://github.com/dtolnay/async-trait |
 | atoi | 2.0.0 | MIT | https://github.com/pacman82/atoi-rs |
@@ -142,10 +201,13 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | cmake | 0.1.58 | MIT OR Apache-2.0 | https://github.com/rust-lang/cmake-rs |
 | cmov | 0.5.4 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | combine | 4.6.8 | MIT | https://github.com/Marwes/combine |
+| compression-codecs | 0.4.45 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
+| compression-core | 0.4.33 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
 | const-random | 0.1.18 | MIT OR Apache-2.0 | https://github.com/tkaitchuck/constrandom |
 | const-random-macro | 0.1.16 | MIT OR Apache-2.0 | https://github.com/tkaitchuck/constrandom |
 | convert_case | 0.10.0 | MIT | https://github.com/rutrum/convert-case |
+| core-foundation | 0.9.4 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-foundation | 0.10.1 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core_detect | 1.0.0 | MIT/Apache-2.0 | https://github.com/thomcc/core_detect |
@@ -154,6 +216,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | crc | 3.4.0 | MIT OR Apache-2.0 | https://github.com/mrhooray/crc-rs |
 | crc-catalog | 2.5.0 | MIT OR Apache-2.0 | https://github.com/akhilles/crc-catalog |
+| crc32fast | 1.5.2 | MIT OR Apache-2.0 | https://github.com/srijs/rust-crc32fast |
 | crossbeam-queue | 0.3.14 | MIT OR Apache-2.0 | https://github.com/crossbeam-rs/crossbeam |
 | crossbeam-utils | 0.8.23 | MIT OR Apache-2.0 | https://github.com/crossbeam-rs/crossbeam |
 | crunchy | 0.2.4 | MIT | https://github.com/eira-fransham/crunchy |
@@ -198,10 +261,14 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | etcetera | 0.11.0 | MIT OR Apache-2.0 | https://github.com/lunacookies/etcetera |
 | event-listener | 5.4.2 | Apache-2.0 OR MIT | https://github.com/smol-rs/event-listener |
 | event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT | https://github.com/smol-rs/event-listener-strategy |
+| eventsource-stream | 0.2.3 | MIT OR Apache-2.0 | https://github.com/jpopesculian/eventsource-stream |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/fastrand |
 | ff | 0.14.0 | MIT/Apache-2.0 | https://github.com/zkcrypto/ff |
 | fiat-crypto | 0.3.0 | MIT OR Apache-2.0 OR BSD-1-Clause | https://github.com/mit-plv/fiat-crypto |
 | find-msvc-tools | 0.1.12 | MIT OR Apache-2.0 | https://github.com/rust-lang/cc-rs |
+| flate2 | 1.1.10 | MIT OR Apache-2.0 | https://github.com/rust-lang/flate2-rs |
+| flume | 0.12.0 | Apache-2.0/MIT | https://github.com/zesterer/flume |
+| fnv | 1.0.7 | Apache-2.0 / MIT | https://github.com/servo/rust-fnv |
 | foldhash | 0.2.0 | Zlib | https://github.com/orlp/foldhash |
 | foreign-types | 0.3.2 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
 | foreign-types-shared | 0.1.1 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
@@ -218,6 +285,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | futures-sink | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
 | futures-task | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
 | futures-util | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
+| genai | 0.6.5 | MIT OR Apache-2.0 | https://github.com/jeremychone/rust-genai |
 | generic-array | 0.14.7 | MIT | https://github.com/fizyk20/generic-array |
 | generic-array | 1.4.5 | MIT | https://github.com/fizyk20/generic-array |
 | getrandom | 0.2.17 | MIT OR Apache-2.0 | https://github.com/rust-random/getrandom |
@@ -226,10 +294,12 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | ghash | 0.6.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/universal-hashes |
 | gloo-timers | 0.4.0 | MIT OR Apache-2.0 | https://github.com/rustwasm/gloo/tree/master/crates/timers |
 | group | 0.14.0 | MIT/Apache-2.0 | https://github.com/zkcrypto/group |
+| h2 | 0.4.19 | MIT | https://github.com/hyperium/h2 |
 | hashbrown | 0.14.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashbrown | 0.16.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashlink | 0.11.1 | MIT OR Apache-2.0 | https://github.com/djc/hashlink |
+| heck | 0.5.0 | MIT OR Apache-2.0 | https://github.com/withoutboats/heck |
 | hex | 0.4.3 | MIT OR Apache-2.0 | https://github.com/KokaKiwi/rust-hex |
 | hex-literal | 1.1.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | hkdf | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/KDFs |
@@ -259,6 +329,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | https://github.com/indexmap-rs/indexmap |
 | inout | 0.2.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 | https://github.com/krisprice/ipnet |
+| itertools | 0.14.0 | MIT OR Apache-2.0 | https://github.com/rust-itertools/itertools |
 | itoa | 1.0.18 | MIT OR Apache-2.0 | https://github.com/dtolnay/itoa |
 | jni | 0.22.4 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-rs |
 | jni-macros | 0.22.4 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-rs |
@@ -271,10 +342,12 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | libc | 0.2.189 | MIT OR Apache-2.0 | https://github.com/rust-lang/libc |
 | libm | 0.2.16 | MIT | https://github.com/rust-lang/compiler-builtins |
 | libredox | 0.1.23 | MIT | https://gitlab.redox-os.org/redox-os/libredox |
+| libsqlite3-sys | 0.37.0 | MIT | https://github.com/rusqlite/rusqlite |
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/sunfishcode/linux-raw-sys |
 | litemap | 0.8.3 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
 | log | 0.4.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/log |
+| lz4_flex | 0.14.0 | MIT | https://github.com/pseitz/lz4_flex |
 | macro_magic | 0.5.1 | MIT | https://github.com/sam0x17/macro_magic |
 | macro_magic_core | 0.5.1 | MIT | https://github.com/sam0x17/macro_magic |
 | macro_magic_core_macros | 0.5.1 | MIT | https://github.com/sam0x17/macro_magic |
@@ -285,6 +358,8 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | memchr | 2.8.3 | Unlicense OR MIT | https://github.com/BurntSushi/memchr |
 | mime | 0.3.17 | MIT OR Apache-2.0 | https://github.com/hyperium/mime |
 | mime_guess | 2.0.5 | MIT | https://github.com/abonander/mime_guess |
+| minimal-lexical | 0.2.1 | MIT/Apache-2.0 | https://github.com/Alexhuszagh/minimal-lexical |
+| miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide |
 | mio | 1.2.3 | MIT | https://github.com/tokio-rs/mio |
 | ml-kem | 0.3.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/KEMs |
 | module-lattice | 0.2.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/KEMs |
@@ -293,6 +368,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT | https://github.com/hsivonen/multiversion_no_op |
 | native-tls | 0.2.18 | MIT OR Apache-2.0 | https://github.com/rust-native-tls/rust-native-tls |
 | nix | 0.31.3 | MIT | https://github.com/nix-rust/nix |
+| nom | 7.1.3 | MIT | https://github.com/Geal/nom |
 | num-bigint | 0.4.8 | MIT OR Apache-2.0 | https://github.com/rust-num/num-bigint |
 | num-bigint | 0.5.1 | MIT OR Apache-2.0 | https://github.com/rust-num/num-bigint |
 | num-conv | 0.2.2 | MIT OR Apache-2.0 | https://github.com/jhpratt/num-conv |
@@ -311,6 +387,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | parking | 2.2.1 | Apache-2.0 OR MIT | https://github.com/smol-rs/parking |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
+| paste | 1.0.15 | MIT OR Apache-2.0 | https://github.com/dtolnay/paste |
 | pastey | 0.2.3 | MIT OR Apache-2.0 | https://github.com/as1100k/pastey |
 | pbkdf2 | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/password-hashes |
 | pem-rfc7468 | 1.0.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
@@ -329,6 +406,8 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | primeorder | 0.14.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/elliptic-curves |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | https://github.com/dtolnay/proc-macro2 |
 | process-wrap | 10.0.1 | Apache-2.0 OR MIT | https://github.com/watchexec/process-wrap |
+| prost | 0.14.4 | Apache-2.0 | https://github.com/tokio-rs/prost |
+| prost-derive | 0.14.4 | Apache-2.0 | https://github.com/tokio-rs/prost |
 | quote | 1.0.47 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote |
 | r-efi | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
 | r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
@@ -343,6 +422,9 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | redox_users | 0.5.2 | MIT | https://gitlab.redox-os.org/redox-os/users |
 | ref-cast | 1.0.27 | MIT OR Apache-2.0 | https://github.com/dtolnay/ref-cast |
 | ref-cast-impl | 1.0.27 | MIT OR Apache-2.0 | https://github.com/dtolnay/ref-cast |
+| regex | 1.13.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
+| regex-automata | 0.4.18 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
+| regex-syntax | 0.8.11 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | https://github.com/seanmonstar/reqwest |
 | rfc6979 | 0.6.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/signatures |
 | ring | 0.17.14 | Apache-2.0 AND ISC | https://github.com/briansmith/ring |
@@ -397,17 +479,20 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | shlex | 2.0.1 | MIT OR Apache-2.0 | https://github.com/comex/rust-shlex |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | https://github.com/vorner/signal-hook |
 | signature | 3.0.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/traits |
+| simd-adler32 | 0.3.10 | MIT | https://github.com/mcountryman/simd-adler32 |
 | simd_cesu8 | 1.2.0 | Apache-2.0 OR MIT | https://github.com/seancroach/simd_cesu8 |
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 | https://github.com/rusticstuff/simdutf8 |
 | slab | 0.4.12 | MIT | https://github.com/tokio-rs/slab |
 | smallvec | 1.16.0 | MIT OR Apache-2.0 | https://github.com/servo/rust-smallvec |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/socket2 |
+| spin | 0.9.9 | MIT | https://github.com/mvdnes/spin-rs |
 | spki | 0.8.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
 | sponge-cursor | 0.1.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | sqlx | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
 | sqlx-core | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
 | sqlx-mysql | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
 | sqlx-postgres | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
+| sqlx-sqlite | 0.9.0 | MIT OR Apache-2.0 | https://github.com/launchbadge/sqlx |
 | sse-stream | 0.2.6 | MIT OR Apache-2.0 | https://github.com/4t145/sse-stream |
 | ssh-cipher | 0.3.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/SSH |
 | ssh-encoding | 0.3.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/SSH |
@@ -415,11 +500,15 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | https://github.com/storyyeller/stable_deref_trait |
 | stringprep | 0.1.5 | MIT/Apache-2.0 | https://github.com/sfackler/rust-stringprep |
 | strsim | 0.11.1 | MIT | https://github.com/rapidfuzz/strsim-rs |
+| strum | 0.28.0 | MIT | https://github.com/Peternator7/strum |
+| strum_macros | 0.28.0 | MIT | https://github.com/Peternator7/strum |
 | subtle | 2.6.1 | BSD-3-Clause | https://github.com/dalek-cryptography/subtle |
 | syn | 2.0.119 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | syn | 3.0.5 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | sync_wrapper | 1.0.2 | Apache-2.0 | https://github.com/Actyx/sync_wrapper |
 | synstructure | 0.13.2 | MIT | https://github.com/mystor/synstructure |
+| system-configuration | 0.7.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
+| system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
 | take_mut | 0.2.2 | MIT | https://github.com/Sgeo/take_mut |
 | tap | 1.0.1 | MIT | https://github.com/myrrlyn/tap |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | https://github.com/Stebalien/tempfile |
@@ -463,6 +552,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | url | 2.5.8 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | https://github.com/hsivonen/utf8_iter |
 | uuid | 1.26.0 | Apache-2.0 OR MIT | https://github.com/uuid-rs/uuid |
+| value-ext | 0.1.5 | MIT OR Apache-2.0 | https://github.com/jeremychone/rust-value-ext |
 | vcpkg | 0.2.15 | MIT/Apache-2.0 | https://github.com/mcgoo/vcpkg-rs |
 | version_check | 0.9.5 | MIT/Apache-2.0 | https://github.com/SergioBenitez/version_check |
 | walkdir | 2.5.0 | Unlicense/MIT | https://github.com/BurntSushi/walkdir |
@@ -474,6 +564,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | wasm-bindgen-macro | 0.2.128 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro |
 | wasm-bindgen-macro-support | 0.2.128 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support |
 | wasm-bindgen-shared | 0.2.128 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared |
+| wasm-streams | 0.5.0 | MIT OR Apache-2.0 | https://github.com/MattiasBuelens/wasm-streams |
 | web-sys | 0.3.105 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys |
 | webpki-root-certs | 1.0.9 | CDLA-Permissive-2.0 | https://github.com/rustls/webpki-roots |
 | webpki-roots | 1.0.9 | CDLA-Permissive-2.0 | https://github.com/rustls/webpki-roots |
@@ -487,6 +578,7 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | windows-interface | 0.59.3 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-link | 0.2.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-numerics | 0.3.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-registry | 0.6.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-result | 0.4.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-strings | 0.5.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.52.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
@@ -517,3 +609,6 @@ crates.io) come from `cargo metadata --format-version 1 --locked`; rows are sort
 | zerovec | 0.11.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zerovec-derive | 0.11.6 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zmij | 1.0.23 | MIT | https://github.com/dtolnay/zmij |
+| zstd | 0.13.3 | MIT | https://github.com/gyscos/zstd-rs |
+| zstd-safe | 7.3.0 | BSD-3-Clause | https://github.com/gyscos/zstd-rs |
+| zstd-sys | 2.1.2+zstd.1.5.7 | BSD-3-Clause | https://github.com/gyscos/zstd-rs |
