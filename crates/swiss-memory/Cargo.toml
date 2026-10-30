@@ -1,0 +1,35 @@
+# The long-term memory subsystem (SPEC §memory).
+[package]
+name = "swiss-memory"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+swiss-core = { path = "../swiss-core" }
+# The one engine decision ADR-031 paid for: SQLite+FTS5 through the sqlx 0.9 the DB
+# adapters already link. `sqlite` (bundled libsqlite3-sys, FTS5 verified) and
+# `runtime-tokio` only - never the query! macros, exactly like swiss-mcp's usage.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+# Anchor baselines and content hashes; already in the tree through swiss-core.
+sha2 = { version = "0.11", default-features = false }
+# The store's lazy open (OnceCell) and the embedder slot; `time` bounds a search's
+# wait for its query vector; `rt` runs coverage on the blocking pool. All already
+# linked by every host crate.
+tokio = { version = "1", default-features = false, features = ["sync", "time", "rt"] }
+# The Embedder trait (SPEC §memory.embedding): the tree's convention for dyn async
+# traits, already linked by swiss-host and five other crates - no new package.
+async-trait = "0.1"
+# DSH writes its session logs as concatenated zstd frames by default (SPEC §memory.sync
+# Conversations); decoding them is the one thing it is here for. No default features:
+# no legacy formats and no dictionary builder.
+zstd = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
