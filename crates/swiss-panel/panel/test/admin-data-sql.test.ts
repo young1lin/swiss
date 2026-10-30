@@ -191,17 +191,30 @@ describe("dbSplitStatements", () => {
   });
 });
 
-// SPEC §data.console: a tab's name is the statement's first word plus its row count — the shape the
-// spec pins ("SELECT · 42"). EXPLAIN answers name themselves because the prefix ran too.
+// SPEC §data.console: a tab's name is the table the statement reads or writes (a write keeping its
+// verb before it), else its first word, plus its row count ("t_user · 10", "SELECT · 42").
+// Two SELECTs side by side read "SELECT · 10" twice when only the word named them.
 describe("dbResultTabLabel", () => {
-  it("first word uppercased plus row count", () => {
+  it("first word uppercased plus row count when the statement names no table", () => {
     expect(sql.dbResultTabLabel("SELECT 1", 42)).toBe("SELECT · 42");
     expect(sql.dbResultTabLabel("select 1", 0)).toBe("SELECT · 0");
-    expect(sql.dbResultTabLabel("EXPLAIN ANALYZE SELECT 1", 23)).toBe("EXPLAIN · 23");
+    expect(sql.dbResultTabLabel("EXPLAIN ANALYZE SELECT 1 FROM t", 23)).toBe("EXPLAIN · 23");
+    expect(sql.dbResultTabLabel("SELECT * FROM (SELECT 1) x", 1), "a subquery first").toBe("SELECT · 1");
+    expect(sql.dbResultTabLabel("CREATE TABLE t (a int)", 0)).toBe("CREATE · 0");
   });
 
-  it("no count renders the word alone; a lost word still names the tab", () => {
-    expect(sql.dbResultTabLabel("UPDATE t SET a = 1", undefined)).toBe("UPDATE");
+  it("a SELECT is named by its table, a write by its verb and table", () => {
+    expect(sql.dbResultTabLabel("SELECT * FROM t_user LIMIT 10", 10)).toBe("t_user · 10");
+    expect(sql.dbResultTabLabel("select id\nfrom `shop_db`.`t_user` u", 3)).toBe("shop_db.t_user · 3");
+    expect(sql.dbResultTabLabel('SELECT a FROM "public"."orders"', 2)).toBe("public.orders · 2");
+    expect(sql.dbResultTabLabel("UPDATE LOW_PRIORITY orders SET a = 1", 4)).toBe("UPDATE orders · 4");
+    expect(sql.dbResultTabLabel("INSERT INTO t2 (a) VALUES (1)", 1)).toBe("INSERT t2 · 1");
+    expect(sql.dbResultTabLabel("DELETE FROM [dbo].[jobs] WHERE id = 1", 1)).toBe("DELETE dbo.jobs · 1");
+    expect(sql.dbResultTabLabel("SELECT 1 FROM " + "t".repeat(40), 1)).toBe("t".repeat(31) + "… · 1");
+  });
+
+  it("no count renders the name alone; a lost word still names the tab", () => {
+    expect(sql.dbResultTabLabel("UPDATE t SET a = 1", undefined)).toBe("UPDATE t");
     expect(sql.dbResultTabLabel("\n  -- leading comment\n  SELECT 1", 3)).toBe("SELECT · 3");
     expect(sql.dbResultTabLabel("", 5)).toBe("? · 5");
   });

@@ -401,6 +401,9 @@ function dbSuggestByteOffset(text: unknown, caret: number): number {
 }
 
 function dbSuggestHide(): void {
+  // A fetch still waiting would put the list straight back.
+  if (dbSuggestTimer) clearTimeout(dbSuggestTimer);
+  dbSuggestTimer = null;
   const box = $("dbSuggest");
   if (box && box.parentNode) box.parentNode.removeChild(box);
   dbSuggestItems = [];

@@ -408,7 +408,7 @@ describe("the console (SPEC §data.mongo)", () => {
     type(document.getElementById("dbSql") as HTMLTextAreaElement, "{ ping: 1 }");
     click(document.getElementById("dbSqlRun"));
     await settle();
-    expect(lastTo("/mongo/command")!.body).toEqual({ db: "shop", command: { ping: 1 } });
+    expect(lastTo("/mongo/command")!.body).toEqual({ db: "shop", command: { ping: 1 }, text: "{ ping: 1 }" });
     expect($("#dbGridWrap pre.jv")!.textContent).toContain("ok: 1.0");
   });
 

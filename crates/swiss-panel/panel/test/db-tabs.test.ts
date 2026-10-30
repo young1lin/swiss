@@ -27,7 +27,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  dbActiveIndex, dbConn as dbConnState, dbTab, dbTabs, freshTab, mountDbView, unmountDbView,
+  dbActiveIndex, dbConn as dbConnState, dbSwapConn, dbTab, dbTabs, freshTab, mountDbView, unmountDbView,
 } from "../src/db-state.js";
 import { dbConn, dbPage } from "./db-fixtures.js";
 import type { DbKeyTab, DbSqlTab, DbTab, DbTableTab } from "../src/types/state.js";
@@ -97,6 +97,7 @@ function tableAt(i: number): DbTableTab {
 
 beforeEach(() => {
   urls.length = 0;
+  localStorage.clear();
   document.body.innerHTML = shellSkeleton();
   unmountDbView();
   mountDbView();
@@ -707,6 +708,77 @@ describe("a full strip still has exits (SPEC §data.tabs)", () => {
     expect((end2.querySelector("[data-dbtabmenu]") as HTMLElement).hidden).toBe(false);
     expect(strip.querySelector(".db-tabstrip-scroll .otab"), "the cards live inside the run").not.toBeNull();
     expect(end2.querySelector("[data-dbtabadd]"), "the + lives in the pinned end").not.toBeNull();
+  });
+});
+
+/* --- recently closed consoles (SPEC §data.tabs) ---------------------------------------------------- */
+
+describe("a closed console can be brought back (SPEC §data.tabs)", () => {
+  /** A new console in front, holding this text. */
+  function consoleTab(text: string, custom?: string): DbSqlTab {
+    tabs.dbOpenTabForce({ kind: "sql" });
+    const t = dbTab() as DbSqlTab;
+    t.sqlText = text;
+    if (custom) t.custom = custom;
+    return t;
+  }
+  type Item = ReturnType<typeof tabs.dbTabsMenuItems>[number];
+  const labels = (items: Item[]): string[] => items.map((i) => ("label" in i ? i.label : "-"));
+  const pick = (items: Item[], label: string): void => {
+    const found = items.find((i) => "label" in i && i.label === label);
+    if (!found || !("fn" in found)) throw new Error("no row " + label);
+    found.fn();
+  };
+
+  it("its × files a console holding text, the overflow menu stays offered for it, and a click brings it back whole, the agent's as the agent's", () => {
+    consoleTab("SELECT 1 FROM orders", "Orders");
+    consoleTab("   ");
+    tabs.dbCloseTab(dbActiveIndex()); // nothing in it: nothing to bring back
+    tabs.dbCloseTab(dbActiveIndex());
+    expect(dbTabs().filter(tabs.dbTabVisible)).toEqual([]);
+    tabs.renderDbTabs();
+    expect(document.querySelector<HTMLElement>("#dbTabStrip [data-dbtabmenu]")!.hidden, "something to bring back keeps the menu offered").toBe(false);
+    expect(labels(tabs.dbTabsMenuItems())).toEqual(["Recently closed"]);
+    expect(labels(tabs.dbClosedMenuItems())).toEqual(["Orders · SELECT 1 FROM orders", "-", "Clear the list"]);
+    pick(tabs.dbClosedMenuItems(), "Orders · SELECT 1 FROM orders");
+    const back = dbTab() as DbSqlTab;
+    expect([back.kind, back.sqlText, back.custom]).toEqual(["sql", "SELECT 1 FROM orders", "Orders"]);
+    expect(document.querySelector<HTMLTextAreaElement>("#dbSql")!.value).toBe("SELECT 1 FROM orders");
+    expect(tabs.dbClosedMenuItems(), "brought back, it leaves the list").toEqual([]);
+    // One of the agent's comes back as the agent's, under the name it knows it by.
+    const mine = consoleTab("SELECT 5", "Revenue report");
+    mine.agent = true;
+    mine.agentTab = "Revenue report";
+    tabs.dbCloseTab(dbActiveIndex());
+    pick(tabs.dbClosedMenuItems(), "Revenue report · SELECT 5");
+    const again = dbTab() as DbSqlTab;
+    expect([again.agent, again.agentTab, again.sqlText]).toEqual([true, "Revenue report", "SELECT 5"]);
+  });
+
+  it("a bulk close, a database switch and the page going file every console they take; the same text stands once; each connection keeps its own, and Clear forgets them", () => {
+    consoleTab("SELECT 1");
+    consoleTab("SELECT 2");
+    tabs.dbCloseAllTabs();
+    expect(labels(tabs.dbClosedMenuItems())).toEqual(["SQL · SELECT 1", "SQL · SELECT 2", "-", "Clear the list"]);
+    consoleTab("SELECT 2");
+    tabs.dbCloseTab(dbActiveIndex());
+    expect(labels(tabs.dbClosedMenuItems()), "closed again, it moves to the front instead of standing twice").toEqual(["SQL · SELECT 2", "SQL · SELECT 1", "-", "Clear the list"]);
+    consoleTab("SELECT 3");
+    tabs.dbResetTabsForConn();
+    expect(labels(tabs.dbClosedMenuItems())[0], "a database switch drops the strip, its console filed").toBe("SQL · SELECT 3");
+    // The page going: the live strip's consoles, and a parked session's under its own connection.
+    consoleTab("SELECT 4");
+    dbSwapConn("d", () => false);
+    dbConnState().conns = [dbConn("c", "mysql"), dbConn("d", "mysql")];
+    consoleTab("SELECT 9");
+    window.dispatchEvent(new Event("pagehide"));
+    expect(labels(tabs.dbClosedMenuItems())).toEqual(["SQL · SELECT 9", "-", "Clear the list"]);
+    dbSwapConn("c", () => false);
+    expect(labels(tabs.dbClosedMenuItems()).slice(0, 2)).toEqual(["SQL · SELECT 4", "SQL · SELECT 3"]);
+    pick(tabs.dbClosedMenuItems(), "Clear the list");
+    expect(tabs.dbClosedMenuItems()).toEqual([]);
+    dbSwapConn("d", () => false);
+    expect(labels(tabs.dbClosedMenuItems())[0], "Clear forgets this connection's alone").toBe("SQL · SELECT 9");
   });
 });
 

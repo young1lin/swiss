@@ -26,7 +26,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dbConn as dbConnState, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
+import { dbConn as dbConnState, dbTab, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
 import { tr } from "../src/i18n.js";
 import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 import { sheet } from "./styles.js";
@@ -56,6 +56,7 @@ const csv = await import("../src/data-csv.js");
 const edit = await import("../src/data-edit.js");
 const activity = await import("../src/data-activity.js");
 const browsers = await import("../src/data-browsers.js");
+const pubsub = await import("../src/data-pubsub.js");
 
 /** An open table with one row, the way a loaded /data page leaves it. */
 function openTable(editable: boolean, editNote?: string): DbTableTab {
@@ -158,18 +159,62 @@ describe("the segmented strips are seg() (SPEC §panel.pages: .db-tabs goes)", (
     expect(Array.from(sub.querySelectorAll("button")).map((b) => b.dataset.dtab)).toEqual(["columns", "indexes", "fks"]);
   });
 
-  it("a script's result tabs", () => {
+  /* The result tabs sit on the results' own bar, over their grid, each naming its statement on
+     hover - they sat in the head above the editor, away from the rows they switch. */
+  it("a script's result tabs, on the results bar", () => {
     const t = freshTab("sql") as DbSqlTab;
-    const r = { columns: ["n"], rows: [{ n: 1 }], rowCount: 1 };
-    t.sqlResults = [r, { ...r, tabLabel: "second" }];
+    const r = { columns: ["n"], rows: [{ n: 1 }], rowCount: 1, elapsedMs: 4, stmt: "SELECT 1 FROM orders" };
+    t.sqlResults = [r, { ...r, tabLabel: "second", stmt: "SELECT 2" }];
     t.sqlResult = r;
     t.resultTab = 0;
     dbTabs().length = 0;
     dbTabs().push(t);
     grid.renderDbToolbar();
+    grid.renderDbGrid();
     expect(document.querySelector(".db-tabs")).toBeNull();
-    const s = document.querySelector("#dbHead .seg")!;
+    expect(document.querySelector("#dbHead .seg"), "the head is the editor's").toBeNull();
+    const bar = document.getElementById("dbRbar")!;
+    expect(bar.hidden).toBe(false);
+    const s = bar.querySelector(".db-rtabs .seg")!;
     expect(Array.from(s.querySelectorAll("button")).map((b) => b.dataset.rtab)).toEqual(["0", "1"]);
+    expect(Array.from(s.querySelectorAll("button")).map((b) => b.title)).toEqual(["SELECT 1 FROM orders", "SELECT 2"]);
+    expect(bar.querySelector(".db-meta")!.textContent, "the facts once, on the bar").toContain("4 ms");
+    expect(document.getElementById("dbStatus")!.textContent).not.toContain("4 ms");
+    // One result: its kind names the bar; no result: no bar.
+    t.sqlResults = [r];
+    grid.renderDbGrid();
+    expect(bar.querySelector(".seg")).toBeNull();
+    expect(bar.querySelector("strong")!.textContent).toBe(tr("dataGrid.sqlResults"));
+    t.sqlResults = null;
+    t.sqlResult = null;
+    grid.renderDbGrid();
+    expect(bar.hidden).toBe(true);
+  });
+});
+
+/* Found by the owner on a result grid with rows checked: row 2's number showed through the
+   select-all corner (a hovered header painted the translucent --hover over nothing), and row 10's
+   box sat left of rows 3-9's (box and number were centred together, so "10" pushed its box out). */
+describe("a result grid's checkbox column holds still (a regression)", () => {
+  it("each box starts its cell, its number in a column of its own; the header paints opaque", () => {
+    const t = freshTab("sql") as DbSqlTab;
+    const r = { columns: ["n"], rows: Array.from({ length: 12 }, (_, i) => ({ n: i })), rowCount: 12 };
+    t.sqlResults = [r];
+    t.sqlResult = r;
+    dbTabs().length = 0;
+    dbTabs().push(t);
+    grid.renderDbGrid();
+    const cells = Array.from(document.querySelectorAll("#dbGridWrap .db-grid .db-rowctl"));
+    expect(cells).toHaveLength(13);
+    for (const c of cells) {
+      expect(Array.from(c.children).map((e) => e.className)).toEqual(["db-selbox", "db-rn"]);
+    }
+    expect(cells[0].querySelector(".db-rn")!.textContent).toBe("");
+    expect(cells[10].querySelector(".db-rn")!.textContent).toBe("10");
+    const css = sheet("views.css");
+    expect(css).toContain(".db-rn { display: inline-block; min-width: 3ch; text-align: right; }");
+    expect(css).toContain(".db-grid td.db-rowctl:has(> .db-selbox:first-child) { text-align: left; }");
+    expect(css).toContain(".db-grid thead th:not(.db-rowctl, .db-nosort):hover { background: linear-gradient(var(--hover), var(--hover)) var(--th); }");
   });
 });
 
@@ -235,18 +280,34 @@ describe("the activity monitor's own session is a tag (SPEC §panel.pages: .db-k
    return has fired on every mount and switch since. The same fold lost the rule that a Redis
    command has no plan and no SQL formatting: its overflow offered both. */
 describe("the connection's kind reaches the page (SPEC §data.tabs, a regression)", () => {
+  // The console's hint sits in its own head, so a console tab is open to read it.
+  const openConsole = (): void => {
+    dbTabs().length = 0;
+    dbTabs().push(freshTab("sql"));
+    grid.renderDbToolbar();
+  };
+
   it("a SQL connection shows the pane's ⋯ and the table grammar", () => {
     const more = document.getElementById("dbMore")!;
     expect(more.hidden, "the Activity door is open").toBe(false);
     expect((document.getElementById("dbGrep") as HTMLInputElement).placeholder).toBe("a*, b|c");
+    openConsole();
     expect(document.getElementById("dbSqlHint")!.textContent).toBe(tr("dataView.blankLineStartsNew"));
   });
 
-  it("a Redis connection hides it and speaks of keys and commands", () => {
+  /* A Redis connection has no sessions for the Activity monitor, so its ⋯ used to hide; it is
+     the Pub/Sub page's door now (SPEC §data.pubsub) - channels are not keys, and nothing else
+     on the page would show them. */
+  it("a Redis connection's ⋯ opens Pub/Sub, and the page speaks of keys and commands", () => {
     Object.assign(dbConnState(), { conns: [dbConn("demo-cache", "redis")], conn: "demo-cache" });
     view.renderDbView();
-    expect(document.getElementById("dbMore")!.hidden).toBe(true);
+    const more = document.getElementById("dbMore")!;
+    expect(more.hidden).toBe(false);
+    more.click();
+    const labels = Array.from(document.querySelectorAll("#menu button")).map((b) => b.textContent);
+    expect(labels).toEqual([tr("dataView.pubsub")]);
     expect((document.getElementById("dbGrep") as HTMLInputElement).placeholder).toBe(tr("dataView.filterKeys"));
+    openConsole();
     expect(document.getElementById("dbSqlHint")!.textContent).toBe(tr("dataView.redisConsoleHint"));
   });
 
@@ -377,6 +438,67 @@ describe("the cell editor's head names the row by its key (found on the P7-2 wal
   });
 });
 
+/* The owner, 2026-10-28: a JSON cell's editor showed its value in one flat colour. The sheet was
+   a bare textarea; it is now the console's layered editor (SPEC §panel.code), the text painted
+   in the library's token classes under a transparent textarea. */
+describe("the cell editor colours a JSON value (2026-10-28)", () => {
+  const open = async (orig: string): Promise<{ ta: HTMLTextAreaElement; hl: HTMLElement }> => {
+    const cell = await import("../src/data-cell.js");
+    openTable(true);
+    cell.dbOpenCellEditor("update", "[1]", -1, "name", { pk: { id: 1 }, orig });
+    return { ta: document.getElementById("dbCellText") as HTMLTextAreaElement, hl: document.getElementById("dbCellHl")! };
+  };
+  const spans = (hl: HTMLElement, cls: string): string[] => Array.from(hl.querySelectorAll("." + cls)).map((s) => s.textContent || "");
+
+  it("opens pretty-printed and painted: keys, strings, numbers, literals, the same text as the textarea", async () => {
+    const { ta, hl } = await open('{"a":1,"b":[true,null],"s":"x"}');
+    expect(ta.value).toBe(JSON.stringify({ a: 1, b: [true, null], s: "x" }, null, 2));
+    expect(ta.classList.contains("json")).toBe(true);
+    expect(hl.parentElement!.classList.contains("db-sql-wrap")).toBe(true);
+    expect(spans(hl, "jv-k")).toEqual(['"a"', '"b"', '"s"']);
+    expect(spans(hl, "jv-n")).toEqual(["1"]);
+    expect(spans(hl, "jv-l")).toEqual(["true", "null"]);
+    expect(spans(hl, "jv-s")).toEqual(['"x"']);
+    expect(hl.textContent).toBe(ta.value + "\n");
+  });
+
+  it("repaints as it is typed, a half-written value included", async () => {
+    const { ta, hl } = await open('{"a":1}');
+    ta.value = '{"k": "v", "n": 2';
+    ta.dispatchEvent(new Event("input"));
+    expect(spans(hl, "jv-k")).toEqual(['"k"', '"n"']);
+    expect(spans(hl, "jv-s")).toEqual(['"v"']);
+    expect(spans(hl, "jv-n")).toEqual(["2"]);
+    expect(hl.textContent).toBe(ta.value + "\n");
+  });
+
+  it("Format JSON repaints the formatted text", async () => {
+    const { ta, hl } = await open('{"a":1}');
+    ta.value = '{"z":[1,2]}';
+    (document.getElementById("dbCellJson") as HTMLButtonElement).click();
+    expect(ta.value).toBe('{\n  "z": [\n    1,\n    2\n  ]\n}');
+    expect(spans(hl, "jv-n")).toEqual(["1", "2"]);
+    expect(hl.textContent).toBe(ta.value + "\n");
+  });
+
+  it("plain text stays one plain run, and NULL dims the whole box", async () => {
+    const { ta, hl } = await open("true love, 42 times");
+    expect(hl.querySelector("span")).toBeNull();
+    expect(hl.textContent).toBe("true love, 42 times\n");
+    expect(ta.classList.contains("json")).toBe(false);
+    (document.getElementById("dbCellNull") as HTMLButtonElement).click();
+    expect(hl.parentElement!.style.opacity).toBe(".5");
+  });
+
+  it("views.css: the textarea is transparent over the <pre>, and both reserve the scrollbar's gutter", () => {
+    const css = sheet("views.css");
+    const rule = (sel: string): string => { const i = css.indexOf("\n    " + sel + " {"); expect(i, sel).toBeGreaterThan(-1); return css.slice(i, css.indexOf("}", i)); };
+    expect(rule(":is(#dbSql, #dbCellText)")).toContain("color: transparent");
+    expect(rule("#dbCellText")).toContain("position: relative");
+    expect(rule(".db-sql-face")).toContain("scrollbar-gutter: stable");
+  });
+});
+
 /* SPEC §panel.pages: renaming a key is the library's one-field sheet. The hand-built one closed
    before RENAME ran, so a refusal lost what was typed, and an empty name was a silent cancel. */
 describe("a Redis key's rename is the library's one-field sheet (SPEC §panel.pages)", () => {
@@ -503,7 +625,7 @@ describe("a key's own acts send the key's exact bytes (2026-09-29)", () => {
     dbTabs().push(freshTab("sql"));
     const keyTabs = (): number => dbTabs().filter((t) => t.kind === "key").length;
     view.renderDbTables();
-    const rows = Array.from(document.querySelectorAll<HTMLElement>("#dbTables .db-key-row"));
+    const rows = Array.from(document.querySelectorAll<HTMLElement>("#dbTables .db-key-row[data-rkey]"));
     const b = rows.find((r) => r.dataset.rkey === bin)!;
     expect(b.querySelector(".db-table-name")!.textContent).toBe(bin);
     expect(b.querySelector(".db-table-meta")!.textContent).toBe(tr("dataView.binaryKeyMeta"));
@@ -512,6 +634,38 @@ describe("a key's own acts send the key's exact bytes (2026-09-29)", () => {
     expect(document.getElementById("toast")!.textContent).toBe(tr("dataView.binaryKeyTitle"));
     rows.find((r) => r.dataset.rkey === "plain")!.click();
     expect(keyTabs(), "while a UTF-8 row still opens its tab").toBe(1);
+  });
+
+  it("the tree's first row is Pub/Sub - channels are no keys - and it opens the page, marked while in front", async () => {
+    Object.assign(dbConnState(), {
+      conns: [dbConn("demo-cache", "redis")], conn: "demo-cache",
+      redis: { keys: [], cursor: "0", done: true, total: 0 },
+    });
+    dbTabs().length = 0;
+    dbTabs().push(freshTab("sql"));
+    view.renderDbTables();
+    const first = document.querySelector<HTMLElement>("#dbTables")!.firstElementChild as HTMLElement;
+    expect(first.matches(".db-pubsub-row[data-dbpubsub]"), "even over an empty keyspace").toBe(true);
+    expect(first.dataset.rkey, "it addresses no key").toBeUndefined();
+    expect(first.querySelector(".db-table-name")!.textContent).toBe(tr("dataTabs.pubsub"));
+    expect(first.querySelector(".db-table-meta")!.textContent).toBe(tr("dataView.pubsubRowMeta"));
+    expect(first.classList.contains("sel")).toBe(false);
+    const ok = globalThis.fetch;
+    const listing = { pattern: "*", channels: [], total: 0, truncated: false, patterns: 0 };
+    Object.assign(globalThis, { fetch: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(listing) }) });
+    try {
+      first.click();
+      expect(dbTab().kind).toBe("pubsub");
+      view.renderDbTables();
+      expect(document.querySelector("#dbTables .db-pubsub-row")!.classList.contains("sel")).toBe(true);
+      await new Promise((r) => { setTimeout(r, 0); });
+    } finally {
+      Object.assign(globalThis, { fetch: ok });
+    }
+    // A SQL connection's tree has no such row.
+    Object.assign(dbConnState(), { conns: [dbConn("demo-pg", "pg")], conn: "demo-pg", tables: [] });
+    view.renderDbTables();
+    expect(document.querySelector("#dbTables .db-pubsub-row")).toBeNull();
   });
 
   it("Delete says so when the key was already gone (DEL answered 0)", async () => {
@@ -656,7 +810,8 @@ describe("a Redis key's ⋯ offers every act on the key, one press away", () => 
 
   it("names the TTL, the rename and the delete without a submenu", () => {
     openKeyHead();
-    expect(labels()).toEqual(["Set the TTL…", "Rename…", "Delete…", "Command"]);
+    // The pane's own row closes it: one ⋯ per head (SPEC §panel.pages, §data.pubsub).
+    expect(labels()).toEqual(["Set the TTL…", "Rename…", "Delete…", "Command", "Pub/Sub…"]);
     expect(labels().some((l) => /Rename or delete/.test(l)), "no nested door").toBe(false);
   });
 
@@ -789,7 +944,7 @@ describe("a key's TTL is one live countdown, top-right (2026-09-28)", () => {
       redis: { keys: [{ key: "test223", type: "string", ttl: 95 }], cursor: "0", done: true, total: 1 },
     });
     view.renderDbTables();
-    const row = document.querySelector("#dbTables .db-key-row")!;
+    const row = document.querySelector("#dbTables .db-key-row[data-rkey]")!;
     expect(row.querySelector(".db-table-meta")!.textContent, "the type alone").toBe("string");
     expect((row as HTMLElement).title).toBe("test223 · string");
   });
@@ -850,5 +1005,142 @@ describe("a key's TTL is one live countdown, top-right (2026-09-28)", () => {
     // number than the key ever had: the readout is capped by what was read.
     openKey(30, Date.now() + 5_000);
     expect(document.querySelector("#dbHead [data-rttl]")!.textContent, "capped by what was read").toBe("30s");
+  });
+});
+
+/* SPEC §data.pubsub: the Pub/Sub page on a real DOM, drawn with the library alone - the channels
+   that have a subscriber in the aside, a channel already watched offering no second Watch, the
+   watch set as buttons that let a name go, and the log as the panel's event list, newest on top,
+   a row opening on its summary to show the payload and the pattern that matched it. */
+describe("the Pub/Sub page", () => {
+  function openPubsub(): import("../src/types/state.js").DbPubsubTab {
+    Object.assign(dbConnState(), { conns: [dbConn("demo-cache", "redis")], conn: "demo-cache" });
+    const t = freshTab("pubsub");
+    t.channels = {
+      pattern: "*", total: 2, truncated: false, patterns: 1,
+      channels: [{ name: "orders.created", subscribers: 3 }, { name: "ÿ", binary: true, subscribers: 1 }],
+    };
+    t.watchChannels = ["orders.created"];
+    t.watchPatterns = ["news.*"];
+    t.log = [
+      { line: "note", seq: 1, label: tr("dataPubsub.evListening"), text: "orders.created, news.*", at: Date.now() },
+      { line: "message", seq: 2, event: "message", channel: "news.eu", pattern: "news.*", payload: "hello world", size: 11, at: Date.now() },
+    ];
+    dbTabs().length = 0;
+    dbTabs().push(t);
+    grid.renderDbToolbar();
+    grid.renderDbGrid();
+    return t;
+  }
+
+  it("lists the channels with their subscribers and watches each at most once", () => {
+    openPubsub();
+    expect(document.querySelector("#dbGridWrap .split-aside #dbPsChannels"), "the listing is the aside").not.toBeNull();
+    const rows = Array.from(document.querySelectorAll("#dbPsChannels tbody tr"));
+    expect(rows.map((r) => r.querySelector("td.tnum")!.textContent)).toEqual(["3", "1"]);
+    const watch = rows.map((r) => r.querySelector<HTMLButtonElement>("[data-ps='watch']")!);
+    expect(watch[0].disabled, "already watched").toBe(true);
+    expect(watch[1].disabled, "a binary name subscribes to nothing").toBe(true);
+    expect(document.querySelector("#dbPsChannels")!.textContent).toContain(tr("dataPubsub.numpat.one", { n: 1 }));
+  });
+
+  it("shows the watch set as buttons and the log newest first, a row opening on its summary", () => {
+    openPubsub();
+    const chips = Array.from(document.querySelectorAll<HTMLElement>("#dbPsWatch [data-ps='unwatch']"));
+    expect(chips.map((c) => c.textContent)).toEqual(["orders.created", "news.*"]);
+    expect(chips.map((c) => c.dataset.psside)).toEqual(["channel", "pattern"]);
+    expect(document.querySelector("#dbPsWatch [data-ps='all']"), "a watch set already holds names").toBeNull();
+    const rows = Array.from(document.querySelectorAll<HTMLElement>("#dbPsLog .tl-item"));
+    expect(rows.map((r) => r.dataset.tlId)).toEqual(["2", "1"]);
+    expect(rows[0].querySelector(".tl-title")!.textContent).toBe("news.eu");
+    expect(rows[1].querySelector(".tl-title")!.textContent).toBe(tr("dataPubsub.evListening"));
+    expect(rows[0].querySelector(".tl-body"), "closed until clicked").toBeNull();
+    rows[0].querySelector<HTMLElement>(".tl-sum")!.click();
+    const body = document.querySelector("#dbPsLog .tl-item.open .tl-body")!;
+    expect(body.textContent).toContain("hello world");
+    expect(body.textContent).toContain(tr("dataPubsub.via", { pattern: "news.*" }));
+    // The poll's repaint keeps the row the reader opened.
+    grid.renderDbGrid();
+    expect(document.querySelector<HTMLElement>("#dbPsLog .tl-item.open")!.dataset.tlId).toBe("2");
+  });
+
+  it("offers the names watched here before, a click watching one again and moving it to the front", () => {
+    localStorage.setItem("swiss.pubsubRecent", JSON.stringify({
+      "demo-cache": ["news.*", "quotes.tick", "orders.created", "user:?"],
+      "other-conn": ["elsewhere"],
+    }));
+    const t = openPubsub();
+    const recent = (): string[] => {
+      return Array.from(document.querySelectorAll<HTMLElement>("#dbPsWatch [data-ps='recent']")).map((b) => b.textContent);
+    };
+    expect(recent(), "a name in the watch set is not offered again, another connection's never").toEqual(["quotes.tick", "user:?"]);
+    document.querySelector<HTMLElement>("#dbPsWatch [data-ps='recent'][data-psname='user:?']")!.click();
+    expect(t.watchPatterns, "a glob name goes on the pattern side").toEqual(["news.*", "user:?"]);
+    expect(Array.from(document.querySelectorAll<HTMLElement>("#dbPsWatch [data-ps='unwatch']")).map((c) => c.textContent))
+      .toEqual(["orders.created", "news.*", "user:?"]);
+    expect(recent()).toEqual(["quotes.tick"]);
+    const kept = JSON.parse(localStorage.getItem("swiss.pubsubRecent")!) as Record<string, string[]>;
+    expect(kept["demo-cache"]).toEqual(["user:?", "news.*", "quotes.tick", "orders.created"]);
+    expect(kept["other-conn"]).toEqual(["elsewhere"]);
+    // Letting a name go puts it back among the recent ones.
+    document.querySelector<HTMLElement>("#dbPsWatch [data-ps='unwatch'][data-psname='orders.created']")!.click();
+    expect(recent()).toEqual(["quotes.tick", "orders.created"]);
+    unmountDbView();
+    localStorage.removeItem("swiss.pubsubRecent");
+  });
+
+  it("an open message copies its channel and payload and can become the one channel watched", async () => {
+    const wrote: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: (s: string) => { wrote.push(s); return Promise.resolve(); } } });
+    const t = openPubsub();
+    // An earlier case may have left the row open: the open set outlives a repaint by design.
+    if (!document.querySelector("#dbPsLog .tl-item.open[data-tl-id='2']")) {
+      document.querySelector<HTMLElement>("#dbPsLog .tl-item[data-tl-id='2'] .tl-sum")!.click();
+    }
+    const body = (): Element => { return document.querySelector("#dbPsLog .tl-item[data-tl-id='2'] .tl-body")!; };
+    // The channel is text in the body, where it can be selected - the summary is a button.
+    expect(body().querySelector(".tl-meta")!.textContent!.startsWith("news.eu")).toBe(true);
+    body().querySelector<HTMLElement>("[data-ps='copych']")!.click();
+    body().querySelector<HTMLElement>("[data-ps='copymsg']")!.click();
+    await Promise.resolve();
+    expect(wrote).toEqual(["news.eu", "hello world"]);
+    const only = body().querySelector<HTMLButtonElement>("[data-ps='only']")!;
+    expect(only.disabled).toBe(false);
+    only.click();
+    expect([t.watchChannels, t.watchPatterns]).toEqual([["news.eu"], []]);
+    expect(Array.from(document.querySelectorAll<HTMLElement>("#dbPsWatch [data-ps='unwatch']")).map((c) => c.textContent)).toEqual(["news.eu"]);
+    grid.renderDbGrid();
+    expect(body().querySelector<HTMLButtonElement>("[data-ps='only']")!.disabled, "already the one channel watched").toBe(true);
+    unmountDbView();
+    localStorage.removeItem("swiss.pubsubRecent");
+    delete (navigator as unknown as Record<string, unknown>).clipboard;
+  });
+
+  it("names the watched * and says when a channel arrives twice", () => {
+    const t = openPubsub();
+    t.watchPatterns = ["*"];
+    grid.renderDbGrid();
+    const chips = Array.from(document.querySelectorAll<HTMLElement>("#dbPsWatch [data-ps='unwatch']"));
+    expect(chips.map((c) => c.textContent)).toEqual(["orders.created", tr("dataPubsub.everything")]);
+    expect(chips[1].dataset.psname).toBe("*");
+    expect(document.querySelector("#dbPsWatch")!.textContent).toContain(tr("dataPubsub.watching"));
+    expect(document.querySelector<HTMLElement>("#dbPsWatch [data-pstwice]")!.dataset.pstwice).toBe("orders.created");
+    t.watchPatterns = ["news.*"];
+    grid.renderDbGrid();
+    expect(document.querySelector("#dbPsWatch [data-pstwice]"), "news.* does not match orders.created").toBeNull();
+  });
+
+  it("holds the log's repaint while text in it is selected", () => {
+    openPubsub();
+    const log = document.getElementById("dbPsLog")!;
+    expect(pubsub.dbPubsubLogBusy(log)).toBe(false);
+    const range = document.createRange();
+    range.selectNodeContents(log.querySelector(".tl-title")!);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    expect(pubsub.dbPubsubLogBusy(log)).toBe(true);
+    sel.removeAllRanges();
+    expect(pubsub.dbPubsubLogBusy(log)).toBe(false);
   });
 });

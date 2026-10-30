@@ -14,15 +14,18 @@
  * limitations under the License.
  */
 
-import type { DbConnState, DbFilterTerm, DbTab, DbTableTab, DbTabSpec } from "./types/state.js";
+import type { DbConnState, DbFilterTerm, DbSqlTab, DbTab, DbTableTab, DbTabSpec } from "./types/state.js";
 import type { MenuItem } from "./types/dom.js";
 import type { ApiDbDatabase } from "./types/api.js";
 import { $, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
-import { dbActiveIndex, dbConn, dbIsMounted, dbResetTabs, dbSetActive, dbTab, dbTabs, freshTab } from "./db-state.js";
+import { dbActiveIndex, dbConn, dbIsMounted, dbParkedNames, dbParkedTabs, dbResetTabs, dbSetActive, dbSqlTab, dbTab, dbTabs, freshTab } from "./db-state.js";
+import { dbClosedClear, dbClosedFor, dbClosedRemember, dbClosedTake } from "./data-closed.js";
+import type { DbClosedTab } from "./data-closed.js";
 import { dbIsRedis, dbLoadRedisValue } from "./data-browsers.js";
 import { dbIsMongo, mongoAfterTabSwitch, mongoCurrentDb } from "./data-mongo.js";
 import { dbActivityPollStop, dbActivityStart } from "./data-activity.js";
+import { dbPubsubStart, dbPubsubStop } from "./data-pubsub.js";
 import { dbRestoreData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { renderDbBar } from "./data-sql.js";
@@ -158,8 +161,8 @@ function dbFiltersSame(a: DbFilterTerm[], b: DbFilterTerm[]): boolean {
  *    Anything else and it would rewrite the filter the operator is reading, which is the
  *    regression this whole tier exists to end (SPEC §data.grid).
  *
- *  A console and an activity monitor have no address: there is one of each per connection, so a
- *  second open activates the first. Pure. */
+ *  A console, an activity monitor and a pub/sub page have no address: there is one of each per
+ *  connection, so a second open activates the first. Pure. */
 function dbTabMatches(t: DbTab, spec: DbTabSpec): boolean {
   if (t.kind !== spec.kind) return false;
   if (t.kind === "table" && spec.kind === "table") {
@@ -189,6 +192,7 @@ function dbTabTitle(t: DbTab): string {
   // placeholder has always said so (SET k v · GET k …), and a card reading "SQL" over it was the
   // one label on the strip that named something the tab cannot do.
   if (t.kind === "sql") return tr(dbConsoleSpeaksCommands() ? "dataTabs.command" : "dataTabs.sql");
+  if (t.kind === "pubsub") return tr("dataTabs.pubsub");
   return tr("dataTabs.activity");
 }
 
@@ -204,6 +208,7 @@ function dbTabGlyph(t: DbTab): string {
   }
   if (t.kind === "coll") return "braces";
   if (t.kind === "sql") return "terminal";
+  if (t.kind === "pubsub") return "activity";
   return "clock";
 }
 
@@ -320,10 +325,11 @@ function renderDbTabs(): void {
   fill(strip, scroller,
     h("div", { class: "db-tabstrip-end" },
       // The overflow menu is the one place the whole set stays visible once the strip scrolls
-      // (SPEC §data.tabs): every open object, then the browser's bulk-close idioms. Nothing is
-      // open yet → nothing to list → the button is not offered.
+      // (SPEC §data.tabs): every open object, then the consoles closed on this connection and
+      // the browser's bulk-close idioms. Nothing open and nothing closed → nothing to list → the
+      // button is not offered.
       h("button", {
-        class: "db-tab-more", type: "button", hidden: !shown,
+        class: "db-tab-more", type: "button", hidden: !shown && !dbClosedFor(dbConn().conn).length,
         title: tr("dataTabs.openObjects"), aria: { haspopup: "menu" }, data: { dbtabmenu: "" },
       }, iconNode("chevron-down")),
       // The console opens from the strip's own end: it is an object like the rest, and the one
@@ -432,8 +438,9 @@ function dbTabsContext(t: Element, ev: MouseEvent): boolean {
 /** The overflow menu's rows (SPEC §data.tabs): one per open object, in strip order, the
  *  current one ticked — the strip's whole set in one place that never scrolls away. The type
  *  glyph and the dirty dot ride the row so the menu also answers "which of these is holding
- *  my work" without opening anything. Behind a separator sit the bulk closes; the
- *  destructive one is last and red (rule 4). */
+ *  my work" without opening anything. Behind a separator sit Recently closed (the consoles
+ *  closed on this connection, a row opening their list) and the bulk closes; the destructive
+ *  one is last and red (rule 4). */
 function dbTabsMenuItems(): MenuItem[] {
   const tabs = dbTabs();
   const active = dbActiveIndex();
@@ -449,8 +456,18 @@ function dbTabsMenuItems(): MenuItem[] {
       fn: (): void => { dbActivateTab(i); },
     });
   });
-  if (!items.length) return items;
+  const closed = dbClosedFor(dbConn().conn);
+  const recent: MenuItem | null = closed.length ? {
+    label: tr("dataTabs.recentlyClosed"), title: trn(closed.length, "dataTabs.nClosed.one", "dataTabs.nClosed.other"), affordance: "chevron-right",
+    fn: (): void => {
+      const at = document.querySelector<HTMLElement>("#dbTabStrip [data-dbtabmenu]");
+      const rows = dbClosedMenuItems();
+      if (at && rows.length) popupMenu(at.getBoundingClientRect(), rows, rows.length > 9 ? { filter: tr("dataTabs.findClosed") } : undefined);
+    },
+  } : null;
+  if (!items.length) return recent ? [recent] : items;
   items.push({ sep: true });
+  if (recent) items.push(recent);
   if (tabs.filter(dbTabVisible).length > 1) {
     items.push({ label: tr("dataTabs.closeOthers"), fn: dbCloseOthers });
   }
@@ -460,6 +477,67 @@ function dbTabsMenuItems(): MenuItem[] {
   items.push({ label: tr("dataTabs.closeAll"), danger: true, fn: dbCloseAllTabs });
   return items;
 }
+
+/** A closed console's row: its name and its first line, the text itself one hover away. */
+function dbClosedLabel(e: DbClosedTab): string {
+  const line = (e.text.split("\n").find((l: string): boolean => !!l.trim()) || "").trim();
+  const name = e.custom || tr(dbConsoleSpeaksCommands() ? "dataTabs.command" : "dataTabs.sql");
+  return name + " · " + (line.length > 48 ? line.slice(0, 47) + "…" : line);
+}
+
+/** Recently closed's list (SPEC §data.tabs): the connection's closed consoles, newest first, each
+ *  brought back by a click; Clear forgets them. */
+function dbClosedMenuItems(): MenuItem[] {
+  const closed = dbClosedFor(dbConn().conn);
+  if (!closed.length) return [];
+  const rows: MenuItem[] = closed.map((e: DbClosedTab): MenuItem => ({
+    label: dbClosedLabel(e), title: e.text.length > 400 ? e.text.slice(0, 399) + "…" : e.text, icon: "terminal",
+    fn: (): void => { dbRestoreClosed(e.id); },
+  }));
+  rows.push({ sep: true });
+  rows.push({ label: tr("dataTabs.clearClosed"), danger: true, fn: (): void => { const c = dbConn().conn; if (c) dbClosedClear(c); renderDbTabs(); } });
+  return rows;
+}
+
+/** Bring a closed console back as a new tab in front: its text and its name, and - while no open
+ *  tab is the agent's of that name - the agent's again, so its next run lands there. */
+function dbRestoreClosed(id: string): void {
+  const e = dbClosedTake(id);
+  if (!e) { renderDbTabs(); return; }
+  dbOpenTabForce({ kind: "sql" });
+  const t = dbSqlTab();
+  if (!t) return;
+  t.sqlText = e.text;
+  if (e.custom) t.custom = e.custom;
+  const name = e.agentTab || "";
+  if (e.agent && !dbTabs().some((x: DbTab): boolean => x !== t && x.kind === "sql" && x.agent === true && (x.agentTab || "") === name)) {
+    t.agent = true;
+    if (name) t.agentTab = name;
+  }
+  dbAfterTabSwitch();
+}
+
+/** File the consoles among these tabs, about to close on the live connection (data-closed.ts). */
+function dbFileClosed(gone: DbTab[]): void {
+  const conn = dbConn().conn;
+  if (!conn) return;
+  dbClosedRemember(gone.filter((t: DbTab): t is DbSqlTab => t.kind === "sql").map((tab: DbSqlTab) => ({ conn, tab })));
+}
+
+/* A page reload or a closed browser tab takes every console with it: each one with text, the
+   parked sessions' too, is filed as closed on its way out, so the next visit brings it back. */
+function dbFileClosedOnLeave(): void {
+  const gone: { conn: string; tab: DbSqlTab }[] = [];
+  const live = dbConn().conn;
+  if (live) for (const t of dbTabs()) if (t.kind === "sql") gone.push({ conn: live, tab: t });
+  const names = dbParkedNames();
+  dbParkedTabs().forEach((strip: DbTab[], i: number): void => {
+    for (const t of strip) if (t.kind === "sql") gone.push({ conn: names[i], tab: t });
+  });
+  dbClosedRemember(gone);
+}
+// A node test has no window, or a stand-in (globalThis) with no events to listen to.
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("pagehide", dbFileClosedOnLeave);
 
 /** Close a set of tabs by index, asking ONCE when any of them holds work (SPEC §data.tabs).
  *  A single × names the one object it drops; a bulk close asks the one question the operator
@@ -473,8 +551,10 @@ function dbCloseBatch(ix: number[]): void {
   if (pending && !confirm(tr("dataTabs.closeDiscardsBatch", {
     n: trn(pending, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other"),
   }))) return;
+  dbFileClosed(targets.map((i: number): DbTab => tabs[i]));
   targets.forEach((i: number): void => {
     if (tabs[i].kind === "activity") dbActivityPollStop();
+    if (tabs[i].kind === "pubsub") dbPubsubStop();
   });
   const gone = new Set(targets);
   const live = dbTab();
@@ -596,6 +676,7 @@ function dbBuildTab(spec: DbTabSpec): DbTab {
     return t;
   }
   if (spec.kind === "sql") return freshTab("sql");
+  if (spec.kind === "pubsub") return freshTab("pubsub");
   return freshTab("activity");
 }
 
@@ -696,7 +777,9 @@ function dbCloseTab(i: number): void {
     name: dbTabTitle(t),
     n: trn(n, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other"),
   }))) return;
+  dbFileClosed([t]);
   if (t.kind === "activity") dbActivityPollStop();
+  if (t.kind === "pubsub") dbPubsubStop();
   const active = dbActiveIndex();
   const next = tabs.filter((_: DbTab, j: number): boolean => { return j !== i; });
   let idx = active;
@@ -719,8 +802,11 @@ function dbCycleTab(back: boolean): void {
  *  browses keys, a MongoDB one collections, everything else tables). The page size carries
  *  across, the same preference the single record never reset either. */
 function dbResetTabsForConn(): void {
+  // A database switch drops the strip: its consoles are filed as closed, to bring back.
+  dbFileClosed(dbTabs());
   const keep = dbLastTableTab();
   dbActivityPollStop();
+  dbPubsubStop();
   const next = dbHomeTab();
   if (next.kind === "table" && keep) next.pageSize = keep.pageSize;
   dbResetTabs([next], 0);
@@ -734,6 +820,8 @@ function dbLeaveTab(t: DbTab): void {
   if (t.kind === "table" && t.table) t.data = null;
   if (t.kind === "coll" && t.coll) t.docs = null;
   if (t.kind === "activity") dbActivityPollStop();
+  // A pub/sub page in the background holds no subscription (SPEC §data.pubsub).
+  if (t.kind === "pubsub") dbPubsubStop();
 }
 
 /** Everything the pane owes a new active tab: the console's text, the chrome, the grid, and the
@@ -760,6 +848,7 @@ function dbAfterTabSwitch(byKeyboard?: boolean): void {
   // The 5s poll follows "is that tab active" (SPEC §data.tabs): a backgrounded monitor stops
   // asking the server about sessions nobody is looking at.
   if (t.kind === "activity") dbActivityStart();
+  if (t.kind === "pubsub") dbPubsubStart();
   // Landing on a console by pointer means "I am going to type here"; landing on it mid-walk
   // does not. Taking the caret on the keyboard path turned the arrows into a one-way trip:
   // the next ArrowLeft moved the textarea's caret instead of the strip (found live, T2 walk).
@@ -767,9 +856,9 @@ function dbAfterTabSwitch(byKeyboard?: boolean): void {
 }
 
 export {
-  DB_TAB_MAX, dbActivateTab, dbAfterTabSwitch, dbCloseAllTabs, dbCloseBatch, dbCloseToLeft, dbCloseOthers,
+  DB_TAB_MAX, dbActivateTab, dbAfterTabSwitch, dbClosedMenuItems, dbCloseAllTabs, dbCloseBatch, dbCloseToLeft, dbCloseOthers,
   dbCloseTab, dbCloseToRight, dbCycleTab, dbDropTableTabs, dbEvictTarget, dbFiltersSame, dbLastTableTab,
-  dbOpenTab, dbOpenTabForce, dbResetTabsForConn, dbTabCardTitle, dbTabGlyph, dbTabMatches, dbTabPending,
+  dbOpenTab, dbOpenTabForce, dbResetTabsForConn, dbRestoreClosed, dbTabCardTitle, dbTabGlyph, dbTabMatches, dbTabPending,
   dbTabPlaceholder, dbTabsAuxClick, dbTabsClick, dbTabsContext, dbTabsMenuItems, dbTabsPending,
   dbTabTitle, dbTabVisible, dbTabEvictable, renderDbTabs,
 };

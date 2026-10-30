@@ -277,7 +277,7 @@ function loadPipeline(t: DbCollTab, text: string): void {
 
 /* --- schema ----------------------------------------------------------------------------------------- */
 
-async function mongoSchemaRun(t: DbCollTab): Promise<void> {
+export async function mongoSchemaRun(t: DbCollTab): Promise<void> {
   const q = mongoQueryOf(t);
   t.schemaBusy = true;
   renderDbGrid();

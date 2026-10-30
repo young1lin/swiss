@@ -21,7 +21,7 @@ import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from 
 import {
   DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbRedisDeleteKey, dbRedisRenameKey, dbRedisTtl, dbRedisTtlSheet, dbRenderRedisValue,
 } from "./data-browsers.js";
-import { REDIS_TEMPLATES } from "./data-suggest.js";
+import { REDIS_TEMPLATES, dbSuggestHide } from "./data-suggest.js";
 // The MongoDB workspace paints its own head, body and status (SPEC §data.mongo-panel); the cycle
 // back into this module (renderDbGrid, renderDbToolbar) is only ever crossed inside functions.
 import {
@@ -29,20 +29,26 @@ import {
 } from "./data-mongo.js";
 import { dbKeyShown } from "./data-tree.js";
 import { dbActivityLoad, dbActivityRender } from "./data-activity.js";
+import { dbPubsubClear, dbPubsubForget, dbPubsubRender } from "./data-pubsub.js";
 import { dbCloseAllTabs, dbOpenTab } from "./data-tabs.js";
 import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText, dbCellView } from "./data-cell.js";
 import { dbEditCellEnter, dbTableMenu } from "./data-edit.js";
 import { renderDbFilters, dbSqlPaint } from "./data-filters.js";
-import { dbFavPush, dbFillConsole, dbFormatSql, dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
+import { DB_ROW_LIMITS, dbFavPush, dbFillConsole, dbFormatSql, dbRowLimit, dbRunSql, dbSetRowLimit, dbStatsSql, renderDbBar } from "./data-sql.js";
+import { dbHistoryEnsure, dbHistoryOpen, dbHistoryRecent } from "./data-history.js";
+import {
+  DB_COL_MAX, DB_COL_MIN, dbColFinder, dbColGrip, dbColReveal, dbColWidth, dbResultColsSig, dbResultWidthSave, dbResultWidths,
+} from "./data-columns.js";
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
 import { renderDbFormView } from "./data-form.js";
 import { h } from "./h.js";
-import { DB_PAGE_SIZES, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbResultKey } from "./data-view.js";
+import { DB_PAGE_SIZES, dbDialectOf, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbResultKey } from "./data-view.js";
 import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
 import { btn, iconBtn, moreBtn } from "./ui/button.js";
 import { popupMenu } from "./ui/menu.js";
+import { dockShow } from "./ui/dock.js";
 import { seg } from "./ui/seg.js";
 
 /* --- one page of rows --------------------------------------------------------------------------- */
@@ -52,10 +58,9 @@ import { seg } from "./ui/seg.js";
    here is ONE localStorage object per connection+table holding the widths the user dragged and
    the columns they hid. The helpers are pure (or storage-only) so the key format, the parse's
    tolerance of a corrupt entry and the clamp pin without a DOM. The grid reloads the config on
-   every page load — a rename or a second tab's change is picked up, never cached stale. */
+   every page load — a rename or a second tab's change is picked up, never cached stale. The
+   clamp (DB_COL_MIN..DB_COL_MAX) and the grip are data-columns.ts's, shared with the results. */
 const DB_GRID_PREFIX = "swiss.dbGrid.";
-const DB_COL_MIN = 48;  // narrower than the header's own name line and nothing reads
-const DB_COL_MAX = 1200; // wider than the grid itself — a runaway drag helps nobody
 
 function dbGridConfigKey(conn: string, schema: string, table: string): string {
   return DB_GRID_PREFIX + conn + "_" + (schema ? schema + "." : "") + table;
@@ -130,36 +135,37 @@ function dbShowAllColumns(): void {
   renderDbGrid();
 }
 
-/** Drag the column's right edge: width follows the pointer live across every cell of the
- *  column (cells captured at drag start — no repaint per mousemove), and the config is
- *  written once on release. The handle owns mousedown/click (stopPropagation) so a drag never
- *  sorts the column it is resizing. Each cell gets width AND maxWidth — under
- *  table-layout: auto a width alone is only a hint the nowrap content outvotes. */
-function dbColResizeStart(e: MouseEvent, name: string, th: HTMLElement, cells: HTMLElement[]): void {
-  e.preventDefault();
-  e.stopPropagation();
+/** A table column's width, dragged or fitted on its grip: into the config and through to storage. */
+function dbColWidthSave(name: string, w: number): void {
   const c = dbConn();
-  const startX = e.clientX;
-  const startW = th.getBoundingClientRect().width;
-  let lastW = startW;
-  function move(ev: MouseEvent): void {
-    lastW = Math.max(DB_COL_MIN, Math.min(DB_COL_MAX, Math.round(startW + ev.clientX - startX)));
-    for (let i = 0; i < cells.length; i++) {
-      cells[i].style.width = lastW + "px";
-      cells[i].style.maxWidth = lastW + "px";
-    }
-  }
-  function up(): void {
-    document.removeEventListener("mousemove", move);
-    document.removeEventListener("mouseup", up);
-    if (lastW !== Math.round(startW)) {
-      c.gridCfg.widths[name] = lastW;
-      const key = dbGridKeyNow();
-      if (key) dbGridConfigSave(key, c.gridCfg);
-    }
-  }
-  document.addEventListener("mousemove", move);
-  document.addEventListener("mouseup", up);
+  c.gridCfg.widths[name] = w;
+  const key = dbGridKeyNow();
+  if (key) dbGridConfigSave(key, c.gridCfg);
+}
+
+/** The table's column finder (the ⋯'s Find a column): it lists every column of the table, hidden
+ *  or not; a visible one is brought into sight, a hidden one is shown again first. */
+function dbTableColumnFinder(anchor: HTMLElement, tt: DbTableTab): void {
+  const c = dbConn();
+  const cols = tt.data ? tt.data.columns : [];
+  const thOf = (name: string): HTMLElement | undefined => {
+    const ths = document.querySelectorAll<HTMLElement>("#dbGridWrap thead th[data-sort]");
+    return Array.from(ths).find((th) => th.dataset.sort === name);
+  };
+  dbColFinder(anchor, cols.map((col: ApiDbColumn) => ({
+    name: col.name,
+    hidden: c.gridCfg.hidden.includes(col.name),
+    go: (): void => {
+      if (c.gridCfg.hidden.includes(col.name)) {
+        c.gridCfg.hidden = c.gridCfg.hidden.filter((x: string): boolean => { return x !== col.name; });
+        const key = dbGridKeyNow();
+        if (key) dbGridConfigSave(key, c.gridCfg);
+        renderDbGrid();
+      }
+      const th = thOf(col.name);
+      if (th) dbColReveal(th);
+    },
+  })));
 }
 
 /* --- keyboard navigation + TSV paste (SPEC §data.grid) --------------------------------------------- */
@@ -520,6 +526,7 @@ function dbMoreItemsForTable(more: HTMLElement, tt: DbTableTab): MenuItem[] {
     { label: tr("dataGrid.csv"), title: tr("dataGrid.downloadCurrentPageCsv"), fn: (): void => { dbExportCsv(); } },
   ];
   if (tt.data) {
+    items.push({ label: tr("dataGrid.findColumn"), title: tr("dataGrid.findColumnTip"), fn: (): void => { dbTableColumnFinder(more, tt); } });
     items.push({ sep: true });
     items.push({ heading: true, label: tr("dataGrid.exportWholeTableCsv"), fn: (): void => {} });
     items.push({ label: tr("dataGrid.exportCsv"), fn: (): void => { void dbExportTable(more as HTMLButtonElement, "csv"); } });
@@ -540,17 +547,22 @@ function dbMoreItemsForTable(more: HTMLElement, tt: DbTableTab): MenuItem[] {
   return dbWithActivity(items);
 }
 
-/** One ⋯ per head (SPEC §panel.pages): on a SQL connection the open object's overflow ends with the
- *  pane's own action, the Activity monitor, so the pane's ⋯ never stands beside it. */
+/** One ⋯ per head (SPEC §panel.pages): the open object's overflow ends with the pane's own action -
+ *  the Activity monitor, or on a redis connection (no sessions there) the Pub/Sub page (SPEC
+ *  §data.pubsub) - so the pane's ⋯ never stands beside it. */
 function dbWithActivity(items: MenuItem[]): MenuItem[] {
-  if (dbIsRedis()) return items;
   items.push({ sep: true });
-  items.push({ label: tr("dataView.activity"), fn: (): void => { dbOpenTab({ kind: "activity" }); } });
+  if (dbIsRedis()) {
+    items.push({ label: tr("dataView.pubsub"), fn: (): void => { dbOpenTab({ kind: "pubsub" }); } });
+  } else {
+    items.push({ label: tr("dataView.activity"), fn: (): void => { dbOpenTab({ kind: "activity" }); } });
+  }
   return items;
 }
 
 /** The overflow items for a SQL tab: the secondary run modes, the formatter, favorites and
- *  history — everything the console's old flat row carried, one hover deep. A Redis command
+ *  this database's history (SPEC §data.history) — everything the console's old flat row
+ *  carried, one hover deep. A Redis command
  *  has no plan and SQL formatting has nothing to say about it (SPEC §data.console), so its console
  *  gets neither: the old flat row hid both buttons, and the fold into this menu had dropped
  *  that until SPEC §panel.pages. */
@@ -559,16 +571,17 @@ function dbMoreItemsForSql(): MenuItem[] {
   const d = dbConn();
   // A MongoDB command has no plan from here (the Explain pane has it) but does format.
   const items: MenuItem[] = dbIsRedis() ? [] : dbIsMongo() ? [
-    { label: tr("dataView.format"), fn: (): void => { dbSqlFormatNow(); } },
+    { label: tr("dataView.format"), title: tr("dataView.formatKeys"), fn: (): void => { dbSqlFormatNow(); } },
   ] : [
     { label: tr("dataView.explain"), fn: (): void => { void dbRunSql("plan"); } },
     { label: tr("dataView.explainAnalyze"), fn: (): void => { void dbRunSql("analyze"); } },
-    { label: tr("dataView.format"), fn: (): void => { dbSqlFormatNow(); } },
+    { label: tr("dataView.format"), title: tr("dataView.formatKeys"), fn: (): void => { dbSqlFormatNow(); } },
   ];
   const loadSql = dbLoadConsoleLine;
   items.push({ label: tr("dataView.saveFavorites"), title: tr("dataView.saveConsoleTextFavorites"), fn: (): void => { if (st) dbFavPush(st.sqlText); } });
   // The templates moved OUT of here (SPEC §data.redis-console): they are their own button beside Run now, so
-  // this menu is favorites and history - the two lists that are the operator's own.
+  // this menu is favorites and history - the two lists that are the operator's own. The history
+  // is the server's for the database this console reaches, never another one's.
   if (d.favorites && d.favorites.length) {
     items.push({ sep: true });
     items.push({ heading: true, label: tr("dataView.favoritesTitle"), fn: (): void => {} });
@@ -576,13 +589,15 @@ function dbMoreItemsForSql(): MenuItem[] {
       items.push({ label: q.slice(0, 60), title: q, fn: (): void => { loadSql(q); } });
     });
   }
-  if (d.history && d.history.length) {
-    items.push({ sep: true });
+  const recent = dbHistoryRecent();
+  items.push({ sep: true });
+  if (recent.length) {
     items.push({ heading: true, label: tr("dataView.history"), fn: (): void => {} });
-    d.history.slice(0, 8).forEach((q: string): void => {
-      items.push({ label: q.slice(0, 60), title: q, fn: (): void => { loadSql(q); } });
+    recent.forEach((q: string): void => {
+      items.push({ label: q.replace(/\s+/g, " ").slice(0, 60), title: q, fn: (): void => { loadSql(q); } });
     });
   }
+  items.push({ label: tr("dataView.allHistory"), title: tr("dataView.allHistoryTitle"), fn: (): void => { void dbHistoryOpen(); } });
   return dbWithActivity(items);
 }
 
@@ -590,12 +605,12 @@ function dbMoreItemsForSql(): MenuItem[] {
  *  (2026-09-28) found only "Rename or delete this key" here and no TTL: the expiry was editable
  *  by clicking the readout in the meta line and nowhere else, which nothing announced. */
 function dbMoreItemsForKey(): MenuItem[] {
-  return [
+  return dbWithActivity([
     { label: tr("dataBrowsers.setTtlEllipsis"), fn: dbRedisTtlSheet },
     { label: tr("dataBrowsers.renameEllipsis"), fn: dbRedisRenameKey },
     { label: tr("dataBrowsers.delete"), danger: true, fn: dbRedisDeleteKey },
     { label: tr("dataGrid.command"), fn: (): void => { dbOpenTab({ kind: "sql" }); } },
-  ];
+  ]);
 }
 
 /** The overflow items for an ACTIVITY tab — the generic object actions; its Refresh IS the
@@ -603,6 +618,16 @@ function dbMoreItemsForKey(): MenuItem[] {
 function dbMoreItemsForActivity(): MenuItem[] {
   return [
     { label: tr("dataGrid.refresh"), fn: (): void => { void dbActivityLoad(); } },
+    { label: tr("dataTabs.closeAll"), fn: (): void => { dbCloseAllTabs(); } },
+  ];
+}
+
+/** The overflow items for a PUB/SUB tab: its Refresh is the primary action, so the log's own
+ *  Clear, forgetting the recent names, and the generic Close all. */
+function dbMoreItemsForPubsub(): MenuItem[] {
+  return [
+    { label: tr("dataPubsub.clearMessages"), fn: dbPubsubClear },
+    { label: tr("dataPubsub.clearRecent"), fn: dbPubsubForget },
     { label: tr("dataTabs.closeAll"), fn: (): void => { dbCloseAllTabs(); } },
   ];
 }
@@ -674,17 +699,55 @@ function dbLoadConsoleLine(line: string): void {
   }
 }
 
-/** SPEC §data.tabs: format the console's text in place — the old #dbSqlFormat button's body. */
+/** Where the caret goes once the text is laid out again: after as many non-blank characters
+ *  as stood before it (formatting moves only whitespace), and still before the character it
+ *  stood before when that was not a blank. Pure. */
+function dbCaretAfterFormat(before: string, caret: number, after: string): number {
+  let n = 0;
+  for (let i = 0; i < caret && i < before.length; i++) if (!/\s/.test(before.charAt(i))) n++;
+  let j = 0;
+  while (j < after.length && n > 0) { if (!/\s/.test(after.charAt(j))) n--; j++; }
+  if (caret < before.length && !/\s/.test(before.charAt(caret))) while (j < after.length && /\s/.test(after.charAt(j))) j++;
+  return j;
+}
+
+/** SPEC §data.console: format the console's text in place (⋯ Format, Ctrl+Alt+L, Shift+Alt+F).
+ *  A SQL selection formats alone, at the column it starts on, its blanks around it kept; else
+ *  the whole box. The text goes in through the box's own insertText, so Ctrl+Z takes it back.
+ *  A Redis command has nothing to lay out. */
 function dbSqlFormatNow(): void {
   const st = dbSqlTab();
-  if (!st || !st.sqlText.trim()) return;
-  if (dbIsMongo()) {
-    const text = mongoFormatCommand(st.sqlText);
-    if (text == null) { toast(tr("dataMongo.formatFailed"), true); return; }
-    st.sqlText = text;
-  } else st.sqlText = dbFormatSql(st.sqlText);
   const ta = $<HTMLTextAreaElement>("dbSql");
-  if (ta) { ta.value = st.sqlText; dbSqlPaint(); ta.focus(); }
+  if (!st || !ta || dbIsRedis()) return;
+  const text = ta.value;
+  if (!text.trim()) return;
+  let from = 0, to = text.length, next: string;
+  const picked = ta.selectionEnd > ta.selectionStart && !dbIsMongo();
+  if (dbIsMongo()) {
+    const out = mongoFormatCommand(text);
+    if (out == null) { toast(tr("dataMongo.formatFailed"), true); return; }
+    next = out;
+  } else if (picked) {
+    const piece = text.slice(ta.selectionStart, ta.selectionEnd);
+    from = ta.selectionStart + piece.length - piece.trimStart().length;
+    to = ta.selectionEnd - (piece.length - piece.trimEnd().length);
+    if (to <= from) return;
+    next = dbFormatSql(text.slice(from, to), { dialect: dbDialectOf(), indent: from - (text.lastIndexOf("\n", from - 1) + 1) });
+  } else next = dbFormatSql(text, { dialect: dbDialectOf() });
+  const whole = text.slice(0, from) + next + text.slice(to);
+  if (whole === text) return;
+  const caret = picked ? -1 : dbCaretAfterFormat(text, ta.selectionEnd, whole);
+  ta.focus();
+  ta.setSelectionRange(from, to);
+  // The browser's own edit keeps the undo stack; where it is missing, the value is set outright.
+  let typed = false;
+  try { typed = typeof document.execCommand === "function" && document.execCommand("insertText", false, next); } catch { typed = false; }
+  if (!typed || ta.value !== whole) ta.value = whole;
+  if (picked) ta.setSelectionRange(from, from + next.length);
+  else ta.setSelectionRange(caret, caret);
+  st.sqlText = ta.value;
+  dbSqlPaint();
+  dbSuggestHide(); // the edit's input event is not someone typing a word
 }
 
 /* --- SPEC §data.tabs: the status bar ---------------------------------------------------------------
@@ -716,21 +779,136 @@ function renderDbStatus(): void {
     }));
     // No editability sentence here (SPEC §panel.pages): the head's meta line already says it in the
     // server's own words, and the same sentence twice on one screen read as two facts.
-  } else if (t.kind === "sql" && t.sqlResult) {
-    const res = t.sqlResult;
-    const facts = (dbIsMongoReply(res) ? "" : trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other")) +
-      (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "");
-    bar.appendChild(el("span", "db-status-note", facts.replace(/^ · /, "")));
   } else if (t.kind === "key" && t.redisValue) {
     // The type only: the TTL printed here was the number the last read saw, and it sat there
     // while the key actually expired. The live one is the head's, top-right (2026-09-28).
     bar.appendChild(el("span", "db-status-note", t.redisValue.type));
   } else if (t.kind === "coll") {
     renderMongoStatus(bar, t);
+  } else if (t.kind === "sql" && !dbIsRedis() && !dbIsMongo()) {
+    // The console's row limit (SPEC §data.console): the most rows a statement without a LIMIT
+    // of its own brings back. Its data-tb address is #pane's delegated change listener's.
+    // The pick is set on the built select: a detached option's selected is not kept by every DOM.
+    bar.appendChild(el("span", "db-status-note", tr("dataGrid.rowLimit")));
+    const pick = h("select", { class: "db-pagesize", title: tr("dataGrid.rowLimitTitle"), aria: { label: tr("dataGrid.rowLimit") }, data: { tb: "rowlimit" } },
+      DB_ROW_LIMITS.map((n: number) => { return h("option", { value: String(n) }, n.toLocaleString(locale())); }));
+    pick.value = String(dbRowLimit());
+    bar.appendChild(pick);
   }
   bar.appendChild(el("span", "grow"));
   const conn0 = c.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === c.conn; });
   bar.appendChild(el("span", "db-status-conn", (conn0 ? conn0.label : c.conn) || ""));
+}
+
+/* --- SPEC §data.console: the results' bar ------------------------------------------------------
+   The top edge of the grid it switches and the dock's handle (ui/dock.ts) under the console: the
+   tabs a script answered, each named for its table with the statement on hover, or the one
+   answer's kind; and its facts (rows, the server's note, the time) at the right. When the results
+   fold down under the console the bar stays, and a tab's click brings them back. A console's
+   facts are said here only - the status line under the grid names the connection. */
+
+function renderDbResultsBar(): void {
+  const bar = $("dbRbar");
+  if (!bar) return;
+  bar.textContent = "";
+  const t = dbTab();
+  const res = t.kind === "sql" ? t.sqlResult : null;
+  bar.hidden = !res;
+  if (t.kind !== "sql" || !res) return;
+  const all = t.sqlResults || [];
+  let strip: HTMLElement | null = null;
+  if (all.length > 1) {
+    // The library's seg (SPEC §panel.pages) in a strip that scrolls sideways: a long script's
+    // tabs scroll the strip, each on one line, instead of wrapping or pushing the facts off the
+    // bar. The wheel scrolls it too, the tab showing is scrolled into view, and the list beside
+    // it names every result, the one showing checked, under a find box that matches a tab's name
+    // or its statement (the menu's rows scroll: a long script's would run off the window).
+    const label = (r: DbQueryReply, ti: number): string => r.tabLabel || tr("dataGrid.resultN", { n: ti + 1 });
+    const tabs = h("div", { class: "db-rtabs" },
+      seg(all.map((r: DbQueryReply, ti: number) => {
+        return { id: String(ti), label: label(r, ti), title: r.stmt };
+      }), String(t.resultTab), { key: "rtab", label: tr("dataView.resultsName") }));
+    tabs.addEventListener("wheel", (ev: WheelEvent): void => {
+      if (!ev.deltaY || tabs.scrollWidth <= tabs.clientWidth) return;
+      ev.preventDefault();
+      tabs.scrollLeft += ev.deltaY;
+    }, { passive: false });
+    bar.appendChild(tabs);
+    strip = tabs;
+    const list = iconBtn("list", tr("dataGrid.allResults"), { ghost: true, title: tr("dataGrid.allResultsTip", { n: all.length }), data: { rlist: "" } });
+    list.onclick = (ev: MouseEvent): void => {
+      ev.stopPropagation();
+      popupMenu(list.getBoundingClientRect(), all.map((r: DbQueryReply, ti: number) => ({
+        label: label(r, ti), title: r.stmt, pick: true, on: ti === t.resultTab, fn: (): void => { dbShowResult(ti); },
+      })), { filter: tr("dataGrid.findResult") });
+    };
+    bar.appendChild(list);
+  } else {
+    bar.appendChild(h("strong", null, res.explained ? tr("dataGrid.executionPlan") : (dbIsRedis() || dbIsMongo() ? tr("dataGrid.commandReply") : tr("dataGrid.sqlResults"))));
+  }
+  // A MongoDB reply is one document, not a row set: its facts are the time alone. A write the
+  // agent committed says the rows it changed (and the id an insert took), not the rows it answered.
+  // A cut by the row limit is said, so a page of 500 never reads as the whole table.
+  const count = dbIsMongoReply(res) ? ""
+    : res.affectedRows != null
+      ? trn(res.affectedRows, "dataGrid.nCommitted.one", "dataGrid.nCommitted.other") + (res.insertId != null ? tr("dataGrid.insertId", { id: res.insertId }) : "")
+      : trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other");
+  const facts = count +
+    (res.limitApplied != null ? tr("dataGrid.limitApplied", { n: res.limitApplied.toLocaleString(locale()) }) : "") +
+    (res.note ? tr("dataGrid.note", { note: res.note }) : "") +
+    (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "");
+  bar.appendChild(el("span", "db-meta", facts.replace(/^ · /, "")));
+  // A wide answer's columns run off the side: the finder lists them and jumps to the one picked.
+  if (res.columns.length > 1 && !(dbIsMongoReply(res) && res.rows.length === 1)) {
+    const find = iconBtn("search", tr("dataGrid.findColumn"), { ghost: true, title: tr("dataGrid.findColumnTip") });
+    find.onclick = (ev: MouseEvent): void => {
+      ev.stopPropagation();
+        dbColFinder(find, res.columns.map((name: string, ci: number) => ({
+        name,
+        go: (): void => {
+          const th = document.querySelector<HTMLElement>("#dbGridWrap thead th[data-ci='" + ci + "']");
+          if (th) dbColReveal(th);
+        },
+      })));
+    };
+    bar.appendChild(find);
+  }
+  // The tab showing scrolled into view once the bar holds everything: the facts and buttons
+  // after the strip narrow it (found live on 19998: the last of 16 picked from the list stayed
+  // past the edge when measured before them).
+  const on = strip && strip.querySelector<HTMLElement>("[aria-selected='true']");
+  if (strip && on) {
+    const tab = on.getBoundingClientRect();
+    const room = strip.getBoundingClientRect();
+    if (tab.left < room.left) strip.scrollLeft += tab.left - room.left;
+    else if (tab.right > room.right) strip.scrollLeft += tab.right - room.right;
+  }
+}
+
+/** The console's result tab ti in front (SPEC §data.console): the strip's tab or the list's
+ *  pick. Folded down under the console, the results come back for the tab asked for. */
+function dbShowResult(ti: number): void {
+  const d = dbTab();
+  if (d.kind !== "sql") return;
+  dockShow("db-console", "bottom");
+  if (d.resultTab === ti) return;
+  const all = d.sqlResults || [];
+  if (!all[ti]) return; // a stale strip's address — the run that named it is gone
+  d.resultTab = ti;
+  d.sqlResult = all[ti];
+  d.selAnchor = -1; // a Shift-range never spans tabs
+  renderDbToolbar();
+  renderDbGrid();
+}
+
+/** The console's standing hint for the connection's kind (SPEC §data.console): the head's meta
+ *  line while a console is open. On redis the command being typed takes it over (dbRedisHint). */
+function dbConsoleHint(): string {
+  if (dbIsRedis()) return tr("dataView.redisConsoleHint");
+  if (dbIsMongo()) return tr("dataMongo.consoleHint");
+  // The ; split answers one result tab per statement; the blank-line block rule (W1.8) still
+  // decides what a single Run covers.
+  return tr("dataView.blankLineStartsNew");
 }
 
 function renderDbToolbar(): void {
@@ -744,22 +922,10 @@ function renderDbToolbar(): void {
     const conn0 = d.conns.find((c: ApiDbConnectionRow): boolean => { return c.name === d.conn; });
     left.appendChild(el("h2", "db-title", tr("dataActivity.title")));
     left.appendChild(el("div", "db-meta", (conn0 ? conn0.label : d.conn || "") + " · " + tr("dataActivity.refreshesWhileOpen")));
-  } else if (t.kind === "sql" && t.sqlResult) {
-    const res = t.sqlResult;
-    left.appendChild(el("h2", "db-title", res.explained ? tr("dataGrid.executionPlan") : (dbIsRedis() || dbIsMongo() ? tr("dataGrid.commandReply") : tr("dataGrid.sqlResults"))));
-    // A MongoDB reply is one document, not a row set: its meta is the time alone.
-    const facts = (dbIsMongoReply(res) ? "" : trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other")) +
-      (res.note ? tr("dataGrid.note", { note: res.note }) : "") +
-      (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "");
-    left.appendChild(el("div", "db-meta", facts.replace(/^ · /, "")));
-    if ((t.sqlResults || []).length > 1) {
-      // The library's seg (SPEC §panel.pages), inside a strip that scrolls sideways: eight results
-      // fit, a longer script's ninth scrolls the strip instead of wrapping the head.
-      left.appendChild(h("div", { class: "db-rtabs" },
-        seg((t.sqlResults || []).map((r: DbQueryReply, ti: number) => {
-          return { id: String(ti), label: r.tabLabel || tr("dataGrid.resultN", { n: ti + 1 }) };
-        }), String(t.resultTab), { key: "rtab" })));
-    }
+  } else if (t.kind === "pubsub") {
+    const conn0 = d.conns.find((c: ApiDbConnectionRow): boolean => { return c.name === d.conn; });
+    left.appendChild(el("h2", "db-title", tr("dataPubsub.title")));
+    left.appendChild(el("div", "db-meta", (conn0 ? conn0.label : d.conn || "") + " · " + tr("dataPubsub.meta")));
   } else if (t.kind === "table" && t.data) {
     left.appendChild(el("h2", "db-title", (t.data.schema ? t.data.schema + "." : "") + t.data.table));
     const bits = [tr("dataGrid.nRows2", { n: t.data.total.toLocaleString(locale()) })];
@@ -769,9 +935,12 @@ function renderDbToolbar(): void {
       : (t.data.editNote || tr("dataGrid.browsingOnly")));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
   } else if (t.kind === "sql") {
+    // The editor's own head, answers or not: what the console takes and how it runs. The answers
+    // are the results bar's, under the console's edge (renderDbResultsBar).
     const cmd = dbIsRedis() || dbIsMongo();
     left.appendChild(el("h2", "db-title", cmd ? tr("dataGrid.command") : tr("dataSql.sql")));
-    left.appendChild(el("div", "db-meta", dbIsMongo() ? tr("dataMongo.consoleTitle") : cmd ? tr("dataGrid.commandConsoleTitle") : tr("dataGrid.sqlConsoleTitle")));
+    left.appendChild(h("div", { class: "db-meta", id: "dbSqlHint" }, dbConsoleHint()));
+    dbHistoryEnsure(); // the ⋯'s recent statements, read once for the database this console reaches
   } else if (t.kind === "coll") {
     renderMongoHeadLeft(left, t);
   } else if (dbIsRedis()) {
@@ -812,7 +981,10 @@ function renderDbToolbar(): void {
     } else if (dbIsMongo()) {
       ctl.appendChild(dbMoreButton2(tr("dataView.templates"), (): MenuItem[] => { return mongoTemplateItems(dbInsertConsoleLine); }));
     }
-    ctl.appendChild(btn(tr("dataView.run"), { id: "dbSqlRun", title: tr("dataView.statementsSplitCtrlEnter") }));
+    // Run is the selection or the caret's block; Run all the whole console - one command
+    // document is all a MongoDB console holds, so it has no Run all (SPEC §data.console).
+    if (!dbIsMongo()) ctl.appendChild(btn(tr("dataView.runAll"), { id: "dbSqlRunAll", title: tr("dataView.runAllTitle") }));
+    ctl.appendChild(btn(tr("dataView.run"), { id: "dbSqlRun", title: tr("dataView.runTitle") }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForSql(); }));
   } else if (t.kind === "key" && t.redisValue) {
     const cfg = DB_REDIS_TYPES[t.redisValue.type];
@@ -831,14 +1003,17 @@ function renderDbToolbar(): void {
   } else if (t.kind === "activity") {
     ctl.appendChild(btn(tr("dataGrid.refresh"), { title: tr("dataActivity.title"), data: { actrefresh: "" } }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForActivity(); }));
+  } else if (t.kind === "pubsub") {
+    ctl.appendChild(btn(tr("dataGrid.refresh"), { title: tr("dataPubsub.refreshTip"), data: { ps: "refresh" } }));
+    ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForPubsub(); }));
   } else objMore = false;
   head.appendChild(ctl);
-  // One ⋯ per head (SPEC §panel.pages): the pane's ⋯ - the Activity monitor, a SQL connection's page
-  // action - stands in only while no open object has a ⋯ of its own; an object's ⋯ carries
-  // Activity… as its last row instead. Two identical glyphs a hairline apart, opening two
+  // One ⋯ per head (SPEC §panel.pages): the pane's ⋯ - the Activity monitor, or a redis connection's
+  // Pub/Sub page - stands in only while no open object has a ⋯ of its own; an object's ⋯ carries
+  // that row as its last instead. Two identical glyphs a hairline apart, opening two
   // different menus, was what the regression fix under SPEC §data.tabs first put on screen.
   const paneMore = $("dbMore");
-  if (paneMore) paneMore.hidden = !d.conn || nosql || objMore;
+  if (paneMore) paneMore.hidden = !d.conn || objMore;
 }
 
 
@@ -927,6 +1102,7 @@ function renderDbGrid(): void {
   wrap.textContent = "";
   dbTipHide(); // a rebuilt grid invalidates any header card still open
   renderDbStatus(); // SPEC §data.tabs: the status line follows every body repaint
+  renderDbResultsBar(); // and so does the results' bar (SPEC §data.console)
 
   // SPEC §data.edits: conflict marks live exactly as long as the buffered change they name —
   // reverting the cell, dropping the buffer or reloading the table clears them (a new
@@ -943,6 +1119,7 @@ function renderDbGrid(): void {
   // flags deciding which view is standing on top of which.
   if (t.kind === "sql") { renderDbResultGrid(wrap); return; }
   if (t.kind === "activity") { dbActivityRender(); return; }
+  if (t.kind === "pubsub") { dbPubsubRender(); return; }
   if (t.kind === "key") { dbRenderRedisValue(wrap); return; }
   if (t.kind === "coll") { renderMongoBody(wrap); return; }
   const d = t;
@@ -1026,24 +1203,11 @@ function renderDbGrid(): void {
     th.appendChild(main);
     th.appendChild(el("div", "db-col-type", c.dataType));
     if (hasComments) th.appendChild(el("div", "db-col-comment", c.comment || ""));
-    // SPEC §data.grid: the resize grip hugs the header's right edge. It owns mousedown and click
-    // so a drag neither sorts the column nor fights the hover card for the pointer.
-    const grip = el("span", "db-col-grip");
-    grip.title = tr("dataGrid.dragResize");
-    grip.onmousedown = (ev: MouseEvent): void => {
-      const idx = Array.prototype.indexOf.call(hr.children, th);
-      const cells: HTMLElement[] = [th];
-      const trs = tbl.querySelectorAll("tbody tr");
-      for (let r = 0; r < trs.length; r++) {
-        // The column's body cells are td elements; children[] only promises Element.
-        const cell = trs[r].children[idx];
-        if (cell) cells.push(cell as HTMLElement);
-      }
-      dbColResizeStart(ev, c.name, th, cells);
-    };
-    // No grip.onclick stopPropagation any more: #pane's delegated click consumes grip clicks
+    // SPEC §data.grid: the resize grip hugs the header's right edge - a drag sizes the column, a
+    // double-click fits it to its content. It owns mousedown so a drag neither sorts the column
+    // nor fights the hover card for the pointer; #pane's delegated click consumes grip clicks
     // BEFORE the sort check (a grip click resizes, it must never sort).
-    th.appendChild(grip);
+    th.appendChild(dbColGrip(th, (w: number): void => { dbColWidthSave(c.name, w); }));
     widthOf(c, th);
     th.onmouseenter = (): void => {
       clearTimeout(dbTip.timer);
@@ -1242,8 +1406,20 @@ function renderDbResultGrid(wrap: HTMLElement): void {
     type: "checkbox", class: "db-selbox", checked: allOn2,
     title: tr("dataGrid.selectEveryResultRow"), data: { selall: "" },
   }));
+  thAll2.appendChild(el("span", "db-rn")); // an empty number column: the box stands over the rows' boxes
   hr.appendChild(thAll2);
-  res.columns.forEach((c: string): void => { hr.appendChild(el("th", "db-col", c)); });
+  // SPEC §data.console: a result's columns size like a table's - drag the grip, double-click to
+  // fit - and keep their widths under the connection and the column list (data-columns.ts). They
+  // do not sort; data-ci is the column's place, the finder's address for it.
+  const sig = dbResultColsSig(dbConn().conn || "", res.columns);
+  const widths = dbResultWidths(sig);
+  res.columns.forEach((c: string, ci: number): void => {
+    const th = el("th", "db-col db-nosort", c);
+    th.dataset.ci = String(ci);
+    th.appendChild(dbColGrip(th, (w: number): void => { dbResultWidthSave(sig, c, w); }));
+    if (widths[c]) dbColWidth([th], widths[c]);
+    hr.appendChild(th);
+  });
   thead.appendChild(hr);
   tbl.appendChild(thead);
   const tbody = el("tbody");
@@ -1257,7 +1433,8 @@ function renderDbResultGrid(wrap: HTMLElement): void {
       type: "checkbox", class: "db-selbox", checked: !!d.sel[qkey],
       title: tr("dataGrid.selectRowCopyShift"), data: { qrow: String(i) },
     }));
-    rc2.appendChild(document.createTextNode(String(i + 1)));
+    // The number in a column of its own width, so "10" does not push its box left of "9"'s.
+    rc2.appendChild(el("span", "db-rn", String(i + 1)));
     tri.appendChild(rc2);
     res?.columns.forEach((c: string): void => {
       const td = el("td", "db-cell");
@@ -1266,6 +1443,7 @@ function renderDbResultGrid(wrap: HTMLElement): void {
       // links URLs and right-aligns JS numbers off the value alone.
       const v = row[c];
       dbPaintCell(td, v === undefined ? null : v, true);
+      if (widths[c]) dbColWidth([td], widths[c]);
       tri.appendChild(td);
     });
     tbody.appendChild(tri);
@@ -1343,15 +1521,7 @@ function dbToolbarClick(t: Element, ev: MouseEvent): boolean {
   }
   const rtab = t.closest<HTMLElement>("[data-rtab]");
   if (rtab && d.kind === "sql") {
-    const ti = Number(rtab.dataset.rtab);
-    if (d.resultTab === ti) return true;
-    const all = d.sqlResults || [];
-    if (!all[ti]) return true; // a stale strip's address — the run that named it is gone
-    d.resultTab = ti;
-    d.sqlResult = all[ti];
-    d.selAnchor = -1; // a Shift-range never spans tabs
-    renderDbToolbar();
-    renderDbGrid();
+    dbShowResult(Number(rtab.dataset.rtab));
     return true;
   }
   const pg = t.closest<HTMLElement>("[data-pg]");
@@ -1465,6 +1635,11 @@ function dbGridChange(t: Element, ev: Event): boolean {
     renderDbToolbar(); renderDbGrid();
     return true;
   }
+  const limit = t.closest<HTMLSelectElement>('[data-tb="rowlimit"]');
+  if (limit) {
+    dbSetRowLimit(Number(limit.value));
+    return true;
+  }
   const size = t.closest<HTMLSelectElement>('[data-tb="pagesize"]');
   if (size && d.kind === "table") {
     if (!dbOkToDrop()) { size.value = String(d.pageSize); return true; }
@@ -1535,4 +1710,4 @@ function dbGridKeydown(t: Element, ev: KeyboardEvent): boolean {
   return true;
 }
 
-export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbCopyChecked, dbFocusCell, dbGridChange, dbGridClick, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridKeydown, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, dbRestoreData, dbRowAddr, dbToolbarClick, renderDbGrid, renderDbResultGrid, renderDbStatus, renderDbToolbar, dbShowAllColumns, dbTsvRows };
+export { DB_COL_MAX, DB_COL_MIN, dbCaretAfterFormat, dbConsoleHint, dbCopyChecked, dbFocusCell, dbGridChange, dbLoadConsoleLine, dbGridClick, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridKeydown, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, dbRestoreData, dbRowAddr, dbToolbarClick, renderDbGrid, renderDbResultGrid, renderDbStatus, renderDbToolbar, dbShowAllColumns, dbSqlFormatNow, dbTsvRows };

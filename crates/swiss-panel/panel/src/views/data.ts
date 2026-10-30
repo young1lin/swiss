@@ -17,6 +17,7 @@
 import { $ } from "../util.js";
 import { dbConnLabel, dbDropAllEdits, dbOkToLeave, dbPendingAll, dbSessionPinned, loadDbView } from "../data-view.js";
 import { dbConn, dbSuspendView } from "../db-state.js";
+import { dbPubsubStop } from "../data-pubsub.js";
 export function mount() { return loadDbView(); }
 export function refresh() { return loadDbView(); }
 /* SPEC §data.tabs: the page-leave guards ask the WHOLE strip, not the object in front. A buffer
@@ -29,6 +30,8 @@ export function unmount() {
   // its strip, rows and catalog. The buffered writes go: canLeave() asked about them, and once
   // the page is gone no guard would count them.
   dbDropAllEdits();
+  // A live pub/sub feed is a subscription on the server: it ends with the page (SPEC §data.pubsub).
+  dbPubsubStop();
   dbSuspendView(dbSessionPinned);
   // Take the workspace framing back off (data-view.js's renderDbView adds it) so the next
   // page — whatever it is — starts from the pane's ordinary padding.

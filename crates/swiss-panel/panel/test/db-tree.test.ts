@@ -829,7 +829,11 @@ describe("the extreme keyspaces (2026-09-29)", () => {
     expect(nameOf(byKey["plain"])).toBe("plain");
   });
 
-  it("a band over 200,000 walked keys lists them all - a spread of that many arguments overflowed", () => {
+  // The 200,000-row build brushes the default 5 s deadline on a box still
+  // settling after the cargo gates (twice bit a deploy's panel check, and passed
+  // idle in 3.7 s both times): the test's own budget says what it costs, so a
+  // loaded machine cannot flake it. The assertions are untouched.
+  it("a band over 200,000 walked keys lists them all - a spread of that many arguments overflowed", { timeout: 30_000 }, () => {
     // `app:config` keeps `app` a band of its own, so its count gathers a 200,000-key child.
     const keys = Array.from({ length: 200000 }, (_, i) => row("app:session:" + i)).concat([row("app:config")]);
     const tree = redisNamespaceTree(keys);

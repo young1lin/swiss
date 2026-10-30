@@ -62,6 +62,9 @@ const byId: Record<string, Stub> = {};
 const requests: { url: string; body: any }[] = [];
 const parked: { resolve: (j: any) => void; fail: (j: any) => void }[] = [];
 globalThis.fetch = ((url: any, opts: any) => {
+  // The console head reads its database's history (SPEC §data.history) on its own; answered at
+  // once, so it never parks in front of the loader requests these tests answer in order.
+  if (String(url).split("?")[0].endsWith("/history")) return Promise.resolve({ ok: true, status: 200, json: async () => ({ target: "", runs: [], more: false }) });
   requests.push({ url: String(url), body: opts && opts.body ? JSON.parse(opts.body) : null });
   return new Promise((res) => {
     parked.push({

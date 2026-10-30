@@ -159,7 +159,7 @@ describe("the toolbar draws only the active tab's controls (SPEC §data.tabs)", 
     openTable(false, "Read-only: ops_dev is not this connection's configured database (acme_app_dev).");
     expect(flatBtns().length).toBe(0);
   });
-  it("an sql tab: no pager, no row buffer — Run is the one flat button", () => {
+  it("an sql tab: no pager, no row buffer — Run all and Run are its flat buttons", () => {
     mount();
     const s = freshTab("sql");
     s.sqlText = "select 1";
@@ -167,7 +167,7 @@ describe("the toolbar draws only the active tab's controls (SPEC §data.tabs)", 
     dbTabs().push(s);
     grid.renderDbToolbar();
     const flat = flatBtns();
-    expect(flat.length).toBeLessThanOrEqual(1);
+    expect(flat.map((n) => n.id), "the whole console, then the selection or the caret's block (SPEC §data.console)").toEqual(["dbSqlRunAll", "dbSqlRun"]);
     const head = find(byId.dbHead, (n) => n.dataset && (n.dataset.pg || n.dataset.tb === "addrow"));
     expect(head.length, "no pager and no +Row on an sql toolbar").toBe(0);
   });
@@ -203,7 +203,50 @@ describe("the toolbar draws only the active tab's controls (SPEC §data.tabs)", 
     expect(flatBtns().length).toBeLessThanOrEqual(1);
     expect(find(byId.dbHead, (n) => n.dataset && n.dataset.actrefresh === "").length).toBe(1);
   });
+  it("a pubsub tab: Refresh is the one flat button (SPEC §data.pubsub)", () => {
+    mountRedis();
+    const p = freshTab("pubsub");
+    dbTabs().length = 0;
+    dbTabs().push(p);
+    grid.renderDbToolbar();
+    expect(flatBtns().length).toBeLessThanOrEqual(1);
+    expect(find(byId.dbHead, (n) => n.dataset && n.dataset.ps === "refresh").length).toBe(1);
+    expect(byId.dbMore.hidden, "the tab's own ⋯ stands in for the pane's").toBe(true);
+  });
+  it("a redis connection reaches Pub/Sub from either ⋯ (SPEC §data.pubsub)", () => {
+    // The placeholder key tab draws no ⋯ of its own, so the pane's ⋯ shows - on a redis
+    // connection too, where it used to hide (no sessions there, nothing in it).
+    mountRedis();
+    grid.renderDbToolbar();
+    expect(byId.dbMore.hidden).toBe(false);
+    // A key on screen has its own ⋯, and Pub/Sub… is its last row.
+    const k = freshTab("key");
+    k.redisKey = "h";
+    k.redisValue = { key: "h", type: "hash", value: {}, length: 1, ttl: -1 } as never;
+    dbTabs().length = 0;
+    dbTabs().push(k);
+    byId.dbHead.children.length = 0;
+    grid.renderDbToolbar();
+    expect(byId.dbMore.hidden).toBe(true);
+    const more = find(byId.dbHead, (n) => typeof n.onclick === "function");
+    expect(more.length).toBeGreaterThan(0);
+    const body = (globalThis as unknown as { document: { body: Stub } }).document.body;
+    body.children.length = 0;
+    more[more.length - 1].onclick({ stopPropagation: () => {} });
+    const labels = find(body, (n) => typeof n.textContent === "string" && n.textContent !== "").map((n) => n.textContent);
+    expect(labels).toContain("Pub/Sub…");
+    expect(labels).not.toContain("Activity…");
+  });
 });
+
+function mountRedis(): void {
+  mount();
+  byId.dbMore = el("button");
+  Object.assign(dbConn(), {
+    conn: "redis",
+    conns: [{ name: "redis", dialect: "redis", state: "running", group: "", label: "redis" }],
+  });
+}
 
 describe("the six panes fold into four tabs (SPEC §data.tabs)", () => {
   it("DB_TABS is exactly Data / Form / Structure / DDL", () => {

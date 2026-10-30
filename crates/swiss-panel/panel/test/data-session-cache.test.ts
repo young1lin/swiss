@@ -151,17 +151,17 @@ describe("switching away and back brings the session back whole (SPEC §data.ses
     expect(ask, "nothing was dropped, so nothing was asked").not.toHaveBeenCalled();
   });
 
-  it("a connection seen for the first time starts empty; the row density and the history carry", async () => {
+  it("a connection seen for the first time starts empty; the row density and the favorites carry", async () => {
     tabs.dbOpenTab({ kind: "table", table: "orders", schema: "demo" });
     await flush();
     front().pageSize = 200;
-    rec().history = ["select 1"];
+    rec().favorites = ["select 1"];
     await view.dbSwitchConn("audit");
     await flush();
     expect(dbTabs().length).toBe(1);
     expect(front().table, "a fresh placeholder").toBeNull();
     expect(front().pageSize).toBe(200);
-    expect(rec().history).toEqual(["select 1"]);
+    expect(rec().favorites).toEqual(["select 1"]);
     expect(rec().conns.map((c) => c.name), "the registry list is the page's, not the session's").toEqual(["shop", "cache", "audit"]);
   });
 });
