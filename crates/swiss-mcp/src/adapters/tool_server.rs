@@ -45,6 +45,10 @@ pub struct ToolDef {
 /// Output budget for a single tool result. Without one, `KEYS *` or `SELECT * FROM big_table`
 /// builds the entire reply in memory and floods the client's context, which is the more
 /// expensive of the two problems.
+///
+/// The cut is deliberate and stays: a reply lands whole in the model's context window, and past
+/// 1000 items or 256 KB one call stops being an answer and starts crowding out the conversation
+/// that asked for it. What the cut must never do is change what the reply is (render_result).
 #[derive(Clone, Copy)]
 pub struct RenderLimits {
     /// Max array elements rendered.
@@ -135,13 +139,131 @@ fn rewrap(host: &Map<String, Value>, items: Vec<Value>) -> Value {
     Value::Object(out)
 }
 
-/// Serialize a tool result within the given budget, telling the model explicitly when output was
-/// dropped and how to narrow it — a silently truncated list reads as a complete one.
-pub fn render_result(result: &Value, limits: RenderLimits) -> String {
-    let mut value = result.clone();
-    let mut notes: Vec<String> = Vec::new();
+/// What one render cut away, for the account the reply carries (budget_account).
+#[derive(Default)]
+struct Cut {
+    /// `(shown, total)` when the result's list was shed.
+    items: Option<(usize, usize)>,
+    /// How many strings were clipped, and the byte length each was cut to.
+    clipped: Option<(usize, usize)>,
+    /// The value had nothing left to give: `partial` holds the start of its JSON as text.
+    partial: bool,
+}
 
-    if let Value::String(text) = &value {
+/// Shortest a clipped string is cut to: below this the text says nothing anyway.
+const CLIP_FLOOR: usize = 64;
+
+/// The `outputBudget` object a cut reply carries: what was shown of how much, and how to narrow.
+fn budget_account(limits: RenderLimits, cut: &Cut) -> Value {
+    let mut out = Map::new();
+    let mut said: Vec<String> = Vec::new();
+    if let Some((shown, total)) = cut.items {
+        out.insert("shown".into(), json!(shown));
+        out.insert("total".into(), json!(total));
+        said.push(format!("showing the first {shown} of {total} items"));
+    }
+    if let Some((count, keep)) = cut.clipped {
+        out.insert("clippedStrings".into(), json!(count));
+        said.push(format!(
+            "{count} long string(s) cut to {keep} bytes, each ending in …[+N bytes]"
+        ));
+    }
+    if cut.partial {
+        said.push("the value had no list or long string to drop, so `partial` holds the start of its JSON as text".into());
+    }
+    out.insert(
+        "note".into(),
+        json!(format!(
+            "Cut to the output budget ({} items, {} bytes a reply), which keeps one call from \
+             flooding the model's context: {}. Narrow the request (SQL LIMIT, a key pattern, \
+             SCAN COUNT) to see the rest.",
+            limits.max_items,
+            limits.max_bytes,
+            said.join("; ")
+        )),
+    );
+    Value::Object(out)
+}
+
+/// The cut value with its account: `truncated: true` and `outputBudget` beside the fields of an
+/// object (an engine's own `truncated` means the same thing — not everything is here), or a bare
+/// array wrapped as `{ items, truncated, outputBudget }`, since an array has nowhere to say it.
+fn annotate(value: Value, limits: RenderLimits, cut: &Cut) -> Value {
+    let mut out = match value {
+        Value::Object(map) => map,
+        other => {
+            let mut map = Map::new();
+            map.insert("items".into(), other);
+            map
+        }
+    };
+    out.insert("truncated".into(), json!(true));
+    out.insert("outputBudget".into(), budget_account(limits, cut));
+    Value::Object(out)
+}
+
+/// Every string in `value` longer than `keep` bytes cut to `keep` (on a char boundary) and
+/// marked with how much went; returns how many were cut.
+fn clip_strings(value: &mut Value, keep: usize) -> usize {
+    match value {
+        Value::String(text) if text.len() > keep => {
+            let mut end = keep;
+            while end > 0 && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            let dropped = text.len() - end;
+            text.truncate(end);
+            text.push_str(&format!("…[+{dropped} bytes]"));
+            1
+        }
+        Value::Array(items) => items.iter_mut().map(|v| clip_strings(v, keep)).sum(),
+        Value::Object(map) => map.values_mut().map(|v| clip_strings(v, keep)).sum(),
+        _ => 0,
+    }
+}
+
+fn longest_string(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.len(),
+        Value::Array(items) => items.iter().map(longest_string).max().unwrap_or(0),
+        Value::Object(map) => map.values().map(longest_string).max().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// The largest `n` in `lo..=hi` for which `fits(n)` holds, given that it holds for `lo` and
+/// grows false as `n` grows.
+fn largest_fitting(mut lo: usize, mut hi: usize, fits: impl Fn(usize) -> bool) -> usize {
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        if fits(mid) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    lo
+}
+
+/// Serialize a tool result within the output budget (RenderLimits).
+///
+/// A structured result stays ONE valid JSON value however hard it is cut, so a caller that
+/// parses `content[0].text` gets what fit and is told the rest was dropped. The cut used to
+/// trail the JSON as a prose note, which made that parse throw - and callers do write a parse
+/// whose fallback is an empty list (one read a present mysql row as missing on 2026-10-21, over
+/// a different slip), so the largest answers would read as "no rows", indistinguishable from a
+/// real empty result. Now the account rides inside the value (annotate): `truncated: true` and
+/// an `outputBudget` saying what was shown of how much and how to narrow the request.
+/// `rowCount` still counts the rows beside it; `outputBudget.total` is the count before the cut.
+///
+/// In order, each step only when the one before was not enough: the list is cut to
+/// `max_items`; then to the most items that fit `max_bytes` (a binary search, so a reply is
+/// never halved below what fits); then every string over a length is clipped - one wide row (a
+/// TEXT column, a big redis value) keeps its other fields; and a value with nothing left to give
+/// is carried as a `partial` string of its first bytes. A plain-text result (`Value::String`:
+/// vision prose, a redis string reply) is text, not JSON, and is cut as text.
+pub fn render_result(result: &Value, limits: RenderLimits) -> String {
+    if let Value::String(text) = result {
         if byte_len(text) <= limits.max_bytes {
             return text.clone();
         }
@@ -152,56 +274,77 @@ pub fn render_result(result: &Value, limits: RenderLimits) -> String {
         );
     }
 
-    let list = list_of(&value);
-    let total_items = list.as_ref().map(|(items, _)| items.len()).unwrap_or(0);
+    let compact = |value: &Value| serde_json::to_string(value).unwrap_or_default();
+    let fits = |text: &str| byte_len(text) <= limits.max_bytes;
+    let list = list_of(result);
+    let total = list.as_ref().map_or(0, |(items, _)| items.len());
+    let whole = compact(result);
+    if fits(&whole) && total <= limits.max_items {
+        return whole;
+    }
 
+    let mut cut = Cut::default();
+    let mut value = result.clone();
     if let Some((items, host)) = &list {
-        if total_items > limits.max_items {
-            notes.push(format!(
-                "showing the first {} of {} items",
-                limits.max_items, total_items
-            ));
-            value = rewrap(host, items[..limits.max_items].to_vec());
+        let cap = total.min(limits.max_items);
+        let shed = |n: usize| rewrap(host, items[..n].to_vec());
+        let render = |n: usize| {
+            let cut = Cut { items: Some((n, total)), ..Cut::default() };
+            compact(&annotate(shed(n), limits, &cut))
+        };
+        // One item always stays: a row too wide to fit is clipped below, not dropped.
+        let shown = if cap == 0 || fits(&render(cap)) {
+            cap
+        } else {
+            largest_fitting(1, cap, |n| fits(&render(n)))
+        };
+        if shown < total {
+            cut.items = Some((shown, total));
         }
+        value = shed(shown);
     }
 
-    let mut text = serde_json::to_string(&value).unwrap_or_default();
-
-    // Over budget: drop items until it fits, so the output stays valid JSON rather than being cut
-    // mid-token. A result with no list to shed has nothing to give and gets a hard cut.
-    if byte_len(&text) > limits.max_bytes {
-        if let Some((items, host)) = &list {
-            let mut kept = items[..items.len().min(limits.max_items)].to_vec();
-            while kept.len() > 1 && byte_len(&text) > limits.max_bytes {
-                kept.truncate(kept.len() / 2);
-                value = rewrap(host, kept.clone());
-                text = serde_json::to_string(&value).unwrap_or_else(|_| text.clone());
-            }
-            notes.clear(); // the item count changed — restate it below
-            notes.push(format!(
-                "showing {} of {} items ({}-byte output budget)",
-                kept.len(),
-                total_items,
-                limits.max_bytes
-            ));
-        }
-    }
-
-    if byte_len(&text) > limits.max_bytes {
-        text = clip_bytes(&text, limits.max_bytes);
-        notes.push(format!(
-            "truncated at {} bytes — this is no longer valid JSON",
-            limits.max_bytes
-        ));
-    }
-
-    if notes.is_empty() {
+    let mut text = compact(&annotate(value.clone(), limits, &cut));
+    if fits(&text) {
         return text;
     }
-    format!(
-        "{text}\n\n[{}. Narrow the request (SQL LIMIT, a key pattern, SCAN COUNT) to see the rest.]",
-        notes.join("; ")
-    )
+
+    let longest = longest_string(&value);
+    if longest > CLIP_FLOOR {
+        let clipped = |keep: usize| {
+            let mut v = value.clone();
+            let count = clip_strings(&mut v, keep);
+            (v, count)
+        };
+        let render = |keep: usize| {
+            let (v, count) = clipped(keep);
+            let cut = Cut { clipped: Some((count, keep)), items: cut.items, ..Cut::default() };
+            compact(&annotate(v, limits, &cut))
+        };
+        if fits(&render(CLIP_FLOOR)) {
+            let keep = largest_fitting(CLIP_FLOOR, longest - 1, |keep| fits(&render(keep)));
+            let (v, count) = clipped(keep);
+            cut.clipped = Some((count, keep));
+            return compact(&annotate(v, limits, &cut));
+        }
+    }
+
+    // Nothing left to give (a deep or wide value with no top-level list): its first bytes, as a
+    // string, so the reply still parses. Escaping can grow the text, hence the shrinking loop.
+    cut.partial = true;
+    let whole = compact(&value);
+    let mut room = limits.max_bytes;
+    loop {
+        let mut out = Map::new();
+        out.insert("truncated".into(), json!(true));
+        out.insert("outputBudget".into(), budget_account(limits, &cut));
+        out.insert("partial".into(), json!(clip_bytes(&whole, room)));
+        text = compact(&Value::Object(out));
+        if fits(&text) || room == 0 {
+            return text;
+        }
+        room = room.saturating_sub(byte_len(&text) - limits.max_bytes).min(room / 2 + room / 4);
+    }
 }
 
 /// Identity of one hosted MCP, so a client can tell same-engine endpoints apart.
@@ -608,34 +751,89 @@ mod tests {
     }
 
     #[test]
-    fn item_budget_drops_rows_and_says_so() {
+    fn an_empty_result_says_so_explicitly() {
+        let out = render_result(&json!({ "rowCount": 0, "rows": [] }), DEFAULT_LIMITS);
+        assert_eq!(out, r#"{"rowCount":0,"rows":[]}"#);
+    }
+
+    /// The reply a caller parses: past the budget it is still one JSON value, so
+    /// `JSON.parse(content[0].text)` yields the rows that fit and says the rest went - never a
+    /// throw that a fallback turns into "no rows" (the trailing prose note did exactly that).
+    #[test]
+    fn a_cut_reply_still_parses_and_says_what_went() {
         let rows: Vec<Value> = (0..1500).map(|i| json!({ "n": i })).collect();
         let out = render_result(&json!({ "rowCount": 1500, "rows": rows }), DEFAULT_LIMITS);
-        assert!(
-            out.contains("showing"),
-            "must state what was dropped: {out}"
-        );
-        assert!(out.contains("Narrow the request"));
+        let reply: Value = serde_json::from_str(&out).expect("a cut reply is valid JSON");
+        assert_eq!(reply["rows"].as_array().map(Vec::len), Some(1000));
+        assert_eq!(reply["rowCount"], json!(1000), "rowCount counts the rows beside it");
+        assert_eq!(reply["truncated"], json!(true));
+        assert_eq!(reply["outputBudget"]["shown"], json!(1000));
+        assert_eq!(reply["outputBudget"]["total"], json!(1500));
+        let note = reply["outputBudget"]["note"].as_str().unwrap_or_default();
+        assert!(note.contains("showing the first 1000 of 1500 items"), "{note}");
+        assert!(note.contains("Narrow the request"), "{note}");
     }
 
     #[test]
-    fn byte_budget_halves_until_it_fits() {
+    fn byte_budget_keeps_the_most_rows_that_fit() {
         // 1000 items is under max_items but far over max_bytes.
         let rows: Vec<Value> = (0..1000)
             .map(|i| json!({ "n": i, "pad": "0123456789abcdefghij".repeat(20) }))
             .collect();
+        let row_len = serde_json::to_string(&rows[999]).unwrap_or_default().len();
         let mut limits = DEFAULT_LIMITS;
         limits.max_bytes = 8 * 1024;
         let out = render_result(&json!({ "rowCount": 1000, "rows": rows }), limits);
-        assert!(out.len() <= limits.max_bytes + 512, "output {}", out.len());
-        assert!(out.contains("output budget"));
+        assert!(out.len() <= limits.max_bytes, "output {}", out.len());
+        let reply: Value = serde_json::from_str(&out).expect("valid JSON");
+        let shown = reply["rows"].as_array().map_or(0, Vec::len);
+        assert_eq!(reply["outputBudget"]["shown"], json!(shown));
+        assert_eq!(reply["outputBudget"]["total"], json!(1000));
+        // Halving stopped at 31 rows here; one more row than shown must not fit.
+        assert!(out.len() + row_len + 1 > limits.max_bytes, "{shown} rows, {} bytes", out.len());
     }
 
     #[test]
     fn bare_arrays_shed_too() {
         let items: Vec<Value> = (0..1200).map(|i| json!(i)).collect();
         let out = render_result(&json!(items), DEFAULT_LIMITS);
-        assert!(out.contains("showing the first 1000 of 1200 items"));
+        let reply: Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(reply["items"].as_array().map(Vec::len), Some(1000));
+        assert_eq!(reply["truncated"], json!(true));
+        let note = reply["outputBudget"]["note"].as_str().unwrap_or_default();
+        assert!(note.contains("showing the first 1000 of 1200 items"), "{note}");
+    }
+
+    /// One row wider than the whole budget (a TEXT column, a big redis string) keeps its row and
+    /// its other fields; only the long string is cut, and says how much went.
+    #[test]
+    fn one_wide_row_is_clipped_not_dropped() {
+        let body = "x".repeat(400 * 1024);
+        let result = json!({ "rowCount": 1, "rows": [{ "id": 7, "body": body, "tag": "kept" }] });
+        let out = render_result(&result, DEFAULT_LIMITS);
+        assert!(out.len() <= DEFAULT_LIMITS.max_bytes, "output {}", out.len());
+        let reply: Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(reply["rows"][0]["id"], json!(7));
+        assert_eq!(reply["rows"][0]["tag"], json!("kept"));
+        let cut = reply["rows"][0]["body"].as_str().unwrap_or_default();
+        assert!(cut.ends_with(" bytes]") && cut.contains("…[+"), "marked: …{}", &cut[cut.len().saturating_sub(24)..]);
+        assert_eq!(reply["outputBudget"]["clippedStrings"], json!(1));
+        assert!(reply["outputBudget"].get("total").is_none(), "no row was dropped");
+    }
+
+    /// No list to shed and no long string to clip: the start of the JSON, carried as a string so
+    /// the reply still parses.
+    #[test]
+    fn a_value_with_nothing_to_drop_is_carried_as_partial_text() {
+        let wide: Map<String, Value> = (0..40_000).map(|i| (format!("f{i}"), json!(i))).collect();
+        let out = render_result(&json!({ "value": wide }), DEFAULT_LIMITS);
+        assert!(out.len() <= DEFAULT_LIMITS.max_bytes, "output {}", out.len());
+        let reply: Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(reply["truncated"], json!(true));
+        let partial = reply["partial"].as_str().unwrap_or_default();
+        assert!(partial.starts_with(r#"{"value":{"f0":0,"#), "{}", &partial[..40.min(partial.len())]);
+        let note = reply["outputBudget"]["note"].as_str().unwrap_or_default();
+        assert!(note.contains("`partial`"), "{note}");
     }
 
     /// Four tools: one that answers behind a strict schema, one behind a permissive schema, one

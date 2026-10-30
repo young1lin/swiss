@@ -40,6 +40,7 @@ pub mod proc;
 pub mod proxy;
 pub mod redis;
 pub mod redis_browser;
+pub mod redis_pubsub;
 pub mod redis_resources;
 pub mod remote;
 pub mod resources;
@@ -260,6 +261,21 @@ where
     }
 }
 
+/// How much of one MCP's traffic the host may keep on disk. Honoured by the traffic log
+/// (here, host-side) and by the adapter's own call logging. Memory declares
+/// `MetadataOnly`: its arguments and results are the user's notes, and a log must never
+/// become a second copy of them (SPEC §memory.mcp).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogPolicy {
+    /// Arguments and clipped results, as every adapter always had.
+    #[default]
+    Full,
+    /// Method, tool name, timing, outcome and opaque ids - never arguments or results.
+    MetadataOnly,
+    /// Nothing at all.
+    Disabled,
+}
+
 /// One hosted MCP's adapter — port of `adapters/types.ts`. Default methods stand in for
 /// TypeScript's optional members, so a new adapter implements two methods and inherits the rest.
 #[async_trait]
@@ -301,6 +317,100 @@ pub trait Adapter: Send + Sync {
     fn resource_toggle(&self) -> Option<ResourceToggle> {
         None
     }
+
+    /// What the host may log of this MCP's traffic. Full unless the adapter says otherwise.
+    fn log_policy(&self) -> LogPolicy {
+        LogPolicy::Full
+    }
+}
+
+/// The child-row wiring a proc MCP carries (SPEC §process.children): the shared
+/// registry its spawned child registers into, plus the stop hook that is EXACTLY what
+/// `POST /api/mcps/{name}/stop` does — stop, then persist as disabled, so an MCP stopped
+/// from the Process page does not come back at the next boot.
+///
+/// Built by the composition root, which owns the swiss-host child registry, this crate's
+/// MCP registry and the managed store. `None` reaches the adapter in tests and in the
+/// connection probe, whose children live for a handshake and nobody can click.
+pub struct McpChildSeat {
+    children: std::sync::Arc<swiss_host::services::children::ChildRegistry>,
+    /// The MCP's CURRENT name, shared with the stop closure (SPEC §mcp.registry):
+    /// a rename keeps the running adapter, so both the row's label and the stop
+    /// path must answer to the name the entry carries now - never the one this
+    /// seat was built with.
+    name: std::sync::Arc<std::sync::RwLock<String>>,
+    stop: std::sync::Arc<dyn swiss_host::services::children::ChildStop>,
+}
+
+impl McpChildSeat {
+    pub fn new(
+        children: std::sync::Arc<swiss_host::services::children::ChildRegistry>,
+        name: &str,
+        registry: &std::sync::Arc<crate::registry::Registry>,
+        store: &std::sync::Arc<swiss_host::managed::ManagedStore>,
+    ) -> Self {
+        let mcp_registry = std::sync::Arc::clone(registry);
+        let managed = std::sync::Arc::clone(store);
+        let name = std::sync::Arc::new(std::sync::RwLock::new(name.to_string()));
+        let stop_cell = std::sync::Arc::clone(&name);
+        McpChildSeat {
+            children,
+            name,
+            stop: swiss_host::services::children::child_stop_fn(move || {
+                let mcp_registry = std::sync::Arc::clone(&mcp_registry);
+                let managed = std::sync::Arc::clone(&managed);
+                let cell = std::sync::Arc::clone(&stop_cell);
+                async move {
+                    let mcp = cell
+                        .read()
+                        .map(|n| n.clone())
+                        .unwrap_or_default();
+                    mcp_registry.stop(&mcp).await?;
+                    managed
+                        .set_enabled(&mcp, false)
+                        .map_err(|err| err.to_string())
+                }
+            }),
+        }
+    }
+
+    /// The row's stop path, the one thing the children route reaches - and the
+    /// test's way in without a live child.
+    pub async fn stop(&self) -> Result<(), String> {
+        self.stop.stop().await
+    }
+
+    /// Follow a registry rename (SPEC §mcp.registry): the live name the stop
+    /// closure resolves and new rows label with.
+    pub fn rename(&self, new_name: &str) {
+        if let Ok(mut name) = self.name.write() {
+            *name = new_name.to_string();
+        }
+    }
+
+    /// Relabel the already-registered row of a live child (no-op without one).
+    pub fn relabel(&self, pid: u32, new_name: &str) {
+        self.children.relabel(pid, new_name);
+    }
+
+    /// Register the just-spawned child at the point the adapter records the pid for the
+    /// ledger (SPEC §process.children). The guard rides LiveChild, so the row vanishes
+    /// exactly when the child does.
+    pub fn register(&self, pid: u32) -> Option<swiss_host::services::children::ChildGuard> {
+        let label = self
+            .name
+            .read()
+            .map(|n| n.clone())
+            .unwrap_or_default();
+        self.children
+            .register(swiss_host::services::children::ChildSpec {
+                pid,
+                owner: "mcp".to_string(),
+                kind: swiss_host::services::children::ChildKind::Mcp,
+                label,
+                stop: Some(std::sync::Arc::clone(&self.stop)),
+            })
+    }
 }
 
 /// Map a config/managed ServerDef to its Adapter — port of `factory.ts` minus the
@@ -315,6 +425,7 @@ pub fn make_adapter(
     raw_def: &ServerDef,
     name: &str,
     log: &std::sync::Arc<crate::calls::CallLog>,
+    child_seat: Option<McpChildSeat>,
 ) -> Result<Arc<dyn Adapter>, String> {
     let def =
         swiss_host::config::resolve_def_checked(raw_def).map_err(|e| format!("{name}: {e}"))?;
@@ -336,7 +447,7 @@ pub fn make_adapter(
         // MongoDB (SPEC §mcp.db, ADR-030): the driver's own pool, opened on the first call.
         "mongo" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, mongo::MongoEngine::new(&def, name)?, log.clone()))),
         "rest" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, rest::RestEngine::new(&def, name)?, log.clone()))),
-        "proc" => Ok(Arc::new(proc::ProcAdapter::new(&def, name, log.clone()))),
+        "proc" => Ok(Arc::new(proc::ProcAdapter::new(&def, name, log.clone(), child_seat))),
         // The zai-vision type: the @z_ai/mcp-server GLM vision tools compiled in natively
         // (replacing the Node child a proc def used to spawn) - see zai.rs for the port map.
         "zai-vision" => Ok(Arc::new(direct::DirectAdapter::new(
@@ -353,7 +464,7 @@ pub fn make_adapter(
             expanded.set("type", serde_json::json!("http"));
             expanded.set("url", serde_json::json!(crate::oauth::FIGMA_MCP_URL));
             expanded.set("auth", serde_json::json!("oauth"));
-            make_adapter(&expanded, name, log)
+            make_adapter(&expanded, name, log, child_seat)
         }
         "http" => Ok(Arc::new(http::HttpAdapter::new(&def, name, log.clone())?)),
         other => Err(format!(
@@ -378,7 +489,7 @@ mod tests {
     }
 
     fn kind_of(v: Value) -> Result<String, String> {
-        make_adapter(&def(v), "an-mcp", &crate::calls::test_log()).map(|a| a.kind().to_string())
+        make_adapter(&def(v), "an-mcp", &crate::calls::test_log(), None).map(|a| a.kind().to_string())
     }
 
     fn rest_def() -> Value {
@@ -386,6 +497,45 @@ mod tests {
             "type": "rest",
             "tools": [{ "name": "t", "request": { "method": "GET", "path": "/" } }],
         })
+    }
+
+    #[tokio::test]
+    async fn the_seat_stops_and_persists_under_the_live_name() {
+        // SPEC §process.children + §mcp.registry: a rename keeps the running adapter,
+        // so the children row's stop must resolve under the name the entry carries
+        // NOW. Before the live-name cell the closure captured the build-time name -
+        // after a rename the Process page's Stop answered "unknown MCP: old" and
+        // left the disabling unpersisted: a dead button.
+        let dir = std::env::temp_dir().join(format!("swiss-seat-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let calls = crate::calls::test_log();
+        let registry = crate::registry::Registry::new(3_600_000, calls.clone());
+        let managed = std::sync::Arc::new(swiss_host::managed::ManagedStore::open_at(
+            dir.join("managed.json"),
+        ));
+        let children = swiss_host::services::children::ChildRegistry::new();
+        let def = def(json!({ "type": "proc", "command": "node" }));
+        let adapter = make_adapter(&def, "old", &calls, None).expect("the adapter builds");
+        registry
+            .register("old", crate::registry::Source::Managed, def, adapter)
+            .expect("registered");
+        let seat = McpChildSeat::new(children.clone(), "old", &registry, &managed);
+        // A live child's row registers under the build-time name, as at spawn.
+        let _row = seat.register(4242).expect("the row registers");
+        assert_eq!(children.rows()[0].label, "old");
+        // The production flow: registry.rename relabels through adapter.rename,
+        // whose seat follows (ProcAdapter::rename drives both calls below).
+        registry.rename("old", "renamed").await.expect("the rename lands");
+        seat.rename("renamed");
+        seat.relabel(4242, "renamed");
+        assert_eq!(children.rows()[0].label, "renamed", "the row answers to the current name");
+        seat.stop().await.expect("stop resolves under the live name");
+        assert_eq!(
+            managed.enabled_for("renamed"),
+            Some(false),
+            "the disabling persisted under the new name"
+        );
+        assert_eq!(managed.enabled_for("old"), None, "no state under the vacated name");
     }
 
     #[test]
@@ -453,11 +603,12 @@ mod tests {
             &def(json!({ "type": "http", "url": "https://example.test/mcp" })),
             "an-mcp",
             &crate::calls::test_log(),
+            None,
         )
         .expect("http adapter");
         assert!(http.ping().await.is_none());
 
-        let rest = make_adapter(&def(rest_def()), "an-mcp", &crate::calls::test_log())
+        let rest = make_adapter(&def(rest_def()), "an-mcp", &crate::calls::test_log(), None)
             .expect("rest adapter");
         assert!(rest.ping().await.is_none());
     }
@@ -470,6 +621,7 @@ mod tests {
             &def(json!({ "type": "echo" })),
             "an-mcp",
             &crate::calls::test_log(),
+            None,
         )
         .expect("echo");
         assert!(echo.tool_toggle().is_none());
@@ -479,6 +631,7 @@ mod tests {
             &def(json!({ "type": "mysql", "host": "x", "database": "shop" })),
             "an-mcp",
             &crate::calls::test_log(),
+            None,
         )
         .expect("mysql");
         assert!(mysql.tool_toggle().is_some());
@@ -491,6 +644,7 @@ mod tests {
             &def(json!({ "type": "mysql", "host": "x" })),
             "an-mcp",
             &crate::calls::test_log(),
+            None,
         )
         .expect("mysql");
         assert!(unscoped.tool_toggle().is_some());
@@ -504,7 +658,7 @@ mod tests {
         let raw = def(json!({ "type": "http", "url": "${SWISS_TEST_MISSING_URL}" }));
         // An unset ref resolves to nothing, which is exactly the "needs a url" error — proof the
         // expansion ran, since the unexpanded string is a perfectly good non-empty url.
-        let err = match make_adapter(&raw, "an-mcp", &crate::calls::test_log()) {
+        let err = match make_adapter(&raw, "an-mcp", &crate::calls::test_log(), None) {
             Err(err) => err,
             Ok(_) => panic!("an unset url ref must not build an http adapter"),
         };
@@ -518,11 +672,27 @@ mod tests {
         // one — kind is what the tag and the authorize guard read — while the def the registry
         // holds stays type figma with no url or auth key on it, exactly as the panel wrote it.
         let raw = def(json!({ "type": "figma", "description": "Figma design files" }));
-        let adapter = make_adapter(&raw, "figma", &crate::calls::test_log()).expect("figma builds");
+        let adapter = make_adapter(&raw, "figma", &crate::calls::test_log(), None).expect("figma builds");
         assert_eq!(adapter.kind(), "http");
         assert_eq!(raw.type_(), "figma");
         assert_eq!(raw.get_str("url"), None);
         assert_eq!(raw.get_str("auth"), None);
         assert!(crate::oauth::is_oauth(&raw));
+    }
+
+    #[test]
+    fn a_figma_def_hands_its_proxy_to_the_http_adapter() {
+        // The proxy is the one network key a figma def takes (SPEC §mcp.figma): the expansion
+        // keeps it, so the http adapter validates it like its own - a socks5 URL is a start
+        // error, not a first-call mystery - and a usable one builds.
+        let socks = def(json!({ "type": "figma", "proxy": "socks5://127.0.0.1:1080" }));
+        let err = match make_adapter(&socks, "figma", &crate::calls::test_log(), None) {
+            Err(err) => err,
+            Ok(_) => panic!("a socks5 proxy must not build a figma adapter"),
+        };
+        assert!(err.contains("proxy must be an http"), "{err}");
+        let http = def(json!({ "type": "figma", "proxy": "http://127.0.0.1:7890" }));
+        assert!(make_adapter(&http, "figma", &crate::calls::test_log(), None).is_ok());
+        assert_eq!(http.get_str("proxy"), Some("http://127.0.0.1:7890"));
     }
 }

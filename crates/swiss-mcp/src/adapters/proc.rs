@@ -276,9 +276,12 @@ impl SpawnedChild {
         // No job (creation/assignment failed, or off Windows): kill by PID as the Node build
         // did. Skip when the root already exited — its PID is free for the OS to hand to
         // something else, and a kill-by-PID would take the innocent process down with it.
+        // Survivors of the fallback are not acted on further: the primary path (the job
+        // object / group kill) is what carries the guarantee, and the caller's wait below is
+        // the honest answer about whether the root died.
         if !self.exited() {
             #[cfg(windows)]
-            swiss_core::platform::tree_kill(self.pid);
+            let _ = swiss_core::platform::tree_kill(self.pid);
             #[cfg(not(windows))]
             let _ = self.child.start_kill(); // kill(pid, SIGKILL) on the recorded root
         }
@@ -457,9 +460,12 @@ impl super::proxy::RemoteMcp for ChildRemote {
 }
 
 /// The live child plus its established MCP session, held between `build()` and `close()`.
+/// The child-registry guard rides along, so the Process page's row for this MCP vanishes
+/// exactly when the child does (SPEC §process.children).
 struct LiveChild {
     spawned: SpawnedChild,
     client: RunningService<RoleClient, ProcClientHandler>,
+    child: Option<swiss_host::services::children::ChildGuard>,
 }
 
 /// One hosted proc MCP — port of `ProcAdapter`. Spawns on `build()`, tree-kills on `close()`;
@@ -489,12 +495,20 @@ pub struct ProcAdapter {
     peer: Arc<std::sync::RwLock<Option<Peer<RoleClient>>>>,
     /// Where calls through this adapter are recorded.
     log: std::sync::Arc<crate::calls::CallLog>,
+    /// The Process page's row wiring (SPEC §process.children): present in the gateway,
+    /// None in tests and in the connection probe.
+    seat: Option<super::McpChildSeat>,
 }
 
 impl ProcAdapter {
     /// `def` must already be a `resolve_def_checked()` clone (env refs expanded), exactly as
     /// `make_adapter` hands it over.
-    pub fn new(def: &ServerDef, name: &str, log: std::sync::Arc<crate::calls::CallLog>) -> Self {
+    pub fn new(
+        def: &ServerDef,
+        name: &str,
+        log: std::sync::Arc<crate::calls::CallLog>,
+        seat: Option<super::McpChildSeat>,
+    ) -> Self {
         let env: BTreeMap<String, String> = def
             .get("env")
             .and_then(Value::as_object)
@@ -528,6 +542,7 @@ impl ProcAdapter {
             pid: std::sync::Mutex::new(None),
             peer: Arc::new(std::sync::RwLock::new(None)),
             log,
+            seat,
         }
     }
 
@@ -535,6 +550,9 @@ impl ProcAdapter {
     /// the SDK handle (Node's order exactly).
     async fn teardown(live: LiveChild) {
         let mut live = live;
+        // The Process page's row goes FIRST: close() owns this child now, so the row must
+        // not outlive the lifecycle op that is tearing it down (SPEC §process.children).
+        drop(live.child.take());
         // Closed cleanly -> no longer a candidate for orphan reaping on next boot. This runs
         // BEFORE the kill: a tree we are about to kill must not be reaped again by a future
         // boot that races our own shutdown.
@@ -712,11 +730,22 @@ impl super::Adapter for ProcAdapter {
         };
 
         let peer = client.peer().clone();
+        let mut child_row = None;
         if pid != 0 {
             // Ledger it, so a future boot can reap this child if we die hard before close runs.
             swiss_host::proc_pids::note_proc_pid(pid);
+            // The Process page's row, at the point the pid is recorded for the ledger
+            // (SPEC §process.children): owner mcp, label the MCP's name, stop through the
+            // lifecycle route. The guard rides LiveChild below.
+            if let Some(seat) = &self.seat {
+                child_row = seat.register(pid);
+            }
         }
-        *self.live.lock().await = Some(LiveChild { spawned, client });
+        *self.live.lock().await = Some(LiveChild {
+            spawned,
+            client,
+            child: child_row,
+        });
         if let Ok(mut cell) = self.pid.lock() {
             *cell = Some(pid);
         }
@@ -802,6 +831,17 @@ impl super::Adapter for ProcAdapter {
     fn rename(&self, name: &str) {
         if let Ok(mut current) = self.name.write() {
             *current = name.to_string();
+        }
+        // The children row follows (SPEC §process.children): the seat's live name
+        // keeps the Process page's stop resolving after a rename, and a live
+        // child's row label stops answering to the vacated name.
+        if let Some(seat) = &self.seat {
+            seat.rename(name);
+            if let Ok(guard) = self.pid.lock() {
+                if let Some(pid) = *guard {
+                    seat.relabel(pid, name);
+                }
+            }
         }
     }
 }
@@ -973,7 +1013,7 @@ mod tests {
             "env": { "A": "1", "B": 2, "C": "3" },
         }))
         .unwrap();
-        let adapter = ProcAdapter::new(&def, "fetch", crate::calls::test_log());
+        let adapter = ProcAdapter::new(&def, "fetch", crate::calls::test_log(), None);
         assert_eq!(adapter.command, "uvx mcp-server-fetch");
         assert_eq!(adapter.cwd.as_deref(), Some("C:\\work"));
         // Non-string env entries are skipped, string ones kept.

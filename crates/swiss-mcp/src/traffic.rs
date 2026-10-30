@@ -73,7 +73,7 @@ pub struct TrafficEntry {
 const KEEP: usize = 500;
 /// Matches the tool-call log's page (CALLS_PAGE_SIZE). Both views are one-line-per-row logs you
 /// scan, and 20 rows is about a screen — you page rather than scroll, then page.
-const PAGE_SIZE: usize = 20;
+pub(crate) const PAGE_SIZE: usize = 20;
 
 const PARAMS_MAX: usize = 512;
 /// Cap on the full request body stored for the expandable raw view (keeps the ring + poll small).
@@ -94,6 +94,10 @@ struct TrafficState {
     /// get).
     file: Option<PathBuf>,
     bytes: u64,
+    /// Whether the legacy file tail has been folded into the ring. Arming the file at
+    /// construction no longer reads it (SPEC §host.history L1: a disabled module opens
+    /// zero history paths), so the fold happens on first use, once.
+    restored: bool,
 }
 
 /// One traffic log: the ring, the sequence, the token→client memory and the armed recovery
@@ -113,6 +117,13 @@ pub struct TrafficLog {
     registered: std::sync::atomic::AtomicU64,
     /// Writes that have reached the file; `flush_traffic` waits for it to catch up.
     completed: tokio::sync::watch::Sender<u64>,
+    /// The module database the MCP plugin attaches while enabled (SPEC §host.history).
+    /// When set, reads and clears answer from the archive; the ring stays the live window
+    /// and the attribution memory either way.
+    history: std::sync::RwLock<Option<std::sync::Arc<crate::history::McpHistory>>>,
+    /// Set once a database has been attached: after that the ring holds live rows and the
+    /// legacy tail must never be folded over them.
+    ever_attached: std::sync::atomic::AtomicBool,
 }
 
 impl TrafficLog {
@@ -127,23 +138,46 @@ impl TrafficLog {
                 known_client: std::collections::HashMap::new(),
                 file: None,
                 bytes: 0,
+                restored: true,
             })),
             write_queue: Arc::new(tokio::sync::Mutex::new(())),
             registered: std::sync::atomic::AtomicU64::new(0),
             completed: tokio::sync::watch::Sender::new(0),
+            history: std::sync::RwLock::new(None),
+            ever_attached: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     /// A persistent log writing `traffic.jsonl` under `dir` (the production one is
-    /// `data_path(["logs"])`), constructed with its pre-restart tail already restored — the
-    /// two halves the old `init_traffic_log` performed on process-global state (construct,
-    /// then attach the file), folded into construction because nothing can record into an
-    /// instance before it exists. Where that merge once re-numbered ring entries recorded
-    /// before the file was armed, an instance starts empty by construction, so the sequence
-    /// simply continues from the newest seq on disk.
+    /// `data_path(["logs"])`). Construction ARMS the file and nothing more — no path
+    /// under the home's logs tree is opened while the module is disabled (SPEC
+    /// §host.history L1); the pre-restart tail folds into the ring on first use, once,
+    /// or is superseded entirely when the plugin attaches the module database first.
     pub fn at(dir: PathBuf) -> TrafficLog {
         let log = TrafficLog::memory();
         let file = dir.join("traffic.jsonl");
+        if let Ok(mut s) = log.state.lock() {
+            s.file = Some(file);
+            s.restored = false;
+        }
+        log
+    }
+
+    /// Fold the armed legacy tail into the ring, once. No-op after the first fold, after
+    /// a database attach, and on memory-only logs.
+    fn ensure_restored(&self) {
+        if self.ever_attached.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let (file, needs_fold) = {
+            let Ok(s) = self.state.lock() else {
+                return;
+            };
+            (s.file.clone(), !s.restored)
+        };
+        let Some(file) = file.filter(|_| needs_fold) else {
+            return;
+        };
         let restored: Vec<TrafficEntry> = crate::calls::tail_lines(&file, KEEP)
             .ok()
             .map(|tail| {
@@ -155,7 +189,11 @@ impl TrafficLog {
             })
             .unwrap_or_default();
         let bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
-        if let Ok(mut s) = log.state.lock() {
+        let max_seq = restored.iter().map(|e| e.seq).max().unwrap_or(0);
+        if let Ok(mut s) = self.state.lock() {
+            if s.restored || self.ever_attached.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
             // The token→client memory rides along: without it, restored traffic would show
             // "token X" rows until that client happens to send another initialize.
             for e in &restored {
@@ -166,12 +204,42 @@ impl TrafficLog {
                     );
                 }
             }
-            s.seq = restored.iter().map(|e| e.seq).max().unwrap_or(0);
+            if max_seq > s.seq {
+                s.seq = max_seq;
+            }
             s.ring = restored;
-            s.file = Some(file);
             s.bytes = bytes;
+            s.restored = true;
         }
-        log
+    }
+
+    /// Attach the module database (the plugin's start). The ring's sequence floor is
+    /// raised to the archive's newest legacy seq so new rows never renumber old ones.
+    pub async fn attach_history(&self, history: std::sync::Arc<crate::history::McpHistory>) {
+        let floor = history.traffic_seq_floor().await;
+        self.ever_attached.store(true, std::sync::atomic::Ordering::Release);
+        if let Ok(mut s) = self.state.lock() {
+            if floor > s.seq {
+                s.seq = floor;
+            }
+            s.restored = true;
+        }
+        if let Ok(mut slot) = self.history.write() {
+            *slot = Some(history);
+        }
+    }
+
+    /// Detach (the plugin's stop, before the bounded close) — the live ring answers
+    /// reads again and new rows append to the legacy path until the next start.
+    pub fn detach_history(&self) {
+        if let Ok(mut slot) = self.history.write() {
+            *slot = None;
+        }
+    }
+
+    /// The attached database, if the module is enabled.
+    pub fn attached_history(&self) -> Option<std::sync::Arc<crate::history::McpHistory>> {
+        self.history.read().ok().and_then(|slot| slot.clone())
     }
 }
 
@@ -246,6 +314,46 @@ fn clip(s: &str, max: usize) -> String {
     }
     let head: String = s.chars().take(max).collect();
     format!("{head}…")
+}
+
+/// A request body reduced to what a metadata-only MCP may keep (SPEC §memory.mcp):
+/// `{jsonrpc, id, method, params: {name}}` per message, plus the client identification an
+/// initialize or discover carries - never arguments. Batches stay batches.
+pub fn metadata_only(body: &Value) -> Value {
+    fn one(message: &Value) -> Value {
+        let Some(obj) = message.as_object() else {
+            return Value::Null;
+        };
+        let mut out = Map::new();
+        for key in ["jsonrpc", "id", "method"] {
+            if let Some(value) = obj.get(key) {
+                out.insert(key.to_string(), value.clone());
+            }
+        }
+        if let Some(params) = obj.get("params").and_then(Value::as_object) {
+            let mut kept = Map::new();
+            if let Some(name) = params.get("name").filter(|v| v.is_string()) {
+                kept.insert("name".into(), name.clone());
+            }
+            if let Some(info) = params.get("clientInfo") {
+                kept.insert("clientInfo".into(), info.clone());
+            }
+            if let Some(info) = params
+                .get("_meta")
+                .and_then(|m| m.get("io.modelcontextprotocol/clientInfo"))
+            {
+                let mut meta = Map::new();
+                meta.insert("io.modelcontextprotocol/clientInfo".into(), info.clone());
+                kept.insert("_meta".into(), Value::Object(meta));
+            }
+            out.insert("params".into(), Value::Object(kept));
+        }
+        Value::Object(out)
+    }
+    match body.as_array() {
+        Some(batch) => Value::Array(batch.iter().map(one).collect()),
+        None => one(body),
+    }
 }
 
 /// Lift clientInfo out of the params, leaving the rest to be logged.
@@ -444,6 +552,12 @@ impl TrafficLog {
             });
             to_persist.push(entry);
         }
+        // The ring always stays the live window; the database, when attached, is what
+        // outlives it. Fold any armed legacy tail first so the sequence continues from
+        // disk rather than renumbering a restored row.
+        if self.attached_history().is_none() {
+            self.ensure_restored();
+        }
         let mut armed: Option<PathBuf> = None;
         let mut recorded: Vec<TrafficEntry> = Vec::new();
         if let Ok(mut s) = self.state.lock() {
@@ -459,7 +573,9 @@ impl TrafficLog {
             }
             armed = s.file.clone();
         }
-        if armed.is_some() {
+        if let Some(history) = self.attached_history() {
+            history.record_traffic(recorded);
+        } else if armed.is_some() {
             for entry in recorded {
                 self.persist_traffic(entry);
             }
@@ -471,7 +587,7 @@ impl TrafficLog {
 /// (initialize, tools/list, notifications/…). The panel defaults to these so a handshake storm
 /// does not bury the four calls you came to look at. Server-side because the filter now runs
 /// before paging: filtering a page of 50 in the browser can leave a page showing nothing at all.
-const ACTION_METHODS: [&str; 7] = [
+pub(crate) const ACTION_METHODS: [&str; 7] = [
     "tools/call",
     "resources/read",
     "resources/subscribe",
@@ -538,7 +654,11 @@ impl TrafficLog {
     /// 3 MB — polled every 6 seconds, to render a dozen visible lines whose raw JSON is hidden until
     /// you expand one. The panel fetches a single entry's payload from read_traffic_entry when a row
     /// is opened. `hasResponse` survives because the collapsed row says whether a reply was captured.
-    pub fn read_traffic(&self, q: &TrafficQuery) -> Value {
+    pub async fn read_traffic(&self, q: &TrafficQuery<'_>) -> Value {
+        if let Some(history) = self.attached_history() {
+            return history.read_traffic(q).await;
+        }
+        self.ensure_restored();
         let s = self.state.lock().ok();
         let Some(s) = s else {
             return json!({ "entries": [], "total": 0, "totalUnfiltered": 0, "page": 0, "pageSize": PAGE_SIZE, "more": false });
@@ -583,7 +703,11 @@ impl TrafficLog {
     }
 
     /// One entry's raw request and reply, fetched when a row is expanded.
-    pub fn read_traffic_entry(&self, seq: u64) -> Option<Value> {
+    pub async fn read_traffic_entry(&self, seq: u64) -> Option<Value> {
+        if let Some(history) = self.attached_history() {
+            return history.read_traffic_entry(seq).await;
+        }
+        self.ensure_restored();
         let s = self.state.lock().ok()?;
         let e = s.ring.iter().find(|x| x.seq == seq)?;
         let mut out = json!({ "body": e.body });
@@ -597,7 +721,11 @@ impl TrafficLog {
     /// over the current page. This summary is the answer to "who is talking to my gateway", and a
     /// summary derived from page 3 of an actions-only filter would answer a different question each
     /// time you paged. Newest-active first.
-    pub fn traffic_clients(&self) -> Vec<Value> {
+    pub async fn traffic_clients(&self) -> Vec<Value> {
+        if let Some(history) = self.attached_history() {
+            return history.traffic_clients().await;
+        }
+        self.ensure_restored();
         let Ok(s) = self.state.lock() else {
             return Vec::new();
         };
@@ -677,7 +805,24 @@ impl TrafficLog {
     /// Intentionally does NOT clear known_client: "Clear" wipes the log, not the gateway's memory of
     /// which token is which client. Forgetting it here would make ongoing traffic drop back to
     /// "token X" until the client happens to re-initialize — the split looking like it came back.
-    pub fn clear_traffic(&self, client_key: Option<&str>) {
+    pub async fn clear_traffic(&self, client_key: Option<&str>) {
+        if let Some(history) = self.attached_history() {
+            let armed = {
+                let Ok(mut s) = self.state.lock() else { return };
+                match client_key {
+                    Some(key) => s.ring.retain(|e| self.client_key_of(e) != key),
+                    None => {
+                        s.ring.clear();
+                        s.seq = 0;
+                    }
+                }
+                s.file.clone()
+            };
+            let _ = armed;
+            history.clear_traffic(client_key).await;
+            return;
+        }
+        self.ensure_restored();
         let armed = {
             let Ok(mut s) = self.state.lock() else { return };
             match client_key {
@@ -809,6 +954,12 @@ fn trim_traffic_log(state: &Arc<Mutex<TrafficState>>) -> Result<(), String> {
 impl TrafficLog {
     /// Wait for every pending write (the shutdown path and tests).
     pub async fn flush_traffic(&self) {
+        if let Some(history) = self.attached_history() {
+            // The database is the authority; the legacy counters stay at 0/0 with no
+            // writers to wait for.
+            history.flush().await;
+            return;
+        }
         let want = self.registered.load(std::sync::atomic::Ordering::SeqCst);
         let mut done = self.completed.subscribe();
         while *done.borrow_and_update() < want {
@@ -826,6 +977,17 @@ mod tests {
 
     fn request(method: &str, params: Value) -> Value {
         json!({"jsonrpc":"2.0","id":1,"method":method,"params":params})
+    }
+
+    #[test]
+    fn metadata_only_keeps_the_tool_name_and_drops_arguments() {
+        let call = request("tools/call", json!({"name": "memory_save", "arguments": {"title": "SENTINEL"}}));
+        let kept = metadata_only(&call);
+        assert_eq!(kept, json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_save"}}));
+        let init = request("initialize", json!({"clientInfo": {"name": "codex", "version": "1"}, "capabilities": {"x": 1}}));
+        assert_eq!(metadata_only(&init)["params"], json!({"clientInfo": {"name": "codex", "version": "1"}}));
+        let batch = Value::Array(vec![call.clone(), call]);
+        assert!(!metadata_only(&batch).to_string().contains("SENTINEL"));
     }
 
     fn q<'a>() -> TrafficQuery<'a> {
@@ -868,8 +1030,8 @@ mod tests {
     /// per app, so two logs in one process are two rings that never see each other. Before
     /// the change this test could not be written at all — there was one process-global ring
     /// and every caller shared it, which is also why the tests below used to serialize.
-    #[test]
-    fn two_logs_in_one_process_never_see_each_others_rows() {
+    #[tokio::test]
+    async fn two_logs_in_one_process_never_see_each_others_rows() {
         let a = TrafficLog::memory();
         let b = TrafficLog::memory();
         a.record_traffic(
@@ -889,8 +1051,8 @@ mod tests {
             None,
         );
 
-        let pa = a.read_traffic(&q());
-        let pb = b.read_traffic(&q());
+        let pa = a.read_traffic(&q()).await;
+        let pb = b.read_traffic(&q()).await;
         assert_eq!(pa["total"], 1);
         assert_eq!(pb["total"], 1);
         assert_eq!(pa["entries"][0]["client"], "ta");
@@ -902,8 +1064,8 @@ mod tests {
 
     // --- recording ---
 
-    #[test]
-    fn records_one_entry_per_json_rpc_message_and_skips_bodies_with_no_method() {
+    #[tokio::test]
+    async fn records_one_entry_per_json_rpc_message_and_skips_bodies_with_no_method() {
         let log = TrafficLog::memory();
         log.record_traffic(
             "db",
@@ -931,7 +1093,7 @@ mod tests {
         log.record_traffic("db", None, None, true, 1, None);
 
         assert_eq!(ring_len(&log), 3);
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         let methods: Vec<&str> = rows(&page)
             .iter()
             .map(|r| r["method"].as_str().unwrap())
@@ -940,31 +1102,31 @@ mod tests {
         assert_eq!(page["total"], 3);
     }
 
-    #[test]
-    fn redacts_secret_looking_values_in_both_the_params_and_the_stored_body() {
+    #[tokio::test]
+    async fn redacts_secret_looking_values_in_both_the_params_and_the_stored_body() {
         let log = TrafficLog::memory();
         let body = request(
             "tools/call",
             json!({"name":"t","arguments":{"password":"hunter2","user":"deploy"}}),
         );
         log.record_traffic("db", Some(&body), None, true, 1, None);
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         let params = rows(&page)[0]["params"].as_str().unwrap();
         assert!(!params.contains("hunter2"));
         assert!(params.contains("deploy"));
-        let raw = log.read_traffic_entry(1).unwrap();
+        let raw = log.read_traffic_entry(1).await.unwrap();
         assert!(!raw["body"].as_str().unwrap().contains("hunter2"));
     }
 
-    #[test]
-    fn omits_params_entirely_when_nothing_is_left_after_lifting_client_info() {
+    #[tokio::test]
+    async fn omits_params_entirely_when_nothing_is_left_after_lifting_client_info() {
         let log = TrafficLog::memory();
         let init = request(
             "initialize",
             json!({"clientInfo":{"name":"claude-code","version":"2.0"}}),
         );
         log.record_traffic("db", Some(&init), Some("default"), true, 1, None);
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         assert!(rows(&page)[0].get("params").is_none());
         assert_eq!(rows(&page)[0]["clientName"], "claude-code");
         assert_eq!(rows(&page)[0]["clientVersion"], "2.0");
@@ -973,23 +1135,23 @@ mod tests {
     // server/discover — the capability probe Claude Code sends — nests clientInfo under _meta.
     // Without that path every discover row showed "unknown client" right after the client
     // announced itself.
-    #[test]
-    fn reads_client_info_out_of_the_discover_meta_shape_too() {
+    #[tokio::test]
+    async fn reads_client_info_out_of_the_discover_meta_shape_too() {
         let log = TrafficLog::memory();
         let discover = request(
             "server/discover",
             json!({"_meta":{"io.modelcontextprotocol/clientInfo":{"name":"claude-code","version":"3.1"}}}),
         );
         log.record_traffic("db", Some(&discover), Some("default"), true, 1, None);
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         assert_eq!(rows(&page)[0]["clientName"], "claude-code");
         assert_eq!(rows(&page)[0]["clientVersion"], "3.1");
     }
 
     // clientInfo is announced only during the handshake; without remembering it, one client
     // splits into two rows — the frames that carried a name, and all the rest.
-    #[test]
-    fn remembers_the_name_a_token_announced_and_attributes_its_later_frames() {
+    #[tokio::test]
+    async fn remembers_the_name_a_token_announced_and_attributes_its_later_frames() {
         let log = TrafficLog::memory();
         let init = request(
             "initialize",
@@ -1013,20 +1175,20 @@ mod tests {
             None,
         );
 
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         assert_eq!(rows(&page)[0]["clientName"], Value::Null); // a different token, still unnamed
         assert_eq!(rows(&page)[1]["clientName"], "claude-code");
         assert_eq!(rows(&page)[1]["clientVersion"], "2.0");
     }
 
-    #[test]
-    fn the_ring_never_grows_past_its_bound() {
+    #[tokio::test]
+    async fn the_ring_never_grows_past_its_bound() {
         let log = TrafficLog::memory();
         for _ in 0..KEEP + 25 {
             log.record_traffic("db", Some(&request("ping", json!({}))), None, true, 0, None);
         }
         assert_eq!(ring_len(&log), KEEP);
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         assert_eq!(page["totalUnfiltered"], KEEP);
         // The sequence keeps counting past what the ring holds.
         assert_eq!(rows(&page)[0]["seq"], (KEEP + 25) as u64);
@@ -1034,8 +1196,8 @@ mod tests {
 
     // --- the reply summary ---
 
-    #[test]
-    fn summarizes_a_reply_from_either_protocol_era() {
+    #[tokio::test]
+    async fn summarizes_a_reply_from_either_protocol_era() {
         // Modern (2026): one JSON body.
         let modern =
             summarize_response(Some(r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}"#)).unwrap();
@@ -1048,8 +1210,8 @@ mod tests {
         assert!(!legacy.contains("progress"));
     }
 
-    #[test]
-    fn shows_an_unparseable_reply_raw_rather_than_implying_none_was_inspected() {
+    #[tokio::test]
+    async fn shows_an_unparseable_reply_raw_rather_than_implying_none_was_inspected() {
         assert_eq!(
             summarize_response(Some("<html>502</html>")).unwrap(),
             "<html>502</html>"
@@ -1058,16 +1220,16 @@ mod tests {
         assert_eq!(summarize_response(None), None);
     }
 
-    #[test]
-    fn redacts_the_reply_as_well_as_the_request() {
+    #[tokio::test]
+    async fn redacts_the_reply_as_well_as_the_request() {
         let out = summarize_response(Some(r#"{"id":1,"result":{"password":"hunter2"}}"#)).unwrap();
         assert!(!out.contains("hunter2"));
     }
 
     // --- reading ---
 
-    #[test]
-    fn a_page_carries_no_payload_but_says_whether_a_reply_was_captured() {
+    #[tokio::test]
+    async fn a_page_carries_no_payload_but_says_whether_a_reply_was_captured() {
         let log = TrafficLog::memory();
         log.record_traffic(
             "db",
@@ -1079,7 +1241,7 @@ mod tests {
         );
         log.record_traffic("db", Some(&request("ping", json!({}))), None, true, 1, None);
 
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         // Each payload is capped at 8 KB; a polled 200-row answer carrying them would be megabytes.
         for row in rows(&page) {
             assert!(row.get("body").is_none());
@@ -1088,14 +1250,14 @@ mod tests {
         assert_eq!(rows(&page)[0]["hasResponse"], false);
         assert_eq!(rows(&page)[1]["hasResponse"], true);
 
-        let raw = log.read_traffic_entry(1).unwrap();
+        let raw = log.read_traffic_entry(1).await.unwrap();
         assert!(raw["body"].as_str().unwrap().contains("tools/call"));
         assert!(raw["response"].as_str().unwrap().contains("result"));
-        assert!(log.read_traffic_entry(99).is_none());
+        assert!(log.read_traffic_entry(99).await.is_none());
     }
 
-    #[test]
-    fn pages_newest_first_and_reports_whether_older_rows_exist() {
+    #[tokio::test]
+    async fn pages_newest_first_and_reports_whether_older_rows_exist() {
         let log = TrafficLog::memory();
         for i in 0..25 {
             log.record_traffic(
@@ -1107,20 +1269,20 @@ mod tests {
                 None,
             );
         }
-        let first = log.read_traffic(&q());
+        let first = log.read_traffic(&q()).await;
         assert_eq!(rows(&first).len(), PAGE_SIZE);
         assert_eq!(rows(&first)[0]["method"], "m24");
         assert_eq!(first["more"], true);
 
-        let second = log.read_traffic(&TrafficQuery { page: 1, ..q() });
+        let second = log.read_traffic(&TrafficQuery { page: 1, ..q() }).await;
         assert_eq!(rows(&second).len(), 5);
         assert_eq!(rows(&second)[0]["method"], "m4");
         assert_eq!(second["more"], false);
         assert_eq!(second["total"], 25);
     }
 
-    #[test]
-    fn filters_by_mcp_method_and_client_and_reports_both_totals() {
+    #[tokio::test]
+    async fn filters_by_mcp_method_and_client_and_reports_both_totals() {
         let log = TrafficLog::memory();
         let init = request("initialize", json!({"clientInfo":{"name":"claude-code"}}));
         log.record_traffic("db", Some(&init), Some("laptop"), true, 1, None);
@@ -1144,32 +1306,32 @@ mod tests {
         let by_mcp = log.read_traffic(&TrafficQuery {
             mcp: Some("cache"),
             ..q()
-        });
+        }).await;
         assert_eq!(by_mcp["total"], 1);
         assert_eq!(by_mcp["totalUnfiltered"], 3); // the whole ring, not the filtered slice
 
         let by_method = log.read_traffic(&TrafficQuery {
             method: Some("tools/list"),
             ..q()
-        });
+        }).await;
         assert_eq!(by_method["total"], 2);
 
         // The client key is the prefixed one the panel groups by.
         let by_client = log.read_traffic(&TrafficQuery {
             client: Some("n:claude-code"),
             ..q()
-        });
+        }).await;
         assert_eq!(by_client["total"], 2);
         let by_token = log.read_traffic(&TrafficQuery {
             client: Some("t:ci"),
             ..q()
-        });
+        }).await;
         assert_eq!(by_token["total"], 1);
     }
 
     // The panel defaults to actions so a handshake storm does not bury the calls you came to see.
-    #[test]
-    fn actions_only_keeps_what_a_user_asked_for_and_drops_the_scaffolding() {
+    #[tokio::test]
+    async fn actions_only_keeps_what_a_user_asked_for_and_drops_the_scaffolding() {
         let log = TrafficLog::memory();
         for method in [
             "initialize",
@@ -1183,7 +1345,7 @@ mod tests {
         let page = log.read_traffic(&TrafficQuery {
             actions_only: true,
             ..q()
-        });
+        }).await;
         let methods: Vec<&str> = rows(&page)
             .iter()
             .map(|r| r["method"].as_str().unwrap())
@@ -1192,24 +1354,24 @@ mod tests {
         assert_eq!(page["totalUnfiltered"], 5);
     }
 
-    #[test]
-    fn clamps_an_absurd_page_size_and_answers_an_empty_page_past_the_end() {
+    #[tokio::test]
+    async fn clamps_an_absurd_page_size_and_answers_an_empty_page_past_the_end() {
         let log = TrafficLog::memory();
         log.record_traffic("db", Some(&request("ping", json!({}))), None, true, 0, None);
         let huge = log.read_traffic(&TrafficQuery {
             page_size: Some(100_000),
             ..q()
-        });
+        }).await;
         assert_eq!(huge["pageSize"], KEEP as u64);
-        let past = log.read_traffic(&TrafficQuery { page: 9, ..q() });
+        let past = log.read_traffic(&TrafficQuery { page: 9, ..q() }).await;
         assert!(rows(&past).is_empty());
         assert_eq!(past["more"], false);
     }
 
     // --- the client summary ---
 
-    #[test]
-    fn folds_the_whole_ring_into_one_row_per_client_newest_active_first() {
+    #[tokio::test]
+    async fn folds_the_whole_ring_into_one_row_per_client_newest_active_first() {
         let log = TrafficLog::memory();
         // A frame that arrives before the handshake carries no name, so it groups under its
         // token; everything from `initialize` onward groups under the announced name. The two
@@ -1244,7 +1406,7 @@ mod tests {
             None,
         );
 
-        let clients = log.traffic_clients();
+        let clients = log.traffic_clients().await;
         assert_eq!(clients.len(), 3);
         assert_eq!(clients[0]["key"], "t:ci"); // newest active first
         let named = clients
@@ -1262,19 +1424,19 @@ mod tests {
         assert_eq!(early["count"], 1);
     }
 
-    #[test]
-    fn an_unauthenticated_frame_folds_under_the_unknown_client() {
+    #[tokio::test]
+    async fn an_unauthenticated_frame_folds_under_the_unknown_client() {
         let log = TrafficLog::memory();
         log.record_traffic("db", Some(&request("ping", json!({}))), None, true, 1, None);
-        let clients = log.traffic_clients();
+        let clients = log.traffic_clients().await;
         assert_eq!(clients[0]["key"], "?");
         assert_eq!(clients[0]["label"], "unknown client");
     }
 
     // --- clearing ---
 
-    #[test]
-    fn clearing_one_client_keeps_the_rest_and_clearing_all_resets_the_sequence() {
+    #[tokio::test]
+    async fn clearing_one_client_keeps_the_rest_and_clearing_all_resets_the_sequence() {
         let log = TrafficLog::memory();
         let init = request("initialize", json!({"clientInfo":{"name":"claude-code"}}));
         log.record_traffic("db", Some(&init), Some("laptop"), true, 1, None);
@@ -1287,25 +1449,25 @@ mod tests {
             None,
         );
 
-        log.clear_traffic(Some("n:claude-code"));
-        let page = log.read_traffic(&q());
+        log.clear_traffic(Some("n:claude-code")).await;
+        let page = log.read_traffic(&q()).await;
         assert_eq!(page["total"], 1);
         assert_eq!(rows(&page)[0]["client"], "ci");
 
-        log.clear_traffic(None);
-        assert_eq!(log.read_traffic(&q())["total"], 0);
+        log.clear_traffic(None).await;
+        assert_eq!(log.read_traffic(&q()).await["total"], 0);
         log.record_traffic("db", Some(&request("ping", json!({}))), None, true, 1, None);
-        assert_eq!(log.read_traffic(&q())["entries"][0]["seq"], 1);
+        assert_eq!(log.read_traffic(&q()).await["entries"][0]["seq"], 1);
     }
 
     // Clear wipes the log, not the gateway memory of which token is which client: forgetting it
     // would make ongoing traffic drop back to "token X" until the client re-initializes.
-    #[test]
-    fn clearing_does_not_forget_which_client_a_token_belongs_to() {
+    #[tokio::test]
+    async fn clearing_does_not_forget_which_client_a_token_belongs_to() {
         let log = TrafficLog::memory();
         let init = request("initialize", json!({"clientInfo":{"name":"claude-code"}}));
         log.record_traffic("db", Some(&init), Some("laptop"), true, 1, None);
-        log.clear_traffic(None);
+        log.clear_traffic(None).await;
         log.record_traffic(
             "db",
             Some(&request("tools/list", json!({}))),
@@ -1315,7 +1477,7 @@ mod tests {
             None,
         );
         assert_eq!(
-            log.read_traffic(&q())["entries"][0]["clientName"],
+            log.read_traffic(&q()).await["entries"][0]["clientName"],
             "claude-code"
         );
     }
@@ -1340,7 +1502,7 @@ mod tests {
         );
 
         let log = restart(&dir);
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         assert_eq!(page["total"], 1);
         assert_eq!(rows(&page)[0]["method"], "tools/call");
         assert_eq!(rows(&page)[0]["mcp"], "db");
@@ -1386,7 +1548,7 @@ mod tests {
             None,
         );
 
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         assert_eq!(page["total"], 4);
         assert_eq!(rows(&page)[0]["method"], "pending");
         assert_eq!(rows(&page)[0]["seq"], 4);
@@ -1414,18 +1576,18 @@ mod tests {
         );
         log.flush_traffic().await;
 
-        log.clear_traffic(Some("?")); // the unauthenticated row only
+        log.clear_traffic(Some("?")).await; // the unauthenticated row only
         log.flush_traffic().await;
 
         let log = restart(&dir);
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         assert_eq!(page["total"], 1);
         assert_eq!(rows(&page)[0]["method"], "kept");
 
-        log.clear_traffic(None);
+        log.clear_traffic(None).await;
         log.flush_traffic().await;
         let log = restart(&dir);
-        assert_eq!(log.read_traffic(&q())["total"], 0);
+        assert_eq!(log.read_traffic(&q()).await["total"], 0);
         let _ = std::fs::remove_file(file);
     }
 
@@ -1444,7 +1606,7 @@ mod tests {
         )
         .unwrap();
         let log = restart(&dir);
-        let page = log.read_traffic(&q());
+        let page = log.read_traffic(&q()).await;
         assert_eq!(page["total"], 1);
         assert_eq!(rows(&page)[0]["method"], "ping");
         let _ = std::fs::remove_file(file);
@@ -1457,7 +1619,7 @@ mod tests {
         let log = TrafficLog::memory();
         log.record_traffic("db", Some(&request("ping", json!({}))), None, true, 0, None);
         log.flush_traffic().await;
-        assert_eq!(log.read_traffic(&q())["total"], 1);
+        assert_eq!(log.read_traffic(&q()).await["total"], 1);
     }
 
     #[tokio::test]

@@ -51,7 +51,7 @@ use serde_json::{json, Value};
 use swiss_host::config::ServerDef;
 
 use super::direct::{def_bool, BoxFut, Lazy};
-use super::proxy::{assert_proxy_url, proxied_client, ProxyOpts, ProxyServer, RemoteMcp};
+use super::proxy::{assert_proxy_url, outbound_client, ProxyOpts, ProxyServer, RemoteMcp};
 use super::{rmcp_endpoint, Adapter, McpEndpoint};
 use crate::oauth::{self as oauth_flow, Discovered, NEEDS_AUTH};
 
@@ -699,12 +699,7 @@ impl HttpAdapter {
             let proxy = proxy.clone();
             let name_cell = conn_name.clone();
             Box::pin(async move {
-                let client = match &proxy {
-                    Some(proxy) => proxied_client(proxy)?,
-                    None => reqwest::Client::builder()
-                        .build()
-                        .map_err(|err| format!("http client build failed: {err}"))?,
-                };
+                let client = outbound_client(proxy.as_deref())?;
                 let auth = if want_oauth {
                     Some(Arc::new(OauthHalf::new(name_cell, &url, client.clone())))
                 } else {

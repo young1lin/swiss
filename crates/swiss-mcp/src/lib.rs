@@ -20,6 +20,7 @@
 
 pub mod adapters;
 pub mod calls;
+pub mod history;
 pub mod introspect;
 pub mod mcp_import;
 pub mod oauth;

@@ -19,7 +19,7 @@
 //! connection shared.
 
 use std::collections::{BTreeSet, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -28,7 +28,7 @@ use serde_json::{json, Map, Value};
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{StreamBound, StreamQuery, STREAM_SCAN_BUDGET, STREAM_SCAN_PAGE};
 
-use super::direct::{def_bool, BoxFut, Lazy};
+use super::direct::{def_bool, BoxFut, Lazy, CONNECTION_IDLE};
 use super::redis_resources::RedisResources;
 use super::sql::as_i64;
 use super::tool_server::{Engine, ServerMeta, ToolDef};
@@ -78,7 +78,11 @@ fn tools(allow_destructive: bool, allow_eval: bool) -> Vec<ToolDef> {
                         "maximum": SCAN_LIMIT_MAX,
                         "description": format!("Keys to collect before returning (default {SCAN_LIMIT_DEFAULT}, max {SCAN_LIMIT_MAX})."),
                     },
-                    "type": { "type": "string", "enum": SCAN_TYPES, "description": "Only keys of this type." },
+                    "type": {
+                        "type": "string",
+                        "enum": SCAN_TYPES,
+                        "description": "Only keys of this type. Servers older than 6.0 have no SCAN TYPE; the filter is applied to each scanned key instead.",
+                    },
                 },
                 "additionalProperties": false,
             }),
@@ -224,6 +228,24 @@ const SCRIPT_ADMIN: &[&str] = &["SCRIPT", "FUNCTION"];
 
 /// TYPE values SCAN can filter by — validated before a socket is opened, so a typo costs nothing.
 pub const SCAN_TYPES: &[&str] = &["string", "hash", "list", "set", "zset", "stream"];
+/// The version SCAN grew its TYPE option — older servers answer "syntax error" and the whole
+/// walk dies, so the type filters locally over the per-key TYPEs instead (SPEC §data).
+pub const SCAN_TYPE_SINCE: (u64, u64) = (6, 0);
+
+/// The (major, minor) out of an INFO reply's redis_version line. None when the line is absent
+/// or mangled: the caller then degrades to local type filtering, which is correct on every
+/// version — only slower on a big keyspace.
+pub fn parse_redis_version(info: &str) -> Option<(u64, u64)> {
+    let line = info
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("redis_version:"))?;
+    let rest = line.trim_start_matches("redis_version:").trim();
+    let mut parts = rest.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
 /// Keys one redis_scan call collects by default, and at most — the output budget's item cap.
 const SCAN_LIMIT_DEFAULT: i64 = 100;
 const SCAN_LIMIT_MAX: i64 = 1000;
@@ -247,6 +269,30 @@ fn next_scan_count(count: i64, found: usize, wanted: usize) -> i64 {
         (count.saturating_mul(wanted as i64) + found - 1) / found
     };
     next.clamp(1, SCAN_COUNT_MAX)
+}
+
+/// One round's SCAN argv, cursor first. TYPE rides the command only where the server knows the
+/// option (>= 6.0, SPEC §data) — on an older one it is a syntax error that kills the walk, so
+/// the caller filters the per-key TYPEs locally instead.
+fn scan_round_args(
+    cursor: &str,
+    pattern: &str,
+    count: i64,
+    type_: &str,
+    supported: bool,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        cursor.to_string(),
+        "MATCH".into(),
+        pattern.to_string(),
+        "COUNT".into(),
+        count.to_string(),
+    ];
+    if !type_.is_empty() && supported {
+        args.push("TYPE".into());
+        args.push(type_.to_string());
+    }
+    args
 }
 
 /// Commands rejected outright, each with the reason the model sees. A rejection has to say what
@@ -1450,12 +1496,83 @@ pub fn assert_command_allowed(
     Ok(())
 }
 
+/// The commands the Data agent runs on its own (SPEC §data.agent): reads that change nothing,
+/// block nothing and run no script. An allowlist, so a command a newer Redis or a module adds
+/// stays out until it is named here; everything else is a write the agent stages for the
+/// reader. CONFIG GET is not one: it answers requirepass and masterauth.
+const AGENT_READS: &[&str] = &[
+    "GET", "MGET", "GETRANGE", "SUBSTR", "STRLEN", "LCS",
+    "EXISTS", "TYPE", "TTL", "PTTL", "EXPIRETIME", "PEXPIRETIME", "RANDOMKEY", "SCAN", "DBSIZE",
+    "HGET", "HMGET", "HGETALL", "HKEYS", "HVALS", "HLEN", "HEXISTS", "HSTRLEN", "HSCAN", "HRANDFIELD",
+    "HTTL", "HPTTL", "HEXPIRETIME", "HPEXPIRETIME",
+    "LRANGE", "LLEN", "LINDEX", "LPOS",
+    "SMEMBERS", "SCARD", "SISMEMBER", "SMISMEMBER", "SRANDMEMBER", "SSCAN", "SINTER", "SINTERCARD", "SUNION",
+    "SDIFF",
+    "ZRANGE", "ZRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGE", "ZREVRANGEBYSCORE", "ZREVRANGEBYLEX", "ZCARD", "ZCOUNT",
+    "ZLEXCOUNT", "ZSCORE", "ZMSCORE", "ZRANK", "ZREVRANK", "ZSCAN", "ZRANDMEMBER", "ZINTER", "ZUNION", "ZDIFF",
+    "ZINTERCARD",
+    "XRANGE", "XREVRANGE", "XLEN", "XPENDING",
+    "GEOPOS", "GEODIST", "GEOHASH", "GEOSEARCH", "GEORADIUS_RO", "GEORADIUSBYMEMBER_RO",
+    "GETBIT", "BITCOUNT", "BITPOS", "BITFIELD_RO", "PFCOUNT", "SORT_RO",
+    "PING", "ECHO", "TIME", "INFO", "LASTSAVE", "ROLE",
+    "JSON.GET", "JSON.MGET", "JSON.TYPE", "JSON.STRLEN", "JSON.ARRLEN", "JSON.OBJKEYS", "JSON.OBJLEN",
+    "TS.GET", "TS.MGET", "TS.RANGE", "TS.REVRANGE", "TS.MRANGE", "TS.MREVRANGE", "TS.INFO", "TS.QUERYINDEX",
+];
+/// The agent's reads behind a container command: the subcommand decides, as in [CONTAINERS].
+const AGENT_READ_CONTAINERS: &[(&str, &[&str])] = &[
+    ("OBJECT", &["ENCODING", "FREQ", "IDLETIME", "REFCOUNT"]),
+    ("XINFO", &["STREAM", "GROUPS", "CONSUMERS"]),
+    ("MEMORY", &["USAGE", "STATS", "DOCTOR"]),
+    ("CLIENT", &["ID", "INFO", "LIST", "GETNAME"]),
+    ("SLOWLOG", &["GET", "LEN"]),
+    // The channels with a subscriber and how many listen: what pub/sub is up to, never a
+    // message (listening is SUBSCRIBE, on a connection of its own).
+    ("PUBSUB", &["CHANNELS", "NUMSUB", "NUMPAT", "SHARDCHANNELS", "SHARDNUMSUB"]),
+];
+
+/// The Data agent's read gate (SPEC §data.agent): a command [AGENT_READS] names, or a
+/// container's read subcommand. Decided before a socket is touched; the console's guard
+/// ([assert_command_allowed]) still applies after it.
+pub fn assert_read_command(command: &str, args: &[&str]) -> Result<(), String> {
+    let upper = command.trim().to_uppercase();
+    if upper.is_empty() {
+        return Err("command is required".into());
+    }
+    if upper == "KEYS" {
+        return Err("KEYS is not run here: it walks the whole keyspace in one blocking pass. Page it with SCAN and a MATCH pattern".into());
+    }
+    if let Some((_, reads)) = AGENT_READ_CONTAINERS.iter().find(|(name, _)| *name == upper) {
+        let sub = args.first().map(|s| s.trim().to_uppercase()).unwrap_or_default();
+        if reads.contains(&sub.as_str()) {
+            return Ok(());
+        }
+        return Err(format!("only a read runs here: {upper} {} is not one ({upper} reads with {})", if sub.is_empty() { "without a subcommand" } else { &sub }, reads.join(", ")));
+    }
+    if AGENT_READS.contains(&upper.as_str()) {
+        return Ok(());
+    }
+    Err(format!(
+        "only a read runs here, and {upper} is not one this gate knows: a command that writes, blocks, scripts or reads the server's configuration is staged for the user to run"
+    ))
+}
+
 // --- the shared connection -------------------------------------------------------------------------
+
+/// connectTimeout: how long the first connect - the probe's, the manager's and a pub/sub
+/// connection's alike - may take.
+pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One multiplexed, auto-reconnecting connection (ioredis's role). Every clone shares the
 /// underlying socket; the manager reconnects on its own when the server comes back.
 pub struct RedisHandle {
     manager: redis::aio::ConnectionManager,
+    /// The client the manager came from: a pub/sub feed (SPEC §data.pubsub) opens a connection
+    /// of its own from it, since a SUBSCRIBE would take the shared one out of service.
+    pub(crate) client: redis::Client,
+    /// Pub/sub feeds open on this MCP right now, each holding its own socket. Every handle the
+    /// engine opens shares the one count: a feed outlives an idle release of the handle it came
+    /// from, and the cap must still count it.
+    pub(crate) subscriptions: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl RedisHandle {
@@ -1589,6 +1706,10 @@ pub struct RedisEngine {
     def: ServerDef,
     name: Arc<std::sync::RwLock<String>>,
     conn: Arc<Lazy<RedisHandle>>,
+    /// The server's (major, minor), probed once via INFO and cached (SPEC §data): SCAN's TYPE
+    /// option needs >= 6.0, and probing per call would add a round trip to every scan for a
+    /// fact that never changes under us.
+    server_version: OnceLock<(u64, u64)>,
 }
 
 impl RedisEngine {
@@ -1601,6 +1722,7 @@ impl RedisEngine {
             .get_str("password")
             .filter(|p| !p.is_empty())
             .map(str::to_string);
+        let subscriptions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let conn = Lazy::new(move || {
             let mut settings = redis::RedisConnectionInfo::default()
                 .set_db(db)
@@ -1609,6 +1731,7 @@ impl RedisEngine {
                 settings = settings.set_password(password);
             }
             let addr = redis::ConnectionAddr::Tcp(host.clone(), port);
+            let subscriptions = subscriptions.clone();
             Box::pin(async move {
                 let info = redis::IntoConnectionInfo::into_connection_info(addr)
                     .map_err(|e| e.to_string())?
@@ -1619,24 +1742,47 @@ impl RedisEngine {
                 // timeout below, 5s later ("redis connect timed out"), never as what Redis
                 // said (2026-09-28). The probe fails at once with the refusal itself; only a
                 // server that accepted us gets the reconnecting manager.
-                tokio::time::timeout(Duration::from_secs(5), client.get_multiplexed_async_connection())
-                    .await
-                    .map_err(|_| "redis connect timed out after 5s".to_string())?
-                    .map_err(|e| e.to_string())?;
+                let probe = redis::AsyncConnectionConfig::new()
+                    .set_connection_timeout(Some(CONNECT_TIMEOUT))
+                    .set_response_timeout(None);
+                tokio::time::timeout(
+                    CONNECT_TIMEOUT,
+                    client.get_multiplexed_async_connection_with_config(&probe),
+                )
+                .await
+                .map_err(|_| "redis connect timed out after 5s".to_string())?
+                .map_err(|e| e.to_string())?;
                 // connectTimeout 5000 (the eager first connect) over the manager, which then
-                // keeps reconnecting on its own — ioredis's retryStrategy, capped.
-                let manager =
-                    tokio::time::timeout(Duration::from_secs(5), client.get_connection_manager())
-                        .await
-                        .map_err(|_| "redis connect timed out after 5s".to_string())?
-                        .map_err(|e| e.to_string())?;
-                Ok(RedisHandle { manager })
+                // keeps reconnecting on its own — ioredis's retryStrategy, capped. redis-rs's
+                // own defaults (a 1s connect, 500 ms per reply) are turned off: through an SSH
+                // tunnel a SCAN round or a page's TYPE/TTL pipeline routinely takes longer, and
+                // every such reply died as a bare "timed out" mid-walk, so a key past it - the
+                // 5.x servers' streams - was never reached (2026-10-22). The 10s commandTimeout
+                // in call_raw/pipeline_args is the one bound, and it names the command.
+                let config = redis::aio::ConnectionManagerConfig::new()
+                    .set_connection_timeout(Some(CONNECT_TIMEOUT))
+                    .set_response_timeout(None);
+                let manager = tokio::time::timeout(
+                    CONNECT_TIMEOUT,
+                    client.get_connection_manager_with_config(config),
+                )
+                .await
+                .map_err(|_| "redis connect timed out after 5s".to_string())?
+                .map_err(|e| e.to_string())?;
+                Ok(RedisHandle {
+                    manager,
+                    client,
+                    subscriptions,
+                })
             }) as BoxFut<Result<RedisHandle, String>>
-        });
+        })
+        // Dropped, not shut down: the manager's socket closes with its last clone.
+        .release_idle(CONNECTION_IDLE, |_| Box::pin(async {}) as BoxFut<()>);
         Self {
             def,
             name: Arc::new(std::sync::RwLock::new(name.to_string())),
             conn: Arc::new(conn),
+            server_version: OnceLock::new(),
         }
     }
 
@@ -1659,6 +1805,24 @@ impl RedisEngine {
                 .unwrap_or(6379),
             self.def.get_number("db").map(|d| d as i64).unwrap_or(0),
         )
+    }
+
+    /// Whether the server understands SCAN TYPE (>= 6.0). Probed once with INFO and cached;
+    /// an unprobed or failed probe degrades to local filtering, which is correct everywhere.
+    async fn supports_scan_type(&self, handle: &RedisHandle) -> bool {
+        if let Some(v) = self.server_version.get() {
+            return *v >= SCAN_TYPE_SINCE;
+        }
+        handle
+            .call("INFO", &["server"])
+            .await
+            .ok()
+            .and_then(|v| parse_redis_version(&value_string(&v)))
+            .map(|v| {
+                let _ = self.server_version.set(v);
+                v >= SCAN_TYPE_SINCE
+            })
+            .unwrap_or(false)
     }
 
     async fn call_scan(&self, args: &Value) -> Result<Value, String> {
@@ -1690,6 +1854,12 @@ impl RedisEngine {
             ));
         }
         let client = self.conn.get().await?;
+        // SPEC §data: SCAN TYPE needs server >= 6.0; an older one answers "syntax error" and
+        // the whole walk dies. Probed once and cached — a pre-6.0 (or unprobed) server walks
+        // unfiltered and the type is applied to the per-key TYPEs locally, which is correct
+        // on every version.
+        let scan_type_supported = self.supports_scan_type(&client).await;
+        let local_type = (!type_.is_empty() && !scan_type_supported).then(|| type_.clone());
         let started = Instant::now();
         let mut cursor = cursor;
         let mut count = limit as i64;
@@ -1699,17 +1869,7 @@ impl RedisEngine {
         for _ in 0..SCAN_ROUNDS_MAX {
             // Through the raw channel: the TYPE filter only exists as an option token, and
             // SCAN's raw reply is already [cursor, keys].
-            let mut scan_args: Vec<String> = vec![
-                cursor.clone(),
-                "MATCH".into(),
-                pattern.clone(),
-                "COUNT".into(),
-                count.to_string(),
-            ];
-            if !type_.is_empty() {
-                scan_args.push("TYPE".into());
-                scan_args.push(type_.clone());
-            }
+            let scan_args = scan_round_args(&cursor, &pattern, count, &type_, scan_type_supported);
             let refs: Vec<&str> = scan_args.iter().map(String::as_str).collect();
             let reply = RedisHandle::call(&client, "SCAN", &refs).await?;
             let (next, batch) = match &reply {
@@ -1723,6 +1883,29 @@ impl RedisEngine {
                 _ => ("0".into(), Vec::new()),
             };
             cursor = next;
+            // Pre-6.0 walk: ask each key's TYPE in one pipelined round trip and keep the
+            // matches — the server-side option does not exist there.
+            let batch = match &local_type {
+                // An empty page has nothing to TYPE, and a zero-command pipeline is itself
+                // an error in redis-rs ("empty command") — so it passes through untouched.
+                Some(want) if !batch.is_empty() => {
+                    let commands: Vec<(String, Vec<String>)> = batch
+                        .iter()
+                        .map(|k| ("TYPE".to_string(), vec![k.clone()]))
+                        .collect();
+                    let replies = RedisHandle::pipeline(&client, &commands).await?;
+                    batch
+                        .into_iter()
+                        .zip(replies)
+                        .filter(|(_, t)| value_string(t).eq_ignore_ascii_case(want))
+                        .map(|(k, _)| k)
+                        .collect::<Vec<_>>()
+                }
+                _ => batch,
+            };
+            // The density that scales the next round is what MATCHED, as with the server-side
+            // filter: counted before the local filter, a sparse type looked dense - every raw
+            // key a hit - and COUNT narrowed where it had to widen.
             let found = batch.len();
             for key in batch {
                 if seen.insert(key.clone()) {
@@ -1869,7 +2052,7 @@ impl Engine for RedisEngine {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -1886,6 +2069,317 @@ mod tests {
         assert_eq!(scan.name, "redis_scan");
         assert_eq!(scan.input_schema["properties"]["limit"]["maximum"], json!(SCAN_LIMIT_MAX));
         assert!(scan.input_schema["properties"].get("count").is_none());
+    }
+
+    #[test]
+    fn type_rides_the_scan_only_where_the_server_knows_it() {
+        // A pre-6.0 server would refuse the option outright, so TYPE must stay off the argv.
+        let a = scan_round_args("0", "*", 200, "stream", false);
+        assert!(!a.iter().any(|x| x == "TYPE"), "TYPE must not reach SCAN: {a:?}");
+        // A 6.0+ server keeps the server-side filter, right after COUNT.
+        let a = scan_round_args("17", "k:*", 400, "hash", true);
+        let i = a.iter().position(|x| x == "TYPE").expect("TYPE present");
+        assert_eq!(a[i + 1], "hash");
+        assert_eq!(a[0], "17");
+        // No type asked: neither path carries one.
+        for supported in [true, false] {
+            let a = scan_round_args("0", "*", 200, "", supported);
+            assert!(!a.iter().any(|x| x == "TYPE"), "{supported} -> {a:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pre60_server_filters_the_type_locally_instead_of_dying() {
+        // A Redis 5.0.5 owning three keys: s1/s3 strings, z2 a zset. The real 5.x answers
+        // "syntax error" to SCAN TYPE, which used to kill the whole redis_scan call — the
+        // quotes MCP on the test server, 2026-10-21. Now the type never rides the SCAN and
+        // the per-key TYPEs filter locally.
+        let seen_scan = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen_scan_srv = seen_scan.clone();
+        let scan_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let port = fake_redis(Duration::ZERO, move |verb, args| match verb {
+            "INFO" => bulk("# Server\r\nredis_version:5.0.5\r\n"),
+            "SCAN" => {
+                *seen_scan_srv.lock().unwrap() = args.to_vec();
+                // Round 1: an EMPTY page under a non-zero cursor — SCAN may do that on a
+                // sparse pattern, and the local filter used to turn it into a zero-command
+                // pipeline (an "empty command" error). Round 2 finishes the walk.
+                if scan_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    scan_page("1", &[])
+                } else {
+                    scan_page("0", &["s1", "z2", "s3"])
+                }
+            }
+            "TYPE" => match args.first().map(String::as_str) {
+                Some("s1") | Some("s3") => b"+string\r\n".to_vec(),
+                Some("z2") => b"+zset\r\n".to_vec(),
+                _ => b"+none\r\n".to_vec(),
+            },
+            _ => b"+OK\r\n".to_vec(),
+        })
+        .await;
+        let engine = engine_at(port);
+        // stream: none of the three keys is one — an empty list, not the old syntax error.
+        let out = engine.call_scan(&json!({ "type": "stream" })).await.expect("local filter");
+        assert_eq!(out["keys"], json!([]));
+        assert_eq!(out["done"], json!(true));
+        // zset: only z2 survives, and no SCAN ever carried the TYPE option.
+        let out = engine.call_scan(&json!({ "type": "zset" })).await.expect("local filter");
+        assert_eq!(out["keys"], json!(["z2"]));
+        assert_eq!(out["done"], json!(true));
+        let scan = seen_scan.lock().unwrap().join(" ");
+        assert!(
+            !scan.to_uppercase().contains(" TYPE"),
+            "TYPE must not reach a pre-6.0 SCAN: {scan}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_slow_reply_is_waited_for_not_cut_at_half_a_second() {
+        // Every reply 800 ms late, as a SCAN round or a page's pipeline often is through the
+        // SSH tunnel to the test server. redis-rs gives up on a reply after 500 ms by default,
+        // so the walk died with a bare "timed out" (2026-10-22); the 10s commandTimeout is now
+        // the one bound.
+        let port = fake_redis(Duration::from_millis(800), |verb, _| match verb {
+            "INFO" => bulk("# Server\r\nredis_version:6.2.0\r\n"),
+            "SCAN" => scan_page("0", &["k1"]),
+            _ => b"+OK\r\n".to_vec(),
+        })
+        .await;
+        let engine = engine_at(port);
+        let out = engine.call_scan(&json!({})).await.expect("a reply past 500 ms still lands");
+        assert_eq!(out["keys"], json!(["k1"]));
+        assert_eq!(out["done"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn a_sparse_type_walks_on_until_it_matches() {
+        // A Redis 5.0.5 whose two streams sit in the third and fourth SCAN rounds, behind
+        // strings and a hash - the shape of the quotes servers, whose streams lay many rounds
+        // deep (2026-10-22).
+        let scans = Arc::new(std::sync::Mutex::new(Vec::<Vec<String>>::new()));
+        let scans_srv = scans.clone();
+        let port = fake_redis(Duration::ZERO, move |verb, args| match verb {
+            "INFO" => bulk("# Server\r\nredis_version:5.0.5\r\n"),
+            "SCAN" => {
+                scans_srv.lock().unwrap().push(args.to_vec());
+                match args[0].as_str() {
+                    "0" => scan_page("1", &["s1", "s2", "s3", "s4"]),
+                    "1" => scan_page("2", &["h1"]),
+                    "2" => scan_page("3", &["x1", "s5"]),
+                    _ => scan_page("0", &["x2"]),
+                }
+            }
+            "TYPE" => match args[0].chars().next() {
+                Some('s') => b"+string\r\n".to_vec(),
+                Some('h') => b"+hash\r\n".to_vec(),
+                Some('x') => b"+stream\r\n".to_vec(),
+                _ => b"+none\r\n".to_vec(),
+            },
+            "TTL" => b":-1\r\n".to_vec(),
+            "DBSIZE" => b":9\r\n".to_vec(),
+            _ => b"+OK\r\n".to_vec(),
+        })
+        .await;
+        // The COUNT of every SCAN since the last look.
+        let counts = || -> Vec<String> {
+            scans.lock().unwrap().drain(..).map(|a| a[4].clone()).collect()
+        };
+        let engine = engine_at(port);
+
+        // redis_scan: COUNT widens with what MATCHED. Counted before the local filter, the
+        // four strings of round 1 read as four hits and the next round narrowed to 1.
+        let out = engine
+            .call_scan(&json!({ "type": "stream", "limit": 2 }))
+            .await
+            .expect("local filter");
+        assert_eq!(out["keys"], json!(["x1", "x2"]));
+        assert_eq!(out["done"], json!(true));
+        assert_eq!(counts(), ["2", "4", "8", "8"]);
+
+        // The Data view: one page request walks past the empty rounds, COUNT doubling, and
+        // comes back at its first match - no longer an empty page and a More button per round.
+        let Some(swiss_host::dbbrowser::BrowserFlavor::Redis(browser)) = engine.browser() else {
+            panic!("a redis engine browses")
+        };
+        let page = browser.list_keys(&json!({ "type": "stream" })).await.expect("page");
+        let names = |page: &Value| -> Vec<String> {
+            page["keys"].as_array().unwrap().iter().map(|k| value_string(&k["key"])).collect()
+        };
+        assert_eq!(names(&page), ["x1"]);
+        assert_eq!(page["cursor"], json!("3"));
+        assert_eq!(page["done"], json!(false));
+        assert_eq!(page["total"], json!(9));
+        assert_eq!(counts(), ["200", "400", "800"]);
+        let page = browser
+            .list_keys(&json!({ "type": "stream", "cursor": "3" }))
+            .await
+            .expect("page");
+        assert_eq!(names(&page), ["x2"]);
+        assert_eq!(page["done"], json!(true));
+        assert_eq!(page["total"], json!(9));
+        counts();
+        // A round that already holds keys is the page: one SCAN, the cursor carrying the rest.
+        let page = browser.list_keys(&json!({})).await.expect("page");
+        assert_eq!(names(&page), ["s1", "s2", "s3", "s4"]);
+        assert_eq!(page["cursor"], json!("1"));
+        assert_eq!(counts(), ["200"]);
+        // fill (the Data agent's) walks on past a round that matched too few, widening, until
+        // the page holds that many or the walk ends; a round that brings enough is the page.
+        let page = browser.list_keys(&json!({ "type": "stream", "fill": 2 })).await.expect("page");
+        assert_eq!(names(&page), ["x1", "x2"]);
+        assert_eq!(page["done"], json!(true));
+        assert_eq!(counts(), ["200", "400", "800", "1000"]);
+        let page = browser.list_keys(&json!({ "fill": 3 })).await.expect("page");
+        assert_eq!(names(&page), ["s1", "s2", "s3", "s4"]);
+        assert_eq!(counts(), ["200"]);
+    }
+
+    pub(crate) fn engine_at(port: u16) -> RedisEngine {
+        let Value::Object(def) = json!({ "type": "redis", "host": "127.0.0.1", "port": port }) else {
+            unreachable!()
+        };
+        RedisEngine::new(&ServerDef(def), "r")
+    }
+
+    /// The shared connection of an engine on `port`, opened.
+    pub(crate) async fn handle_at(port: u16) -> Arc<RedisHandle> {
+        engine_at(port).conn.get().await.expect("connect")
+    }
+
+    /// A fake Redis on a loopback port: `answer` replies to each command by its verb and
+    /// arguments, `delay` late - except the connection setup redis-rs sends on connect.
+    pub(crate) async fn fake_redis<F>(delay: Duration, answer: F) -> u16
+    where
+        F: Fn(&str, &[String]) -> Vec<u8> + Send + Sync + 'static,
+    {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let answer = Arc::new(answer);
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let answer = answer.clone();
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf: Vec<u8> = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    while let Ok(n) = sock.read(&mut chunk).await {
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        while let Some((verb, args, consumed)) = take_command(&buf) {
+                            buf.drain(..consumed);
+                            if !matches!(verb.as_str(), "CLIENT" | "SELECT" | "AUTH") {
+                                tokio::time::sleep(delay).await;
+                            }
+                            if sock.write_all(&answer(&verb, &args)).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    /// A SCAN reply: the next cursor and one page of names.
+    fn scan_page(next: &str, keys: &[&str]) -> Vec<u8> {
+        let mut out = format!("*2\r\n${}\r\n{next}\r\n*{}\r\n", next.len(), keys.len()).into_bytes();
+        for k in keys {
+            out.extend_from_slice(&bulk(k));
+        }
+        out
+    }
+
+    /// One complete RESP command out of the buffer with the bytes it consumed — None while the
+    /// buffer holds only part of one.
+    pub(crate) fn take_command(buf: &[u8]) -> Option<(String, Vec<String>, usize)> {
+        let mut pos = 0;
+        let line = line_at(buf, &mut pos)?;
+        let n: usize = line.strip_prefix('*')?.parse().ok()?;
+        let mut words = Vec::with_capacity(n);
+        for _ in 0..n {
+            let hdr = line_at(buf, &mut pos)?;
+            let len: usize = hdr.strip_prefix('$')?.parse().ok()?;
+            let end = pos.checked_add(len)?;
+            if buf.len() < end + 2 {
+                return None;
+            }
+            words.push(String::from_utf8_lossy(&buf[pos..end]).into_owned());
+            pos = end + 2;
+        }
+        let (verb, args) = words.split_first()?;
+        Some((verb.clone(), args.to_vec(), pos))
+    }
+
+    fn line_at(buf: &[u8], pos: &mut usize) -> Option<String> {
+        let rest = &buf[*pos..];
+        let nl = rest.windows(2).position(|w| w == b"\r\n")?;
+        let line = String::from_utf8_lossy(&rest[..nl]).into_owned();
+        *pos += nl + 2;
+        Some(line)
+    }
+
+    pub(crate) fn bulk(s: &str) -> Vec<u8> {
+        let mut out = format!("${}\r\n", s.len()).into_bytes();
+        out.extend_from_slice(s.as_bytes());
+        out.extend_from_slice(b"\r\n");
+        out
+    }
+
+    /// Live check of the pre-6.0 fallback against a real old server — the quotes Redis
+    /// behind the local tunnel. Ignored by default (needs a live server): run with
+    /// `cargo test -p swiss-mcp --lib a_live_pre60 -- --ignored --nocapture`, pointing
+    /// QR_HOST/QR_PORT/QR_PASSWORD at it (defaults: 127.0.0.1:6380, the test-server tunnel).
+    #[tokio::test]
+    #[ignore = "needs a live Redis; defaults to the 127.0.0.1:6380 quotes tunnel"]
+    async fn a_live_pre60_server_answers_type_filters_locally() {
+        let host = std::env::var("QR_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let port: u16 = std::env::var("QR_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(6380);
+        let mut def = json!({ "type": "redis", "host": host, "port": port });
+        if let Ok(p) = std::env::var("QR_PASSWORD") {
+            def["password"] = json!(p);
+        }
+        let Value::Object(o) = def else {
+            unreachable!()
+        };
+        let engine = RedisEngine::new(&ServerDef(o), "live");
+        // zset: the kline keys come back through the LOCAL filter — a 5.x would have refused
+        // the old server-side SCAN TYPE with "syntax error" and the call would have died.
+        let out = engine
+            .call_scan(&json!({ "pattern": "K_LINE_BTCUSDT*", "type": "zset", "limit": 20 }))
+            .await
+            .expect("redis_scan with a type filter");
+        let keys = out["keys"].as_array().expect("keys array");
+        assert!(!keys.is_empty(), "expected kline zsets: {out}");
+        assert!(
+            keys.iter()
+                .all(|k| k.as_str().unwrap_or_default().starts_with("K_LINE_BTCUSDT")),
+            "{out}"
+        );
+        println!("zset filter on live 5.x -> {} keys, e.g. {:?}", keys.len(), keys[0]);
+        // stream: walked to its end through the cursor. One call's page may be empty while
+        // done is false, so an empty first page says nothing about whether streams exist -
+        // this test used to assert exactly that, and the 5.x's streams went unnoticed.
+        let mut cursor = String::from("0");
+        let mut streams: Vec<Value> = Vec::new();
+        loop {
+            let out = engine
+                .call_scan(&json!({ "type": "stream", "limit": 50, "cursor": cursor }))
+                .await
+                .expect("redis_scan with a type filter");
+            streams.extend(out["keys"].as_array().cloned().unwrap_or_default());
+            cursor = value_string(&out["cursor"]);
+            if out["done"] == json!(true) {
+                break;
+            }
+        }
+        println!("stream filter on live 5.x -> {} streams over the whole walk", streams.len());
     }
 
     #[tokio::test]
@@ -1971,6 +2465,50 @@ mod tests {
         assert!(assert_command_allowed("EXPIRE", &["k", "60"], false, false).is_ok());
         assert!(assert_command_allowed("RENAME", &["k", "k2"], false, false).is_ok());
         assert!(assert_command_allowed("PERSIST", &["k"], false, false).is_ok());
+    }
+
+    #[test]
+    fn the_agents_gate_passes_reads_and_refuses_everything_else() {
+        for (command, args) in [
+            ("get", &["k"][..]),
+            ("HGETALL", &["h"][..]),
+            ("zrange", &["z", "0", "9", "WITHSCORES"][..]),
+            ("SCAN", &["0", "MATCH", "user:*", "COUNT", "100"][..]),
+            ("XRANGE", &["s", "-", "+", "COUNT", "10"][..]),
+            ("object", &["encoding", "k"][..]),
+            ("XINFO", &["STREAM", "s"][..]),
+            ("MEMORY", &["USAGE", "k"][..]),
+            ("JSON.GET", &["doc", "$"][..]),
+            ("pubsub", &["channels", "news.*"][..]),
+            ("PUBSUB", &["NUMSUB", "news", "orders"][..]),
+            ("PUBSUB", &["NUMPAT"][..]),
+        ] {
+            assert!(assert_read_command(command, args).is_ok(), "{command} {args:?}");
+        }
+        for (command, args) in [
+            ("SET", &["k", "v"][..]),
+            ("DEL", &["k"][..]),
+            ("EXPIRE", &["k", "60"][..]),
+            ("FLUSHDB", &[][..]),
+            ("EVAL_RO", &["return 1", "0"][..]),
+            ("GEORADIUS", &["g", "0", "0", "1", "km", "STORE", "x"][..]),
+            ("SORT", &["l", "STORE", "x"][..]),
+            ("CONFIG", &["GET", "requirepass"][..]),
+            ("MEMORY", &["PURGE"][..]),
+            ("CLIENT", &["KILL", "ID", "7"][..]),
+            ("OBJECT", &[][..]),
+            ("SUBSCRIBE", &["c"][..]),
+            ("PSUBSCRIBE", &["c.*"][..]),
+            ("PUBLISH", &["c", "hi"][..]),
+            ("PUBSUB", &["HELP"][..]),
+            ("", &[][..]),
+        ] {
+            assert!(assert_read_command(command, args).is_err(), "{command} {args:?}");
+        }
+        let keys = assert_read_command("keys", &["*"]).unwrap_err();
+        assert!(keys.contains("SCAN"), "{keys}");
+        let set = assert_read_command("set", &["k", "v"]).unwrap_err();
+        assert!(set.contains("SET") && set.contains("staged"), "{set}");
     }
 
     #[test]

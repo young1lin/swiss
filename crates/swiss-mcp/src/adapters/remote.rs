@@ -741,7 +741,7 @@ mod tests {
     /// Mirrors how the real wiring builds the adapter - only the alias closure
     /// differs (a static list standing in for the sealed targets table).
     fn server_with_actions() -> (Arc<RuntimeServices>, Vec<Arc<StubAction>>) {
-        let services = RuntimeServices::new();
+        let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
         let mut stubs = Vec::new();
         for name in [
             "remote.exec",
@@ -793,10 +793,7 @@ mod tests {
                 other => format!("[{other:?} content]"),
             })
             .collect::<Vec<_>>()
-            .join(
-                "
-",
-            )
+            .join("\n")
     }
 
     fn is_error(result: &CallToolResult) -> bool {
@@ -1072,7 +1069,7 @@ mod tests {
     async fn a_missing_action_names_the_plugin_not_the_protocol() {
         // No stubs registered at all: the tools exist, the actions do not - the
         // exact shape a disabled Remote plugin presents.
-        let services = RuntimeServices::new();
+        let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
         let out = call(
             &services,
             "remote_cat",

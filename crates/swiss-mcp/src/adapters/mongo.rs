@@ -39,7 +39,7 @@ use swiss_host::mongobrowser::{
     MONGO_PAGE_MAX, MONGO_STATS_MAX,
 };
 
-use super::direct::{def_bool, BoxFut, Lazy};
+use super::direct::{def_bool, BoxFut, Lazy, CONNECTION_IDLE};
 use super::mongo_resources::MongoResources;
 use super::resources::human_bytes;
 use super::sql::{as_i64, inspect_args, inspect_description, inspect_reply, Check};
@@ -95,7 +95,7 @@ pub fn to_bson(v: &Value, what: &str) -> Result<Bson, String> {
 }
 
 /// One canonical value re-spoken relaxed — the schema sample values a model reads.
-fn relaxed_of(v: &Value) -> Value {
+pub fn relaxed_of(v: &Value) -> Value {
     match Bson::try_from(v.clone()) {
         Ok(b) => b.into_relaxed_extjson(),
         Err(_) => v.clone(),
@@ -382,6 +382,54 @@ pub fn assert_command_allowed(cmd: &Map<String, Value>, allow_destructive: bool)
             "{name} is rejected here: it destroys data. Set \"allowDestructive\": true on this MCP to \
              permit it."
         ));
+    }
+    Ok(())
+}
+
+/// The command documents the Data agent runs on its own (SPEC §data.agent), by their first
+/// key, lowercased: reads that change nothing. An allowlist, so a command a newer server adds
+/// stays out until it is named here; everything else is a write the agent stages for the
+/// reader. getCmdLineOpts and getParameter are not here: they answer the server's own setup.
+const AGENT_READS: &[&str] = &[
+    "find", "aggregate", "count", "distinct", "listcollections", "listindexes", "collstats", "dbstats", "datasize",
+    "explain", "listdatabases", "buildinfo", "serverstatus", "hostinfo", "ping", "hello", "ismaster", "connectionstatus",
+    "top", "replsetgetstatus",
+];
+
+/// Whether a command document names `$out` or `$merge` anywhere - an aggregation stage that
+/// writes, however deep a `$facet` or a `$lookup` pipeline nests it.
+fn names_a_write_stage(v: &Value) -> bool {
+    match v {
+        Value::Object(m) => m.iter().any(|(k, v)| k == "$out" || k == "$merge" || names_a_write_stage(v)),
+        Value::Array(list) => list.iter().any(names_a_write_stage),
+        _ => false,
+    }
+}
+
+/// The Data agent's read gate (SPEC §data.agent): a command [AGENT_READS] names, with no
+/// `$out` or `$merge` anywhere in it, and an `explain` only of such a read. Decided before a
+/// socket is touched; the console's guard ([assert_command_allowed]) still applies after it.
+pub fn assert_read_command(cmd: &Map<String, Value>) -> Result<(), String> {
+    let Some(name) = cmd.keys().next() else {
+        return Err("command is empty - pass one command document, e.g. {\"find\": \"users\", \"limit\": 10}".into());
+    };
+    let lower = name.to_ascii_lowercase();
+    if !AGENT_READS.contains(&lower.as_str()) {
+        return Err(format!(
+            "only a read runs here (find, aggregate, count, distinct, listCollections, listIndexes, collStats, dbStats, explain, ...), not {name}: a command that writes or changes the server is staged for the user to run"
+        ));
+    }
+    if names_a_write_stage(&Value::Object(cmd.clone())) {
+        return Err("only a read runs here: $out and $merge write a collection".into());
+    }
+    if lower == "explain" {
+        let Some(Value::Object(inner)) = cmd.get(name) else {
+            return Err("explain takes the command it explains as a document, e.g. {\"explain\": {\"find\": \"users\"}}".into());
+        };
+        if inner.keys().next().is_some_and(|k| k.eq_ignore_ascii_case("explain")) {
+            return Err("explain explains one command, not another explain".into());
+        }
+        return assert_read_command(inner);
     }
     Ok(())
 }
@@ -1340,7 +1388,10 @@ impl MongoEngine {
             let url = url.clone();
             let database = database.clone();
             Box::pin(async move { MongoHandle::open(&url, database).await }) as BoxFut<Result<MongoHandle, String>>
-        });
+        })
+        // Dropped, not shut down: an export streams through a clone of the client, and the
+        // driver ends its sessions and stops its monitors when the last clone goes.
+        .release_idle(CONNECTION_IDLE, |_| Box::pin(async {}) as BoxFut<()>);
         Ok(Self {
             def,
             name: Arc::new(std::sync::RwLock::new(name.to_string())),
@@ -2079,6 +2130,41 @@ mod tests {
     #[test]
     fn an_empty_command_says_what_a_command_looks_like() {
         assert!(assert_command_allowed(&Map::new(), true).unwrap_err().contains("{\"ping\": 1}"));
+    }
+
+    #[test]
+    fn the_agents_gate_passes_reads_and_refuses_everything_else() {
+        for c in [
+            json!({ "find": "posts", "filter": { "type": "custom_images" }, "limit": 5 }),
+            json!({ "Aggregate": "posts", "pipeline": [{ "$group": { "_id": "$type", "n": { "$sum": 1 } } }], "cursor": {} }),
+            json!({ "count": "posts", "query": {} }),
+            json!({ "distinct": "posts", "key": "type" }),
+            json!({ "listCollections": 1, "nameOnly": true }),
+            json!({ "collStats": "posts" }),
+            json!({ "explain": { "find": "posts", "filter": {} }, "verbosity": "queryPlanner" }),
+        ] {
+            assert!(assert_read_command(&cmd(c.clone())).is_ok(), "{c}");
+        }
+        for c in [
+            json!({ "insert": "posts", "documents": [{}] }),
+            json!({ "update": "posts", "updates": [{ "q": {}, "u": { "$set": { "a": 1 } } }] }),
+            json!({ "delete": "posts", "deletes": [{ "q": {}, "limit": 0 }] }),
+            json!({ "findAndModify": "posts", "query": {}, "remove": true }),
+            json!({ "drop": "posts" }),
+            json!({ "createIndexes": "posts", "indexes": [] }),
+            json!({ "mapReduce": "posts", "map": "", "reduce": "", "out": { "inline": 1 } }),
+            json!({ "getParameter": "*" }),
+            json!({ "aggregate": "posts", "pipeline": [{ "$merge": { "into": "copy" } }], "cursor": {} }),
+            json!({ "aggregate": "posts", "pipeline": [{ "$facet": { "a": [{ "$out": "copy" }] } }], "cursor": {} }),
+            json!({ "explain": { "delete": "posts", "deletes": [{ "q": {}, "limit": 0 }] } }),
+            json!({ "explain": { "explain": { "find": "posts" } } }),
+            json!({ "explain": "find" }),
+        ] {
+            assert!(assert_read_command(&cmd(c.clone())).is_err(), "{c}");
+        }
+        assert!(assert_read_command(&Map::new()).unwrap_err().contains("find"));
+        let insert = assert_read_command(&cmd(json!({ "insert": "posts", "documents": [] }))).unwrap_err();
+        assert!(insert.contains("insert") && insert.contains("staged"), "{insert}");
     }
 
     // ---- where it points ----------------------------------------------------------------------

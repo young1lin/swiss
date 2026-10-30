@@ -169,7 +169,25 @@ pub struct Registry {
     timer: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     sweeper: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     interval_ms: u64,
+    /// Until when someone is looking at health (SPEC §mcp.registry): every read of the status
+    /// pushes it two probe intervals out, and the probe runs only before it. A probe nobody
+    /// reads built every database pool at boot and kept one connection per database open, and
+    /// pinged, for the life of the process.
+    watched_until: std::sync::Mutex<Option<tokio::time::Instant>>,
+    /// Wakes the parked probe task when a look begins after a lapse.
+    probe_wake: tokio::sync::Notify,
+    /// Signalled after each probe round, for the read that woke it ([`watch_fresh`](Self::watch_fresh)).
+    probed: tokio::sync::Notify,
+    /// Wakes the reaper when a deadline is armed earlier than the one it sleeps toward.
+    reap_wake: tokio::sync::Notify,
 }
+
+/// The longest the reaper sleeps while a deadline is pending: deadlines are wall-clock, so a
+/// clock step or a resume from sleep is noticed within this.
+const REAP_RECHECK_MS: u64 = 60_000;
+/// The shortest it sleeps: a deadline already past (a stop that failed leaves it there) must
+/// not turn the reaper into a spin.
+const REAP_FLOOR_MS: u64 = 1_000;
 
 fn msg(err: &str) -> String {
     err.to_string()
@@ -184,7 +202,52 @@ impl Registry {
             timer: std::sync::Mutex::new(None),
             sweeper: std::sync::Mutex::new(None),
             interval_ms,
+            watched_until: std::sync::Mutex::new(None),
+            probe_wake: tokio::sync::Notify::new(),
+            probed: tokio::sync::Notify::new(),
+            reap_wake: tokio::sync::Notify::new(),
         })
+    }
+
+    /// Someone is reading health - the MCP list, the connection catalog, a page of tools: keep
+    /// the probe running for two more intervals, and start it now if it had lapsed. Answers
+    /// whether it had.
+    pub fn watch(&self) -> bool {
+        let now = tokio::time::Instant::now();
+        let window = std::time::Duration::from_millis(self.interval_ms.saturating_mul(2));
+        let lapsed = match self.watched_until.lock() {
+            Ok(mut until) => {
+                let lapsed = until.is_none_or(|t| t <= now);
+                *until = Some(now + window);
+                lapsed
+            }
+            Err(_) => false,
+        };
+        if lapsed {
+            self.probe_wake.notify_one();
+        }
+        lapsed
+    }
+
+    /// [`watch`](Self::watch), and when the look had lapsed wait up to `bound` for the probe
+    /// round it starts: the first read after a lapse would otherwise show every database as
+    /// unknown until the next poll. No wait when no probe task runs.
+    pub async fn watch_fresh(&self, bound: std::time::Duration) {
+        let probed = self.probed.notified();
+        tokio::pin!(probed);
+        probed.as_mut().enable();
+        let running = self.timer.lock().is_ok_and(|slot| slot.is_some());
+        if self.watch() && running {
+            let _ = tokio::time::timeout(bound, probed).await;
+        }
+    }
+
+    fn watched(&self) -> bool {
+        self.watched_until
+            .lock()
+            .ok()
+            .and_then(|until| *until)
+            .is_some_and(|t| t > tokio::time::Instant::now())
     }
 
     pub fn register(
@@ -338,11 +401,17 @@ impl Registry {
             .filter(|n| *n >= 0.0)
             .map(|n| n as u64)
             .unwrap_or(DEFAULT_IDLE_MS);
+        let before = d.idle_deadline;
         d.idle_deadline = if ms == 0 {
             None
         } else {
             Some(swiss_core::util::now_ms() + ms)
         };
+        // A deadline pushed later needs no wake: the reaper finds it not yet due and sleeps on.
+        // A new or earlier one may come before what the reaper sleeps toward.
+        if d.idle_deadline.is_some_and(|due| before.is_none_or(|was| due < was)) {
+            self.reap_wake.notify_one();
+        }
     }
 
     fn clear_idle(&self, entry: &Arc<EntryInner>) {
@@ -618,16 +687,39 @@ impl Registry {
 
     // --- health probing (started entries only) ---
 
-    /// Start the health-probe interval and the idle-reap sweeper (one task each; stop_timer
-    /// aborts both).
+    /// Start the health probe and the idle reaper (one task each; stop_timer aborts both).
+    /// Neither ticks when there is nothing to do: the probe parks until someone reads health
+    /// ([`watch`](Self::watch)), and the reaper sleeps toward the earliest idle deadline, or
+    /// parks while there is none.
     pub fn start_timer(self: &Arc<Self>) {
         let this = self.clone();
-        let interval = self.interval_ms;
+        let interval = std::time::Duration::from_millis(self.interval_ms);
         let handle = tokio::spawn(async move {
-            this.check_all().await;
+            let mut probing = false;
             loop {
-                tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
-                this.check_all().await;
+                if this.watched() {
+                    probing = true;
+                    this.check_all().await;
+                    this.probed.notify_waiters();
+                    tokio::time::sleep(interval).await;
+                    continue;
+                }
+                if probing {
+                    // The look lapsed: what the probe last saw is no longer kept true, so it
+                    // is not shown as current either.
+                    this.forget_health();
+                    probing = false;
+                }
+                this.sweep_page_caches();
+                if this.holds_page_caches() {
+                    // A page cache outlives the look that filled it: sweep on until it is gone.
+                    tokio::select! {
+                        _ = tokio::time::sleep(interval) => {}
+                        _ = this.probe_wake.notified() => {}
+                    }
+                } else {
+                    this.probe_wake.notified().await;
+                }
             }
         });
         if let Ok(mut slot) = self.timer.lock() {
@@ -636,13 +728,57 @@ impl Registry {
         let this = self.clone();
         let sweep = tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 this.reap_idle().await;
+                match this.next_idle_deadline() {
+                    Some(due) => {
+                        let ms = due
+                            .saturating_sub(swiss_core::util::now_ms())
+                            .clamp(REAP_FLOOR_MS, REAP_RECHECK_MS);
+                        tokio::select! {
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(ms)) => {}
+                            _ = this.reap_wake.notified() => {}
+                        }
+                    }
+                    None => this.reap_wake.notified().await,
+                }
             }
         });
         if let Ok(mut slot) = self.sweeper.lock() {
             *slot = Some(sweep);
         }
+    }
+
+    /// Mark every started entry's health unknown, keeping when it was last checked: called when
+    /// nobody has read health for two probe intervals and the probe parks.
+    fn forget_health(&self) {
+        for entry in self.all() {
+            let Ok(mut d) = entry.data.write() else { continue };
+            if d.lifecycle == Lifecycle::Started {
+                d.status = Health::Unknown;
+                d.latency_ms = None;
+                d.last_error = None;
+            }
+        }
+    }
+
+    fn holds_page_caches(&self) -> bool {
+        self.all().iter().any(|entry| {
+            entry.data.read().is_ok_and(|d| {
+                d.res_page.is_some() || d.tool_page.is_some() || d.prompt_page.is_some()
+            })
+        })
+    }
+
+    /// The earliest idle deadline of a running lazy entry, if any is armed.
+    fn next_idle_deadline(&self) -> Option<u64> {
+        self.all()
+            .iter()
+            .filter_map(|entry| {
+                let d = entry.data.read().ok()?;
+                d.server.as_ref()?;
+                d.idle_deadline
+            })
+            .min()
     }
 
     pub fn stop_timer(&self) {
@@ -675,7 +811,8 @@ impl Registry {
     }
 
     /// Reap lazy entries whose idle deadline passed (the Node build's per-entry setTimeout,
-    /// centralized into one 1s walk). Takes the entry's op queue, like every lifecycle change.
+    /// centralized into one walk the reaper runs at the earliest deadline). Takes the entry's
+    /// op queue, like every lifecycle change.
     async fn reap_idle(&self) {
         for entry in self.all() {
             let due = entry.data.read().ok().and_then(|d| {
@@ -920,6 +1057,8 @@ impl RegistryCatalog {
 
 impl swiss_host::services::catalog::ConnectionCatalog for RegistryCatalog {
     fn list(&self) -> Vec<swiss_host::services::catalog::ConnectionInfo> {
+        // The rows carry the health state, so a read keeps the probe running.
+        self.registry.watch();
         self.registry
             .all()
             .into_iter()
@@ -994,6 +1133,7 @@ mod tests {
     struct Fake {
         builds: AtomicUsize,
         closes: AtomicUsize,
+        pings: AtomicUsize,
         build_delay_ms: u64,
         ping: Option<Result<(), String>>,
         ping_delay_ms: u64,
@@ -1012,6 +1152,9 @@ mod tests {
         fn closes(&self) -> usize {
             self.closes.load(Ordering::SeqCst)
         }
+        fn pings(&self) -> usize {
+            self.pings.load(Ordering::SeqCst)
+        }
     }
 
     #[async_trait]
@@ -1029,6 +1172,7 @@ mod tests {
                 .await
         }
         async fn ping(&self) -> Option<Result<(), String>> {
+            self.pings.fetch_add(1, Ordering::SeqCst);
             if self.ping_delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.ping_delay_ms)).await;
             }
@@ -1517,6 +1661,104 @@ mod tests {
         assert_eq!(d.status, Health::Unknown);
     }
 
+    // The probe used to run from boot to exit, so every native database kept a pooled
+    // connection open, and pinged, whether or not anyone ever looked.
+    #[tokio::test(start_paused = true)]
+    async fn the_probe_runs_only_while_someone_reads_health() {
+        let r = reg();
+        let fake = Fake {
+            ping: Some(Ok(())),
+            ..Default::default()
+        }
+        .arc();
+        r.register("db", Source::Config, def(json!({"type":"fake"})), fake.clone())
+            .unwrap();
+        r.start("db").await.unwrap();
+        r.start_timer();
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        assert_eq!(fake.pings(), 0, "nobody looked, so nothing was probed");
+
+        r.watch();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(fake.pings(), 1, "a look starts the probe at once");
+        assert_eq!(row(&r, "db")["state"], "up");
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert_eq!(fake.pings(), 2, "and keeps it on its interval");
+
+        // Two intervals after the last look the probe parks, and what it saw is no longer
+        // shown as current.
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        assert_eq!(fake.pings(), 2);
+        assert_eq!(row(&r, "db")["state"], "unknown");
+
+        r.watch();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(fake.pings(), 3, "the next look wakes it again");
+        assert_eq!(row(&r, "db")["state"], "up");
+        r.stop_timer();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_first_read_after_a_lapse_waits_briefly_for_the_round_it_starts() {
+        let pinging = |ms| {
+            Fake {
+                ping: Some(Ok(())),
+                ping_delay_ms: ms,
+                ..Default::default()
+            }
+            .arc()
+        };
+        let r = reg();
+        r.register("quick", Source::Config, def(json!({"type":"fake"})), pinging(100))
+            .unwrap();
+        r.start("quick").await.unwrap();
+        r.start_timer();
+        let began = tokio::time::Instant::now();
+        r.watch_fresh(Duration::from_secs(1)).await;
+        assert_eq!(began.elapsed(), Duration::from_millis(100), "back when the round is");
+        assert_eq!(row(&r, "quick")["state"], "up");
+        let began = tokio::time::Instant::now();
+        r.watch_fresh(Duration::from_secs(1)).await;
+        assert_eq!(began.elapsed(), Duration::ZERO, "inside the window: nothing to wait for");
+        r.stop_timer();
+
+        // A slow ping holds the round, never the read past its bound.
+        let r = reg();
+        r.register("quick", Source::Config, def(json!({"type":"fake"})), pinging(100))
+            .unwrap();
+        r.register("slow", Source::Config, def(json!({"type":"fake"})), pinging(5_000))
+            .unwrap();
+        r.start("quick").await.unwrap();
+        r.start("slow").await.unwrap();
+        r.start_timer();
+        let began = tokio::time::Instant::now();
+        r.watch_fresh(Duration::from_secs(1)).await;
+        assert_eq!(began.elapsed(), Duration::from_secs(1));
+        assert_eq!(row(&r, "quick")["state"], "up");
+        assert_eq!(row(&r, "slow")["state"], "unknown");
+        r.stop_timer();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_look_pushes_the_probes_lapse_back() {
+        let r = reg();
+        let fake = Fake {
+            ping: Some(Ok(())),
+            ..Default::default()
+        }
+        .arc();
+        r.register("db", Source::Config, def(json!({"type":"fake"})), fake.clone())
+            .unwrap();
+        r.start("db").await.unwrap();
+        r.start_timer();
+        r.watch(); // probes at 0 s, 60 s
+        tokio::time::sleep(Duration::from_secs(100)).await;
+        r.watch(); // and on to 220 s: 120 s, 180 s
+        tokio::time::sleep(Duration::from_secs(400)).await;
+        assert_eq!(fake.pings(), 4);
+        r.stop_timer();
+    }
+
     // --- concurrent lifecycle ---
 
     #[tokio::test]
@@ -1746,6 +1988,31 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(5)).await;
         r.note_activity("p");
         assert!(deadline(&r, "p").unwrap() > first);
+    }
+
+    // The reaper used to walk every entry once a second for the life of the process; it now
+    // parks while no deadline is armed and sleeps toward the earliest one.
+    #[tokio::test(start_paused = true)]
+    async fn an_earlier_deadline_wakes_the_sleeping_reaper() {
+        let r = reg();
+        r.start_timer();
+        let slow = Fake::default().arc();
+        let quick = Fake::default().arc();
+        r.register("slow", Source::Managed, def(json!({"type":"proc"})), slow.clone())
+            .unwrap();
+        let d = def(json!({"type":"proc","idleMs":1}));
+        r.register("quick", Source::Managed, d, quick.clone()).unwrap();
+        // Ten minutes out: the reaper wakes from its park and sleeps its full recheck.
+        r.start("slow").await.unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        r.start("quick").await.unwrap();
+        // Deadlines are wall-clock: let a real millisecond pass so this one is due.
+        std::thread::sleep(Duration::from_millis(5));
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(!is_running(&r, "quick"), "reaped at once, not at the next recheck");
+        assert!(is_running(&r, "slow"));
+        assert_eq!((quick.closes(), slow.closes()), (1, 0));
+        r.stop_timer();
     }
 
     #[tokio::test]

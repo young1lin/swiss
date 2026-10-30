@@ -172,6 +172,19 @@ pub fn proxied_client(proxy: &str) -> Result<reqwest::Client, String> {
     }
 }
 
+/// The outbound client for a def's resolved `proxy`: that proxy's shared client when it names
+/// one, else a plain client, which follows the system proxy - `HTTPS_PROXY`/`ALL_PROXY`, or the
+/// Windows proxy setting (reqwest's `system-proxy` feature, SPEC §mcp.http). Empty is absent,
+/// as Node's `opts.proxy ?` check read it.
+pub fn outbound_client(proxy: Option<&str>) -> Result<reqwest::Client, String> {
+    match proxy.filter(|p| !p.trim().is_empty()) {
+        Some(proxy) => proxied_client(proxy),
+        None => reqwest::Client::builder()
+            .build()
+            .map_err(|err| format!("http client build failed: {err}")),
+    }
+}
+
 /// The resolved toggles and identity a [`ProxyServer`] is built from — port of `ProxyOpts`, with
 /// the panel's boolean-as-string quirk already resolved by the caller (`def_bool`).
 pub struct ProxyOpts {

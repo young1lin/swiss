@@ -37,12 +37,12 @@ use swiss_host::dbbrowser::{
     TableSortKey,
 };
 
-use super::direct::{BoxFut, Lazy};
+use super::direct::{BoxFut, Lazy, CONNECTION_IDLE};
 use super::pg_resources::PgResources;
 use super::sql::{
     clamp_row_limit, drop_null_columns, grep_arg, inspect_args, inspect_description,
     inspect_reply, inspect_schema, like_contains, limit_report, page_arg, row_limit_arg,
-    table_limit_arg, table_page_args, with_row_limit, Check, DEFAULT_ROW_LIMIT,
+    table_limit_arg, table_page_args, with_row_limit, CappedWrite, Check, DEFAULT_ROW_LIMIT,
 };
 use super::tool_server::{Engine, ServerMeta, ToolDef};
 
@@ -1050,6 +1050,39 @@ pub async fn run_pg_tx(
     Ok(result.rows_affected())
 }
 
+/// The Data agent's write in auto mode (SPEC §data.agent Writes): one statement the auto gate
+/// passed, in a read-write transaction committed only when it changed at most `cap` rows -
+/// past that it is rolled back. A runaway write ends at 30 s, and one waiting on another's
+/// lock gives up at 5 s; both settings die with the transaction. A RETURNING write answers one
+/// row for each it changed, which is its count.
+pub async fn run_capped_write(pool: &PgPool, sql: &str, cap: u64) -> Result<CappedWrite, String> {
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    let ran = async {
+        sqlx::query("SET LOCAL statement_timeout = '30s'").execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        if super::sql::has_returning(sql) {
+            let rows = run_pg_tx_rows(&mut tx, sql, &[]).await?;
+            Ok::<_, String>((rows.len() as u64, rows))
+        } else {
+            Ok((run_pg_tx(&mut tx, sql, &[]).await?, Vec::new()))
+        }
+    }
+    .await;
+    let (changed, rows) = match ran {
+        Ok(ran) => ran,
+        Err(why) => {
+            let _ = tx.rollback().await;
+            return Err(why);
+        }
+    };
+    if changed > cap {
+        let _ = tx.rollback().await;
+        return Ok(CappedWrite::Past { changed });
+    }
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(CappedWrite::Kept { changed, rows, insert_id: None })
+}
+
 /// SPEC §data.edits: the rows-returning sibling of run_pg_tx — an INSERT..RETURNING or the
 /// same-transaction read-back SELECT needs the committed row itself, not a count.
 pub async fn run_pg_tx_rows(
@@ -1132,7 +1165,10 @@ impl PgEngine {
                     .map_err(|e| e.to_string())?;
                 Ok(pool)
             }) as BoxFut<Result<PgPool, String>>
-        });
+        })
+        // The pool's own idle timeout empties it; the release drops the pool and its
+        // maintenance task too. Nothing clones the pool out of its handle, so it may close it.
+        .release_idle(CONNECTION_IDLE, |pool| Box::pin(async move { pool.close().await }) as BoxFut<()>);
         Self {
             def,
             name: Arc::new(std::sync::RwLock::new(name.to_string())),

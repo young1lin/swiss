@@ -33,7 +33,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # 8's caching_sha2_password sends the password encrypted to the server's RSA key whenever the
 # server has not cached the login, so `mysql-rsa` stays on: sqlx 0.9 made it opt-in, and
 # without it every such login fails with "RSA auth backend disabled".
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "mysql", "mysql-rsa", "postgres", "json", "chrono", "bigdecimal"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "mysql", "mysql-rsa", "postgres", "json", "chrono", "bigdecimal", "sqlite"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 bigdecimal = { version = "0.4", default-features = false }
 redis = { version = "1.7", default-features = false, features = ["tokio-comp", "aio", "connection-manager"] }
@@ -56,12 +56,15 @@ time = { version = "0.3", default-features = false, features = ["std", "formatti
 # links: aws-lc-rs beside reqwest's off Windows, ring beside russh's on Windows (ADR-030 - the
 # one place a Windows build carries rustls next to schannel, because the driver has no
 # native-tls backend).
+# reqwest's `system-proxy`: a remote MCP with no proxy of its own follows the machine's - the
+# Windows proxy setting (or macOS's) besides HTTPS_PROXY (SPEC §mcp.http). Named here because
+# this crate relies on it; genai already turns it on, so it adds no code to the build.
 [target.'cfg(windows)'.dependencies]
-reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls", "system-proxy"] }
 mongodb = { version = "3.9", default-features = false, features = ["compat-3-3-0", "bson-3", "rustls-tls"] }
 
 [target.'cfg(not(windows))'.dependencies]
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "system-proxy"] }
 mongodb = { version = "3.9", default-features = false, features = ["compat-3-3-0", "bson-3", "rustls-tls-aws-lc"] }
 libc = "0.2"
 
@@ -76,6 +79,9 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 async-trait = "0.1"
 anyhow = "1"
+# Direct SQLite reach-in for the sealed-at-rest and orphan-invariant tests: the
+# same crate the lib links (no second driver), sqlite surface only.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 
 [features]
 default = []

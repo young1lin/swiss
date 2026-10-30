@@ -120,6 +120,9 @@ pub struct CallLog {
     files: Mutex<HashMap<String, Arc<Mutex<FileState>>>>,
     /// Old name -> current name, for calls already in flight when a rename happened.
     aliases: Mutex<HashMap<String, String>>,
+    /// The module database the MCP plugin attaches while enabled (SPEC §host.history):
+    /// when set, IT is the authority and the jsonl tree is the pre-cutover fallback.
+    history: std::sync::RwLock<Option<std::sync::Arc<crate::history::McpHistory>>>,
 }
 
 impl CallLog {
@@ -129,7 +132,30 @@ impl CallLog {
             dir,
             files: Mutex::new(HashMap::new()),
             aliases: Mutex::new(HashMap::new()),
+            history: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Attach the module database (the plugin's start) — every later record, read, clear,
+    /// rename and sweep lands in it. The legacy files are NOT touched from that moment:
+    /// they stay as the inventoried import source they became (SPEC §mcp.logs).
+    pub fn attach_history(&self, history: std::sync::Arc<crate::history::McpHistory>) {
+        if let Ok(mut slot) = self.history.write() {
+            *slot = Some(history);
+        }
+    }
+
+    /// Detach (the plugin's stop, before the bounded close) — later traffic falls back to
+    /// the jsonl path, so a stopped module logs on instead of vanishing.
+    pub fn detach_history(&self) {
+        if let Ok(mut slot) = self.history.write() {
+            *slot = None;
+        }
+    }
+
+    /// The attached database, if the module is enabled (test seam for the dispatch paths).
+    pub fn attached_history(&self) -> Option<std::sync::Arc<crate::history::McpHistory>> {
+        self.history.read().ok().and_then(|slot| slot.clone())
     }
 
     /// The log's root directory - test seam for asserting on files directly.
@@ -193,7 +219,7 @@ impl Drop for AppendDone {
 
 static LAST_ERROR_LOG: AtomicU64 = AtomicU64::new(0);
 
-fn on_error(where_: &str, err: &str) {
+pub(crate) fn on_error(where_: &str, err: &str) {
     // A log that cannot be written must never break a tool call, but silence would be worse.
     let now = now_ms();
     if now.saturating_sub(LAST_ERROR_LOG.load(Ordering::Relaxed)) < 30_000 {
@@ -280,8 +306,12 @@ fn clip(text: &str, max: usize) -> String {
 }
 
 /// Recursively redact values whose OBJECT KEY looks like a credential — the replacer the Node
-/// build passed to JSON.stringify (`SECRET_ARG_KEY_RE`), ported as a tree walk.
+/// build passed to JSON.stringify (`SECRET_ARG_KEY_RE`), ported as a tree walk. A value under
+/// an innocent key keeps its text with any credential literal in it masked (SPEC §mcp.calls):
+/// a command line's `REDISCLI_AUTH=<value>`, an argv's `--password <value>` - an array of
+/// texts is read as the one command line an argv makes.
 fn redact_args(value: &Value) -> Value {
+    use swiss_core::secure::literal;
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
@@ -294,7 +324,12 @@ fn redact_args(value: &Value) -> Value {
                 })
                 .collect(),
         ),
+        Value::Array(items) if !items.is_empty() && items.iter().all(Value::is_string) => {
+            let words: Vec<String> = items.iter().filter_map(Value::as_str).map(str::to_string).collect();
+            Value::Array(literal::mask_argv(&words).into_iter().map(Value::String).collect())
+        }
         Value::Array(items) => Value::Array(items.iter().map(redact_args).collect()),
+        Value::String(text) => Value::String(literal::mask(text)),
         other => other.clone(),
     }
 }
@@ -418,32 +453,14 @@ impl CallLog {
     ) {
         let Some(raw_mcp) = raw_mcp else { return }; // a nameless adapter (tests) simply isn't logged
         let mcp = self.current_name(raw_mcp);
+        if let Some(history) = self.attached_history() {
+            // The module database is the authority while enabled: same entry shape, one
+            // queued transaction, sequence claimed inside it (SPEC §host.history).
+            history.record_call(&mcp, source, rec);
+            return;
+        }
         let state = self.state(&mcp);
-        let output = if rec.output.chars().count() > BODY_MAX {
-            clip(&rec.output, BODY_MAX)
-        } else {
-            rec.output.clone()
-        };
-        let long = output.chars().count() > PREVIEW_MAX;
-        let entry = CallEntry {
-            seq: 0, // assigned inside the queue, so concurrent calls cannot claim the same number
-            at: swiss_core::log::iso_now(),
-            tool: rec.tool,
-            via: source.via.clone(),
-            client: source.client.clone(),
-            ok: rec.ok,
-            ms: rec.ms,
-            args: args_text(rec.args.as_ref()),
-            output: if long {
-                output.chars().take(PREVIEW_MAX).collect()
-            } else {
-                output.clone()
-            },
-            chars: rec.output.chars().count(),
-            preview: long.then_some(true),
-            body: long.then_some(true),
-            body_gone: None,
-        };
+        let (entry, output, long) = build_entry(source, rec);
         let mcp_for_task = mcp.clone();
         // Count the append BEFORE spawning. A reader that flushes in the window between here and
         // the writer's first poll would otherwise find the queue free, take it, and serve a page
@@ -467,6 +484,38 @@ impl CallLog {
             }
         });
     }
+}
+
+/// The log entry for one call, under the jsonl era's clipping rules — shared by the
+/// legacy append path and the module database so the two can never disagree about what a
+/// recorded call looks like. Returns (entry-with-seq-0, clipped full output, is-long).
+pub(crate) fn build_entry(source: &CallSource, rec: CallRecord) -> (CallEntry, String, bool) {
+    let output = if rec.output.chars().count() > BODY_MAX {
+        clip(&rec.output, BODY_MAX)
+    } else {
+        rec.output.clone()
+    };
+    let long = output.chars().count() > PREVIEW_MAX;
+    let entry = CallEntry {
+        seq: 0, // assigned by the writer, so concurrent calls cannot claim the same number
+        at: swiss_core::log::iso_now(),
+        tool: rec.tool,
+        via: source.via.clone(),
+        client: source.client.clone(),
+        ok: rec.ok,
+        ms: rec.ms,
+        args: args_text(rec.args.as_ref()),
+        output: if long {
+            output.chars().take(PREVIEW_MAX).collect()
+        } else {
+            output.clone()
+        },
+        chars: rec.output.chars().count(),
+        preview: long.then_some(true),
+        body: long.then_some(true),
+        body_gone: None,
+    };
+    (entry, output, long)
 }
 
 async fn append_one(
@@ -684,6 +733,12 @@ impl CallLog {
     /// would sit there past the cutoff forever. Walks the DIRECTORY rather than the live state map,
     /// so it also reaches logs belonging to MCPs that are no longer registered at all.
     pub async fn sweep_call_logs(&self) {
+        if let Some(history) = self.attached_history() {
+            // Age retention over the durable index; the byte budgets are physical
+            // accounting and land with the retention phase (SPEC §mcp.logs, planned).
+            history.sweep(MAX_AGE_MS).await;
+            return;
+        }
         let names = match std::fs::read_dir(&self.dir) {
             Ok(rd) => rd,
             Err(_) => return, // nothing logged yet
@@ -816,6 +871,9 @@ impl CallLog {
     /// One page of an MCP's log, newest first. Each entry carries the preview already stored in the
     /// index.
     pub async fn read_calls(&self, mcp: &str, page: i64, page_size: i64, q: Option<&str>) -> Value {
+        if let Some(history) = self.attached_history() {
+            return history.read_calls(mcp, page, page_size, q).await;
+        }
         self.flush_calls(Some(mcp)).await;
         let size = page_size.clamp(1, 100) as usize;
         let page = page.max(0) as usize;
@@ -866,6 +924,9 @@ impl CallLog {
     /// metadata, then reads the payload beside it. A reply whose payload has been pruned comes back
     /// as the preview, flagged, rather than as a silently short result.
     pub async fn read_call(&self, mcp: &str, seq: u64) -> Option<CallEntry> {
+        if let Some(history) = self.attached_history() {
+            return history.read_call(mcp, seq).await;
+        }
         self.flush_calls(Some(mcp)).await;
         let tail = tail_lines(&self.file_for(mcp), usize::MAX).ok()?;
         let entry = parse_lines(&tail.lines)
@@ -904,6 +965,9 @@ impl CallLog {
         limit: usize,
         q: Option<&str>,
     ) -> Vec<Value> {
+        if let Some(history) = self.attached_history() {
+            return history.read_tool_history(mcp, tool, limit, q).await;
+        }
         self.flush_calls(Some(mcp)).await;
         let size = limit.clamp(1, TOOL_HISTORY_MAX);
         let needle = q.unwrap_or("").trim().to_ascii_lowercase();
@@ -954,6 +1018,10 @@ impl CallLog {
 
     /// Forget an MCP's history (the panel's Clear button, and deleting an MCP).
     pub async fn clear_calls(&self, mcp: &str) {
+        if let Some(history) = self.attached_history() {
+            history.clear_calls(mcp).await;
+            return;
+        }
         self.flush_calls(Some(mcp)).await;
         if let Ok(mut map) = self.files.lock() {
             map.remove(mcp);
@@ -964,6 +1032,11 @@ impl CallLog {
 
     /// Follow a rename, so the history isn't stranded under a name that no longer exists.
     pub async fn rename_calls(&self, from: &str, to: &str) {
+        if let Some(history) = self.attached_history() {
+            history.rename_calls(from, to).await;
+        }
+        // The alias stays live either way: in-flight calls captured under the old name are
+        // redirected in memory for as long as the module keeps running.
         self.flush_calls(Some(from)).await;
         let carried = self.files.lock().ok().and_then(|mut m| {
             m.remove(from).and_then(|s| {
@@ -1110,6 +1183,11 @@ mod tests {
             .unwrap_or_default()
     }
 
+    /// A sweep walks every log in the shared directory, and a seeded or restarted log drops its
+    /// in-memory state: a sweep holding the dropped state rewrites the file outside the new
+    /// state's queue and loses an append landing beside it. The tests doing either take turns.
+    static SWEEPS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// Write an index directly, so entries can carry dates the clock cannot reach.
     async fn seed(mcp: &str, rows: &[(u64, String, bool)]) {
         let log = test_log();
@@ -1232,8 +1310,37 @@ mod tests {
         assert!(args.contains("keep"));
     }
 
+    // Under an innocent key: a remote exec's argv and a SQL text (SPEC §mcp.calls). The keys
+    // are argv and query, so the wordlist above never sees them; the literal inside is masked.
+    #[tokio::test]
+    async fn masks_a_credential_literal_under_an_innocent_key() {
+        let log = test_log();
+        let mcp = "masks-literals";
+        log.clear_calls(mcp).await;
+        log.record_call(
+            Some(mcp),
+            &source(),
+            rec(
+                "t",
+                Some(json!({
+                    "argv": ["bash", "-c", "REDISCLI_AUTH=Xq7pLm2Rv9 redis-cli ping", "--password", "pa55word"],
+                    "nested": [{ "command": "redis-cli -a p4ssw0rd ping" }, 7],
+                    "note": "ls -la /srv"
+                })),
+                true,
+                "",
+            ),
+        );
+        let args = &entries(mcp).await[0].args;
+        for value in ["Xq7pLm2Rv9", "pa55word", "p4ssw0rd"] {
+            assert!(!args.contains(value), "{args}");
+        }
+        assert!(args.contains("REDISCLI_AUTH=••••••••") && args.contains("ls -la /srv"), "{args}");
+    }
+
     #[tokio::test]
     async fn survives_a_restart_and_keeps_counting() {
+        let _turn = SWEEPS.lock().await;
         let log = test_log();
         let mcp = "survives-restart";
         log.clear_calls(mcp).await;
@@ -1578,6 +1685,7 @@ mod tests {
 
     #[tokio::test]
     async fn skips_a_torn_line_instead_of_failing_the_page() {
+        let _turn = SWEEPS.lock().await;
         let log = test_log();
         let mcp = "torn-line";
         log.clear_calls(mcp).await;
@@ -1603,6 +1711,7 @@ mod tests {
 
     #[tokio::test]
     async fn drops_entries_past_the_half_year_cutoff_and_keeps_everything_inside_it() {
+        let _turn = SWEEPS.lock().await;
         let log = test_log();
         let mcp = "aged-cutoff";
         seed(
@@ -1623,6 +1732,7 @@ mod tests {
 
     #[tokio::test]
     async fn deletes_the_payload_files_of_entries_that_aged_out_and_keeps_the_rest() {
+        let _turn = SWEEPS.lock().await;
         let log = test_log();
         let mcp = "aged-bodies";
         seed(mcp, &[(1, days_ago(400), true), (2, days_ago(10), true)]).await;
@@ -1637,6 +1747,7 @@ mod tests {
     // nobody appends to is exactly the one that would keep year-old arguments forever.
     #[tokio::test]
     async fn sweeps_a_log_whose_mcp_is_never_called_again() {
+        let _turn = SWEEPS.lock().await;
         let log = test_log();
         let mcp = "retired-mcp";
         seed(mcp, &[(1, days_ago(365), false), (2, days_ago(300), false)]).await;
@@ -1648,6 +1759,7 @@ mod tests {
 
     #[tokio::test]
     async fn leaves_a_log_alone_when_nothing_in_it_has_expired() {
+        let _turn = SWEEPS.lock().await;
         let log = test_log();
         let mcp = "aged-untouched";
         seed(mcp, &[(1, days_ago(5), false), (2, days_ago(2), false)]).await;
@@ -1660,6 +1772,7 @@ mod tests {
 
     #[tokio::test]
     async fn keeps_appending_correctly_after_a_sweep() {
+        let _turn = SWEEPS.lock().await;
         let log = test_log();
         let mcp = "aged-then-append";
         seed(mcp, &[(1, days_ago(400), false), (7, days_ago(3), false)]).await;

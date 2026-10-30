@@ -44,15 +44,44 @@ pub fn def_bool(def: &ServerDef, key: &str) -> bool {
     }
 }
 
+/// How long a database connection may sit unused before its cell lets it go (SPEC
+/// §mcp.registry): the same ten minutes a lazy proc child is given before it is reaped.
+pub const CONNECTION_IDLE: std::time::Duration =
+    std::time::Duration::from_millis(crate::registry::DEFAULT_IDLE_MS);
+
 /// A connection opened on first use and shared from then on — port of `Lazy<T>`.
 ///
 /// The single-flight is the tokio mutex itself: the first `get()` holds it across the open, so
 /// two concurrent first requests share one connection rather than racing two into existence and
 /// leaking one. A failed attempt leaves the cell empty (the guard drops on the error path), so
 /// the next request tries again instead of being handed the same rejection forever.
+///
+/// A cell built with [`release_idle`](Self::release_idle) also lets the connection go once
+/// nothing has asked for it for that long and nobody still holds it, and the next `get()` opens
+/// a fresh one. Without it a pool, a multiplexed redis socket or a mongo client with its
+/// heartbeat monitors stayed open for the life of the process after a single use.
 pub struct Lazy<T> {
-    cell: tokio::sync::Mutex<Option<Arc<T>>>,
+    inner: Arc<LazyInner<T>>,
+}
+
+struct LazyInner<T> {
+    cell: tokio::sync::Mutex<Slot<T>>,
     open: Box<dyn Fn() -> BoxFut<Result<T, String>> + Send + Sync>,
+    release: Option<Release<T>>,
+}
+
+struct Slot<T> {
+    value: Option<Arc<T>>,
+    /// The last `get()`, the clock the idle release reads.
+    used: tokio::time::Instant,
+    /// Bumped on every open, so the release watcher of a connection already disposed and
+    /// reopened knows the cell's value is no longer its own.
+    opened: u64,
+}
+
+struct Release<T> {
+    idle: std::time::Duration,
+    close: Box<dyn Fn(Arc<T>) -> BoxFut<()> + Send + Sync>,
 }
 
 impl<T: Send + Sync + 'static> Lazy<T> {
@@ -61,18 +90,49 @@ impl<T: Send + Sync + 'static> Lazy<T> {
         F: Fn() -> BoxFut<Result<T, String>> + Send + Sync + 'static,
     {
         Self {
-            cell: tokio::sync::Mutex::new(None),
-            open: Box::new(open),
+            inner: Arc::new(LazyInner {
+                cell: tokio::sync::Mutex::new(Slot {
+                    value: None,
+                    used: tokio::time::Instant::now(),
+                    opened: 0,
+                }),
+                open: Box::new(open),
+                release: None,
+            }),
         }
     }
 
+    /// Let the connection go after `idle` without a `get()`, through `close` - but only while
+    /// the cell holds the last reference: a caller still holding the handle (a query, a dump
+    /// between chunks) keeps it, and the release looks again one window later.
+    ///
+    /// `close` may only shut the connection down when no clone of the inner value can be alive
+    /// outside the handle; a value whose clones outlive it (a mongo client an export streams
+    /// through) is let go by dropping it instead, and the driver closes when its last clone goes.
+    pub fn release_idle<C>(mut self, idle: std::time::Duration, close: C) -> Self
+    where
+        C: Fn(Arc<T>) -> BoxFut<()> + Send + Sync + 'static,
+    {
+        // Still unshared: the builder runs before the cell is handed to anyone.
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.release = Some(Release { idle, close: Box::new(close) });
+        }
+        self
+    }
+
     pub async fn get(&self) -> Result<Arc<T>, String> {
-        let mut guard = self.cell.lock().await;
-        if let Some(value) = &*guard {
+        let mut slot = self.inner.cell.lock().await;
+        slot.used = tokio::time::Instant::now();
+        if let Some(value) = &slot.value {
             return Ok(value.clone());
         }
-        let opened = Arc::new((self.open)().await?);
-        *guard = Some(opened.clone());
+        let opened = Arc::new((self.inner.open)().await?);
+        slot.value = Some(opened.clone());
+        slot.used = tokio::time::Instant::now();
+        slot.opened += 1;
+        if let Some(release) = &self.inner.release {
+            watch_idle(Arc::downgrade(&self.inner), slot.opened, release.idle);
+        }
         Ok(opened)
     }
 
@@ -83,11 +143,48 @@ impl<T: Send + Sync + 'static> Lazy<T> {
     /// stop or delete an MCP while its first connection is still being established and the
     /// driver otherwise finished connecting into a cell nothing would ever close.
     pub async fn dispose(&self, close: impl FnOnce(Arc<T>) -> BoxFut<()>) {
-        let mut guard = self.cell.lock().await;
-        if let Some(value) = guard.take() {
+        let mut slot = self.inner.cell.lock().await;
+        if let Some(value) = slot.value.take() {
             close(value).await;
         }
     }
+}
+
+/// The idle release of one opened connection: a task that sleeps until the connection has been
+/// unused for the window, then closes it under the cell's mutex. It holds the cell weakly, so a
+/// dropped adapter is not kept alive by its own release, and it ends with the connection it
+/// watches - released, disposed, or replaced by a later open that has a watcher of its own.
+fn watch_idle<T: Send + Sync + 'static>(
+    cell: std::sync::Weak<LazyInner<T>>,
+    opened: u64,
+    idle: std::time::Duration,
+) {
+    tokio::spawn(async move {
+        let mut due = tokio::time::Instant::now() + idle;
+        loop {
+            tokio::time::sleep_until(due).await;
+            let Some(inner) = cell.upgrade() else { return };
+            let Some(release) = &inner.release else { return };
+            let mut slot = inner.cell.lock().await;
+            if slot.opened != opened {
+                return;
+            }
+            let Some(value) = &slot.value else { return };
+            let now = tokio::time::Instant::now();
+            if Arc::strong_count(value) > 1 {
+                due = now + idle;
+                continue;
+            }
+            if slot.used + idle > now {
+                due = slot.used + idle;
+                continue;
+            }
+            if let Some(value) = slot.value.take() {
+                (release.close)(value).await;
+            }
+            return;
+        }
+    });
 }
 
 /// The adapter shell every direct engine plugs into: toggle seeding from the def, rename
@@ -398,6 +495,103 @@ mod tests {
         lazy.dispose(|_| Box::pin(async {})).await;
         assert_eq!(*lazy.get().await.unwrap(), 2);
         assert_eq!(o.count.load(Ordering::SeqCst), 2);
+    }
+
+    const IDLE: std::time::Duration = std::time::Duration::from_secs(600);
+
+    /// A cell with an idle release that records what it closed.
+    fn releasing(o: &Opens) -> (Lazy<usize>, Arc<std::sync::Mutex<Vec<usize>>>) {
+        let closed = Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
+        let sink = closed.clone();
+        let lazy = o.lazy().release_idle(IDLE, move |v: Arc<usize>| {
+            let sink = sink.clone();
+            Box::pin(async move {
+                sink.lock().unwrap().push(*v);
+            })
+        });
+        (lazy, closed)
+    }
+
+    /// Let spawned tasks run at the current (paused) instant.
+    async fn settle() {
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unused_connection_is_released_and_the_next_get_opens_a_fresh_one() {
+        // A pool opened once used to stay open for the life of the process.
+        let o = opens(0, 0);
+        let (lazy, closed) = releasing(&o);
+        drop(lazy.get().await.unwrap());
+        tokio::time::sleep(IDLE - std::time::Duration::from_secs(1)).await;
+        settle().await;
+        assert!(closed.lock().unwrap().is_empty(), "released before the window ran out");
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        settle().await;
+        assert_eq!(*closed.lock().unwrap(), vec![1]);
+        assert_eq!(*lazy.get().await.unwrap(), 2, "a get after the release opens again");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_get_pushes_the_release_back() {
+        let o = opens(0, 0);
+        let (lazy, closed) = releasing(&o);
+        drop(lazy.get().await.unwrap());
+        tokio::time::sleep(IDLE / 2).await;
+        drop(lazy.get().await.unwrap());
+        tokio::time::sleep(IDLE / 2 + std::time::Duration::from_secs(1)).await;
+        settle().await;
+        assert!(closed.lock().unwrap().is_empty(), "the window counts from the last get");
+        tokio::time::sleep(IDLE / 2).await;
+        settle().await;
+        assert_eq!(*closed.lock().unwrap(), vec![1]);
+        assert_eq!(o.count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_connection_still_held_is_not_released() {
+        // A dump holding the handle between chunks must not have the pool closed under it.
+        let o = opens(0, 0);
+        let (lazy, closed) = releasing(&o);
+        let held = lazy.get().await.unwrap();
+        tokio::time::sleep(IDLE * 2).await;
+        settle().await;
+        assert!(closed.lock().unwrap().is_empty(), "closed while a caller held it");
+        drop(held);
+        tokio::time::sleep(IDLE + std::time::Duration::from_secs(1)).await;
+        settle().await;
+        assert_eq!(*closed.lock().unwrap(), vec![1], "let go once the holder was done");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_disposed_and_reopened_connection_is_released_once() {
+        // The first open's watcher must not act on the second open's connection.
+        let o = opens(0, 0);
+        let (lazy, closed) = releasing(&o);
+        drop(lazy.get().await.unwrap());
+        lazy.dispose(|_| Box::pin(async {})).await;
+        tokio::time::sleep(IDLE / 2).await;
+        drop(lazy.get().await.unwrap());
+        tokio::time::sleep(IDLE / 2 + std::time::Duration::from_secs(1)).await;
+        settle().await;
+        assert!(closed.lock().unwrap().is_empty(), "the stale watcher closed the new connection");
+        tokio::time::sleep(IDLE / 2).await;
+        settle().await;
+        assert_eq!(*closed.lock().unwrap(), vec![2]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cell_without_a_release_keeps_its_connection() {
+        // http sessions opt out: a remote MCP's session is not a pool to let go.
+        let o = opens(0, 0);
+        let lazy = o.lazy();
+        drop(lazy.get().await.unwrap());
+        tokio::time::sleep(IDLE * 3).await;
+        settle().await;
+        assert_eq!(*lazy.get().await.unwrap(), 1);
+        assert_eq!(o.count.load(Ordering::SeqCst), 1);
     }
 
     // ---- DirectAdapter ----------------------------------------------------------------

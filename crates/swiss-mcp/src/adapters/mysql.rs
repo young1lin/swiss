@@ -35,14 +35,15 @@ use swiss_host::dbbrowser::{
     bytea_hex, exact_int64, exact_uint64, finite_f64, TableSort, TableSortKey,
 };
 
-use super::direct::{BoxFut, Lazy};
+use super::direct::{BoxFut, Lazy, CONNECTION_IDLE};
 use super::mysql_browser::MysqlBrowser;
 use super::mysql_resources::MysqlResources;
 use super::resources::human_bytes;
 use super::sql::{
     assert_single_statement, clamp_row_limit, drop_null_columns, grep_arg, inspect_args,
     inspect_description, inspect_reply, inspect_schema, like_contains, limit_report, page_arg,
-    row_limit_arg, table_limit_arg, table_page_args, with_row_limit, Check, DEFAULT_ROW_LIMIT,
+    row_limit_arg, table_limit_arg, table_page_args, with_row_limit, CappedWrite, Check,
+    DEFAULT_ROW_LIMIT,
 };
 use super::tool_server::{Engine, ServerMeta, ToolDef};
 
@@ -817,6 +818,41 @@ pub async fn run_query(
     }
 }
 
+/// The Data agent's read (SPEC §data.agent): one statement inside START TRANSACTION READ
+/// ONLY, always rolled back - the server refuses a write to a table there, and nothing the
+/// statement did is kept. The caller's read gate has already refused DDL, which MySQL would
+/// commit implicitly before the mode could refuse it.
+pub async fn run_read_query(pool: &MySqlPool, sql: &str) -> Result<Vec<Map<String, Value>>, String> {
+    let mut tx = pool.begin_with("START TRANSACTION READ ONLY").await.map_err(|e| e.to_string())?;
+    let outcome = collect_outcome(sqlx::raw_sql(AssertSqlSafe(sql)).fetch_many(&mut *tx), sql).await;
+    let _ = tx.rollback().await;
+    Ok(outcome?.rows)
+}
+
+/// The Data agent's write in auto mode (SPEC §data.agent Writes): one statement the auto gate
+/// passed, in a read-write transaction committed only when it changed at most `cap` rows -
+/// sqlx asks for CLIENT_FOUND_ROWS, so an UPDATE counts the rows it matched, unchanged ones
+/// too. Past the cap it is rolled back. A MyISAM table keeps what it changed all the same: no
+/// transaction undoes one, which is why the browser bounds a single-table UPDATE or DELETE
+/// to cap + 1 rows first (sql::bounded_write).
+pub async fn run_capped_write(pool: &MySqlPool, sql: &str, cap: u64) -> Result<CappedWrite, String> {
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    let outcome = match collect_outcome(sqlx::raw_sql(AssertSqlSafe(sql)).fetch_many(&mut *tx), sql).await {
+        Ok(outcome) => outcome,
+        Err(why) => {
+            let _ = tx.rollback().await;
+            return Err(why);
+        }
+    };
+    let (changed, insert_id) = outcome.affected.unwrap_or((0, 0));
+    if changed > cap {
+        let _ = tx.rollback().await;
+        return Ok(CappedWrite::Past { changed });
+    }
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(CappedWrite::Kept { changed, rows: outcome.rows, insert_id: Some(insert_id).filter(|id| *id > 0) })
+}
+
 /// The drain loop over either protocol's `fetch_many` stream.
 ///
 /// sqlx ends EVERY statement with `Either::Left` — an OK packet for DML, but also a
@@ -1028,7 +1064,10 @@ impl MysqlEngine {
                     .map_err(|e| e.to_string())?;
                 Ok(pool)
             }) as BoxFut<Result<MySqlPool, String>>
-        });
+        })
+        // Nothing clones the pool out of its handle, so the release may close it: a closed pool
+        // says goodbye to the server instead of leaving an aborted connection in its log.
+        .release_idle(CONNECTION_IDLE, |pool| Box::pin(async move { pool.close().await }) as BoxFut<()>);
         let conn = Arc::new(conn);
         Ok(Self {
             def,

@@ -190,7 +190,7 @@ describe("oauth form fields (SPEC §mcp.oauth)", () => {
   });
 });
 
-describe("the figma type (SPEC §mcp.figma): one field, everything implied", () => {
+describe("the figma type (SPEC §mcp.figma): a name and a route, everything else implied", () => {
   it("the figma form carries no url, no auth box — the type decides those", () => {
     const keys = fields.TYPE_FIELDS.figma.map((f) => f.k);
     expect(keys).toContain("description");
@@ -199,6 +199,16 @@ describe("the figma type (SPEC §mcp.figma): one field, everything implied", () 
     expect(fields.TYPE_LABELS.figma).toContain("figma");
     // No Test button: a keyless handshake is always 401 for an OAuth remote.
     expect(fields.TESTABLE_TYPES).not.toContain("figma");
+  });
+
+  it("the figma form carries a proxy: the route to Figma is the machine's, not the type's", () => {
+    const proxy = fields.TYPE_FIELDS.figma.find((f) => f.k === "proxy");
+    expect(proxy).toBeDefined();
+    // Its own hint: the OAuth handshake rides the proxy too, and empty follows the system one.
+    expect(proxy!.hint).toBe("fields.figmaProxyRoute");
+    // readFields sends it like any text field, so the server stores it on the figma def.
+    byId.set("g-proxy", Object.assign(new FakeNode("input"), { value: "http://127.0.0.1:7890" }));
+    expect(fields.readFields("figma", "g-").proxy).toBe("http://127.0.0.1:7890");
   });
 
   it("a figma detail renders the Authorize button with no auth key on the config", () => {

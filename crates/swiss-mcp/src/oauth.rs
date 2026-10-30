@@ -78,6 +78,20 @@ pub fn is_oauth(def: &swiss_host::config::ServerDef) -> bool {
     def.type_() == "figma" || def.get_str("auth") == Some("oauth")
 }
 
+/// The client an authorize flow for `def` runs on: the outbound path the adapter's own traffic
+/// takes - the def's `proxy` (a reference resolved here), else the system proxy. Discovery,
+/// registration and the code exchange must reach the provider the way the MCP does, or a
+/// network that needs the proxy could never finish the consent the MCP is waiting on.
+pub fn flow_client(def: &swiss_host::config::ServerDef) -> Result<reqwest::Client, String> {
+    let proxy = match def.get_str("proxy").filter(|p| !p.trim().is_empty()) {
+        Some(raw) => {
+            Some(swiss_core::secure::refs::resolve(raw).map_err(|err| format!("proxy: {err}"))?)
+        }
+        None => None,
+    };
+    crate::adapters::proxy::outbound_client(proxy.as_deref())
+}
+
 /// Per-provider OAuth registration defaults. Only what a provider's DCR allowlist or scope
 /// demands; everything else is standard flow.
 pub struct ProviderDefaults {
@@ -1029,6 +1043,27 @@ mod tests {
             .clone(),
         );
         assert!(!is_oauth(&plain));
+    }
+
+    #[test]
+    fn the_flow_client_takes_the_route_the_adapter_takes() {
+        // flow_client reads the def's proxy through the adapter's own gate: what the adapter
+        // refuses at start, the authorize flow refuses too, and what it accepts builds.
+        let def = |proxy: &str| {
+            swiss_host::config::ServerDef(
+                serde_json::json!({ "type": "figma", "proxy": proxy })
+                    .as_object()
+                    .expect("object")
+                    .clone(),
+            )
+        };
+        let err = match flow_client(&def("socks5://127.0.0.1:1080")) {
+            Err(err) => err,
+            Ok(_) => panic!("a socks5 proxy must not build the flow client"),
+        };
+        assert!(err.contains("proxy must be an http"), "{err}");
+        assert!(flow_client(&def("http://127.0.0.1:7890")).is_ok());
+        assert!(flow_client(&def("")).is_ok(), "empty is no proxy");
     }
 
     #[test]
