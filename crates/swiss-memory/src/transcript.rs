@@ -954,8 +954,7 @@ mod tests {
 
     #[test]
     fn dsh_key_matches_dsh_names() {
-        // The first is a real directory under ~/.dsh/sessions.
-        assert_eq!(dsh_key(r"C:\Users\user\dev\swiss"), "--C-Users-user-dev-swiss--");
+        assert_eq!(dsh_key(r"C:\Users\dev\swiss"), "--C-Users-dev-swiss--");
         assert_eq!(dsh_key("/home/me/my_app.v2"), "--home-me-my_app.v2--");
         assert_eq!(dsh_key("/srv/缓存"), "--srv-~7F13~5B58--");
         assert_eq!(dsh_key("/srv/a😀"), "--srv-a~D83D~DE00--");
