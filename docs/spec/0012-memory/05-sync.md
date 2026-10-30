@@ -218,7 +218,7 @@ a registered project.
 
 **Cancel.** A run stops without the plugin stopping: `POST sync/runs/{id}/cancel`, `swiss
 memory sync cancel ID`, the sheet's *Stop*, the auto-update sheet's *Stop the review*
-(§memory.surfaces) or *Stop* on a live LLM-history row the run asked (§llm.history Live). The
+(§memory.panel) or *Stop* on a live LLM-history row the run asked (§llm.history Live). The
 route's `project` may be left out: run ids are store-wide, so the LLM page, whose rows know
 their memory run and not its project, stops it by its id alone; a `project` that is not the
 run's is still a 404. A queued run is cancelled there and never starts

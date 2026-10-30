@@ -72,7 +72,7 @@ in §decisions.
 | 0003 | [§core](spec/0003-core.md) | `swiss-core` | The data directory, the sealed envelope, the master key |
 | 0004 | [§host](spec/0004-host.md) | `swiss-host`, `swiss-plugins`, `swiss` | Plugin host, lifecycle, routes, wire rules, security boundary, session, config, vault, groups, CLI, daemon |
 | 0005 | [§mcp](spec/0005-mcp.md) | `swiss-mcp` | The MCP plugin: endpoint, protocol eras, registry, adapters, OAuth, revisions, call log |
-| 0006 | [§data](spec/0006-data.md) | `swiss-data` | The Data plugin: connections, browsers, SQL console, Redis, tabs |
+| 0006 | [§data](spec/0006-data/README.md) | `swiss-data` | The Data plugin: connections, browsers, SQL console, Redis, tabs |
 | 0007 | [§tunnels](spec/0007-tunnels.md) | `swiss-tunnels` | SSH connections, forward rules, proxy and jump hosts |
 | 0008 | [§jobs](spec/0008-jobs.md) | `swiss-jobs` | Config-driven scheduled jobs |
 | 0009 | [§terminal](spec/0009-terminal.md) | `swiss-terminal` | Local and remote shells over WebSocket |
@@ -153,31 +153,31 @@ in §decisions.
 - [§mcp.catalog — The connection catalog and the tunnel link](spec/0005-mcp.md#mcpcatalog--the-connection-catalog-and-the-tunnel-link)
 - [§mcp.panel — The Servers, Traffic and Token pages](spec/0005-mcp.md#mcppanel--the-servers-traffic-and-token-pages)
 
-### 0006 · [§data — The Data plugin](spec/0006-data.md)
+### 0006 · [§data — The Data plugin](spec/0006-data/README.md)
 
-- [§data.api — The routes](spec/0006-data.md#dataapi--the-routes)
-- [§data.browse — Tables and rows](spec/0006-data.md#databrowse--tables-and-rows)
-- [§data.databases — The database axis (ADR-027)](spec/0006-data.md#datadatabases--the-database-axis-adr-027)
-- [§data.grid — The grid, form and value views](spec/0006-data.md#datagrid--the-grid-form-and-value-views)
-- [§data.edits — Buffered edits](spec/0006-data.md#dataedits--buffered-edits)
-- [§data.console — The SQL console](spec/0006-data.md#dataconsole--the-sql-console)
-- [§data.history — What a console ran, per database](spec/0006-data.md#datahistory--what-a-console-ran-per-database)
-- [§data.agent — The agent beside the console](spec/0006-data.md#dataagent--the-agent-beside-the-console)
-- [§data.completion — Server-side completion (ADR-017)](spec/0006-data.md#datacompletion--server-side-completion-adr-017)
-- [§data.activity — Live sessions](spec/0006-data.md#dataactivity--live-sessions)
-- [§data.export — Export and import](spec/0006-data.md#dataexport--export-and-import)
-- [§data.ddl — Structural operations](spec/0006-data.md#dataddl--structural-operations)
-- [§data.redis — Keys and values](spec/0006-data.md#dataredis--keys-and-values)
-- [§data.redis-console — The Redis console](spec/0006-data.md#dataredis-console--the-redis-console)
-- [§data.streams — Redis streams](spec/0006-data.md#datastreams--redis-streams)
-- [§data.pubsub — Redis pub/sub](spec/0006-data.md#datapubsub--redis-pubsub)
-- [§data.mongo — MongoDB: the routes and the sidebar](spec/0006-data.md#datamongo--mongodb-the-routes-and-the-sidebar)
-- [§data.mongo-edits — Writes: one document, many, and transfers](spec/0006-data.md#datamongo-edits--writes-one-document-many-and-transfers)
-- [§data.mongo-pipeline — Aggregation and explain](spec/0006-data.md#datamongo-pipeline--aggregation-and-explain)
-- [§data.mongo-schema — Schema, indexes, validation](spec/0006-data.md#datamongo-schema--schema-indexes-validation)
-- [§data.mongo-panel — The documents workspace](spec/0006-data.md#datamongo-panel--the-documents-workspace)
-- [§data.tabs — Object tabs, the tree and the bars (ADR-026)](spec/0006-data.md#datatabs--object-tabs-the-tree-and-the-bars-adr-026)
-- [§data.sessions — The session cache](spec/0006-data.md#datasessions--the-session-cache)
+- [§data.api — The routes](spec/0006-data/01-browse.md#dataapi--the-routes)
+- [§data.browse — Tables and rows](spec/0006-data/01-browse.md#databrowse--tables-and-rows)
+- [§data.databases — The database axis (ADR-027)](spec/0006-data/01-browse.md#datadatabases--the-database-axis-adr-027)
+- [§data.grid — The grid, form and value views](spec/0006-data/01-browse.md#datagrid--the-grid-form-and-value-views)
+- [§data.edits — Buffered edits](spec/0006-data/01-browse.md#dataedits--buffered-edits)
+- [§data.console — The SQL console](spec/0006-data/02-console.md#dataconsole--the-sql-console)
+- [§data.history — What a console ran, per database](spec/0006-data/02-console.md#datahistory--what-a-console-ran-per-database)
+- [§data.agent — The agent beside the console](spec/0006-data/02-console.md#dataagent--the-agent-beside-the-console)
+- [§data.completion — Server-side completion (ADR-017)](spec/0006-data/03-workspace.md#datacompletion--server-side-completion-adr-017)
+- [§data.activity — Live sessions](spec/0006-data/03-workspace.md#dataactivity--live-sessions)
+- [§data.export — Export and import](spec/0006-data/03-workspace.md#dataexport--export-and-import)
+- [§data.ddl — Structural operations](spec/0006-data/03-workspace.md#dataddl--structural-operations)
+- [§data.redis — Keys and values](spec/0006-data/04-redis.md#dataredis--keys-and-values)
+- [§data.redis-console — The Redis console](spec/0006-data/04-redis.md#dataredis-console--the-redis-console)
+- [§data.streams — Redis streams](spec/0006-data/04-redis.md#datastreams--redis-streams)
+- [§data.pubsub — Redis pub/sub](spec/0006-data/04-redis.md#datapubsub--redis-pubsub)
+- [§data.mongo — MongoDB: the routes and the sidebar](spec/0006-data/05-mongo.md#datamongo--mongodb-the-routes-and-the-sidebar)
+- [§data.mongo-edits — Writes: one document, many, and transfers](spec/0006-data/05-mongo.md#datamongo-edits--writes-one-document-many-and-transfers)
+- [§data.mongo-pipeline — Aggregation and explain](spec/0006-data/05-mongo.md#datamongo-pipeline--aggregation-and-explain)
+- [§data.mongo-schema — Schema, indexes, validation](spec/0006-data/05-mongo.md#datamongo-schema--schema-indexes-validation)
+- [§data.mongo-panel — The documents workspace](spec/0006-data/05-mongo.md#datamongo-panel--the-documents-workspace)
+- [§data.tabs — Object tabs, the tree and the bars (ADR-026)](spec/0006-data/06-panel.md#datatabs--object-tabs-the-tree-and-the-bars-adr-026)
+- [§data.sessions — The session cache](spec/0006-data/06-panel.md#datasessions--the-session-cache)
 
 ### 0007 · [§tunnels — The Tunnels plugin](spec/0007-tunnels.md)
 

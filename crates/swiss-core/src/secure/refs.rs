@@ -118,7 +118,7 @@ pub struct SetAside {
 /// Rewrite every vault reference into what `stand_in(n)` spells for the n-th distinct one
 /// (from 0) and hand back what each stands for, in that order: the values leave the text
 /// entirely, for a shell command whose values travel in its child's environment, never on
-/// its command line or through its parser (SPEC §llm.surfaces Agents Test). `expands` says,
+/// its command line or through its parser (SPEC §llm.agents Test). `expands` says,
 /// by the character index of its `$`, whether a reference sits where the consumer expands
 /// it; one that does not (a shell's single quotes) stays text, needing no grant. `gate`
 /// speaks next for every name, before the vault is read, so a refused name is refused

@@ -1,7 +1,7 @@
 // Copyright 2026 young1lin
 // SPDX-License-Identifier: Apache-2.0
 
-//! Vault references in an interactive agent's shell command (SPEC §llm.surfaces Agents Test).
+//! Vault references in an interactive agent's shell command (SPEC §llm.agents Test).
 //! A `${secret://name}` reads as a shell variable. Where the shell expands a variable
 //! (unquoted, inside double quotes, in an expanding here-document) it becomes one, whose value
 //! the child gets in its environment: never on its command line, never through its parser,
