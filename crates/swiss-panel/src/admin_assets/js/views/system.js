@@ -18,11 +18,13 @@ import { $, api, apiJson, refocusIfIdle, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import { currentView } from "../ui-state.js";
 import { tr } from "../i18n.js";
-import { btn, card, closeSheet, emptyNode, hint, note, paneBody, paneHead, row, section, sheet, showSheet, sw, tag } from "../ui/index.js";
+import { btn, card, closeSheet, emptyNode, hint, iconBtn, note, paneBody, paneHead, row, section, sheet, showSheet, sw, tag } from "../ui/index.js";
                                                                                                                              // Admin API contracts.
 const machine                                            = { autostart: null, "user-path": null };
 const busy = new Set            ();
 let skills                          = null;
+const skillBusy = new Set        ();
+let skillRead = 0;
 let generation = 0;
 
 export function startupRowNode(a                       )                     {
@@ -46,12 +48,15 @@ function skillsSection()              {
     name: skill.name, data: { skill: skill.name },
     cols: skill.locations.map(location => {
       const state = tr(location.installed === true ? "system.skillInstalled" : location.installed === false ? "system.skillMissing" : "system.skillUnknown");
-      return { w: "l"         , v: h("span", { data: { "skill-root": location.root }, title: location.path + (location.error ? " · " + location.error : "") },
-        h("code", null, location.root), " ", tag(state, { tone: location.installed === null ? "warn" : undefined })) };
+      const key = skill.name + ":" + location.root;
+      const label = tr(location.installed === true ? "system.updateSkill" : "system.installSkill", { name: skill.name, root: location.root });
+      return { v: h("span", { data: { "skill-root": location.root }, title: location.path + (location.error ? " · " + location.error : "") },
+        h("code", null, location.root), " ", tag(state, { tone: location.installed === null ? "warn" : undefined }), " ",
+        iconBtn("download", label, { ghost: true, disabled: skillBusy.has(key), data: { "skill-install": skill.name, "skill-directory": location.root } })) };
     }),
   }))) : note(tr("system.skillsUnavailable"));
-  const part = section({ cap: tr("system.skills"), note: tr("system.skillsHint"), tools: [btn(tr("system.refreshSkills"), { id: "system-skills-refresh" })] },
-    body, note([tr("system.skillsInstallHint"), " ", h("code", null, "swiss skill install")]));
+  const part = section({ cap: tr("system.skills"), note: tr("system.skillsHint"), tools: [btn(tr("system.refreshSkills"), { id: "system-skills-refresh", disabled: skillBusy.size > 0 })] },
+    body, note(tr("system.skillsActionHint")));
   part.id = "system-skills";
   return part;
 }
@@ -85,12 +90,31 @@ async function toggleMachine(key            )                {
 }
 
 async function refreshSkills()                {
+  if (skillBusy.size) return;
   const ticket = generation;
+  const read = ++skillRead;
   const button = $                   ("system-skills-refresh");
   if (button) button.disabled = true;
   const next = await readStatus                              ("/api/skills");
-  if (ticket !== generation || currentView() !== "system") return;
+  if (ticket !== generation || read !== skillRead || currentView() !== "system") return;
   skills = next?.skills || null;
+  document.getElementById("system-skills")?.replaceWith(skillsSection());
+}
+
+async function installSkill(name        , root        )                {
+  const key = name + ":" + root;
+  if (skillBusy.has(key)) return;
+  const ticket = generation;
+  skillRead++;
+  skillBusy.add(key);
+  document.getElementById("system-skills")?.replaceWith(skillsSection());
+  const result = await apiJson                              ("/api/skills/install", { method: "POST", body: JSON.stringify({ name, root }) });
+  if (ticket !== generation || currentView() !== "system") return;
+  skillBusy.delete(key);
+  // Merge only this target: concurrent installs must not overwrite each other's statuses.
+  const location = result?.skills.find(skill => skill.name === name)?.locations.find(item => item.root === root);
+  const current = skills?.find(skill => skill.name === name)?.locations.find(item => item.root === root);
+  if (location && current) Object.assign(current, location);
   document.getElementById("system-skills")?.replaceWith(skillsSection());
 }
 
@@ -168,6 +192,7 @@ async function requestQuit()                {
 async function mount()                {
   const ticket = ++generation;
   busy.clear();
+  skillBusy.clear();
   const [startup, path, checked] = await Promise.all([
     readStatus                ("/api/autostart"), readStatus                ("/api/user-path"),
     readStatus                              ("/api/skills"),
@@ -180,11 +205,13 @@ async function mount()                {
   $("pane").onclick = (event            )       => {
     if (targetEl(event)?.closest("#system-quit")) openQuitSheet();
     if (targetEl(event)?.closest("#system-skills-refresh")) { void refreshSkills(); return; }
+    const install = targetEl(event)?.closest             ("[data-skill-install]");
+    if (install) { void installSkill(install.dataset.skillInstall || "", install.dataset.skillDirectory || ""); return; }
     const key = targetEl(event)?.closest("[data-machine-toggle]")?.getAttribute("data-machine-toggle");
     if (key === "autostart" || key === "user-path") void toggleMachine(key);
   };
 }
 
-function unmount()       { generation++; busy.clear(); machine.autostart = null; machine["user-path"] = null; skills = null; }
+function unmount()       { generation++; busy.clear(); skillBusy.clear(); machine.autostart = null; machine["user-path"] = null; skills = null; }
 
 export { mount, mount as refresh, unmount, openQuitSheet, quitSheetNode, requestQuit, systemBodyNode };

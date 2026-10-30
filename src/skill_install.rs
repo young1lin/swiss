@@ -77,6 +77,34 @@ fn status_in(home: &Path) -> Vec<SkillStatus> {
     }).collect()
 }
 
+pub fn valid_target(name: &str, root: &str) -> bool {
+    SHIPPED_SKILLS.iter().any(|(shipped, _)| *shipped == name)
+        && matches!(root, ".claude" | ".codex" | ".agents")
+}
+
+pub fn install_selected(name: &str, root: &str) -> Result<(), String> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+        .ok_or_else(|| "cannot find the user home directory".to_string())?;
+    install_selected_in(&PathBuf::from(home), name, root)
+}
+
+fn install_selected_in(home: &Path, name: &str, root: &str) -> Result<(), String> {
+    if !valid_target(name, root) { return Err("unknown skill or skill directory".into()); }
+    let Some((_, body)) = SHIPPED_SKILLS.iter().find(|(shipped, _)| *shipped == name) else {
+        return Err("unknown skill".into());
+    };
+    let directory = home.join(root).join("skills").join(name);
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    // Replace only SKILL.md. User additions and other skills remain untouched, and a failed
+    // staged write or rename leaves the previous installed document intact.
+    let staged = directory.join(format!(".SKILL-{}.tmp", swiss_core::util::random_hex(12)));
+    let result = std::fs::write(&staged, body).and_then(|_| retry_busy(|| {
+        std::fs::rename(&staged, directory.join("SKILL.md"))
+    })).map_err(|e| format!("could not install {name} in {root}: {e}"));
+    if result.is_err() { let _ = std::fs::remove_file(&staged); }
+    result
+}
+
 /// Virtual source directory for the general setup skill, kept for callers that report it.
 /// The remote skill lives at the sibling `<embedded>/.agents/skills/swiss-remote` path.
 pub fn skill_dir() -> PathBuf {
@@ -193,6 +221,26 @@ mod tests {
     }
 
     struct TempHome(PathBuf);
+
+    #[test]
+    fn selected_install_only_writes_one_skill_in_one_root_and_preserves_extra_files() {
+        let home = TempHome::new();
+        let folder = home.0.join(".codex/skills/swiss-memory");
+        std::fs::create_dir_all(&folder).expect("mkdir");
+        std::fs::write(folder.join("notes.txt"), "keep me").expect("extra file");
+        install_selected_in(&home.0, "swiss-memory", ".codex").expect("install");
+        assert_eq!(std::fs::read_to_string(folder.join("SKILL.md")).expect("skill"), MEMORY_SKILL_MD);
+        assert_eq!(std::fs::read_to_string(folder.join("notes.txt")).expect("extra"), "keep me");
+        assert!(!home.0.join(".agents").exists());
+        assert!(!home.0.join(".claude").exists());
+        assert!(!home.0.join(".codex/skills/swiss").exists());
+        std::fs::write(folder.join("SKILL.md"), "old content").expect("old");
+        install_selected_in(&home.0, "swiss-memory", ".codex").expect("update");
+        assert_eq!(std::fs::read_to_string(folder.join("SKILL.md")).expect("updated"), MEMORY_SKILL_MD);
+        for (name, root) in [("../other", ".codex"), ("swiss", "../other"), ("swiss", ".cursor")] {
+            assert!(install_selected_in(&home.0, name, root).is_err());
+        }
+    }
 
     impl TempHome {
         fn new() -> Self {

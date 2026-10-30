@@ -99,6 +99,17 @@ async fn shipped_skill_status_is_read_only_and_reports_all_three_roots() {
 }
 
 #[tokio::test]
+async fn selected_skill_install_refuses_arbitrary_names_roots_and_paths() {
+    let h = setup_machine(FakeUserPath::default());
+    for body in [json!({}), json!({ "name": "../other", "root": ".codex" }),
+        json!({ "name": "swiss", "root": "../other" }),
+        json!({ "name": "swiss", "root": ".codex", "path": "C:/other" })] {
+        let (status, _) = h.post("/api/skills/install", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
 async fn machine_settings_round_trip_through_their_providers() {
     let h = setup_machine(FakeUserPath::default());
     for route in ["/api/autostart", "/api/user-path"] {

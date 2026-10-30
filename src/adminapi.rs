@@ -638,6 +638,25 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             Err(error) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
         }
     }));
+    r = r.route("/api/skills/install", post(|body: crate::reply::NodeBody| async move {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Install { name: String, root: String }
+        let Ok(target) = serde_json::from_value::<Install>(body.0) else {
+            return admin_error(StatusCode::BAD_REQUEST, "expected a skill name and directory");
+        };
+        if !crate::skill_install::valid_target(&target.name, &target.root) {
+            return admin_error(StatusCode::BAD_REQUEST, "unknown skill or skill directory");
+        }
+        match tokio::task::spawn_blocking(move || {
+            crate::skill_install::install_selected(&target.name, &target.root)?;
+            crate::skill_install::status()
+        }).await {
+            Ok(Ok(skills)) => admin_json(StatusCode::OK, json!({ "skills": skills })),
+            Ok(Err(error)) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
+            Err(error) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+        }
+    }));
 
     // --- the machine settings: start-at-sign-in and the user PATH entry --------------------------
     //

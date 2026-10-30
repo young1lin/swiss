@@ -813,7 +813,11 @@ never shown again, and a forgotten one is re-stored, never revealed.
   (`swiss`, `swiss-memory`, `swiss-remote`) has one row, with a status for `.claude`, `.codex`
   and `.agents`. A `SKILL.md` file means installed; a missing file means not installed;
   an unreadable path means cannot check, with the path and error on hover. The page never
-  installs or overwrites skills. It shows the existing `swiss skill install` command.
+  installs on mount or Refresh. Each skill/directory cell has a download action that installs
+  or updates only that target through `POST /api/skills/install`; its accessible label names
+  both the skill and directory. Only that cell is disabled during the write. Errors retain
+  the prior status, successful writes update the selected cell, and late responses cannot
+  repaint another page.
 - **Runtime** keeps Quit through a confirming sheet. Quit stays red (the rule 4 exception).
 
 ## §panel.i18n — Languages

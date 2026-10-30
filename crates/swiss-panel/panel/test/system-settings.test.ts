@@ -2,28 +2,47 @@
 // @vitest-environment happy-dom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import * as machineView from "../src/views/system.js";
 import * as system from "../src/views/system.js";
 import { install } from "../src/i18n.js";
 import { setCurrentView } from "../src/ui-state.js";
+import { assetsDir } from "./styles.js";
 
 const writes: { path: string; enabled: boolean }[] = [];
 let skillReads = 0;
+const skillWrites: { name: string; root: string }[] = [];
+const installedTargets = new Set<string>();
+let installWait: Promise<void> | null = null;
+let installFailure = false;
+function skillReply(): Response {
+  return new Response(JSON.stringify({ skills: ["swiss", "swiss-memory", "swiss-remote"].map(name => ({
+    name, locations: [".claude", ".codex", ".agents"].map((root, i) => ({
+      root, path: "/user/" + root + "/skills/" + name + "/SKILL.md",
+      installed: i === 0 || installedTargets.has(name + ":" + root) ? true : i === 1 ? false : null,
+      ...(i === 2 ? { error: "permission denied" } : {}),
+    })),
+  })) }));
+}
 beforeEach(() => {
   install("en", null);
   setCurrentView("system");
   document.body.innerHTML = '<main id="pane"></main><div id="sheet" hidden></div><div id="toast"></div>';
   writes.length = 0; skillReads = 0;
+  skillWrites.length = 0; installedTargets.clear(); installWait = null; installFailure = false;
   vi.stubGlobal("fetch", async (path: string, init?: RequestInit) => {
+    if (path === "/api/skills/install") {
+      const target = JSON.parse(String(init?.body)) as { name: string; root: string };
+      skillWrites.push(target);
+      if (installWait) await installWait;
+      if (installFailure) return new Response(JSON.stringify({ error: "permission denied" }), { status: 500 });
+      installedTargets.add(target.name + ":" + target.root);
+      return skillReply();
+    }
     if (path === "/api/skills") {
       skillReads++;
-      return new Response(JSON.stringify({ skills: ["swiss", "swiss-memory", "swiss-remote"].map(name => ({
-        name, locations: [".claude", ".codex", ".agents"].map((root, i) => ({
-          root, path: "/user/" + root + "/skills/" + name + "/SKILL.md",
-          installed: i === 0 ? true : i === 1 ? false : null,
-          ...(i === 2 ? { error: "permission denied" } : {}),
-        })),
-      })) }));
+      return skillReply();
     }
     if (path === "/api/autostart" || path === "/api/user-path") {
       const enabled = init?.method === "PUT" ? Boolean(JSON.parse(String(init.body)).enabled) : false;
@@ -33,7 +52,7 @@ beforeEach(() => {
     return new Response("{}", { status: 404 });
   });
 });
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { system.unmount(); vi.unstubAllGlobals(); });
 
 describe("System machine settings and AI skills (SPEC §panel.settings)", () => {
   it("owns the startup and PATH controls, preserving their existing write contract", async () => {
@@ -68,6 +87,56 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
     document.querySelector<HTMLButtonElement>("#system-skills-refresh")?.click();
     await vi.waitFor(() => { expect(skillReads).toBe(2); });
     expect(writes).toEqual([]);
+  });
+
+  it("ships visible sprite geometry for every skill installation button", async () => {
+    await system.mount();
+    const shell = document.createElement("template");
+    shell.innerHTML = readFileSync(join(assetsDir, "index.html"), "utf8");
+    const icons = document.querySelectorAll("[data-skill-install] use");
+    expect(icons).toHaveLength(9);
+    for (const icon of icons) {
+      const target = icon.getAttribute("href") || "#missing";
+      expect(shell.content.querySelector(target)?.children.length || 0, target).toBeGreaterThan(0);
+    }
+  });
+
+  it("installs only the chosen skill and directory and offers updates for existing copies", async () => {
+    await system.mount();
+    expect(document.querySelectorAll("[data-skill-install]")).toHaveLength(9);
+    const selector = '[data-skill-install="swiss-memory"][data-skill-directory=".codex"]';
+    expect(document.querySelector(selector)?.getAttribute("aria-label")).toBe("Install swiss-memory in .codex");
+    document.querySelector<HTMLButtonElement>(selector)?.click();
+    await vi.waitFor(() => { expect(document.querySelector(selector)?.getAttribute("aria-label")).toBe("Update swiss-memory in .codex"); });
+    expect(skillWrites).toEqual([{ name: "swiss-memory", root: ".codex" }]);
+    expect(document.querySelector('[data-skill="swiss"] [data-skill-root=".codex"]')?.textContent).toContain("Not installed");
+    expect(writes).toEqual([]);
+  });
+
+  it("disables just the pending target and restores it after an installation failure", async () => {
+    let finish: (() => void) | undefined;
+    installWait = new Promise(resolve => { finish = resolve; });
+    installFailure = true;
+    await system.mount();
+    const selector = '[data-skill-install="swiss"][data-skill-directory=".codex"]';
+    document.querySelector<HTMLButtonElement>(selector)?.click();
+    expect(document.querySelector<HTMLButtonElement>(selector)?.disabled).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('[data-skill-install="swiss-remote"][data-skill-directory=".codex"]')?.disabled).toBe(false);
+    finish?.();
+    await vi.waitFor(() => { expect(document.querySelector<HTMLButtonElement>(selector)?.disabled).toBe(false); });
+    expect(document.querySelector(selector)?.getAttribute("aria-label")).toBe("Install swiss in .codex");
+    expect(document.querySelector("#toast")?.textContent).toContain("permission denied");
+  });
+
+  it("does not repaint another page when an installation finishes after navigation", async () => {
+    let finish: (() => void) | undefined;
+    installWait = new Promise(resolve => { finish = resolve; });
+    await system.mount();
+    document.querySelector<HTMLButtonElement>('[data-skill-install="swiss"][data-skill-directory=".codex"]')?.click();
+    system.unmount(); setCurrentView("mcp"); document.querySelector("#pane")!.textContent = "another page";
+    finish?.();
+    await vi.waitFor(() => { expect(installedTargets.size).toBe(1); });
+    expect(document.querySelector("#pane")?.textContent).toBe("another page");
   });
 });
 
