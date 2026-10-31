@@ -2359,6 +2359,7 @@ const en: Record<string, string> = {
   "ui.chat.tokPerSec": "{n} tok/s",
   "ui.chat.tokens": "{n} tok",
   "ui.chat.cacheHit": "Cache hit {pct}%",
+  "ui.chat.toBottom": "Back to bottom",
   "ui.chat.statsTitle": "Session statistics",
   "ui.chat.llmTime": "LLM time",
   "ui.chat.toolTime": "Tool time",

@@ -128,7 +128,12 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   (the name only while free); it says why when the plugin does not answer - read once per visit,
   never retried by its own repaint. Enter sends, Shift+Enter breaks the line. The words box
   starts at two rows and grows with its words up to 40 % of the window, then scrolls
-  (`chatPane`'s own, §panel.ui), so a long question stays readable whole.
+  (`chatPane`'s own, §panel.ui), so a long question stays readable whole. Streaming text and
+  thinking follow the bottom while the reader is there; scrolling up pauses following and
+  reveals **Back to bottom** above the composer. Its press resumes following, as does an
+  explicit send; queued sends preserve a reader's position. Work opens while running and
+  folds as soon as the final answer arrives or Stop is pressed, without waiting for the
+  transport to close. Stopped partial answer text stays visible outside the folded work.
 - **Its tools, named first.** Above every conversation, before the first ask too, a folded
   line names the tools the model may call here - the connection's kind's own from the
   status's db catalog, where each tool names its kind (`on`): *Tools · list_tables ·

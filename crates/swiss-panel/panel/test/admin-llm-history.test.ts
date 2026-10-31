@@ -408,9 +408,9 @@ describe("llm history page", () => {
     await click(round.querySelector("[data-hcall='7']")!);
     await settle();
     expect(calls.some((c) => { return c.path === "/api/llm/history/calls/7/body"; })).toBe(true);
-    expect(text("#sheet")).toContain("Call #7");
+    expect(text(".backdrop.stacked")).toContain("Call #7");
     // Back to the run: the closing answer renders as the themed JSON block.
-    await click("[data-hrun='3']");
+    await click(".backdrop.stacked .sheet-foot button:last-child");
     await settle();
     expect(text("#sheet")).toContain('"result": "proposal filed"');
   });
@@ -434,13 +434,98 @@ describe("llm history page", () => {
     await click(rowInRun!);
     await settle();
     expect(calls.some((c) => { return c.path === "/api/llm/history/calls/7/body"; })).toBe(true);
-    const reopened = q("#sheet").textContent || "";
+    const reopened = q(".backdrop.stacked").textContent || "";
     expect(reopened).toContain("Call #7");
     // The detail viewer answers with the response side first; the ask is one
     // switch away (the request-log detail page's Request | Response).
     expect(reopened).toContain("a port is a loopback address");
     q("[data-lhside='request']").click();
-    expect(q("#sheet").textContent || "").toContain('"prompt": "hi"');
+    expect(q(".backdrop.stacked").textContent || "").toContain('"prompt": "hi"');
+  });
+
+  it.each(["Close", "Escape", "backdrop"])("dismissing a conversation's call via %s preserves its place and disclosures", async (how) => {
+    await mount();
+    await click("#pane [data-hrun='3']");
+    const parent = q("#sheet > .sheet");
+    const scroll = q("#sheet .sheet-body");
+    const process = q<HTMLDetailsElement>("#sheet [data-lhprocess='0']");
+    process.open = true;
+    await click("#sheet [data-lhsteps='0'] .fl-sum");
+    const round = q("#sheet .fl-step.open");
+    const opener = q("#sheet [data-hcall='7']");
+    opener.focus();
+    scroll.scrollTop = 240;
+    const reads = calls.filter((c) => c.path === "/api/llm/history/runs/3/dialogue").length;
+
+    await click(opener);
+    const layer = q(".backdrop.stacked");
+    expect(layer.textContent).toContain("Call #7");
+    expect(layer.querySelector('[data-lhbody="response"]')?.textContent).toContain("a port is a loopback address");
+    expect(parent.isConnected).toBe(true);
+    if (how === "Escape") {
+      layer.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await settle();
+    } else if (how === "backdrop") {
+      await click(layer);
+    } else {
+      await click(q(".backdrop.stacked .sheet-foot button:last-child"));
+    }
+
+    expect(document.querySelector(".backdrop.stacked")).toBeNull();
+    expect(q("#sheet").hidden).toBe(false);
+    expect(q("#sheet > .sheet")).toBe(parent);
+    expect(scroll.scrollTop).toBe(240);
+    expect(process.open).toBe(true);
+    expect(round.classList.contains("open")).toBe(true);
+    expect(document.activeElement).toBe(opener);
+    expect(calls.filter((c) => c.path === "/api/llm/history/runs/3/dialogue")).toHaveLength(reads);
+    await click("#sheet .sheet-foot button:last-child");
+    expect(q("#sheet").hidden).toBe(true);
+  });
+
+  it("the call's run link returns to the preserved conversation without another read", async () => {
+    override = (c) => c.path === "/api/llm/history/runs/3/dialogue"
+      ? [200, { ...DIALOGUE, calls: DIALOGUE.calls.map((call) => ({ ...call, runId: 3 })) }]
+      : undefined;
+    await mount();
+    await click("#pane [data-hrun='3']");
+    const parent = q("#sheet > .sheet");
+    await click("#sheet [data-lhsteps='0'] .fl-sum");
+    await click("#sheet [data-hcall='7']");
+    await click(".backdrop.stacked [data-hrun='3']");
+    expect(document.querySelector(".backdrop.stacked")).toBeNull();
+    expect(q("#sheet > .sheet")).toBe(parent);
+    expect(calls.filter((c) => c.path === "/api/llm/history/runs/3/dialogue")).toHaveLength(1);
+  });
+
+  it("a dismissed call's late body cannot overwrite the next inspector", async () => {
+    const normalFetch = globalThis.fetch;
+    let release = (): void => { throw new Error("no pending body read"); };
+    let pending = true;
+    globalThis.fetch = (url, opts): ReturnType<typeof fetch> => {
+      if (String(url) === "/api/llm/history/calls/7/body" && pending) {
+        pending = false;
+        return new Promise((resolve) => {
+          release = (): void => { resolve(new Response(JSON.stringify({ body: "stale body", bodyGone: false }))); };
+        });
+      }
+      return normalFetch(url, opts);
+    };
+    try {
+      await mount();
+      await click("#pane [data-hrun='3']");
+      await click("#sheet [data-hcall='7']");
+      await click(".backdrop.stacked .sheet-foot button:last-child");
+      await click("#sheet [data-hcall='7']");
+      const current = q(".backdrop.stacked #lhCallBody");
+      expect(current.textContent).toContain("a port is a loopback address");
+      release();
+      await settle();
+      expect(q(".backdrop.stacked #lhCallBody")).toBe(current);
+      expect(current.textContent).not.toContain("stale body");
+    } finally {
+      globalThis.fetch = normalFetch;
+    }
   });
 
   it("the words: what a run is called by, how it ran, who started it, a tool's ask", () => {

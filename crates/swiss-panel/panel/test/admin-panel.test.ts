@@ -62,11 +62,11 @@ describe("admin panel assets", () => {
     // four-line pre-paint resolver, i-palette and the header button), the memory page (SPEC §memory 11.2: i-brain, its glyph, and
     // i-minus, the graph's zoom out), the llm plugin (SPEC §llm: i-sparkles, its seat's glyph),
     // the chat's statistics (SPEC §panel.ui: i-gauge, the activity pill's glyph), and the skill
-    // installer (i-download) — still small, still no markup. The Apache-2.0 banner is stripped
+    // installer (i-download), and chat's return-to-bottom (i-arrow-down) — still small, still no markup. The Apache-2.0 banner is stripped
     // before counting: it is a fixed licence cost, not shell content, and it must never buy
     // anyone headroom.
     const shellBody = shell.replace(/^<!--[\s\S]*?-->\s*/, "");
-    expect(shellBody.split("\n").length).toBeLessThan(182);
+    expect(shellBody.split("\n").length).toBeLessThan(183);
   });
 
   it("links the whole module graph: every import resolves to a file that exports the name", () => {

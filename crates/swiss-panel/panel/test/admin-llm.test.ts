@@ -202,7 +202,7 @@ function sseFrame(event: string, data: unknown): string {
 function liveBody(): { body: ReadableStream<Uint8Array>; push(event: string, data: unknown): void; end(): void } {
   const encoder = new TextEncoder();
   let ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
-  const body = new ReadableStream<Uint8Array>({ start(c) { ctl = c; } });
+  const body = new ReadableStream<Uint8Array>({ start(c) { ctl = c; }, cancel() { ctl = null; } });
   return {
     body,
     push: (event, data) => { ctl?.enqueue(encoder.encode(sseFrame(event, data))); },

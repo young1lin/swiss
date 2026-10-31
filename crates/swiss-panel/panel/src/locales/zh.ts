@@ -2282,6 +2282,7 @@ const zh: Record<string, string> = {
   "ui.chat.tokPerSec": "{n} tok/s",
   "ui.chat.tokens": "{n} tok",
   "ui.chat.cacheHit": "缓存命中 {pct}%",
+  "ui.chat.toBottom": "回到底部",
   "ui.chat.statsTitle": "会话统计",
   "ui.chat.llmTime": "模型用时",
   "ui.chat.toolTime": "工具调用用时",

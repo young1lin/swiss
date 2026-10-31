@@ -69,7 +69,7 @@ function sseBody(frames: string[]): ReadableStream<Uint8Array> {
 function liveBody(): { body: ReadableStream<Uint8Array>; push(event: string, data: unknown): void; end(): void } {
   const encoder = new TextEncoder();
   let ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
-  const body = new ReadableStream<Uint8Array>({ start(c) { ctl = c; } });
+  const body = new ReadableStream<Uint8Array>({ start(c) { ctl = c; }, cancel() { ctl = null; } });
   return {
     body,
     push: (event, data) => { ctl?.enqueue(encoder.encode(sseFrame(event, data))); },
@@ -176,6 +176,49 @@ beforeEach(() => {
 });
 
 describe("the agent's pane (SPEC §data.agent)", () => {
+  it("keeps streamed deltas in view, lets the reader inspect history, and resumes from Back to bottom", async () => {
+    const wire = liveBody();
+    route = (c) => c.path === "/api/llm/db/stream" ? [200, { __live: wire.body }] : undefined;
+    await openOn("follow-shop");
+    const body = q("#dbAgent .chat-body");
+    let height = 900;
+    let top = 0;
+    Object.defineProperties(body, {
+      clientHeight: { value: 200 },
+      scrollHeight: { get: () => height },
+      scrollTop: { get: () => top, set: (v: number) => { top = Math.max(0, Math.min(v, height - 200)); } },
+    });
+    await ask("show me the latest answer");
+    expect(top).toBe(700);
+    wire.push("run", { runId: 91 });
+    wire.push("delta", { kind: "thinking", text: "Read the schema" });
+    await settle();
+    height = 1300;
+    wire.push("delta", { kind: "thinking", text: " and inspect more columns" });
+    await settle();
+    expect(top, "growth inside the existing Think row follows without a new turn").toBe(1100);
+    body.scrollTop = 400;
+    body.dispatchEvent(new Event("scroll"));
+    height = 1800;
+    wire.push("delta", { kind: "text", text: "The latest reply" });
+    await settle();
+    expect(top).toBe(400);
+    const latest = q<HTMLButtonElement>('#dbAgent [aria-label="Back to bottom"]');
+    expect(latest.hidden).toBe(false);
+    latest.click();
+    expect(top).toBe(1600);
+    height = 2200;
+    wire.push("delta", { kind: "text", text: " keeps growing" });
+    await settle();
+    expect(top, "later pieces of the same reply keep following").toBe(2000);
+    wire.push("final", { text: "The latest reply keeps growing" });
+    await settle();
+    expect(q<HTMLDetailsElement>("#dbAgentBody details.fold").open).toBe(false);
+    wire.push("done", { ok: true, runId: 91 });
+    wire.end();
+    await settle();
+  });
+
   it("sits folded at the end edge until the head's button opens it; a connection it cannot work on takes it away", async () => {
     Object.assign(dbConnState(), { conns: [dbConn("p-shop", "mysql"), dbConn("p-cache", "redis"), dbConn("p-file", "sqlite")], conn: "p-shop", databases: [] });
     view.renderDbView();

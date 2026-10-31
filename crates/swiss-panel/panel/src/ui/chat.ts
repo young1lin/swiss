@@ -58,11 +58,14 @@ export interface ChatPaneOpts {
 export function chatPane(o: ChatPaneOpts): HTMLElement {
   chatGrow(o.input);
   const menu = o.commands && o.commands.length ? chatCommands(o.input, o.commands) : null;
-  return h("aside", { class: "chat-pane", id: o.id, aria: { label: o.cap } },
+  const body = h("div", { class: "chat-body" }, o.body);
+  const latest = iconBtn("arrow-down", tr("ui.chat.toBottom"), { hidden: true });
+  latest.classList.add("chat-jump");
+  const pane = h("aside", { class: "chat-pane", id: o.id, aria: { label: o.cap } },
     h("div", { class: "chat-head" },
       h("span", { class: "sec-cap", title: o.cap }, o.cap),
       o.tools && o.tools.length ? h("span", { class: "chat-tools" }, o.tools) : null),
-    h("div", { class: "chat-body" }, o.body),
+    body,
     h("div", { class: "chat-compose" },
       o.queued,
       o.input,
@@ -70,7 +73,10 @@ export function chatPane(o: ChatPaneOpts): HTMLElement {
         h("span", { class: "chat-note" }, o.note),
         o.actions),
       o.stats,
-      menu));
+      menu,
+      latest));
+  bindFollow(pane, body, latest);
+  return pane;
 }
 
 /** One message waiting in a chatQueue: its words, and whether it was steered - handed to the
@@ -232,8 +238,52 @@ export function chatQueue(o: ChatQueueOpts): ChatQueue {
   };
 }
 
-/** Keep the end of a pane's column in view: the carriage of an answer that streams in. */
-export function chatFollow(pane: HTMLElement): void {
+const following = new WeakMap<HTMLElement, (force: boolean) => void>();
+
+/** Content growth does not give up the tail; an upward reading gesture does (DSH's policy).
+ *  The button sits above the composer, outside the scrolling transcript. */
+function bindFollow(pane: HTMLElement, body: HTMLElement, latest: HTMLButtonElement): void {
+  const nearEnd = (): boolean => body.scrollHeight - body.clientHeight - body.scrollTop <= 24;
+  let tail = true;
+  let lastTop = body.scrollTop;
+  let frame: number | null = null;
+  const paint = (): void => {
+    if (tail) body.scrollTop = body.scrollHeight;
+    lastTop = body.scrollTop;
+    latest.hidden = nearEnd();
+  };
+  const update = (force: boolean): void => {
+    if (force) tail = true;
+    paint();
+    // Re-measure after the browser lays out markdown, folds and the growing composer.
+    // A reading gesture before this frame still wins over the pending follow.
+    if (frame == null && pane.isConnected) frame = requestAnimationFrame(() => {
+      frame = null;
+      if (pane.isConnected) paint();
+    });
+  };
+  following.set(pane, update);
+  latest.onclick = (): void => { update(true); };
+  body.addEventListener("wheel", (e) => { if (e.deltaY < 0) tail = false; }, { passive: true });
+  body.addEventListener("scroll", () => {
+    const end = nearEnd();
+    if (body.scrollTop < lastTop || end) tail = end;
+    lastTop = body.scrollTop;
+    latest.hidden = end;
+  });
+  if (typeof ResizeObserver !== "undefined") {
+    const size = new ResizeObserver(() => {
+      if (!pane.isConnected) { size.disconnect(); return; }
+      update(false);
+    });
+    size.observe(body);
+  }
+}
+
+/** Follow an answer's latest paint while the reader owns the tail; a new send forces it. */
+export function chatFollow(pane: HTMLElement, force = false): void {
+  const update = following.get(pane);
+  if (update) { update(force); return; }
   const body = pane.querySelector<HTMLElement>(".chat-body");
   if (body) body.scrollTop = body.scrollHeight;
 }

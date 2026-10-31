@@ -54,6 +54,8 @@ import { firstLine, stepLine, thinkLine, toolIcon } from "./llm-history.js";
                                                                  
                                                                                                  
                                                         
+                                                                                            
+                   
  
 
                                                                                                          
@@ -69,6 +71,7 @@ export async function streamAsk(
   let answerText = "";
   let doneSeen = false;
   let cancelled = false;
+  let reader                                                 = null;
   const pending                                                                       = [];
   let process                            = null;
   let processBody                     = null;
@@ -127,6 +130,32 @@ export async function streamAsk(
     if (thought) paintThought(thought, Date.now() - thought.at);
     thought = null;
   };
+  const foldProcess = (label = tr("llm.test.worked"))       => {
+    if (!process) return;
+    process.open = false;
+    const summary = process.querySelector("summary");
+    if (summary) summary.textContent = label;
+  };
+  const settleInterrupted = ()       => {
+    closeThought();
+    // Keep partial words readable after Stop even when the caller has retired this send.
+    // Reparent its own turn rather than asking that caller to append to a newer generation.
+    if (answerEl && process?.contains(answerEl)) {
+      process.closest(".tc-turn")?.after(answerEl);
+      answerEl = null;
+      answerText = "";
+    }
+    foldProcess(tr(signal.aborted ? "llm.test.cancelled" : "llm.history.failed"));
+    process?.querySelectorAll(".fl-step.live").forEach((step) => step.classList.remove("live"));
+    process?.querySelectorAll(".dot.starting").forEach((pulse) => pulse.remove());
+    hooks.onPaint?.();
+  };
+  const abort = ()       => {
+    if (!doneSeen) settleInterrupted();
+    // A custom transport may not reject its pending read on fetch's AbortSignal.
+    void reader?.cancel().catch(() => { /* the fetch may already have aborted */ });
+  };
+  signal.addEventListener("abort", abort, { once: true });
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -152,7 +181,7 @@ export async function streamAsk(
         locked: code !== undefined && code !== "busy",
       };
     }
-    const reader = response.body.getReader();
+    reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let error                    ;
@@ -227,6 +256,7 @@ export async function streamAsk(
         // The closing answer renders as the markdown it is, whole, its Copy closing it.
         closeThought();
         if (answerEl) answerEl.remove();
+        foldProcess();
         const text = String(payload.text || "");
         addTurn({ role: process ? null : tr("llm.history.role.assistant"), text, markdown: true, copy: text.trim() ? text : undefined });
       } else if (name === "done") {
@@ -271,24 +301,21 @@ export async function streamAsk(
           if (line.startsWith("event:")) eventName = line.slice(6).trim();
           else if (line.startsWith("data:")) data += line.slice(5).trim();
         }
-        if (data) onFrame(eventName, data);
+        if (data) { onFrame(eventName, data); hooks.onPaint?.(); }
       }
     }
-    if (cancelled) return { cancelled: true };
+    if (signal.aborted || cancelled) return { cancelled: true };
     if (error !== undefined) return { error };
     return doneSeen ? {} : { ended: true };
   } catch (err) {
     if (signal.aborted) return { cancelled: true };
     return { error: err instanceof Error ? err.message : String(err) };
   } finally {
+    signal.removeEventListener("abort", abort);
     // Event callbacks assigned the disclosure while the stream was being read.
     const work = process                             ;
     if (work && !doneSeen) {
-      work.open = false;
-      const summary = work.querySelector("summary");
-      if (summary) summary.textContent = tr(signal.aborted ? "llm.test.cancelled" : "llm.history.failed");
-      work.querySelectorAll(".fl-step.live").forEach((step) => step.classList.remove("live"));
-      work.querySelectorAll(".dot.starting").forEach((pulse) => pulse.remove());
+      settleInterrupted();
     }
   }
 }

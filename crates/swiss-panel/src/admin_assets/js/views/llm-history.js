@@ -32,7 +32,7 @@ import { $, api, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
                                       
 import { locale, tr } from "../i18n.js";
-import { JV_LINES, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, section, sheet, showSheet, splitJsonBlock, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
+import { JV_LINES, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, section, sheet, showSheet, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
                                                                        
 import { call, takeWantedRun } from "./llm-core.js";
 
@@ -406,7 +406,7 @@ function pagerRow(which                  , page        , more         )         
 
 /* --- the sheets ---------------------------------------------------------------------------- */
 
-/** Bumped every time a sheet opens: a body fetch answered after ANOTHER sheet
+/** Bumped every time a run sheet opens: a body fetch answered after ANOTHER run
  * took the stage paints nothing - the id alone could match a fresh container. */
 let sheetSeq = 0;
 
@@ -422,7 +422,11 @@ const runIndex = new Map                   ();
 /** The open run sheet's step bodies, by step id: a step paints its body when opened. */
 const stepBodies = new Map                      ();
 
-function callSheet(c            )       {
+function callSheet(c            , nested = false)       {
+  // A conversation's inspector is a layer over its existing DOM: closing it must
+  // preserve the reader's scroll, disclosures and focus without fetching the run again.
+  const layer = nested ? stackSheet() : null;
+  const dismiss = ()       => { if (layer) layer.close(); else closeSheet(); };
   const what = taskLine(c.task, c.subject);
   const meta = card(
     kvRow(tr("llm.history.f.at"), c.at, { mono: true }),
@@ -439,7 +443,14 @@ function callSheet(c            )       {
   const body = h("div", { id: "lhCallBody" }, note(tr("llm.history.loadingBody"), { busy: true }));
   // The inspector is also opened from Test, where History's page listener is absent.
   meta.onclick = (event)       => {
-    if (targetEl(event)?.closest("[data-hrun]")) { event.stopPropagation(); onClick(event); }
+    const run = targetEl(event)?.closest             ("[data-hrun]");
+    if (!run) return;
+    event.stopPropagation();
+    if (layer) {
+      dismiss();
+      if ($("lhRunBody")?.dataset.lhrun === run.dataset.hrun) return;
+    }
+    onClick(event);
   };
   // The foot is the detail viewer's head turned sideways (request-log's detail):
   // Copy carries the WHOLE stored JSON away, and the sides are one switch apart.
@@ -452,16 +463,17 @@ function callSheet(c            )       {
     });
   };
   const close = btn(tr("llm.history.close"));
-  close.onclick = ()       => { closeSheet(); };
-  showSheet(sheet({ title: tr("llm.history.callTitle", { id: c.id }), body: [meta, body], foot: [copy, close] }));
-  const mine = ++sheetSeq;
+  close.onclick = dismiss;
+  const spec = { title: tr("llm.history.callTitle", { id: c.id }), body: [meta, body], foot: [copy, close] };
+  if (layer) layer.paint(spec);
+  else showSheet(sheet(spec));
   void (async () => {
     const r = await call                                       ("GET", "/api/llm/history/calls/" + c.id + "/body");
-    const into = $("lhCallBody");
-    if (!into || mine !== sheetSeq) return; // closed, or another sheet took the stage
-    if (!r.data) { fill(into, failNote({ text: tr("llm.history.bodyFailed"), why: r.err })); return; }
+    // A late answer belongs only to this layer, never to a newer inspector with the same id.
+    if (!body.isConnected) return;
+    if (!r.data) { fill(body, failNote({ text: tr("llm.history.bodyFailed"), why: r.err })); return; }
     rawBody = r.data.body || "";
-    fill(into, r.data.bodyGone
+    fill(body, r.data.bodyGone
       ? note(tr("llm.history.bodyGone"), { err: true })
       : sidedBlocks(rawBody));
   })();
@@ -999,7 +1011,7 @@ export function conversationNode(d             , bodies = new Map               
     }
     const call = target?.closest             ("[data-hcall]");
     const c = call && (d.calls || []).find((c) => c.id === Number(call.dataset.hcall));
-    if (c) { event.stopPropagation(); callSheet(c); }
+    if (c) { event.stopPropagation(); callSheet(c, !!call?.closest(".sheet")); }
   };
   return column;
 }
@@ -1046,7 +1058,7 @@ function runHead(d             )              {
 
 function runSheet(id        )       {
   const known = runIndex.get(id);
-  const body = h("div", { id: "lhRunBody" }, note(tr("llm.history.loadingBody"), { busy: true }));
+  const body = h("div", { id: "lhRunBody", data: { lhrun: id } }, note(tr("llm.history.loadingBody"), { busy: true }));
   body.onclick = (event)       => {
     if (targetEl(event)?.closest("[data-hrun], [data-hcall]")) { event.stopPropagation(); onClick(event); }
   };
@@ -1276,7 +1288,7 @@ function onClick(event            )       {
   if (callRowEl) {
     const id = Number(callRowEl.dataset.hcall);
     const c = calls.find((x) => { return x.id === id; }) || runCalls.get(id);
-    if (c) callSheet(c);
+    if (c) callSheet(c, !!callRowEl.closest(".sheet"));
     return;
   }
   const stopEl = t.closest                   ("[data-hstop]");

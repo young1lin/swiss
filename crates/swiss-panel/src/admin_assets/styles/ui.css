@@ -992,6 +992,8 @@
     .chat-tools select { min-width: 0; max-width: calc(var(--chat-pane-w) / 2); }
     .chat-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s2) var(--s3); }
     .chat-compose { position: relative; flex: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); padding: var(--s2) var(--s3) var(--s3); border-top: 1px solid var(--sep-soft); }
+    /* Return to the latest words without scrolling the pinned composer out of reach. */
+    .btn.chat-jump { position: absolute; bottom: calc(100% + var(--s3)); left: 50%; transform: translateX(-50%); z-index: 3; width: var(--s8); height: var(--s8); padding: 0; border-radius: var(--r-pill); background: var(--card); box-shadow: var(--shadow-pop); }
     /* The words box grows with its words (chatGrow sets its height): its rows the floor, this cap
        the ceiling, a scroll past it. No drag handle: the words size it. */
     .chat-compose textarea { width: 100%; resize: none; max-height: 40vh; overflow-y: auto; }

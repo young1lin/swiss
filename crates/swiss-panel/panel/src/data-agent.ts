@@ -614,11 +614,13 @@ function renderDbAgent(): void {
     return;
   }
   const talk = talkOf(agent, conn.name);
+  const changed = !body.contains(talk.out);
   if (talk.hist) fill(body, talk.hist);
   else fill(body, toolsNode(conn.kind), h("div", { id: "dbAgentEmpty", hidden: !!talk.out.firstElementChild }, hint(tr("dataAgent.empty"))), talk.out);
   if (queued) fill(queued, talk.queue.node);
   paintStats(talk);
   controls(talk);
+  if (!talk.hist) follow(talk, changed);
   if (!talk.restored && !talk.restoring) void restore(talk);
 }
 
@@ -732,12 +734,12 @@ function column(talk: Talk): HTMLElement {
 }
 
 /** Keep the end of the column in view while it is the one on screen. */
-function follow(talk: Talk): void {
+function follow(talk: Talk, force = false): void {
   if (!inFront(talk) || talk.hist) return;
   const empty = byId("dbAgentEmpty");
   if (empty) empty.hidden = true;
   const pane = byId("dbAgent");
-  if (pane) chatFollow(pane);
+  if (pane) chatFollow(pane, force);
 }
 
 function addTurn(talk: Talk, t: TranscriptTurn): HTMLElement {
@@ -858,7 +860,7 @@ function sendNext(talk: Talk): boolean {
   if (!q) return false;
   if (talk.queue.editing() === q) { talk.waiting = true; return false; }
   talk.queue.remove(q.id);
-  void send(talk, q.text);
+  void send(talk, q.text, false);
   return true;
 }
 
@@ -867,7 +869,7 @@ function unsteer(talk: Talk): void {
   for (const q of talk.queue.items()) talk.queue.steer(q.id, false);
 }
 
-async function send(talk: Talk, text: string): Promise<void> {
+async function send(talk: Talk, text: string, reveal = true): Promise<void> {
   talk.hist = null;
   talk.asked = true;
   talk.live = true;
@@ -879,6 +881,8 @@ async function send(talk: Talk, text: string): Promise<void> {
   talk.usage.turns++;
   if (inFront(talk)) renderDbAgent();
   addTurn(talk, askedTurn(text));
+  // A queued send respects a reader inspecting history; an explicit send reveals its words.
+  if (reveal) follow(talk, true);
   const body: Record<string, unknown> = { agent: talk.agent, conn: talk.conn, prompt: text, rowLimit: dbRowLimit(), ...modelBody(talk.agent) };
   if (talk.runId != null) body.runId = talk.runId;
   // Every SQL send names the connection's writes: the server tells the model when they changed.
@@ -892,6 +896,7 @@ async function send(talk: Talk, text: string): Promise<void> {
   const ran = new Set<string>();
   const outcome = await streamAsk("/api/llm/db/stream", body, {
     alive: (): boolean => talk.gen === myGen,
+    onPaint: (): void => { follow(talk); },
     onRunId: (id: number): void => {
       if (talk.gen !== myGen) return;
       talk.runId = id;

@@ -422,7 +422,8 @@ const chatAnswer = (): string => "```sql\nSELECT type, count(*) FROM posts GROUP
  *  the head, a short conversation, the words box with its note and Send; a "/" in the box lists
  *  its command, and two messages wait in the queue above it, the first steered; each turn closes
  *  on its Copy, the answer's code block carrying its own; centred under Send the conversation's
- *  account, its context ring a third full. */
+ *  account, its context ring a third full. Scrolling back exposes Back to bottom above the
+ *  composer; it returns to the latest words and resumes following. */
 function chatSample(): HTMLElement {
   const stats = chatStats({ id: "gallery-chat-stats", note: tr("gallery.d.chatCtxNote") });
   stats.set({

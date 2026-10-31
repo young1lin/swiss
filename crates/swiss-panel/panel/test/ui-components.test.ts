@@ -23,6 +23,8 @@
    it drew is styled by base.css or ui.css - the two sheets the gallery links - so a typo in a
    class name fails here instead of rendering as an unstyled box. */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { URL as NodeURL } from "node:url";
 import { h } from "../src/h.js";
 import { install } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
@@ -2164,6 +2166,42 @@ describe("ui/chat - chatPane", () => {
     chatFollow(p);
     expect(body.scrollTop).toBe(900);
     expect(p.querySelector(".chat-cmds"), "no commands, no list").toBeNull();
+  });
+
+  it("follows growing replies until the reader scrolls up, then offers a way back to the latest words", () => {
+    const p = chatPane({ cap: "Agent", body: h("div"), input: h("textarea"), actions: [] });
+    document.body.appendChild(p);
+    const body = p.querySelector<HTMLElement>(".chat-body")!;
+    let height = 900;
+    let top = 0;
+    Object.defineProperties(body, {
+      clientHeight: { value: 200 },
+      scrollHeight: { get: () => height },
+      scrollTop: { get: () => top, set: (v: number) => { top = Math.max(0, Math.min(v, height - 200)); } },
+    });
+    chatFollow(p);
+    expect(top).toBe(700);
+    height = 1100;
+    chatFollow(p);
+    expect(top).toBe(900);
+    body.scrollTop = 400;
+    body.dispatchEvent(new Event("scroll"));
+    height = 1500;
+    chatFollow(p);
+    expect(top, "new chunks do not pull the reader out of older history").toBe(400);
+    const latest = p.querySelector<HTMLButtonElement>('[aria-label="Back to bottom"]')!;
+    const glyph = latest.querySelector("use")?.getAttribute("href") || "";
+    expect(glyph).toBe("#i-arrow-down");
+    const sprite = readFileSync(new NodeURL("../../src/admin_assets/index.html", import.meta.url), "utf8");
+    expect(sprite).toContain('id="' + glyph.slice(1) + '"');
+    expect(latest.hidden).toBe(false);
+    latest.click();
+    expect(top).toBe(1300);
+    expect(latest.hidden).toBe(true);
+    height = 1700;
+    chatFollow(p);
+    expect(top, "returning to the latest words resumes following").toBe(1500);
+    p.remove();
   });
 
   it("the words box grows with its words, a write by the page included; a box not laid out keeps its rows", () => {

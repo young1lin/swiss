@@ -436,13 +436,17 @@ literal.
   queued, note, actions, stats})` after a `grip({end, fold})`): Data's agent (§data.agent). A column on the
   sidebar's surface, `--chat-pane-w` wide before a drag: the head (its caption, then a
   picker, New and close), the conversation that scrolls on its own (`chatFollow(pane)` keeps
-  its end in view while an answer streams), and the compose box under it - the words, then a
+  its end in view on every streamed paint), and the compose box under it - the words, then a
   line with a note at its start (what the pane works on) and the send and stop at its end,
   which stays put however long the conversation grows. `queued` stands above the words box:
   what was sent while an answer streams, waiting its turn (a `chatQueue`'s node, below, no
   room taken while empty). `stats` stands under that line: the conversation's account (a
   `chatStats`'s node, below, hidden while it has nothing to say). The page wires the
-  controls; the words box's manners are the pane's own:
+  controls; the pane follows the latest content until the reader scrolls up. A circular
+  **Back to bottom** button above the composer appears while away from the end; it returns
+  there and resumes following. Sending a new prompt also resumes following. Layout changes
+  after markdown, process folds and composer resizing keep a following reader at the end.
+  The words box's manners are the pane's own:
   - **It grows with its words** (`chatGrow`): its rows are the floor, `max-height: 40vh` the
     cap, a scroll past it, no drag handle. It refits on every write - typed, pasted, or set
     by the page (`box.value = ""` after a send, words handed back: the instance's own `value`
