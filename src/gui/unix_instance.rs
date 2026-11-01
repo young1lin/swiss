@@ -51,7 +51,14 @@ impl Guard {
     #[cfg(target_os = "macos")]
     pub fn listen(self, mut show: impl FnMut()) {
         for incoming in self.listener.incoming() {
-            let Ok(mut stream) = incoming else { break; };
+            // One failed accept — a peer gone between connect and accept, EMFILE under pressure —
+            // must not end the window's only raise-window receiver: `incoming()` never returns
+            // None, so leaving the loop here means this window can never be brought forward
+            // again. The pause keeps a persistent error from spinning a core.
+            let mut stream = match incoming {
+                Ok(stream) => stream,
+                Err(_) => { std::thread::sleep(std::time::Duration::from_millis(50)); continue }
+            };
             // A broken local client never holds the only raise-window receiver forever.
             let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
             let mut message = [0u8; 4];

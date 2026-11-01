@@ -51,7 +51,15 @@ use tray_icon::{Icon as TrayIconPixels, TrayIconBuilder, TrayIconEvent};
 #[cfg(any(windows, target_os = "macos"))]
 use wry::dpi::{PhysicalPosition, PhysicalSize, Position, Size as WebViewSize};
 #[cfg(any(windows, target_os = "macos"))]
-use wry::{Rect, WebContext, WebViewBuilder};
+use wry::{NewWindowResponse, Rect, WebContext, WebViewBuilder};
+
+/// A standing window that can no longer paint is worse than none: the next `swiss gui` only
+/// raises it. This is how long that next launch waits for the zombie to exit and hand the
+/// identity over — ten tries, a fifth of a second apart.
+#[cfg(any(windows, target_os = "macos"))]
+const CLAIM_TAKEOVER_TRIES: u32 = 10;
+#[cfg(any(windows, target_os = "macos"))]
+const CLAIM_TAKEOVER_STEP: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// Bring the gateway up if it is not running, then mint the one-time sign-in link the window
 /// spends. `start_daemon` is idempotent — a running gateway answers `AlreadyRunning` without a
@@ -67,6 +75,80 @@ pub async fn launch_sequence(opts: StartOptions) -> Result<String, String> {
     }
 }
 
+/// The explicit `swiss gui` launcher: re-enter this binary in its foreground window mode,
+/// detached from the terminal exactly as `swiss start` detaches `serve`. The child owns the
+/// native event loop; this process reports the spawn and returns instead of waiting for Exit.
+#[cfg(any(windows, target_os = "macos"))]
+pub fn launch(port: Option<u16>) -> i32 {
+    let port = port.unwrap_or_else(daemon::resolve_port);
+    // The child must not inherit a wrapper's output pipe (that is the hang this launcher
+    // removes), yet a window that dies before its event loop paints still has to say why - a
+    // macOS failure would otherwise be entirely silent, and a double-clicked app has no
+    // terminal at all. Both streams append to the home's `gui-<port>.log` (SPEC §host.gui).
+    let (stdout, stderr) = window_stdio(port);
+    let mut command = std::process::Command::new(daemon::server_entry());
+    command
+        .args(foreground_args(port))
+        .stdin(std::process::Stdio::null())
+        .stdout(stdout)
+        .stderr(stderr);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        // Null stdio is not enough on Windows: an inherited pipe would keep a wrapper waiting
+        // for EOF until the window exited, recreating the very hang this launcher avoids.
+        swiss_core::platform::keep_std_handles_from_children();
+    }
+    #[cfg(target_os = "macos")]
+    swiss_core::platform::detach_command(&mut command);
+    match command.spawn() {
+        Ok(child) => {
+            println!("swiss gui launched (pid {})", child.id());
+            println!("url {}", daemon::url_for(port));
+            0
+        }
+        Err(error) => {
+            eprintln!("swiss gui: could not launch the window: {error}");
+            1
+        }
+    }
+}
+
+/// The detached window's streams: append both to `gui-<port>.log` in the data home, one
+/// handle each. A log that cannot be opened falls back to null — the pre-log behavior.
+#[cfg(any(windows, target_os = "macos"))]
+fn window_stdio(port: u16) -> (std::process::Stdio, std::process::Stdio) {
+    let open = || -> Option<std::process::Stdio> {
+        let dir = swiss_core::paths::data_dir();
+        std::fs::create_dir_all(&dir).ok()?;
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join(format!("gui-{port}.log")))
+            .ok()?;
+        Some(std::process::Stdio::from(log))
+    };
+    match (open(), open()) {
+        (Some(out), Some(err)) => (out, err),
+        _ => (std::process::Stdio::null(), std::process::Stdio::null()),
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn launch(port: Option<u16>) -> i32 {
+    run(port)
+}
+
+/// The detached launch must name foreground mode explicitly: without this flag its child
+/// would launch another child and exit, and no process would remain to own the window.
+#[cfg(any(windows, target_os = "macos", test))]
+fn foreground_args(port: u16) -> Vec<String> {
+    vec!["gui".to_string(), "--foreground".to_string(), "--port".to_string(), port.to_string()]
+}
+
 /// The Windows entry point and its named-kernel-object instance claim (SPEC §host.gui).
 #[cfg(windows)]
 pub fn run(port: Option<u16>) -> i32 {
@@ -78,12 +160,23 @@ pub fn run(port: Option<u16>) -> i32 {
     // another SWISS_HOME exited silently while the first window, hidden in the tray, kept
     // showing the old gateway's panel). One window per gateway; two gateways, two windows.
     let port = port.unwrap_or_else(daemon::resolve_port);
+    // One window per gateway. A standing window for this identity is raised, not duplicated —
+    // unless its gateway is gone (the panel's Quit, or `swiss stop` from a terminal): that shell
+    // can never paint again, and it holds the claim, so this launch waits for it to leave and
+    // takes the identity over. Without that wait the only exit from a dead window was the tray.
     let id = instance_id(port, &swiss_core::paths::data_dir());
-    match claim_instance(&id) {
-        Instance::Claimed { show } => shell(port, show),
-        Instance::AlreadyRunning => {
-            eprintln!("a swiss window for this home is already open - bringing it to the front");
-            0
+    let mut waits = 0;
+    loop {
+        match claim_instance(&id) {
+            Instance::Claimed { show } => return shell(port, show),
+            Instance::AlreadyRunning => {
+                if waits >= CLAIM_TAKEOVER_TRIES || daemon::port_accepts(port) {
+                    eprintln!("a swiss window for this home is already open - bringing it to the front");
+                    return 0;
+                }
+                waits += 1;
+                std::thread::sleep(CLAIM_TAKEOVER_STEP);
+            }
         }
     }
 }
@@ -97,10 +190,19 @@ pub fn run(port: Option<u16>) -> i32 {
         return 1;
     }
     swiss_core::platform::mkdir_private(&home);
-    match unix_instance::claim(&home, &instance_id(port, &home)) {
-        Ok(unix_instance::Claim::Owned(signal)) => shell(port, signal),
-        Ok(unix_instance::Claim::Existing) => 0,
-        Err(error) => { desktop::startup_error(&error.to_string()); 1 }
+    let mut waits = 0;
+    loop {
+        match unix_instance::claim(&home, &instance_id(port, &home)) {
+            Ok(unix_instance::Claim::Owned(signal)) => return shell(port, signal),
+            // Same takeover as the Windows entry: a zombie window for a dead gateway frees the
+            // claim by exiting, and this launch waits it out instead of reporting "already open".
+            Ok(unix_instance::Claim::Existing) if waits < CLAIM_TAKEOVER_TRIES && !daemon::port_accepts(port) => {
+                waits += 1;
+                std::thread::sleep(CLAIM_TAKEOVER_STEP);
+            }
+            Ok(unix_instance::Claim::Existing) => return 0,
+            Err(error) => { desktop::startup_error(&error.to_string()); return 1; }
+        }
     }
 }
 
@@ -193,6 +295,36 @@ fn instance_id(port: u16, home: &std::path::Path) -> String {
     format!("{port:x}-{hash:016x}")
 }
 
+/// The URL a new-window request may actually open, or None for everything else.
+///
+/// Only the two schemes a panel link may legitimately carry get through: the panel renders model
+/// output and database cells, so `file:` (read the disk through the opener) and `javascript:`
+/// (the opener is a shell, not a sandbox) are exactly what must not.
+#[cfg(any(test, windows, target_os = "macos"))]
+fn external_url(uri: &str) -> Option<String> {
+    let url = reqwest::Url::parse(uri).ok()?;
+    matches!(url.scheme(), "http" | "https").then(|| url.as_str().to_string())
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+fn open_external(uri: &str) {
+    if let Some(url) = external_url(uri) {
+        crate::cli::open_in_browser(&url);
+    }
+}
+
+#[cfg(any(test, windows, target_os = "macos"))]
+fn panel_url(uri: &str, port: u16) -> bool {
+    reqwest::Url::parse(uri).is_ok_and(|url| url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1") && url.port_or_known_default() == Some(port)
+        && url.username().is_empty() && url.password().is_none())
+}
+
+#[cfg(any(test, windows, target_os = "macos"))]
+fn download_url(uri: &str, port: u16) -> bool {
+    panel_url(uri.strip_prefix("blob:").unwrap_or(uri), port)
+}
+
 /// The window, the webview, the tray and the loop that keeps them alive. Never returns while
 /// the app runs — tao's loop only unwinds into process exit — so every exit below is explicit.
 #[cfg(any(windows, target_os = "macos"))]
@@ -206,6 +338,7 @@ fn shell(
     enum GuiEvent {
         PanelReady(String),
         Fatal(String),
+        DownloadFinished(bool),
         TrayOpen,
         Desktop(desktop::Message),
         Quit,
@@ -282,14 +415,38 @@ fn shell(
     let data = swiss_core::paths::data_dir().join("gui-webview");
     let mut web_context = WebContext::new(Some(data));
     let desktop_proxy = event_loop.create_proxy();
+    let download_proxy = event_loop.create_proxy();
     let webview_builder = WebViewBuilder::new_with_web_context(&mut web_context)
         .with_bounds(full_bounds(window.inner_size().width, window.inner_size().height))
         .with_html(loading_html())
         .with_initialization_script("window.__SWISS_DESKTOP__ = true;")
+        .with_navigation_handler(move |uri| {
+            if uri == "about:blank" || panel_url(&uri, port) { return true; }
+            open_external(&uri);
+            false
+        })
+        // Wry already permits downloads by default. Make the origin/destination policy
+        // explicit and report actual completion instead of assuming an anchor click saved.
+        .with_download_started_handler(move |uri, path| download_url(&uri, port)
+            && path.is_absolute() && !path.components().any(|p| p == std::path::Component::ParentDir))
+        .with_download_completed_handler(move |_, _, success| {
+            let _ = download_proxy.send_event(GuiEvent::DownloadFinished(success));
+        })
         .with_ipc_handler(move |request| {
             if let Some(message) = desktop::message(&request.uri().to_string(), port, request.body()) {
                 let _ = desktop_proxy.send_event(GuiEvent::Desktop(message));
             }
+        })
+        // The window is the panel, not a browser. A link that asks for a new window — a
+        // target="_blank" answer link, a data cell's URL, the MCP sign-in page, "Open UI" on
+        // the process page — has to reach the operator's real browser, where their session and
+        // their password manager live. wry's default with NO handler here is a silent denial on
+        // both engines (WebView2 sets Handled, WKWebView returns a nil webview), so every such
+        // click disappeared while the page had already told the user it opened (2026-11-01:
+        // MCP authorization could not be completed from the desktop app at all).
+        .with_new_window_req_handler(|uri, _features| {
+            open_external(&uri);
+            NewWindowResponse::Deny
         });
     // WKWebView ignores WebContext's directory. A distinct persistent data store isolates
     // cookies and localStorage even when two homes serve the same loopback hostname.
@@ -374,10 +531,12 @@ fn shell(
             .enable_all()
             .build()
         {
-            Ok(runtime) => match runtime.block_on(launch_sequence(StartOptions {
-                port: Some(port),
-                ..Default::default()
-            })) {
+            // No port here on purpose. `start_daemon` resolves it exactly the way this shell
+            // already did — `SWISS_PORT`, then the home's config, then 19999 — but only a port
+            // it was HANDED is persisted into gateway.config.json. Passing the resolved number
+            // turned one launch under a temporary `SWISS_PORT` into a permanent port switch for
+            // every later `swiss start` (2026-11-01).
+            Ok(runtime) => match runtime.block_on(launch_sequence(StartOptions::default())) {
                 Ok(url) => GuiEvent::PanelReady(url),
                 Err(reason) => GuiEvent::Fatal(reason),
             },
@@ -391,9 +550,16 @@ fn shell(
     // the thread as an integer because the windows crate's HANDLE is a raw pointer and so
     // not Send — the number is this process's own never-closed handle, only ever fed back
     // to WaitForSingleObject.
+    //
+    // `ready` separates "still coming up" from "was up and is gone". A nudge that arrives
+    // before the panel ever loaded only means a concurrent launch lost the claim, so the
+    // window stays; a nudge after it loaded, with nothing listening on the port, means the
+    // gateway behind this window was quit or killed and the shell has to go with it.
+    let ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     #[cfg(windows)]
     if !show.is_invalid() {
         let waiter_proxy = event_loop.create_proxy();
+        let waiter_ready = ready.clone();
         let show_event = show.0 as usize;
         std::thread::spawn(move || {
             use windows::Win32::Foundation::WAIT_OBJECT_0;
@@ -404,7 +570,9 @@ fn shell(
                 if unsafe { WaitForSingleObject(show, INFINITE) } != WAIT_OBJECT_0 {
                     return;
                 }
-                let _ = waiter_proxy.send_event(GuiEvent::TrayOpen);
+                let gone = waiter_ready.load(std::sync::atomic::Ordering::Relaxed)
+                    && !daemon::port_accepts(port);
+                let _ = waiter_proxy.send_event(if gone { GuiEvent::Quit } else { GuiEvent::TrayOpen });
             }
         });
     }
@@ -412,8 +580,11 @@ fn shell(
     #[cfg(target_os = "macos")]
     {
         let signal_proxy = event_loop.create_proxy();
+        let signal_ready = ready.clone();
         std::thread::spawn(move || signal.listen(move || {
-            let _ = signal_proxy.send_event(GuiEvent::TrayOpen);
+            let gone = signal_ready.load(std::sync::atomic::Ordering::Relaxed)
+                && !daemon::port_accepts(port);
+            let _ = signal_proxy.send_event(if gone { GuiEvent::Quit } else { GuiEvent::TrayOpen });
         }));
     }
 
@@ -471,6 +642,9 @@ fn shell(
                 prefs.save(&prefs_path);
             }
             Event::UserEvent(GuiEvent::PanelReady(url)) => {
+                // From here on a nudge from a second launch means "this window has a gateway
+                // behind it" only if something still answers on the port.
+                ready.store(true, std::sync::atomic::Ordering::Relaxed);
                 // The one-time token is spent by this load and the panel redirects itself to
                 // a clean `/` (SPEC §host.session); nothing sensitive stays in any URL bar
                 // because there is no URL bar.
@@ -488,6 +662,9 @@ fn shell(
                 fatal = true;
                 window.set_focus();
             }
+            Event::UserEvent(GuiEvent::DownloadFinished(success)) => {
+                let _ = webview.evaluate_script(&format!("window.dispatchEvent(new CustomEvent('swiss-download',{{detail:{{success:{success}}}}}));"));
+            }
             Event::UserEvent(GuiEvent::TrayOpen) | Event::Reopen { .. } => {
                 window.set_visible(true);
                 window.set_minimized(false);
@@ -500,6 +677,12 @@ fn shell(
                     prefs.save(&prefs_path);
                 }
                 desktop::Message::Title(title) => window.set_title(&title),
+                desktop::Message::Quit => {
+                    // Stop the tray and the loop the same way the tray's Exit does, and save the
+                    // window before it goes: the gateway behind this window is already gone.
+                    prefs.save(&prefs_path);
+                    std::process::exit(0);
+                }
                 desktop::Message::Zoom(step) => {
                     let zoom = if step == 0 { 1.0 } else { ((prefs.zoom * 10.0).round() + f64::from(step)) / 10.0 }.clamp(0.8, 1.5);
                     match webview.zoom(zoom) {
@@ -687,6 +870,34 @@ mod tests {
     use crate::pidfile::log_file_path;
     use serde_json::json;
     use std::path::PathBuf;
+
+    #[test]
+    fn a_detached_launch_reenters_as_one_foreground_window() {
+        assert_eq!(foreground_args(19999), ["gui", "--foreground", "--port", "19999"]);
+    }
+
+    /// A window request is a hand-off to the operator's browser, so it may only ever carry a
+    /// web link. The panel renders model output and database cells, which is exactly where a
+    /// `file:` or `javascript:` payload would come from.
+    #[test]
+    fn a_new_window_request_only_reaches_the_browser_for_web_links() {
+        assert_eq!(external_url("https://example.test/auth?x=1").as_deref(), Some("https://example.test/auth?x=1"));
+        assert!(external_url("http://127.0.0.1:19999/api/session/ticket?t=abc").is_some());
+        for refused in ["file:///C:/Windows/win.ini", "javascript:alert(1)", "data:text/html,<b>x</b>", "mailto:someone@example.test", "not a url", ""] {
+            assert_eq!(external_url(refused), None, "{refused}");
+        }
+    }
+
+    #[test]
+    fn navigation_and_downloads_are_scoped_to_the_selected_gateway() {
+        assert!(panel_url("http://127.0.0.1:19998/?token=one", 19998));
+        assert!(download_url("blob:http://127.0.0.1:19998/a-result", 19998));
+        for uri in ["http://127.0.0.1:19999/", "https://example.test/", "http://127.0.0.1.evil.test:19998/", "http://user@127.0.0.1:19998/", "file:///tmp/result", "data:text/html,test"] {
+            assert!(!panel_url(uri, 19998), "{uri}");
+            assert!(!download_url(uri, 19998), "{uri}");
+        }
+        assert!(!download_url("blob:http://127.0.0.1:19999/result", 19998));
+    }
 
     #[test]
     fn the_mac_webview_store_is_stable_and_isolates_homes_and_ports() {

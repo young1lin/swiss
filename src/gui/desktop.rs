@@ -130,7 +130,7 @@ impl Preferences {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Message { Theme(bool), Title(String), Zoom(i8) }
+pub enum Message { Theme(bool), Title(String), Zoom(i8), Quit }
 
 pub fn message(origin: &str, port: u16, body: &str) -> Option<Message> {
     let origin = reqwest::Url::parse(origin).ok()?;
@@ -144,6 +144,11 @@ pub fn message(origin: &str, port: u16, body: &str) -> Option<Message> {
         "zoom:in" => Some(Message::Zoom(1)),
         "zoom:out" => Some(Message::Zoom(-1)),
         "zoom:reset" => Some(Message::Zoom(0)),
+        // The panel's own Quit stopped the gateway. A window cannot come back from that — it
+        // holds the single-instance claim and its page has nowhere to load — so the shell goes
+        // with it instead of lingering as a zombie that the next `swiss gui` can only raise
+        // (2026-11-01: the tray's Exit was the only way back in).
+        "quit:" => Some(Message::Quit),
         _ => body.strip_prefix("title:").filter(|title| {
             !title.is_empty() && title.chars().count() <= 128 && !title.chars().any(char::is_control)
         }).map(|title| Message::Title(title.into())),
@@ -216,6 +221,18 @@ mod tests {
         prefs.remember((1000, 680), Some((120, 90)), false, false);
         assert_eq!((prefs.width, prefs.height, prefs.position), (1000, 680, Some((120, 90))));
         assert!(!prefs.maximized);
+    }
+
+    #[test]
+    fn the_panel_can_ask_the_window_to_close_with_the_gateway_it_showed() {
+        // The panel's Quit stops the gateway; a window left standing after that can never load
+        // again and holds the single-instance claim, so the next `swiss gui` could only raise
+        // the dead window (2026-11-01).
+        assert_eq!(message("http://127.0.0.1:19998/", 19998, "quit:"), Some(Message::Quit));
+        // Still a bridge with a shape: another origin, another port, another path say nothing,
+        // and nothing else may spell its way in.
+        assert_eq!(message("http://127.0.0.1:19999/", 19998, "quit:"), None);
+        assert_eq!(message("http://127.0.0.1:19998/", 19998, "quit:now"), None);
     }
 
     #[test]
