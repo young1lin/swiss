@@ -164,6 +164,7 @@ in §decisions.
 - [§data.console — The SQL console](spec/0006-data/02-console.md#dataconsole--the-sql-console)
 - [§data.history — What a console ran, per database](spec/0006-data/02-console.md#datahistory--what-a-console-ran-per-database)
 - [§data.agent — The agent beside the console](spec/0006-data/02-console.md#dataagent--the-agent-beside-the-console)
+- [§data.analysis — The analysis ledger](spec/0006-data/02-console.md#dataanalysis--the-analysis-ledger)
 - [§data.completion — Server-side completion (ADR-017)](spec/0006-data/03-workspace.md#datacompletion--server-side-completion-adr-017)
 - [§data.activity — Live sessions](spec/0006-data/03-workspace.md#dataactivity--live-sessions)
 - [§data.export — Export and import](spec/0006-data/03-workspace.md#dataexport--export-and-import)

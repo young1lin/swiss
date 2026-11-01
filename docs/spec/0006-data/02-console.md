@@ -26,8 +26,9 @@ Part 02 of [§data](README.md), chapter 0006 of the [swiss specification](../../
   The first failure stops the batch: the tabs that answered stay, and the failure gets a tab of
   its own in front (`SELECT · failed`: the server's error, the statement, how many after it did
   not run).
-- **The layout** reads top to bottom: the head (SQL or Command, the kind's hint, Run all, Run,
-  ⋯), the editor, the **results bar** (the result tabs, or the reply's kind when there is one;
+- **The layout** reads top to bottom: the head (SQL or Command with the kind's hint on hover,
+  Run all, Run, ⋯), the editor, the **results bar** (the result tabs, or the reply's kind when
+  there is one;
   its rows · note · ms at the right, said only there; the dock's two buttons after them), the
   grid, and the status line naming the connection. The result tabs sit in a strip that
   scrolls sideways, each on one line - the wheel scrolls it too, and the tab showing is
@@ -257,6 +258,13 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   it; `listen_channels` opens it with the names listened on added to the watch set - the
   page's own feed listening on them from there while the page is in front - and what was
   heard in its log under one *Agent* line (how long, on what, how many, what was dropped).
+  That feed is the page's alone - it outlives the listen that opened it, and nothing on this
+  side holds a handle on it - so `stop_listen {}` asks the page to end it, exactly as the
+  reader's own Stop does: the subscription goes back to the server, the log keeps what was
+  heard before it under a line saying the agent ended it, and the answer says the ask went
+  out, never that the feed is confirmed closed. Before this, a page left listening with the
+  agent's names in its watch set kept the subscription up with nothing in the conversation able
+  to end it (2026-11-01; `the agent can end the reader's live feed`).
   What it finds and describes on MySQL, PostgreSQL and MongoDB shows the same way: a
   `list_tables` or `list_collections` puts its grep in the sidebar's search (none clears it;
   a MongoDB listing only while the tree shows that database), so the tree is the listing the
@@ -299,6 +307,25 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   closed tabs to come back (2026-10-29;
   `open_console_opens_a_named_tab_and_a_run_naming_it_lands_there`, `a console tab of the
   agent's own`, `a console tab of the agent's the reader closed comes back`).
+- **A tab's id.** Every console tab carries an id (the strip's own, §data.tabs), and the tools
+  address a tab by it: `list_console_tabs` lists the connection's tabs - open, then the ones
+  still in Recently closed - with each one's id, name, state and how many statements it holds;
+  `read_console_tab {tabId | tab}` reads one, each statement with its 0-based index, its text
+  and the name its first line comments it with; `edit_console_sql {tabId, index, sql}` replaces
+  exactly that statement and `delete_console_sql {tabId, index}` drops it, the tab staying -
+  empty, when that was its last. `open_console` takes `tabId` beside `tab`, and wins: a closed
+  tab comes back under its own id, its statements with it. The id outlives a rename, a close
+  (Recently closed files the tab under its own id and restores it with that id), another console
+  of the same name and a page reload; a name outlives none of those, and two tabs called *SQL*
+  were otherwise one address. Each send carries the page's tabs in its body (`consoleTabs`, open
+  and closed), so the tools read the page's picture before they act; the page applies each frame
+  as it arrives and its console stays the truth, and a frame delivered twice (the same replace,
+  a repeated delete) changes nothing the second time. Neither tool runs a statement: an edit or a
+  delete is text, not execution. Before this a tab could only be named and the statements inside
+  one could not be touched at all (2026-11-01; `is minted at birth, survives the close into
+  Recently closed, and the snapshot lists open and closed tabs alike`, `two consoles sharing a
+  name are told apart by id`, `edit and delete reach a tab that is closed`, `a tab the reader
+  renamed answers to its id`).
 - **Its account under the box** (`chatStats`, §panel.ui), centred: the turns the reader
   took, the steps the model ran and its output speed, opening Session statistics (LLM time,
   tool time, the average time to first token, tokens per second); the tokens the
@@ -496,3 +523,76 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   /api/llm/db/memory/delete`. A send
   naming any agent but a db one is refused, and so is a db agent's Agents Test
   (`only_a_db_agent_on_a_sql_connection_streams`).
+
+## §data.analysis — The analysis ledger
+
+The server-side truth behind a multi-step analysis, as opposed to the chat text and the
+browser's memory. Code: `crates/swiss-plugins/src/analysis.rs` (the store) and
+`analysis_api.rs` (the routes), mounted at `/api/analysis`. The SQL agent's `analysis` tool
+creates, revises, executes and reads this same store; it addresses tasks, revisions and results
+by immutable ids, and refuses a task belonging to another connection. Each mutation emits an
+analysis reference to the Data workspace. The workspace lists saved and recent analyses, reads
+bounded result pages, and exposes revision, rerun, comparison, export and validation controls.
+The next chat send carries the selected task/revision/result and selected row ids as view
+context; these are resolved against the store, never treated as a database query supplied by the
+browser. Leaving the page does not erase committed results.
+
+**Measured checks, scoped conclusions.** `POST /{id}/results/{result}/validate` runs a declared
+`unique`, `nonNull` or `rowCount` rule over the stored result. The check records its result id,
+rule, measured value and expected value. A truncated result cannot confirm a whole-result
+check. `/checks` records annotations only: caller-supplied `confirmed` is refused, even when it
+cites a successful execution. Passing local checks yields partial verification; it does not
+certify business definitions, source coverage or a historical database snapshot. Failed checks
+dominate. The page presents the measured checks and remaining limitations together.
+
+**One folder per analysis**, `llm/analysis/<taskId>/`: `task.json` for the ledger, one NDJSON
+file per result for its rows. Four objects with four lifetimes, and the design refuses to merge
+them: a **revision** is one version of the business conditions plus the SQL that answers them
+(editing either makes a new one; naming an older one as the parent makes a branch); an
+**execution** is one attempt to run one revision (two runs of one SQL are two executions and may
+legitimately differ); a **result** is what one execution committed - a stable `resultId`, its
+columns, its row count, whether it was truncated, and its rows - immutable, so a re-run makes a
+new one and never rewrites the old; a **check** is one piece of evidence about a result.
+
+**Rows are stored exactly as the driver replied**: one JSON object per row, keyed by column, in
+the driver's own order. Anything that reads them (a chart's series, a comparison's keys) looks a
+cell up by its column name. A positional array is still read, for results written by an earlier
+build. Reading positionally was how a chart over a real answer grouped every row into one empty
+bucket and a keyed comparison called every row the same row (2026-11-01;
+`a_chart_reads_the_rows_the_driver_really_wrote`,
+`a_keyed_comparison_tells_object_rows_apart`).
+
+**Truncation is the driver's word as well as the budget's.** The analysis may ask for
+`ROWS_MAX` (20,000), but a browser's own ceiling (`MAX_ROW_LIMIT`, 10,000) clamps it and reports
+`limitApplied`; a result is `truncated` when either the budget ran out OR that field is present,
+and its note names what was kept and, when it is lower, the connection's ceiling. A result marked
+complete is a claim that the query had nothing more (2026-11-01;
+`a_driver_that_caps_below_the_budget_still_makes_a_truncated_result`).
+
+Materialization also stops at 20 MiB, independently of row count. Integers outside JavaScript's
+exact integer range travel as strings, as driver decimal strings already do. Nonempty `params`
+are refused because this runner does not bind parameters; storing them must not pretend they
+affected execution. Result comparisons refuse a key absent from either column list.
+
+**Verification is derived, never asserted.** Failure dominates partial checks and open questions.
+Passing measured checks yields partial verification of the result: source coverage and business
+meaning remain open. `record_check` accepts annotations but refuses `confirmed`, including an
+annotation citing a successful execution. Only `validate` produces passing checks, with the rule,
+observed value and immutable result reference recorded by the runtime. Old self-asserted checks
+are not promoted on read (tests `a_successful_execution_does_not_prove_a_claim`,
+`measured_constraints_find_duplicates_and_never_certify_business_meaning`). Zero rows is a result,
+not proof of absence, and its note says so.
+
+**Restart, cancel and late results.** An execution still `running` when the store is opened is
+marked `interrupted`: the process died with it, and it must never look like it is still going or
+like it finished. Cancelling is its own state, distinct from failing and from the page stopping
+its spinner. A result committed after its revision stopped being current is marked superseded: it
+stays readable as history and never becomes the analysis's current answer.
+
+**Routes.** `POST /api/analysis`, `POST /api/analysis/{id}/revisions`,
+`POST /api/analysis/{id}/execute`, `POST /api/analysis/{id}/executions/{run}/cancel`,
+`GET /api/analysis/{id}`, `GET /api/analysis/{id}/results/{result}/rows?offset&limit`,
+`POST /api/analysis/{id}/compare`, `POST /api/analysis/{id}/results/{result}/checks`,
+`POST /api/analysis/{id}/results/{result}/chart`,
+`GET /api/analysis/{id}/results/{result}/series?x&y`, `POST /api/analysis/{id}/save`,
+and `DELETE /api/analysis/{id}`.
