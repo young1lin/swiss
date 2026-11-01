@@ -29,8 +29,8 @@ import { assignGroup, groupOf, rowOf, saveGroups } from "./sidebar.js";
 import { currentView } from "./ui-state.js";
 import { lastActionOf, mcpBusyVerb, mcpDetail, mcpGroups, mcpRows } from "./mcp-state.js";
 import { locale, tk, tr } from "./i18n.js";
-import { anchoredMenu, closeMenu, dot, iconBtn, menuOpen, moreBtn, note, paneBody, resHead, seg } from "./ui/index.js";
-import { setIconBtn } from "./ui/button.js";
+import { actionBtn, anchoredMenu, closeMenu, dot, iconBtn, menuOpen, moreBtn, note, paneBody, resHead, seg } from "./ui/index.js";
+import { setActionBtn } from "./ui/action.js";
                                                         
 
 /* --- rendering: detail pane ------------------------------------------------------------------- */
@@ -39,6 +39,23 @@ function paneHasFocus()          {
   const a = document.activeElement;
   return !!a && $("pane").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
 }
+
+/** The verb in flight, in words (SPEC §panel.design rule 14): a disabled button showing only "…"
+ *  told the reader nothing about what the gateway was doing on their click. */
+function busyLabel(verb        )         {
+  switch (verb) {
+    case "stop": return tr("pane.disabling");
+    case "start": return tr("pane.enabling");
+    case "restart": return tr("pane.restarting");
+    case "save": return tr("pane.saving");
+    default: return verb + "…";
+  }
+}
+
+/** The head's verb as the action it performs: a started MCP offers Disable (power-off), a
+ *  stopped one Enable (power). The two states never share a glyph - the difference has to be
+ *  visible before the tooltip is read (SPEC §panel.design rule 7, ui/action.ts). */
+function headAction(started         )                       { return started ? "disable" : "enable"; }
 
 function patchDetailHead()       {
   const d = mcpDetail();
@@ -54,11 +71,11 @@ function patchDetailHead()       {
   if (primary) {
     const started = m.lifecycle === "started";
     // The head's state verb is a glyph now, so the word moves to aria-label/title: writing
-    // textContent here would wipe the sprite instead of relabelling it (setIconBtn).
-    const busy = busyVerb ? busyVerb + "…" : "";
+    // textContent here would wipe the sprite instead of relabelling it (setActionBtn).
+    const busy = busyVerb ? busyLabel(busyVerb) : "";
     const label = busy || (started ? tr("pane.disable") : tr("pane.enable"));
     const hint = busy || (started ? tr("pane.disableHint") : tr("pane.enableHint"));
-    setIconBtn(primary, "power", label, hint);
+    setActionBtn(primary, headAction(started), label, hint);
     primary.disabled = !!busyVerb;
     // No onclick here (SPEC §panel.toolchain): #pane's delegated click derives the verb from live state.
   }
@@ -68,12 +85,12 @@ function patchDetailHead()       {
  *  flight. Its title is the state word the subtitle leads with. */
 function stateDot(m                           , busyVerb                           )              {
   const state = (busyVerb ? "starting" : m.state)            ;
-  return dot(state, busyVerb ? busyVerb + "…" : m.state === "stopped" ? tr("pane.disabled") : m.state);
+  return dot(state, busyVerb ? busyLabel(busyVerb) : m.state === "stopped" ? tr("pane.disabled") : m.state);
 }
 
 function headSubtitle(m                           )         {
   const bits = [];
-  if (mcpBusyVerb(m.name)) bits.push(mcpBusyVerb(m.name) + "…");
+  if (mcpBusyVerb(m.name)) bits.push(busyLabel(mcpBusyVerb(m.name)));
   else bits.push(m.state === "stopped" ? tr("pane.disabled") : m.state); // SPEC §mcp.revisions: the honest word
   bits.push(m.type);
   bits.push(m.source);
@@ -137,14 +154,18 @@ function renderPane()       {
           disabled: !!d.oauthBusy,
         })
       : null,
-    // An icon button carries no tint (the library's one accent fill is btn.primary), so Start's
-    // blue goes with the word: the power glyph and its tooltip say which way the switch turns,
-    // and a header full of blue Stop buttons was why the tint stayed Start-only anyway.
+    // An icon button carries no tint (the library's one accent fill is btn.primary), so the head
+    // has no blue Start/Stop word any more — a header whose accent moved with the state was why
+    // the tint stayed Start-only before. The glyph carries the verb and the tooltip carries the
+    // consequence; the state itself is the dot and the subtitle beside them.
     // SPEC §mcp.revisions: the verb is Disable/Enable, not Stop/Start — a stop that survives a boot and
     // refuses every client IS a disable; the mechanism below keeps the stop/start verbs.
-    iconBtn("power", busyVerb ? busyVerb + "…" : started ? tr("pane.disable") : tr("pane.enable"), {
+    // The glyph is the ACTION's, never the state's: started shows power-off (Disable), stopped
+    // shows power (Enable). One power glyph for both halves left the pair readable only through a
+    // tooltip, which is exactly what a reader who does not hover never sees.
+    actionBtn(started ? "disable" : "enable", busyVerb ? busyLabel(busyVerb) : started ? tr("pane.disable") : tr("pane.enable"), {
       id: "primaryBtn",
-      title: busyVerb ? busyVerb + "…" : started ? tr("pane.disableHint") : tr("pane.enableHint"),
+      title: busyVerb ? busyLabel(busyVerb) : started ? tr("pane.disableHint") : tr("pane.enableHint"),
       disabled: !!busyVerb,
     }),
     moreBtn(tr("pane.moreActions"), { id: "menuBtn" }),

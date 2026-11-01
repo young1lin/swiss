@@ -21,12 +21,13 @@ import { fill, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { copyText } from "./connect.js";
 import { assignMember, groupOf as makeGroupOf, mountGroup, newGroupFlow, saveOrder, slice } from "./groups.js";
-import { connRowNode, isTunnelsView, loadList, loadTunnels, ruleRowNode, tunData, tunDot, tunGroupsList, tunRows, tunScope } from "./polling.js";
+import { connRowNode, isTunnelsView, loadList, loadTunnels, ruleRowNode, tunBusyWord, tunData, tunDot, tunGroupsList, tunRows, tunScope } from "./polling.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
 import { currentView } from "./ui-state.js";
 import { clearTunBusy, clearTunView, setTunBusy, setTunDragging, setTunDraggingGroup, setTunPendingGroup, setMountedTunScope, tunBusyOf, tunDragging, tunDraggingGroup, tunFolds, mountedTunScope } from "./tunnel-state.js";
 import { tr, trn } from "./i18n.js";
-import { btn, closeMenu, dot, iconBtn, menuOpen, moreBtn, paneBody, paneHead, popupMenu } from "./ui/index.js";
+import { closeMenu, dot, iconBtn, menuOpen, moreBtn, paneBody, paneHead, popupMenu } from "./ui/index.js";
+import { actionBtn, setActionBtn } from "./ui/action.js";
 
 /* --- tunnels: groups and drag-to-reorder --------------------------------------------------------
    The sidebar's model, shared through the groups component (SPEC §panel.groups): one flat order per
@@ -114,7 +115,8 @@ function renderTunnels(): void {
   // Start all / Stop all wait behind the head's ⋯, and New is the page's one primary.
   const acts: HChild[] = [iconBtn("folder-plus", tr("tunnels.newGroup"), { id: "tNewGroup" })];
   if (!isConns) acts.push(moreBtn(tr("tunnels.moreForwardActions"), { id: "tMore" }));
-  acts.push(btn(tr("tunnels.new"), { kind: "primary", id: isConns ? "tNewConn" : "tNewRule" }));
+  // The page's create action uses the shared New icon.
+  acts.push(actionBtn("new", tr("tunnels.new"), { id: isConns ? "tNewConn" : "tNewRule" }));
 
   // One group per slice — the component owns the header band, the indent and the empty line
   // now (SPEC §panel.groups). Empty groups keep their place: that is how you drag the first row into
@@ -205,14 +207,15 @@ function patchTunnels() {
     // A fresh dot, not a patched class: its class, title and label move together (SPEC §panel.design),
     // and a dot whose class moved but whose title stayed would explain the previous state.
     if (mark) mark.replaceWith(dot(tunDot(live), dotTitle(live === "connected" ? "up" : live, null, row.reason)));
-    const act = node.querySelector("[data-act]") as HTMLButtonElement | null;
+    const act = node.querySelector<HTMLButtonElement>("[data-act]");
     if (act) {
       const running = row.state === "up" || row.state === "starting" || row.state === "reconnecting";
-      const label = busy ? "…" : running ? tr("tunnels.stop") : tr("tunnels.start");
-      if (act.textContent !== label) {
-        act.textContent = label;
-        act.dataset.act = running ? "stop" : "start";
-      }
+      // The row's verb is a glyph now: the label, the tooltip, the sprite and the click's verb
+      // move together in one call (setActionBtn). Writing textContent here would have deleted
+      // the icon instead of relabelling the button - the trap SPEC §panel.design rule 7 names.
+      const label = busy ? tunBusyWord(busy) : running ? tr("tunnels.stop") : tr("tunnels.start");
+      setActionBtn(act, running ? "stop" : "start", label, busy ? label : running ? tr("tunnels.stopHint") : tr("tunnels.startHint"));
+      act.dataset.act = running ? "stop" : "start";
       act.disabled = !!busy;
     }
   }

@@ -34,11 +34,15 @@ Part 06 of [§data](README.md), chapter 0006 of the [swiss specification](../../
   `+` only on Tables); pg nests schema bands over them. Each section renders 200 rows
   (`DB_TREE_ROW_CAP`), "show N more" adds 500, "Show fewer" sits at the end; search results
   are uncapped. Connection and database pickers are drawers, one open at a time.
-- **Toolbars** show only the active tab's controls, at most one non-icon button each (a test
-  gates it): table = view segment + one primary + ⋯; sql = Run + ⋯; key = the type's primary;
-  activity and pubsub = Refresh. Refresh / CSV / Export / Import live in ⋯.
+- **Toolbars** show only the active tab's controls: table = view segment + one primary + ⋯;
+  sql = Run all and Run + ⋯; key = the type's primary;
+  activity and pubsub = Refresh (an icon button, `actionBtn("refresh")` — §panel.design rule 7).
+  Short actions use icon buttons. Run all uses list-play to distinguish its scope from Run.
+  Refresh / CSV / Export / Import live in ⋯.
 - **The status bar** — range, pager, page size, elapsed, editNote, connection — is separate
-  from the commit bar.
+  from the commit bar. The pager and the page size are the **row views'** only (Data and
+  Form): a schema pane (Structure's columns / indexes / foreign keys, or DDL) lists the
+  table's shape, not its rows, and carries neither — the connection stays at the right edge.
 - **Structure** folds its panes into four tabs: Data / Form / Structure / DDL.
 - Not built: docking, drag-reorder, workspace persistence.
 

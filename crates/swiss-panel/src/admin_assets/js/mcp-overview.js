@@ -3,12 +3,12 @@
                                                  // Inventory contract.
 import { h } from "./h.js";
 import { tr } from "./i18n.js";
-import { btn, card, dot, note, paneBody, paneHead, row, section } from "./ui/index.js";
+import { actionBtn, btn, card, dot, note, paneBody, paneHead, row, section } from "./ui/index.js";
                                                // Shared status marks.
 
 /** A useful first frame without making a tools/list request or waking a lazy process. */
 export function mcpOverview(rows             , open                        , add            )              {
-  const addButton = btn(tr("pane.addMcp"), { kind: "primary", icon: "plus" });
+  const addButton = actionBtn("new", tr("pane.addMcp"));
   addButton.onclick = add;
   const content = rows.slice(0, 6).map((server) => {
     const action = btn(tr("desktop.open"));

@@ -28,7 +28,7 @@ import { currentView } from "./ui-state.js";
 import { setTunResponse, tunBusyOf, tunDragging, tunResponse, mountedTunScope } from "./tunnel-state.js";
 import { jobGroupNames, jobRows, setJobGroupNames, setJobRows } from "./job-state.js";
 import { mcpDetail, mcpRows, memoryInfo, selectedMcp, setMcpDetail, setMcpGroups, setMcpRows, setMemoryInfo, setSelectedMcp } from "./mcp-state.js";
-import { btn, dot, moreBtn, redacted, row, tag } from "./ui/index.js";
+import { actionBtn, dot, moreBtn, redacted, row, tag } from "./ui/index.js";
 import type { DotState } from "./ui/index.js";
 
 
@@ -232,22 +232,38 @@ function ruleSubNode(r: ApiTunnelRuleRow): HChild[] {
   return out;
 }
 
+/** The verb a row is waiting on, in words (SPEC §panel.design rule 14). The busy button used to
+ *  read "…", which named neither the verb nor what the gateway was doing with the click. */
+function tunBusyWord(verb: string): string {
+  switch (verb) {
+    case "start": return tr("tunnels.starting");
+    case "stop": return tr("tunnels.stopping");
+    case "test": return tr("tunnels.testing");
+    default: return verb + "…";
+  }
+}
+
 /** One rule row: the library row (SPEC §panel.pages). The dot, the name, the route; the local port
  *  in its own column (the value you point a client at); a failure as the row's one red line with
  *  the whole reason in its title, so a failing row is as tall as a healthy one. Start / Stop is
- *  the row's one word button - hairline, never the page's solid primary (SPEC §panel.design) - and the
- *  rest is behind ⋯. data-act / data-more answer #pane's delegated click (tunnels.ts). */
+ *  the row's one action button - play while it is down, square while it runs, never the same
+ *  glyph for both (SPEC §panel.design rule 7, ui/action.ts) - and the rest is behind ⋯.
+ *  data-act / data-more answer #pane's delegated click (tunnels.ts). */
 function ruleRowNode(r: ApiTunnelRuleRow): HTMLElement {
   const busy = tunBusyOf(r.id);
   const word = busy ? "starting" : r.state;
   const running = r.state === "up" || r.state === "starting" || r.state === "reconnecting";
+  const label = busy ? tunBusyWord(busy) : running ? tr("tunnels.stop") : tr("tunnels.start");
   return row({
     lead: dot(tunDot(word), dotTitle(word, null, r.reason)),
     name: r.name,
     sub: ruleSubNode(r),
     err: ruleFailing(r) ? r.reason || undefined : undefined,
     cols: [{ v: String(r.localPort), mono: true, title: tr("tunnels.localPort") }],
-    primary: btn(busy ? "…" : running ? tr("polling.stop") : tr("polling.start"), { data: { act: running ? "stop" : "start" }, disabled: !!busy }),
+    primary: actionBtn(running ? "stop" : "start", label, {
+      title: busy ? label : running ? tr("tunnels.stopHint") : tr("tunnels.startHint"),
+      data: { act: running ? "stop" : "start" }, disabled: !!busy,
+    }),
     more: moreBtn(tr("polling.rowActions"), { data: { more: "" } }),
     data: { rule: r.id },
     draggable: true,
@@ -283,16 +299,19 @@ function connBadgeNodes(c: ApiTunnelConnectionRow): HChild[] {
  *  eye is pressed - redacted(), 2026-09-28), who it signs in
  *  as and how, the transport tags; how many rules ride it is the row's column now, not a clause
  *  in the sub-line; a failure is the one red line. Test is the row's one word button. */
+/** One connection row. Test dials it and reports the handshake (the row's one action, the plug
+ *  glyph, its word in the tooltip); New, Edit and Delete stay where they were. */
 function connRowNode(c: ApiTunnelConnectionRow): HTMLElement {
   const busy = tunBusyOf(c.id);
   const word = busy ? "starting" : c.state;
+  const label = busy ? tunBusyWord(busy) : tr("tunnels.test");
   return row({
     lead: dot(tunDot(word), dotTitle(word === "connected" ? "up" : word, null, c.reason)),
     name: c.name,
     sub: [redacted(c.host, { suffix: ":" + c.port }), " · ", tr("polling.userAuth", { user: c.username, auth: c.authType }), connBadgeNodes(c)],
     err: c.reason || undefined,
     cols: [trn(c.ruleCount || 0, "tunnels.nRules.one", "tunnels.nRules.other")],
-    primary: btn(busy ? "…" : tr("polling.test"), { data: { test: "" }, disabled: !!busy }),
+    primary: actionBtn("test", label, { title: busy ? label : tr("tunnels.testHint"), data: { test: "" }, disabled: !!busy }),
     more: moreBtn(tr("polling.rowActions"), { data: { more: "" } }),
     data: { conn: c.id },
     draggable: true,
@@ -300,4 +319,4 @@ function connRowNode(c: ApiTunnelConnectionRow): HTMLElement {
 }
 
 
-export { connRowNode, isTunnelsView, tunDot, jobGroupsList, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowNode, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };
+export { connRowNode, isTunnelsView, tunBusyWord, tunDot, jobGroupsList, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowNode, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };

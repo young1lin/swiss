@@ -9,9 +9,9 @@ import { dbActivateTab, dbOpenTabForce } from "./data-tabs.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import type { AnalysisTask, AnalysisPage, AnalysisView, AnalysisResult } from "./types/analysis.js";
 import type { DbSqlTab } from "./types/state.js";
-import { btn, card, closeSheet, emptyNode, field, form, formActions, formFold, hint, iconBtn, jsonCodeNode, note, pager, resultChart, resultTable, row, section, sheet, showSheet, tag, wsScroll } from "./ui/index.js";
+import { actionBtn, btn, card, closeSheet, emptyNode, field, form, formActions, formFold, hint, iconBtn, jsonCodeNode, note, pager, resultChart, resultTable, row, section, sheet, showSheet, tag, wsScroll } from "./ui/index.js";
 
-interface View { task: AnalysisTask; resultId: string | null; page: AnalysisPage | null; selected: Set<string>; busy: boolean; pending: boolean; generation: number; failed: boolean }
+interface View { task: AnalysisTask; resultId: string | null; page: AnalysisPage | null; selected: Set<string>; busy: boolean; saving: boolean; pending: boolean; generation: number; failed: boolean }
 const views = new Map<string, View>();
 let opening = 0;
 const PAGE = 50;
@@ -43,7 +43,7 @@ export async function dbAnalysisOpen(id: string, conn = dbConn().conn): Promise<
   }
   const prior = views.get(id);
   const next: View = { task, resultId: current(task)?.id ?? task.results.at(-1)?.id ?? null, page: null,
-    selected: new Set(), busy: prior?.busy ?? false, pending: false, generation: (prior?.generation ?? 0) + 1, failed: false };
+    selected: new Set(), busy: prior?.busy ?? false, saving: prior?.saving ?? false, pending: false, generation: (prior?.generation ?? 0) + 1, failed: false };
   // In-flight run callbacks must still update the view that reopening displays.
   views.set(id, prior ? Object.assign(prior, next) : next);
   dbActivateTab(at);
@@ -197,20 +197,31 @@ export function dbAnalysisRender(wrap: HTMLElement, id: string): void {
   const selected = h("select", { aria: { label: tr("analysis.version") } }, task.results.map(r => h("option", { value: r.id }, r.id)));
   selected.value = v.resultId ?? "";
   selected.onchange = (): void => { v.resultId = selected.value; v.page = null; v.selected.clear(); v.generation++; v.pending = false; paint(v); };
-  const revise = button(tr("analysis.edit"), () => edit(v), v.busy);
-  const rerun = button(tr("analysis.run"), () => { void run(v); }, v.busy);
-  const saved = button(task.saved ? tr("analysis.unsave") : tr("analysis.save"), () => { void (async () => {
-    if (await post(path(task.id) + "/save", { saved: !task.saved })) await refresh(v);
-  })(); });
+  const revise = actionBtn("edit", tr("analysis.edit"), { disabled: v.busy });
+  revise.onclick = (): void => edit(v);
+  const rerun = actionBtn("start", tr("analysis.run"), { disabled: v.busy });
+  rerun.onclick = (): void => { void run(v); };
+  const saveAction = task.saved ? "unbookmark" : "bookmark";
+  const saveLabel = task.saved ? "analysis.unsave" : "analysis.save";
+  const saved = actionBtn(saveAction, tr(v.saving ? (task.saved ? "analysis.unsaving" : "analysis.saving") : saveLabel), { disabled: v.saving });
+  saved.onclick = (): void => { void (async () => {
+    if (v.saving) return;
+    v.saving = true; paint(v);
+    try { if (await post(path(task.id) + "/save", { saved: !task.saved })) await refresh(v); }
+    finally { v.saving = false; paint(v); }
+  })(); };
   const lastRun = [...task.executions].reverse().find(e => e.status === "running");
-  const stop = button(tr("analysis.stop"), () => { if (lastRun) void post(path(task.id) + "/executions/" + lastRun.id + "/cancel", {}); }, !lastRun);
+  const stop = actionBtn("stop", tr("analysis.stop"), { disabled: !lastRun });
+  stop.onclick = (): void => { if (lastRun) void post(path(task.id) + "/executions/" + lastRun.id + "/cancel", {}); };
   const content = wsScroll({ pad: true },
     section({ cap: task.title, tools: [rerun, saved] }, formActions(revise, selected, stop),
       hint(task.id), hint(tr("analysis.scope")), v.busy ? note(tr("analysis.running"), { busy: true }) : null,
       task.executions.at(-1)?.error ? note(task.executions.at(-1)?.error, { err: true }) : null));
   wrap.appendChild(content);
   if (!result) { content.appendChild(emptyNode({ icon: "database", title: tr("analysis.noResult"), hint: tr("analysis.startHint") })); return; }
-  content.appendChild(section({ cap: tr("analysis.result"), tools: [button(tr("analysis.export"), () => { void exportResult(v, result); })] },
+  const exportButton = actionBtn("download", tr("analysis.export"));
+  exportButton.onclick = (): void => { void exportResult(v, result); };
+  content.appendChild(section({ cap: tr("analysis.result"), tools: [exportButton] },
     formActions(tag(stateLabel(result.verification)), result.truncated ? tag(tr("analysis.truncated"), { tone: "bad" }) : null,
       result.revision !== task.current ? tag(tr("analysis.historical")) : null), hint(result.id),
     hint(tr("analysis.rowCount", { n: result.rowCount })),

@@ -37,7 +37,7 @@ import type { HChild } from "../h.js";
 import { fill, h } from "../h.js";
 import { tk, tr, trn } from "../i18n.js";
 import {
-  btn, card, closeMenu, closeSheet, docHead, emptyNode, field, formFold, hint, iconBtn, inlineForm, kvRow, markdownNode,
+  actionBtn, btn, card, closeMenu, closeSheet, docHead, emptyNode, field, formFold, hint, iconBtn, inlineForm, kvRow, markdownNode,
   menuOpen, moreBtn, note, openFieldSheet, pickList, pickRow, pickSelect, popupMenu, refLink, relTime, row, section, sheet,
   showSheet, tag, timeline, timelineToggle, valueBlock, wsBar, wsScroll, wsSplit,
 } from "../ui/index.js";
@@ -101,9 +101,9 @@ export async function paintDomains(slot: HTMLElement): Promise<void> {
     id: slot.id, fixed: "start",
     start: [
       wsBar({},
-        btn(tr("memory.dom.new"), { icon: "plus", data: { mdnew: "" } }),
+        actionBtn("new", tr("memory.dom.new"), { data: { mdnew: "" } }),
         h("span", { class: "grow" }),
-        btn(tr("memory.dom.autofile"), { kind: "ghost", data: { mdauto: "" }, title: tr("memory.dom.autofileWhy") })),
+        iconBtn("sparkles", tr("memory.dom.autofile"), { ghost: true, data: { mdauto: "" }, title: tr("memory.dom.autofileWhy") })),
       wsScroll({ id: "memDomScroll" }, h("div", { id: "memDomMap" }, note(tr("memory.loading"), { busy: true }))),
       wsBar({ foot: true, id: "memDomFoot" }),
     ],
@@ -287,16 +287,8 @@ function crumbs(d: MemDomainDetail): HChild {
 
 function domainDoc(d: MemDomainDetail): HTMLElement {
   const c = coverageOf(d.id);
-  // One click confirms the domain whole; the words say when that is more than its own mark.
-  const open = openInTree(d);
-  const whole = open.notes > 0 || open.domains > (d.confirmed ? 0 : 1);
-  const confirm = !open.domains && !open.notes ? null
-    : whole ? btn(tr("memory.dom.confirmAll"), { data: { mdact: "confirm" }, title: tr("memory.dom.confirmAllWhy", { notes: open.notes }) })
-    : btn(tr("memory.confirm"), { data: { mdact: "confirm" }, title: tr("memory.dom.confirmWhy") });
   const acts: HChild[] = [
-    btn(tr("memory.dom.edit"), { kind: "primary", data: { mdact: "edit" } }),
-    btn(tr("memory.mark.verified"), { data: { mdact: "verify" }, title: tr("memory.dom.verifiedWhy") }),
-    confirm,
+    actionBtn("edit", tr("memory.dom.edit"), { data: { mdact: "edit" } }),
     moreBtn(tr("memory.dom.moreOf", { title: d.title }), { data: { mdact: "more" } }),
   ];
   return h("article", { data: { mdomdoc: d.id } },
@@ -329,7 +321,7 @@ function domainDoc(d: MemDomainDetail): HTMLElement {
         : hint(tr("memory.dom.ownsNone"))),
     section({
       cap: tr("memory.dom.subDomains"),
-      tools: d.depth < DEPTH_MAX ? [btn(tr("memory.dom.newSub"), { kind: "ghost", data: { mdact: "newsub" } })] : undefined,
+      tools: d.depth < DEPTH_MAX ? [actionBtn("new", tr("memory.dom.newSub"), { ghost: true, data: { mdact: "newsub" } })] : undefined,
     },
       d.children.length
         ? card(d.children.map((ch) => row({
@@ -341,7 +333,7 @@ function domainDoc(d: MemDomainDetail): HTMLElement {
     section({
       cap: tr("memory.dom.notes"), note: tr("memory.dom.notesNote"),
       tools: [
-        btn(tr("memory.dom.newNote"), { kind: "ghost", data: { mdact: "newnote" } }),
+        actionBtn("new", tr("memory.dom.newNote"), { ghost: true, data: { mdact: "newnote" } }),
         btn(tr("memory.dom.inNotes"), { kind: "ghost", data: { mdact: "notes" }, title: tr("memory.dom.inNotesWhy") }),
       ],
     },
@@ -445,7 +437,7 @@ async function paintUnfiled(host: HTMLElement, mine: number): Promise<void> {
       title: tr("memory.dom.unfiled"),
       lede: tr("memory.dom.unfiledWhy"),
       meta: [r.data.truncated ? tr("memory.truncated", { n: items.length }) : trn(items.length, "memory.nNotes.one", "memory.nNotes.other")],
-      actions: [btn(tr("memory.dom.autofile"), { kind: "primary", data: { mdauto: "" }, title: tr("memory.dom.autofileWhy") })],
+      actions: [iconBtn("sparkles", tr("memory.dom.autofile"), { data: { mdauto: "" }, title: tr("memory.dom.autofileWhy") })],
     }),
     h("div", { id: "memDomErr" }),
     items.length
@@ -453,7 +445,7 @@ async function paintUnfiled(host: HTMLElement, mine: number): Promise<void> {
           lead: kindChip(x.kind, { bare: true }),
           name: [noteButton(x), " ", statusTag(x.status), markerTags(x.markers)],
           sub: x.excerpt || undefined,
-          primary: btn(tr("memory.dom.fileAsk"), { data: { mdfile: x.id, mdfiletitle: x.title } }),
+          primary: iconBtn("folder", tr("memory.dom.fileAsk"), { data: { mdfile: x.id, mdfiletitle: x.title } }),
         })))
       : emptyNode({ icon: "check", title: tr("memory.dom.unfiledNone") })));
 }
@@ -481,7 +473,7 @@ function paintUncovered(host: HTMLElement): void {
       ? card(dirs.map((u) => row({
           name: refLink(u.path + "/", { code: true, title: tr("memory.pv.openAnchor", { path: u.path }), data: { mpvfile: u.path } }),
           cols: [{ v: trn(u.files, "memory.dom.files.one", "memory.dom.files.other"), w: "m" }],
-          primary: btn(tr("memory.dom.own"), { data: { mdown: u.path }, title: tr("memory.dom.ownWhy", { path: u.path }) }),
+          primary: actionBtn("new", tr("memory.dom.own"), { data: { mdown: u.path }, title: tr("memory.dom.ownWhy", { path: u.path }) }),
         })))
       : emptyNode({ icon: "check", title: tr("memory.dom.uncoveredNone") })));
 }
@@ -647,13 +639,30 @@ function askDelete(d: MemDomainDetail): void {
 }
 
 function domainMenu(anchor: HTMLElement, d: MemDomainDetail): void {
+  const open = openInTree(d);
+  const whole = open.notes > 0 || open.domains > (d.confirmed ? 0 : 1);
   const items: MenuItem[] = [
+    { label: tr("memory.mark.verified"), title: tr("memory.dom.verifiedWhy"), fn: () => { void domainMenuAction(d, "verify"); } },
+    ...(open.domains || open.notes ? [{ label: tr(whole ? "memory.dom.confirmAll" : "memory.confirm"), title: whole ? tr("memory.dom.confirmAllWhy", { notes: open.notes }) : tr("memory.dom.confirmWhy"), fn: () => { void domainMenuAction(d, "confirm"); } }] : []),
     { label: tr("memory.dom.newSubAsk"), fn: () => { openDomainEditor({ parent: d.path }); }, disabled: d.depth >= DEPTH_MAX },
     { label: tr("memory.dom.moveAsk"), fn: () => { askMove(d); } },
     { sep: true },
     { label: tr("memory.dom.deleteAsk"), fn: () => { askDelete(d); }, danger: true },
   ];
   popupMenu(anchor.getBoundingClientRect(), items);
+}
+
+async function domainMenuAction(d: MemDomainDetail, action: "verify" | "confirm"): Promise<void> {
+  if (action === "verify") {
+    const r = await req<{ domain: MemDomain }>("POST", "/domains/" + seg(d.id) + "/verify", { project: S.project });
+    if (!r.ok) { domErr(errMessage(r.err)); return; }
+    toast(tr("memory.dom.verifiedDone"));
+  } else {
+    const r = await req<MemDomainConfirmed>("POST", "/domains/" + seg(d.id) + "/confirm", { project: S.project, all: true });
+    if (!r.ok || !r.data) { domErr(errMessage(r.err)); return; }
+    toast(confirmedWords(r.data));
+  }
+  await hooks.reload();
 }
 
 async function autofile(): Promise<void> {

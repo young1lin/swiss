@@ -40,6 +40,7 @@ import { assignMember, groupFieldNode, groupOf, lastGroup, loadCollapsed, mountG
 import { locale, tr, trn } from "../i18n.js";
                                               
 import { btn, checkField, closeSheet, dot, field, iconBtn, moreBtn, pair, paneBody, paneHead, popupMenu, relTime, row, sheet, showSheet, tag } from "../ui/index.js";
+import { actionBtn } from "../ui/action.js";
                                              
 import { commandOf, runOutcome, runTarget } from "./remote-runs.js";
 
@@ -331,7 +332,7 @@ function render()       {
         sub: [notServing ? tr("remote.tunnelsState", { state: presence }) : null, status],
         actions: [
           iconBtn("folder-plus", tr("remote.newGroup"), { id: "rmNewGroup" }),
-          btn(tr("remote.addTarget"), { id: "rmAdd", kind: "primary" }),
+          actionBtn("new", tr("remote.addTarget"), { id: "rmAdd" }),
         ],
       }),
       h("div", { id: "rmGroups" })));

@@ -32,7 +32,7 @@
 import { fill, h } from "./h.js";
 import { tr } from "./i18n.js";
 import { targetEl, toast } from "./util.js";
-import { btn, closeSheet, field, flow, formActions, formCap, hint, markdownNode, note, relTime, sheet, showSheet } from "./ui/index.js";
+import { actionBtn, btn, closeSheet, field, flow, formActions, formCap, hint, markdownNode, note, relTime, sheet, showSheet } from "./ui/index.js";
 import type { FlowStep } from "./ui/index.js";
 import { call } from "./views/llm-core.js";
 
@@ -85,7 +85,7 @@ function dbMemoryView(conn: string, onBack: () => void): HTMLElement {
     open = null;
     const mine = ++gen;
     const back = btn(tr("dataAgent.back"), { icon: "chevron-left", kind: "ghost", data: { dbmemback: "" } });
-    const add = btn(tr("dataAgent.memNew"), { icon: "plus", kind: "ghost", data: { dbmemnew: "" } });
+    const add = actionBtn("new", tr("dataAgent.memNew"), { ghost: true, data: { dbmemnew: "" } });
     const about = hint(tr("dataAgent.memHint"));
     const list = h("div", { data: { dbmemlist: "" } }, note(tr("dataAgent.loading"), { busy: true }));
     back.onclick = onBack;
@@ -107,8 +107,8 @@ function dbMemoryView(conn: string, onBack: () => void): HTMLElement {
     open = name;
     const mine = ++gen;
     const back = btn(tr("dataAgent.back"), { icon: "chevron-left", kind: "ghost", data: { dbmemlistback: "" } });
-    const edit = btn(tr("dataAgent.memEdit"), { kind: "ghost", disabled: true, data: { dbmemedit: name } });
-    const drop = btn(tr("dataAgent.memDelete"), { kind: "ghost", disabled: true, data: { dbmemdelete: name } });
+    const edit = actionBtn("edit", tr("dataAgent.memEdit"), { ghost: true, disabled: true, data: { dbmemedit: name } });
+    const drop = actionBtn("delete", tr("dataAgent.memDelete"), { ghost: true, disabled: true, data: { dbmemdelete: name } });
     const said = h("div", { data: { dbmemnote: name } }, note(tr("dataAgent.loading"), { busy: true }));
     back.onclick = (): void => { void showList(); };
     fill(view, formActions(back, h("code", { title: name }, name), h("span", { class: "grow" }), edit, drop), said);

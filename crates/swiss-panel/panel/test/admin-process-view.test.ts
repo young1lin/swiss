@@ -112,7 +112,9 @@ describe("the Process page (process plugin, SPEC §process.panel)", () => {
     expect(pane.querySelector(".pane-desc")?.textContent).toBe("Manage local apps and inspect gateway-owned processes.");
     expect(pane.querySelector(".pane-sub")?.textContent).toContain("4242");
     const add = pane.querySelector("#prAdd");
-    expect(add?.className).toContain("primary");
+    expect(add?.className).toContain("icon");
+    expect(add?.getAttribute("aria-label")).toBe("Add app");
+    expect(add?.querySelector("use")?.getAttribute("href")).toBe("#i-plus");
     expect($("countChip").textContent).toBe("0 apps");
     view.unmount();
   });
@@ -161,7 +163,7 @@ describe("the Process page (process plugin, SPEC §process.panel)", () => {
     view.unmount();
   });
 
-  it("a button the status makes meaningless is disabled; a busy row shows the action's name", async () => {
+  it("a button the status makes meaningless is disabled; a busy row names the action it is running", async () => {
     serve([
       app({ name: "up", status: "running" }),
       app({ name: "clash", status: "conflict", reason: "port 4317 is held by node.exe (pid 5)", conflictPid: 5, conflictImage: "node.exe" }),
@@ -170,12 +172,18 @@ describe("the Process page (process plugin, SPEC §process.panel)", () => {
     ]);
     await view.mount();
     const primary = (name: string): HTMLButtonElement => { return rowNamed(name).querySelector("[data-pract]") as HTMLButtonElement; };
-    expect(primary("up").textContent).toBe("Stop");
+    // The row action is an icon button (SPEC §panel.design rule 7): the glyph carries the verb,
+    // the accessible name and the tooltip carry the words.
+    expect(primary("up").textContent).toBe("");
+    expect(primary("up").getAttribute("aria-label")).toBe("Stop");
+    expect(primary("up").querySelector("use")?.getAttribute("href")).toBe("#i-square");
     expect(primary("up").disabled).toBe(false);
     expect(primary("clash").disabled).toBe(true);
-    expect(primary("gone").textContent).toBe("Start");
+    expect(primary("gone").getAttribute("aria-label")).toBe("Start");
+    expect(primary("gone").querySelector("use")?.getAttribute("href")).toBe("#i-play");
     expect(primary("gone").disabled).toBe(false);
     expect(primary("busy-one").disabled).toBe(true);
+    expect(primary("busy-one").getAttribute("aria-label")).toBe("Starting…");
     expect(rowNamed("busy-one").querySelector(".lrow-col .tag")?.textContent).toBe("Starting…");
     view.unmount();
   });

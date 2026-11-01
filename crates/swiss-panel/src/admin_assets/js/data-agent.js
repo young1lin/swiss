@@ -55,7 +55,7 @@ import { fill, h } from "./h.js";
 import { tr } from "./i18n.js";
 import { targetEl, toast } from "./util.js";
 import {
-  btn, chatFollow, chatPane, chatQueue, chatStats, dot, emptyNode, factLine, flow, formActions, formCap, formFold, grip, gripFold, gripFolded, hint, iconBtn, iconNode, note,
+  actionBtn, setActionBtn, btn, chatFollow, chatPane, chatQueue, chatStats, dot, emptyNode, factLine, flow, formActions, formCap, formFold, grip, gripFold, gripFolded, hint, iconBtn, iconNode, note,
   popupMenu, relTime, transcript, transcriptTurn,
 } from "./ui/index.js";
                                                                                                                                   
@@ -525,7 +525,7 @@ function dbAgentPane()                {
     actions: [
       btn("", { id: "dbAgentWrites", kind: "ghost", icon: "pencil", hidden: true, title: tr("dataAgent.writes.stageTip") }),
       btn("", { id: "dbAgentModel", kind: "ghost", icon: "chevron-up", hidden: true, title: tr("dataAgent.modelTip") }),
-      btn(tr("dataAgent.stop"), { id: "dbAgentStop", kind: "ghost", hidden: true }),
+      actionBtn("stop", tr("dataAgent.stop"), { id: "dbAgentStop", ghost: true, hidden: true }),
       btn(tr("dataAgent.send"), { id: "dbAgentSend", kind: "primary" }),
     ],
     stats: (stats = chatStats({ id: "dbAgentStats", note: tr("dataAgent.ctxNote") })).node,
@@ -673,7 +673,10 @@ function controls(talk             )       {
     else send.removeAttribute("title");
   }
   if (ask) ask.placeholder = queues ? tr("ui.chat.queuePh") : tr("dataAgent.askPh");
-  if (stop) { stop.hidden = !live; stop.disabled = !live || talk.stopping; }
+  if (stop) {
+    stop.hidden = !live; stop.disabled = !live || talk.stopping;
+    setActionBtn(stop, "stop", tr(talk?.stopping ? "memory.sync.run.stopping" : "dataAgent.stop"));
+  }
   if (fresh) fresh.disabled = !talk || live;
   if (history) {
     history.disabled = !talk;

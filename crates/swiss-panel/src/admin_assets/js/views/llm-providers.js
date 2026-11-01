@@ -34,6 +34,7 @@ import {
   btn, card, checkField, checkGrid, checkRow, closeSheet, editDetail, editLine, editList, editSub, emptyNode, failNote, field, formActions, formFold, hint, iconBtn, iconNode, kvRow,
   moreBtn, note, pair, paneBody, paneHead, popupMenu, row, section, sheet, showSheet, tag, valueBlock,
 } from "../ui/index.js";
+import { actionBtn } from "../ui/action.js";
              
                                                                                                                          
                          
@@ -259,7 +260,7 @@ function rowNode(p                )              {
         : valueBlock({ label: tr("llm.providers.models"), data: { lpblock: "models" }, text: tr("llm.providers.noModelsWhy") }),
     ],
     cols: [{ v: counts, w: "l", title: p.models.map((m) => m.id).join(", ") }, { v: usedCol(p.name), w: "l" }],
-    primary: btn(tr("llm.test"), { kind: "ghost", data: { lptest: p.name } }),
+    primary: actionBtn("test", tr("llm.test"), { ghost: true, title: tr("llm.testHint"), data: { lptest: p.name } }),
     more: moreBtn(tr("llm.providers.actionsName", { name: p.name }), { data: { lpmore: p.name } }),
     data: { lprow: p.name },
   });
@@ -279,7 +280,7 @@ function render()       {
     paneHead({
       desc: tr("llm.providers.desc"),
       sub: s.serving ? null : tr("llm.notServing"),
-      actions: [btn(tr("llm.providers.add"), { id: "lpAdd", kind: "primary" })],
+      actions: [actionBtn("new", tr("llm.providers.add"), { id: "lpAdd" })],
     }),
     section({},
       s.providers.length

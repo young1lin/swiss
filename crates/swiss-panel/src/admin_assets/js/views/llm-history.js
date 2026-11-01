@@ -32,7 +32,7 @@ import { $, api, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
                                       
 import { locale, tr } from "../i18n.js";
-import { JV_LINES, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, scrollBox, section, sheet, showSheet, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
+import { JV_LINES, actionBtn, setActionBtn, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, scrollBox, section, sheet, showSheet, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
                                                                        
 import { call, takeWantedRun } from "./llm-core.js";
 
@@ -344,8 +344,8 @@ function stopMemoryNode(r           )                                {
   const id = r.live ? memoryRunOf(r) : "";
   if (!id) return undefined;
   const stopping = stoppingMemory.has(id);
-  return btn(tr(stopping ? "memory.sync.run.stopping" : "memory.sync.run.stop"), {
-    kind: "ghost", data: { hstop: id }, disabled: stopping, title: tr("llm.history.stopMemoryTip", { id }),
+  return actionBtn("stop", tr(stopping ? "memory.sync.run.stopping" : "memory.sync.run.stop"), {
+    ghost: true, data: { hstop: id }, disabled: stopping, title: stopping ? tr("memory.sync.run.stopping") : tr("llm.history.stopMemoryTip", { id }),
   });
 }
 
@@ -353,7 +353,7 @@ function stopMemoryNode(r           )                                {
 async function stopMemory(id        , button                   )                {
   stoppingMemory.add(id);
   button.disabled = true;
-  button.textContent = tr("memory.sync.run.stopping");
+  setActionBtn(button, "stop", tr("memory.sync.run.stopping"));
   let said = "";
   try {
     const r = await api("/api/knowledge/sync/runs/" + encodeURIComponent(id) + "/cancel", { method: "POST" });
@@ -369,7 +369,7 @@ async function stopMemory(id        , button                   )                
   }
   stoppingMemory.delete(id);
   button.disabled = false;
-  button.textContent = tr("memory.sync.run.stop");
+  setActionBtn(button, "stop", tr("memory.sync.run.stop"), tr("llm.history.stopMemoryTip", { id }));
   toast(said, true);
 }
 

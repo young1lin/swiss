@@ -240,10 +240,12 @@ describe("a collection tab (SPEC §data.mongo-panel)", () => {
     await openOrders();
     const panes = all("#dbHead [data-mpane]").map((b) => b.dataset.mpane);
     expect(panes).toEqual(["docs", "agg", "schema", "indexes", "explain", "validation"]);
-    expect(all("#dbHead .btn:not(.icon)").map((b) => b.textContent)).toEqual([tr("dataMongo.addDocument")]);
+    expect($("#dbHead [data-madd]")?.getAttribute("aria-label")).toBe(tr("dataMongo.addDocument"));
+    expect($("#dbHead [data-madd] use")?.getAttribute("href")).toBe("#i-plus");
     click($("[data-mpane=indexes]"));
     await settle();
-    expect(all("#dbHead .btn:not(.icon)").map((b) => b.textContent)).toEqual([tr("dataMongo.addIndex")]);
+    expect($("#dbHead [data-mixadd]")?.getAttribute("aria-label")).toBe(tr("dataMongo.addIndex"));
+    expect($("#dbHead [data-mixadd] use")?.getAttribute("href")).toBe("#i-plus");
   });
 });
 

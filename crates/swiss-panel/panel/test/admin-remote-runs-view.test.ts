@@ -471,7 +471,8 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     const body = item(18).querySelector(".tl-body") as HTMLElement;
     expect(block(18, "Live output")?.querySelector("pre")?.textContent).toBe("tick\n");
     const cancel = body.querySelector("[data-rcancel]") as HTMLElement;
-    expect(cancel.textContent).toBe("Cancel");
+    expect(cancel.getAttribute("aria-label")).toBe("Cancel");
+    expect(cancel.querySelector("use")?.getAttribute("href")).toBe("#i-square");
     cancel.click();
     await settle();
     expect(requests.some((r) => r.path === "/api/runs/18/cancel" && r.method === "POST")).toBe(true);
@@ -571,7 +572,8 @@ describe("Cancel, while the run is stopping and after (2026-09-29)", () => {
       await settle();
       cancelBtn().click();
       await settle();
-      expect(cancelBtn().textContent).toBe("Canceling…");
+      expect(cancelBtn().getAttribute("aria-label")).toBe("Canceling…");
+      expect(cancelBtn().querySelector("use")?.getAttribute("href")).toBe("#i-square");
       expect(cancelBtn().disabled).toBe(true);
       cancelBtn().click();
       await settle();
@@ -596,7 +598,8 @@ describe("Cancel, while the run is stopping and after (2026-09-29)", () => {
       await settle();
       release!(false);
       await settle();
-      expect(cancelBtn().textContent).toBe("Cancel");
+      expect(cancelBtn().getAttribute("aria-label")).toBe("Cancel");
+      expect(cancelBtn().querySelector("use")?.getAttribute("href")).toBe("#i-square");
       expect(cancelBtn().disabled).toBe(false);
     } finally {
       Object.assign(globalThis, { fetch: stub });

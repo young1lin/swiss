@@ -152,7 +152,9 @@ describe("SPEC §mcp.revisions: the verb is disable, the word is disabled", () =
     expect(primary().getAttribute("aria-label")).toBe("Disable");
     expect(primary().title).toBe("Disable this MCP server — its clients lose the tools until you enable it again");
     expect(primary().textContent).toBe("");
-    expect(primary().querySelector("use")!.getAttribute("href")).toBe("#i-power");
+    // Disable is power-OFF and Enable is power — one shared glyph would leave the pair readable
+    // only through a tooltip, which is the one thing a reader who never hovers does not get.
+    expect(primary().querySelector("use")!.getAttribute("href")).toBe("#i-power-off");
     (mcpRows()[0] as unknown as Record<string, unknown>).lifecycle = "stopped";
     pane.patchDetailHead();
     expect(primary().getAttribute("aria-label")).toBe("Enable");

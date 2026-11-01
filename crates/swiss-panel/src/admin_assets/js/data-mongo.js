@@ -36,6 +36,7 @@ import { dbCopyText } from "./data-csv.js";
 import { dbOpenValueSheet } from "./data-value.js";
 import { loadCollapsed, mountGroup } from "./groups.js";
 import { locale, tr, trn } from "./i18n.js";
+import { actionBtn } from "./ui/action.js";
 import { btn, iconBtn } from "./ui/button.js";
 import { hint } from "./ui/form.js";
 import { jsonCodeNode, tokenCodeNode, valueBlock } from "./ui/json-view.js";
@@ -471,7 +472,8 @@ export function renderMongoHeadCtl(ctl             , t           , more         
     { id: "validation", label: tr("dataMongo.paneValidation"), hidden: view },
   ], t.pane, { key: "mpane", label: tr("dataMongo.panes") }));
   if (t.pane === "docs") {
-    if (!view) ctl.appendChild(btn(tr("dataMongo.addDocument"), { title: tr("dataMongo.addDocumentTitle"), data: { madd: "" } }));
+    // The pane's create action uses the shared New icon.
+    if (!view) ctl.appendChild(actionBtn("new", tr("dataMongo.addDocument"), { title: tr("dataMongo.addDocumentTitle"), data: { madd: "" } }));
   } else {
     const primary = mongoPaneHead(t);
     if (primary) ctl.appendChild(primary);
@@ -677,7 +679,7 @@ function renderMongoJson(wrap             , docs                           )    
   const code = jsonCodeNode(docs, true);
   wrap.appendChild(h("div", { style: "padding:var(--s2) var(--s3)" },
     h("div", { class: "db-console-row" },
-      btn(tr("dataMongo.copyPage"), { icon: "copy", data: { mcopypage: "" } }),
+      actionBtn("copy", tr("dataMongo.copyPage"), { data: { mcopypage: "" } }),
       hint(tr("dataMongo.jsonHint"))),
     code.node));
 }

@@ -43,6 +43,7 @@ import { copyText } from "../connect.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
 import { tr, trn } from "../i18n.js";
 import { btn, iconBtn, inlineForm, moreBtn, paneBody, paneHead, popupMenu, row, section } from "../ui/index.js";
+import { actionBtn } from "../ui/action.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed: Record<string, boolean> = {}; // the secrets fold map, loaded once before the first paint
@@ -105,7 +106,9 @@ function rowNode(name: string): HTMLElement {
   return row({
     name,
     sub: h("code", null, "${secret://" + name + "}"),
-    primary: btn(tr("secrets.copyRef"), { kind: "ghost", icon: "copy", data: { skcopy: name } }),
+    // The copy ref is the copy action's glyph, and its name says what it copies (SPEC §panel.design
+    // rule 7, ui/action.ts): one quieter mark per row instead of N standing hairline buttons.
+    primary: actionBtn("copy", tr("secrets.copyRef"), { ghost: true, data: { skcopy: name } }),
     more: moreBtn(tr("secrets.actionsName", { name }), { data: { skmore: name } }),
     data: { secret: name },
     draggable: true,

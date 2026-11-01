@@ -24,6 +24,7 @@ import { tk, tr, trn } from "./i18n.js";
 import { readableBody } from "./logs.js";
 import { dbCopyText } from "./data-csv.js";
 import { btn, iconBtn } from "./ui/button.js";
+import { actionBtn } from "./ui/action.js";
 import { valueBlock } from "./ui/json-view.js";
 import { filterInput, inlineForm, note, section, split } from "./ui/page.js";
 import { dot, tag } from "./ui/status.js";
@@ -634,7 +635,7 @@ function dbPubsubBody(t: DbPubsubTab, run: TimelineItem[]): HChild {
       l.truncated ? tr("dataPubsub.cutTip") : null,
     ]),
     inlineForm(
-      btn(tr("dataPubsub.copyChannel"), { kind: "ghost", icon: "copy", title: l.channel, data: { ps: "copych", psseq: seq } }),
+      actionBtn("copy", tr("dataPubsub.copyChannel"), { ghost: true, data: { ps: "copych", psseq: seq } }),
       btn(tr("dataPubsub.watchOnly"), {
         kind: "ghost", disabled: alone || !!l.channelBinary,
         title: l.channelBinary ? tr("dataPubsub.binaryChannelTip") : tr("dataPubsub.watchOnlyTip", { name: l.channel }),

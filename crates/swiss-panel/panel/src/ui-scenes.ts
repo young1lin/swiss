@@ -31,7 +31,7 @@ import type { HChild } from "./h.js";
 import { h } from "./h.js";
 import { tk, tr } from "./i18n.js";
 import {
-  btn, card, decodeStrings, dot, emptyNode, filterInput, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, moreBtn,
+  actionBtn, btn, card, decodeStrings, dot, emptyNode, filterInput, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, moreBtn,
   pageFoot, pager, pane, paneHead, pickPanel, pickerRow, portChip, resHead, row, section, seg, sideRow, sw, tag, timeline, timelineMeta, valueBlock,
   flow, flowIO, flowToggle, formFold, transcript, transcriptText, resultTable, resultChart,
 } from "./ui/index.js";
@@ -115,7 +115,7 @@ function content(): HTMLElement {
       sub: [h("code", null, t.key), " · ", tr("gallery.s.createdDaysAgo", { n: t.age })],
       muted: !!t.revoked,
       cols: t.revoked ? [tag(tr("gallery.s.revoked"))] : [],
-      primary: t.revoked ? undefined : btn(tr("gallery.s.copy"), { kind: "ghost", icon: "copy" }),
+      primary: t.revoked ? undefined : actionBtn("copy", tr("gallery.s.copy"), { ghost: true }),
       more: moreBtn(tr("gallery.s.moreFor", { name: t.name })),
     }))).root;
   });
@@ -209,7 +209,7 @@ function processPage(): HTMLElement {
   const children = groupNode({ name: "mcp", count: 1, density: "page" }, row({
     name: "design-tools", sub: tr("process.childKind.mcp"),
     meta: [h("code", null, tr("process.pid", { pid: "4243" })), tr("process.uptime", { up: "3m" }), tr("process.memMb", { n: "24" })],
-    primary: btn(tr("process.action.stopChild")),
+    primary: actionBtn("stop", tr("process.action.stopChild")),
   }));
   children.toggle.onclick = () => {
     const folded = children.root.classList.toggle("collapsed");
@@ -220,7 +220,7 @@ function processPage(): HTMLElement {
   pick.path.value = "C:/Users/Developer/workspaces/local-services/example-with-a-long-project-name/build/bin";
   pick.list.append(pickerRow("dir", "bin", false), pickerRow("exe", "demo.exe", true), pickerRow("other", "readme.txt", false));
   return h("div", { class: "shell" }, pane({},
-    paneHead({ desc: tr("process.desc"), sub: tr("process.gatewayLine", { pid: "4241", up: "1h", mem: "18" }), actions: [btn(tr("process.addApp"), { kind: "primary", icon: "plus" })] }),
+    paneHead({ desc: tr("process.desc"), sub: tr("process.gatewayLine", { pid: "4241", up: "1h", mem: "18" }), actions: [actionBtn("new", tr("process.addApp"))] }),
     section({ cap: tr("process.appsCap"), note: tr("process.appsNote") }, card(
       app("telemetry-demo", "up", tr("process.status.running"), [14317, 14318, 18899], tr("process.action.stop")),
       app("edge-relay-with-sixteen-listeners", "down", tr("process.status.partial"), Array.from({ length: 16 }, (_, i) => 18400 + i), tr("process.action.stop")),
@@ -257,7 +257,7 @@ function conversation(): HTMLElement {
 /** The desktop's first resource page has useful entry points without a selected server. */
 function desktopOverview(): HTMLElement {
   return h("div", { class: "shell" }, pane({},
-    paneHead({ title: tr("desktop.workspace"), desc: tr("desktop.workspaceHint"), actions: [btn(tr("pane.addMcp"), { kind: "primary", icon: "plus" })] }),
+    paneHead({ title: tr("desktop.workspace"), desc: tr("desktop.workspaceHint"), actions: [actionBtn("new", tr("pane.addMcp"))] }),
     section({ cap: tr("desktop.servers") }, card(...SERVERS.map(server => row({
       name: server.name, sub: server.glyph, lead: dot(server.state, server.state), primary: btn(tr("desktop.open")),
     }))))));

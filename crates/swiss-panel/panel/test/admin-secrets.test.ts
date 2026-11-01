@@ -120,12 +120,16 @@ describe("the Secrets page (SPEC §host.vault)", () => {
       .toBe("${secret://stripe-key}");
     expect($("pane").querySelector(".pane-desc")?.textContent)
       .toBe("Write-only vault. Reference a value as ${secret://name}; it is never shown again.");
-    // Copy ref is a quiet ghost button with the copy glyph, one per row.
-    const copy = $("pane").querySelectorAll('[data-skcopy="stripe-key"]');
+    // Copy ref is the copy action's glyph alone: its name rides in aria-label and the tooltip
+    // (SPEC §panel.design rule 7 — an icon button is never a mystery, and never one of N word
+    // buttons on a row).
+    const copy = $("pane").querySelectorAll<HTMLButtonElement>('[data-skcopy="stripe-key"]');
     expect(copy.length).toBe(1);
-    expect(copy[0].className).toBe("btn ghost with-ic");
+    expect(copy[0].className).toBe("btn icon ghost");
     expect(copy[0].querySelector("use")?.getAttribute("href")).toBe("#i-copy");
-    expect(copy[0].textContent).toBe("Copy ref");
+    expect(copy[0].getAttribute("aria-label")).toBe("Copy ref");
+    expect(copy[0].title).toBe("Copy ref");
+    expect(copy[0].textContent).toBe("");
     // New group is the folder-plus glyph - the sidebar's own for the same act (rule 7).
     expect($("skNewGroup").querySelector("use")?.getAttribute("href")).toBe("#i-folder-plus");
     // Delete lives behind the row's overflow menu (design rule 4: red never sits on a row).

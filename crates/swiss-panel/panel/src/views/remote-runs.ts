@@ -46,7 +46,7 @@ import type { HChild } from "../h.js";
 import { tr, trn } from "../i18n.js";
 import { copyLogText, readableBody } from "../logs.js";
 import {
-  btn, closeMenu, collapseRuns, emptyNode, filterInput, iconBtn, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, textNode, timeline, timelineMeta,
+  actionBtn, btn, closeMenu, collapseRuns, emptyNode, filterInput, iconBtn, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, textNode, timeline, timelineMeta,
   timelineToggle, valueBlock,
 } from "../ui/index.js";
 import type { TimelineItem } from "../ui/index.js";
@@ -291,8 +291,8 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
         // does not return until the run has actually stopped.
         tools: cancellable
           ? [canceling[r.runId]
-            ? btn(tr("remoteRuns.canceling"), { data: { rcancel: r.runId }, disabled: true })
-            : btn(tr("remoteRuns.cancel"), { data: { rcancel: r.runId } })]
+            ? actionBtn("stop", tr("remoteRuns.canceling"), { data: { rcancel: r.runId }, disabled: true })
+            : actionBtn("stop", tr("remoteRuns.cancel"), { data: { rcancel: r.runId } })]
           : [],
       },
       liveText != null
@@ -342,11 +342,11 @@ function stdinNode(r: ApiRemoteRunRow): HChild {
   const size = fmtBytes(bytes);
   const c = contents[r.runId];
   if (!c) {
-    return valueBlock({ label, notes: [size], tools: [btn(tr("remoteRuns.showStdin"), { data: { rcontent: r.runId } })] });
+    return valueBlock({ label, notes: [size], tools: [iconBtn("eye", tr("remoteRuns.showStdin"), { data: { rcontent: r.runId } })] });
   }
   if ("error" in c) return valueBlock({ label, notes: [size] }, note(c.error));
   const notes = c.truncated ? [size, tr("remoteRuns.contentHead", { cap: fmtBytes(256 * 1024) })] : [size];
-  return valueBlock({ label, notes, tools: [btn(tr("remoteRuns.hideContent"), { data: { rcontenthide: r.runId } })] },
+  return valueBlock({ label, notes, tools: [iconBtn("eye-off", tr("remoteRuns.hideContent"), { data: { rcontenthide: r.runId } })] },
     textNode(c.text, true, "logs").node);
 }
 
@@ -364,7 +364,7 @@ function writtenNode(r: ApiRemoteRunRow): HChild {
   const label = tr("remoteRuns.contentWritten");
   const c = contents[r.runId];
   if (!c) {
-    return valueBlock({ label, notes: [size], tools: [btn(tr("remoteRuns.showContent"), { data: { rcontent: r.runId } })] });
+    return valueBlock({ label, notes: [size], tools: [iconBtn("eye", tr("remoteRuns.showContent"), { data: { rcontent: r.runId } })] });
   }
   if ("error" in c) return valueBlock({ label, notes: [size] }, note(c.error));
   const notes = c.truncated ? [size, tr("remoteRuns.contentHead", { cap: fmtBytes(256 * 1024) })] : [size];

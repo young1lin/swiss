@@ -37,6 +37,7 @@ import {
   paneHead, popupMenu, proseText, relTime, row, section, sheet, showSheet, tag, transcript, transcriptTurn, valueBlock,
 } from "../ui/index.js";
 import type { ChatQueued, RowCol, TranscriptTurn } from "../ui/index.js";
+import { actionBtn } from "../ui/action.js";
 import type { LlmAgentEntry, LlmAgentRow, LlmEffort, LlmProtocol, LlmRuntime, LlmStatus, LlmTelemetryBlock, LlmTestReply, LlmToolInfo } from "../types/llm.js";
 import {
   NAME_RE, call, credentialLeak, isError, linesToMap, loadRow, loadStatus, mapToLines, modelsOf, putRow, runtimeWord, takeAgentPreset, testNode, toolSummary, wholeField,
@@ -202,7 +203,7 @@ function agentRow(a: LlmAgentRow): HTMLElement {
     // A db agent runs no Test: it is asked on the Data page, on a connection.
     primary: a.runtime === "db"
       ? btn(tr("llm.agents.openData"), { kind: "ghost", data: { ladata: a.name } })
-      : btn(tr("llm.test"), { kind: "ghost", data: { latest: a.name } }),
+      : actionBtn("test", tr("llm.test"), { ghost: true, title: tr("llm.testHint"), data: { latest: a.name } }),
     more: moreBtn(tr("llm.agents.actionsName", { name: a.name }), { data: { lamore: a.name } }),
     data: { larow: a.name },
   });
@@ -241,7 +242,7 @@ function render(): void {
     paneHead({
       desc: tr("llm.agents.desc"),
       sub: s.serving ? null : tr("llm.notServing"),
-      actions: [btn(tr("llm.agents.add"), { id: "laAdd", kind: "primary", disabled: s.agents.length >= AGENTS_MAX })],
+      actions: [actionBtn("new", tr("llm.agents.add"), { id: "laAdd", disabled: s.agents.length >= AGENTS_MAX })],
     }),
     section({},
       s.agents.length

@@ -49,9 +49,10 @@ import { appendJobRuns, clearJobBusy, jobDragging, jobDraggingGroup, jobFolds, j
 import { locale, tk, tr } from "./i18n.js";
 import { readableBody } from "./logs.js";
 import {
-  btn, checkField, closeSheet, collapseRuns, dot, field, formCap, hint, iconBtn, moreBtn, note, pair, paneBody, paneHead,
+  actionBtn, btn, checkField, closeSheet, collapseRuns, dot, field, formCap, hint, iconBtn, moreBtn, note, pair, paneBody, paneHead,
   popupMenu, relTime, row, section, seg, sheet, showSheet, tag, timeline, timelineMeta, timelineToggle, valueBlock,
 } from "./ui/index.js";
+import { setActionBtn } from "./ui/action.js";
 import type { RowCol, TimelineItem } from "./ui/index.js";
 
 let probed: boolean | null = null; // null = not probed yet; then the cached boolean answer for this page load
@@ -162,8 +163,11 @@ function lastCol(j: ApiJobRow): RowCol {
  *  run. There is no lead dot. A switched-off job is an Off tag after its name, not a greyed
  *  row, and a green "scheduled" dot would only repeat the next-run column. The amber pulse
  *  after the name appears only while the job runs. A v2 title is the name; the id every action
- *  addresses rides the sub-line in mono. Run now is the one word button, the rest is behind
- *  the ⋯. Every label, command and trigger sentence is a text node (SPEC §panel.toolchain). */
+ *  addresses rides the sub-line in mono. Run now is the row's one action button - the play
+ *  glyph, its word and its promise in the tooltip (SPEC §panel.design rule 7) - the rest is
+ *  behind the ⋯. Running the job and switching its schedule off are two different verbs and
+ *  live in two different places: the schedule is the row's switch in its ⋯. Every label,
+ *  command and trigger sentence is a text node (SPEC §panel.toolchain). */
 function jobRowNode(j: ApiJobRow): HTMLElement {
   const busy = jobIsBusy(j.name);
   const titled = !!j.title && j.title !== j.name;
@@ -176,10 +180,21 @@ function jobRowNode(j: ApiJobRow): HTMLElement {
     ],
     sub: titled ? [h("code", null, j.name), " · ", h("code", null, j.command)] : h("code", null, j.command),
     cols: [{ v: scheduleWords(j), w: "m", title: triggerSummary(j) }, nextCol(j), lastCol(j)],
-    primary: btn(busy ? "\u2026" : tr("jobs.runNow"), { data: { run: "" }, disabled: busy || !!j.running }),
+    primary: runButton(j),
     more: moreBtn(tr("jobs.actionsName", { name: j.name }), { data: { more: "" } }),
     data: { job: j.name },
     draggable: true,
+  });
+}
+
+/** The row's one action, built in ONE place so the drawn row and the poll's patch can never
+ *  disagree about its glyph, its words or when it is available. */
+function runButton(j: ApiJobRow): HTMLButtonElement {
+  const busy = jobIsBusy(j.name);
+  const label = busy ? tr("jobs.runningNow") : tr("jobs.runNow");
+  return actionBtn("start", label, {
+    title: busy ? label : tr("jobs.runNowHint"),
+    data: { run: "" }, disabled: busy || !!j.running,
   });
 }
 
@@ -201,7 +216,7 @@ function renderJobs(): void {
       actions: [
         iconBtn("folder-plus", tr("jobs.newGroup"), { id: "jobNewGroup" }),
         moreBtn(tr("jobs.moreActions"), { id: "jobMore" }),
-        btn(tr("jobs.new"), { kind: "primary", id: "jobNew" }),
+        actionBtn("new", tr("jobs.new"), { id: "jobNew" }),
       ],
     }),
     section({}, h("div", { id: "jobGroups" }))));
@@ -258,9 +273,10 @@ function jobCfg(): GroupCfg<ApiJobRow> {
 
 /** Bring a drawn row up to a freshly built one in place: the text block and each column are
  *  swapped only when they read differently (a hover title under the pointer does not flicker
- *  every tick), and Run now stays the SAME node with its label and state moved, so a poll
- *  never takes the focus off the button a hand just pressed. */
-function patchJobRow(node: Element, fresh: HTMLElement): void {
+ *  every tick), and Run now stays the SAME node with its glyph, name, tooltip and state moved,
+ *  so a poll never takes the focus off the button a hand just pressed — and never empties it,
+ *  which is what a `textContent = …` write would do to a button whose child is an <svg>. */
+function patchJobRow(node: Element, fresh: HTMLElement, j: ApiJobRow): void {
   const swap = (sel: string): void => {
     const now = fresh.querySelectorAll(sel);
     node.querySelectorAll(sel).forEach((was: Element, i: number): void => {
@@ -271,8 +287,11 @@ function patchJobRow(node: Element, fresh: HTMLElement): void {
   swap(".lrow-main");
   swap(".lrow-col");
   const run = node.querySelector<HTMLButtonElement>("[data-run]");
-  const next = fresh.querySelector<HTMLButtonElement>("[data-run]");
-  if (run && next) { run.disabled = next.disabled; run.textContent = next.textContent; }
+  const next = runButton(j);
+  if (run) {
+    setActionBtn(run, "start", next.getAttribute("aria-label") || tr("jobs.runNow"), next.title);
+    run.disabled = next.disabled;
+  }
 }
 
 /** Poll-safe update: every row's words and columns, Run now, the group counts. Never
@@ -288,7 +307,7 @@ function patchJobs(): void {
   }
   Array.prototype.forEach.call(pane.querySelectorAll("[data-job]"), (node: Element): void => {
     const j = jobByName(node.getAttribute("data-job"));
-    if (j) patchJobRow(node, jobRowNode(j));
+    if (j) patchJobRow(node, jobRowNode(j), j);
   });
   // Group counts move with rows: a count that only refreshed on rebuild would disagree with
   // the patched dots beside it for the rest of the poll.

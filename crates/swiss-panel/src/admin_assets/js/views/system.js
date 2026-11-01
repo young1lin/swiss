@@ -20,6 +20,7 @@ import { currentView } from "../ui-state.js";
 import { desktopQuit } from "../desktop.js";
 import { tr } from "../i18n.js";
 import { btn, card, closeSheet, emptyNode, hint, iconBtn, note, paneBody, paneHead, row, section, sheet, showSheet, sw, tag } from "../ui/index.js";
+import { actionBtn } from "../ui/action.js";
                                                                                                                              // Admin API contracts.
 const machine                                            = { autostart: null, "user-path": null };
 const busy = new Set            ();
@@ -56,7 +57,9 @@ function skillsSection()              {
         iconBtn("download", label, { ghost: true, disabled: skillBusy.has(key), data: { "skill-install": skill.name, "skill-directory": location.root } })) };
     }),
   }))) : note(tr("system.skillsUnavailable"));
-  const part = section({ cap: tr("system.skills"), note: tr("system.skillsHint"), tools: [btn(tr("system.refreshSkills"), { id: "system-skills-refresh", disabled: skillBusy.size > 0 })] },
+  // Refresh reads every skill's install state again: the refresh glyph, its word in the tooltip
+  // (SPEC §panel.design rule 7). NOT a restart - nothing is rebuilt, the page just looks again.
+  const part = section({ cap: tr("system.skills"), note: tr("system.skillsHint"), tools: [actionBtn("refresh", tr("system.refreshSkills"), { id: "system-skills-refresh", title: tr("system.refreshSkillsHint"), disabled: skillBusy.size > 0 })] },
     body, note(tr("system.skillsActionHint")));
   part.id = "system-skills";
   return part;

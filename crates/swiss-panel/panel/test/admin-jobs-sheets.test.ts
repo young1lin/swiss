@@ -100,7 +100,10 @@ describe("the Jobs head (SPEC §panel.pages)", () => {
     const acts = Array.from(pane.querySelectorAll(".pane-actions > *"));
     expect(acts.map((b) => b.id)).toEqual(["jobNewGroup", "jobMore", "jobNew"]);
     expect($("jobNewGroup").querySelector("use")?.getAttribute("href")).toBe("#i-folder-plus");
-    expect($("jobNew").className).toBe("btn primary");
+    // New carries the plus glyph (SPEC §panel.design rule 7), like New in every other module.
+    expect($("jobNew").className).toBe("btn icon");
+    expect($("jobNew").getAttribute("aria-label")).toBe("New");
+    expect($("jobNew").querySelector("use")?.getAttribute("href")).toBe("#i-plus");
     expect(pane.querySelector(".sec-cap")).toBeNull(); // "Scheduled commands" named the page twice
     expect(pane.querySelector(".page-foot, .tun-foot")).toBeNull(); // the count is the context bar's
   });

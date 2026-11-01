@@ -113,7 +113,10 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect(acts.map((b) => b.id)).toEqual(["rmNewGroup", "rmAdd"]);
     expect($("rmNewGroup").querySelector("use")?.getAttribute("href")).toBe("#i-folder-plus");
     expect($("rmNewGroup").getAttribute("aria-label")).toBe("New group");
-    expect($("rmAdd").className).toBe("btn primary");
+    // Add carries the plus glyph, like every other "new" in the panel (SPEC §panel.design rule 7).
+    expect($("rmAdd").className).toBe("btn icon");
+    expect($("rmAdd").querySelector("use")?.getAttribute("href")).toBe("#i-plus");
+    expect($("rmAdd").getAttribute("aria-label")).toBe("Add target");
     expect($("countChip").textContent).toBe("1 target");
   });
 

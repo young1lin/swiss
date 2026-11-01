@@ -159,15 +159,17 @@ describe("the toolbar draws only the active tab's controls (SPEC §data.tabs)", 
     openTable(false, "Read-only: ops_dev is not this connection's configured database (acme_app_dev).");
     expect(flatBtns().length).toBe(0);
   });
-  it("an sql tab: no pager, no row buffer — Run all and Run are its flat buttons", () => {
+  it("an sql tab: no pager or row buffer — Run all and Run have distinct icons", () => {
     mount();
     const s = freshTab("sql");
     s.sqlText = "select 1";
     dbTabs().length = 0;
     dbTabs().push(s);
     grid.renderDbToolbar();
-    const flat = flatBtns();
-    expect(flat.map((n) => n.id), "the whole console, then the selection or the caret's block (SPEC §data.console)").toEqual(["dbSqlRunAll", "dbSqlRun"]);
+    const runs = find(byId.dbHead, (n) => n.id === "dbSqlRunAll" || n.id === "dbSqlRun");
+    expect(runs.map((n) => n.id)).toEqual(["dbSqlRunAll", "dbSqlRun"]);
+    expect(runs.map((n) => n.dataset.action)).toEqual(["startAll", "start"]);
+    expect(flatBtns()).toHaveLength(0);
     const head = find(byId.dbHead, (n) => n.dataset && (n.dataset.pg || n.dataset.tb === "addrow"));
     expect(head.length, "no pager and no +Row on an sql toolbar").toBe(0);
   });
@@ -278,5 +280,34 @@ describe("the status line (SPEC §data.tabs)", () => {
     const conn = find(byId.dbStatus, (n) => String(n.className).includes("db-status-conn"))
       .map((n) => n.textContent).join(" ");
     expect(conn).toContain("mysql");
+  });
+
+  it("draws no row pager on a table's schema panes — they list columns, not rows", () => {
+    // Found on the panel: the Structure tab (59 columns of a_contract_position) carried
+    // "301–350 of 3,387" and a page size, paging rows that were not on screen.
+    // One mount per pane: this DOM stub does not empty a node on textContent = "", so a second
+    // render would count the first render's pager.
+    const openOn = (pane: string): void => {
+      openTable(true);
+      const t = dbTabs()[0];
+      if (t.kind !== "table") throw new Error("a table tab");
+      t.pane = pane;
+      byId.dbStatus.children.length = 0;
+      grid.renderDbStatus();
+    };
+    for (const pane of ["columns", "indexes", "fks", "ddl"]) {
+      openOn(pane);
+      const pager = find(byId.dbStatus, (n) => n.dataset && (n.dataset.pg || n.dataset.tb === "pagesize"));
+      expect(pager.length, pane + " carries no pager").toBe(0);
+      // The connection stays: the line still says which database this schema belongs to.
+      const conn = find(byId.dbStatus, (n) => String(n.className).includes("db-status-conn"));
+      expect(conn.length, pane + " still names the connection").toBe(1);
+    }
+    // The two row views keep it: the grid and the form walk the same page of rows.
+    for (const pane of ["data", "form"]) {
+      openOn(pane);
+      expect(find(byId.dbStatus, (n) => n.dataset && n.dataset.pg === "next").length, pane + " pages").toBe(1);
+      expect(find(byId.dbStatus, (n) => n.dataset && n.dataset.tb === "pagesize").length, pane + " sizes").toBe(1);
+    }
   });
 });

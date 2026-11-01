@@ -96,12 +96,16 @@ const HELPERS: Record<string, string> = {
   pickSelect: "moves a pickList()'s selection in place - the memory list's arrows drive it",
   diffFiles: "parses the patch diffNode() draws, file by file - a pure reader with nothing to show",
   diffStatusWord: "a file status as its word - the label inside diffNode()'s fold, nothing drawn of its own",
+  ACTION_ICON: "the action → glyph table actionBtn() draws by - strings, every one shown in the Actions section",
+  actionIcon: "the glyph name for an action - a string a page's word button wears (btn({ icon: actionIcon(\"new\") }))",
+  setActionBtn: "restates a built action button in place on a state flip - a state move, nothing new drawn",
 };
 
 /** The shape each drawing function leaves in the DOM: how a claim is checked. */
 const SIG: Record<string, string> = {
   btn: ".btn:not(.icon)",
   iconBtn: ".btn.icon",
+  actionBtn: ".btn.icon[data-action]",
   moreBtn: ".btn.icon.ghost use[href=\"#i-ellipsis\"]",
   iconNode: "svg.ic > use",
   redacted: ".redact > code + button.redact-eye",

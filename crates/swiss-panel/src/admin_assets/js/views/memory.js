@@ -49,7 +49,7 @@ import { $, targetEl, toast } from "../util.js";
                                       
 import { fill, h } from "../h.js";
 import { tr, trn } from "../i18n.js";
-import {
+import { actionBtn,
   btn, card, checkField, closeMenu, closeSheet, dot, emptyNode, failNote, field, filterInput, form, formActions, hint,
   iconBtn, inlineForm, markdownNode, menuOpen, moreBtn, note, openFieldSheet, pickList, pickRow, pickSelect, popupMenu, row, seg,
   sheet, showSheet, sideRow, tag, textNode, valueBlock, workspace, wsBar, wsHead, wsScroll, wsSide, wsSplit,
@@ -219,7 +219,7 @@ function headNode(p            )              {
       autoButton(p),
       // Global is the shared scope every project reads: it cannot be renamed or deleted.
       p.global ? null : moreBtn(tr("memory.proj.actions", { name: p.name }), { data: { mpmenu: "" } }),
-      btn(tr("memory.newNote"), { kind: "primary", icon: "plus", data: { mnewnote: "" } }),
+      actionBtn("new", tr("memory.newNote"), { data: { mnewnote: "" } }),
     ],
     nav: seg([
       { id: "domains", label: tr("memory.tab.domains"), n: S.domains && S.domainsOf === p.id ? S.domains.length || null : null, hidden: p.global },

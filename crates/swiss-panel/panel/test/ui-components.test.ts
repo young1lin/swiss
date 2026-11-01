@@ -34,7 +34,8 @@ import {
 } from "../src/ui/index.js";
 import {
   anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, failNote, filterInput,
-  fmtMs, groupNode, heldDot, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
+  ACTION_ICON, actionBtn, fmtMs, groupNode, heldDot, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
+  setActionBtn,
   objTab, pager, paneBody, paneHead, pickPanel, pickerRow, portChip, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
   relTime, timeLabel, timeline, timelineMeta, timelineToggle, toTop, transcript, transcriptText, transcriptTurn, toolChip, valueBlock,
 } from "../src/ui/index.js";
@@ -167,6 +168,51 @@ describe("ui/button", () => {
     // Present but not shown yet, like btn({ hidden }): Data's pane ⋯ waits for a SQL connection.
     expect(iconBtn("copy", "Copy", { hidden: true }).hidden).toBe(true);
     expect(moreBtn("More", { id: "m", hidden: true }).hidden).toBe(true);
+  });
+
+  it("the action table: one glyph per verb, and the opposite halves never share one", () => {
+    // SPEC §panel.design rule 7. The pair is what a reader clicks blind: with one picture for both
+    // halves the difference is only in a tooltip nobody hovers.
+    expect(ACTION_ICON.enable).not.toBe(ACTION_ICON.disable);
+    expect(ACTION_ICON.start).not.toBe(ACTION_ICON.stop);
+    expect(ACTION_ICON.startAll).not.toBe(ACTION_ICON.start);
+    expect(ACTION_ICON.bookmark).not.toBe(ACTION_ICON.unbookmark);
+    expect(ACTION_ICON.refresh).not.toBe(ACTION_ICON.restart);
+    expect(ACTION_ICON.new).not.toBe(ACTION_ICON.newGroup);
+    // A resume IS a start, and says so: nothing on the panel pauses, so both wear the same play.
+    expect(ACTION_ICON.resume).toBe(ACTION_ICON.start);
+    expect(ACTION_ICON.pause).not.toBe(ACTION_ICON.stop);
+  });
+
+  it("actionBtn carries the verb it performs - the glyph, the name and the data-action hook", () => {
+    const b = actionBtn("disable", "Disable this MCP", { id: "primaryBtn", title: "Disable this MCP server" });
+    expect(b.className).toBe("btn icon");
+    expect(useHref(b)).toBe("#i-power-off");
+    expect(b.dataset.action).toBe("disable");
+    expect(b.getAttribute("aria-label")).toBe("Disable this MCP");
+    expect(b.title).toBe("Disable this MCP server");
+    // The pair drawn side by side: two pictures, not one picture and one tooltip.
+    expect(useHref(actionBtn("enable", "Enable"))).toBe("#i-power");
+    expect(useHref(actionBtn("stop", "Stop"))).not.toBe(useHref(actionBtn("start", "Start")));
+  });
+
+  it("setActionBtn moves glyph, name, tooltip and verb together - and never empties the sprite", () => {
+    // The trap this exists for: a poll that wrote `textContent = label` onto a state-flipping
+    // button deleted its <svg> and left a wordless, iconless box (§panel.design rule 7).
+    const b = actionBtn("disable", "Disable", { title: "Disable this tunnel" });
+    setActionBtn(b, "enable", "Enable", "Enable this tunnel");
+    expect(b.querySelectorAll("svg").length, "the glyph is still there").toBe(1);
+    expect(useHref(b)).toBe("#i-power");
+    expect(b.dataset.action).toBe("enable");
+    expect(b.getAttribute("aria-label")).toBe("Enable");
+    expect(b.title).toBe("Enable this tunnel");
+    // The started/stopped pair of a port forward turns the same way.
+    setActionBtn(b, "stop", "Stop", "Stop this port forward");
+    setActionBtn(b, "start", "Start", "Start this port forward");
+    expect(useHref(b)).toBe("#i-play");
+    // An own title is restated from the label when the caller passes none.
+    setActionBtn(b, "stop", "Stop");
+    expect(b.title).toBe("Stop");
   });
 
   it("moreBtn is the ghost ellipsis with the caller's hook", () => {

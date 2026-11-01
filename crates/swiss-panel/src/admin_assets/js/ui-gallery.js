@@ -34,7 +34,7 @@ import { install, langPref, tk, tr } from "./i18n.js";
 import { SCENES } from "./ui-scenes.js";
 import { graphEngine } from "./graph-engine.js";
 import {
-  anchoredMenu, btn, card, catChip, chatPane, chatQueue, chatStats, checkField, checkGrid, checkRow, closeMenu, closeSheet, decodeStrings, dock, docHead, dot, editDetail, editLine, editList, editSub,
+  actionBtn, anchoredMenu, btn, card, catChip, chatPane, chatQueue, chatStats, checkField, checkGrid, checkRow, closeMenu, closeSheet, decodeStrings, dock, docHead, dot, editDetail, editLine, editList, editSub,
   emptyNode, factLine, failNote, field, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, form, formActions, formCap, formFold, graphView, groupNode, heldDot, hint, iconBtn, iconNode,
   initSelects, redacted, initSheet, inlineForm, jsonCodeNode, diffNode, kvRow, markdownNode, menuOpen, moreBtn, note, objTab, openFieldSheet,
   grip, pageFoot, pager, pair, pane, paneHead, pickList, pickRow, popupMenu, refLink, relTime, resHead, row, section,
@@ -476,6 +476,20 @@ function catalogue(now        )              {
       [tr("gallery.st.iconGhost"), iconBtn("folder-plus", tr("gallery.d.newGroup"), { ghost: true })],
       [tr("gallery.st.iconPressed"), iconBtn("star", tr("gallery.d.pin"), { ghost: true, pressed: true })],
       [tr("gallery.st.more"), moreBtn(tr("gallery.d.more"))],
+    ]),
+    // The action table (SPEC §panel.design rule 7): one row per verb, so a reader can see that the
+    // two halves of a pair wear different pictures and that the tooltip states the click's effect.
+    entry(["actionBtn"], tk("gallery.c.actions"), tk("gallery.c.actionsNote"), [
+      [tr("gallery.st.actStart"), [actionBtn("start", tr("gallery.d.run")), " ", actionBtn("startAll", tr("dataView.runAll")), " ", actionBtn("bookmark", tr("analysis.save")), " ", actionBtn("unbookmark", tr("analysis.unsave"))]],
+      [tr("gallery.st.actStop"), actionBtn("stop", tr("gallery.d.stop"))],
+      [tr("gallery.st.actEnable"), actionBtn("enable", tr("gallery.d.enable"))],
+      [tr("gallery.st.actDisable"), actionBtn("disable", tr("gallery.d.disable"))],
+      [tr("gallery.st.actRefresh"), actionBtn("refresh", tr("gallery.d.refresh"))],
+      [tr("gallery.st.actRestart"), actionBtn("restart", tr("gallery.d.restart"))],
+      [tr("gallery.st.actTest"), actionBtn("test", tr("gallery.d.test"))],
+      [tr("gallery.st.actBusy"), actionBtn("stop", tr("gallery.d.actionBusy"), { disabled: true })],
+      [tr("gallery.st.actPair"), [actionBtn("start", tr("gallery.d.run")), " ", actionBtn("stop", tr("gallery.d.stop")),
+        " ", actionBtn("enable", tr("gallery.d.enable")), " ", actionBtn("disable", tr("gallery.d.disable"))]],
     ]),
     entry(["dot", "heldDot", "tag", "spinner"], tk("gallery.c.status"), tk("gallery.c.statusNote"),
       DOTS.map(([s, k])                   => [tr(k), dot(s, tr(k))]).concat([

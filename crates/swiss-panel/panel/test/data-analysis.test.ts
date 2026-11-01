@@ -17,12 +17,14 @@ const calls: string[] = [];
 let seq = 0;
 let task: AnalysisTask;
 let execution: Promise<unknown> | null = null;
+let saving: Promise<unknown> | null = null;
 const previousFetch = globalThis.fetch;
 globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
   const url = String(input);
   calls.push(url);
   let out: unknown = {};
   if (url.endsWith("/execute")) out = await execution;
+  else if (url.endsWith("/save") && saving) out = await saving;
   else if (url === "/api/analysis/" + task.id) out = task;
   else if (url.includes("/rows?")) {
     const offset = Number(new URL(url, "http://localhost").searchParams.get("offset"));
@@ -36,7 +38,7 @@ const analysis = await import("../src/data-analysis.js");
 afterAll(() => { globalThis.fetch = previousFetch; });
 beforeEach(() => {
   shell(); localStorage.clear(); calls.length = 0; unmountDbView(); mountDbView();
-  execution = null;
+  execution = null; saving = null;
   Object.assign(state(), { conn: "c", conns: [dbConn("c", "mysql")] });
   task = { id: "a" + (++seq), conn: "c", title: "Orders", current: "v1", saved: false,
     revisions: [{ id: "v1", parent: null, sql: "SELECT id, amount FROM orders", conditions: { grain: "order" }, note: "", at: "2026-11-01" }],
@@ -69,11 +71,28 @@ it("reopening an in-flight analysis keeps the completion callback attached to it
   let finish!: (value: unknown) => void;
   execution = new Promise(resolve => { finish = resolve; });
   await analysis.dbAnalysisOpen(task.id);
-  const rerun = (): HTMLButtonElement => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Rerun")!;
+  const rerun = (): HTMLButtonElement => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.getAttribute("aria-label") === "Rerun")!;
   await vi.waitFor(() => expect(rerun()).toBeTruthy());
   rerun().click();
   await vi.waitFor(() => expect(calls.some(url => url.endsWith("/execute"))).toBe(true));
   await analysis.dbAnalysisOpen(task.id);
   finish({ result: task.results[0] });
   await vi.waitFor(() => expect(rerun().disabled).toBe(false));
+});
+
+
+it("saving keeps the action disabled through a repaint and reverses its icon after success", async () => {
+  let finish!: (value: unknown) => void;
+  saving = new Promise(resolve => { finish = resolve; });
+  await analysis.dbAnalysisOpen(task.id);
+  const action = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('[data-action="bookmark"], [data-action="unbookmark"]')!;
+  expect(action().querySelector("use")?.getAttribute("href")).toBe("#i-bookmark");
+  action().click();
+  await vi.waitFor(() => expect(action().disabled).toBe(true));
+  expect(action().getAttribute("aria-label")).toBe("Saving analysis…");
+  await analysis.dbAnalysisOpen(task.id);
+  expect(action().disabled).toBe(true);
+  task.saved = true; finish({ ok: true });
+  await vi.waitFor(() => expect(action().getAttribute("aria-label")).toBe("Unsave analysis"));
+  expect(action().querySelector("use")?.getAttribute("href")).toBe("#i-bookmark-minus");
 });

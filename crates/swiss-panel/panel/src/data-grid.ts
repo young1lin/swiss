@@ -47,6 +47,7 @@ import { DB_PAGE_SIZES, dbDialectOf, dbDropEdits, dbFkOpen, dbFocusedColumnValue
 import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
 import { btn, iconBtn, moreBtn } from "./ui/button.js";
+import { actionBtn } from "./ui/action.js";
 import { popupMenu } from "./ui/menu.js";
 import { dockShow } from "./ui/dock.js";
 import { dbAnalysisButton, dbAnalysisRender } from "./data-analysis.js";
@@ -752,10 +753,11 @@ function dbSqlFormatNow(): void {
 }
 
 /* --- SPEC §data.tabs: the status bar ---------------------------------------------------------------
-   One line under the pane body: pager + page-size for table tabs, row/timing facts for
-   the others, editability in the table's own words (editNote verbatim — a read-only
-   foreign database says WHY), and the connection always named at the right edge. The
-   commit bar (.db-bar) is a different line with a different job. */
+   One line under the pane body: pager + page-size for a table's ROW views (the grid and the
+   form), row/timing facts for the others, editability in the table's own words (editNote
+   verbatim — a read-only foreign database says WHY), and the connection always named at the
+   right edge. A schema pane has no rows to page, so it carries no pager. The commit bar
+   (.db-bar) is a different line with a different job. */
 
 function renderDbStatus(): void {
   const bar = $("dbStatus");
@@ -763,7 +765,12 @@ function renderDbStatus(): void {
   bar.textContent = "";
   const c = dbConn();
   const t = dbTab();
-  if (t.kind === "table" && t.data) {
+  // SPEC §data.tabs: ONLY a table's row views page. The structure panes (Columns / Indexes /
+  // Foreign keys / DDL) list schema, not rows — the page-size select and "301–350 of 3,387"
+  // there paged a table while the reader was looking at 59 columns, which is a pager for
+  // something that is not on screen. Those panes draw their own facts, or nothing at all.
+  const rowPaged = t.kind === "table" && (t.pane === "data" || t.pane === "form");
+  if (t.kind === "table" && t.data && rowPaged) {
     // The page-size select keeps its data-tb address — #pane's delegated change listener
     // answers it, and the refused-discard restore reads live state (SPEC §panel.toolchain).
     bar.appendChild(h("select", { class: "db-pagesize", title: tr("dataGrid.rowsPage"), data: { tb: "pagesize" } },
@@ -997,7 +1004,8 @@ function renderDbToolbar(): void {
   if (tt && tt.data && !nosql) dbRenderTabs(ctl);
   if (tt && tt.data) {
     if (tt.data.editable) {
-      ctl.appendChild(btn(tr("dataGrid.row"), { title: tr("dataGrid.bufferNewRowInserted"), data: { tb: "addrow" } }));
+      // The toolbar exposes the create action with its accessible name and tooltip.
+      ctl.appendChild(actionBtn("new", tr("dataGrid.row"), { title: tr("dataGrid.bufferNewRowInserted"), data: { tb: "addrow" } }));
     }
     ctl.appendChild(dbMoreButton((more: HTMLElement): MenuItem[] => { return dbMoreItemsForTable(more, tt); }));
   } else if (t.kind === "sql" && t.analysisId) {
@@ -1013,16 +1021,14 @@ function renderDbToolbar(): void {
     }
     // Run is the selection or the caret's block; Run all the whole console - one command
     // document is all a MongoDB console holds, so it has no Run all (SPEC §data.console).
-    // Run carries the primary weight: it is the action this head exists for, and the head's
-    // buttons now sit on ONE line with it, so the emphasis has to come from the button rather
-    // than from its position (2026-11-01).
-    if (!dbIsMongo()) ctl.appendChild(btn(tr("dataView.runAll"), { id: "dbSqlRunAll", title: tr("dataView.runAllTitle") }));
-    ctl.appendChild(btn(tr("dataView.run"), { id: "dbSqlRun", kind: "primary", title: tr("dataView.runTitle") }));
+    // Run all has a list-play glyph so its wider scope remains visible beside Run.
+    if (!dbIsMongo()) ctl.appendChild(actionBtn("startAll", tr("dataView.runAll"), { id: "dbSqlRunAll", title: tr("dataView.runAllTitle") }));
+    ctl.appendChild(actionBtn("start", tr("dataView.run"), { id: "dbSqlRun", title: tr("dataView.runTitle") }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForSql(); }));
   } else if (t.kind === "key" && t.redisValue) {
     const cfg = DB_REDIS_TYPES[t.redisValue.type];
     if (cfg && cfg.ins.length) {
-      ctl.appendChild(btn(tr(cfg.add), {
+      ctl.appendChild(actionBtn("new", tr(cfg.add), {
         title: tr("dataBrowsers.bufferNewThingApplied", { thing: tr(REDIS_THING_KEYS[cfg.thing] ?? cfg.thing) }), data: { radd: "" },
       }));
     }
@@ -1034,10 +1040,10 @@ function renderDbToolbar(): void {
   } else if (t.kind === "coll" && t.coll) {
     renderMongoHeadCtl(ctl, t, dbMoreButton);
   } else if (t.kind === "activity") {
-    ctl.appendChild(btn(tr("dataGrid.refresh"), { title: tr("dataActivity.title"), data: { actrefresh: "" } }));
+    ctl.appendChild(actionBtn("refresh", tr("dataGrid.refresh"), { title: tr("dataActivity.title"), data: { actrefresh: "" } }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForActivity(); }));
   } else if (t.kind === "pubsub") {
-    ctl.appendChild(btn(tr("dataGrid.refresh"), { title: tr("dataPubsub.refreshTip"), data: { ps: "refresh" } }));
+    ctl.appendChild(actionBtn("refresh", tr("dataGrid.refresh"), { title: tr("dataPubsub.refreshTip"), data: { ps: "refresh" } }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForPubsub(); }));
   } else objMore = false;
   head.appendChild(ctl);

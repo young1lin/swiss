@@ -33,6 +33,7 @@ import {
   mongoAllowsDestroy, mongoBytes, mongoCollInfo, mongoLoadCollections, mongoLoadDocs, mongoNs, mongoQueryOf, mongoTab, mongoTeachPaths,
 } from "./data-mongo.js";
 import { locale, tr, trn } from "./i18n.js";
+import { actionBtn } from "./ui/action.js";
 import { btn, iconBtn } from "./ui/button.js";
 import { hint } from "./ui/form.js";
 import { jsonCodeNode, tokenCodeNode, valueBlock } from "./ui/json-view.js";
@@ -613,11 +614,13 @@ export function renderMongoPane(wrap             , t           )       {
   else if (t.pane === "validation") renderValidation(wrap, t);
 }
 
-/** The pane's one primary action for the head. */
+/** The pane's one primary action for the head. Run and Add index are table verbs, so they
+ *  carry the table's glyph beside their word (SPEC §panel.design rule 7); Analyze, Explain
+ *  and Save validator are the pane's own words and stay plain. */
 export function mongoPaneHead(t           )                     {
-  if (t.pane === "agg") return btn(tr("dataView.run"), { title: tr("dataMongo.runPipelineTitle"), data: { maggrun: "" } });
+  if (t.pane === "agg") return actionBtn("start", tr("dataView.run"), { title: tr("dataMongo.runPipelineTitle"), data: { maggrun: "" } });
   if (t.pane === "schema") return btn(tr("dataMongo.analyze"), { title: tr("dataMongo.analyzeTitle"), data: { mschemarun: "" } });
-  if (t.pane === "indexes") return btn(tr("dataMongo.addIndex"), { title: tr("dataMongo.newIndex"), data: { mixadd: "" } });
+  if (t.pane === "indexes") return actionBtn("new", tr("dataMongo.addIndex"), { title: tr("dataMongo.newIndex"), data: { mixadd: "" } });
   if (t.pane === "explain") return btn(tr("dataView.explain"), { title: tr("dataMongo.explainTitle"), data: { mexplainrun: "" } });
   if (t.pane === "validation") return btn(tr("dataMongo.saveValidator"), { title: tr("dataMongo.saveValidatorTitle"), data: { mvalsave: "" } });
   return null;

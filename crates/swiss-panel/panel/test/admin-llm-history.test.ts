@@ -780,7 +780,8 @@ describe("llm history page", () => {
     };
     await mount();
     // Only a live row a memory run asked has it; a filed run and a run of no job have none.
-    expect(text("[data-hrun='12'] [data-hstop]")).toBe("Stop");
+    expect(q("[data-hrun='12'] [data-hstop]").getAttribute("aria-label")).toBe("Stop");
+    expect(q("[data-hrun='12'] [data-hstop] use").getAttribute("href")).toBe("#i-square");
     expect(q("[data-hrun='12'] [data-hstop]").getAttribute("title")).toContain("memory run r-a1e84e8c");
     expect(document.querySelector("[data-hrun='14'] [data-hstop]")).toBe(null);
     expect(document.querySelector("[data-hrun='3'] [data-hstop]")).toBe(null);
@@ -792,14 +793,16 @@ describe("llm history page", () => {
     // The click stopped there: no sheet opened for the row.
     expect(calls.some((c) => c.path === "/api/llm/history/runs/12/dialogue")).toBe(false);
     expect(text("#toast")).toBe("Run r-a1e84e8c is stopping: the questions in flight are dropped, the notes it saved stay");
-    expect(text("[data-hrun='12'] [data-hstop]")).toBe("stopping…");
+    expect(q("[data-hrun='12'] [data-hstop]").getAttribute("aria-label")).toBe("stopping…");
+    expect(q("[data-hrun='12'] [data-hstop] use").getAttribute("href")).toBe("#i-square");
 
     // A repaint keeps it: another row of the same memory run says it is stopping too.
     view.unmount();
     await mount();
     const stopping = q<HTMLButtonElement>("[data-hrun='13'] [data-hstop]");
     expect(stopping.disabled).toBe(true);
-    expect(stopping.textContent).toBe("stopping…");
+    expect(stopping.getAttribute("aria-label")).toBe("stopping…");
+    expect(stopping.querySelector("use")?.getAttribute("href")).toBe("#i-square");
   });
 
   it("a refused Stop says why and hands the button back", async () => {
@@ -816,7 +819,9 @@ describe("llm history page", () => {
     expect(text("#toast")).toBe("run r-gone already ended (ok); only a queued or running run cancels");
     const button = q<HTMLButtonElement>("[data-hrun='12'] [data-hstop]");
     expect(button.disabled).toBe(false);
-    expect(button.textContent).toBe("Stop");
+    expect(button.getAttribute("aria-label")).toBe("Stop");
+    expect(button.title).toContain("memory run r-gone");
+    expect(button.querySelector("use")?.getAttribute("href")).toBe("#i-square");
   });
 
   it("a running run's sheet shows the step in flight and reads again until the run files, keeping what was opened", async () => {

@@ -22,7 +22,10 @@ describe("the desktop MCP landing page (SPEC §panel.pages)", () => {
     expect(button).toBeTruthy();
     button?.click();
     expect(open).toHaveBeenCalledWith("lazy");
-    Array.from(view.querySelectorAll("button")).find(b => b.textContent?.startsWith("Add"))?.click();
+    const addButton = view.querySelector<HTMLButtonElement>("[data-action=new]");
+    expect(addButton?.getAttribute("aria-label")).toBe("Add an MCP");
+    expect(addButton?.querySelector("use")?.getAttribute("href")).toBe("#i-plus");
+    addButton?.click();
     expect(add).toHaveBeenCalledOnce();
   });
 

@@ -38,6 +38,7 @@ import {
   kvRow, markdownNode, menuOpen, moreBtn, note, openFieldSheet, popupMenu, refLink, relTime, row, section, sheet, showSheet, tag,
   timeline, timelineToggle, valueBlock,
 } from "../ui/index.js";
+import { actionBtn } from "../ui/action.js";
                                                              
              
                                                                                                                                                  
@@ -433,13 +434,10 @@ function detailNode(r           , revisions               , related             
   const live = isLive(r.status);
   const acts           = live
     ? [
-        btn(tr("memory.edit"), { kind: "primary", data: { mact: "edit" } }),
-        btn(tr("memory.mark.verified"), { data: { mact: "verified" }, title: tr("memory.mark.verifiedWhy") }),
-        r.confirmed ? null : btn(tr("memory.confirm"), { data: { mact: "confirm" }, title: tr("memory.confirmWhy") }),
+        actionBtn("edit", tr("memory.edit"), { data: { mact: "edit" } }),
       ]
     : [
         btn(tr("memory.restoreAsk"), { kind: "primary", data: { mact: "restore" } }),
-        r.confirmed ? null : btn(tr("memory.confirm"), { data: { mact: "confirm" }, title: tr("memory.confirmWhy") }),
       ];
   acts.push(moreBtn(tr("memory.detail.more", { title: r.title }), { data: { mact: "more" } }));
   const ego = near ? egoGraph(r, near) : null;
@@ -457,7 +455,7 @@ function detailNode(r           , revisions               , related             
     markdownNode(r.content, { class: "note-body" }),
     section({
       cap: tr("memory.f.relations"),
-      tools: [btn(tr("memory.showInGraph"), { kind: "ghost", data: { mact: "graph" } })],
+      tools: [iconBtn("network", tr("memory.showInGraph"), { ghost: true, data: { mact: "graph" } })],
     },
       ego ? card(ego) : null,
       links.length ? links : hint(tr("memory.links.none")),
@@ -539,6 +537,8 @@ function detailMenu(anchor             , r           )       {
         { sep: true },
       ]
     : [];
+  if (live) items.unshift({ label: tr("memory.mark.verified"), title: tr("memory.mark.verifiedWhy"), fn: () => { void noteMenuAction(r, "verified"); } });
+  if (!r.confirmed) items.unshift({ label: tr("memory.confirm"), title: tr("memory.confirmWhy"), fn: () => { void noteMenuAction(r, "confirm"); } });
   if (mapped()) items.push({ label: tr("memory.dom.moveNote"), fn: () => { void askFile([r.id], r.title, r.domain || ""); } });
   items.push(
     { label: tr("memory.showInGraph"), fn: () => { showInGraph(r.id); } },
@@ -546,6 +546,13 @@ function detailMenu(anchor             , r           )       {
     { label: tr("memory.del.ask"), fn: () => { askDelete(r); }, danger: true },
   );
   popupMenu(anchor.getBoundingClientRect(), items);
+}
+
+async function noteMenuAction(r           , action                        )                {
+  const err = action === "verified" ? await markNote(r.id, "verified") : await confirmNote(r.id);
+  if (err) { noteErr(err); return; }
+  toast(tr(action === "verified" ? "memory.mark.verifiedDone" : "memory.confirmDone"));
+  await hooks.reload();
 }
 
 function showInGraph(id        )       {

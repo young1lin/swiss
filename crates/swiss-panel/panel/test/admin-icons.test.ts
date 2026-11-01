@@ -84,7 +84,9 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
     // leaves paged-in lists alone - lives on the r key; the memory chip's click re-reads
     // memory only (a reading is not a reload button).
     expect(shell).not.toContain('id="refreshBtn"');
-    expect(shell).not.toContain("i-refresh-cw"); // the sprite entry goes with the button
+    // The SPRITE entry is back, for a different reason: ui/action.ts maps "refresh" to it so the
+    // pages that do need to read again (System's skills, Data's activity) wear one glyph. What
+    // went with the button is the toolbar control, not the mark.
     expect(shell).toContain('id="memChip"');
     // Focus mode (js/immersive.js) is the page-sized answer: the context bar's far right
     // carries the expand control, painted with its own two-state sprite icons (SPEC §panel.nav
@@ -160,6 +162,21 @@ describe("visual refresh V7 — one empty-state template", () => {
 /* The MCP plugin seat wears the official MCP mark (modelcontextprotocol.io): the site logo
    mark — three interleaved hooks — mapped from the logo's own grid onto the 24-grid. The
    generic i-server box it replaced left the sprite with its last consumer. */
+/* SPEC §panel.design rule 7 + ui/action.ts: every verb the panel's action table names has a
+   hand-drawn symbol in the one sprite — a page that asks for an action whose glyph is missing
+   draws an empty box, which is worse than the word it replaced. */
+describe("the action table has every glyph it names", () => {
+  it("each action's symbol is a <symbol> in the shell", async () => {
+    const { ACTION_ICON } = await import("../src/ui/action.js") as unknown as { ACTION_ICON: Record<string, string> };
+    const missing = Object.keys(ACTION_ICON).filter((a) => { return !shell.includes('<symbol id="i-' + ACTION_ICON[a] + '"'); });
+    expect(missing).toEqual([]);
+    // The pair glyphs this round added, named so a rename cannot silently drop one.
+    for (const glyph of ["i-power-off", "i-square", "i-pause", "i-refresh-cw", "i-rotate-cw", "i-upload"]) {
+      expect(shell, glyph).toContain('<symbol id="' + glyph + '"');
+    }
+  });
+});
+
 describe("the MCP glyph is the official mark", () => {
   it("the sprite carries i-mcp; the retired server box is gone", () => {
     expect(shell).toContain('<symbol id="i-mcp"');

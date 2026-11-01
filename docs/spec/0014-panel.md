@@ -288,6 +288,20 @@ Code blocks take their colours from a scheme of their own under `:root[data-code
 6. **Every "new" says where it goes**: a Group field prefilled from the header `+` that opened
    it or the last group used; the title carries the group ("New job in *learn*").
 7. **One glyph, one meaning per page** (`folder-plus` for a new group, `plus` for a new item).
+   A short action's glyph is the action's, never the state's: a started MCP shows the
+   *Disable* glyph (`power-off`), a running port forward the *Stop* glyph (`square`) — the
+   state itself is the dot and the status words. The two halves of a verb never share one
+   glyph (`power` is Enable, `power-off` is Disable; `play` starts, `square` stops), and
+   near-neighbours stay apart: refresh (`refresh-cw`) re-reads, restart (`rotate-cw`) tears
+   down and rebuilds, stop is not disable. Run all uses list-play to distinguish its scope
+   from the adjacent Run. Saving and unsaving an analysis use bookmark and bookmark-minus.
+   The verbs live in one table, `ui/action.ts`
+   (`ACTION_ICON`, `actionBtn(verb, label)`, `setActionBtn`): a page never picks its own
+   glyph for a verb the table names, and a verb the table lacks joins the table first. The
+   word rides in the accessible name and the tooltip (`iconBtn`), not as text beside the
+   glyph; while the action runs, the button is disabled and the name states the verb in
+   motion ("Stopping…"), never a bare ellipsis. A state flip patches the same node
+   (`setIconBtn` / `setActionBtn`) — a repaint through `textContent` would drop the sprite.
 8. **One persistent glyph per container header, and the whole header drags**: `+` always
    visible (dimmed), `⋯` on hover/focus; its buttons cancel the drag at `dragstart`.
 9. **Icons are the sprite**: Lucide-style, 24 viewBox, 1.5 stroke, `currentColor`, hand-written
@@ -549,7 +563,7 @@ to the library first.
 | status | `dot(state, words)`, `heldDot(words)`, `tag(text, {mono, tone})`, `spinner()` | `.dot`, `.tag`, `.spin` |
 | fact chip | `portChip(port, {tone, title})` — a port the machine holds (up), a promise unkept (down) or a quiet declared-only one (held: no tone class) | `.pchip` |
 | entry picker | `pickPanel(pathPlaceholder, goLabel, upLabel)` + `pickRow(kind, name, mono)` — the inline file browser a field opens under itself; its root is `.dirpick`, NEVER `.pick` (the styled select's option rows own that name) | `.dirpick*` |
-| controls | `sw(on, label)`, `btn(label, {kind, icon})`, `iconBtn`, `moreBtn`; native `<select>` styled by `initSelects` | `.sw`, `.btn`, `.dd*` |
+| controls | `sw(on, label)`, `btn(label, {kind, icon})`, `iconBtn`, `moreBtn`, and the action table `ui/action.ts` — `actionBtn(verb, label)` / `setActionBtn` / `ACTION_ICON` — one glyph per verb (rule 7, every verb a page may name); native `<select>` styled by `initSelects` | `.sw`, `.btn`, `.dd*` |
 | layers | `popupMenu(anchor, items, {filter})` - with `filter` (the placeholder) a find box over rows that scroll under it: typing narrows them, the arrows walk the box and the rows left, Enter runs the first, "Nothing matches" when none do - `anchoredMenu(host, items)`, `sheet({title, sub, body, foot})` + `showSheet`, `stackSheet`, `openFieldSheet(spec)` | `.menu`, `.menu.find`, `.menu-filter`, `.menu-rows`, `.sheet*`, `.backdrop` |
 | page furniture | `emptyNode(…)`, `pageFoot({note, rev})`, `toTop(scroller)`; the toast is the shell's (`util.ts toast()`) | `.empty`, `.page-foot`, `.to-top`, `.toast` |
 | grip | `grip(pane, {axis, key, size, min, max, label, fold, folded, end})`, `gripState(opts)`, `gripFold(edge, folded)`, `gripFolded(edge)` - the edge after a pane (before one, with `end`) that sizes it (and folds it) | `.grip`, `.grip.x`, `.grip.y`, `.grip.end`, `.grip.folded`, `.grip-btn` |

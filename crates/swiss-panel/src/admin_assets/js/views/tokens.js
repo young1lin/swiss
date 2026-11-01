@@ -43,6 +43,7 @@ import { locale, tr, trn } from "../i18n.js";
 import {
   btn, card, field, form, formActions, iconBtn, inlineForm, moreBtn, paneBody, paneHead, popupMenu, row, section, tag,
 } from "../ui/index.js";
+import { actionBtn } from "../ui/action.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed                          = {}; // the tokens fold map, loaded once before the first paint
@@ -256,7 +257,7 @@ function render()       {
     inlineForm(
       h("input", { id: "tkLabel", placeholder: tr("tokens.labelEGClaude") }),
       groupSelectNode(),
-      btn(tr("tokens.create"), { kind: "primary", id: "tkCreate" })),
+      actionBtn("new", tr("tokens.create"), { id: "tkCreate" })),
     secretNode(),
     section({}, h("div", { id: "tkGroups" }))));
   paintGroups();

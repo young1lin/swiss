@@ -583,7 +583,8 @@ describe("the Memory page - domains", () => {
     expect(rows.map((r) => r.className)).toEqual(["pick-row", "pick-row d1", "pick-row d2", "pick-row d3", "pick-row d4"]);
     // The fourth level still takes a sub-domain; the fifth, the deepest a map goes, does not.
     await click('#memDomList [data-mdom="d-c4"]');
-    expect(q("#memDomDetail article[data-mdomdoc=d-c4] [data-mdact=newsub]").textContent).toBe("New sub-domain");
+    expect(q("#memDomDetail article[data-mdomdoc=d-c4] [data-mdact=newsub]").getAttribute("aria-label")).toBe("New sub-domain");
+    expect(q("#memDomDetail article[data-mdomdoc=d-c4] [data-mdact=newsub] use").getAttribute("href")).toBe("#i-plus");
     await click('#memDomList [data-mdom="d-c5"]');
     expect(q("#memDomDetail article[data-mdomdoc=d-c5]").querySelector("[data-mdact=newsub]")).toBeNull();
   });
@@ -650,11 +651,12 @@ describe("the Memory page - domains", () => {
     expect(q("[data-mdcrumbs]", sub).textContent).toBe("Payments / pay/refunds");
     expect(sub.querySelector(".doc-lede")).toBeNull();
     // An agent drew it: Confirm is offered; Verified says the hub is true to the code again.
-    expect(q("[data-mdact=confirm]", sub).textContent).toBe("Confirm");
-    await click(q("[data-mdact=confirm]", sub));
+    await click(q("[data-mdact=more]", sub));
+    await menuPick("Confirm");
     expect(sent("POST", "/domains/d-2/confirm").map((c) => c.body)).toEqual([{ project: "p-1", all: true }]);
     expect(text("#toast")).toBe("Domain confirmed");
-    await click("#memDomDetail [data-mdact=verify]");
+    await click("#memDomDetail [data-mdact=more]");
+    await menuPick("Verified");
     expect(sent("POST", "/domains/d-2/verify").map((c) => c.body)).toEqual([{ project: "p-1" }]);
     expect(text("#toast")).toBe("Marked verified");
   });
@@ -671,15 +673,16 @@ describe("the Memory page - domains", () => {
       return undefined;
     };
     await domainsTab();
-    const all = q("#memDomDetail article[data-mdomdoc=d-1] [data-mdact=confirm]");
-    expect(all.textContent).toBe("Confirm all");
-    expect(all.title).toBe("Confirm this domain, the domains under it and their 4 unconfirmed notes; a note that needs review waits for its verdict");
-    await click(all);
+    await click("#memDomDetail article[data-mdomdoc=d-1] [data-mdact=more]");
+    const all = [...document.querySelectorAll<HTMLButtonElement>(".menu.float button")].find((b) => b.textContent === "Confirm all");
+    expect(all?.title).toBe("Confirm this domain, the domains under it and their 4 unconfirmed notes; a note that needs review waits for its verdict");
+    await menuPick("Confirm all");
     expect(sent("POST", "/domains/d-1/confirm").map((c) => c.body)).toEqual([{ project: "p-1", all: true }]);
     expect(text("#toast")).toBe("Domain confirmed with 3 notes · 1 that needs review waits in Review");
     // Nothing left to confirm under a domain: no confirm at all.
     await click("#memDomList [data-mdom=d-3]");
-    expect(q("#memDomDetail article[data-mdomdoc=d-3]").querySelector("[data-mdact=confirm]")).toBeNull();
+    await click("#memDomDetail article[data-mdomdoc=d-3] [data-mdact=more]");
+    expect([...document.querySelectorAll(".menu.float button")].some((b) => b.textContent === "Confirm" || b.textContent === "Confirm all")).toBe(false);
   });
 
   it("New domain sends the path, title, summary, owns and hub; a taken path is said in the sheet", async () => {
@@ -1466,7 +1469,8 @@ describe("the Memory page - graph, agent view, review", () => {
     expect(text("#memList [data-mnote=m-4] .pick-sub")).toContain("written by codex, not confirmed yet");
     expect(q("#memDetail article").dataset.mdoc).toBe("m-4");
 
-    await click("#memDetail [data-mact=confirm]");
+    await click("#memDetail [data-mact=more]");
+    await menuPick("Confirm");
     expect(sent("POST", "/records/m-4/confirm").map((c) => c.body)).toEqual([{ project: "p-1" }]);
     expect(text("#toast")).toBe("Confirmed");
     // Decided: it left the inbox, and the one after it is open.
@@ -1474,7 +1478,8 @@ describe("the Memory page - graph, agent view, review", () => {
     expect(q("#memList [data-mnote=m-5]").getAttribute("aria-selected")).toBe("true");
     expect(q("#memDetail article").dataset.mdoc).toBe("m-5");
 
-    await click("#memDetail [data-mact=verified]");
+    await click("#memDetail [data-mact=more]");
+    await menuPick("Verified");
     expect(sent("POST", "/records/m-5/mark").map((c) => c.body)).toEqual([{ project: "p-1", verdict: "verified" }]);
     expect(text("#memList")).toContain("Nothing to review");
     expect(text("#memDetail")).toContain("No note selected");

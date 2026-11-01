@@ -47,7 +47,7 @@ import { api, toast } from "../util.js";
 import type { HChild } from "../h.js";
 import { fill, h } from "../h.js";
 import { locale, tk, tr } from "../i18n.js";
-import { btn, card, checkField, checkGrid, closeSheet, dot, field, flow, flowToggle, formFold, hint, inlineForm, kvRow, pair, sheet, showSheet, tag } from "../ui/index.js";
+import { actionBtn, setActionBtn, btn, card, checkField, checkGrid, closeSheet, dot, field, flow, flowToggle, formFold, hint, inlineForm, kvRow, pair, sheet, showSheet, tag } from "../ui/index.js";
 import type { DotState, FlowStep } from "../ui/index.js";
 import type { MemEmbeddingScope, MemFullPlan, MemMapPlan, MemSyncAgent, MemSyncBlock, MemSyncOverview, MemSyncPhase, MemSyncRun } from "../types/memory.js";
 import type { LlmAgentRow } from "../types/llm.js";
@@ -363,7 +363,7 @@ function stopNode(r: MemSyncRun, stopping: string[]): HChild {
   if (r.state !== "queued" && r.state !== "running") return null;
   return stopping.includes(r.id)
     ? tag(tr("memory.sync.run.stopping"), { tone: "warn" })
-    : btn(tr("memory.sync.run.stop"), { kind: "ghost", data: { mstop: r.id } });
+    : actionBtn("stop", tr("memory.sync.run.stop"), { ghost: true, data: { mstop: r.id } });
 }
 
 /** How each worker of a pool went (§memory.settings), when the run asked more than one:
@@ -809,9 +809,10 @@ export async function openSync(projectId: string, o: { openAuto?: () => void } =
   const stopRun = async (id: string, button: HTMLButtonElement): Promise<void> => {
     say("");
     button.disabled = true;
+    setActionBtn(button, "stop", tr("memory.sync.run.stopping"));
     const r = await req<{ run: MemSyncRun; stopping: boolean }>("POST",
       "/sync/runs/" + encodeURIComponent(id) + "/cancel?project=" + encodeURIComponent(projectId));
-    if (!r.ok || !r.data) { button.disabled = false; say(errMessage(r.err)); return; }
+    if (!r.ok || !r.data) { button.disabled = false; setActionBtn(button, "stop", tr("memory.sync.run.stop")); say(errMessage(r.err)); return; }
     toast(r.data.stopping ? tr("memory.sync.run.stoppingToast", { id }) : tr("memory.sync.run.cancelledToast", { id }));
     await refresh();
     follow();

@@ -19,7 +19,8 @@
 import { $, api, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import { tr, trn } from "../i18n.js";
-import { btn, iconBtn, moreBtn } from "../ui/button.js";
+import {  iconBtn, moreBtn } from "../ui/button.js";
+import { actionBtn } from "../ui/action.js";
 import { dot, tag } from "../ui/status.js";
 import { card, emptyNode, note, paneBody, paneHead, section } from "../ui/page.js";
 import { row } from "../ui/row.js";
@@ -166,6 +167,13 @@ function appRow(r            )              {
   // raw failure sentence on a running row reads as a contradiction; the row
   // says the port is held now, the sentence stays in the history sheet.
   const healedStart = last != null && !last.ok && last.action === "start" && r.status === "running";
+  // The row's one action, the ACTION not the state (SPEC §panel.design rule 7): a live app offers
+  // Stop (square), a stopped one offers Start (play), and while a verb is in flight the button
+  // names that verb instead of showing an ellipsis into a dead click.
+  const inflight = busy(r);
+  const click                   = live ? "stop" : "start";
+  const glyph                               = inflight === "restart" ? "restart" : click;
+  const word = inflight ? busyWord(inflight) : click === "stop" ? tr("process.action.stop") : tr("process.action.start");
   return row({
     lead: dot(dotState(r), busy(r) ? busyWord(busy(r) || "") : statusWord(r.status)),
     name: r.name,
@@ -180,9 +188,10 @@ function appRow(r            )              {
       r.stopIsKill ? tag(tr("process.mark.stopIsKill"), { title: tr("process.mark.stopIsKillHint") }) : null,
     ],
     cols: [statusTag(r)],
-    primary: btn(live ? tr("process.action.stop") : tr("process.action.start"), {
-      data: { pract: live ? "stop" : "start", prname: r.name },
-      disabled: live ? !canStop(r) : !canStart(r),
+    primary: actionBtn(glyph, word, {
+      title: inflight ? word : click === "stop" ? tr("process.action.stopHint") : tr("process.action.startHint"),
+      data: { pract: click, prname: r.name },
+      disabled: !!inflight || (click === "stop" ? !canStop(r) : !canStart(r)),
     }),
     secondary: iconBtn("file", tr("process.logs.forApp", { name: r.name }), { ghost: true, data: { prlogs: r.name } }),
     more: moreBtn(tr("process.actionsFor", { name: r.name }), { data: { prmore: r.name } }),
@@ -208,7 +217,7 @@ function childrenCard()              {
       ...mine.map((c) => row({
         name: c.label, sub: childKind(c.kind),
         meta: [h("code", null, tr("process.pid", { pid: String(c.pid) })), tr("process.uptime", { up: durShort(c.uptimeSec) }), c.memMb != null ? tr("process.memMb", { n: String(c.memMb) }) : null],
-        primary: c.stoppable ? btn(tr("process.action.stopChild"), { disabled: pendingChildren.has(c.pid), data: { prstopchild: String(c.pid) }, title: tr("process.action.stopChildTitle", { label: c.label }) }) : undefined,
+        primary: c.stoppable ? actionBtn("stop", tr("process.action.stopChild"), { disabled: pendingChildren.has(c.pid), data: { prstopchild: String(c.pid) }, title: tr("process.action.stopChildTitle", { label: c.label }) }) : undefined,
         data: { prchild: String(c.pid) },
       })));
     parts.toggle.onclick = () => {
@@ -248,7 +257,7 @@ function rememberPaint()       {
 function paint()       {
   const childBody = h("div", { id: "prChildren" }, childrenCard());
   fill($("pane"), paneBody({},
-    paneHead({ desc: tr("process.desc"), sub: h("span", { id: "prGateway" }, gatewayLine()), actions: [btn(tr("process.addApp"), { kind: "primary", icon: "plus", id: "prAdd" })] }),
+    paneHead({ desc: tr("process.desc"), sub: h("span", { id: "prGateway" }, gatewayLine()), actions: [actionBtn("new", tr("process.addApp"), { id: "prAdd" })] }),
     appSection(),
     section({ cap: tr("process.childrenCap"), note: tr("process.childrenNote") }, childBody)));
   rememberPaint();
