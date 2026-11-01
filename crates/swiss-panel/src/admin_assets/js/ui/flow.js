@@ -41,6 +41,7 @@
  * `eager` (hidden until opened) when the list is short and its text must be findable. */
                                                
 import { h } from "../h.js";
+import { copyBtn } from "./copy.js";
 import { iconNode } from "./icon.js";
 import { dot, tag } from "./status.js";
 
@@ -133,12 +134,24 @@ export function flowToggle(root             , id        , body         )        
   return open;
 }
 
+/** A step's prose body past the prose cap (a round's thinking, a prompt part): it scrolls in
+ *  place, so one long thought cannot push the answer, the next step and the box below it off
+ *  the column. The flow's own shell - a view asks for it rather than drawing the class. */
+export function scrollBox(body        )              {
+  return h("div", { class: "fl-scroll" }, body);
+}
+
 /** A step's input and output as one surface: each part under its caption in a gutter, scrolled
- *  past a cap so one long result never floods the flow. Notes ride beside a caption (a size). */
-export function flowIO(parts                                                                                 )              {
+ *  past a cap so one long result never floods the flow. Notes ride beside a caption (a size);
+ *  `copy` puts the part's own text on the clipboard from a glyph in that caption - what was
+ *  sent and what came back are things a reader takes away, not retypes. */
+export function flowIO(parts                                                                                                                    )              {
   return h("div", { class: "fl-io" }, parts.map((p) => (p
     ? h("div", { class: "fl-io-part", data: p.data },
-        h("div", { class: "fl-io-label" }, p.label, (p.notes || []).map((n) => h("span", { class: "fl-io-note" }, n))),
+        h("div", { class: "fl-io-label" },
+          p.label,
+          (p.notes || []).map((n) => h("span", { class: "fl-io-note" }, n)),
+          p.copy == null ? null : copyBtn(p.copy, p.copyLabel == null ? {} : { label: p.copyLabel })),
         h("div", { class: "fl-io-body" }, p.body))
     : null)));
 }

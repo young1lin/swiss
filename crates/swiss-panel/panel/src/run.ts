@@ -22,7 +22,7 @@ import { frag, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { histButtonLabel } from "./run-history.js";
 import { tr } from "./i18n.js";
-import { btn, card, checkField, field, form, formActions, hint, note } from "./ui/index.js";
+import { card, checkField, field, form, formActions, hint, iconBtn, note } from "./ui/index.js";
 
 /** What the argument-form generator needs of a tool: its input schema and nothing else, so
  *  an MCP tool and a jobs action (whose schema field is the same JSON Schema) both fit. */
@@ -146,7 +146,9 @@ function runBodyNode(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): HChild {
       }),
       argFieldsNode(current),
       formActions(
-        btn(tr("run.run"), { kind: "primary", id: "runBtn" }),
+        // The play glyph IS the verb here (just show, don't tell): renderRunResult restates the
+        // button's glyph, name and tooltip for the running state through setIconBtn.
+        iconBtn("play", tr("run.run"), { id: "runBtn", title: tr("runHistory.runHint") }),
         h("div", { class: "hist-wrap" },
           h("button", {
             type: "button",

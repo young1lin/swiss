@@ -33,7 +33,7 @@ import { tk, tr } from "./i18n.js";
 import {
   btn, card, decodeStrings, dot, emptyNode, filterInput, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, moreBtn,
   pageFoot, pager, pane, paneHead, pickPanel, pickerRow, portChip, resHead, row, section, seg, sideRow, sw, tag, timeline, timelineMeta, valueBlock,
-  flow, flowIO, flowToggle, formFold, transcript, transcriptText,
+  flow, flowIO, flowToggle, formFold, transcript, transcriptText, resultTable, resultChart,
 } from "./ui/index.js";
 import type { TimelineItem } from "./ui/index.js";
 
@@ -264,6 +264,11 @@ function desktopOverview(): HTMLElement {
 }
 
 export const SCENES: Scene[] = [
+  { id: "analysis", titleKey: tk("analysis.result"), uses: ["pane", "paneHead", "section", "resultTable", "resultChart"], build: () => h("div", { class: "shell" }, pane({ wide: true },
+    paneHead({ title: tr("analysis.result"), desc: tr("analysis.scope") }),
+    section({ cap: tr("analysis.result") }, resultTable({ columns: ["customer_id", "orders"], rows: [{ customer_id: "C01", orders: 4 }, { customer_id: "C02", orders: 7 }],
+      ids: ["r1:0", "r1:1"], selected: new Set(), label: tr("analysis.result"), selectLabel: row => tr("analysis.selectRow", { row }), onSelect: () => {} }),
+      resultChart({ title: tr("analysis.chart"), kind: "bar", points: [{ label: "C01", value: 4 }, { label: "C02", value: 7 }] })))) },
   { id: "desktop-overview", titleKey: tk("gallery.scene.desktopOverview"), build: desktopOverview,
     uses: ["pane", "paneHead", "btn", "section", "card", "row", "dot"] },
   { id: "conversation", titleKey: tk("gallery.c.transcript"), build: conversation,

@@ -29,7 +29,8 @@ import { assignGroup, groupOf, rowOf, saveGroups } from "./sidebar.js";
 import { currentView } from "./ui-state.js";
 import { lastActionOf, mcpBusyVerb, mcpDetail, mcpGroups, mcpRows } from "./mcp-state.js";
 import { locale, tk, tr } from "./i18n.js";
-import { anchoredMenu, btn, closeMenu, dot, menuOpen, moreBtn, note, paneBody, resHead, seg } from "./ui/index.js";
+import { anchoredMenu, closeMenu, dot, iconBtn, menuOpen, moreBtn, note, paneBody, resHead, seg } from "./ui/index.js";
+import { setIconBtn } from "./ui/button.js";
 import type { DotState, MenuItem } from "./ui/index.js";
 
 /* --- rendering: detail pane ------------------------------------------------------------------- */
@@ -52,7 +53,12 @@ function patchDetailHead(): void {
   txt.textContent = headSubtitle(m);
   if (primary) {
     const started = m.lifecycle === "started";
-    primary.textContent = busyVerb ? "…" : (started ? tr("pane.disable") : tr("pane.enable"));
+    // The head's state verb is a glyph now, so the word moves to aria-label/title: writing
+    // textContent here would wipe the sprite instead of relabelling it (setIconBtn).
+    const busy = busyVerb ? busyVerb + "…" : "";
+    const label = busy || (started ? tr("pane.disable") : tr("pane.enable"));
+    const hint = busy || (started ? tr("pane.disableHint") : tr("pane.enableHint"));
+    setIconBtn(primary, "power", label, hint);
     primary.disabled = !!busyVerb;
     // No onclick here (SPEC §panel.toolchain): #pane's delegated click derives the verb from live state.
   }
@@ -123,16 +129,24 @@ function renderPane(): void {
     // OAuth MCPs get their authorize action in the header (SPEC §mcp.oauth) — it is the one
     // action this MCP cannot live without until it runs, and Reauthorize is the anytime
     // re-consent path after a revoked grant. Disabled while a flow this panel started is
-    // still polling.
+    // still polling. The key glyph is the grant; the word rides in aria-label and the tooltip.
     oauthKind
-      ? btn(tr(m.oauth === "authorized" ? "pane.reauthorize" : "pane.authorize"), { id: "oauthBtn", disabled: !!d.oauthBusy })
+      ? iconBtn("key", tr(m.oauth === "authorized" ? "pane.reauthorize" : "pane.authorize"), {
+          id: "oauthBtn",
+          title: tr(m.oauth === "authorized" ? "pane.reauthorizeHint" : "pane.authorizeHint"),
+          disabled: !!d.oauthBusy,
+        })
       : null,
-    // Tinted only for Start: blue is the affirmative action, and a header full of blue Stop
-    // buttons on six healthy MCPs says nothing. Disable is a plain button with the same footprint.
+    // An icon button carries no tint (the library's one accent fill is btn.primary), so Start's
+    // blue goes with the word: the power glyph and its tooltip say which way the switch turns,
+    // and a header full of blue Stop buttons was why the tint stayed Start-only anyway.
     // SPEC §mcp.revisions: the verb is Disable/Enable, not Stop/Start — a stop that survives a boot and
     // refuses every client IS a disable; the mechanism below keeps the stop/start verbs.
-    btn(busyVerb ? "…" : started ? tr("pane.disable") : tr("pane.enable"),
-      { kind: started ? undefined : "primary", id: "primaryBtn", disabled: !!busyVerb }),
+    iconBtn("power", busyVerb ? busyVerb + "…" : started ? tr("pane.disable") : tr("pane.enable"), {
+      id: "primaryBtn",
+      title: busyVerb ? busyVerb + "…" : started ? tr("pane.disableHint") : tr("pane.enableHint"),
+      disabled: !!busyVerb,
+    }),
     moreBtn(tr("pane.moreActions"), { id: "menuBtn" }),
   ].filter((b): b is HTMLButtonElement => b != null);
 

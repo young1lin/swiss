@@ -74,6 +74,7 @@
       /* Content measure. Nothing in the pane is ever full-bleed. */
       --measure: 920px;
       --measure-wide: 1180px;
+      --chart-line-width: 2px;
 
       --r-card: 8px;
       --r-row: 6px;
@@ -95,6 +96,9 @@
       --fl-lead: 16px;
       --tc-user-max: 82%;
       --fl-io-h: 280px;
+      /* The prose cap: a round's thinking and a folded system prompt scroll here, so one
+         long thought cannot push the answer and the box below it off the column. */
+      --fl-prose-h: 340px;
       /* A workspace's columns (ui/workspace.ts): the source list, the list a detail is picked
          from, an inspector at the end; each with a narrower step under 1200px. */
       --ws-side-w: 224px;
@@ -233,7 +237,10 @@
       --code-fg: #a9b7c6;
       --code-edge: rgba(255, 255, 255, 0.06);
       --code-gutter: #606366;
-      --code-sel: #214283;
+      /* A tint, not a block: in the console the textarea's own glyphs are transparent and
+         the words read from the <pre> behind it, so an opaque paint hides them (this value
+         did exactly that on a dark panel). The GitHub schemes were always tints. */
+      --code-sel: rgba(33, 66, 131, 0.45);
       --code-caret: #bbbbbb;
       --syn-kw: #cc7832;
       --syn-str: #6a8759;
@@ -249,7 +256,7 @@
       --code-fg: #bcbec4;
       --code-edge: rgba(255, 255, 255, 0.06);
       --code-gutter: #4b5059;
-      --code-sel: #214283;
+      --code-sel: rgba(33, 66, 131, 0.45);
       --code-caret: #ced0d6;
       --syn-kw: #cf8e6d;
       --syn-str: #6aab73;

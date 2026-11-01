@@ -44,12 +44,31 @@ import {
 } from "../src/ui/index.js";
 import { chatFollow, chatPane, chatQueue, chatStats, copyBtn, copyText, dock, dockShow, grip, gripFold, gripFolded, gripState } from "../src/ui/index.js";
 import { diffFiles, diffNode, tokenCodeNode } from "../src/ui/index.js";
+import { resultTable, resultChart } from "../src/ui/index.js";
 import type { GraphEdge, GraphEls, GraphGroup, GraphNode, GraphSpec, TimelineItem } from "../src/ui/index.js";
 import { allClassesOf, parseCss } from "./css-rules.js";
 import { drawn, fakeEngine } from "./graph-fake.js";
 import { sheet } from "./styles.js";
 
 afterEach(() => { install("en", null); });
+
+describe("immutable result views (SPEC §data.analysis)", () => {
+  it("keeps decimal strings intact, escapes cell content and selects by server row id", () => {
+    const select = vi.fn();
+    const table = resultTable({ columns: ["amount", "note"], rows: [{ amount: "9007199254740993.01", note: "<script>bad</script>" }], ids: ["result:4"], selected: new Set(), label: "rows", selectLabel: id => id, onSelect: select });
+    expect(table.textContent).toContain("9007199254740993.01");
+    expect(table.querySelector("script")).toBeNull();
+    const input = table.querySelector<HTMLInputElement>("input")!;
+    input.checked = true; input.dispatchEvent(new Event("change"));
+    expect(select).toHaveBeenCalledWith("result:4", true);
+  });
+  it("draws negative and positive values with finite geometry and an accessible name", () => {
+    const chart = resultChart({ title: "Totals", kind: "bar", points: [{ label: "a", value: -2 }, { label: "b", value: 3 }, { label: "bad", value: NaN }] });
+    expect(chart.querySelector("svg")?.getAttribute("aria-label")).toBe("Totals");
+    expect(chart.querySelectorAll("rect")).toHaveLength(2);
+    expect(chart.innerHTML).not.toMatch(/NaN|Infinity/);
+  });
+});
 
 /* The mermaid bundle is 5.5MB of browser code that needs a layout engine; vendor-markdown.test.ts
    holds it to its contract. Here a stand-in answers the way mermaid's sandbox level does - one

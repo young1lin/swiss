@@ -96,10 +96,15 @@ describe("config tab: the replace flow and the rollback shelf (SPEC §mcp.revisi
     freshState({ mcps: [ROW] as never, detail: d });
     pane.renderPane();
     const root = document.getElementById("pane")!;
-    expect(root.querySelector("#c-replace")!.textContent).toContain("Replace definition");
+    // The control is a glyph now: its word is the accessible name and the tooltip (iconBtn), and
+    // the tooltip says what the swap costs, not just its name.
+    const replace = root.querySelector("#c-replace")!;
+    expect(replace.getAttribute("aria-label")).toContain("Replace definition");
+    expect(replace.getAttribute("title")).toContain("kept as a revision");
+    expect(replace.querySelector("use")!.getAttribute("href")).toBe("#i-arrow-right");
     expect(root.textContent).toContain("Saved revisions (1)");
     expect(root.textContent).toContain("proc version");
-    expect(root.querySelector('[data-restore="0"]')).not.toBeNull();
+    expect(root.querySelector('[data-restore="0"]')!.getAttribute("aria-label")).toBe("Restore");
     expect(root.querySelector('[data-revdel="0"]')).not.toBeNull();
   });
 
@@ -142,10 +147,17 @@ describe("SPEC §mcp.revisions: the verb is disable, the word is disabled", () =
     pane.renderPane();
     const primary = (): HTMLButtonElement => document.getElementById("primaryBtn") as HTMLButtonElement;
     pane.patchDetailHead();
-    expect(primary().textContent).toBe("Disable");
+    // A glyph button carries its word in aria-label and its promise in the tooltip; the state flip
+    // restates both in place (setIconBtn) and never writes text into the sprite.
+    expect(primary().getAttribute("aria-label")).toBe("Disable");
+    expect(primary().title).toBe("Disable this MCP server — its clients lose the tools until you enable it again");
+    expect(primary().textContent).toBe("");
+    expect(primary().querySelector("use")!.getAttribute("href")).toBe("#i-power");
     (mcpRows()[0] as unknown as Record<string, unknown>).lifecycle = "stopped";
     pane.patchDetailHead();
-    expect(primary().textContent).toBe("Enable");
+    expect(primary().getAttribute("aria-label")).toBe("Enable");
+    expect(primary().title).toBe("Enable this MCP server so its clients can use its tools again");
+    expect(primary().querySelector("use")!.getAttribute("href")).toBe("#i-power");
   });
 
   it("the header subtitle and the overflow menu use the operator's word", () => {

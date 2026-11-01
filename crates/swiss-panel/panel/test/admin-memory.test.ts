@@ -496,7 +496,7 @@ describe("the Memory page - export and import", () => {
       await click("#memXferExport");
       expect(sent("GET", "/export").map((c) => [c.query.get("project"), c.query.get("domain")])).toEqual([["p-1", "pay/refunds"]]);
       expect(saved).toEqual(["memory-p-1-pay-refunds.jsonl"]);
-      expect(text("#toast")).toBe("Exported memory-p-1-pay-refunds.jsonl");
+      expect(text("#toast")).toBe("Download started: memory-p-1-pay-refunds.jsonl");
     } finally {
       anchor.mockRestore();
       Object.assign(URL, { createObjectURL: prev.create, revokeObjectURL: prev.revoke });

@@ -21,7 +21,7 @@ import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown, dbRefreshKeyspace, dbRefreshRedisValue, dbRewalkKeys } from "./data-browsers.js";
 import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlPaint, renderDbFilters } from "./data-filters.js";
-import { dbConsoleHint, dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbSqlFormatNow, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
+import { dbConsoleHint, dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbSqlFormatNow, dbSqlHintSet, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbBarClick, dbFavLoad, dbRunSql, renderDbBar } from "./data-sql.js";
 import { dbAgentButton, dbAgentForget, dbAgentPane, renderDbAgent } from "./data-agent.js";
 import { dbActivityClick, dbActivityPollStop } from "./data-activity.js";
@@ -651,10 +651,9 @@ function dbRedisCompare(a: ApiDbRedisKeyRow, b: ApiDbRedisKeyRow): number {
  *  or a SQL console - leaves the standing hint alone, because a line that flickered between a
  *  signature and a general instruction would be harder to read than either. */
 function dbRedisHint(ta: HTMLTextAreaElement): void {
-  const el2 = $("dbSqlHint");
-  if (!el2 || !dbIsRedis()) return;
+  if (!dbIsRedis()) return;
   const sig = dbRedisSignature(ta.value, ta.selectionStart || 0, dbRedisCommands());
-  el2.textContent = sig || tr("dataView.redisConsoleHint");
+  dbSqlHintSet(sig || tr("dataView.redisConsoleHint"));
 }
 
 function dbSyncKind(): void {
@@ -663,10 +662,10 @@ function dbSyncKind(): void {
   // on every mount and switch, so the pane's ⋯ never showed and a Redis key list's search said
   // "Filter tables" (found on a walk of SPEC §panel.pages). Explain and Format are overflow rows now,
   // and dbMoreItemsForSql leaves them out for a Redis command.
-  const grep = $<HTMLInputElement>("dbGrep"), sql = $<HTMLTextAreaElement>("dbSql"), sqlHint = $("dbSqlHint");
+  const grep = $<HTMLInputElement>("dbGrep"), sql = $<HTMLTextAreaElement>("dbSql");
   if (!grep || !sql) return;
   // The hint is the sql tab's head line: there only while a console is the open object.
-  if (sqlHint) sqlHint.textContent = dbConsoleHint();
+  dbSqlHintSet(dbConsoleHint());
   if (dbIsRedis()) {
     grep.placeholder = tr("dataView.filterKeys"); grep.setAttribute("aria-label", tr("dataView.filterKeys"));
     grep.title = tr("dataView.filterKeysScanPattern");

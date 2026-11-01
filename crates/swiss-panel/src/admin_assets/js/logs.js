@@ -433,7 +433,7 @@ function kindBodyNode(d           , kind         , m                           )
         return row({
           name: h("code", null, it.uri),
           sub: [it.name, it.description].filter(Boolean).join(" · ") || null,
-          primary: btn(tr("logs.read"), { data: { read: it.uri }, title: tr("logs.readResource") }),
+          primary: iconBtn("eye", tr("logs.read"), { data: { read: it.uri }, title: tr("logs.readHint") }),
         });
       }
       // Tools get Try (it opens Run with this tool already selected) and the client switch: off
@@ -444,7 +444,7 @@ function kindBodyNode(d           , kind         , m                           )
         // The one line is cut; hovering the row reads the whole of it.
         title: it.description || undefined,
         detail: itemRecordNode(it, kind),
-        primary: kind === "tools" ? btn(tr("logs.try"), { data: { try: it.name }, title: tr("logs.tryTool") }) : undefined,
+        primary: kind === "tools" ? iconBtn("play", tr("logs.try"), { data: { try: it.name }, title: tr("logs.tryHint") }) : undefined,
         toggle: kind === "tools"
           ? sw(true, tr("logs.visibleClients2"), { data: { toggle: it.name, on: "1" }, title: tr("logs.visibleClientsClickHide") })
           : undefined,

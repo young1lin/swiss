@@ -32,7 +32,7 @@ import { $, api, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import type { HChild } from "../h.js";
 import { locale, tr } from "../i18n.js";
-import { JV_LINES, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, section, sheet, showSheet, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
+import { JV_LINES, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, scrollBox, section, sheet, showSheet, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
 import type { FlowStep, RowCol, TranscriptTurn } from "../ui/index.js";
 import { call, takeWantedRun } from "./llm-core.js";
 
@@ -531,8 +531,8 @@ function liveDot(): HTMLElement {
 
 /** One JSON value as the panel's code block (the view every page draws, SPEC panel.ui),
  *  with the Show-all swap past the line cap: a 1024-wide vector block stays openable,
- *  not a wall. */
-function jsonBlock(value: unknown): HChild {
+ *  not a wall. Shared with the live stream, which must highlight exactly as history does. */
+export function jsonBlock(value: unknown): HChild {
   const capped = jsonCodeNode(decodeStrings(value), false);
   if (capped.lines <= JV_LINES) return capped.node;
   const full = jsonCodeNode(decodeStrings(value), true);
@@ -812,7 +812,7 @@ const OPEN_PROMPT = 2000;
 
 /** One folded part: its name and size on the summary, its markdown inside. */
 function fold(head: string, text: string): HTMLElement {
-  return formFold({ summary: [head, tag(sizeOf(text))] }, markdownNode(text, { class: "tc-md", copy: true }));
+  return formFold({ summary: [head, tag(sizeOf(text))], scroll: true }, markdownNode(text, { class: "tc-md", copy: true }));
 }
 
 /** The prompt as an outline: the system prompt folded, the opening in place, every part
@@ -823,7 +823,7 @@ function promptNodes(text: string): HChild[] {
   const preview = (o.lead || firstLine(text)).slice(0, 320);
   return [
     transcriptText(preview + (preview.length < (o.lead || text).length ? "…" : "")),
-    formFold({ summary: [tr("llm.history.promptWhole"), tag(sizeOf(text))] },
+    formFold({ summary: [tr("llm.history.promptWhole"), tag(sizeOf(text))], scroll: true },
       o.parts.length
         ? [o.lead ? markdownNode(o.lead, { class: "tc-md", copy: true }) : null, ...o.parts.map((p) => fold(p.head, p.text))]
         : markdownNode(text, { class: "tc-md", copy: true })),
@@ -921,7 +921,9 @@ function roundBody(r: TraceRound): HChild {
   const c = r.call;
   return [
     c ? factLine([h("code", null, c.provider + " / " + c.model), tokensText(c), c.stopReason ? tr("llm.history.stop", { why: c.stopReason }) : null]) : null,
-    r.thinking.length ? transcriptText(r.thinking.join("\n\n"), { dim: true }) : null,
+    // A thought past the prose cap scrolls in place: one long reasoning round must not push
+    // the answer, the next step and the box below it off the column.
+    r.thinking.length ? scrollBox(transcriptText(r.thinking.join("\n\n"), { dim: true })) : null,
     c ? refLink(tr("llm.history.openCall", { id: c.id }), { data: { hcall: c.id } }) : null,
   ];
 }
@@ -933,12 +935,14 @@ function toolBody(s: TraceTool): HChild {
   return [
     s.args || s.result != null
       ? flowIO([
-        s.args ? { label: tr("llm.history.arguments"), body: args && !args.tail ? jsonBlock(args.value) : textBlock(s.args), data: { lhio: "args" } } : null,
+        s.args ? { label: tr("llm.history.arguments"), body: args && !args.tail ? jsonBlock(args.value) : textBlock(s.args), copy: s.args, copyLabel: tr("logs.copyArguments"), data: { lhio: "args" } } : null,
         s.result != null
           ? {
             label: tr("llm.history.result"),
             notes: [sizeOf(s.result), tr("llm.history.linesN", { n: s.result.split("\n").length })],
             body: textBlock(s.result),
+            copy: s.result,
+            copyLabel: tr("logs.copyResult"),
             data: { lhio: "result" },
           }
           : null,

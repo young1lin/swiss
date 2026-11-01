@@ -417,6 +417,13 @@ export interface DbTableTab extends DbTabBase {
  *  and which reply is showing. One statement per result tab (SPEC §data.console). */
 export interface DbSqlTab extends DbTabBase {
   kind: "sql";
+  /** A view over a server-owned immutable analysis; SQL consoles remain separate. */
+  analysisId?: string;
+  /* SPEC §data.agent Tabs: the console's stable address, minted at birth and kept when the tab
+     is closed (data-closed.ts files it under the same id) and brought back - so a tool can name
+     one tab across a reload, a close and a restore, where a name is only a label. Unique on the
+     connection, not on the browser. */
+  id: string;
   /** The Data agent's own console (SPEC §data.agent): its statements land here, never in another. */
   agent?: boolean;
   /** The name of the agent's console tab it opened (open_console), which a run or stage naming

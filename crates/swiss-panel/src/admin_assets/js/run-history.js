@@ -31,6 +31,7 @@ import { ago } from "./traffic.js";
 import { mcpDetail, selectedMcp } from "./mcp-state.js";
 import { locale, tr, trn } from "./i18n.js";
 import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
+import { setIconBtn } from "./ui/button.js";
 import { closeSheet } from "./ui/sheet.js";
 import {
   btn, card, dot, field, form, formActions, hint, iconBtn, isLocalAddress, kvRow, note, redacted, row, section, sheet, showSheet, spinner, tag,
@@ -348,7 +349,7 @@ async function runTool()                {
   }
   d.run.running = true;
   const btn = $                   ("runBtn");
-  if (btn) { btn.disabled = true; btn.textContent = tr("runHistory.running"); }
+  if (btn) { btn.disabled = true; setIconBtn(btn, "play", tr("runHistory.running"), tr("runHistory.runningHint")); }
   const meta = $("runMeta");
   if (meta) fill(meta, spinner());
   try {
@@ -377,8 +378,13 @@ function renderRunResult()       {
   const d = mcpDetail();
   const running = !!(d && d.run.running);
   const btn = $                   ("runBtn");
-  // Also called right after a pane rebuild, which may land mid-run — keep the button honest.
-  if (btn) { btn.disabled = running; btn.textContent = running ? tr("runHistory.running") : tr("runHistory.run"); }
+  // Also called right after a pane rebuild, which may land mid-run — keep the button honest
+  // (glyph, name and tooltip all read the same state; a textContent write would erase the glyph).
+  if (btn) {
+    btn.disabled = running;
+    setIconBtn(btn, "play", running ? tr("runHistory.running") : tr("runHistory.run"),
+      running ? tr("runHistory.runningHint") : tr("runHistory.runHint"));
+  }
   const out = $("runOut"), meta = $("runMeta");
   if (!out || !d) return;
   const res = d.run.result                       ;
@@ -500,9 +506,16 @@ function configBodyNode(d           )         {
         ? field({ label: tr("runHistory.noteKeptParkedRevision"), control: h("input", { id: "e-note", placeholder: tr("runHistory.optionalEGProc") }) })
         : null,
       formActions(
-        btn(replacing ? tr("runHistory.replaceDefinition") : tr("runHistory.saveRestart"), { kind: "primary", id: "e-save" }),
-        TESTABLE_TYPES.includes(type) ? btn(tr("runHistory.testConnection"), { id: "e-test" }) : null,
-        btn(tr("runHistory.cancel"), { id: "e-cancel" })),
+        // The form's commit keeps its word beside the check: it is the one action here that
+        // restarts the MCP, and a bare glyph between two icon buttons would undersell it.
+        btn(replacing ? tr("runHistory.replaceDefinition") : tr("runHistory.saveRestart"), {
+          kind: "primary", icon: "check", id: "e-save",
+          title: replacing ? tr("runHistory.replaceSaveHint") : tr("runHistory.saveHint"),
+        }),
+        TESTABLE_TYPES.includes(type)
+          ? iconBtn("plug", tr("runHistory.testConnection"), { id: "e-test", title: tr("runHistory.testHint") })
+          : null,
+        iconBtn("x", tr("runHistory.cancel"), { id: "e-cancel", title: tr("runHistory.cancelHint") })),
       hint(null, { id: "e-test-out", hidden: true })));
   }
   const c = d.config;
@@ -549,7 +562,7 @@ function configBodyNode(d           )         {
           h("span", null, kind)),
         // A masked target carries no title: a hover would show what the mask hides.
         h("div", { class: "config-target", title: targetHost ? undefined : target }, maskedText(target, targetHost))),
-      btn(tr("runHistory.editConfiguration"), { id: "c-edit" })),
+      iconBtn("pencil", tr("runHistory.editConfiguration"), { id: "c-edit", title: tr("runHistory.editHint") })),
     badges.length ? h("div", { class: "config-badges" }, badges.map((badge) => { return tag(badge); })) : null,
     h("details", { class: "config-more" },
       h("summary", null,
@@ -570,7 +583,7 @@ function configBodyNode(d           )         {
         return row({
           name: tr(TYPE_LABELS[r.type] || r.type || "?"),
           sub: (r.note || tr("runHistory.note")) + (when ? " · " + when : ""),
-          primary: btn(tr("runHistory.restore"), { data: { restore: i } }),
+          primary: iconBtn("undo", tr("runHistory.restore"), { data: { restore: i }, title: tr("runHistory.restoreHint") }),
           more: iconBtn("trash", tr("runHistory.delete"), { ghost: true, data: { revdel: i } }),
         });
       }))
@@ -582,7 +595,7 @@ function configBodyNode(d           )         {
     h("div", { class: "config-revision-body" },
       h("div", { class: "config-revision-intro" },
         h("span", null, tr("runHistory.swapAdapterDefinitionWhile")),
-        btn(tr("runHistory.replaceDefinition2"), { id: "c-replace" })),
+        iconBtn("arrow-right", tr("runHistory.replaceDefinition2"), { id: "c-replace", title: tr("runHistory.replaceDefinitionHint") })),
       revRows));
   // Its own section, so a Depends-on section above sits a full step away (.sec + .sec).
   return frag(tunnelDepsNode(d), section({}, summary, fromFile, revBlock));
@@ -673,21 +686,22 @@ function paneTabClick(ev            )       {
     if (d) void deepBody(d.name, Number(deepMore.dataset.deepmore), true);
     return;
   }
-  // Config editing form
-  if (t.id === "e-save") {
+  // Config editing form. These are icon buttons now, so the click lands on the <svg> first and
+  // the target carries no id: closest() climbs to the button the way #pane's chrome dispatch does.
+  if (t.closest("#e-save")) {
     const d = mcpDetail();
     if (d) void (d.editMode === "replace" ? saveReplace : saveEdit)();
     return;
   }
-  if (t.id === "e-cancel") { cancelEdit(); return; }
-  if (t.id === "e-test") { void runConnTest("e-"); return; }
+  if (t.closest("#e-cancel")) { cancelEdit(); return; }
+  if (t.closest("#e-test")) { void runConnTest("e-"); return; }
   const restore = t.closest             ("[data-restore]");
   if (restore) { void restoreRevision(Number(restore.dataset.restore)); return; }
   const revdel = t.closest             ("[data-revdel]");
   if (revdel) { void deleteRevision(Number(revdel.dataset.revdel)); return; }
   // Config read view
-  if (t.id === "c-edit") { startEdit(); return; }
-  if (t.id === "c-replace") { startReplace(); return; }
+  if (t.closest("#c-edit")) { startEdit(); return; }
+  if (t.closest("#c-replace")) { startReplace(); return; }
   // Kind lists pager
   if (t.id === "pgPrev") { pagePrev(); return; }
   if (t.id === "pgNext") { pageNext(); return; }
@@ -768,7 +782,7 @@ function paneTabClick(ev            )       {
   const callRow = callSum ? callSum.closest             ("[data-callseq]") : null;
   if (callRow) { openOrCloseCall(Number(callRow.dataset.callseq)); return; }
   // Run tab
-  if (t.id === "runBtn") { void runTool(); return; }
+  if (t.closest("#runBtn")) { void runTool(); return; }
   if (t.id === "r-hist") { histToggle(); return; }
 }
 
@@ -937,13 +951,19 @@ async function toggleTool(name        , currentlyOn         , btn               
 async function readResource(uri        , trigger                          )                {
   const sel = selectedMcp();
   if (!sel) return;
-  const label = trigger ? trigger.textContent : "";
-  if (trigger) { trigger.disabled = true; trigger.textContent = "…"; }
+  // The trigger is an icon button, so its words live in aria-label/title (a textContent read
+  // would return the glyph and a textContent write would erase it): keep them, restate them.
+  const label = trigger ? trigger.getAttribute("aria-label") || "" : "";
+  const hint = trigger ? trigger.title : "";
+  if (trigger) { trigger.disabled = true; setIconBtn(trigger, "eye", tr("runHistory.reading"), tr("runHistory.reading")); }
   const j = await apiJson                    ("/api/mcps/" + encodeURIComponent(sel) + "/resource", {
     method: "POST",
     body: JSON.stringify({ uri: uri }),
   });
-  if (trigger) { trigger.disabled = false; trigger.textContent = label || tr("runHistory.read"); }
+  if (trigger) {
+    trigger.disabled = false;
+    setIconBtn(trigger, "eye", label || tr("runHistory.read"), hint || tr("logs.readHint"));
+  }
   if (!j) return;
   // hidden BEFORE the content (the house sheet idiom, panel-proof-of-life rule 1). The
   // resource text is a text node - a resource body is data, never markup.

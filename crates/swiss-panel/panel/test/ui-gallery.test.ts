@@ -124,6 +124,9 @@ const SIG: Record<string, string> = {
   hint: ".fld > .hint, .form > .hint",
   formCap: ".form-cap",
   formFold: "details.fold > summary + .fold-body",
+  resultTable: ".result-table-wrap > table.result-table > tbody > tr",
+  resultChart: ".result-chart > svg[role=img]",
+  scrollBox: ".fl-scroll > *",
   editList: ".edit-list[style*=\"--edit-cols\"] > .edit-line",
   editLine: ".edit-line > input + select + .dd",
   editSub: ".edit-line > .edit-sub:not([hidden])",
@@ -337,7 +340,7 @@ describe("SPEC §panel.ui - every export is on the page", () => {
 
 describe("SPEC §panel.ui - the scenes", () => {
   it("the page scenes include the conversation reference", () => {
-    expect(SCENES.map((s) => s.id)).toEqual(["desktop-overview", "conversation", "content", "resource", "event", "empty", "process"]);
+    expect(SCENES.map((s) => s.id)).toEqual(["analysis", "desktop-overview", "conversation", "content", "resource", "event", "empty", "process"]);
   });
 
   for (const s of SCENES) {

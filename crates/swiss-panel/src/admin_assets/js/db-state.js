@@ -66,6 +66,13 @@ function freshConnState()              {
    same millisecond would tie. */
 let tabClock = 0;
 
+/** A console tab's address (SPEC §data.agent Tabs): base36 stamped and random-tailed, so two
+ *  tabs born in the same millisecond still differ. Not a UUID - it only has to be unique among
+ *  one connection's tabs and stable across the tab's close, restore and reload. */
+export function dbNewTabId()         {
+  return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}
+
 /** A fresh tab of one kind, carrying ONLY that kind's fields (the T1 acceptance pins the
  *  shapes: a sql tab has no table field, a key tab no sqlText — the union stays honest
  *  from the first builder). Overloaded so a literal kind yields the literal member type;
@@ -99,7 +106,7 @@ export function freshTab(kind           )        {
     };
   }
   if (kind === "sql") {
-    return { kind: "sql", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
+    return { kind: "sql", id: dbNewTabId(), loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
       sqlText: "", sqlResult: null, sqlResults: null, resultTab: 0, sqlBusy: false };
   }
   if (kind === "key") {

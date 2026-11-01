@@ -246,7 +246,10 @@ describe("the connection sheet's Advanced fold (SPEC §tunnels.panel)", () => {
     expect(advanced, "the Advanced fold").toBeTruthy();
     expect(advanced.className).toBe("fold");
     expect(advanced.getAttribute("open")).toBe(null);
-    expect(html).toContain("<summary>Advanced</summary>");
+    // The fold line is the bare word, led by the library's own chevron - never the native
+    // text triangle the browser's marker drew, and never a chip.
+    expect(html).toContain('<summary><span class="fold-chev">');
+    expect(html).toContain("</span>Advanced</summary>");
     // Nothing configured -> no tags at all; the fold line is the sheet's only new element.
     expect(html).not.toContain('<span class="tag">');
     // The inline error line starts hidden.

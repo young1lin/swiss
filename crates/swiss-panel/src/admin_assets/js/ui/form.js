@@ -39,6 +39,7 @@
  * No handlers and no state: a form is read by id when it is submitted. */
                                                
 import { h } from "../h.js";
+import { iconNode } from "./icon.js";
 
 export function form(...kids          )              {
   return h("div", { class: "form" }, ...kids);
@@ -74,10 +75,14 @@ export function field(o                                                         
 /** A fold inside a form: the part most people never open (a connection's proxy and jump),
  *  collapsed under a summary line that still names what is set in it (chips), so collapsed
  *  never means hidden. Native <details>: keyboard and state for free. */
-export function formFold(o                                  , ...body          )              {
+/** A fold: a summary line the reader opens, a chevron before it that turns as it opens (the
+ *  native marker is gone - a text triangle reads as a bullet), and its body beneath. `scroll`
+ *  caps the body at the prose height and scrolls it, so one long system prompt or prompt part
+ *  reads in place instead of running the column down the page. */
+export function formFold(o                                                    , ...body          )              {
   return h("details", { class: "fold", id: o.id },
-    h("summary", null, o.summary),
-    h("div", { class: "fold-body" }, ...body));
+    h("summary", null, h("span", { class: "fold-chev" }, iconNode("chevron-right")), o.summary),
+    h("div", { class: o.scroll ? "fold-body scroll" : "fold-body" }, ...body));
 }
 
 /** A caption inside a form, over the part it names (a sheet's "Proxy", "Serves MCPs"): the

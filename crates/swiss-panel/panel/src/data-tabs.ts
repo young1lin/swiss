@@ -500,13 +500,16 @@ function dbClosedMenuItems(): MenuItem[] {
 }
 
 /** Bring a closed console back as a new tab in front: its text and its name, and - while no open
- *  tab is the agent's of that name - the agent's again, so its next run lands there. */
+ *  tab is the agent's of that name - the agent's again, so its next run lands there. It keeps
+ *  the id it was filed under, which is the tab's own: a tool holding that id still addresses
+ *  this console after the round trip (data-closed.ts). */
 function dbRestoreClosed(id: string): void {
   const e = dbClosedTake(id);
   if (!e) { renderDbTabs(); return; }
   dbOpenTabForce({ kind: "sql" });
   const t = dbSqlTab();
   if (!t) return;
+  t.id = e.id;
   t.sqlText = e.text;
   if (e.custom) t.custom = e.custom;
   const name = e.agentTab || "";
@@ -852,7 +855,7 @@ function dbAfterTabSwitch(byKeyboard?: boolean): void {
   // Landing on a console by pointer means "I am going to type here"; landing on it mid-walk
   // does not. Taking the caret on the keyboard path turned the arrows into a one-way trip:
   // the next ArrowLeft moved the textarea's caret instead of the strip (found live, T2 walk).
-  if (t.kind === "sql" && ta && !byKeyboard) ta.focus();
+  if (t.kind === "sql" && !t.analysisId && ta && !byKeyboard) ta.focus();
 }
 
 export {

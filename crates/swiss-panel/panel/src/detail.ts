@@ -27,6 +27,7 @@ import { rowOf } from "./sidebar.js";
 import { clearMcpBusy, mcpBusyVerb, mcpDetail, selectedMcp, setLastAction, setMcpBusy, setMcpDetail, setSelectedMcp } from "./mcp-state.js";
 import { tr, trn } from "./i18n.js";
 import { closeMenu } from "./ui/menu.js";
+import { setIconBtn } from "./ui/button.js";
 import { openFieldSheet } from "./ui/sheet.js";
 
 /* --- lifecycle actions ------------------------------------------------------------------------ */
@@ -660,6 +661,18 @@ function changeEditType(t: string): void {
   renderPane();
 }
 
+/** The test button is a word in the Add sheet and a glyph on the detail page: restate whichever
+ *  shape it is. Writing textContent into an icon button would erase its sprite, so the glyph keeps
+ *  its href and only the words around it move (setIconBtn). */
+function connTestState(btn: HTMLButtonElement, busy: boolean, idleTitle?: string): void {
+  const use = btn.querySelector("use");
+  if (!use) { btn.textContent = busy ? tr("detail.testing") : tr("detail.testConnection"); return; }
+  const icon = (use.getAttribute("href") || "").replace("#i-", "") || "plug";
+  setIconBtn(btn, icon,
+    busy ? tr("detail.testing") : tr("detail.testConnection"),
+    busy ? tr("detail.testing") : idleTitle || tr("runHistory.testHint"));
+}
+
 /**
  * Test connection — the DB types' form carries this beside Save. It POSTs the form's CURRENT
  * values (env refs intact) to /api/mcpdefs/test, which expands them server-side and opens a real
@@ -693,8 +706,9 @@ async function runConnTest(p: string): Promise<void> {
     out.style.color = "";
     return;
   }
+  const idleTitle = btn.title;
   btn.disabled = true;
-  btn.textContent = tr("detail.testing");
+  connTestState(btn, true);
   out.hidden = false;
   out.textContent = tr("detail.connectingTheseExactValues");
   out.style.color = "";
@@ -719,7 +733,7 @@ async function runConnTest(p: string): Promise<void> {
     out.style.color = "var(--red)";
   } finally {
     btn.disabled = false;
-    btn.textContent = tr("detail.testConnection");
+    connTestState(btn, false, idleTitle);
   }
 }
 

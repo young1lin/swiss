@@ -49,6 +49,7 @@ import { locale, tr, trn } from "./i18n.js";
 import { btn, iconBtn, moreBtn } from "./ui/button.js";
 import { popupMenu } from "./ui/menu.js";
 import { dockShow } from "./ui/dock.js";
+import { dbAnalysisButton, dbAnalysisRender } from "./data-analysis.js";
 import { seg } from "./ui/seg.js";
 
 /* --- one page of rows --------------------------------------------------------------------------- */
@@ -911,6 +912,21 @@ function dbConsoleHint(): string {
   return tr("dataView.blankLineStartsNew");
 }
 
+/** Restate the console's rule in both places it lives: the `#dbSqlHint` text every caller has
+ *  always written (read by the tests, and the source of truth for the words), and the head's
+ *  hover text, which is what the operator actually sees now that the paragraph is folded away.
+ *  One write, so a redis command's signature can never say one thing in the DOM and another on
+ *  the head. */
+export function dbSqlHintSet(text: string): void {
+  const node = $("dbSqlHint");
+  if (!node) return; // no console head on screen: nothing to restate (a key tab, a table)
+  node.textContent = text;
+  const left = document.querySelector<HTMLElement>("#dbHead .db-head-left");
+  if (left) left.title = text;
+  const mark = document.querySelector<HTMLElement>("#dbHead .db-title");
+  if (mark) mark.title = text;
+}
+
 function renderDbToolbar(): void {
   const d = dbConn();
   const t = dbTab();
@@ -934,12 +950,23 @@ function renderDbToolbar(): void {
       ? (pkCols0.length ? tr("dataGrid.editableChangesBufferUntil") : tr("dataGrid.editableNote", { note: t.data.editNote || tr("dataGrid.rowsAddressedAllColumns") }))
       : (t.data.editNote || tr("dataGrid.browsingOnly")));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
+  } else if (t.kind === "sql" && t.analysisId) {
+    left.appendChild(h("h2", { class: "db-title" }, t.custom || tr("analysis.result")));
   } else if (t.kind === "sql") {
     // The editor's own head, answers or not: what the console takes and how it runs. The answers
     // are the results bar's, under the console's edge (renderDbResultsBar).
     const cmd = dbIsRedis() || dbIsMongo();
-    left.appendChild(el("h2", "db-title", cmd ? tr("dataGrid.command") : tr("dataSql.sql")));
-    left.appendChild(h("div", { class: "db-meta", id: "dbSqlHint" }, dbConsoleHint()));
+    // The rule the console runs by is a PARAGRAPH, and this head is the strip every editor sits
+    // under: two lines of instruction above a box that already says what it wants pushed the
+    // editor down on every visit. It stays one hover away instead — on the title and on the help
+    // mark beside it — and the words themselves stay in `#dbSqlHint` for the readers that keep it
+    // current (dbSyncKind, dbRedisHint) and for the tests that pin it (2026-11-01).
+    const hint = dbConsoleHint();
+    left.title = hint;
+    left.appendChild(h("h2", { class: "db-title", title: hint },
+      cmd ? tr("dataGrid.command") : tr("dataSql.sql"),
+      h("span", null, " ", iconNode("help"))));
+    left.appendChild(h("span", { id: "dbSqlHint", hidden: true }, hint));
     dbHistoryEnsure(); // the ⋯'s recent statements, read once for the database this console reaches
   } else if (t.kind === "coll") {
     renderMongoHeadLeft(left, t);
@@ -963,6 +990,7 @@ function renderDbToolbar(): void {
   // action, and the overflow. The pager and page-size are the status bar's now; the
   // console opener rides the overflow of every non-sql tab.
   const ctl = el("div", "db-head-ctl");
+  if (d.conn && !dbIsRedis() && !dbIsMongo()) ctl.appendChild(dbAnalysisButton());
   const nosql = dbIsRedis();
   const tt = t.kind === "table" ? t : null;
   let objMore = true; // every branch below that draws controls ends with the object's ⋯
@@ -972,6 +1000,8 @@ function renderDbToolbar(): void {
       ctl.appendChild(btn(tr("dataGrid.row"), { title: tr("dataGrid.bufferNewRowInserted"), data: { tb: "addrow" } }));
     }
     ctl.appendChild(dbMoreButton((more: HTMLElement): MenuItem[] => { return dbMoreItemsForTable(more, tt); }));
+  } else if (t.kind === "sql" && t.analysisId) {
+    // Analysis actions belong to its versioned result view, never the raw SQL editor.
   } else if (t.kind === "sql") {
     // SPEC §data.redis-console: Templates stands on its own for a redis console. It was a section inside the
     // ⋯, under favorites and history, and the owner never found it ("没有 template") - the
@@ -983,8 +1013,11 @@ function renderDbToolbar(): void {
     }
     // Run is the selection or the caret's block; Run all the whole console - one command
     // document is all a MongoDB console holds, so it has no Run all (SPEC §data.console).
+    // Run carries the primary weight: it is the action this head exists for, and the head's
+    // buttons now sit on ONE line with it, so the emphasis has to come from the button rather
+    // than from its position (2026-11-01).
     if (!dbIsMongo()) ctl.appendChild(btn(tr("dataView.runAll"), { id: "dbSqlRunAll", title: tr("dataView.runAllTitle") }));
-    ctl.appendChild(btn(tr("dataView.run"), { id: "dbSqlRun", title: tr("dataView.runTitle") }));
+    ctl.appendChild(btn(tr("dataView.run"), { id: "dbSqlRun", kind: "primary", title: tr("dataView.runTitle") }));
     ctl.appendChild(dbMoreButton((): MenuItem[] => { return dbMoreItemsForSql(); }));
   } else if (t.kind === "key" && t.redisValue) {
     const cfg = DB_REDIS_TYPES[t.redisValue.type];
@@ -1095,7 +1128,7 @@ function renderDbGrid(): void {
   // SPEC §data.tabs: the console is the sql tab's BODY, so it is on screen exactly when that tab
   // is the open object — no flag, no toggle, nothing to get out of sync with the strip.
   const con = $("dbConsole");
-  if (con) con.hidden = t.kind !== "sql";
+  if (con) con.hidden = t.kind !== "sql" || !!(t.kind === "sql" && t.analysisId);
   // Full rebuild inside a scrolled pane. The wrap carries overflow-anchor:none (views.css):
   // Chrome's scroll anchoring otherwise re-picks its anchor when this wipe destroys the old
   // one and compensates by scrolling, which snaps the row the user just clicked to the top.
@@ -1103,6 +1136,12 @@ function renderDbGrid(): void {
   dbTipHide(); // a rebuilt grid invalidates any header card still open
   renderDbStatus(); // SPEC §data.tabs: the status line follows every body repaint
   renderDbResultsBar(); // and so does the results' bar (SPEC §data.console)
+  if (t.kind === "sql" && t.analysisId) {
+    const bar = $("dbRbar"); if (bar) bar.hidden = true;
+    const status = $("dbStatus"); if (status) status.textContent = "";
+    dbAnalysisRender(wrap, t.analysisId);
+    return;
+  }
 
   // SPEC §data.edits: conflict marks live exactly as long as the buffered change they name —
   // reverting the cell, dropping the buffer or reloading the table clears them (a new

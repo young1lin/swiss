@@ -38,7 +38,7 @@ import {
   emptyNode, factLine, failNote, field, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, form, formActions, formCap, formFold, graphView, groupNode, heldDot, hint, iconBtn, iconNode,
   initSelects, redacted, initSheet, inlineForm, jsonCodeNode, diffNode, kvRow, markdownNode, menuOpen, moreBtn, note, objTab, openFieldSheet,
   grip, pageFoot, pager, pair, pane, paneHead, pickList, pickRow, popupMenu, refLink, relTime, resHead, row, section,
-  seg, sheet, sheetOpen, showSheet, sideRow, spinner, split, sw, tag, timeline, timelineMeta, timelineToggle, toTop,
+  scrollBox, seg, sheet, sheetOpen, showSheet, sideRow, spinner, split, sw, tag, timeline, timelineMeta, timelineToggle, toTop,
   textNode, tokenCodeNode, transcript, transcriptText, transcriptTurn, toolChip, valueBlock, proseText, codeSchemeFor, workspace, wsBar, wsHead, wsScroll, wsSide, wsSplit,
 } from "./ui/index.js";
                                                                                                                   
@@ -260,6 +260,9 @@ function callBody(it              )         {
 /** An opened tool call in the flow, the way the LLM history's run sheet draws one: what went in
  *  and what came back, on one code surface. */
 function flowBody(s          )         {
+  // A round that reasoned opens on its thought: prose, scrolled past the prose cap (scrollBox),
+  // the way the LLM history draws a long reasoning round.
+  if (s.id === "f1") return scrollBox(transcriptText(tr("gallery.s.tThink"), { dim: true }));
   return flowIO([
     { label: tr("gallery.d.arguments"), body: jsonCodeNode({ path: "notes.md", offset: 1, limit: 40, step: s.id }, false, { oneLine: true }).node },
     { label: tr("gallery.d.result"), notes: [tr("gallery.d.replySize", { n: 64 })],
@@ -283,7 +286,7 @@ function sampleFlow()           {
       { id: "f3", lead: "search", title: "grep", mono: true, summary: "idempotency src/", summaryMono: true, meta: "40 ms",
         status: { text: tr("gallery.d.error"), tone: "bad" } },
       { id: "f4", lead: "terminal", title: "exec", mono: true, summary: "cargo test -p orders", summaryMono: true, live: true, meta: "3.0 s" },
-    ], { open: new Set(["f2"]), body: flowBody }),
+    ], { open: new Set(["f1", "f2"]), body: flowBody }),
     flow([
       { id: "s1", lead: dot("starting", tr("gallery.dot.starting")), title: tr("gallery.d.flowSync"), summary: tr("gallery.d.flowPhase"),
         detail: tr("gallery.d.flowVerdict"), live: true, meta: "2 min", tools: btn(tr("gallery.d.cancel"), { kind: "ghost" }) },
@@ -590,7 +593,7 @@ function catalogue(now        )              {
       timeline(sampleCalls(now), { now, open: new Set(["g3"]), body: callBody }),
       timeline(sampleHits(now), { now }),
     ]),
-    entry(["flow", "flowProse", "flowIO", "flowHead", "factLine"], tk("gallery.c.flow"), tk("gallery.c.flowNote"), [], sampleFlow()),
+    entry(["flow", "flowProse", "flowIO", "flowHead", "factLine", "scrollBox"], tk("gallery.c.flow"), tk("gallery.c.flowNote"), [], sampleFlow()),
     entry(["jsonCodeNode", "tokenCodeNode", "valueBlock", "proseText"], tk("gallery.c.code"), tk("gallery.c.codeNote"), [
       [tr("gallery.st.codeOneLine"), valueBlock({ label: tr("gallery.d.arguments"), tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
         jsonCodeNode({ status: "open", limit: 20 }, false, { oneLine: true }).node)],

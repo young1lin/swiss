@@ -71,6 +71,20 @@ export function iconBtn(icon        , label        , o              = {})       
   }, iconNode(icon));
 }
 
+/** Restate a built icon button in place - glyph, accessible name and tooltip move together.
+ *
+ *  This is the ONLY way a state flip (Disable/Enable, Run/Running) may change an icon button:
+ *  its glyph is an <svg> child, so a `textContent = …` write would not relabel the button, it
+ *  would erase the icon. Callers that keep the same glyph still come through here, because the
+ *  name and the tooltip have to change with the state either way. */
+export function setIconBtn(b                   , icon        , label        , title         )       {
+  // The glyph is updated in place - never rebuilt - so a button keeps the node its caller built.
+  const use = b.querySelector("use");
+  if (use) use.setAttribute("href", "#i-" + icon);
+  b.setAttribute("aria-label", label);
+  b.title = title ?? label;
+}
+
 /** A ⋯ always opens a menu, so it says so (aria-haspopup): a screen reader announces the menu
  *  before the click, and every caller gets it without remembering to. */
 export function moreBtn(label        , o                                                    = {})                    {

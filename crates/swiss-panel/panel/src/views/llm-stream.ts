@@ -23,10 +23,11 @@
    ================================================================================================ */
 import { targetEl } from "../util.js";
 import { fill, h } from "../h.js";
+import type { HChild } from "../h.js";
 import { tr } from "../i18n.js";
-import { factLine, flow, flowIO, flowToggle, fmtMs, formFold, note, transcriptText, transcriptTurn } from "../ui/index.js";
+import { factLine, flow, flowIO, flowToggle, fmtMs, formFold, note, scrollBox, splitJsonBlock, transcriptText, transcriptTurn } from "../ui/index.js";
 import type { TranscriptTurn } from "../ui/index.js";
-import { firstLine, stepLine, thinkLine, toolIcon } from "./llm-history.js";
+import { firstLine, jsonBlock, stepLine, thinkLine, toolIcon } from "./llm-history.js";
 
 /** One streamed ask (SPEC §llm.api): POST the body to a stream route, read the answer as
  *  server-sent events, paint every happening on the dialog's column as it arrives.
@@ -104,7 +105,7 @@ export async function streamAsk(
     const open = !!t.holder.querySelector(".fl-step.open");
     t.shown = firstLine(t.text.trim());
     fill(t.holder, flow([{ id: "think", ...thinkLine(t.text), live: ms == null, meta: ms == null ? undefined : fmtMs(ms) }], {
-      eager: true, open: open ? new Set(["think"]) : undefined, body: () => transcriptText(t.text, { dim: true }),
+      eager: true, open: open ? new Set(["think"]) : undefined, body: () => scrollBox(transcriptText(t.text, { dim: true })),
     }));
   };
   const think = (text: string): void => {
@@ -219,13 +220,26 @@ export async function streamAsk(
         const tool = String(payload.name || "");
         const args = String(payload.arguments || "");
         const holder = h("div", { data: { latool: tool } });
+        // A call and its answer are JSON most of the time (a SQL result, a file's rows), and
+        // the reader must see it highlighted here exactly as the history page shows it: the
+        // plain-text block this used to paint was the regression. Anything that is not JSON
+        // still reads as text, verbatim.
+        const shown = (raw: string): HChild => {
+          const parsed = splitJsonBlock(raw);
+          return parsed && !parsed.tail ? jsonBlock(parsed.value) : transcriptText(raw, { mono: true });
+        };
         const paint = (text: string | null, ok = true): void => {
           const open = !!holder.querySelector(".fl-step.open");
           fill(holder, flow([{ id: "tool", title: tool, lead: toolIcon(tool), mono: true, ...stepLine(args),
             live: text == null, status: !ok ? { text: tr("llm.history.toolError"), tone: "bad" } : undefined,
           }], { eager: true, open: open ? new Set(["tool"]) : undefined, body: () => flowIO([
-            { label: tr("llm.history.arguments"), body: transcriptText(args, { mono: true }) },
-            { label: tr("llm.history.result"), body: text == null ? note(tr("llm.agents.testing"), { busy: true }) : transcriptText(text, { mono: true }) },
+            { label: tr("llm.history.arguments"), body: shown(args), copy: args, copyLabel: tr("logs.copyArguments") },
+            {
+              label: tr("llm.history.result"),
+              body: text == null ? note(tr("llm.agents.testing"), { busy: true }) : shown(text),
+              copy: text == null ? undefined : text,
+              copyLabel: tr("logs.copyResult"),
+            },
           ]) }));
         };
         holder.onclick = (e): void => {

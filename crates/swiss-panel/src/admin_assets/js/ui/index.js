@@ -25,6 +25,7 @@
  *
  * A design is a gallery SCENE built from these, not a page of hand-written CSS (SPEC §panel.ui). */
 export { btn, iconBtn, moreBtn } from "./button.js";
+export { resultTable, resultChart } from "./result.js";
 export { copyBtn, copyText } from "./copy.js";
                                                         
 export { iconNode } from "./icon.js";
@@ -57,7 +58,7 @@ export { objTab } from "./tab.js";
                                         
 export { collapseRuns, dayLabel, fmtMs, relTime, timeLabel, timeline, timelineMeta, timelineToggle } from "./timeline.js";
                                                                 
-export { factLine, flow, flowHead, flowIO, flowProse, flowToggle } from "./flow.js";
+export { factLine, flow, flowHead, flowIO, flowProse, flowToggle, scrollBox } from "./flow.js";
                                                     
 export { transcript, transcriptText, transcriptTurn, toolChip } from "./transcript.js";
                                                       

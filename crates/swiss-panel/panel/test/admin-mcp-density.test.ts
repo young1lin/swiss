@@ -96,9 +96,23 @@ describe("MCP detail progressive disclosure", () => {
     expect(record.querySelector(".vblock-text")!.textContent).toBe(description);
     expect(record.querySelector("pre.jv")!.textContent, "the schema is the panel's one code block").toContain('"The SQL statement to execute."');
     const tryBtn = host.querySelector('[data-try="mysql_query"]')!;
+    // Just show, don't tell: the row's verb is the play glyph, and its word stays available to a
+    // screen reader and to a hover (iconBtn's aria-label + tooltip).
+    expect(tryBtn.getAttribute("aria-label")).toBe("Try");
+    expect(tryBtn.getAttribute("title")).toBe("Open this tool on the Run tab, its arguments ready from its schema");
+    expect(tryBtn.querySelector("use")!.getAttribute("href")).toBe("#i-play");
     const toggle = host.querySelector('[data-toggle="mysql_query"]')!;
     expect(detail.contains(tryBtn) || detail.contains(toggle), "the row's controls never open the record").toBe(false);
     expect(toggle.getAttribute("role")).toBe("switch");
+  });
+
+  it("a resource's Read is the eye glyph, its tooltip naming what the read does", () => {
+    const host = document.createElement("div");
+    host.append(logs.kindBodyNode({ resources: loadedKind([{ uri: "db://orders", name: "orders" }]) }, "resources", { lifecycle: "started" }));
+    const read = host.querySelector('[data-read="db://orders"]')!;
+    expect(read.getAttribute("aria-label")).toBe("Read");
+    expect(read.getAttribute("title")).toBe("Read this resource now and show its contents — read-only, nothing changes");
+    expect(read.querySelector("use")!.getAttribute("href")).toBe("#i-eye");
   });
 
   it("a prompt's record names its arguments - or says it has none - never an input schema", () => {

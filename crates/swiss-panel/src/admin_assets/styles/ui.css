@@ -564,6 +564,9 @@
     .fl-body { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s1) var(--s2) var(--s3) calc(var(--s2) + var(--fl-lead) + var(--s3)); }
     .fl-body > .btn { align-self: flex-start; }
     .fl-body > .note { padding-top: 0; }
+    /* A step's prose body past the prose cap (a round's thinking): it scrolls in place, so the
+       answer below it stays where the reader can see it. */
+    .fl-scroll { max-height: var(--fl-prose-h); overflow: auto; overscroll-behavior: contain; }
     .fl-prose { padding: var(--s1) var(--s2) var(--s2) calc(var(--s2) + var(--fl-lead) + var(--s3)); font-size: var(--f-body); line-height: 1.6; overflow-wrap: anywhere; }
     .fl-prose > :first-child { margin-top: 0; }
     .fl-prose > :last-child { margin-bottom: 0; }
@@ -916,7 +919,19 @@
        hidden: the row's transport stays visible without unfolding. The interior grid gives
        the fold's content its own rhythm (the sheet-body gap stops at the <details> element),
        a touch tighter than the form above because it is a sub-section. */
-    details.fold > summary { cursor: pointer; font-size: var(--f-label); color: var(--text-2); }
+    /* A fold's summary: its own chevron, not the native marker - a text triangle reads as a
+       bullet at caption size, and it never turned with the fold. The marker leaves no gap
+       behind it, so the label keeps the same inset. */
+    details.fold > summary { position: relative; display: block; padding-left: calc(var(--ic-s) + var(--s2)); cursor: pointer; font-size: var(--f-label); color: var(--text-2); list-style: none; }
+    details.fold > summary::-webkit-details-marker, details.fold > summary::marker { display: none; content: ""; }
+    details.fold .fold-chev { position: absolute; left: 0; top: 0.1em; display: inline-flex; color: var(--text-3); transition: transform .15s ease, color .12s ease; }
+    details.fold .fold-chev .ic { width: var(--ic-s); height: var(--ic-s); }
+    details.fold > summary:hover .fold-chev { color: var(--text); }
+    details.fold[open] > summary .fold-chev { transform: rotate(90deg); }
+    @media (prefers-reduced-motion: reduce) { details.fold .fold-chev { transition: none; } }
+    /* A body past the prose cap scrolls in place (formFold's `scroll`): the prompt parts, a
+       system prompt, a long thought. */
+    details.fold > .fold-body.scroll { max-height: var(--fl-prose-h); overflow: auto; overscroll-behavior: contain; }
     details.fold > summary .tag { margin-left: var(--s1); }
     details.fold > .fold-body { display: grid; gap: var(--s2); padding-top: var(--s3); }
 
@@ -1240,3 +1255,15 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
 
+/* Immutable result pages and server-aggregated charts (SPEC §data.analysis). */
+.result-table-wrap { overflow: auto; max-width: 100%; }
+.result-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: var(--f-label); }
+.result-table :is(th, td) { padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep); text-align: left; max-width: var(--measure); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-table th { color: var(--text-3); font-weight: var(--w-emph); }
+.result-chart { margin: var(--s3) 0; }
+.result-chart svg { display: block; width: 100%; max-height: var(--measure); }
+.result-chart-axis { stroke: var(--sep); }
+.result-chart-value { fill: var(--cat-1); }
+.result-chart-area { fill: color-mix(in srgb, var(--cat-1) 16%, transparent); }
+.result-chart-line { stroke: var(--cat-1); fill: none; stroke-width: var(--chart-line-width); }
+.result-chart-label { fill: var(--text-3); font-size: var(--f-label); }
