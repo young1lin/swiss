@@ -17,6 +17,7 @@
 import { $, api, apiJson, refocusIfIdle, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import { currentView } from "../ui-state.js";
+import { desktopQuit } from "../desktop.js";
 import { tr } from "../i18n.js";
 import { btn, card, closeSheet, emptyNode, hint, iconBtn, note, paneBody, paneHead, row, section, sheet, showSheet, sw, tag } from "../ui/index.js";
 import type { ApiSkillStatus, ApiMachineSetting as MachineSetting, MachineSettingKey as MachineKey } from "../types/api.js"; // Admin API contracts.
@@ -179,6 +180,10 @@ async function requestQuit(): Promise<void> {
     return;
   }
   closeSheet();
+  // The window goes with the gateway in the desktop app (SPEC §host.gui): the page it would show
+  // next can never load again, and leaving the shell standing held the single-instance claim
+  // hostage. A browser tab keeps the "stopping" page below.
+  if (desktopQuit()) return;
   // A slow response must not overwrite a different page reached while the sheet was open.
   if (currentView() === "system") {
     fill($("pane"), emptyNode({

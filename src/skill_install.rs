@@ -59,14 +59,34 @@ pub struct SkillStatus {
 pub fn status() -> Result<Vec<SkillStatus>, String> {
     let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
         .ok_or_else(|| "cannot find the user home directory".to_string())?;
-    Ok(status_in(&PathBuf::from(home)))
+    Ok(status_in(&PathBuf::from(home), claude_config().as_deref()))
 }
 
-fn status_in(home: &Path) -> Vec<SkillStatus> {
+/// `$CLAUDE_CONFIG_DIR`, when it names something. Claude Code reads its user skills and its
+/// settings under it, so a machine that sets it is not served by `~/.claude` at all.
+fn claude_config() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|c| !c.to_string_lossy().trim().is_empty())
+        .map(PathBuf::from)
+}
+
+/// Where one of the three user skill roots actually lives. `.claude` is the only one that can
+/// move: with `CLAUDE_CONFIG_DIR` set, that IS the directory Claude Code reads, and the batch
+/// install (`install_skills_in`) has always honored it — the panel's per-skill path and status
+/// did not, so a machine with the variable set saw the row say "installed" for a directory the
+/// client never opens, and the install wrote there too (2026-11-01).
+fn root_dir(home: &Path, root: &str, claude_config: Option<&Path>) -> PathBuf {
+    match (root, claude_config) {
+        (".claude", Some(config)) => config.join("skills"),
+        _ => home.join(root).join("skills"),
+    }
+}
+
+fn status_in(home: &Path, claude_config: Option<&Path>) -> Vec<SkillStatus> {
     SHIPPED_SKILLS.iter().map(|(name, _)| SkillStatus {
         name: (*name).into(),
         locations: [".claude", ".codex", ".agents"].iter().map(|root| {
-            let path = home.join(root).join("skills").join(name).join("SKILL.md");
+            let path = root_dir(home, root, claude_config).join(name).join("SKILL.md");
             let (installed, error) = match std::fs::metadata(&path) {
                 Ok(metadata) => (Some(metadata.is_file()), None),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => (Some(false), None),
@@ -85,15 +105,15 @@ pub fn valid_target(name: &str, root: &str) -> bool {
 pub fn install_selected(name: &str, root: &str) -> Result<(), String> {
     let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
         .ok_or_else(|| "cannot find the user home directory".to_string())?;
-    install_selected_in(&PathBuf::from(home), name, root)
+    install_selected_in(&PathBuf::from(home), name, root, claude_config().as_deref())
 }
 
-fn install_selected_in(home: &Path, name: &str, root: &str) -> Result<(), String> {
+fn install_selected_in(home: &Path, name: &str, root: &str, claude_config: Option<&Path>) -> Result<(), String> {
     if !valid_target(name, root) { return Err("unknown skill or skill directory".into()); }
     let Some((_, body)) = SHIPPED_SKILLS.iter().find(|(shipped, _)| *shipped == name) else {
         return Err("unknown skill".into());
     };
-    let directory = home.join(root).join("skills").join(name);
+    let directory = root_dir(home, root, claude_config).join(name);
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     // Replace only SKILL.md. User additions and other skills remain untouched, and a failed
     // staged write or rename leaves the previous installed document intact.
@@ -210,7 +230,7 @@ mod tests {
         std::fs::create_dir_all(installed.parent().expect("skill parent")).expect("mkdir");
         std::fs::write(&installed, "a locally installed skill").expect("write fixture");
         std::fs::create_dir_all(home.0.join(".codex/skills/swiss-memory")).expect("mkdir");
-        let rows = status_in(&home.0);
+        let rows = status_in(&home.0, None);
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].name, "swiss");
         assert_eq!(rows[0].locations.iter().map(|l| l.root.as_str()).collect::<Vec<_>>(), [".claude", ".codex", ".agents"]);
@@ -223,22 +243,38 @@ mod tests {
     struct TempHome(PathBuf);
 
     #[test]
+    fn a_moved_claude_config_dir_is_the_one_both_status_and_install_use() {
+        // Claude Code reads `$CLAUDE_CONFIG_DIR` and nothing under `~/.claude` when it is set.
+        // Status and the per-skill install have to follow it, or the panel reports "installed"
+        // for a directory the client never opens (2026-11-01).
+        let home = TempHome::new();
+        let config = TempHome::new();
+        let rows = status_in(&home.0, Some(&config.0));
+        assert_eq!(rows[0].locations[0].path, config.0.join("skills").join("swiss").join("SKILL.md").to_string_lossy());
+        install_selected_in(&home.0, "swiss", ".claude", Some(&config.0)).expect("install");
+        assert!(config.0.join("skills/swiss/SKILL.md").is_file(), "the client's directory got the skill");
+        assert!(!home.0.join(".claude").exists(), "and the one it does not read stayed untouched");
+        let after = status_in(&home.0, Some(&config.0));
+        assert_eq!(after[0].locations[0].installed, Some(true), "status follows the same directory");
+    }
+
+    #[test]
     fn selected_install_only_writes_one_skill_in_one_root_and_preserves_extra_files() {
         let home = TempHome::new();
         let folder = home.0.join(".codex/skills/swiss-memory");
         std::fs::create_dir_all(&folder).expect("mkdir");
         std::fs::write(folder.join("notes.txt"), "keep me").expect("extra file");
-        install_selected_in(&home.0, "swiss-memory", ".codex").expect("install");
+        install_selected_in(&home.0, "swiss-memory", ".codex", None).expect("install");
         assert_eq!(std::fs::read_to_string(folder.join("SKILL.md")).expect("skill"), MEMORY_SKILL_MD);
         assert_eq!(std::fs::read_to_string(folder.join("notes.txt")).expect("extra"), "keep me");
         assert!(!home.0.join(".agents").exists());
         assert!(!home.0.join(".claude").exists());
         assert!(!home.0.join(".codex/skills/swiss").exists());
         std::fs::write(folder.join("SKILL.md"), "old content").expect("old");
-        install_selected_in(&home.0, "swiss-memory", ".codex").expect("update");
+        install_selected_in(&home.0, "swiss-memory", ".codex", None).expect("update");
         assert_eq!(std::fs::read_to_string(folder.join("SKILL.md")).expect("updated"), MEMORY_SKILL_MD);
         for (name, root) in [("../other", ".codex"), ("swiss", "../other"), ("swiss", ".cursor")] {
-            assert!(install_selected_in(&home.0, name, root).is_err());
+            assert!(install_selected_in(&home.0, name, root, None).is_err());
         }
     }
 
