@@ -654,6 +654,9 @@ fn answered(text: impl Into<String>) -> ToolAnswer {
 const STAGED: &str = "Placed in the user's console. It has NOT run: the user reviews it and runs it themselves.";
 /// The longest name a console tab of the agent's takes (open_console, a run's or stage's tab).
 const TAB_MAX: usize = 40;
+/// The longest console tab id taken back from the model: the page's are ~14 characters, this
+/// only refuses a paste that could not be one.
+const TAB_ID_MAX: usize = 64;
 /// The most rows a write of the agent's changes on its own in auto mode (SPEC §data.agent
 /// Writes): one that changes more is rolled back and staged for the user.
 const WRITE_ROWS_MAX: u64 = 1_000;
@@ -704,10 +707,52 @@ fn tab_of(args: &Value) -> Result<Option<String>, String> {
     Ok(Some(tab))
 }
 
-/// A run's or stage's frame to the page, naming the console tab it lands in when it names one.
-fn in_tab(mut frame: Value, tab: &Option<String>) -> Value {
-    if let Some(tab) = tab {
+/// The console tab id open_console, read_console_tab and the two edit tools address: the page's
+/// own (db-state.ts dbNewTabId), one line and short. None when the model names none.
+fn tab_id_of(args: &Value) -> Result<Option<String>, String> {
+    let Some(id) = string_arg(args, "tabId") else { return Ok(None) };
+    if id.chars().count() > TAB_ID_MAX {
+        return Err(format!("tabId: at most {TAB_ID_MAX} characters, as list_console_tabs prints it"));
+    }
+    if id.chars().any(char::is_control) {
+        return Err("tabId: one line, as list_console_tabs prints it".into());
+    }
+    Ok(Some(id))
+}
+
+/// Why an id named no console tab: the page's snapshot has no such tab, and the readable ids are
+/// one call away - a closed tab the reader cleared, or an id from another connection's list.
+fn no_such_tab(id: &str) -> String {
+    format!("no console tab with id {id} on this connection: call list_console_tabs for the tabs and their ids")
+}
+
+/// The console tabs the page sent with this send. Absent is an empty list - a page holding no
+/// console tab, or an older one that sends none - and malformed is the body's own bad field.
+fn console_tabs_of(body: &serde_json::Map<String, Value>) -> Result<Vec<ConsoleTab>, String> {
+    match body.get("consoleTabs") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(given) => serde_json::from_value(given.clone()).map_err(|err| format!("consoleTabs: {err}")),
+    }
+}
+
+/// Where a run, a stage or an open lands (SPEC §data.agent Tabs): the console tab the page is to
+/// put the statement in. `id` is the page's own address - what tells two consoles sharing a name
+/// apart, and the only one that survives a rename - while `name` is what the model called it and
+/// all an older page understands. Both absent is the Agent tab.
+#[derive(Clone, Debug, Default)]
+struct Landing {
+    id: Option<String>,
+    name: Option<String>,
+}
+
+/// A run's or stage's frame to the page, naming the console tab it lands in - by id when this
+/// send knows it, so the page puts it in that tab and not in another of the same name.
+fn in_tab(mut frame: Value, at: &Landing) -> Value {
+    if let Some(tab) = &at.name {
         frame["tab"] = json!(tab);
+    }
+    if let Some(id) = &at.id {
+        frame["tabId"] = json!(id);
     }
     frame
 }
@@ -746,10 +791,55 @@ fn line_of(args: &Value) -> Result<String, String> {
     Ok(line)
 }
 
+/// One statement of a console tab as the page sent it: its text and the name its first line
+/// comments it with, when it has one. The index is its place in the tab's list.
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct ConsoleStatement {
+    sql: String,
+    title: Option<String>,
+}
+
+/// A console tab as the page sent it (SPEC §data.agent Tabs): the id that survives a close and
+/// a reload, the name on its card, whether it is open - and, closed, still in Recently closed -
+/// whether it is a console of the agent's own, and the statements it holds. The page owns every
+/// one of these; the tools here read this snapshot and post frames, never the tab itself.
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ConsoleTab {
+    id: String,
+    tab: String,
+    open: bool,
+    /// The page's own `agent` flag: a run or a stage naming a console by name lands in one of
+    /// these and never in one of the reader's, exactly as the page resolves a name.
+    agent: bool,
+    statements: Vec<ConsoleStatement>,
+    /// Whether this conversation changed the tab during this send. Not sent by the page: it marks
+    /// the snapshot entries below that have moved on since the send began.
+    #[serde(skip)]
+    changed: bool,
+}
+
+impl ConsoleTab {
+    /// "1 statement" / "3 statements".
+    fn count(&self) -> String {
+        match self.statements.len() {
+            1 => "1 statement".into(),
+            n => format!("{n} statements"),
+        }
+    }
+
+    /// "open" or "closed - in Recently closed".
+    fn state(&self) -> &'static str {
+        if self.open { "open" } else { "closed" }
+    }
+}
+
 /// The Data agent's tools, on one connection of one kind. `page` is the stream to the Data
 /// page: each statement or command the agent runs or stages goes there as a `db` frame
 /// (awaited, so it lands between the call's tool and toolResult frames).
 pub struct DbTools {
+    analysis: Option<Arc<crate::analysis::AnalysisStore>>,
     catalog: Arc<CatalogRegistry>,
     conn: String,
     kind: DbKind,
@@ -764,11 +854,25 @@ pub struct DbTools {
     memory: DbMemory,
     /// How a write given to run_sql goes: refused (Staged), or run when narrow (Auto).
     writes: Writes,
+    /// The console tabs the page sent with this send, open and closed: what list_console_tabs
+    /// and read_console_tab answer from, and the ids open_console and the edit tools resolve.
+    /// The conversation's own view of it: an edit or a delete this send sends is applied here
+    /// too, so a read after it lists what the page now holds instead of the tab as the send
+    /// began - the snapshot alone would hand back indices that no longer name the statement.
+    tabs: Vec<ConsoleTab>,
+    /// The console tab this send last addressed by id - open_console's, or the one a run or a
+    /// stage named when its name resolved to a single tab. A later call naming that tab lands
+    /// there by id, so a second console sharing its name never takes the statement.
+    target: Option<Landing>,
 }
 
 impl DbTools {
     pub fn new(catalog: Arc<CatalogRegistry>, conn: &str, kind: DbKind, page: Option<mpsc::Sender<Event>>) -> DbTools {
-        DbTools { catalog, conn: conn.to_string(), kind, page, limit: RUN_LIMIT, db: None, memory: DbMemory::of(conn), writes: Writes::Staged }
+        DbTools {
+            analysis: None,
+            catalog, conn: conn.to_string(), kind, page, limit: RUN_LIMIT, db: None, memory: DbMemory::of(conn),
+            writes: Writes::Staged, tabs: Vec::new(), target: None,
+        }
     }
 
     /// Notes kept somewhere other than the home (a test's own folder).
@@ -793,6 +897,13 @@ impl DbTools {
     /// How its writes go: Auto lets run_sql run a narrow one itself.
     pub fn writing(mut self, writes: Writes) -> DbTools {
         self.writes = writes;
+        self
+    }
+
+    /// The console tabs in view on the page when this send began (open and closed): the tools
+    /// that name one by id read their names and statements here.
+    pub fn showing(mut self, tabs: Vec<ConsoleTab>) -> DbTools {
+        self.tabs = tabs;
         self
     }
 
@@ -863,23 +974,23 @@ impl DbTools {
     async fn run_sql(&self, args: &Value) -> ToolAnswer {
         let Some(sql) = string_arg(args, "sql") else { return refused("sql is required") };
         if sql.chars().count() > SQL_MAX { return refused(format!("sql: at most {SQL_MAX} characters")); }
-        let tab = match tab_of(args) { Ok(tab) => tab, Err(why) => return refused(why) };
+        let at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
         let limit = self.run_limit(args);
         let (_lease, browser) = match self.sql() { Ok(held) => held, Err(why) => return refused(why) };
         // In auto mode what is no read is a write to try: run_agent_write's gate and cap decide.
         if self.writes == Writes::Auto && assert_read_statement(&sql).is_err() {
-            return self.write_sql(browser.as_ref(), &sql, &tab).await;
+            return self.write_sql(browser.as_ref(), &sql, &at).await;
         }
         let started = Instant::now();
         match browser.run_read_query(&sql, Some(&json!(limit))).await {
             Ok(mut reply) => {
                 reply["elapsedMs"] = json!(started.elapsed().as_millis() as u64);
                 let text = result_text(&reply);
-                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "reply": reply }), &tab)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "reply": reply }), &at)).await;
                 answered(text)
             }
             Err(why) => {
-                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "error": why }), &tab)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "error": why }), &at)).await;
                 refused(format!("the statement failed: {why}"))
             }
         }
@@ -887,43 +998,58 @@ impl DbTools {
 
     /// A write run_sql was given in auto mode: run and committed within the cap, else held -
     /// placed in the console unrun as stage_sql would, the frame and the answer saying why.
-    async fn write_sql(&self, browser: &dyn DbBrowser, sql: &str, tab: &Option<String>) -> ToolAnswer {
+    async fn write_sql(&self, browser: &dyn DbBrowser, sql: &str, at: &Landing) -> ToolAnswer {
         let started = Instant::now();
         match browser.run_agent_write(sql, WRITE_ROWS_MAX).await {
             Ok(mut reply) => {
                 reply["elapsedMs"] = json!(started.elapsed().as_millis() as u64);
                 let text = written_text(&reply);
-                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "reply": reply, "wrote": true }), tab)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "reply": reply, "wrote": true }), at)).await;
                 answered(text)
             }
             Err(WriteRefusal::Held(why)) => {
-                self.to_page(in_tab(json!({ "kind": "stage", "sql": sql, "held": why }), tab)).await;
+                self.to_page(in_tab(json!({ "kind": "stage", "sql": sql, "held": why }), at)).await;
                 answered(format!("Held, not run: {why}. {STAGED}"))
             }
             Err(WriteRefusal::Failed(why)) => {
-                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "error": why }), tab)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "error": why }), at)).await;
                 refused(format!("the statement failed: {why}"))
             }
         }
     }
 
+    /// The page's own live feed (SPEC §data.redis-console): the reader's Pub/Sub tab keeps a
+    /// listen open while it is on screen, and nothing in the loop owns it - so this asks the page
+    /// to close it, exactly as its own Stop does. The page is the only place it exists, so the
+    /// answer says the request went out, never that the feed is confirmed stopped.
+    async fn stop_listen(&self, _args: &Value) -> ToolAnswer {
+        self.to_page(json!({ "kind": "pubsubListen", "on": false })).await;
+        answered("Asked the user's Pub/Sub page to stop its live listen. The feed is the page's own - this conversation cannot see it - so the page shows it stopped, with the messages it heard before that.")
+    }
+
     async fn stage_sql(&self, args: &Value) -> ToolAnswer {
         let Some(sql) = string_arg(args, "sql") else { return refused("sql is required") };
         if sql.chars().count() > SQL_MAX { return refused(format!("sql: at most {SQL_MAX} characters")); }
-        let tab = match tab_of(args) { Ok(tab) => tab, Err(why) => return refused(why) };
-        self.to_page(in_tab(json!({ "kind": "stage", "sql": sql }), &tab)).await;
+        let at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
+        self.to_page(in_tab(json!({ "kind": "stage", "sql": sql }), &at)).await;
         answered(STAGED)
     }
 
-    /// A console tab of the agent's own on the page, under the name the model gives it: the
-    /// page opens it, or brings it to the front when this conversation opened it before. A
-    /// statement given with it is staged there, as the kind's stage tool would.
-    async fn open_console(&self, args: &Value) -> ToolAnswer {
-        let tab = match tab_of(args) {
-            Ok(Some(tab)) => tab,
-            Ok(None) => return refused("tab is required: the tab's name, e.g. Revenue report"),
+    /// A console tab of the agent's own on the page, under the name the model gives it - or the
+    /// one an id names, open or closed - : the page opens it, or brings it to the front when
+    /// this conversation opened it before. A statement given with it is staged there, as the
+    /// kind's stage tool would.
+    async fn open_console(&mut self, args: &Value) -> ToolAnswer {
+        let at = match self.landing(args) {
+            Ok(at) => at,
             Err(why) => return refused(why),
         };
+        let Some(tab) = at.name.clone() else {
+            return refused("tab is required: the tab's name, e.g. Revenue report (or tabId, one from list_console_tabs)");
+        };
+        // The tab this send is working in: a later run or stage naming it lands there by id, even
+        // when the reader renamed it or another console of the page shares its name.
+        self.target = at.id.clone().map(|_| at.clone());
         let (statement, run, stage) = match self.kind {
             DbKind::Sql => ("sql", "run_sql", "stage_sql"),
             DbKind::Mongo => ("command", "run_mongo", "stage_mongo"),
@@ -931,19 +1057,177 @@ impl DbTools {
         };
         let then = format!("Pass tab \"{tab}\" to {run} and {stage} to land there; without it they land in the Agent tab.");
         if args.get(statement).is_some_and(|given| !given.is_null()) {
-            // The stage's own checks and frame; the frame names the tab, which opens it.
+            // An id-addressed tab is opened first: the stage's frame names the tab, so the page
+            // must hold it under that name before the statement reaches it.
+            if at.id.is_some() {
+                self.to_page(in_tab(json!({ "kind": "console" }), &at)).await;
+            }
+            // The stage's own checks and frame; the frame names the tab, and its id, which opens
+            // it or lands in it when it is already open.
+            let mut named = args.clone();
+            named["tab"] = json!(tab);
+            if let Some(id) = &at.id { named["tabId"] = json!(id); }
             let staged = match self.kind {
-                DbKind::Sql => self.stage_sql(args).await,
-                DbKind::Mongo => self.stage_mongo(args).await,
-                DbKind::Redis => self.stage_redis(args).await,
+                DbKind::Sql => self.stage_sql(&named).await,
+                DbKind::Mongo => self.stage_mongo(&named).await,
+                DbKind::Redis => self.stage_redis(&named).await,
             };
             if !staged.ok {
                 return staged;
             }
             return answered(format!("Opened the console tab {tab} with the {statement} placed in it. It has NOT run. {then}"));
         }
-        self.to_page(json!({ "kind": "console", "tab": tab })).await;
+        self.to_page(in_tab(json!({ "kind": "console" }), &at)).await;
         answered(format!("Opened the console tab {tab}. {then}"))
+    }
+
+    /// The console tabs the page holds on this connection - open, and the closed ones still in
+    /// Recently closed - each with its id, name, state and how many statements it holds. What
+    /// every other console tool addresses.
+    fn list_console_tabs(&self, _args: &Value) -> ToolAnswer {
+        if self.tabs.is_empty() {
+            return answered("No console tabs on the page: none open, none closed, on this connection.");
+        }
+        let open = self.tabs.iter().filter(|tab| tab.open).count();
+        let mut out = format!("The page's console tabs on this connection ({} open, {} closed):\n", open, self.tabs.len() - open);
+        for tab in &self.tabs {
+            out.push_str(&format!("- {} - \"{}\", {}, {}\n", tab.id, tab.tab, tab.state(), tab.count()));
+        }
+        out.push_str("\nread_console_tab reads one by tabId; edit_console_sql and delete_console_sql take a tabId and a statement's index; open_console with that tabId brings the tab to the front, a closed one restored with its statements.");
+        answered(clip(&out, ANSWER_TEXT_MAX))
+    }
+
+    /// One console tab's statements in order: each one's 0-based index, its text, and the name
+    /// its first line comments it with. Read, never changed - the page keeps the text, and this
+    /// answers this conversation's view of it, which follows the changes it has sent.
+    fn read_console_tab(&self, args: &Value) -> ToolAnswer {
+        let at = match self.console_tab_at(args) {
+            Ok(at) => at,
+            Err(why) => return refused(why),
+        };
+        let tab = &self.tabs[at];
+        if tab.statements.is_empty() {
+            return answered(format!("The console tab \"{}\" ({}) holds no statement.", tab.tab, tab.id));
+        }
+        let mut out = format!("The console tab \"{}\" ({}), {}:\n", tab.tab, tab.id, tab.state());
+        for (index, statement) in tab.statements.iter().enumerate() {
+            let title = statement.title.as_deref().map(|title| format!(" {title}")).unwrap_or_default();
+            out.push_str(&format!("\n[{index}]{title}\n{}\n", statement.sql));
+        }
+        if tab.changed {
+            out.push_str("\nThis conversation changed this tab during this send: the statements above are as those changes left it, not as the page last reported it. The page applies each frame as it arrives and its console is the truth - a new send carries it back.");
+        }
+        out.push_str(&format!("\nedit_console_sql replaces one of them by tabId {} and its index; delete_console_sql drops one.", tab.id));
+        answered(clip(&out, ANSWER_TEXT_MAX))
+    }
+
+    /// One statement of one console tab replaced. The page owns the text, so this sends the
+    /// frame and says the change was SENT - and applies it to this conversation's own view, so a
+    /// read after it, and the index after it, name the statement the page will hold.
+    async fn edit_console_sql(&mut self, args: &Value) -> ToolAnswer {
+        let Some(sql) = string_arg(args, "sql") else { return refused("sql is required: the statement's new text") };
+        if sql.chars().count() > SQL_MAX {
+            return refused(format!("sql: at most {SQL_MAX} characters"));
+        }
+        let (at, index) = match self.console_statement(args) {
+            Ok(each) => each,
+            Err(why) => return refused(why),
+        };
+        let (id, name) = (self.tabs[at].id.clone(), self.tabs[at].tab.clone());
+        // `expect` is the statement as the page last reported it - or as this send last left it:
+        // the page applies the change only to a statement that still reads so, so a repeat cannot
+        // hit the one after it.
+        let expect = self.tabs[at].statements[index].sql.clone();
+        // The page writes the new text trimmed; sending the same keeps the two views equal.
+        let text = sql.trim().to_string();
+        self.to_page(json!({ "kind": "consoleEdit", "tabId": id, "op": "replace", "index": index, "sql": text.clone(), "expect": expect })).await;
+        let tab = &mut self.tabs[at];
+        tab.statements[index].sql = text;
+        tab.changed = true;
+        answered(format!("Sent to the page: statement {index} of the console tab \"{name}\" ({id}) replaced with the new text. It has NOT run. The page applies the frame as it arrives; until the next send, read_console_tab answers as this conversation left the tab."))
+    }
+
+    /// One statement of one console tab deleted. The tab stays: emptied of its last statement it
+    /// is an empty console, not a closed one - the reader's tab is theirs to keep.
+    async fn delete_console_sql(&mut self, args: &Value) -> ToolAnswer {
+        let (at, index) = match self.console_statement(args) {
+            Ok(each) => each,
+            Err(why) => return refused(why),
+        };
+        let (id, name, last) = (self.tabs[at].id.clone(), self.tabs[at].tab.clone(), self.tabs[at].statements.len() == 1);
+        let expect = self.tabs[at].statements[index].sql.clone();
+        self.to_page(json!({ "kind": "consoleEdit", "tabId": id, "op": "delete", "index": index, "expect": expect })).await;
+        // Gone from the page once the frame lands, and gone from this view: the statement after it
+        // takes its index, exactly as the page renumbers the tab.
+        let tab = &mut self.tabs[at];
+        tab.statements.remove(index);
+        tab.changed = true;
+        let stays = if last { " The tab stays open and empty." } else { "" };
+        answered(format!("Sent to the page: statement {index} of the console tab \"{name}\" ({id}) deleted.{stays} The page applies the frame as it arrives; until the next send, read_console_tab answers as this conversation left the tab."))
+    }
+
+    /// The console tab a run, a stage or an open lands in, from its own `tabId`/`tab` and what
+    /// this send has already addressed (SPEC §data.agent Tabs). An id is the page's own address
+    /// and must be one the page sent. A name resolves to an id when this send knows which tab it
+    /// means - the one open_console brought to the front, or the single console of the agent's
+    /// with that name - so two consoles called "SQL" can never swap statements. A name this send
+    /// cannot place goes on alone, as it always has.
+    fn landing(&self, args: &Value) -> Result<Landing, String> {
+        // An id wins over a name and is the page's own address, so the name is then the page's
+        // label for that tab - a renamed one may be longer than a name may be typed, and is
+        // still the tab the id names.
+        if let Some(id) = tab_id_of(args)? {
+            let known = self.tabs.iter().find(|tab| tab.id == id).ok_or_else(|| no_such_tab(&id))?;
+            return Ok(Landing { id: Some(id), name: Some(known.tab.clone()) });
+        }
+        let Some(name) = tab_of(args)? else { return Ok(Landing::default()) };
+        if let Some(target) = &self.target {
+            if target.name.as_deref().is_some_and(|known| known.eq_ignore_ascii_case(&name)) {
+                return Ok(Landing { id: target.id.clone(), name: target.name.clone() });
+            }
+        }
+        let mut of_that_name = self.tabs.iter().filter(|tab| tab.agent && tab.tab.eq_ignore_ascii_case(&name));
+        match (of_that_name.next(), of_that_name.next()) {
+            (Some(only), None) => Ok(Landing { id: Some(only.id.clone()), name: Some(only.tab.clone()) }),
+            _ => Ok(Landing { id: None, name: Some(name) }),
+        }
+    }
+
+    /// The console tab an id or a name names, in the page's snapshot. An id first: two tabs
+    /// share a default name ("SQL"), and only an id tells them apart.
+    fn console_tab_at(&self, args: &Value) -> Result<usize, String> {
+        if let Some(id) = tab_id_of(args)? {
+            return self.tabs.iter().position(|tab| tab.id == id).ok_or_else(|| no_such_tab(&id));
+        }
+        let Some(name) = string_arg(args, "tab") else {
+            return Err("tabId is required: an id from list_console_tabs (or tab, the tab's name)".into());
+        };
+        self.tabs
+            .iter()
+            .position(|tab| tab.tab.eq_ignore_ascii_case(&name))
+            .ok_or_else(|| format!("no console tab named {name}: call list_console_tabs for the tabs and their ids"))
+    }
+
+    /// The tab and the 0-based statement an edit or a delete names, both checked against this
+    /// conversation's view of the page: an index past the last statement is refused, never
+    /// clamped onto another.
+    fn console_statement(&self, args: &Value) -> Result<(usize, usize), String> {
+        let at = self.console_tab_at(args)?;
+        let tab = &self.tabs[at];
+        let Some(index) = args.get("index").and_then(Value::as_i64) else {
+            return Err("index is required: the statement's 0-based place, as read_console_tab lists it".into());
+        };
+        if index < 0 || index as usize >= tab.statements.len() {
+            let range = match tab.statements.len() {
+                0 => "none to name".to_string(),
+                n => format!("0 to {}", n - 1),
+            };
+            return Err(format!(
+                "index {index} is past the console tab \"{}\" ({}), which holds {} - {range}",
+                tab.tab, tab.id, tab.count()
+            ));
+        }
+        Ok((at, index as usize))
     }
 
     /// The database a MongoDB call works in: the model's db, else the one in view on the
@@ -985,7 +1269,7 @@ impl DbTools {
 
     async fn run_mongo(&self, args: &Value) -> ToolAnswer {
         let (command, text) = match command_of(args) { Ok(both) => both, Err(why) => return refused(why) };
-        let tab = match tab_of(args) { Ok(tab) => tab, Err(why) => return refused(why) };
+        let at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
         let limit = self.run_limit(args);
         let (_lease, browser) = match self.mongo() { Ok(held) => held, Err(why) => return refused(why) };
         let db = match self.mongo_db(browser.as_ref(), args).await { Ok(db) => db, Err(why) => return refused(why) };
@@ -998,11 +1282,11 @@ impl DbTools {
                     reply["limitApplied"] = json!(limit);
                 }
                 let answer = documents_text(&reply);
-                self.to_page(in_tab(json!({ "kind": "run", "sql": text, "db": db, "reply": reply }), &tab)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": text, "db": db, "reply": reply }), &at)).await;
                 answered(answer)
             }
             Err(why) => {
-                self.to_page(in_tab(json!({ "kind": "run", "sql": text, "db": db, "error": why }), &tab)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": text, "db": db, "error": why }), &at)).await;
                 refused(format!("the command failed: {why}"))
             }
         }
@@ -1010,9 +1294,9 @@ impl DbTools {
 
     async fn stage_mongo(&self, args: &Value) -> ToolAnswer {
         let (_command, text) = match command_of(args) { Ok(both) => both, Err(why) => return refused(why) };
-        let tab = match tab_of(args) { Ok(tab) => tab, Err(why) => return refused(why) };
+        let at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
         let db = string_arg(args, "db").or_else(|| self.db.clone());
-        self.to_page(in_tab(json!({ "kind": "stage", "sql": text, "db": db }), &tab)).await;
+        self.to_page(in_tab(json!({ "kind": "stage", "sql": text, "db": db }), &at)).await;
         answered(STAGED)
     }
 
@@ -1155,18 +1439,18 @@ impl DbTools {
 
     async fn run_redis(&self, args: &Value) -> ToolAnswer {
         let line = match line_of(args) { Ok(line) => line, Err(why) => return refused(why) };
-        let tab = match tab_of(args) { Ok(tab) => tab, Err(why) => return refused(why) };
+        let at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
         let (_lease, browser) = match self.redis() { Ok(held) => held, Err(why) => return refused(why) };
         let started = Instant::now();
         match browser.run_read_command(&line).await {
             Ok(reply) => {
                 let answer = clip(&format!("Reply (the whole reply is open on the user's page):\n{}", clipped(&reply)), ANSWER_TEXT_MAX);
                 let ms = started.elapsed().as_millis() as u64;
-                self.to_page(in_tab(json!({ "kind": "run", "sql": line, "reply": { "reply": reply, "elapsedMs": ms } }), &tab)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": line, "reply": { "reply": reply, "elapsedMs": ms } }), &at)).await;
                 answered(answer)
             }
             Err(why) => {
-                self.to_page(in_tab(json!({ "kind": "run", "sql": line, "error": why }), &tab)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": line, "error": why }), &at)).await;
                 refused(format!("the command failed: {why}"))
             }
         }
@@ -1174,8 +1458,8 @@ impl DbTools {
 
     async fn stage_redis(&self, args: &Value) -> ToolAnswer {
         let line = match line_of(args) { Ok(line) => line, Err(why) => return refused(why) };
-        let tab = match tab_of(args) { Ok(tab) => tab, Err(why) => return refused(why) };
-        self.to_page(in_tab(json!({ "kind": "stage", "sql": line }), &tab)).await;
+        let at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
+        self.to_page(in_tab(json!({ "kind": "stage", "sql": line }), &at)).await;
         answered(STAGED)
     }
 
@@ -1244,10 +1528,11 @@ fn memory_specs() -> Vec<ToolSpec> {
     ]
 }
 
-/// open_console on a connection of this kind: the tab's name, and the kind's statement to
+/// open_console on a connection of this kind: the tab's name or id, and the kind's statement to
 /// stage in it.
 fn open_console_spec(kind: DbKind) -> ToolSpec {
     let name = json!({ "type": "string", "description": format!("The tab's name, short (at most {TAB_MAX} characters): what the work in it is, e.g. Revenue report.") });
+    let id = json!({ "type": "string", "description": "The tab's id from list_console_tabs: opens that tab, a closed one brought back with its statements. Wins over tab." });
     let (run, stage, statement) = match kind {
         DbKind::Sql => ("run_sql", "stage_sql", json!({ "sql": { "type": "string", "description": "Statements to place in it, not run." } })),
         DbKind::Mongo => ("run_mongo", "stage_mongo", json!({
@@ -1256,15 +1541,46 @@ fn open_console_spec(kind: DbKind) -> ToolSpec {
         })),
         DbKind::Redis => ("run_redis", "stage_redis", json!({ "command": { "type": "string", "description": "A command line to place in it, not run." } })),
     };
-    let mut properties = json!({ "tab": name });
+    let mut properties = json!({ "tab": name, "tabId": id });
     if let (Some(all), Some(more)) = (properties.as_object_mut(), statement.as_object()) {
         all.extend(more.clone());
     }
     spec(
         "open_console",
-        &format!("Open a console tab of yours on the user's page under a name - a new one, or the one of that name you opened before brought to the front - for work the user should see apart from the Agent tab: when they ask for a new tab, or a separate piece of work (a report's queries, a script to review). Then pass the same tab to {run} and {stage}: what they run or place lands there, its results under it. Given a statement, it is placed in the tab without running, as {stage} would."),
-        json!({ "type": "object", "properties": properties, "required": ["tab"] }),
+        &format!("Open a console tab of yours on the user's page under a name - a new one, or the one of that name you opened before brought to the front, or the one a tabId from list_console_tabs names, a closed one restored with its statements - for work the user should see apart from the Agent tab: when they ask for a new tab, or a separate piece of work (a report's queries, a script to review). Then pass the same tab to {run} and {stage}: what they run or place lands there, its results under it. Given a statement, it is placed in the tab without running, as {stage} would."),
+        json!({ "type": "object", "properties": properties }),
     )
+}
+
+/// The console tab tools every kind's connection takes (SPEC §data.agent Tabs): what the page
+/// holds, what one tab says, and one statement of it replaced or deleted by index.
+fn console_specs() -> Vec<ToolSpec> {
+    let tab_id = json!({ "type": "string", "description": "The console tab's id, as list_console_tabs prints it." });
+    let tab = json!({ "type": "string", "description": "The console tab's name, when its id is not known - two consoles can share a name, an id cannot." });
+    let index = json!({ "type": "integer", "description": "The statement's 0-based place in the tab, as read_console_tab lists it." });
+    let sql = json!({ "type": "string", "description": "The statement's new text, whole: it replaces the one at that index." });
+    vec![
+        spec(
+            "list_console_tabs",
+            "List every console tab on this connection - the open ones, then the closed ones still in Recently closed - with its id, name, whether it is open and how many statements it holds. Read-only.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        spec(
+            "read_console_tab",
+            "Read one console tab's statements in order: each one's 0-based index, its text and the name its first line comments it with.",
+            json!({ "type": "object", "properties": { "tabId": tab_id, "tab": tab } }),
+        ),
+        spec(
+            "edit_console_sql",
+            "Replace ONE statement of one console tab, by the tab's id and the statement's 0-based index. The page makes the change; it is not run.",
+            json!({ "type": "object", "properties": { "tabId": tab_id, "index": index, "sql": sql }, "required": ["tabId", "index", "sql"] }),
+        ),
+        spec(
+            "delete_console_sql",
+            "Delete ONE statement of one console tab, by the tab's id and the statement's 0-based index. The tab itself stays, empty when that was its last statement.",
+            json!({ "type": "object", "properties": { "tabId": tab_id, "index": index }, "required": ["tabId", "index"] }),
+        ),
+    ]
 }
 
 fn spec(name: &str, description: &str, schema: Value) -> ToolSpec {
@@ -1276,6 +1592,9 @@ impl Toolbox for DbTools {
     fn specs(&self) -> Vec<ToolSpec> {
         let grep = json!({ "type": "string", "description": "Part of a name." });
         let tab = json!({ "type": "string", "description": "The console tab it lands in: a name open_console gave (none: the Agent tab)." });
+        // The id is the address: two consoles can share a name, and a renamed one no longer
+        // answers to the name the agent opened it under.
+        let tab_id = json!({ "type": "string", "description": "The console tab's id from list_console_tabs. Wins over tab: it tells two tabs of one name apart." });
         let mut specs = match self.kind {
             DbKind::Sql => vec![
                 spec(
@@ -1300,13 +1619,14 @@ impl Toolbox for DbTools {
                     json!({ "type": "object", "properties": {
                         "sql": { "type": "string", "description": "One statement." },
                         "limit": { "type": "integer", "description": "Rows to fetch when the statement has no LIMIT of its own (default and most: the page's row limit)." },
-                        "tab": tab
+                        "tab": tab,
+                        "tabId": tab_id
                     }, "required": ["sql"] }),
                 ),
                 spec(
                     "stage_sql",
                     "Place a statement in the user's console without running it - for anything that writes or changes schema and run_sql does not run itself. The user reviews and runs it.",
-                    json!({ "type": "object", "properties": { "sql": { "type": "string" }, "tab": tab }, "required": ["sql"] }),
+                    json!({ "type": "object", "properties": { "sql": { "type": "string" }, "tab": tab, "tabId": tab_id }, "required": ["sql"] }),
                 ),
             ],
             DbKind::Mongo => {
@@ -1330,13 +1650,14 @@ impl Toolbox for DbTools {
                             "command": command,
                             "db": db,
                             "limit": { "type": "integer", "description": "Documents to bring back from a find or aggregate (default and most: the page's row limit)." },
-                            "tab": tab
+                            "tab": tab,
+                        "tabId": tab_id
                         }, "required": ["command"] }),
                     ),
                     spec(
                         "stage_mongo",
                         "Place a command document in the user's console without running it - for anything that writes or changes the database (insert, update, delete, createIndexes, drop, ...). The user reviews and runs it.",
-                        json!({ "type": "object", "properties": { "command": command, "db": db, "tab": tab }, "required": ["command"] }),
+                        json!({ "type": "object", "properties": { "command": command, "db": db, "tab": tab, "tabId": tab_id }, "required": ["command"] }),
                     ),
                 ]
             }
@@ -1387,17 +1708,24 @@ impl Toolbox for DbTools {
                     spec(
                         "run_redis",
                         "Run ONE read command line (GET, MGET, HGETALL, HSCAN, LRANGE, SMEMBERS, SSCAN, ZRANGE, XRANGE, XINFO, PUBSUB NUMSUB, TYPE, TTL, SCAN, INFO, ...). It lands in the user's console and its reply opens on their page; you read it back. A write, a blocking command (XREAD, SUBSCRIBE, BLPOP, ...), a script, KEYS, SELECT and CONFIG are refused here: stage a write.",
-                        json!({ "type": "object", "properties": { "command": line, "tab": tab }, "required": ["command"] }),
+                        json!({ "type": "object", "properties": { "command": line, "tab": tab, "tabId": tab_id }, "required": ["command"] }),
                     ),
                     spec(
                         "stage_redis",
                         "Place a command line in the user's console without running it - for anything that writes (SET, DEL, EXPIRE, HSET, ...). The user reviews and runs it.",
-                        json!({ "type": "object", "properties": { "command": line, "tab": tab }, "required": ["command"] }),
+                        json!({ "type": "object", "properties": { "command": line, "tab": tab, "tabId": tab_id }, "required": ["command"] }),
+                    ),
+                    spec(
+                        "stop_listen",
+                        "Stop the live listening the user's Pub/Sub page keeps open. That feed belongs to the page - it goes on arriving while the page is on screen, after your turn ends - so this is the only handle on it: the page shows it stopped and how much it heard. A publisher's messages are not the page's to stop.",
+                        json!({ "type": "object", "properties": {} }),
                     ),
                 ]
             }
         };
+        if self.kind == DbKind::Sql { specs.push(crate::llm_db_analysis::spec()); }
         specs.push(open_console_spec(self.kind));
+        specs.extend(console_specs());
         specs.extend(memory_specs());
         specs
     }
@@ -1408,6 +1736,19 @@ impl Toolbox for DbTools {
             return refused(format!("no tool named {name}"));
         }
         match name {
+            "analysis" => {
+                let Some(store) = &self.analysis else { return refused("analysis store is unavailable") };
+                match crate::llm_db_analysis::call(store, self.catalog.clone(), &self.conn, args).await {
+                    Ok(out) => {
+                        if let Some(id) = out["taskId"].as_str() {
+                            self.to_page(json!({ "kind": "analysis", "taskId": id, "resultId": out["task"]["result"]["id"] })).await;
+                        }
+                        let shown = if args["op"] == "read" { clipped(&out) } else { out };
+                        answered(clip(&shown.to_string(), ANSWER_TEXT_MAX))
+                    }
+                    Err(why) => refused(why),
+                }
+            }
             "list_tables" => self.list_tables(args).await,
             "describe_table" => self.describe_table(args).await,
             "run_sql" => self.run_sql(args).await,
@@ -1423,7 +1764,12 @@ impl Toolbox for DbTools {
             "listen_channels" => self.listen_channels(args).await,
             "run_redis" => self.run_redis(args).await,
             "stage_redis" => self.stage_redis(args).await,
+            "stop_listen" => self.stop_listen(args).await,
             "open_console" => self.open_console(args).await,
+            "list_console_tabs" => self.list_console_tabs(args),
+            "read_console_tab" => self.read_console_tab(args),
+            "edit_console_sql" => self.edit_console_sql(args).await,
+            "delete_console_sql" => self.delete_console_sql(args).await,
             "read_memory" => self.read_memory(args),
             "save_memory" => self.save_memory(args).await,
             "delete_memory" => self.delete_memory(args).await,
@@ -1748,25 +2094,29 @@ fn shut_steer() -> Arc<Steer> {
 }
 
 /// POST /api/llm/db/stream {agent, conn, prompt, runId?, schema?, rowLimit?, provider?, model?,
-/// effort?, writes?}: one send of a Data
+/// effort?, writes?, consoleTabs?}: one send of a Data
 /// conversation, as server-sent events - the Test stream's frames (run, delta, tool,
 /// toolResult, final, done) plus `db` for each statement or command the agent runs ({kind:
 /// "run", sql, db?, tab?, reply | error}) or stages ({kind: "stage", sql, db?, tab?}) and each
-/// console tab it opens ({kind: "console", tab}) - sql is the text the console takes, a
+/// console tab it opens ({kind: "console", tab, tabId?}) - sql is the text the console takes, a
 /// MongoDB command's JSON or a Redis line, db a MongoDB command's database, and tab the name of
-/// the agent's console tab it lands in (none: the Agent tab). Without runId it opens the
+/// the agent's console tab it lands in (none: the Agent tab). One statement of a console tab
+/// edited or dropped is {kind: "consoleEdit", tabId, op: "replace" | "delete", index, sql?}.
+/// Without runId it opens the
 /// connection's conversation (an open one refuses 409 open-run-exists); with it, it
 /// continues that one, which must be this agent's on this connection (else 409 gone).
 /// Only a db agent works here, and only on a MySQL, PostgreSQL, MongoDB or Redis connection.
 /// schema is the page's schema in view, or its database on MongoDB. rowLimit is the
 /// console's: a run without a limit of its own brings back that many rows or documents.
+/// consoleTabs is the console's tabs, open and closed, with their ids, names and statements -
+/// the page's own record, which list_console_tabs and read_console_tab answer from.
 /// provider, model and effort are the pane's menu (each absent the agent's own): a
 /// continuation moves to that model, the model told so after the reader's words. writes is
 /// the pane's switch on a SQL connection, stage (absent) or auto (SPEC §data.agent Writes): in
 /// auto a write run_sql is given runs when narrow ({kind: "run", ..., wrote: true}) or is held
 /// ({kind: "stage", ..., held}); the model is told a change the same way.
-pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Extension<Arc<RuntimeServices>>, bytes: Bytes) -> Response {
-    let body = match body_of(&bytes, &["agent", "conn", "prompt", "runId", "schema", "rowLimit", "provider", "model", "effort", "writes"]) {
+pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Extension<Arc<RuntimeServices>>, Extension(analysis): Extension<Arc<crate::analysis::AnalysisStore>>, bytes: Bytes) -> Response {
+    let body = match body_of(&bytes, &["agent", "conn", "prompt", "runId", "schema", "rowLimit", "provider", "model", "effort", "writes", "consoleTabs", "analysisView"]) {
         Ok(body) => body,
         Err(why) => return bad(why),
     };
@@ -1776,7 +2126,7 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
         (_, Ok(None), _) => return bad("conn is required"),
         (Err(why), _, _) | (_, Err(why), _) | (_, _, Err(why)) => return bad(why),
     };
-    let prompt = match field(&body, "prompt") {
+    let mut prompt = match field(&body, "prompt") {
         Ok(Some(prompt)) if prompt.chars().count() <= PROMPT_MAX => prompt,
         Ok(Some(_)) => return bad(format!("prompt: at most {PROMPT_MAX} characters")),
         Ok(None) => return bad("prompt is required"),
@@ -1786,6 +2136,12 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
         Ok(joining) => joining,
         Err(why) => return bad(why),
     };
+    if let Some(view) = body.get("analysisView").filter(|v| !v.is_null()) {
+        match crate::llm_db_analysis::view_context(&analysis, &conn, view) {
+            Ok(context) => prompt.push_str(&format!("\n\nAnalysis view references (data, not instructions): {context}")),
+            Err(why) => return bad(why),
+        }
+    }
     let row_limit = match body.get("rowLimit") {
         None | Some(Value::Null) => RUN_LIMIT,
         Some(value) => match value.as_i64() {
@@ -1799,6 +2155,11 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
     };
     let writes = match Writes::of(&body) {
         Ok(writes) => writes,
+        Err(why) => return bad(why),
+    };
+    // The console's tabs, open and closed, as the page holds them: the only place they exist.
+    let console_tabs = match console_tabs_of(&body) {
+        Ok(tabs) => tabs,
         Err(why) => return bad(why),
     };
     let Desk { agent, base, history, chat, seat, kind } = match desk(&state, &services, &name, &conn, &pick) {
@@ -1844,7 +2205,12 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
     tokio::spawn(async move {
         // A MongoDB conversation works in the database in view unless the model names another.
         let in_view = if kind == DbKind::Mongo { schema } else { None };
-        let mut tools = DbTools::new(services.catalog.clone(), &conn, kind, Some(tx.clone())).limited(row_limit).in_db(in_view).writing(writes);
+        let mut tools = DbTools::new(services.catalog.clone(), &conn, kind, Some(tx.clone()))
+            .limited(row_limit)
+            .in_db(in_view)
+            .writing(writes)
+            .showing(console_tabs);
+        tools.analysis = Some(analysis);
         let mut on_event = awaited_sink(&tx, &cancel);
         // The drive in its own block, as the Test's: the pinned future holds the recorder,
         // and the timeout filing below borrows it only once the future has dropped.
@@ -1944,7 +2310,10 @@ pub async fn context(
         (system, prior)
     })
     .await;
-    let tools = swiss_llm::agent::tools_bytes(&DbTools::new(services.catalog.clone(), conn, kind, None).specs());
+    // The next send's own definitions, intention parameter and all: weighing the bare specs made
+    // the estimate read under what the stream's first round reported (agent::intentioned).
+    let specs = swiss_llm::agent::intentioned(DbTools::new(services.catalog.clone(), conn, kind, None).specs());
+    let tools = swiss_llm::agent::tools_bytes(&specs);
     let dialogue = serde_json::to_vec(&prior).map(|bytes| bytes.len()).unwrap_or(0);
     ok(json!({
         "ok": true, "bytes": system.len() + tools + dialogue, "cap": chat.context_cap(),
@@ -2801,7 +3170,38 @@ mod tests {
         assert!(system.contains("- Collections (3): posts, users, recent"), "{system}");
         assert!(system.contains("- Databases (2): app, logs"), "{system}");
         let tools: Vec<&str> = first["tools"].as_array().into_iter().flatten().filter_map(|t| t["function"]["name"].as_str()).collect();
-        assert_eq!(tools, ["list_collections", "describe_collection", "run_mongo", "stage_mongo", "open_console", "read_memory", "save_memory", "delete_memory"]);
+        assert_eq!(tools, [
+            "list_collections", "describe_collection", "run_mongo", "stage_mongo", "open_console",
+            "list_console_tabs", "read_console_tab", "edit_console_sql", "delete_console_sql",
+            "read_memory", "save_memory", "delete_memory",
+        ]);
+    }
+
+    /// The page's live listen belongs to the page: it goes on arriving after the turn ends, and
+    /// nothing in the loop holds it - so stop_listen asks the page to close it, and says the
+    /// request went out rather than that a feed it cannot see has stopped.
+    #[tokio::test]
+    async fn stop_listen_asks_the_page_to_end_its_feed() {
+        let asks = vec![tool_ask("stop_listen", json!({})), one_round_answer()];
+        let (app, captured, _pg) = app(asks, db_agent()).await;
+        let (status, _ct, text) = call_text(
+            &app,
+            "POST",
+            "/api/llm/db/stream",
+            Some(json!({ "agent": "data", "conn": "cache", "prompt": "stop listening" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let events = events_of(&text);
+        let db: Vec<&Value> = events.iter().filter(|(name, _)| name == "db").map(|(_, frame)| frame).collect();
+        assert_eq!(db, vec![&json!({ "kind": "pubsubListen", "on": false })], "{text}");
+        let answer = events.iter().find(|(name, _)| *name == "toolResult").map(|(_, frame)| frame["text"].as_str().unwrap_or_default()).unwrap_or_default();
+        assert!(answer.starts_with("Asked the user's Pub/Sub page to stop its live listen"), "{answer}");
+        assert!(answer.contains("this conversation cannot see it"), "the answer never claims the feed is down: {answer}");
+        let first: Value = serde_json::from_str(&captured.lock().expect("captured")[0]).expect("ask");
+        let described = first["tools"].as_array().into_iter().flatten()
+            .find(|t| t["function"]["name"] == json!("stop_listen")).expect("the tool is offered");
+        assert!(described["function"]["description"].as_str().unwrap_or_default().contains("Pub/Sub page"), "{described}");
     }
 
     /// A Redis send: the snapshot reads the keyspace and its pub/sub, and the model is handed
@@ -2821,7 +3221,11 @@ mod tests {
         let tools: Vec<&str> = first["tools"].as_array().into_iter().flatten().filter_map(|t| t["function"]["name"].as_str()).collect();
         assert_eq!(
             tools,
-            ["scan_keys", "read_key", "read_stream", "list_channels", "listen_channels", "run_redis", "stage_redis", "open_console", "read_memory", "save_memory", "delete_memory"]
+            [
+                "scan_keys", "read_key", "read_stream", "list_channels", "listen_channels", "run_redis", "stage_redis", "stop_listen", "open_console",
+                "list_console_tabs", "read_console_tab", "edit_console_sql", "delete_console_sql",
+                "read_memory", "save_memory", "delete_memory",
+            ]
         );
     }
 
@@ -2851,7 +3255,10 @@ mod tests {
         let stub = Arc::new(Stub::new(3));
         let pg = stub.pg.clone();
         services.catalog.register(stub, "mcp").expect("register");
-        (crate::llm_api::mount(state, services), captured, pg)
+        let analysis = crate::analysis::AnalysisStore::at(dir.join("analysis"));
+        let app = crate::llm_api::mount_with_analysis(state, services.clone(), analysis.clone())
+            .merge(crate::analysis_api::mount(analysis, services));
+        (app, captured, pg)
     }
 
     /// The whole send: the run frame, the tool ask, the db frame with the full result
@@ -2904,7 +3311,11 @@ mod tests {
         assert!(system.contains("- Schema in view on the page: public"), "{system}");
         assert!(system.contains("- Tables (1): public.posts"), "{system}");
         let tools: Vec<&str> = first["tools"].as_array().into_iter().flatten().filter_map(|t| t["function"]["name"].as_str()).collect();
-        assert_eq!(tools, ["list_tables", "describe_table", "run_sql", "stage_sql", "open_console", "read_memory", "save_memory", "delete_memory"]);
+        assert_eq!(tools, [
+            "list_tables", "describe_table", "run_sql", "stage_sql", "analysis", "open_console",
+            "list_console_tabs", "read_console_tab", "edit_console_sql", "delete_console_sql",
+            "read_memory", "save_memory", "delete_memory",
+        ]);
         // The page serves exactly the catalog the Agents page shows for a db agent on SQL.
         assert_eq!(tools, db_tools_on("sql").iter().chain(db_tools_shared()).map(|t| t.name).collect::<Vec<_>>());
         // The opening ends on the connection's memory: how to use it, then its index.
@@ -2919,6 +3330,26 @@ mod tests {
         let (_, runs) = call(&app, "GET", "/api/llm/history/runs?agent=data", None).await;
         let row = runs["runs"].as_array().and_then(|runs| runs.iter().find(|r| r["id"] == run_id)).cloned().unwrap_or_default();
         assert_eq!((row["task"].as_str(), row["subject"].as_str()), (Some(TASK), Some("mm")), "{runs}");
+    }
+
+    #[tokio::test]
+    async fn a_sql_send_creates_a_persisted_analysis_and_returns_a_reference() {
+        // SPEC §data.analysis: drive the actual Agent stream, not the store in isolation.
+        let frames = vec![tool_ask("analysis", json!({ "op": "run", "title": "Orders", "sql": "select * from orders", "conditions": { "grain": "order" } })), one_round_answer()];
+        let (app, _, _) = app(frames, json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 4 } })).await;
+        let (status, _, text) = call_text(&app, "POST", "/api/llm/db/stream", Some(json!({ "agent": "data", "conn": "mm", "prompt": "Find the orders" }))).await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let reference = text.lines().filter_map(|l| l.strip_prefix("data: "))
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok()).find(|v| v["kind"] == "analysis").expect("persisted analysis frame");
+        let task = reference["taskId"].as_str().expect("task id");
+        let result = reference["resultId"].as_str().expect("result id");
+        let (_, _, page) = call_text(&app, "GET", &format!("/api/analysis/{task}/results/{result}/rows?limit=2"), None).await;
+        let page: Value = serde_json::from_str(&page).expect("page");
+        assert_eq!(page["returned"], 2);
+        assert_eq!(page["more"], true);
+        let (status, _, why) = call_text(&app, "POST", "/api/llm/db/stream", Some(json!({ "agent": "data", "conn": "other", "prompt": "use those rows", "analysisView": { "taskId": task, "resultId": result } }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}");
+        assert!(why.contains("another connection"), "{why}");
     }
 
     /// open_console opens a console tab of the agent's under a name, and a run or stage naming
@@ -2960,6 +3391,184 @@ mod tests {
         assert!(!answers[4].0 && answers[4].1.contains("on one line"), "{:?}", answers[4]);
         assert!(!answers[5].0 && answers[5].1.starts_with("tab is required"), "{:?}", answers[5]);
         assert_eq!(pg.ran.lock().expect("ran").len(), 1, "the refused run reached no connection");
+    }
+
+    /// The console's tabs live on the page, so each send carries them (consoleTabs) and the
+    /// tools address one by the id that survives a close: list names them all, read gives one
+    /// tab's statements, edit and delete send one statement's change, open_console's tabId
+    /// brings a closed one back - while an id or an index the page does not have is refused
+    /// before any frame goes out.
+    #[tokio::test]
+    async fn console_tabs_are_listed_read_and_edited_by_id() {
+        let console = json!([
+            { "id": "t-open", "tab": "Revenue report", "open": true, "statements": [
+                { "sql": "SELECT 1", "title": "revenue" }, { "sql": "SELECT 2" }] },
+            { "id": "t-closed", "tab": "Cleanup", "open": false, "statements": [{ "sql": "DELETE FROM posts" }] },
+        ]);
+        let asks = vec![
+            tool_ask("list_console_tabs", json!({})),
+            tool_ask("read_console_tab", json!({ "tabId": "t-closed" })),
+            tool_ask("edit_console_sql", json!({ "tabId": "t-open", "index": 1, "sql": "SELECT 3" })),
+            tool_ask("delete_console_sql", json!({ "tabId": "t-open", "index": 0 })),
+            tool_ask("open_console", json!({ "tabId": "t-closed" })),
+            tool_ask("open_console", json!({ "tabId": "nope" })),
+            tool_ask("delete_console_sql", json!({ "tabId": "t-closed", "index": 4 })),
+            tool_ask("read_console_tab", json!({ "tabId": "nope" })),
+            one_round_answer(),
+        ];
+        let (app, _captured, pg) = app(asks, json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 12 } })).await;
+        let (status, _ct, text) = call_text(
+            &app,
+            "POST",
+            "/api/llm/db/stream",
+            Some(json!({ "agent": "data", "conn": "mm", "prompt": "the tabs", "consoleTabs": console })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let events = events_of(&text);
+        let db: Vec<&Value> = events.iter().filter(|(name, _)| name == "db").map(|(_, frame)| frame).collect();
+        assert_eq!(db.len(), 3, "{text}");
+        assert_eq!(*db[0], json!({
+            "kind": "consoleEdit", "tabId": "t-open", "op": "replace", "index": 1, "sql": "SELECT 3", "expect": "SELECT 2",
+        }));
+        assert_eq!(*db[1], json!({
+            "kind": "consoleEdit", "tabId": "t-open", "op": "delete", "index": 0, "expect": "SELECT 1",
+        }));
+        assert_eq!(*db[2], json!({ "kind": "console", "tabId": "t-closed", "tab": "Cleanup" }), "by id, the frame names the tab it opened");
+        let answers: Vec<(bool, &str)> = events
+            .iter()
+            .filter(|(name, _)| name == "toolResult")
+            .map(|(_, frame)| (frame["ok"].as_bool().unwrap_or(false), frame["text"].as_str().unwrap_or_default()))
+            .collect();
+        assert_eq!(answers.len(), 8, "{text}");
+        assert!(answers[0].0 && answers[0].1.starts_with("The page's console tabs on this connection (1 open, 1 closed)"), "{:?}", answers[0]);
+        assert!(answers[0].1.contains("- t-open - \"Revenue report\", open, 2 statements"), "{:?}", answers[0]);
+        assert!(answers[0].1.contains("- t-closed - \"Cleanup\", closed, 1 statement"), "{:?}", answers[0]);
+        assert!(answers[1].0 && answers[1].1.contains("The console tab \"Cleanup\" (t-closed), closed"), "{:?}", answers[1]);
+        assert!(answers[1].1.contains("[0]\nDELETE FROM posts"), "{:?}", answers[1]);
+        assert!(answers[2].0 && answers[2].1.starts_with("Sent to the page: statement 1 of the console tab \"Revenue report\" (t-open) replaced"), "{:?}", answers[2]);
+        assert!(answers[3].0 && answers[3].1.contains("statement 0 of the console tab \"Revenue report\" (t-open) deleted"), "{:?}", answers[3]);
+        assert!(answers[4].0 && answers[4].1.starts_with("Opened the console tab Cleanup."), "{:?}", answers[4]);
+        assert!(!answers[5].0 && answers[5].1.contains("no console tab with id nope") && answers[5].1.contains("list_console_tabs"), "{:?}", answers[5]);
+        assert!(!answers[6].0 && answers[6].1.contains("index 4 is past the console tab \"Cleanup\" (t-closed)") && answers[6].1.contains("0 to 0"), "{:?}", answers[6]);
+        assert!(!answers[7].0 && answers[7].1.contains("no console tab with id nope"), "{:?}", answers[7]);
+        assert!(pg.ran.lock().expect("ran").is_empty(), "nothing here runs a statement");
+    }
+
+    /// A send that deletes and replaces: the conversation's own view of the tab follows each
+    /// change it sends, so the read after a delete lists what the page now holds - B and C, never
+    /// the deleted A - and the index the next edit names is the statement that read just showed.
+    /// A view left on the send's opening snapshot renumbers nothing, and every later index would
+    /// name the statement after the one meant.
+    #[tokio::test]
+    async fn a_console_reads_back_its_own_delete_and_replace_in_one_send() {
+        let console = json!([
+            { "id": "t-a", "tab": "Report", "open": true, "agent": true, "statements": [
+                { "sql": "SELECT 'A'" }, { "sql": "SELECT 'B'" }, { "sql": "SELECT 'C'" }] },
+        ]);
+        let asks = vec![
+            tool_ask("delete_console_sql", json!({ "tabId": "t-a", "index": 0 })),
+            tool_ask("read_console_tab", json!({ "tabId": "t-a" })),
+            tool_ask("edit_console_sql", json!({ "tabId": "t-a", "index": 1, "sql": "SELECT 'C2'" })),
+            tool_ask("read_console_tab", json!({ "tabId": "t-a" })),
+            tool_ask("delete_console_sql", json!({ "tabId": "t-a", "index": 0 })),
+            tool_ask("edit_console_sql", json!({ "tabId": "t-a", "index": 0, "sql": "SELECT 'C3'" })),
+            tool_ask("read_console_tab", json!({ "tabId": "t-a" })),
+            one_round_answer(),
+        ];
+        let (app, _captured, pg) = app(asks, json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 12 } })).await;
+        let (status, _ct, text) = call_text(
+            &app,
+            "POST",
+            "/api/llm/db/stream",
+            Some(json!({ "agent": "data", "conn": "mm", "prompt": "the tab", "consoleTabs": console })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let events = events_of(&text);
+        let db: Vec<&Value> = events.iter().filter(|(name, _)| name == "db").map(|(_, frame)| frame).collect();
+        assert_eq!(db.len(), 4, "{text}");
+        // Each frame guards the statement the tab held when it was sent: A, then C (B moved up),
+        // then B (the edit's C2 is at index 1 now), then the C2 the second delete left at 0.
+        assert_eq!((db[0]["op"].as_str(), db[0]["index"].as_i64(), db[0]["expect"].as_str()), (Some("delete"), Some(0), Some("SELECT 'A'")), "{}", db[0]);
+        assert_eq!((db[1]["op"].as_str(), db[1]["index"].as_i64(), db[1]["expect"].as_str()), (Some("replace"), Some(1), Some("SELECT 'C'")), "{}", db[1]);
+        assert_eq!((db[2]["op"].as_str(), db[2]["index"].as_i64(), db[2]["expect"].as_str()), (Some("delete"), Some(0), Some("SELECT 'B'")), "{}", db[2]);
+        assert_eq!((db[3]["op"].as_str(), db[3]["index"].as_i64(), db[3]["expect"].as_str()), (Some("replace"), Some(0), Some("SELECT 'C2'")), "{}", db[3]);
+        let answers: Vec<&str> = events.iter().filter(|(name, _)| name == "toolResult").map(|(_, frame)| frame["text"].as_str().unwrap_or_default()).collect();
+        assert_eq!(answers.len(), 7, "{text}");
+        assert!(answers[1].contains("[0]\nSELECT 'B'") && answers[1].contains("[1]\nSELECT 'C'"), "{:?}", answers[1]);
+        assert!(!answers[1].contains("SELECT 'A'"), "the deleted statement is gone: {:?}", answers[1]);
+        assert!(answers[1].contains("changed this tab during this send"), "the read says whose view it is: {:?}", answers[1]);
+        assert!(answers[3].contains("[1]\nSELECT 'C2'") && !answers[3].contains("SELECT 'C'\n"), "{:?}", answers[3]);
+        assert!(answers[6].contains("[0]\nSELECT 'C3'"), "{:?}", answers[6]);
+        assert!(pg.ran.lock().expect("ran").is_empty(), "nothing here runs a statement");
+    }
+
+    /// The tab open_console opens by id is the tab the rest of the send works in: two consoles of
+    /// the page can share the name "SQL", so a stage or a run naming that name must carry the id
+    /// with it - while a name that names one console of the agent's resolves to that tab's id by
+    /// itself, and a name of the reader's own console never resolves to one at all.
+    #[tokio::test]
+    async fn a_console_opened_by_id_takes_the_statements_that_follow() {
+        let console = json!([
+            { "id": "t-1", "tab": "SQL", "open": true, "agent": true, "statements": [] },
+            { "id": "t-2", "tab": "SQL", "open": true, "agent": true, "statements": [] },
+            { "id": "t-notes", "tab": "Notes", "open": true, "agent": false, "statements": [] },
+        ]);
+        let asks = vec![
+            tool_ask("open_console", json!({ "tabId": "t-2" })),
+            tool_ask("stage_sql", json!({ "tab": "SQL", "sql": "SELECT 2" })),
+            tool_ask("run_sql", json!({ "tab": "SQL", "sql": "SELECT 3" })),
+            tool_ask("open_console", json!({ "tabId": "t-2", "sql": "SELECT 4" })),
+            tool_ask("stage_sql", json!({ "tab": "Notes", "sql": "SELECT 5" })),
+            one_round_answer(),
+        ];
+        let (app, _captured, pg) = app(asks, json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 12 } })).await;
+        let (status, _ct, text) = call_text(
+            &app,
+            "POST",
+            "/api/llm/db/stream",
+            Some(json!({ "agent": "data", "conn": "mm", "prompt": "the second SQL", "consoleTabs": console })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let events = events_of(&text);
+        let db: Vec<&Value> = events.iter().filter(|(name, _)| name == "db").map(|(_, frame)| frame).collect();
+        assert_eq!(db.len(), 6, "{text}");
+        assert_eq!((db[0]["kind"].as_str(), db[0]["tabId"].as_str()), (Some("console"), Some("t-2")), "{}", db[0]);
+        for (frame, sql) in [(db[1], "SELECT 2"), (db[2], "SELECT 3"), (db[4], "SELECT 4")] {
+            assert_eq!((frame["sql"].as_str(), frame["tab"].as_str(), frame["tabId"].as_str()), (Some(sql), Some("SQL"), Some("t-2")), "{frame}");
+        }
+        assert_eq!((db[3]["kind"].as_str(), db[3]["tabId"].as_str()), (Some("console"), Some("t-2")), "{}", db[3]);
+        // A console of the reader's own: named, never taken by id - the page opens or finds it by name.
+        assert_eq!((db[5]["sql"].as_str(), db[5]["tab"].as_str(), db[5]["tabId"].is_null()), (Some("SELECT 5"), Some("Notes"), true), "{}", db[5]);
+        assert_eq!(pg.ran.lock().expect("ran").len(), 1, "the run reached the connection");
+    }
+
+    /// A name that one console of the agent's carries resolves to its id even before open_console
+    /// names it: the page then holds the statement in that tab, never in a second one of the name.
+    #[tokio::test]
+    async fn a_name_of_one_agent_console_resolves_to_its_id() {
+        let console = json!([
+            { "id": "t-only", "tab": "Revenue report", "open": true, "agent": true, "statements": [] },
+            { "id": "t-reader", "tab": "Revenue report", "open": true, "agent": false, "statements": [] },
+        ]);
+        let asks = vec![tool_ask("stage_sql", json!({ "tab": "revenue report", "sql": "SELECT 1" })), one_round_answer()];
+        let (app, _captured, _pg) = app(asks, json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 4 } })).await;
+        let (status, _ct, text) = call_text(
+            &app,
+            "POST",
+            "/api/llm/db/stream",
+            Some(json!({ "agent": "data", "conn": "mm", "prompt": "one statement", "consoleTabs": console })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let events = events_of(&text);
+        let db: Vec<&Value> = events.iter().filter(|(name, _)| name == "db").map(|(_, frame)| frame).collect();
+        assert_eq!(db.len(), 1, "{text}");
+        // The name matches the agent's console only, case aside: the reader's console of that name
+        // is not a tab the agent may take, so it is the agent's one that is addressed.
+        assert_eq!((db[0]["tabId"].as_str(), db[0]["tab"].as_str()), (Some("t-only"), Some("Revenue report")), "{}", db[0]);
     }
 
     /// The pane's menu: a send names the provider, model and effort to answer with - a
@@ -3164,7 +3773,7 @@ The model answering changed since you were last told.
         assert_eq!(role, "user");
         assert!(instruction.starts_with(DB_COMPACT_INSTRUCTION) && instruction.ends_with("keep in particular: the post types"), "{instruction}");
         let condensing_ask: Value = serde_json::from_str(&asked[1]).expect("ask");
-        assert_eq!(condensing_ask["tools"].as_array().map(Vec::len), Some(8), "the page's tools declared, open_console and the memory's three among them");
+        assert_eq!(condensing_ask["tools"].as_array().map(Vec::len), Some(db_tools_on("sql").len() + db_tools_shared().len()), "the full SQL tool catalog survives compaction");
         let (_, found) = call(&app, "GET", "/api/llm/db/conversation?agent=data&conn=mm", None).await;
         assert_eq!(found["runId"].as_i64(), Some(next), "the new conversation is the open one");
         // The next send replays the framing and the checkpoint under the same system.

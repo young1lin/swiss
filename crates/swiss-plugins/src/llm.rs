@@ -202,7 +202,9 @@ impl PluginFactory for LlmPlugin {
                 page("llm-agents", "Agents", 87),
                 page("llm-history", "History", 88),
             ],
-            routes: vec!["/api/llm".into()],
+            // /api/analysis is the Data agent's ledger (SPEC §data.analysis): it is this
+            // plugin's because every analysis is an agent's work, so disabling llm disables it.
+            routes: vec!["/api/llm".into(), "/api/analysis".into()],
             restart_on_config_change: false,
             requires: Vec::new(),
         }
@@ -365,7 +367,7 @@ mod tests {
         let pages: Vec<&str> = d.pages.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(pages, ["llm-providers", "llm-embedding", "llm-agents", "llm-history"]);
         assert!(d.pages.iter().all(|p| p.layout == "page" && p.entry == format!("/admin/js/views/{}.js", p.id)));
-        assert_eq!(d.routes, vec!["/api/llm".to_string()]);
+        assert_eq!(d.routes, vec!["/api/llm".to_string(), "/api/analysis".to_string()]);
     }
 
     #[test]

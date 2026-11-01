@@ -889,6 +889,21 @@ function dbPubsubAgentRead(frame                         )       {
   dbPubsubPaintLog(t);
 }
 
+/** The agent stopped the page's live feed (the stop_listen tool): that feed belongs to the page
+ *  and outlives the conversation that started nothing of it, so a tool can only ask it to close -
+ *  the reader's own Stop, with a line in the log saying who ended it. False when the page has no
+ *  Pub/Sub tab in front, which is the only place a feed exists. */
+function dbPubsubAgentStop()          {
+  const t = dbTab();
+  if (t.kind !== "pubsub") return false;
+  const was = t.live !== "off";
+  dbPubsubClose(false);
+  t.live = "off";
+  if (was) dbPubsubNote(t, tr("dataPubsub.evAgent"), tr("dataPubsub.agentStopped"), false);
+  dbPubsubRender();
+  return true;
+}
+
 function dbPubsubClear()       {
   const t = dbTab();
   if (t.kind !== "pubsub") return;
@@ -898,7 +913,7 @@ function dbPubsubClear()       {
 }
 
 export {
-  DB_PUBSUB_LOG_MAX, dbPubsubAddName, dbPubsubAgentRead, dbPubsubBytes, dbPubsubClear, dbPubsubClick, dbPubsubForget, dbPubsubGlob, dbPubsubInput,
+  DB_PUBSUB_LOG_MAX, dbPubsubAddName, dbPubsubAgentRead, dbPubsubAgentStop, dbPubsubBytes, dbPubsubClear, dbPubsubClick, dbPubsubForget, dbPubsubGlob, dbPubsubInput,
   dbPubsubIsPattern, dbPubsubItems, dbPubsubKeydown, dbPubsubLoad, dbPubsubLogBusy, dbPubsubOverlap, dbPubsubPush, dbPubsubRemember,
   dbPubsubRender, dbPubsubSplit, dbPubsubStart, dbPubsubStop, dbPubsubTime,
 };

@@ -18,6 +18,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
+import { tr } from "../src/i18n.js";
 import type { DbPubsubLine, DbPubsubTab } from "../src/types/state.js";
 
 /* SPEC §data.pubsub: the Pub/Sub page's pure parts (the NDJSON splitter, the log's ring, a typed
@@ -125,6 +126,7 @@ const ps = await import(pathToFileURL(join(here, "data-pubsub.js")).href) as {
   dbPubsubOverlap: (t: Pick<DbPubsubTab, "watchChannels" | "watchPatterns">) => [string, string] | null;
   dbPubsubStart: () => void;
   dbPubsubStop: () => void;
+  dbPubsubAgentStop: () => boolean;
 };
 
 afterAll(() => {
@@ -306,6 +308,38 @@ describe("the feed follows the page in front (SPEC §data.pubsub)", () => {
     expect(last.line === "note" && last.label).toBe("Cut off");
     expect(t.offAt).not.toBeNull();
     ps.dbPubsubStop();
+  });
+
+  it("the agent can end the reader's live feed: stop_listen closes it where it stands, and the log says who asked", async () => {
+    unmountDbView();
+    mountDbView();
+    Object.assign(dbConn(), { conn: "cache" });
+    const t = freshTab("pubsub");
+    t.watchChannels = ["orders"];
+    dbTabs().length = 0;
+    dbTabs().push(t);
+    ps.dbPubsubStart();
+    await settle();
+    const sub = calls.filter((c) => c.path.endsWith("/pubsub/subscribe")).pop()!;
+    feed!.push('{"event":"subscribed","channels":["orders"],"patterns":[]}\n');
+    await settle();
+    expect(t.live).toBe("live");
+
+    // The feed the page keeps open, closed by the reader's own Stop - asked for by the agent,
+    // which holds no handle on it otherwise (data-agent.ts, the pubsubListen frame).
+    expect(ps.dbPubsubAgentStop()).toBe(true);
+    await settle();
+    expect(t.live).toBe("off");
+    expect(sub.signal!.aborted, "the subscription goes back to the server").toBe(true);
+    const last = t.log[t.log.length - 1];
+    expect(last.line === "note" && last.label).toBe("Agent");
+    expect(last.line === "note" && last.text).toBe(tr("dataPubsub.agentStopped"));
+
+    // A page that is not the Pub/Sub one has no feed to stop: the frame changes nothing.
+    ps.dbPubsubStop();
+    dbTabs().length = 0;
+    dbTabs().push(freshTab("sql"));
+    expect(ps.dbPubsubAgentStop()).toBe(false);
   });
 
   it("opens no feed while nothing is watched", async () => {

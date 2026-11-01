@@ -176,6 +176,18 @@ beforeEach(() => {
 });
 
 describe("the agent's pane (SPEC §data.agent)", () => {
+  it("keeps the empty conversation's guidance on screen until the first question", async () => {
+    // The guidance answers "what do I type here", and it was hidden in the same tick it was
+    // painted: `render` tested the transcript CONTAINER (which exists from the first paint) and
+    // `follow`, one call later, hid the node outright (2026-11-01).
+    await openOn("fresh-shop");
+    const empty = q("#dbAgentEmpty");
+    expect(empty.hidden, "a conversation with nothing in it says how to start").toBe(false);
+    expect(empty.textContent).toBeTruthy();
+    await ask("what tables are there?");
+    expect(q("#dbAgentEmpty").hidden, "the first turn takes it away").toBe(true);
+  });
+
   it("keeps streamed deltas in view, lets the reader inspect history, and resumes from Back to bottom", async () => {
     const wire = liveBody();
     route = (c) => c.path === "/api/llm/db/stream" ? [200, { __live: wire.body }] : undefined;
@@ -307,7 +319,12 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     // A pasted statement reads as typed: its _ and its * are not markdown.
     const asked = "five of each: SELECT * FROM posts WHERE type LIKE 'custom\\_%' AND 2 * 3 > 1";
     await ask(asked);
-    expect(sent("/api/llm/db/stream")).toEqual([{ agent: "db", conn: "s-shop", prompt: asked, rowLimit: 500, writes: "stage" }]);
+    expect(sent("/api/llm/db/stream")).toEqual([{
+      agent: "db", conn: "s-shop", prompt: asked, rowLimit: 500, writes: "stage",
+      // The page's console tabs ride every send, the reader's own included, by the id that
+      // outlives a close (SPEC §data.agent Tabs).
+      consoleTabs: [{ id: mine.id, tab: "SQL", open: true, agent: false, statements: [{ sql: "SELECT 42" }] }],
+    }]);
     expect(bodyText()).toContain("LIKE 'custom\\_%' AND 2 * 3");
     expect(mine.sqlText, "the reader's console is theirs").toBe("SELECT 42");
     const st = dbSqlTab();

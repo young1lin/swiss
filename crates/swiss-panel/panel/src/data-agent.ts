@@ -63,10 +63,11 @@ import type { LlmEffort, LlmModelRow, LlmToolInfo } from "./types/llm.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { dbSetGrep } from "./data-view.js";
 import { dbSetTab } from "./data-structure.js";
-import { dbAgentConsole, dbAgentStatement, dbRowLimit } from "./data-sql.js";
+import { dbAgentConsole, dbAgentConsoleEdit, dbAgentConsoleId, dbAgentStatement, dbConsoleTabs, dbRowLimit } from "./data-sql.js";
 import { dbMemoryRefresh, dbMemoryView } from "./data-agent-memory.js";
 import { dbOpenTab } from "./data-tabs.js";
-import { dbPubsubAgentRead } from "./data-pubsub.js";
+import { dbAnalysisContext, dbAnalysisOpen } from "./data-analysis.js";
+import { dbPubsubAgentRead, dbPubsubAgentStop } from "./data-pubsub.js";
 import { mongoAgentSchema, mongoCurrentDb } from "./data-mongo.js";
 import { call, loadStatus, presetAgent, toolSummary } from "./views/llm-core.js";
 import { conversationNode, firstLine, runHow, sourceLabel } from "./views/llm-history.js";
@@ -616,7 +617,7 @@ function renderDbAgent(): void {
   const talk = talkOf(agent, conn.name);
   const changed = !body.contains(talk.out);
   if (talk.hist) fill(body, talk.hist);
-  else fill(body, toolsNode(conn.kind), h("div", { id: "dbAgentEmpty", hidden: !!talk.out.firstElementChild }, hint(tr("dataAgent.empty"))), talk.out);
+  else fill(body, toolsNode(conn.kind), h("div", { id: "dbAgentEmpty", hidden: hasTurns(talk) }, hint(tr("dataAgent.empty"))), talk.out);
   if (queued) fill(queued, talk.queue.node);
   paintStats(talk);
   controls(talk);
@@ -733,11 +734,21 @@ function column(talk: Talk): HTMLElement {
   return talk.out.firstElementChild as HTMLElement;
 }
 
+/** Whether this conversation has said anything yet — the one condition the empty-state
+ *  guidance answers to. `talk.out.firstElementChild` is the transcript CONTAINER, which
+ *  `column()` creates on the first paint whether or not it holds a turn, so testing it hid the
+ *  guidance the moment the pane opened — and `follow`, called in the same tick, hid it again for
+ *  good (2026-11-01). */
+function hasTurns(talk: Talk): boolean {
+  const col = talk.out.firstElementChild;
+  return !!col && col.childElementCount > 0;
+}
+
 /** Keep the end of the column in view while it is the one on screen. */
 function follow(talk: Talk, force = false): void {
   if (!inFront(talk) || talk.hist) return;
   const empty = byId("dbAgentEmpty");
-  if (empty) empty.hidden = true;
+  if (empty && hasTurns(talk)) empty.hidden = true;
   const pane = byId("dbAgent");
   if (pane) chatFollow(pane, force);
 }
@@ -892,6 +903,13 @@ async function send(talk: Talk, text: string, reveal = true): Promise<void> {
   const conn = agentConn();
   const schema = conn && conn.name === talk.conn ? schemaInView(conn.kind) : undefined;
   if (schema) body.schema = schema;
+  // The console's tabs exist only here, so each send carries them (open and closed): the ids,
+  // names and statements list_console_tabs, read_console_tab and open_console's tabId read.
+  // None to send - nothing open, nothing in Recently closed - is the same as an empty list.
+  const consoleTabs = conn && conn.name === talk.conn ? dbConsoleTabs() : [];
+  if (consoleTabs.length) body.consoleTabs = consoleTabs;
+  const analysisView = conn && conn.name === talk.conn ? dbAnalysisContext() : null;
+  if (analysisView) body.analysisView = analysisView;
   // A send's first statement in a console tab starts its results over; the ones after it gather beside it.
   const ran = new Set<string>();
   const outcome = await streamAsk("/api/llm/db/stream", body, {
@@ -927,11 +945,21 @@ async function send(talk: Talk, text: string, reveal = true): Promise<void> {
       if (payload.kind === "memory") { dbMemoryRefresh(talk.hist); return; }
       // A statement for a connection the page has left stays in its own conversation.
       if (dbConn().conn !== talk.conn) return;
+      if (payload.kind === "analysis" && typeof payload.taskId === "string") {
+        void dbAnalysisOpen(payload.taskId, talk.conn);
+        return;
+      }
       // What the agent reads the reader sees (SPEC §data.agent): a key or stream it read opens
       // in its own tab, a channel listing or a listen opens the Pub/Sub tab on what it read.
       if (payload.kind === "key") {
         const key = typeof payload.key === "string" ? payload.key : "";
         if (key) dbOpenTab({ kind: "key", key, type: typeof payload.type === "string" ? payload.type : undefined });
+        return;
+      }
+      // The page's own live feed, ended on the agent's ask (stop_listen): the reader's Stop, and
+      // the only handle on a listen this conversation never held.
+      if (payload.kind === "pubsubListen") {
+        dbPubsubAgentStop();
         return;
       }
       if (payload.kind === "channels" || payload.kind === "listen") {
@@ -956,22 +984,31 @@ async function send(talk: Talk, text: string, reveal = true): Promise<void> {
         if (typeof payload.db === "string" && typeof payload.coll === "string" && payload.coll) mongoAgentSchema(payload.db, payload.coll);
         return;
       }
-      // A console tab of the agent's own, by the name it gave (SPEC §data.agent Tabs); a run
-      // or stage naming it lands there, one naming none in the Agent tab.
+      // A console tab of the agent's own, by the name it gave (SPEC §data.agent Tabs) - or by
+      // the id that outlives a close and a reload - or one statement of one rewritten or
+      // dropped. A run or stage naming it lands there, one naming none in the Agent tab.
       const tab = typeof payload.tab === "string" ? payload.tab : undefined;
-      if (payload.kind === "console") { if (tab) dbAgentConsole(tab); return; }
+      // The tab's id, when the server knows it: the address that tells two consoles of one name
+      // apart and survives a rename (SPEC §data.agent Tabs).
+      const tabId = typeof payload.tabId === "string" && payload.tabId ? payload.tabId : undefined;
+      if (payload.kind === "console") {
+        if (tabId) dbAgentConsoleId(tabId, tab);
+        else if (tab) dbAgentConsole(tab);
+        return;
+      }
+      if (payload.kind === "consoleEdit") { dbAgentConsoleEdit(payload); return; }
       // The statement, the MongoDB command document or the Redis line; a MongoDB one names its database.
       const sql = typeof payload.sql === "string" ? payload.sql : "";
       if (!sql) return;
       const db = typeof payload.db === "string" ? payload.db : undefined;
       if (payload.kind === "stage") {
-        dbAgentStatement(sql, null, ran, db, tab);
+        dbAgentStatement(sql, null, ran, db, tab, tabId);
         // An auto write the server held: it waits in the console, and the reader hears why.
         if (typeof payload.held === "string") toast(tr("dataAgent.writes.held", { why: payload.held }), true);
         return;
       }
       const reply = payload.reply && typeof payload.reply === "object" ? payload.reply as Record<string, unknown> : undefined;
-      dbAgentStatement(sql, reply ? { reply } : { error: typeof payload.error === "string" ? payload.error : "" }, ran, db, tab);
+      dbAgentStatement(sql, reply ? { reply } : { error: typeof payload.error === "string" ? payload.error : "" }, ran, db, tab, tabId);
     },
   }, (t: TranscriptTurn): HTMLElement => (talk.gen === myGen ? addTurn(talk, t) : h("span")), mine.signal);
   if (talk.gen !== myGen) return; // Stop or New already settled the column

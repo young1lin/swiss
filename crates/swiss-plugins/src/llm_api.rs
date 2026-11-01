@@ -68,6 +68,10 @@ const DEFAULT_PROMPT: &str = "Reply with one short sentence that names the model
 pub(crate) const SSE_FRAMES: usize = 32;
 
 pub fn mount(state: Arc<LlmState>, services: Arc<RuntimeServices>) -> Router {
+    mount_with_analysis(state, services, crate::analysis::AnalysisStore::home())
+}
+
+pub fn mount_with_analysis(state: Arc<LlmState>, services: Arc<RuntimeServices>, analysis: Arc<crate::analysis::AnalysisStore>) -> Router {
     Router::new()
         .route("/api/llm/status", get(status))
         .route("/api/llm/providers/test", post(provider_test))
@@ -99,6 +103,7 @@ pub fn mount(state: Arc<LlmState>, services: Arc<RuntimeServices>) -> Router {
         .route("/api/llm/history/turns/{run_id}/{seq}/body", get(history_turn_body))
         .with_state(state)
         .layer(Extension(services))
+        .layer(Extension(analysis))
 }
 
 pub(crate) fn bad(message: impl AsRef<str>) -> Response {
@@ -444,6 +449,7 @@ fn tool_notes(taken: &[&str], secrets: &[(String, String)]) -> String {
     if taken.contains(&"job_output") { text.push_str(&format!(" job_output reads a background {shell} job by job_id; job_kill stops its process tree.")); }
     if taken.contains(&"sync") { text.push_str(" sync validates proposal operations in this test only; they are not applied to project memory."); }
     if taken.contains(&"delegate") { text.push_str(" delegate sends real tasks to a worker using your configured model; the worker answers once without tools."); }
+    text.push_str(" Every call carries a description: one short sentence, in the user's language, saying why you are making it now - it is shown beside the tool's name as you work.");
     text.push_str(" Check with your tools rather than guess.");
     text.trim_start().to_string()
 }
@@ -1516,10 +1522,19 @@ pub(crate) mod tests {
         assert_eq!(body["catalog"]["chat"], json!([]));
         assert!(body["catalog"]["builtin"][0].get("on").is_none(), "only a db tool names a connection kind");
         let db: Vec<(&str, &str)> = body["catalog"]["db"].as_array().expect("db catalog").iter().map(|t| (t["name"].as_str().unwrap_or_default(), t["on"].as_str().unwrap_or_default())).collect();
-        assert_eq!(db.len(), 19);
-        assert_eq!((db[0], db[4], db[14]), (("list_tables", "sql"), ("list_collections", "mongo"), ("stage_redis", "redis")));
-        // A console tab of its own and the memory serve every kind: they name none.
-        assert_eq!(&db[15..], [("open_console", ""), ("read_memory", ""), ("save_memory", ""), ("delete_memory", "")]);
+        assert_eq!(db.len(), 25);
+        assert_eq!((db[0], db[5], db[15], db[16]), (("list_tables", "sql"), ("list_collections", "mongo"), ("stage_redis", "redis"), ("stop_listen", "redis")));
+        // A console's tabs and the memory serve every kind: they name none.
+        assert_eq!(&db[17..], [
+            ("open_console", ""),
+            ("list_console_tabs", ""),
+            ("read_console_tab", ""),
+            ("edit_console_sql", ""),
+            ("delete_console_sql", ""),
+            ("read_memory", ""),
+            ("save_memory", ""),
+            ("delete_memory", ""),
+        ]);
         assert_eq!(body["defaultPrompts"]["builtin"], distiller["systemPromptDefault"]);
         assert_eq!((&body["defaultPrompts"]["claude"], &body["defaultPrompts"]["pi"]), (&Value::Null, &Value::Null));
         assert!(body["catalog"]["pi"][0]["summary"].as_str().is_some_and(|s| !s.is_empty()));

@@ -15,6 +15,7 @@
  */
 
                                                  
+import { dbNewTabId } from "./db-state.js";
 
 /* ================================================================================================
    Recently closed consoles (SPEC §data.tabs). A console tab holding text is work the reader
@@ -25,10 +26,14 @@
    (data-tabs.ts), and the agent's open_console naming a tab the reader closed brings that one
    back with its text (data-sql.ts dbAgentTab). A result is not kept: its rows are a read to
    run again.
+
+   The entry's `id` IS the console tab's id (db-state.ts dbNewTabId): the id is what survives a
+   close, so a tool holding one still addresses the same console after the tab is restored.
    ================================================================================================ */
 
 /** One closed console, under the connection it was open on. */
                               
+                                                              
              
                
                
@@ -48,17 +53,30 @@ const CLOSED_MAX = 30;
  *  script cannot crowd out the other preferences this origin keeps. */
 const CLOSED_CHARS = 1_000_000;
 
-function closedEntry(v         )                   {
+/** An entry as it may sit in storage: one written before ids existed has none yet. */
+                                                              
+
+function closedEntry(v         )                    {
   if (!v || typeof v !== "object") return false;
   const e = v                           ;
-  return typeof e.id === "string" && typeof e.conn === "string" && typeof e.text === "string" && typeof e.at === "number";
+  return typeof e.conn === "string" && typeof e.text === "string" && typeof e.at === "number"
+    && (e.id === undefined || typeof e.id === "string");
 }
 
 function readClosed()                {
-  try {
-    const v          = JSON.parse(localStorage.getItem(CLOSED_KEY) || "[]");
-    return Array.isArray(v) ? v.filter(closedEntry) : [];
-  } catch { return []; }
+  let raw         ;
+  try { raw = JSON.parse(localStorage.getItem(CLOSED_KEY) || "[]"); } catch { return []; }
+  if (!Array.isArray(raw)) return [];
+  let repaired = false;
+  const list                = raw.filter(closedEntry).map((e              )              => {
+    if (e.id) return e               ;
+    // An entry filed before ids: minted here and written back, so the id a tool read once
+    // still addresses it on the next visit.
+    repaired = true;
+    return { ...e, id: dbNewTabId() };
+  });
+  if (repaired) writeClosed(list);
+  return list;
 }
 
 function writeClosed(list               )       {
@@ -78,7 +96,7 @@ export function dbClosedRemember(gone                                   )       
   const now = Date.now();
   for (const { conn, tab } of gone) {
     if (!conn || !tab.sqlText.trim()) continue;
-    const e              = { id: now.toString(36) + "-" + Math.random().toString(36).slice(2, 8), conn, text: tab.sqlText, at: now };
+    const e              = { id: tab.id, conn, text: tab.sqlText, at: now };
     if (tab.custom) e.custom = tab.custom;
     if (tab.agent) { e.agent = true; if (tab.agentTab) e.agentTab = tab.agentTab; }
     fresh.push(e);
@@ -108,6 +126,23 @@ export function dbClosedTake(id        )                     {
 export function dbClosedTakeAgent(conn        , agentTab        )                     {
   const e = dbClosedFor(conn).find((x) => x.agent === true && (x.agentTab || "") === agentTab);
   return e ? dbClosedTake(e.id) : null;
+}
+
+/** One of the connection's closed consoles by its id (the console tab's own), if any. */
+export function dbClosedById(conn               , id        )                     {
+  return dbClosedFor(conn).find((e) => e.id === id) || null;
+}
+
+/** Rewrite a closed console's text where it sits - a statement the agent edited or deleted
+ *  while the tab was closed. Its id and place in the list stay, so the tab it comes back as
+ *  is still the one that was asked for. False when it is gone already. */
+export function dbClosedSetText(id        , text        )          {
+  const list = readClosed();
+  const at = list.findIndex((e) => e.id === id);
+  if (at < 0) return false;
+  list[at].text = text;
+  writeClosed(list);
+  return true;
 }
 
 /** Forget the connection's closed consoles (the menu's Clear). */

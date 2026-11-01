@@ -15,7 +15,7 @@
  */
 
                                                                                     
-                                                           
+                                                                  
 import { $, api, apiJson, dbReqGuard, errText, toast } from "./util.js";
 import { fill, h } from "./h.js";
                                      
@@ -28,8 +28,8 @@ import { dbFormatSql } from "./data-sql-format.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
 import { dbConn, dbSqlTab, dbTab, dbTabs } from "./db-state.js";
-import { dbActivateTab, dbOpenTab, dbOpenTabForce, renderDbTabs } from "./data-tabs.js";
-import { dbClosedTakeAgent } from "./data-closed.js";
+import { dbActivateTab, dbOpenTab, dbOpenTabForce, dbRestoreClosed, dbTabTitle, renderDbTabs } from "./data-tabs.js";
+import { dbClosedFor, dbClosedById, dbClosedSetText, dbClosedTakeAgent } from "./data-closed.js";
 import { dbHistoryRefresh } from "./data-history.js";
 import { dbIsMongo, mongoCurrentDb, mongoFormatCommand, mongoRunCommand, mongoRunSupersede } from "./data-mongo.js";
 import { dockShow } from "./ui/dock.js";
@@ -528,6 +528,91 @@ function dbConsoleBlocks(text        )           {
   return String(text).split(/\n[ \t]*\n/).map((b        )         => { return b.trim(); }).filter(Boolean);
 }
 
+/* --- one statement, addressed (SPEC §data.agent Tabs) -------------------------------------------- */
+
+/* The console keeps ONE text per tab (sqlText), so "the third statement" has to be a position in
+   that text. The unit is the blank-line block: the block Run all walks (dbConsoleBlocks) and the
+   one the agent writes each statement in, a blank line apart (dbAgentStatement). The spans below
+   are character ranges in the original text rather than a split and a re-join, because an edit
+   must leave every other statement byte for byte as the reader typed it - indentation, the blank
+   lines they chose, the trailing comment and all. */
+
+/** One statement of a console: its 0-based position, its text, and the name its first line
+ *  comments it with, when it has one. */
+;                                    
+                
+              
+                 
+ 
+
+/** Where each block's trimmed content sits in the text, in order. Pure. */
+function dbConsoleSpans(text        )                                   {
+  const t = String(text);
+  const spans                                   = [];
+  const push = (from        , to        )       => {
+    const piece = t.slice(from, to);
+    if (!piece.trim()) return;
+    const lead = piece.length - piece.trimStart().length;
+    const tail = piece.length - piece.trimEnd().length;
+    spans.push({ start: from + lead, end: to - tail });
+  };
+  const sep = /\n[ \t]*\n/g;
+  let last = 0;
+  let m                        ;
+  while ((m = sep.exec(t)) !== null) {
+    push(last, m.index);
+    last = m.index + m[0].length;
+  }
+  push(last, t.length);
+  return spans;
+}
+
+/** The name a statement's first line comments it with ("-- Clean up stale rows", "# orders"):
+ *  how the agent labels a block it writes and how a reader tags their own. None when the first
+ *  line is code, or the comment says nothing. Pure. */
+function dbStatementTitle(sql        )                     {
+  const first = String(sql).split("\n")[0].trim();
+  const m = /^(?:--|#)\s*(.+)$/.exec(first);
+  const title = m ? m[1].trim() : "";
+  if (!title) return undefined;
+  return title.length > 60 ? title.slice(0, 59) + "…" : title;
+}
+
+/** The tab's statements, in the order the console shows them. A tab holding one command line,
+ *  or no blank line at all, holds exactly one. Pure. */
+function dbConsoleStatements(text        )                       {
+  const t = String(text);
+  return dbConsoleSpans(t).map((s                                , index        )                     => {
+    const sql = t.slice(s.start, s.end);
+    const title = dbStatementTitle(sql);
+    return title ? { index, sql, title } : { index, sql };
+  });
+}
+
+/** The text with statement `index` replaced whole. Null when there is no such statement - the
+ *  caller says so rather than writing the text somewhere else. Pure. */
+function dbConsoleReplace(text        , index        , sql        )                {
+  const t = String(text);
+  const span = dbConsoleSpans(t)[index];
+  if (!span) return null;
+  return t.slice(0, span.start) + String(sql).trim() + t.slice(span.end);
+}
+
+/** The text with statement `index` gone, and the blank lines that separated it with it. The
+ *  last statement leaves an empty tab, never a closed one: the tab is the reader's, and an
+ *  empty console is a place to write the next statement. Null when there is no such statement. */
+function dbConsoleDelete(text        , index        )                {
+  const t = String(text);
+  const spans = dbConsoleSpans(t);
+  const at = spans[index];
+  if (!at) return null;
+  const next = spans[index + 1];
+  if (next) return t.slice(0, at.start) + t.slice(next.start);
+  const prev = spans[index - 1];
+  if (prev) return t.slice(0, prev.end);
+  return "";
+}
+
 /** SPEC §data.redis-console: a redis script's commands, one a line. The server reads a command's
  *  words the way a shell does (shlex), where a newline is only a space - "SET a 1\nGET a" would
  *  reach redis as one SET with two stray words - so the console cuts the lines itself. A newline
@@ -751,39 +836,180 @@ function dbAgentTabName(tab         )         {
   return name.toLowerCase() === "agent" || name === tr("dataAgent.name") ? "" : name;
 }
 
-/* SPEC §data.agent Tabs: the agent's console tab of that name brought to the front, or opened
-   under it when the page has none - its Agent tab when it names none. A named one the reader
-   closed comes back with its text (Recently closed, data-closed.ts); the Agent tab starts
-   empty again. */
-function dbAgentTab(tab         )                  {
+/* SPEC §data.agent Tabs: the agent's console tab that name - or that id - names, brought to the
+   front, or opened under the name when the page has none - its Agent tab when it names neither.
+   The id wins over every name: two consoles can be called "SQL", and one the reader renamed no
+   longer answers to the name the agent opened it under, yet a run or a stage coming back from the
+   server carries the id it was addressed by. A named one the reader closed comes back with its
+   text and its own id (Recently closed, data-closed.ts); the Agent tab starts empty again. */
+function dbAgentTab(tab         , id         )                  {
   const name = dbAgentTabName(tab);
+  const byId = id ? dbConsoleById(id) : null;
+  if (byId) return dbAgentOwn(byId, name);
   const at = dbTabs().findIndex((t)          => { return t.kind === "sql" && t.agent === true && (t.agentTab || "") === name; });
   if (at >= 0) dbActivateTab(at);
   else {
-    const conn = dbConn().conn;
-    const back = name && conn ? dbClosedTakeAgent(conn, name) : null;
-    dbOpenTabForce({ kind: "sql" });
-    const made = dbSqlTab();
-    if (!made) return null;
-    made.agent = true;
-    if (name) made.agentTab = name;
-    made.custom = back?.custom || name || tr("dataAgent.name");
-    if (back) {
-      made.sqlText = back.text;
-      const ta = $                     ("dbSql");
-      if (ta) ta.value = made.sqlText;
-      dbSqlPaint();
+    // A rename the agent never made: the card's own title is the only name that tab answers to.
+    const renamed = name ? dbTabs().findIndex((t)          => { return t.kind === "sql" && t.agent === true && dbTabTitle(t) === name; }) : -1;
+    if (renamed >= 0) dbActivateTab(renamed);
+    else {
+      const conn = dbConn().conn;
+      const back = name && conn ? dbClosedTakeAgent(conn, name) : null;
+      dbOpenTabForce({ kind: "sql" });
+      const made = dbSqlTab();
+      if (!made) return null;
+      made.agent = true;
+      if (name) made.agentTab = name;
+      made.custom = back?.custom || name || tr("dataAgent.name");
+      if (back) {
+        // The id the tab was filed under is the tab's, or every request the server addresses by
+        // it - a statement to place, an edit, a delete - lands in a console of another id.
+        made.id = back.id;
+        made.sqlText = back.text;
+        const ta = $                     ("dbSql");
+        if (ta) ta.value = made.sqlText;
+        dbSqlPaint();
+      }
+      renderDbTabs();
     }
-    renderDbTabs();
   }
   const d = dbSqlTab();
   return d && d.agent ? d : null;
+}
+
+/** A tab an id found, made one of the agent's. The name a frame carries is a label: it is adopted
+ *  only where the tab has none, so the reader's rename and the agent's own first name both stand. */
+function dbAgentOwn(t          , name        )           {
+  t.agent = true;
+  if (!t.agentTab && name) t.agentTab = name;
+  if (!t.custom && name) t.custom = name;
+  renderDbTabs();
+  return t;
 }
 
 /** The agent opened a console tab (open_console with nothing to place in it): it comes to the
  *  front with the console showing. */
 function dbAgentConsole(tab        )       {
   if (dbAgentTab(tab)) dockShow("db-console", "bottom");
+}
+
+/* --- the console by id (SPEC §data.agent Tabs) ---------------------------------------------------- */
+
+/** One console of the connection, as the request body sends it: the id a tool addresses, the
+ *  name on the card, whether it is open, and its statements. */
+;                                  
+             
+              
+                
+                                                                                                
+                                                                                                   
+                 
+                                                
+ 
+
+/** The console tabs the page holds on the connection, open ones in strip order then the closed
+ *  ones, newest first (SPEC §data.agent Tabs). The page is the only place they exist, so this
+ *  snapshot rides every send (data-agent.ts) and is what list_console_tabs, read_console_tab and
+ *  open_console's tabId read. An edit the agent makes after this send is not in it until the
+ *  next one. */
+function dbConsoleTabs()                     {
+  const rows                     = [];
+  const wire = (id        , tab        , open         , text        , agent         )                   => ({
+    id, tab, open, agent,
+    statements: dbConsoleStatements(text).map((s                    )                                  => {
+      return s.title ? { sql: s.sql, title: s.title } : { sql: s.sql };
+    }),
+  });
+  for (const t of dbTabs()) if (t.kind === "sql") rows.push(wire(t.id, dbTabTitle(t), true, t.sqlText, t.agent === true));
+  const conn = dbConn().conn;
+  for (const e of dbClosedFor(conn)) {
+    rows.push(wire(e.id, e.custom || tr(dbIsRedis() || dbIsMongo() ? "dataTabs.command" : "dataTabs.sql"), false, e.text, e.agent === true));
+  }
+  return rows;
+}
+
+/** The console tab this id names: open (brought to the front) or closed (restored with its
+ *  text under the same id, data-closed.ts). Null when the page has neither - the tab was
+ *  forgotten, or another browser tab closed and cleared it. */
+function dbConsoleById(id        )                  {
+  const at = dbTabs().findIndex((t       )          => t.kind === "sql" && t.id === id);
+  if (at >= 0) {
+    dbActivateTab(at);
+  } else if (dbClosedById(dbConn().conn, id)) {
+    dbRestoreClosed(id);
+  } else {
+    return null;
+  }
+  const t = dbSqlTab();
+  return t && t.id === id ? t : null;
+}
+
+/** open_console addressed by id: the same gesture as by name, on the address that outlives a
+ *  close and a reload. `name` is what the frame carried, so a console the agent did not open
+ *  becomes one of its own and later runs naming it land there. */
+function dbAgentConsoleId(id        , name         )       {
+  const t = dbConsoleById(id);
+  if (!t) { console.warn("console: no tab with this id on the page - ignored", { id }); return; }
+  dbAgentOwn(t, dbAgentTabName(name));
+  dockShow("db-console", "bottom");
+}
+
+/** Edit (`replace`) or drop (`delete`) one statement of one console, found by id: an open one
+ *  is rewritten in place and repainted, a closed one has its filed text rewritten. False when
+ *  the id is unknown or the index no longer exists - the caller says why, never guesses which
+ *  statement was meant.
+ *
+ *  `expect` is the statement's text as the page last reported it to the agent. A frame delivered
+ *  twice, or one whose tab moved on since, therefore cannot hit the wrong statement: a replace
+ *  finding its own text already there is a no-op, and anything else is refused rather than
+ *  applied to whatever now sits at that index. */
+function dbConsoleEdit(tabId        , op        , index        , sql         , expect         )          {
+  const next = (text        )                => op === "delete" ? dbConsoleDelete(text, index) : dbConsoleReplace(text, index, sql || "");
+  /** Does the statement at `index` still read as the frame expected? A repeat of a replace
+   *  addressed the same statement it already wrote, which is done, not stale. */
+  const placed = (text        )          => {
+    const at = dbConsoleStatements(text)[index];
+    if (!at) return false;
+    if (!expect || at.sql === expect) return true;
+    return op === "replace" && at.sql === (sql || "").trim();
+  };
+  const open = dbTabs().find((t       )                => t.kind === "sql" && t.id === tabId);
+  if (open) {
+    if (!placed(open.sqlText)) return false;
+    const text = next(open.sqlText);
+    if (text === null) return false;
+    if (text === open.sqlText) return true; // already what was asked for
+    open.sqlText = text;
+    if (dbSqlTab() === open) {
+      const ta = $                     ("dbSql");
+      if (ta) ta.value = text;
+      dbSqlPaint();
+    }
+    renderDbTabs();
+    return true;
+  }
+  const closed = dbClosedById(dbConn().conn, tabId);
+  if (!closed) return false;
+  if (!placed(closed.text)) return false;
+  const text = next(closed.text);
+  if (text === null) return false;
+  dbClosedSetText(tabId, text);
+  renderDbTabs();
+  return true;
+}
+
+/** The consoleEdit frame of the Data agent (edit_console_sql, delete_console_sql). Applied to
+ *  the console it names; an unknown tabId or a statement that is gone is ignored with the
+ *  reason on the browser console, because there is nothing to show the reader and no better
+ *  guess to make. The server has already said the request was SENT, not done. */
+function dbAgentConsoleEdit(frame                         )       {
+  const tabId = typeof frame.tabId === "string" ? frame.tabId : "";
+  const raw = typeof frame.index === "number" ? frame.index : -1;
+  const index = raw >= 0 ? Math.floor(raw) : -1;
+  const op = frame.op === "delete" ? "delete" : "replace";
+  if (!tabId || index < 0) { console.warn("consoleEdit: the frame names no console or no statement - ignored", frame); return; }
+  if (dbConsoleEdit(tabId, op, index, typeof frame.sql === "string" ? frame.sql : "", typeof frame.expect === "string" ? frame.expect : undefined)) return;
+  console.warn("consoleEdit: no console tab, no statement at that index, or one that moved on - ignored", { tabId, op, index });
 }
 
 /* SPEC §data.agent: the Data agent works on the page the way the reader would. What it runs
@@ -795,8 +1021,8 @@ function dbAgentConsole(tab        )       {
    a send's first run in a tab starting that tab's over (`ran`: the tabs this send has run in).
    A staged one (a write the agent leaves to the reader) only lands in the console. The agent's
    run supersedes a Run still in flight on the results. `db`: the database a MongoDB command ran on. */
-function dbAgentStatement(sql        , outcome                                                            , ran             , db         , tab         )       {
-  const d = dbAgentTab(tab);
+function dbAgentStatement(sql        , outcome                                                            , ran             , db         , tab         , id         )       {
+  const d = dbAgentTab(tab, id);
   if (!d) return;
   const mongo = dbIsMongo();
   const redis = dbIsRedis();
@@ -833,9 +1059,11 @@ function dbAgentStatement(sql        , outcome                                  
       ? { ...r, explained: false, tabLabel: dbResultTabLabel(stmt, r.affectedRows ?? r.rowCount), stmt }
       : dbFailedReply("statement", stmt, outcome.error || "", dbResultTabLabel(stmt, null), 0);
   }
-  const name = d.agentTab || "";
-  const fresh = !ran.has(name);
-  ran.add(name);
+  // Keyed by the tab's id, not its name: two consoles called "SQL" are two tabs, and the first
+  // run in each has to start that tab's results over.
+  const key = d.id;
+  const fresh = !ran.has(key);
+  ran.add(key);
   const results = (fresh ? [] : d.sqlResults || []).concat([reply]);
   d.sqlBusy = false;
   d.sqlResults = results;
@@ -847,4 +1075,4 @@ function dbAgentStatement(sql        , outcome                                  
   renderDbGrid();
 }
 
-export { DB_ROW_LIMITS, dbAgentConsole, dbAgentStatement, dbApplyReadback, dbBarClick, dbCommandTabLabel, dbCommit, dbConsoleBlocks, dbFavoriteName, dbFavLoad, dbFavPush, dbFormatSql, dbFillConsole, dbPendingSql, dbQuoteIdentSafe, dbResultTabLabel, dbRowLimit, dbRunSql, dbRunText, dbSetRowLimit, dbSqlLiteral, dbSplitCommands, dbSplitStatements, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };
+export { DB_ROW_LIMITS, dbAgentConsole, dbAgentConsoleEdit, dbAgentConsoleId, dbAgentStatement, dbApplyReadback, dbBarClick, dbCommandTabLabel, dbCommit, dbConsoleBlocks, dbConsoleDelete, dbConsoleEdit, dbConsoleReplace, dbConsoleStatements, dbConsoleTabs, dbFavoriteName, dbFavLoad, dbFavPush, dbFormatSql, dbFillConsole, dbPendingSql, dbQuoteIdentSafe, dbResultTabLabel, dbRowLimit, dbRunSql, dbRunText, dbSetRowLimit, dbSqlLiteral, dbSplitCommands, dbSplitStatements, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };

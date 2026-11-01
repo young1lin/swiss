@@ -22,7 +22,7 @@
 //! SSE server; every test owns its scratch home; every wait is bounded.
 
 use serde_json::{json, Value};
-use swiss_llm::agent::{run_loop, tools_bytes, LoopEvent, RoundUsage, ToolAnswer, ToolSpec, Toolbox};
+use swiss_llm::agent::{intentioned, run_loop, tools_bytes, LoopEvent, RoundUsage, ToolAnswer, ToolSpec, Toolbox};
 use swiss_llm::history::{CancelFlag, LlmHistory, Steer, SteerRefused};
 use swiss_llm::telemetry::Session;
 
@@ -339,7 +339,7 @@ async fn words_sent_mid_run_go_in_after_the_tool_answers() {
     let steer = Steer::new();
     run.set_steer(steer.clone());
     let mut toolbox = Steering { steer: steer.clone() };
-    let tools_weight = tools_bytes(&toolbox.specs());
+    let tools_weight = tools_bytes(&intentioned(toolbox.specs()));
     let session = Session::disabled();
     let mut steered: Vec<(String, String)> = Vec::new();
     let mut rounds: Vec<RoundUsage> = Vec::new();
