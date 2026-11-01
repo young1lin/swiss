@@ -48,6 +48,9 @@ fn sandbox() {
         // Safety: once, before anything reads either variable.
         unsafe {
             std::env::set_var("SWISS_HOME", &home);
+            std::env::set_var("USERPROFILE", home.join("user"));
+            std::env::set_var("HOME", home.join("user"));
+            std::env::set_var("CLAUDE_CONFIG_DIR", home.join("user/.claude"));
             std::env::set_var("SWISS_MASTER_KEY", "ab".repeat(32));
         }
     });

@@ -8,13 +8,22 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Added
 
-- `swiss gui` opens the panel in its own window on Windows (SPEC §host.gui, ADR-038): the
-  same one-time sign-in `open` mints, spent by a WebView2 window with a tray (close hides,
-  Open/Exit), one window per gateway — named by port and home — so a config switch under
-  another `SWISS_HOME` is another window, never the standing one, and a second launcher for
-  the same gateway raises it instead of exiting silently. The window and the tray carry the
-  brand mark itself, drawn from `assets/logo.svg`. macOS and Linux stay headless: the gateway
-  serves, a browser looks.
+- SQL analyses persist business conditions, revisions, executions and result pages. The Data
+  agent and workspace share stable task/result references for follow-up questions, reruns,
+  checks, charts, comparisons, saved work and exports (SPEC §data.analysis).
+- System exposes installation and status of the bundled skills in the supported client
+  directories; Plugins owns plugin management separately from machine settings
+  (SPEC §panel.settings, §host.cli).
+
+- `swiss gui` opens the panel in its own window on Windows and macOS (SPEC §host.gui,
+  ADR-038): the same one-time sign-in `open` mints, spent by a WebView2/WKWebView window
+  with a tray (close hides, Open/Exit), one window per gateway — named by port and home — so
+  a config switch under another `SWISS_HOME` is another window, never the standing one, and
+  a second launcher for the same gateway raises it instead of exiting silently. The explicit
+  command detaches and returns like `swiss start`; `swiss gui -f` stays in the foreground.
+  The window and the tray carry the brand mark itself, drawn from `assets/logo.svg`; macOS
+  also ships a signed `.app` bundle and Keychain-backed master-key storage. Linux stays
+  headless: the gateway serves, a browser looks.
 - The Data page has an agent beside its console on a MySQL, PostgreSQL, MongoDB or Redis
   connection (SPEC §data.agent, §llm.agents, §llm.api, §panel.ui).
 
@@ -52,6 +61,14 @@ All notable changes to swiss are recorded here. The format follows
     Before this change, everything it ran landed in the Agent tab, and it could not put a
     report's queries apart. A conversation open from before this change has the tool from
     its next send; New brings the prompt's word on when to use it.
+  - A console tab is addressed by its id, not only by its name: `list_console_tabs` lists the
+    connection's tabs - open, then the ones still in Recently closed - and `read_console_tab`
+    reads one statement by statement. `edit_console_sql` and `delete_console_sql` rewrite or
+    drop one statement of one tab, by that tab's id and the statement's index, and
+    `open_console` takes a tabId beside a name. The id outlives a rename, a close and a reload,
+    which a name does not: two tabs called *SQL* used to be one address, a statement inside a
+    tab could not be changed at all, and a tab the reader renamed no longer answered to the
+    name the agent opened it under.
   - The prompt keeps one console tab to one kind of work: the agent opens a new tab, named
     for the work, when another kind of work begins or the tab in use already holds many
     statements, and goes back to a tab by its name when that work comes back. A tab of the
@@ -73,7 +90,9 @@ All notable changes to swiss are recorded here. The format follows
   - What the agent reads on Redis opens on the page as it reads it: a key or stream in its
     own tab, a channel listing on the Pub/Sub page under the agent's pattern, and a listen
     there too, its names added to the watch set (the page goes on listening live) and what
-    was heard in the log under an *Agent* line.
+    was heard in the log under an *Agent* line. That feed is the page's, so the agent ends it
+    with `stop_listen` - the reader's own Stop, a line saying who asked - and says the ask went
+    out rather than claiming a feed it cannot see is closed.
   - Each connection keeps its own conversation, so two databases never mix one dialogue.
     The conversation is restored when the pane opens; New starts over and Stop cancels.
   - A folded line above the conversation names the tools the model may call.
@@ -564,7 +583,7 @@ All notable changes to swiss are recorded here. The format follows
   quota, swept at 180 days and never exported. The read-only History page reads it back:
   *Calls* newest first with the sealed body a row away, *Conversations* with each turn's full
   text one expand away and whether the conversation is open or closed.
-- The Test dialogue (SPEC §llm.test, §llm.history): a `builtin` or `chat` agent's Test is a
+- The Test dialogue (SPEC §llm.api, §llm.history): a `builtin` or `chat` agent's Test is a
   real, persisted conversation that streams. Deltas arrive as server-sent events
   (`POST agents/test/stream`) and paint as they land - reasoning dimmed, tool asks as chips,
   the closing answer as markdown. Each prompt files as the run's next user turn and the turns
@@ -804,6 +823,57 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- Data chat follows streaming replies while at the bottom, offers a jump to the latest
+  message, and collapses work details after completion or stop. Nested call details return
+  to their conversation history sheet when closed.
+- Desktop navigation stays on the selected gateway; sign-in URLs are constructed locally
+  from the ticket. Export completion and failure are reported by the native download handler.
+- Skill API tests isolate client home directories as well as gateway state. Login ticket
+  and cookie expiry boundaries have deterministic regression coverage.
+
+- A link that asks for a new window reaches the browser from `swiss gui` (SPEC §host.gui).
+  Before this change, every `target="_blank"` click was dropped in silence: the webview had no
+  new-window handler, and both engines deny the request when none is set. An MCP authorization
+  page opened by the panel was told "opened" and then timed out after five minutes, and answer
+  links, a URL cell, *Open UI* on the Process page and memory references did nothing at all.
+  Only `http` and `https` are handed over — the panel renders model output and database cells,
+  so `file:` and `javascript:` are exactly the payloads the opener must not receive. `swiss
+  open` also works on macOS now, where it called `xdg-open`.
+- The window goes with the gateway it was showing (SPEC §host.gui). The panel's Quit stopped
+  the gateway and left the shell standing: its page could never load again, and because the
+  shell still held the single-instance claim, the next `swiss gui` could only raise that dead
+  window — the tray's Exit was the only way back. The shell now closes with the gateway, and a
+  launch that finds a window for a gateway nothing answers on waits for it to leave and takes
+  the identity over.
+- `swiss start` recognises its own gateway, not merely a 200 (SPEC §host.daemon). The health
+  probe read the status code alone, so a dev server or any other app on the port answered
+  "already running", `stop` refused to act, and the panel link was minted for a page that is not
+  the panel. `/health` names the process (`{"ok":true,"build":…}`); the probe reads it.
+- A racing `swiss start` no longer erases the pid file the winner just wrote (SPEC
+  §host.daemon). Two starts on one port both wrote a record; the loser's child died on
+  EADDRINUSE, and the loser then deleted the file — by then the winner's — so `swiss stop`
+  answered "not running" over a live gateway and `restart` was a no-op. A record that names a
+  standing process is nobody else's to replace or delete; the start that actually serves the
+  port writes its own.
+- `swiss gui` no longer turns a temporary `SWISS_PORT` into a permanent port (SPEC §host.gui).
+  The shell resolved the port and handed it to the start, and a handed port is persisted into
+  `gateway.config.json`: one launch under the variable pinned that port for every later start.
+  The shell passes none, and the start resolves it exactly as the shell did.
+- The console keeps its own font size in the desktop window (SPEC §panel.design). The window's
+  zoom listener runs on `document` in the capture phase and took Ctrl+= / Ctrl+- / Ctrl+0
+  before xterm's textarea saw them, so the terminal page's zoom was dead in the app while it
+  worked in a browser tab. Keys typed inside a console are left to it, and on a Mac the window
+  takes Cmd, which is the platform's modifier and had no menu item to fall back on.
+- A skill's status and its install read `$CLAUDE_CONFIG_DIR` (SPEC §host.skills). The batch
+  install honoured the variable; the per-skill path and the panel's rows did not, so on a
+  machine that sets it the row said "installed" for `~/.claude`, where Claude Code reads
+  nothing, and *Install* wrote there too.
+- The Data console's head says what the console runs by on hover (SPEC §data.tabs): the rule
+  was a two-line paragraph above every editor, and it is now a help mark beside the title with
+  the words in its tooltip. *Run* carries the primary weight on the one line the head now is.
+- A DB agent's pane keeps its opening guidance until the first question (SPEC §data.agent).
+  `render` decided on the transcript *container*, which exists from the first paint, and
+  `follow` hid the line in the same tick, so an empty conversation never said what to type.
 - The Data console's result tabs all stay reachable when a script answers many (SPEC
   §data.console). Before this change, the tabs wrapped onto two lines and the last ones hid
   under the bar's facts and buttons. Each tab now stays on one line in a strip that scrolls

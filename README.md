@@ -70,9 +70,10 @@ needed to build; see [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Quick start
 
 On Windows, double-click `swiss.exe`; on macOS, open `swiss.app` to use the desktop GUI.
-On either desktop, running `swiss` without
-arguments or `swiss gui` opens the same window. The panel and AI skills are embedded in
-the single executable. **Settings → System** shows skill installation in
+On either desktop, running `swiss` without arguments or `swiss gui` opens the same window.
+The explicit `swiss gui` command returns after launching it; use `swiss gui -f` to keep the
+window in the foreground. The panel and AI skills are embedded in the single executable.
+**Settings → System** shows skill installation in
 `~/.claude/skills`, `~/.codex/skills` and `~/.agents/skills`, alongside startup and PATH settings.
 
 1. `swiss start` brings the gateway up on `127.0.0.1:19999` and opens the panel.

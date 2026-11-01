@@ -110,6 +110,14 @@ cargo run -- start --no-open      # the gateway itself, on 127.0.0.1:19999
 crates, where most of the tests live, are never built — yet the run still reports ok. The same
 applies to clippy.
 
+**A build must never take the whole machine.** This is the human's working computer, not a build
+box: an unconstrained `cargo build`/`cargo test` saturates every core, and the editor, the browser
+and the panel they are using stall for the length of the link. Cap the parallelism — `-j 4` on
+every cargo command (or `CARGO_BUILD_JOBS=4`), a `quick` profile for iteration, never two cargo
+processes at once, and kill a build rather than start a second one beside it. A command that links
+the whole workspace is a build, `cargo test` included; so is `npm run check`, whose vitest pool
+spawns a worker per test file. Slower is the point.
+
 A commit that edits any `Cargo.toml` carries the regenerated `Cargo.lock`: glance at
 `git status --short` before committing and self-check with
 `cargo tree --locked --offline --workspace --depth 0` — every CI command is `--locked`.

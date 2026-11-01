@@ -59,3 +59,4 @@ session.json
 # trailers the tool that wrote it added, which SPEC §release.hygiene forbids.
 *.tmp
 __pycache__/
+/.workbuddy/

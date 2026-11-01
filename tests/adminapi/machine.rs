@@ -92,6 +92,7 @@ async fn shipped_skill_status_is_read_only_and_reports_all_three_roots() {
         for location in locations {
             assert!(location["installed"].is_boolean() || location["installed"].is_null());
             assert!(location["path"].as_str().is_some_and(|p| p.ends_with("SKILL.md")));
+            assert!(std::path::Path::new(location["path"].as_str().expect("path")).starts_with(swiss_core::paths::data_dir()), "skill inspection must stay in the sandbox");
         }
     }
     let (status, _) = h.put("/api/skills", json!({})).await;

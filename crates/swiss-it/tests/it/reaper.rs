@@ -51,6 +51,8 @@ async fn owned_by(pid: u32) -> Vec<String> {
 async fn run_child(extra_env: Option<(&str, &str)>) -> (u32, Option<i32>) {
     let mut cmd = std::process::Command::new(std::env::current_exe().expect("this binary"));
     cmd.args(["--exact", "smoke::redis_answers_ping", "--test-threads=1"]);
+    // Cleanup must create a container even when the parent uses an external Redis URL.
+    cmd.env_remove("SWISS_IT_REDIS_URL");
     if let Some((k, v)) = extra_env {
         cmd.env(k, v);
     }

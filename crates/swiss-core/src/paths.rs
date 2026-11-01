@@ -64,7 +64,12 @@ pub fn test_home() -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("swiss-test-home-{}", crate::util::random_hex(8)));
         let _ = std::fs::create_dir_all(&dir);
-        unsafe { std::env::set_var("SWISS_HOME", &dir) };
+        unsafe {
+            std::env::set_var("SWISS_HOME", &dir);
+            std::env::set_var("USERPROFILE", dir.join("user"));
+            std::env::set_var("HOME", dir.join("user"));
+            std::env::set_var("CLAUDE_CONFIG_DIR", dir.join("user/.claude"));
+        }
         dir
     })
     .clone()
