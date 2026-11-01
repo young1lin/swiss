@@ -22,6 +22,9 @@
 //! only — descriptor, action, page — with no edits inside the host crate and exactly
 //! one register line in server.rs per plugin.
 
+pub mod analysis;
+pub mod analysis_api;
+mod llm_db_analysis;
 pub mod llm;
 pub mod llm_api;
 pub mod llm_tools;
