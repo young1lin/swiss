@@ -121,7 +121,7 @@ pub const USAGE: &str = "swiss — one local endpoint in front of your databases
 
 usage: swiss <command> [options]
 
-On Windows, double-click swiss.exe or run swiss without arguments to open the GUI.
+On Windows or macOS, double-click the app or run swiss without arguments to open the GUI.
 
   start            start the gateway in the background and open the panel
   stop             ask it to shut down, then force it if it will not
@@ -131,8 +131,8 @@ On Windows, double-click swiss.exe or run swiss without arguments to open the GU
   token            print the token clients authenticate with
   creds            print the panel url and the gateway token (for asking an AI)
   open             open the panel in a browser, signed in with a one-time link (SPEC §host.session)
-  gui              open the panel in its own window, signed in the same way (Windows only;
-                   on a mac or Linux the gateway runs headless — open it from a browser)
+  gui              open the panel in its own window and return (Windows and macOS;
+                   on Linux run start and open the panel in a browser)
   export           dump every state file as JSON to stdout (vault values masked) — the recovery /
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
@@ -154,8 +154,8 @@ On Windows, double-click swiss.exe or run swiss without arguments to open the GU
 options
   -p, --port <n>   listen on this port (saved as the new default)
                    other commands: which instance to act on
-  -f               start: run in the foreground instead of detaching
-                   logs:  follow the log as it grows
+  -f               start/gui: run in the foreground instead of detaching
+                   logs:      follow the log as it grows
       --no-open    start: do not open the panel in a browser
   -n, --lines <n>  logs: how many lines to show first (default 200)
       --force      stop: kill a live pid even if it cannot be confirmed as this gateway
@@ -852,7 +852,7 @@ pub async fn tail_log(port: u16, lines: u64, follow: bool, io: &dyn Io) {
     }
 }
 
-fn open_in_browser(url: &str) {
+pub(crate) fn open_in_browser(url: &str) {
     // The platform default opener, detached and hidden.
     #[cfg(windows)]
     let mut command = {
@@ -860,7 +860,15 @@ fn open_in_browser(url: &str) {
         c.args(["/c", "start", "", url]);
         c
     };
-    #[cfg(not(windows))]
+    // macOS has no xdg-open; `open` is the system opener there, and the desktop shell's
+    // new-window hand-off needs it too (2026-11-01: `swiss open` on a Mac did nothing).
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut c = std::process::Command::new("open");
+        c.arg(url);
+        c
+    };
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     let mut command = {
         let mut c = std::process::Command::new("xdg-open");
         c.arg(url);
@@ -965,7 +973,12 @@ pub async fn main(argv: Vec<String>) -> i32 {
             eprintln!("--port needs a number between 1 and 65535");
             return 1;
         }
-        return crate::gui::run(p.port);
+        // Finder/Explorer owns a double-clicked app's lifetime, so that path stays in this
+        // process. An explicit terminal command returns like `start`; `gui -f` opts back in.
+        if argv.is_empty() || p.foreground {
+            return crate::gui::run(p.port);
+        }
+        return crate::gui::launch(p.port);
     }
     // `remote` and `run` carry their own argv contract (SPEC §remote.cli): a bare `--` means
     // everything after it is the far side's ARGV, untouched. The generic parser would eat
@@ -1033,6 +1046,8 @@ mod tests {
         let p = parse_argv(&argv(&["logs", "-f"]));
         assert!(p.follow);
         let p = parse_argv(&argv(&["start", "-f"]));
+        assert!(p.foreground);
+        let p = parse_argv(&argv(&["gui", "--foreground"]));
         assert!(p.foreground);
 
         let p = parse_argv(&argv(&["import", "bundle.json", "--port", "8080"]));

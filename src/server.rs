@@ -393,6 +393,14 @@ pub async fn run_gateway() -> Result<(), String> {
     // /api/llm routes and the telemetry exporter. Its applied row is one shared state
     // every consumer reads at the moment it asks.
     let llm_state = swiss_llm::LlmState::new();
+    // The Data agent's analysis ledger (SPEC §data.analysis): opened once, and reconciled here -
+    // an execution the previous process left "running" is marked interrupted before any route can
+    // report it as still going.
+    let analysis_store = swiss_plugins::analysis::AnalysisStore::home();
+    let interrupted = analysis_store.reconcile();
+    if interrupted > 0 {
+        swiss_core::log::log("info", "analysis ledger recovered", Some(serde_json::json!({ "interrupted": interrupted })));
+    }
     let llm_plugin = Arc::new(swiss_plugins::llm::LlmPlugin::new(services.clone(), llm_state.clone()));
     // The memory plugin (SPEC §memory): the #memory page, the /api/knowledge
     // routes and the builtin memory MCP (twelve tools under /mcp/memory, every one
@@ -462,7 +470,10 @@ pub async fn run_gateway() -> Result<(), String> {
         // the structured 503 here too.
         .merge(swiss_plugins::memory_api::mount(memory_state))
         // Same guard and boundary: the /api/llm tree is owned by the llm plugin.
-        .merge(swiss_plugins::llm_api::mount(llm_state, services.clone()))
+        .merge(swiss_plugins::llm_api::mount_with_analysis(llm_state, services.clone(), analysis_store.clone()))
+        // The /api/analysis tree belongs to the same plugin (route_owner /api/analysis): the
+        // analyses, their revisions, executions and paged results (SPEC §data.analysis).
+        .merge(swiss_plugins::analysis_api::mount(analysis_store, services.clone()))
         // Same guard and boundary a third time: the /api/process tree is owned by the
         // process plugin (route_owner prefix /api/process), so a disabled plugin
         // answers the structured 503 naming it - and a started app keeps running.

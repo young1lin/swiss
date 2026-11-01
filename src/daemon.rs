@@ -347,14 +347,63 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
     Ok(restored)
 }
 
+/// Record `rec` as the port's daemon — unless the file names a DIFFERENT process that is still
+/// standing, because that one owns the port.
+///
+/// Two starts race on one port; both spawn, both write. The file must end up naming whoever
+/// actually serves it, so a start that came second may not simply overwrite: whichever child
+/// loses dies on EADDRINUSE, and the record would then name a corpse (2026-11-01).
+fn claim_pid_file(rec: &PidRecord) {
+    if read_pid_file(rec.port).is_some_and(|cur| cur.pid != rec.pid && is_pid_alive(cur.pid)) {
+        return;
+    }
+    write_pid_file(rec);
+}
+
+/// Erase the pid file for a port only while it still names `pid` — this start's own child.
+///
+/// A record naming some other live process is not this start's to delete: in a racing start the
+/// winner has already written its own, and removing it left `swiss stop` answering "not
+/// running" over a gateway that was up and serving (2026-11-01).
+fn drop_own_pid_file(port: u16, pid: u32) {
+    if read_pid_file(port).is_some_and(|rec| rec.pid == pid) {
+        remove_pid_file(port);
+    }
+}
+
+/// Whether something still accepts connections on the port — the liveness question the desktop
+/// launcher has to ask before the async runtime exists (its window entry is a plain thread).
+/// A gateway that is up but wedged still accepts, so this answers "not gone", not "healthy";
+/// that is exactly the distinction a window deciding whether it can still paint needs.
+pub fn port_accepts(port: u16) -> bool {
+    use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
+
+/// Whether the gateway answers on the port — and whether the answer is OURS.
+///
+/// A bare 200 is not enough: any dev server, any other app that happens to hold the port, and
+/// any loopback proxy answers 200 to a GET it does not understand. `swiss start` would then
+/// report "already running" over a stranger's port, `swiss stop` would refuse to act, and the
+/// panel link would be handed out for a page that is not the panel. `/health` is the one route
+/// that names the process (`{"ok":true,"build":...}`), so it is also the one to read.
 async fn health_ok(client: &reqwest::Client, port: u16) -> bool {
-    client
+    let Ok(res) = client
         .get(format!("http://127.0.0.1:{port}/health"))
         .timeout(Duration::from_secs(2))
         .send()
         .await
-        .map(|res| res.status().is_success())
-        .unwrap_or(false)
+    else {
+        return false;
+    };
+    if !res.status().is_success() {
+        return false;
+    }
+    match res.json::<Value>().await {
+        Ok(body) => body.get("ok").and_then(Value::as_bool) == Some(true),
+        Err(_) => false,
+    }
 }
 
 /// Poll /health until it answers. `stop` lets the caller abandon early — a daemon that has
@@ -536,28 +585,34 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
     // the stop closure below reports.
     let _ = child;
 
-    write_pid_file(&PidRecord {
+    let record = PidRecord {
         pid,
         port,
         entry: entry.to_string_lossy().into_owned(),
         node: entry.to_string_lossy().into_owned(),
         started_at: swiss_core::log::iso_now(),
-    });
+    };
+    // The record names whoever actually serves the port — see claim_pid_file.
+    claim_pid_file(&record);
 
     if wait_for_health(&client, port, timeout_ms, || !is_pid_alive(pid)).await {
         // Two racing `swiss start`s both reach here: the loser's child died on EADDRINUSE while
         // the WINNER answered the health poll — the port being up proves nothing about whose
-        // child it is. Only our own child still standing counts as "started"; otherwise this is
-        // a failure with a pid file that must go (it points at the dead loser, not the daemon
-        // that serves the port).
+        // child it is. Only our own child still standing counts as "started", and a start that
+        // did come up states its own pid file: whichever start wrote first, the winner's record
+        // is the true one.
         if is_pid_alive(pid) {
+            write_pid_file(&record);
             return StartResult::Started {
                 pid,
                 port,
                 url: url_for(port),
             };
         }
-        remove_pid_file(port);
+        // Only a record that names THIS dead child is ours to erase; one that names somebody
+        // alive is the winner's, and deleting it made `swiss stop` report "not running" over a
+        // running gateway (2026-11-01).
+        drop_own_pid_file(port, pid);
         // Health answered but our child is gone: the port is served by a gateway this start
         // did not spawn — the winner of a racing start, or a serve started outside `swiss
         // start`. That is a running gateway, not a failure; the operator asked for a gateway
@@ -582,7 +637,7 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
     // next deploy would have failed at the copy with the exe still held. The record stays with
     // whatever is running; the caller still hears that the wait ran out.
     if !is_pid_alive(pid) {
-        remove_pid_file(port);
+        drop_own_pid_file(port, pid);
     }
     StartResult::Failed {
         port,
@@ -640,10 +695,17 @@ pub async fn login_url(port: u16) -> Result<String, String> {
             body["error"].as_str().unwrap_or("no detail")
         ));
     }
-    body["url"]
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| "the gateway answered without a sign-in link".to_string())
+    ticket_url(port, &body)
+}
+
+fn ticket_url(port: u16, body: &Value) -> Result<String, String> {
+    let token = body["token"].as_str().filter(|s| !s.is_empty() && s.len() <= 512)
+        .ok_or("the gateway answered without a login token")?;
+    // The response supplies a ticket, never authority over the webview's destination.
+    let mut url = reqwest::Url::parse(&format!("http://127.0.0.1:{port}/"))
+        .map_err(|err| err.to_string())?;
+    url.query_pairs_mut().append_pair("token", token);
+    Ok(url.into())
 }
 
 /// Ask the gateway to shut itself down. Failure is fine — the caller falls back to a tree-kill.
@@ -859,6 +921,17 @@ mod tests {
             .local_addr()
             .expect("a bound listener has an address")
             .port()
+    }
+
+    #[test]
+    fn a_ticket_response_cannot_choose_the_browser_destination() {
+        let body = json!({ "url": "https://example.com/steal", "token": "a&next=evil" });
+        let link = ticket_url(19998, &body).expect("local ticket");
+        let parsed = reqwest::Url::parse(&link).unwrap();
+        assert_eq!(parsed.host_str(), Some("127.0.0.1"));
+        assert_eq!(parsed.port(), Some(19998));
+        assert_eq!(parsed.query_pairs().collect::<Vec<_>>(), vec![("token".into(), "a&next=evil".into())]);
+        assert!(ticket_url(19998, &json!({ "url": "https://example.com" })).is_err());
     }
 
     /// A proxy env var pointing at a port nothing answers must never sit between the CLI and
@@ -1542,6 +1615,36 @@ mod tests {
         tree_kill(rec.pid);
         remove_pid_file(port);
         let _ = std::fs::remove_file(log_file_path(port));
+    }
+
+    #[test]
+    fn the_pid_file_changes_hands_only_when_its_process_is_gone() {
+        // 2026-11-01: the loser of a start race erased the record the winner had just written,
+        // so `swiss stop` answered "not running" over a live gateway and `restart` was a no-op.
+        // The file belongs to the pid it names; only that start may take it back or replace it.
+        let dead = u32::MAX;
+        if is_pid_alive(dead) { return; } // a pid this high being live would make the test lie
+        let port = free_port();
+        let mine = std::process::id();
+        let rec = |pid: u32| PidRecord {
+            pid,
+            port,
+            entry: "entry".into(),
+            node: "entry".into(),
+            started_at: swiss_core::log::iso_now(),
+        };
+        write_pid_file(&rec(mine)); // the winner's record, naming a process that is standing
+        claim_pid_file(&rec(dead)); // a second start's first write
+        assert_eq!(read_pid_file(port).map(|r| r.pid), Some(mine), "a live owner keeps the file");
+        drop_own_pid_file(port, dead); // its cleanup, after losing the bind
+        assert_eq!(read_pid_file(port).map(|r| r.pid), Some(mine), "the loser may not erase it");
+        drop_own_pid_file(port, mine); // the owner leaves, as a `stop` or a crash would
+        assert_eq!(read_pid_file(port), None, "its own record goes");
+        claim_pid_file(&rec(dead)); // nothing standing to respect: the record is ours
+        assert_eq!(read_pid_file(port).map(|r| r.pid), Some(dead), "a stale port changes hands");
+        drop_own_pid_file(port, mine);
+        assert_eq!(read_pid_file(port).map(|r| r.pid), Some(dead), "only its own pid is erased");
+        remove_pid_file(port);
     }
 
     #[tokio::test]

@@ -128,7 +128,10 @@ impl AdminSession {
 
     /// A fresh single-use login token.
     pub fn mint_ticket(&self) -> String {
-        let now = now_ms();
+        self.mint_ticket_at(now_ms())
+    }
+
+    fn mint_ticket_at(&self, now: u64) -> String {
         let token = random_hex(32);
         let mut tickets = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
         tickets.retain(|(_, expires)| *expires > now);
@@ -142,7 +145,10 @@ impl AdminSession {
 
     /// Spend a login token: true once, for a token minted here and not yet expired.
     pub fn redeem_ticket(&self, token: &str) -> bool {
-        let now = now_ms();
+        self.redeem_ticket_at(token, now_ms())
+    }
+
+    fn redeem_ticket_at(&self, token: &str, now: u64) -> bool {
         let mut tickets = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
         tickets.retain(|(_, expires)| *expires > now);
         match tickets.iter().position(|(t, _)| constant_time_eq(t.as_bytes(), token.as_bytes())) {
@@ -153,7 +159,10 @@ impl AdminSession {
 
     /// The `Set-Cookie` value that signs a browser in for [`SESSION_TTL_MS`].
     pub fn issue_cookie(&self) -> String {
-        let issued = now_ms();
+        self.issue_cookie_at(now_ms())
+    }
+
+    fn issue_cookie_at(&self, issued: u64) -> String {
         let nonce = random_hex(16);
         let mac = self.mac(issued, &nonce);
         format!(
@@ -188,6 +197,10 @@ impl AdminSession {
     }
 
     fn cookie_value_ok(&self, value: &str) -> bool {
+        self.cookie_value_ok_at(value, now_ms())
+    }
+
+    fn cookie_value_ok_at(&self, value: &str, now: u64) -> bool {
         let mut parts = value.split('.');
         let (Some("v1"), Some(issued), Some(nonce), Some(mac), None) =
             (parts.next(), parts.next(), parts.next(), parts.next(), parts.next())
@@ -197,8 +210,7 @@ impl AdminSession {
         let Ok(issued) = issued.parse::<u64>() else {
             return false;
         };
-        let now = now_ms();
-        if issued > now + SKEW_MS || now.saturating_sub(issued) > SESSION_TTL_MS {
+        if issued > now.saturating_add(SKEW_MS) || now.saturating_sub(issued) >= SESSION_TTL_MS {
             return false;
         }
         constant_time_eq(self.mac(issued, nonce).as_bytes(), mac.as_bytes())
@@ -356,6 +368,21 @@ mod tests {
         }
         assert!(s.tickets.lock().unwrap().len() <= MAX_TICKETS);
         assert!(!s.redeem_ticket(&first), "the oldest made room");
+    }
+
+    #[test]
+    fn tickets_and_signed_cookies_expire_at_their_ttl_without_sleeping() {
+        let s = session(19999);
+        let now = 1_000_000;
+        let live = s.mint_ticket_at(now);
+        assert!(s.redeem_ticket_at(&live, now + TICKET_TTL_MS - 1));
+        let expired = s.mint_ticket_at(now);
+        assert!(!s.redeem_ticket_at(&expired, now + TICKET_TTL_MS));
+        let cookie = s.issue_cookie_at(now);
+        let value = cookie.split(';').next().unwrap().split_once('=').unwrap().1;
+        assert!(s.cookie_value_ok_at(value, now + SESSION_TTL_MS - 1));
+        assert!(!s.cookie_value_ok_at(value, now + SESSION_TTL_MS));
+        assert!(!s.cookie_value_ok_at(value, now - SKEW_MS - 1));
     }
 
     #[test]
