@@ -823,6 +823,9 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- Desktop Back no longer returns to the startup blank page. Desktop context menus use the
+  panel's localized appearance and editing actions while preserving page-owned menus.
+
 - Data chat follows streaming replies while at the bottom, offers a jump to the latest
   message, and collapses work details after completion or stop. Nested call details return
   to their conversation history sheet when closed.

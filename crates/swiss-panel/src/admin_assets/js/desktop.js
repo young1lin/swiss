@@ -4,6 +4,82 @@
                                                      // Native window bridge.
 import { toast } from "./util.js";
 import { tr } from "./i18n.js";
+import { popupMenu } from "./ui/menu.js";
+                                             
+
+/** The terminal owns its selection and paste API rather than DOM text selection. */
+export function desktopTerminalMenu(event            , actions   
+                                                                                            
+ )       {
+  event.preventDefault();
+  const target = event.target instanceof Element ? event.target : document.body;
+  const rect = target.getBoundingClientRect();
+  const x = event.clientX || rect.left;
+  const y = event.clientY || rect.bottom;
+  popupMenu({ left: x, top: y, bottom: y }, [
+    { label: tr("desktop.copy"), disabled: !actions.hasSelection, fn: () => { actions.copy(); actions.focus(); } },
+    { label: tr("desktop.paste"), fn: () => {
+      void navigator.clipboard.readText().then((text) => { actions.paste(text); actions.focus(); }).catch(() => {
+        toast(tr("desktop.clipboardFailed"), true); actions.focus();
+      });
+    } },
+  ]);
+}
+
+/** Only handle context menus the current page did not already claim. */
+function desktopContextMenu(event            )       {
+  if (event.defaultPrevented || !(event.target instanceof Element)) return;
+  const target = event.target;
+  const input = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? target : null;
+  const editable = target.closest             ('[contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]');
+  const writable = input ? !input.readOnly && !input.disabled : !!editable;
+  const start = input?.selectionStart ?? 0;
+  const end = input?.selectionEnd ?? 0;
+  const selection = window.getSelection();
+  const range = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+  const selected = input ? (input.type === "password" ? "" : input.value.slice(start, end)) : (selection?.toString() || "");
+  const focus = ()       => {
+    if (input) {
+      input.focus();
+      if (input.selectionStart !== null) input.setSelectionRange(start, end);
+    } else if (editable) {
+      editable.focus();
+      if (range && selection) { selection.removeAllRanges(); selection.addRange(range); }
+    }
+  };
+  const failed = ()       => { toast(tr("desktop.clipboardFailed"), true); };
+  const insert = (text        )       => {
+    focus();
+    if (typeof document.execCommand === "function" && document.execCommand("insertText", false, text)) return;
+    if (input && input.selectionStart !== null) {
+      input.setRangeText(text, start, end, "end");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    } else failed();
+  };
+  const items             = [];
+  if (selected && writable) items.push({ label: tr("desktop.cut"), fn: () => {
+    void navigator.clipboard.writeText(selected).then(() => { insert(""); }).catch(failed);
+  } });
+  if (selected) items.push({ label: tr("desktop.copy"), fn: () => { void navigator.clipboard.writeText(selected).catch(failed); } });
+  if (writable) items.push({ label: tr("desktop.paste"), fn: () => { void navigator.clipboard.readText().then(insert).catch(failed); } });
+  if (input || editable) items.push({ label: tr("desktop.selectAll"), fn: () => {
+    focus();
+    if (input && input.selectionStart !== null) input.select();
+    else document.execCommand("selectAll");
+  } });
+  const link = target.closest                   ("a[href]");
+  if (link && /^https?:$/.test(link.protocol)) {
+    if (items.length) items.push({ sep: true });
+    items.push({ label: tr("desktop.openLink"), fn: () => { window.open(link.href, "_blank", "noopener"); } });
+    items.push({ label: tr("desktop.copyLink"), fn: () => { void navigator.clipboard.writeText(link.href).catch(failed); } });
+  }
+  event.preventDefault();
+  if (!items.length) return;
+  const rect = target.getBoundingClientRect();
+  const x = event.clientX || rect.left;
+  const y = event.clientY || rect.bottom;
+  popupMenu({ left: x, top: y, bottom: y }, items);
+}
 
 export function desktopMode()          {
   const host = window                 ;
@@ -68,11 +144,13 @@ export function initDesktop()             {
     send("zoom:" + step);
   };
   document.addEventListener("keydown", zoom, true);
+  document.addEventListener("contextmenu", desktopContextMenu);
   sync();
   return () => {
     themeObserver.disconnect();
     titleObserver.disconnect();
     document.removeEventListener("keydown", zoom, true);
+    document.removeEventListener("contextmenu", desktopContextMenu);
     window.removeEventListener("swiss-download", download);
   };
 }

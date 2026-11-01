@@ -321,6 +321,12 @@ fn panel_url(uri: &str, port: u16) -> bool {
 }
 
 #[cfg(any(test, windows, target_os = "macos"))]
+fn navigation_allowed(uri: &str, port: u16, panel_started: &std::cell::Cell<bool>) -> bool {
+    if panel_url(uri, port) { panel_started.set(true); return true; }
+    uri == "about:blank" && !panel_started.get()
+}
+
+#[cfg(any(test, windows, target_os = "macos"))]
 fn download_url(uri: &str, port: u16) -> bool {
     panel_url(uri.strip_prefix("blob:").unwrap_or(uri), port)
 }
@@ -416,12 +422,17 @@ fn shell(
     let mut web_context = WebContext::new(Some(data));
     let desktop_proxy = event_loop.create_proxy();
     let download_proxy = event_loop.create_proxy();
+    let panel_started = std::rc::Rc::new(std::cell::Cell::new(false));
+    let navigation_started = panel_started.clone();
     let webview_builder = WebViewBuilder::new_with_web_context(&mut web_context)
         .with_bounds(full_bounds(window.inner_size().width, window.inner_size().height))
         .with_html(loading_html())
         .with_initialization_script("window.__SWISS_DESKTOP__ = true;")
+        // The startup HTML is about:blank, and NavigateToString leaves it behind the panel in
+        // WebView2 history. Refuse that entry after the panel starts, while keeping its own
+        // same-origin history navigable by mouse and keyboard.
         .with_navigation_handler(move |uri| {
-            if uri == "about:blank" || panel_url(&uri, port) { return true; }
+            if navigation_allowed(&uri, port, &navigation_started) { return true; }
             open_external(&uri);
             false
         })
@@ -448,6 +459,11 @@ fn shell(
             open_external(&uri);
             NewWindowResponse::Deny
         });
+    #[cfg(windows)]
+    let webview_builder = {
+        use wry::WebViewBuilderExtWindows;
+        webview_builder.with_default_context_menus(false)
+    };
     // WKWebView ignores WebContext's directory. A distinct persistent data store isolates
     // cookies and localStorage even when two homes serve the same loopback hostname.
     #[cfg(target_os = "macos")]
@@ -652,12 +668,14 @@ fn shell(
                     eprintln!("cannot load the panel: {err}");
                     fatal = true;
                     let reason = format!("cannot load the panel: {err}");
+                    panel_started.set(false);
                     let _ = webview.load_html(&error_html(&reason));
                 }
                 window.set_focus();
             }
             Event::UserEvent(GuiEvent::Fatal(reason)) => {
                 eprintln!("swiss gui: {reason}");
+                panel_started.set(false);
                 let _ = webview.load_html(&error_html(&reason));
                 fatal = true;
                 window.set_focus();
@@ -897,6 +915,17 @@ mod tests {
             assert!(!download_url(uri, 19998), "{uri}");
         }
         assert!(!download_url("blob:http://127.0.0.1:19999/result", 19998));
+    }
+
+    #[test]
+    fn navigation_cannot_return_to_the_startup_page() {
+        let panel_started = std::cell::Cell::new(false);
+        assert!(navigation_allowed("about:blank", 19998, &panel_started));
+        assert!(navigation_allowed("http://127.0.0.1:19998/?token=once", 19998, &panel_started));
+        assert!(navigation_allowed("http://127.0.0.1:19998/#data", 19998, &panel_started));
+        assert!(navigation_allowed("http://127.0.0.1:19998/#mcp", 19998, &panel_started));
+        assert!(!navigation_allowed("about:blank", 19998, &panel_started));
+        assert!(!navigation_allowed("http://127.0.0.1:19999/", 19998, &panel_started));
     }
 
     #[test]

@@ -53,6 +53,7 @@ import { closeSheet, sheet, showSheet } from "../ui/sheet.js";
 import { btn, iconBtn } from "../ui/button.js";
 import { objTab } from "../ui/tab.js";
 import { heldDot } from "../ui/status.js";
+import { desktopMode, desktopTerminalMenu } from "../desktop.js";
 
 /* SPEC §terminal.panel: the system monospace stack - no Nerd Font, no web font. The resource
    pipeline is text-only; a font file cannot enter the tree, by design. */
@@ -633,6 +634,13 @@ function wireTerminal(m: TermModel) {
        browser's menu as the escape hatch (SPEC §terminal.panel). */
     holder.addEventListener("contextmenu", (ev) => {
       const action = mouseAction(ev, term.hasSelection());
+      if ((action === "menu" || action === null) && desktopMode()) {
+        desktopTerminalMenu(ev, {
+          hasSelection: term.hasSelection(), copy: () => { copySelection(term); },
+          paste: (text) => { term.paste(text); }, focus: () => { term.focus(); },
+        });
+        return;
+      }
       if (action === "menu") return;
       ev.preventDefault();
       if (action === "copy") { copySelection(term); term.focus(); return; }

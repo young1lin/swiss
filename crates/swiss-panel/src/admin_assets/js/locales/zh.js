@@ -39,6 +39,13 @@ const zh                         = {
   "desktop.open": "打开",
   "desktop.downloadSaved": "文件已保存",
   "desktop.downloadFailed": "下载失败，请重新导出。",
+  "desktop.cut": "剪切",
+  "desktop.copy": "复制",
+  "desktop.paste": "粘贴",
+  "desktop.selectAll": "全选",
+  "desktop.openLink": "在浏览器中打开链接",
+  "desktop.copyLink": "复制链接",
+  "desktop.clipboardFailed": "无法访问剪贴板",
   /* --- process --- */
   "process.form.nameExample": "my-app",
   "process.appsNote": "网关退出后仍继续运行；保存定义不会启动应用。",

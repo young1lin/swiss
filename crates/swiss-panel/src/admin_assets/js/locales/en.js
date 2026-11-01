@@ -37,6 +37,13 @@ const en                         = {
   "desktop.open": "Open",
   "desktop.downloadSaved": "Download saved",
   "desktop.downloadFailed": "Download failed. Please retry the export.",
+  "desktop.cut": "Cut",
+  "desktop.copy": "Copy",
+  "desktop.paste": "Paste",
+  "desktop.selectAll": "Select all",
+  "desktop.openLink": "Open link in browser",
+  "desktop.copyLink": "Copy link",
+  "desktop.clipboardFailed": "Clipboard access failed",
   /* --- process --- */
   "process.form.nameExample": "my-app",
   "process.appsNote": "Keep running when the gateway stops. Saving a definition never starts it.",
