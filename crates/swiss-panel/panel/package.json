@@ -19,13 +19,13 @@
     "check": "npm run typecheck && npm run lint && npm run build:check && npm run test"
   },
   "devDependencies": {
-    "@types/node": "^24.19.0",
-    "eslint": "^10.11.0",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.13.0",
     "happy-dom": "^20.14.5",
     "ts-blank-space": "~0.9.0",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.71.0",
-    "vite": "^8.3.1",
-    "vitest": "^5.0.2"
+    "typescript-eslint": "^8.72.1",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   }
 }
