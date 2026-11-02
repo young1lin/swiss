@@ -823,6 +823,18 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- The panel e2e suite walks the three views later work added, in a real browser.
+  The Data walk registers a lazy mysql def aimed at a port nothing answers - the
+  analysis ledger's list and create never touch the database (analysis_api.rs) -
+  then walks the head's Analyses button, its visibly opening sheet, the honest
+  empty state, and New analysis planting the first task as the connection's own
+  SQL tab. The Mcps walk stubs the desktop window's two globals (desktop.ts's
+  exact contract) after its last full load and walks the desktop first frame:
+  the overview paints with the built-in echo, and its Open button really takes
+  the pane to echo's detail. The Settings walk asserts the System page's bundled
+  skills paint with their per-destination install actions; the install buttons
+  themselves are not clicked - they write into the operator's real profile
+  roots, outside the isolated e2e home.
 - The ten tools later work added translate again on the Data agent's fold and the Agents
   page's catalog. The analysis tool, the four console-tab tools by id, stop_listen and
   Test's write/edit/glob/grep never joined the panel's TOOL_SUMMARIES table, so their lines
