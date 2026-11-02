@@ -217,7 +217,10 @@ function childrenCard()              {
       ...mine.map((c) => row({
         name: c.label, sub: childKind(c.kind),
         meta: [h("code", null, tr("process.pid", { pid: String(c.pid) })), tr("process.uptime", { up: durShort(c.uptimeSec) }), c.memMb != null ? tr("process.memMb", { n: String(c.memMb) }) : null],
-        primary: c.stoppable ? actionBtn("stop", tr("process.action.stopChild"), { disabled: pendingChildren.has(c.pid), data: { prstopchild: String(c.pid) }, title: tr("process.action.stopChildTitle", { label: c.label }) }) : undefined,
+        primary: c.stoppable ? actionBtn("stop", tr(pendingChildren.has(c.pid) ? "process.busy.stop" : "process.action.stopChild"), {
+          disabled: pendingChildren.has(c.pid), data: { prstopchild: String(c.pid) },
+          title: pendingChildren.has(c.pid) ? tr("process.busy.stop") : tr("process.action.stopChildTitle", { label: c.label }),
+        }) : undefined,
         data: { prchild: String(c.pid) },
       })));
     parts.toggle.onclick = () => {

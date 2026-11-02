@@ -4070,6 +4070,7 @@ const zh: Record<string, string> = {
   "analysis.unsaving": "正在取消保存分析…",
   "analysis.unsave": "取消保存",
   "analysis.stop": "停止等待",
+  "analysis.stopping": "正在停止等待…",
   "analysis.running": "查询正在运行，已保存的结果仍可查看。",
   "analysis.noResult": "此版本还没有结果",
   "analysis.result": "分析结果",

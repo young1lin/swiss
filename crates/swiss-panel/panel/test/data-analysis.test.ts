@@ -13,15 +13,20 @@ function shell(): void {
   document.body.innerHTML = [...new Set([...ids, "dbTabStrip", "dbHead", "dbMore", "dbFilters", "dbConsole", "dbSql", "dbSqlHl", "dbGridWrap", "dbBar", "dbRbar", "dbStatus", "dbTables"])].map(id => `<div id="${id}"></div>`).join("");
 }
 shell();
+const { dbOpenTabForce } = await import("../src/data-tabs.js");
 const calls: string[] = [];
 let seq = 0;
 let task: AnalysisTask;
 let execution: Promise<unknown> | null = null;
 let saving: Promise<unknown> | null = null;
+let cancellation: Promise<Response> | null = null;
+let taskReads: Promise<Response>[] = [];
 const previousFetch = globalThis.fetch;
 globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
   const url = String(input);
   calls.push(url);
+  if (url.endsWith("/cancel") && cancellation) return cancellation;
+  if (url === "/api/analysis/" + task.id && taskReads.length) return taskReads.shift()!;
   let out: unknown = {};
   if (url.endsWith("/execute")) out = await execution;
   else if (url.endsWith("/save") && saving) out = await saving;
@@ -39,10 +44,136 @@ afterAll(() => { globalThis.fetch = previousFetch; });
 beforeEach(() => {
   shell(); localStorage.clear(); calls.length = 0; unmountDbView(); mountDbView();
   execution = null; saving = null;
+  cancellation = null;
+  taskReads = [];
   Object.assign(state(), { conn: "c", conns: [dbConn("c", "mysql")] });
   task = { id: "a" + (++seq), conn: "c", title: "Orders", current: "v1", saved: false,
     revisions: [{ id: "v1", parent: null, sql: "SELECT id, amount FROM orders", conditions: { grain: "order" }, note: "", at: "2026-11-01" }],
     executions: [], results: [{ id: "r1", revision: "v1", execution: "e1", rowCount: 51, truncated: false, verification: "undetermined", checks: [], note: "", superseded: false, chart: null }] };
+});
+
+it("disables Stop waiting through a repaint and restores it after a refusal", async () => {
+  let finish!: (value: Response) => void;
+  cancellation = new Promise(resolve => { finish = resolve; });
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  await analysis.dbAnalysisOpen(task.id);
+  const stop = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('[data-action="stop"]')!;
+  await vi.waitFor(() => expect(stop()).toBeTruthy());
+  stop().focus();
+  stop().click();
+  expect(stop().disabled).toBe(true);
+  expect(stop().getAttribute("aria-label")).toBe("Stopping wait…");
+  stop().blur(); // A real browser removes focus when a focused button becomes disabled.
+  await analysis.dbAnalysisOpen(task.id);
+  expect(stop().disabled).toBe(true);
+  stop().click();
+  expect(calls.filter(url => url.endsWith("/cancel"))).toHaveLength(1);
+  finish(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
+  await vi.waitFor(() => expect(stop().disabled).toBe(false));
+  expect(stop().getAttribute("aria-label")).toBe("Stop waiting");
+  expect(stop().querySelector("use")?.getAttribute("href")).toBe("#i-stop");
+  expect(document.activeElement).toBe(stop());
+});
+
+it("refreshes the execution after accepting Stop waiting", async () => {
+  let finish!: (value: Response) => void;
+  cancellation = new Promise(resolve => { finish = resolve; });
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  await analysis.dbAnalysisOpen(task.id);
+  const stop = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('[data-action="stop"]')!;
+  stop().click();
+  task.executions[0].status = "cancelled";
+  finish(new Response(JSON.stringify({ execution: "e1", cancelled: true, databaseCancellationConfirmed: false }), { status: 200 }));
+  await vi.waitFor(() => expect(stop().getAttribute("aria-label")).toBe("Stop waiting"));
+  expect(stop().disabled).toBe(true);
+  expect(calls.filter(url => url.endsWith("/cancel"))).toHaveLength(1);
+});
+
+it("keeps an accepted stop disabled when the status refresh fails", async () => {
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  await analysis.dbAnalysisOpen(task.id);
+  taskReads.push(Promise.resolve(new Response("unavailable", { status: 503 })));
+  cancellation = Promise.resolve(new Response(JSON.stringify({ cancelled: true }), { status: 200 }));
+  const stop = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('[data-action="stop"]')!;
+  stop().click();
+  await vi.waitFor(() => expect(calls.filter(url => url === "/api/analysis/" + task.id)).toHaveLength(2));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  expect(stop().disabled).toBe(true);
+  stop().click();
+  expect(calls.filter(url => url.endsWith("/cancel"))).toHaveLength(1);
+});
+
+it("retries the status of an accepted stop started in another session", async () => {
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  await analysis.dbAnalysisOpen(task.id);
+  taskReads.push(Promise.resolve(new Response("unavailable", { status: 503 })));
+  cancellation = Promise.resolve(new Response(JSON.stringify({ cancelled: true }), { status: 200 }));
+  const stop = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('[data-action="stop"]')!;
+  stop().click();
+  await vi.waitFor(() => expect(calls.filter(url => url === "/api/analysis/" + task.id)).toHaveLength(2));
+  task.executions[0].status = "cancelled";
+  await vi.waitFor(() => expect(stop().dataset.analysisrun).toBe(""), { timeout: 4000 });
+  expect(stop().disabled).toBe(true);
+});
+
+it("still activates an analysis when a newer status read overtakes opening", async () => {
+  await analysis.dbAnalysisOpen(task.id);
+  let finishRead!: (value: Response) => void;
+  taskReads.push(new Promise(resolve => { finishRead = resolve; }));
+  const reopening = analysis.dbAnalysisOpen(task.id);
+  saving = Promise.resolve({});
+  document.querySelector<HTMLButtonElement>('[data-action="bookmark"]')!.click();
+  await vi.waitFor(() => expect(calls.filter(url => url === "/api/analysis/" + task.id)).toHaveLength(3));
+  dbOpenTabForce({ kind: "sql" });
+  expect((dbTab() as { analysisId?: string }).analysisId).not.toBe(task.id);
+  finishRead(new Response(JSON.stringify(task), { status: 200 }));
+  await reopening;
+  expect((dbTab() as { analysisId?: string }).analysisId).toBe(task.id);
+});
+
+it("applies a slow polling response while a newer poll is still pending", async () => {
+  await analysis.dbAnalysisOpen(task.id);
+  let finishExecution!: (value: unknown) => void;
+  execution = new Promise(resolve => { finishExecution = resolve; });
+  let firstRead!: (value: Response) => void;
+  let secondRead!: (value: Response) => void;
+  taskReads.push(new Promise(resolve => { firstRead = resolve; }), new Promise(resolve => { secondRead = resolve; }));
+  document.querySelector<HTMLButtonElement>('[data-action="start"]')!.click();
+  await vi.waitFor(() => expect(calls.filter(url => url === "/api/analysis/" + task.id)).toHaveLength(3), { timeout: 3500 });
+  const running = structuredClone(task);
+  running.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  firstRead(new Response(JSON.stringify(running), { status: 200 }));
+  await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>('[data-action="stop"]')!.disabled).toBe(false));
+  secondRead(new Response(JSON.stringify(running), { status: 200 }));
+  finishExecution({});
+});
+
+it("restores the action when the server does not accept cancellation", async () => {
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  await analysis.dbAnalysisOpen(task.id);
+  cancellation = Promise.resolve(new Response(JSON.stringify({ cancelled: false }), { status: 200 }));
+  const stop = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('[data-action="stop"]')!;
+  stop().click();
+  await vi.waitFor(() => expect(stop().disabled).toBe(false));
+  expect(stop().getAttribute("aria-label")).toBe("Stop waiting");
+});
+
+it("does not let an older opening response undo the accepted stop", async () => {
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  await analysis.dbAnalysisOpen(task.id);
+  let finishRead!: (value: Response) => void;
+  taskReads.push(new Promise(resolve => { finishRead = resolve; }));
+  const reopening = analysis.dbAnalysisOpen(task.id);
+  cancellation = Promise.resolve(new Response(JSON.stringify({ cancelled: true }), { status: 200 }));
+  const stop = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('[data-action="stop"]')!;
+  stop().click();
+  task.executions[0].status = "cancelled";
+  await vi.waitFor(() => expect(stop().dataset.analysisrun).toBe(""));
+  const stale = structuredClone(task); stale.executions[0].status = "running";
+  finishRead(new Response(JSON.stringify(stale), { status: 200 }));
+  await reopening;
+  expect(stop().disabled).toBe(true);
+  expect(stop().dataset.analysisrun).toBe("");
 });
 
 it("opens a server-owned analysis in the Data grid and carries stable selected row references", async () => {

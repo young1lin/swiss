@@ -4172,6 +4172,7 @@ const en: Record<string, string> = {
   "analysis.saving": "Saving analysis…",
   "analysis.unsaving": "Unsaving analysis…",
   "analysis.stop": "Stop waiting",
+  "analysis.stopping": "Stopping wait…",
   "analysis.running": "Query running; committed results remain available.",
   "analysis.noResult": "No result for this revision",
   "analysis.result": "Analysis result",

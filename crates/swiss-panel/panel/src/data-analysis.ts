@@ -9,9 +9,9 @@ import { dbActivateTab, dbOpenTabForce } from "./data-tabs.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import type { AnalysisTask, AnalysisPage, AnalysisView, AnalysisResult } from "./types/analysis.js";
 import type { DbSqlTab } from "./types/state.js";
-import { actionBtn, btn, card, closeSheet, emptyNode, field, form, formActions, formFold, hint, iconBtn, jsonCodeNode, note, pager, resultChart, resultTable, row, section, sheet, showSheet, tag, wsScroll } from "./ui/index.js";
+import { actionBtn, setActionBusy, btn, card, closeSheet, emptyNode, field, form, formActions, formFold, hint, iconBtn, jsonCodeNode, note, pager, resultChart, resultTable, row, section, sheet, showSheet, tag, wsScroll } from "./ui/index.js";
 
-interface View { task: AnalysisTask; resultId: string | null; page: AnalysisPage | null; selected: Set<string>; busy: boolean; saving: boolean; pending: boolean; generation: number; failed: boolean }
+interface View { task: AnalysisTask; resultId: string | null; page: AnalysisPage | null; selected: Set<string>; busy: boolean; saving: boolean; stopping: Set<string>; accepted: Set<string>; taskRead: number; taskApplied: number; retry: ReturnType<typeof setTimeout> | null; pending: boolean; generation: number; failed: boolean } // Per-analysis view state.
 const views = new Map<string, View>();
 let opening = 0;
 const PAGE = 50;
@@ -29,8 +29,13 @@ export function dbAnalysisContext(): AnalysisView | null {
 
 export async function dbAnalysisOpen(id: string, conn = dbConn().conn): Promise<void> {
   const generation = ++opening;
-  const task = await apiJson<AnalysisTask>(path(id));
-  if (!task || generation !== opening || dbConn().conn !== conn || task.conn !== conn) return;
+  const existing = views.get(id);
+  const read = existing ? ++existing.taskRead : 0;
+  const fetched = await apiJson<AnalysisTask>(path(id));
+  if (!fetched || generation !== opening || dbConn().conn !== conn) return;
+  const task = existing && read < existing.taskApplied ? existing.task : fetched;
+  if (task.conn !== conn) return;
+  if (existing && read >= existing.taskApplied) existing.taskApplied = read;
   let at = dbTabs().findIndex(t => t.kind === "sql" && t.analysisId === id);
   if (at < 0) {
     const before = dbTab();
@@ -43,7 +48,8 @@ export async function dbAnalysisOpen(id: string, conn = dbConn().conn): Promise<
   }
   const prior = views.get(id);
   const next: View = { task, resultId: current(task)?.id ?? task.results.at(-1)?.id ?? null, page: null,
-    selected: new Set(), busy: prior?.busy ?? false, saving: prior?.saving ?? false, pending: false, generation: (prior?.generation ?? 0) + 1, failed: false };
+    selected: new Set(), busy: prior?.busy ?? false, saving: prior?.saving ?? false, stopping: prior?.stopping ?? new Set<string>(), accepted: prior?.accepted ?? new Set<string>(), taskRead: prior?.taskRead ?? 0, taskApplied: prior?.taskApplied ?? 0, retry: prior?.retry ?? null, pending: false, generation: (prior?.generation ?? 0) + 1, failed: false };
+  settleAccepted(next, task);
   // In-flight run callbacks must still update the view that reopening displays.
   views.set(id, prior ? Object.assign(prior, next) : next);
   dbActivateTab(at);
@@ -65,10 +71,31 @@ async function loadPage(v: View, offset: number): Promise<void> {
 }
 
 async function refresh(v: View): Promise<void> {
+  const read = ++v.taskRead;
   const task = await apiJson<AnalysisTask>(path(v.task.id));
-  if (!task) return;
+  if (!task || read < v.taskApplied) return;
+  v.taskApplied = read;
   v.task = task;
+  settleAccepted(v, task);
   paint(v);
+}
+
+function settleAccepted(v: View, task: AnalysisTask): void {
+  for (const id of v.accepted) {
+    if (!task.executions.some(e => e.id === id && e.status === "running")) {
+      v.accepted.delete(id);
+      v.stopping.delete(id);
+    }
+  }
+}
+
+function scheduleAccepted(v: View): void {
+  const active = (): boolean => dbTab().kind === "sql" && (dbTab() as DbSqlTab).analysisId === v.task.id && dbConn().conn === v.task.conn;
+  if (v.retry || !v.accepted.size || !active()) return;
+  v.retry = setTimeout(() => {
+    v.retry = null;
+    if (active() && v.accepted.size) void refresh(v).finally(() => scheduleAccepted(v));
+  }, 1000);
 }
 
 async function run(v: View, sql?: string, description?: string, baseRevision?: string): Promise<void> {
@@ -192,6 +219,7 @@ function resultControls(v: View, result: AnalysisResult): HTMLElement {
 export function dbAnalysisRender(wrap: HTMLElement, id: string): void {
   const v = views.get(id);
   if (!v) { wrap.appendChild(note(tr("analysis.loading"), { busy: true })); void dbAnalysisOpen(id); return; }
+  scheduleAccepted(v);
   const task = v.task;
   const result = task.results.find(r => r.id === v.resultId);
   const selected = h("select", { aria: { label: tr("analysis.version") } }, task.results.map(r => h("option", { value: r.id }, r.id)));
@@ -211,8 +239,33 @@ export function dbAnalysisRender(wrap: HTMLElement, id: string): void {
     finally { v.saving = false; paint(v); }
   })(); };
   const lastRun = [...task.executions].reverse().find(e => e.status === "running");
-  const stop = actionBtn("stop", tr("analysis.stop"), { disabled: !lastRun });
-  stop.onclick = (): void => { if (lastRun) void post(path(task.id) + "/executions/" + lastRun.id + "/cancel", {}); };
+  const stop = actionBtn("stop", tr("analysis.stop"), { disabled: !lastRun, data: { analysisstop: task.id, analysisrun: lastRun?.id ?? "" } });
+  if (lastRun && v.stopping.has(lastRun.id)) setActionBusy(stop, "stop", { label: tr("analysis.stop") }, tr("analysis.stopping"));
+  stop.onclick = (): void => {
+    if (!lastRun || v.stopping.has(lastRun.id)) return;
+    const hadFocus = document.activeElement === stop;
+    v.stopping.add(lastRun.id);
+    setActionBusy(stop, "stop", { label: tr("analysis.stop") }, tr("analysis.stopping"));
+    void (async (): Promise<void> => {
+      try {
+        const result = await post<{ cancelled: boolean }>(path(task.id) + "/executions/" + encodeURIComponent(lastRun.id) + "/cancel", {});
+        if (result?.cancelled) {
+          v.accepted.add(lastRun.id);
+          v.taskApplied = ++v.taskRead; // A read started before acceptance cannot confirm its outcome.
+        }
+        if (result) await refresh(v);
+      } finally {
+        scheduleAccepted(v);
+        if (!v.accepted.has(lastRun.id)) v.stopping.delete(lastRun.id);
+        const current = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-analysisstop]"))
+          .find(b => b.dataset.analysisstop === task.id && b.dataset.analysisrun === lastRun.id);
+        if (current && !v.stopping.has(lastRun.id)) {
+          setActionBusy(current, "stop", { label: tr("analysis.stop") }, null);
+          if (hadFocus && document.activeElement === document.body) current.focus();
+        }
+      }
+    })();
+  };
   const content = wsScroll({ pad: true },
     section({ cap: task.title, tools: [rerun, saved] }, formActions(revise, selected, stop),
       hint(task.id), hint(tr("analysis.scope")), v.busy ? note(tr("analysis.running"), { busy: true }) : null,

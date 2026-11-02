@@ -291,6 +291,32 @@ describe("the Process page (process plugin, SPEC §process.panel)", () => {
     view.unmount();
   });
 
+  it("a child stop says it is stopping until the request fails", async () => {
+    serve([], { children: [{ pid: 11, owner: "run", kind: "run", label: "test child", uptimeSec: 90, memMb: 4, stoppable: true }] });
+    await view.mount();
+    const original = globalThis.fetch;
+    let finish!: (r: Response) => void;
+    let requestsSent = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+      if (String(url) === "/api/process/children/11/stop") {
+        requestsSent++;
+        return new Promise<Response>(resolve => { finish = resolve; });
+      }
+      return original(url, init);
+    });
+    try {
+      const button = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>("[data-prstopchild='11']")!;
+      button().click();
+      expect(button().disabled).toBe(true);
+      expect(button().getAttribute("aria-label")).toBe("Stopping…");
+      button().click();
+      expect(requestsSent).toBe(1);
+      finish({ ok: false, status: 409, json: async () => ({ error: "refused" }) } as Response);
+      await vi.waitFor(() => expect(button().disabled).toBe(false));
+      expect(button().getAttribute("aria-label")).toBe("Stop");
+    } finally { view.unmount(); }
+  });
+
   it("leaving the page stops every poll: unmount clears the timers and the listener", async () => {
     serve([]);
     await view.mount();
