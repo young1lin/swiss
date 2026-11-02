@@ -823,6 +823,14 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- The ten tools later work added translate again on the Data agent's fold and the Agents
+  page's catalog. The analysis tool, the four console-tab tools by id, stop_listen and
+  Test's write/edit/glob/grep never joined the panel's TOOL_SUMMARIES table, so their lines
+  fell through to the catalog's English words while every older tool showed translated, and
+  run_sql and open_console kept wording from before auto writes and tab ids. A ratchet test
+  reads swiss-llm's BUILTIN_TOOLS and DB_TOOLS straight from agent.rs now and fails the
+  build when a served tool lacks a mapped entry, a retired tool lingers in the map, or a
+  mapped key is missing from either locale (SPEC §panel.i18n).
 - A URL containing `&` opens whole in the browser on Windows. The opener ran
   `cmd /c start`, and cmd re-parses its command line: an OAuth authorize URL split at the
   first `&`, so the browser saw only the first query pair and everything after it executed

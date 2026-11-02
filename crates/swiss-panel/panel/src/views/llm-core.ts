@@ -56,12 +56,15 @@ export function runtimeWord(runtime: string): string {
 }
 
 /** The catalog's tools in the panel's languages, by runtime and the runtime's own spelling. */
-const TOOL_SUMMARIES: Record<string, string> = {
+export const TOOL_SUMMARIES: Record<string, string> = {
   "builtin.read": tk("llm.tool.builtin.read"),
+  "builtin.write": tk("llm.tool.builtin.write"),
+  "builtin.edit": tk("llm.tool.builtin.edit"),
+  "builtin.glob": tk("llm.tool.builtin.glob"),
+  "builtin.grep": tk("llm.tool.builtin.grep"),
   "builtin.bash": tk("llm.tool.builtin.bash"),
   "builtin.sync": tk("llm.tool.builtin.sync"),
   "builtin.delegate": tk("llm.tool.builtin.delegate"),
-  "builtin.list": tk("llm.tool.builtin.list"),
   "builtin.job_output": tk("llm.tool.builtin.jobOutput"),
   "builtin.job_kill": tk("llm.tool.builtin.jobKill"),
   "claude.Read": tk("llm.tool.claude.read"),
@@ -75,6 +78,7 @@ const TOOL_SUMMARIES: Record<string, string> = {
   "db.describe_table": tk("llm.tool.db.describeTable"),
   "db.run_sql": tk("llm.tool.db.runSql"),
   "db.stage_sql": tk("llm.tool.db.stageSql"),
+  "db.analysis": tk("llm.tool.db.analysis"),
   "db.list_collections": tk("llm.tool.db.listCollections"),
   "db.describe_collection": tk("llm.tool.db.describeCollection"),
   "db.run_mongo": tk("llm.tool.db.runMongo"),
@@ -84,9 +88,14 @@ const TOOL_SUMMARIES: Record<string, string> = {
   "db.read_stream": tk("llm.tool.db.readStream"),
   "db.list_channels": tk("llm.tool.db.listChannels"),
   "db.listen_channels": tk("llm.tool.db.listenChannels"),
+  "db.stop_listen": tk("llm.tool.db.stopListen"),
   "db.run_redis": tk("llm.tool.db.runRedis"),
   "db.stage_redis": tk("llm.tool.db.stageRedis"),
   "db.open_console": tk("llm.tool.db.openConsole"),
+  "db.list_console_tabs": tk("llm.tool.db.listConsoleTabs"),
+  "db.read_console_tab": tk("llm.tool.db.readConsoleTab"),
+  "db.edit_console_sql": tk("llm.tool.db.editConsoleSql"),
+  "db.delete_console_sql": tk("llm.tool.db.deleteConsoleSql"),
   "db.read_memory": tk("llm.tool.db.readMemory"),
   "db.save_memory": tk("llm.tool.db.saveMemory"),
   "db.delete_memory": tk("llm.tool.db.deleteMemory"),
