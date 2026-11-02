@@ -852,14 +852,31 @@ pub async fn tail_log(port: u16, lines: u64, follow: bool, io: &dyn Io) {
     }
 }
 
+/// Build the Windows "open this URL with the default handler" command.
+///
+/// The URL must reach the shell as one CreateProcess argument. `cmd /c start` cannot give
+/// that: cmd re-parses its command line, so a URL containing `&` — every OAuth authorize
+/// URL carries several — splits at the first one, the browser opens a truncated link, and
+/// the remainder runs as its own command. `rundll32 url.dll,FileProtocolHandler` resolves
+/// the same default handler with no shell in between, leaving `&`, `%` and friends
+/// untouched. Spaces are encoded first: std quotes any argument containing one, and
+/// rundll32 hands those quotes to the handler verbatim.
+#[cfg(windows)]
+fn windows_open_command(url: &str) -> std::process::Command {
+    let encoded = if url.contains(' ') || url.contains('\t') {
+        url.replace(' ', "%20").replace('\t', "%09")
+    } else {
+        url.to_string()
+    };
+    let mut c = std::process::Command::new("rundll32");
+    c.args(["url.dll,FileProtocolHandler", encoded.as_str()]);
+    c
+}
+
 pub(crate) fn open_in_browser(url: &str) {
     // The platform default opener, detached and hidden.
     #[cfg(windows)]
-    let mut command = {
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/c", "start", "", url]);
-        c
-    };
+    let mut command = windows_open_command(url);
     // macOS has no xdg-open; `open` is the system opener there, and the desktop shell's
     // new-window hand-off needs it too (2026-11-01: `swiss open` on a Mac did nothing).
     #[cfg(target_os = "macos")]
@@ -1005,6 +1022,31 @@ mod tests {
 
     fn argv(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_opener_hands_ampersand_urls_over_whole() {
+        // OAuth authorize URLs carry several query pairs. The opener must pass the URL as
+        // one argument of a non-shell program: `cmd /c start` re-parses its command line,
+        // splits the URL at the first `&` and executes the remainder as a command.
+        let url = "https://auth.example/oauth?client_id=1&redirect_uri=%2Fcb&state=abc";
+        let command = windows_open_command(url);
+        assert_eq!(command.get_program().to_str(), Some("rundll32"));
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args[0].to_str(), Some("url.dll,FileProtocolHandler"));
+        assert_eq!(args[1].to_str(), Some(url));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_opener_encodes_spaces_so_std_never_quotes() {
+        // std quotes an argument containing a space, and rundll32 hands those quotes to the
+        // handler verbatim — the URL would not resolve. Spaces must leave as %20.
+        let command = windows_open_command("http://127.0.0.1:1/a b?x=1");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args[1].to_str(), Some("http://127.0.0.1:1/a%20b?x=1"));
+        assert!(!args.iter().any(|a| a.to_str().unwrap_or("").contains(' ')));
     }
 
     #[test]

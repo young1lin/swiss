@@ -823,6 +823,12 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- A URL containing `&` opens whole in the browser on Windows. The opener ran
+  `cmd /c start`, and cmd re-parses its command line: an OAuth authorize URL split at the
+  first `&`, so the browser saw only the first query pair and everything after it executed
+  as a command — and from `swiss gui` those URLs come out of model text and database cells.
+  The opener is `rundll32 url.dll,FileProtocolHandler` now: the same default handler, but
+  the URL travels as one CreateProcess argument with no shell in between.
 - Desktop Back no longer returns to the startup blank page. Desktop context menus use the
   panel's localized appearance and editing actions while preserving page-owned menus.
 
