@@ -32,7 +32,7 @@ import { h } from "./h.js";
 import { tk, tr } from "./i18n.js";
 import {
   actionBtn, btn, card, decodeStrings, dot, emptyNode, filterInput, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, moreBtn,
-  pageFoot, pager, pane, paneHead, pickPanel, pickerRow, portChip, resHead, row, section, seg, sideRow, sw, tag, timeline, timelineMeta, valueBlock,
+  pageFoot, pager, pane, paneHead, pickPanel, pickerRow, portChip, resHead, row, section, seg, setActionBusy, sideRow, sw, tag, timeline, timelineMeta, valueBlock,
   flow, flowIO, flowToggle, formFold, transcript, transcriptText, resultTable, resultChart,
 } from "./ui/index.js";
                                                   
@@ -193,7 +193,7 @@ function events(now        )              {
 /** Process is two inventories with different lifetimes, not a task manager. The
  *  metadata strip leaves room for every port and the one natural row verb. */
 function processPage()              {
-  const app = (name        , state                            , word        , ports          , verb        , disabled = false)              => row({
+  const app = (name        , state                            , word        , ports          , click                  , disabled = false)              => row({
     lead: dot(state, word), name,
     cols: [tag(word)],
     meta: [
@@ -202,7 +202,9 @@ function processPage()              {
       tr("process.uptime", { up: "12m" }),
       tag(tr("process.mark.autostart")),
     ],
-    primary: btn(verb, { disabled }),
+    primary: actionBtn(click, tr(click === "stop" ? "process.action.stop" : "process.action.start"), {
+      title: tr(click === "stop" ? "process.action.stopHint" : "process.action.startHint"), disabled,
+    }),
     secondary: iconBtn("file", tr("process.logs.forApp", { name }), { ghost: true }),
     more: moreBtn(tr("process.actionsFor", { name })),
   });
@@ -222,9 +224,9 @@ function processPage()              {
   return h("div", { class: "shell" }, pane({},
     paneHead({ desc: tr("process.desc"), sub: tr("process.gatewayLine", { pid: "4241", up: "1h", mem: "18" }), actions: [actionBtn("new", tr("process.addApp"))] }),
     section({ cap: tr("process.appsCap"), note: tr("process.appsNote") }, card(
-      app("telemetry-demo", "up", tr("process.status.running"), [14317, 14318, 18899], tr("process.action.stop")),
-      app("edge-relay-with-sixteen-listeners", "down", tr("process.status.partial"), Array.from({ length: 16 }, (_, i) => 18400 + i), tr("process.action.stop")),
-      app("starting-demo", "starting", tr("process.busy.start"), [], tr("process.action.start"), true))),
+      app("telemetry-demo", "up", tr("process.status.running"), [14317, 14318, 18899], "stop"),
+      app("edge-relay-with-sixteen-listeners", "down", tr("process.status.partial"), Array.from({ length: 16 }, (_, i) => 18400 + i), "stop"),
+      app("starting-demo", "starting", tr("process.busy.start"), [], "start", true))),
     section({ cap: tr("process.childrenCap"), note: tr("process.childrenNote") }, children.root),
     section({ cap: tr("gallery.s.pickPath") }, pick.root)));
 }
@@ -263,6 +265,37 @@ function desktopOverview()              {
     }))))));
 }
 
+/** A resource list with many rows running at once. Every row's one action is its Stop, so the
+ *  square is the only action colour a row carries (SPEC §panel.design rules 2 and 4): fourteen of them read
+ *  as a quiet column, not fourteen red buttons. Three rows are what a list meets in practice: one is
+ *  in flight (its square greys, the dot and the word say the wait), one stop failed and is back as a
+ *  Stop beside a failure tag, and one cannot be stopped from here (greyed, the reason in its tooltip). */
+function runningPage()              {
+  const BUSY = 10, FAILED = 11, UNSTOPPABLE = 12;
+  const names = ["telemetry-demo", "orders-db-replica", "cache-warmer", "docs-search", "build-agent-01",
+    "build-agent-02", "etl-nightly", "report-renderer", "mail-relay", "queue-worker-a", "queue-worker-b",
+    "feature-flags", "pdf-export", "search-indexer"];
+  const idle = { label: tr("process.action.stop"), title: tr("process.action.stopHint") };
+  const rows = names.map((name, i) => {
+    const stop = actionBtn("stop", idle.label, {
+      title: i === UNSTOPPABLE ? tr("gallery.running.unstoppable") : idle.title,
+      disabled: i === UNSTOPPABLE,
+    });
+    if (i === BUSY) setActionBusy(stop, "stop", idle, tr("process.busy.stop"));
+    return row({
+      lead: i === BUSY ? dot("stopping", tr("process.busy.stop")) : dot("up", tr("process.status.running")),
+      name,
+      cols: i === FAILED ? [tag(tr("gallery.running.failed"), { tone: "bad" })] : undefined,
+      meta: [h("code", null, tr("process.pid", { pid: String(4100 + i) })), tr("process.uptime", { up: `${3 + i * 4}m` })],
+      primary: stop,
+      more: moreBtn(tr("process.actionsFor", { name })),
+    });
+  });
+  return h("div", { class: "shell" }, pane({},
+    paneHead({ desc: tr("gallery.running.desc"), actions: [moreBtn(tr("gallery.s.trafficActions"))] }),
+    section({ cap: tr("gallery.running.cap") }, card(...rows))));
+}
+
 export const SCENES          = [
   { id: "analysis", titleKey: tk("analysis.result"), uses: ["pane", "paneHead", "section", "resultTable", "resultChart"], build: () => h("div", { class: "shell" }, pane({ wide: true },
     paneHead({ title: tr("analysis.result"), desc: tr("analysis.scope") }),
@@ -282,5 +315,7 @@ export const SCENES          = [
   { id: "empty", titleKey: tk("gallery.scene.empty"), build: empty,
     uses: ["pane", "emptyNode"] },
   { id: "process", titleKey: tk("gallery.scene.process"), build: processPage,
-    uses: ["pane", "paneHead", "section", "card", "row", "dot", "tag", "btn", "iconBtn", "moreBtn", "groupNode", "portChip", "pickPanel", "pickerRow"] },
+    uses: ["pane", "paneHead", "section", "card", "row", "dot", "tag", "actionBtn", "btn", "iconBtn", "moreBtn", "groupNode", "portChip", "pickPanel", "pickerRow"] },
+  { id: "running", titleKey: tk("gallery.scene.running"), build: runningPage,
+    uses: ["pane", "paneHead", "section", "card", "row", "dot", "tag", "actionBtn", "setActionBusy", "moreBtn"] },
 ];

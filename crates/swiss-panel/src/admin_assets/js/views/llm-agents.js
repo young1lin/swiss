@@ -570,7 +570,7 @@ function openTest(a             )       {
   const close = btn(tr("llm.close"), { id: "laTestClose" });
   const fresh = btn(tr("llm.test.newChat"), { id: "laTestFresh", kind: "ghost", hidden: !asks });
   const run = btn(asks ? tr("llm.test.run") : tr("llm.agents.testVersion"), { id: "laTestRun", kind: "primary" });
-  const stop = btn(tr("llm.test.stop"), { id: "laTestStop", kind: "ghost", hidden: true });
+  const stop = actionBtn("stop", tr("llm.test.stop"), { id: "laTestStop", ghost: true, hidden: true });
   showSheet(sheet({
     title: tr("llm.agents.testName", { name: a.name }),
     body: [

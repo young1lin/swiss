@@ -32,7 +32,7 @@ import { $, api, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
 import type { HChild } from "../h.js";
 import { locale, tr } from "../i18n.js";
-import { JV_LINES, actionBtn, setActionBtn, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, scrollBox, section, sheet, showSheet, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
+import { JV_LINES, actionBtn, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, scrollBox, section, setActionBusy, sheet, showSheet, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
 import type { FlowStep, RowCol, TranscriptTurn } from "../ui/index.js";
 import { call, takeWantedRun } from "./llm-core.js";
 
@@ -340,20 +340,36 @@ const stoppingMemory = new Set<string>();
 
 /** A live run a memory run asked carries Stop: it stops that memory run - every question it
  *  has in flight, these rows among them (SPEC §memory.sync Cancel). */
+/** The words a memory run's Stop wears when it is not in flight (its name and its tooltip). */
+function memoryStopIdle(id: string): { label: string; title: string } {
+  return { label: tr("memory.sync.run.stop"), title: tr("llm.history.stopMemoryTip", { id }) };
+}
+
 function stopMemoryNode(r: LlmRunRow): HTMLButtonElement | undefined {
   const id = r.live ? memoryRunOf(r) : "";
   if (!id) return undefined;
-  const stopping = stoppingMemory.has(id);
-  return actionBtn("stop", tr(stopping ? "memory.sync.run.stopping" : "memory.sync.run.stop"), {
-    ghost: true, data: { hstop: id }, disabled: stopping, title: stopping ? tr("memory.sync.run.stopping") : tr("llm.history.stopMemoryTip", { id }),
-  });
+  // Built, then restated through the same setActionBusy the click uses, so a row that is already
+  // stopping paints exactly what the click would have painted.
+  const idle = memoryStopIdle(id);
+  const b = actionBtn("stop", idle.label, { ghost: true, data: { hstop: id }, title: idle.title });
+  setActionBusy(b, "stop", idle, stoppingMemory.has(id) ? tr("memory.sync.run.stopping") : null);
+  return b;
 }
 
 /** Stop a memory run by its id alone - the run row knows no project. */
 async function stopMemory(id: string, button: HTMLButtonElement): Promise<void> {
+  if (stoppingMemory.has(id)) return;
+  const hadFocus = document.activeElement === button;
+  const rowId = button.closest<HTMLElement>("[data-hrun]")?.dataset.hrun;
   stoppingMemory.add(id);
-  button.disabled = true;
-  setActionBtn(button, "stop", tr("memory.sync.run.stopping"));
+  const idle = memoryStopIdle(id);
+  const paint = (busy: string | null): void => {
+    setActionBusy(button, "stop", idle, busy);
+    document.querySelectorAll<HTMLButtonElement>("[data-hstop]").forEach((other) => {
+      if (other !== button && other.dataset.hstop === id) setActionBusy(other, "stop", idle, busy);
+    });
+  };
+  paint(tr("memory.sync.run.stopping"));
   let said = "";
   try {
     const r = await api("/api/knowledge/sync/runs/" + encodeURIComponent(id) + "/cancel", { method: "POST" });
@@ -368,8 +384,12 @@ async function stopMemory(id: string, button: HTMLButtonElement): Promise<void> 
     said = tr("util.requestFailedGatewayRunning");
   }
   stoppingMemory.delete(id);
-  button.disabled = false;
-  setActionBtn(button, "stop", tr("memory.sync.run.stop"), tr("llm.history.stopMemoryTip", { id }));
+  paint(null);
+  if (hadFocus && document.activeElement === document.body) {
+    const row = Array.from(document.querySelectorAll<HTMLElement>("[data-hrun]")).find((item) => item.dataset.hrun === rowId);
+    const restored = row?.querySelector<HTMLButtonElement>("[data-hstop]");
+    if (restored && restored.dataset.hstop === id && !restored.disabled) restored.focus();
+  }
   toast(said, true);
 }
 

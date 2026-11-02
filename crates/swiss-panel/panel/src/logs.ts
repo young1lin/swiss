@@ -25,7 +25,7 @@ import { mcpDetail } from "./mcp-state.js";
 import { tr } from "./i18n.js";
 import { JV_LINES, decodeStrings, formattedCopyText, hasDecoded, jsonCodeNode, splitJsonBlock, textNode, valueBlock } from "./ui/json-view.js";
 import {
-  btn, card, collapseRuns, emptyNode, failNote, filterInput, fmtMs, iconBtn, moreBtn, note, pager, row, section, spinner,
+  actionBtn, btn, card, collapseRuns, emptyNode, failNote, filterInput, fmtMs, iconBtn, moreBtn, note, pager, row, section, spinner,
   sw, timeLabel, timeline, timelineMeta, timelineToggle,
 } from "./ui/index.js";
 import type { TimelineItem } from "./ui/index.js";
@@ -444,7 +444,7 @@ function kindBodyNode(d: McpDetail, kind: McpKind, m: ApiMcpRow | PhantomMcpRow)
         // The one line is cut; hovering the row reads the whole of it.
         title: it.description || undefined,
         detail: itemRecordNode(it, kind),
-        primary: kind === "tools" ? iconBtn("play", tr("logs.try"), { data: { try: it.name }, title: tr("logs.tryHint") }) : undefined,
+        primary: kind === "tools" ? actionBtn("start", tr("logs.try"), { data: { try: it.name }, title: tr("logs.tryHint") }) : undefined,
         toggle: kind === "tools"
           ? sw(true, tr("logs.visibleClients2"), { data: { toggle: it.name, on: "1" }, title: tr("logs.visibleClientsClickHide") })
           : undefined,

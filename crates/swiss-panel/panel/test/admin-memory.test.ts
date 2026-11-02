@@ -2212,6 +2212,66 @@ describe("the Memory page - sync settings", () => {
     }
   });
 
+  it("keeps sync Stop disabled across a poll while cancellation is pending", async () => {
+    syncAnswers({ runs: [{ id: "r-pending", project: "p-1", trigger: "manual", dryRun: false, state: "running", queuedMs: NOW, dueMs: NOW, startedMs: NOW, summary: "" }] });
+    const base = override;
+    let finish!: (answer: Answer) => void;
+    const pending = new Promise<Answer>((resolve) => { finish = resolve; });
+    override = (c) => c.method === "POST" && c.path.includes("/cancel") ? pending : base ? base(c) : undefined;
+    await mounted();
+    vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
+    try {
+      await click("[data-msync]");
+      q<HTMLButtonElement>('[data-mstop="r-pending"]').focus();
+      await click('[data-mstop="r-pending"]');
+      q<HTMLButtonElement>('[data-mstop="r-pending"]').blur();
+      await vi.advanceTimersByTimeAsync(3100);
+      const stop = q<HTMLButtonElement>('[data-mstop="r-pending"]');
+      expect(stop.disabled).toBe(true);
+      expect(stop.getAttribute("aria-label")).toBe("stopping…");
+      await click(stop);
+      expect(sent("POST", "/sync/runs/r-pending/cancel")).toHaveLength(1);
+      finish([400, { message: "refused" }]);
+      await settle();
+      expect(q<HTMLButtonElement>('[data-mstop="r-pending"]').disabled).toBe(false);
+      expect(document.activeElement).toBe(q('[data-mstop="r-pending"]'));
+    } finally {
+      finish([400, { message: "refused" }]);
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps sync Stop disabled after accepted cancellation when refresh fails", async () => {
+    syncAnswers({ runs: [{ id: "r-accepted", project: "p-1", trigger: "manual", dryRun: false, state: "running", queuedMs: NOW, dueMs: NOW, startedMs: NOW, summary: "" }] });
+    const base = override;
+    let accepted = false;
+    override = (c) => {
+      if (c.method === "POST" && c.path.includes("/cancel")) { accepted = true; return [200, { run: { id: "r-accepted", state: "running" }, stopping: true }]; }
+      if (accepted && c.method === "GET" && c.path === "/api/knowledge/sync") return [500, { message: "unavailable" }];
+      return base ? base(c) : undefined;
+    };
+    await mounted();
+    await click("[data-msync]");
+    await click('[data-mstop="r-accepted"]');
+    expect(q<HTMLButtonElement>('[data-mstop="r-accepted"]').disabled).toBe(true);
+    await click('[data-mstop="r-accepted"]');
+    expect(sent("POST", "/sync/runs/r-accepted/cancel")).toHaveLength(1);
+  });
+
+  it("restores the same focused sync Stop after a refused cancellation", async () => {
+    syncAnswers({ runs: [{ id: "r-refused", project: "p-1", trigger: "manual", dryRun: false, state: "running", queuedMs: NOW, dueMs: NOW, startedMs: NOW, summary: "" }] });
+    const base = override;
+    override = (c) => c.method === "POST" && c.path.includes("/cancel") ? [400, { message: "refused" }] : base ? base(c) : undefined;
+    await mounted();
+    await click("[data-msync]");
+    const stop = q<HTMLButtonElement>('[data-mstop="r-refused"]');
+    stop.focus();
+    await click(stop);
+    expect(q('[data-mstop="r-refused"]')).toBe(stop);
+    expect(document.activeElement).toBe(stop);
+    expect(stop.disabled).toBe(false);
+  });
+
   it("a sync run lists the agent runs it started - a running one's at once, live first; a finished one's on opening - and a row opens its trace", async () => {
     syncAnswers({
       config: { agent: "distiller", transcripts: "claude-code", auto: true },
@@ -2540,14 +2600,21 @@ describe("the Memory page - auto-update", () => {
     expect(text("#memAutoStatus")).toContain("reviewing now");
     expect(q<HTMLButtonElement>("#memAutoReviewNow").disabled).toBe(true);
     expect(q("#memAutoStopReview").hidden).toBe(false);
-    expect(text("#memAutoStopReview")).toBe("Stop the review");
+    // An icon, not words: the square says the verb; the accessible name and the tooltip say the rest.
+    expect(q("#memAutoStopReview").getAttribute("aria-label")).toBe("Stop the review");
+    expect(q("#memAutoStopReview").title).toContain("Drops the questions in flight");
+    expect(q("#memAutoStopReview").querySelector("use")?.getAttribute("href")).toBe("#i-stop");
+    expect(q<HTMLButtonElement>("#memAutoStopReview").dataset.tone).toBe("stop");
 
     await click("#memAutoStopReview");
     expect(cancels).toHaveLength(1);
     expect(cancels[0]).toContain("/api/knowledge/sync/runs/r-7/cancel");
     expect(cancels[0]).toContain("p-1");
     expect(text("#toast")).toBe("Run r-7 is stopping: the questions in flight are dropped, the notes it saved stay");
-    expect(text("#memAutoStopReview")).toBe("stopping…");
+    // In flight: the wait is in the words, the button is disabled, the glyph is still the Stop's.
+    expect(q("#memAutoStopReview").getAttribute("aria-label")).toBe("stopping…");
+    expect(q("#memAutoStopReview").title).toBe("stopping…");
+    expect(q("#memAutoStopReview").querySelector("use")?.getAttribute("href")).toBe("#i-stop");
     expect(q<HTMLButtonElement>("#memAutoStopReview").disabled).toBe(true);
 
     // The run ends cancelled: the next read hides Stop and hands Review now back.
@@ -2559,6 +2626,81 @@ describe("the Memory page - auto-update", () => {
     await click("#memAutoOpen");
     expect(q("#memAutoStopReview").hidden).toBe(true);
     expect(q<HTMLButtonElement>("#memAutoReviewNow").disabled).toBe(false);
+  });
+
+  it("keeps review Stop disabled when a poll returns while cancellation is pending", async () => {
+    const running = { ...REVIEWED, id: "r-pending", state: "running", startedMs: NOW - 60_000, finishedMs: null, summary: "" };
+    autoAnswers({ runs: [running] });
+    const base = override;
+    let finish!: (answer: Answer) => void;
+    const pending = new Promise<Answer>((resolve) => { finish = resolve; });
+    override = (c) => c.method === "POST" && c.path.includes("/cancel") ? pending : base ? base(c) : undefined;
+    await mounted();
+    vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
+    try {
+      await click("#memAutoOpen");
+      q<HTMLButtonElement>("#memAutoStopReview").focus();
+      await click("#memAutoStopReview");
+      // Browsers blur a focused button as soon as it becomes disabled; happy-dom does not.
+      q<HTMLButtonElement>("#memAutoStopReview").blur();
+      await vi.advanceTimersByTimeAsync(3100);
+      expect(q<HTMLButtonElement>("#memAutoStopReview").disabled).toBe(true);
+      expect(q("#memAutoStopReview").getAttribute("aria-label")).toBe("stopping…");
+      await click("#memAutoStopReview");
+      expect(sent("POST", "/sync/runs/r-pending/cancel")).toHaveLength(1);
+      finish([400, { message: "refused" }]);
+      await settle();
+      expect(q<HTMLButtonElement>("#memAutoStopReview").disabled).toBe(false);
+      expect(document.activeElement).toBe(q("#memAutoStopReview"));
+    } finally {
+      finish([400, { message: "refused" }]);
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps review Stop disabled after accepted cancellation when refresh fails", async () => {
+    const running = { ...REVIEWED, id: "r-accepted", state: "running", startedMs: NOW - 60_000, finishedMs: null, summary: "" };
+    autoAnswers({ runs: [running] });
+    const base = override;
+    let accepted = false;
+    override = (c) => {
+      if (c.method === "POST" && c.path.includes("/cancel")) { accepted = true; return [200, { run: running, stopping: true }]; }
+      if (accepted && c.method === "GET" && c.path === "/api/knowledge/sync") return [500, { message: "unavailable" }];
+      return base ? base(c) : undefined;
+    };
+    await mounted();
+    await click("#memAutoOpen");
+    await click("#memAutoStopReview");
+    expect(q<HTMLButtonElement>("#memAutoStopReview").disabled).toBe(true);
+    await click("#memAutoStopReview");
+    expect(sent("POST", "/sync/runs/r-accepted/cancel")).toHaveLength(1);
+  });
+
+  it("a refused Stop says why, and the button is the Stop again: enabled, its own words, its red", async () => {
+    const running = { ...REVIEWED, id: "r-7", state: "running", startedMs: NOW - 60_000, finishedMs: null, summary: "" };
+    autoAnswers({ runs: [running, REVIEWED] });
+    const base = override;
+    const cancels: string[] = [];
+    // The cancel is refused and the run is still live, so nothing is stopping.
+    override = (c) => {
+      if (c.method === "POST" && c.path.startsWith("/api/knowledge/sync/runs/")) {
+        cancels.push(c.path);
+        return [400, { error: "memory_invalid", message: "run r-7 already ended (ok); only a queued or running run cancels" }];
+      }
+      return base ? base(c) : undefined;
+    };
+    await mounted();
+    await click("#memAutoOpen");
+    await click("#memAutoStopReview");
+    expect(cancels).toHaveLength(1);
+    expect(text("#memAutoErr")).toBe("run r-7 already ended (ok); only a queued or running run cancels");
+    const stop = q<HTMLButtonElement>("#memAutoStopReview");
+    expect(stop.hidden).toBe(false);
+    expect(stop.disabled).toBe(false);
+    expect(stop.getAttribute("aria-label")).toBe("Stop the review");
+    expect(stop.title).toContain("Drops the questions in flight");
+    expect(stop.querySelector("use")?.getAttribute("href")).toBe("#i-stop");
+    expect(stop.dataset.tone).toBe("stop");
   });
 
   it("Stop the review is hidden while no review waits or runs", async () => {

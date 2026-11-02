@@ -47,7 +47,7 @@ import { api, toast } from "../util.js";
                                       
 import { fill, h } from "../h.js";
 import { locale, tk, tr } from "../i18n.js";
-import { actionBtn, setActionBtn, btn, card, checkField, checkGrid, closeSheet, dot, field, flow, flowToggle, formFold, hint, inlineForm, kvRow, pair, sheet, showSheet, tag } from "../ui/index.js";
+import { actionBtn, btn, card, checkField, checkGrid, closeSheet, dot, field, flow, flowToggle, formFold, hint, inlineForm, kvRow, pair, setActionBusy, sheet, showSheet, tag } from "../ui/index.js";
                                                          
                                                                                                                                                             
                                                    
@@ -554,7 +554,19 @@ export async function openSync(projectId        , o                            =
 
   const status = h("div", null, statusNode(over));
   const runs = h("div", null);
-  const paintRuns = ()       => { fill(runs, runsNode(over.runs, over.stopping || [], agentRuns, openRuns)); };
+  const cancelPending = new Set        ();
+  const cancelAccepted = new Set        ();
+  const paintCancelButtons = ()       => {
+    runs.querySelectorAll                   ("[data-mstop]").forEach((button) => {
+      const id = button.dataset.mstop || "";
+      const busy = cancelPending.has(id) || cancelAccepted.has(id);
+      setActionBusy(button, "stop", { label: tr("memory.sync.run.stop") }, busy ? tr("memory.sync.run.stopping") : null);
+    });
+  };
+  const paintRuns = ()       => {
+    fill(runs, runsNode(over.runs, over.stopping || [], agentRuns, openRuns));
+    paintCancelButtons();
+  };
   paintRuns();
   const err = hint("", { id: "memSyncErr", bad: true, hidden: true, live: true });
   const say = (text        )       => { err.textContent = text; err.hidden = !text; };
@@ -622,11 +634,17 @@ export async function openSync(projectId        , o                            =
     return put.data.error || null;
   };
 
+  let refreshSeq = 0;
   const refresh = async ()                => {
+    const seq = ++refreshSeq;
     const r = await req                 ("GET", "/sync?project=" + encodeURIComponent(projectId));
-    if (r.ok && r.data) {
+    if (seq === refreshSeq && r.ok && r.data) {
       over = r.data;
+      cancelAccepted.forEach((id) => {
+        if (!over.runs.some((run) => run.id === id && (run.state === "queued" || run.state === "running"))) cancelAccepted.delete(id);
+      });
       await readRunning();
+      if (seq !== refreshSeq) return;
       fill(status, statusNode(over));
       paintRuns();
     }
@@ -807,15 +825,28 @@ export async function openSync(projectId        , o                            =
   };
   /** Stop a run: a queued one is cancelled at once, a running one is told to stop. */
   const stopRun = async (id        , button                   )                => {
+    if (cancelPending.has(id) || cancelAccepted.has(id)) return;
+    const hadFocus = document.activeElement === button;
+    cancelPending.add(id);
     say("");
-    button.disabled = true;
-    setActionBtn(button, "stop", tr("memory.sync.run.stopping"));
-    const r = await req                                        ("POST",
-      "/sync/runs/" + encodeURIComponent(id) + "/cancel?project=" + encodeURIComponent(projectId));
-    if (!r.ok || !r.data) { button.disabled = false; setActionBtn(button, "stop", tr("memory.sync.run.stop")); say(errMessage(r.err)); return; }
-    toast(r.data.stopping ? tr("memory.sync.run.stoppingToast", { id }) : tr("memory.sync.run.cancelledToast", { id }));
-    await refresh();
-    follow();
+    setActionBusy(button, "stop", { label: tr("memory.sync.run.stop") }, tr("memory.sync.run.stopping"));
+    let failed = false;
+    try {
+      const r = await req                                        ("POST",
+        "/sync/runs/" + encodeURIComponent(id) + "/cancel?project=" + encodeURIComponent(projectId));
+      if (!r.ok || !r.data) { failed = true; say(errMessage(r.err)); return; }
+      cancelAccepted.add(id);
+      toast(r.data.stopping ? tr("memory.sync.run.stoppingToast", { id }) : tr("memory.sync.run.cancelledToast", { id }));
+      await refresh();
+      follow();
+    } finally {
+      cancelPending.delete(id);
+      paintCancelButtons();
+      if (failed && hadFocus && document.activeElement === document.body) {
+        const restored = Array.from(runs.querySelectorAll                   ("[data-mstop]")).find((item) => item.dataset.mstop === id);
+        if (restored && !restored.disabled) restored.focus();
+      }
+    }
   };
   /** Show a finished run's agent runs: the list says it is loading, then what the read found. */
   const showAgents = async (id        )                => {

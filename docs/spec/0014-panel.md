@@ -273,15 +273,20 @@ Code blocks take their colours from a scheme of their own under `:root[data-code
 1. **Monospace is for values you would copy** — a path, a command, a key, JSON, a tool name —
    never for prose identity. `tnum` for every number in a column.
 2. **Saturation is for state**: dots, the one accent, error red, amber. Type chips, tags,
-   group names and descriptions are monochrome; a column's annotation is `--text-3`. The one
-   exception is syntax colour inside a code block (the JSON view, the SQL highlighter, a
-   document card), in the active code scheme's `--syn-*` tokens only (§panel.code).
+   group names and descriptions are monochrome; a column's annotation is `--text-3`. Two
+   exceptions. Syntax colour inside a code block (the JSON view, the SQL highlighter, a
+   document card) uses the active code scheme's `--syn-*` tokens only (§panel.code). The stop
+   glyph is the other: a pressable Stop draws its square in `--red`, the one honest warning that
+   a click ends a running thing. The table sets the colour (`data-tone="stop"`, `ui.css`); it is
+   grey while the button is disabled, and it never fills a button or a row (rules 4 and 7). No
+   other action glyph takes a colour.
 3. **Text needs a measure.** Nothing is full-bleed except a workspace; content hugs the left
    edge and is never centred a second time.
 4. **One primary action per view; the rest behind `⋯`.** A row holds at most one non-icon
    button. Red never appears on a row: destructive items are last in the overflow, after a
-   separator, in `--red` text, or the row's trailing glyph. (The System page's Quit is the
-   page's one act and stays red.)
+   separator, in `--red` text, or the row's trailing glyph. The one exception is a pressable
+   stop's square (rule 2): the glyph alone, never a red row, a red name or a red-filled button,
+   and no large danger button. (The System page's Quit is the page's one act and stays red.)
 5. **Hierarchy is surface and indent, not size and caps.** A user-named container is a header
    band over its members (§panel.groups). Uppercase 11 px captions are for sections the product
    named, never for containers the user named.
@@ -289,18 +294,22 @@ Code blocks take their colours from a scheme of their own under `:root[data-code
    it or the last group used; the title carries the group ("New job in *learn*").
 7. **One glyph, one meaning per page** (`folder-plus` for a new group, `plus` for a new item).
    A short action's glyph is the action's, never the state's: a started MCP shows the
-   *Disable* glyph (`power-off`), a running port forward the *Stop* glyph (`square`) — the
-   state itself is the dot and the status words. The two halves of a verb never share one
-   glyph (`power` is Enable, `power-off` is Disable; `play` starts, `square` stops), and
+   *Disable* glyph (`power-off`), a running port forward the *Stop* glyph (`stop`) — the
+   state itself is the dot and the status words. The transport glyphs are solid and each has
+   its own shape: `play` (a triangle) starts, `stop` (a square) stops, `pause` (two bars) pauses,
+   and pause appears only where a thing can actually be paused. The two halves of a verb never
+   share one glyph (`power` is Enable, `power-off` is Disable), and
    near-neighbours stay apart: refresh (`refresh-cw`) re-reads, restart (`rotate-cw`) tears
    down and rebuilds, stop is not disable. Run all uses list-play to distinguish its scope
    from the adjacent Run. Saving and unsaving an analysis use bookmark and bookmark-minus.
-   The verbs live in one table, `ui/action.ts`
-   (`ACTION_ICON`, `actionBtn(verb, label)`, `setActionBtn`): a page never picks its own
-   glyph for a verb the table names, and a verb the table lacks joins the table first. The
-   word rides in the accessible name and the tooltip (`iconBtn`), not as text beside the
-   glyph; while the action runs, the button is disabled and the name states the verb in
-   motion ("Stopping…"), never a bare ellipsis. A state flip patches the same node
+   The verbs live in one table, `ui/action.ts` (`ACTION_ICON`, `actionBtn(verb, label)`,
+   `setActionBtn`, `setActionBusy`): a page never picks its own glyph for a verb the table
+   names, and a verb the table lacks joins the table first. The word rides in the accessible
+   name and the tooltip (`iconBtn`), not as text beside the glyph. A stop's red is the one
+   colour an action carries (rule 2): the table sets it (`data-tone="stop"`), so a page never
+   colours a button itself. While a request runs, `setActionBusy` disables the button and the
+   name states the verb in motion ("Stopping…"), never a bare ellipsis; when the request fails
+   it restores the verb with its own words and tone. A state flip patches the same node
    (`setIconBtn` / `setActionBtn`) — a repaint through `textContent` would drop the sprite.
 8. **One persistent glyph per container header, and the whole header drags**: `+` always
    visible (dimmed), `⋯` on hover/focus; its buttons cancel the drag at `dragstart`.
@@ -563,7 +572,7 @@ to the library first.
 | status | `dot(state, words)`, `heldDot(words)`, `tag(text, {mono, tone})`, `spinner()` | `.dot`, `.tag`, `.spin` |
 | fact chip | `portChip(port, {tone, title})` — a port the machine holds (up), a promise unkept (down) or a quiet declared-only one (held: no tone class) | `.pchip` |
 | entry picker | `pickPanel(pathPlaceholder, goLabel, upLabel)` + `pickRow(kind, name, mono)` — the inline file browser a field opens under itself; its root is `.dirpick`, NEVER `.pick` (the styled select's option rows own that name) | `.dirpick*` |
-| controls | `sw(on, label)`, `btn(label, {kind, icon})`, `iconBtn`, `moreBtn`, and the action table `ui/action.ts` — `actionBtn(verb, label)` / `setActionBtn` / `ACTION_ICON` — one glyph per verb (rule 7, every verb a page may name); native `<select>` styled by `initSelects` | `.sw`, `.btn`, `.dd*` |
+| controls | `sw(on, label)`, `btn(label, {kind, icon})`, `iconBtn`, `moreBtn`, and the action table `ui/action.ts` — `actionBtn(verb, label)` / `setActionBtn` / `setActionBusy` / `ACTION_ICON` — one glyph per verb (rule 7, every verb a page may name); the stop square is the one coloured action (rule 2: `--red` while pressable, grey when disabled, `data-tone="stop"`); native `<select>` styled by `initSelects` | `.sw`, `.btn`, `.btn.icon[data-tone="stop"]`, `.dd*` |
 | layers | `popupMenu(anchor, items, {filter})` - with `filter` (the placeholder) a find box over rows that scroll under it: typing narrows them, the arrows walk the box and the rows left, Enter runs the first, "Nothing matches" when none do - `anchoredMenu(host, items)`, `sheet({title, sub, body, foot})` + `showSheet`, `stackSheet`, `openFieldSheet(spec)` | `.menu`, `.menu.find`, `.menu-filter`, `.menu-rows`, `.sheet*`, `.backdrop` |
 | page furniture | `emptyNode(…)`, `pageFoot({note, rev})`, `toTop(scroller)`; the toast is the shell's (`util.ts toast()`) | `.empty`, `.page-foot`, `.to-top`, `.toast` |
 | grip | `grip(pane, {axis, key, size, min, max, label, fold, folded, end})`, `gripState(opts)`, `gripFold(edge, folded)`, `gripFolded(edge)` - the edge after a pane (before one, with `end`) that sizes it (and folds it) | `.grip`, `.grip.x`, `.grip.y`, `.grip.end`, `.grip.folded`, `.grip-btn` |

@@ -536,8 +536,8 @@ function dbPubsubPaintState(t: DbPubsubTab): void {
   state.append(dot(shown[0], shown[1]), " ", shown[1]);
   if (watching) {
     const on = t.live === "live" || t.live === "connecting";
-    toggle.appendChild(btn(on ? tr("dataPubsub.stop") : tr("dataPubsub.listen"), {
-      kind: "ghost", data: { ps: on ? "stop" : "listen" },
+    toggle.appendChild(actionBtn(on ? "stop" : "start", on ? tr("dataPubsub.stop") : tr("dataPubsub.listen"), {
+      ghost: true, data: { ps: on ? "stop" : "listen" },
       title: on ? tr("dataPubsub.stopTip") : tr("dataPubsub.listenTip"),
     }));
   }

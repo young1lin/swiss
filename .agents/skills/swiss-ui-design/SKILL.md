@@ -133,7 +133,9 @@ CSS.
 - No new Unicode icon, no `innerHTML` of a glyph.
 - No row with two non-icon buttons, no red word button on a row — the second action and every
   destructive one live behind the row's `⋯` (danger last) or are its trailing glyph (rule 4).
-- Mono only for values you would copy (rule 1); saturation only for state (rule 2).
+- Mono only for values you would copy (rule 1); saturation only for state (rule 2). The one
+  action colour is a pressable Stop's `--red` square (`data-tone="stop"`), grey when disabled,
+  never a red row, name or filled button.
 - Vertical rhythm: nothing is glued to the block above it (rule 17).
 - A create form says which group the item joins before submit (rule 6); user-named containers
   are bands in mixed case, product-named sections are uppercase captions (rule 5).

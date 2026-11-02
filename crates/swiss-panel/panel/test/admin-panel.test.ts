@@ -63,7 +63,7 @@ describe("admin panel assets", () => {
     // i-minus, the graph's zoom out), the llm plugin (SPEC §llm: i-sparkles, its seat's glyph),
     // the chat's statistics (SPEC §panel.ui: i-gauge, the activity pill's glyph), and the skill
     // installer (i-download), and chat's return-to-bottom (i-arrow-down), and the action pair's
-    // six verb glyphs (SPEC §panel.design rule 7: i-power-off, i-square, i-pause, i-refresh-cw,
+    // six verb glyphs (SPEC §panel.design rule 7: i-power-off, i-stop, i-pause, i-refresh-cw,
     // i-rotate-cw, i-upload, with the three notes that say why a pair may not share one) — still
     // small, still no markup. The Apache-2.0 banner is stripped
     // before counting: it is a fixed licence cost, not shell content, and it must never buy

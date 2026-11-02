@@ -35,7 +35,7 @@ import {
 import {
   anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, failNote, filterInput,
   ACTION_ICON, actionBtn, fmtMs, groupNode, heldDot, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
-  setActionBtn,
+  setActionBtn, setActionBusy,
   objTab, pager, paneBody, paneHead, pickPanel, pickerRow, portChip, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
   relTime, timeLabel, timeline, timelineMeta, timelineToggle, toTop, transcript, transcriptText, transcriptTurn, toolChip, valueBlock,
 } from "../src/ui/index.js";
@@ -48,6 +48,7 @@ import { diffFiles, diffNode, tokenCodeNode } from "../src/ui/index.js";
 import { resultTable, resultChart } from "../src/ui/index.js";
 import type { GraphEdge, GraphEls, GraphGroup, GraphNode, GraphSpec, TimelineItem } from "../src/ui/index.js";
 import { allClassesOf, parseCss } from "./css-rules.js";
+import type { CssDecl } from "./css-rules.js";
 import { drawn, fakeEngine } from "./graph-fake.js";
 import { sheet } from "./styles.js";
 
@@ -223,6 +224,109 @@ describe("ui/button", () => {
     expect(b.dataset.more).toBe("fs");
     // Every ⋯ opens a menu, and says so to assistive tech (SPEC §panel.pages: Data's said it by hand).
     expect(b.getAttribute("aria-haspopup")).toBe("menu");
+  });
+});
+
+/* One action button through its states (SPEC §panel.design rules 2 and 7): a first render and a
+   restated button end with the same attributes, a Stop restated as a Start loses its red, and a
+   request in flight disables the button and says the wait in words - the node, the glyph and the
+   listener stay the caller's. */
+describe("ui/action - one button through its states", () => {
+  // Every attribute a reader, a screen reader or the stylesheet can see, as one comparable value.
+  const snapshot = (b: HTMLButtonElement) => {
+    return {
+      attrs: Object.fromEntries(Array.from(b.attributes).map((a): [string, string] => { return [a.name, a.value]; })),
+      href: useHref(b),
+      svgs: b.querySelectorAll("svg").length,
+      disabled: b.disabled,
+    };
+  };
+
+  it("a Start restated as a Stop ends with the attributes a first Stop render has", () => {
+    const first = actionBtn("stop", "Stop", { title: "Stop this port forward" });
+    const flipped = actionBtn("start", "Start", { title: "Start this port forward" });
+    setActionBtn(flipped, "stop", "Stop", "Stop this port forward");
+    expect(snapshot(flipped)).toEqual(snapshot(first));
+  });
+
+  it("Stop, Start, Stop: each state wears its own glyph, name, tooltip and tone, and the red leaves with the Stop", () => {
+    const b = actionBtn("stop", "Stop", { title: "Stop this port forward" });
+    expect(b.dataset.tone).toBe("stop");
+    setActionBtn(b, "start", "Start", "Start this port forward");
+    expect(useHref(b)).toBe("#i-play");
+    expect(b.getAttribute("aria-label")).toBe("Start");
+    expect(b.title).toBe("Start this port forward");
+    expect(b.dataset.action).toBe("start");
+    expect(b.hasAttribute("data-tone"), "a Start carries no stop tone").toBe(false);
+    setActionBtn(b, "stop", "Stop", "Stop this port forward");
+    expect(useHref(b)).toBe("#i-stop");
+    expect(b.getAttribute("aria-label")).toBe("Stop");
+    expect(b.title).toBe("Stop this port forward");
+    expect(b.dataset.tone).toBe("stop");
+    // Restated, never rebuilt: one glyph, and no words written over it.
+    expect(b.querySelectorAll("svg"), "the glyph is still there").toHaveLength(1);
+    expect(b.textContent).toBe("");
+  });
+
+  it("only a stop wears the tone; start, pause, resume, delete and close never do", () => {
+    expect(actionBtn("stop", "Stop").dataset.tone).toBe("stop");
+    for (const action of ["start", "pause", "resume", "delete", "close"] as const) {
+      expect(actionBtn(action, action).hasAttribute("data-tone"), action).toBe(false);
+    }
+  });
+
+  it("in flight the button is disabled and says the wait; a failed request gives back the Stop", () => {
+    const b = actionBtn("stop", "Stop", { title: "Stop this run" });
+    const svg = b.querySelector("svg");
+    const idle = { label: "Stop", title: "Stop this run" };
+    setActionBusy(b, "stop", idle, "stopping…");
+    expect(b.disabled).toBe(true);
+    expect(b.getAttribute("aria-label")).toBe("stopping…");
+    expect(b.title).toBe("stopping…");
+    expect(useHref(b)).toBe("#i-stop");
+    expect(b.querySelector("svg"), "the same glyph node").toBe(svg);
+    // The request failed: the verb is back, enabled, with its own words and its red.
+    setActionBusy(b, "stop", idle, null);
+    expect(b.disabled).toBe(false);
+    expect(b.getAttribute("aria-label")).toBe("Stop");
+    expect(b.title).toBe("Stop this run");
+    expect(b.dataset.tone).toBe("stop");
+    expect(b.querySelector("svg")).toBe(svg);
+  });
+
+  it("the node and its listener survive every flip: the click still reaches the caller's handler", () => {
+    const b = actionBtn("stop", "Stop", { data: { hstop: "r-1" } });
+    const seen: string[] = [];
+    b.addEventListener("click", () => { seen.push(b.dataset.hstop ?? ""); });
+    setActionBusy(b, "stop", { label: "Stop" }, "stopping…");
+    setActionBusy(b, "stop", { label: "Stop" }, null);
+    setActionBtn(b, "start", "Start");
+    setActionBtn(b, "stop", "Stop");
+    b.click();
+    expect(seen).toEqual(["r-1"]);
+  });
+
+  it("ui.css: a pressable stop is --red, its pale seat is never solid red, and a disabled stop is grey", () => {
+    const rules = parseCss(sheet("ui.css"));
+    const stopRules = rules.filter((r) => r.selectors.some((s) => s.includes('data-tone="stop"')));
+    const decl = (selector: string, prop: string): string | undefined => {
+      return stopRules.find((r) => r.selectors.includes(selector))?.decls.find((d: CssDecl) => d.prop === prop)?.value;
+    };
+    // The square takes the theme's red and nothing else about the button is coloured by it.
+    expect(decl('.btn.icon[data-tone="stop"]', "color")).toBe("var(--red)");
+    // Hover and focus take a pale seat: a tint of the red, never the solid red itself.
+    const seat = decl('.btn.icon[data-tone="stop"]:not(:disabled):hover', "background");
+    expect(seat).toContain("color-mix");
+    expect(seat).not.toBe("var(--red)");
+    expect(decl('.btn.icon[data-tone="stop"]:not(:disabled):focus-visible', "background")).toBe(seat);
+    // Disabled: grey like every disabled glyph, never the red that would still shout danger.
+    expect(decl('.btn.icon[data-tone="stop"]:disabled', "color")).toBe("var(--text-2)");
+    // No stop rule paints a solid red ground anywhere.
+    for (const r of stopRules) {
+      for (const d of r.decls) {
+        if (d.prop.startsWith("background")) expect(d.value, r.selectors.join(" | ")).not.toBe("var(--red)");
+      }
+    }
   });
 });
 

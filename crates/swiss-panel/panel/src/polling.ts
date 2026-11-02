@@ -246,7 +246,7 @@ function tunBusyWord(verb: string): string {
 /** One rule row: the library row (SPEC §panel.pages). The dot, the name, the route; the local port
  *  in its own column (the value you point a client at); a failure as the row's one red line with
  *  the whole reason in its title, so a failing row is as tall as a healthy one. Start / Stop is
- *  the row's one action button - play while it is down, square while it runs, never the same
+ *  the row's one action button - play while it is down, the stop square while it runs, never the same
  *  glyph for both (SPEC §panel.design rule 7, ui/action.ts) - and the rest is behind ⋯.
  *  data-act / data-more answer #pane's delegated click (tunnels.ts). */
 function ruleRowNode(r: ApiTunnelRuleRow): HTMLElement {

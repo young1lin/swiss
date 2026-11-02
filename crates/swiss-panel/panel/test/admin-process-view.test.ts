@@ -176,11 +176,14 @@ describe("the Process page (process plugin, SPEC §process.panel)", () => {
     // the accessible name and the tooltip carry the words.
     expect(primary("up").textContent).toBe("");
     expect(primary("up").getAttribute("aria-label")).toBe("Stop");
-    expect(primary("up").querySelector("use")?.getAttribute("href")).toBe("#i-square");
+    expect(primary("up").querySelector("use")?.getAttribute("href")).toBe("#i-stop");
+    // Only a pressable Stop wears the red tone; a Start never does (SPEC §panel.design rule 2).
+    expect(primary("up").dataset.tone).toBe("stop");
     expect(primary("up").disabled).toBe(false);
     expect(primary("clash").disabled).toBe(true);
     expect(primary("gone").getAttribute("aria-label")).toBe("Start");
     expect(primary("gone").querySelector("use")?.getAttribute("href")).toBe("#i-play");
+    expect(primary("gone").dataset.tone).toBeUndefined();
     expect(primary("gone").disabled).toBe(false);
     expect(primary("busy-one").disabled).toBe(true);
     expect(primary("busy-one").getAttribute("aria-label")).toBe("Starting…");

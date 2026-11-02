@@ -781,7 +781,9 @@ describe("llm history page", () => {
     await mount();
     // Only a live row a memory run asked has it; a filed run and a run of no job have none.
     expect(q("[data-hrun='12'] [data-hstop]").getAttribute("aria-label")).toBe("Stop");
-    expect(q("[data-hrun='12'] [data-hstop] use").getAttribute("href")).toBe("#i-square");
+    expect(q("[data-hrun='12'] [data-hstop] use").getAttribute("href")).toBe("#i-stop");
+    // The tone is the red of a pressable Stop; ui.css greys it while the button is disabled.
+    expect(q<HTMLButtonElement>("[data-hrun='12'] [data-hstop]").dataset.tone).toBe("stop");
     expect(q("[data-hrun='12'] [data-hstop]").getAttribute("title")).toContain("memory run r-a1e84e8c");
     expect(document.querySelector("[data-hrun='14'] [data-hstop]")).toBe(null);
     expect(document.querySelector("[data-hrun='3'] [data-hstop]")).toBe(null);
@@ -794,7 +796,7 @@ describe("llm history page", () => {
     expect(calls.some((c) => c.path === "/api/llm/history/runs/12/dialogue")).toBe(false);
     expect(text("#toast")).toBe("Run r-a1e84e8c is stopping: the questions in flight are dropped, the notes it saved stay");
     expect(q("[data-hrun='12'] [data-hstop]").getAttribute("aria-label")).toBe("stopping…");
-    expect(q("[data-hrun='12'] [data-hstop] use").getAttribute("href")).toBe("#i-square");
+    expect(q("[data-hrun='12'] [data-hstop] use").getAttribute("href")).toBe("#i-stop");
 
     // A repaint keeps it: another row of the same memory run says it is stopping too.
     view.unmount();
@@ -802,7 +804,43 @@ describe("llm history page", () => {
     const stopping = q<HTMLButtonElement>("[data-hrun='13'] [data-hstop]");
     expect(stopping.disabled).toBe(true);
     expect(stopping.getAttribute("aria-label")).toBe("stopping…");
-    expect(stopping.querySelector("use")?.getAttribute("href")).toBe("#i-square");
+    expect(stopping.querySelector("use")?.getAttribute("href")).toBe("#i-stop");
+    expect(stopping.dataset.tone).toBe("stop");
+  });
+
+  it("disables every visible row of a memory run while its Stop is pending", async () => {
+    const first = { ...LIVE_RUN, source: "memory:r-pending" };
+    const second = { ...first, id: 13 };
+    override = (c) => c.path.startsWith("/api/llm/history/runs?")
+      ? [200, { runs: [first, second], page: 0, pageSize: 20, more: false }] : undefined;
+    const original = globalThis.fetch;
+    let finish!: (response: Response) => void;
+    let posts = 0;
+    const pending = new Promise<Response>((resolve) => { finish = resolve; });
+    globalThis.fetch = ((url: string | URL | Request, opts?: RequestInit): Promise<Response> => {
+      if (String(url).includes("/sync/runs/r-pending/cancel")) { posts++; return pending; }
+      return original(url, opts);
+    }) as typeof fetch;
+    try {
+      await mount();
+      q<HTMLButtonElement>("[data-hrun='12'] [data-hstop]").focus();
+      await click("[data-hrun='12'] [data-hstop]");
+      q<HTMLButtonElement>("[data-hrun='12'] [data-hstop]").blur();
+      const other = q<HTMLButtonElement>("[data-hrun='13'] [data-hstop]");
+      expect(other.disabled).toBe(true);
+      expect(other.getAttribute("aria-label")).toBe("stopping…");
+      await click(other);
+      expect(posts).toBe(1);
+      await view.poll();
+      finish({ ok: false, status: 400, json: () => Promise.resolve({ message: "refused" }) } as Response);
+      await settle();
+      expect(q<HTMLButtonElement>("[data-hrun='12'] [data-hstop]").disabled).toBe(false);
+      expect(q<HTMLButtonElement>("[data-hrun='13'] [data-hstop]").disabled).toBe(false);
+      expect(document.activeElement).toBe(q("[data-hrun='12'] [data-hstop]"));
+    } finally {
+      finish({ ok: false, status: 400, json: () => Promise.resolve({ message: "refused" }) } as Response);
+      globalThis.fetch = original;
+    }
   });
 
   it("a refused Stop says why and hands the button back", async () => {
@@ -821,7 +859,7 @@ describe("llm history page", () => {
     expect(button.disabled).toBe(false);
     expect(button.getAttribute("aria-label")).toBe("Stop");
     expect(button.title).toContain("memory run r-gone");
-    expect(button.querySelector("use")?.getAttribute("href")).toBe("#i-square");
+    expect(button.querySelector("use")?.getAttribute("href")).toBe("#i-stop");
   });
 
   it("a running run's sheet shows the step in flight and reads again until the run files, keeping what was opened", async () => {

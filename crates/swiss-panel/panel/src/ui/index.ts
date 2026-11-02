@@ -25,7 +25,7 @@
  *
  * A design is a gallery SCENE built from these, not a page of hand-written CSS (SPEC §panel.ui). */
 export { btn, iconBtn, moreBtn } from "./button.js";
-export { ACTION_ICON, actionBtn, actionIcon, setActionBtn } from "./action.js";
+export { ACTION_ICON, actionBtn, actionIcon, setActionBtn, setActionBusy } from "./action.js";
 export type { ActionId } from "./action.js";
 export { resultTable, resultChart } from "./result.js";
 export { copyBtn, copyText } from "./copy.js";

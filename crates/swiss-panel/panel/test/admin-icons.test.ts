@@ -171,9 +171,44 @@ describe("the action table has every glyph it names", () => {
     const missing = Object.keys(ACTION_ICON).filter((a) => { return !shell.includes('<symbol id="i-' + ACTION_ICON[a] + '"'); });
     expect(missing).toEqual([]);
     // The pair glyphs this round added, named so a rename cannot silently drop one.
-    for (const glyph of ["i-power-off", "i-square", "i-pause", "i-refresh-cw", "i-rotate-cw", "i-upload"]) {
+    for (const glyph of ["i-power-off", "i-stop", "i-pause", "i-refresh-cw", "i-rotate-cw", "i-upload"]) {
       expect(shell, glyph).toContain('<symbol id="' + glyph + '"');
     }
+  });
+});
+
+/* SPEC §panel.design rule 7: stop, start and pause are three different shapes. A stop that drew
+   a triangle would read as Start, so the shapes are read back from the sprite itself. */
+describe("stop, start and pause are three different shapes", () => {
+  const symbolBody = (id: string): string => {
+    const m = shell.match(new RegExp('<symbol id="' + id + '"[^>]*>([\\s\\S]*?)</symbol>'));
+    return m ? m[1] : "";
+  };
+
+  it("stop is one solid square, with no triangle or bars in it", () => {
+    const stop = symbolBody("i-stop");
+    expect(stop).toContain('<rect x="6" y="6" width="12" height="12"');
+    expect(stop).not.toContain("<polygon");
+    expect(stop.match(/<rect/g)?.length).toBe(1);
+  });
+
+  it("start is one solid triangle, with no square in it", () => {
+    const play = symbolBody("i-play");
+    expect(play).toContain('<polygon points="7 4 19.5 12 7 20"');
+    expect(play).not.toContain("<rect");
+  });
+
+  it("pause is two solid bars, never a square or a triangle", () => {
+    const pause = symbolBody("i-pause");
+    expect(pause.match(/<rect/g)?.length).toBe(2);
+    expect(pause).not.toContain("<polygon");
+  });
+
+  it("the action table gives stop, start and pause three different glyphs", async () => {
+    const { ACTION_ICON } = await import("../src/ui/action.js") as unknown as { ACTION_ICON: Record<string, string> };
+    const glyphs = [ACTION_ICON.stop, ACTION_ICON.start, ACTION_ICON.pause];
+    expect(new Set(glyphs).size).toBe(3);
+    expect(ACTION_ICON.stop).toBe("stop");
   });
 });
 

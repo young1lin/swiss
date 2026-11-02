@@ -195,7 +195,7 @@ function stageCard(t           , s              , i        )              {
     MONGO_STAGES.map((op                  )         => h("option", { value: op[0], selected: op[0] === s.op }, op[0])));
   const on = h("input", { type: "checkbox", checked: s.on, title: tr("dataMongo.stageOn"), data: { mstageon: String(i) } });
   const tools           = [
-    iconBtn("play", tr("dataMongo.previewStage"), { ghost: true, data: { mstagepreview: String(i) } }),
+    actionBtn("start", tr("dataMongo.previewStage"), { ghost: true, data: { mstagepreview: String(i) } }),
     iconBtn("arrow-up", tr("dataMongo.moveUp"), { ghost: true, disabled: i === 0, data: { mstageup: String(i) } }),
     iconBtn("chevron-down", tr("dataMongo.moveDown"), { ghost: true, disabled: i === t.stages.length - 1, data: { mstagedown: String(i) } }),
     iconBtn("trash", tr("dataMongo.removeStage"), { ghost: true, data: { mstagerm: String(i) } }),

@@ -83,6 +83,15 @@
     .redact-eye .ic { width: var(--ic-m); height: var(--ic-m); }
     .redact-eye:hover, .redact-eye[aria-pressed="true"] { color: var(--text); background: var(--hover); }
     .btn.icon[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    /* The stop glyph is the one action glyph that carries a colour (SPEC §panel.design rule 2): a
+       pressable stop draws its square in --red and takes a pale-red seat on hover and focus. Not
+       pressable (in flight, or disabled) it goes grey like every other disabled glyph: a red square
+       that cannot be pressed would still shout danger. The seat is never solid red - the row stays
+       quiet and the square alone carries the meaning. data-tone is set by ui/action.ts. */
+    .btn.icon[data-tone="stop"] { color: var(--red); }
+    .btn.icon[data-tone="stop"]:not(:disabled):hover,
+    .btn.icon[data-tone="stop"]:not(:disabled):focus-visible { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
+    .btn.icon[data-tone="stop"]:disabled { color: var(--text-2); }
     /* Inline icons (SPEC §panel.design): one sprite in the shell, stroke=currentColor, sized here.
        Size and ink are knobs the HOST sets on its own element (--ic, --ic-ink): a page's row
        sizes its glyphs without a rule on .ic, which stays the library's (SPEC §panel.ui). */

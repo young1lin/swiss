@@ -106,6 +106,8 @@ const SIG: Record<string, string> = {
   btn: ".btn:not(.icon)",
   iconBtn: ".btn.icon",
   actionBtn: ".btn.icon[data-action]",
+  // A busy action: the same button, disabled while its request is in flight (the running scene).
+  setActionBusy: ".btn.icon[data-action][disabled]",
   moreBtn: ".btn.icon.ghost use[href=\"#i-ellipsis\"]",
   iconNode: "svg.ic > use",
   redacted: ".redact > code + button.redact-eye",
@@ -344,7 +346,7 @@ describe("SPEC §panel.ui - every export is on the page", () => {
 
 describe("SPEC §panel.ui - the scenes", () => {
   it("the page scenes include the conversation reference", () => {
-    expect(SCENES.map((s) => s.id)).toEqual(["analysis", "desktop-overview", "conversation", "content", "resource", "event", "empty", "process"]);
+    expect(SCENES.map((s) => s.id)).toEqual(["analysis", "desktop-overview", "conversation", "content", "resource", "event", "empty", "process", "running"]);
   });
 
   for (const s of SCENES) {

@@ -34,7 +34,7 @@ import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
 import { setIconBtn } from "./ui/button.js";
 import { closeSheet } from "./ui/sheet.js";
 import {
-  btn, card, dot, field, form, formActions, hint, iconBtn, isLocalAddress, kvRow, note, redacted, row, section, sheet, showSheet, spinner, tag,
+  btn, card, dot, field, form, formActions, hint, iconBtn, isLocalAddress, kvRow, note, redacted, row, section, setActionBtn, sheet, showSheet, spinner, tag,
   valueBlock,
 } from "./ui/index.js";
                                               
@@ -349,7 +349,7 @@ async function runTool()                {
   }
   d.run.running = true;
   const btn = $                   ("runBtn");
-  if (btn) { btn.disabled = true; setIconBtn(btn, "play", tr("runHistory.running"), tr("runHistory.runningHint")); }
+  if (btn) { btn.disabled = true; setActionBtn(btn, "start", tr("runHistory.running"), tr("runHistory.runningHint")); }
   const meta = $("runMeta");
   if (meta) fill(meta, spinner());
   try {
@@ -382,7 +382,7 @@ function renderRunResult()       {
   // (glyph, name and tooltip all read the same state; a textContent write would erase the glyph).
   if (btn) {
     btn.disabled = running;
-    setIconBtn(btn, "play", running ? tr("runHistory.running") : tr("runHistory.run"),
+    setActionBtn(btn, "start", running ? tr("runHistory.running") : tr("runHistory.run"),
       running ? tr("runHistory.runningHint") : tr("runHistory.runHint"));
   }
   const out = $("runOut"), meta = $("runMeta");

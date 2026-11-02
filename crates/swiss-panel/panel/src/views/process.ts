@@ -168,7 +168,7 @@ function appRow(r: ProcessRow): HTMLElement {
   // says the port is held now, the sentence stays in the history sheet.
   const healedStart = last != null && !last.ok && last.action === "start" && r.status === "running";
   // The row's one action, the ACTION not the state (SPEC §panel.design rule 7): a live app offers
-  // Stop (square), a stopped one offers Start (play), and while a verb is in flight the button
+  // Stop (the stop square), a stopped one offers Start (play), and while a verb is in flight the button
   // names that verb instead of showing an ellipsis into a dead click.
   const inflight = busy(r);
   const click: "start" | "stop" = live ? "stop" : "start";

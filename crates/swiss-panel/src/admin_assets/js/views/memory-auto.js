@@ -34,7 +34,7 @@ import { toast } from "../util.js";
                                       
 import { fill, h } from "../h.js";
 import { tr } from "../i18n.js";
-import { btn, card, checkField, closeSheet, dot, field, formCap, hint, inlineForm, kvRow, pair, sheet, showSheet, tag } from "../ui/index.js";
+import { actionBtn, btn, card, checkField, closeSheet, dot, field, formCap, hint, inlineForm, kvRow, pair, setActionBusy, sheet, showSheet, tag } from "../ui/index.js";
                                                                                                                     
                                                    
 import { ageText, errMessage, req } from "./memory-core.js";
@@ -153,14 +153,19 @@ export async function openAuto(projectId        , name        , onSaved         
   const reviewNow = btn(tr("memory.auto.reviewNow"), { id: "memAutoReviewNow" });
   // Stop (SPEC §memory.sync Cancel) beside the button that started it: shown while a review
   // waits or runs, "stopping…" once told to.
-  const stopReview = btn(tr("memory.auto.stopReview"), { id: "memAutoStopReview", kind: "ghost", title: tr("memory.auto.stopReviewWhy") });
+  const stopReview = actionBtn("stop", tr("memory.auto.stopReview"), { id: "memAutoStopReview", ghost: true, title: tr("memory.auto.stopReviewWhy") });
+  // The words a Stop wears when it is not waiting on anything (setActionBusy restores them).
+  const stopIdle = ()                                   => {
+    return { label: tr("memory.auto.stopReview"), title: tr("memory.auto.stopReviewWhy") };
+  };
+  let cancelPending = "";
+  const cancelAccepted = new Set        ();
   const paintButtons = ()       => {
     const live = liveReview(over.runs);
-    const stopping = !!live && (over.stopping || []).includes(live.id);
+    const stopping = !!live && (cancelPending === live.id || cancelAccepted.has(live.id) || (over.stopping || []).includes(live.id));
     reviewNow.disabled = !!live;
     stopReview.hidden = !live;
-    stopReview.disabled = stopping;
-    stopReview.textContent = tr(stopping ? "memory.sync.run.stopping" : "memory.auto.stopReview");
+    setActionBusy(stopReview, "stop", stopIdle(), stopping ? tr("memory.sync.run.stopping") : null);
   };
   const paintStatus = ()       => {
     const saved = over.settings && over.settings.autoReview;
@@ -228,9 +233,18 @@ export async function openAuto(projectId        , name        , onSaved         
     foot: [toSync, h("span", { class: "grow" }), close, save],
   }));
 
+  let refreshSeq = 0;
   const refresh = async ()                => {
+    const seq = ++refreshSeq;
     const r = await req                 ("GET", "/sync?project=" + enc);
-    if (r.ok && r.data) { over = r.data; paintStatus(); }
+    if (seq !== refreshSeq) return;
+    if (r.ok && r.data) {
+      over = r.data;
+      cancelAccepted.forEach((id) => {
+        if (!over.runs.some((run) => run.id === id && (run.state === "queued" || run.state === "running"))) cancelAccepted.delete(id);
+      });
+      paintStatus();
+    }
   };
   // A review that waits or runs is followed while the sheet stays open.
   let following = false;
@@ -265,17 +279,30 @@ export async function openAuto(projectId        , name        , onSaved         
   };
   stopReview.onclick = ()       => {
     const live = liveReview(over.runs);
-    if (!live) return;
+    if (!live || cancelPending || cancelAccepted.has(live.id)) return;
+    const hadFocus = document.activeElement === stopReview;
     void (async ()                => {
       say("");
-      stopReview.disabled = true;
-      const r = await req                                        ("POST",
-        "/sync/runs/" + encodeURIComponent(live.id) + "/cancel?project=" + enc);
-      if (!r.ok || !r.data) say(errMessage(r.err));
-      else toast(r.data.stopping ? tr("memory.sync.run.stoppingToast", { id: live.id }) : tr("memory.sync.run.cancelledToast", { id: live.id }));
-      await refresh();
+      // In flight: no second request, and the words say the wait. paintButtons restores the verb
+      // when the answer comes back (a refused Stop is a Stop once more).
+      cancelPending = live.id;
       paintButtons();
-      follow();
+      let failed = false;
+      try {
+        const r = await req                                        ("POST",
+          "/sync/runs/" + encodeURIComponent(live.id) + "/cancel?project=" + enc);
+        if (!r.ok || !r.data) { failed = true; say(errMessage(r.err)); }
+        else {
+          cancelAccepted.add(live.id);
+          toast(r.data.stopping ? tr("memory.sync.run.stoppingToast", { id: live.id }) : tr("memory.sync.run.cancelledToast", { id: live.id }));
+        }
+        await refresh();
+      } finally {
+        cancelPending = "";
+        paintButtons();
+        if (failed && hadFocus && liveReview(over.runs)?.id === live.id && stopReview.isConnected && !stopReview.hidden && !stopReview.disabled && document.activeElement === document.body) stopReview.focus();
+        follow();
+      }
     })();
   };
 
