@@ -23,7 +23,7 @@
 
 use serde_json::{json, Value};
 use swiss_llm::agent::{intentioned, run_loop, tools_bytes, LoopEvent, RoundUsage, ToolAnswer, ToolSpec, Toolbox};
-use swiss_llm::history::{CancelFlag, LlmHistory, Steer, SteerRefused};
+use swiss_llm::history::{CancelFlag, LlmHistory, ReplayState, Steer, SteerRefused};
 use swiss_llm::telemetry::Session;
 
 fn home(name: &str) -> std::path::PathBuf {
@@ -126,8 +126,9 @@ impl Toolbox for Gated {
 
 /// R3: a cancel during a pending tool aborts the wait within the bound, keeps
 /// the completed tool's facts, records the pending one as UNKNOWN (never a
-/// success), and leaves the conversation open for a later send. RED today:
-/// the loop waits the tool out forever - the bounded drive fails in seconds.
+/// success) and the one never reached as NOT RUN, and leaves the conversation
+/// open and continuable for a later send. A loop that waited the tool out
+/// forever fails the bounded drive in seconds.
 #[tokio::test]
 async fn cancel_during_a_pending_tool_records_unknown_and_files_prior_results() {
     // Wire grammar proven by the R5 fixture (upstream-isolation order): each
@@ -141,6 +142,8 @@ async fn cancel_during_a_pending_tool_records_unknown_and_files_prior_results() 
         "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
         "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_stall\",\"type\":\"function\",\"function\":{\"name\":\"stall\"}}]},\"finish_reason\":null}]}\n\n",
         "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"call_after\",\"type\":\"function\",\"function\":{\"name\":\"quick\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":2,\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
         "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":3,\"total_tokens\":12}}\n\n",
         "data: [DONE]\n\n"
     )
@@ -157,10 +160,12 @@ async fn cancel_during_a_pending_tool_records_unknown_and_files_prior_results() 
     }))
     .expect("row");
     let entry = row.provider("local").expect("provider");
-    let chat = swiss_llm::provider::Chat::new(entry, Some("tiny"), 64).expect("chat");
-
     let dir = home("llm-agent-pending-tool");
     let history = LlmHistory::open(&dir).await.expect("open");
+    // Recording, as the route's chat does: the interrupted round settles only over its filed call.
+    let chat = swiss_llm::provider::Chat::new(entry, Some("tiny"), 64)
+        .expect("chat")
+        .recording(Some(history.clone()), Some("alpha"));
     let mut run = history.open_conversation("alpha", "builtin", Some("local"), Some("tiny")).await;
     let run_id = run.id().expect("reserved");
     // CancelFlag::new already returns the shared Arc handle.
@@ -230,8 +235,43 @@ async fn cancel_during_a_pending_tool_records_unknown_and_files_prior_results() 
         joined.contains("call_stall") && joined.contains("nknown"),
         "the pending tool's result must say execution UNKNOWN, never success: {joined}"
     );
+    assert!(
+        joined.contains("call_after") && joined.contains("not run"),
+        "the call the dispatch never reached is noted as not run: {joined}"
+    );
     let open = history.read_runs(0, 10, Some("alpha".into()), Some(true)).await.expect("open read");
     assert_eq!(open["runs"].as_array().map(Vec::len), Some(1), "a cancelled conversation stays open");
+    // ...and CONTINUABLE: the interrupted round settled with one answer per call,
+    // in call order, so the next send replays it instead of refusing the run as
+    // unresolved (the Stop-then-send the Data agent's reader expects).
+    history.flush().await;
+    match history.replay_state(run_id).await {
+        ReplayState::Continuable { prior } => {
+            let tools: Vec<(Value, Value)> = prior
+                .iter()
+                .filter(|message| message["role"] == "tool")
+                .map(|message| (message["id"].clone(), message["text"].clone()))
+                .collect();
+            assert_eq!(
+                tools,
+                vec![
+                    (json!("call_quick"), json!("the answer is 42")),
+                    (json!("call_stall"), json!("execution unknown - cancelled before it could finish")),
+                    (json!("call_after"), json!("not run - cancelled before it started")),
+                ],
+                "every call of the interrupted round is answered by its exact id: {prior:?}"
+            );
+        }
+        ReplayState::Refused(why) => panic!("a Stop during a tool must leave the conversation continuable: {why}"),
+        ReplayState::Fresh => panic!("the interrupted round must not disappear"),
+    }
+    assert!(
+        history
+            .resume_conversation(run_id, "alpha", "builtin", Some("local"), Some("tiny"), None)
+            .await
+            .is_ok(),
+        "the next send reopens the interrupted conversation"
+    );
     history.close().await.expect("close");
 }
 /// The request budget is the agent's own (`maxContextKiB` on the chat): a round

@@ -809,6 +809,19 @@ impl ModuleHistoryStore {
                         self.reserved_in_flight
                             .fetch_sub(item.estimated_bytes as u64, Ordering::AcqRel);
                     }
+                    // A failed write is said in the log, not only kept for a barrier
+                    // to read: most writes are queued and forgotten, and a row that
+                    // silently never lands (a conversation's settling call, say)
+                    // must leave a reason someone can find.
+                    if let Err(reason) = &outcome {
+                        swiss_core::log::warn(
+                            "a history write failed",
+                            Some(serde_json::json!({
+                                "module": self.id.0.as_ref(),
+                                "reason": reason,
+                            })),
+                        );
+                    }
                     {
                         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                         inner.queue.completed += 1;

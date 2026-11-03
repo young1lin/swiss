@@ -973,6 +973,10 @@ pub type OnEvent<'a> = &'a mut (dyn FnMut(LoopEvent) -> Delivered + Send);
 /// What a dispatch the cancel cut leaves for a call that may have started.
 const UNKNOWN_RESULT: &str = "execution unknown - cancelled before it could finish";
 
+/// What an interrupted round's tail answers for a call the dispatch never reached:
+/// it did not run, so the model may ask for it again.
+const NOT_RUN_RESULT: &str = "not run - cancelled before it started";
+
 /// The builtin runtime for a fresh one-shot ask (memory's sync, the blocking
 /// Test): the drive with no earlier turns and an always-ready delivery - a
 /// consumer that watches nothing live passes a no-op sink.
@@ -1261,19 +1265,12 @@ async fn drive_loop(
                 }
             }
         }
-        // The round's ADMITTED activity fact commits BEFORE the outbound (SPEC
-        // llm.history): only the round's own sealed completion, matching the
-        // attempt token, clears it. A refused or unprovable mark - quota, a
-        // competing attempt, a lost reply - means the round never flies; there
-        // is no window after a refusal to fall back into.
-        if let Err(why) = run.begin_round().await {
-            run.fail(&format!("the round could not commit its activity: {why}"));
-            return Err(format!("the history could not commit the round's activity: {why}"));
-        }
         // The complete ask of THIS round trip: the request grows with every tool
         // answer, so it is serialized here, not once above. Over the chat's context
         // budget (the agent's maxContextKiB, SPEC llm.agents Test) refuses; nothing
-        // is ever clipped.
+        // is ever clipped. The check runs BEFORE the round's mark: a round that
+        // never flies leaves no activity behind, so the conversation stays
+        // settled and a compaction can still read it.
         let asked = crate::provider::request_json(&request);
         let bytes = context_bytes(chat, &request, &asked);
         if fold.is_none() && bytes > chat.context_cap() {
@@ -1282,6 +1279,15 @@ async fn drive_loop(
                 "the request context passed its {} KiB budget (the agent's maxContextKiB): start a New conversation",
                 chat.context_cap() / 1024
             ));
+        }
+        // The round's ADMITTED activity fact commits BEFORE the outbound (SPEC
+        // llm.history): only the round's own sealed completion, matching the
+        // attempt token, clears it. A refused or unprovable mark - quota, a
+        // competing attempt, a lost reply - means the round never flies; there
+        // is no window after a refusal to fall back into.
+        if let Err(why) = run.begin_round().await {
+            run.fail(&format!("the round could not commit its activity: {why}"));
+            return Err(format!("the history could not commit the round's activity: {why}"));
         }
         // The structural context this round seals beside its reply: what a
         // continuation rebuilds from if this call is the last.
@@ -1397,9 +1403,16 @@ async fn drive_loop(
         run.note("assistant", &text);
         let dispatched = dispatch(&calls, toolbox, &injected, run, session, &prompt_id, on_event).await;
         if dispatched.aborted {
-            // The round's partial tool audit, queued under the current run and
-            // attempt: not a completion receipt, not a promise of later replay.
-            run.file_tail(dispatched.audit_tail());
+            // The interrupted round's AUTHORITATIVE completion: every call of
+            // the round answered by its exact wire id - the results in hand,
+            // UNKNOWN for the call the cancel cut, NOT RUN for the ones never
+            // reached - settled like any tool round, so the conversation stays
+            // continuable and the model reads what really happened. Only when
+            // that settle cannot be proven does the partial audit tail queue
+            // under the still-open mark (continuation then refuses).
+            if run.settle_round(dispatched.interrupted_tail()).await.is_err() {
+                run.file_tail(dispatched.audit_tail());
+            }
             outcome.cancelled = true;
             run.fail("cancelled");
             return Ok(outcome);
@@ -1447,19 +1460,36 @@ struct Dispatched {
     /// The asks whose outcome is unknown (id, name): cut mid-flight, or never
     /// delivered to a consumer that had already gone.
     unknown: Vec<(String, String)>,
+    /// The asks an aborted dispatch never reached (id, name), in call order.
+    not_run: Vec<(String, String)>,
     /// Whether a cancel or a gone consumer stopped the dispatch before its end.
     aborted: bool,
 }
 
 impl Dispatched {
-    /// The audit tail an aborted dispatch queues: the results in hand, then every
-    /// ask whose fate is unknown - never dressed as a success.
+    /// The audit tail an aborted dispatch queues when its round cannot settle:
+    /// the results in hand, then every ask whose fate is unknown - never
+    /// dressed as a success.
     fn audit_tail(&self) -> Value {
         let mut tail = self.tools.clone();
         for (id, name) in &self.unknown {
             tail.push(json!({ "id": id, "name": name, "text": UNKNOWN_RESULT }));
         }
         json!({ "tools": tail })
+    }
+
+    /// The complete tail an aborted dispatch settles with: the audit tail, then
+    /// every ask it never reached, so each call of the round has exactly one
+    /// answer, in call order (the dispatch runs the calls one by one: results,
+    /// then the cut one, then the rest).
+    fn interrupted_tail(&self) -> Value {
+        let mut tail = self.audit_tail();
+        if let Some(all) = tail["tools"].as_array_mut() {
+            for (id, name) in &self.not_run {
+                all.push(json!({ "id": id, "name": name, "text": NOT_RUN_RESULT }));
+            }
+        }
+        tail
     }
 }
 
@@ -1476,7 +1506,7 @@ async fn dispatch(
     prompt_id: &str,
     on_event: OnEvent<'_>,
 ) -> Dispatched {
-    let mut done = Dispatched { responses: Vec::new(), tools: Vec::new(), unknown: Vec::new(), aborted: false };
+    let mut done = Dispatched { responses: Vec::new(), tools: Vec::new(), unknown: Vec::new(), not_run: Vec::new(), aborted: false };
     for call in calls {
         session.tool_decision(prompt_id, &call.fn_name);
         run.note(
@@ -1547,6 +1577,16 @@ async fn dispatch(
             break;
         }
         done.responses.push(ToolResponse::new(call.call_id.clone(), answer.text));
+    }
+    if done.aborted {
+        // Each ask the dispatch reached left one entry (a result or an UNKNOWN
+        // verdict); every ask after them never ran: noted, so the reader sees
+        // the round's whole fate, and tailed as NOT RUN.
+        let reached = done.tools.len() + done.unknown.len();
+        for skipped in calls.iter().skip(reached) {
+            run.note("tool", &format!("{} [{}]: {NOT_RUN_RESULT}", skipped.fn_name, skipped.call_id));
+            done.not_run.push((skipped.call_id.clone(), skipped.fn_name.clone()));
+        }
     }
     done
 }
