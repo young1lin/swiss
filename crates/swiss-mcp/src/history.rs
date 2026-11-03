@@ -456,28 +456,32 @@ impl McpHistory {
             .query(move |pool| {
                 Box::pin(async move {
                     let rows = sqlx::query(
-                        "SELECT args, at FROM call \
-                         WHERE mcp = ? AND tool = ? ORDER BY id DESC",
+                        "SELECT legacy_seq, at, via, client, ok, ms, args FROM call \
+                         WHERE id IN (SELECT MAX(id) FROM call \
+                             WHERE mcp = ? AND tool = ? AND instr(lower(args), ?) > 0 GROUP BY args) \
+                         ORDER BY id DESC LIMIT ?",
                     )
                     .bind(&mcp)
                     .bind(&tool)
+                    .bind(&needle)
+                    .bind(size as i64)
                     .fetch_all(&pool)
                     .await?;
                     let mut out: Vec<Value> = Vec::new();
-                    let mut seen = std::collections::HashSet::new();
                     for row in rows {
-                        let args: String = row.try_get(0)?;
-                        if !needle.is_empty() && !args.to_ascii_lowercase().contains(&needle) {
-                            continue;
+                        let args: String = row.try_get("args")?;
+                        let mut value = json!({
+                            "seq": row.try_get::<i64, _>("legacy_seq")?,
+                            "at": row.try_get::<String, _>("at")?,
+                            "via": row.try_get::<String, _>("via")?,
+                            "ok": row.try_get::<i64, _>("ok")? != 0,
+                            "ms": row.try_get::<i64, _>("ms")?,
+                            "args": crate::calls::CallLog::one_line(&args),
+                        });
+                        if let Some(client) = row.try_get::<Option<String>, _>("client")? {
+                            value["client"] = json!(client);
                         }
-                        if !seen.insert(args.clone()) {
-                            continue;
-                        }
-                        let at: String = row.try_get(1)?;
-                        out.push(json!({ "args": args, "at": at }));
-                        if out.len() >= size {
-                            break;
-                        }
+                        out.push(value);
                     }
                     Ok::<Vec<Value>, sqlx::Error>(out)
                 })

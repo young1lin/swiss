@@ -198,6 +198,46 @@ async fn a_recorded_call_is_visible_to_the_very_next_read() {
     let _ = history.close().await;
 }
 
+#[tokio::test]
+async fn tool_history_preserves_wire_ids_for_preview_and_refill() {
+    let home = swiss_core::paths::test_home().join("mcp-hist-tool-history-wire");
+    let args = r#"{"sql":"SELECT 1"}"#;
+    let long_args = json!({ "sql": format!("SELECT '{}' AS note", "x".repeat(180) + "needle") }).to_string();
+    write_legacy_call_line(&home, "db", &entry_json(7, "query", args, "old result", json!({})));
+    write_legacy_call_line(&home, "db", &entry_json(11, "query", &long_args, "preview", json!({ "preview": true, "body": true })));
+    write_legacy_body(&home, "db", 11, "the complete stored result");
+    write_legacy_call_line(&home, "db", &entry_json(37, "query", args, "latest error", json!({ "ok": false, "via": "panel", "client": "history-fixture", "ms": 19 })));
+    write_legacy_call_line(&home, "db", &entry_json(42, "other", "{}", "other tool", json!({})));
+    write_legacy_call_line(&home, "elsewhere", &entry_json(99, "query", "{}", "other MCP", json!({})));
+
+    let log = CallLog::at(home.join("logs").join("calls"));
+    let file_rows = log.read_tool_history("db", "query", 10, None).await;
+    assert_eq!(file_rows.len(), 2);
+    assert_eq!(file_rows[0]["seq"], json!(37));
+    let history = McpHistory::open(&home.join("logs")).await.unwrap();
+    log.attach_history(history.clone());
+    let rows = log.read_tool_history("db", "query", 10, None).await;
+    // The database row id differs from the public per-MCP seq. Every history row must
+    // still address the exact full call that hover and refill read, just as the file path did.
+    assert_eq!(rows, file_rows, "the database and file paths keep the same history contract");
+    for row in &rows {
+        let seq = row["seq"].as_u64().expect("a history row carries its public call sequence");
+        let full = log.read_call("db", seq).await.expect("history opens its recorded call");
+        assert_eq!(full.seq, seq);
+        assert_eq!(full.tool, "query");
+        serde_json::from_str::<Value>(&full.args).expect("refill reads complete JSON arguments");
+    }
+    let latest = log.read_call("db", 37).await.unwrap();
+    assert!(!latest.ok);
+    assert_eq!(latest.output, "latest error");
+    assert_eq!(log.read_call("db", 11).await.unwrap().output, "the complete stored result");
+    let found = log.read_tool_history("db", "query", 1, Some("NEEDLE")).await;
+    assert_eq!(found.len(), 1, "search matches full arguments beyond the row preview");
+    assert_eq!(found[0]["seq"], json!(11));
+    assert_eq!(found[0]["args"].as_str().unwrap().chars().count(), 97);
+    let _ = history.close().await;
+}
+
 // --- C2: traffic archive semantics ----------------------------------------------------------------
 
 #[tokio::test]

@@ -1006,7 +1006,7 @@ impl CallLog {
     }
 
     /// Fold whitespace and clip, so a stored multi-line args blob still reads as one label line.
-    fn one_line(text: &str) -> String {
+    pub(crate) fn one_line(text: &str) -> String {
         let folded: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
         let max = 96;
         if folded.chars().count() <= max {

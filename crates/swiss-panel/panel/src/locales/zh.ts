@@ -4099,6 +4099,7 @@ const zh: Record<string, string> = {
   "analysis.chart.line": "折线图",
   "analysis.chart.area": "面积图",
   "analysis.chart.scatter": "散点图",
+  "runHistory.bodyGone": "完整回复已清理；当前仅保留存储的预览。",
 };
 
 export default zh;

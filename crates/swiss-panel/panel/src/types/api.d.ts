@@ -276,6 +276,9 @@ export interface ApiMcpCallRow {
 /** GET /api/mcps/{name}/calls/{seq} - read_call: the same CallEntry with the full reply. */
 export type ApiMcpCallFull = ApiMcpCallRow;
 
+/** /tool-history contains bounded summaries, not full call bodies. */
+export type ApiMcpToolHistoryRow = Pick<ApiMcpCallRow, "seq" | "at" | "via" | "client" | "ok" | "ms" | "args">;
+
 /* --- traffic (swiss-mcp/src/traffic.rs) --------------------------------------------------------- */
 
 /** GET /api/traffic - traffic.rs read_traffic: one newest-first page of the ring. */

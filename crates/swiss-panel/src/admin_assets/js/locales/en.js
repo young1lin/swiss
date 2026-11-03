@@ -4201,6 +4201,7 @@ const en                         = {
   "analysis.chart.line": "Line",
   "analysis.chart.area": "Area",
   "analysis.chart.scatter": "Points",
+  "runHistory.bodyGone": "The full reply has been cleared; only the stored preview remains.",
 };
 
 export default en;

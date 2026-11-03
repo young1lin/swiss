@@ -25,7 +25,7 @@
    Renaming the file to types/domain.ts is R6's, not a slice's — it touches every importer
    and would bury the state split in import churn. */
 
-import type { ApiDbActivityRow, ApiDbPubsubChannels, ApiDbPubsubMessage, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbStreamGroupRow, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, ApiMongoAggReply, ApiMongoColl, ApiMongoExplainReply, ApiMongoIndexesResponse, ApiMongoInfo, ApiMongoSchema, ApiRedisCommand, DbQueryReply } from "./api.js";
+import type { ApiDbActivityRow, ApiDbPubsubChannels, ApiDbPubsubMessage, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbStreamGroupRow, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpToolHistoryRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, ApiMongoAggReply, ApiMongoColl, ApiMongoExplainReply, ApiMongoIndexesResponse, ApiMongoInfo, ApiMongoSchema, ApiRedisCommand, DbQueryReply } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -58,14 +58,13 @@ export interface McpRunState {
   tool: string | null;
   result: unknown;
   running: boolean;
-  /* hist holds the tool-call listing rows (/calls), which are ApiMcpCallRow-shaped -
-   *  not job runs, despite the file that renders them. */
-  hist: ApiMcpCallRow[] | null;
+  hist: ApiMcpToolHistoryRow[] | null;
+  histError?: string;
   histTool: string | null;
   histLoading: boolean;
   histOpen: boolean;
   histSelSeq: number | null;
-  histFull: Record<number, unknown>;
+  histFull: Record<number, ApiMcpCallRow>;
   histQ: string;
 }
 

@@ -60,6 +60,7 @@ function histButtonLabel(d: McpDetail, tool: string): string {
  *  the 96-char row label would miss a keyword deeper in). The row label is the clipped one-line
  *  preview — the full text is what the right pane is for. */
 function histRowsNode(d: McpDetail, tool: string): HChild {
+  if (d.run.histError) return h("div", { class: "hist-empty" }, d.run.histError);
   if (d.run.histTool !== tool) return h("div", { class: "hist-empty" }, tr("runHistory.loading"));
   const list = d.run.hist || [];
   if (!list.length) {
@@ -90,6 +91,7 @@ function histViewNode(c: ApiMcpCallRow): HChild {
     head,
     valueBlock({ label: tr("runHistory.arguments2") }, ...readableBody(c.args || tr("runHistory.none"), false)),
     valueBlock({ label: outcome }, ...readableBody(c.output || tr("runHistory.empty"), !c.ok)),
+    c.bodyGone ? hint(tr("runHistory.bodyGone")) : null,
     c.preview
       ? h("div", { class: "hist-note" }, tr("runHistory.replyShownFirst"), fmtChars(c.chars),
           tr("runHistory.fullReplyLivesLogs"))
@@ -133,6 +135,17 @@ function histOpen(): void {
     h("div", { class: "hist-view", id: "r-hist-view" },
       h("div", { class: "hist-empty" }, tr("runHistory.hoverRunSeeFull"))));
   document.body.appendChild(pop);
+  if (d.run.histError) { d.run.histTool = null; void loadRunHistory(d.name, d.run.tool); }
+  pop.onkeydown = (ev): void => {
+    if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); histClose(); btn.focus(); return; }
+    if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
+    const rows = [...pop.querySelectorAll<HTMLButtonElement>(".hist-row")];
+    const at = rows.indexOf(document.activeElement as HTMLButtonElement);
+    if (at < 0) return;
+    ev.preventDefault();
+    const next = rows[(at + (ev.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length];
+    next?.focus(); next?.scrollIntoView?.({ block: "nearest" });
+  };
   // One delegated listener triplet on the popover (SPEC §panel.toolchain) instead of three handlers
   // re-attached to every row on every filter repaint: rows come and go, the listener stays.
   pop.onclick = (ev: MouseEvent): void => {
@@ -205,7 +218,13 @@ async function histPreview(seq: number): Promise<void> {
   const d = mcpDetail();
   const view = $("r-hist-view");
   if (!d || d.tab !== "run" || !d.run.histOpen || !view) return;
+  if (!Number.isSafeInteger(seq) || seq <= 0) {
+    d.run.histSelSeq = null;
+    fill(view, h("div", { class: "hist-empty" }, tr("runHistory.couldLoadRun")));
+    return;
+  }
   d.run.histSelSeq = seq;
+  const tool = d.run.tool;
   let full = d.run.histFull[seq];
   if (!full) {
     fill(view, h("div", { class: "hist-empty" }, spinner(), " ", tr("runHistory.loading")));
@@ -213,14 +232,15 @@ async function histPreview(seq: number): Promise<void> {
       const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
       if (!r.ok) throw new Error(tr("runHistory.httpN", { n: r.status }));
       const j = await r.json();
-      if (!j.call || mcpDetail() !== d) return;
+      if (mcpDetail() !== d || d.run.tool !== tool) return;
+      if (!j.call || j.call.seq !== seq || j.call.tool !== tool) throw new Error("Missing call");
       full = d.run.histFull[seq] = j.call;
     } catch (e) {
-      if (d.run.histSelSeq === seq) fill(view, h("div", { class: "hist-empty" }, tr("runHistory.couldLoadRun")));
+      if (mcpDetail() === d && d.run.tool === tool && d.run.histSelSeq === seq) fill(view, h("div", { class: "hist-empty" }, tr("runHistory.couldLoadRun")));
       return;
     }
   }
-  if (d.run.histSelSeq !== seq) return; // a newer hover already won
+  if (mcpDetail() !== d || d.run.tool !== tool || !d.run.histOpen || d.run.histSelSeq !== seq) return;
   fill(view, histViewNode(full as ApiMcpCallRow));
 }
 
@@ -230,8 +250,9 @@ async function histPreview(seq: number): Promise<void> {
  *  after a run, or on each debounced keystroke in the filter). */
 async function loadRunHistory(name: string, tool: string | null): Promise<void> {
   const d = mcpDetail();
-  if (!d || d.name !== name || d.run.histTool === tool || d.run.histLoading) return;
+  if (!d || !tool || d.name !== name || d.run.histTool === tool || d.run.histLoading) return;
   d.run.histLoading = true;
+  d.run.histError = "";
   const q = d.run.histQ || "";
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(name) + "/tool-history?tool=" +
@@ -240,20 +261,27 @@ async function loadRunHistory(name: string, tool: string | null): Promise<void> 
       const j = await r.json();
       // A revisit built a new detail object, or the query moved on (a newer keystroke, or the close
       // that reset it) — a stale reply would narrow the list to something nobody asked for. Drop it.
-      if (mcpDetail() === d && d.run.histQ === q) {
+      if (mcpDetail() === d && d.run.histQ === q && d.run.tool === tool) {
         d.run.hist = j.entries || [];
         d.run.histTool = tool;
         renderHistoryOnly();
       }
     }
-  } catch (e) { /* the control keeps its previous contents */ }
+    else throw new Error(tr("runHistory.httpN", { n: r.status }));
+  } catch (e) {
+    if (mcpDetail() === d && d.run.histQ === q && d.run.tool === tool) {
+      d.run.histError = tr("runHistory.couldLoadRun");
+      d.run.histTool = tool;
+      renderHistoryOnly();
+    }
+  }
   finally {
     d.run.histLoading = false;
     // This reply lost the race to a newer query (a newer keystroke, or the reset a close performs),
     // and that query's own call was turned away while this one held the loading slot — run it now
     // rather than leave the list answering the old q. Not gated on the popover: a close-during-fetch
     // must still heal the closed label, which would otherwise sit at "Past runs…" forever.
-    if (mcpDetail() === d && d.run.histQ !== q && !d.run.histTool) {
+    if (mcpDetail() === d && (d.run.histQ !== q || d.run.tool !== tool) && d.run.histTool !== d.run.tool) {
       void loadRunHistory(d.name, d.run.tool);
     }
   }
@@ -269,7 +297,7 @@ function renderHistoryOnly(): void {
     fill(btn, iconNode("history"), " ", histButtonLabel(d, d.run.tool));
     // "No history at all" disables the control — but a filter that matched nothing must not: the
     // popover is mid-search, its empty state is the answer, and slamming it shut would eat the query.
-    btn.disabled = !d.run.histQ && d.run.histTool === d.run.tool && !(d.run.hist || []).length;
+    btn.disabled = !d.run.histError && !d.run.histQ && d.run.histTool === d.run.tool && !(d.run.hist || []).length;
     if (btn.disabled && d.run.histOpen) histClose();
   }
   const list = $("r-hist-list");
@@ -283,6 +311,8 @@ function renderHistoryOnly(): void {
 async function applyRunHistory(seq: number): Promise<void> {
   const d = mcpDetail();
   if (!d || !d.run.tool) return;
+  if (!Number.isSafeInteger(seq) || seq <= 0) { toast(tr("runHistory.couldLoadRun"), true); return; }
+  const toolName = d.run.tool;
   const tools = d.tools.items || [];
   let toolDef = null as ApiMcpTool | null;
   for (let i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) toolDef = tools[i] as ApiMcpTool;
@@ -291,7 +321,9 @@ async function applyRunHistory(seq: number): Promise<void> {
     const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
     if (!r.ok) { toast(tr("runHistory.httpN", { n: r.status }), true); return; }
     const j = await r.json();
-    if (!j.call) return;
+    if (mcpDetail() !== d || d.tab !== "run" || d.run.tool !== toolName) return;
+    if (!j.call || j.call.seq !== seq || j.call.tool !== toolName) { toast(tr("runHistory.couldLoadRun"), true); return; }
+    if (!j.call.args && j.call.bodyGone) { toast(tr("runHistory.bodyGone"), true); return; }
     d.run.histFull[seq] = j.call; // the pick just fetched it — a hover later is free
     // Arguments over 4 KB were stored clipped (argsText's overflow marker), so they are no longer
     // parseable JSON — say that precisely instead of the generic read failure.
