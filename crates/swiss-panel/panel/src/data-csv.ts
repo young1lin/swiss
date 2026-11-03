@@ -19,7 +19,8 @@ import { $, apiJson, el, errText, targetEl, toast } from "./util.js";
 import { h } from "./h.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
-import { dbOpenValueSheet } from "./data-value.js";
+import { dbOpenValueSheet, dbValueKind } from "./data-value.js";
+import type { DbCellDecodeRef } from "./data-value.js";
 import { dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data-view.js";
 import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, moduleDbMessage, tr, trn } from "./i18n.js";
@@ -257,6 +258,27 @@ function dbPushCellFilter(column: string, op: string, value: unknown): void {
   if (!dbApplyFilters()) { d.filters.pop(); renderDbFilters(); }
 }
 
+/** SPEC §data.sqlite "Decoded cells": a binary cell of a module's own SQLite file names its row
+ *  by the primary key, so the module that wrote it can read the row again and decode it. Any
+ *  other dialect, a value that is not the binary wire, or a row missing part of its key: null,
+ *  and the value sheet keeps its hex dump. */
+function dbCellDecodeRef(row: Record<string, unknown> | null, column: string, value: unknown): DbCellDecodeRef | null {
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table" || !d.data || !row || !c.conn || !d.table) return null;
+  const conn = c.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === c.conn; });
+  if (!conn || conn.dialect !== "sqlite" || dbValueKind(value) !== "hex") return null;
+  const pk = d.data.primaryKey || [];
+  if (!pk.length) return null;
+  const key: Record<string, unknown> = {};
+  for (const k of pk) {
+    const v = row[k];
+    if (v === null || v === undefined) return null;
+    key[k] = v;
+  }
+  return { conn: c.conn, table: d.table, column, key };
+}
+
 function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: string | null, column: string, editInDialog: null | (() => void)): void {
   e.preventDefault();
   const c = dbConn();
@@ -281,7 +303,7 @@ function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: str
   // no content to view, so it gets no item (same rule as the filter items below).
   if (value !== null && value !== undefined) {
     item(tr("dataCsv.viewValue"), (): void => {
-      dbOpenValueSheet(column, value, (d.schema ? d.schema + "." : "") + d.table!);
+      dbOpenValueSheet(column, value, (d.schema ? d.schema + "." : "") + d.table!, pending ? null : dbCellDecodeRef(row, column, value));
     });
   }
   if (editInDialog) {
@@ -490,4 +512,4 @@ function dbExportCsv(): void {
   setTimeout(() => { URL.revokeObjectURL(a.href); }, 1000);
 }
 
-export { dbCellMenu, dbCopyCsvCell, dbCopyFallback, dbCopyText, dbExportCsv, dbOpenImport, dbParseCsvLine, dbPushCellFilter, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy };
+export { dbCellDecodeRef, dbCellMenu, dbCopyCsvCell, dbCopyFallback, dbCopyText, dbExportCsv, dbOpenImport, dbParseCsvLine, dbPushCellFilter, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy };

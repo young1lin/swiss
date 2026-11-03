@@ -38,6 +38,7 @@ mod llm_shell;
 pub mod memory;
 pub mod memory_agent;
 pub mod memory_api;
+mod memory_cells;
 pub mod memory_ask;
 pub mod memory_embed;
 #[cfg(test)]

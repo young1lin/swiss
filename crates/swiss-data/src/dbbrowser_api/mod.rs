@@ -419,6 +419,36 @@ async fn data(
     b.read_table(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
+/// SPEC §data.sqlite "Decoded cells": one cell decoded by the module that wrote it.
+/// `key` is the row's primary key as a JSON object; the module reads the row again by
+/// it, so the bytes shown are the stored ones, never the request's. A connection or
+/// column nothing decodes answers `{decoded:false}` and the grid keeps its own view.
+async fn decode(
+    catalog: &CatalogRegistry,
+    name: &str,
+    q: &HashMap<String, String>,
+) -> Result<Value, Fail> {
+    let table = q.get("table").filter(|s| !s.is_empty()).ok_or_else(|| Fail::bad("table is required"))?;
+    let column = q.get("column").filter(|s| !s.is_empty()).ok_or_else(|| Fail::bad("column is required"))?;
+    let key = q
+        .get("key")
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(|v| match v {
+            Value::Object(m) if !m.is_empty() => Some(m),
+            _ => None,
+        })
+        .ok_or_else(|| Fail::bad("key must be a JSON object naming the row's primary key"))?;
+    let (_lease, b) = lease_db(catalog, name)?;
+    match b.decode_cell(table, column, &key).await.map_err(Fail::bad)? {
+        Some(Value::Object(mut cell)) => {
+            cell.insert("decoded".into(), Value::Bool(true));
+            Ok(Value::Object(cell))
+        }
+        Some(other) => Ok(json!({ "decoded": true, "value": other })),
+        None => Ok(json!({ "decoded": false })),
+    }
+}
+
 async fn schema(
     catalog: &CatalogRegistry,
     name: &str,
@@ -1069,6 +1099,14 @@ async fn data_route(
     reply(data(&catalog, &name, &q).await)
 }
 
+async fn decode_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    reply(decode(&catalog, &name, &q).await)
+}
+
 async fn schema_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -1231,6 +1269,8 @@ where
         .route("/api/db/{name}/databases", get(databases_route))
         // One grid page: columns, rows, total, and whether (and why not) the table is editable.
         .route("/api/db/{name}/data", get(data_route))
+        // SPEC §data.sqlite: one stored cell decoded by the module that wrote it.
+        .route("/api/db/{name}/decode", get(decode_route))
         // The Structure tabs: columns, indexes, foreign keys and DDL for one table.
         .route("/api/db/{name}/schema", get(schema_route))
         .route("/api/db/{name}/export", get(export_route))

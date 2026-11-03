@@ -282,6 +282,13 @@ impl PluginInstance for LlmInstance {
                 self.services
                     .module_dbs
                     .publish(PLUGIN_ID, self.logs_dir.join("llm.db"));
+                // The Data page reads its sealed body parts through this store's own
+                // keys (SPEC §data.sqlite "Decoded cells"); the withdraw in stop takes it back.
+                self.services.module_dbs.set_decoder(
+                    PLUGIN_ID,
+                    self.logs_dir.join("llm.db"),
+                    history.cell_decoder(),
+                );
                 *self.history.lock().await = Some(history);
             }
             Err(err) => {

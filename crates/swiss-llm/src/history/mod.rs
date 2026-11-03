@@ -89,6 +89,8 @@ mod close_queue_seam;
 #[cfg(test)]
 mod size_trim;
 #[cfg(test)]
+mod cell_seam;
+#[cfg(test)]
 mod v4_migration;
 #[cfg(test)]
 mod tool_round_settle_seam;
@@ -458,7 +460,48 @@ pub enum ReplayState {
     Refused(&'static str),
 }
 
+/// The llm body-part tables as the writers lay them down (rows.rs): a call or turn body
+/// binds its row id as the event, a piece binds its hash as the resource; no table
+/// stores the offset, so it is the earlier parts' plain lengths summed.
+static LLM_BODY_TABLES: &[swiss_host::history::cell::BodyPartTable] = &[
+    swiss_host::history::cell::BodyPartTable {
+        table: "call_body",
+        record_col: "call_id",
+        record: "call",
+        binding: swiss_host::history::cell::RecordBinding::Event,
+        has_ofs: false,
+        key: &["id"],
+    },
+    swiss_host::history::cell::BodyPartTable {
+        table: "turn_body",
+        record_col: "turn_id",
+        record: "turn",
+        binding: swiss_host::history::cell::RecordBinding::Event,
+        has_ofs: false,
+        key: &["id"],
+    },
+    swiss_host::history::cell::BodyPartTable {
+        table: "piece_body",
+        record_col: "hash",
+        record: "piece",
+        binding: swiss_host::history::cell::RecordBinding::Resource,
+        has_ofs: false,
+        key: &["id"],
+    },
+];
+
 impl LlmHistory {
+    /// The Data page's decoder for this file's sealed body parts (SPEC §data.sqlite
+    /// "Decoded cells"): it reads through this store and opens with these keys.
+    pub fn cell_decoder(&self) -> std::sync::Arc<dyn swiss_host::services::module_db::ModuleCellDecoder> {
+        std::sync::Arc::new(swiss_host::history::cell::BodyPartDecoder::new(
+            "llm",
+            self.store.clone(),
+            self.keys.clone(),
+            LLM_BODY_TABLES,
+        ))
+    }
+
     /// Open `<logs>/llm.db`. A fresh home has no logs directory until the first open
     /// makes one - the module owns its database file, so it owns the seat too.
     pub async fn open(logs_dir: &Path) -> Result<Arc<Self>, String> {

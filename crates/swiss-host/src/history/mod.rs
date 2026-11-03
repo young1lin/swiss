@@ -22,6 +22,7 @@
 //! stores that consume these land with their own delivery slices.
 
 pub mod body;
+pub mod cell;
 pub mod engine;
 pub mod factory;
 pub mod quota;

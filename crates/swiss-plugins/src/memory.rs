@@ -340,6 +340,13 @@ impl PluginInstance for MemoryInstance {
         // one this instance was given; the code index sits beside it and is
         // listed only when that file already exists.
         self.services.module_dbs.publish(PLUGIN_ID, self.path.clone());
+        // The embedding vectors read as numbers on the Data page (SPEC §data.sqlite
+        // "Decoded cells"), through the serving service; the withdraw in stop takes it back.
+        self.services.module_dbs.set_decoder(
+            PLUGIN_ID,
+            self.path.clone(),
+            Arc::new(crate::memory_cells::MemoryVectorDecoder::new(self.state.clone())),
+        );
         let code = self.path.with_file_name(swiss_memory::code::CODE_FILE);
         if code.is_file() {
             self.services.module_dbs.publish(PLUGIN_ID, code);

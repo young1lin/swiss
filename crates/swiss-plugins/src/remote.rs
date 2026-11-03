@@ -237,6 +237,13 @@ impl PluginInstance for RemoteInstance {
                         )),
                     },
                 );
+                // The Data page reads the sealed output parts through this store
+                // (SPEC §data.sqlite "Decoded cells"); unregister takes it back.
+                system.services().module_dbs.set_decoder(
+                    "remote",
+                    self.logs_dir.join("remote.db"),
+                    history.cell_decoder(),
+                );
                 // The hourly maintenance seat (SPEC §host.history): checkpoint,
                 // conditional VACUUM, ledger reconciliation and the age sweep, run by
                 // the server's retention timer while this database is open.

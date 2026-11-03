@@ -755,6 +755,21 @@ export interface ApiDbTableDetail {
   ddl: string;
 }
 
+/** GET /api/db/{name}/decode - dbbrowser_api/mod.rs decode over swiss-host module_db.rs
+ *  DecodedCell (SPEC §data.sqlite "Decoded cells"). `decoded` false is "nothing decodes this
+ *  cell": the grid's own view stands. `chunk` describes a sealed body part (`part` 0-based,
+ *  `ofs` its first byte in the whole record body), `vectorFacts` an embedding vector. */
+export interface ApiDbDecoded {
+  decoded: boolean;
+  kind?: "text" | "json" | "vector";
+  text?: string;
+  vector?: number[];
+  record?: string;
+  recordId?: string;
+  chunk?: { part: number; parts: number; codec: string; sealed: boolean; plain: number; stored: number; ofs: number };
+  vectorFacts?: { model: string; dims: number; norm: number };
+}
+
 /** One console run as the history files it (swiss-data history.rs Run::to_json, SPEC
  *  §data.history): `ts` in epoch ms, `conn` the connection name that ran it, `cut` when the
  *  statement was stored shortened, `rows` a SQL reply's row count, `error` a failure's words. */

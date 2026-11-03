@@ -201,6 +201,19 @@ pub trait DbBrowser: Send + Sync {
     async fn list_databases(&self) -> Result<Value, String> {
         Ok(json!({ "primary": null, "current": null, "databases": [] }))
     }
+    /// One cell decoded by the module that wrote it (SPEC §data.sqlite "Decoded cells"):
+    /// the row is read again by `key` (the grid's primary-key values), never taken from
+    /// the request. `Ok(None)` means nothing here decodes that cell and the grid keeps its
+    /// own view; the default says so for every connection that is not a module's file.
+    async fn decode_cell(
+        &self,
+        table: &str,
+        column: &str,
+        key: &serde_json::Map<String, Value>,
+    ) -> Result<Option<Value>, String> {
+        let _ = (table, column, key);
+        Ok(None)
+    }
 }
 
 /// The redis flavour of the Data view: page keys by SCAN, read one key type-aware.

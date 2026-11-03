@@ -55,6 +55,8 @@ struct Seen {
     stream_opts: Option<Value>,
     /// The key the stream groups route forwarded (SPEC §data.streams).
     stream_groups_key: Option<String>,
+    /// The (table, column, key) the decode route forwarded (SPEC §data.sqlite).
+    decoded: Option<(String, String, Map<String, Value>)>,
 }
 
 type SeenRef = Arc<Mutex<Seen>>;
@@ -79,6 +81,19 @@ struct StubDb {
 impl DbBrowser for StubDb {
     fn dialect(&self) -> swiss_host::dbbrowser::DbDialect {
         swiss_host::dbbrowser::DbDialect::Mysql
+    }
+    async fn decode_cell(&self, table: &str, column: &str, key: &Map<String, Value>) -> Result<Option<Value>, String> {
+        if let Ok(mut seen) = self.seen.lock() {
+            seen.decoded = Some((table.to_string(), column.to_string(), key.clone()));
+        }
+        match (table, column) {
+            ("call_body", "block") => Ok(Some(json!({
+                "kind": "text", "text": "hello", "record": "call", "recordId": "42",
+                "chunk": { "part": 0, "parts": 1, "codec": "lz4", "sealed": true, "plain": 5, "stored": 9, "ofs": 0 },
+            }))),
+            ("refused", _) => Err("the sealed part did not open".into()),
+            _ => Ok(None),
+        }
     }
     fn label(&self) -> String {
         "stub @ localhost".into()
@@ -2456,4 +2471,42 @@ async fn a_non_browsable_mcp_404s_on_the_catalog_route() {
         body.expect("json")["error"],
         "MCP 'echo' (echo) has no database to browse"
     );
+}
+
+#[tokio::test]
+async fn decode_forwards_the_row_key_and_answers_what_the_module_read() {
+    // SPEC §data.sqlite "Decoded cells": the route hands the table, column and primary key to
+    // the browser; the bytes come from the module's own read, never from the request.
+    let seen: SeenRef = Arc::new(Mutex::new(Seen::default()));
+    let app = || router_of(vec![db_entry("swiss-llm", Arc::new(StubDb { seen: seen.clone(), databases: None }))]);
+    let key = "%7B%22id%22%3A42%7D"; // {"id":42}
+    let (status, _, body, _) =
+        call(app(), "GET", &format!("/api/db/swiss-llm/decode?table=call_body&column=block&key={key}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = body.expect("json");
+    assert_eq!(body["decoded"], json!(true));
+    assert_eq!(body["text"], json!("hello"));
+    assert_eq!(body["chunk"]["codec"], json!("lz4"));
+    let (table, column, sent) = seen.lock().unwrap().decoded.clone().expect("forwarded");
+    assert_eq!((table.as_str(), column.as_str()), ("call_body", "block"));
+    assert_eq!(Value::Object(sent), json!({ "id": 42 }));
+
+    let (status, _, body, _) =
+        call(app(), "GET", &format!("/api/db/swiss-llm/decode?table=call&column=preview_text&key={key}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.expect("json"), json!({ "decoded": false }), "a cell nothing decodes keeps the grid's view");
+
+    let (status, _, body, _) =
+        call(app(), "GET", &format!("/api/db/swiss-llm/decode?table=refused&column=block&key={key}"), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body.expect("json")["error"], json!("the sealed part did not open"));
+
+    for bad in ["", "&key=%5B1%5D", "&key=%7B%7D", "&key=nope"] {
+        let (status, _, body, _) =
+            call(app(), "GET", &format!("/api/db/swiss-llm/decode?table=call_body&column=block{bad}"), None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+        assert!(body.expect("json")["error"].as_str().unwrap().contains("key must be a JSON object"), "{bad}");
+    }
+    let (status, _, _, _) = call(app(), "GET", &format!("/api/db/swiss-llm/decode?column=block&key={key}"), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a table is required");
 }

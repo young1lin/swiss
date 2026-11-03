@@ -220,6 +220,13 @@ impl PluginInstance for TerminalInstance {
                         )),
                     },
                 );
+                // The Data page reads the sealed recording parts through this store
+                // (SPEC §data.sqlite "Decoded cells"); unregister takes it back.
+                self.services.module_dbs.set_decoder(
+                    "terminal",
+                    logs.join("terminal.db"),
+                    history.cell_decoder(),
+                );
                 {
                     // The hourly maintenance seat (SPEC §host.history): checkpoint,
                     // conditional VACUUM, ledger reconciliation and the 90-day sweep

@@ -1086,6 +1086,7 @@ impl RegistryCatalog {
     fn browser_for(
         &self,
         id: &str,
+        plugin: &str,
         path: &std::path::Path,
         label: &str,
     ) -> Arc<crate::adapters::sqlite_browser::SqliteBrowser> {
@@ -1095,22 +1096,22 @@ impl RegistryCatalog {
                 return have.clone();
             }
         }
-        let browser = Arc::new(crate::adapters::sqlite_browser::SqliteBrowser::new(
-            path.to_path_buf(),
-            label.to_string(),
-        ));
+        let browser = Arc::new(
+            crate::adapters::sqlite_browser::SqliteBrowser::new(path.to_path_buf(), label.to_string())
+                .with_decoders(self.modules.clone(), plugin),
+        );
         cache.insert(id.to_string(), browser.clone());
         browser
     }
 
-    fn published(&self, id: &str) -> Option<(std::path::PathBuf, String)> {
+    fn published(&self, id: &str) -> Option<(String, std::path::PathBuf, String)> {
         use swiss_host::services::module_db::{connection_id, connection_label};
         if self.registry.get(id).is_some() {
             return None;
         }
         self.modules.list().into_iter().find_map(|db| {
             let cid = connection_id(&db.plugin, &db.path);
-            (cid == id).then(|| (db.path.clone(), connection_label(&db.path)))
+            (cid == id).then(|| (db.plugin.clone(), db.path.clone(), connection_label(&db.path)))
         })
     }
 
@@ -1195,8 +1196,8 @@ impl swiss_host::services::catalog::ConnectionCatalog for RegistryCatalog {
         swiss_host::services::catalog::CatalogError,
     > {
         use swiss_host::services::catalog::CatalogError;
-        if let Some((path, label)) = self.published(id) {
-            let browser = self.browser_for(id, &path, &label);
+        if let Some((plugin, path, label)) = self.published(id) {
+            let browser = self.browser_for(id, &plugin, &path, &label);
             let flavor = swiss_host::dbbrowser::BrowserFlavor::Db(
                 browser as Arc<dyn swiss_host::dbbrowser::DbBrowser>,
             );
@@ -2293,5 +2294,49 @@ mod tests {
             Ok(_) => panic!("the user entry should win, got a lease"),
             Err(other) => panic!("the user entry should win: {other}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_module_files_cells_decode_through_the_decoder_its_plugin_set() {
+        // SPEC §data.sqlite "Decoded cells": the leased browser asks the publishing
+        // plugin's decoder per request, so a stop (withdraw) leaves the grid's own view.
+        use swiss_host::services::module_db::{CellRef, DecodedCell, ModuleCellDecoder, ModuleDbSeat};
+        struct Echo;
+        #[async_trait::async_trait]
+        impl ModuleCellDecoder for Echo {
+            async fn decode(&self, cell: &CellRef<'_>) -> Result<Option<DecodedCell>, String> {
+                Ok((cell.column == "block").then(|| DecodedCell {
+                    kind: "text",
+                    text: Some(format!("{}:{}", cell.table, cell.key["id"])),
+                    vector: None,
+                    record: "call",
+                    record_id: cell.key["id"].to_string(),
+                    chunk: None,
+                    vector_facts: None,
+                }))
+            }
+        }
+        let seat = Arc::new(ModuleDbSeat::new());
+        let llm = std::env::temp_dir().join("swiss-llm-decode").join("logs").join("llm.db");
+        seat.publish("llm", llm.clone());
+        seat.set_decoder("llm", llm.clone(), Arc::new(Echo));
+        let catalog = RegistryCatalog::new(reg(), swiss_host::services::catalog::LeaseTracker::new())
+            .with_module_dbs(seat.clone());
+        let lease = swiss_host::services::catalog::ConnectionCatalog::lease(&catalog, "swiss-llm", "data")
+            .expect("the llm file leases");
+        let swiss_host::dbbrowser::BrowserFlavor::Db(browser) = lease.flavor() else {
+            panic!("a module file is a SQL browser");
+        };
+        let mut key = serde_json::Map::new();
+        key.insert("id".into(), json!(42));
+        let decoded = browser.decode_cell("call_body", "block", &key).await.expect("no error");
+        assert_eq!(decoded.expect("decoded")["text"], json!("call_body:42"));
+        assert!(browser.decode_cell("call", "preview_text", &key).await.expect("no error").is_none());
+        seat.withdraw("llm");
+        seat.publish("llm", llm);
+        assert!(
+            browser.decode_cell("call_body", "block", &key).await.expect("no error").is_none(),
+            "a stopped plugin's decoder is gone even for a browser already leased"
+        );
     }
 }

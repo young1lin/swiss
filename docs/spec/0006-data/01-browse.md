@@ -13,6 +13,7 @@ All under `/api/db`; `{name}` is the registry name.
 | `GET /{name}/databases` | the database catalog (§data.databases) |
 | `GET /{name}/data` | `{schema,table,columns,rows,total,offset,limit,primaryKey,editable,editNote?,nextPage?}` |
 | `GET /{name}/schema` | `{schema,table,columns,primaryKey,indexes,foreignKeys,ddl}` |
+| `GET /{name}/decode?table=&column=&key=` | a module file's binary cell as the module reads it: `{decoded:true,kind,text?,vector?,record,recordId,chunk?,vectorFacts?}`, or `{decoded:false}` when no decoder takes the cell; a refusal is a 400 (§data.sqlite "Decoded cells") |
 | `GET /{name}/export` | an attachment (§data.export) |
 | `POST /{name}/import` | `{inserted}` (§data.export) |
 | `POST /{name}/ddl`, `/ddl-preview` | `{ran}`; `{sql}` (§data.ddl) |
@@ -103,6 +104,11 @@ behind the pending-edits confirm.
 - **Cells** are type-aware (`dbCellView`): JSON longer than 100 characters folds, a URL is a
   link, numbers use tabular figures, booleans read `TRUE`/`FALSE`, binary is marked.
 - **The value sheet** shows a value as a JSON tree, text, a link, or hex (the first 512 bytes).
+  A binary cell of a module's own SQLite file shows what it decodes to instead (§data.sqlite
+  "Decoded cells"), with a facts line and a Raw hex toggle; a user database's BLOB stays hex.
+- **A grid that cannot edit still looks.** A query-only connection (§data.sqlite) and a row
+  buffered for delete keep the cell menu (copy, View value, filters, row copies) without
+  "Edit in dialog", and a double-click on such a cell opens the value sheet.
 - **Form view** shows one row as a form; **FK jump** opens the referenced table in a new tab
   with the filter preset.
 - **Column stats** ("Value distribution…", "Numeric stats…") and **filter by this value** come
@@ -174,3 +180,44 @@ identifiers with double quotes. The console and the Data agent use the SQL tools
 and a write the agent tries is held rather than run. The Writes switch is not offered.
 `a_query_only_store_lists_and_reads_and_refuses_a_write` and
 `an_open_module_database_is_a_connection_until_its_plugin_stops` pin it.
+
+**Decoded cells.** A module's binary columns hold sealed, LZ4-compressed body parts or float
+vectors, so their hex says nothing. The module that publishes a file may also set a decoder for
+it on the module-database seat (`ModuleDbSeat::set_decoder`); withdrawing the plugin's files
+drops its decoders too. `GET /api/db/{name}/decode?table=&column=&key=` names the cell by its
+table, column and the row's primary key as a JSON object. The browser's bytes are never sent and
+never trusted: the decoder reads the row again from its own store by that key, opens the seal
+against that row's own binding (module, record, part, range), decompresses, and answers. The
+lookup is per request, so a restarted plugin's store answers and a stopped plugin's decoder is
+gone even for a browser leased before.
+
+| Module | Table · column | Record (binding) | Key |
+|---|---|---|---|
+| LLM | `call_body.block`, `turn_body.block` | `call`/`turn` by `call_id`/`turn_id`; range from earlier parts | `id` |
+| LLM | `piece_body.block` | `piece` by `hash` | `id` |
+| Terminal | `chunk.block` | `session`; stored `ofs` | `session`, `part` |
+| Remote | `run_output.block` | `run` by `run_id`; stored `ofs` | `id` |
+| Memory | `memory_vectors.vec` | `memory`: little-endian f32, width `dims` | `memory_id` |
+
+A body part answers `kind` `json` only when it is the record's only part and parses as an
+object or array; a part cut from a longer body is `text`. `chunk` says the part (0-based),
+the parts count, the codec (`lz4`/`raw`), whether it was sealed, plain and stored bytes and
+its offset in the body. A vector answers its numbers with `vectorFacts` (model, dims, L2
+norm); a blob that is not whole f32s, or disagrees with `dims`, is an error, not a short
+vector. Remote's `run_content` is a TEXT sealed envelope and is not decoded. Any other column,
+table or connection answers `{decoded:false}` and the panel keeps the hex dump.
+
+Refusals are 400 with an English sentence (`table is required`, `column is required`,
+`key must be a JSON object naming the row's primary key`, `the row key must name … for …`,
+`no … row has that key any more (…)`, `the sealed part did not open: …`, `codec N is not
+one this build wrote`, `the memory service is not running`). The panel maps the decoder's
+sentences through `dbDecodeMessage` and shows the refusal above the hex dump. The panel asks
+only for a sqlite connection's cell whose value is the binary wire and whose row carries every
+primary-key column. `a_decoder_belongs_to_its_file_and_leaves_with_the_plugin`,
+`a_sealed_part_opens_against_its_own_row_and_refuses_another`,
+`a_call_body_part_and_a_piece_decode_against_their_own_bindings`,
+`the_data_page_reads_one_sealed_part_through_the_owners_decoder`,
+`a_stored_vector_reads_back_as_its_numbers_with_width_and_norm`,
+`a_module_files_cells_decode_through_the_decoder_its_plugin_set`,
+`decode_forwards_the_row_key_and_answers_what_the_module_read` and the panel's
+`admin-data-readonly-cellmenu.test.ts` pin it.

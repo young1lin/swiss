@@ -31,8 +31,9 @@ import { dbKeyShown } from "./data-tree.js";
 import { dbActivityLoad, dbActivityRender } from "./data-activity.js";
 import { dbPubsubClear, dbPubsubForget, dbPubsubRender } from "./data-pubsub.js";
 import { dbCloseAllTabs, dbOpenTab } from "./data-tabs.js";
-import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
+import { dbCellDecodeRef, dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText, dbCellView } from "./data-cell.js";
+import { dbOpenValueSheet } from "./data-value.js";
 import { dbEditCellEnter, dbTableMenu } from "./data-edit.js";
 import { renderDbFilters, dbSqlPaint } from "./data-filters.js";
 import { DB_ROW_LIMITS, dbFavPush, dbFillConsole, dbFormatSql, dbRowLimit, dbRunSql, dbSetRowLimit, dbStatsSql, renderDbBar } from "./data-sql.js";
@@ -1412,6 +1413,18 @@ function renderDbGrid()       {
         td.oncontextmenu = (e            )       => {
           dbCellMenu(e, row, key, c.name, ()       => { dbOpenCellEditor("update", key, -1, c.name, meta); });
         };
+      } else {
+        // SPEC §data.grid: a grid that cannot edit (a query-only connection, a module's own
+        // SQLite, a row buffered for delete) still LOOKS — the cell menu keeps copy, View
+        // value, filters and the row copies, only "Edit in dialog" drops out. Double-click,
+        // the editor's gesture on a writable cell, opens the read-only value sheet instead;
+        // NULL has nothing to show.
+        td.oncontextmenu = (e            )       => { dbCellMenu(e, row, key, c.name, null); };
+        if (v !== null && v !== undefined) {
+          td.ondblclick = ()       => {
+            dbOpenValueSheet(c.name, v, (d.schema ? d.schema + "." : "") + d.table, dbCellDecodeRef(row, c.name, v));
+          };
+        }
       }
       tri.appendChild(td);
     });

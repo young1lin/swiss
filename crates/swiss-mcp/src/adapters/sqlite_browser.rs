@@ -19,8 +19,11 @@
 //! The file belongs to whichever plugin opened it. This browser never writes it:
 //! the file is opened `SQLITE_OPEN_READONLY`, every connection sets `query_only`,
 //! and a statement that is not a read is refused before it reaches the file.
+//! A cell it can only show as bytes is decoded by the plugin that published the file,
+//! through the decoder that plugin set on the module seat (§data.sqlite "Decoded cells").
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -43,6 +46,8 @@ pub struct SqliteBrowser {
     /// The picker label (`logs/data.db`, `memory/store.sqlite3`). The home stays out.
     label: String,
     pool: tokio::sync::Mutex<Option<SqlitePool>>,
+    /// The seat and the publishing plugin, to find that plugin's cell decoder per request.
+    decoders: Option<(Arc<swiss_host::services::module_db::ModuleDbSeat>, String)>,
 }
 
 impl SqliteBrowser {
@@ -51,7 +56,19 @@ impl SqliteBrowser {
             path,
             label: label.into(),
             pool: tokio::sync::Mutex::new(None),
+            decoders: None,
         }
+    }
+
+    /// Decode cells through whatever decoder `plugin` sets for this file on `seat`.
+    /// The lookup is per request, so a restarted plugin's new store is the one read.
+    pub fn with_decoders(
+        mut self,
+        seat: Arc<swiss_host::services::module_db::ModuleDbSeat>,
+        plugin: impl Into<String>,
+    ) -> Self {
+        self.decoders = Some((seat, plugin.into()));
+        self
     }
 
     pub fn path(&self) -> &std::path::Path {
@@ -586,6 +603,20 @@ impl DbBrowser for SqliteBrowser {
             .filter_map(|r| r.get("name").and_then(Value::as_str).map(str::to_string))
             .collect();
         Ok(json!({ "items": completion_items(DbDialect::Sqlite, prefix, &tables, None) }))
+    }
+
+    async fn decode_cell(&self, table: &str, column: &str, key: &Map<String, Value>) -> Result<Option<Value>, String> {
+        let Some((seat, plugin)) = &self.decoders else {
+            return Ok(None);
+        };
+        let Some(decoder) = seat.decoder(plugin, &self.path) else {
+            return Ok(None);
+        };
+        let cell = swiss_host::services::module_db::CellRef { table, column, key };
+        match decoder.decode(&cell).await? {
+            Some(decoded) => serde_json::to_value(decoded).map(Some).map_err(|e| e.to_string()),
+            None => Ok(None),
+        }
     }
 }
 

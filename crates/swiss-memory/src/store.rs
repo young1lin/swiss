@@ -1690,6 +1690,19 @@ pub async fn scope_vectors(
     Ok(out)
 }
 
+/// One note's stored vector row as (model, dims, vec bytes), undecoded: the Data page
+/// reads it to show the numbers (SPEC §data.sqlite "Decoded cells").
+pub async fn stored_vector(conn: &mut SqliteConnection, memory_id: &str) -> MemResult<Option<(String, i64, Vec<u8>)>> {
+    let row = sqlx::query("SELECT model, dims, vec FROM memory_vectors WHERE memory_id = ?")
+        .bind(memory_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    match row {
+        Some(row) => Ok(Some((row.try_get("model")?, row.try_get("dims")?, row.try_get("vec")?))),
+        None => Ok(None),
+    }
+}
+
 /// The widths stored under `model` as (dims, vectors), the most recently written
 /// first. More than one means the index is stale (SPEC §memory.embedding).
 pub async fn vector_widths(conn: &mut SqliteConnection, model: &str) -> MemResult<Vec<(usize, usize)>> {

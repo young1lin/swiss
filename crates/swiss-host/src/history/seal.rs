@@ -63,6 +63,13 @@ impl ChunkKeys {
         }
     }
 
+    /// Keys over one fixed master, for tests in this crate: the sealed path without
+    /// the machine's key sources.
+    #[cfg(test)]
+    pub(crate) fn from_master(master: [u8; 32]) -> Self {
+        Self { candidates: vec![master], ..Self::default() }
+    }
+
     /// True when no key source answered: writes stay plain; reads still open PLAIN
 /// (legacy/degraded) rows - a sealed row from a key this machine lacks serves as
 /// gone, exactly as it always does.

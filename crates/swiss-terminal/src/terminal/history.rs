@@ -148,7 +148,29 @@ type SessionTupleRow = (
     i64,
 );
 
+/// The recording's parts as append_part writes them: the session id is the event, the
+/// row stores its offset, and the grid addresses a part by (session, part).
+static TERMINAL_BODY_TABLES: &[swiss_host::history::cell::BodyPartTable] = &[swiss_host::history::cell::BodyPartTable {
+    table: "chunk",
+    record_col: "session",
+    record: "session",
+    binding: swiss_host::history::cell::RecordBinding::Event,
+    has_ofs: true,
+    key: &["session", "part"],
+}];
+
 impl TerminalHistory {
+    /// The Data page's decoder for this file's sealed recording parts (SPEC
+    /// §data.sqlite "Decoded cells").
+    pub fn cell_decoder(&self) -> Arc<dyn swiss_host::services::module_db::ModuleCellDecoder> {
+        Arc::new(swiss_host::history::cell::BodyPartDecoder::new(
+            "terminal",
+            self.store.clone(),
+            self.keys.clone(),
+            TERMINAL_BODY_TABLES,
+        ))
+    }
+
     /// Open (and if needed import into) `<logs>/terminal.db`. The caller is the plugin's
     /// start — never a constructor — so a disabled terminal opens nothing at all.
     pub async fn open(sessions_dir: &Path, logs_dir: &Path) -> Result<Arc<Self>, String> {
@@ -1754,5 +1776,53 @@ mod tests {
     fn parse_cast_rejects_a_non_object_header() {
         assert!(parse_cast(b"[]\n[0.1, \"o\", \"x\"]\n").is_err());
         assert!(parse_cast(b"not json\n").is_err());
+    }
+
+    #[tokio::test]
+    async fn the_data_page_reads_one_sealed_part_through_the_owners_decoder() {
+        // SPEC §data.sqlite "Decoded cells": the grid shows chunk.block as bytes; the
+        // decoder reads the row again by (session, part), opens it against the binding
+        // append_part sealed it with, and says where in the recording the part sits.
+        let (sessions, logs) = temp_home("decode-cell");
+        let h = TerminalHistory::open(&sessions, &logs).await.expect("open");
+        let uid = session_uid(&"e".repeat(32));
+        h.begin(uid, &"e".repeat(32), 80, 24, "xterm").expect("begin");
+        let first = format!("[1.0, \"o\", \"{}\"]
+", "a".repeat(400));
+        let second = b"[2.0, \"o\", \"second part\"]
+".to_vec();
+        let _ = h.append_part(uid, 0, 0, first.as_bytes());
+        let _ = h.append_part(uid, 1, first.len() as u64, &second);
+        h.flush().await;
+        let decoder = h.cell_decoder();
+        let key = |part: i64| {
+            let mut m = serde_json::Map::new();
+            m.insert("session".into(), serde_json::json!(uid));
+            m.insert("part".into(), serde_json::json!(part));
+            m
+        };
+        let k1 = key(1);
+        let cell = swiss_host::services::module_db::CellRef { table: "chunk", column: "block", key: &k1 };
+        let decoded = decoder.decode(&cell).await.expect("decodes").expect("a chunk block is decoded");
+        assert_eq!(decoded.text.as_deref(), Some("[2.0, \"o\", \"second part\"]
+"));
+        assert_eq!((decoded.record, decoded.record_id.clone()), ("session", uid.to_string()));
+        let facts = decoded.chunk.expect("chunk facts");
+        assert_eq!((facts.part, facts.parts, facts.ofs), (1, 2, first.len() as u64));
+        assert_eq!(facts.sealed, !h.keys.degraded(), "sealed whenever this machine has a key");
+        let k0 = key(0);
+        let first_cell = swiss_host::services::module_db::CellRef { table: "chunk", column: "block", key: &k0 };
+        let decoded = decoder.decode(&first_cell).await.expect("decodes").expect("decoded");
+        assert_eq!(decoded.chunk.expect("facts").codec, "lz4", "a run of the same byte compresses");
+        let other = swiss_host::services::module_db::CellRef { table: "session", column: "term", key: &k0 };
+        assert!(decoder.decode(&other).await.expect("not an error").is_none(), "only body blocks are this decoder's");
+        let k9 = key(9);
+        let gone = swiss_host::services::module_db::CellRef { table: "chunk", column: "block", key: &k9 };
+        assert!(decoder.decode(&gone).await.unwrap_err().contains("no chunk row"));
+        let mut half = serde_json::Map::new();
+        half.insert("session".into(), serde_json::json!(uid));
+        let half = swiss_host::services::module_db::CellRef { table: "chunk", column: "block", key: &half };
+        assert!(decoder.decode(&half).await.unwrap_err().contains("session, part"));
+        h.close().await.expect("close");
     }
 }

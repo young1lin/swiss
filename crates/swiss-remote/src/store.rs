@@ -104,7 +104,30 @@ pub struct RemoteHistory {
     keys: swiss_host::history::seal::ChunkKeys,
 }
 
+/// The output stream's parts as the run writer lays them down: the run id is the event
+/// and the row stores its offset. run_content is a sealed envelope kept as TEXT on
+/// purpose (a sensitive file's body): it is not listed, so it is never decoded.
+static REMOTE_BODY_TABLES: &[swiss_host::history::cell::BodyPartTable] = &[swiss_host::history::cell::BodyPartTable {
+    table: "run_output",
+    record_col: "run_id",
+    record: "run",
+    binding: swiss_host::history::cell::RecordBinding::Event,
+    has_ofs: true,
+    key: &["id"],
+}];
+
 impl RemoteHistory {
+    /// The Data page's decoder for this file's sealed output parts (SPEC §data.sqlite
+    /// "Decoded cells").
+    pub fn cell_decoder(&self) -> Arc<dyn swiss_host::services::module_db::ModuleCellDecoder> {
+        Arc::new(swiss_host::history::cell::BodyPartDecoder::new(
+            "remote",
+            self.store.clone(),
+            self.keys.clone(),
+            REMOTE_BODY_TABLES,
+        ))
+    }
+
     /// Open (and if needed import into) `<logs>/remote.db`. The caller is the plugin's
     /// start — never a constructor — so a disabled Remote module opens nothing at all.
     /// FULL durability (SPEC `host.history): this database is the audit surface.
