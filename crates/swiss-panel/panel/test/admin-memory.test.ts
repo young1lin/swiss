@@ -3066,3 +3066,20 @@ describe("the Memory page - previews", () => {
     expect(pv.findLine(md, "nowhere", true)).toBeNull();
   });
 });
+
+it("keeps search available and discloses, summarizes and clears advanced filters", async () => {
+  await mounted();
+  const summary = q("#memFilterSummary");
+  const fold = summary.closest("details") as HTMLDetailsElement;
+  expect(fold.open).toBe(false);
+  expect(q("#memQ").closest("details")).toBeNull();
+  fold.open = true;
+  const kind = q<HTMLSelectElement>("#memKind");
+  kind.value = "decision"; kind.dispatchEvent(new Event("change", { bubbles: true }));
+  await settle();
+  expect(q("#memFilterSummary").textContent).toContain("decision");
+  expect(q<HTMLButtonElement>("#memFilterClear").disabled).toBe(false);
+  await click("#memFilterClear");
+  expect(q<HTMLSelectElement>("#memKind").value).toBe("");
+  expect(q<HTMLButtonElement>("#memFilterClear").disabled).toBe(true);
+});

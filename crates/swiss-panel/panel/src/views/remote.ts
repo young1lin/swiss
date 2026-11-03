@@ -39,7 +39,7 @@ import type { HChild } from "../h.js";
 import { assignMember, groupFieldNode, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
 import { locale, tr, trn } from "../i18n.js";
 import type { MenuItem } from "../ui/menu.js";
-import { btn, checkField, closeSheet, dot, field, iconBtn, moreBtn, pair, paneBody, paneHead, popupMenu, relTime, row, sheet, showSheet, tag } from "../ui/index.js";
+import { btn, checkField, closeSheet, dot, field, hint, note, iconBtn, moreBtn, pair, paneBody, paneHead, popupMenu, relTime, row, sheet, showSheet, tag } from "../ui/index.js";
 import { actionBtn } from "../ui/action.js";
 import type { RowCol } from "../ui/index.js";
 import { commandOf, runOutcome, runTarget } from "./remote-runs.js";
@@ -335,6 +335,8 @@ function render(): void {
           actionBtn("new", tr("remote.addTarget"), { id: "rmAdd" }),
         ],
       }),
+      !targets.length ? note(tr("remote.emptySetup")) : null,
+      (!targets.length || !endpoints.length) ? hint([!endpoints.length ? tr("remote.endpointSetup") : null, " ", h("a", { href: "#tunnels" }, tr("remote.openTunnels"))]) : null,
       h("div", { id: "rmGroups" })));
   // The grouped list ALWAYS paints, rows or none. A group is a place (SPEC §host.groups: an empty
   // group is not an empty state - it is a drop target with a +), and the default group is
@@ -400,7 +402,7 @@ function openSheet(target: RemoteTargetRow | null): void {
       field({ label: tr("remote.alias"), control: h("input", { id: "rm-id", placeholder: tr("remote.build") }), hint: tr("remote.aliasHint") }),
       field({ label: tr("remote.labelOptional"), control: h("input", { id: "rm-label" }) }),
       pair(
-        field({ label: tr("remote.endpointTunnelsConnection"), control: h("select", { id: "rm-endpoint" }, endpointOptions) }),
+        field({ label: tr("remote.endpointTunnelsConnection"), control: h("select", { id: "rm-endpoint" }, endpointOptions), hint: !endpoints.length ? [tr("remote.endpointSetup"), " ", h("a", { href: "#tunnels" }, tr("remote.openTunnels"))] : undefined }),
         groupFieldNode(groupNames, groupSel)),
       field({ label: tr("remote.workspaceRootAbsolutePosix"), control: h("input", { id: "rm-root", placeholder: tr("remote.dataWsProj") }) }),
       // Several checks under one caption: a group, so the caption presses none of them.

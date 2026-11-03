@@ -4202,6 +4202,11 @@ const en: Record<string, string> = {
   "analysis.chart.area": "Area",
   "analysis.chart.scatter": "Points",
   "runHistory.bodyGone": "The full reply has been cleared; only the stored preview remains.",
+  "memory.filter.advanced": "Advanced filters",
+  "memory.filter.clear": "Clear filters",
+  "remote.emptySetup": "Add a target to run commands or transfer files in a remote workspace. A target uses an SSH connection provided by Tunnels.",
+  "remote.endpointSetup": "No SSH endpoints are available. Add an SSH connection in Tunnels first.",
+  "remote.openTunnels": "Open Tunnels",
 };
 
 export default en;

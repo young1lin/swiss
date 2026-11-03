@@ -457,3 +457,11 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect($("sheet").querySelector(".sheet")).toBe(dlg);
   });
 });
+
+it("explains empty targets and links to Tunnels even when endpoints already exist", async () => {
+  serve([]); await view.mount();
+  expect(document.querySelector('#rmGroups')).not.toBeNull();
+  expect(document.querySelector('a[href="#tunnels"]')).not.toBeNull();
+  expect(document.getElementById("pane")?.textContent).not.toContain("No SSH endpoints are available");
+  expect(requests.filter(r => r.method !== "GET")).toEqual([]);
+});

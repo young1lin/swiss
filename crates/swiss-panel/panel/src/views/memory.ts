@@ -50,7 +50,7 @@ import type { HChild } from "../h.js";
 import { fill, h } from "../h.js";
 import { tr, trn } from "../i18n.js";
 import { actionBtn,
-  btn, card, checkField, closeMenu, closeSheet, dot, emptyNode, failNote, field, filterInput, form, formActions, hint,
+  btn, card, checkField, closeMenu, closeSheet, dot, emptyNode, failNote, field, filterInput, form, formActions, formFold, hint,
   iconBtn, inlineForm, markdownNode, menuOpen, moreBtn, note, openFieldSheet, pickList, pickRow, pickSelect, popupMenu, row, seg,
   sheet, showSheet, sideRow, tag, textNode, valueBlock, workspace, wsBar, wsHead, wsScroll, wsSide, wsSplit,
 } from "../ui/index.js";
@@ -356,16 +356,13 @@ function notesToolbar(): HTMLElement {
   askBtn.onclick = (): void => {
     if (p) void openAsk(p.id, projectName(p));
   };
-  return wsBar({
-    rows: [
-      [mode, askBtn],
-      ...ask,
-      [kind, status],
-      // A path reads only whole: the domain filter takes a line of its own.
-      ...(domain ? [[domain]] : []),
-      [checkbox("memUnconf", S.unconfirmed, tr("memory.filter.unconfirmed")), checkbox("memHist", S.history, tr("memory.history"))],
-    ],
-  });
+  const active = [S.kind && kindLabel(S.kind), S.statusFilter && statusLabel(S.statusFilter), S.domain, S.unconfirmed && tr("memory.filter.unconfirmed"), S.history && tr("memory.history")].filter(Boolean).join(" · ");
+  const clear = btn(tr("memory.filter.clear"), { kind: "ghost", id: "memFilterClear" });
+  clear.disabled = !active;
+  clear.onclick = (): void => { S.kind = ""; S.statusFilter = ""; S.domain = ""; S.unconfirmed = false; S.history = false; void paintBody(); };
+  const advanced = formFold({ summary: h("span", { id: "memFilterSummary" }, tr("memory.filter.advanced"), active ? " · " + active : "") },
+    wsBar({ rows: [[kind, status], ...(domain ? [[domain]] : [])] }), formActions(checkbox("memUnconf", S.unconfirmed, tr("memory.filter.unconfirmed")), checkbox("memHist", S.history, tr("memory.history")), clear));
+  return wsBar({ rows: [[mode, askBtn], ...ask, [advanced]] });
 }
 
 /** The status, unconfirmed and kind filters over an answer the server could not filter itself
@@ -898,6 +895,11 @@ function onChange(ev: Event): void {
     case "memBriefGlobal": S.briefGlobal = checked; return;
     default: return;
   }
+  const summary = document.getElementById("memFilterSummary");
+  const active = [S.kind && kindLabel(S.kind), S.statusFilter && statusLabel(S.statusFilter), S.domain, S.unconfirmed && tr("memory.filter.unconfirmed"), S.history && tr("memory.history")].filter(Boolean).join(" · ");
+  if (summary) summary.textContent = tr("memory.filter.advanced") + (active ? " · " + active : "");
+  const clear = document.getElementById("memFilterClear") as HTMLButtonElement | null;
+  if (clear) clear.disabled = !active;
   void loadList();
 }
 

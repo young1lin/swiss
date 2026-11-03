@@ -428,6 +428,11 @@ The builtin `remote` MCP (def type `remote`): five tools — `remote_exec`, `rem
 
 ## §remote.panel — The Targets and Runs pages
 
+An empty list explains that Tunnels provides SSH endpoints while Remote targets name workspace
+and capabilities. A Tunnels link remains available even with existing endpoints; without any,
+the endpoint field explains setup. The default group and Add remain. No link runs commands or
+copies configuration.
+
 - **Targets** (`#remote`): library rows (§panel.ui) — the alias; a sub-line saying where
   it runs (endpoint, the workspace root in mono, the capabilities); when it last ran, read from
   the run record's own route; one ⋯ menu. The CLI and the page write the same rows through the

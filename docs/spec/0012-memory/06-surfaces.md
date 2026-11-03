@@ -207,8 +207,9 @@ picked from it: keyword search with scores and, with a provider, whether meaning
 or *Associate* over a pasted passage with explained scores; beside the two modes, the
 **Ask** button opens the ask sheet (§memory.rag: a question, the agent left to the layers or
 named, the answer drawn as Markdown with the note ids it rests on and the runner said
-underneath); kind/status/unconfirmed/history/domain
-filters; new note, filed in the domain picked), **Review** (the same two columns over the inbox: confirm, verified,
+underneath); kind/status/unconfirmed/history/domain filters in a collapsed Advanced fold,
+whose summary names active constraints and Clear resets them while preserving search text;
+common search stays directly available; new note, filed in the domain picked), **Review** (the same two columns over the inbox: confirm, verified,
 outdated, wrong, each moving on to the next note waiting; its bar says the daily review under
 the inbox's own line - on, its time and how many pending notes of every origin it takes
 then; off with such notes waiting, tagged *no daily review*, that they stay as they are, with

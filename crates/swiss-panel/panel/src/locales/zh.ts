@@ -4100,6 +4100,11 @@ const zh: Record<string, string> = {
   "analysis.chart.area": "面积图",
   "analysis.chart.scatter": "散点图",
   "runHistory.bodyGone": "完整回复已清理；当前仅保留存储的预览。",
+  "memory.filter.advanced": "高级筛选",
+  "memory.filter.clear": "清除筛选",
+  "remote.emptySetup": "添加目标后，可在远程工作目录执行命令、传输文件。目标使用 Tunnels 提供的 SSH 连接。",
+  "remote.endpointSetup": "暂无 SSH 端点，请先在 Tunnels 中添加 SSH 连接。",
+  "remote.openTunnels": "打开 Tunnels",
 };
 
 export default zh;
