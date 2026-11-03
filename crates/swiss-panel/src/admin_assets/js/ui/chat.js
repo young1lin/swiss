@@ -334,6 +334,13 @@ function afterWrite(ta                     , fn            )       {
   fns.push(fn);
 }
 
+/** Run fn after every write to a chat's words box, typed or set by the page: for a pane whose
+ *  controls follow the words, such as a round button that stops a streaming reply while the box
+ *  is empty and sends (queues) once it holds words. */
+export function chatAfterWrite(ta                     , fn            )       {
+  afterWrite(ta, fn);
+}
+
 /** The words box grows with its words: its rows are the floor, the CSS max-height the cap, and
  *  past the cap it scrolls. It refits on every write, on focus, and when its width changes (the
  *  same words wrap to another height); a box not laid out (a folded pane) keeps its rows. */

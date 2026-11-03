@@ -462,9 +462,12 @@ literal.
 - **An assistant sits at the end edge** (`chatPane({id, cap, tools, body, input, commands,
   queued, note, actions, stats})` after a `grip({end, fold})`): Data's agent (§data.agent). A column on the
   sidebar's surface, `--chat-pane-w` wide before a drag: the head (its caption, then a
-  picker, New and close), the conversation that scrolls on its own (`chatFollow(pane)` keeps
+  picker, New and close - one line at any width: the subject ellipsizes, a pane narrower than
+  360px drops the caption, the tools never wrap under it), the conversation that scrolls on its own (`chatFollow(pane)` keeps
   its end in view on every streamed paint), and the compose box under it - the words, then a
-  line with a note at its start (what the pane works on) and the send and stop at its end,
+  line with a note at its start (what the pane works on) and the send at its end (a page may
+  turn it into the stop while an answer streams; `chatAfterWrite(box, fn)` re-reads it on every
+  write to the box, typed or set),
   which stays put however long the conversation grows. `queued` stands above the words box:
   what was sent while an answer streams, waiting its turn (a `chatQueue`'s node, below, no
   room taken while empty). `stats` stands under that line: the conversation's account (a

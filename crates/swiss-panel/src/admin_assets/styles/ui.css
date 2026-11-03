@@ -305,8 +305,10 @@
     .pane > .wide { max-width: var(--measure-wide); }
     .pane > .empty { max-width: none; }
     /* The workspace template (SPEC §panel.nav): a full-bleed body - no padding, no measure, no scroll
-       of its own; the page inside divides the space itself (Data, Terminal). */
-    .pane.full { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+       of its own; the page inside divides the space itself (Data, Terminal). Clipped, never
+       hidden: a hidden box still scrolls under a focus() or scrollIntoView() that reaches a
+       few pixels past its edge, and the whole page then sat shifted with no way to scroll back. */
+    .pane.full { display: flex; flex-direction: column; overflow: clip; padding: 0; }
     .pane.full > * { max-width: none; } /* .pane > * caps at --measure: a workspace left 40% of a wide window blank (19998) */
 
     /* --- page scaffolding, lists, menus, sheets (from views.css) -------------------------------- */
@@ -1014,13 +1016,16 @@
        beside the work it acts on, on the sidebar's surface. Its head carries the caption and the
        tools (a picker, New, close); the column scrolls on its own; the words box and its actions
        stay docked under a hairline however long the conversation grows. A grip({ end }) before
-       it sizes it. */
-    .chat-pane { width: var(--chat-pane-w); flex: none; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--sidebar); border-left: 1px solid var(--sep); }
-    .chat-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); min-width: 0; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
-    .chat-heading { flex: 1 1 26em; display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+       it sizes it. The head stays one line at any width: the subject gives way first (an
+       ellipsis), then the caption (a narrow pane drops it), and the tools never wrap under the
+       heading - a second head row pushed the conversation down whenever the pane narrowed. */
+    .chat-pane { container: chat / inline-size; width: var(--chat-pane-w); flex: none; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--sidebar); border-left: 1px solid var(--sep); }
+    .chat-head { flex: none; display: flex; align-items: center; gap: var(--s2); min-width: 0; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
+    .chat-heading { flex: 1; display: flex; align-items: center; gap: var(--s2); min-width: 0; }
     .chat-heading > .sec-cap { flex: none; }
+    @container chat (max-width: 360px) { .chat-heading > .sec-cap { display: none; } }
     .chat-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: var(--f-label); }
-    .chat-tools { display: flex; align-items: center; gap: var(--s1); min-width: 0; margin-left: auto; }
+    .chat-tools { flex: none; display: flex; align-items: center; gap: var(--s1); margin-left: auto; }
     .chat-tools select, .chat-heading select { min-width: 0; max-width: calc(var(--chat-pane-w) / 3); }
     .chat-heading > .dd { flex: 0 1 auto; max-width: 40%; }
     .chat-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s2) var(--s3); }

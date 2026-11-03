@@ -691,8 +691,18 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     wire.push("delta", { kind: "text", text: "Counting" });
     await settle();
     expect(bodyText()).toContain("count the posts");
-    expect(q<HTMLButtonElement>("#dbAgentSend").getAttribute("aria-label"), "live on this connection: Send queues").toBe(tr("llm.test.queue"));
+    const round = q<HTMLButtonElement>("#dbAgentSend");
+    expect(round.getAttribute("aria-label"), "live with an empty box: the round button stops").toBe(tr("dataAgent.stop"));
+    expect(round.querySelector("use")?.getAttribute("href")).toBe("#i-stop");
+    const box = q<HTMLTextAreaElement>("#dbAgentAsk");
+    box.value = "follow";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(round.getAttribute("aria-label"), "live with words in the box: it queues").toBe(tr("llm.test.queue"));
+    expect(round.querySelector("use")?.getAttribute("href")).toBe("#i-arrow-up");
+    box.value = "";
+    expect(round.getAttribute("aria-label"), "cleared again: back to Stop").toBe(tr("dataAgent.stop"));
     await ask("follow up");
+    expect(sent("/api/llm/agents/test/cancel"), "words in the box queue, never stop").toEqual([]);
     await switchTo("i-crm");
     expect(calls.some((c) => c.path === "/api/llm/db/conversation?agent=db&conn=i-crm")).toBe(true);
     expect(bodyText()).not.toContain("count the posts");
@@ -746,13 +756,14 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     wire.push("run", { runId: 42, agent: "db", continued: false });
     await settle();
     expect((sent("/api/llm/db/stream")[0] as { runId?: number }).runId).toBeUndefined();
-    expect(q("#dbAgentStop").hidden).toBe(false);
-    q<HTMLButtonElement>("#dbAgentStop").click();
+    const round = q<HTMLButtonElement>("#dbAgentSend");
+    expect(round.getAttribute("aria-label")).toBe(tr("dataAgent.stop"));
+    round.click();
     await settle();
     expect(sent("/api/llm/agents/test/cancel")).toEqual([{ runId: 42 }]);
     expect(bodyText()).toContain(tr("llm.test.cancelled"));
-    expect(q<HTMLButtonElement>("#dbAgentSend").disabled).toBe(false);
-    expect(q("#dbAgentStop").hidden).toBe(true);
+    expect(round.disabled).toBe(false);
+    expect(round.getAttribute("aria-label"), "stopped: the round button sends again").toBe(tr("dataAgent.send"));
     wire.end();
   });
 
@@ -929,14 +940,16 @@ describe("around the conversation (SPEC §data.agent)", () => {
     expect(steers().slice(-2)).toEqual(["one more", "and another"]);
     expect(queued()).toEqual(["one more", "and another"]);
     expect(box.value).toBe("");
-    // Stop keeps the queue, the marks off, and leaves the box alone.
-    box.value = "half typed";
-    q<HTMLButtonElement>("#dbAgentStop").click();
+    // With the box empty the round button stops: it keeps the queue, with the marks off.
+    expect(q<HTMLButtonElement>("#dbAgentSend").getAttribute("aria-label")).toBe(tr("dataAgent.stop"));
+    q<HTMLButtonElement>("#dbAgentSend").click();
     await settle();
     expect(queued()).toEqual(["one more", "and another"]);
     expect(document.querySelectorAll("#dbAgentQueued [data-steered]")).toHaveLength(0);
-    expect(box.value).toBe("half typed");
-    expect(q<HTMLButtonElement>("#dbAgentSend").getAttribute("aria-label")).toBe(tr("dataAgent.send"));
+    expect(box.value).toBe("");
+    box.value = "half typed";
+    expect(q<HTMLButtonElement>("#dbAgentSend").getAttribute("aria-label"), "nothing streams: words send").toBe(tr("dataAgent.send"));
+    box.value = "";
     expect(box.placeholder).toBe(tr("dataAgent.askPh"));
     next.end();
     // With nothing streaming, ↑ sends that one now.
@@ -1192,12 +1205,16 @@ describe("around the conversation (SPEC §data.agent)", () => {
     await openOn("k-shop");
     q<HTMLButtonElement>("#dbAgentCompact").click();
     await settle();
-    expect(q<HTMLButtonElement>("#dbAgentSend").disabled, "a compaction takes no queued words").toBe(true);
+    const round = q<HTMLButtonElement>("#dbAgentSend");
+    q<HTMLTextAreaElement>("#dbAgentAsk").value = "typed meanwhile";
+    expect(round.getAttribute("aria-label"), "a compaction takes no queued words: the round button only stops").toBe(tr("dataAgent.stop"));
+    q<HTMLTextAreaElement>("#dbAgentAsk").value = "";
     // Stop before the run frame: the cancel waits for the run it names.
-    q<HTMLButtonElement>("#dbAgentStop").click();
+    round.click();
     await settle();
     expect(sent("/api/llm/agents/test/cancel")).toEqual([]);
-    expect(q<HTMLButtonElement>("#dbAgentStop").disabled).toBe(true);
+    expect(round.disabled).toBe(true);
+    expect(round.getAttribute("aria-label")).toBe(tr("memory.sync.run.stopping"));
     wire.push("run", { runId: 92, from: 91, agent: "db", conn: "k-shop", compacting: true });
     await settle();
     expect(sent("/api/llm/agents/test/cancel")).toEqual([{ runId: 92 }]);
@@ -1205,8 +1222,8 @@ describe("around the conversation (SPEC §data.agent)", () => {
     wire.end();
     await settle();
     expect(q("[data-dbcompact='91']").textContent).toContain(tr("dataAgent.compactCancelled"));
-    expect(q<HTMLButtonElement>("#dbAgentSend").disabled).toBe(false);
-    expect(q("#dbAgentStop").hidden).toBe(true);
+    expect(round.disabled).toBe(false);
+    expect(round.getAttribute("aria-label")).toBe(tr("dataAgent.send"));
   });
 
   it("uses the smaller model window for both the fresh estimate and the first provider count", async () => {
@@ -1599,7 +1616,7 @@ it("keeps the connection beside the DB picker and every composer control inside 
   expect(q("#dbAgentEmpty").querySelector("button")).toBeNull();
   const editor = q("#dbAgentAsk").closest(".chat-editor");
   expect(editor).not.toBeNull();
-  for (const id of ["dbAgentWrites", "dbAgentModel", "dbAgentSend", "dbAgentStop"]) {
+  for (const id of ["dbAgentWrites", "dbAgentModel", "dbAgentSend"]) {
     expect(q("#" + id).closest(".chat-editor"), id).toBe(editor);
   }
 });

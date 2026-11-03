@@ -63,6 +63,7 @@ const HELPERS: Record<string, string> = {
   gripFolded: "a grip()'s fold flag",
   chatGrow: "fits a chatPane()'s words box to its words - chatPane() wires it, a height and nothing drawn",
   chatFollow: "keeps a chatPane()'s column end in view - called as an answer streams in",
+  chatAfterWrite: "hears every write to a chatPane()'s words box, typed or set - a hook, draws nothing",
   copyText: "puts words on the clipboard - copyBtn() calls it, draws nothing",
   dockShow: "brings back a pane its dock folded - called by a page's run or tab, draws nothing",
   sheetOpen: "sheet()'s open flag",

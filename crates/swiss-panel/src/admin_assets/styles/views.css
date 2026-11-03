@@ -226,7 +226,7 @@
     .db-tree-cap .db-table-name { flex: 1; font-size: var(--f-caption); color: var(--text-3); }
     .db-tree-cap:hover .db-table-name { color: var(--accent); }
     .db-side-foot { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); justify-content: space-between; }
-    .db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; padding: var(--s3) var(--s4) 0; }
+    .db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; --db-px: var(--s4); padding: var(--s3) var(--db-px) 0; }
     /* The object tab strip (SPEC §data.tabs). L3 resource navigation owned by the page body, drawn
        as CARD tabs — the shape for "one open resource". It is
        deliberately neither of the other two tab shapes on screen: the context bar's underline
@@ -236,10 +236,9 @@
        is lifted to --bg with the strip's hairline cancelled under it, so card and grid read as
        one surface (rule 16). The accent is a 2px inset on the card's TOP edge — the bottom edge
        belongs to the L2 underline and must not be echoed here. */
-    .db-tabstrip { display: flex; align-items: stretch; flex: none; margin: calc(var(--s3) * -1) calc(var(--s4) * -1) 0; background: var(--sidebar); border-bottom: 1px solid var(--sep); }
-    /* The cards scroll, the exits stay. The "+" and the overflow button used
-       to sit INSIDE the scroll run, so a full strip scrolled its own way out offscreen (the
-       owner's screenshot). Two zones now: the run overflows and hides its scrollbar (the
+    .db-tabstrip { display: flex; align-items: stretch; flex: none; margin: calc(var(--s3) * -1) calc(var(--db-px) * -1) 0; background: var(--sidebar); border-bottom: 1px solid var(--sep); }
+    /* The cards scroll, the exits stay: the "+" and the overflow button once sat INSIDE the
+       scroll run, so a full strip scrolled them offscreen. Two zones now: the run overflows and hides its scrollbar (the
        wheel still scrolls it — wired in data-tabs.ts), the end cap is pinned and separated
        from the run by the strip's own hairline colour. */
     .db-tabstrip-scroll { display: flex; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-width: none; padding-left: var(--s2); }
@@ -257,7 +256,8 @@
     .db-tab-more { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 32px; border: none; background: none; color: var(--text-3); cursor: pointer; --ic: 14px; }
     .db-tab-more:hover { background: var(--hover); color: var(--text); }
     .db-head { display: flex; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
-    .db-head-left { min-width: 0; }
+    .db-head-left { flex: 1 1 14em; min-width: 0; }
+    .db-head-left > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-title { margin: 0; font-size: var(--f-head); font-weight: var(--w-title); }
     .db-meta { font-size: var(--f-label); color: var(--text-2); margin-top: 2px; }
     .db-head-ctl { margin-left: auto; display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; justify-content: flex-end; }
@@ -743,7 +743,7 @@
 .db-root > .db-side { max-width: 24%; }
 .db-root > #dbAgent { max-width: 42%; }
 @container (max-width: 1100px) {
-  .db-main { padding-inline: var(--s2); }
+  .db-main { --db-px: var(--s2); }
   .db-root > .db-side { max-width: 21%; }
   .db-root > #dbAgent { max-width: 40%; }
 }

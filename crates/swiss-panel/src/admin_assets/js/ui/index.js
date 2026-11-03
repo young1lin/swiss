@@ -64,7 +64,7 @@ export { factLine, flow, flowHead, flowIO, flowProse, flowToggle, scrollBox } fr
                                                     
 export { transcript, transcriptText, transcriptTurn, toolChip } from "./transcript.js";
                                                       
-export { chatCommands, chatFollow, chatGrow, chatPane, chatQueue } from "./chat.js";
+export { chatAfterWrite, chatCommands, chatFollow, chatGrow, chatPane, chatQueue } from "./chat.js";
                                                                                                  
 export { chatStats } from "./chat-stats.js";
                                                                          

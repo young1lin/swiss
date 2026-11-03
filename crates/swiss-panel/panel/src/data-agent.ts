@@ -55,7 +55,7 @@ import { fill, h } from "./h.js";
 import { moduleDbMessage, tr } from "./i18n.js";
 import { targetEl, toast } from "./util.js";
 import {
-  actionBtn, setActionBtn, setIconBtn, btn, chatFollow, chatPane, chatQueue, chatStats, dot, emptyNode, factLine, flow, formActions, formCap, formFold, grip, gripFold, gripFolded, hint, iconBtn, iconNode, note,
+  setIconBtn, btn, chatAfterWrite, chatFollow, chatPane, chatQueue, chatStats, dot, emptyNode, factLine, flow, formActions, formCap, formFold, grip, gripFold, gripFolded, hint, iconBtn, iconNode, note,
   popupMenu, relTime, transcript, transcriptTurn,
 } from "./ui/index.js";
 import type { ChatContext, ChatQueue, ChatQueued, ChatStats, ChatUsage, FlowStep, MenuItem, TranscriptTurn } from "./ui/index.js";
@@ -605,7 +605,8 @@ function dbAgentPane(): HTMLElement[] {
     controls: [btn("", { id: "dbAgentWrites", kind: "ghost", icon: "pencil", hidden: true, title: tr("dataAgent.writes.stageTip") })],
     actions: [
       btn("", { id: "dbAgentModel", kind: "ghost", icon: "chevron-up", hidden: true, title: tr("dataAgent.modelTip") }),
-      actionBtn("stop", tr("dataAgent.stop"), { id: "dbAgentStop", ghost: true, hidden: true }),
+      // One round button: Send, or Stop while a reply streams and the box is empty (words
+      // typed meanwhile turn it back to Send, which queues them).
       iconBtn("arrow-up", tr("dataAgent.send"), { id: "dbAgentSend", kind: "primary" }),
     ],
     stats: (stats = chatStats({ id: "dbAgentStats", note: tr("dataAgent.ctxNote") })).node,
@@ -624,9 +625,9 @@ function dbAgentPane(): HTMLElement[] {
     writes.onclick = onWrites;
   }
   const send = pane.querySelector<HTMLButtonElement>("#dbAgentSend");
-  if (send) send.onclick = (): void => { void onSend(); };
-  const stop = pane.querySelector<HTMLButtonElement>("#dbAgentStop");
-  if (stop) stop.onclick = onStop;
+  if (send) send.onclick = (): void => { if (stopsReply(front())) onStop(); else void onSend(); };
+  // The round button follows the box: every write (typed, or a send clearing it) restates it.
+  chatAfterWrite(ask, (): void => { controls(front()); });
   const fresh = pane.querySelector<HTMLButtonElement>("#dbAgentNew");
   if (fresh) fresh.onclick = (): void => { void onNew(); };
   const history = pane.querySelector<HTMLButtonElement>("#dbAgentHistory");
@@ -814,11 +815,20 @@ function noAgentNode(): HTMLElement {
   return node;
 }
 
-/** Send (Queue while a reply streams), Stop, New, History, Memory and Compact as the
- *  conversation in front stands. A compaction takes no queued words: its round reads no inbox. */
+/** Whether the round button stops the reply in front rather than sends: a reply streams and
+ *  the box holds no words (words typed meanwhile queue), or a compaction runs (it takes none). */
+function stopsReply(talk: Talk | null): boolean {
+  if (!talk || !talk.live) return false;
+  if (talk.compacting) return true;
+  const ask = byId<HTMLTextAreaElement>("dbAgentAsk");
+  return !ask || ask.value.trim() === "";
+}
+
+/** Send (Stop while a reply streams and the box is empty, Queue once it holds words), New,
+ *  History, Memory and Compact as the conversation in front stands. A compaction takes no
+ *  queued words: its round reads no inbox. */
 function controls(talk: Talk | null): void {
   const send = byId<HTMLButtonElement>("dbAgentSend");
-  const stop = byId<HTMLButtonElement>("dbAgentStop");
   const fresh = byId<HTMLButtonElement>("dbAgentNew");
   const history = byId<HTMLButtonElement>("dbAgentHistory");
   const memory = byId<HTMLButtonElement>("dbAgentMemory");
@@ -827,15 +837,16 @@ function controls(talk: Talk | null): void {
   const live = !!talk && talk.live;
   const queues = live && !talk.compacting;
   if (send) {
-    send.disabled = !talk || talk.compacting;
-    setIconBtn(send, queues ? "plus" : "arrow-up", queues ? tr("llm.test.queue") : tr("dataAgent.send"),
-      queues ? tr("llm.test.queueTip") : tr("dataAgent.send"));
+    if (stopsReply(talk)) {
+      send.disabled = !!talk?.stopping;
+      setIconBtn(send, "stop", tr(talk?.stopping ? "memory.sync.run.stopping" : "dataAgent.stop"));
+    } else {
+      send.disabled = !talk || talk.compacting;
+      setIconBtn(send, "arrow-up", queues ? tr("llm.test.queue") : tr("dataAgent.send"),
+        queues ? tr("llm.test.queueTip") : tr("dataAgent.send"));
+    }
   }
   if (ask) ask.placeholder = queues ? tr("ui.chat.queuePh") : tr("dataAgent.askPh");
-  if (stop) {
-    stop.hidden = !live; stop.disabled = !live || talk.stopping;
-    setActionBtn(stop, "stop", tr(talk?.stopping ? "memory.sync.run.stopping" : "dataAgent.stop"));
-  }
   if (fresh) fresh.disabled = !talk || live;
   if (history) {
     history.disabled = !talk;

@@ -1004,6 +1004,10 @@ function renderDbToolbar()       {
     left.appendChild(el("h2", "db-title", tr("dataGrid.data")));
     left.appendChild(el("div", "db-meta", d.conn ? (table ? tr("dataGrid.loading") : tr("dataGrid.selectTableLeft")) : tr("dataGrid.databaseMcpRegistered")));
   }
+  // A narrow head cuts the title and its facts to one line each: the whole words stay a hover away.
+  for (const line of Array.from(left.children)                 ) {
+    if (!line.title && line.textContent) line.title = line.textContent;
+  }
   head.appendChild(left);
 
   // SPEC §data.tabs: the control side is per-kind — the segment (table tabs), ONE primary

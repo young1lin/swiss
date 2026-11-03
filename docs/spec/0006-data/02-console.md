@@ -170,7 +170,10 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
 - **First ask and tools.** The first screen has a short introduction and no fixed question buttons.
   The header puts the connection beside the DB-agent picker. Connection identity is not repeated
   below the conversation. One input card contains the words box and its bottom toolbar: write
-  permissions at the left, model and send/queue/stop at the right. Editable page references stay
+  permissions at the left, model and one round button at the right: Send, *Queue* while a reply
+  streams and the box holds words, the stop square while it streams and the box is empty (or a
+  compaction runs). The header stays one line at any width: the connection ellipsizes, then the
+  caption gives way, and the tools never wrap under it. Editable page references stay
   above that card and take no space when absent.
   The folded Tools summary shows a count; opening discloses localized names and descriptions.
   Completed process folds; the answer, thinking and tool details retain their transcript behavior.
@@ -442,12 +445,14 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   has left fills its own column but never touches the page.
 - **Restore, New, Stop.** Opening the pane on a connection asks for its open conversation
   (`GET /api/llm/db/conversation`) and paints its dialogue; **New** closes that run
-  (`history/runs/{id}/close`, the record kept) and starts clean; **Stop** cancels by run id
+  (`history/runs/{id}/close`, the record kept) and starts clean; **Stop** (the round button while
+  the box is empty) cancels by run id
   (`agents/test/cancel`), the turns already filed staying filed. One stream per agent and
   connection (409 `busy`); a send that meets an open run it did not know (409
   `open-run-exists`) reads that run again instead of failing silently.
 - **Queue.** Words sent while a reply streams wait above the box in a queue (`chatQueue`,
-  §panel.ui) - Send reads *Queue* meanwhile, Enter queues - and are posted nowhere until the
+  §panel.ui) - the round button reads *Queue* once the box holds words, Enter queues - and are
+  posted nowhere until the
   reader steers them: ↑ on a row puts it first and steers it now, Ctrl/Cmd+Enter queues the
   box's words and steers every waiting row. A steered row reaches the loop between its steps
   as the Agents Test's do (`agents/test/steer`, §llm.api, posted once the run frame named the
