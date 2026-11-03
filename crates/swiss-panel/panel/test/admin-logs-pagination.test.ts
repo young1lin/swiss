@@ -633,7 +633,7 @@ describe("SPEC §mcp.calls: the toolbar ellipsis, Clear logs behind a confirm", 
     mountLogs(d);
     fireTab("clMenu");
     const menu = lastMenu();
-    const items = menu.children.filter((c) => c.tag === "BUTTON");
+    const items = menu.children[0].children.filter((c) => c.tag === "BUTTON");
     expect(items.map((c) => c.textContent)).toEqual(["Clear logs…"]);
     expect(items[0].className).toContain("danger");
   });
@@ -642,7 +642,7 @@ describe("SPEC §mcp.calls: the toolbar ellipsis, Clear logs behind a confirm", 
     const d = fakeDetail();
     mountLogs(d);
     fireTab("clMenu");
-    lastMenu().children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
+    lastMenu().children[0].children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
     await new Promise((r) => setTimeout(r, 0));
     expect(requests.length).toBe(0);
   });
@@ -656,7 +656,7 @@ describe("SPEC §mcp.calls: the toolbar ellipsis, Clear logs behind a confirm", 
     await http({ error: "boom" }, 0, 500); // failed switch leaves an error + Retry target
     confirmAnswer = true;
     fireTab("clMenu");
-    lastMenu().children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
+    lastMenu().children[0].children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
     expect(confirmTexts).toEqual([
       "Clear all recorded tool calls for \u201Credis\u201D? This removes the call history and stored full replies. The MCP configuration is not changed.",
     ]);
@@ -689,7 +689,7 @@ describe("SPEC §mcp.calls review fixes: the clear transaction and the error str
     clickOlder(); // page-1 switch in flight — its GET parks first
     confirmAnswer = true;
     fireTab("clMenu");
-    lastMenu().children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
+    lastMenu().children[0].children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
     await new Promise((r) => setTimeout(r, 0));
     // parked order: the switch's GET first, the DELETE behind it — the DELETE answers now.
     await ok({}, 1);
@@ -888,7 +888,7 @@ describe("SPEC §mcp.calls: the block buttons dispatch", () => {
     expect(menuOpen(), "the block's ⋯ opens a menu").toBe(true);
     const body = (globalThis as unknown as { document: { body: FakeNode } }).document.body;
     const menu = body.children[body.children.length - 1];
-    const item = menu.children[0];
+    const item = menu.children[0].children[0];
     expect(item.textContent).toBe("Copy raw");
     item.onclick!({ stopPropagation() {} });
     await tick();

@@ -80,6 +80,7 @@ import { heldDot } from "./status.js";
  
 
 let open = false;
+let returnFocus                     = null;
 
 /** Whether a menu holds the pointer: outside clicks and Escape close it first. */
 export function menuOpen()          { return open; }
@@ -115,7 +116,7 @@ function clampMenuPos(anchor                                               , w  
    built on it needs no second menu idiom. */
 /** The rows of a menu, as popupMenu and anchoredMenu both draw them. */
 function menuNode(cls        , items            )              {
-  return h("div", { class: cls, id: "menu" }, menuRows(items));
+  return h("div", { class: cls, id: "menu" }, h("div", { class: "menu-rows" }, menuRows(items)));
 }
 
 function menuRows(items            )                {
@@ -123,7 +124,7 @@ function menuRows(items            )                {
     if (it.sep) return h("hr");
     // SPEC §data.databases: a heading is chrome, not a choice — a plain div, so it can neither take
     // focus from the first real item nor answer a click.
-    if (it.heading) return h("div", { class: "menu-head" }, it.label);
+    if (it.heading) return h("div", { class: "menu-head", data: { heading: "" } }, it.label);
     // Order is the object card's (SPEC §data.tabs): the type glyph first, then the word, then a
     // trailing affordance for a row that opens ANOTHER menu (SPEC §panel.design - a direction about
     // what happens next), then the held-writes dot last, a fact about the row. A refused row
@@ -158,6 +159,14 @@ function findNode(cls        , items            , placeholder        )          
       row.hidden = !hit;
       if (hit && row.tagName === "BUTTON") any = true;
     }
+    // Keep only headings whose own group still has a match. Search never leaves empty bands.
+    const rows = Array.from(list.children)                 ;
+    rows.forEach((row, i) => {
+      if (!row.hasAttribute("data-heading")) return;
+      let end = i + 1;
+      while (end < rows.length && !rows[end].hasAttribute("data-heading") && rows[end].tagName !== "HR") end++;
+      row.hidden = !rows.slice(i + 1, end).some(r => r.tagName === "BUTTON" && !r.hidden);
+    });
     none.hidden = any;
     list.scrollTop = 0;
   });
@@ -197,9 +206,13 @@ function wireMenu(node             )       {
       if (n < 0) n = walk.length - 1;
       if (n >= walk.length) n = 0;
       walk[n].focus();
+      walk[n].scrollIntoView?.({ block: "nearest" });
     } else if (ev.key === "Escape") {
+      ev.preventDefault();
       ev.stopPropagation();
+      const back = returnFocus;
       closeMenu();
+      if (back?.isConnected) back.focus();
     } else if (find && ev.target === find && ev.key === "Enter") {
       ev.preventDefault();
       ev.stopPropagation();
@@ -219,6 +232,7 @@ let scrollWired = false;
 function closeOnScroll()       {
   if (scrollWired || typeof document.addEventListener !== "function") return;
   scrollWired = true;
+  window.addEventListener("resize", closeMenu);
   document.addEventListener("scroll", (ev) => {
     const node = document.getElementById("menu");
     if (!open || !node || !node.classList.contains("float")) return;
@@ -229,15 +243,19 @@ function closeOnScroll()       {
 
 function popupMenu(anchor                                                               , items            , o           = {})       {
   closeMenu();
+  returnFocus = document.activeElement                      ;
   closeOnScroll();
   const node = o.filter ? findNode("menu float", items, o.filter) : menuNode("menu float", items);
   document.body.appendChild(node);
+  node.style.maxHeight = Math.max(0, window.innerHeight - 16) + "px";
+  node.style.maxWidth = Math.max(0, window.innerWidth - 16) + "px";
   // A menu dropped from a row never sits narrower than the row itself (found live on
   // 19998: the connection menu measured 160px against its 233px sidebar row - the CSS
   // content floor won and the dropdown floated 73px short of the thing that opened it).
   // The anchor's width joins the CSS floor through max(), so a small anchor (a toolbar
   // overflow button) keeps the stylesheet's 160px unchanged.
-  if (anchor.width) node.style.minWidth = "max(160px, " + Math.ceil(anchor.width) + "px)";
+  if (anchor.width) node.style.minWidth = window.innerWidth - 16 < Math.max(160, Math.ceil(anchor.width))
+    ? Math.max(0, window.innerWidth - 16) + "px" : "max(160px, " + Math.ceil(anchor.width) + "px)";
   // Aligned to the button's LEFT edge and growing right, over the detail pane. Right-aligning it
   // instead pushed a sidebar menu back across the list it was opened from, hiding those rows.
   // The clamp itself is clampMenuPos (SPEC §data).
@@ -249,14 +267,20 @@ function popupMenu(anchor                                                       
   wireMenu(node);
 }
 
-/** The same menu hung INSIDE a positioned box - a page head's .pane-actions - right-aligned
- *  under it, instead of floating on <body>. A resource's ⋯ sits at the pane's right edge,
- *  where a float growing right from the button would run off-screen; hung in the pinned head,
- *  it also rides the head when the page scrolls. Rows, keys and closing are popupMenu's. */
+/** A menu owned by a page head, right-aligned to it and clamped to the viewport.
+ *  Fixed positioning prevents a short head or a clipped ancestor from hiding its rows.
+ *  Scrolling or resizing closes it; keys and focus restoration match popupMenu. */
 function anchoredMenu(host             , items            )       {
   closeMenu();
-  const node = menuNode("menu", items);
+  returnFocus = document.activeElement                      ;
+  closeOnScroll();
+  const node = menuNode("menu float", items);
   host.appendChild(node);
+  node.style.maxHeight = Math.max(0, window.innerHeight - 16) + "px";
+  node.style.maxWidth = Math.max(0, window.innerWidth - 16) + "px";
+  const anchor = host.getBoundingClientRect(), size = node.getBoundingClientRect();
+  const pos = clampMenuPos({ left: anchor.right - size.width, top: anchor.top, bottom: anchor.bottom }, size.width, size.height, window.innerWidth, window.innerHeight);
+  node.style.left = pos.left + "px"; node.style.top = pos.top + "px"; node.style.right = "auto";
   wireMenu(node);
 }
 

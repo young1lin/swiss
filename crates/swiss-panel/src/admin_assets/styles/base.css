@@ -54,9 +54,9 @@
       /* Type ramp — five roles, nothing in between. */
       --f-title: 22px;      /* pane title */
       --f-head: 15px;       /* pane description, sheet heading */
-      --f-body: 13px;       /* default */
-      --f-label: 12px;      /* secondary text */
-      --f-caption: 11px;    /* group captions, uppercase */
+      --f-body: 14px;       /* default */
+      --f-label: 13px;      /* secondary text */
+      --f-caption: 12px;    /* group captions, uppercase */
       --rail-w: 56px;
       --rail-seat-h: 42px;
       --rail-caption: 10px;
@@ -145,7 +145,7 @@
       --field: #ffffff;
       --text: #111114;
       --text-2: #6b7280;
-      --text-3: #9ca3af;
+      --text-3: #757b86;
       --sep: rgba(0, 0, 0, 0.08);
       --sep-soft: rgba(0, 0, 0, 0.05);
       --hover: rgba(0, 0, 0, 0.04);
@@ -213,7 +213,7 @@
       --field: #0f1012;
       --text: #e4e4e7;      /* SPEC §panel.design: #ededef glared at the lighter weights */
       --text-2: #9a9ca3;
-      --text-3: #66686f;
+      --text-3: #9499a4;
       --sep: rgba(255, 255, 255, 0.08);
       --sep-soft: rgba(255, 255, 255, 0.05);
       --hover: rgba(255, 255, 255, 0.05);
@@ -300,19 +300,13 @@
       --syn-punct: #e6edf3;
     }
 
-    /* A desktop window is a reading surface at its own scale. The browser keeps its compact
-       defaults; the shell marker arrives before paint and the native caption owns the brand. */
+    /* Browser and desktop share typography and contrast. Only the native shell chrome differs. */
     :root[data-desktop="true"] {
-      --f-body: 14px;
-      --f-label: 13px;
-      --f-caption: 12px;
       --rail-w: 64px;
       --rail-seat-h: 48px;
       --rail-caption: 11px;
       --context-h: 44px;
-      --text-3: #757b86;
     }
-    :root[data-desktop="true"][data-theme="dark"] { --text-3: #9499a4; }
     :root[data-desktop="true"] .rail-brand { display: none; }
 
     * { box-sizing: border-box; }

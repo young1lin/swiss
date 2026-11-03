@@ -78,7 +78,7 @@ import { dot, tag } from "./status.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 
-function dayKey(at        )         {
+export function dayKey(at        )         {
   const d = new Date(at);
   return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
 }
@@ -87,8 +87,11 @@ function dayKey(at        )         {
  *  not this one). Local days, not 24-hour windows: 00:30 today and 23:50 last night are on
  *  different days however close they are. */
 export function dayLabel(at        , now        )         {
+  if (!Number.isFinite(at)) return tr("ui.timeUnknown");
   if (dayKey(at) === dayKey(now)) return tr("ui.today");
-  if (dayKey(at) === dayKey(now - DAY)) return tr("ui.yesterday");
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (dayKey(at) === dayKey(yesterday.getTime())) return tr("ui.yesterday");
   const d = new Date(at);
   const sameYear = d.getFullYear() === new Date(now).getFullYear();
   return d.toLocaleDateString(locale(), sameYear

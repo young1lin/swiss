@@ -4207,6 +4207,12 @@ const en                         = {
   "remote.emptySetup": "Add a target to run commands or transfer files in a remote workspace. A target uses an SSH connection provided by Tunnels.",
   "remote.endpointSetup": "No SSH endpoints are available. Add an SSH connection in Tunnels first.",
   "remote.openTunnels": "Open Tunnels",
+  "ui.timeUnknown": "Time unknown",
+  "gallery.c.chart": "Result chart",
+  "gallery.c.chartNote": "Numeric X positions keep duplicate observations separate. Axes, negative values and point details use the same result surface.",
+  "gallery.d.chartTitle": "Observations at 1, 2 and 100",
+  "analysis.observations": "Individual observations",
+  "dataAgent.sqlContext": "SQL · {n} characters",
 };
 
 export default en;

@@ -83,7 +83,9 @@ function paint(sel                   , trig                   )       {
  *  moves under it (onScroll). */
 function place(menu             , trig                   )       {
   const r = trig.getBoundingClientRect();
-  const mh = Math.min(menu.offsetHeight, 280);
+  menu.style.maxHeight = Math.max(0, Math.min(280, window.innerHeight - 16)) + "px";
+  menu.style.maxWidth = Math.max(0, window.innerWidth - 16) + "px";
+  const mh = Math.min(menu.offsetHeight, window.innerHeight - 16, 280);
   const left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8));
   menu.style.left = left + "px";
   const below = r.bottom + 4;
@@ -147,6 +149,7 @@ function openMenuFor(sel                   , trig                   )       {
   openState = { menu: menu, trig: trig, sel: sel, items: items };
   trig.setAttribute("aria-expanded", "true");
   (mark || items[0]).focus();
+  (mark || items[0]).scrollIntoView?.({ block: "nearest" });
 }
 
 function buildTrigger(sel                   , ownClasses        )                    {
@@ -241,7 +244,9 @@ function onKey(e               )       {
   e.stopPropagation();
   const i = items.indexOf(document.activeElement                     );
   const n = e.key === "ArrowDown" ? i + 1 : i - 1;
-  items[(n + items.length) % items.length].focus();
+  const next = items[(n + items.length) % items.length];
+  next.focus();
+  next.scrollIntoView?.({ block: "nearest" });
 }
 
 /** Style everything already in the DOM, then watch for selects the views create later. Every

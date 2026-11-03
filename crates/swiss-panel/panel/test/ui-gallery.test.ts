@@ -98,6 +98,7 @@ const HELPERS: Record<string, string> = {
   diffStatusWord: "a file status as its word - the label inside diffNode()'s fold, nothing drawn of its own",
   ACTION_ICON: "the action → glyph table actionBtn() draws by - strings, every one shown in the Actions section",
   actionIcon: "the glyph name for an action - a string a page's word button wears (btn({ icon: actionIcon(\"new\") }))",
+  setIconBtn: "restates an icon and its accessible name on Send/Queue state changes; draws no new shape",
   setActionBtn: "restates a built action button in place on a state flip - a state move, nothing new drawn",
 };
 
@@ -153,8 +154,8 @@ const SIG: Record<string, string> = {
   workspace: ".ws > aside.ws-side + .grip + .ws-main",
   grip: ".ws > aside.ws-side + .grip.x[role=separator] > button.grip-btn",
   dock: ".dock > .dock-top + .dock-head > .dock-edge[role=separator]",
-  chatPane: ".grip.x.end + aside.chat-pane > .chat-head + .chat-body + .chat-compose > textarea + .chat-acts > .chat-note",
-  chatCommands: ".chat-compose > textarea[aria-controls] ~ .chat-cmds[role=listbox]",
+  chatPane: ".grip.x.end + aside.chat-pane > .chat-head + .chat-body + .chat-compose > .chat-editor > textarea + .chat-acts > .chat-note",
+  chatCommands: ".chat-compose > .chat-editor:has(> textarea[aria-controls]) ~ .chat-cmds[role=listbox]",
   chatQueue: ".chat-compose > .chat-queue > button.chat-queue-head + .chat-queue-list > .chat-queue-row",
   copyBtn: ".tc-turn > .tc-acts > .btn.icon.copy-btn",
   chatStats: ".chat-compose > .chat-stats > button.chat-ctx[aria-haspopup=dialog] > svg.chat-ring",
@@ -558,7 +559,7 @@ describe("SPEC §panel.ui - the switches and demos answer", () => {
     const menu = document.getElementById("menu")!;
     expect(ui.menuOpen()).toBe(true);
     expect(menu.parentElement).toBe(more.closest(".pane-actions"));
-    expect(menu.classList.contains("float")).toBe(false);
+    expect(menu.classList.contains("float")).toBe(true);
     expect(menu.querySelector(".menu-head")!.textContent).toBe(tr("gallery.d.menuHeading"));
     expect(document.activeElement).toBe(menu.querySelector("button"));
     key(document.activeElement!, "Escape");

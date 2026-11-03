@@ -286,7 +286,7 @@ describe("popupMenu's find box (SPEC §panel.ui)", () => {
   it("the box and the scrolling rows are the library's (ui.css)", () => {
     const ui = sheet("ui.css");
     expect(ui).toMatch(/\.menu-filter \{[^}]*margin-bottom/);
-    expect(ui).toMatch(/\.menu-rows \{[^}]*max-height:[^}]*overflow-y: auto/);
+    expect(ui).toMatch(/\.menu-rows \{[^}]*min-height:[^}]*overflow-y: auto/);
   });
 });
 

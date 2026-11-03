@@ -141,18 +141,18 @@ function speedOf(u: ChatUsage): number | null {
 /** How full the context reads: tokens against the fixed limit - the provider's count, else the
  *  bytes as tokens, marked (~) - or, with neither, bytes against the byte budget. The parts
  *  (system prompt, tool definitions, messages) share the reading as they share the bytes. */
-function gauge(c: ChatContext): { share: number; used: string; cap: string; part(bytes: number): string } {
+function gauge(c: ChatContext): { share: number; estimated: boolean; used: string; cap: string; part(bytes: number): string } {
   const used = c.used ?? (c.perByte ? c.bytes * c.perByte : null);
   if (c.limit && used != null) {
     const mark = c.used != null ? "" : "~";
     return {
-      share: used / c.limit,
+      share: used / c.limit, estimated: c.used == null,
       used: mark + fmtCount(used),
       cap: fmtCount(c.limit),
       part: (bytes) => mark + fmtCount(c.bytes > 0 ? used * bytes / c.bytes : 0),
     };
   }
-  return { share: c.cap > 0 ? c.bytes / c.cap : 0, used: fmtKiB(c.bytes), cap: fmtKiB(c.cap), part: fmtKiB };
+  return { share: c.cap > 0 ? c.bytes / c.cap : 0, estimated: false, used: fmtKiB(c.bytes), cap: fmtKiB(c.cap), part: fmtKiB };
 }
 
 /** The ring: a track and the share filled, from twelve o'clock. */
@@ -337,8 +337,8 @@ export function chatStats(o: { id?: string; note?: string } = {}): ChatStats {
     const c = u.context;
     button.hidden = !c;
     if (c) {
-      const share = gauge(c).share;
-      pct.textContent = Math.round(share * 100) + "%";
+      const g = gauge(c), share = g.share;
+      pct.textContent = (g.estimated ? "~" : "") + Math.round(share * 100) + "%";
       arc.setAttribute("stroke-dasharray", (RING_C * Math.min(1, share)).toFixed(2) + " " + RING_C.toFixed(2));
       button.dataset.level = share >= FULL_AT ? "full" : share >= WARN_AT ? "warn" : "";
       const label = tr("ui.chat.ctxLabel", { pct: pct.textContent });

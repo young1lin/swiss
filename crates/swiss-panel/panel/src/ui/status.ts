@@ -38,10 +38,13 @@ export function dot(state: DotState, title: string | null): HTMLElement {
 /** The amber mark of writes held back until Commit (SPEC §data.tabs): an open object's tab and the
  *  overflow row that stands in for it carry it. Its title is the count in words. A held write
  *  is not a process state, so it is its own mark and not a dot(). `null`, as for dot(): the
- *  thing that holds it already says it (a menu row), so it has no title and stays out of AT. */
-export function heldDot(title: string | null): HTMLElement {
-  if (title === null) return h("span", { class: "db-tab-dot", aria: { hidden: "true" } });
-  return h("span", { class: "db-tab-dot", title, role: "img", aria: { label: title } });
+ *  thing that holds it already says it (a menu row), so it has no title and stays out of AT.
+ *  `tone` "err" is a refused console save: the same mark, red, still drawn here so a page does
+ *  not spell the class itself. */
+export function heldDot(title: string | null, tone?: "err"): HTMLElement {
+  const cls = tone === "err" ? "db-tab-dot err" : "db-tab-dot";
+  if (title === null) return h("span", { class: cls, aria: { hidden: "true" } });
+  return h("span", { class: cls, title, role: "img", aria: { label: title } });
 }
 
 export interface TagOpts {

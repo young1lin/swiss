@@ -21,8 +21,8 @@
  *   head     the caption, then the tools: a picker (which agent), New, close;
  *   body     the conversation - a transcript() column, or a note while there is none - which
  *            scrolls on its own; chatFollow keeps its end in view while an answer streams;
- *   compose  the words box, then a line of actions: a note at its start (what the pane works
- *            on), the send and stop at its end. It stays put however long the column grows.
+ *   compose  one bordered input card: the words box, then permission controls at its start
+ *            and model/send/stop actions at its end. It stays put however long the column grows.
  *            `queued` stands above the box: words sent while an answer streams, waiting their
  *            turn (a chatQueue(), which takes no room while empty).
  *
@@ -41,6 +41,9 @@ export interface ChatPaneOpts {
   id?: string;
   /** The pane's name: its caption and its accessible label. */
   cap: string;
+  /** A picker and the current subject beside the caption, separate from head actions. */
+  heading?: HChild;
+  subject?: HChild;
   tools?: HChild[];
   body: HChild;
   input: HTMLTextAreaElement;
@@ -48,8 +51,12 @@ export interface ChatPaneOpts {
   commands?: ChatCommand[];
   /** Above the words box: what waits to be sent (a chatQueue()'s node, gone while empty). */
   queued?: HChild;
+  /** Editable references actually included in the next send. */
+  context?: HChild;
   /** The line under the words box: a note at its start, the actions at its end. */
   note?: HChild;
+  /** Leading controls inside the input card, such as the current permission mode. */
+  controls?: HChild[];
   actions: HChild[];
   /** Under the actions: the conversation's account (a chatStats()'s node, hidden while empty). */
   stats?: HChild;
@@ -63,15 +70,18 @@ export function chatPane(o: ChatPaneOpts): HTMLElement {
   latest.classList.add("chat-jump");
   const pane = h("aside", { class: "chat-pane", id: o.id, aria: { label: o.cap } },
     h("div", { class: "chat-head" },
-      h("span", { class: "sec-cap", title: o.cap }, o.cap),
+      h("div", { class: "chat-heading" },
+        h("span", { class: "sec-cap", title: o.cap }, o.cap), o.heading,
+        o.subject ? h("span", { class: "chat-subject" }, o.subject) : null),
       o.tools && o.tools.length ? h("span", { class: "chat-tools" }, o.tools) : null),
     body,
     h("div", { class: "chat-compose" },
       o.queued,
-      o.input,
-      h("div", { class: "chat-acts" },
-        h("span", { class: "chat-note" }, o.note),
-        o.actions),
+      o.context,
+      h("div", { class: "chat-editor" }, o.input,
+        h("div", { class: "chat-acts" }, o.controls,
+          h("span", { class: "chat-note" }, o.note),
+          o.actions)),
       o.stats,
       menu,
       latest));

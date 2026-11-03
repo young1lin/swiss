@@ -60,11 +60,11 @@ export default defineConfig({
     ],
   },
   // One worker per test file pegs every core of a small machine (the suite is over a
-  // hundred files): cap workers at half the cores, never below two. A slower run is
+  // hundred files): cap workers at four or half the cores, never below two. A slower run is
   // free; a starved deadline is a false failure.
   test: {
     environment: "node",
     include: ["test/**/*.test.ts"],
-    maxWorkers: Math.max(2, Math.floor(cpus().length / 2)),
+    maxWorkers: Math.min(4, Math.max(2, Math.floor(cpus().length / 2))),
   },
 });

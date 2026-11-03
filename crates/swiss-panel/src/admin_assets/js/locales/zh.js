@@ -4105,6 +4105,12 @@ const zh                         = {
   "remote.emptySetup": "添加目标后，可在远程工作目录执行命令、传输文件。目标使用 Tunnels 提供的 SSH 连接。",
   "remote.endpointSetup": "暂无 SSH 端点，请先在 Tunnels 中添加 SSH 连接。",
   "remote.openTunnels": "打开 Tunnels",
+  "ui.timeUnknown": "时间未知",
+  "gallery.c.chart": "结果图表",
+  "gallery.c.chartNote": "数值横轴保留相同 X 的独立观察值，展示坐标轴、负数和数据点详情。",
+  "gallery.d.chartTitle": "1、2 和 100 处的观察值",
+  "analysis.observations": "独立观测点",
+  "dataAgent.sqlContext": "SQL · {n} 字符",
 };
 
 export default zh;

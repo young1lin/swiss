@@ -149,10 +149,11 @@ mode, the pane's scrolling (its pinned-head measurements and back to top, `pane-
 and app-level responsiveness. A page owns only its body.
 
 **Desktop window.** The same panel gains `data-desktop` before paint only in `swiss gui`
-(§host.gui). Desktop reading sizes are 14/13/12 px (body/label/caption), the rail is 64 px
+(§host.gui). Browser and desktop share 14/13/12 px reading tokens (body/label/caption), with
+secondary contrast defined per theme. The desktop rail is 64 px
 with 48 px seats and 11 px captions (10 px floor), and the context bar is 44 px. The native
 caption owns the app mark, so the desktop rail omits its duplicate brand mark. Secondary
-text keeps more contrast. The browser retains its existing dimensions. `desktop.ts` follows
+text uses the shared theme tokens. The browser keeps its shell dimensions. `desktop.ts` follows
 the panel's resolved theme and plugin title and handles desktop text-zoom chords; it adds no
 listeners or native behavior to ordinary browser tabs.
 
@@ -576,7 +577,7 @@ to the library first.
 | layers | `popupMenu(anchor, items, {filter})` - with `filter` (the placeholder) a find box over rows that scroll under it: typing narrows them, the arrows walk the box and the rows left, Enter runs the first, "Nothing matches" when none do - `anchoredMenu(host, items)`, `sheet({title, sub, body, foot})` + `showSheet`, `stackSheet`, `openFieldSheet(spec)` | `.menu`, `.menu.find`, `.menu-filter`, `.menu-rows`, `.sheet*`, `.backdrop` |
 | page furniture | `emptyNode(…)`, `pageFoot({note, rev})`, `toTop(scroller)`; the toast is the shell's (`util.ts toast()`) | `.empty`, `.page-foot`, `.to-top`, `.toast` |
 | grip | `grip(pane, {axis, key, size, min, max, label, fold, folded, end})`, `gripState(opts)`, `gripFold(edge, folded)`, `gripFolded(edge)` - the edge after a pane (before one, with `end`) that sizes it (and folds it) | `.grip`, `.grip.x`, `.grip.y`, `.grip.end`, `.grip.folded`, `.grip-btn` |
-| chat pane | `chatPane({id, cap, tools, body, input, commands, queued, note, actions, stats})`, `chatFollow(pane)`, `chatGrow(box)`, `chatCommands(box, commands)` - an assistant's column at the end edge: head, conversation, compose; the words box grows with its words and completes its commands | `.chat-pane`, `.chat-head`, `.chat-tools`, `.chat-body`, `.chat-compose`, `.chat-acts`, `.chat-note`, `.chat-cmds`, `.chat-cmd`, `.chat-cmd-name`, `.chat-cmd-arg`, `.chat-cmd-hint` |
+| chat pane | `chatPane({id, cap, heading, subject, tools, body, input, commands, queued, context, controls, note, actions, stats})`, `chatFollow(pane)`, `chatGrow(box)`, `chatCommands(box, commands)` - an assistant's column at the end edge: head, conversation, compose; the words box grows with its words and completes its commands | `.chat-pane`, `.chat-head`, `.chat-heading`, `.chat-subject`, `.chat-tools`, `.chat-body`, `.chat-compose`, `.chat-editor`, `.chat-acts`, `.chat-note`, `.chat-cmds`, `.chat-cmd`, `.chat-cmd-name`, `.chat-cmd-arg`, `.chat-cmd-hint` |
 | chat queue | `chatQueue({id, max, onSteer, onDelete, onEdited})` → `{node, items, add, remove, steer, editing}` - what waits to be sent while an answer streams: a card over the words box, a row per message with Edit, Delete and steer-now | `.chat-queue`, `.chat-queue-head`, `.chat-queue-n`, `.chat-queue-list`, `.chat-queue-row`, `.chat-queue-text`, `.chat-queue-tag`, `.chat-queue-edit` |
 | chat stats | `chatStats({id, note})` → `{node, set}` - a conversation's account centred under the words box: turns, steps and speed opening Session statistics, tokens and the cache's share opening Token usage, the context ring opening what fills it | `.chat-stats`, `.chat-stat`, `.chat-stat-label`, `.chat-stat-sep`, `.chat-ctx`, `.chat-ring`, `.chat-ring-track`, `.chat-ring-fill`, `.chat-ctx-pct`, `.chat-pop`, `.chat-pop-title`, `.chat-pop-label`, `.chat-pop-value`, `.chat-pop-rule`, `.chat-pop-rows`, `.chat-pop-note`, `.chat-ctx-bar`, `.chat-ctx-seg`, `.chat-ctx-key` |
 | copy | `copyBtn(text, {label})`, `copyText(text)`; a transcript turn's `copy`, `markdownNode(src, {copy})` - a quiet button that copies a turn's words or a code block and says so in place | `.copy-btn`, `.tc-acts`, `.md-codebox` |
@@ -732,6 +733,15 @@ plain styled select; `.term-jump` sits at z 3; the count is "N live" through `tr
 **Settings** — §panel.settings.
 
 **Known gaps.** The i18n ratchet does not scan function return values (§panel.i18n).
+
+Menus clamp to eight-pixel viewport margins. A flex column keeps the find box above a scrolling
+row list. Arrows scroll focused rows into view, Enter activates and Escape restores trigger focus.
+Search drops empty headings; resize or outside scrolling closes stale placement. Anchored menus
+remain owned by the head but use fixed, clamped geometry. The chatPane context slot sits between
+queue and input, letting references change without replacing the editor. The header places a
+subject beside its picker. The textarea and bottom toolbar share one bordered input card; leading
+permission controls and trailing model/send/stop actions belong inside it. Statistics remain below
+the card and the message queue remains above it.
 
 ## §panel.groups — The grouped list
 

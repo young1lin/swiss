@@ -37,7 +37,7 @@ import {
   actionBtn, anchoredMenu, btn, card, catChip, chatPane, chatQueue, chatStats, checkField, checkGrid, checkRow, closeMenu, closeSheet, decodeStrings, dock, docHead, dot, editDetail, editLine, editList, editSub,
   emptyNode, factLine, failNote, field, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, form, formActions, formCap, formFold, graphView, groupNode, heldDot, hint, iconBtn, iconNode,
   initSelects, redacted, initSheet, inlineForm, jsonCodeNode, diffNode, kvRow, markdownNode, menuOpen, moreBtn, note, objTab, openFieldSheet,
-  grip, pageFoot, pager, pair, pane, paneHead, pickList, pickRow, popupMenu, refLink, relTime, resHead, row, section,
+  grip, pageFoot, pager, pair, pane, paneHead, pickList, pickRow, popupMenu, refLink, relTime, resHead, resultChart, row, section,
   scrollBox, seg, sheet, sheetOpen, showSheet, sideRow, spinner, split, sw, tag, timeline, timelineMeta, timelineToggle, toTop,
   textNode, tokenCodeNode, transcript, transcriptText, transcriptTurn, toolChip, valueBlock, proseText, codeSchemeFor, workspace, wsBar, wsHead, wsScroll, wsSide, wsSplit,
 } from "./ui/index.js";
@@ -437,22 +437,29 @@ function chatSample()              {
   const queued = chatQueue({ onSteer: (q) => { queued.steer(q.id, true); }, onDelete: () => undefined });
   queued.steer(queued.add(tr("gallery.d.chatQueued1")).id, true);
   queued.add(tr("gallery.d.chatQueued2"));
+  const references = [CONN_SAMPLE, tr("dataAgent.sqlContext", { n: 28 })].map(label => {
+    const b = btn(label, { kind: "ghost", icon: "check" }); b.setAttribute("aria-pressed", "true");
+    b.onclick = ()       => { const on = b.getAttribute("aria-pressed") !== "true"; b.setAttribute("aria-pressed", String(on)); b.querySelector("svg use")?.setAttribute("href", on ? "#i-check" : "#i-plus"); };
+    return b;
+  });
   const pane = chatPane({
     cap: tr("gallery.d.chatCap"),
-    tools: [h("select", { aria: { label: tr("gallery.d.chatAgent") } }, h("option", null, AGENT_SAMPLE)),
-      iconBtn("plus", tr("gallery.d.chatNew"), { ghost: true }), iconBtn("x", tr("gallery.d.chatClose"), { ghost: true })],
+    heading: h("select", { aria: { label: tr("gallery.d.chatAgent") } }, h("option", null, AGENT_SAMPLE)),
+    subject: CONN_SAMPLE,
+    tools: [iconBtn("plus", tr("gallery.d.chatNew"), { ghost: true }), iconBtn("x", tr("gallery.d.chatClose"), { ghost: true })],
     body: transcript([
       { side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.d.chatAsk"), copy: tr("gallery.d.chatAsk") },
       { role: tr("gallery.s.roleAssistant"), text: chatAnswer(), markdown: true, copy: chatAnswer() },
     ]),
+    context: formActions(...references),
     input: h("textarea", { rows: 2, placeholder: tr("gallery.d.chatAskPh") }),
     queued: queued.node,
     commands: [{ name: "compact", arg: tr("gallery.d.chatCmdArg"), hint: tr("gallery.d.chatCmdHint") }],
-    note: CONN_SAMPLE,
-    actions: [btn(tr("gallery.d.chatSend"), { kind: "primary" })],
+    controls: [btn(tr("dataAgent.writes.stage"), { kind: "ghost", icon: "pencil" })],
+    actions: [btn(AGENT_SAMPLE, { kind: "ghost", icon: "chevron-up" }), iconBtn("arrow-up", tr("gallery.d.chatSend"), { kind: "primary" })],
     stats: stats.node,
   });
-  return h("div", { style: "display: flex; height: 360px" },
+  return h("div", { style: "display: flex; height: 520px" },
     h("div", { style: "flex: 1; min-width: 0" }, card(tokenCodeNode([["", "SELECT id, total\nFROM orders"]], { all: true }).node)),
     grip(pane, { axis: "x", key: "gallery-chat", min: 240, max: 520, label: tr("gallery.d.chatCap"), fold: true, end: true }),
     pane);
@@ -568,6 +575,10 @@ function catalogue(now        )              {
       tk("gallery.c.workspace"), tk("gallery.c.workspaceNote"), [], card(workspaceSample(now))),
     entry(["dock"], tk("gallery.c.dock"), tk("gallery.c.dockNote"), [], dockSample()),
     entry(["chatPane", "chatCommands", "chatQueue", "chatStats", "copyBtn"], tk("gallery.c.chat"), tk("gallery.c.chatNote"), [], chatSample()),
+    entry(["resultChart"], tk("gallery.c.chart"), tk("gallery.c.chartNote"), [], card(resultChart({
+      title: tr("gallery.d.chartTitle"), kind: "scatter", xLabel: "x", yLabel: "y",
+      aggregation: tr("analysis.observations"), points: [{ label: "1", x: 1, value: -4 }, { label: "2", x: 2, value: 7 }, { label: "2", x: 2, value: 3 }, { label: "100", x: 100, value: 9 }],
+    }))),
     entry(["graphView", "graphLegend"], tk("gallery.c.graph"), tk("gallery.c.graphNote"), [], [
       card(graphView({ nodes: GRAPH_NODES, edges: GRAPH_EDGES, selected: "m-1", label: tr("gallery.d.graphWhole"), keys: graphKeys() }, { engine: graphEngine }).el),
       card(graphView({ nodes: GRAPH_NODES, edges: GRAPH_EDGES, center: "m-1", label: tr("gallery.d.graphCentred"), compact: true }, { engine: graphEngine }).el),
@@ -699,7 +710,7 @@ const DEMO_COLUMNS = ["order_id", "customer_id", "customer_name", "status", "tot
 
 /** The menu with a find box (popupMenu's filter): a long list narrowed as it is typed into. */
 function openDemoFind(anchor             )       {
-  popupMenu(anchor.getBoundingClientRect(), DEMO_COLUMNS.map((label) => ({ label, fn: () => {} })), { filter: tr("gallery.d.findColumn") });
+  popupMenu(anchor.getBoundingClientRect(), Array.from({ length: 80 }, (_, n) => ({ label: DEMO_COLUMNS[n % DEMO_COLUMNS.length] + " " + (n + 1), fn: () => {}, pick: true, on: n === 79 })), { filter: tr("gallery.d.findColumn") });
 }
 
 function openDemoMenu(anchor             )       {

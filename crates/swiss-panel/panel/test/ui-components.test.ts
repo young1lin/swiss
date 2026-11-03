@@ -26,7 +26,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { URL as NodeURL } from "node:url";
 import { h } from "../src/h.js";
-import { install } from "../src/i18n.js";
+import { install, tr } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 import {
   checkField as checkFieldFn, field as fieldFn, form as formFn, formActions, formCap as formCapFn, formFold as formFoldFn, hint as hintFn,
@@ -69,6 +69,15 @@ describe("immutable result views (SPEC §data.analysis)", () => {
     expect(chart.querySelector("svg")?.getAttribute("aria-label")).toBe("Totals");
     expect(chart.querySelectorAll("rect")).toHaveLength(2);
     expect(chart.innerHTML).not.toMatch(/NaN|Infinity/);
+  });
+  it("places scatter points on their real numeric x axis", () => {
+    // SPEC §data.analysis: x=1,2,100 must not become three evenly spaced categories.
+    const chart = resultChart({ title: "Response time", kind: "scatter", points: [
+      { label: "1", x: 1, value: 10 }, { label: "2", x: 2, value: 20 }, { label: "100", x: 100, value: 30 },
+    ] });
+    const xs = Array.from(chart.querySelectorAll("circle")).map(c => Number(c.getAttribute("cx")));
+    expect(xs).toHaveLength(3);
+    expect((xs[2] - xs[1]) / (xs[1] - xs[0])).toBeCloseTo(98, 6);
   });
 });
 
@@ -147,6 +156,15 @@ describe("ui/button", () => {
     // It must also outrank the primary's own hover, which sits at the same specificity.
     const at = (sel: string): number => rules.findIndex((r) => r.selectors.includes(sel));
     expect(at(".btn.primary:disabled")).toBeGreaterThan(at(".btn.primary:hover"));
+  });
+
+  it("a primary icon keeps its contrasting ink instead of the quiet toolbar ink", () => {
+    const b = iconBtn("arrow-up", "Send", { kind: "primary" });
+    expect(b.className).toBe("btn icon primary");
+    expect(b.getAttribute("aria-label")).toBe("Send");
+    const rules = parseCss(sheet("ui.css")).filter(r => !r.at);
+    const ink = rules.find(r => r.selectors.includes(".btn.icon.primary"));
+    expect(ink?.decls.find(d => d.prop === "color")?.value).toBe("var(--accent-text)");
   });
 
   it("iconBtn: the word is the aria-label and, by default, the tooltip", () => {
@@ -1795,6 +1813,14 @@ describe("ui/timeline - the helpers", () => {
     expect(dayLabel(new Date(2025, 11, 31, 9).getTime(), NOW)).toContain("2025");
   });
 
+  it("local midnight and the year boundary retain natural-day labels; invalid legacy dates are unknown", () => {
+    const midnight = new Date(2027, 0, 1, 0, 5).getTime();
+    expect(dayLabel(new Date(2026, 11, 31, 23, 59).getTime(), midnight)).toBe("Yesterday");
+    expect(dayLabel(new Date(2027, 0, 1, 0, 1).getTime(), midnight)).toBe("Today");
+    expect(dayLabel(new Date(2026, 11, 30).getTime(), midnight)).toContain("2026");
+    for (const invalid of [NaN, Infinity, -Infinity]) expect(dayLabel(invalid, midnight)).toBe(tr("ui.timeUnknown"));
+  });
+
   it("dayLabel speaks the installed language", () => {
     install("zh-CN", zh);
     expect(dayLabel(at(23, 1), NOW)).toBe("今天");
@@ -2012,6 +2038,16 @@ function mechanisms(): Element[] {
 }
 
 describe("ui/menu - anchoredMenu", () => {
+  it("keeps every menu's rows in a scroll region and restores focus on Escape", () => {
+    document.body.innerHTML = '<button id="opener">Open</button>';
+    const opener = document.getElementById("opener")!;
+    opener.focus();
+    popupMenu({ left: 950, top: 600, bottom: 620 }, Array.from({ length: 80 }, (_, n) => ({ label: String(n), fn: () => {} })));
+    const menu = document.getElementById("menu")!;
+    expect(menu.querySelectorAll(".menu-rows button")).toHaveLength(80);
+    menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(document.activeElement).toBe(opener);
+  });
   it("hangs the menu in the host, not on <body>: same rows, focus on the first, Escape closes", () => {
     document.body.innerHTML = '<div class="pane-actions" id="host"></div>';
     const host = document.getElementById("host")!;
@@ -2024,7 +2060,7 @@ describe("ui/menu - anchoredMenu", () => {
     ]);
     const menu = document.getElementById("menu")!;
     expect(menu.parentElement).toBe(host);
-    expect(menu.className).toBe("menu");
+    expect(menu.className).toBe("menu float");
     expect(menu.getAttribute("role")).toBe("menu");
     expect(menuOpen()).toBe(true);
     expect(document.activeElement?.textContent).toBe("default");
@@ -2309,6 +2345,24 @@ describe("ui/grip - grip", () => {
 });
 
 describe("ui/chat - chatPane", () => {
+  it("places editable context between the queue and input without rebuilding the editor", () => {
+    const input = h("textarea"), queued = h("div"), context = h("button", { type: "button" }, "orders");
+    input.value = "keep my draft";
+    const pane = chatPane({ cap: "Agent", body: null, input, queued, context, actions: [] });
+    expect([...pane.querySelector(".chat-compose")!.children].slice(0, 2)).toEqual([queued, context]);
+    expect(pane.querySelector(".chat-editor > textarea")).toBe(input);
+    context.textContent = "orders · 2 selected rows";
+    expect(input.value).toBe("keep my draft");
+  });
+  it("keeps the subject in its heading and permission/model/send inside one input card", () => {
+    const input = h("textarea"), permission = h("button", null, "Review writes"), model = h("button", null, "Model"), send = h("button", null, "Send");
+    const p = chatPane({ cap: "Agent", heading: h("select"), subject: "shop @ localhost", body: null, input, controls: [permission], actions: [model, send] });
+    expect(p.querySelector(".chat-heading .chat-subject")?.textContent).toBe("shop @ localhost");
+    expect(p.querySelector(".chat-heading > select")).not.toBeNull();
+    const editor = p.querySelector(".chat-editor");
+    for (const control of [input, permission, model, send]) expect(control.closest(".chat-editor")).toBe(editor);
+    expect([...p.querySelector(".chat-acts")!.children]).toEqual([permission, p.querySelector(".chat-note"), model, send]);
+  });
   it("a labelled aside: the head with its caption and tools, the body, the words box over its note and actions", () => {
     const input = h("textarea");
     const send = h("button", { type: "button" }, "Send");
@@ -2317,9 +2371,9 @@ describe("ui/chat - chatPane", () => {
     expect(p.id).toBe("ag");
     expect(p.getAttribute("aria-label")).toBe("Agent");
     expect(Array.from(p.children).map((c) => c.className)).toEqual(["chat-head", "chat-body", "chat-compose"]);
-    expect(p.querySelector(".chat-head > .sec-cap")?.textContent).toBe("Agent");
+    expect(p.querySelector(".chat-heading > .sec-cap")?.textContent).toBe("Agent");
     expect(p.querySelector(".chat-tools > select")).not.toBeNull();
-    expect(p.querySelector(".chat-compose > textarea")).toBe(input);
+    expect(p.querySelector(".chat-editor > textarea")).toBe(input);
     expect(p.querySelector(".chat-acts > .chat-note")?.textContent).toBe("orders");
     expect(p.querySelector(".chat-acts > button")).toBe(send);
     const bare = chatPane({ cap: "Agent", body: null, input: h("textarea"), actions: [] });
@@ -2327,7 +2381,7 @@ describe("ui/chat - chatPane", () => {
     // What waits to be sent stands above the words box.
     const queued = h("div", { class: "edit-list" });
     const q = chatPane({ cap: "Agent", body: null, input: h("textarea"), queued, actions: [] });
-    expect(Array.from(q.querySelector(".chat-compose")!.children).slice(0, 2).map((c) => c.tagName)).toEqual(["DIV", "TEXTAREA"]);
+    expect(Array.from(q.querySelector(".chat-compose")!.children).slice(0, 2).map((c) => c.tagName)).toEqual(["DIV", "DIV"]);
     expect(q.querySelector(".chat-compose > .edit-list")).toBe(queued);
     // The column's end comes into view as an answer streams.
     const body = p.querySelector<HTMLElement>(".chat-body")!;
@@ -2772,7 +2826,7 @@ describe("ui/chat-stats - chatStats", () => {
     // No round has counted what the conversation carries (a compaction's checkpoint): the
     // bytes read as tokens, marked as the estimate they are.
     s.set({ ...USAGE, context: { ...USAGE.context, used: undefined } });
-    expect(text(ring)).toBe("33%");
+    expect(text(ring)).toBe("~33%");
     expect(text(pop.querySelector(".chat-pop-value"))).toBe("~84.5K / 256K");
     expect(rows(pop)[0][2]).toBe("~7.2K");
     // Without a limit the bytes read against the byte budget.
@@ -2811,7 +2865,7 @@ describe("ui/chat-stats - chatStats", () => {
     const s = chatStats();
     s.set(USAGE);
     const pane = chatPane({ cap: "Agent", body: h("div"), input: h("textarea"), actions: [], stats: s.node });
-    expect(pane.querySelector(".chat-compose > .chat-acts + .chat-stats")).toBe(s.node);
+    expect(pane.querySelector(".chat-compose > .chat-editor + .chat-stats")).toBe(s.node);
     const activity = s.node.querySelector<HTMLButtonElement>("[data-stat=activity]")!;
     expect(activity.getAttribute("aria-label")).toBe("2 轮 5 步 · 106 tok/s");
     expect(s.node.querySelector("[data-stat=tokens]")!.getAttribute("aria-label")).toBe("45.4K tok · 缓存命中 87%");

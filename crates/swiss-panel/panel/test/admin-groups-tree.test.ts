@@ -222,9 +222,9 @@ describe("group head - anatomy", () => {
     const menu = document.getElementById("menu");
     expect(menu?.className).toBe("menu float");
     // "default" is first of two: no Move up, a Move down.
-    const items = Array.from(menu?.children || []).map((n) => n.tagName === "HR" ? "---" : n.textContent);
+    const items = Array.from(menu?.querySelector(".menu-rows")?.children || []).map((n) => n.tagName === "HR" ? "---" : n.textContent);
     expect(items).toEqual([tr("groups.moveDown"), "---", tr("groups.rename"), "---", tr("groups.deleteGroup")]);
-    expect(menu?.lastElementChild?.className).toBe("danger");
+    expect(menu?.querySelector(".menu-rows")?.lastElementChild?.className).toBe("danger");
     menu?.remove();
   });
 

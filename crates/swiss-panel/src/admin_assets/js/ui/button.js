@@ -50,6 +50,7 @@ export function btn(label        , o          = {})                    {
 }
 
 ;                             
+                         
               
                  
                                                                            
@@ -65,7 +66,7 @@ export function btn(label        , o          = {})                    {
 export function iconBtn(icon        , label        , o              = {})                    {
   return h("button", {
     type: "button",
-    class: "btn icon" + (o.ghost ? " ghost" : ""),
+    class: "btn icon" + (o.kind ? " " + o.kind : o.ghost ? " ghost" : ""),
     id: o.id, title: o.title ?? label, disabled: o.disabled, hidden: o.hidden, data: o.data,
     aria: { label, pressed: o.pressed == null ? null : String(o.pressed) },
   }, iconNode(icon));
