@@ -610,6 +610,28 @@ impl Registry {
         self.do_start(&entry).await
     }
 
+    /// Drop pooled sockets of a started MCP without stopping it. A tunnel that just
+    /// reconnected calls this so the next query dials the new session instead of a
+    /// socket of the one that died. False when the MCP is not started or its adapter
+    /// has no pool to drop (a proc child stays up).
+    pub async fn release_pooled_connections(&self, name: &str) -> bool {
+        let Ok(entry) = self.require(name) else {
+            return false;
+        };
+        let started = entry
+            .data
+            .read()
+            .ok()
+            .is_some_and(|d| d.lifecycle == Lifecycle::Started);
+        if !started {
+            return false;
+        }
+        let Some(adapter) = entry.data.read().ok().map(|d| d.adapter.clone()) else {
+            return false;
+        };
+        adapter.release_pool().await
+    }
+
     pub async fn rename(self: &Arc<Self>, old_name: &str, new_name: &str) -> Result<(), String> {
         if old_name == new_name {
             return Ok(());

@@ -31,6 +31,15 @@ pub trait McpView: Send + Sync {
     fn is_started(&self, name: &str) -> bool;
     /// ISO timestamp of the MCP's current run, for the stale-pool notice.
     fn started_at(&self, name: &str) -> Option<String>;
+    /// Drop sockets this running MCP pooled before the tunnel it rides came back.
+    /// True when they were released. The default does nothing: a test view, and any
+    /// adapter that has no pool, leaves the restart notice in place.
+    fn release_pooled_connections<'a>(
+        &'a self,
+        _name: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+        Box::pin(std::future::ready(false))
+    }
 }
 
 impl TunnelManager {
@@ -81,13 +90,15 @@ impl TunnelManager {
                 if let Some(at) = &data.reconnected_at {
                     row.insert("reconnectedAt".into(), json!(at));
                 }
-                // A reconnect after the MCP started means its pool may still hold sockets of the
-                // old SSH session. Information only — nothing here restarts an MCP.
-                let stale = data
+                // A reconnect after the MCP started, and we could not drop its pool. A pool
+                // that was released dials the new session on its next call, so it is not stale.
+                let reconnected_after_start = data
                     .reconnected_at
                     .as_ref()
                     .zip(started_at.as_ref())
                     .is_some_and(|(reconn, started)| reconn > started);
+                let released = data.pools_released.iter().any(|name| name == mcp);
+                let stale = reconnected_after_start && !released;
                 row.insert("stalePool".into(), json!(stale));
                 Value::Object(row)
             })
@@ -139,12 +150,15 @@ mod tests {
     /// The MCP registry view the linkage tests run against.
     struct View {
         started: Vec<String>,
+        /// When set, a reconnect drops this MCP's pool and the restart notice stays off.
+        release: bool,
     }
 
     impl View {
         fn boxed(started: &[&str]) -> Option<Box<dyn McpView>> {
             Some(Box::new(View {
                 started: started.iter().map(|s| s.to_string()).collect(),
+                release: false,
             }))
         }
     }
@@ -166,6 +180,13 @@ mod tests {
         fn started_at(&self, name: &str) -> Option<String> {
             self.is_started(name)
                 .then(|| "2026-08-13T10:00:00.000Z".to_string())
+        }
+        fn release_pooled_connections<'a>(
+            &'a self,
+            name: &'a str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+            let ok = self.release && self.is_started(name);
+            Box::pin(std::future::ready(ok))
         }
     }
 
@@ -317,6 +338,48 @@ mod tests {
         assert_eq!(
             m.tunnels_for_mcp("pg-analytics")[0]["stalePool"],
             json!(true)
+        );
+        m.close_all().await;
+    }
+
+    #[tokio::test]
+    async fn a_reconnect_that_releases_the_pool_does_not_ask_for_a_restart() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager_with(
+            &store,
+            Some(Box::new(View {
+                started: vec!["pg-analytics".into()],
+                release: true,
+            })),
+            None,
+        );
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(
+            &store,
+            RuleInput {
+                auto_reconnect: true,
+                reconnect_interval: 1.0,
+                mcps: Some(vec!["pg-analytics".into()]),
+                ..rule_input("pg", &c.id, port, echo)
+            },
+        );
+        m.start_rule(&r.id).await.expect("start");
+        nth(&built, 0).die(FailureKind::Network);
+        assert!(
+            wait_until(Duration::from_secs(5), || state_of(&m, &r.id) == "reconnecting").await,
+            "state stayed {}",
+            state_of(&m, &r.id)
+        );
+        assert!(
+            wait_until(Duration::from_secs(10), || state_of(&m, &r.id) == "up").await,
+            "the retry never brought it back up"
+        );
+        assert_eq!(
+            m.tunnels_for_mcp("pg-analytics")[0]["stalePool"],
+            json!(false),
+            "the pool was dropped with the old session"
         );
         m.close_all().await;
     }

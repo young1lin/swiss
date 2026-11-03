@@ -294,6 +294,13 @@ pub trait Adapter: Send + Sync {
     /// Close DB connections / children on shutdown. Best effort by contract.
     async fn close(&self) {}
 
+    /// Drop pooled sockets without stopping the MCP. True when this adapter held a pool
+    /// and released it. A proc child is not a pool: the default does nothing and returns
+    /// false, and the panel still asks for Restart.
+    async fn release_pool(&self) -> bool {
+        false
+    }
+
     /// Captured stderr of a spawned child, for the panel's log view. proc only.
     fn logs(&self) -> Option<String> {
         None

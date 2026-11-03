@@ -193,8 +193,11 @@ transport(conn) = conn.jump ? live(jump).open_channel(conn.host, conn.port)   //
   redis read host/port (defaults 3306/6379), pg parses its connection string; references are
   resolved first — an unresolvable one does not match. proc and echo never match.
 - **Links.** A rule's `mcps` names the MCPs it serves; rows carry `mcpRows`
-  (`{name,state,known}`), and an MCP started before the tunnel's last reconnect is flagged
-  `stalePool`. The MCP detail page lists its tunnels.
+  (`{name,state,known}`). When a tunnel reconnects after a linked MCP started, that MCP's
+  pooled sockets (MySQL, PostgreSQL, Redis, MongoDB) are dropped so the next call dials
+  the new session. `stalePool` stays set only when the adapter cannot drop them — a child
+  process has no pool to release — and the detail page then still points at Restart.
+  The MCP detail page lists its tunnels.
 - **The guard.** Stopping or deleting a rule that a **started** MCP depends on, or stop-all, is
   409 `Dependents`; the panel lists them and resends with force.
 - **Renames.** An MCP rename migrates the links and a delete clears them.

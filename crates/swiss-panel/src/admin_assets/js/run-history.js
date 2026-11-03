@@ -605,9 +605,9 @@ function configBodyNode(d           )         {
  * The tunnels this MCP's traffic goes through. When a health check fails, the answer to "is it the
  * tunnel or the database?" belongs on the same screen as the failure.
  *
- * The stale-pool line is information only, by explicit decision: a reconnect after this MCP started
- * means its pool may hold sockets of the old SSH session, and the fix is the Restart button that is
- * already there. Nothing restarts an MCP on its own.
+ * The stale-pool line remains when a reconnect could not drop this MCP's sockets. A child process
+ * has no pool. MySQL, PostgreSQL, Redis and MongoDB pools are released with the old session, and
+ * then this line stays off. Nothing restarts an MCP on its own.
  */
 function tunnelDepsNode(d           )         {
   const t = d.tunnels;

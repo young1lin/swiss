@@ -133,14 +133,28 @@ impl TunnelManager {
         match started {
             Ok(fwd) => {
                 let now = swiss_core::log::iso_now();
+                // The listener is already bound. Drop linked pools before publishing the
+                // reconnect, so the next dial hits this session and the page does not flash
+                // a restart notice for a pool we just released.
+                let was_lost = rt
+                    .data
+                    .lock()
+                    .map(|d| d.lost)
+                    .unwrap_or(false);
+                let released = if was_lost {
+                    self.release_linked_pools(&rule.mcps).await
+                } else {
+                    Vec::new()
+                };
                 {
                     let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
                     data.forward = Some(fwd);
                     data.state = RuleState::Up;
                     data.retries = 0; // a successful connect resets the backoff for the next outage
                     if data.lost {
-                        data.reconnected_at = Some(now);
+                        data.reconnected_at = Some(now.clone());
                         data.lost = false;
+                        data.pools_released = released;
                     } else {
                         data.started_at = Some(now);
                     }
@@ -217,6 +231,22 @@ impl TunnelManager {
         }
     }
 
+    /// Drop pooled sockets of the MCPs this rule serves, now that its listener is the new
+    /// session. A name whose adapter has no pool (a proc child) is left out, and the detail
+    /// page keeps the restart notice for that one.
+    async fn release_linked_pools(self: &Arc<Self>, names: &[String]) -> Vec<String> {
+        let Some(view) = self.mcps.as_ref() else {
+            return Vec::new();
+        };
+        let mut released = Vec::new();
+        for name in names {
+            if view.is_started(name) && view.release_pooled_connections(name).await {
+                released.push(name.clone());
+            }
+        }
+        released
+    }
+
     /// Close any forward of ours that still holds `port` (state desync recovery). The teardown
     /// runs through each victim's OWN queue: the direct version bypassed the per-rule
     /// serialization every other mutation goes through, so a stop/lost op racing on that rule
@@ -272,6 +302,7 @@ impl TunnelManager {
             data.retries = 0;
             data.started_at = None;
             data.reconnected_at = None;
+            data.pools_released.clear();
             data.port_owner = None;
         }
         if persist {

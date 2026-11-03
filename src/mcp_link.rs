@@ -32,8 +32,8 @@ use swiss_tunnels::tunnel::api::McpDisplay;
 use swiss_tunnels::tunnel::manager::McpView;
 use swiss_tunnels::tunnel::mcpmatch::mcp_loopback_port;
 
-/// The manager's read-only registry window (has/stateOf/isStarted/startedAt). Nothing here can
-/// start or stop an MCP.
+/// The manager's registry window (has/stateOf/isStarted/startedAt, and dropping a pool after
+/// a tunnel reconnect). Nothing here can start or stop an MCP.
 pub fn registry_view(registry: Arc<Registry>) -> Box<dyn McpView> {
     Box::new(RegistryView(registry))
 }
@@ -84,6 +84,13 @@ impl McpView for RegistryView {
     fn started_at(&self, name: &str) -> Option<String> {
         self.entry(name)
             .and_then(|e| e.data.read().ok()?.started_at.clone())
+    }
+
+    fn release_pooled_connections<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move { self.0.release_pooled_connections(name).await })
     }
 }
 

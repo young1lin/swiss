@@ -1429,6 +1429,11 @@ impl Engine for MysqlEngine {
             .await;
     }
 
+    async fn release_pool(&self) -> bool {
+        self.conn.release().await;
+        true
+    }
+
     fn rename(&self, name: &str) {
         if let Ok(mut current) = self.name.write() {
             *current = name.to_string();

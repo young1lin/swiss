@@ -136,6 +136,25 @@ impl<T: Send + Sync + 'static> Lazy<T> {
         Ok(opened)
     }
 
+    /// Drop the pooled value so the next `get` opens a fresh one, and shut the old one
+    /// down off this call. A caller that already holds a clone keeps that clone; new
+    /// callers do not. The close is not awaited: a socket wedged on a dead tunnel must
+    /// not stall the next dial.
+    pub async fn release(&self) {
+        let taken = {
+            let mut slot = self.inner.cell.lock().await;
+            let taken = slot.value.take();
+            if taken.is_some() {
+                // The idle watcher of this generation sees the bump and leaves the close to us.
+                slot.opened += 1;
+            }
+            taken
+        };
+        let Some(value) = taken else { return };
+        let Some(release) = &self.inner.release else { return };
+        tokio::spawn((release.close)(value));
+    }
+
     /// Forget the connection and shut it down, waiting for one still being opened.
     ///
     /// Taking the cell while holding the mutex means a `get()` that queued behind this call
@@ -265,6 +284,10 @@ impl<E: Engine + 'static> Adapter for DirectAdapter<E> {
 
     async fn close(&self) {
         self.engine.close().await;
+    }
+
+    async fn release_pool(&self) -> bool {
+        self.engine.release_pool().await
     }
 
     fn rename(&self, name: &str) {
@@ -441,6 +464,28 @@ mod tests {
         // A second stop has nothing left to close.
         lazy.dispose(record(closed.clone())).await;
         assert_eq!(*closed.lock().unwrap(), vec![1]);
+    }
+
+    #[tokio::test]
+    async fn release_drops_the_pooled_connection_and_the_next_get_opens_another() {
+        let o = opens(0, 0);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let lazy = o.lazy().release_idle(std::time::Duration::from_secs(60), move |v: Arc<usize>| {
+            let tx = tx.clone();
+            Box::pin(async move {
+                let _ = tx.send(*v).await;
+            })
+        });
+        let first = lazy.get().await.expect("open");
+        drop(first);
+        lazy.release().await;
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("close ran")
+            .expect("close sent");
+        assert_eq!(closed, 1);
+        assert_eq!(*lazy.get().await.expect("reopen"), 2);
+        assert_eq!(o.count.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

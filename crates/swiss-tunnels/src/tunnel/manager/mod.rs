@@ -148,6 +148,9 @@ struct RuleData {
     forward: Option<Arc<Forward>>,
     started_at: Option<String>,
     reconnected_at: Option<String>,
+    /// Linked MCPs whose pools were dropped for the current `reconnected_at`. The detail
+    /// page asks for a restart only for a name that is not in this list.
+    pools_released: Vec<String>,
     port_owner: Option<PortOwner>,
     /// True between a transport loss and the next successful start, so it reports as a reconnect.
     lost: bool,
@@ -168,6 +171,7 @@ impl Default for RuleData {
             forward: None,
             started_at: None,
             reconnected_at: None,
+            pools_released: Vec::new(),
             port_owner: None,
             lost: false,
             retries: 0,

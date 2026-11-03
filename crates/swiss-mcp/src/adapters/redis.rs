@@ -2027,6 +2027,11 @@ impl Engine for RedisEngine {
         Some(result)
     }
 
+    async fn release_pool(&self) -> bool {
+        self.conn.release().await;
+        true
+    }
+
     async fn close(&self) {
         self.conn
             .dispose(|client| {

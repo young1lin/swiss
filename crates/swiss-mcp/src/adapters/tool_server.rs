@@ -401,6 +401,12 @@ pub trait Engine: Send + Sync {
     }
     /// Close the connection(s) on shutdown. Best effort by contract.
     async fn close(&self) {}
+    /// Drop pooled sockets after the tunnel they rode came back, so the next call dials
+    /// the new session. False for an engine that has no pool to drop (a child process
+    /// stays up). The default is false.
+    async fn release_pool(&self) -> bool {
+        false
+    }
     /// Follow a registry rename, so `meta()` keeps reporting the MCP's current name.
     fn rename(&self, _name: &str) {}
 
