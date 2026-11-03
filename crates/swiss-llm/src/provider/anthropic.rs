@@ -190,7 +190,9 @@ pub(super) fn payload(model: &str, request: ChatRequest, options: &ChatOptions) 
     }
     let messages: Vec<Value> = turns.into_iter().map(|(role, content)| json!({ "role": role, "content": content })).collect();
     let max_tokens = options.max_tokens.unwrap_or(MAX_TOKENS_DEFAULT);
-    let mut payload = json!({ "model": model, "max_tokens": max_tokens, "messages": messages, "stream": true });
+    // Automatic caching keeps the breakpoint at the growing conversation's tail.
+    let mut payload = json!({ "model": model, "max_tokens": max_tokens, "messages": messages, "stream": true,
+        "cache_control": { "type": "ephemeral", "ttl": "5m" } });
     if !system.is_empty() {
         payload["system"] = json!(system.join("\n\n"));
     }
@@ -481,6 +483,16 @@ mod tests {
             json!({ "type": "message_delta", "delta": { "stop_reason": reason }, "usage": { "output_tokens": 40 } }),
             json!({ "type": "message_stop" }),
         ]
+    }
+
+    #[test]
+    fn cache_context_defaults_to_five_minutes_on_the_anthropic_wire_only() {
+        for model in ["claude-sonnet-4-6", "glm-5.3-flash"] {
+            let sent = payload(model, ChatRequest::from_user("q"), &options(None, 4096)).expect("payload");
+            assert_eq!(sent["cache_control"], json!({ "type": "ephemeral", "ttl": "5m" }));
+        }
+        let openai = super::super::stream::openai_payload("m", ChatRequest::from_user("q"), &options(None, 4096)).expect("payload");
+        assert!(openai.get("cache_control").is_none(), "an Anthropic field never reaches an OpenAI endpoint");
     }
 
     #[test]
