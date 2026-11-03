@@ -31,9 +31,11 @@ built.
 definitions sharing host and port but differing in credentials are two entries and never merge
 (a test pins it). **There is no read-only flag**: Data is editable and queryable, and the
 operator's databases are the operator's to change. An old definition may still store
-`readonly`; nothing reads it and the echo drops it (§host.refs). The one read-only
-surface is a table in a database other than the configured one (§data.databases). The browser
-`label` names only the target (`db @ host:port`), never a credential.
+`readonly`; nothing reads it and the echo drops it (§host.refs). The read-only
+surfaces are a table in a database other than the configured one (§data.databases) and
+each open plugin's own SQLite file (§data.sqlite), query-only because it is that module's
+database, not the operator's to change. The browser `label` names only the target
+(`db @ host:port`, or `logs/data.db`, `memory/store.sqlite3`), never a credential.
 
 **Boundary and errors.** `/api/db` sits inside the host's loopback guard, 2 MiB body limit and
 plugin boundary (§host); it does no bearer auth — loopback is the gate. The error body is

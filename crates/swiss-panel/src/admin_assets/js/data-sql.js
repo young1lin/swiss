@@ -27,14 +27,15 @@ import { SQL_TOKEN_RE, dbHighlightNodes, dbSqlPaint } from "./data-filters.js";
 import { dbFormatSql } from "./data-sql-format.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
-import { dbConn, dbSqlTab, dbTab, dbTabs } from "./db-state.js";
-import { dbActivateTab, dbOpenTab, dbOpenTabForce, dbRestoreClosed, dbTabTitle, renderDbTabs } from "./data-tabs.js";
-import { dbClosedFor, dbClosedById, dbClosedSetText, dbClosedTakeAgent } from "./data-closed.js";
+import { dbSetSqlText, dbConn, dbSqlTab, dbTab, dbTabs } from "./db-state.js";
+import { dbActivateTab, dbClaimClosed, dbOpenTab, dbOpenTabForce, dbTabTitle, renderDbTabs } from "./data-tabs.js";
+import { dbClosedEntry, dbConsolePut, dbConsoleStoreOn } from "./data-console-store.js";
+import { dbClosedAdd, dbClosedById, dbClosedFor, dbClosedSetText } from "./data-closed.js";
 import { dbHistoryRefresh } from "./data-history.js";
 import { dbIsMongo, mongoCurrentDb, mongoFormatCommand, mongoRunCommand, mongoRunSupersede } from "./data-mongo.js";
 import { dockShow } from "./ui/dock.js";
                                                  
-import { tr, trn } from "./i18n.js";
+import { moduleDbMessage, tr, trn } from "./i18n.js";
 import { btn } from "./ui/button.js";
 
 /* --- pending-SQL preview ------------------------------------------------------------------------ */
@@ -264,7 +265,7 @@ function dbFillConsole(sql        )       {
   dbOpenTab({ kind: "sql" });
   const st = dbSqlTab();
   if (!st) return; // the strip refused the open — the toast has already said why
-  st.sqlText = sql;
+  dbSetSqlText(st, sql);
   const ta = $                     ("dbSql");
   if (ta) ta.value = sql;
   dbSqlPaint();
@@ -762,7 +763,7 @@ async function dbRunSql(explain                 , all          )                
     if (!dbRunReq.accepts(token)) return; // superseded mid-batch: stop quietly, the newer run owns the pane
     if (!r.ok) {
       ok = false;
-      toast(r.error, true);
+      toast(moduleDbMessage(r.error), true);
       const label = redis ? dbCommandTabLabel(toSend) : dbResultTabLabel(toSend, null);
       results.push(dbFailedReply(redis ? "command" : "statement", toSend, r.error, label, pieces.length - si - 1));
       break;
@@ -830,10 +831,10 @@ function dbAgentCommandReply(j                     , mongo         , label      
   };
 }
 
-/** The agent's name for one of its console tabs: none (or its Agent tab's own name) is the Agent tab. */
+/** The reserved wire name Agent identifies the default slot in every locale. */
 function dbAgentTabName(tab         )         {
   const name = (tab || "").trim();
-  return name.toLowerCase() === "agent" || name === tr("dataAgent.name") ? "" : name;
+  return name.toLowerCase() === "agent" ? "" : name;
 }
 
 /* SPEC §data.agent Tabs: the agent's console tab that name - or that id - names, brought to the
@@ -846,30 +847,23 @@ function dbAgentTab(tab         , id         )                  {
   const name = dbAgentTabName(tab);
   const byId = id ? dbConsoleById(id) : null;
   if (byId) return dbAgentOwn(byId, name);
-  const at = dbTabs().findIndex((t)          => { return t.kind === "sql" && t.agent === true && (t.agentTab || "") === name; });
+  if (id) { toast(tr("dataTabs.idMissing"), true); return null; }
+  const at = dbTabs().findIndex((t)          => { return t.kind === "sql" && !t.analysisId && t.agent === true && (t.agentTab || "") === name; });
   if (at >= 0) dbActivateTab(at);
   else {
     // A rename the agent never made: the card's own title is the only name that tab answers to.
-    const renamed = name ? dbTabs().findIndex((t)          => { return t.kind === "sql" && t.agent === true && dbTabTitle(t) === name; }) : -1;
+    const renamed = name ? dbTabs().findIndex((t)          => { return t.kind === "sql" && !t.analysisId && t.agent === true && dbTabTitle(t) === name; }) : -1;
     if (renamed >= 0) dbActivateTab(renamed);
     else {
       const conn = dbConn().conn;
-      const back = name && conn ? dbClosedTakeAgent(conn, name) : null;
+      const back = name && conn ? dbClosedFor(conn).find(x => x.agent && x.agentTab === name) : null;
+      if (back) { const restored = dbClaimClosed(back); return restored ? dbAgentOwn(restored, name) : null; }
       dbOpenTabForce({ kind: "sql" });
       const made = dbSqlTab();
       if (!made) return null;
       made.agent = true;
       if (name) made.agentTab = name;
-      made.custom = back?.custom || name || tr("dataAgent.name");
-      if (back) {
-        // The id the tab was filed under is the tab's, or every request the server addresses by
-        // it - a statement to place, an edit, a delete - lands in a console of another id.
-        made.id = back.id;
-        made.sqlText = back.text;
-        const ta = $                     ("dbSql");
-        if (ta) ta.value = made.sqlText;
-        dbSqlPaint();
-      }
+      made.custom = name || tr("dataAgent.name");
       renderDbTabs();
     }
   }
@@ -880,8 +874,8 @@ function dbAgentTab(tab         , id         )                  {
 /** A tab an id found, made one of the agent's. The name a frame carries is a label: it is adopted
  *  only where the tab has none, so the reader's rename and the agent's own first name both stand. */
 function dbAgentOwn(t          , name        )           {
+  if (!t.agent && name) t.agentTab = name;
   t.agent = true;
-  if (!t.agentTab && name) t.agentTab = name;
   if (!t.custom && name) t.custom = name;
   renderDbTabs();
   return t;
@@ -904,6 +898,8 @@ function dbAgentConsole(tab        )       {
                                                                                                 
                                                                                                    
                  
+                    
+                              
                                                 
  
 
@@ -914,16 +910,40 @@ function dbAgentConsole(tab        )       {
  *  next one. */
 function dbConsoleTabs()                     {
   const rows                     = [];
-  const wire = (id        , tab        , open         , text        , agent         )                   => ({
-    id, tab, open, agent,
-    statements: dbConsoleStatements(text).map((s                    )                                  => {
+  const wire = (id        , tab        , open         , text        , agent         )                   => {
+    const statements = dbConsoleStatements(text).map((s                    )                                  => {
       return s.title ? { sql: s.sql, title: s.title } : { sql: s.sql };
-    }),
-  });
-  for (const t of dbTabs()) if (t.kind === "sql") rows.push(wire(t.id, dbTabTitle(t), true, t.sqlText, t.agent === true));
+    });
+    const omit = statements.length > 1000 || statements.some(s => Array.from(s.sql).length > 20_000);
+    return { id, tab: Array.from(tab).slice(0, 500).join(""), open, agent,
+      statements: omit ? [] : statements, ...(omit ? { statementsOmitted: true } : {}) };
+  };
+  // One pass, one lookup per tab: a hundred open consoles are a page the reader actually has.
+  const seen = new Set        ();
+  for (const t of dbTabs()) if (t.kind === "sql" && !t.analysisId) {
+    const row = wire(t.id, dbTabTitle(t), true, t.sqlText, t.agent === true);
+    if (t.agent) row.agentTab = t.agentTab || "";
+    seen.add(t.id);
+    rows.push(row);
+  }
   const conn = dbConn().conn;
   for (const e of dbClosedFor(conn)) {
-    rows.push(wire(e.id, e.custom || tr(dbIsRedis() || dbIsMongo() ? "dataTabs.command" : "dataTabs.sql"), false, e.text, e.agent === true));
+    if (seen.has(e.id)) continue;
+    const row = wire(e.id, e.custom || tr(dbIsRedis() || dbIsMongo() ? "dataTabs.command" : "dataTabs.sql"), false, e.text, e.agent === true);
+    if (e.agent) row.agentTab = e.agentTab || "";
+    rows.push(row);
+  }
+  // Leave headroom for JSON escaping and other request fields. Omission is explicit and never
+  // changes the page's text; the server refuses statement edits when it lacks their indices.
+  const encoder = new TextEncoder();
+  let bytes = 2;
+  for (const row of rows) {
+    let size = encoder.encode(JSON.stringify(row)).length + 1;
+    if (bytes + size > 1_800_000 && row.statements.length) {
+      row.statements = []; row.statementsOmitted = true;
+      size = encoder.encode(JSON.stringify(row)).length + 1;
+    }
+    bytes += size;
   }
   return rows;
 }
@@ -932,13 +952,13 @@ function dbConsoleTabs()                     {
  *  text under the same id, data-closed.ts). Null when the page has neither - the tab was
  *  forgotten, or another browser tab closed and cleared it. */
 function dbConsoleById(id        )                  {
-  const at = dbTabs().findIndex((t       )          => t.kind === "sql" && t.id === id);
+  const at = dbTabs().findIndex((t       )          => t.kind === "sql" && !t.analysisId && t.id === id);
   if (at >= 0) {
     dbActivateTab(at);
-  } else if (dbClosedById(dbConn().conn, id)) {
-    dbRestoreClosed(id);
   } else {
-    return null;
+    const closed = dbClosedById(dbConn().conn, id);
+    if (!closed) return null;
+    if (!dbClaimClosed(closed)) return null;
   }
   const t = dbSqlTab();
   return t && t.id === id ? t : null;
@@ -954,6 +974,48 @@ function dbAgentConsoleId(id        , name         )       {
   dockShow("db-console", "bottom");
 }
 
+/** Format only the Agent's incoming SQL; unrelated drafts keep their original text. */
+function dbAgentFormat(text        , format = true)         {
+  if (!format || dbIsRedis() || dbIsMongo()) return text;
+  const dialect = dbConn().conns.find(c => c.name === dbConn().conn)?.dialect;
+  try { return dbFormatSql(text, { dialect: dialect === "pg" ? "pg" : "mysql" }); }
+  catch { toast(tr("dataTabs.formatFailed"), true); return text; }
+}
+
+/** Open first, then place and format. Only a creation frame may introduce an unknown ID. */
+export function dbAgentOpenConsole(frame                         )          {
+  if (frame.format !== undefined && typeof frame.format !== "boolean") { toast(tr("dataTabs.formatFailed"), true); return false; }
+  const id = typeof frame.tabId === "string" ? frame.tabId : undefined;
+  const name = typeof frame.tab === "string" ? frame.tab : undefined;
+  let t                 ;
+  if (id && frame.create === true && !dbTabs().some(t => t.kind === "sql" && t.id === id) && !dbClosedById(dbConn().conn, id)) {
+    dbOpenTabForce({ kind: "sql" });
+    t = dbSqlTab();
+    if (!t) return false;
+    t.id = id;
+    if (!name) t.custom = tr("dataAgent.name");
+    dbAgentOwn(t, dbAgentTabName(name));
+  } else t = dbAgentTab(name, id);
+  if (!t) return false;
+  // The record's revision travels with the frame (SPEC §data.agent Tabs): the page's formatted
+  // text is written against exactly the record the server just saved, never against a stale one.
+  const revision = typeof frame.consoleRevision === "number" && Number.isSafeInteger(frame.consoleRevision) ? frame.consoleRevision : null;
+  if (revision != null) t.revision = revision;
+  if (typeof frame.sql === "string" && frame.sql.trim()) {
+    // Only the incoming block is formatted (SPEC §data.agent): formatting the whole console here
+    // rewrote a manual draft's spacing when a tool merely pointed at it by id.
+    const incoming = dbIsMongo() ? mongoFormatCommand(frame.sql) || frame.sql : frame.sql;
+    const text = frame.format === false || dbIsRedis() ? incoming : dbAgentFormat(incoming);
+    dbSetSqlText(t, t.sqlText ? t.sqlText + "\n\n" + text : text);
+  }
+  const ta = $                     ("dbSql");
+  if (ta) ta.value = t.sqlText;
+  dbSqlPaint();
+  renderDbTabs();
+  dockShow("db-console", "bottom");
+  return true;
+}
+
 /** Edit (`replace`) or drop (`delete`) one statement of one console, found by id: an open one
  *  is rewritten in place and repainted, a closed one has its filed text rewritten. False when
  *  the id is unknown or the index no longer exists - the caller says why, never guesses which
@@ -963,7 +1025,7 @@ function dbAgentConsoleId(id        , name         )       {
  *  twice, or one whose tab moved on since, therefore cannot hit the wrong statement: a replace
  *  finding its own text already there is a no-op, and anything else is refused rather than
  *  applied to whatever now sits at that index. */
-function dbConsoleEdit(tabId        , op        , index        , sql         , expect         )          {
+function dbConsoleEdit(tabId        , op        , index        , sql         , expect         , revision                )          {
   const next = (text        )                => op === "delete" ? dbConsoleDelete(text, index) : dbConsoleReplace(text, index, sql || "");
   /** Does the statement at `index` still read as the frame expected? A repeat of a replace
    *  addressed the same statement it already wrote, which is done, not stale. */
@@ -971,15 +1033,22 @@ function dbConsoleEdit(tabId        , op        , index        , sql         , e
     const at = dbConsoleStatements(text)[index];
     if (!at) return false;
     if (!expect || at.sql === expect) return true;
+    if (dbIsMongo() && at.sql === mongoFormatCommand(expect)) return true;
+    if (!dbIsRedis() && !dbIsMongo()) {
+      const dialect = dbConn().conns.find(c => c.name === dbConn().conn)?.dialect === "pg" ? "pg" : "mysql";
+      try { if (dbFormatSql(at.sql, { dialect }) === dbFormatSql(expect, { dialect })) return true; }
+      catch { /* Invalid SQL still permits an exact match or an idempotent replacement below. */ }
+    }
     return op === "replace" && at.sql === (sql || "").trim();
   };
-  const open = dbTabs().find((t       )                => t.kind === "sql" && t.id === tabId);
+  const open = dbTabs().find((t       )                => t.kind === "sql" && !t.analysisId && t.id === tabId);
   if (open) {
+    if (revision != null) open.revision = revision;
     if (!placed(open.sqlText)) return false;
     const text = next(open.sqlText);
     if (text === null) return false;
     if (text === open.sqlText) return true; // already what was asked for
-    open.sqlText = text;
+    dbSetSqlText(open, text);
     if (dbSqlTab() === open) {
       const ta = $                     ("dbSql");
       if (ta) ta.value = text;
@@ -993,7 +1062,7 @@ function dbConsoleEdit(tabId        , op        , index        , sql         , e
   if (!placed(closed.text)) return false;
   const text = next(closed.text);
   if (text === null) return false;
-  dbClosedSetText(tabId, text);
+  if (!dbClosedSetText(tabId, text, dbConn().conn || undefined)) return false;
   renderDbTabs();
   return true;
 }
@@ -1008,7 +1077,26 @@ function dbAgentConsoleEdit(frame                         )       {
   const index = raw >= 0 ? Math.floor(raw) : -1;
   const op = frame.op === "delete" ? "delete" : "replace";
   if (!tabId || index < 0) { console.warn("consoleEdit: the frame names no console or no statement - ignored", frame); return; }
-  if (dbConsoleEdit(tabId, op, index, typeof frame.sql === "string" ? frame.sql : "", typeof frame.expect === "string" ? frame.expect : undefined)) return;
+  const text = typeof frame.sql === "string" ? frame.sql : "";
+  const revision = typeof frame.consoleRevision === "number" && Number.isSafeInteger(frame.consoleRevision) ? frame.consoleRevision : null;
+  if (dbConsoleEdit(tabId, op, index, op === "replace" ? dbAgentFormat(text, frame.format !== false) : text, typeof frame.expect === "string" ? frame.expect : undefined, revision)) {
+    // A closed console's change is the server's record now: write the page's formatted text
+    // (or its deletion) against the revision the frame named.
+    const conn = dbConn().conn;
+    const entry = conn ? dbClosedById(conn, tabId) : null;
+    if (conn && entry && dbConsoleStoreOn(conn)) {
+      void dbConsolePut(conn, {
+        id: entry.id, tab: entry.custom || "", agent: entry.agent === true, agentTab: entry.agentTab || null,
+        open: false, sql: entry.text, revision: revision ?? entry.revision ?? 0,
+        createdAt: entry.createdAt || 0, updatedAt: entry.updatedAt || 0, closedAt: entry.at,
+      }, "update").then((result) => {
+        if (result.ok) dbClosedAdd(conn, dbClosedEntry(conn, result.console));
+        else toast(result.error || tr("dataTabs.consoleSaveFailed"), true);
+      });
+    }
+    return;
+  }
+  toast(tr("dataTabs.editFailed"), true);
   console.warn("consoleEdit: no console tab, no statement at that index, or one that moved on - ignored", { tabId, op, index });
 }
 
@@ -1021,20 +1109,22 @@ function dbAgentConsoleEdit(frame                         )       {
    a send's first run in a tab starting that tab's over (`ran`: the tabs this send has run in).
    A staged one (a write the agent leaves to the reader) only lands in the console. The agent's
    run supersedes a Run still in flight on the results. `db`: the database a MongoDB command ran on. */
-function dbAgentStatement(sql        , outcome                                                            , ran             , db         , tab         , id         )       {
+function dbAgentStatement(sql        , outcome                                                            , ran             , db         , tab         , id         , format = true, revision                )       {
   const d = dbAgentTab(tab, id);
   if (!d) return;
+  if (revision != null) d.revision = revision;
   const mongo = dbIsMongo();
   const redis = dbIsRedis();
   const text = sql.trim();
   // A MongoDB command reads as the console's shell syntax, one block (no blank line inside); a
   // Redis line is the line. A statement's trailing line comment would swallow the semicolon: it
   // goes on a line of its own then.
-  const stmt = mongo ? (mongoFormatCommand(text) || text).replace(/\n\s*\n/g, "\n")
+  const raw = mongo ? (mongoFormatCommand(text) || text).replace(/\n\s*\n/g, "\n")
     : redis ? text
     : /;\s*$/.test(text) ? text : text + (/--[^\n]*$/.test(text) ? "\n;" : ";");
-  const before = d.sqlText.trimEnd();
-  d.sqlText = before ? before + "\n\n" + stmt : stmt;
+  const stmt = dbAgentFormat(raw, format);
+  const before = d.sqlText;
+  dbSetSqlText(d, before ? before + "\n\n" + stmt : stmt);
   const ta = $                     ("dbSql");
   if (ta) {
     ta.value = d.sqlText;

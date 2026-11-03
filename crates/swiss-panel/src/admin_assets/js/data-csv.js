@@ -22,7 +22,7 @@ import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
 import { dbOpenValueSheet } from "./data-value.js";
 import { dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data-view.js";
 import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
-import { locale, tr, trn } from "./i18n.js";
+import { locale, moduleDbMessage, tr, trn } from "./i18n.js";
                                              
 import { popupMenu } from "./ui/menu.js";
 import { btn } from "./ui/button.js";
@@ -65,7 +65,7 @@ function dbOpenImport()       {
   if (t0.kind !== "table") { toast(tr("dataCsv.openTableFirst"), true); return; }
   const d = t0;
   if (!c.conn || !d.table || !d.data) { toast(tr("dataCsv.openTableFirst"), true); return; }
-  if (!d.data.editable) { toast(tr("dataCsv.tableNotEditable", { reason: d.data.editNote || tr("dataCsv.noPrimaryKey") }), true); return; }
+  if (!d.data.editable) { toast(tr("dataCsv.tableNotEditable", { reason: d.data.editNote ? moduleDbMessage(d.data.editNote) : tr("dataCsv.noPrimaryKey") }), true); return; }
   if (dbPending() && !dbOkToDrop()) return;
   let header           = [], lines           = [], mapping                    = [];
   let mode = "insert"; // SPEC §data.export: "insert" | "upsert" — the statement form the commit uses

@@ -119,6 +119,7 @@ pub fn register_all(host: &mut PluginHost, deps: &BuiltinDeps) -> Result<(), Str
     }))?;
     host.register(Arc::new(DataPlugin {
         history: deps.data_history.clone(),
+        services: deps.services.clone(),
     }))?;
     host.register(Arc::new(JobsPlugin {
         jobs: deps.jobs.clone(),
@@ -279,10 +280,13 @@ impl PluginInstance for McpInstance {
         self.services
             .catalog
             .register(
-                Arc::new(swiss_mcp::registry::RegistryCatalog::new(
-                    self.registry.clone(),
-                    self.tracker.clone(),
-                )),
+                Arc::new(
+                    swiss_mcp::registry::RegistryCatalog::new(
+                        self.registry.clone(),
+                        self.tracker.clone(),
+                    )
+                    .with_module_dbs(self.services.module_dbs.clone()),
+                ),
                 MCP_ID,
             )
             .map_err(|err| format!("connection catalog registration: {err}"))?;
@@ -543,6 +547,7 @@ impl PluginInstance for TunnelsInstance {
 /// §data.history), the one file Data owns.
 struct DataPlugin {
     history: Arc<swiss_data::history::DataHistory>,
+    services: Arc<RuntimeServices>,
 }
 
 #[async_trait]
@@ -571,6 +576,7 @@ impl PluginFactory for DataPlugin {
     async fn create(&self, _config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
         Ok(Arc::new(DataInstance {
             history: self.history.clone(),
+            services: self.services.clone(),
         }))
     }
 }
@@ -582,6 +588,7 @@ impl PluginFactory for DataPlugin {
 /// connectivity away from Data with it.
 struct DataInstance {
     history: Arc<swiss_data::history::DataHistory>,
+    services: Arc<RuntimeServices>,
 }
 
 #[async_trait]
@@ -594,6 +601,11 @@ impl PluginInstance for DataInstance {
         // a warning, and the consoles still run (SPEC §data.history).
         if let Err(err) = self.history.open().await {
             swiss_core::log::warn(&format!("the console history is unavailable: {err}"), None);
+        } else {
+            self.services
+                .module_dbs
+                .publish(DATA_ID, self.history.database_file());
+            self.services.catalog.sql_history.install(self.history.clone());
         }
         Ok(())
     }
@@ -602,6 +614,8 @@ impl PluginInstance for DataInstance {
         // Request leases die with their requests, and the boundary dropping /api/db IS their
         // release; leases still held elsewhere are the provider's drain's business. The one
         // thing Data holds is its history, closed bounded here.
+        self.services.module_dbs.withdraw(DATA_ID);
+        self.services.catalog.sql_history.clear();
         if let Err(err) = self.history.close().await {
             swiss_core::log::warn(&format!("closing the console history: {err:?}"), None);
         }

@@ -80,6 +80,9 @@ pub fn upsert_suffix(
                 .collect();
             Ok(format!(" ON DUPLICATE KEY UPDATE {}", sets?.join(", ")))
         }
+        DbDialect::Sqlite => {
+            Err("sqlite is query-only — an import would write the built-in memory store".into())
+        }
         DbDialect::Pg => {
             if primary_key.is_empty() {
                 return Err("table has no primary key — Postgres has no ON CONFLICT target".into());

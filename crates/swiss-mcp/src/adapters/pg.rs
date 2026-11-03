@@ -1060,6 +1060,7 @@ pub async fn run_capped_write(pool: &PgPool, sql: &str, cap: u64) -> Result<Capp
     let ran = async {
         sqlx::query("SET LOCAL statement_timeout = '30s'").execute(&mut *tx).await.map_err(|e| e.to_string())?;
         sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        swiss_host::dbbrowser::execution::submitted(sql);
         if super::sql::has_returning(sql) {
             let rows = run_pg_tx_rows(&mut tx, sql, &[]).await?;
             Ok::<_, String>((rows.len() as u64, rows))

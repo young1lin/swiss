@@ -287,7 +287,9 @@ impl Runner for CatalogRunner {
             _ => return Err(format!("{} is not a MySQL or PostgreSQL connection", self.conn)),
         };
         // The lease outlives the call: it is what keeps the connection alive while it runs.
-        let out = browser.run_read_query(sql, Some(&json!(limit))).await;
+        let bound = json!(limit);
+        let out = self.catalog.sql_history.observe(&self.conn, browser.label(), lease.dialect(),
+            browser.run_read_query(sql, Some(&bound)), Clone::clone).await;
         drop(lease);
         out
     }
@@ -673,7 +675,9 @@ impl AnalysisStore {
     }
 
     /// Row-level comparison of two committed results, keyed on the named columns or on the whole
-    /// row. Both directions are reported, with counts over every row - not over a sample.
+    /// row. Both directions are reported, with counts over every row - not over a sample. With a
+    /// key, equal keys pair their rows and expose field-level changes; duplicate keys are matched
+    /// exactly first and the ambiguous remainder is explicitly diagnosed.
     pub fn compare(&self, task: &str, left: &str, right: &str, keys: &[String]) -> Result<Value, String> {
         let task = self.get(task)?;
         let (Some(a), Some(b)) = (task.result(left), task.result(right)) else {
@@ -688,59 +692,113 @@ impl AnalysisStore {
         let a_rows = read_all(&self.rows_path(&task.id, &a.id))?;
         let b_rows = read_all(&self.rows_path(&task.id, &b.id))?;
         let key_of = |meta: &ResultMeta, row: &Value| -> String {
-            if keys.is_empty() {
-                // The whole row: compare what the driver wrote, in its own order. A stored object
-                // keeps that order, because serde_json preserves insertion order.
-                return row.to_string();
-            }
-            let parts: Vec<String> = keys.iter().map(|k| {
-                match meta.columns.iter().position(|c| c == k) {
-                    Some(at) => cell(row, &meta.columns, at).to_string(),
-                    // A key naming no column of this result must not silently match anything.
-                    None => Value::Null.to_string(),
+            if keys.is_empty() { return canonical_row(meta, row); }
+            let mut value = Value::Array(keys.iter().map(|k| {
+                let cell = meta.columns.iter().position(|c| c == k).and_then(|at| cell_opt(row, &meta.columns, at));
+                match cell { Some(value) => json!([1, value]), None => json!([0]) }
+            }).collect());
+            value.sort_all_objects();
+            value.to_string()
+        };
+        let key_values = |meta: &ResultMeta, row: &Value| -> Value {
+            let mut out = Map::new();
+            for key in keys {
+                if let Some(at) = meta.columns.iter().position(|c| c == key) {
+                    if let Some(value) = cell_opt(row, &meta.columns, at) { out.insert(key.clone(), value.clone()); }
                 }
-            }).collect();
-            parts.join("\u{1}")
-        };
-        let count = |meta: &ResultMeta, rows: &[Value]| -> HashMap<String, u64> {
-            let mut map = HashMap::new();
-            for row in rows {
-                *map.entry(key_of(meta, row)).or_insert(0) += 1;
             }
-            map
+            Value::Object(out)
         };
-        let a_map = count(a, &a_rows);
-        let b_map = count(b, &b_rows);
+        let mut a_groups: HashMap<String, Vec<&Value>> = HashMap::new();
+        let mut b_groups: HashMap<String, Vec<&Value>> = HashMap::new();
+        for row in &a_rows { a_groups.entry(key_of(a, row)).or_default().push(row); }
+        for row in &b_rows { b_groups.entry(key_of(b, row)).or_default().push(row); }
+        let mut all_keys: Vec<String> = a_groups.keys().cloned().collect();
+        all_keys.extend(b_groups.keys().filter(|k| !a_groups.contains_key(*k)).cloned());
+        all_keys.sort();
+        let diagnostics = |meta: &ResultMeta, rows: &[Value], groups: &HashMap<String, Vec<&Value>>| -> Value {
+            let duplicate_rows: u64 = if keys.is_empty() { 0 } else { groups.values().map(|rows| rows.len().saturating_sub(1) as u64).sum() };
+            let duplicate_keys = if keys.is_empty() { 0 } else { groups.values().filter(|rows| rows.len() > 1).count() };
+            let null_rows = if keys.is_empty() { 0 } else {
+                rows.iter().filter(|row| keys.iter().any(|key| {
+                    meta.columns.iter().position(|c| c == key).is_some_and(|at| cell(row, &meta.columns, at).is_null())
+                })).count()
+            };
+            json!({ "duplicateRows": duplicate_rows, "duplicateKeys": duplicate_keys, "nullRows": null_rows })
+        };
+        let key_issues = json!({
+            "left": diagnostics(a, &a_rows, &a_groups),
+            "right": diagnostics(b, &b_rows, &b_groups),
+        });
+        let columns: Vec<String> = a.columns.iter().chain(b.columns.iter()).cloned().fold(Vec::new(), |mut out, col| {
+            if !out.contains(&col) { out.push(col); }
+            out
+        });
+        let differences = |left_row: &Value, right_row: &Value| -> Vec<Value> {
+            columns.iter().filter(|col| !keys.contains(col)).filter_map(|col| {
+                let av = a.columns.iter().position(|c| c == col).and_then(|at| cell_opt(left_row, &a.columns, at));
+                let bv = b.columns.iter().position(|c| c == col).and_then(|at| cell_opt(right_row, &b.columns, at));
+                (av != bv).then(|| json!({ "column": col, "left": av, "right": bv, "leftMissing": av.is_none(), "rightMissing": bv.is_none() }))
+            }).collect()
+        };
         let mut added = 0_u64;
         let mut removed = 0_u64;
         let mut shared = 0_u64;
+        let mut changed = 0_u64;
+        let mut unchanged = 0_u64;
         let mut added_sample = Vec::new();
         let mut removed_sample = Vec::new();
-        for (key, n) in &b_map {
-            let was = a_map.get(key).copied().unwrap_or(0);
-            shared += was.min(*n);
-            if n > &was {
-                added += n - was;
-                if added_sample.len() < 20 {
-                    added_sample.push(json!({ "key": key, "count": n - was }));
+        let mut changed_sample = Vec::new();
+        for key in all_keys {
+            let av = a_groups.get(&key).cloned().unwrap_or_default();
+            let bv = b_groups.get(&key).cloned().unwrap_or_default();
+            shared += av.len().min(bv.len()) as u64;
+            let mut left_rest = Vec::new();
+            let mut right_by_row: HashMap<String, Vec<usize>> = HashMap::new();
+            for (at, row) in bv.iter().enumerate() { right_by_row.entry(canonical_row(b, row)).or_default().push(at); }
+            let mut matched = vec![false; bv.len()];
+            // Match identical rows in linear time before pairing the remaining duplicate keys.
+            for left_row in av {
+                if let Some(at) = right_by_row.get_mut(&canonical_row(a, left_row)).and_then(Vec::pop) {
+                    matched[at] = true;
+                    unchanged += 1;
+                } else { left_rest.push(left_row); }
+            }
+            let right_rest: Vec<&Value> = bv.into_iter().enumerate().filter(|(at, _)| !matched[*at]).map(|(_, row)| row).collect();
+            let paired = left_rest.len().min(right_rest.len());
+            for at in 0..paired {
+                let fields = differences(left_rest[at], right_rest[at]);
+                if fields.is_empty() { unchanged += 1; continue; }
+                changed += 1;
+                if changed_sample.len() < 20 {
+                    changed_sample.push(json!({
+                        "key": key_values(a, left_rest[at]), "left": left_rest[at], "right": right_rest[at], "fields": fields,
+                    }));
                 }
             }
-        }
-        for (key, n) in &a_map {
-            let now = b_map.get(key).copied().unwrap_or(0);
-            if n > &now {
-                removed += n - now;
-                if removed_sample.len() < 20 {
-                    removed_sample.push(json!({ "key": key, "count": n - now }));
-                }
+            let removed_here = left_rest.len().saturating_sub(paired);
+            let added_here = right_rest.len().saturating_sub(paired);
+            removed += removed_here as u64;
+            added += added_here as u64;
+            if removed_here > 0 && removed_sample.len() < 20 {
+                removed_sample.push(json!({ "key": key_values(a, left_rest[paired]), "row": left_rest[paired], "count": removed_here }));
+            }
+            if added_here > 0 && added_sample.len() < 20 {
+                added_sample.push(json!({ "key": key_values(b, right_rest[paired]), "row": right_rest[paired], "count": added_here }));
             }
         }
         Ok(json!({
-            "left": { "result": a.id, "revision": a.revision, "rows": a.row_count, "truncated": a.truncated },
-            "right": { "result": b.id, "revision": b.revision, "rows": b.row_count, "truncated": b.truncated },
+            "left": { "result": a.id, "revision": a.revision, "at": a.at, "rows": a.row_count, "truncated": a.truncated },
+            "right": { "result": b.id, "revision": b.revision, "at": b.at, "rows": b.row_count, "truncated": b.truncated },
             "keys": keys, "added": added, "removed": removed, "shared": shared,
-            "addedSample": added_sample, "removedSample": removed_sample,
+            "changed": changed, "unchanged": unchanged,
+            "addedSample": added_sample, "removedSample": removed_sample, "changedSample": changed_sample,
             "columnsSame": a.columns == b.columns,
+            "columns": {
+                "onlyLeft": a.columns.iter().filter(|c| !b.columns.contains(c)).collect::<Vec<_>>(),
+                "onlyRight": b.columns.iter().filter(|c| !a.columns.contains(c)).collect::<Vec<_>>(),
+            },
+            "keyIssues": key_issues, "sampleLimit": 20, "duplicatePairing": "exact rows first, then stored order; duplicate keys cannot establish row identity",
             "note": if a.truncated || b.truncated {
                 "At least one side was truncated: this compares the kept prefixes, not the whole data."
             } else { "" },
@@ -889,61 +947,66 @@ impl AnalysisStore {
         }
         let rows = read_all(&self.rows_path(&task.id, result))?;
         let mut groups: HashMap<String, (Vec<f64>, Vec<u64>, u64)> = HashMap::new();
-        let mut order: Vec<String> = Vec::new();
+        let mut order: Vec<(String, String)> = Vec::new();
         let mut approximate = false;
+        let mut invalid = 0_u64;
         for row in &rows {
-            let key = cell(row, &meta.columns, x_at).clone();
-            let key = match &key {
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
+            let mut category = cell(row, &meta.columns, x_at).clone();
+            category.sort_all_objects();
+            let key = category.to_string();
+            let label = match &category {
+                Value::String(s) if serde_json::from_str::<Value>(s).is_err() => s.clone(),
+                _ => key.clone(),
             };
             if !groups.contains_key(&key) {
                 if groups.len() >= SERIES_GROUPS_MAX {
                     return Err(format!("more than {SERIES_GROUPS_MAX} distinct {x} values: aggregate in SQL first"));
                 }
-                order.push(key.clone());
+                order.push((key.clone(), label));
                 groups.insert(key.clone(), (vec![0.0; y_at.len()], vec![0; y_at.len()], 0));
             }
             let Some((sums, counts, rows_in)) = groups.get_mut(&key) else { continue };
             *rows_in += 1;
             for (i, at) in y_at.iter().enumerate() {
-                match cell(row, &meta.columns, *at) {
+                let value = cell(row, &meta.columns, *at);
+                let number = match value {
                     Value::Number(n) => {
-                        if let Some(v) = n.as_f64() {
-                            sums[i] += v;
-                            counts[i] += 1;
-                            if sums[i].abs() > 9_007_199_254_740_991.0 { approximate = true; }
-                            if n.as_i64().is_none() && n.as_u64().is_none() {
-                                approximate = true;
-                            }
-                        }
+                        if n.as_i64().is_none() && n.as_u64().is_none() { approximate = true; }
+                        n.as_f64()
                     }
                     Value::String(s) => {
-                        // bigint / decimal arrive as strings from the drivers. They are summed
-                        // here only approximately; the string itself is never rounded in storage.
-                        if let Ok(v) = s.parse::<f64>() {
-                            sums[i] += v;
-                            counts[i] += 1;
-                            approximate = true;
-                        }
+                        // Decimal strings remain exact in storage; the chart is approximate.
+                        approximate = true;
+                        s.parse::<f64>().ok()
                     }
-                    _ => {}
-                }
+                    Value::Null => continue,
+                    _ => None,
+                };
+                let Some(v) = number.filter(|n| n.is_finite()) else { invalid += 1; continue };
+                let sum = sums[i] + v;
+                if !sum.is_finite() { return Err(format!("chart sum overflow for {col}; aggregate in SQL first", col = y[i])); }
+                sums[i] = sum;
+                counts[i] += 1;
+                if sum.abs() > 9_007_199_254_740_991.0 { approximate = true; }
             }
         }
-        let points: Vec<Value> = order.iter().map(|key| {
+        let points: Vec<Value> = order.iter().map(|(key, label)| {
             let (sums, counts, rows_in) = groups.get(key).cloned().unwrap_or_default();
             let mut point = Map::new();
-            point.insert("x".into(), json!(key));
+            point.insert("x".into(), json!(label));
             point.insert("rows".into(), json!(rows_in));
+            let mut values = Map::new();
             for (i, col) in y.iter().enumerate() {
-                point.insert(col.clone(), json!({ "sum": sums[i], "n": counts[i] }));
+                let value = json!({ "sum": sums[i], "n": counts[i] });
+                values.insert(col.clone(), value.clone());
+                if !matches!(col.as_str(), "x" | "rows" | "values") { point.insert(col.clone(), value); }
             }
+            point.insert("values".into(), Value::Object(values));
             Value::Object(point)
         }).collect();
         Ok(json!({
             "result": meta.id, "x": x, "y": y, "points": points,
-            "rows": meta.row_count, "truncated": meta.truncated, "approximate": approximate,
+            "rows": meta.row_count, "truncated": meta.truncated, "approximate": approximate, "invalid": invalid,
             "note": if meta.truncated {
                 "Computed over the kept (truncated) rows only."
             } else if approximate {
@@ -951,6 +1014,79 @@ impl AnalysisStore {
             } else { "" },
         }))
     }
+
+    /// A scatter chart's observations, one point per stored row. Unlike `series`, this never
+    /// groups or sums: repeated x values remain separate points. Values retain their exact JSON
+    /// representation; the view labels the numeric conversion needed for SVG as approximate.
+    pub fn scatter_series(&self, task: &str, result: &str, x: &str, y: &[String]) -> Result<Value, String> {
+        let task = self.get(task)?;
+        let Some(meta) = task.result(result) else { return Err("unknown result".into()) };
+        let Some(x_at) = meta.columns.iter().position(|c| c == x) else {
+            return Err("x: not a column of this result".into());
+        };
+        if y.is_empty() { return Err("y: at least one column".into()); }
+        let mut y_at = Vec::new();
+        for col in y {
+            let Some(at) = meta.columns.iter().position(|c| c == col) else {
+                return Err(format!("y: {col} is not a column of this result"));
+            };
+            y_at.push(at);
+        }
+        let rows = read_all(&self.rows_path(&task.id, result))?;
+        let mut approximate = false;
+        let mut invalid = 0_u64;
+        let mut numeric = |value: &Value| -> bool {
+            match value {
+                Value::Number(n) => {
+                    if n.as_i64().is_none() && n.as_u64().is_none()
+                        || n.as_i64().is_some_and(|v| !(-9_007_199_254_740_991..=9_007_199_254_740_991).contains(&v))
+                        || n.as_u64().is_some_and(|v| v > 9_007_199_254_740_991) { approximate = true; }
+                    n.as_f64().is_some_and(f64::is_finite)
+                }
+                Value::String(s) => {
+                    let valid = s.parse::<f64>().ok().is_some_and(f64::is_finite);
+                    if valid { approximate = true; }
+                    valid
+                }
+                _ => false,
+            }
+        };
+        let mut points = Vec::new();
+        for row in &rows {
+            let x_value = cell(row, &meta.columns, x_at);
+            let valid_x = numeric(x_value);
+            let mut point = Map::new();
+            point.insert("x".into(), x_value.clone());
+            let mut valid_y = true;
+            let mut values = Map::new();
+            for (i, col) in y.iter().enumerate() {
+                let value = cell(row, &meta.columns, y_at[i]);
+                valid_y &= numeric(value);
+                values.insert(col.clone(), value.clone());
+                if !matches!(col.as_str(), "x" | "values") { point.insert(col.clone(), value.clone()); }
+            }
+            point.insert("values".into(), Value::Object(values));
+            if valid_x && valid_y { points.push(Value::Object(point)); }
+            else { invalid += 1; }
+        }
+        Ok(json!({
+            "result": meta.id, "mode": "scatter", "x": x, "y": y, "points": points,
+            "rows": meta.row_count, "invalid": invalid, "truncated": meta.truncated, "approximate": approximate,
+            "note": if meta.truncated {
+                "Points cover the kept (truncated) rows only; numeric display may be approximate."
+            } else if approximate || invalid > 0 {
+                "Numeric display may be approximate; rows with a non-numeric or infinite coordinate are omitted."
+            } else { "" },
+        }))
+    }
+}
+
+// Normalize legacy positional rows and current object rows through their column names.
+fn canonical_row(meta: &ResultMeta, row: &Value) -> String {
+    let map: Map<String, Value> = meta.columns.iter().enumerate().filter_map(|(at, col)| cell_opt(row, &meta.columns, at).map(|value| (col.clone(), value.clone()))).collect();
+    let mut value = Value::Object(map);
+    value.sort_all_objects();
+    value.to_string()
 }
 
 /// One cell of a stored row, by column position.
@@ -960,10 +1096,15 @@ impl AnalysisStore {
 /// or a comparison over real data showed zeros (2026-11-01). A positional array is still read
 /// too, so a result written by an older build keeps working.
 fn cell<'a>(row: &'a Value, columns: &[String], at: usize) -> &'a Value {
+    cell_opt(row, columns, at).unwrap_or(&Value::Null)
+}
+
+/// Comparison retains absence separately from a present JSON null.
+fn cell_opt<'a>(row: &'a Value, columns: &[String], at: usize) -> Option<&'a Value> {
     match row {
-        Value::Array(items) => items.get(at).unwrap_or(&Value::Null),
-        Value::Object(map) => columns.get(at).and_then(|c| map.get(c)).unwrap_or(&Value::Null),
-        _ => &Value::Null,
+        Value::Array(items) => items.get(at),
+        Value::Object(map) => columns.get(at).and_then(|c| map.get(c)),
+        _ => None,
     }
 }
 
@@ -1097,6 +1238,82 @@ mod tests {
             }
             Ok(out)
         }
+    }
+
+    struct Reply(Value);
+
+    #[async_trait::async_trait]
+    impl Runner for Reply {
+        async fn run(&self, _sql: &str, _limit: u32) -> Result<Value, String> { Ok(self.0.clone()) }
+    }
+
+    #[tokio::test]
+    async fn comparing_reordered_columns_and_nested_objects_does_not_invent_changes() {
+        let store = store();
+        let task = task(&store);
+        let a = store.execute(&Reply(json!({ "columns": ["a", "b"], "rows": [[1, { "one": 1, "two": 2 }]] })), &task.id, None, None, None).await.expect("a");
+        let b = store.execute(&Reply(json!({ "columns": ["b", "a"], "rows": [{ "b": { "two": 2, "one": 1 }, "a": 1 }] })), &task.id, None, None, None).await.expect("b");
+        for keys in [vec![], vec!["a".to_string()]] {
+            let diff = store.compare(&task.id, a["result"]["id"].as_str().expect("a"), b["result"]["id"].as_str().expect("b"), &keys).expect("compare");
+            assert_eq!((diff["added"].as_u64(), diff["removed"].as_u64(), diff["changed"].as_u64()), (Some(0), Some(0), Some(0)), "{diff}");
+        }
+        let _ = std::fs::remove_dir_all(store.root());
+    }
+
+    #[tokio::test]
+    async fn analysis_context_rejects_excess_and_invalid_row_ids() {
+        let store = store();
+        let task = task(&store);
+        let result = store.execute(&Stub::of(25), &task.id, None, None, None).await.expect("run");
+        let id = result["result"]["id"].as_str().expect("result");
+        let ids: Vec<String> = (0..21).map(|i| format!("{id}:{i}")).collect();
+        assert!(crate::llm_db_analysis::view_context(&store, "pg1", &json!({ "taskId": task.id, "resultId": id, "rowIds": ids })).is_err());
+        assert!(crate::llm_db_analysis::view_context(&store, "pg1", &json!({ "taskId": task.id, "resultId": id, "rowIds": [42] })).is_err());
+        let _ = std::fs::remove_dir_all(store.root());
+    }
+
+    #[tokio::test]
+    async fn comparison_canonicalizes_object_keys_and_distinguishes_missing_cells() {
+        let store = store();
+        let task = task(&store);
+        let a = store.execute(&Reply(json!({ "columns": ["key", "amount"], "rows": [{ "key": { "a": 1, "b": { "x": 1, "y": 2 } } }] })), &task.id, None, None, None).await.expect("a");
+        let b = store.execute(&Reply(json!({ "columns": ["key", "amount"], "rows": [{ "key": { "b": { "y": 2, "x": 1 }, "a": 1 }, "amount": null }] })), &task.id, None, None, None).await.expect("b");
+        let diff = store.compare(&task.id, a["result"]["id"].as_str().expect("a"), b["result"]["id"].as_str().expect("b"), &["key".into()]).expect("compare");
+        assert_eq!((diff["added"].as_u64(), diff["removed"].as_u64(), diff["changed"].as_u64()), (Some(0), Some(0), Some(1)), "{diff}");
+        assert_eq!(diff["changedSample"][0]["fields"][0]["leftMissing"], true);
+        assert_eq!(diff["changedSample"][0]["fields"][0]["rightMissing"], false);
+        let whole = store.compare(&task.id, a["result"]["id"].as_str().expect("a"), b["result"]["id"].as_str().expect("b"), &[]).expect("whole");
+        assert_eq!((whole["added"].as_u64(), whole["removed"].as_u64()), (Some(1), Some(1)), "{whole}");
+        let _ = std::fs::remove_dir_all(store.root());
+    }
+
+    #[tokio::test]
+    async fn comparison_refuses_a_key_one_side_does_not_have() {
+        let store = store();
+        let task = task(&store);
+        let a = store.execute(&Reply(json!({ "columns": ["id", "amount"], "rows": [[1, 2]] })), &task.id, None, None, None).await.expect("a");
+        let b = store.execute(&Reply(json!({ "columns": ["key", "amount"], "rows": [["k", 2]] })), &task.id, None, None, None).await.expect("b");
+        let why = store.compare(&task.id, a["result"]["id"].as_str().expect("a"), b["result"]["id"].as_str().expect("b"), &["id".into()])
+            .expect_err("a key the right side lacks cannot pair rows");
+        assert!(why.contains("not a column of both results"), "{why}");
+        let _ = std::fs::remove_dir_all(store.root());
+    }
+
+    #[tokio::test]
+    async fn chart_columns_named_x_rows_or_values_do_not_replace_coordinates() {
+        let store = store();
+        let task = task(&store);
+        let out = store.execute(&Reply(json!({ "columns": ["position", "x", "rows", "values"], "rows": [{ "position": 100, "x": 7, "rows": 8, "values": 9 }] })), &task.id, None, None, None).await.expect("run");
+        let result = out["result"]["id"].as_str().expect("result");
+        let columns = ["x".into(), "rows".into(), "values".into()];
+        let scatter = store.scatter_series(&task.id, result, "position", &columns).expect("scatter");
+        assert_eq!(scatter["points"][0]["x"], 100);
+        assert_eq!(scatter["points"][0]["values"], json!({ "x": 7, "rows": 8, "values": 9 }));
+        let series = store.series(&task.id, result, "position", &columns).expect("series");
+        assert_eq!(series["points"][0]["x"], "100");
+        assert_eq!(series["points"][0]["rows"], 1);
+        assert_eq!(series["points"][0]["values"]["x"]["sum"], 7.0);
+        let _ = std::fs::remove_dir_all(store.root());
     }
 
     fn region(rows: &[(&str, i64)]) -> Objects {
@@ -1351,6 +1568,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chart_categories_preserve_json_types() {
+        let store = store();
+        let task = task(&store);
+        let data = Objects { rows: vec![json!({ "region": null, "amount": 2 }), json!({ "region": "null", "amount": 3 }), json!({ "region": 1, "amount": 4 }), json!({ "region": "1", "amount": 5 })], capped: None };
+        let out = store.execute(&data, &task.id, None, None, None).await.expect("run");
+        let series = store.series(&task.id, out["result"]["id"].as_str().expect("id"), "region", &["amount".into()]).expect("series");
+        let points = series["points"].as_array().expect("points");
+        assert_eq!(points.len(), 4, "{series}");
+        assert_eq!(points.iter().map(|p| p["values"]["amount"]["sum"].as_f64().expect("sum")).collect::<Vec<_>>(), vec![2.0, 3.0, 4.0, 5.0]);
+        let _ = std::fs::remove_dir_all(store.root());
+    }
+
+    #[tokio::test]
+    async fn chart_ignores_nonfinite_inputs_and_rejects_overflow() {
+        let store = store();
+        let task = task(&store);
+        let data = Objects { rows: vec![json!({ "region": "north", "amount": "NaN" }), json!({ "region": "north", "amount": "Infinity" }), json!({ "region": "north", "amount": "2" })], capped: None };
+        let out = store.execute(&data, &task.id, None, None, None).await.expect("run");
+        let result = out["result"]["id"].as_str().expect("id");
+        let series = store.series(&task.id, result, "region", &["amount".into()]).expect("series");
+        assert_eq!(series["invalid"], json!(2));
+        assert_eq!(series["points"][0]["values"]["amount"]["sum"], json!(2.0));
+        assert_eq!(series["points"][0]["values"]["amount"]["n"], json!(1));
+        let overflow = Objects { rows: vec![json!({ "region": "north", "amount": "1e308" }), json!({ "region": "north", "amount": "1e308" })], capped: None };
+        let out = store.execute(&overflow, &task.id, None, None, None).await.expect("run");
+        let result = out["result"]["id"].as_str().expect("id");
+        assert!(store.series(&task.id, result, "region", &["amount".into()]).expect_err("overflow").contains("overflow"));
+        let _ = std::fs::remove_dir_all(store.root());
+    }
+
+    #[tokio::test]
     async fn a_keyed_comparison_tells_object_rows_apart() {
         let store = store();
         let task = task(&store);
@@ -1386,6 +1634,61 @@ mod tests {
         let note = out["result"]["note"].as_str().unwrap_or_default();
         assert!(note.contains("Truncated at 10 rows"), "{note}");
         assert!(note.contains("at most 10"), "the note names the connection's ceiling: {note}");
+        let _ = std::fs::remove_dir_all(store.root());
+    }
+
+    #[tokio::test]
+    async fn a_scatter_series_keeps_duplicate_x_values_as_independent_points() {
+        // SPEC §data.analysis: a scatter plot is not a grouped sum. Its numeric x axis and every
+        // stored point survive, including two observations at the same x.
+        let store = store();
+        let task = task(&store);
+        let data = Objects {
+            rows: vec![
+                json!({ "region": 1, "amount": 10 }),
+                json!({ "region": 2, "amount": 20 }),
+                json!({ "region": 2, "amount": 25 }),
+                json!({ "region": 100, "amount": 30 }),
+            ],
+            capped: None,
+        };
+        let out = store.execute(&data, &task.id, None, None, None).await.expect("run");
+        let result = out["result"]["id"].as_str().expect("result").to_string();
+        let series = store.scatter_series(&task.id, &result, "region", &["amount".into()]).expect("scatter");
+        let points = series["points"].as_array().expect("points");
+        assert_eq!(points.len(), 4, "duplicate x values are not aggregated away: {series}");
+        assert_eq!(points[0]["x"], json!(1));
+        assert_eq!(points[1]["amount"], json!(20));
+        assert_eq!(points[2]["x"], json!(2));
+        assert_eq!(points[2]["amount"], json!(25));
+        assert_eq!(points[3]["x"], json!(100));
+        assert_eq!(series["mode"], json!("scatter"));
+        let _ = std::fs::remove_dir_all(store.root());
+    }
+
+    #[tokio::test]
+    async fn a_keyed_comparison_reports_changed_fields_and_key_diagnostics() {
+        let store = store();
+        let task = task(&store);
+        let a = store.execute(&region(&[("north", 10), ("south", 7), ("west", 4)]), &task.id, None, None, None).await.expect("a");
+        let b = store.execute(&region(&[("north", 12), ("south", 7), ("east", 3)]), &task.id, None, None, None).await.expect("b");
+        let diff = store.compare(&task.id, a["result"]["id"].as_str().expect("a"), b["result"]["id"].as_str().expect("b"), &["region".into()]).expect("compare");
+        assert_eq!(diff["changed"], json!(1));
+        assert_eq!(diff["unchanged"], json!(1));
+        assert_eq!(diff["added"], json!(1));
+        assert_eq!(diff["removed"], json!(1));
+        assert_eq!(diff["changedSample"][0]["fields"][0]["column"], json!("amount"));
+        assert_eq!(diff["changedSample"][0]["fields"][0]["left"], json!(10));
+        assert_eq!(diff["changedSample"][0]["fields"][0]["right"], json!(12));
+
+        let duplicate = store.execute(&region(&[("north", 10), ("north", 11)]), &task.id, None, None, None).await.expect("duplicate");
+        let diagnosed = store.compare(&task.id, a["result"]["id"].as_str().expect("a"), duplicate["result"]["id"].as_str().expect("duplicate"), &["region".into()]).expect("compare duplicates");
+        assert_eq!(diagnosed["keyIssues"]["right"]["duplicateRows"], json!(1));
+
+        let null_data = Objects { rows: vec![json!({ "region": Value::Null, "amount": 1 })], capped: None };
+        let null_result = store.execute(&null_data, &task.id, None, None, None).await.expect("null key");
+        let nulls = store.compare(&task.id, a["result"]["id"].as_str().expect("a"), null_result["result"]["id"].as_str().expect("null"), &["region".into()]).expect("compare nulls");
+        assert_eq!(nulls["keyIssues"]["right"]["nullRows"], json!(1));
         let _ = std::fs::remove_dir_all(store.root());
     }
 

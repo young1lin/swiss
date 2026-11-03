@@ -14,16 +14,18 @@
  * limitations under the License.
  */
 
+import { objectPrefs, objectPrefixes, favoriteObject, prefixObjects } from "./data-objects.js";
+import { groupNode } from "./ui/group.js";
 import type { ApiDbConnectionRow, ApiDbDatabase, ApiDbDatabasesResponse, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbTableRow, ApiDbTablesResponse } from "./types/api.js";
 import type { DbConnState, DbFilterTerm, DbTab, DbTableTab } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el, iconNode, targetEl, toast, typeTagNode } from "./util.js";
 import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown, dbRefreshKeyspace, dbRefreshRedisValue, dbRewalkKeys } from "./data-browsers.js";
-import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlPaint, renderDbFilters } from "./data-filters.js";
-import { dbConsoleHint, dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbSqlFormatNow, dbSqlHintSet, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
+import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlHighlightClear, dbSqlPaint, renderDbFilters } from "./data-filters.js";
+import { dbConsoleHint, dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbSqlFormatInProgress, dbSqlFormatNow, dbSqlHintSet, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbBarClick, dbFavLoad, dbRunSql, renderDbBar } from "./data-sql.js";
-import { dbAgentButton, dbAgentForget, dbAgentPane, renderDbAgent } from "./data-agent.js";
+import { dbAgentButton, dbAgentForget, dbAgentPane, paintContext, renderDbAgent } from "./data-agent.js";
 import { dbActivityClick, dbActivityPollStop } from "./data-activity.js";
 import { dbPubsubClick, dbPubsubInput, dbPubsubKeydown, dbPubsubStop } from "./data-pubsub.js";
 // The MongoDB workspace (SPEC §data.mongo-panel). Same accepted cycle shape as data-tabs below:
@@ -45,13 +47,13 @@ import type { GroupCfg, GroupSlice, MenuItem } from "./types/dom.js";
 import { DB_TREE_SECTIONS, dbKeyShown, dbSectionOf, dbSectionSlices, redisNamespaceTree, redisTypeGlyph } from "./data-tree.js";
 import type { DbTreeSection, RedisNsGroup } from "./data-tree.js";
 import {
-  dbConn, dbForgetParked, dbIsMounted, dbParkedTabs, dbReplaceConn, dbResumeView, dbSqlTab, dbSwapConn, dbTab, dbTabs, mountDbView,
+  dbSetSqlText, dbConn, dbForgetParked, dbIsMounted, dbParkedTabs, dbReplaceConn, dbResumeView, dbSqlTab, dbSwapConn, dbTab, dbTabs, mountDbView,
 } from "./db-state.js";
 // The strip's policy module. The cycle is the same accepted shape as the data-structure edge
 // below: data-tabs reaches back for renderDbTables, and both sides only call across it inside
 // functions, never at module scope.
 import {
-  dbAfterTabSwitch, dbLastTableTab, dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsContext,
+  dbAfterTabSwitch, dbConsolesLoad, dbLastTableTab, dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsContext,
   dbTabsPending, dbTabPending, renderDbTabs,
 } from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
@@ -128,7 +130,7 @@ function dbPendingAll(): number {
 
 /** Does a session hold work the park must never evict (SPEC §data.sessions)? */
 function dbSessionPinned(tabs: DbTab[]): boolean {
-  return dbTabsPending(tabs) > 0;
+  return dbTabsPending(tabs) > 0 || tabs.some(t => t.kind === "sql" && !t.analysisId);
 }
 
 /** The confirmed page leave (SPEC §data.sessions): every session's buffered writes go and the sessions
@@ -214,11 +216,15 @@ async function loadDbView(): Promise<void> {
     // The connection on screen is gone, or there never was one: go to the registry's first,
     // resuming its parked session if it has one. The one that left is not parked - nothing
     // can be read or committed through it any more.
-    if (!dbReplaceConn(d.conns.length ? d.conns[0].name : null)) dbResetTabsForConn();
+    if (!dbReplaceConn(d.conns.length ? d.conns[0].name : null)) await dbResetTabsForConn();
   }
   // The skeleton above was drawn before /api/db answered: dbShowSession dresses everything that
   // depends on the connection's KIND and repaints the strip, which hides with no connection.
   dbShowSession();
+  // dbReplaceConn installs a new record when this entry had none (or the old one left the
+  // registry). `d` is that previous record, so its conn is not the one now on screen.
+  const opened = dbConn().conn;
+  if (opened) void dbConsolesLoad(opened);
 }
 
 /** Paint the live session whole, then fetch only what it lacks (SPEC §data.sessions). What the session
@@ -256,6 +262,7 @@ function renderDbView(): void {
   // db-host is this page's own hook for its child rules. views/data.js takes both back off
   // on unmount so no other page inherits them.
   pane.classList.add("db-host", "full");
+  dbSqlHighlightClear();
   pane.textContent = "";
   dbAgentForget();
   // SPEC §panel.toolchain: the skeleton is a node tree, and the pane carries ONE delegated listener per
@@ -416,10 +423,23 @@ function dbPaneAuxClick(ev: MouseEvent): void {
 function dbPaneContext(ev: MouseEvent): void {
   const t = targetEl(ev);
   if (!t) return;
-  dbTabsContext(t, ev);
+  if (dbTabsContext(t, ev)) return;
+  const table = t.closest<HTMLElement>("[data-tname]");
+  if (!table || !dbConn().conn) return;
+  ev.preventDefault(); ev.stopPropagation();
+  const conn = dbConn().conn, database = dbConn().database;
+  if (!conn || !table.dataset.tname) return;
+  const address = { name: table.dataset.tname, schema: table.dataset.tschema || null };
+  const pinned = objectPrefs(conn, database).favorites.some(a => a.name === address.name && a.schema === address.schema);
+  popupMenu(table.getBoundingClientRect(), [{ label: tr(pinned ? "dataObjects.unfavorite" : "dataObjects.favorite"), fn: (): void => {
+    if (!favoriteObject(conn, database, address)) toast(tr("dataObjects.saveFailed"), true);
+    if (dbConn().conn === conn && dbConn().database === database) renderDbTables();
+  } }]);
 }
 
 function dbPaneInput(ev: Event): void {
+  if (targetEl(ev)?.id === "dbSql" && dbSqlFormatInProgress()) return;
+  if (targetEl(ev)?.id === "dbSql") queueMicrotask(paintContext);
   const t = targetEl(ev);
   if (!t || t.closest("#dbAgent")) return;
   if (dbChromeInput(t)) return;
@@ -522,7 +542,8 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
     const name = tblRow.dataset.tname!;
     const schema = tblRow.dataset.tschema || null;
     const row = d.tables.find((x: ApiDbTableRow): boolean => { return x.name === name && (x.schema || null) === schema; });
-    if (row) dbOpenTab({ kind: "table", table: row.name, schema: schema });
+    const remembered = objectPrefs(d.conn || "", d.database);
+    if (row || [...remembered.favorites, ...remembered.recent].some(a => a.name === name && a.schema === schema)) dbOpenTab({ kind: "table", table: name, schema });
     return true;
   }
   if (t.closest("[data-keysmore]")) { void dbLoadKeys(false); return true; }
@@ -568,7 +589,7 @@ function dbChromeInput(t: Element): boolean {
   const ta = t.closest<HTMLTextAreaElement>("#dbSql");
   if (ta) {
     const st = dbSqlTab();
-    if (st) st.sqlText = ta.value;
+    if (st) dbSetSqlText(st, ta.value);
     dbSqlPaint();
     dbSuggestOnInput.call(ta);
     dbRedisHint(ta); // SPEC §data.redis-console: the line under the box follows the command being typed
@@ -726,11 +747,12 @@ async function dbSwitchConn(name: string): Promise<void> {
   dbActivityPollStop(); // a parked monitor stops asking about sessions nobody is looking at (D8)
   dbPubsubStop(); // and a parked pub/sub page gives its subscription back (SPEC §data.pubsub)
   if (!dbSwapConn(name, dbSessionPinned)) {
-    dbResetTabsForConn();
+    await dbResetTabsForConn();
     const t = dbTab();
     if (size && t.kind === "table") t.pageSize = size;
   }
   dbShowSession();
+  void dbConsolesLoad(name);
 }
 
 /* The owner's drawer ask (post-M5): the connection and database pickers slide open under
@@ -838,7 +860,7 @@ function renderDbSide(): void {
       // The database drawer: primary first with its heading, system last, not-browsable
       // rows disabled with the server's reason one hover away.
       dbDrawerFill($("dbDbDrawer"), dbDatabaseMenuItems(d.databases || [], dbCurrentDatabase(d),
-        (name: string): void => { dbDrawer = ""; dbSwitchDatabase(name); }), dbDrawer === "db");
+        (name: string): void => { dbDrawer = ""; void dbSwitchDatabase(name); }), dbDrawer === "db");
     } else {
       dbRow.setAttribute("aria-expanded", "false");
     }
@@ -895,28 +917,37 @@ function dbDatabaseMenuItems(
   return items;
 }
 
-/** SPEC §data.databases: switching DATABASES is the light version of switching connections -
- *  the same whole-strip confirmation (an orders tab that now points at another database's
- *  orders table is worse than a closed tab), the same resets, but the connection and its
- *  catalog stay. */
-function dbSwitchDatabase(name: string): void {
+/** The resets that follow a database switch, once the strip has actually closed. */
+function dbApplyDatabase(name: string): void {
   const d = dbConn();
-  if (!name) return;
-  // The no-op test reads the database IN EFFECT (dbCurrentDatabase): picking the primary
-  // while nothing has been picked is "stay", not a strip-wide drop for nothing.
-  if (name === dbCurrentDatabase(d)) return;
-  if (!dbOkToLeave()) return;
   d.database = name;
   d.tables = []; d.treeShown = {};
   d.grep = "";
   d.sort = "name"; d.sortDir = "asc";
   const gb = $<HTMLInputElement>("dbGrep");
   if (gb) gb.value = "";
-  dbResetTabsForConn();
   renderDbSide();
   renderDbTabs();
   renderDbTables(); renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
   void dbLoadTables();
+}
+
+/** SPEC §data.databases: switching DATABASES is the light version of switching connections -
+ *  the same whole-strip confirmation (an orders tab that now points at another database's
+ *  orders table is worse than a closed tab), the same resets, but the connection and its
+ *  catalog stay. A local strip closes before this returns; a server-backed strip waits for
+ *  its closed records to be filed, and only then applies the switch. */
+function dbSwitchDatabase(name: string): void | Promise<void> {
+  const d = dbConn();
+  if (!name) return;
+  // The no-op test reads the database IN EFFECT (dbCurrentDatabase): picking the primary
+  // while nothing has been picked is "stay", not a strip-wide drop for nothing.
+  if (name === dbCurrentDatabase(d)) return;
+  if (!dbOkToLeave()) return;
+  const reset = dbResetTabsForConn();
+  if (reset instanceof Promise) return reset.then((ok: boolean): void => { if (ok) dbApplyDatabase(name); });
+  if (!reset) return;
+  dbApplyDatabase(name);
 }
 
 /** SPEC §data.databases: fetch the connection's database catalog once — null means not asked yet,
@@ -1082,6 +1113,12 @@ function renderDbTables(): void {
       }
     }
     return;
+  }
+  if (!d.grep && d.conn) {
+    const prefs = objectPrefs(d.conn, d.database);
+    for (const [label, addresses] of [[tr("dataObjects.favorites"), prefs.favorites], [tr("dataObjects.recent"), prefs.recent]] as const) {
+      if (addresses.length) box.appendChild(objectBand(label, addresses.length, label, () => addresses.map(a => () => dbTableRow(d.tables.find(r => r.name === a.name && (r.schema || null) === a.schema) || { name: a.name, schema: a.schema || "", type: "table" }, dbTabScope(d, dbIsPg())))));
+    }
   }
   if (!d.tables.length) {
     box.appendChild(el("div", "db-hint", d.grep ? tr("dataView.noTablesMatchQ", { q: d.grep }) : tr("dataView.noTables")));
@@ -1267,6 +1304,9 @@ function dbTreeCap(sec: { name: DbTreeSection; rows: ApiDbTableRow[] }):
 function dbSectionBand(sec: { name: DbTreeSection; rows: ApiDbTableRow[] },
   secCollapsed: Record<string, boolean>): HTMLElement {
   const d = dbConn();
+  if (sec.name === "tables" && !d.grep && d.conn && objectPrefs(d.conn, d.database).prefixes) {
+    return objectBand(dbSectionLabel(sec.name), sec.rows.length, (sec.rows[0]?.schema || "") + "/tables", () => objectPrefixes(sec.rows).map(g => () => objectBand(g.name || tr("dataObjects.noPrefix"), g.rows.length, (sec.rows[0]?.schema || "") + "/" + g.name, () => g.rows.map(t => () => dbTableRow(t, dbTabScope(d, dbIsPg()))))), true);
+  }
   const cfg: GroupCfg<ApiDbTableRow> = {
     scope: "dbtree", density: "side",
     names: DB_TREE_SECTIONS.slice(), collapsed: secCollapsed, noun: "table",
@@ -1286,6 +1326,31 @@ function dbSectionBand(sec: { name: DbTreeSection; rows: ApiDbTableRow[] },
     rowNode: (t: ApiDbTableRow): HTMLElement => dbTableRow(t, dbTabScope(d, dbIsPg())),
   };
   return mountGroup(cfg, sec);
+}
+
+const objectExpanded = new Set<string>();
+/** Folded branches allocate no row nodes. Each expansion adds a bounded batch on demand. */
+function objectBand(label: string, count: number, id: string, rows: () => (() => HTMLElement)[], tables = false): HTMLElement {
+  const d = dbConn(), key = JSON.stringify([d.conn, d.database, id]);
+  const parts = groupNode({ name: id, label, count, density: "side", collapsed: !objectExpanded.has(key), moreTitle: tables ? tr("dataView.sort") : null, addTitle: tables ? tr("dataView.newTable2") : null });
+  let built = false;
+  const populate = (): void => {
+    if (built) return;
+    built = true;
+    // The factory is invoked only on expansion; batches stay bounded even in a large catalog.
+    const nodes = rows();
+    let at = 0;
+    const more = btn(tr("dataView.more"));
+    const append = (): void => { nodes.slice(at, at + DB_TREE_ROW_CAP).forEach(make => parts.body.appendChild(make())); at += DB_TREE_ROW_CAP; more.remove(); if (at < nodes.length) parts.body.appendChild(more); };
+    more.onclick = append;
+    append();
+  };
+  if (objectExpanded.has(key)) populate();
+  parts.toggle.onclick = (): void => { const opening = !objectExpanded.has(key); if (opening) { objectExpanded.add(key); populate(); } else objectExpanded.delete(key); parts.root.classList.toggle("collapsed", !opening); parts.toggle.setAttribute("aria-expanded", String(opening)); };
+  const more = parts.more;
+  if (more) more.onclick = (e): void => { e.stopPropagation(); popupMenu(more.getBoundingClientRect(), dbSortMenu()); };
+  if (parts.add) parts.add.onclick = (): void => dbNewTableFlow();
+  return parts.root;
 }
 
 /** The band label over a stable section id (SPEC §panel.i18n: identity keys the fold state, copy is
@@ -1330,6 +1395,10 @@ function dbSortMenu(): MenuItem[] {
   items.push({ sep: true });
   items.push({ label: tr("dataView.sortAscending"), pick: true, on: d.sortDir !== "desc", fn: (): void => { dbSetSort(null, "asc"); } });
   items.push({ label: tr("dataView.sortDescending"), pick: true, on: d.sortDir === "desc", fn: (): void => { dbSetSort(null, "desc"); } });
+  if (!dbIsRedis() && !dbIsMongo() && d.conn) {
+    const prefs = objectPrefs(d.conn, d.database);
+    items.push({ sep: true }, { label: tr("dataObjects.prefixes"), pick: true, on: prefs.prefixes, fn: (): void => { if (d.conn) prefixObjects(d.conn, d.database, !prefs.prefixes); renderDbTables(); } });
+  }
   return items;
 }
 

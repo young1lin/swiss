@@ -4,12 +4,13 @@
 import { h, fill } from "./h.js";
 import { tk, tr } from "./i18n.js";
 import { apiJson, toast } from "./util.js";
+import { paintContext } from "./data-agent.js";
 import { dbConn, dbTab, dbTabs } from "./db-state.js";
 import { dbActivateTab, dbOpenTabForce } from "./data-tabs.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
-import type { AnalysisTask, AnalysisPage, AnalysisView, AnalysisResult } from "./types/analysis.js";
+import type { AnalysisTask, AnalysisPage, AnalysisView, AnalysisResult, AnalysisComparison } from "./types/analysis.js";
 import type { DbSqlTab } from "./types/state.js";
-import { actionBtn, setActionBusy, btn, card, closeSheet, emptyNode, field, form, formActions, formFold, hint, iconBtn, jsonCodeNode, note, pager, resultChart, resultTable, row, section, sheet, showSheet, tag, wsScroll } from "./ui/index.js";
+import { actionBtn, setActionBusy, btn, card, closeSheet, emptyNode, field, form, formActions, formFold, hint, iconBtn, jsonCodeNode, note, pager, relTime, resultChart, resultTable, row, section, sheet, showSheet, tag, wsScroll } from "./ui/index.js";
 
 interface View { task: AnalysisTask; resultId: string | null; page: AnalysisPage | null; selected: Set<string>; busy: boolean; saving: boolean; stopping: Set<string>; accepted: Set<string>; taskRead: number; taskApplied: number; retry: ReturnType<typeof setTimeout> | null; pending: boolean; generation: number; failed: boolean } // Per-analysis view state.
 const views = new Map<string, View>();
@@ -27,7 +28,35 @@ export function dbAnalysisContext(): AnalysisView | null {
   return v?.resultId ? { taskId: t.analysisId, resultId: v.resultId, rowIds: [...v.selected] } : null;
 }
 
-export async function dbAnalysisOpen(id: string, conn = dbConn().conn): Promise<void> {
+/** A server-authored result reference stays bound to its immutable result, including after restore.
+ * The first reference object survives the bounded tool-answer preview even when its tail is cut. */
+export function dbAnalysisReference(text: string, conn: string): HTMLElement | null {
+  let reference: unknown;
+  try { reference = (JSON.parse(text) as { reference?: unknown }).reference; } catch {
+    const prefix = '{"reference":';
+    if (!text.startsWith(prefix) || text[prefix.length] !== "{") return null;
+    let depth = 0, quoted = false, escaped = false;
+    for (let i = prefix.length; i < Math.min(text.length, 4096); i++) {
+      const c = text[i];
+      if (quoted) { if (escaped) escaped = false; else if (c === "\\") escaped = true; else if (c === '"') quoted = false; }
+      else if (c === '"') quoted = true;
+      else if (c === "{") depth++;
+      else if (c === "}" && --depth === 0) { try { reference = JSON.parse(text.slice(prefix.length, i + 1)); } catch { return null; } break; }
+    }
+  }
+  if (!reference || typeof reference !== "object") return null;
+  const ref = reference as Record<string, unknown>;
+  if (typeof ref.taskId !== "string" || typeof ref.resultId !== "string" || typeof ref.title !== "string"
+    || typeof ref.version !== "number" || typeof ref.run !== "number") return null;
+  const taskId = ref.taskId, resultId = ref.resultId;
+  const label = tr("analysis.openResult", { title: ref.title || tr("analysis.unsaved"), version: tr("analysis.versionLabel", { version: ref.version, attempt: ref.run }) });
+  const open = btn(label, { kind: "ghost", icon: "table", data: { "analysis-result": resultId } });
+  open.onclick = (): void => { void dbAnalysisOpen(taskId, conn, resultId); };
+  const at = typeof ref.at === "string" ? Date.parse(ref.at) : NaN;
+  return formActions(open, Number.isFinite(at) ? relTime(at) : null);
+}
+
+export async function dbAnalysisOpen(id: string, conn = dbConn().conn, resultId?: string): Promise<void> {
   const generation = ++opening;
   const existing = views.get(id);
   const read = existing ? ++existing.taskRead : 0;
@@ -35,6 +64,7 @@ export async function dbAnalysisOpen(id: string, conn = dbConn().conn): Promise<
   if (!fetched || generation !== opening || dbConn().conn !== conn) return;
   const task = existing && read < existing.taskApplied ? existing.task : fetched;
   if (task.conn !== conn) return;
+  if (resultId && !task.results.some(r => r.id === resultId)) { toast(tr("analysis.resultMissing"), true); return; }
   if (existing && read >= existing.taskApplied) existing.taskApplied = read;
   let at = dbTabs().findIndex(t => t.kind === "sql" && t.analysisId === id);
   if (at < 0) {
@@ -47,7 +77,7 @@ export async function dbAnalysisOpen(id: string, conn = dbConn().conn): Promise<
     at = dbTabs().indexOf(made);
   }
   const prior = views.get(id);
-  const next: View = { task, resultId: current(task)?.id ?? task.results.at(-1)?.id ?? null, page: null,
+  const next: View = { task, resultId: resultId ?? (prior?.resultId && task.results.some(r => r.id === prior.resultId) ? prior.resultId : current(task)?.id ?? task.results.at(-1)?.id ?? null), page: null,
     selected: new Set(), busy: prior?.busy ?? false, saving: prior?.saving ?? false, stopping: prior?.stopping ?? new Set<string>(), accepted: prior?.accepted ?? new Set<string>(), taskRead: prior?.taskRead ?? 0, taskApplied: prior?.taskApplied ?? 0, retry: prior?.retry ?? null, pending: false, generation: (prior?.generation ?? 0) + 1, failed: false };
   settleAccepted(next, task);
   // In-flight run callbacks must still update the view that reopening displays.
@@ -98,14 +128,14 @@ function scheduleAccepted(v: View): void {
   }, 1000);
 }
 
-async function run(v: View, sql?: string, description?: string, baseRevision?: string): Promise<void> {
+async function run(v: View, sql?: string, conditions?: unknown, baseRevision?: string): Promise<void> {
   if (v.busy) return;
   v.busy = true;
   paint(v);
   try {
     if (sql != null) {
       const task = await post<AnalysisTask>(path(v.task.id) + "/revisions", { baseRevision: baseRevision ?? v.task.current, sql,
-        conditions: { description: description ?? "" }, note: "" });
+        conditions: conditions ?? {}, params: v.task.revisions.find(r => r.id === (baseRevision ?? v.task.current))?.params ?? [], note: "" });
       if (!task) return;
       v.task = task;
     }
@@ -134,7 +164,7 @@ export async function dbAnalysisList(): Promise<void> {
   const body = card(...response.analyses.map(t => {
     const open = btn(tr("analysis.open"));
     open.onclick = (): void => { closeSheet(); void dbAnalysisOpen(t.id, conn); };
-    return row({ name: t.title, sub: t.saved ? tr("analysis.saved") : t.id, primary: open });
+    return row({ name: t.title, sub: t.saved ? tr("analysis.saved") : tr("analysis.unsaved"), primary: open });
   }));
   if (!response.analyses.length) body.appendChild(emptyNode({ icon: "database", title: tr("analysis.empty"), hint: tr("analysis.startHint") }));
   const create = btn(tr("analysis.new"), { kind: "primary" });
@@ -177,6 +207,51 @@ async function exportResult(v: View, result: AnalysisResult): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function conditionsText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && !Array.isArray(value)) return Object.entries(value).map(([key, item]) => key === "description" && typeof item === "string" ? item : key + ": " + (typeof item === "string" ? item : JSON.stringify(item))).join(" · ");
+  return JSON.stringify(value) ?? "";
+}
+
+export function dbAnalysisContextLabel(): string {
+  const t = dbTab();
+  const v = t.kind === "sql" && t.analysisId ? views.get(t.analysisId) : null;
+  const r = v?.task.results.find(r => r.id === v.resultId);
+  return v && r ? v.task.title + " · " + resultLabel(v.task, r) : tr("analysis.result");
+}
+
+function revisionChanges(task: AnalysisTask, revision: AnalysisTask["revisions"][number]): string {
+  const parent = task.revisions.find(r => r.id === revision.parent);
+  if (!parent) return tr("analysis.initialConditions");
+  const before = parent.conditions && typeof parent.conditions === "object" ? parent.conditions as Record<string, unknown> : { description: parent.conditions };
+  const after = revision.conditions && typeof revision.conditions === "object" ? revision.conditions as Record<string, unknown> : { description: revision.conditions };
+  const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(k => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+  const summary = changed.map(k => k + ": " + (JSON.stringify(before[k]) ?? "∅") + " → " + (JSON.stringify(after[k]) ?? "∅")).join(" · ");
+  return (summary || tr("analysis.sameConditions")) + (parent.sql !== revision.sql ? " · " + tr("analysis.sqlChanged") : "");
+}
+
+function resultLabel(task: AnalysisTask, result: AnalysisResult): string {
+  const version = task.revisions.findIndex(r => r.id === result.revision) + 1;
+  const attempt = task.results.filter(r => r.revision === result.revision).findIndex(r => r.id === result.id) + 1;
+  const at = Date.parse(result.at);
+  return tr("analysis.versionLabel", { version, attempt }) + " · " + (Number.isFinite(at) ? new Date(at).toLocaleString() + " · " + relTime(at) : tr("ui.timeUnknown"));
+}
+
+function comparisonNode(value: AnalysisComparison): HTMLElement {
+  const counts = hint(tr("analysis.compareCounts", { added: value.added, removed: value.removed, changed: value.changed, unchanged: value.unchanged }));
+  const issues = [value.keyIssues.left, value.keyIssues.right];
+  const rows = value.changedSample.flatMap(sample => sample.fields.map(f => row({ name: f.column, sub: JSON.stringify(sample.key),
+    detail: hint((f.leftMissing ? tr("analysis.missingColumn") : JSON.stringify(f.left)) + " → " + (f.rightMissing ? tr("analysis.missingColumn") : JSON.stringify(f.right))) })));
+  return section({ cap: tr("analysis.comparison") }, counts,
+    hint(tr("analysis.compareDirection", { left: new Date(value.left.at).toLocaleString(), right: new Date(value.right.at).toLocaleString() })),
+    (value.left.truncated || value.right.truncated) ? note(tr("analysis.compareTruncated")) : null,
+    !value.columnsSame ? note(tr("analysis.compareColumns", { left: value.columns.onlyLeft.join(", ") || "∅", right: value.columns.onlyRight.join(", ") || "∅" })) : null,
+    hint(tr("analysis.compareIssues", { leftDup: issues[0].duplicateRows, rightDup: issues[1].duplicateRows, leftNull: issues[0].nullRows, rightNull: issues[1].nullRows })),
+    issues.some(i => i.duplicateRows) ? note(tr("analysis.compareAmbiguous")) : null,
+    hint(tr("analysis.compareSample")), ...rows,
+    formFold({ summary: tr("analysis.compareRows") }, jsonCodeNode({ added: value.addedSample, removed: value.removedSample }, true).node));
+}
+
 function resultControls(v: View, result: AnalysisResult): HTMLElement {
   const column = h("select", null, (v.page?.columns ?? []).map(c => h("option", { value: c }, c)));
   const rule = h("select", null, [["unique", tk("analysis.rule.unique")], ["nonNull", tk("analysis.rule.nonNull")], ["rowCount", tk("analysis.rule.rowCount")]].map(([type, label]) => h("option", { value: type }, tr(label))));
@@ -185,11 +260,12 @@ function resultControls(v: View, result: AnalysisResult): HTMLElement {
     const body = rule.value === "rowCount" ? { type: rule.value, expected: Number(expected.value) } : { type: rule.value, columns: [column.value] };
     if (await post(path(v.task.id) + "/results/" + result.id + "/validate", body)) await refresh(v);
   })(); });
-  const other = h("select", null, v.task.results.filter(r => r.id !== result.id).map(r => h("option", { value: r.id }, r.id)));
+  const other = h("select", null, v.task.results.filter(r => r.id !== result.id).map(r => h("option", { value: r.id }, resultLabel(v.task, r))));
+  const keys = h("select", { multiple: true, aria: { label: tr("analysis.compareKeys") } }, result.columns.map(c => h("option", { value: c }, c)));
   const comparison = h("div");
   const compare = button(tr("analysis.compare"), () => { void (async () => {
-    const value = await post(path(v.task.id) + "/compare", { left: other.value, right: result.id, keys: column.value ? [column.value] : [] });
-    if (value) fill(comparison, jsonCodeNode(value, true).node);
+    const value = await post<AnalysisComparison>(path(v.task.id) + "/compare", { left: other.value, right: result.id, keys: [...keys.selectedOptions].map(o => o.value) });
+    if (value) fill(comparison, comparisonNode(value));
   })(); }, !other.options.length);
   const x = h("select", null, (v.page?.columns ?? []).map(c => h("option", { value: c }, c)));
   const y = h("select", null, (v.page?.columns ?? []).map(c => h("option", { value: c }, c)));
@@ -199,10 +275,18 @@ function resultControls(v: View, result: AnalysisResult): HTMLElement {
   const draw = async (): Promise<void> => {
     const chart = v.task.results.find(r => r.id === result.id)?.chart;
     if (!chart) return;
-    const series = await apiJson<{ points: Record<string, unknown>[]; approximate: boolean; truncated: boolean }>(path(v.task.id) + "/results/" + result.id + "/series?x=" + encodeURIComponent(chart.x) + "&y=" + encodeURIComponent(chart.y.join(",")));
-    if (!series || !chartArea.isConnected) return;
-    fill(chartArea, (series.truncated || series.approximate) ? hint(tr("analysis.chartLimits")) : null,
-      chart.y.map(col => resultChart({ title: chart.title || col, kind: chart.kind, points: series.points.map(p => ({ label: String(p.x), value: Number((p[col] as { sum: number }).sum) })) })));
+    const series = await apiJson<{ points: { x: unknown; values: Record<string, unknown> }[]; approximate: boolean; truncated: boolean; invalid?: number }>(path(v.task.id) + "/results/" + result.id + "/series?x=" + encodeURIComponent(chart.x) + "&y=" + encodeURIComponent(chart.y.join(",")) + (chart.kind === "scatter" ? "&mode=scatter" : ""));
+    if (!series || !Array.isArray(series.points) || !chartArea.isConnected) return;
+    const stride = Math.max(1, Math.ceil(series.points.length / 1000));
+    const displayed = series.points.filter((_, i) => i % stride === 0);
+    fill(chartArea, hint(tr(chart.kind === "scatter" ? "analysis.scatterScope" : "analysis.categoryScope")),
+      (series.truncated || series.approximate) ? hint(tr("analysis.chartLimits")) : null,
+      series.invalid ? hint(tr("analysis.chartInvalid", { n: series.invalid })) : null,
+      stride > 1 ? hint(tr("analysis.chartSample", { n: displayed.length, total: series.points.length })) : null,
+      chart.y.map(col => resultChart({ title: chart.title || col, kind: chart.kind, xLabel: chart.x, yLabel: col,
+        aggregation: tr(chart.kind === "scatter" ? "analysis.observations" : "analysis.sum"), emptyLabel: tr("analysis.chartEmpty"),
+        points: displayed.filter(p => chart.kind === "scatter" || (p.values[col] as { n: number }).n > 0)
+          .map(p => ({ label: String(p.x), x: Number(p.x), value: Number(chart.kind === "scatter" ? p.values[col] : (p.values[col] as { sum: number }).sum) })) })));
   };
   const chart = button(tr("analysis.draw"), () => { void (async () => {
     if (!await post(path(v.task.id) + "/results/" + result.id + "/chart", { kind: kind.value, x: x.value, y: [y.value], title: "" })) return;
@@ -212,7 +296,7 @@ function resultControls(v: View, result: AnalysisResult): HTMLElement {
   if (result.chart) queueMicrotask(() => { void draw(); });
   return section({ cap: tr("analysis.inspect") },
     formFold({ summary: tr("analysis.validate") }, form(field({ label: tr("analysis.rule"), control: rule }), field({ label: tr("analysis.column"), control: column }), field({ label: tr("analysis.expected"), control: expected }), formActions(validate))),
-    formFold({ summary: tr("analysis.compare") }, form(field({ label: tr("analysis.previousResult"), control: other }), formActions(compare), comparison)),
+    formFold({ summary: tr("analysis.compare") }, form(field({ label: tr("analysis.previousResult"), control: other }), field({ label: tr("analysis.compareKeys"), control: keys, hint: tr("analysis.compareKeysHint") }), formActions(compare), comparison)),
     formFold({ summary: tr("analysis.chart") }, form(field({ label: tr("analysis.chartType"), control: kind }), field({ label: tr("analysis.x"), control: x }), field({ label: tr("analysis.y"), control: y }), formActions(chart))), chartArea);
 }
 
@@ -222,7 +306,7 @@ export function dbAnalysisRender(wrap: HTMLElement, id: string): void {
   scheduleAccepted(v);
   const task = v.task;
   const result = task.results.find(r => r.id === v.resultId);
-  const selected = h("select", { aria: { label: tr("analysis.version") } }, task.results.map(r => h("option", { value: r.id }, r.id)));
+  const selected = h("select", { aria: { label: tr("analysis.version") } }, task.results.map(r => h("option", { value: r.id }, resultLabel(task, r))));
   selected.value = v.resultId ?? "";
   selected.onchange = (): void => { v.resultId = selected.value; v.page = null; v.selected.clear(); v.generation++; v.pending = false; paint(v); };
   const revise = actionBtn("edit", tr("analysis.edit"), { disabled: v.busy });
@@ -266,19 +350,31 @@ export function dbAnalysisRender(wrap: HTMLElement, id: string): void {
       }
     })();
   };
+  const currentRevision = task.revisions.find(r => r.id === task.current);
   const content = wsScroll({ pad: true },
     section({ cap: task.title, tools: [rerun, saved] }, formActions(revise, selected, stop),
-      hint(task.id), hint(tr("analysis.scope")), v.busy ? note(tr("analysis.running"), { busy: true }) : null,
+      hint(tr("analysis.scope")),
+      currentRevision ? row({ name: tr("analysis.currentRevision", { version: task.revisions.indexOf(currentRevision) + 1 }), sub: conditionsText(currentRevision.conditions) }) : null, v.busy ? note(tr("analysis.running"), { busy: true }) : null,
       task.executions.at(-1)?.error ? note(task.executions.at(-1)?.error, { err: true }) : null));
   wrap.appendChild(content);
   if (!result) { content.appendChild(emptyNode({ icon: "database", title: tr("analysis.noResult"), hint: tr("analysis.startHint") })); return; }
+  const revision = task.revisions.find(r => r.id === result.revision);
+  const execution = task.executions.find(e => e.id === result.execution);
   const exportButton = actionBtn("download", tr("analysis.export"));
   exportButton.onclick = (): void => { void exportResult(v, result); };
+  const copy = iconBtn("copy", tr("analysis.copyIds"), { ghost: true });
+  copy.onclick = (): void => { void navigator.clipboard.writeText(JSON.stringify({ taskId: task.id, revisionId: result.revision, executionId: result.execution, resultId: result.id })).catch(() => toast(tr("dataTabs.copyFailed"), true)); };
   content.appendChild(section({ cap: tr("analysis.result"), tools: [exportButton] },
     formActions(tag(stateLabel(result.verification)), result.truncated ? tag(tr("analysis.truncated"), { tone: "bad" }) : null,
-      result.revision !== task.current ? tag(tr("analysis.historical")) : null), hint(result.id),
-    hint(tr("analysis.rowCount", { n: result.rowCount })),
-    ...result.checks.map(check => row({ name: check.kind, sub: stateLabel(check.state), detail: jsonCodeNode(check.measurement ?? { note: check.note, by: check.by }, true).node }))));
+      result.id !== current(task)?.id ? tag(tr("analysis.historical")) : tag(tr("analysis.current"))),
+    hint(resultLabel(task, result)), hint(tr("analysis.rowCount", { n: result.rowCount }) + " · " + tr("analysis.duration", { n: result.elapsedMs })),
+    revision ? row({ name: tr("analysis.conditions"), sub: conditionsText(revision.conditions), detail: hint(revisionChanges(task, revision)) }) : null,
+    result.note ? note(result.note) : null,
+    formFold({ summary: tr("analysis.provenance") }, formActions(copy),
+      jsonCodeNode({ taskId: task.id, resultId: result.id, executionId: result.execution, revisionId: result.revision, at: result.at,
+        startedAt: execution?.startedAt ?? null, finishedAt: execution?.finishedAt ?? null, params: revision?.params ?? null, conditions: revision?.conditions ?? null }, true).node,
+      jsonCodeNode(execution?.sql ?? revision?.sql ?? "", true).node),
+    ...result.checks.map(check => row({ name: check.kind, sub: stateLabel(check.state), detail: jsonCodeNode({ by: check.by, at: check.at, note: check.note, evidence: check.evidence ?? null, measurement: check.measurement ?? null }, true).node }))));
   if (!v.page) {
     if (v.failed) content.appendChild(button(tr("analysis.retry"), () => { void loadPage(v, 0); }));
     else { content.appendChild(note(tr("analysis.loading"), { busy: true })); if (!v.pending) void loadPage(v, 0); }
@@ -288,6 +384,7 @@ export function dbAnalysisRender(wrap: HTMLElement, id: string): void {
     label: tr("analysis.result"), selectLabel: row => tr("analysis.selectRow", { row }), onSelect: (row, on) => {
       if (on && v.selected.size >= 20) { toast(tr("analysis.selectionLimit"), true); paint(v); return; }
       if (on) v.selected.add(row); else v.selected.delete(row);
+      paintContext();
     } }));
   const page = v.page;
   content.appendChild(pager({ label: tr("analysis.pages"), prev: button(tr("analysis.prev"), () => { void loadPage(v, Math.max(0, page.offset - PAGE)); }, page.offset === 0),
@@ -299,8 +396,12 @@ function edit(v: View): void {
   const revision = v.task.revisions.find(r => r.id === v.task.current);
   if (!revision) return;
   const sql = h("textarea", { rows: 8, value: revision.sql });
-  const conditions = h("textarea", { rows: 3, value: typeof revision.conditions.description === "string" ? revision.conditions.description : JSON.stringify(revision.conditions) });
+  const conditions = h("textarea", { rows: 3, value: JSON.stringify(revision.conditions, null, 2) });
   const apply = btn(tr("analysis.runRevision"), { kind: "primary" });
-  apply.onclick = (): void => { closeSheet(); void run(v, sql.value, conditions.value, revision.id); };
+  apply.onclick = (): void => {
+    let value: unknown;
+    try { value = JSON.parse(conditions.value); } catch { toast(tr("analysis.conditionsJson"), true); conditions.focus(); return; }
+    closeSheet(); void run(v, sql.value, value, revision.id);
+  };
   showSheet(sheet({ title: tr("analysis.edit"), body: [form(field({ label: tr("analysis.conditions"), control: conditions }), field({ label: tr("analysis.sql"), control: sql }))], foot: [apply] }));
 }

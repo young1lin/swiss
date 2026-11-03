@@ -14,14 +14,21 @@
  * limitations under the License.
  */
 
+import { visitObject } from "./data-objects.js";
+import { paintContext } from "./data-agent.js";
                                                                                                           
                                                
                                                     
 import { $, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
-import { dbActiveIndex, dbConn, dbIsMounted, dbParkedNames, dbParkedTabs, dbResetTabs, dbSetActive, dbSqlTab, dbTab, dbTabs, freshTab } from "./db-state.js";
-import { dbClosedClear, dbClosedFor, dbClosedRemember, dbClosedTake } from "./data-closed.js";
+import { dbActiveIndex, dbConn, dbIsMounted, dbOnSqlTextChanged, dbParkedNames, dbParkedTabs, dbResetTabs, dbSetActive, dbSqlTab, dbTab, dbTabs, freshTab } from "./db-state.js";
+import { dbClosedAdd, dbClosedAdopt, dbClosedById, dbClosedClear, dbClosedDrop, dbClosedEmpty, dbClosedFor, dbClosedLocalFor, dbClosedLocalForget, dbClosedLocalOnly, dbClosedRemember, dbClosedTake } from "./data-closed.js";
                                                     
+import {
+  dbClosedEntry, dbConsoleAdopt, dbConsoleClearClosed, dbConsoleFlush, dbConsoleForget, dbConsoleOnSettled, dbConsolePut, dbConsoleRebase,
+  dbConsoleRecord, dbConsoleStage, dbConsoleStoreList, dbConsoleStoreOn, dbConsoleSyncState,
+} from "./data-console-store.js";
+                                                            
 import { dbIsRedis, dbLoadRedisValue } from "./data-browsers.js";
 import { dbIsMongo, mongoAfterTabSwitch, mongoCurrentDb } from "./data-mongo.js";
 import { dbActivityPollStop, dbActivityStart } from "./data-activity.js";
@@ -36,6 +43,8 @@ import { tr, trn } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
 import { heldDot } from "./ui/status.js";
 import { objTab } from "./ui/tab.js";
+import { dayKey, dayLabel, timeLabel } from "./ui/timeline.js";
+import { locale } from "./i18n.js";
 
 /* ================================================================================================
    The object tab strip (SPEC §data.tabs).
@@ -84,6 +93,116 @@ function dbConsoleSpeaksCommands()          {
   return dbIsRedis() || dbIsMongo();
 }
 
+/* --- the server-owned console (SPEC §data.agent Tabs) -------------------------------------------- */
+
+/** Stage one open console's current text and name for the store. Every edit path calls this;
+ *  the store's debounce coalesces a burst of keystrokes into one write. A no-op while the
+ *  gateway has no store, so the console keeps working from the page's own snapshot. */
+export function dbConsoleTouch(tab          )       {
+  const conn = dbConn().conn;
+  if (!conn || tab.analysisId || !dbConsoleStoreOn(conn)) return;
+  dbConsoleStage(conn, tab, dbTabTitle(tab));
+}
+
+// Every dbSetSqlText edit (typing, formatting, an agent frame) reaches the store through here;
+// the store's debounce coalesces the burst. Registered once, at module load.
+dbOnSqlTextChanged((tab) => { dbConsoleTouch(tab); });
+// A save finishes after the keystroke that staged it. The strip has to learn the refusal
+// then, or the red dot waits for some later, unrelated repaint.
+dbConsoleOnSettled((conn) => { if (dbConn().conn === conn) renderDbTabs(); });
+
+/** A server record as a strip tab: identity, text, agent slot and lifetime, never reformatted -
+ *  the bytes stored are the reader's. */
+function dbConsoleTabOf(record               )           {
+  const t = freshTab("sql");
+  t.id = record.id;
+  t.sqlText = record.sql;
+  t.agent = record.agent === true;
+  if (record.agentTab) t.agentTab = record.agentTab;
+  const fallback = tr(dbConsoleSpeaksCommands() ? "dataTabs.command" : "dataTabs.sql");
+  if (record.tab && record.tab !== fallback) t.custom = record.tab;
+  t.createdAt = record.createdAt || null;
+  t.updatedAt = record.updatedAt || null;
+  t.revision = record.revision;
+  return t;
+}
+
+/** Put the open records the page does not already have back on the strip, oldest first, and
+ *  bring the newest in front. True when the strip changed. */
+function dbAdoptConsoles(records                 )          {
+  const tabs = dbTabs();
+  const open = new Set(tabs.filter((t       )          => t.kind === "sql").map((t) => (t            ).id));
+  const add = records.filter((r) => r.open && !open.has(r.id))
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.id.localeCompare(b.id))
+    .map(dbConsoleTabOf);
+  if (!add.length) return false;
+  const next          = tabs.filter(dbTabVisible).concat(add);
+  dbResetTabs(next, next.length - 1);
+  return true;
+}
+
+/** Where this connection's own legacy drafts are imported from, once: localStorage entries and
+ *  open consoles born before the store answered. Create-only - a record already on the server
+ *  always wins, and a refused import keeps the local copy for the next visit. */
+async function dbConsoleMigrate(conn        , records                 )                {
+  const known = new Set(records.map((r) => r.id));
+  const migrated           = [];
+  for (const e of dbClosedLocalFor(conn)) {
+    if (known.has(e.id)) { migrated.push(e.id); continue; }
+    const result = await dbConsolePut(conn, {
+      id: e.id, tab: e.custom || "", agent: e.agent === true, agentTab: e.agentTab || null,
+      open: false, sql: e.text, revision: 0, createdAt: e.createdAt || 0, updatedAt: e.updatedAt || 0, closedAt: e.at,
+    }, "create");
+    if (result.ok) { dbClosedAdd(conn, dbClosedEntry(conn, result.console)); migrated.push(e.id); }
+    else if (result.conflict) { migrated.push(e.id); continue; } // another page imported it first
+    else { toast(tr("dataTabs.consoleMigrateFailed"), true); break; }
+  }
+  if (!dbClosedLocalForget(conn, migrated)) toast(tr("dataTabs.storageFull"), true);
+  for (const t of dbTabs()) {
+    if (t.kind !== "sql" || t.analysisId || t.revision || known.has(t.id)) continue;
+    const result = await dbConsolePut(conn, dbConsoleRecord(conn, t, dbTabTitle(t)), "create");
+    if (!result.ok) {
+      if (result.conflict) dbConsoleRebase(conn, { ...dbConsoleRecord(conn, t, dbTabTitle(t)), revision: 0 });
+      continue;
+    }
+    t.revision = result.console.revision;
+    t.createdAt = result.console.createdAt;
+    t.updatedAt = result.console.updatedAt;
+  }
+}
+
+/** Enter a connection: read the store once, restore its open consoles, fill Recently closed and
+ *  import this browser's older drafts. A gateway without the store leaves the page exactly on
+ *  its local snapshot. */
+const dbConsoleLoaded = new Set        ();
+const dbConsoleLoading = new Set        ();
+export async function dbConsolesLoad(conn        )                {
+  if (!conn || dbConsoleLoaded.has(conn) || dbConsoleLoading.has(conn)) return;
+  dbConsoleLoading.add(conn);
+  try {
+    const records = await dbConsoleStoreList(conn);
+    if (!records) { dbClosedLocalOnly(conn); return; }
+    if (dbConn().conn !== conn) return;
+    dbClosedAdopt(conn, records.filter((r) => !r.open).map((r) => dbClosedEntry(conn, r)));
+    for (const t of dbTabs()) {
+      if (t.kind !== "sql") continue;
+      const record = records.find((r) => r.id === t.id && r.open);
+      if (!record) continue;
+      t.revision = record.revision;
+      if (record.createdAt) t.createdAt = record.createdAt;
+      if (record.updatedAt) t.updatedAt = record.updatedAt;
+    }
+    const adopted = dbAdoptConsoles(records);
+    await dbConsoleMigrate(conn, records);
+    if (dbConn().conn !== conn) return;
+    dbConsoleLoaded.add(conn);
+    if (adopted) dbAfterTabSwitch();
+    else { renderDbTabs(); renderDbTables(); }
+  } finally {
+    dbConsoleLoading.delete(conn);
+  }
+}
+
 /* --- pure: what a tab is, and what it is worth ---------------------------------------------------- */
 
 /** A tab that has never been pointed at an object — the fresh literal the view falls back to so
@@ -123,11 +242,10 @@ function dbTabsPending(tabs         )         {
 }
 
 /** May the cap drop this tab to make room? Buffered writes never may — that is D3's promise.
- *  Neither may a console with text in it: an unrun query the operator is still composing is
- *  work they would have to type again, and it is far cheaper to keep than a page of rows. Pure. */
+ *  Neither may a console: its ID can already be in use even before any text is entered. Pure. */
 function dbTabEvictable(t       )          {
   if (dbTabPending(t)) return false;
-  if (t.kind === "sql" && t.sqlText.trim()) return false;
+  if (t.kind === "sql" && !t.analysisId) return false;
   return true;
 }
 
@@ -292,6 +410,9 @@ function renderDbTabs()       {
     if (!dbTabVisible(t)) return null;
     const n = dbTabPending(t);
     const filters = t.kind === "table" ? t.filters.length : 0;
+    // A refused console save is state the reader must see: the local draft is intact, but the
+    // server has a newer record until they resolve it from the card's own menu.
+    const conflict = t.kind === "sql" && dbConsoleSyncState(dbConn().conn, t.id) === "failed";
     // The library's object tab (SPEC §panel.pages): the shape Terminal's sessions wear too. It carries
     // the roving tabindex and the close; the rename (right-click) swaps the name for an input
     // for as long as dbTabRenaming points here (built by dbTabRenameInput - handlers are
@@ -303,7 +424,9 @@ function renderDbTabs()       {
       title: dbTabTitle(t),
       data: { dbtab: String(i) },
       count: filters ? { n: filters, title: trn(filters, "dataTabs.nFilters.one", "dataTabs.nFilters.other") } : null,
-      mark: n ? heldDot(trn(n, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other")) : null,
+      mark: conflict
+        ? heldDot(tr("dataTabs.consoleConflict"), "err")
+        : n ? heldDot(trn(n, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other")) : null,
       close: { label: tr("dataTabs.closeTab"), data: { dbtabx: String(i) } },
     });
   });
@@ -361,11 +484,11 @@ function dbScrollActiveTab()       {
  *  the overflow menu must stop the document click that would close it again. */
 function dbTabsClick(t         , ev             )          {
   const x = t.closest             ("[data-dbtabx]");
-  if (x) { dbCloseTab(Number(x.dataset.dbtabx)); return true; }
+  if (x) { void dbCloseTab(Number(x.dataset.dbtabx)); return true; }
   const menuBtn = t.closest             ("[data-dbtabmenu]");
   if (menuBtn) {
     if (ev) ev.stopPropagation();
-    popupMenu(menuBtn.getBoundingClientRect(), dbTabsMenuItems());
+    popupMenu(menuBtn.getBoundingClientRect(), dbTabsMenuItems(), { filter: tr("dataTabs.findClosed") });
     return true;
   }
   const add = t.closest             ("[data-dbtabadd]");
@@ -380,9 +503,9 @@ function dbTabsClick(t         , ev             )          {
  *  and auxclick, so only auxclick may act) and hands the target here. */
 function dbTabsAuxClick(t         )          {
   const x = t.closest             ("[data-dbtabx]");
-  if (x) { dbCloseTab(Number(x.dataset.dbtabx)); return true; }
+  if (x) { void dbCloseTab(Number(x.dataset.dbtabx)); return true; }
   const card = t.closest             ("[data-dbtab]");
-  if (card) { dbCloseTab(Number(card.dataset.dbtab)); return true; }
+  if (card) { void dbCloseTab(Number(card.dataset.dbtab)); return true; }
   return false;
 }
 
@@ -407,8 +530,48 @@ function dbTabRenameCommit(value        )       {
   const v = value.trim();
   if (i == null) return;
   const t = dbTabs()[i];
-  if (t) t.custom = v || undefined;
+  if (t && t.custom !== (v || undefined)) {
+    t.custom = v || undefined;
+    if (t.kind === "sql") { t.updatedAt = Date.now(); dbConsoleTouch(t); }
+  }
   renderDbTabs();
+}
+
+/** Resolve a refused console save, never silently: either take the record the server holds now,
+ *  or keep the reader's draft and write it over that record on purpose. */
+async function dbConsoleResolve(id        , choice                    )                {
+  const conn = dbConn().conn;
+  if (!conn) return;
+  const records = await dbConsoleStoreList(conn, true);
+  if (dbConn().conn !== conn) return;
+  const record = records ? records.find((r) => r.id === id) || null : null;
+  const at = dbTabs().findIndex((t       )          => t.kind === "sql" && t.id === id);
+  if (at < 0) return;
+  const t = dbTabs()[at]            ;
+  if (choice === "server") {
+    if (!record) { toast(tr("dataTabs.idMissing"), true); return; }
+    if (t.sqlText !== record.sql && !confirm(tr("dataTabs.reloadConsoleConfirm"))) return;
+    t.sqlText = record.sql;
+    if (record.createdAt) t.createdAt = record.createdAt;
+    if (record.updatedAt) t.updatedAt = record.updatedAt;
+    t.revision = record.revision;
+    dbConsoleAdopt(conn, record);
+    if (dbSqlTab() === t) {
+      const ta = $                     ("dbSql");
+      if (ta) ta.value = t.sqlText;
+      dbSqlPaint();
+    }
+    renderDbTabs();
+    toast(tr("dataTabs.consoleReloaded"));
+    return;
+  }
+  // The draft wins: catch up to the record's revision, or to 0 when it is gone so the write
+  // creates a record rather than failing forever.
+  const base = record || { ...dbConsoleRecord(conn, t, dbTabTitle(t)), revision: 0 };
+  dbConsoleRebase(conn, base);
+  const ok = await dbConsoleFlush(conn);
+  renderDbTabs();
+  toast(tr(ok ? "dataTabs.consoleDraftSaved" : "dataTabs.consoleSaveFailed"), !ok);
 }
 
 /** #pane's delegated contextmenu for the strip: the card's own menu (the owner's ask —
@@ -424,14 +587,31 @@ function dbTabsContext(t         , ev            )          {
   ev.stopPropagation();
   const i = Number(card.dataset.dbtab);
   const tabs = dbTabs();
+  const target = tabs[i];
+  const index = ()         => dbTabs().indexOf(target);
   const hasLeft = tabs.slice(0, i).some(dbTabVisible);
   const hasRight = tabs.slice(i + 1).some(dbTabVisible);
-  popupMenu(card.getBoundingClientRect(), [
-    { label: tr("dataTabs.rename"), fn: ()       => { dbTabRenameStart(i); } },
+  const items             = [
+    { label: tr("dataTabs.rename"), fn: ()       => { if (index() >= 0) dbTabRenameStart(index()); } },
+  ];
+  if (target && target.kind === "sql") {
+    const id = target.id;
+    items.push({ label: tr("dataTabs.copyId"), fn: ()       => { void navigator.clipboard.writeText(id).catch(() => toast(tr("dataTabs.copyFailed"), true)); } });
+  }
+  if (target && target.kind === "sql" && dbConsoleSyncState(dbConn().conn, target.id) === "failed") {
+    const id = target.id;
+    items.push(
+      { sep: true },
+      { label: tr("dataTabs.reloadConsoleServer"), fn: ()       => { void dbConsoleResolve(id, "server"); } },
+      { label: tr("dataTabs.keepConsoleDraft"), fn: ()       => { void dbConsoleResolve(id, "draft"); } },
+    );
+  }
+  items.push(
     { sep: true },
-    { label: tr("dataTabs.closeLeft"), disabled: !hasLeft, fn: ()       => { dbCloseToLeft(i); } },
-    { label: tr("dataTabs.closeRight"), disabled: !hasRight, fn: ()       => { dbCloseToRight(i); } },
-  ]);
+    { label: tr("dataTabs.closeLeft"), disabled: !hasLeft, fn: ()       => { if (index() >= 0) void dbCloseToLeft(index()); } },
+    { label: tr("dataTabs.closeRight"), disabled: !hasRight, fn: ()       => { if (index() >= 0) void dbCloseToRight(index()); } },
+  );
+  popupMenu(card.getBoundingClientRect(), items);
   return true;
 }
 
@@ -450,10 +630,10 @@ function dbTabsMenuItems()             {
     if (!dbTabVisible(t)) return;
     items.push({
       label: dbTabCardTitle(t, scope),
-      title: dbTabTitle(t),
+      title: dbTabTitle(t) + (t.kind === "sql" ? " · " + t.id + "\n" + t.sqlText.slice(0, 400) : ""),
       pick: true, on: i === active,
       icon: dbTabGlyph(t), dot: !!dbTabPending(t),
-      fn: ()       => { dbActivateTab(i); },
+      fn: ()       => { const now = dbTabs().indexOf(t); if (now >= 0) dbActivateTab(now); },
     });
   });
   const closed = dbClosedFor(dbConn().conn);
@@ -485,62 +665,174 @@ function dbClosedLabel(e             )         {
   return name + " · " + (line.length > 48 ? line.slice(0, 47) + "…" : line);
 }
 
+/** Forget the connection's closed history. The server deletes first on a store-backed
+ *  connection, so a failure keeps the list instead of hiding entries that would come back on
+ *  the next visit; the local list is cleared only after its own write succeeded. */
+async function dbClearClosedHistory()                {
+  const conn = dbConn().conn;
+  if (!conn) return;
+  if (dbConsoleStoreOn(conn)) {
+    if (!(await dbConsoleClearClosed(conn))) return;
+    dbClosedEmpty(conn);
+  } else if (!dbClosedClear(conn)) {
+    toast(tr("dataTabs.storageFull"), true);
+    return;
+  }
+  renderDbTabs();
+}
+
 /** Recently closed's list (SPEC §data.tabs): the connection's closed consoles, newest first, each
  *  brought back by a click; Clear forgets them. */
 function dbClosedMenuItems()             {
   const closed = dbClosedFor(dbConn().conn);
   if (!closed.length) return [];
-  const rows             = closed.map((e             )           => ({
-    label: dbClosedLabel(e), title: e.text.length > 400 ? e.text.slice(0, 399) + "…" : e.text, icon: "terminal",
-    fn: ()       => { dbRestoreClosed(e.id); },
-  }));
+  const rows             = [];
+  let day = "";
+  const exact = (n                           )         => n && Number.isFinite(n) && n > 0 && n <= 8.64e15 ? new Date(n).toLocaleString(locale()) : tr("ui.timeUnknown");
+  for (const e of closed) {
+    const at = e.updatedAt && Number.isFinite(e.updatedAt) && e.updatedAt > 0 && e.updatedAt <= 8.64e15 ? e.updatedAt : NaN;
+    const group = Number.isFinite(at) ? dayKey(at) : "unknown";
+    if (day !== group) { rows.push({ label: dayLabel(at, Date.now()), heading: true, fn: () => {} }); day = group; }
+    rows.push({
+      label: dbClosedLabel(e) + " · " + (Number.isFinite(at) ? timeLabel(at) : tr("ui.timeUnknown")),
+      title: tr("dataTabs.lifetime", { id: e.id, created: exact(e.createdAt), updated: exact(e.updatedAt), closed: exact(e.at) }) + "\n" + e.text.slice(0, 400), icon: "terminal",
+      fn: ()       => { if (dbClosedById(dbConn().conn, e.id)) void dbRestoreClosed(e.id); },
+    });
+  }
   rows.push({ sep: true });
-  rows.push({ label: tr("dataTabs.clearClosed"), danger: true, fn: ()       => { const c = dbConn().conn; if (c) dbClosedClear(c); renderDbTabs(); } });
+  rows.push({ label: tr("dataTabs.clearClosed"), danger: true, fn: ()       => { void dbClearClosedHistory(); } });
   return rows;
 }
 
-/** Bring a closed console back as a new tab in front: its text and its name, and - while no open
- *  tab is the agent's of that name - the agent's again, so its next run lands there. It keeps
- *  the id it was filed under, which is the tab's own: a tool holding that id still addresses
- *  this console after the round trip (data-closed.ts). */
-function dbRestoreClosed(id        )       {
-  const e = dbClosedTake(id);
-  if (!e) { renderDbTabs(); return; }
+/** Open a closed console as a tab from the page's own copy - the frame path, where a restore
+ *  must land before the statement that named it arrives. `revision` keeps the store's address
+ *  so the next save compares against the record instead of recreating it. */
+function dbOpenClosedCached(e             , revision         = e.revision || 0)                  {
   dbOpenTabForce({ kind: "sql" });
   const t = dbSqlTab();
-  if (!t) return;
+  if (!t) return null;
   t.id = e.id;
   t.sqlText = e.text;
+  t.revision = revision;
+  t.createdAt = e.createdAt ?? null;
+  t.updatedAt = e.updatedAt ?? null;
   if (e.custom) t.custom = e.custom;
   const name = e.agentTab || "";
   if (e.agent && !dbTabs().some((x       )          => x !== t && x.kind === "sql" && x.agent === true && (x.agentTab || "") === name)) {
     t.agent = true;
     if (name) t.agentTab = name;
   }
+  // The tab was built blank and seeded the box before its text was known: put the rescued text
+  // back in front now, or the console would show an empty editor for a real draft.
+  if (dbSqlTab() === t) {
+    const ta = $                     ("dbSql");
+    if (ta) ta.value = t.sqlText;
+    dbSqlPaint();
+  }
+  renderDbTabs();
+  return t;
+}
+
+/** Open a closed console and take it off Recently closed. A frame has to land before the
+ *  statement that named it, so this stays synchronous: a store-backed list drops the cached
+ *  row (the edit that follows saves it open), and the local list removes the entry. A refused
+ *  local write leaves the row where it was and opens nothing. */
+function dbClaimClosed(e             )                  {
+  if (dbConsoleStoreOn(e.conn)) dbClosedDrop(e.conn, e.id);
+  else if (!dbClosedTake(e.id, e.conn)) { toast(tr("dataTabs.storageFull"), true); return null; }
+  return dbOpenClosedCached(e);
+}
+
+/** Bring a closed console back as a new tab in front: its text and its name, and - while no open
+ *  tab is the agent's of that name - the agent's again, so its next run lands there. It keeps
+ *  the id it was filed under, which is the tab's own: a tool holding that id still addresses
+ *  this console after the round trip (data-closed.ts).
+ *
+ *  On a store-backed connection the server record is read fresh first: reopening a stale copy
+ *  and then saving it would overwrite a newer edit another page made. A record removed
+ *  meanwhile is gone, and the page says so instead of reopening a dead id. */
+async function dbRestoreClosed(id        )                {
+  const live = dbTabs().findIndex(t => t.kind === "sql" && t.id === id);
+  if (live >= 0) { dbActivateTab(live); return; }
+  const conn = dbConn().conn;
+  if (!conn) return;
+  if (dbConsoleStoreOn(conn)) {
+    const records = await dbConsoleStoreList(conn, true);
+    if (dbConn().conn !== conn) return;
+    const record = records ? records.find((r) => r.id === id) || null : null;
+    if (!record) {
+      dbClosedDrop(conn, id);
+      renderDbTabs();
+      toast(tr("dataTabs.idMissing"), true);
+      return;
+    }
+    const result = await dbConsolePut(conn, { ...record, open: true, closedAt: null }, "update");
+    if (dbConn().conn !== conn) return;
+    if (!result.ok) { toast(result.error || tr("dataTabs.consoleSaveFailed"), true); return; }
+    dbClosedDrop(conn, id);
+    if (!dbOpenClosedCached(dbClosedEntry(conn, result.console), result.console.revision)) return;
+    dbAfterTabSwitch();
+    return;
+  }
+  const e = dbClosedById(conn, id);
+  if (!e) { renderDbTabs(); return; }
+  if (!dbClosedTake(id, conn)) { toast(tr("dataTabs.storageFull"), true); return; }
+  if (!dbOpenClosedCached(e)) return;
   dbAfterTabSwitch();
 }
 
-/** File the consoles among these tabs, about to close on the live connection (data-closed.ts). */
-function dbFileClosed(gone         )       {
+/** File the consoles among these tabs in the browser (the connection has no server store). */
+function dbFileClosedNow(gone         )          {
   const conn = dbConn().conn;
-  if (!conn) return;
-  dbClosedRemember(gone.filter((t       )                => t.kind === "sql").map((tab          ) => ({ conn, tab })));
+  if (!conn) return true;
+  const sqlTabs = gone.filter((t       )                => t.kind === "sql" && !t.analysisId);
+  if (!sqlTabs.length) return true;
+  const saved = dbClosedRemember(sqlTabs.map((tab          ) => ({ conn, tab })));
+  if (!saved) toast(tr("dataTabs.storageFull"), true);
+  return saved;
+}
+
+/** File the consoles among these tabs on a store-backed connection. The close is a
+ *  compare-and-swap first: a refused write keeps the tab open rather than closing work the
+ *  server never received. */
+async function dbFileClosedStored(gone         )                   {
+  const conn = dbConn().conn;
+  if (!conn) return true;
+  const sqlTabs = gone.filter((t       )                => t.kind === "sql" && !t.analysisId);
+  if (!sqlTabs.length) return true;
+  for (const tab of sqlTabs) {
+    const record = dbConsoleRecord(conn, tab, dbTabTitle(tab));
+    const result = await dbConsolePut(conn, { ...record, open: false }, tab.revision ? "update" : "create");
+    if (!result.ok) { toast(result.error || tr("dataTabs.consoleSaveFailed"), true); return false; }
+    dbClosedAdd(conn, dbClosedEntry(conn, result.console));
+    dbConsoleForget(conn, tab.id);
+  }
+  return true;
 }
 
 /* A page reload or a closed browser tab takes every console with it: each one with text, the
-   parked sessions' too, is filed as closed on its way out, so the next visit brings it back. */
-function dbFileClosedOnLeave()       {
+   parked sessions' too, is filed as closed on its way out, so the next visit brings it back.
+   A store-backed console is not filed closed - it stays open on the server and the next visit
+   restores the strip it left; pending edits are flushed, best effort, before the page goes. */
+function dbFileClosedOnLeave()          {
   const gone                                    = [];
   const live = dbConn().conn;
-  if (live) for (const t of dbTabs()) if (t.kind === "sql") gone.push({ conn: live, tab: t });
+  if (live) {
+    if (dbConsoleStoreOn(live)) void dbConsoleFlush(live, true);
+    else for (const t of dbTabs()) if (t.kind === "sql") gone.push({ conn: live, tab: t });
+  }
   const names = dbParkedNames();
   dbParkedTabs().forEach((strip         , i        )       => {
+    if (dbConsoleStoreOn(names[i])) { void dbConsoleFlush(names[i], true); return; }
     for (const t of strip) if (t.kind === "sql") gone.push({ conn: names[i], tab: t });
   });
-  dbClosedRemember(gone);
+  return gone.length ? dbClosedRemember(gone) : true;
 }
 // A node test has no window, or a stand-in (globalThis) with no events to listen to.
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("pagehide", dbFileClosedOnLeave);
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("pagehide", () => { dbFileClosedOnLeave(); });
+  window.addEventListener("beforeunload", (ev) => { if (!dbFileClosedOnLeave()) { ev.preventDefault(); ev.returnValue = ""; } });
+}
 
 /** Close a set of tabs by index, asking ONCE when any of them holds work (SPEC §data.tabs).
  *  A single × names the one object it drops; a bulk close asks the one question the operator
@@ -554,18 +846,23 @@ function dbCloseBatch(ix          )       {
   if (pending && !confirm(tr("dataTabs.closeDiscardsBatch", {
     n: trn(pending, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other"),
   }))) return;
-  dbFileClosed(targets.map((i        )        => tabs[i]));
-  targets.forEach((i        )       => {
-    if (tabs[i].kind === "activity") dbActivityPollStop();
-    if (tabs[i].kind === "pubsub") dbPubsubStop();
-  });
-  const gone = new Set(targets);
-  const live = dbTab();
-  const next = tabs.filter((_       , j        )          => { return !gone.has(j); });
-  if (!next.length) next.push(dbHomeTab());
-  const at = next.indexOf(live);
-  dbResetTabs(next, at >= 0 ? at : 0);
-  dbAfterTabSwitch();
+  const gone = targets.map((i        )        => tabs[i]);
+  const proceed = ()       => {
+    targets.forEach((i        )       => {
+      if (tabs[i].kind === "activity") dbActivityPollStop();
+      if (tabs[i].kind === "pubsub") dbPubsubStop();
+    });
+    const closing = new Set(targets);
+    const live = dbTab();
+    const next = tabs.filter((_       , j        )          => { return !closing.has(j); });
+    if (!next.length) next.push(dbHomeTab());
+    const at = next.indexOf(live);
+    dbResetTabs(next, at >= 0 ? at : 0);
+    dbAfterTabSwitch();
+  };
+  const conn = dbConn().conn;
+  if (conn && dbConsoleStoreOn(conn)) { void dbFileClosedStored(gone).then((ok) => { if (ok) proceed(); }); return; }
+  if (dbFileClosedNow(gone)) proceed();
 }
 
 /** "Close others" — everything but the active tab. */
@@ -575,7 +872,7 @@ function dbCloseOthers()       {
   dbTabs().forEach((t       , i        )       => {
     if (i !== active && dbTabVisible(t)) ix.push(i);
   });
-  dbCloseBatch(ix);
+  void dbCloseBatch(ix);
 }
 
 /** "Close to the left" of the PIVOT card (the right-clicked one; the overflow menu
@@ -585,7 +882,7 @@ function dbCloseToLeft(pivot        )       {
   dbTabs().forEach((t       , i        )       => {
     if (i < pivot && dbTabVisible(t)) ix.push(i);
   });
-  dbCloseBatch(ix);
+  void dbCloseBatch(ix);
 }
 
 /** "Close to the right" of the pivot card — the tabs the strip shows after it. */
@@ -594,7 +891,7 @@ function dbCloseToRight(pivot        )       {
   dbTabs().forEach((t       , i        )       => {
     if (i > pivot && dbTabVisible(t)) ix.push(i);
   });
-  dbCloseBatch(ix);
+  void dbCloseBatch(ix);
 }
 
 /** "Close all" — back to the placeholder, i.e. the pane's empty state. */
@@ -603,7 +900,7 @@ function dbCloseAllTabs()       {
   dbTabs().forEach((t       , i        )       => {
     if (dbTabVisible(t)) ix.push(i);
   });
-  dbCloseBatch(ix);
+  void dbCloseBatch(ix);
 }
 
 /* Ctrl+Tab / Ctrl+Shift+Tab cycle the strip (rule 19: the frequent gesture must
@@ -735,6 +1032,10 @@ function dbOpenTabForce(spec           )       {
   next.push(dbBuildTab(spec));
   dbResetTabs(next, next.length - 1);
   dbAfterTabSwitch();
+  // A new console exists on the server from birth: its id can already be handed to a tool,
+  // and a blank console is work the reader may type into after a reload.
+  const made = dbSqlTab();
+  if (made) dbConsoleTouch(made);
 }
 
 /** Drop every tab open on one table — what DROP TABLE leaves behind (SPEC §data,
@@ -780,17 +1081,21 @@ function dbCloseTab(i        )       {
     name: dbTabTitle(t),
     n: trn(n, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other"),
   }))) return;
-  dbFileClosed([t]);
-  if (t.kind === "activity") dbActivityPollStop();
-  if (t.kind === "pubsub") dbPubsubStop();
-  const active = dbActiveIndex();
-  const next = tabs.filter((_       , j        )          => { return j !== i; });
-  let idx = active;
-  if (i === active) idx = Math.min(i, next.length - 1);
-  else if (i < active) idx = active - 1;
-  if (!next.length) next.push(dbHomeTab());
-  dbResetTabs(next, Math.max(0, idx));
-  dbAfterTabSwitch();
+  const proceed = ()       => {
+    if (t.kind === "activity") dbActivityPollStop();
+    if (t.kind === "pubsub") dbPubsubStop();
+    const active = dbActiveIndex();
+    const next = tabs.filter((_       , j        )          => { return j !== i; });
+    let idx = active;
+    if (i === active) idx = Math.min(i, next.length - 1);
+    else if (i < active) idx = active - 1;
+    if (!next.length) next.push(dbHomeTab());
+    dbResetTabs(next, Math.max(0, idx));
+    dbAfterTabSwitch();
+  };
+  const conn = dbConn().conn;
+  if (conn && dbConsoleStoreOn(conn)) { void dbFileClosedStored([t]).then((ok) => { if (ok) proceed(); }); return; }
+  if (dbFileClosedNow([t])) proceed();
 }
 
 /** Ctrl+Tab's move: forward through the strip, wrapping. */
@@ -804,15 +1109,22 @@ function dbCycleTab(back         )       {
  *  strip and starts the new connection at its own family's placeholder (a redis connection
  *  browses keys, a MongoDB one collections, everything else tables). The page size carries
  *  across, the same preference the single record never reset either. */
-function dbResetTabsForConn()       {
+function dbResetTabsForConn()                             {
+  const closing = dbTabs();
+  const finish = ()          => {
+    const keep = dbLastTableTab();
+    dbActivityPollStop();
+    dbPubsubStop();
+    const next = dbHomeTab();
+    if (next.kind === "table" && keep) next.pageSize = keep.pageSize;
+    dbResetTabs([next], 0);
+    return true;
+  };
   // A database switch drops the strip: its consoles are filed as closed, to bring back.
-  dbFileClosed(dbTabs());
-  const keep = dbLastTableTab();
-  dbActivityPollStop();
-  dbPubsubStop();
-  const next = dbHomeTab();
-  if (next.kind === "table" && keep) next.pageSize = keep.pageSize;
-  dbResetTabs([next], 0);
+  const conn = dbConn().conn;
+  if (conn && dbConsoleStoreOn(conn)) return dbFileClosedStored(closing).then((ok) => ok ? finish() : false);
+  if (!dbFileClosedNow(closing)) return false;
+  return finish();
 }
 
 /** SPEC §data.tabs: a tab going to the background keeps what is cheap — its filters, its offset, its
@@ -836,12 +1148,15 @@ function dbAfterTabSwitch(byKeyboard          )       {
   const ta = $                     ("dbSql");
   if (ta) ta.value = t.kind === "sql" ? t.sqlText : "";
   dbSqlPaint();
+  const connection = dbConn().conn;
+  if (t.kind === "table" && t.table && connection) visitObject(connection, dbConn().database, { name: t.table, schema: t.schema });
   renderDbTabs();
   renderDbTables();
   renderDbToolbar();
   renderDbFilters();
   renderDbGrid();
   renderDbBar();
+  paintContext();
   if (t.kind === "table" && t.table) {
     if (!t.data) void dbRestoreData();
     if (!t.detail) void dbLoadDetail();
@@ -861,7 +1176,7 @@ function dbAfterTabSwitch(byKeyboard          )       {
 export {
   DB_TAB_MAX, dbActivateTab, dbAfterTabSwitch, dbClosedMenuItems, dbCloseAllTabs, dbCloseBatch, dbCloseToLeft, dbCloseOthers,
   dbCloseTab, dbCloseToRight, dbCycleTab, dbDropTableTabs, dbEvictTarget, dbFiltersSame, dbLastTableTab,
-  dbOpenTab, dbOpenTabForce, dbResetTabsForConn, dbRestoreClosed, dbTabCardTitle, dbTabGlyph, dbTabMatches, dbTabPending,
+  dbClaimClosed, dbOpenClosedCached, dbOpenTab, dbOpenTabForce, dbResetTabsForConn, dbRestoreClosed, dbTabCardTitle, dbTabGlyph, dbTabMatches, dbTabPending,
   dbTabPlaceholder, dbTabsAuxClick, dbTabsClick, dbTabsContext, dbTabsMenuItems, dbTabsPending,
   dbTabTitle, dbTabVisible, dbTabEvictable, renderDbTabs,
 };

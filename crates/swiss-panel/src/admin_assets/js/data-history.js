@@ -23,7 +23,7 @@
                                                                         
 import { api, apiJson, dbReqGuard, targetEl, toast } from "./util.js";
 import { h } from "./h.js";
-import { tr, trn } from "./i18n.js";
+import { moduleDbMessage, tr, trn } from "./i18n.js";
 import { dbConn } from "./db-state.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbIsMongo, mongoCurrentDb } from "./data-mongo.js";
@@ -138,7 +138,7 @@ function runStep(r                 , conn               )           {
     title: r.stmt.replace(/\s+/g, " ").trim(),
     mono: true,
     summary: facts.join(" · ") || undefined,
-    detail: !r.ok && r.error ? r.error : undefined,
+    detail: !r.ok && r.error ? moduleDbMessage(r.error) : undefined,
     detailBad: true,
     meta: h("span", { title: new Date(r.ts).toLocaleString() }, relTime(r.ts)),
     data: { hrun: String(r.id) },
@@ -150,7 +150,7 @@ function runBody(r                 )                {
   return [
     flowIO([
       { label: tr("dataHistory.statement"), notes: r.cut ? [tr("dataHistory.cut")] : [], body: stmtNode(r.stmt) },
-      !r.ok && r.error ? { label: tr("dataHistory.error"), body: plainCode(r.error) } : null,
+      !r.ok && r.error ? { label: tr("dataHistory.error"), body: plainCode(moduleDbMessage(r.error)) } : null,
     ]),
     btn(tr("dataHistory.open"), { data: { hload: String(r.id) } }),
   ];

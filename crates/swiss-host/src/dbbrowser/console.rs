@@ -366,7 +366,9 @@ pub fn sql_keywords(dialect: DbDialect) -> &'static [&'static str] {
         all
     }
     match dialect {
-        DbDialect::Pg => PG_KEYWORDS.get_or_init(|| build(CORE, PG_EXTRA)),
+        // SQLite's completion set is Postgres's: the shared core plus the words a
+        // SELECT actually uses. A MySQL-only word (STRAIGHT_JOIN) would be a lie here.
+        DbDialect::Pg | DbDialect::Sqlite => PG_KEYWORDS.get_or_init(|| build(CORE, PG_EXTRA)),
         DbDialect::Mysql => MYSQL_KEYWORDS.get_or_init(|| build(CORE, MYSQL_EXTRA)),
     }
 }

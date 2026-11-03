@@ -21,7 +21,8 @@
    are part of what is being asserted. */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { LANG_KEY, install, langPref, loadLocale, locale, nextLang, setLang, tr, trn } from "../src/i18n.js";
+import { LANG_KEY, install, langPref, loadLocale, locale, moduleDbMessage, nextLang, setLang, tr, trn } from "../src/i18n.js";
+import zh from "../src/locales/zh.js";
 
 /* A minimal storage: node has none, and a throwing one must be installable to cover the
  * catch paths. */
@@ -113,6 +114,16 @@ describe("i18n lookup and preference (SPEC §panel.i18n)", () => {
     vi.stubGlobal("localStorage", throwingStorage);
     setLang("zh-CN");
     expect(document.documentElement.lang).toBe("zh-CN");
+  });
+
+  it("moduleDbMessage translates a query-only refusal and leaves an engine error", () => {
+    const raw = "this connection is query-only (logs/mcp.db): a write would change this module's own database (only a read runs here (SELECT, WITH, TABLE, VALUES, SHOW, DESCRIBE, EXPLAIN), not INSERT)";
+    expect(moduleDbMessage(raw)).toBe("This connection is query-only (logs/mcp.db): a write would change this module's own database (only a read runs here (SELECT, WITH, TABLE, VALUES, SHOW, DESCRIBE, EXPLAIN), not INSERT)");
+    expect(moduleDbMessage("no such table: notes")).toBe("no such table: notes");
+    install("zh-CN", zh);
+    expect(moduleDbMessage(raw)).toBe("此连接只读（logs/mcp.db）：写入会改掉这个模块自己的数据库（这里只执行读取（SELECT、WITH、TABLE、VALUES、SHOW、DESCRIBE、EXPLAIN），不能执行 INSERT）");
+    expect(moduleDbMessage("this connection is query-only (logs/mcp.db): a write would change this module's own database")).toBe("此连接只读（logs/mcp.db）：写入会改掉这个模块自己的数据库");
+    expect(moduleDbMessage("no such table: notes")).toBe("no such table: notes");
   });
 
   it("loadLocale installs the real dictionary only for a Chinese preference", async () => {

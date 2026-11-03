@@ -118,9 +118,15 @@ describe("the connection row's dialect (SPEC §panel.pages: .db-chip becomes tag
     expect(mark!.getAttribute("aria-label")).toBe("mysql");
     Object.assign(dbConnState(), { conns: [dbConn("demo-shop", "sqlite")] });
     view.renderDbSide();
+    const feather = document.querySelector("#dbConnRow svg.db-row-mark");
+    expect(feather, "the sqlite glyph").not.toBeNull();
+    expect(feather!.getAttribute("aria-label")).toBe("sqlite");
+    expect(feather!.querySelector("use")!.getAttribute("href")).toBe("#i-sqlite");
+    Object.assign(dbConnState(), { conns: [dbConn("demo-shop", "csv")] });
+    view.renderDbSide();
     const word = document.querySelector("#dbConnRow .tag.mono");
     expect(word, "a word dialect is the library's tag").not.toBeNull();
-    expect(word!.textContent).toBe("sqlite");
+    expect(word!.textContent).toBe("csv");
   });
 });
 

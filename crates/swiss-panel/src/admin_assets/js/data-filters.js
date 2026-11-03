@@ -166,13 +166,62 @@ function dbHighlightNodes(sql        , o                      = {})         {
   return tokenSpans(dbSqlTokens(sql, { dquoteIdent: dbIsPg() }), { lined: o.lined }).nodes;
 }
 
+// Large editors otherwise create one element per colored token on every keystroke. The browser's
+// highlight registry colors text ranges without a DOM element for each keyword. Comments and
+// numbers keep their spans: their italic and numeric font styles cannot be set on highlights.
+const DB_SQL_RANGE_MIN = 64_000;
+const DB_SQL_RANGES = ["jv-k", "jv-s", "jv-l", "jv-w", "jv-f"];
+function dbSqlHighlightClear()       {
+  if (typeof CSS === "undefined" || !CSS.highlights) return;
+  for (const cls of DB_SQL_RANGES) CSS.highlights.delete("swiss-db-sql-" + cls);
+}
+
+function dbSqlRangePaint(hl             , tokens             )       {
+  const fragment = document.createDocumentFragment();
+  const groups = new Map                   ();
+  let text = "";
+  let runs                                                = [];
+  const flush = ()       => {
+    if (!text) return;
+    const node = document.createTextNode(text);
+    fragment.appendChild(node);
+    for (const run of runs) {
+      const range = new Range();
+      range.setStart(node, run.start);
+      range.setEnd(node, run.end);
+      let group = groups.get(run.cls);
+      if (!group) { group = new Highlight(); groups.set(run.cls, group); }
+      group.add(range);
+    }
+    text = "";
+    runs = [];
+  };
+  for (const [cls, value] of tokens) {
+    if (cls === "jv-c" || cls === "jv-n") {
+      flush();
+      fragment.appendChild(h("span", { class: cls }, value));
+    } else {
+      const start = text.length;
+      text += value;
+      if (cls) runs.push({ cls, start, end: text.length });
+    }
+  }
+  text += "\n";
+  flush();
+  hl.replaceChildren(fragment);
+  for (const [cls, group] of groups) CSS.highlights.set("swiss-db-sql-" + cls, group);
+}
+
 /** Keep the highlighted layer under the textarea: same text, same scroll. A mongo console is
  *  the shell's syntax, a PostgreSQL one quotes identifiers with ". */
 function dbSqlPaint()       {
   const ta = $                     ("dbSql"), hl = $("dbSqlHl");
   if (!ta || !hl) return;
+  dbSqlHighlightClear();
   const tokens = dbIsMongo() ? dbShellTokens(ta.value) : dbSqlTokens(ta.value, { dquoteIdent: dbIsPg() });
-  fill(hl, tokenSpans(tokens).nodes, "\n");
+  if (ta.value.length >= DB_SQL_RANGE_MIN && typeof CSS !== "undefined" && CSS.highlights && typeof Highlight === "function" && typeof Range === "function") {
+    dbSqlRangePaint(hl, tokens);
+  } else fill(hl, tokenSpans(tokens).nodes, "\n");
   hl.scrollTop = ta.scrollTop;
   hl.scrollLeft = ta.scrollLeft;
 }
@@ -389,5 +438,5 @@ function dbFiltersKeydown(ev               , t         )          {
 export {
   DB_FILTER_OPS, SQL_KEYWORDS, SQL_TOKEN_RE, dbApplyFilters, dbFiltersChange, dbFiltersClick,
   dbFiltersInput, dbFiltersKeydown, dbHighlightNodes, dbShellTokens, dbSqlPaint, dbSqlTokens, dbValueless,
-  renderDbFilters,
+  dbSqlHighlightClear, renderDbFilters,
 };

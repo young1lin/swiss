@@ -197,11 +197,11 @@ describe("the connection menu's groups (SPEC §host.groups, SPEC §data.database
     const mark = kids[kids.findIndex((c) => String(c.className) === "db-row-name") + 1];
     expect(String(mark.className), "the glyph sits bare after the name, in no wrapper").not.toContain("tag");
     expect(mark.children.length, "an svg with its <use>, not a text node").toBe(1);
-    // A dialect outside the icon whitelist is the library's mono tag - sqlite is not a mark.
-    (conns[0] as { dialect: string }).dialect = "sqlite";
+    // A dialect outside the icon whitelist is the library's mono tag.
+    (conns[0] as { dialect: string }).dialect = "csv";
     const word = rowKids().find((c) => String(c.className) === "tag mono");
     expect(word, "the word tag").toBeTruthy();
-    expect(word!.children[0].textContent).toBe("sqlite");
+    expect(word!.children[0].textContent).toBe("csv");
     unmountDbView();
   });
 });

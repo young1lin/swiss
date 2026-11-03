@@ -824,6 +824,7 @@ pub async fn run_query(
 /// commit implicitly before the mode could refuse it.
 pub async fn run_read_query(pool: &MySqlPool, sql: &str) -> Result<Vec<Map<String, Value>>, String> {
     let mut tx = pool.begin_with("START TRANSACTION READ ONLY").await.map_err(|e| e.to_string())?;
+    swiss_host::dbbrowser::execution::submitted(sql);
     let outcome = collect_outcome(sqlx::raw_sql(AssertSqlSafe(sql)).fetch_many(&mut *tx), sql).await;
     let _ = tx.rollback().await;
     Ok(outcome?.rows)
@@ -837,6 +838,7 @@ pub async fn run_read_query(pool: &MySqlPool, sql: &str) -> Result<Vec<Map<Strin
 /// to cap + 1 rows first (sql::bounded_write).
 pub async fn run_capped_write(pool: &MySqlPool, sql: &str, cap: u64) -> Result<CappedWrite, String> {
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    swiss_host::dbbrowser::execution::submitted(sql);
     let outcome = match collect_outcome(sqlx::raw_sql(AssertSqlSafe(sql)).fetch_many(&mut *tx), sql).await {
         Ok(outcome) => outcome,
         Err(why) => {

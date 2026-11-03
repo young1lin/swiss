@@ -19,7 +19,7 @@ import { $, apiJson, el } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbIsMongo } from "./data-mongo.js";
 import { dbSqlPaint } from "./data-filters.js";
-import { dbConn, dbSqlTab } from "./db-state.js";
+import { dbSetSqlText, dbConn, dbSqlTab } from "./db-state.js";
 import { dbKeyShown } from "./data-tree.js";
 // SPEC §data.redis-console: the same lexer the gateway splits a console line with (vendored, MIT).
 import { split } from "./vendor/shlex/3.0.0/index.js";
@@ -523,7 +523,7 @@ function dbSuggestAccept(i: number): void {
   const start = caret - dbSuggestPrefix.length;
   ta.setRangeText(label, start, caret, "end");
   const st = dbSqlTab();
-  if (st) st.sqlText = ta.value;
+  if (st) dbSetSqlText(st, ta.value);
   dbSqlPaint();
   dbSuggestHide();
   ta.focus();

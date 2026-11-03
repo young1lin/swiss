@@ -30,7 +30,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde_json::{json, Value};
 
@@ -1020,6 +1020,13 @@ impl Registry {
 pub struct RegistryCatalog {
     registry: Arc<Registry>,
     tracker: Arc<swiss_host::services::catalog::LeaseTracker>,
+    /// Files the plugins themselves published (SPEC §data.sqlite). Empty unless
+    /// the MCP plugin was given the gateway's seat. A user MCP of the same
+    /// connection id hides that row.
+    modules: Arc<swiss_host::services::module_db::ModuleDbSeat>,
+    /// Read-only browsers, opened on the first lease and dropped when the
+    /// publishing plugin withdraws. Listing does not open a pool.
+    browsers: Mutex<HashMap<String, Arc<crate::adapters::sqlite_browser::SqliteBrowser>>>,
 }
 
 impl RegistryCatalog {
@@ -1029,7 +1036,82 @@ impl RegistryCatalog {
         registry: Arc<Registry>,
         tracker: Arc<swiss_host::services::catalog::LeaseTracker>,
     ) -> Self {
-        RegistryCatalog { registry, tracker }
+        RegistryCatalog {
+            registry,
+            tracker,
+            modules: Arc::new(swiss_host::services::module_db::ModuleDbSeat::new()),
+            browsers: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Browse whatever plugins have published on this seat. The catalog does not
+    /// know which modules exist; a plugin that is not started has published nothing.
+    pub fn with_module_dbs(
+        mut self,
+        modules: Arc<swiss_host::services::module_db::ModuleDbSeat>,
+    ) -> Self {
+        self.modules = modules;
+        self
+    }
+
+    fn module_rows(&self) -> Vec<swiss_host::services::catalog::ConnectionInfo> {
+        use swiss_host::services::module_db::{connection_id, connection_label};
+        let mut rows = Vec::new();
+        for db in self.modules.list() {
+            let id = connection_id(&db.plugin, &db.path);
+            if self.registry.get(&id).is_some() {
+                continue;
+            }
+            if rows.iter().any(|r: &swiss_host::services::catalog::ConnectionInfo| r.id == id) {
+                continue;
+            }
+            rows.push(swiss_host::services::catalog::ConnectionInfo {
+                id,
+                label: connection_label(&db.path),
+                dialect: "sqlite".to_string(),
+                state: if db.path.is_file() {
+                    "running".to_string()
+                } else {
+                    "unknown".to_string()
+                },
+            });
+        }
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        let live: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+        let mut cache = self.browsers.lock().unwrap_or_else(|e| e.into_inner());
+        cache.retain(|id, _| live.iter().any(|kept| kept == id));
+        rows
+    }
+
+    fn browser_for(
+        &self,
+        id: &str,
+        path: &std::path::Path,
+        label: &str,
+    ) -> Arc<crate::adapters::sqlite_browser::SqliteBrowser> {
+        let mut cache = self.browsers.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(have) = cache.get(id) {
+            if have.path() == path {
+                return have.clone();
+            }
+        }
+        let browser = Arc::new(crate::adapters::sqlite_browser::SqliteBrowser::new(
+            path.to_path_buf(),
+            label.to_string(),
+        ));
+        cache.insert(id.to_string(), browser.clone());
+        browser
+    }
+
+    fn published(&self, id: &str) -> Option<(std::path::PathBuf, String)> {
+        use swiss_host::services::module_db::{connection_id, connection_label};
+        if self.registry.get(id).is_some() {
+            return None;
+        }
+        self.modules.list().into_iter().find_map(|db| {
+            let cid = connection_id(&db.plugin, &db.path);
+            (cid == id).then(|| (db.path.clone(), connection_label(&db.path)))
+        })
     }
 
     pub fn tracker(&self) -> Arc<swiss_host::services::catalog::LeaseTracker> {
@@ -1100,6 +1182,7 @@ impl swiss_host::services::catalog::ConnectionCatalog for RegistryCatalog {
                     state,
                 })
             })
+            .chain(self.module_rows())
             .collect()
     }
 
@@ -1112,6 +1195,13 @@ impl swiss_host::services::catalog::ConnectionCatalog for RegistryCatalog {
         swiss_host::services::catalog::CatalogError,
     > {
         use swiss_host::services::catalog::CatalogError;
+        if let Some((path, label)) = self.published(id) {
+            let browser = self.browser_for(id, &path, &label);
+            let flavor = swiss_host::dbbrowser::BrowserFlavor::Db(
+                browser as Arc<dyn swiss_host::dbbrowser::DbBrowser>,
+            );
+            return Ok(self.tracker.grant(id, holder, "sqlite", flavor));
+        }
         let Some(entry) = self.registry.get(id) else {
             return Err(CatalogError::Unknown(format!("unknown MCP: {id}")));
         };
@@ -2157,6 +2247,51 @@ mod tests {
             }
             Ok(_) => panic!("unknown, got a lease"),
             Err(other) => panic!("unknown, wrong error: {other}"),
+        }
+    }
+
+    #[test]
+    fn an_open_module_database_is_a_connection_until_its_plugin_stops() {
+        // SPEC §data.sqlite: the catalog lists files plugins published, and a
+        // user MCP of the same id hides that row. It does not know the path.
+        use swiss_host::services::module_db::{connection_id, ModuleDbSeat};
+        let r = reg();
+        let seat = Arc::new(ModuleDbSeat::new());
+        let memory = std::env::temp_dir().join("memory").join("store.sqlite3");
+        let data = std::env::temp_dir().join("swiss-data-missing").join("logs").join("data.db");
+        seat.publish("memory", memory.clone());
+        seat.publish("data", data);
+        let catalog = RegistryCatalog::new(
+            r.clone(),
+            swiss_host::services::catalog::LeaseTracker::new(),
+        )
+        .with_module_dbs(seat.clone());
+        let rows = swiss_host::services::catalog::ConnectionCatalog::list(&catalog);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "swiss-data");
+        assert_eq!(rows[0].label, "logs/data.db");
+        assert_eq!(rows[1].id, connection_id("memory", &memory));
+        assert_eq!(rows[1].id, "swiss-memory");
+        assert_eq!(rows[1].label, "memory/store.sqlite3");
+        assert!(rows.iter().all(|c| c.dialect == "sqlite" && c.state == "unknown"));
+        let lease = swiss_host::services::catalog::ConnectionCatalog::lease(&catalog, "swiss-memory", "data")
+            .expect("the memory plugin's file leases");
+        assert_eq!(lease.dialect(), "sqlite");
+
+        seat.withdraw("data");
+        let rows = swiss_host::services::catalog::ConnectionCatalog::list(&catalog);
+        assert_eq!(rows.len(), 1, "a stopped plugin's file leaves the list");
+        assert_eq!(rows[0].id, "swiss-memory");
+
+        r.register("swiss-memory", Source::Managed, def(json!({"type": "fake"})), Fake::default().arc())
+            .unwrap();
+        let rows = swiss_host::services::catalog::ConnectionCatalog::list(&catalog);
+        assert_eq!(rows.len(), 1, "the user entry replaces the module file, it does not sit beside it");
+        assert_eq!(rows[0].dialect, "none");
+        match swiss_host::services::catalog::ConnectionCatalog::lease(&catalog, "swiss-memory", "data") {
+            Err(swiss_host::services::catalog::CatalogError::NotBrowsable(_)) => {}
+            Ok(_) => panic!("the user entry should win, got a lease"),
+            Err(other) => panic!("the user entry should win: {other}"),
         }
     }
 }

@@ -142,6 +142,49 @@ export function wireLabel(served        )         {
   return Object.prototype.hasOwnProperty.call(WIRE_LABELS, served) ? WIRE_LABELS[served] : served;
 }
 
+const QUERY_ONLY_HEAD = "this connection is query-only (";
+const QUERY_ONLY_TAIL = "): a write would change this module's own database";
+const READ_HEAD = "only a read runs here (SELECT, WITH, TABLE, VALUES, SHOW, DESCRIBE, EXPLAIN), not ";
+const READ_OUTFILE = "only a read runs here: INTO OUTFILE and INTO DUMPFILE write a server file";
+const ANALYZE_WRITES = "ANALYZE writes sqlite_stat1";
+const NOT_THERE_HEAD = "this module database is not there yet (";
+const NO_SESSIONS = "this connection is query-only and has no sessions to cancel";
+const IMPORT_WRITES = "sqlite is query-only — an import would write the built-in memory store";
+
+/** The module-database refusals the gateway writes in English (SPEC §data.sqlite). A known
+ *  sentence is the panel's own copy; an engine error, or any other sentence, passes through. */
+export function moduleDbMessage(served        )         {
+  if (served === NO_SESSIONS) return tr("dataSqlite.noSessions");
+  if (served === IMPORT_WRITES) return tr("dataSqlite.importWrites");
+  if (served.startsWith(NOT_THERE_HEAD) && served.endsWith(")")) {
+    return tr("dataSqlite.notThere", { label: served.slice(NOT_THERE_HEAD.length, -1) });
+  }
+  if (served.startsWith(QUERY_ONLY_HEAD)) {
+    const tailAt = served.indexOf(QUERY_ONLY_TAIL);
+    if (tailAt > QUERY_ONLY_HEAD.length) {
+      const label = served.slice(QUERY_ONLY_HEAD.length, tailAt);
+      const rest = served.slice(tailAt + QUERY_ONLY_TAIL.length);
+      if (rest === "") return tr("dataSqlite.queryOnly", { label });
+      if (rest.startsWith(" (") && rest.endsWith(")")) {
+        const raw = rest.slice(2, -1);
+        return tr("dataSqlite.queryOnlyReason", { label, reason: readReason(raw) ?? raw });
+      }
+    }
+  }
+  return readReason(served) ?? served;
+}
+
+function readReason(reason        )                {
+  if (reason === READ_OUTFILE) return tr("dataSqlite.readOutfile");
+  if (reason === ANALYZE_WRITES) return tr("dataSqlite.analyzeWrites");
+  if (!reason.startsWith(READ_HEAD)) return null;
+  const statement = reason.slice(READ_HEAD.length);
+  if (!statement) return null;
+  return tr("dataSqlite.readOnly", {
+    statement: statement === "an empty statement" ? tr("dataSqlite.emptyStatement") : statement,
+  });
+}
+
 /* --- install / load ----------------------------------------------------------------------------- */
 
 /** Swap the active language in memory. Tests and loadLocale are the callers; setLang is the

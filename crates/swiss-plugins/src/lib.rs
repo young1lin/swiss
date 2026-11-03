@@ -24,6 +24,7 @@
 
 pub mod analysis;
 pub mod analysis_api;
+mod db_consoles;
 mod llm_db_analysis;
 pub mod llm;
 pub mod llm_api;

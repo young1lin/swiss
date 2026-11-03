@@ -180,6 +180,11 @@ impl ProcessHistory {
         })
     }
 
+    /// The file this store opens. The Process plugin publishes it on its own seat.
+    pub fn database_file(&self) -> PathBuf {
+        self.store.policy().db_file.clone()
+    }
+
     /// Open (and if needed import into) `<logs>/process.db`. The caller is the
     /// plugin's start - never a constructor - so a disabled process opens nothing.
     pub async fn open(&self) -> Result<(), String> {

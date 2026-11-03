@@ -1296,3 +1296,9 @@
 .result-chart-label { fill: var(--text-3); font-size: var(--f-label); }
 
 .menu.dd-menu { overflow-y: auto; }
+/* Large SQL editors color native text ranges without creating a span per token. */
+::highlight(swiss-db-sql-jv-k) { color: var(--syn-key); }
+::highlight(swiss-db-sql-jv-s) { color: var(--syn-str); }
+::highlight(swiss-db-sql-jv-l) { color: var(--syn-lit); }
+::highlight(swiss-db-sql-jv-w) { color: var(--syn-kw); }
+::highlight(swiss-db-sql-jv-f) { color: var(--syn-fn); }

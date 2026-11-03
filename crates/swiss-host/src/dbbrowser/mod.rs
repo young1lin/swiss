@@ -85,6 +85,8 @@ pub use self::activity::*;
 
 use std::sync::Arc;
 
+pub mod execution;
+
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -106,6 +108,10 @@ pub enum BrowserFlavor {
 pub enum DbDialect {
     Mysql,
     Pg,
+    /// The built-in memory store (SPEC §data.sqlite). Query-only: the file is the memory
+    /// plugin's database, and a write from this browser would be a second writer with no
+    /// idea what it was changing.
+    Sqlite,
 }
 
 impl DbDialect {
@@ -113,7 +119,13 @@ impl DbDialect {
         match self {
             DbDialect::Mysql => "mysql",
             DbDialect::Pg => "pg",
+            DbDialect::Sqlite => "sqlite",
         }
+    }
+
+    /// "?" placeholders. Postgres numbers them (`$1`); MySQL and SQLite do not.
+    pub fn binds_question(self) -> bool {
+        matches!(self, DbDialect::Mysql | DbDialect::Sqlite)
     }
 }
 

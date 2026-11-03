@@ -200,6 +200,23 @@ describe("the guards count every session (SPEC §data.sessions)", () => {
 });
 
 describe("the park is capped, and a session holding writes is never the one to go (SPEC §data.sessions)", () => {
+  it("keeps console drafts and blank console identities beyond the parked-session cap", async () => {
+    conns = Array.from({ length: 11 }, (_, i) => dbConn("p" + i, "mysql"));
+    await page.refresh();
+    await flush();
+    await view.dbSwitchConn("p0");
+    tabs.dbOpenTabForce({ kind: "sql" });
+    const tab = dbTab();
+    if (tab.kind !== "sql") throw new Error("expected console");
+    tab.sqlText = "SELECT 42";
+    const id = tab.id;
+    for (let i = 1; i <= 10; i++) { await view.dbSwitchConn("p" + i); await flush(); }
+    await view.dbSwitchConn("p0");
+    const restored = dbTabs().find(t => t.kind === "sql" && t.id === id);
+    expect(restored?.kind === "sql" && restored.sqlText).toBe("SELECT 42");
+    expect(view.dbSessionPinned([{ ...tab, sqlText: "" }])).toBe(true);
+  });
+
   it("the least recently used clean session goes; a dirty one stays", async () => {
     conns = Array.from({ length: 11 }, (_, i) => dbConn("c" + i, "mysql"));
     await page.refresh();

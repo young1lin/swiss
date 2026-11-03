@@ -211,7 +211,12 @@ async fn series(
 ) -> Response {
     let Some(x) = q.get("x").cloned() else { return bad("x is required") };
     let y: Vec<String> = q.get("y").map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default();
-    match store.series(&id, &result, &x, &y) {
+    let out = match q.get("mode").map(String::as_str) {
+        None => store.series(&id, &result, &x, &y),
+        Some("scatter") => store.scatter_series(&id, &result, &x, &y),
+        Some(_) => Err("mode: scatter is the only explicit mode".into()),
+    };
+    match out {
         Ok(out) => ok(out),
         Err(why) => bad(why),
     }

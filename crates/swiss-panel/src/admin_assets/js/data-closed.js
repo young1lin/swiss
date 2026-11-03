@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { tr } from "./i18n.js";
+import { toast } from "./util.js";
                                                  
 import { dbNewTabId } from "./db-state.js";
 
@@ -44,17 +46,75 @@ import { dbNewTabId } from "./db-state.js";
                     
                                          
              
+                            
+                            
+                                                                                               
+                                                                                                  
+                    
  
 
 const CLOSED_KEY = "swiss.dbClosedTabs";
 /** How many closed consoles the list keeps, every connection's together. */
-const CLOSED_MAX = 30;
-/** The list's stored size it keeps under, in characters: the oldest go past it, so one long
- *  script cannot crowd out the other preferences this origin keeps. */
+const CLOSED_MAX = 200;
+/** The list's stored size it keeps under, in characters, to protect other preferences. */
 const CLOSED_CHARS = 1_000_000;
+// Failed legacy migration keeps identities stable for this session until storage is writable.
+const legacyIds = new Map                ();
+let migrationWarned = false;
+
+/* Once the gateway answers its console store, the closed list of that connection is the
+ * SERVER's (SPEC §data.agent Tabs): this cache is what the synchronous renderers read, filled
+ * by the page's load and kept in step by close/restore/clear. localStorage stays the fallback
+ * for a gateway without the store, and the migration source the first load imports once. */
+const remote = new Map                       ();
+const remoteOn = new Set        ();
+
+/** Does this connection read its closed consoles from the server store? */
+export function dbClosedRemote(conn               )          {
+  return !!conn && remoteOn.has(conn);
+}
+
+/** Replace the connection's cached list with the server's records (newest first by update). */
+export function dbClosedAdopt(conn        , list               )       {
+  remoteOn.add(conn);
+  remote.set(conn, sortClosed(list));
+}
+
+/** The connection is back on its local list (the store refused, or another one was selected). */
+export function dbClosedLocalOnly(conn        )       {
+  remoteOn.delete(conn);
+  remote.delete(conn);
+}
+
+export function dbClosedAdd(conn        , entry             )       {
+  const list = (remote.get(conn) || []).filter((e) => e.id !== entry.id);
+  remote.set(conn, sortClosed([entry, ...list]));
+}
+
+export function dbClosedDrop(conn        , id        )       {
+  const list = remote.get(conn);
+  if (list) remote.set(conn, list.filter((e) => e.id !== id));
+}
+
+export function dbClosedEmpty(conn        )       {
+  remote.set(conn, []);
+}
+
+/** The local entries not yet migrated to the server, oldest first. */
+export function dbClosedLocalFor(conn        )                {
+  return readClosed().filter((e) => e.conn === conn);
+}
+
+/** Drop migrated entries from localStorage by id. False when the browser refused the write,
+ *  which keeps them for the next visit instead of pretending the migration is complete. */
+export function dbClosedLocalForget(conn        , ids          )          {
+  if (!ids.length) return true;
+  const gone = new Set(ids);
+  return writeClosed(readClosed().filter((e) => !(e.conn === conn && gone.has(e.id))));
+}
 
 /** An entry as it may sit in storage: one written before ids existed has none yet. */
-                                                              
+;                                                             
 
 function closedEntry(v         )                    {
   if (!v || typeof v !== "object") return false;
@@ -68,64 +128,77 @@ function readClosed()                {
   try { raw = JSON.parse(localStorage.getItem(CLOSED_KEY) || "[]"); } catch { return []; }
   if (!Array.isArray(raw)) return [];
   let repaired = false;
-  const list                = raw.filter(closedEntry).map((e              )              => {
+  const list                = raw.filter(closedEntry).map((e              , index        )              => {
     if (e.id) return e               ;
     // An entry filed before ids: minted here and written back, so the id a tool read once
     // still addresses it on the next visit.
     repaired = true;
-    return { ...e, id: dbNewTabId() };
+    const key = JSON.stringify([index, e.conn, e.at, e.custom, e.agentTab]);
+    let id = legacyIds.get(key);
+    if (!id) { id = dbNewTabId(); if (legacyIds.size >= CLOSED_MAX) legacyIds.delete(legacyIds.keys().next().value || ""); legacyIds.set(key, id); }
+    return { ...e, id };
   });
-  if (repaired) writeClosed(list);
+  if (repaired && !writeClosed(list) && !migrationWarned) { migrationWarned = true; toast(tr("dataTabs.migrationFailed"), true); }
   return list;
 }
 
-function writeClosed(list               )       {
-  const kept = list.slice(0, CLOSED_MAX);
-  while (kept.length > 1 && JSON.stringify(kept).length > CLOSED_CHARS) kept.pop();
+function writeClosed(list               )          {
+  const encoded = JSON.stringify(list);
+  if (list.length > CLOSED_MAX || encoded.length > CLOSED_CHARS) return false;
   try {
-    if (kept.length) localStorage.setItem(CLOSED_KEY, JSON.stringify(kept));
+    if (list.length) localStorage.setItem(CLOSED_KEY, encoded);
     else localStorage.removeItem(CLOSED_KEY);
-  } catch { /* storage refused (full, or blocked): the tabs close as they used to */ }
+    return true;
+  } catch { return false; }
 }
 
-/** File the consoles about to close, each under its connection: one holding no text is
- *  nothing to bring back. The same text closed again on a connection moves to the front
- *  instead of standing twice. */
-export function dbClosedRemember(gone                                   )       {
+/** File the consoles about to close, each under its connection, including blank consoles whose
+ *  IDs can already have been copied. Refiling the same ID updates its entry; equal text in different
+ *  consoles remains separate work. A failed save refuses the close. */
+export function dbClosedRemember(gone                                   )          {
   const fresh                = [];
   const now = Date.now();
   for (const { conn, tab } of gone) {
-    if (!conn || !tab.sqlText.trim()) continue;
-    const e              = { id: tab.id, conn, text: tab.sqlText, at: now };
+    if (!conn || tab.analysisId) continue;
+    const e              = { id: tab.id, conn, text: tab.sqlText, at: now,
+      createdAt: tab.createdAt ?? null, updatedAt: tab.updatedAt ?? null };
     if (tab.custom) e.custom = tab.custom;
     if (tab.agent) { e.agent = true; if (tab.agentTab) e.agentTab = tab.agentTab; }
     fresh.push(e);
   }
-  if (!fresh.length) return;
-  const same = (a             , b             )          => a.conn === b.conn && a.text === b.text;
+  if (!fresh.length) return true;
+  const same = (a             , b             )          => a.conn === b.conn && a.id === b.id;
   const before = readClosed().filter((e) => !fresh.some((f) => same(e, f)));
-  writeClosed(fresh.concat(before));
+  return writeClosed(fresh.concat(before));
+}
+
+/** Newest meaningful update first, then close time, then the stable id: the order the history
+ *  menu and the agent's restore-by-name read. Pure. */
+function sortClosed(list               )                {
+  const time = (n         )         => typeof n === "number" && Number.isFinite(n) && n > 0 && n <= 8.64e15 ? n : 0;
+  return list.slice().sort((a, b) => time(b.updatedAt) - time(a.updatedAt) || time(b.at) - time(a.at) || a.id.localeCompare(b.id));
 }
 
 /** The connection's closed consoles, newest first. */
 export function dbClosedFor(conn               )                {
-  return conn ? readClosed().filter((e) => e.conn === conn) : [];
+  if (!conn) return [];
+  if (remoteOn.has(conn)) return remote.get(conn) || [];
+  return sortClosed(readClosed().filter((e) => e.conn === conn));
 }
 
 /** Take one off the list to bring it back: null when it is gone already (another page took it). */
-export function dbClosedTake(id        )                     {
+export function dbClosedTake(id        , conn         )                     {
   const list = readClosed();
-  const at = list.findIndex((e) => e.id === id);
+  const at = list.findIndex((e) => e.id === id && (conn === undefined || e.conn === conn));
   if (at < 0) return null;
   const [e] = list.splice(at, 1);
-  writeClosed(list);
-  return e;
+  return writeClosed(list) ? e : null;
 }
 
 /** Take the newest closed console of the agent's of that name on the connection, if any. */
 export function dbClosedTakeAgent(conn        , agentTab        )                     {
   const e = dbClosedFor(conn).find((x) => x.agent === true && (x.agentTab || "") === agentTab);
-  return e ? dbClosedTake(e.id) : null;
+  return e ? dbClosedTake(e.id, conn) : null;
 }
 
 /** One of the connection's closed consoles by its id (the console tab's own), if any. */
@@ -136,16 +209,26 @@ export function dbClosedById(conn               , id        )                   
 /** Rewrite a closed console's text where it sits - a statement the agent edited or deleted
  *  while the tab was closed. Its id and place in the list stay, so the tab it comes back as
  *  is still the one that was asked for. False when it is gone already. */
-export function dbClosedSetText(id        , text        )          {
+export function dbClosedSetText(id        , text        , conn         )          {
+  if (conn && remoteOn.has(conn)) {
+    const list = remote.get(conn) || [];
+    const at = list.findIndex((e) => e.id === id);
+    if (at < 0) return false;
+    if (list[at].text === text) return true;
+    remote.set(conn, sortClosed(list.map((e, i) => i === at ? { ...e, text, updatedAt: Date.now() } : e)));
+    return true;
+  }
   const list = readClosed();
-  const at = list.findIndex((e) => e.id === id);
+  const at = list.findIndex((e) => e.id === id && (conn === undefined || e.conn === conn));
   if (at < 0) return false;
+  if (list[at].text === text) return true;
   list[at].text = text;
-  writeClosed(list);
-  return true;
+  list[at].updatedAt = Date.now();
+  return writeClosed(list);
 }
 
 /** Forget the connection's closed consoles (the menu's Clear). */
-export function dbClosedClear(conn        )       {
-  writeClosed(readClosed().filter((e) => e.conn !== conn));
+export function dbClosedClear(conn        )          {
+  if (remoteOn.has(conn)) { remote.set(conn, []); return true; }
+  return writeClosed(readClosed().filter((e) => e.conn !== conn));
 }

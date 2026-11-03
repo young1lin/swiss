@@ -17,19 +17,28 @@ Part 06 of [§data](README.md), chapter 0006 of the [swiss specification](../../
   The overflow menu lists every tab plus Close others / to the right / all. The wheel scrolls
   it, middle-click closes, right-click offers rename and close left/right. Card tabs are a third
   shape, distinct from underline tabs and pills (§panel.design).
-- **Recently closed.** A console tab holding text is filed before it goes - its ×, a bulk
-  close, a database switch, and the page going (`pagehide`: the live strip's and every parked
-  session's) - with its text, its name and, for one of the Data agent's, the name the agent
-  knows it by (`data-closed.ts`; `swiss.dbClosedTabs` in this browser, newest first, the
-  same connection and text once, 30 at most across connections and under a million
-  characters, the oldest going first). The overflow menu then offers *Recently closed* (shown
-  with nothing open too): the connection's closed consoles, each its name and first line, its
-  text on hover, a find box past nine; a pick opens it as a new console in front with its text
-  and name - the agent's again while no open tab is the agent's under that name - and leaves
-  the list. *Clear the list* forgets the connection's. A result is not kept: its rows are a
-  read to run again. A table, key or collection tab is an address, opened again from the
-  sidebar, and is not filed. Before this, a closed console was gone for good (2026-10-29; `a
-  closed console can be brought back`).
+- **Recently closed.** Consoles with text, a custom name or Agent ownership are saved before
+  close, database reset and page exit. They retain stable ID, text, names, creation/update times
+  and separate close time. Equal text never merges identities. Storage holds at most 200 entries
+  and one million characters across connections; older saved entries expire first, while a close
+  that cannot save its incoming consoles is refused. Failed page-exit saves request the browser's
+  leave confirmation. Restoration checks capacity before removing history, preserves identity
+  and metadata, and never reruns SQL. Search groups by local update day, unknown times last
+  (§data.agent); details expose ID and times. Once the page has read the server store
+  (§data.agent), this list is those closed records: Clear deletes only them, open consoles
+  stay, and the local list is dropped only after that delete succeeds. Without the store,
+  Clear forgets this connection's local entries alone. The 200-entry and one-million-character
+  bounds are that local fallback and the one-time import, not the server records. A reload of
+  a store-backed connection restores the open consoles; it does not file them closed on the
+  way out.
+- **Object shortcuts.** SQL table/view menus toggle favorites. Favorites (100) and recent visits
+  (20) are scoped by connection/database, with schema in each address. Optional single-level
+  prefix groups use the first underscore, colon or dot. Groups mount rows only on expansion,
+  200 per reveal, with creation/sort controls reachable. Storage holds addresses only: at most
+  64 scopes and 500,000 characters; exceeding a bound refuses new preferences, preserving favorites.
+- **Coordinated columns.** Rendered widths clamp without writing grip preferences. Below a
+  1100 px workspace sidebar/Agent use at most 21%/40%; below 760 px the Agent becomes an end
+  overlay with a visible close action. Widening restores saved widths.
 - **The sidebar tree** has Tables / Views / Routines sections (collapsible groups, §panel.groups;
   `+` only on Tables); pg nests schema bands over them. Each section renders 200 rows
   (`DB_TREE_ROW_CAP`), "show N more" adds 500, "Show fewer" sits at the end; search results
@@ -57,8 +66,8 @@ Part 06 of [§data](README.md), chapter 0006 of the [swiss specification](../../
   value too, unless it has pending edits. The Redis key list is re-walked quietly to the same
   depth on restore, on `r`, on switch-back and after each console command. Console results are
   never re-run.
-- **Limits.** At most 8 parked sessions (`DB_PARKED_MAX`), evicting the least recently used
-  clean one — a session with pending edits is never evicted; sessions of vanished connections
+- **Limits.** A soft cap of 8 parked sessions (`DB_PARKED_MAX`) evicts the least recently used
+  clean one — a session with pending edits or a Console identity is never evicted; sessions of vanished connections
   are dropped. Parking stops the Activity poll.
 - Not built: a (connection, database) key — switching database still resets; nothing survives
   a reload.

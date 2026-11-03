@@ -131,7 +131,7 @@ pub fn grep_where(
         for pattern in alts {
             params.push(Value::String(pattern));
             let n = first_param + params.len();
-            phs.push(if dialect == DbDialect::Mysql {
+            phs.push(if dialect.binds_question() {
                 "?".to_string()
             } else {
                 format!("${n}")
@@ -275,7 +275,7 @@ pub fn build_filter_where(
     // parameter's 1-based number.
     let bind = |params: &mut Vec<Value>, v: Value| -> String {
         params.push(v);
-        if dialect == DbDialect::Mysql {
+        if dialect.binds_question() {
             "?".to_string()
         } else {
             format!("${}", params.len())
@@ -457,6 +457,15 @@ mod tests {
         .unwrap();
         assert_eq!(out.frag, " WHERE `id` >= ?");
         assert_eq!(out.params, vec![json!(42)]);
+
+        // SPEC §data.sqlite: the built-in store binds like MySQL and quotes like Postgres.
+        let sqlite = build_filter_where(
+            DbDialect::Sqlite,
+            &names(&["id", "name"]),
+            &filter(json!([{ "column": "name", "op": "eq", "value": "alice" }])),
+        )
+        .unwrap();
+        assert_eq!(sqlite.frag, " WHERE \"name\" = ?");
 
         let pg = build_filter_where(
             DbDialect::Pg,

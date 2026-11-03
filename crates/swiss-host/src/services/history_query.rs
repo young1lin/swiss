@@ -54,19 +54,31 @@ pub struct HistoryQueryAdapter {
 }
 
 /// The seat. Constructed with the services, so it outlives every plugin instance —
-/// a module stopping and starting again finds the same seat.
+/// a module stopping and starting again finds the same seat. Registration also
+/// enrolls the owner's file on [`super::module_db::ModuleDbSeat`]: the Data page
+/// reads that seat, and the owner is the only one who named the path.
 #[derive(Default)]
 pub struct HistoryQuerySeat {
     adapters: Mutex<Vec<HistoryQueryAdapter>>,
+    modules: Arc<super::module_db::ModuleDbSeat>,
 }
 
 impl HistoryQuerySeat {
     pub fn new() -> Self {
-        HistoryQuerySeat::default()
+        Self::sharing(Arc::new(super::module_db::ModuleDbSeat::new()))
+    }
+
+    /// Share the gateway's module-database seat, so a registration is visible to Data.
+    pub fn sharing(modules: Arc<super::module_db::ModuleDbSeat>) -> Self {
+        HistoryQuerySeat {
+            adapters: Mutex::new(Vec::new()),
+            modules,
+        }
     }
 
     /// Register an adapter. A duplicate owner id is a composition bug: refused,
-    /// not last-write-wins.
+    /// not last-write-wins. The owner's database file is enrolled for browsing
+    /// at the same time, and withdrawn by [`unregister`](Self::unregister).
     pub fn register(&self, adapter: HistoryQueryAdapter) -> Result<(), String> {
         let mut all = self.adapters.lock().unwrap_or_else(|e| e.into_inner());
         if all.iter().any(|a| a.owner == adapter.owner) {
@@ -75,14 +87,17 @@ impl HistoryQuerySeat {
                 adapter.owner
             ));
         }
+        self.modules.publish(&adapter.owner, adapter.db_file.clone());
         all.push(adapter);
         Ok(())
     }
 
     /// Withdraw an owner's adapter (its plugin stopped: the database closed).
+    /// Every file that owner published goes with the adapter.
     pub fn unregister(&self, owner: &str) {
         let mut all = self.adapters.lock().unwrap_or_else(|e| e.into_inner());
         all.retain(|a| a.owner != owner);
+        self.modules.withdraw(owner);
     }
 
     /// The registered body reader for one owner, if it exposes record bodies.
@@ -121,5 +136,48 @@ impl HistoryQuerySeat {
             }
         }
         (sources, owners, skipped)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::history::search::{BodySource, StoredChunk};
+
+    struct Silent;
+
+    impl BodySource for Silent {
+        fn chunks_from(
+            &self,
+            _from: (i64, i64),
+            _limit: usize,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<StoredChunk>, String>> + Send + '_>>
+        {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn generation(&self) -> u64 {
+            0
+        }
+    }
+
+    #[test]
+    fn registering_an_owner_enrolls_its_own_file_and_unregister_takes_it_back() {
+        let modules = Arc::new(super::super::module_db::ModuleDbSeat::new());
+        let seat = HistoryQuerySeat::sharing(modules.clone());
+        let path = PathBuf::from("logs").join("terminal.db");
+        seat.register(HistoryQueryAdapter {
+            owner: "terminal".into(),
+            db_file: path.clone(),
+            source: Arc::new(Silent),
+            bodies: None,
+        })
+        .expect("first registration");
+        let rows = modules.list();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].plugin, "terminal");
+        assert_eq!(rows[0].path, path);
+        seat.unregister("terminal");
+        assert!(modules.list().is_empty(), "the terminal file leaves with the plugin");
     }
 }

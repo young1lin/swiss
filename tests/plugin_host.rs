@@ -1991,11 +1991,11 @@ async fn plugin_row(app: &axum::Router, id: &str) -> Value {
 async fn disabling_mcp_503s_api_db_and_marks_datas_requirement_unmet() {
     let (app, _host, _registry) = full_app("w3-off", json!({})).await;
 
-    // Baseline: MCP serves the catalog (the echo MCP is registered but not browsable, so
-    // the row list is EMPTY — an honest answer, and a 200).
+    // Baseline: MCP serves the catalog. The echo MCP is registered but not browsable.
+    // The rows are the databases the plugins this harness started opened themselves.
     let (status, body, _) = send(&app, local("GET", "/api/db")).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.expect("JSON")["connections"], json!([]));
+    assert_module_databases(&body.expect("JSON"));
 
     // The requirement is stated on the row with a met verdict; plugins that need nothing
     // carry no requires keys at all (absent-not-null).
@@ -2045,7 +2045,7 @@ async fn disabling_mcp_503s_api_db_and_marks_datas_requirement_unmet() {
     assert_eq!(status, StatusCode::OK, "{text}");
     let (status, body, _) = send(&app, local("GET", "/api/db")).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.expect("JSON")["connections"], json!([]));
+    assert_module_databases(&body.expect("JSON"));
     let data = plugin_row(&app, "data").await;
     assert_eq!(data["requiresMet"], json!(true), "{data}");
 }
@@ -2069,7 +2069,17 @@ async fn the_catalog_seat_survives_a_hundred_mcp_restarts() {
     assert_eq!(data["requiresMet"], json!(true), "{data}");
     let (status, body, _) = send(&app, local("GET", "/api/db")).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.expect("JSON")["connections"], json!([]));
+    assert_module_databases(&body.expect("JSON"));
+}
+
+/// The sqlite rows this harness's started plugins publish: Data, MCP and Process.
+/// Echo stays out (dialect none). Names only — the home path stays off the wire.
+fn assert_module_databases(body: &Value) {
+    let rows = body["connections"].as_array().expect("connections");
+    let mut names: Vec<&str> = rows.iter().map(|c| c["name"].as_str().unwrap()).collect();
+    names.sort();
+    assert_eq!(names, vec!["swiss-data", "swiss-mcp", "swiss-process"]);
+    assert!(rows.iter().all(|c| c["dialect"] == "sqlite"), "{body}");
 }
 // --- W4: the touchstone plugin (SPEC §host.seats) ---------------------------------------------------------
 

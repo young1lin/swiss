@@ -52,6 +52,8 @@ document.body.innerHTML = shellSkeleton();
 const tabs = await import("../src/data-tabs.js");
 const sql = await import("../src/data-sql.js");
 const closed = await import("../src/data-closed.js");
+const grid = await import("../src/data-grid.js");
+const view = await import("../src/data-view.js");
 
 /** A new console in front holding this text — what the agent's stage/run leaves behind. */
 function consoleTab(text: string, custom?: string): DbSqlTab {
@@ -63,6 +65,38 @@ function consoleTab(text: string, custom?: string): DbSqlTab {
 }
 
 const live = (): DbSqlTab => dbTab() as DbSqlTab;
+
+describe("formatting the SQL editor", () => {
+  it("coalesces the browser's intermediate input events into one final repaint", () => {
+    consoleTab("select id, name from users where id = 1;");
+    const old = document.querySelector("#dbSql")!;
+    const input = document.createElement("textarea");
+    input.id = "dbSql";
+    input.value = live().sqlText;
+    old.replaceWith(input);
+    input.addEventListener("input", view.dbPaneInput);
+    const hl = document.querySelector<HTMLElement>("#dbSqlHl")!;
+    const paint = vi.spyOn(hl, "textContent", "set");
+    const original = Object.getOwnPropertyDescriptor(document, "execCommand");
+    Object.defineProperty(document, "execCommand", { configurable: true, value: (_cmd: string, _ui: boolean, value: string): boolean => {
+      for (const partial of ["select", "select id", value]) {
+        input.value = partial;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return true;
+    } });
+    try {
+      grid.dbSqlFormatNow();
+      expect(input.value).toBe("select id,\n       name\nfrom users\nwhere id = 1;");
+      expect(live().sqlText).toBe(input.value);
+      expect(hl.textContent).toBe(input.value + "\n");
+      expect(paint).toHaveBeenCalledTimes(1);
+    } finally {
+      if (original) Object.defineProperty(document, "execCommand", original);
+      else Reflect.deleteProperty(document, "execCommand");
+    }
+  });
+});
 
 beforeEach(() => {
   localStorage.clear();
@@ -102,6 +136,45 @@ describe("the console's statements (SPEC §data.agent Tabs)", () => {
 });
 
 describe("a console tab's id (SPEC §data.agent Tabs)", () => {
+  it("keeps a closed draft closed when removing it from storage fails", () => {
+    const tab = consoleTab("SELECT 1", "Manual");
+    tabs.dbCloseAllTabs();
+    const before = dbTabs().length;
+    const storage = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new Error("storage unavailable"); });
+    tabs.dbRestoreClosed(tab.id);
+    expect(closed.dbClosedById("c", tab.id)?.text).toBe("SELECT 1");
+    expect(dbTabs()).toHaveLength(before);
+    expect(dbTabs().some(t => t.kind === "sql" && t.id === tab.id)).toBe(false);
+    expect(closed.dbClosedClear("c")).toBe(false);
+    expect(closed.dbClosedById("c", tab.id)?.text).toBe("SELECT 1");
+    storage.mockRestore();
+  });
+
+  it("keeps identical consoles distinct and restores their original lifetime timestamps", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    const a = consoleTab("SELECT 1", "Same");
+    vi.spyOn(Date, "now").mockReturnValue(2000);
+    const b = consoleTab("SELECT 1", "Same");
+    tabs.dbCloseAllTabs();
+    expect(closed.dbClosedFor("c").map(e => e.id).sort()).toEqual([a.id, b.id].sort());
+    vi.spyOn(Date, "now").mockReturnValue(3000);
+    tabs.dbRestoreClosed(a.id);
+    expect(live().id).toBe(a.id);
+    expect(live().createdAt).toBe(1000);
+    expect(live().updatedAt).toBe(1000);
+    sql.dbConsoleEdit(a.id, "replace", 0, "SELECT 2");
+    expect(live().updatedAt).toBe(3000);
+    tabs.dbCloseTab(dbActiveIndex());
+    expect(closed.dbClosedById("c", a.id)?.createdAt).toBe(1000);
+    expect(closed.dbClosedById("c", a.id)?.updatedAt).toBe(3000);
+  });
+
+  it("does not place an id-addressed statement into a different console when the id is missing", () => {
+    const a = consoleTab("SELECT 1", "Same");
+    sql.dbAgentStatement("SELECT 2", null, new Set(), undefined, "Same", "missing");
+    expect(dbTabs()).toHaveLength(1);
+    expect(a.sqlText).toBe("SELECT 1");
+  });
   it("is minted at birth, survives the close into Recently closed, and the snapshot lists open and closed tabs alike", () => {
     const first = consoleTab("SELECT 1;\n\nSELECT 2;", "Report");
     const id = first.id;
@@ -116,6 +189,66 @@ describe("a console tab's id (SPEC §data.agent Tabs)", () => {
       { id, tab: "Report", open: false, agent: false, statements: [{ sql: "SELECT 1;" }, { sql: "SELECT 2;" }] },
     ]);
     expect(closed.dbClosedFor("c")[0].id).toBe(id);
+  });
+
+  it("refuses to close without evicting older consoles at the count and size limits", () => {
+    for (const entries of [
+      Array.from({ length: 200 }, (_, i) => ({ id: "old-" + i, conn: "c", text: "SELECT " + i, at: i + 1 })),
+      [{ id: "large", conn: "c", text: "x".repeat(999900), at: 1 }],
+    ]) {
+      localStorage.setItem("swiss.dbClosedTabs", JSON.stringify(entries));
+      const before = localStorage.getItem("swiss.dbClosedTabs");
+      const t = consoleTab("SELECT 1", "New");
+      tabs.dbCloseTab(dbActiveIndex());
+      expect(dbTabs()).toContain(t);
+      expect(localStorage.getItem("swiss.dbClosedTabs")).toBe(before);
+    }
+  });
+
+  it("never exposes an analysis tab as a console or files it as closed SQL", () => {
+    const t = consoleTab("SELECT 1", "Analysis");
+    t.analysisId = "analysis-1";
+    expect(sql.dbConsoleTabs()).toEqual([]);
+    expect(sql.dbConsoleEdit(t.id, "replace", 0, "SELECT 2")).toBe(false);
+    expect(sql.dbAgentOpenConsole({ tabId: t.id })).toBe(false);
+    expect(t.sqlText).toBe("SELECT 1");
+    tabs.dbCloseTab(dbActiveIndex());
+    expect(closed.dbClosedById("c", t.id)).toBeNull();
+  });
+
+  it("keeps oversized console text out of the bounded agent snapshot without pretending it is empty", () => {
+    const t = consoleTab("x".repeat(20001), "Long");
+    expect(sql.dbConsoleTabs()[0]).toMatchObject({ id: t.id, statements: [], statementsOmitted: true });
+    expect(t.sqlText).toHaveLength(20001);
+  });
+
+  it("keeps a whole page of large consoles under the request budget, marking exactly what it left out", () => {
+    const statement = "SELECT '" + "x".repeat(19_900) + "';";
+    for (let i = 0; i < 46; i++) consoleTab(statement + "\n\n" + statement, "T" + i);
+    const rows = sql.dbConsoleTabs();
+    const bytes = new TextEncoder().encode(JSON.stringify(rows)).length;
+    expect(bytes, "the gateway refuses a body over 2 MiB").toBeLessThan(1_900_000);
+    expect(rows.some((row) => row.statementsOmitted), "the tail is omitted, not silently truncated").toBe(true);
+    for (const row of rows) {
+      if (row.statementsOmitted) expect(row.statements).toEqual([]);
+      else expect(row.statements.length).toBe(2);
+    }
+  }, 20_000);
+
+  it("restores a blank console by its stable id", () => {
+    const t = consoleTab("", "");
+    const id = t.id;
+    tabs.dbCloseTab(dbActiveIndex());
+    expect(closed.dbClosedById("c", id)?.id).toBe(id);
+    expect(sql.dbAgentOpenConsole({ tabId: id, format: false })).toBe(true);
+    expect(live().id).toBe(id);
+  });
+
+  it("sends the canonical agent slot for closed consoles", () => {
+    const t = consoleTab("SELECT 1", "Agent");
+    t.agent = true;
+    tabs.dbCloseTab(dbActiveIndex());
+    expect(sql.dbConsoleTabs()[0]).toMatchObject({ id: t.id, open: false, agent: true, agentTab: "" });
   });
 
   it("open_console's tabId brings a closed tab back under its own id, text and name - and an unknown id changes nothing", () => {
@@ -199,6 +332,16 @@ describe("a statement's way to its tab (SPEC §data.agent Tabs)", () => {
     expect(dbTabs().filter(tabs.dbTabVisible).length, "no third console was opened for the statement").toBe(2);
   });
 
+  it("preserves a renamed default Agent slot when opened by id", () => {
+    const t = consoleTab("SELECT 1", "Renamed");
+    t.agent = true;
+    sql.dbAgentConsoleId(t.id, "Renamed");
+    expect(sql.dbConsoleTabs()[0].agentTab).toBe("");
+    sql.dbAgentStatement("SELECT 2", null, new Set());
+    expect(dbTabs().filter(tabs.dbTabVisible)).toHaveLength(1);
+    expect(t.sqlText).toContain("SELECT 2");
+  });
+
   it("a tab the reader renamed answers to its id, and to the title the rename left it", () => {
     const t = consoleTab("SELECT 1;", "Original");
     t.agent = true;
@@ -231,4 +374,97 @@ describe("a statement's way to its tab (SPEC §data.agent Tabs)", () => {
     expect(sql.dbConsoleEdit(id, "replace", 0, "SELECT 10;", "SELECT 1;")).toBe(true);
     expect(live().sqlText).toBe("SELECT 10;\n\nSELECT 2;");
   });
+});
+
+
+it("formats an opened SQL console by default, preserves raw text only for false, and never executes", () => {
+  const raw = "select id,name from users where id=7";
+  expect(sql.dbAgentOpenConsole({ create: true, tabId: "generated-1", tab: "Report", sql: raw })).toBe(true);
+  expect(live().id).toBe("generated-1");
+  expect(live().sqlText).toContain("\nfrom users");
+  expect(live().sqlResult).toBeNull();
+  expect(sql.dbAgentOpenConsole({ create: true, tabId: "generated-2", tab: "Report", sql: raw, format: false })).toBe(true);
+  expect(live().sqlText).toBe(raw);
+  const before = live().sqlText;
+  expect(sql.dbAgentOpenConsole({ tabId: "generated-2", format: "false" })).toBe(false);
+  expect(live().sqlText).toBe(before);
+  expect(sql.dbAgentOpenConsole({ tabId: "generated-1" })).toBe(true);
+  expect(live().id).toBe("generated-1");
+  expect(sql.dbConsoleEdit("generated-1", "replace", 0, "select 9", raw)).toBe(true);
+  expect(live().sqlText).toBe("select 9");
+});
+
+it("keeps a manual console's exact bytes when open_console only brings it to the front by id", () => {
+  const original = "select  1\n\n  -- keep  spacing\nselect 2 ;";
+  const t = consoleTab(original, "Manual");
+  const id = t.id;
+  tabs.dbCloseTab(dbActiveIndex());
+  expect(sql.dbAgentOpenConsole({ tabId: id })).toBe(true);
+  expect(live().sqlText).toBe(original);
+});
+
+it("keeps every byte of a manual draft when an Agent statement is appended by ID", () => {
+  const original = "  SELECT 1;\n\n-- trailing note\n \t\n";
+  const tab = consoleTab(original, "Manual");
+  sql.dbAgentStatement("SELECT 2;", null, new Set(), undefined, undefined, tab.id, false);
+  expect(tab.sqlText).toBe(original + "\n\nSELECT 2;");
+});
+
+it("formats Agent staged, executed and replaced SQL by default without rewriting earlier drafts", () => {
+  const raw = "select id,name from orders where id=1";
+  const first = consoleTab("-- keep my draft\nselect 0;", "Report");
+  sql.dbAgentStatement(raw, null, new Set(), undefined, "Report", first.id);
+  const formatted = sql.dbFormatSql(raw + ";", { dialect: "mysql" });
+  expect(first.sqlText).toBe("-- keep my draft\nselect 0;\n\n" + formatted);
+  const second = consoleTab("");
+  sql.dbAgentStatement(raw, { error: "read failed" }, new Set(), undefined, undefined, second.id);
+  expect(second.sqlText).toBe(formatted);
+  sql.dbAgentConsoleEdit({ tabId: second.id, op: "replace", index: 0, expect: raw + ";", sql: "select id from orders where id=2" });
+  expect(second.sqlText).toBe(sql.dbFormatSql("select id from orders where id=2", { dialect: "mysql" }));
+});
+
+it("formats closed PostgreSQL replacements and honors explicit raw staging and edits", () => {
+  dbConnState().conns[0].dialect = "pg";
+  const raw = "select id,name from orders where id=1";
+  const first = consoleTab(raw + ";");
+  tabs.dbCloseTab(dbActiveIndex());
+  sql.dbAgentConsoleEdit({ tabId: first.id, op: "replace", index: 0, expect: raw + ";", sql: "select name from orders where id=2" });
+  expect(closed.dbClosedById("c", first.id)?.text).toBe(sql.dbFormatSql("select name from orders where id=2", { dialect: "pg" }));
+  const second = consoleTab("");
+  sql.dbAgentStatement(raw, null, new Set(), undefined, undefined, second.id, false);
+  expect(second.sqlText).toBe(raw + ";");
+  const next = "select id,name from orders where id=3";
+  sql.dbAgentConsoleEdit({ tabId: second.id, op: "replace", index: 0, expect: raw + ";", sql: next, format: false });
+  expect(second.sqlText).toBe(next);
+});
+
+it("refuses a close when storage cannot save it and preserves both identity and text", () => {
+  const t = consoleTab("SELECT 'keep this work';", "Unsaved");
+  const original = localStorage;
+  vi.stubGlobal("localStorage", new Proxy(original, { get(target, key) { return key === "setItem" ? (): never => { throw new DOMException("full", "QuotaExceededError"); } : Reflect.get(target, key); } }));
+  tabs.dbCloseTab(dbActiveIndex());
+  expect(dbTabs()).toContain(t);
+  expect(live().id).toBe(t.id);
+  expect(live().sqlText).toBe("SELECT 'keep this work';");
+  vi.stubGlobal("localStorage", original);
+});
+
+
+it("closed edits and removal stay scoped when connections carry the same supplied id", () => {
+  const first = consoleTab("SELECT 1", "One"); first.id = "shared-id";
+  expect(closed.dbClosedRemember([{ conn: "other", tab: first }, { conn: "c", tab: { ...first, sqlText: "SELECT 2" } }])).toBe(true);
+  expect(closed.dbClosedSetText(first.id, "SELECT 3", "c")).toBe(true);
+  expect(closed.dbClosedById("other", first.id)?.text).toBe("SELECT 1");
+  expect(closed.dbClosedTake(first.id, "c")?.text).toBe("SELECT 3");
+  expect(closed.dbClosedById("other", first.id)?.text).toBe("SELECT 1");
+});
+
+it("failed legacy migration keeps duplicate legacy entries distinct and their ids stable for the session", () => {
+  localStorage.setItem("swiss.dbClosedTabs", JSON.stringify([{ conn: "c", text: "SELECT 1", at: 1 }, { conn: "c", text: "SELECT 1", at: 1 }]));
+  const original = localStorage;
+  vi.stubGlobal("localStorage", new Proxy(original, { get(target, key) { return key === "setItem" ? (): never => { throw new DOMException("full", "QuotaExceededError"); } : Reflect.get(target, key); } }));
+  const before = closed.dbClosedFor("c").map(e => e.id);
+  expect(new Set(before).size).toBe(2);
+  expect(closed.dbClosedFor("c").map(e => e.id)).toEqual(before);
+  vi.stubGlobal("localStorage", original);
 });

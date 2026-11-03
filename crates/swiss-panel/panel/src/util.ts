@@ -20,7 +20,7 @@ import { iconNode } from "./ui/icon.js";
 import { emptyNode } from "./ui/page.js";
 /* i18n has no import back into util (its element lookup is a local byId), so this edge is
    one-way: util may localize its own copy without a module cycle. */
-import { locale, tr } from "./i18n.js";
+import { locale, moduleDbMessage, tr } from "./i18n.js";
 const TOKEN_ID_KEY = "swiss.tokenId"; // which token copied connect commands embed
 const THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
 const CODE_KEY = "swiss_code";         // the code colour scheme preference (SPEC §panel.code)
@@ -58,7 +58,7 @@ function now(): string { return new Date().toLocaleTimeString(locale()); }
  *  echo…), so this is a whitelist and everything outside it falls back to text. The icon
  *  carries the word as its aria-label: a screen reader hears the type the chip no longer spells. */
 const TYPE_ICONS: Record<string, string> = {
-  mysql: "mysql", mariadb: "mariadb", redis: "redis", pg: "pg", postgres: "pg", mongo: "mongo",
+  mysql: "mysql", mariadb: "mariadb", redis: "redis", pg: "pg", postgres: "pg", sqlite: "sqlite", mongo: "mongo",
   http: "globe", https: "globe", rest: "plug",
   figma: "figma", "zai-vision": "zai",
   npx: "package", uvx: "package", docker: "docker",
@@ -185,7 +185,7 @@ async function apiJson<T = unknown>(path: string, opts?: RequestInit): Promise<T
     if (!r.ok) {
       // Failure bodies are the API's own { error } envelope - narrowed, not assumed.
       const msg = typeof j === "object" && j !== null && "error" in j && typeof j.error === "string" ? j.error : "";
-      toast(msg || tr("util.httpN", { n: r.status }), true);
+      toast(msg ? moduleDbMessage(msg) : tr("util.httpN", { n: r.status }), true);
       return null;
     }
     // The one trust every caller grants the admin API: an ok body is the T the caller declared.

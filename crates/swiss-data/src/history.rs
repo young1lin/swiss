@@ -158,6 +158,13 @@ impl Run {
     }
 }
 
+impl swiss_host::dbbrowser::execution::SqlRecorder for DataHistory {
+    fn record(&self, run: swiss_host::dbbrowser::execution::SqlRun) {
+        self.record(NewRun { target: run.target, conn: run.conn, dialect: run.dialect,
+            stmt: run.stmt, ok: run.ok, error: run.error, rows: run.rows, ms: run.ms });
+    }
+}
+
 /// Cut `s` to at most `max` bytes on a char boundary; true when anything was cut.
 fn cut_at(s: &str, max: usize) -> (String, bool) {
     if s.len() <= max {
@@ -199,6 +206,11 @@ impl DataHistory {
             appends: AtomicU64::new(0),
             warned: AtomicBool::new(false),
         })
+    }
+
+    /// The file this store opens. The Data plugin publishes it; nothing else is handed the path.
+    pub fn database_file(&self) -> PathBuf {
+        self.store.policy().db_file.clone()
     }
 
     /// Open `<logs>/data.db`. The caller is the Data plugin's start, never a constructor.
@@ -501,4 +513,39 @@ mod tests {
         let bad = NewRun::of("t".into(), "c", "postgres", "SELEC 1", &Err("syntax error".into()), 2);
         assert_eq!((bad.ok, bad.rows, bad.error.as_deref()), (false, None, Some("syntax error")));
     }
+    #[tokio::test]
+    async fn observed_agent_attempts_are_durable_and_keep_repeated_executions() {
+        use swiss_host::dbbrowser::execution::{submitted, SqlHistorySeat};
+        let dir = scratch("observed");
+        let h = DataHistory::new(dir.clone());
+        h.open().await.expect("open");
+        let seat = SqlHistorySeat::default();
+        seat.install(h.clone());
+        for _ in 0..2 {
+            let _ = seat.observe("c", "db @ host".into(), "pg", async {
+                submitted("SELECT 1 LIMIT 50");
+                Ok::<_, String>(json!({ "rowCount": 1 }))
+            }, Clone::clone).await;
+        }
+        let _ = seat.observe("c", "db @ host".into(), "pg", async {
+            submitted("SELECT missing LIMIT 50");
+            Err::<Value, _>("missing relation".to_string())
+        }, Clone::clone).await;
+        let _ = seat.observe("c", "db @ host".into(), "pg", async {
+            Err::<Value, _>("policy refused before submission".to_string())
+        }, Clone::clone).await;
+        seat.clear();
+        h.close().await.expect("close");
+        let reopened = DataHistory::new(dir);
+        reopened.open().await.expect("reopen");
+        let (rows, more) = reopened.page("db @ host", None, None, 10).await.expect("history");
+        assert!(!more);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.iter().filter(|r| r.stmt == "SELECT 1 LIMIT 50").count(), 2);
+        assert!(!rows[0].ok);
+        assert_eq!(rows[0].error.as_deref(), Some("missing relation"));
+        assert!(reopened.page("other db", None, None, 10).await.expect("other").0.is_empty());
+        reopened.close().await.expect("close");
+    }
+
 }

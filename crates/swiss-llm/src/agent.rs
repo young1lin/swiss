@@ -881,6 +881,9 @@ pub struct ToolAnswer {
 #[async_trait]
 pub trait Toolbox: Send {
     fn specs(&self) -> Vec<ToolSpec>;
+    /// Consumer metadata for this user turn, sealed with its canonical replay only.
+    /// It never enters a provider request; consumers may use it to avoid repeating context.
+    fn turn_context(&self) -> Option<Value> { None }
     async fn call(&mut self, name: &str, args: &Value) -> ToolAnswer;
 }
 
@@ -898,8 +901,8 @@ pub struct LoopOutcome {
     pub cut: bool,
     /// Whether a route-side cancel ended the loop - from the provider stream,
     /// between rounds, or mid tool-dispatch. A cancelled run files what it knows
-    /// and stays OPEN: only a resolved round (or an observed streamed prefix)
-    /// continues the dialogue; unresolved shapes need an explicit close or a New
+    /// and stays OPEN: a completed or explicitly cancelled provider round can
+    /// continue the dialogue; unresolved tool outcomes need an explicit close or a New
     /// conversation.
     pub cancelled: bool,
     /// The run's tokens, summed over every request.
@@ -1114,9 +1117,9 @@ impl Round<'_> {
     /// The cancelled or consumer-dropped round: the prefix that really arrived
     /// files CANONICALLY (a call row with the partial texts and thinking, settling
     /// the round's attempt) beside its notes, then the run reports cancelled and
-    /// stays open for the next send. A round that ended with no observed prefix
-    /// files no body - its attempt stays marked and continuation fails closed,
-    /// which is the honest answer (the outbound may have flown; nothing seals it).
+    /// stays open for the next send. With no observed prefix, the provider wait
+    /// is filed as cancelled, not as an invented answer. The sealed request
+    /// proves the prior context; no tool was dispatched from that unfinished reply.
     fn file_cancelled(&self, run: &mut crate::history::RunRecorder, partial_text: &str, partial_thinking: &[String]) {
         if !partial_text.is_empty() || !partial_thinking.is_empty() {
             for one in partial_thinking {
@@ -1138,6 +1141,15 @@ impl Round<'_> {
                 stop_reason: None,
                 contents: &Value::Null,
             });
+        } else {
+            let cancelled = crate::provider::CallError {
+                message: "cancelled before the model returned an answer".to_string(),
+                status: None,
+                kind: "cancelled",
+                retryable: false,
+                duration_ms: 0,
+            };
+            self.file(run, crate::history::ChatOutcome::Err(&cancelled));
         }
         run.fail("cancelled");
     }
@@ -1210,7 +1222,11 @@ async fn drive_loop(
         request = request.append_message(message);
     }
     request = request.append_message(ChatMessage::user(prompt.to_string()));
-    log.push(json!({ "role": "user", "text": fold.unwrap_or(prompt) }));
+    let mut user = json!({ "role": "user", "text": fold.unwrap_or(prompt) });
+    if fold.is_none() {
+        if let Some(context) = toolbox.turn_context() { user["context"] = context; }
+    }
+    log.push(user);
     // The conversation record (SPEC llm.history): the whole dialogue as it happens,
     // filed with the call rows each round trip records. Without a history attached
     // the notes are no-ops. A continued run already holds its opening turns as rows;

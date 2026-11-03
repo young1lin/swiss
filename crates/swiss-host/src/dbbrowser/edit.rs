@@ -63,7 +63,7 @@ pub fn browse_edit_of(v: &Value) -> Result<BrowseEdit, String> {
 /// A bound-parameter placeholder: "?" for MySQL, "$n" for Postgres (per statement, so n restarts).
 pub(super) fn ph(dialect: DbDialect, params: &[Value]) -> String {
     // bind() has already pushed the value, so the array length IS this parameter's 1-based number.
-    if dialect == DbDialect::Mysql {
+    if dialect.binds_question() {
         "?".to_string()
     } else {
         format!("${}", params.len())

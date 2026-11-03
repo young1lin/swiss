@@ -44,6 +44,7 @@ pub mod children;
 pub mod detached;
 pub mod history_query;
 pub mod maintenance;
+pub mod module_db;
 pub mod process;
 pub mod remote;
 pub mod runs;
@@ -115,6 +116,10 @@ pub struct RuntimeServices {
     /// open history database register on start, withdraw on stop. The seat
     /// outlives plugin instances like the catalog and shell seats.
     pub history_query: Arc<history_query::HistoryQuerySeat>,
+    /// Module databases the Data page browses (SPEC §data.sqlite). The same seat
+    /// the history-query registration enrolls into, so a plugin publishes its own
+    /// file and no other plugin is handed the path.
+    pub module_dbs: Arc<module_db::ModuleDbSeat>,
     /// The hourly maintenance seat (SPEC §host.history): a module with an open
     /// history database registers its maintenance hook on start and withdraws on
     /// stop; the server's retention timer runs them each hour. Same
@@ -132,6 +137,7 @@ impl RuntimeServices {
     pub fn new(boot: BootInfo) -> Arc<Self> {
         let actions = Arc::new(ActionRegistry::new());
         let children = ChildRegistry::new();
+        let module_dbs = Arc::new(module_db::ModuleDbSeat::new());
         Arc::new(RuntimeServices {
             runs: RunCoordinator::new(actions.clone()),
             actions,
@@ -141,7 +147,8 @@ impl RuntimeServices {
             remote: Arc::new(RemoteTransportRegistry::new()),
             children,
             boot,
-            history_query: Arc::new(history_query::HistoryQuerySeat::new()),
+            history_query: Arc::new(history_query::HistoryQuerySeat::sharing(module_dbs.clone())),
+            module_dbs,
             maintenance: Arc::new(maintenance::MaintenanceSeat::new()),
             boot_pass_taken: AtomicBool::new(false),
         })

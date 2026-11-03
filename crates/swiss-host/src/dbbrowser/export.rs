@@ -125,11 +125,10 @@ pub fn sql_dump_literal(dialect: DbDialect, v: Option<&Value>) -> Result<String,
                         }
                     }
                 }
-                DbDialect::Pg => {
+                DbDialect::Pg | DbDialect::Sqlite => {
                     if s.contains('\0') {
                         return Err(
-                            "a Postgres text value holds a NUL byte — the dump cannot express it"
-                                .into(),
+                            "a text value holds a NUL byte — the dump cannot express it".into(),
                         );
                     }
                     for c in s.chars() {

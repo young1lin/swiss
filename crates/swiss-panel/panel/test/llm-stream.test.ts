@@ -37,6 +37,33 @@ const paint = async (): Promise<void> => {
 };
 
 describe("a streaming answer's process", () => {
+  it("keeps the complete live tool arguments and result, including their tails", async () => {
+    const wire = streaming();
+    const column = document.createElement("div");
+    const previous = globalThis.fetch;
+    const args = JSON.stringify({ sql: "select " + "column_name, ".repeat(100) + "last_column" });
+    const result = "result " + "row data ".repeat(200) + "RESULT_END";
+    globalThis.fetch = vi.fn(async () => new Response(wire.body));
+    try {
+      const ask = streamAsk("/stream", {}, { alive: () => true, onRunId: () => undefined }, (turn) => {
+        const node = transcriptTurn(turn);
+        column.appendChild(node);
+        return node;
+      }, new AbortController().signal);
+      wire.push("tool", { name: "run_sql", arguments: args });
+      wire.push("toolResult", { name: "run_sql", ok: true, text: result });
+      await paint();
+      expect(column.textContent).toContain("last_column");
+      expect(column.textContent).toContain("RESULT_END");
+      wire.push("done", { runId: 1, ok: true });
+      wire.end();
+      await expect(ask).resolves.toEqual({});
+    } finally {
+      wire.end();
+      globalThis.fetch = previous;
+    }
+  });
+
   it("folds when the final answer arrives, before the transport's done frame", async () => {
     const wire = streaming();
     const column = document.createElement("div");

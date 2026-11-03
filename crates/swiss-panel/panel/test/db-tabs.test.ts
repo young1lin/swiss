@@ -139,9 +139,9 @@ describe("what a tab is worth (SPEC §data.tabs)", () => {
     expect(tabs.dbTabEvictable(tableTab("t"))).toBe(true);
     expect(tabs.dbTabEvictable(dirty(tableTab("t")))).toBe(false);
     const s = freshTab("sql");
-    expect(tabs.dbTabEvictable(s)).toBe(true);
+    expect(tabs.dbTabEvictable(s), "an empty console still has an address").toBe(false);
     s.sqlText = "  \n ";
-    expect(tabs.dbTabEvictable(s), "whitespace is not a query").toBe(true);
+    expect(tabs.dbTabEvictable(s), "whitespace does not remove its identity").toBe(false);
     s.sqlText = "select 1";
     expect(tabs.dbTabEvictable(s), "a query still being composed would have to be retyped").toBe(false);
   });
@@ -723,17 +723,15 @@ describe("a closed console can be brought back (SPEC §data.tabs)", () => {
     return t;
   }
   type Item = ReturnType<typeof tabs.dbTabsMenuItems>[number];
-  const labels = (items: Item[]): string[] => items.map((i) => ("label" in i ? i.label : "-"));
+  const labels = (items: Item[]): string[] => items.filter(i => !("heading" in i && i.heading)).map(i => "label" in i ? i.label.replace(/ · \d{2}:\d{2}:\d{2}$/, "") : "-");
   const pick = (items: Item[], label: string): void => {
-    const found = items.find((i) => "label" in i && i.label === label);
+    const found = items.find((i) => "label" in i && (i.label === label || i.label.startsWith(label + " · ")));
     if (!found || !("fn" in found)) throw new Error("no row " + label);
     found.fn();
   };
 
   it("its × files a console holding text, the overflow menu stays offered for it, and a click brings it back whole, the agent's as the agent's", () => {
     consoleTab("SELECT 1 FROM orders", "Orders");
-    consoleTab("   ");
-    tabs.dbCloseTab(dbActiveIndex()); // nothing in it: nothing to bring back
     tabs.dbCloseTab(dbActiveIndex());
     expect(dbTabs().filter(tabs.dbTabVisible)).toEqual([]);
     tabs.renderDbTabs();
@@ -755,14 +753,14 @@ describe("a closed console can be brought back (SPEC §data.tabs)", () => {
     expect([again.agent, again.agentTab, again.sqlText]).toEqual([true, "Revenue report", "SELECT 5"]);
   });
 
-  it("a bulk close, a database switch and the page going file every console they take; the same text stands once; each connection keeps its own, and Clear forgets them", () => {
+  it("a bulk close, a database switch and the page going file every console they take; equal text keeps distinct identities; each connection keeps its own, and Clear forgets them", () => {
     consoleTab("SELECT 1");
     consoleTab("SELECT 2");
     tabs.dbCloseAllTabs();
-    expect(labels(tabs.dbClosedMenuItems())).toEqual(["SQL · SELECT 1", "SQL · SELECT 2", "-", "Clear the list"]);
+    expect(labels(tabs.dbClosedMenuItems())).toEqual(["SQL · SELECT 2", "SQL · SELECT 1", "-", "Clear the list"]);
     consoleTab("SELECT 2");
     tabs.dbCloseTab(dbActiveIndex());
-    expect(labels(tabs.dbClosedMenuItems()), "closed again, it moves to the front instead of standing twice").toEqual(["SQL · SELECT 2", "SQL · SELECT 1", "-", "Clear the list"]);
+    expect(labels(tabs.dbClosedMenuItems()), "a new console with equal text keeps its own identity").toEqual(["SQL · SELECT 2", "SQL · SELECT 2", "SQL · SELECT 1", "-", "Clear the list"]);
     consoleTab("SELECT 3");
     tabs.dbResetTabsForConn();
     expect(labels(tabs.dbClosedMenuItems())[0], "a database switch drops the strip, its console filed").toBe("SQL · SELECT 3");

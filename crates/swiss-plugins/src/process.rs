@@ -266,6 +266,9 @@ impl PluginInstance for ProcessInstance {
             }
             return Err(err);
         }
+        self.services
+            .module_dbs
+            .publish(PROCESS_ID, self.history.database_file());
 
         // The tracked record from the last gateway: what survived, kept; what
         // was reused or gone, dropped (SPEC §process.apps).
@@ -340,6 +343,7 @@ impl PluginInstance for ProcessInstance {
     }
 
     async fn stop(&self) {
+        self.services.module_dbs.withdraw(PROCESS_ID);
         // The seat first: no request reaches a dying plugin. Then the
         // capabilities, then the cancellation of runs already executing them:
         // nothing can start a new run of a capability that is no longer

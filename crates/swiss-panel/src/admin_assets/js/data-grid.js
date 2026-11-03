@@ -44,12 +44,13 @@ import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
 import { renderDbFormView } from "./data-form.js";
 import { h } from "./h.js";
 import { DB_PAGE_SIZES, dbDialectOf, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbResultKey } from "./data-view.js";
-import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
-import { locale, tr, trn } from "./i18n.js";
+import { dbSetSqlText, dbConn, dbSqlTab, dbTab } from "./db-state.js";
+import { locale, moduleDbMessage, tr, trn } from "./i18n.js";
 import { btn, iconBtn, moreBtn } from "./ui/button.js";
 import { actionBtn } from "./ui/action.js";
 import { popupMenu } from "./ui/menu.js";
 import { dockShow } from "./ui/dock.js";
+import { paintContext } from "./data-agent.js";
 import { dbAnalysisButton, dbAnalysisRender } from "./data-analysis.js";
 import { seg } from "./ui/seg.js";
 
@@ -337,7 +338,7 @@ function dbPasteApply(text        , r0        , c0        )       {
   const d = dbTab();
   if (d.kind !== "table") return;
   if (!d.data || !d.data.editable) {
-    toast(tr("dataGrid.notEditablePaste", { note: d.data && d.data.editNote ? d.data.editNote : tr("dataGrid.noPrimaryKey") }), true);
+    toast(tr("dataGrid.notEditablePaste", { note: d.data && d.data.editNote ? moduleDbMessage(d.data.editNote) : tr("dataGrid.noPrimaryKey") }), true);
     return;
   }
   const cfg = dbConn().gridCfg || { widths: {}, hidden: [] };
@@ -691,7 +692,7 @@ function dbInsertConsoleLine(line        )       {
 function dbLoadConsoleLine(line        )       {
   const st = dbSqlTab();
   if (!st) return;
-  st.sqlText = line;
+  dbSetSqlText(st, line);
   const ta = $                     ("dbSql");
   if (ta) {
     ta.value = line;
@@ -712,6 +713,11 @@ function dbCaretAfterFormat(before        , caret        , after        )       
   if (caret < before.length && !/\s/.test(before.charAt(caret))) while (j < after.length && /\s/.test(after.charAt(j))) j++;
   return j;
 }
+
+// Chromium may emit an input event per inserted line during execCommand. The delegated
+// handler must wait for the complete edit, or formatting repaints the editor hundreds of times.
+let dbSqlFormatting = false;
+export function dbSqlFormatInProgress()          { return dbSqlFormatting; }
 
 /** SPEC §data.console: format the console's text in place (⋯ Format, Ctrl+Alt+L, Shift+Alt+F).
  *  A SQL selection formats alone, at the column it starts on, its blanks around it kept; else
@@ -743,12 +749,17 @@ function dbSqlFormatNow()       {
   ta.setSelectionRange(from, to);
   // The browser's own edit keeps the undo stack; where it is missing, the value is set outright.
   let typed = false;
-  try { typed = typeof document.execCommand === "function" && document.execCommand("insertText", false, next); } catch { typed = false; }
+  try {
+    dbSqlFormatting = true;
+    typed = typeof document.execCommand === "function" && document.execCommand("insertText", false, next);
+  } catch { typed = false; }
+  finally { dbSqlFormatting = false; }
   if (!typed || ta.value !== whole) ta.value = whole;
   if (picked) ta.setSelectionRange(from, from + next.length);
   else ta.setSelectionRange(caret, caret);
-  st.sqlText = ta.value;
+  dbSetSqlText(st, ta.value);
   dbSqlPaint();
+  paintContext();
   dbSuggestHide(); // the edit's input event is not someone typing a word
 }
 
@@ -935,6 +946,7 @@ export function dbSqlHintSet(text        )       {
 }
 
 function renderDbToolbar()       {
+  paintContext();
   const d = dbConn();
   const t = dbTab();
   const head = $("dbHead");
@@ -954,8 +966,8 @@ function renderDbToolbar()       {
     const bits = [tr("dataGrid.nRows2", { n: t.data.total.toLocaleString(locale()) })];
     const pkCols0 = t.data.primaryKey || [];
     bits.push(t.data.editable
-      ? (pkCols0.length ? tr("dataGrid.editableChangesBufferUntil") : tr("dataGrid.editableNote", { note: t.data.editNote || tr("dataGrid.rowsAddressedAllColumns") }))
-      : (t.data.editNote || tr("dataGrid.browsingOnly")));
+      ? (pkCols0.length ? tr("dataGrid.editableChangesBufferUntil") : tr("dataGrid.editableNote", { note: t.data.editNote ? moduleDbMessage(t.data.editNote) : tr("dataGrid.rowsAddressedAllColumns") }))
+      : (t.data.editNote ? moduleDbMessage(t.data.editNote) : tr("dataGrid.browsingOnly")));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
   } else if (t.kind === "sql" && t.analysisId) {
     left.appendChild(h("h2", { class: "db-title" }, t.custom || tr("analysis.result")));
@@ -1127,6 +1139,7 @@ document.addEventListener("scroll", dbTipHide, true);
 
 
 function renderDbGrid()       {
+  paintContext();
   const c = dbConn();
   const t = dbTab();
   const wrap = $("dbGridWrap");
@@ -1487,7 +1500,8 @@ function renderDbResultGrid(wrap             )       {
       // No column types on a result grid: dbCellView still words booleans, folds long JSON,
       // links URLs and right-aligns JS numbers off the value alone.
       const v = row[c];
-      dbPaintCell(td, v === undefined ? null : v, true);
+      const shown = c === "error" && typeof v === "string" ? moduleDbMessage(v) : v;
+      dbPaintCell(td, shown === undefined ? null : shown, true);
       if (widths[c]) dbColWidth([td], widths[c]);
       tri.appendChild(td);
     });

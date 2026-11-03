@@ -146,19 +146,11 @@
 
     /* --- data view (the DBeaver-style browser; SPEC §data.tabs, §data.grid) ---------------------- */
     .pane > .db-root { max-width: none; }
-    /* A workspace body (.pane.full, ui.css; SPEC §panel.nav): no padding, no measure,
-       the explorer consumes everything under the context bar. The boundary it used to draw as
-       one giant enclosing card is gone too - the browser column wears the sidebar's own surface
-       and hairline, the work area sits on the canvas: the shell's vocabulary, not a second
-       application embedded in the panel. */
+    /* The workspace shares the shell canvas and sidebar surfaces (SPEC §panel.nav). */
     .pane.db-host > .db-root { flex: 1; min-height: 0; }
     .db-root { display: flex; height: 100%; min-height: 420px; }
     .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; background: var(--sidebar); border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
-    /* SPEC §data.databases: the sidebar's top is two band-shaped rows. The CONNECTION row carries the
-       status dot, the name, the dialect mark and the menu chevron; the DATABASE row (present
-       only when the connection has a database axis) carries the database glyph and the
-       current name. Both open popup menus — the band geometry matches .side-row's flex
-       metrics (base.css) the same way .db-table's does. */
+    /* Connection and database pickers share the shell row geometry (SPEC §data.databases). */
     .db-conn-row, .db-db-row { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: 5px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-conn-row:hover, .db-db-row:hover { background: var(--hover); }
     .db-conn-row.off { cursor: default; color: var(--text-3); }
@@ -745,3 +737,16 @@
     /* Pinned is accent, not filled: saturation stays for state (design rule 2). */
     .pal-pin.on { color: var(--accent); }
     .pal-none { padding: var(--s2) var(--s3); font-size: var(--f-label); color: var(--text-3); }
+
+/* Constrain rendered widths without overwriting the sizes kept by the user's grips. */
+.db-root { position: relative; container-type: inline-size; }
+.db-root > .db-side { max-width: 24%; }
+.db-root > #dbAgent { max-width: 42%; }
+@container (max-width: 1100px) {
+  .db-main { padding-inline: var(--s2); }
+  .db-root > .db-side { max-width: 21%; }
+  .db-root > #dbAgent { max-width: 40%; }
+}
+@container (max-width: 760px) {
+  .db-root > #dbAgent { position: absolute; inset: 0 0 0 auto; max-width: calc(100% - var(--s4)); border-left: 1px solid var(--sep); z-index: 4; }
+}

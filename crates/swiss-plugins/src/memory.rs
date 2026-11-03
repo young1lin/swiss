@@ -336,10 +336,19 @@ impl PluginInstance for MemoryInstance {
                 .map_err(|err| format!("memory mcp start: {err}"))?;
             self.state.set_seat(McpSeat::Serving);
         }
+        // This plugin's own files (SPEC §data.sqlite). The store is always the
+        // one this instance was given; the code index sits beside it and is
+        // listed only when that file already exists.
+        self.services.module_dbs.publish(PLUGIN_ID, self.path.clone());
+        let code = self.path.with_file_name(swiss_memory::code::CODE_FILE);
+        if code.is_file() {
+            self.services.module_dbs.publish(PLUGIN_ID, code);
+        }
         Ok(())
     }
 
     async fn stop(&self) {
+        self.services.module_dbs.withdraw(PLUGIN_ID);
         // Withdraw first so no request finds a service that is going away (the
         // seat goes to stopped with it). The
         // store itself is NOT deleted or vacuumed: the offline CLI and the next

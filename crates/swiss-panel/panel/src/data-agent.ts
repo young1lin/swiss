@@ -17,7 +17,7 @@
 /* ================================================================================================
    The Data agent (SPEC §data.agent): a db agent - the runtime made for this page and run by
    nothing else - docked at the Data page's end edge, working on the connection in front: a
-   MySQL or PostgreSQL one, a MongoDB one or a Redis one, each kind with tools of its own. The
+   MySQL, PostgreSQL or query-only SQLite one, a MongoDB one or a Redis one, each kind with tools of its own. The
    reader asks in their own words; the agent reads how the data is laid out (tables, collections,
    keys), writes the statement or command in this connection's language and runs it read-only on
    the server (POST /api/llm/db/stream), and everything it runs lands on the page as the reader's
@@ -52,21 +52,23 @@
    (GET /api/llm/db/context) after a send and for a conversation restored or carried on.
    ================================================================================================ */
 import { fill, h } from "./h.js";
-import { tr } from "./i18n.js";
+import { moduleDbMessage, tr } from "./i18n.js";
 import { targetEl, toast } from "./util.js";
 import {
-  actionBtn, setActionBtn, btn, chatFollow, chatPane, chatQueue, chatStats, dot, emptyNode, factLine, flow, formActions, formCap, formFold, grip, gripFold, gripFolded, hint, iconBtn, iconNode, note,
+  actionBtn, setActionBtn, setIconBtn, btn, chatFollow, chatPane, chatQueue, chatStats, dot, emptyNode, factLine, flow, formActions, formCap, formFold, grip, gripFold, gripFolded, hint, iconBtn, iconNode, note,
   popupMenu, relTime, transcript, transcriptTurn,
 } from "./ui/index.js";
 import type { ChatContext, ChatQueue, ChatQueued, ChatStats, ChatUsage, FlowStep, MenuItem, TranscriptTurn } from "./ui/index.js";
 import type { LlmEffort, LlmModelRow, LlmToolInfo } from "./types/llm.js";
 import { dbConn, dbTab } from "./db-state.js";
-import { dbSetGrep } from "./data-view.js";
+import { dbPkKey, dbResultKey, dbSetGrep } from "./data-view.js";
 import { dbSetTab } from "./data-structure.js";
-import { dbAgentConsole, dbAgentConsoleEdit, dbAgentConsoleId, dbAgentStatement, dbConsoleTabs, dbRowLimit } from "./data-sql.js";
+import { dbAgentOpenConsole, dbAgentConsoleEdit, dbAgentStatement, dbConsoleTabs, dbRowLimit } from "./data-sql.js";
 import { dbMemoryRefresh, dbMemoryView } from "./data-agent-memory.js";
 import { dbOpenTab } from "./data-tabs.js";
-import { dbAnalysisContext, dbAnalysisOpen } from "./data-analysis.js";
+import { dbConsoleFlush, dbConsoleStoreOn } from "./data-console-store.js";
+import { dbAnalysisContext, dbAnalysisContextLabel, dbAnalysisOpen, dbAnalysisReference } from "./data-analysis.js";
+import { dbHistoryRefresh } from "./data-history.js";
 import { dbPubsubAgentRead, dbPubsubAgentStop } from "./data-pubsub.js";
 import { mongoAgentSchema, mongoCurrentDb } from "./data-mongo.js";
 import { call, loadStatus, presetAgent, toolSummary } from "./views/llm-core.js";
@@ -88,7 +90,7 @@ type Writes = "stage" | "auto";
 const EFFORTS: LlmEffort[] = ["low", "medium", "high", "max"];
 const ASK_MAX = 20_000;
 /** The connection kinds the agent's tools speak, by dialect: each kind has its own. */
-const AGENT_KINDS = new Map([["pg", "sql"], ["mysql", "sql"], ["mongo", "mongo"], ["redis", "redis"]]);
+const AGENT_KINDS = new Map([["pg", "sql"], ["mysql", "sql"], ["sqlite", "sql"], ["mongo", "mongo"], ["redis", "redis"]]);
 /** The box's one command: /compact, then what the checkpoint should keep in particular. */
 const COMPACT_RE = /^\/compact(?:\s+([\s\S]*))?$/;
 
@@ -112,6 +114,8 @@ interface Talk {
   controller: AbortController | null;
   /** The column, kept across repaints and connection switches. */
   out: HTMLElement;
+  /** Frames for this connection received while another connection is in front. */
+  pendingDb: { payload: Record<string, unknown>; ran: Set<string> }[];
   /** The live send's run frame has named its run: steered words post from then on. */
   named: boolean;
   /** Words sent while the reply streams, in order: each goes as an ask of its own after a
@@ -131,6 +135,10 @@ interface Talk {
 }
 
 const talks = new Map<string, Talk>();
+// A deferred frame can contain work the user has not yet seen in its connection's console.
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("beforeunload", (ev) => {
+  if ([...talks.values()].some(t => t.pendingDb.length > 0)) { ev.preventDefault(); ev.returnValue = ""; }
+});
 /** The db agents the status names (null: not read yet this visit); `why` when it failed. */
 let agents: string[] | null = null;
 let agentsWhy = "";
@@ -185,7 +193,7 @@ function talkOf(agent: string, conn: string): Talk {
     });
     const talk: Talk = {
       agent, conn, runId: null, gen: 0, live: false, compacting: false, stopping: false, asked: false, restoring: false, restored: false,
-      controller: null, out: h("div"), named: false, queue, waiting: false, hist: null, usage: noUsage(), perByte: null,
+      controller: null, out: h("div"), pendingDb: [], named: false, queue, waiting: false, hist: null, usage: noUsage(), perByte: null,
       used: null,
     };
     t = talk;
@@ -194,20 +202,13 @@ function talkOf(agent: string, conn: string): Talk {
   return t;
 }
 
-/** The connection in front when the agent can work on it - a MySQL, PostgreSQL, MongoDB or Redis
- *  one - with its kind (sql, mongo, redis). */
+/** The connection in front when the agent can work on it - a MySQL, PostgreSQL, SQLite,
+ *  MongoDB or Redis one - with its kind (sql, mongo, redis). */
 function agentConn(): { name: string; kind: string; label: string } | null {
   const d = dbConn();
   const c = d.conns.find((x): boolean => x.name === d.conn);
   const kind = c ? AGENT_KINDS.get(c.dialect) : undefined;
   return c && kind ? { name: c.name, kind, label: c.label || c.name } : null;
-}
-
-/** The kind of a connection by name (sql, mongo, redis), in front or not: a queued send names
- *  its own. */
-function kindOf(conn: string): string | undefined {
-  const c = dbConn().conns.find((x): boolean => x.name === conn);
-  return c ? AGENT_KINDS.get(c.dialect) : undefined;
 }
 
 /** A connection's writes: staged until the reader turns auto on for it. */
@@ -327,12 +328,19 @@ function onModel(ev: MouseEvent): void {
   popupMenu(b.getBoundingClientRect(), items);
 }
 
-/** The footer's Writes button as the connection's switch stands, on a SQL connection with an
- *  agent picked; hidden otherwise (MongoDB's and Redis's writes are always staged). */
+/** MySQL and PostgreSQL are the connections whose writes can run on their own. The built-in
+ *  SQLite store is query-only (SPEC §data.sqlite), so it keeps the SQL tools and not this switch. */
+function sqlWrites(name: string): boolean {
+  const c = dbConn().conns.find((x): boolean => x.name === name);
+  return !!c && (c.dialect === "mysql" || c.dialect === "pg");
+}
+
+/** The footer's Writes button as the connection's switch stands, on a MySQL or PostgreSQL
+ *  connection with an agent picked; hidden otherwise. */
 function paintWrites(agent: string | null, conn: { name: string; kind: string } | null): void {
   const b = byId<HTMLButtonElement>("dbAgentWrites");
   if (!b) return;
-  b.hidden = !agent || !conn || conn.kind !== "sql";
+  b.hidden = !agent || !conn || !sqlWrites(conn.name);
   if (b.hidden || !conn) return;
   const w = readWrites(conn.name);
   fill(b, iconNode("pencil"), h("span", null, tr(w === "auto" ? "dataAgent.writes.auto" : "dataAgent.writes.stage")));
@@ -345,7 +353,7 @@ function onWrites(ev: MouseEvent): void {
   ev.stopPropagation();
   const b = byId<HTMLButtonElement>("dbAgentWrites");
   const conn = agentConn();
-  if (!b || !conn || conn.kind !== "sql") return;
+  if (!b || !conn || !sqlWrites(conn.name)) return;
   const now = readWrites(conn.name);
   const row = (w: Writes): MenuItem => ({
     label: tr(w === "auto" ? "dataAgent.writes.autoRow" : "dataAgent.writes.stageRow"),
@@ -375,6 +383,77 @@ function schemaInView(kind: string): string | undefined {
   if (t.kind === "table" && t.schema) return t.schema;
   const d = dbConn();
   return d.schemaFilter || d.database || undefined;
+}
+
+type ContextPart = "database" | "table" | "sql" | "analysis" | "rows";
+const excluded = new Map<string, Set<ContextPart>>();
+function omitted(): Set<ContextPart> {
+  const key = dbConn().conn || "";
+  const prior = excluded.get(key);
+  if (prior) return prior;
+  const next = new Set<ContextPart>(); excluded.set(key, next); return next;
+}
+
+/** Only selected rows on the visible result page; bounded before they reach the composer. */
+function selectedRows(): unknown[] {
+  const t = dbTab();
+  const rows = t.kind === "table" ? t.data?.rows ?? [] : t.kind === "sql" && !t.analysisId ? t.sqlResult?.rows ?? [] : [];
+  const selected = rows.filter((r, i) => {
+    const key = t.kind === "table" && t.data?.primaryKey.length ? dbPkKey(t.data.primaryKey, r) : t.kind === "sql" ? dbResultKey(t.resultTab || 0, i) : String(i);
+    return t.sel[key];
+  }).slice(0, 20);
+  const bounded: unknown[] = [];
+  for (const r of selected) { if (new TextEncoder().encode(JSON.stringify([...bounded, r])).length <= 16_000) bounded.push(r); }
+  return bounded;
+}
+
+/** Keep the UTF-16 limit without sending half of a supplementary Unicode character. */
+function boundedContextSql(text: string): string {
+  const clipped = text.slice(0, ASK_MAX);
+  return /[\uD800-\uDBFF]$/.test(clipped) ? clipped.slice(0, -1) : clipped;
+}
+
+/** The visible choices and the request share this snapshot; no hidden SQL is added. */
+export function dbAgentContext(): { pageContext: Record<string, unknown>; analysisView: ReturnType<typeof dbAnalysisContext> } {
+  const d = dbConn(), t = dbTab(), skip = omitted();
+  const conn = agentConn();
+  const page: Record<string, unknown> = { conn: d.conn };
+  const database = conn ? schemaInView(conn.kind) : undefined;
+  if (!skip.has("database") && database) page.database = database;
+  if (!skip.has("table") && t.kind === "table" && t.table) page.table = { name: t.table, schema: t.schema };
+  if (!skip.has("table") && t.kind === "coll" && t.coll) page.table = { name: t.coll, schema: t.db };
+  if (!skip.has("sql") && t.kind === "sql" && !t.analysisId && t.sqlText) page.sql = boundedContextSql(t.sqlText);
+  const rows = selectedRows();
+  if (!skip.has("rows") && rows.length) page.rows = rows;
+  const analysis = skip.has("analysis") ? null : dbAnalysisContext();
+  if (analysis && skip.has("rows")) analysis.rowIds = [];
+  return { pageContext: page, analysisView: analysis };
+}
+
+export function paintContext(): void {
+  const host = byId("dbAgentContext"), conn = agentConn();
+  if (!host || !conn) return;
+  const skip = omitted(), t = dbTab(), view = dbAnalysisContext();
+  const choices: [ContextPart, string][] = [];
+  const database = schemaInView(conn.kind);
+  if (database) choices.push(["database", database]);
+  if (t.kind === "table" && t.table) choices.push(["table", t.table]);
+  if (t.kind === "coll" && t.coll) choices.push(["table", t.coll]);
+  if (t.kind === "sql" && !t.analysisId && t.sqlText) choices.push(["sql", tr("dataAgent.sqlContext", { n: boundedContextSql(t.sqlText).length })]);
+  if (view) choices.push(["analysis", dbAnalysisContextLabel()]);
+  const count = view?.rowIds.length || selectedRows().length;
+  if (count) choices.push(["rows", tr("dataAgent.rowsContext", { n: count })]);
+  host.hidden = !choices.length;
+  host.title = tr("dataAgent.contextHint");
+  host.setAttribute("aria-label", tr("dataAgent.context"));
+  fill(host, formActions(...choices.map(([key, label]) => {
+    const control = btn(label, { kind: "ghost", icon: skip.has(key) ? "plus" : "check", title: tr("dataAgent.toggleContext") });
+    control.disabled = key === "rows" && !!view && skip.has("analysis");
+    control.setAttribute("aria-pressed", String(!skip.has(key) && !control.disabled));
+    control.dataset.context = key;
+    control.onclick = (): void => { if (skip.has(key)) skip.delete(key); else skip.add(key); paintContext(); };
+    return control;
+  })));
 }
 
 /** The edge and the pane, built once per page paint; the conversations live on in `talks`. */
@@ -451,7 +530,8 @@ function paintStats(talk: Talk): void {
     ...u.context,
     limit: contextLimit(talk.agent, u.context.cap),
     used: talk.used ?? undefined,
-    perByte: talk.perByte ?? undefined,
+    // Use the budget's token conversion until a provider count calibrates this model.
+    perByte: talk.perByte ?? TOKENS_A_KIB / 1024,
   };
   stats.set({ ...u, context });
 }
@@ -480,11 +560,10 @@ function tally(talk: Talk, p: Record<string, unknown>, carries = true): void {
  *  call's count, gives the tokens a byte while no round of this visit has. A send that started
  *  meanwhile says it itself, frame by frame. */
 async function weigh(talk: Talk, prompt = 0): Promise<void> {
-  const id = talk.runId;
-  if (id == null) return;
-  const r = await call<Partial<ChatContext>>("GET", "/api/llm/db/context?agent=" + encodeURIComponent(talk.agent) + "&conn=" + encodeURIComponent(talk.conn) + "&runId=" + id);
+  const id = talk.runId, gen = talk.gen;
+  const r = await call<Partial<ChatContext>>("GET", "/api/llm/db/context?agent=" + encodeURIComponent(talk.agent) + "&conn=" + encodeURIComponent(talk.conn) + (id == null ? "" : "&runId=" + id));
   const c = r.data;
-  if (!c || typeof c.bytes !== "number" || typeof c.cap !== "number" || talk.runId !== id || talk.live) return;
+  if (!c || typeof c.bytes !== "number" || typeof c.cap !== "number" || talk.runId !== id || talk.gen !== gen || talk.live) return;
   if (talk.perByte == null && prompt > 0 && c.bytes > 0) talk.perByte = prompt / c.bytes;
   talk.usage.context = { bytes: c.bytes, cap: c.cap, system: c.system || 0, tools: c.tools || 0 };
   paintStats(talk);
@@ -508,8 +587,9 @@ function dbAgentPane(): HTMLElement[] {
   const pane = chatPane({
     id: "dbAgent",
     cap: tr("dataAgent.name"),
+    heading: h("select", { id: "dbAgentPick", aria: { label: tr("dataAgent.pick") } }),
+    subject: h("span", { id: "dbAgentConnection" }),
     tools: [
-      h("select", { id: "dbAgentPick", aria: { label: tr("dataAgent.pick") } }),
       iconBtn("history", tr("dataAgent.history"), { id: "dbAgentHistory", ghost: true, pressed: false }),
       iconBtn("brain", tr("dataAgent.memory"), { id: "dbAgentMemory", ghost: true, pressed: false }),
       iconBtn("collapse", tr("dataAgent.compact"), { id: "dbAgentCompact", ghost: true }),
@@ -519,14 +599,14 @@ function dbAgentPane(): HTMLElement[] {
     body: h("div", { id: "dbAgentBody" }),
     queued: h("div", { id: "dbAgentQueued" }),
     input: ask,
+    context: h("div", { id: "dbAgentContext" }),
     // The box grows with its words; a "/" at its start offers the command (chatPane's own).
     commands: [{ name: "compact", arg: tr("dataAgent.cmdCompactArg"), hint: tr("dataAgent.cmdCompact") }],
-    note: h("span", { id: "dbAgentNote" }),
+    controls: [btn("", { id: "dbAgentWrites", kind: "ghost", icon: "pencil", hidden: true, title: tr("dataAgent.writes.stageTip") })],
     actions: [
-      btn("", { id: "dbAgentWrites", kind: "ghost", icon: "pencil", hidden: true, title: tr("dataAgent.writes.stageTip") }),
       btn("", { id: "dbAgentModel", kind: "ghost", icon: "chevron-up", hidden: true, title: tr("dataAgent.modelTip") }),
       actionBtn("stop", tr("dataAgent.stop"), { id: "dbAgentStop", ghost: true, hidden: true }),
-      btn(tr("dataAgent.send"), { id: "dbAgentSend", kind: "primary" }),
+      iconBtn("arrow-up", tr("dataAgent.send"), { id: "dbAgentSend", kind: "primary" }),
     ],
     stats: (stats = chatStats({ id: "dbAgentStats", note: tr("dataAgent.ctxNote") })).node,
   });
@@ -590,17 +670,22 @@ function renderDbAgent(): void {
   pane.hidden = !conn;
   if (button) button.hidden = !conn;
   if (!conn) return;
+  for (const t of talks.values()) if (t.conn === conn.name) {
+    for (const frame of t.pendingDb.splice(0)) applyDbFrame(t, frame.payload, frame.ran);
+    if (t.waiting && !t.live) queueMicrotask(() => { if (t.waiting && !t.live) sendNext(t); });
+  }
   // One read per visit: a failed one stands (its reason shown) until the page is opened again.
   if (agents === null && !agentsLoading && !agentsWhy) { void loadAgents(); }
   const pick = byId<HTMLSelectElement>("dbAgentPick");
   const body = byId("dbAgentBody");
-  const noteEl = byId("dbAgentNote");
+  const noteEl = byId("dbAgentConnection");
   const queued = byId("dbAgentQueued");
   if (noteEl) { noteEl.textContent = conn.label; noteEl.title = conn.label; }
+  paintContext();
   const agent = picked();
   if (pick) {
     fill(pick, (agents || []).map((a) => h("option", { value: a, selected: a === agent }, a)));
-    pick.hidden = !agents || agents.length < 2;
+    pick.hidden = !agents || !agents.length;
   }
   paintModel(agent);
   paintWrites(agent, conn);
@@ -617,12 +702,87 @@ function renderDbAgent(): void {
   const talk = talkOf(agent, conn.name);
   const changed = !body.contains(talk.out);
   if (talk.hist) fill(body, talk.hist);
-  else fill(body, toolsNode(conn.kind), h("div", { id: "dbAgentEmpty", hidden: hasTurns(talk) }, hint(tr("dataAgent.empty"))), talk.out);
+  else fill(body, toolsNode(conn.kind), h("div", { id: "dbAgentEmpty", hidden: hasTurns(talk) }, hint(tr("dataAgent.start"))), talk.out);
   if (queued) fill(queued, talk.queue.node);
   paintStats(talk);
   controls(talk);
   if (!talk.hist) follow(talk, changed);
   if (!talk.restored && !talk.restoring) void restore(talk);
+}
+
+/** Apply a frame only with its connection in front. Deferred frames retain their send’s result grouping. */
+function applyDbFrame(talk: Talk, payload: Record<string, unknown>, ran: Set<string>): void {
+  if (payload.kind === "analysis" && typeof payload.taskId === "string") {
+    void dbAnalysisOpen(payload.taskId, talk.conn, typeof payload.resultId === "string" ? payload.resultId : undefined);
+    void dbHistoryRefresh();
+    return;
+  }
+  // What the agent reads the reader sees (SPEC §data.agent): a key or stream it read opens
+  // in its own tab, a channel listing or a listen opens the Pub/Sub tab on what it read.
+  if (payload.kind === "key") {
+    const key = typeof payload.key === "string" ? payload.key : "";
+    if (key) dbOpenTab({ kind: "key", key, type: typeof payload.type === "string" ? payload.type : undefined });
+    return;
+  }
+  // The page's own live feed, ended on the agent's ask (stop_listen): the reader's Stop, and
+  // the only handle on a listen this conversation never held.
+  if (payload.kind === "pubsubListen") {
+    dbPubsubAgentStop();
+    return;
+  }
+  if (payload.kind === "channels" || payload.kind === "listen") {
+    dbOpenTab({ kind: "pubsub" });
+    dbPubsubAgentRead(payload);
+    return;
+  }
+  // A listing shows as the tree it found: the sidebar's search takes the agent's grep (a
+  // MongoDB one while the tree shows that database). A table it described opens on its
+  // Structure, a collection on its Schema.
+  if (payload.kind === "list") {
+    const grep = typeof payload.grep === "string" ? payload.grep : "";
+    if (typeof payload.db !== "string" || payload.db === mongoCurrentDb()) dbSetGrep(grep);
+    return;
+  }
+  if (payload.kind === "table") {
+    const table = typeof payload.table === "string" ? payload.table : "";
+    if (table) dbAgentStructure(table, typeof payload.schema === "string" && payload.schema ? payload.schema : null);
+    return;
+  }
+  if (payload.kind === "coll") {
+    if (typeof payload.db === "string" && typeof payload.coll === "string" && payload.coll) mongoAgentSchema(payload.db, payload.coll);
+    return;
+  }
+  // A console tab of the agent's own, by the name it gave (SPEC §data.agent Tabs) - or by
+  // the id that outlives a close and a reload - or one statement of one rewritten or
+  // dropped. A run or stage naming it lands there, one naming none in the Agent tab.
+  const tab = typeof payload.tab === "string" ? payload.tab : undefined;
+  // The tab's id, when the server knows it: the address that tells two consoles of one name
+  // apart and survives a rename (SPEC §data.agent Tabs).
+  const tabId = typeof payload.tabId === "string" && payload.tabId ? payload.tabId : undefined;
+  // The store-backed record's revision the frame was produced against (SPEC §data.agent Tabs):
+  // the page's formatted text is written back on top of exactly that record.
+  const revision = typeof payload.consoleRevision === "number" && Number.isSafeInteger(payload.consoleRevision) ? payload.consoleRevision : null;
+  if (payload.kind === "console") {
+    dbAgentOpenConsole(payload);
+    return;
+  }
+  if (payload.kind === "consoleEdit") { dbAgentConsoleEdit(payload); return; }
+  // The statement, the MongoDB command document or the Redis line; a MongoDB one names its database.
+  const sql = typeof payload.sql === "string" ? payload.sql : "";
+  if (!sql) return;
+  const db = typeof payload.db === "string" ? payload.db : undefined;
+  if (payload.create === true && tabId) {
+    if (!dbAgentOpenConsole({ create: true, tabId, tab, format: false })) return;
+  }
+  if (payload.kind === "stage") {
+    dbAgentStatement(sql, null, ran, db, tab, tabId, payload.format !== false, revision);
+    // An auto write the server held: it waits in the console, and the reader hears why.
+    if (typeof payload.held === "string") toast(tr("dataAgent.writes.held", { why: moduleDbMessage(payload.held) }), true);
+    return;
+  }
+  const reply = payload.reply && typeof payload.reply === "object" ? payload.reply as Record<string, unknown> : undefined;
+  dbAgentStatement(sql, reply ? { reply } : { error: typeof payload.error === "string" ? payload.error : "" }, ran, db, tab, tabId, payload.format !== false, revision);
+  void dbHistoryRefresh();
 }
 
 /** The conversation's tools, above it: their names on the fold's line, what each does inside -
@@ -631,7 +791,7 @@ function renderDbAgent(): void {
 function toolsNode(kind: string): HTMLElement | null {
   const tools = catalog.filter((t) => !t.on || t.on === kind);
   if (!tools.length) return null;
-  const fold = formFold({ id: "dbAgentTools", summary: [tr("dataAgent.tools"), " · ", tools.map((t) => t.name).join(" · ")] },
+  const fold = formFold({ id: "dbAgentTools", summary: [tr("dataAgent.tools"), " · ", tr("dataAgent.toolsCount", { n: tools.length })] },
     hint(tr("dataAgent.toolsHint")),
     tools.map((t) => factLine([h("code", null, t.name), toolSummary("db", t)], { data: { dbtool: t.name } }))) as HTMLDetailsElement;
   fold.open = toolsOpen;
@@ -668,9 +828,8 @@ function controls(talk: Talk | null): void {
   const queues = live && !talk.compacting;
   if (send) {
     send.disabled = !talk || talk.compacting;
-    send.textContent = queues ? tr("llm.test.queue") : tr("dataAgent.send");
-    if (queues) send.title = tr("llm.test.queueTip");
-    else send.removeAttribute("title");
+    setIconBtn(send, queues ? "plus" : "arrow-up", queues ? tr("llm.test.queue") : tr("dataAgent.send"),
+      queues ? tr("llm.test.queueTip") : tr("dataAgent.send"));
   }
   if (ask) ask.placeholder = queues ? tr("ui.chat.queuePh") : tr("dataAgent.askPh");
   if (stop) {
@@ -798,14 +957,15 @@ async function restore(talk: Talk): Promise<void> {
     const id = await openRun(talk);
     if (id === undefined) return; // unknown: the next look tries again
     talk.restored = true;
-    if (id === null || retired()) return;
+    if (retired()) return;
+    if (id === null) { void weigh(talk); return; }
     talk.runId = id;
     const r = await fetch("/api/llm/history/runs/" + id + "/dialogue");
     if (!r.ok) return;
     const d = await r.json() as LlmDialogue;
     if (retired()) return;
     if (d.turns.length > 0) {
-      fill(talk.out, conversationNode(d, undefined, askedTurn));
+      fill(talk.out, conversationNode(d, undefined, askedTurn, analysisArtifact(talk.conn)));
       if (inFront(talk)) renderDbAgent();
     }
     account(talk, d);
@@ -841,10 +1001,11 @@ async function onSend(steerAll = false): Promise<void> {
     await compact(talk, (command[1] || "").trim());
     return;
   }
-  ask.value = "";
   // While a reply streams the words wait in the queue, posted nowhere until steered.
-  if (talk.live) { talk.queue.add(text); return; }
-  await send(talk, text);
+  if (talk.live) { talk.queue.add(text); ask.value = ""; return; }
+  ask.value = "";
+  // A refused send (the console store did not take the draft) keeps the words in the box.
+  if (!(await send(talk, text))) { ask.value = text; ask.focus(); }
 }
 
 /** ↑ on a queued row (or Ctrl/Cmd+Enter for all): into the live reply's inbox once its run
@@ -855,7 +1016,7 @@ function steerNow(talk: Talk, q: ChatQueued): void {
   if (talk.compacting) return;
   if (!talk.live) {
     talk.queue.remove(q.id);
-    void send(talk, q.text);
+    void send(talk, q.text).then((ok) => { if (!ok) talk.queue.add(q.text); });
     return;
   }
   talk.queue.steer(q.id, true);
@@ -871,10 +1032,12 @@ function post(talk: Talk, q: ChatQueued): void {
  *  turn, in order. While the reader edits it, it goes when the edit ends. */
 function sendNext(talk: Talk): boolean {
   const q = talk.queue.items()[0] as ChatQueued | undefined;
-  if (!q) return false;
+  if (!q) { talk.waiting = false; return false; }
+  if (dbConn().conn !== talk.conn) { talk.waiting = true; return false; }
   if (talk.queue.editing() === q) { talk.waiting = true; return false; }
+  talk.waiting = false;
   talk.queue.remove(q.id);
-  void send(talk, q.text, false);
+  void send(talk, q.text, false).then((ok) => { if (!ok) talk.queue.add(q.text); });
   return true;
 }
 
@@ -883,7 +1046,14 @@ function unsteer(talk: Talk): void {
   for (const q of talk.queue.items()) talk.queue.steer(q.id, false);
 }
 
-async function send(talk: Talk, text: string, reveal = true): Promise<void> {
+async function send(talk: Talk, text: string, reveal = true): Promise<boolean> {
+  // The agent reads consoles from the server store (SPEC §data.agent Tabs): a draft the store
+  // has not received would be invisible to it, so the send stops here and says why. The box
+  // keeps the words (submit restores them) and nothing is asked.
+  if (dbConsoleStoreOn(talk.conn) && !(await dbConsoleFlush(talk.conn, true))) {
+    toast(tr("dataAgent.consoleSyncBlocked"), true);
+    return false;
+  }
   talk.hist = null;
   talk.asked = true;
   talk.live = true;
@@ -900,21 +1070,29 @@ async function send(talk: Talk, text: string, reveal = true): Promise<void> {
   const body: Record<string, unknown> = { agent: talk.agent, conn: talk.conn, prompt: text, rowLimit: dbRowLimit(), ...modelBody(talk.agent) };
   if (talk.runId != null) body.runId = talk.runId;
   // Every SQL send names the connection's writes: the server tells the model when they changed.
-  if (kindOf(talk.conn) === "sql") body.writes = readWrites(talk.conn);
+  if (sqlWrites(talk.conn)) body.writes = readWrites(talk.conn);
+  // The page has read the store: the agent's tools read and save the same records, not the
+  // bounded snapshot alone.
+  if (dbConsoleStoreOn(talk.conn)) body.consoleStore = true;
   // The page's view is the default only while this connection is in front: a queued ask that
   // goes on after the reader left it names none.
   const conn = agentConn();
   const schema = conn && conn.name === talk.conn ? schemaInView(conn.kind) : undefined;
-  if (schema) body.schema = schema;
+  const context = dbAgentContext();
+  if (schema && !omitted().has("database")) body.schema = schema;
+  if (conn?.name === talk.conn) body.pageContext = context.pageContext;
   // The console's tabs exist only here, so each send carries them (open and closed): the ids,
   // names and statements list_console_tabs, read_console_tab and open_console's tabId read.
   // None to send - nothing open, nothing in Recently closed - is the same as an empty list.
   const consoleTabs = conn && conn.name === talk.conn ? dbConsoleTabs() : [];
-  if (consoleTabs.length) body.consoleTabs = consoleTabs;
-  const analysisView = conn && conn.name === talk.conn ? dbAnalysisContext() : null;
+  if (consoleTabs.length) body.consoleTabs = consoleTabs.slice(0, 1024);
+  if (consoleTabs.length > 1024) body.consoleTabsPartial = true;
+  if (consoleTabs.length > 1024 || consoleTabs.some(tab => tab.statementsOmitted)) toast(tr("dataAgent.consoleSnapshotLimited"), true);
+  const analysisView = conn && conn.name === talk.conn ? context.analysisView : null;
   if (analysisView) body.analysisView = analysisView;
   // A send's first statement in a console tab starts its results over; the ones after it gather beside it.
   const ran = new Set<string>();
+  let frames: Promise<void> = Promise.resolve();
   const outcome = await streamAsk("/api/llm/db/stream", body, {
     alive: (): boolean => talk.gen === myGen,
     onPaint: (): void => { follow(talk); },
@@ -935,7 +1113,12 @@ async function send(talk: Talk, text: string, reveal = true): Promise<void> {
       addTurn(talk, askedTurn(said)).setAttribute("data-dbsteered", "");
     },
     onToolResult: (payload: Record<string, unknown>): void => {
-      if (talk.gen !== myGen || typeof payload.ms !== "number") return;
+      if (talk.gen !== myGen) return;
+      if (payload.name === "analysis" && payload.ok !== false && typeof payload.text === "string") {
+        const artifact = dbAnalysisReference(payload.text, talk.conn);
+        if (artifact) addTurn(talk, { role: null, code: [artifact] });
+      }
+      if (typeof payload.ms !== "number") return;
       talk.usage.toolMs += payload.ms;
       paintStats(talk);
     },
@@ -946,75 +1129,22 @@ async function send(talk: Talk, text: string, reveal = true): Promise<void> {
       // The agent saved or deleted a note of the connection's memory: its Memory view, when
       // that is what the column shows, reads again.
       if (payload.kind === "memory") { dbMemoryRefresh(talk.hist); return; }
-      // A statement for a connection the page has left stays in its own conversation.
-      if (dbConn().conn !== talk.conn) return;
-      if (payload.kind === "analysis" && typeof payload.taskId === "string") {
-        void dbAnalysisOpen(payload.taskId, talk.conn);
-        return;
-      }
-      // What the agent reads the reader sees (SPEC §data.agent): a key or stream it read opens
-      // in its own tab, a channel listing or a listen opens the Pub/Sub tab on what it read.
-      if (payload.kind === "key") {
-        const key = typeof payload.key === "string" ? payload.key : "";
-        if (key) dbOpenTab({ kind: "key", key, type: typeof payload.type === "string" ? payload.type : undefined });
-        return;
-      }
-      // The page's own live feed, ended on the agent's ask (stop_listen): the reader's Stop, and
-      // the only handle on a listen this conversation never held.
-      if (payload.kind === "pubsubListen") {
-        dbPubsubAgentStop();
-        return;
-      }
-      if (payload.kind === "channels" || payload.kind === "listen") {
-        dbOpenTab({ kind: "pubsub" });
-        dbPubsubAgentRead(payload);
-        return;
-      }
-      // A listing shows as the tree it found: the sidebar's search takes the agent's grep (a
-      // MongoDB one while the tree shows that database). A table it described opens on its
-      // Structure, a collection on its Schema.
-      if (payload.kind === "list") {
-        const grep = typeof payload.grep === "string" ? payload.grep : "";
-        if (typeof payload.db !== "string" || payload.db === mongoCurrentDb()) dbSetGrep(grep);
-        return;
-      }
-      if (payload.kind === "table") {
-        const table = typeof payload.table === "string" ? payload.table : "";
-        if (table) dbAgentStructure(table, typeof payload.schema === "string" && payload.schema ? payload.schema : null);
-        return;
-      }
-      if (payload.kind === "coll") {
-        if (typeof payload.db === "string" && typeof payload.coll === "string" && payload.coll) mongoAgentSchema(payload.db, payload.coll);
-        return;
-      }
-      // A console tab of the agent's own, by the name it gave (SPEC §data.agent Tabs) - or by
-      // the id that outlives a close and a reload - or one statement of one rewritten or
-      // dropped. A run or stage naming it lands there, one naming none in the Agent tab.
-      const tab = typeof payload.tab === "string" ? payload.tab : undefined;
-      // The tab's id, when the server knows it: the address that tells two consoles of one name
-      // apart and survives a rename (SPEC §data.agent Tabs).
-      const tabId = typeof payload.tabId === "string" && payload.tabId ? payload.tabId : undefined;
-      if (payload.kind === "console") {
-        if (tabId) dbAgentConsoleId(tabId, tab);
-        else if (tab) dbAgentConsole(tab);
-        return;
-      }
-      if (payload.kind === "consoleEdit") { dbAgentConsoleEdit(payload); return; }
-      // The statement, the MongoDB command document or the Redis line; a MongoDB one names its database.
-      const sql = typeof payload.sql === "string" ? payload.sql : "";
-      if (!sql) return;
-      const db = typeof payload.db === "string" ? payload.db : undefined;
-      if (payload.kind === "stage") {
-        dbAgentStatement(sql, null, ran, db, tab, tabId);
-        // An auto write the server held: it waits in the console, and the reader hears why.
-        if (typeof payload.held === "string") toast(tr("dataAgent.writes.held", { why: payload.held }), true);
-        return;
-      }
-      const reply = payload.reply && typeof payload.reply === "object" ? payload.reply as Record<string, unknown> : undefined;
-      dbAgentStatement(sql, reply ? { reply } : { error: typeof payload.error === "string" ? payload.error : "" }, ran, db, tab, tabId);
+      // Frames apply in order, and a console frame waits for the page's formatted text to reach
+      // the store before the next one is read: the agent's next tool must see what is on screen.
+      const frameGen = talk.gen;
+      frames = frames.then(async () => {
+        if (talk.gen !== frameGen) return;
+        // Apply when this connection returns; never write into the one now in front.
+        if (dbConn().conn !== talk.conn) { talk.pendingDb.push({ payload, ran }); return; }
+        applyDbFrame(talk, payload, ran);
+        if (typeof payload.tabId === "string" && typeof payload.consoleRevision === "number") await dbConsoleFlush(talk.conn, true);
+      }).catch(() => { /* one frame's refusal is shown on its tab; the stream carries on */ });
     },
   }, (t: TranscriptTurn): HTMLElement => (talk.gen === myGen ? addTurn(talk, t) : h("span")), mine.signal);
-  if (talk.gen !== myGen) return; // Stop or New already settled the column
+  await frames;
+  // Stop moved this generation on after the words were already taken. The turn is on the
+  // column; reporting failure would put the same text back on the queue.
+  if (talk.gen !== myGen) return true;
   talk.live = false;
   talk.controller = null;
   if (outcome.cancelled) addTurn(talk, { role: tr("llm.history.role.assistant"), text: tr("llm.test.cancelled"), dim: true });
@@ -1033,11 +1163,12 @@ async function send(talk: Talk, text: string, reveal = true): Promise<void> {
   // for the reader.
   unsteer(talk);
   const clean = !outcome.cancelled && !outcome.error && !outcome.ended;
-  if (clean && sendNext(talk)) return;
+  if (clean && sendNext(talk)) return true;
   if (inFront(talk)) {
     controls(talk);
     byId<HTMLTextAreaElement>("dbAgentAsk")?.focus();
   }
+  return true;
 }
 
 /** Compact the conversation (SPEC §data.agent Compact): the model condenses it into a
@@ -1155,6 +1286,7 @@ async function onNew(): Promise<void> {
   talk.usage = noUsage();
   talk.used = null;
   fill(talk.out);
+  void weigh(talk);
   if (inFront(talk)) {
     renderDbAgent();
     byId<HTMLTextAreaElement>("dbAgentAsk")?.focus();
@@ -1233,6 +1365,11 @@ async function showHistory(talk: Talk): Promise<void> {
   await load();
 }
 
+/** Restore the same immutable result links in the current conversation and in History. */
+function analysisArtifact(conn: string): (tool: { name: string; result: string | null }) => HTMLElement | null {
+  return tool => tool.name === "analysis" && tool.result ? dbAnalysisReference(tool.result, conn) : null;
+}
+
 /** One conversation of the History, whole, with the way to carry it on here: Continue makes it
  *  the connection's open conversation (the one open now closes and stays in History). A failed
  *  one cannot go on; the one in front goes back to the column. */
@@ -1252,7 +1389,7 @@ async function showHistoryRun(talk: Talk, r: LlmRunRow): Promise<void> {
   if (inFront(talk)) renderDbAgent();
   const { d, why } = await dialogueOf(r.id);
   if (talk.hist !== view) return;
-  fill(said, d ? conversationNode(d, undefined, askedTurn) : hint(why, { bad: true }));
+  fill(said, d ? conversationNode(d, undefined, askedTurn, analysisArtifact(talk.conn)) : hint(why, { bad: true }));
 }
 
 /** Continue here: the run becomes the connection's open conversation and its dialogue the
@@ -1269,7 +1406,7 @@ async function carryOn(talk: Talk, id: number, button: HTMLButtonElement): Promi
     talk.asked = true;
     talk.restored = true;
     talk.runId = id;
-    if (d) { fill(talk.out, conversationNode(d, undefined, askedTurn)); account(talk, d); }
+    if (d) { fill(talk.out, conversationNode(d, undefined, askedTurn, analysisArtifact(talk.conn))); account(talk, d); }
     else { fill(talk.out); talk.usage = noUsage(); talk.used = null; toast(why, true); }
   }
   talk.hist = null;

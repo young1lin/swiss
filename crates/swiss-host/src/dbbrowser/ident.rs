@@ -42,12 +42,14 @@ pub fn assert_ident(name: &str, what: &str) -> Result<(), String> {
 /// so every identifier passes the same SAFE_IDENT gate the resource URIs use — then it is quoted
 /// anyway. Schema-qualified names are quoted per part by qualified().
 pub fn quote_ident(dialect: DbDialect, name: &str) -> Result<String, String> {
-    let what = if dialect == DbDialect::Mysql {
-        "MySQL identifier"
-    } else {
-        "Postgres identifier"
+    let what = match dialect {
+        DbDialect::Mysql => "MySQL identifier",
+        DbDialect::Pg => "Postgres identifier",
+        DbDialect::Sqlite => "SQLite identifier",
     };
     assert_ident(name, what)?;
+    // SQLite accepts either quote; double quotes match the Postgres arm so one
+    // non-MySQL spelling covers both.
     Ok(if dialect == DbDialect::Mysql {
         format!("`{name}`")
     } else {
@@ -76,6 +78,7 @@ mod tests {
     fn identifier_quoting() {
         assert_eq!(quote_ident(DbDialect::Mysql, "users").unwrap(), "`users`");
         assert_eq!(quote_ident(DbDialect::Pg, "users").unwrap(), "\"users\"");
+        assert_eq!(quote_ident(DbDialect::Sqlite, "users").unwrap(), "\"users\"");
         for bad in ["users; DROP TABLE x", "a`b", "c\"d", "with space", ""] {
             assert!(
                 quote_ident(DbDialect::Mysql, bad).is_err(),

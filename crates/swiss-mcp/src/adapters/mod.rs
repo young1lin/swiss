@@ -46,6 +46,7 @@ pub mod remote;
 pub mod resources;
 pub mod rest;
 pub mod sql;
+pub mod sqlite_browser;
 pub mod tool_server;
 pub mod zai;
 mod zai_prompts;

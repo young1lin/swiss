@@ -72,6 +72,7 @@ pub fn mount(state: Arc<LlmState>, services: Arc<RuntimeServices>) -> Router {
 }
 
 pub fn mount_with_analysis(state: Arc<LlmState>, services: Arc<RuntimeServices>, analysis: Arc<crate::analysis::AnalysisStore>) -> Router {
+    let consoles = crate::db_consoles::ConsoleStore::at(analysis.root().with_file_name("consoles"));
     Router::new()
         .route("/api/llm/status", get(status))
         .route("/api/llm/providers/test", post(provider_test))
@@ -83,6 +84,7 @@ pub fn mount_with_analysis(state: Arc<LlmState>, services: Arc<RuntimeServices>,
         .route("/api/llm/agents/test/steer", post(agent_test_steer))
         .route("/api/llm/agents/test/steer/withdraw", post(agent_test_withdraw))
         .route("/api/llm/db/stream", post(crate::llm_db::stream))
+        .route("/api/llm/db/consoles", get(crate::db_consoles::list).post(crate::db_consoles::save).delete(crate::db_consoles::remove))
         .route("/api/llm/db/conversation", get(crate::llm_db::open_conversation))
         .route("/api/llm/db/conversations", get(crate::llm_db::conversations))
         .route("/api/llm/db/context", get(crate::llm_db::context))
@@ -104,6 +106,7 @@ pub fn mount_with_analysis(state: Arc<LlmState>, services: Arc<RuntimeServices>,
         .with_state(state)
         .layer(Extension(services))
         .layer(Extension(analysis))
+        .layer(Extension(consoles))
 }
 
 pub(crate) fn bad(message: impl AsRef<str>) -> Response {
@@ -770,10 +773,10 @@ fn event_frame(event: swiss_llm::agent::LoopEvent) -> (&'static str, Value) {
         swiss_llm::agent::LoopEvent::Text(one) => ("delta", json!({ "kind": "text", "text": one })),
         swiss_llm::agent::LoopEvent::ToolCall { name, arguments } => ("tool", json!({ "name": name, "arguments": arguments })),
         swiss_llm::agent::LoopEvent::ToolResult { name, ok, text, ms } => {
-            ("toolResult", json!({ "name": name, "ok": ok, "text": clip(&text, ANSWER_MAX), "ms": ms }))
+            ("toolResult", json!({ "name": name, "ok": ok, "text": text, "ms": ms }))
         }
         swiss_llm::agent::LoopEvent::Steered { id, text } => ("steer", json!({ "id": id, "text": text })),
-        swiss_llm::agent::LoopEvent::Final(text) => ("final", json!({ "text": clip(&text, ANSWER_MAX * 8) })),
+        swiss_llm::agent::LoopEvent::Final(text) => ("final", json!({ "text": text })),
         swiss_llm::agent::LoopEvent::Usage(usage) => ("usage", json!({
             "bytes": usage.bytes, "cap": usage.cap, "system": usage.system, "tools": usage.tools,
             "tokensIn": usage.tokens.input, "tokensCacheRead": usage.tokens.cache_read,
@@ -1315,6 +1318,20 @@ async fn history_turn_body(State(state): State<Arc<LlmState>>, Path((run_id, seq
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn live_tool_io_and_final_match_the_complete_recorded_text() {
+        let arguments = format!("{{\"sql\":\"{} END\"}}", "列".repeat(600));
+        let result = format!("{} RESULT_END", "数据".repeat(600));
+        let answer = format!("{} ANSWER_END", "回答".repeat(2000));
+        let (_, call) = event_frame(swiss_llm::agent::LoopEvent::ToolCall { name: "run_sql".into(), arguments: arguments.clone() });
+        let (_, output) = event_frame(swiss_llm::agent::LoopEvent::ToolResult { name: "run_sql".into(), ok: true, text: result.clone(), ms: 42 });
+        let (_, final_frame) = event_frame(swiss_llm::agent::LoopEvent::Final(answer.clone()));
+        assert_eq!(call["arguments"], arguments);
+        assert_eq!(output["text"], result);
+        assert_eq!(output["ms"], 42);
+        assert_eq!(final_frame["text"], answer);
+    }
 
     pub(crate) fn mount(state: Arc<LlmState>) -> Router {
         let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
@@ -2153,10 +2170,35 @@ pub(crate) mod tests {
     /// promised body never completes, so the only honest end is a cancel that
     /// drops the in-flight request.
     async fn sse_wire_hanging(prefix: String) -> String {
+        let (url, _, _) = sse_wire_hanging_ready(prefix, None).await;
+        url
+    }
+
+    async fn sse_wire_hanging_ready(prefix: String, first: Option<String>) -> (String, tokio::sync::oneshot::Receiver<()>, tokio::sync::oneshot::Receiver<String>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let url = format!("http://{}", listener.local_addr().expect("addr"));
+        let (ready, received) = tokio::sync::oneshot::channel();
+        let (next_request, captured) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            if let Some(first) = first {
+                let (mut socket, _) = listener.accept().await.expect("first round");
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let n = socket.read(&mut chunk).await.expect("read first round");
+                    if n == 0 { return; }
+                    buf.extend_from_slice(&chunk[..n]);
+                    let Some(head_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                    let head = String::from_utf8_lossy(&buf[..head_end]);
+                    let length = head.lines().find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+                        .and_then(|l| l.split(':').nth(1)).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                    if buf.len() < head_end + 4 + length { continue; }
+                    let answer = format!("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", first.len(), first);
+                    socket.write_all(answer.as_bytes()).await.expect("answer first round");
+                    break;
+                }
+            }
             let (mut socket, _) = listener.accept().await.expect("accept");
             let mut buf = Vec::new();
             let mut chunk = [0u8; 4096];
@@ -2184,12 +2226,97 @@ pub(crate) mod tests {
                         prefix
                     );
                     socket.write_all(answer.as_bytes()).await.expect("write");
+                    let _ = ready.send(());
                     break;
                 }
             }
-            std::future::pending::<()>().await;
+            // Keep the first connection open while accepting the continuation.
+            let _first = socket;
+            let (mut second, _) = listener.accept().await.expect("continuation");
+            let mut buf = Vec::new();
+            loop {
+                let n = second.read(&mut chunk).await.expect("read continuation");
+                if n == 0 { return; }
+                buf.extend_from_slice(&chunk[..n]);
+                let Some(head_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                let head = String::from_utf8_lossy(&buf[..head_end]);
+                let length = head.lines().find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+                    .and_then(|l| l.split(':').nth(1)).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                if buf.len() < head_end + 4 + length { continue; }
+                let _ = next_request.send(String::from_utf8_lossy(&buf[head_end + 4..head_end + 4 + length]).into_owned());
+                let frames = one_round_answer();
+                let answer = format!("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", frames.len(), frames);
+                second.write_all(answer.as_bytes()).await.expect("answer continuation");
+                break;
+            }
         });
-        url
+        (url, received, captured)
+    }
+
+    #[tokio::test]
+    async fn cancel_before_any_model_output_keeps_the_conversation_continuable() {
+        empty_cancel_remains_continuable(false).await;
+    }
+
+    #[tokio::test]
+    async fn cancel_after_a_tool_keeps_its_result_in_the_continuation() {
+        empty_cancel_remains_continuable(true).await;
+    }
+
+    async fn empty_cancel_remains_continuable(after_tool: bool) {
+        use futures_util::StreamExt;
+        use swiss_llm::history::ReplayState;
+        let tool_round = concat!(
+            "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let (base, ready, captured) = sse_wire_hanging_ready(String::new(), after_tool.then(|| tool_round.to_string())).await;
+        let state = LlmState::new();
+        state.apply(LlmConfig::parse(&json!({
+            "providers": { "local": { "style": "openai", "baseUrl": base + "/v1", "models": [{ "id": "tiny" }] } },
+            "agents": { "distiller": { "provider": "local", "maxTurns": 4, "tools": [] } }
+        })).expect("row"));
+        let dir = swiss_core::paths::test_home().join(format!("llm-api-cancel-empty-{}", swiss_core::util::random_hex(8)));
+        let history = swiss_llm::history::LlmHistory::open(&dir).await.expect("open");
+        state.install_history(history.clone());
+        let app = mount(state);
+        let request = Request::builder().method("POST").uri("/api/llm/agents/test/stream")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({ "agent": "distiller", "prompt": "keep this request" }).to_string())).expect("request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        let mut stream = response.into_body().into_data_stream();
+        let first = tokio::time::timeout(std::time::Duration::from_secs(10), stream.next()).await.expect("run frame").expect("frame").expect("bytes");
+        let run_id = events_of(&String::from_utf8_lossy(&first)).into_iter()
+            .find(|(name, _)| name == "run").and_then(|(_, data)| data["runId"].as_i64()).expect("run id");
+        tokio::time::timeout(std::time::Duration::from_secs(10), ready).await.expect("provider was contacted").expect("wire");
+        let (status, result) = call(&app, "POST", "/api/llm/agents/test/cancel", Some(json!({ "runId": run_id }))).await;
+        assert_eq!((status, result["cancelled"].clone()), (StatusCode::OK, json!(true)));
+        tokio::time::timeout(std::time::Duration::from_secs(10), async { while stream.next().await.is_some() {} }).await.expect("cancel settles");
+        history.flush().await;
+        match history.replay_state(run_id).await {
+            ReplayState::Continuable { prior } => {
+                assert!(prior.iter().any(|message| message["role"] == "user" && message.to_string().contains("keep this request")), "the cancelled user request remains: {prior:?}");
+                if after_tool {
+                    assert!(prior.iter().any(|message| message["role"] == "tool" && message["id"] == "call_1"), "the actual tool result remains paired: {prior:?}");
+                } else {
+                    assert!(!prior.iter().any(|message| message["role"] == "assistant"), "no assistant answer is invented: {prior:?}");
+                }
+            }
+            ReplayState::Refused(why) => panic!("an explicitly cancelled provider wait should remain continuable: {why}"),
+            ReplayState::Fresh => panic!("the cancelled request must not disappear"),
+        }
+        let (status, _, resumed) = call_text(&app, "POST", "/api/llm/agents/test/stream", Some(json!({
+            "agent": "distiller", "runId": run_id, "prompt": "continue now"
+        }))).await;
+        assert_eq!(status, StatusCode::OK, "{resumed}");
+        assert!(events_of(&resumed).iter().any(|(name, data)| name == "done" && data["ok"] == true), "{resumed}");
+        let ask = captured.await.expect("the provider saw the continuation");
+        assert!(ask.contains("keep this request") && ask.contains("continue now"), "both user requests reach the provider");
+        if after_tool {
+            let ask: Value = serde_json::from_str(&ask).expect("provider request");
+            assert!(ask["messages"].as_array().expect("messages").iter().any(|message| message["role"] == "tool" && message["tool_call_id"] == "call_1"), "the tool result was replayed with its call id");
+        }
     }
 
     #[tokio::test]

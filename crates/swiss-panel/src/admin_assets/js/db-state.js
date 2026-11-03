@@ -107,6 +107,7 @@ export function freshTab(kind           )        {
   }
   if (kind === "sql") {
     return { kind: "sql", id: dbNewTabId(), loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
+      createdAt: Date.now(), updatedAt: Date.now(),
       sqlText: "", sqlResult: null, sqlResults: null, resultTab: 0, sqlBusy: false };
   }
   if (kind === "key") {
@@ -136,6 +137,24 @@ export function freshTab(kind           )        {
 }
 
 let connRec              = freshConnState();
+/** Every meaningful text change passes here, so the page can mirror it (the server-owned console,
+ *  SPEC §data.agent Tabs) without every caller remembering to. The listener is registered once by
+ *  data-tabs, never at module scope in this leaf: db-state stays types-only. */
+let sqlTextListener                                   = null;
+
+/** Register the one observer of console text edits (data-tabs). */
+export function dbOnSqlTextChanged(fn                         )       {
+  sqlTextListener = fn;
+}
+
+/** Meaningful edits use wall time; activation keeps its separate monotonic LRU clock. */
+export function dbSetSqlText(tab          , text        )       {
+  if (tab.sqlText === text) return;
+  tab.sqlText = text;
+  tab.updatedAt = Date.now();
+  sqlTextListener?.(tab);
+}
+
 let tabs          = [freshTab("table")];
 let activeIdx = 0;
 let mounted = false;
@@ -154,7 +173,7 @@ const parked = new Map                   ();
 let lastConn                = null;
 
 /** How many sessions the park holds (SPEC §data.sessions). Connections are a handful; the cap only
- *  bounds the pathological case, and a session holding buffered writes is never the one to go. */
+ *  bounds the pathological case, and a session holding buffered writes or consoles is never the one to go. */
 export const DB_PARKED_MAX = 8;
 
 /** Park the live session under its connection. `pinned` says which sessions hold work that

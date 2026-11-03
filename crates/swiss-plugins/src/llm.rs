@@ -279,6 +279,9 @@ impl PluginInstance for LlmInstance {
                     );
                 }
                 self.state.install_history(history.clone());
+                self.services
+                    .module_dbs
+                    .publish(PLUGIN_ID, self.logs_dir.join("llm.db"));
                 *self.history.lock().await = Some(history);
             }
             Err(err) => {
@@ -313,6 +316,7 @@ impl PluginInstance for LlmInstance {
         .await;
         // Withdraw first: chats and embedders built after this record nothing, and the
         // writer queue drains before the pool releases (the bounded close, 10s).
+        self.services.module_dbs.withdraw(PLUGIN_ID);
         self.state.withdraw_history();
         // The maintenance seat goes with the store (SPEC host.history): a stopped
         // module is reported skipped by name, never run against a closed pool.

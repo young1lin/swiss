@@ -24,7 +24,7 @@ import { dbLoadData } from "./data-grid.js";
 import { dbLoadTables } from "./data-view.js";
 import { dbOpenTab } from "./data-tabs.js";
 import { dbLoadDetail } from "./data-structure.js";
-import { tk, tr } from "./i18n.js";
+import { moduleDbMessage, tk, tr } from "./i18n.js";
 import { btn, iconBtn } from "./ui/button.js";
 import { checkField, field, hint, pair } from "./ui/form.js";
 import { closeSheet, sheet, showSheet } from "./ui/sheet.js";
@@ -428,7 +428,7 @@ function paintDbDdlPreviewError(message: string): void {
   const pre = $("ddl-pre");
   pre.classList.remove("db-ddl-quiet");
   // The server's own refusal, unpainted: it names the field and the rule (kept verbatim from the error text).
-  pre.textContent = message;
+  pre.textContent = moduleDbMessage(message);
   $<HTMLButtonElement>("ddl-commit").disabled = true;
   const ddl_ = S!;
   ddl_.lastSql = null;

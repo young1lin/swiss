@@ -980,7 +980,7 @@ function answerNodes(text        )           {
 
 /** One ask on the sheet: its prompt, its steps, its answer and errors. A running run's
  *  `run` rides on the ask it works on now, its last. */
-function askNodes(ask          , n        , system               , run                    , bodies                           , asTurn                                  )           {
+function askNodes(ask          , n        , system               , run                    , bodies                           , asTurn                                  , artifact                              )           {
   if (ask.compact) return compactNodes(ask, n, n === 0 ? system : null);
   const steps = stepNodes(ask, n, run, bodies);
   const tools = ask.rounds.reduce((sum, r) => sum + r.tools.length, 0);
@@ -994,6 +994,7 @@ function askNodes(ask          , n        , system               , run          
     ask.prompt ? transcriptTurn(asTurn(ask.prompt)) : null,
     transcriptTurn({ side: "assistant", role: tr("llm.history.role.assistant"), code: [
       steps.length ? process : null,
+      ...ask.rounds.flatMap(r => r.tools.map(tool => artifact?.(tool))),
       ask.answer != null ? h("div", { data: { lhanswer: String(n) } }, ...answerNodes(ask.answer)) : null,
       ...ask.errors.map((e) => note(e, { err: true })),
     ], copy: ask.answer?.trim() ? ask.answer : undefined }),
@@ -1017,11 +1018,11 @@ function compactNodes(ask          , n        , system               )          
 /** Recorded and restored conversations share one renderer, including their disclosure state.
  * Each column owns its step bodies and pointer routing, so restoring Test never relies on
  * History being mounted and never populates History's sheet state. */
-export function conversationNode(d             , bodies = new Map                      (), asTurn                                   = promptTurn)              {
+export function conversationNode(d             , bodies = new Map                      (), asTurn                                   = promptTurn, artifact                              )              {
   const trace = traceOf(d.turns || [], d.calls || []);
   const of = trace.asks.length;
   const column = transcript([]);
-  fill(column, trace.asks.map((ask, n) => askNodes(ask, n, trace.system, d.live && n === of - 1 ? d : null, bodies, asTurn)));
+  fill(column, trace.asks.map((ask, n) => askNodes(ask, n, trace.system, d.live && n === of - 1 ? d : null, bodies, asTurn, artifact)));
   column.onclick = (event)       => {
     const target = targetEl(event);
     const sum = target?.closest             (".fl-sum");

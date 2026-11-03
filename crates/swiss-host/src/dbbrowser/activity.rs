@@ -52,6 +52,11 @@ pub fn activity_sql(dialect: DbDialect) -> String {
              (ID = CONNECTION_ID()) AS own \
              FROM information_schema.processlist ORDER BY ID"
             .to_string(),
+        // No sessions to list. The shape stays so a caller that does ask gets no rows
+        // rather than another dialect's SQL.
+        DbDialect::Sqlite => "SELECT NULL AS pid, '' AS \"user\", '' AS state, '' AS wait, \
+             0 AS seconds, '' AS query, 0 AS own WHERE 0"
+            .to_string(),
     }
 }
 
@@ -67,6 +72,9 @@ pub fn activity_kill_sql(dialect: DbDialect, pid: i64, terminate: bool) -> Resul
         (DbDialect::Pg, true) => format!("SELECT pg_terminate_backend({pid})"),
         (DbDialect::Mysql, false) => format!("KILL QUERY {pid}"),
         (DbDialect::Mysql, true) => format!("KILL {pid}"),
+        (DbDialect::Sqlite, _) => {
+            return Err("this connection is query-only and has no sessions to cancel".into());
+        }
     })
 }
 

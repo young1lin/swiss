@@ -388,6 +388,7 @@ impl DbBrowser for PgBrowser {
         let mut tx = pool.begin_with("BEGIN READ ONLY").await.map_err(|e| e.to_string())?;
         // A runaway read ends on its own; the setting dies with the transaction.
         sqlx::query("SET LOCAL statement_timeout = '30s'").execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        swiss_host::dbbrowser::execution::submitted(&prepared.sql);
         let fetched = sqlx::query(sqlx::AssertSqlSafe(prepared.sql.as_str())).fetch_all(&mut *tx).await;
         // Never committed: a read keeps nothing, and a refused write leaves nothing.
         let _ = tx.rollback().await;

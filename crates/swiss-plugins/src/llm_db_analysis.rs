@@ -93,20 +93,39 @@ pub async fn call(store: &AnalysisStore, catalog: Arc<CatalogRegistry>, conn: &s
         _ => return Err("unknown analysis operation".into()),
     };
     let latest = store.get(&task.id)?;
-    Ok(json!({ "taskId": task.id, "task": latest.head(), "value": value }))
+    let result_id = match op {
+        "run" => value["result"]["id"].as_str(),
+        "read" => value["result"].as_str(),
+        "validate" | "chart" => value["id"].as_str(),
+        "compare" => args["right"].as_str(),
+        _ => latest.current_result().map(|r| r.id.as_str()),
+    };
+    let reference = result_id.and_then(|id| latest.result(id)).map(|result| json!({
+        "taskId": task.id, "resultId": result.id, "title": latest.title, "at": result.at,
+        "version": latest.revisions.iter().position(|r| r.id == result.revision).map(|n| n + 1),
+        // The attempt inside this version, matching the version menu. A count across every
+        // result would say "Version 2 · Run 2" for the first run of a revised analysis.
+        "run": latest.results.iter().filter(|r| r.revision == result.revision).position(|r| r.id == result.id).map(|n| n + 1),
+    }));
+    Ok(json!({ "reference": reference, "taskId": task.id, "resultId": result_id, "task": latest.head(), "value": value }))
 }
 
 /// Validate view references against persisted data before adding them to a user turn. A stale
 /// view remains a valid historical reference, but cannot change the task's current revision.
-pub fn view_context(store: &AnalysisStore, conn: &str, view: &Value) -> Result<String, String> {
+pub fn view_context(store: &AnalysisStore, conn: &str, view: &Value) -> Result<Value, String> {
     let task = store.get(required(view, "taskId")?)?;
     if task.conn != conn { return Err("the analysis view belongs to another connection".into()) }
     let result = task.result(required(view, "resultId")?).ok_or("unknown view result")?;
-    let row_ids: Vec<&str> = view["rowIds"].as_array().into_iter().flatten().take(20).filter_map(Value::as_str).collect();
+    let row_ids: Vec<&str> = match view.get("rowIds") {
+        None => Vec::new(),
+        Some(Value::Array(rows)) if rows.len() <= 20 => rows.iter().map(|row| row.as_str().ok_or("rowIds must contain strings")).collect::<Result<_, _>>()?,
+        Some(Value::Array(_)) => return Err("rowIds: at most 20 rows".into()),
+        Some(_) => return Err("rowIds must be an array".into()),
+    };
     for key in &row_ids {
         let (rid, index) = key.rsplit_once(':').ok_or("invalid result row id")?;
         if rid != result.id || index.parse::<u64>().ok().is_none_or(|n| n >= result.row_count) { return Err("unknown result row id".into()) }
     }
     Ok(json!({ "taskId": task.id, "revisionId": result.revision, "resultId": result.id,
-        "rowIds": row_ids, "historical": result.revision != task.current, "truncated": result.truncated }).to_string())
+        "rowIds": row_ids, "historical": result.revision != task.current, "truncated": result.truncated }))
 }

@@ -232,7 +232,7 @@ describe("the agent's pane (SPEC §data.agent)", () => {
   });
 
   it("sits folded at the end edge until the head's button opens it; a connection it cannot work on takes it away", async () => {
-    Object.assign(dbConnState(), { conns: [dbConn("p-shop", "mysql"), dbConn("p-cache", "redis"), dbConn("p-file", "sqlite")], conn: "p-shop", databases: [] });
+    Object.assign(dbConnState(), { conns: [dbConn("p-shop", "mysql"), dbConn("p-cache", "redis"), dbConn("p-store", "sqlite"), dbConn("p-file", "csv")], conn: "p-shop", databases: [] });
     view.renderDbView();
     await settle();
     const pane = q("#dbAgent");
@@ -243,23 +243,26 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     q<HTMLButtonElement>("#dbAgentBtn").click();
     expect(pane.style.display).toBe("");
     await settle();
-    // One db agent: no picker; a task agent, builtin or chat, is never offered (it serves its tasks).
-    expect(q<HTMLSelectElement>("#dbAgentPick").hidden).toBe(true);
+    // The current DB agent stays beside the connection; task agents are never offered.
+    expect(q<HTMLSelectElement>("#dbAgentPick").hidden).toBe(false);
     expect(Array.from(q<HTMLSelectElement>("#dbAgentPick").options).map((o) => o.value)).toEqual(["db"]);
-    expect(bodyText()).toContain(tr("dataAgent.empty"));
+    expect(bodyText()).toContain(tr("dataAgent.start"));
     expect(calls.some((c) => c.path === "/api/llm/db/conversation?agent=db&conn=p-shop")).toBe(true);
     // The close button folds it again; the head's button brings it back.
     q<HTMLButtonElement>("#dbAgentClose").click();
     expect(pane.style.display).toBe("none");
     q<HTMLButtonElement>("#dbAgentBtn").click();
     expect(pane.style.display).toBe("");
-    // MySQL, PostgreSQL, MongoDB and Redis have tools of their own; any other kind has none.
+    // MySQL, PostgreSQL, SQLite, MongoDB and Redis have tools of their own; any other kind has none.
     await switchTo("p-cache");
     expect(pane.hidden, "redis: the agent works there too").toBe(false);
     expect(q("#dbAgentBtn").hidden).toBe(false);
     expect(calls.some((c) => c.path === "/api/llm/db/conversation?agent=db&conn=p-cache")).toBe(true);
+    await switchTo("p-store");
+    expect(pane.hidden, "sqlite: the query tools").toBe(false);
+    expect(q<HTMLButtonElement>("#dbAgentWrites").hidden, "sqlite is query-only: no writes switch").toBe(true);
     await switchTo("p-file");
-    expect(pane.hidden, "sqlite: no agent").toBe(true);
+    expect(pane.hidden, "an unknown dialect: no agent").toBe(true);
     expect(q("#dbAgentBtn").hidden).toBe(true);
   });
 
@@ -293,7 +296,7 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     view.renderDbView();
     await settle();
     expect(reads(), "a fresh visit reads again").toBe(2);
-    expect(bodyText()).toContain(tr("dataAgent.empty"));
+    expect(bodyText()).toContain(tr("dataAgent.start"));
   });
 
   it("a send streams: each statement lands in the agent's own console and its rows in the results, the reader's console untouched", async () => {
@@ -320,7 +323,7 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     const asked = "five of each: SELECT * FROM posts WHERE type LIKE 'custom\\_%' AND 2 * 3 > 1";
     await ask(asked);
     expect(sent("/api/llm/db/stream")).toEqual([{
-      agent: "db", conn: "s-shop", prompt: asked, rowLimit: 500, writes: "stage",
+      agent: "db", conn: "s-shop", prompt: asked, rowLimit: 500, writes: "stage", pageContext: { conn: "s-shop", sql: "SELECT 42" },
       // The page's console tabs ride every send, the reader's own included, by the id that
       // outlives a close (SPEC §data.agent Tabs).
       consoleTabs: [{ id: mine.id, tab: "SQL", open: true, agent: false, statements: [{ sql: "SELECT 42" }] }],
@@ -330,7 +333,7 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     const st = dbSqlTab();
     expect(st?.agent).toBe(true);
     expect(st?.custom).toBe(tr("dataAgent.name"));
-    expect(st?.sqlText).toBe("SELECT DISTINCT type FROM posts;\n\n" + SQL + ";");
+    expect(st?.sqlText).toBe("SELECT DISTINCT type\nFROM posts;\n\nSELECT type,\n       count(*) AS n\nFROM posts\nGROUP BY type;");
     expect(q<HTMLTextAreaElement>("#dbSql").value).toBe(st?.sqlText);
     // Both runs of the send are result tabs, the newest in front.
     expect(st?.sqlResults?.map((r) => r.tabLabel)).toEqual(["posts · 1", "posts · 2"]);
@@ -351,7 +354,7 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     await ask("now delete the polls");
     expect((sent("/api/llm/db/stream")[1] as { runId?: number }).runId).toBe(7);
     const after = dbSqlTab();
-    expect(after?.sqlText.split("\n\n")).toEqual(["SELECT DISTINCT type FROM posts;", SQL + ";", "DELETE FROM posts WHERE type = 'custom_poll';", "SELECT nope FROM posts;"]);
+    expect(after?.sqlText.split("\n\n")).toEqual(["SELECT DISTINCT type\nFROM posts;", "SELECT type,\n       count(*) AS n\nFROM posts\nGROUP BY type;", "DELETE\nFROM posts\nWHERE type = 'custom_poll';", "SELECT nope\nFROM posts;"]);
     expect(after?.sqlResults?.length).toBe(1);
     expect(after?.sqlResult?.tabLabel).toBe(tr("dataSql.failedTab", { label: "posts" }));
     expect(dbTabs().filter((t) => t.kind === "sql" && t.agent).length, "one agent console").toBe(1);
@@ -380,11 +383,11 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     const consoles = (): DbSqlTab[] => dbTabs().filter((t): t is DbSqlTab => t.kind === "sql" && t.agent === true);
     expect(consoles().map((t) => [t.custom, t.agentTab])).toEqual([[tr("dataAgent.name"), undefined], ["Revenue report", "Revenue report"], ["Cleanup", "Cleanup"]]);
     const [agentTab, revenue, cleanup] = consoles();
-    expect(agentTab.sqlText).toBe("SELECT 1 FROM posts;\n\nSELECT 4 FROM posts;");
+    expect(agentTab.sqlText).toBe("SELECT 1\nFROM posts;\n\nSELECT 4\nFROM posts;");
     expect(agentTab.sqlResults?.length, "a send's runs in one tab gather").toBe(2);
-    expect(revenue.sqlText).toBe("SELECT 2 FROM posts;\n\nSELECT 3 FROM posts;");
+    expect(revenue.sqlText).toBe("SELECT 2\nFROM posts;\n\nSELECT 3\nFROM posts;");
     expect(revenue.sqlResults?.map((r) => r.rows)).toEqual([[{ n: 2 }], [{ n: 3 }]]);
-    expect(cleanup.sqlText, "a staged write only lands").toBe("DELETE FROM posts WHERE id = 1;");
+    expect(cleanup.sqlText, "a staged write only lands").toBe("DELETE\nFROM posts\nWHERE id = 1;");
     expect(cleanup.sqlResults ?? []).toEqual([]);
     expect(dbSqlTab(), "the last statement's tab in front").toBe(agentTab);
     // The next send: open_console again brings the tab back rather than opening another, and
@@ -441,7 +444,7 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     await ask("hide p1, add p9, clear the rest");
     expect(sent("/api/llm/db/stream")[0]).toMatchObject({ conn: "wr-shop", runId: 81, writes: "auto" });
     const st = dbSqlTab();
-    expect(st?.sqlText.split("\n\n")).toEqual(["UPDATE posts SET hidden = 1 WHERE id = 'p1';", "INSERT INTO posts (id) VALUES ('p9');", "DELETE FROM posts;"]);
+    expect(st?.sqlText.split("\n\n")).toEqual(["UPDATE posts\nSET hidden = 1\nWHERE id = 'p1';", "INSERT INTO posts (id)\nVALUES ('p9');", "DELETE\nFROM posts;"]);
     expect(st?.sqlResults?.map((r) => r.tabLabel), "a write's tab counts the rows it changed; a held one has no result").toEqual(["UPDATE posts · 3", "INSERT posts · 1"]);
     expect(q("#dbRbar .db-meta").textContent).toContain(trn(1, "dataGrid.nCommitted.one", "dataGrid.nCommitted.other") + tr("dataGrid.insertId", { id: 41 }));
     expect(q("#toast").textContent).toContain(tr("dataAgent.writes.held", { why: held }));
@@ -493,10 +496,11 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     ];
     await ask("one more each");
     const revenue = dbTabs()[at("Revenue report")] as DbSqlTab;
-    expect([revenue.custom, revenue.sqlText]).toEqual(["Revenue report", "SELECT 2 FROM posts;\n\nSELECT 3 FROM posts;"]);
-    expect((dbTabs()[at()] as DbSqlTab).sqlText).toBe("SELECT 4 FROM posts;");
+    expect([revenue.custom, revenue.sqlText]).toEqual(["Revenue report", "SELECT 2\nFROM posts;\n\nSELECT 3\nFROM posts;"]);
+    expect((dbTabs()[at()] as DbSqlTab).sqlText).toBe("SELECT 4\nFROM posts;");
     const labels = tabs.dbClosedMenuItems().map((i) => ("label" in i ? i.label : "-"));
-    expect(labels, "the brought-back tab left the list").toEqual([tr("dataAgent.name") + " · SELECT 1 FROM posts;", "-", tr("dataTabs.clearClosed")]);
+    expect(labels.some(label => label.startsWith(tr("dataAgent.name") + " · SELECT 1 ·")), "the untouched closed Agent console remains").toBe(true);
+    expect(labels.some(label => label.startsWith("Revenue report ·"))).toBe(false);
   });
 
   it("on MongoDB a command lands in the console's shell syntax and its documents in the results, the database in view the default", async () => {
@@ -520,7 +524,7 @@ describe("the agent's pane (SPEC §data.agent)", () => {
       sseFrame("done", { ok: true, runId: 9, ms: 400, turns: 2, tokensIn: 60, tokensOut: 8 }),
     ];
     await ask("two custom images");
-    expect(sent("/api/llm/db/stream")).toEqual([{ agent: "db", conn: "m-docs", prompt: "two custom images", rowLimit: 500, schema: "shop" }]);
+    expect(sent("/api/llm/db/stream")).toEqual([{ agent: "db", conn: "m-docs", pageContext: { conn: "m-docs", database: "shop" }, prompt: "two custom images", rowLimit: 500, schema: "shop" }]);
     const st = dbSqlTab();
     expect(st?.agent).toBe(true);
     // Each command is its own block in the console's shell syntax, never a statement's ;: the
@@ -556,7 +560,7 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     ];
     await ask("what does post 1 hold");
     // Redis has one logical database per connection: nothing in view to name.
-    expect(sent("/api/llm/db/stream")).toEqual([{ agent: "db", conn: "r-cache", prompt: "what does post 1 hold", rowLimit: 500 }]);
+    expect(sent("/api/llm/db/stream")).toEqual([{ agent: "db", conn: "r-cache", pageContext: { conn: "r-cache" }, prompt: "what does post 1 hold", rowLimit: 500 }]);
     const st = dbSqlTab();
     expect(st?.sqlText.split("\n\n")).toEqual(["HGETALL post:1", "GET session:9", "DEBUG SLEEP 1", "DEL post:1"]);
     expect(st?.sqlResults?.map((r) => r.tabLabel)).toEqual(["HGETALL post:1", "GET session:9", tr("dataSql.failedTab", { label: "DEBUG SLEEP" })]);
@@ -677,7 +681,9 @@ describe("the agent's pane (SPEC §data.agent)", () => {
 
   it("one conversation per connection: switching shows that connection's own, and a reply for the one the page left never touches it", async () => {
     const wire = liveBody();
-    route = (c) => (c.method === "POST" && c.path === "/api/llm/db/stream" ? [200, { __live: wire.body }] : undefined);
+    let sends = 0;
+    route = (c) => c.method === "POST" && c.path === "/api/llm/db/stream"
+      ? [200, ++sends === 1 ? { __live: wire.body } : { __sse: [sseFrame("done", { ok: true, runId: 11, ms: 1, turns: 1, tokensIn: 1, tokensOut: 1 })] }] : undefined;
     await openOn("i-shop", "i-crm");
     void ask("count the posts");
     await settle();
@@ -685,12 +691,14 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     wire.push("delta", { kind: "text", text: "Counting" });
     await settle();
     expect(bodyText()).toContain("count the posts");
-    expect(q<HTMLButtonElement>("#dbAgentSend").textContent, "live on this connection: Send queues").toBe(tr("llm.test.queue"));
+    expect(q<HTMLButtonElement>("#dbAgentSend").getAttribute("aria-label"), "live on this connection: Send queues").toBe(tr("llm.test.queue"));
+    await ask("follow up");
     await switchTo("i-crm");
     expect(calls.some((c) => c.path === "/api/llm/db/conversation?agent=db&conn=i-crm")).toBe(true);
     expect(bodyText()).not.toContain("count the posts");
-    expect(q<HTMLButtonElement>("#dbAgentSend").textContent, "the other connection is free").toBe(tr("dataAgent.send"));
+    expect(q<HTMLButtonElement>("#dbAgentSend").getAttribute("aria-label"), "the other connection is free").toBe(tr("dataAgent.send"));
     // The shop's statement arrives while the crm is in front: it stays in the shop's conversation.
+    wire.push("db", { kind: "stage", tabId: "late-console", create: true, sql: "SELECT 9" });
     wire.push("db", { kind: "run", sql: "SELECT count(*) FROM posts", reply: { columns: ["count"], rows: [{ count: 3 }], rowCount: 1, elapsedMs: 1 } });
     wire.push("final", { text: "Three posts." });
     wire.push("done", { ok: true, runId: 11, ms: 10, turns: 1, tokensIn: 1, tokensOut: 1 });
@@ -698,9 +706,14 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     await settle();
     expect(dbTabs().some((t) => t.kind === "sql" && t.agent), "nothing landed on the crm's page").toBe(false);
     expect(bodyText()).not.toContain("Three posts.");
+    expect(sends, "the next send waits for its connection").toBe(1);
     await switchTo("i-shop");
     expect(bodyText()).toContain("count the posts");
     expect(bodyText()).toContain("Three posts.");
+    const late = dbTabs().find(t => t.kind === "sql" && t.id === "late-console");
+    expect(late?.kind === "sql" && late.sqlText).toContain("SELECT 9");
+    expect(sends).toBe(2);
+    expect((sent("/api/llm/db/stream").at(-1) as { consoleTabs: { id: string }[] }).consoleTabs.some(t => t.id === "late-console")).toBe(true);
   });
 
   it("restores the connection's open conversation; New closes it and clears the column; Stop cancels by run id", async () => {
@@ -726,7 +739,7 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     await settle();
     expect(sent("/api/llm/history/runs/41/close")).toHaveLength(1);
     expect(bodyText()).not.toContain("The posts table.");
-    expect(bodyText()).toContain(tr("dataAgent.empty"));
+    expect(bodyText()).toContain(tr("dataAgent.start"));
     // A fresh send names no run; Stop cancels the one its run frame named.
     void ask("and the users?");
     await settle();
@@ -783,7 +796,6 @@ const TOOLS = [
   { name: "save_memory", summary: "server words" },
   { name: "delete_memory", summary: "server words" },
 ];
-const MEMORY_TOOLS = " · read_memory · save_memory · delete_memory";
 
 /** A conversation as the history keeps it: its question and its answer. */
 function dialogue(id: number, asked: string, answered: string, extra: Record<string, unknown> = {}): unknown {
@@ -813,7 +825,7 @@ describe("around the conversation (SPEC §data.agent)", () => {
     await openOn("t-shop");
     const tools = q<HTMLDetailsElement>("#dbAgentBody #dbAgentTools");
     expect(q("#dbAgentBody").firstElementChild, "first, above the conversation").toBe(tools);
-    expect(tools.querySelector("summary")?.textContent).toBe(tr("dataAgent.tools") + " · list_tables · describe_table · run_sql · stage_sql" + MEMORY_TOOLS);
+    expect(tools.querySelector("summary")?.textContent).toBe(tr("dataAgent.tools") + " · " + tr("dataAgent.toolsCount", { n: 7 }));
     expect(tools.open).toBe(false);
     // The panel's own words for the tools it knows.
     expect(q("[data-dbtool='run_sql']").textContent).toContain(tr("llm.tool.db.runSql"));
@@ -830,12 +842,12 @@ describe("around the conversation (SPEC §data.agent)", () => {
     // Each connection's kind names its own, in the panel's words: Redis its streams and pub/sub too.
     dbConnState().conns.push(dbConn("t-cache", "redis"), dbConn("t-docs", "mongo"));
     await switchTo("t-cache");
-    expect(q("#dbAgentTools summary").textContent).toBe(tr("dataAgent.tools") + " · scan_keys · read_key · read_stream · list_channels · listen_channels · run_redis · stage_redis" + MEMORY_TOOLS);
+    expect(q("#dbAgentTools summary").textContent).toBe(tr("dataAgent.tools") + " · " + tr("dataAgent.toolsCount", { n: 10 }));
     expect(q("[data-dbtool='run_redis']").textContent).toContain(tr("llm.tool.db.runRedis"));
     expect(q("[data-dbtool='list_channels']").textContent).toContain(tr("llm.tool.db.listChannels"));
     expect(q("[data-dbtool='read_stream']").textContent).toContain(tr("llm.tool.db.readStream"));
     await switchTo("t-docs");
-    expect(q("#dbAgentTools summary").textContent).toBe(tr("dataAgent.tools") + " · list_collections · describe_collection · run_mongo · stage_mongo" + MEMORY_TOOLS);
+    expect(q("#dbAgentTools summary").textContent).toBe(tr("dataAgent.tools") + " · " + tr("dataAgent.toolsCount", { n: 7 }));
     expect(q("[data-dbtool='describe_collection']").textContent).toContain(tr("llm.tool.db.describeCollection"));
   });
 
@@ -924,7 +936,7 @@ describe("around the conversation (SPEC §data.agent)", () => {
     expect(queued()).toEqual(["one more", "and another"]);
     expect(document.querySelectorAll("#dbAgentQueued [data-steered]")).toHaveLength(0);
     expect(box.value).toBe("half typed");
-    expect(q<HTMLButtonElement>("#dbAgentSend").textContent).toBe(tr("dataAgent.send"));
+    expect(q<HTMLButtonElement>("#dbAgentSend").getAttribute("aria-label")).toBe(tr("dataAgent.send"));
     expect(box.placeholder).toBe(tr("dataAgent.askPh"));
     next.end();
     // With nothing streaming, ↑ sends that one now.
@@ -1197,6 +1209,47 @@ describe("around the conversation (SPEC §data.agent)", () => {
     expect(q("#dbAgentStop").hidden).toBe(true);
   });
 
+  it("uses the smaller model window for both the fresh estimate and the first provider count", async () => {
+    route = c => {
+      if (c.path === "/api/llm/status") return [200, { ...STATUS,
+        providers: [{ name: "local", style: "openai", baseUrl: "", models: [{ id: "small", kind: "chat", name: "Small", contextWindow: 32_000 }] }],
+        agents: [{ name: "db", runtime: "db", provider: "local", model: "small" }],
+      }];
+      if (c.path.startsWith("/api/llm/db/context?")) return [200, { ok: true, bytes: 65_536, cap: 1_048_576, system: 30_000, tools: 35_536 }];
+      if (c.method === "POST" && c.path === "/api/llm/db/stream") return [200, { __sse: [
+        sseFrame("run", { runId: 611, agent: "db", continued: false }),
+        sseFrame("usage", { bytes: 65_536, cap: 1_048_576, system: 30_000, tools: 35_536, tokensIn: 16_000, tokensOut: 0, ms: 1 }),
+        sseFrame("final", { text: "Ready." }), sseFrame("done", { ok: true, runId: 611 }),
+      ] }];
+      return undefined;
+    };
+    await openOn("small-window-shop");
+    const ring = q<HTMLButtonElement>("#dbAgentStats .chat-ctx");
+    expect(ring.textContent).toBe("~50%");
+    ring.click();
+    expect(q("#dbAgentStats .chat-pop-value").textContent).toBe("~16K / 32K");
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await ask("how full?");
+    expect(ring.textContent).toBe("50%");
+  });
+
+  it("shows the base context percentage before the first message and after New", async () => {
+    route = c => c.path === "/api/llm/db/context?agent=db&conn=percent-shop"
+      ? [200, { ok: true, bytes: 41_943, cap: 1_048_576, system: 30_000, tools: 11_943 }]
+      : undefined;
+    await openOn("percent-shop");
+    expect(q("#dbAgentStats").hidden).toBe(false);
+    expect(q("#dbAgentStats .chat-ctx").textContent).toBe("~4%");
+    expect(q("#dbAgentStats [data-stat=activity]").hidden).toBe(true);
+    expect(q("#dbAgentStats [data-stat=tokens]").hidden).toBe(true);
+    q<HTMLButtonElement>("#dbAgentNew").click();
+    await settle();
+    expect(q("#dbAgentStats").hidden).toBe(false);
+    expect(q("#dbAgentStats .chat-ctx").textContent).toBe("~4%");
+    expect(calls.filter(c => c.path === "/api/llm/db/context?agent=db&conn=percent-shop")).toHaveLength(2);
+    expect(calls.some(c => c.method === "POST" && c.path === "/api/llm/db/stream")).toBe(false);
+  });
+
   it("under the box the conversation's account: a restore reads it from its calls and turns, each round's usage counts a step, a tool's answer its time, the ring the provider's count against the budget, New clears it", async () => {
     let weight = 20_480;
     const chat = (id: number, tokensIn: number, tokensCacheRead: number, tokensOut: number, ttftMs?: number): unknown => ({
@@ -1264,7 +1317,10 @@ describe("around the conversation (SPEC §data.agent)", () => {
     expect(q("#dbAgentStats .chat-pop").hidden).toBe(true);
     q<HTMLButtonElement>("#dbAgentNew").click();
     await settle();
-    expect(q("#dbAgentStats").hidden, "a new conversation has spent nothing").toBe(true);
+    expect(q("#dbAgentStats").hidden, "New keeps the base context meter visible").toBe(false);
+    expect(q("#dbAgentStats .chat-ctx").textContent).toBe("~6%");
+    expect(pill("activity").hidden).toBe(true);
+    expect(pill("tokens").hidden).toBe(true);
   });
 
   it("each turn closes on its Copy: the question as typed, the answer whole, a code block its own", async () => {
@@ -1453,4 +1509,97 @@ describe("around the conversation (SPEC §data.agent)", () => {
     // The effort was kept for the next model that takes one.
     expect(button.textContent).toBe("glm-bare " + tr("dataAgent.effort.high"));
   });
+});
+
+
+it("starts without fixed questions and context toggles change the next request", async () => {
+  await openOn("context-shop");
+  expect(q("#dbAgentEmpty").querySelector("button")).toBeNull();
+  expect(q<HTMLTextAreaElement>("#dbAgentAsk").value).toBe("");
+  expect(sent("/api/llm/db/stream")).toHaveLength(0);
+  const t = freshTab("sql") as DbSqlTab; t.sqlText = "SELECT 27;";
+  dbTabs().push(t); tabs.dbActivateTab(dbTabs().indexOf(t));
+  const context = q<HTMLButtonElement>('[data-context="sql"]');
+  expect(context.getAttribute("aria-pressed")).toBe("true"); context.click();
+  expect(q('[data-context="sql"]').getAttribute("aria-pressed")).toBe("false");
+  await ask("review only my question");
+  expect(sent("/api/llm/db/stream").at(-1)).toMatchObject({ pageContext: { conn: "context-shop" } });
+  expect((sent("/api/llm/db/stream").at(-1) as { pageContext: object }).pageContext).not.toHaveProperty("sql");
+});
+
+it("does not split a Unicode character at the SQL context limit", async () => {
+  await openOn("unicode-context");
+  const t = freshTab("sql") as DbSqlTab;
+  t.sqlText = "x".repeat(19_999) + "😀" + " tail";
+  dbTabs().push(t); tabs.dbActivateTab(dbTabs().indexOf(t));
+  const { dbAgentContext } = await import("../src/data-agent.js");
+  expect(dbAgentContext().pageContext.sql).toHaveLength(19_999);
+  await ask("inspect the draft");
+  expect((sent("/api/llm/db/stream").at(-1) as { pageContext: { sql: string } }).pageContext.sql).toHaveLength(19_999);
+});
+
+it("shows and sends only bounded selected rows, and removing the reference leaves selection intact", async () => {
+  await openOn("rows-shop");
+  const t = dbTab();
+  if (t.kind !== "table") throw new Error("table");
+  t.data = dbPage({ primaryKey: ["id"], rows: [{ id: 7, name: "selected" }] });
+  const row = t.data.rows[0];
+  const { dbPkKey } = await import("../src/data-view.js");
+  t.sel[dbPkKey(t.data.primaryKey, row)] = true;
+  const { paintContext, dbAgentContext } = await import("../src/data-agent.js");
+  paintContext();
+  expect(q('[data-context="rows"]').textContent).toContain("1");
+  expect(dbAgentContext().pageContext.rows).toEqual([row]);
+  q<HTMLButtonElement>('[data-context="rows"]').click();
+  expect(dbAgentContext().pageContext).not.toHaveProperty("rows");
+  expect(Object.values(t.sel)).toEqual([true]);
+});
+
+
+it("restores a saved analysis artifact outside the folded process with its original result id", async () => {
+  const result = JSON.stringify({ reference: { taskId: "analysis-old", resultId: "result-old", title: "Orders", version: 1, run: 1, at: "2026-11-01T08:00:00Z" }, taskId: "analysis-old", resultId: "result-old", value: {} });
+  route = c => {
+    if (c.path === "/api/llm/db/conversation?agent=db&conn=artifact-shop") return [200, { ok: true, runId: 88 }];
+    if (c.path === "/api/llm/history/runs/88/dialogue") return [200, dialogue(88, "newer", "newer answer")];
+    if (c.path.startsWith("/api/llm/db/conversations?agent=db&conn=artifact-shop")) return [200, { runs: [historyRow(87, "count orders")], more: false }];
+    if (c.method === "POST" && c.path === "/api/llm/db/reopen") return [200, { runId: 87 }];
+    if (c.path === "/api/llm/history/runs/87/dialogue") return [200, dialogue(87, "count orders", "Done", { turns: [
+      { seq: 1, at: "2026-11-01T08:00:00Z", role: "user", text: "count orders" },
+      { seq: 2, at: "2026-11-01T08:00:00Z", role: "assistant", text: 'tool call analysis [call-1]: {"op":"run"}' },
+      { seq: 3, at: "2026-11-01T08:00:01Z", role: "tool", text: "analysis [call-1]: " + result },
+      { seq: 4, at: "2026-11-01T08:00:02Z", role: "final", text: "Done" },
+    ] })];
+    return undefined;
+  };
+  await openOn("artifact-shop");
+  q<HTMLButtonElement>("#dbAgentHistory").click();
+  await settle();
+  q<HTMLButtonElement>("[data-dbhist='87'] .fl-sum").click();
+  await settle();
+  const artifact = q<HTMLButtonElement>('#dbAgentHist [data-analysis-result="result-old"]');
+  expect(artifact.textContent).toContain("Orders");
+  expect(artifact.closest("details")).toBeNull();
+  q<HTMLButtonElement>("[data-dbcontinue='87']").click();
+  await settle();
+  expect(q('#dbAgentBody [data-analysis-result="result-old"]')).toBeTruthy();
+  q<HTMLButtonElement>('[data-analysis-result="result-old"]').click();
+  await settle();
+  expect(calls.some(c => c.path === "/api/analysis/analysis-old")).toBe(true);
+});
+
+it("keeps the connection beside the DB picker and every composer control inside the input card", async () => {
+  await openOn("composer-shop");
+  const label = "layout_proof @ 127.0.0.1:3306";
+  dbConnState().conns.find(c => c.name === "composer-shop")!.label = label;
+  agent.renderDbAgent();
+  const head = q("#dbAgent .chat-head");
+  expect(head.querySelector("#dbAgentConnection")?.textContent).toBe(label);
+  expect(head.querySelector("#dbAgentPick")).not.toBeNull();
+  expect(q("#dbAgent .chat-compose").textContent).not.toContain(label);
+  expect(q("#dbAgentEmpty").querySelector("button")).toBeNull();
+  const editor = q("#dbAgentAsk").closest(".chat-editor");
+  expect(editor).not.toBeNull();
+  for (const id of ["dbAgentWrites", "dbAgentModel", "dbAgentSend", "dbAgentStop"]) {
+    expect(q("#" + id).closest(".chat-editor"), id).toBe(editor);
+  }
 });

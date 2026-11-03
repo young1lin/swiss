@@ -6,7 +6,8 @@ Part 02 of [§data](README.md), chapter 0006 of the [swiss specification](../../
 
 - **One statement per request** (`assert_single_statement`) is the console's one rule. Reads
   and writes alike go through: the console belongs to the operator's own machine, and no
-  statement-shape classification refuses a write.
+  statement-shape classification refuses a write. Every module database on the Data page
+  (§data.sqlite) is the exception: its console refuses anything but a read.
 - **Automatic LIMIT.** No MySQL or PostgreSQL console statement reads without a bound: one
   without a LIMIT of its own gets `with_row_limit` at the console's **row limit** - 500
   (`CONSOLE_ROW_LIMIT`) unless the operator picked another on the status line (100, 500, 1000,
@@ -82,6 +83,13 @@ Part 02 of [§data](README.md), chapter 0006 of the [swiss specification](../../
 
 ## §data.history — What a console ran, per database
 
+Agent reads, persisted analysis executions and permitted automatic writes use the same durable
+history. The host carries an optional execution observer into each agent SQL operation; an adapter
+marks the actual statement just before submitting it. Validation refusals, drafts and console edits
+produce no run. A submitted failure and a submitted write rolled back by its row cap are failed
+attempts, with the driver's result or rollback reason. The statement is the SQL actually submitted,
+including an applied limit. One observation writes one row; callers do not also append it.
+
 Every statement or command a console sends - SQL, a redis command line, a mongo command
 document; runs, explains and failures alike - is filed by the gateway when its route answers,
 in `logs/data.db` (owner `data`, §host.history), never in the browser. A row is
@@ -108,7 +116,31 @@ in `logs/data.db` (owner `data`, §host.history), never in the browser. A row is
 
 ## §data.agent — The agent beside the console
 
-A MySQL, PostgreSQL, MongoDB or Redis connection's page has an agent at its end edge: the
+`open_console` accepts `tabId` alone. An unknown ID fails; a known closed console is restored
+under that ID before any editing. A new console receives its ID before the tool answers and enters
+the running conversation's tab snapshot, so later tools in the same send can address it. This also
+covers implicit run/stage creation (including the default Agent console) and restoration. Raw SQL
+uses the same blank-line block indices as the panel; semicolons within a block remain intact.
+An oversized console's statements may be omitted from the bounded Agent snapshot, explicitly
+marked as omitted; the model may open that console but cannot read or edit unknown indices.
+An incomplete tab list is reported and cannot justify creating an apparently missing tab.
+`format` is boolean, defaults to true, and formats SQL through the console's dialect formatter
+after restoration and optional placement. Only explicit false preserves whitespace. Commands on
+Redis and MongoDB do not go through the SQL formatter. Opening never executes a statement.
+
+Consoles keep `createdAt` and `updatedAt` in epoch milliseconds, independently of the monotonic
+LRU stamp and of the closed-history `at`. Only a changed name or text updates `updatedAt`.
+Restoration preserves both times; old entries with missing or invalid times display unknown.
+Recently closed is sorted by valid update time descending, then close time and stable ID. It is
+grouped by browser-local calendar day (Today, Yesterday, then date), with unknown updates in their
+own final group. Search removes empty groups. No within-day time windows are used. A row exposes
+its SQL summary and update time; its details include ID and creation, update and close times.
+Closed consoles deduplicate by connection and ID, including blank consoles and two consoles holding
+identical SQL. The 200-entry and one-million-character bounds reject a close that would exceed
+them, with a storage warning; they never silently discard an older console to make room. A failed
+history removal prevents restoration and warns; a failed clear warns and retains the history.
+
+A MySQL, PostgreSQL, SQLite, MongoDB or Redis connection's page has an agent at its end edge: the
 reader asks in their own words, and the agent reads how the data is laid out (tables,
 collections, keys), writes the statement or command for this connection, runs it and shows the
 result on the page - the reader does not have to think the query through. Each kind has tools
@@ -123,7 +155,7 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   remembered (`grip` key `db-agent`, 280 px up to 60 % of the window). A connection of any
   other kind has neither the pane nor the button. It needs the LLM plugin and a **db**
   agent (§llm.agents): the runtime made for this page, which nothing else runs, and no task
-  agent is ever borrowed. The pane offers the db agents (a picker from two on, remembered as
+  agent is ever borrowed. The pane offers the db agents (the picker stays visible beside the connection, remembered as
   `swiss.dbAgent`; first `db`, else the first listed); with none it says what one is, and
   *Make a DB agent* opens the Agents page's Add sheet preset to the db runtime and named `db`
   (the name only while free); it says why when the plugin does not answer - read once per visit,
@@ -135,18 +167,31 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   explicit send; queued sends preserve a reader's position. Work opens while running and
   folds as soon as the final answer arrives or Stop is pressed, without waiting for the
   transport to close. Stopped partial answer text stays visible outside the folded work.
-- **Its tools, named first.** Above every conversation, before the first ask too, a folded
-  line names the tools the model may call here - the connection's kind's own from the
-  status's db catalog, where each tool names its kind (`on`): *Tools · list_tables ·
-  describe_table · run_sql · stage_sql* on MySQL and PostgreSQL, *list_collections ·
-  describe_collection · run_mongo · stage_mongo* on MongoDB, *scan_keys · read_key ·
-  read_stream · list_channels · listen_channels · run_redis · stage_redis* on Redis, then on
-  every kind *open_console* (Tabs, below) and *read_memory · save_memory · delete_memory*
-  (Memory, below; they name no kind) - and
-  opens to each one's line in the panel's language under a note: everything it runs is a
-  read, a write it only drafts - unless Auto writes is on, when a narrow one runs (Writes,
-  below). Its fold holds for the visit. The server offers the model
-  those alone and refuses another kind's by name.
+- **First ask and tools.** The first screen has a short introduction and no fixed question buttons.
+  The header puts the connection beside the DB-agent picker. Connection identity is not repeated
+  below the conversation. One input card contains the words box and its bottom toolbar: write
+  permissions at the left, model and send/queue/stop at the right. Editable page references stay
+  above that card and take no space when absent.
+  The folded Tools summary shows a count; opening discloses localized names and descriptions.
+  Completed process folds; the answer, thinking and tool details retain their transcript behavior.
+- **Next-send references.** The composer shows its fixed connection plus removable database,
+  object, SQL, analysis-result and selected-row references. Removing one preserves source selection
+  and drafts. Console tools still see their separately bounded tab snapshot. Ordinary selected
+  rows come only from the visible result page: at most 20 object rows and 16,000 encoded bytes.
+  Analyses use stable row IDs resolved against their frozen result. SQL is capped at 20,000
+  characters, object/database names at 256. The server rejects mismatched connection ownership,
+  unknown fields and excessive counts. References are quoted data, explicitly never instructions.
+  Analysis row selection depends on including that result; the UI shows effective inclusion.
+  The first send shares the complete selected references. Later sends append only changed
+  fields; `null` removes a current reference while earlier shared data remains historical.
+  Equality is checked against consumer tags in the canonical replay, never parsed from user
+  text or a browser-only cache. Tags contain only changes, are sealed with their user turn,
+  and never enter the provider wire. Reload and Continue retain that basis; New, compaction
+  and old untagged history establish a fresh snapshot without rewriting earlier messages.
+  Agent SQL written by run_sql, stage_sql and edit_console_sql is formatted on the page by
+  default, including closed-tab replacements. Only the incoming block is formatted; prior
+  drafts, including trailing whitespace, and the exact SQL executed by the server stay intact. `format: false` preserves
+  the incoming whitespace, as it does for open_console; a non-boolean is refused.
 - **The prompt is the db runtime's.** The conversation opens under `DB_AGENT_PROMPT`, the
   agent's own prompt after it, a blank line between (a house style, a language to answer in);
   the agent's provider, model, effort and turn cap run it. After the prompts an `# Environment` snapshot names the connection, its
@@ -302,7 +347,9 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   agent's the reader closed waits under Recently closed (§data.tabs) with its text and the
   name the agent knows it by; `open_console` or a run naming it brings it back whole, the
   agent's again, and a later statement replaces its text as in an open one. The Agent tab
-  itself waits there too but opens empty when next needed. Asked to put SQL in a new tab, the
+  itself waits there too but opens empty when next needed. The reserved wire name `Agent`
+  (case insensitive) means the default slot in every locale; a closed snapshot preserves its
+  slot, so restoring it by ID and then staging without a name keeps that same identity. Asked to put SQL in a new tab, the
   agent could only use the Agent tab; the reader then asked for a tab a kind of work and for
   closed tabs to come back (2026-10-29;
   `open_console_opens_a_named_tab_and_a_run_naming_it_lands_there`, `a console tab of the
@@ -317,10 +364,41 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   tab comes back under its own id, its statements with it. The id outlives a rename, a close
   (Recently closed files the tab under its own id and restores it with that id), another console
   of the same name and a page reload; a name outlives none of those, and two tabs called *SQL*
-  were otherwise one address. Each send carries the page's tabs in its body (`consoleTabs`, open
-  and closed), so the tools read the page's picture before they act; the page applies each frame
-  as it arrives and its console stays the truth, and a frame delivered twice (the same replace,
-  a repeated delete) changes nothing the second time. Neither tool runs a statement: an edit or a
+  were otherwise one address. The server owns the consoles. Each one is a sealed record under
+  `llm/consoles/` (the sibling of `llm/analysis`): the connection and the id are hex-encoded, a
+  component past 200 hex characters is split, and a short path already on disk is still read.
+  A record holds the id, the title, whether it is the agent's and the name it knows, whether it
+  is open, the text, a monotonic revision, `createdAt`, `updatedAt` and `closedAt`. Those
+  survive a reload and a gateway restart. A read creates no file, and nothing new is started to
+  hold them (`sealed_consoles_survive_store_restart_with_identity_close_state_and_cas`).
+  `GET /api/llm/db/consoles?conn=` lists one connection, after the catalog leases it.
+  `POST` `{conn, console, mode?}` writes one. `mode` is `auto` when absent (create a missing
+  record, compare one that exists), `create` (a legacy import and a page's first save: an id
+  already stored is 409 `conflict: console already exists…` and the server record stays), or
+  `update` (a later save: a record that is gone is 409 `conflict: console was removed…` and is
+  not recreated). The write then compare-and-swaps `revision`; a stale one is 409
+  `conflict: console changed…` (`legacy_import_is_create_only_and_a_removed_record_is_not_recreated`,
+  `persistent_consoles_survive_a_new_router_and_reject_stale_edits`). The page keeps the draft,
+  paints a red dot on the card (`.db-tab-dot.err`) and offers *Reload the server's copy* and
+  *Keep my draft and save it* on the card's menu. A failed save does not retry until one of
+  those is chosen. `createdAt` stays; `updatedAt` moves only when the text or the title does.
+  `DELETE ?conn=&id=&revision=` removes one record when the revision matches, and is 409
+  `conflict: console changed; reload before deleting` when it does not; an id already gone
+  answers `{removed: false}`. `DELETE ?conn=&closed=true` removes only the closed records and
+  answers `{cleared}`; open consoles stay (`clearing_history_drops_closed_consoles_only`).
+  The page reads a connection once, puts the open records back on the strip, fills Recently
+  closed from the closed ones, and imports older local drafts with `create` only, once, never
+  over a record the server already has. Typing debounces 500 ms per connection; editing another
+  connection cannot cancel a parked draft's save. A send flushes first and is
+  not sent when that flush fails: the words stay in the box (`dataAgent.consoleSyncBlocked`).
+  With `consoleStore: true` on `POST /api/llm/db/stream` the tools reload the records before
+  each call and commit the text before the frame, so a page that has gone still leaves the
+  console (`separate_agent_requests_resume_the_server_owned_console_by_identity`). A snapshot
+  that carries statements and not the original text is refused and writes nothing
+  (`store_refuses_to_reconstruct_manual_console_from_statement_snapshot`). The page still sends
+  its tab snapshot; the store is what a later send and a restart read. A frame is applied, then
+  flushed, before the next frame is applied; a refused frame flush stays on the card and the
+  stream continues. Neither tool runs a statement: an edit or a
   delete is text, not execution. Before this a tab could only be named and the statements inside
   one could not be touched at all (2026-11-01; `is minted at birth, survives the close into
   Recently closed, and the snapshot lists open and closed tabs alike`, `two consoles sharing a
@@ -338,15 +416,20 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   system prompt with the snapshot, the connection kind's tool definitions, the messages)
   under a note: a send past the budget is refused, `/compact` carries the conversation on
   in less. The used figure is the provider's own count of the last round - its request and
-  its answer, every input bucket and the output, so nothing is guessed - and reads with a
-  `~` only after a compaction, when nothing has counted the checkpoint yet and the last
-  count over its bytes estimates it. A send counts a turn, each `usage` frame a step with
+  its answer, every input bucket and the output, so nothing is guessed. Estimates read with
+  `~`: before the first provider count, or after compaction when nothing has counted the
+  checkpoint yet and the last count over its bytes estimates it. A send counts a turn, each `usage` frame a step with
   its tokens, time and time to first token, each `toolResult` frame its tool's time; a
   restored or reopened conversation counts its turns and its calls' tokens, times and
   `ttftMs` from the dialogue, a tool's time as the gap between its answer's turn and the
   turn before it, and the ring's parts from `GET /api/llm/db/context`, asked again after
-  every send, compaction and Continue here. New clears it (`under the box the
-  conversation's account`).
+  every send, compaction and Continue here. With no runId the same route weighs the base
+  prompt and tools without querying the database or calling a model, so the percentage is
+  visible before the first send. Until a provider count calibrates tokens per byte, the same
+  250 tokens/KiB conversion estimates usage against the smaller of the agent budget and model
+  window; estimated percentages carry `~`. New clears the turn/token totals and reweighs this baseline;
+  the first send adds the connection snapshot (`under the box the conversation's account`,
+  `shows the base context percentage before the first message and after New`).
 - **Copy.** Each turn ends on a Copy (`copyBtn`, §panel.ui) - the reader's question as typed,
   the answer whole as markdown - and each code block in an answer has its own, the statement
   exactly (`each turn closes on its Copy`).
@@ -588,6 +671,34 @@ marked `interrupted`: the process died with it, and it must never look like it i
 like it finished. Cancelling is its own state, distinct from failing and from the page stopping
 its spinner. A result committed after its revision stopped being current is marked superseded: it
 stays readable as history and never becomes the analysis's current answer.
+
+**Version presentation.** Result labels name revision/run ordinals and local/relative execution
+ time. Current revision, its current result and a selected historical result remain distinct.
+ Conditions, changes from the parent, SQL, duration, row count, truncation and check evidence are
+ readable. IDs live in provenance with a copy action. Editing conditions preserves JSON structure
+ and params. A chat reference opens its exact immutable result after newer runs exist. Tool answers
+ carry a compact server-authored reference (task/result, revision/run ordinals and execution time);
+ the live transcript and restored conversation draw its action outside the process disclosure.
+ Read/validate/chart of a historical result preserve that result in the reference and page event.
+
+**Comparison.** Left/right are full saved results, independent of pagination. Empty keys compare
+ complete rows as a multiset. Keyed comparison matches exact rows first, then remaining duplicate
+ keys in stored order; diagnostics disclose duplicates and null keys as ambiguous identities.
+ Column names normalize positional legacy rows, including reordered columns; absent differs from
+ JSON null. Schema differences, counts and at most 20 samples expose field-level before/after
+ values. Truncated inputs describe saved subsets, never the whole database.
+
+**Charts.** Default series sums each category in first-seen order. Line/area connect those
+ categories; date text is categorical, not a continuous time axis. Scatter requests mode=scatter,
+ keeps individual observations including duplicate X and plots actual finite numeric X. Axes,
+ ticks, full-value tooltips and aggregation wording accompany charts. Invalid observations are
+ counted and categories without numeric observations are omitted; categories retain JSON types,
+ so null and the string "null" remain distinct. A non-finite sum is refused
+ with an overflow error instead of plotting a false value. Approximate conversions and truncated inputs are flagged. Tables/exports preserve exact
+ strings. The SVG evenly samples beyond 1,000 points and states displayed/available counts.
+ Series points carry measures under `values`, so business columns named `x`, `rows` or `values`
+ cannot overwrite coordinate/row metadata. Nonreserved legacy measure keys remain available.
+ Existing saved chart configs retain their default series mode.
 
 **Routes.** `POST /api/analysis`, `POST /api/analysis/{id}/revisions`,
 `POST /api/analysis/{id}/execute`, `POST /api/analysis/{id}/executions/{run}/cancel`,

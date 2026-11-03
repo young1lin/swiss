@@ -128,3 +128,49 @@ bar counts it and says it is local only. "SQL" previews exactly the statements C
   affected.
 - **Read-only** connections and secondary MySQL databases refuse edits; the editNote says why in
   the server's words.
+
+## §data.sqlite — The built-in memory store
+
+The Data page lists each open plugin's own SQLite file, and only that plugin's. A module
+publishes the path when it opens the file and withdraws every file of its own when it stops.
+A plugin that is not started has no row. Nothing hands one module another module's path.
+
+Two doors, one seat. A history owner enrolls its `db_file` by registering on the history-query
+seat (§host.history); unregister withdraws it. A module that opens a SQLite file and does not
+register a history adapter publishes the path itself on start: Data (`logs/data.db`, the
+console's SQL history — open console tabs stay sealed JSON, not this file), LLM
+(`logs/llm.db`), Process (`logs/process.db`), and Memory (`memory/store.sqlite3`, plus
+`memory/code.sqlite3` only when that file already exists). A later module that already
+registers a history adapter appears on its own; the catalog has no list of module names.
+
+The connection id is `swiss-{plugin}` when the file stem is `store` or the plugin id, and
+`swiss-{plugin}-{stem}` otherwise. The label is the parent directory plus the file name when
+that parent is `logs` or `memory` (`logs/data.db`, `memory/store.sqlite3`); otherwise just
+the file name. The home directory is never in the label. The memory store is `swiss-memory`,
+not a shared connection other modules write.
+
+A file is listed even when it is not there yet (`state` `unknown`); the first query then
+names the label and does not create the file. While the file is there, `state` is `running`.
+A user MCP registered under the same id hides that row — the definition wins, and the list
+does not show both. Disabling MCP removes the catalog route (`GET /api/db` is 503) even
+while other plugins still hold their files; disabling Data is the same 503 because Data owns
+the route. Enabling the plugin again republishes.
+
+Every such connection is query-only. The file is opened read-only, each connection sets
+`query_only`, and a statement that is not a read is refused before it is sent. `INSERT`,
+`UPDATE`, `DELETE`, DDL, `PRAGMA` and `ANALYZE` (it rewrites `sqlite_stat1`) are refused
+with `this connection is query-only ({label}): a write would change this module's own
+database`. The wire text stays that English. The panel maps the known sentence, including
+the read-gate reason appended in parentheses, through `moduleDbMessage`
+(SPEC §panel.i18n). The grid's `editable` is false and `editNote` carries that sentence. Imports,
+structure changes and session kill are the same refusal. The pool stays closed until the
+first browse and holds no connection while idle.
+
+Browsing is the file's own catalog: tables and views, not `sqlite_%`, one database `main`.
+Name order is the list statement's. A rows sort counts each table and orders those counts;
+size is unknown, so a size sort ties and the name breaks the tie. Filters bind `?` and quote
+identifiers with double quotes. The console and the Data agent use the SQL tools
+(`list_tables`, `describe_table`, `run_sql`, `stage_sql`, `analysis`); `run_sql` is a read,
+and a write the agent tries is held rather than run. The Writes switch is not offered.
+`a_query_only_store_lists_and_reads_and_refuses_a_write` and
+`an_open_module_database_is_a_connection_until_its_plugin_stops` pin it.

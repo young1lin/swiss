@@ -308,6 +308,7 @@ pub enum CatalogPresence {
 #[derive(Default)]
 pub struct CatalogRegistry {
     state: Mutex<CatalogState>,
+    pub sql_history: crate::dbbrowser::execution::SqlHistorySeat,
 }
 
 #[derive(Default)]

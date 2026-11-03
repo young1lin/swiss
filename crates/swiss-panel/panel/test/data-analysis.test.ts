@@ -15,22 +15,27 @@ function shell(): void {
 shell();
 const { dbOpenTabForce } = await import("../src/data-tabs.js");
 const calls: string[] = [];
+const posts: { url: string; body: unknown }[] = [];
 let seq = 0;
 let task: AnalysisTask;
 let execution: Promise<unknown> | null = null;
 let saving: Promise<unknown> | null = null;
 let cancellation: Promise<Response> | null = null;
 let taskReads: Promise<Response>[] = [];
+let seriesReply: unknown = null;
 const previousFetch = globalThis.fetch;
-globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   calls.push(url);
+  if (init?.body) posts.push({ url, body: JSON.parse(String(init.body)) });
   if (url.endsWith("/cancel") && cancellation) return cancellation;
   if (url === "/api/analysis/" + task.id && taskReads.length) return taskReads.shift()!;
   let out: unknown = {};
   if (url.endsWith("/execute")) out = await execution;
+  else if (url.endsWith("/revisions")) out = task;
   else if (url.endsWith("/save") && saving) out = await saving;
   else if (url === "/api/analysis/" + task.id) out = task;
+  else if (url.includes("/series?")) out = seriesReply ?? { points: [{ x: "1", values: { amount: "10" } }, { x: "2", values: { amount: "20" } }, { x: "100", values: { amount: "30" } }], approximate: false, truncated: false };
   else if (url.includes("/rows?")) {
     const offset = Number(new URL(url, "http://localhost").searchParams.get("offset"));
     const n = offset === 0 ? 50 : 1;
@@ -42,20 +47,20 @@ globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
 const analysis = await import("../src/data-analysis.js");
 afterAll(() => { globalThis.fetch = previousFetch; });
 beforeEach(() => {
-  shell(); localStorage.clear(); calls.length = 0; unmountDbView(); mountDbView();
+  shell(); localStorage.clear(); calls.length = 0; posts.length = 0; unmountDbView(); mountDbView();
   execution = null; saving = null;
   cancellation = null;
-  taskReads = [];
+  taskReads = []; seriesReply = null;
   Object.assign(state(), { conn: "c", conns: [dbConn("c", "mysql")] });
-  task = { id: "a" + (++seq), conn: "c", title: "Orders", current: "v1", saved: false,
-    revisions: [{ id: "v1", parent: null, sql: "SELECT id, amount FROM orders", conditions: { grain: "order" }, note: "", at: "2026-11-01" }],
-    executions: [], results: [{ id: "r1", revision: "v1", execution: "e1", rowCount: 51, truncated: false, verification: "undetermined", checks: [], note: "", superseded: false, chart: null }] };
+  task = { id: "a" + (++seq), conn: "c", title: "Orders", current: "v1", saved: false, kind: "sql", createdAt: "2026-11-01T08:00:00Z", updatedAt: "2026-11-01T08:01:00Z",
+    revisions: [{ id: "v1", parent: null, sql: "SELECT id, amount FROM orders", conditions: { grain: "order" }, note: "", params: {}, at: "2026-11-01T08:00:00Z" }],
+    executions: [], results: [{ id: "r1", revision: "v1", execution: "e1", at: "2026-11-01T08:01:00Z", elapsedMs: 12, columns: ["id", "amount"], rowCount: 51, truncated: false, verification: "undetermined", checks: [], note: "", superseded: false, chart: null }] };
 });
 
 it("disables Stop waiting through a repaint and restores it after a refusal", async () => {
   let finish!: (value: Response) => void;
   cancellation = new Promise(resolve => { finish = resolve; });
-  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1", sql: "SELECT 1", params: {}, startedAt: "2026-11-01T08:00:00Z", finishedAt: null, elapsedMs: 0, rows: 0, truncated: false, result: null, superseded: false }];
   await analysis.dbAnalysisOpen(task.id);
   const stop = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('[data-action="stop"]')!;
   await vi.waitFor(() => expect(stop()).toBeTruthy());
@@ -78,7 +83,7 @@ it("disables Stop waiting through a repaint and restores it after a refusal", as
 it("refreshes the execution after accepting Stop waiting", async () => {
   let finish!: (value: Response) => void;
   cancellation = new Promise(resolve => { finish = resolve; });
-  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1", sql: "SELECT 1", params: {}, startedAt: "2026-11-01T08:00:00Z", finishedAt: null, elapsedMs: 0, rows: 0, truncated: false, result: null, superseded: false }];
   await analysis.dbAnalysisOpen(task.id);
   const stop = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('[data-action="stop"]')!;
   stop().click();
@@ -90,7 +95,7 @@ it("refreshes the execution after accepting Stop waiting", async () => {
 });
 
 it("keeps an accepted stop disabled when the status refresh fails", async () => {
-  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1", sql: "SELECT 1", params: {}, startedAt: "2026-11-01T08:00:00Z", finishedAt: null, elapsedMs: 0, rows: 0, truncated: false, result: null, superseded: false }];
   await analysis.dbAnalysisOpen(task.id);
   taskReads.push(Promise.resolve(new Response("unavailable", { status: 503 })));
   cancellation = Promise.resolve(new Response(JSON.stringify({ cancelled: true }), { status: 200 }));
@@ -104,7 +109,7 @@ it("keeps an accepted stop disabled when the status refresh fails", async () => 
 });
 
 it("retries the status of an accepted stop started in another session", async () => {
-  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1", sql: "SELECT 1", params: {}, startedAt: "2026-11-01T08:00:00Z", finishedAt: null, elapsedMs: 0, rows: 0, truncated: false, result: null, superseded: false }];
   await analysis.dbAnalysisOpen(task.id);
   taskReads.push(Promise.resolve(new Response("unavailable", { status: 503 })));
   cancellation = Promise.resolve(new Response(JSON.stringify({ cancelled: true }), { status: 200 }));
@@ -141,7 +146,7 @@ it("applies a slow polling response while a newer poll is still pending", async 
   document.querySelector<HTMLButtonElement>('[data-action="start"]')!.click();
   await vi.waitFor(() => expect(calls.filter(url => url === "/api/analysis/" + task.id)).toHaveLength(3), { timeout: 3500 });
   const running = structuredClone(task);
-  running.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  running.executions = [{ id: "e1", status: "running", error: null, revision: "v1", sql: "SELECT 1", params: {}, startedAt: "2026-11-01T08:00:00Z", finishedAt: null, elapsedMs: 0, rows: 0, truncated: false, result: null, superseded: false }];
   firstRead(new Response(JSON.stringify(running), { status: 200 }));
   await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>('[data-action="stop"]')!.disabled).toBe(false));
   secondRead(new Response(JSON.stringify(running), { status: 200 }));
@@ -149,7 +154,7 @@ it("applies a slow polling response while a newer poll is still pending", async 
 });
 
 it("restores the action when the server does not accept cancellation", async () => {
-  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1", sql: "SELECT 1", params: {}, startedAt: "2026-11-01T08:00:00Z", finishedAt: null, elapsedMs: 0, rows: 0, truncated: false, result: null, superseded: false }];
   await analysis.dbAnalysisOpen(task.id);
   cancellation = Promise.resolve(new Response(JSON.stringify({ cancelled: false }), { status: 200 }));
   const stop = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('[data-action="stop"]')!;
@@ -159,7 +164,7 @@ it("restores the action when the server does not accept cancellation", async () 
 });
 
 it("does not let an older opening response undo the accepted stop", async () => {
-  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1" }];
+  task.executions = [{ id: "e1", status: "running", error: null, revision: "v1", sql: "SELECT 1", params: {}, startedAt: "2026-11-01T08:00:00Z", finishedAt: null, elapsedMs: 0, rows: 0, truncated: false, result: null, superseded: false }];
   await analysis.dbAnalysisOpen(task.id);
   let finishRead!: (value: Response) => void;
   taskReads.push(new Promise(resolve => { finishRead = resolve; }));
@@ -226,4 +231,64 @@ it("saving keeps the action disabled through a repaint and reverses its icon aft
   task.saved = true; finish({ ok: true });
   await vi.waitFor(() => expect(action().getAttribute("aria-label")).toBe("Unsave analysis"));
   expect(action().querySelector("use")?.getAttribute("href")).toBe("#i-bookmark-minus");
+});
+
+
+it("opens the immutable result named by an Agent reference and preserves it on reopen", async () => {
+  const old = { ...task.results[0], id: "r-old", at: "2026-10-31T08:00:00Z" };
+  task.results.unshift(old);
+  await analysis.dbAnalysisOpen(task.id, "c", old.id);
+  await vi.waitFor(() => expect(calls.some(url => url.includes("/results/r-old/rows?"))).toBe(true));
+  expect(analysis.dbAnalysisContext()?.resultId).toBe(old.id);
+  await analysis.dbAnalysisOpen(task.id);
+  expect(analysis.dbAnalysisContext()?.resultId).toBe(old.id);
+  await analysis.dbAnalysisOpen(task.id, "c", "other-task-result");
+  expect(analysis.dbAnalysisContext()?.resultId).toBe(old.id);
+});
+
+it("requests scatter observations rather than grouped sums and passes numeric x to the chart", async () => {
+  task.results[0].chart = { kind: "scatter", x: "id", y: ["amount"], title: "Orders" };
+  await analysis.dbAnalysisOpen(task.id);
+  await vi.waitFor(() => expect(calls.some(url => url.includes("/series?") && url.includes("mode=scatter"))).toBe(true));
+  await vi.waitFor(() => expect(document.querySelectorAll(".result-chart circle")).toHaveLength(3));
+  const xs = [...document.querySelectorAll(".result-chart circle")].map(c => Number(c.getAttribute("cx")));
+  expect((xs[2] - xs[1]) / (xs[1] - xs[0])).toBeCloseTo(98);
+});
+
+it("does not plot a zero for a category with no numeric values", async () => {
+  seriesReply = { points: [{ x: "invalid", values: { amount: { sum: 0, n: 0 } } }, { x: "valid", values: { amount: { sum: 4, n: 1 } } }], invalid: 1, approximate: false, truncated: false };
+  task.results[0].chart = { kind: "bar", x: "id", y: ["amount"], title: "Orders" };
+  await analysis.dbAnalysisOpen(task.id);
+  await vi.waitFor(() => expect(document.querySelectorAll(".result-chart rect")).toHaveLength(1));
+  expect(document.querySelector(".result-chart rect title")?.textContent).toContain("valid: 4");
+});
+
+it("keeps condition structure and params when the reader revises SQL", async () => {
+  task.revisions[0].conditions = { window: { from: "2026-10-01", to: "2026-11-01" }, excludeCancelled: true };
+  await analysis.dbAnalysisOpen(task.id);
+  document.querySelector<HTMLButtonElement>('[data-action="edit"]')!.click();
+  const editors = [...document.querySelectorAll<HTMLTextAreaElement>('#sheet textarea')];
+  const conditions = editors.find(e => e.value.includes("excludeCancelled"))!;
+  expect(JSON.parse(conditions.value)).toEqual(task.revisions[0].conditions);
+  const sql = editors.find(e => e !== conditions)!; sql.value += " WHERE id > 10";
+  [...document.querySelectorAll<HTMLButtonElement>('#sheet button')].find(b => b.textContent === "Create revision and run")!.click();
+  await vi.waitFor(() => expect(posts.find(p => p.url.endsWith("/revisions"))).toBeTruthy());
+  expect(posts.find(p => p.url.endsWith("/revisions"))?.body).toMatchObject({ conditions: task.revisions[0].conditions, params: {} });
+});
+
+
+it("a durable chat artifact opens its captured historical result even when newer results exist", async () => {
+  const old = { ...task.results[0], id: "r-artifact", at: "2026-10-31T08:00:00Z" };
+  task.results.unshift(old);
+  const reference = { taskId: task.id, resultId: old.id, title: "Orders", version: 1, run: 1, at: old.at };
+  for (const text of [JSON.stringify({ reference, taskId: task.id, value: {} }), '{"reference":' + JSON.stringify(reference) + ',"taskId":"clipped']) {
+    const artifact = analysis.dbAnalysisReference(text, "c");
+    expect(artifact).toBeTruthy();
+    document.body.appendChild(artifact!);
+    const open = artifact!.querySelector<HTMLButtonElement>('button')!;
+    expect(open.textContent).toContain("Version 1");
+    open.click();
+    await vi.waitFor(() => expect(analysis.dbAnalysisContext()?.resultId).toBe(old.id));
+  }
+  expect(analysis.dbAnalysisReference('{"reference":null}', "c")).toBeNull();
 });

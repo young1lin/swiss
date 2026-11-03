@@ -161,6 +161,7 @@ in §decisions.
 - [§data.databases — The database axis (ADR-027)](spec/0006-data/01-browse.md#datadatabases--the-database-axis-adr-027)
 - [§data.grid — The grid, form and value views](spec/0006-data/01-browse.md#datagrid--the-grid-form-and-value-views)
 - [§data.edits — Buffered edits](spec/0006-data/01-browse.md#dataedits--buffered-edits)
+- [§data.sqlite — The built-in memory store](spec/0006-data/01-browse.md#datasqlite--the-built-in-memory-store)
 - [§data.console — The SQL console](spec/0006-data/02-console.md#dataconsole--the-sql-console)
 - [§data.history — What a console ran, per database](spec/0006-data/02-console.md#datahistory--what-a-console-ran-per-database)
 - [§data.agent — The agent beside the console](spec/0006-data/02-console.md#dataagent--the-agent-beside-the-console)

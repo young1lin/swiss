@@ -401,7 +401,10 @@ reads like DataGrip on SQL it has not resolved against a schema.
   transparent textarea over a highlighted `<pre>`, both in `.db-sql-face` so every metric
   matches, the scrollbar's gutter reserved in both so a line wraps at the same place in each.
   The layer is repainted on every input, Format JSON and boolean toggle, and follows the
-  textarea's scroll. The cell editor paints a value that starts with `{` or `[` through
+  textarea's scroll. For console text of at least 64,000 characters, browsers supporting the
+  CSS Highlight API color ordinary tokens with native text ranges instead of an element per
+  token; comments and numbers retain spans for their font styles. The original span renderer is
+  the fallback, and the range registry is cleared when repainting or leaving Data. The cell editor paints a value that starts with `{` or `[` through
   `dbShellTokens` (JSON is a subset of the shell's syntax, so a half-typed value still
   colours); any other value is one plain run. Its textarea stays in flow, so its own height
   and resize handle size the box.
@@ -861,7 +864,9 @@ never shown again, and a forgotten one is re-stored, never revealed.
 
 English and Simplified Chinese. The scope is the **panel's own copy**: a string the server
 sends is data, shown as sent inside a translated frame (`{name}` placeholders); identifiers —
-names, keys, SQL, paths — are never translated.
+names, keys, SQL, paths — are never translated. A module-database refusal the gateway writes
+in English is the exception next to `wireLabel`: `moduleDbMessage` maps that known sentence,
+and an engine error still passes through.
 
 - **Keys are symbolic**, `<module>.<semanticId>` (`addSheet.addMcp`), in `locales/en.ts` and
   `locales/zh.ts` (TS sources, about 1,800 entries each). English is a static import and the

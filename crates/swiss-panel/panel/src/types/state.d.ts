@@ -424,6 +424,11 @@ export interface DbSqlTab extends DbTabBase {
      connection, not on the browser. */
   id: string;
   /** The Data agent's own console (SPEC §data.agent): its statements land here, never in another. */
+  createdAt?: number | null;
+  updatedAt?: number | null;
+  /** The server record's revision this tab is based on (0 = not stored yet). A save is a
+   *  compare-and-swap against it; a refused save keeps the draft and raises a visible conflict. */
+  revision?: number;
   agent?: boolean;
   /** The name of the agent's console tab it opened (open_console), which a run or stage naming
    *  it lands in; none for its Agent tab. The tab's title may be renamed; this stays. */
