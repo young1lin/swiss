@@ -22,6 +22,8 @@ const REMOVED: &str = "conflict: console was removed; kept the local draft";
 const CHANGED: &str = "conflict: console changed; reload the server record before saving";
 const CHANGED_DELETE: &str = "conflict: console changed; reload before deleting";
 const TOO_LARGE: &str = "console identity, title or text exceeds its limit";
+/// The wire code of a connection the catalog will not lease (unknown, withdrawing, not browsable).
+const CONNECTION: &str = "console.connection";
 
 /// The wire code of one of the store's own refusals; anything else (an I/O error) has none.
 fn code_of(message: &str) -> Option<&'static str> {

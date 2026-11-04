@@ -4309,6 +4309,7 @@ const en: Record<string, string> = {
   "served.consoleChanged": "This console was changed in another window. Load the server's copy, or keep your draft and save it over that copy.",
   "served.consoleChangedDelete": "This console was changed in another window. Load the server's copy before closing it.",
   "served.consoleTooLarge": "This console's name or text is too long to save.",
+  "served.consoleConnection": "This connection is not available, so its consoles cannot be read or saved.",
   "dataTabs.reloadConsoleConfirm": "Replace this console's text with the server's copy? Your draft will be lost.",
   "analysis.unsaved": "Unsaved analysis",
   "analysis.currentRevision": "Current revision · Version {version}",

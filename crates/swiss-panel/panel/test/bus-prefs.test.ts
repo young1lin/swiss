@@ -126,3 +126,23 @@ it("a newer language choice overtakes a delayed repaint without relaying the sta
   await older;
   expect(relays(peer)).toHaveLength(2);
 });
+
+it("a received choice of the language already in force neither repaints nor remounts", async () => {
+  const peer = ConsolePeer.current;
+  const current = locale();
+  const filter = document.getElementById("filter")!;
+  filter.setAttribute("placeholder", "untouched");
+  const navigated = pages.navigate.mock.calls.length;
+  const relayed = relays(peer).length;
+  peer.prefs({ lang: current });
+  await settle();
+  expect(locale()).toBe(current);
+  expect(pages.navigate, "no remount for the language on screen").toHaveBeenCalledTimes(navigated);
+  expect(filter.getAttribute("placeholder"), "no chrome repaint either").toBe("untouched");
+  // The other language still repaints and remounts, so the quiet above is the early return.
+  peer.prefs({ lang: current === "en" ? "zh-CN" : "en" });
+  await settle();
+  expect(pages.navigate).toHaveBeenCalledTimes(navigated + 1);
+  expect(filter.getAttribute("placeholder")).not.toBe("untouched");
+  expect(relays(peer), "received choices never echo").toHaveLength(relayed);
+});

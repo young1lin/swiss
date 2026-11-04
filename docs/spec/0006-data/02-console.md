@@ -387,8 +387,10 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   `{conn, console, mode}`: auto creates a missing record and compares an existing one;
   create refuses an existing id; update refuses a removed record. The write compares the
   revision and refuses a stale one. Refusal faults retain `console.exists`, `console.removed`,
-  `console.changed`, `console.changedDelete` and `console.tooLarge`; the page says the code
-  in the reader's language (SPEC §panel.i18n), and keeps the draft and its conflict bar.
+  `console.changed`, `console.changedDelete` and `console.tooLarge`; a connection the catalog
+  will not lease answers `console.connection` (the module is serving, so never
+  `bus.unavailable`). The page says the code in the reader's language (SPEC §panel.i18n), and
+  keeps the draft and its conflict bar.
   REMOVE compares the revision, refuses stale deletion, and answers `removed: false` for
   an absent record. CLEAR_CLOSED removes only closed records; open work stays. Every write
   publishes CHANGED, REMOVED or CLEARED while holding the store's write lock, so events leave

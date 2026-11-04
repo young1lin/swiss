@@ -173,6 +173,12 @@ async fn console_bus_writes_publish_origin_revisions_and_refuse_stale_edits() {
     assert_eq!(bad.fault.expect("bad body").code, swiss_bus::BAD_BODY);
     let unknown = peer.list("mm2").await;
     assert!(unknown.consoles.is_empty());
+    // A connection the catalog cannot lease answers its own code: the module is serving.
+    let gone = peer.request(v1::ConsolesId::ConsolesPut, v1::ConsolePut { conn: "gone".into(), ..put(record("b", true)) }).await;
+    assert_eq!(gone.fault.expect("unleased put").code, "console.connection");
+    let listed = peer.request(v1::ConsolesId::ConsolesList, v1::ConsolesPage { conn: "gone".into(), after: String::new() }).await;
+    assert_eq!(listed.fault.expect("unleased list").code, "console.connection");
+    assert!(store.list("gone").expect("nothing filed").is_empty());
     std::fs::remove_dir_all(root).expect("scratch cleanup");
 }
 

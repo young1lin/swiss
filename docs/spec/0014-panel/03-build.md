@@ -24,7 +24,8 @@ code on the server and its key in both locales in the same change. Bus faults us
 fallback.
 
 The codes so far are the console store's: `console.exists`, `console.removed`,
-`console.changed`, `console.changedDelete` and `console.tooLarge` (SPEC §data.agent Tabs).
+`console.changed`, `console.changedDelete`, `console.tooLarge` and `console.connection`
+(SPEC §data.agent Tabs).
 The bus adds `bus.unavailable`, `bus.unknown`, `bus.badBody`, `bus.notRelayable`,
 `bus.limit`, `bus.offline`, `bus.timeout` and `bus.tooLarge`, mapped to `served.bus*` keys.
 Two English sentences predate codes and are mapped by their text: `wireLabel` for a served
@@ -46,7 +47,8 @@ nav label, and `moduleDbMessage` for a module-database refusal.
   paint. Explicit language, theme and code-scheme choices follow across every open page,
   including the desktop window, on PANEL.PREFS (§bus.registry). Only the changed field is
   relayed. Receiving stores and applies through the same functions without relaying again;
-  boot, reconnect and OS theme changes never relay. A later page reads its own storage.
+  a received language already on screen and stored neither repaints nor re-navigates. Boot,
+  reconnect and OS theme changes never relay. A later page reads its own storage.
 - **The flip** (文/A in the context bar) is `setLang` → repaint the chrome → re-navigate the
   current page, without a reload. A page whose `canLeave()` refuses blocks it, and then the
   preference is not written. Blocked storage keeps the choice in memory; a failed Chinese load

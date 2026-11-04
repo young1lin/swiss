@@ -63,12 +63,9 @@ const DEFAULT_PROMPT: &str = "Reply with one short sentence that names the model
 /// run; the closing frame always waits its turn.
 pub(crate) const SSE_FRAMES: usize = 32;
 
-pub fn mount(state: Arc<LlmState>, services: Arc<RuntimeServices>) -> Router {
-    let analysis = crate::analysis::AnalysisStore::home();
-    let consoles = crate::db_consoles::ConsoleStore::at(analysis.root().with_file_name("consoles"), services.bus.clone());
-    mount_with_analysis(state, services, analysis, consoles)
-}
-
+/// The /api/llm routes over the plugin's own stores. The caller passes the ConsoleStore the
+/// plugin serves on the bus, never a fresh one: a second store on the same directory would hold
+/// a second write lock, and its saves would publish unordered against the first store's.
 pub fn mount_with_analysis(state: Arc<LlmState>, services: Arc<RuntimeServices>, analysis: Arc<crate::analysis::AnalysisStore>, consoles: Arc<crate::db_consoles::ConsoleStore>) -> Router {
     Router::new()
         .route("/api/llm/status", get(status))
@@ -1332,7 +1329,9 @@ pub(crate) mod tests {
     pub(crate) fn mount(state: Arc<LlmState>) -> Router {
         let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
         crate::llm_shell::register(&services).expect("shell action");
-        super::mount(state, services)
+        let analysis = crate::analysis::AnalysisStore::home();
+        let consoles = crate::db_consoles::ConsoleStore::at(analysis.root().with_file_name("consoles"), services.bus.clone());
+        mount_with_analysis(state, services, analysis, consoles)
     }
 
     use axum::body::Body;

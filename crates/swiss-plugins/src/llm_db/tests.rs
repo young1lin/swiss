@@ -375,6 +375,8 @@ async fn agent_stage_persists_without_a_connected_page() {
 
 #[tokio::test]
 async fn separate_agent_requests_resume_the_server_owned_console_by_identity() {
+    use prost::Message as _;
+    use swiss_bus::pb::v1;
     let frames = vec![
         tool_ask("stage_sql", json!({ "sql": "SELECT 11", "tab": "Report" })), one_round_answer(),
         tool_ask("stage_sql", json!({ "sql": "SELECT 22", "tab": "Report" })), one_round_answer(),
@@ -390,7 +392,10 @@ async fn separate_agent_requests_resume_the_server_owned_console_by_identity() {
     let first_tab = &saved.consoles[0];
     let id = first_tab.id.clone();
     assert_eq!((first_tab.sql.as_str(), first_tab.revision), ("SELECT 11;", 1));
-    assert_eq!(peer.event().await.origin, "", "agent saves have no page origin");
+    let event = peer.event().await;
+    assert_eq!((event.id, event.key.as_str(), event.origin.as_str()), (v1::ConsolesId::ConsolesChanged as u32, "mm", ""), "agent saves have no page origin");
+    let record = v1::ConsoleSaved::decode(event.body.as_slice()).expect("saved").console.expect("record");
+    assert_eq!((record.id.as_str(), record.revision), (id.as_str(), 1));
     let mut continued = request;
     continued["runId"] = json!(run_id);
     let (status, _, second) = call_text(&app, "POST", "/api/llm/db/stream", Some(continued)).await;
@@ -398,7 +403,17 @@ async fn separate_agent_requests_resume_the_server_owned_console_by_identity() {
     let saved = peer.list("mm").await;
     assert_eq!(saved.consoles.len(), 1);
     assert_eq!((&saved.consoles[0].id, saved.consoles[0].sql.as_str(), saved.consoles[0].revision), (&id, "SELECT 11;\n\nSELECT 22;", 2));
-    assert_eq!(peer.event().await.origin, "", "the continuation also publishes");
+    let event = peer.event().await;
+    assert_eq!((event.id, event.origin.as_str()), (v1::ConsolesId::ConsolesChanged as u32, ""), "the continuation also publishes");
+    assert_eq!(v1::ConsoleSaved::decode(event.body.as_slice()).expect("saved").console.expect("record").revision, 2);
+    // The same path carries a page's origin, so the empty one above is the agent's own, not a
+    // field the event lost on the way.
+    let edit = v1::ConsoleRecord { sql: "SELECT 33;".into(), ..saved.consoles[0].clone() };
+    let page = peer.request(v1::ConsolesId::ConsolesPut, v1::ConsolePut { conn: "mm".into(), console: Some(edit), mode: v1::SaveMode::Update as i32 }).await;
+    assert!(page.fault.is_none(), "{:?}", page.fault);
+    let event = peer.event().await;
+    assert_eq!(event.origin, "page-a", "a page's write names its page");
+    assert_eq!(v1::ConsoleSaved::decode(event.body.as_slice()).expect("saved").console.expect("record").revision, 3);
 }
 
 #[tokio::test]

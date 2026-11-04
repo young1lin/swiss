@@ -133,7 +133,9 @@ fn plugin_gate() -> PluginGate {
     let _ = ctx.session.set(session);
     let llm = swiss_llm::LlmState::new();
     let services = swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo::default());
-    let extra = swiss_plugins::llm_api::mount(llm.clone(), services)
+    let analysis = swiss_plugins::analysis::AnalysisStore::home();
+    let consoles = swiss_plugins::db_consoles::ConsoleStore::at(analysis.root().with_file_name("consoles"), services.bus.clone());
+    let extra = swiss_plugins::llm_api::mount_with_analysis(llm.clone(), services, analysis, consoles)
         .merge(swiss_plugins::memory_api::mount(Arc::new(
             swiss_plugins::memory_api::MemoryState::with_llm(llm),
         )))

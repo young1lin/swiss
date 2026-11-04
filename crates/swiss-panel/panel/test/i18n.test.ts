@@ -137,6 +137,7 @@ describe("i18n lookup and preference (SPEC §panel.i18n)", () => {
     install("zh-CN", zh);
     expect(servedError(changed, "fallback")).toBe(zh["served.consoleChanged"]);
     expect(servedError({ error: "x", code: "console.tooLarge" }, "fallback")).toBe(zh["served.consoleTooLarge"]);
+    expect(servedError({ error: "unknown connection", code: "console.connection" }, "fallback"), "an unleased connection is not a stopped module").toBe(zh["served.consoleConnection"]);
   });
 
   it("loadLocale installs the real dictionary only for a Chinese preference", async () => {

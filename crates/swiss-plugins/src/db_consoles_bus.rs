@@ -21,7 +21,9 @@ impl From<v1::ConsoleRecord> for Console {
 impl ConsoleStore {
     pub(super) fn handle(&self, call: Call, services: &RuntimeServices) -> Answer {
         // Every arm keeps its lease through the operation, as the HTTP store did
-        // (SPEC §host.seats). Bad protobuf never reaches the sealed store.
+        // (SPEC §host.seats). Bad protobuf never reaches the sealed store. A connection
+        // the catalog will not lease is that connection's refusal, never bus.unavailable:
+        // the consoles module is serving, the connection is what is missing.
         macro_rules! body {
             ($ty:ty) => {
                 match <$ty>::decode(call.body.as_ref()) {
@@ -34,7 +36,7 @@ impl ConsoleStore {
             ($conn:expr) => {
                 match services.catalog.lease($conn, "db-consoles") {
                     Ok(lease) => lease,
-                    Err(e) => return Answer::fault(swiss_bus::UNAVAILABLE, &e.to_string()),
+                    Err(e) => return Answer::fault(CONNECTION, &e.to_string()),
                 }
             };
         }

@@ -153,6 +153,7 @@ const SERVED_CODES                         = {
   "console.changed": tk("served.consoleChanged"),
   "console.changedDelete": tk("served.consoleChangedDelete"),
   "console.tooLarge": tk("served.consoleTooLarge"),
+  "console.connection": tk("served.consoleConnection"),
   "bus.unavailable": tk("served.busUnavailable"),
   "bus.unknown": tk("served.busUnknown"),
   "bus.badBody": tk("served.busBadBody"),
@@ -327,8 +328,14 @@ function paintLangBtn()       {
  *  back once its labels go through tr() — a static edge would close that cycle. */
 export function toggleLang()                { return changeLang(null, true); }
 
-/** Apply a received choice through the same guarded repaint, without echo (SPEC §panel.i18n). */
-export function applyLang(choice      )                { return changeLang(choice, false); }
+/** Apply a received choice through the same guarded repaint, without echo (SPEC §panel.i18n).
+ *  The language already on screen and stored changes nothing, so it neither repaints nor
+ *  remounts: a remount would drop the page's scroll and form state for no visible change. A
+ *  flip still in flight has stored its target, so a choice that undoes it goes through. */
+export function applyLang(choice      )                {
+  if (choice === lang && langPref() === choice) return Promise.resolve();
+  return changeLang(choice, false);
+}
 
 // Only the latest asynchronous choice may announce itself (SPEC §panel.i18n).
 let langChange = 0;

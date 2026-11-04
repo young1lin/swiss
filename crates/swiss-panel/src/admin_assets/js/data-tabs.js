@@ -186,7 +186,7 @@ export async function dbConsolesLoad(conn        )                {
       applyServerConsole(conn, record);
     }
     if (emptyStrip) {
-      const newest = records.filter(r => r.open).sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id))[0];
+      const newest = records.filter(r => r.open).sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id)).at(0);
       const at = newest ? dbTabs().findIndex(t => t.kind === "sql" && t.id === newest.id) : -1;
       if (at >= 0) { dbSetActive(at); dbAfterTabSwitch(true); }
     }
