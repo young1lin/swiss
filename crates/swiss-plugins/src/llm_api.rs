@@ -3044,14 +3044,13 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_used_run_whose_writes_were_all_refused_refuses_continuation() {
+    async fn a_used_run_whose_writes_were_all_refused_still_continues() {
         // The contract: a used-but-undurable run - its outbound REALLY
         // happened (receipt-gated on the wire) but its call/finish writes
-        // were all refused against a quota emptied mid-flight, so the row
-        // reads virgin - must REFUSE continuation in the prestream
-        // unresolved-tail/corrupt family with ZERO new outbound, never
-        // silently continue as a fresh conversation under the same id.
-        // Distinct from the admission family: activity happened.
+        // were all refused against a quota emptied mid-flight - is never a
+        // dead end. Its drive is gone, so the door releases the stale mark
+        // and the next send continues the same conversation; the model's
+        // context starts there, since no round of it was ever sealed.
         use futures_util::StreamExt;
         let ask_seen = std::sync::Arc::new(tokio::sync::Notify::new());
         let (gate_tx, gate_rx) = tokio::sync::oneshot::channel::<()>();
@@ -3126,17 +3125,9 @@ pub(crate) mod tests {
         .await
         .expect("bounded: the continuation must settle within seconds");
         let asks = captured.lock().expect("captured").clone();
-        assert_eq!(
-            asks.len(),
-            1,
-            "a used run whose writes were all refused must not continue - a second outbound flew under the same id: {}",
-            asks.get(1).map(|a| a.chars().take(120).collect::<String>()).unwrap_or_default()
-        );
-        assert_eq!(
-            status,
-            StatusCode::CONFLICT,
-            "the continuation must refuse in the prestream unresolved-tail/corrupt family, never silently resume: {text}"
-        );
+        assert_eq!(status, StatusCode::OK, "the stranded conversation continues: {text}");
+        assert!(text.contains("event: done"), "the continuation runs to its end: {text}");
+        assert_eq!(asks.len(), 2, "the continuation asked the provider again under the same id");
     }
 
     #[tokio::test]

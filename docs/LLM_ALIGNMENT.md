@@ -105,8 +105,9 @@ global diff-check green.
   — [llm-chat.test.mjs :443-544](<../e2e/llm-chat.test.mjs#L443-L544>)) with the assistant
   prefix ONCE and the unsent-completion negation untouched; interleaving isolated to
   per-agent calls (two each); restart EXACTLY 8 ordered including
-  HOLD; a same-run send after the ct point returns **409 `unresolved-tail`** (the SPEC
-  §llm.history machine-refusing shape) with explicit-close / New recovery; FRESH distinct
+  HOLD; a same-run send after the ct point returned **409 `unresolved-tail`** at the time -
+  since 2026-11-03 the cancelled wait settles and the same run continues (SPEC §llm.history:
+  an interrupted round never strands a conversation; llm-chat.test.mjs pins the continuation); FRESH distinct
   `continued=false` clean recovery — a DIFFERENT run, not a same-run continuation (the
   earlier same-run claim is retracted). The registered E2E unchanged-pair risk closed with
   these observations.

@@ -81,8 +81,10 @@ async fn a_lost_reservation_reply_leaves_a_committed_unused_row_and_a_refused_ca
 
 /// LOST ACTIVITY REPLY: the mark IS committed (positively read) while the
 /// caller holds no authority - begin_round's receipt never arrived, so
-/// the recorder's own claim fails, replay and the public resume refuse,
-/// and an implicit NEW conversation is blocked until the EXPLICIT close.
+/// the recorder's own claim fails, and while that recorder lives replay
+/// refuses, the public resume answers busy and an implicit NEW conversation
+/// is blocked. Once the recorder is gone the mark is stale: the door
+/// releases it and the same conversation continues.
 #[tokio::test]
 async fn a_lost_activity_reply_commits_the_mark_but_grants_no_authority() {
     tokio::time::timeout(BOUND, async {
@@ -122,9 +124,9 @@ async fn a_lost_activity_reply_commits_the_mark_but_grants_no_authority() {
         assert!(
             matches!(
                 history.resume_conversation(id, "alpha", "builtin", Some("glm"), Some("glm-5.3"), None).await,
-                Err(ResumeError::NoCanonical),
+                Err(ResumeError::Busy),
             ),
-            "the public resume refuses the same unresolved mark",
+            "the public resume waits on the recorder that still holds the mark",
         );
         let second = history
             .open_conversation("alpha", "builtin", Some("glm"), Some("glm-5.3"))
@@ -134,7 +136,19 @@ async fn a_lost_activity_reply_commits_the_mark_but_grants_no_authority() {
             "an implicit new conversation is blocked beside the stranded mark: {:?}",
             second.refusal(),
         );
-        // The recovery escape is the EXPLICIT close, then a fresh open.
+        // The holder goes away (its drive ended without filing the round):
+        // the mark is stale, the door releases it, the conversation goes on.
+        drop(run);
+        let resumed = history
+            .resume_conversation(id, "alpha", "builtin", Some("glm"), Some("glm-5.3"), None)
+            .await;
+        assert!(resumed.is_ok(), "a stale mark is released at the door, never a dead end");
+        assert!(
+            matches!(history.replay_state(id).await, ReplayState::Fresh),
+            "no round ever filed: the context the model knows starts with the next send",
+        );
+        drop(resumed);
+        // The EXPLICIT close still ends it, then a fresh open.
         history.close_run(id).await.expect("the explicit close succeeds").expect("the run was open");
         let fresh = history
             .open_conversation("alpha", "builtin", Some("glm"), Some("glm-5.3"))

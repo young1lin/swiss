@@ -103,6 +103,11 @@ impl LiveRuns {
         }
     }
 
+    /// Whether run `id` is in flight here: a recorder of this handle holds it.
+    pub(super) fn has(&self, id: i64) -> bool {
+        self.0.lock().is_ok_and(|runs| runs.contains_key(&id))
+    }
+
     pub(super) fn ids(&self) -> Vec<i64> {
         self.0.lock().map(|runs| runs.keys().copied().collect()).unwrap_or_default()
     }

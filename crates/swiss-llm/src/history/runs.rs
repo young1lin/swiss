@@ -183,15 +183,21 @@ impl LlmHistory {
                 }
             }
         }
-        // The CANONICAL activity gate (SPEC llm.history): evidenced activity
-        // without canonical proof refuses the RESUME itself, not just the
-        // later replay read - the closed shapes replay_state refuses, moved
-        // to the door. An in-flight or legacy-ambiguous mark, turns noted
-        // with no sealed call, a pruned or pre-protocol last body: none of
-        // them may reopen, because a reopened recorder could fork a blank
-        // or stale context under the old id. Only the genuinely unused row
-        // (reserved, never asked) reopens blank.
-        if pending != 0 {
+        // The CANONICAL activity gate (SPEC llm.history). A mark still in
+        // flight is either driven - a round of this conversation is running,
+        // so the reader waits - or stale: the drive that set it is gone (a
+        // Stop whose round could not file, a failed write, a deadline, a
+        // restart). A stale mark is released here with an honest tail and the
+        // conversation continues from its last sealed round; an interruption
+        // never strands it. The legacy-ambiguous mark and a pruned or
+        // pre-protocol last body still refuse: no sealed state to stand on.
+        if pending == 1 {
+            match self.release_stale_round(run_id, attempt).await {
+                release::Released::Yes => {}
+                release::Released::Busy => return Err(ResumeError::Busy),
+                release::Released::Unprovable => return Err(ResumeError::NoCanonical),
+            }
+        } else if pending != 0 {
             return Err(ResumeError::NoCanonical);
         }
         let evidenced = self
@@ -199,11 +205,6 @@ impl LlmHistory {
             .query(
                 move |pool| {
                     Box::pin(async move {
-                        let turns: i64 = sqlx::query("SELECT count(*) FROM turn WHERE run_id = ?")
-                            .bind(run_id)
-                            .fetch_one(&pool)
-                            .await?
-                            .try_get(0)?;
                         let last_call = sqlx::query(
                             "SELECT id FROM call WHERE run_id = ? ORDER BY id DESC LIMIT 1",
                         )
@@ -212,17 +213,17 @@ impl LlmHistory {
                         .await?
                         .map(|row| row.try_get::<i64, _>(0))
                         .transpose()?;
-                        Ok::<(i64, Option<i64>), sqlx::Error>((turns, last_call))
+                        Ok::<Option<i64>, sqlx::Error>(last_call)
                     })
                 },
             )
             .await;
-        let (turns, last_call) = evidenced.map_err(|_| ResumeError::Gone)?;
+        let last_call = evidenced.map_err(|_| ResumeError::Gone)?;
         match last_call {
-            None if turns == 0 => {}
-            // Evidenced activity (turns) with no canonical half at all: the
-            // async-quota shape - refuse, never a blank replay.
-            None => return Err(ResumeError::NoCanonical),
+            // No sealed round at all - unused, or every round was interrupted
+            // before its call could file: the dialogue the model knows starts
+            // with the next send (see [Self::replay_state]).
+            None => {}
             Some(call_id) => {
                 let canonical = match self.read_call_body(call_id).await {
                     Ok(Some(body)) if body["bodyGone"] == false => body,
@@ -401,7 +402,7 @@ impl LlmHistory {
                     .bind(run_id)
                     .fetch_optional(&pool)
                     .await?;
-                    let Some(row) = row else { return Ok::<Option<(i64, Option<String>, Option<i64>, i64)>, sqlx::Error>(None) };
+                    let Some(row) = row else { return Ok::<Option<(i64, Option<String>, Option<i64>)>, sqlx::Error>(None) };
                     let pending: i64 = row.try_get(0)?;
                     let tail: Option<String> = row.try_get(1)?;
                     // Fallible decode with transpose: a present-but-corrupt
@@ -413,16 +414,11 @@ impl LlmHistory {
                         .await?
                         .map(|row| row.try_get::<i64, _>(0))
                         .transpose()?;
-                    let turns: i64 = sqlx::query("SELECT count(*) FROM turn WHERE run_id = ?")
-                        .bind(run_id)
-                        .fetch_one(&pool)
-                        .await?
-                        .try_get(0)?;
-                    Ok(Some((pending, tail, last_call, turns)))
+                    Ok(Some((pending, tail, last_call)))
                 })
             })
             .await;
-        let Some((pending, tail, last_call, turns)) = held.ok().flatten() else {
+        let Some((pending, tail, last_call)) = held.ok().flatten() else {
             return ReplayState::Refused("the run is not an open conversation");
         };
         // The activity protocol's closed shapes: a mark still in flight (an
@@ -432,17 +428,17 @@ impl LlmHistory {
             return ReplayState::Refused("this conversation predates the activity protocol and cannot prove its tail: start a New one");
         }
         if pending == 1 {
-            return ReplayState::Refused("this conversation has an unresolved round in flight: start a New one");
+            // Driven, or stale until the next resume releases it (see
+            // [Self::resume_conversation]).
+            return ReplayState::Refused("this conversation has a round in flight: wait for it, or Stop it, and send again");
         }
         let Some(call_id) = last_call else {
-            // Reserved, never asked: no call row AND no noted turn - genuinely
-            // unused, continuable as its own first send. A turn row without a
-            // call body is EVIDENCED activity whose canonical half is missing
-            // (the all-refused quota shape): it refuses, never replays blank.
-            if turns == 0 {
-                return ReplayState::Fresh;
-            }
-            return ReplayState::Refused("this conversation has noted turns but no sealed round: start a New one");
+            // No sealed round: reserved and never asked, or every round was
+            // interrupted before its call filed (noted turns, nothing the
+            // model answered on record). Either way the context the model
+            // knows is empty and the next send is its first word - the noted
+            // turns stay in the transcript, never replayed as a guess.
+            return ReplayState::Fresh;
         };
         // Activity exists: the canonical body must exist with it, or the tail
         // cannot be proven - fail closed rather than replay a guess.

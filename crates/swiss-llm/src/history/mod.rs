@@ -64,6 +64,7 @@ mod live;
 mod pieces;
 mod reads;
 mod recorder;
+mod release;
 mod rows;
 mod runs;
 mod trim;
@@ -104,6 +105,8 @@ mod tool_round_settle_seam;
 mod lost_reply_seam;
 #[cfg(test)]
 mod live_tests;
+#[cfg(test)]
+mod release_tests;
 #[cfg(test)]
 mod tail_privacy_seam;
 
@@ -311,6 +314,17 @@ static LLM_SCHEMA: &[SchemaStep] = &[SchemaStep::new(
         // run id> lists every agent run that sync run started).
         "CREATE INDEX run_source ON run (source)",
     ],
+), SchemaStep::new(
+    9,
+    &[
+        // Who holds a conversation's in-flight mark (SPEC llm.history): the
+        // handle whose round set it, as `<pid>:<process start ms>:<handle>`.
+        // The door releases a mark whose holder is provably gone (a Stop that
+        // could not file its round, a failed write, a restart) instead of
+        // refusing the conversation for good. NULL is a mark set before the
+        // step: the build that set it no longer runs.
+        "ALTER TABLE run ADD COLUMN holder TEXT",
+    ],
 )];
 
 /// The preview of a body: the first PREVIEW_MAX characters, the char count of the whole.
@@ -427,6 +441,10 @@ pub struct LlmHistory {
     trim_gate: Arc<TrimGate>,
     /// The runs in flight: what each is doing now (SPEC llm.history Live).
     live: LiveRuns,
+    /// This handle's number in the process's registry (see [release]).
+    handle: u64,
+    /// The name every activity mark this handle sets carries (see [release]).
+    holder: String,
 }
 
 /// One trim at a time, and not again within [TRIM_GAP_MS] of the last.
@@ -522,14 +540,19 @@ impl LlmHistory {
         // no protected window - llm history is convenience history, and the honest
         // over-share denial is the plain reason.
         store.set_quota(swiss_host::history::quota::QuotaPolicy::default(), false);
-        Ok(Arc::new(LlmHistory {
+        let (handle, holder) = release::mint_holder();
+        let history = Arc::new(LlmHistory {
             store,
             keys: swiss_host::history::seal::ChunkKeys::resolve(),
             #[cfg(test)]
             drop_reply_after_commit: std::sync::Mutex::new(None),
             trim_gate: Arc::new(TrimGate::default()),
             live: LiveRuns::default(),
-        }))
+            handle,
+            holder,
+        });
+        release::enroll(&history);
+        Ok(history)
     }
 
     /// Arm or clear the TEST-ONLY lost-reply fault (see the field; cfg(test)).

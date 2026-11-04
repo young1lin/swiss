@@ -274,6 +274,203 @@ async fn cancel_during_a_pending_tool_records_unknown_and_files_prior_results() 
     );
     history.close().await.expect("close");
 }
+/// A wire that answers the first request with `first` and then HOLDS the second one:
+/// the request is read in full, `asked` is notified, and no byte of an answer ever comes
+/// (the socket stays open until the test ends) - a model that thinks and never speaks.
+async fn wire_holding_the_second(first: String, asked: std::sync::Arc<tokio::sync::Notify>) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let url = format!("http://{}", listener.local_addr().expect("addr"));
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut held = Vec::new();
+        for round in 0..2 {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = socket.read(&mut chunk).await.expect("read");
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                let Some(head_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                let head = String::from_utf8_lossy(&buf[..head_end]).into_owned();
+                let length = head
+                    .lines()
+                    .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+                    .and_then(|l| l.split(':').nth(1))
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if buf.len() >= head_end + 4 + length {
+                    break;
+                }
+            }
+            if round == 0 {
+                let answer = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    first.len(),
+                    first
+                );
+                socket.write_all(answer.as_bytes()).await.expect("write");
+            } else {
+                asked.notify_one();
+                held.push(socket);
+            }
+        }
+        std::future::pending::<()>().await;
+    });
+    url
+}
+
+/// A Stop while the model is still thinking over a settled tool round (the Data agent's
+/// run_sql answered, the next round asked, nothing streamed yet) files the wait as a
+/// cancelled call that settles the round: the conversation stays open AND continuable,
+/// and the next send reopens it instead of refusing "activity it cannot prove canonically".
+#[tokio::test]
+async fn a_stop_during_the_model_wait_after_a_tool_round_leaves_the_conversation_continuable() {
+    let ask = concat!(
+        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"One check.\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_quick\",\"type\":\"function\",\"function\":{\"name\":\"quick\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":3,\"total_tokens\":12}}\n\n",
+        "data: [DONE]\n\n"
+    )
+    .to_string();
+    let second_asked = std::sync::Arc::new(tokio::sync::Notify::new());
+    let base = wire_holding_the_second(ask, second_asked.clone()).await;
+    let row = swiss_llm::config::LlmConfig::parse(&json!({
+        "providers": { "local": { "style": "openai", "baseUrl": base + "/v1", "models": [{ "id": "tiny" }] } }
+    }))
+    .expect("row");
+    let dir = home("llm-agent-stop-in-wait");
+    let history = LlmHistory::open(&dir).await.expect("open");
+    // Recording, as the route's chat does.
+    let chat = swiss_llm::provider::Chat::new(row.provider("local").expect("provider"), Some("tiny"), 64)
+        .expect("chat")
+        .recording(Some(history.clone()), Some("alpha"));
+    let mut run = history.open_conversation("alpha", "builtin", Some("local"), Some("tiny")).await;
+    let run_id = run.id().expect("reserved");
+    let cancel = CancelFlag::new();
+    run.set_cancel(cancel.clone());
+    let mut toolbox = Gated { stall_entered: std::sync::Arc::new(tokio::sync::Notify::new()) };
+    let session = Session::disabled();
+    let mut on_event = |_event: LoopEvent| {};
+    let stop = cancel.clone();
+    let drive = run_loop(&chat, "You are a test.", "check it", &mut toolbox, 4, &session, &mut run, &mut on_event);
+    let driven = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::pin!(drive);
+        loop {
+            tokio::select! {
+                _ = second_asked.notified() => stop.request(),
+                outcome = &mut drive => return outcome,
+            }
+        }
+    })
+    .await;
+    assert!(cancel.requested(), "the Stop fired only once the second round was asked");
+    let outcome = driven.expect("the Stop ends the wait within the bound").expect("a cancelled loop returns Ok");
+    assert!(outcome.cancelled, "the outcome names the cancel");
+    history.flush().await;
+    match history.replay_state(run_id).await {
+        ReplayState::Continuable { prior } => {
+            assert!(
+                prior.iter().any(|message| message["role"] == "tool" && message["id"] == "call_quick"),
+                "the settled tool round replays: {prior:?}"
+            );
+        }
+        ReplayState::Refused(why) => panic!("a Stop during the model wait must leave the conversation continuable: {why}"),
+        ReplayState::Fresh => panic!("the conversation's rounds must not disappear"),
+    }
+    assert!(
+        history
+            .resume_conversation(run_id, "alpha", "builtin", Some("local"), Some("tiny"), None)
+            .await
+            .is_ok(),
+        "the next send reopens the stopped conversation"
+    );
+    history.close().await.expect("close");
+}
+
+/// The same Stop when the cancelled round can NOT file - every history write refused at
+/// that moment, so the round's mark stays set with no call to clear it (the shape a
+/// conversation stranded by an interrupt used to keep for good). The drive is gone, so
+/// the next send's door releases the round: the settled tool round still replays with
+/// its real result, and the reopened conversation may fly its next round.
+#[tokio::test]
+async fn a_stop_whose_cancelled_round_cannot_file_still_leaves_the_conversation_continuable() {
+    let ask = concat!(
+        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"One check.\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_quick\",\"type\":\"function\",\"function\":{\"name\":\"quick\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":3,\"total_tokens\":12}}\n\n",
+        "data: [DONE]\n\n"
+    )
+    .to_string();
+    let second_asked = std::sync::Arc::new(tokio::sync::Notify::new());
+    let base = wire_holding_the_second(ask, second_asked.clone()).await;
+    let row = swiss_llm::config::LlmConfig::parse(&json!({
+        "providers": { "local": { "style": "openai", "baseUrl": base + "/v1", "models": [{ "id": "tiny" }] } }
+    }))
+    .expect("row");
+    let dir = home("llm-agent-stop-unfiled");
+    let history = LlmHistory::open(&dir).await.expect("open");
+    let chat = swiss_llm::provider::Chat::new(row.provider("local").expect("provider"), Some("tiny"), 64)
+        .expect("chat")
+        .recording(Some(history.clone()), Some("alpha"));
+    let mut run = history.open_conversation("alpha", "builtin", Some("local"), Some("tiny")).await;
+    let run_id = run.id().expect("reserved");
+    let cancel = CancelFlag::new();
+    run.set_cancel(cancel.clone());
+    let mut toolbox = Gated { stall_entered: std::sync::Arc::new(tokio::sync::Notify::new()) };
+    let session = Session::disabled();
+    let mut on_event = |_event: LoopEvent| {};
+    let stop = cancel.clone();
+    let wedge = history.clone();
+    let drive = run_loop(&chat, "You are a test.", "check it", &mut toolbox, 4, &session, &mut run, &mut on_event);
+    let driven = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::pin!(drive);
+        loop {
+            tokio::select! {
+                _ = second_asked.notified() => {
+                    // Every write from here on refuses: the cancelled call and the
+                    // run's finish cannot land, so the second round's mark stays set.
+                    wedge.set_quota(swiss_host::history::quota::QuotaPolicy::from_shares(Default::default()));
+                    stop.request();
+                }
+                outcome = &mut drive => return outcome,
+            }
+        }
+    })
+    .await;
+    let outcome = driven.expect("the Stop ends the wait within the bound").expect("a cancelled loop returns Ok");
+    assert!(outcome.cancelled, "the outcome names the cancel");
+    drop(run);
+    history.set_quota(swiss_host::history::quota::QuotaPolicy::default());
+    history.flush().await;
+    assert!(
+        matches!(history.replay_state(run_id).await, ReplayState::Refused(_)),
+        "before the door the round is still marked in flight"
+    );
+    let mut resumed = history
+        .resume_conversation(run_id, "alpha", "builtin", Some("local"), Some("tiny"), None)
+        .await
+        .expect("the door releases the stranded round and the conversation reopens");
+    match history.replay_state(run_id).await {
+        ReplayState::Continuable { prior } => {
+            assert!(
+                prior.iter().any(|message| message["role"] == "tool"
+                    && message["id"] == "call_quick"
+                    && message["text"] == "the answer is 42"),
+                "the settled tool round replays with its real result: {prior:?}"
+            );
+        }
+        ReplayState::Refused(why) => panic!("a released round must leave the conversation continuable: {why}"),
+        ReplayState::Fresh => panic!("the conversation's rounds must not disappear"),
+    }
+    assert!(resumed.begin_round().await.is_ok(), "the reopened conversation may fly its next round");
+    history.close().await.expect("close");
+}
+
 /// The request budget is the agent's own (`maxContextKiB` on the chat): a round
 /// over it refuses before anything flies, naming the budget, and the same ask
 /// under the default budget goes out and answers.

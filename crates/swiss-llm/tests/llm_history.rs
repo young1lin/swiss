@@ -1307,27 +1307,25 @@ async fn a_second_conversation_cannot_open_while_a_round_is_in_flight() {
     second.close().await.expect("close second");
 }
 
-/// No-fork: a run with EVIDENCED activity but no canonical call body must
-/// refuse the resume - never rebuild a blank context under the old id. The
-/// activity here is a persisted user turn with the call job refused/pruned
-/// away (the async-quota shape: turns > 0, no call row at all).
+/// A run whose every round was interrupted before its call could file (turns
+/// noted, no call row at all - a Stop or a refused write on the first round)
+/// still continues: the model knows no sealed round, so its context starts with
+/// the next send, and the noted turns stay in the transcript, never replayed.
 #[tokio::test]
-async fn a_used_run_without_its_canonical_body_refuses_instead_of_forking() {
+async fn a_used_run_without_a_sealed_round_continues_from_an_empty_context() {
     let dir = home("llm-hist-no-fork");
     let history = LlmHistory::open(&dir).await.expect("open");
     let mut run = history.open_conversation("alpha", "builtin", Some("glm"), Some("glm-5.3")).await;
     let run_id = run.id().expect("reserved");
     run.note("user", "the ask that flew");
     run.finish(true);
-    // No call row is filed - exactly what a refused or stale-dropped call job
-    // leaves behind. Resuming must land in the corrupt/unresolved-tail family,
-    // never Ok with a blank context.
     let resumed = history
         .resume_conversation(run_id, "alpha", "builtin", Some("glm"), Some("glm-5.3"), None)
         .await;
+    assert!(resumed.is_ok(), "an interrupted first round never strands the conversation");
     assert!(
-        resumed.is_err(),
-        "an evidenced-attempt run without its canonical body must refuse the resume - a silent fork continues a conversation that never happened"
+        matches!(history.replay_state(run_id).await, swiss_llm::history::ReplayState::Fresh),
+        "no sealed round: nothing is replayed as a guess"
     );
     history.close().await.expect("close");
 }

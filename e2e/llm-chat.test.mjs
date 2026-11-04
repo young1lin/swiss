@@ -596,7 +596,8 @@ try {
     fake.script("fake-cxltool",
       { mode: "tool", name: "read", args: { path: "note.txt" }, callId: TOOL_CALL_ID_CXL },
       { mode: "hang", then: { mode: "answer", text: "cxltool-never" } },
-      { mode: "answer", text: "CXLTOOL-RECOVERED" });
+      { mode: "answer", text: "CXLTOOL-RECOVERED" },
+      { mode: "answer", text: "CXLTOOL-NEWRUN-ANS" });
     const ct = startStream("cxltool", "CXLTOOL-4b8e");
     const ctRun = (await waitEvent(ct.events, "run")).data.runId;
     await waitEvent(ct.events, "toolResult", 30000); // the tool round completes; the next ask hangs
@@ -626,20 +627,15 @@ try {
       if (Date.now() > ctAbortDeadline) throw new Error("the cancelled ask never aborted: aborted=" + (held[1] && held[1].aborted) + " hangs=" + fake.hangCount());
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    // The witnessed contract (SPEC llm.history): a mid-tool unresolved tail
-    // REFUSES the named continuation with the exact machine code, a no-id send
-    // never silently forks the pending run, and neither refusal reaches the
-    // provider - the journal count is the proof.
-    const ctNamed = await fetchStreamRaw("cxltool", "CXLTOOL-AFTER-51ca", ctRun);
-    assert.equal(ctNamed.status, 409, "a named send onto an unresolved tail answers 409");
-    const ctNamedBody = await ctNamed.json().catch(() => null);
-    assert.equal(ctNamedBody && ctNamedBody.code, "unresolved-tail", "the 409 carries the exact unresolved-tail code");
-    assert.equal(chatsOf("fake-cxltool").length, 2, "the refused named send never reached the provider");
-    const ctNoId = await fetchStreamRaw("cxltool", "no-id-while-pending-c3");
-    assert.equal(ctNoId.status, 409, "a no-id send while the run is pending answers 409");
+    // The contract (SPEC llm.history): a Stop during the model wait after a tool
+    // round files that wait as a cancelled round, so the conversation stays
+    // continuable. A no-id send still refuses beside the open run without
+    // reaching the provider - the journal count is the proof.
+    const ctNoId = await fetchStreamRaw("cxltool", "no-id-while-open-c3");
+    assert.equal(ctNoId.status, 409, "a no-id send while the run is open answers 409");
     const ctNoIdBody = await ctNoId.json().catch(() => null);
     assert.equal(ctNoIdBody && ctNoIdBody.code, "open-run-exists", "the no-id 409 carries the exact open-run-exists code");
-    assert.equal(chatsOf("fake-cxltool").length, 2, "the refused no-id send never reached the provider either");
+    assert.equal(chatsOf("fake-cxltool").length, 2, "the refused no-id send never reached the provider");
     // The canonical wire the cancel interrupted: the second ask THAT REALLY
     // ARRIVED carries the tool round byte-exactly - the Unicode id on both the
     // assistant call and the tool result that answers it.
@@ -654,24 +650,41 @@ try {
     assert.equal(String(ctToolMsg[0].content), NOTE, "the tool result carries the exact file bytes");
     assert.equal(String(ctToolMsg[0].tool_call_id), TOOL_CALL_ID_CXL, "the tool result references the Unicode id exactly");
     assert.ok(!JSON.stringify(ctHang.body).includes("cxltool-never"), "the cancelled round trip left no answer");
-    // Recovery is the operator's explicit close (SPEC llm.history): ONE close,
-    // no retry - the cancel above already settled the run, so a busy 409 here
-    // would be a new defect, not something to poll away.
+    // The named send continues the SAME run: the stopped turn and its settled
+    // tool round replay once each, the new turn follows, nothing is invented.
+    const ctNext = await send("cxltool", "CXLTOOL-AFTER-51ca", ctRun);
+    const ctNextRun = runFrame(ctNext);
+    assert.equal(ctNextRun.runId, ctRun, "the named send continues the stopped run");
+    assert.equal(ctNextRun.continued, true, "the send is a continuation");
+    assert.equal(doneFrame(ctNext).ok, true, "the continued round trip completes");
+    assert.equal(chatsOf("fake-cxltool").length, 3, "exactly three provider asks: the refusal consumed nothing");
+    const ctNextReq = chatsOf("fake-cxltool")[2];
+    const ctNextUsers = userTexts(ctNextReq.body).join(" | ");
+    onceIn(ctNextUsers, "CXLTOOL-4b8e", "the stopped turn's prompt");
+    onceIn(ctNextUsers, "CXLTOOL-AFTER-51ca", "the new turn");
+    const ctNextTool = ctNextReq.body.messages.filter((m) => m.role === "tool");
+    assert.equal(ctNextTool.length, 1, "the settled tool round replays once");
+    assert.equal(String(ctNextTool[0].tool_call_id), TOOL_CALL_ID_CXL, "the replayed result keeps the Unicode id");
+    assert.equal(String(ctNextTool[0].content), NOTE, "the replayed result keeps the exact file bytes");
+    assert.ok(!JSON.stringify(ctNextReq.body).includes("cxltool-never"), "the cancelled answer never appears");
+    const dgNext = await dialogue(ctRun);
+    assert.ok(dgNext.turns.some((t) => (t.text || "").includes("CXLTOOL-RECOVERED")), "the continued answer is recorded");
+    // The operator's explicit close ends it (SPEC llm.history): ONE close, no
+    // retry - the continuation settled, so a busy 409 here would be a defect.
     const ctClose = await adminJson("POST", "/api/llm/history/runs/" + ctRun + "/close");
-    assert.equal(ctClose.status, 200, "the first close after a settled cancel answers 200");
+    assert.equal(ctClose.status, 200, "the close after a settled continuation answers 200");
     assert.deepEqual(ctClose.body, { ok: true }, "close reports ok");
-    // The fresh no-id conversation: the unchanged third script item serves it -
-    // proof the refusals consumed nothing - and no stale context rides.
-    const ctFresh = await send("cxltool", "CXLTOOL-AFTER-51ca");
+    // The fresh no-id conversation: no stale context rides.
+    const ctFresh = await send("cxltool", "CXLTOOL-FRESH-77d0");
     const ctFreshRun = runFrame(ctFresh);
-    assert.notEqual(ctFreshRun.runId, ctRun, "recovery opens a distinct run");
+    assert.notEqual(ctFreshRun.runId, ctRun, "the fresh send opens a distinct run");
     assert.equal(ctFreshRun.continued, false, "the fresh run is not a continuation");
-    assert.equal(doneFrame(ctFresh).ok, true, "the recovered round trip completes");
-    assert.equal(chatsOf("fake-cxltool").length, 3, "exactly three provider asks: the two refusals consumed nothing");
-    const ctFreshReq = chatsOf("fake-cxltool")[2];
+    assert.equal(doneFrame(ctFresh).ok, true, "the fresh round trip completes");
+    assert.equal(chatsOf("fake-cxltool").length, 4, "exactly four provider asks");
+    const ctFreshReq = chatsOf("fake-cxltool")[3];
     const ctFreshUsers = userTexts(ctFreshReq.body);
     assert.equal(ctFreshUsers.length, 1, "the fresh ask carries exactly one user turn");
-    onceIn(ctFreshUsers[0], "CXLTOOL-AFTER-51ca", "the fresh turn");
+    onceIn(ctFreshUsers[0], "CXLTOOL-FRESH-77d0", "the fresh turn");
     assert.ok(!ctFreshReq.body.messages.some((m) => m.role === "tool"), "no tool message rides the fresh ask");
     const ctFreshJson = JSON.stringify(ctFreshReq.body);
     assert.ok(!ctFreshJson.includes(NOTE), "no stale tool bytes ride the fresh ask");
@@ -679,7 +692,7 @@ try {
     assert.ok(!ctFreshJson.includes("CXLTOOL-4b8e"), "no pre-close prompt rides the fresh ask");
     assert.ok(!ctFreshJson.includes("cxltool-never"), "the cancelled answer never appears");
     const dgFresh = await dialogue(ctFreshRun.runId);
-    assert.ok(dgFresh.turns.some((t) => (t.text || "").includes("CXLTOOL-RECOVERED")), "the recovered answer is recorded");
+    assert.ok(dgFresh.turns.some((t) => (t.text || "").includes("CXLTOOL-NEWRUN-ANS")), "the fresh answer is recorded");
 
     // -- generic reasoning: it streams, displays, and files durably ------------
     // NOT the DeepSeek resend guarantee: the conservative policy gates reasoning

@@ -1409,7 +1409,7 @@ async fn drive_loop(
             // reached - settled like any tool round, so the conversation stays
             // continuable and the model reads what really happened. Only when
             // that settle cannot be proven does the partial audit tail queue
-            // under the still-open mark (continuation then refuses).
+            // under the still-open mark; the next resume releases it.
             if run.settle_round(dispatched.interrupted_tail()).await.is_err() {
                 run.file_tail(dispatched.audit_tail());
             }

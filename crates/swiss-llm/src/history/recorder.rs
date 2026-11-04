@@ -244,11 +244,13 @@ pub enum ResumeError {
     Closed,
     /// The provider or model in force changed since the run opened.
     ContextChanged,
-    /// Evidenced activity without canonical proof: an unresolved or
-    /// legacy-ambiguous activity mark, turns noted with no sealed call, a
-    /// pruned or pre-protocol last body. The resume itself refuses - no
-    /// blank context may ride the old id, and no fork may fly beside it.
+    /// Evidenced activity without canonical proof: the legacy-ambiguous
+    /// activity mark, a pruned or pre-protocol last body. The resume itself
+    /// refuses - no blank context may ride the old id.
     NoCanonical,
+    /// A round of the conversation is still in flight: the drive that marked
+    /// it lives. The reader waits for it (or stops it) and sends again.
+    Busy,
 }
 
 impl RunRecorder {
@@ -361,13 +363,17 @@ impl RunRecorder {
             .lock()
             .map(|held| held.as_deref() == Some("activity"))
             .unwrap_or(false);
+        // The mark names its holder: the door may release it once that holder is
+        // provably gone (SPEC llm.history), never while it still drives.
+        let holder = history.holder.clone();
         let (reply, receipt) = tokio::sync::oneshot::channel::<Result<i64, String>>();
         let submitted = history.submit(128, move |pool| {
             Box::pin(async move {
                 let marked = sqlx::query(
-                    "UPDATE run SET pending = 1, attempt = attempt + 1
+                    "UPDATE run SET pending = 1, attempt = attempt + 1, holder = ?
                      WHERE id = ? AND kind = 1 AND ok IS NULL AND at_end IS NULL AND pending = 0 AND attempt = ?",
                 )
+                .bind(&holder)
                 .bind(run_id)
                 .bind(basis)
                 .execute(&pool)
@@ -432,8 +438,8 @@ impl RunRecorder {
     /// results already observed and requests whose outcomes remain unknown.
     /// Queueing is not a commit receipt and grants no completion authority;
     /// pending stays marked. A proven settlement supplies the authoritative
-    /// replay tail. Without it, continuation refuses until explicit close
-    /// (including the panel's New action).
+    /// replay tail. Without it, the next resume releases the stale round and
+    /// pairs this tail with the last sealed round's calls (see release.rs).
     pub fn file_tail(&mut self, tail: Value) {
         let Some(history) = self.history.clone() else { return };
         let Some(run_id) = self.id else { return };

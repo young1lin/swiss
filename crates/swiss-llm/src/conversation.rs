@@ -69,7 +69,7 @@ pub struct Lane {
 #[derive(Debug, PartialEq, Eq)]
 pub enum LaneError {
     /// A guard refused: its machine code (`open-run-exists`, `gone`, `closed`,
-    /// `context-changed`, `unresolved-tail`, `over-budget`) and the reader's message.
+    /// `context-changed`, `unresolved-tail`, `busy`, `over-budget`) and the reader's message.
     Refused { code: &'static str, message: String },
     /// The history could not reserve a run row for a new conversation.
     Unavailable(String),
@@ -165,10 +165,15 @@ async fn resume(
             ),
             // The same wire code the replay refusal family answers with: the
             // no-fork contract is one shape whether the door refuses or the
-            // replay read does.
+            // replay read does. An interrupted round never lands here - the
+            // door releases it - only a body no store can read any more.
             ResumeError::NoCanonical => refused(
                 "unresolved-tail",
-                "that conversation has activity it cannot prove canonically: start a New one",
+                "that conversation's last round is no longer on record (pruned, or from an older build): start a New one",
+            ),
+            ResumeError::Busy => refused(
+                "busy",
+                "that conversation is still answering: wait for it, or Stop it, and send again",
             ),
         })?;
     // The system prompt in force: the dialogue's own first word. A changed one
