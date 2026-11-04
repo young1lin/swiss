@@ -18,12 +18,13 @@
    (`<module>.<semanticId>`) wrapped in tr()/trn(); English (locales/en.ts) is the always-loaded
    floor and Chinese is one flat dictionary fetched on demand. Nothing here probes navigator.language — the
    preference is per-browser (localStorage), exactly like the theme, because it describes
-   this screen, not the user.
+   this screen. Explicit choices follow across open pages through PANEL.PREFS.
 
    Module-scope state only (no window.*): the installed language and the dictionary are two
    lets. Module top level NEVER calls tr() (SPEC §panel.i18n): imported modules evaluate before
    main.ts's await loadLocale() resolves, so a top-level tr() would freeze English onto a
    Chinese screen. */
+import { relayPrefs } from "./bus/prefs.js";
 import { currentView } from "./ui-state.js";
                                                         
 
@@ -324,7 +325,14 @@ function paintLangBtn()       {
  *  current page. No reload: it would drop form state and cut the terminal stream for a
  *  cosmetic change. page-registry loads at click time because its graph imports this module
  *  back once its labels go through tr() — a static edge would close that cycle. */
-export async function toggleLang()                {
+export function toggleLang()                { return changeLang(null, true); }
+
+/** Apply a received choice through the same guarded repaint, without echo (SPEC §panel.i18n). */
+export function applyLang(choice      )                { return changeLang(choice, false); }
+
+// Only the latest asynchronous choice may announce itself (SPEC §panel.i18n).
+let langChange = 0;
+async function changeLang(choice             , relay         )                {
   const reg                      = await import("./page-registry.js");
   if (reg.pageHasPendingChanges()) {
     // The remount at the end of this function would drop those changes, so the flip refuses.
@@ -336,8 +344,11 @@ export async function toggleLang()                {
     toast(tr("i18n.pendingBlocksSwitch"), true);
     return;
   }
-  setLang(nextLang());
+  const generation = ++langChange;
+  const target = choice ?? nextLang();
+  setLang(target);
   await loadLocale();
+  if (generation !== langChange) return;
   /* The zh download failed (loadLocale stayed on English): revert the preference so it
    * stops disagreeing with the screen every boot — the flip becomes a visible no-op that
    * the next click can retry once the asset tree is consistent again. */
@@ -345,6 +356,7 @@ export async function toggleLang()                {
   paintChrome();
   await reg.navigatePage(currentView(), true);
   paintLangBtn();
+  if (relay && generation === langChange && langPref() === target && lang === target) relayPrefs({ lang: target });
 }
 
 /** Wire the button (called once from main.ts, which also hands over paintThemeBtn so the

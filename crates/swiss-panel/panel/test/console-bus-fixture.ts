@@ -5,6 +5,7 @@ import { FaultSchema, FrameSchema, Kind, LinkId, Module, TopicsSchema, WelcomeSc
 import { ConsoleGoneSchema, ConsoleListSchema, ConsolePutSchema, ConsoleRemoveSchema, ConsoleRemovedSchema,
   ConsoleSavedSchema, ConsolesClearedSchema, ConsolesId, ConsolesOfSchema, ConsolesPageSchema, DataSub, SaveMode,
 } from "../src/bus/pb/swiss/bus/v1/data_pb.js";
+import { PanelSub, PrefsId, PrefsSchema } from "../src/bus/pb/swiss/bus/v1/panel_pb.js";
 import { consoleFromWire } from "../src/data-console-store.js";
 import type { ConsoleRecord } from "../src/data-console-sync.js";
 
@@ -99,6 +100,10 @@ export class ConsolePeer implements BusSocket {
       kind: Kind.EVENT, key: conn, origin, body: toBinary(ConsoleSavedSchema, create(ConsoleSavedSchema, { console: {
         ...console, revision: BigInt(console.revision), createdAt: BigInt(console.createdAt), updatedAt: BigInt(console.updatedAt), agentTab: console.agentTab ?? undefined, closedAt: console.closedAt == null ? undefined : BigInt(console.closedAt),
       } })) });
+  }
+  prefs(choice: { lang?: string; theme?: string; codeScheme?: string }): void {
+    this.receive({ module: Module.PANEL, sub: PanelSub.PREFS, id: PrefsId.PREFS_CHANGED, kind: Kind.RELAY,
+      origin: "other-page", body: toBinary(PrefsSchema, create(PrefsSchema, choice)) });
   }
   removed(conn: string, id: string): void {
     this.receive({ module: Module.DATA, sub: DataSub.CONSOLES, id: ConsolesId.CONSOLES_REMOVED,

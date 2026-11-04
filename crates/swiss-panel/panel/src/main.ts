@@ -42,9 +42,10 @@ import { setFoldMap, setKnownPanelVersion, setListFilter } from "./ui-state.js";
 import { setTunFolds } from "./tunnel-state.js";
 import { setJobFolds } from "./job-state.js";
 import { mcpDetail, selectedMcp, setGatewayInfo } from "./mcp-state.js";
+import { initPrefs, relayPrefs } from "./bus/prefs.js";
 import { installBus } from "./bus/bus.js";
 import { mountBusLine, repaintBusLine } from "./bus/line.js";
-import { initLangButton, loadLocale, paintChrome, setBusLinePainter, tk, tr } from "./i18n.js";
+import { applyLang, initLangButton, loadLocale, paintChrome, setBusLinePainter, tk, tr } from "./i18n.js";
 import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
 import type { MenuItem } from "./ui/menu.js";
 import { CODE_SCHEMES, codeSchemeFor } from "./ui/code-scheme.js";
@@ -104,8 +105,8 @@ async function loadInfo(): Promise<void> {
 /* --- appearance ------------------------------------------------------------------------------- */
 /* Three choices, not a two-state switch: "auto" has to stay reachable, because on a machine that
    turns dark at sunset the right answer changes twice a day and a toggle can only ever be wrong
-   half of it. The preference is per-browser (localStorage), not gateway state — it describes this
-   screen, and the same gateway is read from other screens with other lighting. */
+   half of it. Preferences live in localStorage and explicit choices follow across open pages
+   through PANEL.PREFS; boot and OS changes never relay (SPEC §panel.i18n). */
 function themePref(): "light" | "dark" | "auto" {
   try { const v = localStorage.getItem(THEME_KEY); return v === "light" || v === "dark" ? v : "auto"; }
   catch (e) { return "auto"; }
@@ -143,6 +144,11 @@ function codePref(): string {
   try { const v = localStorage.getItem(CODE_KEY); return v && CODE_SCHEMES.includes(v) ? v : "auto"; }
   catch (e) { return "auto"; }
 }
+function setCodeScheme(id: string): void {
+  try { if (id === "auto") localStorage.removeItem(CODE_KEY); else localStorage.setItem(CODE_KEY, id); }
+  catch (e) { /* the choice still applies to this page load */ }
+  applyTheme();
+}
 const CODE_LABELS: Record<string, string> = {
   auto: tk("main.codeAuto"), "intellij-light": tk("main.codeIntellijLight"), darcula: tk("main.codeDarcula"),
   "intellij-dark": tk("main.codeIntellijDark"), github: tk("main.codeGithub"),
@@ -159,9 +165,8 @@ $("codeBtn").onclick = (e) => {
     items.push({
       label: tr(CODE_LABELS[id]), pick: true, on: id === cur,
       fn: (): void => {
-        try { if (id === "auto") localStorage.removeItem(CODE_KEY); else localStorage.setItem(CODE_KEY, id); }
-        catch (err) { /* the choice still applies to this page load */ }
-        applyTheme();
+        setCodeScheme(id);
+        relayPrefs({ codeScheme: id });
       },
     });
   });
@@ -171,8 +176,10 @@ paintCodeBtn();
 $("themeBtn").onclick = (e) => {
   e.stopPropagation();
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
-  setTheme(dark ? "light" : "dark");
+  const theme = dark ? "light" : "dark";
+  setTheme(theme);
   paintThemeBtn();
+  relayPrefs({ theme });
 };
 paintThemeBtn();
 /** The MCP list's right edge (ui/grip.ts): the reader widens it or folds it away. Built again
@@ -220,6 +227,7 @@ installBus({
   info: () => api("/api/info"),
   notice: mountBusLine,
 });
+initPrefs({ lang: applyLang, theme: (theme) => { setTheme(theme); paintThemeBtn(); }, codeScheme: setCodeScheme });
 
 setInterval(poll, 6000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") poll(); });

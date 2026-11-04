@@ -19,10 +19,14 @@ swiss-host `reply.rs`):
 `servedError(body, fallback)` (i18n.ts) turns the code into a `served.*` key through its
 `SERVED_CODES` table and fills it from `params`. A code the build does not know yet shows
 `error` as sent, and a body without one shows the caller's fallback. A new refusal adds its
-code on the server and its key in both locales in the same change.
+code on the server and its key in both locales in the same change. Bus faults use
+`servedFault({code, message, params})` through the same table, with `message` as the English
+fallback.
 
 The codes so far are the console store's: `console.exists`, `console.removed`,
 `console.changed`, `console.changedDelete` and `console.tooLarge` (SPEC §data.agent Tabs).
+The bus adds `bus.unavailable`, `bus.unknown`, `bus.badBody`, `bus.notRelayable`,
+`bus.limit`, `bus.offline`, `bus.timeout` and `bus.tooLarge`, mapped to `served.bus*` keys.
 Two English sentences predate codes and are mapped by their text: `wireLabel` for a served
 nav label, and `moduleDbMessage` for a module-database refusal.
 
@@ -39,7 +43,10 @@ nav label, and `moduleDbMessage` for a module-database refusal.
 - `locale()` answers `en` or `zh-CN` and is what every `toLocale*` / `Intl` call receives.
 - **The preference** is `swiss_lang`; absent is English. `navigator.language` is not
   consulted. `<html lang>` follows it. A top-level `await loadLocale()` runs before the first
-  paint.
+  paint. Explicit language, theme and code-scheme choices follow across every open page,
+  including the desktop window, on PANEL.PREFS (§bus.registry). Only the changed field is
+  relayed. Receiving stores and applies through the same functions without relaying again;
+  boot, reconnect and OS theme changes never relay. A later page reads its own storage.
 - **The flip** (文/A in the context bar) is `setLang` → repaint the chrome → re-navigate the
   current page, without a reload. A page whose `canLeave()` refuses blocks it, and then the
   preference is not written. Blocked storage keeps the choice in memory; a failed Chinese load

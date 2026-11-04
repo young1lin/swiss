@@ -70,7 +70,8 @@ both return `null` — every caller is `if (!j) return;`, and none of them may f
 API types are copied from the Rust serde structs field by field (§panel.toolchain).
 
 **Theme.** `swiss_theme` holds the preference — `light`, `dark`, or absent for auto (the OS's
-`prefers-color-scheme`, followed live). The result is `<html data-theme>`. The button shows what
+`prefers-color-scheme`, followed live). The result is `<html data-theme>`. Explicit choices follow across open pages through the
+PANEL.PREFS relay (§panel.i18n), including the desktop window. The button shows what
 a click switches to (a moon on light, a sun on dark) and the first click pins the choice for
 this browser. Blocked storage keeps the choice for the page load.
 

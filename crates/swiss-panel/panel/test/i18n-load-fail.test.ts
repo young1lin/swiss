@@ -31,6 +31,8 @@ vi.mock("../src/page-registry.js", () => ({
   navigatePage: async () => {},
 }));
 
+import { consolePeer } from "./console-bus-fixture.js";
+import { Kind } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
 import { LANG_KEY, loadLocale, locale, nextLang, setLang, toggleLang, tr } from "../src/i18n.js";
 
 /* The ids paintChrome touches, so a full toggleLang does not die on a missing node
@@ -71,6 +73,16 @@ describe("the zh dictionary failing to load (SPEC §panel.i18n fallback floor)",
     expect(locale()).toBe("en");
     expect(localStorage.getItem(LANG_KEY)).toBe(null);
     expect(document.documentElement.lang).toBe("en");
+  });
+
+  it("a failed dictionary download never relays an unapplied preference", async () => {
+    vi.useFakeTimers();
+    try {
+      const peer = consolePeer();
+      await toggleLang();
+      expect(locale()).toBe("en");
+      expect(peer.sent.filter(frame => frame.kind === Kind.RELAY)).toEqual([]);
+    } finally { vi.clearAllTimers(); vi.useRealTimers(); }
   });
 
   it("nextLang targets from the choice, so a second click flips back", async () => {
