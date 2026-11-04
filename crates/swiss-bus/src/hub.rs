@@ -27,14 +27,15 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use tokio::sync::{mpsc, watch, Notify};
 
-use prost::Message;
-
 use crate::codec::{self, Outgoing};
 use crate::pb::v1::{self, ByeReason, Kind, Topic as ProtoTopic};
 use crate::{
     relayable, BAD_BODY, LIMIT, MAX_LINKS, MAX_QUEUE_BYTES, MAX_QUEUE_FRAMES, MAX_TOPICS, NOT_RELAYABLE,
-    STAMP_INTERVAL, UNAVAILABLE, UNKNOWN,
+    UNAVAILABLE, UNKNOWN,
 };
+// Only a debug build restamps (spawn_restamp), so release and quick builds never read it.
+#[cfg(debug_assertions)]
+use crate::STAMP_INTERVAL;
 
 /// The panel stamp WELCOME and BUILD carry. The composition injects it so this crate
 /// does not depend on the panel (SPEC §bus.link).
@@ -414,7 +415,9 @@ impl Bus {
         self.reply(id, frame.module, frame.sub, frame.id, frame.seq, Answer::fault(code, message));
     }
 
+    #[cfg(debug_assertions)]
     fn announce_build(&self, build: &str) {
+        use prost::Message as _;
         let body = v1::Build { build: build.to_owned() }.encode_to_vec();
         let targets: Vec<u64> = {
             let inner = lock(&self.inner);
