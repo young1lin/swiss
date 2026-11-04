@@ -94,6 +94,67 @@ describe("a streaming answer's process", () => {
     }
   });
 
+  it("heads each reply with the model's mark once: words between steps and a fold under leading words carry none", async () => {
+    const run = async (frames: Array<[string, unknown]>): Promise<HTMLElement> => {
+      const wire = streaming();
+      const column = document.createElement("div");
+      const previous = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => new Response(wire.body));
+      try {
+        const ask = streamAsk("/stream", {}, { alive: () => true, onRunId: () => undefined }, (t) => {
+          const node = transcriptTurn(t);
+          column.appendChild(node);
+          return node;
+        }, new AbortController().signal);
+        for (const [name, payload] of frames) {
+          wire.push(name, payload);
+          await paint();
+        }
+        wire.end();
+        await expect(ask).resolves.toEqual({});
+      } finally {
+        wire.end();
+        globalThis.fetch = previous;
+      }
+      return column;
+    };
+    const marks = (column: HTMLElement): HTMLElement[] => Array.from(column.querySelectorAll<HTMLElement>(".tc-who.assistant"));
+
+    // Work first: the fold's turn is the reply's head; the words said between two steps sit unmarked in it.
+    const worked = await run([
+      ["tool", { name: "run_sql", arguments: "{}" }],
+      ["toolResult", { name: "run_sql", ok: true, text: "1 row" }],
+      ["delta", { kind: "text", text: "Between the steps" }],
+      ["tool", { name: "describe_table", arguments: "{}" }],
+      ["toolResult", { name: "describe_table", ok: true, text: "id int" }],
+      ["final", { text: "The answer" }],
+      ["done", { runId: 1, ok: true }],
+    ]);
+    const between = Array.from(worked.querySelectorAll("details .tc-turn")).find((t) => t.textContent?.includes("Between the steps"));
+    expect(between).toBeTruthy();
+    expect(between?.querySelector(".tc-who")).toBe(null);
+    expect(marks(worked)).toHaveLength(1);
+    expect(marks(worked)[0].closest(".tc-turn")?.querySelector("details")).toBeTruthy();
+
+    // Words first: they head the reply, the fold opening under them and the final carry no mark.
+    // A steer starts the next reply, which is headed again.
+    const led = await run([
+      ["delta", { kind: "text", text: "Let me look" }],
+      ["tool", { name: "run_sql", arguments: "{}" }],
+      ["toolResult", { name: "run_sql", ok: true, text: "1 row" }],
+      ["steer", { id: "q1", text: "also count them" }],
+      ["tool", { name: "run_sql", arguments: "{}" }],
+      ["toolResult", { name: "run_sql", ok: true, text: "2 rows" }],
+      ["final", { text: "Counted" }],
+      ["done", { runId: 1, ok: true }],
+    ]);
+    const heads = marks(led).map((m) => m.closest(".tc-turn"));
+    expect(heads).toHaveLength(2);
+    expect(heads[0]?.textContent).toContain("Let me look");
+    expect(heads[0]?.querySelector("details")).toBe(null);
+    expect(heads[1]?.querySelector("details")).toBeTruthy();
+  });
+
   it("sums the work under its fold in the line a restored ask reads, its chevron kept; a steer folds what came before on its own line", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const wire = streaming();

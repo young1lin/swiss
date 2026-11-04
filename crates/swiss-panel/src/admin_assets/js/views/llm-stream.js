@@ -96,12 +96,17 @@ export async function streamAsk(
   const pending                                                                       = [];
   let process                            = null;
   let processBody                     = null;
+  /** The model's mark heads its reply once, as a restored ask's one turn does (askNodes):
+   *  words between steps stand inside the reply unmarked, and a fold opening under words
+   *  that already lead the reply carries none. A steer starts the next reply. */
+  let headed = false;
   const addProcess = (t                )              => {
     if (!processBody) {
       processBody = h("div", null);
       process = formFold({ summary: tr("llm.test.working") }, processBody)                      ;
       process.open = true;
-      addTurn({ role: speaker("assistant"), code: [process] });
+      addTurn({ role: headed ? null : speaker("assistant"), code: [process] });
+      headed = true;
     }
     const node = transcriptTurn(t);
     processBody.appendChild(node);
@@ -111,7 +116,8 @@ export async function streamAsk(
    *  the markdown it is (as History renders a round's prose in place). */
   const closeWords = ()       => {
     if (answerEl && answerText.trim()) {
-      answerEl.replaceWith(transcriptTurn({ role: speaker("assistant"), text: answerText, markdown: true }));
+      const inWork = !!processBody?.contains(answerEl);
+      answerEl.replaceWith(transcriptTurn({ role: inWork ? null : speaker("assistant"), text: answerText, markdown: true }));
       // (words between steps: their code blocks copy, the turn has no Copy of its own)
     }
     answerEl = null;
@@ -259,9 +265,10 @@ export async function streamAsk(
           // Words said once the work began stand in it, in order: after the step
           // before them, before the tool asks they lead to. Words before any work
           // open the column; the final lifts the closing round's words out below.
-          const turn                 = { role: speaker("assistant"), text };
+          const turn                 = { role: processBody ? null : speaker("assistant"), text };
           answerEl = processBody ? addProcess(turn) : addTurn(turn);
           answerText = text;
+          headed = true;
         } else {
           const holder = answerEl.querySelector(".tc-text");
           if (holder) holder.textContent += text;
@@ -317,6 +324,7 @@ export async function streamAsk(
         steered = true;
         process = null;
         processBody = null;
+        headed = false;
         closeThought();
         closeWords();
         hooks.onSteer?.(String(payload.id || ""), String(payload.text || ""));
