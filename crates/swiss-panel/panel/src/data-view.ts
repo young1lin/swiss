@@ -24,6 +24,7 @@ import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown, dbRefreshKeyspace, dbRefreshRedisValue, dbRewalkKeys } from "./data-browsers.js";
 import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlHighlightClear, dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbConsoleHint, dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbSqlFormatInProgress, dbSqlFormatNow, dbSqlHintSet, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
+import { dbGridTrack } from "./data-columns.js";
 import { dbBarClick, dbFavLoad, dbRunSql, renderDbBar } from "./data-sql.js";
 import { dbAgentButton, dbAgentForget, dbAgentPane, paintContext, renderDbAgent } from "./data-agent.js";
 import { dbActivityClick, dbActivityPollStop } from "./data-activity.js";
@@ -337,6 +338,7 @@ function renderDbView(): void {
     // SPEC §data.agent: the agent at the end edge, folded until the reader opens it.
     ...dbAgentPane());
   pane.appendChild(root);
+  dbGridTrack(gridEl);
   pane.onclick = dbPaneClick;
   pane.oninput = dbPaneInput;
   pane.onchange = dbPaneChange;
@@ -398,7 +400,7 @@ function dbPaneClick(ev: MouseEvent): void {
   if (dbToolbarClick(t, ev)) return;
   if (dbGridClick(t)) return;
   if (dbBarClick(t)) return;
-  if (dbFiltersClick(t)) return;
+  if (dbFiltersClick(t, ev)) return;
   if (dbFormClick(t)) return;
   if (dbStructureClick(t, ev)) return;
   if (dbRedisClick(t)) return;

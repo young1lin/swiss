@@ -147,9 +147,9 @@ function dbColWidthSave(name: string, w: number): void {
   if (key) dbGridConfigSave(key, c.gridCfg);
 }
 
-/** The table's column finder (the ⋯'s Find a column): it lists every column of the table, hidden
+/** The table's column finder on the filter row: it lists every column of the table, hidden
  *  or not; a visible one is brought into sight, a hidden one is shown again first. */
-function dbTableColumnFinder(anchor: HTMLElement, tt: DbTableTab): void {
+export function dbTableColumnFinder(anchor: HTMLElement, tt: DbTableTab): void {
   const c = dbConn();
   const cols = tt.data ? tt.data.columns : [];
   const thOf = (name: string): HTMLElement | undefined => {
@@ -530,7 +530,6 @@ function dbMoreItemsForTable(more: HTMLElement, tt: DbTableTab): MenuItem[] {
     { label: tr("dataGrid.csv"), title: tr("dataGrid.downloadCurrentPageCsv"), fn: (): void => { dbExportCsv(); } },
   ];
   if (tt.data) {
-    items.push({ label: tr("dataGrid.findColumn"), title: tr("dataGrid.findColumnTip"), fn: (): void => { dbTableColumnFinder(more, tt); } });
     items.push({ sep: true });
     items.push({ heading: true, label: tr("dataGrid.exportWholeTableCsv"), fn: (): void => {} });
     items.push({ label: tr("dataGrid.exportCsv"), fn: (): void => { void dbExportTable(more as HTMLButtonElement, "csv"); } });

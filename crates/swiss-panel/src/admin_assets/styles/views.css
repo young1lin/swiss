@@ -249,12 +249,12 @@
     .db-tab-rename { flex: 1; min-width: 0; width: 9em; height: 18px; padding: 0 3px;
       font: inherit; font-size: var(--f-caption); color: var(--text); background: var(--bg);
       border: 1px solid var(--accent); border-radius: 4px; outline: none; }
-    .db-tab-add { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 var(--s2); border: none; background: none; color: var(--text-3); font-size: var(--f-label); cursor: pointer; --ic: 14px; }
-    .db-tab-add:hover { background: var(--hover); color: var(--text); }
+    .db-tab-add, .db-tab-more { flex: none; display: inline-flex; align-items: center; height: 32px; border: none; background: none; color: var(--text-3); cursor: pointer; --ic: 14px; }
+    .db-tab-add { gap: 4px; padding: 0 var(--s2); font-size: var(--f-label); }
+    .db-tab-add:hover, .db-tab-more:hover { background: var(--hover); color: var(--text); }
     /* The overflow seat (SPEC §data.tabs): one glyph, one job — "the whole set, listed". Same
        height and hover as the "+" it sits beside, icon-only because its title says the rest. */
-    .db-tab-more { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 32px; border: none; background: none; color: var(--text-3); cursor: pointer; --ic: 14px; }
-    .db-tab-more:hover { background: var(--hover); color: var(--text); }
+    .db-tab-more { justify-content: center; width: 28px; }
     .db-head { display: flex; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
     .db-head-left { flex: 1 1 14em; min-width: 0; }
     .db-head-left > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -262,6 +262,7 @@
     .db-meta { font-size: var(--f-label); color: var(--text-2); margin-top: 2px; }
     .db-head-ctl { margin-left: auto; display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; justify-content: flex-end; }
     .db-filters { display: flex; flex-wrap: wrap; gap: var(--s1); align-items: center; }
+    .db-filters > [data-ffind] { margin-left: auto; }
     .db-filter { display: inline-flex; gap: var(--s1); align-items: center; padding: 2px 0; }
     /* Sizing only — the chrome (background, border, chevron, focus ring) is the panel's global
        dropdown style, so every dropdown reads as one control family. Never restyle selects locally.
@@ -334,7 +335,9 @@
     .db-sql-hl { position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--code-fg); }
     .db-console { display: flex; flex-direction: column; }
     .db-console-row { display: flex; align-items: center; gap: var(--s2); }
-    .db-grid-wrap { flex: 1; overflow: auto; min-height: 200px; overflow-anchor: none; }
+    .db-grid-wrap { flex: 1; overflow: auto; min-height: 200px; overflow-anchor: none; position: relative; }
+    /* Keep the vertical track below the sticky header. */
+    .db-grid-wrap::-webkit-scrollbar-track:vertical { margin-top: var(--db-head-h, 0px); }
     .db-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: var(--f-label); }
     /* Rows only (SPEC §panel.design): the columns read by alignment, no hairline between cells;
        a body row is 4px taller than the header, for air around its lines. */
@@ -433,7 +436,6 @@
       white-space: pre-wrap; word-break: break-all; resize: none; overflow: hidden;
       outline: none;
     }
-    .db-grid-wrap { position: relative; }
     #dbCellText { position: relative; min-height: 180px; }   /* in flow: it sizes the wrap, over the <pre> */
     #dbCellText.json { min-height: 260px; }
     /* The value sheet's read-only body. The content sits on the quiet inset

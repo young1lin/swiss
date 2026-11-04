@@ -87,12 +87,14 @@ behind the pending-edits confirm.
 
 - **Headers** carry the type, a PK marker and the column comment; a click cycles
   asc → desc → none (server-side). `NULL` is drawn explicitly.
+  The vertical scrollbar starts below the header in both table and query result grids.
 - **Widths and hidden columns** persist in localStorage under
   `swiss.dbGrid.<conn>_<schema.table>`; widths are clamped to 48–1200 px. A column is at most
   240 px until it is sized: a drag on the grip at the header's right edge sizes it, a
   double-click fits it to its widest cell, the header's included (`data-columns`, shared with
   a console's results).
-- **Find a column** (the table's ⋯) lists every column, hidden or not, under a find box
+- **Find a column** (the magnifier at the right of the table's filter row, shown with more than
+  one column) lists every column, hidden or not, under a find box
   (`popupMenu`'s filter): typing narrows the list, Enter or a click takes the column into
   sight at the grid's left edge and underlines its header a moment; a hidden column is shown
   again first.

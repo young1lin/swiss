@@ -20,14 +20,14 @@ import { fill, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbIsMongo, mongoFilterNodes } from "./data-mongo.js";
-import { dbLoadData } from "./data-grid.js";
+import { dbLoadData, dbTableColumnFinder } from "./data-grid.js";
 import { dbDropEdits, dbIsPg, dbOkToDrop } from "./data-view.js";
 // The strip reads this module's filter rows for the per-card count; the call crosses inside a
 // function, never at module scope, which is the accepted shape for every data-* edge.
 import { renderDbTabs } from "./data-tabs.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { locale, tk, tr } from "./i18n.js";
-import { btn } from "./ui/button.js";
+import { btn, iconBtn } from "./ui/button.js";
 import { tokenSpans } from "./ui/json-view.js";
 import type { CodeToken } from "./ui/json-view.js";
 
@@ -320,6 +320,11 @@ function dbFiltersNodes(): HChild[] {
   if (d.filters.length) {
     rows.push(h("span", { class: "db-filter-hint" }, tr("dataFilters.enterAppliesTermsStack")));
   }
+  if (cols.length > 1) {
+    rows.push(iconBtn("search", tr("dataGrid.findColumn"), {
+      ghost: true, title: tr("dataGrid.findColumnTip"), data: { ffind: "" },
+    }));
+  }
   return rows;
 }
 
@@ -329,8 +334,14 @@ function dbFiltersNodes(): HChild[] {
    time; the delegated handlers resolve d.filters[i] from LIVE state at event time, so a
    re-render between paint and click can never restore into a stale object. */
 
-function dbFiltersClick(t: Element): boolean {
+function dbFiltersClick(t: Element, ev: MouseEvent): boolean {
   const d = dbTab();
+  const find = t.closest<HTMLElement>("[data-ffind]");
+  if (find && d.kind === "table") {
+    ev.stopPropagation(); // The document's outside-click listener must leave the new menu open.
+    dbTableColumnFinder(find, d);
+    return true;
+  }
   const rm = t.closest<HTMLElement>("[data-frm]");
   if (rm && d.kind === "table") {
     const i = Number(rm.dataset.frm);

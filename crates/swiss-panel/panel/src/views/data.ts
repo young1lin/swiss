@@ -19,6 +19,7 @@ import { dbConnLabel, dbDropAllEdits, dbOkToLeave, dbPendingAll, dbSessionPinned
 import { dbConn, dbSuspendView } from "../db-state.js";
 import { dbPubsubStop } from "../data-pubsub.js";
 import { dbSqlHighlightClear } from "../data-filters.js";
+import { dbGridTrack } from "../data-columns.js";
 export function mount() { return loadDbView(); }
 export function refresh() { return loadDbView(); }
 /* SPEC §data.tabs: the page-leave guards ask the WHOLE strip, not the object in front. A buffer
@@ -28,6 +29,7 @@ export function hasPendingChanges() { return dbPendingAll() > 0; }
 export function canLeave() { return !dbPendingAll() || dbOkToLeave(); }
 export function unmount() {
   dbSqlHighlightClear();
+  dbGridTrack(null);
   // SPEC §data.sessions: the leave PARKS the session, so the page comes back on the same connection with
   // its strip, rows and catalog. The buffered writes go: canLeave() asked about them, and once
   // the page is gone no guard would count them.

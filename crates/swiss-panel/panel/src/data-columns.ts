@@ -32,6 +32,38 @@ const RESULT_COLS_KEEP = 50; // results remembered, the most recently resized ke
 
 type ResultCols = Record<string, { w: Record<string, number>; at: number }>;
 
+let stopGridTrack: (() => void) | undefined;
+
+/** Keep the vertical scrollbar below a row grid's header (SPEC §data.grid). All painters replace
+ *  the same wrap; nested tables and Activity (no selection controls) own no inset. */
+export function dbGridTrack(wrap: HTMLElement | null): void {
+  stopGridTrack?.();
+  stopGridTrack = undefined;
+  if (!wrap || typeof MutationObserver !== "function" || typeof ResizeObserver !== "function") return;
+  let head: HTMLTableSectionElement | null = null;
+  const measure = (): void => {
+    const height = head ? Math.ceil(head.getBoundingClientRect().height) : 0;
+    const value = height + "px";
+    if (wrap.style.getPropertyValue("--db-head-h") !== value) wrap.style.setProperty("--db-head-h", value);
+  };
+  const sizes = new ResizeObserver(measure);
+  const watch = (): void => {
+    const first = wrap.firstElementChild;
+    const tableHead = first?.matches("table.db-grid") ? (first as HTMLTableElement).tHead : null;
+    const next = tableHead?.querySelector(".db-selbox") ? tableHead : null;
+    if (next !== head) {
+      sizes.disconnect();
+      head = next;
+      if (head) sizes.observe(head);
+    }
+    measure();
+  };
+  const repaints = new MutationObserver(watch);
+  repaints.observe(wrap, { childList: true });
+  watch();
+  stopGridTrack = (): void => { repaints.disconnect(); sizes.disconnect(); };
+}
+
 /** A result's key: FNV-1a over the connection and its column names, short for a long list. */
 export function dbResultColsSig(conn: string, columns: string[]): string {
   const s = conn + "\u0001" + columns.join("\u0001");

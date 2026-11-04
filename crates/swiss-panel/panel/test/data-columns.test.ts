@@ -20,7 +20,7 @@
    again - a result's columns could not be resized, every one took up to 340 px, and the last
    columns were out of reach. A result's header now carries the table's grip (drag, double-click
    to fit) and keeps its widths per connection and column list, the cap is 240 px, and a finder
-   on the results bar (and in a table's ⋯) lists the columns under a find box and jumps to the
+   on the results bar (and a table's filter row) lists the columns under a find box and jumps to the
    one picked - the library's popupMenu grew that find box. These drive the real module and the
    real view against a real DOM with a routed fetch. */
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import { dbConn as dbConnState, dbTab, unmountDbView } from "../src/db-state.js";
 import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 import {
-  DB_COL_MAX, DB_COL_MIN, dbColFit, dbColGrip, dbResultColsSig, dbResultWidthSave, dbResultWidths,
+  DB_COL_MAX, DB_COL_MIN, dbColFit, dbColGrip, dbGridTrack, dbResultColsSig, dbResultWidthSave, dbResultWidths,
 } from "../src/data-columns.js";
 import { closeMenu, popupMenu } from "../src/ui/menu.js";
 import { sheet } from "./styles.js";
@@ -76,6 +76,7 @@ const page = await import("../src/views/data.js");
 const view = await import("../src/data-view.js");
 const tabs = await import("../src/data-tabs.js");
 const grid = await import("../src/data-grid.js");
+const filters = await import("../src/data-filters.js");
 
 const flush = async (): Promise<void> => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); };
 
@@ -343,7 +344,7 @@ describe("a wide result on the real console (SPEC §data.console)", () => {
   });
 });
 
-describe("a table tab's finder, in its ⋯ (SPEC §data.grid)", () => {
+describe("a table tab's finder, on its filter row (SPEC §data.grid)", () => {
   it("lists every column, the hidden one marked; picking it shows it again and goes to it", async () => {
     await view.dbSwitchConn("shop");
     await flush();
@@ -359,13 +360,15 @@ describe("a table tab's finder, in its ⋯ (SPEC §data.grid)", () => {
     tab.pane = "data"; tab.loading = false;
     grid.renderDbToolbar();
     grid.renderDbGrid();
+    filters.renderDbFilters();
     expect(headers().map((th) => th.dataset.sort)).toEqual(["id", "email"]);
-    const more = document.querySelector<HTMLButtonElement>("#dbHead .btn.icon.ghost[aria-haspopup=menu]");
-    if (!more) throw new Error("the table's ⋯");
-    more.click();
-    const row = Array.from(menu()?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((b) => b.textContent === "Find a column");
-    if (!row) throw new Error("Find a column in the ⋯");
-    row.click();
+    const find = document.querySelector<HTMLButtonElement>('#dbFilters .btn.icon[aria-label="Find a column"]');
+    if (!find) throw new Error("the finder button on the filter row");
+    expect(find.querySelector("use")?.getAttribute("href")).toBe("#i-search");
+    // connect.ts closes menus at document: the opener must stop this very click there.
+    document.addEventListener("click", closeMenu);
+    try { find.click(); } finally { document.removeEventListener("click", closeMenu); }
+    expect(menu()?.classList.contains("find")).toBe(true);
     expect(shown()).toEqual(["id", "name", "email"]);
     const hiddenRow = Array.from(menu()?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((b) => b.textContent === "name");
     expect(hiddenRow?.querySelector("use")?.getAttribute("href")).toBe("#i-eye-off");
@@ -375,5 +378,114 @@ describe("a table tab's finder, in its ⋯ (SPEC §data.grid)", () => {
     expect(JSON.parse(localStorage.getItem("swiss.dbGrid.shop_t") || "{}")).toMatchObject({ hidden: [] });
     expect(headers().map((th) => th.dataset.sort)).toEqual(["id", "name", "email"]);
     expect(headers().filter((th) => th.classList.contains("db-hit")).map((th) => th.dataset.sort)).toEqual(["name"]);
+  });
+
+  it("keeps the finder out of the table's overflow menu and hides it for one column", async () => {
+    await view.dbSwitchConn("shop");
+    await flush();
+    const tab = dbTab();
+    if (tab.kind !== "table") throw new Error("a table tab");
+    tab.table = "t"; tab.pane = "data"; tab.loading = false;
+    tab.data = dbPage({ columns: [dbCol("id"), dbCol("name")] });
+    grid.renderDbToolbar();
+    filters.renderDbFilters();
+    expect(document.querySelector('#dbFilters [aria-label="Find a column"]')).not.toBeNull();
+    const more = document.querySelector<HTMLButtonElement>("#dbHead .btn.icon.ghost[aria-haspopup=menu]");
+    if (!more) throw new Error("the table's overflow menu");
+    more.click();
+    expect(shown()).not.toContain("Find a column");
+    closeMenu();
+    tab.data.columns = [dbCol("id")];
+    filters.renderDbFilters();
+    expect(document.querySelector('#dbFilters [aria-label="Find a column"]')).toBeNull();
+    tab.data.columns.push(dbCol("name"));
+    tab.pane = "form";
+    filters.renderDbFilters();
+    expect(document.querySelector('#dbFilters [aria-label="Find a column"]')).toBeNull();
+  });
+});
+
+describe("the grid's vertical track starts below its header (SPEC §data.grid)", () => {
+  it("insets only the vertical track by the measured header", () => {
+    expect(sheet("views.css")).toMatch(/\.db-grid-wrap::-webkit-scrollbar-track:vertical \{[^}]*margin-top: var\(--db-head-h, 0px\)/);
+  });
+
+  it("measures result and table headers after repaint, including types and comments", async () => {
+    let height = 27;
+    vi.spyOn(HTMLTableSectionElement.prototype, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, 0, 400, height));
+    await run("SELECT wide");
+    const wrap = document.getElementById("dbGridWrap");
+    expect(wrap?.style.getPropertyValue("--db-head-h")).toBe("27px");
+    await view.dbSwitchConn("shop");
+    await flush();
+    tabs.dbOpenTab({ kind: "table", table: "", schema: null });
+    await flush();
+    const tab = dbTab();
+    if (tab.kind !== "table") throw new Error("a table tab");
+    tab.table = "t";
+    tab.data = dbPage({ columns: [dbCol("id"), dbCol("name", { comment: "A comment" })] });
+    tab.pane = "data"; tab.loading = false;
+    height = 63;
+    grid.renderDbGrid();
+    await flush();
+    expect(document.querySelector("#dbGridWrap .db-col-comment")).not.toBeNull();
+    expect(document.getElementById("dbGridWrap")?.style.getPropertyValue("--db-head-h")).toBe("63px");
+  });
+
+  it("clears the offset for Activity, empty and nested content, then measures a row grid again", async () => {
+    vi.spyOn(HTMLTableSectionElement.prototype, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, 0, 400, 27));
+    await run("SELECT wide");
+    const wrap = document.getElementById("dbGridWrap");
+    if (!wrap) throw new Error("the grid wrap");
+    expect(wrap.style.getPropertyValue("--db-head-h")).toBe("27px");
+    const table = wrap.querySelector("table");
+    if (!table) throw new Error("the result grid");
+    // Activity uses a top-level db-grid too, but has no selectable row headers.
+    const activity = document.createElement("table");
+    activity.className = "db-grid";
+    activity.innerHTML = "<thead><tr><th>PID</th><th>Query</th></tr></thead><tbody></tbody>";
+    wrap.replaceChildren(activity);
+    await flush();
+    expect(wrap.style.getPropertyValue("--db-head-h")).toBe("0px");
+    const nested = document.createElement("div");
+    nested.appendChild(table);
+    wrap.replaceChildren(nested);
+    await flush();
+    expect(wrap.style.getPropertyValue("--db-head-h")).toBe("0px");
+    wrap.replaceChildren(document.createElement("div"), table);
+    await flush();
+    expect(wrap.style.getPropertyValue("--db-head-h")).toBe("0px");
+    wrap.replaceChildren(table);
+    await flush();
+    expect(wrap.style.getPropertyValue("--db-head-h")).toBe("27px");
+    wrap.replaceChildren();
+    await flush();
+    expect(wrap.style.getPropertyValue("--db-head-h")).toBe("0px");
+  });
+
+  it("follows header resizes and releases both observers when the page leaves", async () => {
+    let height = 27;
+    vi.spyOn(HTMLTableSectionElement.prototype, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, 0, 400, height));
+    await run("SELECT wide");
+    const wrap = document.getElementById("dbGridWrap");
+    if (!wrap) throw new Error("the grid wrap");
+    const observed = new Set<Element>();
+    let resize = (): void => {};
+    vi.spyOn(globalThis, "ResizeObserver").mockImplementation(class implements ResizeObserver {
+      constructor(cb: ResizeObserverCallback) { resize = (): void => { cb([], this); }; }
+      observe(target: Element): void { observed.add(target); }
+      unobserve(target: Element): void { observed.delete(target); }
+      disconnect(): void { observed.clear(); }
+    });
+    dbGridTrack(wrap);
+    expect([...observed]).toEqual([wrap.querySelector("thead")]);
+    height = 49.5;
+    resize();
+    expect(wrap.style.getPropertyValue("--db-head-h")).toBe("50px");
+    page.unmount();
+    expect(observed.size).toBe(0);
+    wrap.replaceChildren();
+    await flush();
+    expect(wrap.style.getPropertyValue("--db-head-h"), "the old wrap is no longer watched").toBe("50px");
   });
 });
