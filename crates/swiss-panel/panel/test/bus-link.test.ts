@@ -38,6 +38,7 @@ import {
   HelloSchema,
   Kind,
   LinkId,
+  PongSchema,
   TopicId,
   TopicsSchema,
   WelcomeSchema,
@@ -299,6 +300,30 @@ describe("the bus link (SPEC §bus.link)", () => {
     latest().close();
     await vi.advanceTimersByTimeAsync(0);
     expect(FakeSocket.all.length).toBe(before + 1);
+  });
+
+  it("an answered PING clears its deadline: the link stays and pings again a heartbeat later", async () => {
+    const sock = latest();
+    sock.open();
+    // The served heartbeat (20 s) outlasts the PONG deadline (10 s), as it does live: a PONG
+    // the link failed to recognize would close the socket before the next PING.
+    sock.receive(welcome("stamp-a"));
+    await vi.advanceTimersByTimeAsync(20_000);
+    const ping = decoded(sock.sent[sock.sent.length - 1]);
+    expect(ping.id).toBe(LinkId.PING);
+    sock.receive(frame({
+      module: 0, sub: 1, id: LinkId.PING, kind: Kind.RESPONSE, seq: 2, replyTo: ping.seq,
+      body: toBinary(PongSchema, create(PongSchema, { sentMs: 1n, serverMs: 2n })),
+    }));
+    const answered = sock.sent.length;
+    // Past the PONG deadline and past any reconnect backoff that a close would start.
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(FakeSocket.all, "the answered link is not dropped").toHaveLength(1);
+    expect(sock.sent).toHaveLength(answered);
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(sock.sent, "the next PING goes a heartbeat after the PONG").toHaveLength(answered + 1);
+    expect(decoded(sock.sent[answered]).id).toBe(LinkId.PING);
+    expect(FakeSocket.all).toHaveLength(1);
   });
 
   it("reloads on BYE PROTOCOL and on a later WELCOME with another build", async () => {

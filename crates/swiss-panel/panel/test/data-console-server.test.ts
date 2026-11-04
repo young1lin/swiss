@@ -278,6 +278,18 @@ describe("the same connection open in another window (SPEC §data.agent Tabs)", 
     expect(store.dbConsoleSyncState("event-order", "echo")).toBe("clean");
   });
 
+  it("an older event for a console closed here neither reopens it nor rolls its history back", async () => {
+    await loaded("event-closed-order", [rec({ id: "shut", sql: "final", revision: 5, open: false, closedAt: 70 })]);
+    expect(dbTabs().some((x) => x.kind === "sql" && x.id === "shut")).toBe(false);
+    // Events the bus queued before the read answered: older than the record the read filed.
+    peer.changed("event-closed-order", rec({ id: "shut", sql: "earlier", revision: 4, open: true }));
+    peer.changed("event-closed-order", rec({ id: "shut", sql: "earliest", revision: 3, open: false, closedAt: 40 }));
+    await settle();
+    expect(dbTabs().some((x) => x.kind === "sql" && x.id === "shut"), "a stale open event reopens nothing").toBe(false);
+    expect(closed.dbClosedFor("event-closed-order").map((e) => [e.id, e.text, e.revision])).toEqual([["shut", "final", 5]]);
+    expect(posted()).toEqual([]);
+  });
+
   it("adopts a pending draft that matches the saved record after a lost response", async () => {
     await loaded("event-pending", [rec({ id: "pending", tab: "Report", sql: "old", revision: 2 })]);
     const tab = dbTab() as DbSqlTab;
