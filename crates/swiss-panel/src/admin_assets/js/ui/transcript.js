@@ -47,6 +47,9 @@ import { tag } from "./status.js";
                                                                                               
                                                               
                 
+                                                                                       
+                                    
+                
                                                                                    
                  
  
@@ -82,6 +85,7 @@ export function transcriptTurn(t                )              {
       h("span", { class: "tc-role" }, t.role),
       t.at == null ? null : h("span", { class: "tc-at" }, t.at)),
     body,
+    t.foot ?? null,
     t.copy ? h("div", { class: "tc-acts" }, copyBtn(t.copy)) : null);
 }
 

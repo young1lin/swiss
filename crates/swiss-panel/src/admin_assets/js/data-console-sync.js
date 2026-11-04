@@ -14,7 +14,7 @@
  
 
                                                                              
-                                                                                                                      
+                                                                                                                                       
 
 /** What the page should say about one record. `failed` is a conflict or a refused write: the
  *  local text is still the reader's and nothing more is sent until it is resolved. */
@@ -59,6 +59,13 @@ export class ConsoleSync {
     return item.failed ? "failed" : "pending";
   }
 
+  /** Why a failed record was refused, in the words the write threw (already the reader's
+   *  language: the store maps the server's code). Null while nothing failed. */
+  reason(conn        , id        )                {
+    const item = this.items.get(this.key(conn, id));
+    return item && item.failed ? item.reason || "" : null;
+  }
+
   /** Adopt the server's revision after a conflict the reader chose to overwrite: the draft stays
    *  exactly as typed and the next flush sends it against the record now on the server. */
   rebase(conn        , id        , server               )       {
@@ -68,6 +75,7 @@ export class ConsoleSync {
     item.value.createdAt = server.createdAt;
     item.value.closedAt = server.closedAt;
     item.failed = false;
+    item.reason = undefined;
     item.generation++;
   }
 
@@ -91,8 +99,9 @@ export class ConsoleSync {
         item.value.updatedAt = saved.updatedAt;
         item.value.closedAt = saved.closedAt;
         item.saved = generation;
-      } catch {
+      } catch (e) {
         item.failed = true;
+        item.reason = e instanceof Error ? e.message : String(e);
         return false;
       }
     }

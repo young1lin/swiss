@@ -118,8 +118,9 @@ export function note(body        , o                                            
 }
 
 /** A load that failed, in place: the sentence, the status code (the only secondary text - a
- *  response body never lands in the panel, SPEC §mcp.calls) and the way out. */
-export function failNote(o                                                                   )              {
+ *  response body never lands in the panel, SPEC §mcp.calls) and the way out - one button, or
+ *  the few a choice offers side by side. */
+export function failNote(o                                                                                   )              {
   return h("div", { class: "fail-note", id: o.id, role: "status" },
     h("span", null, o.text),
     o.why != null && o.why !== false && o.why !== "" ? h("span", { class: "fail-why" }, o.why) : null,

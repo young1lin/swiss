@@ -34,6 +34,13 @@ pub fn admin_error(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "error": message }))).into_response()
 }
 
+/// An admin-route refusal the panel says in its own words: `{error, code}`. `code` is a stable
+/// machine id (`console.changed`) the panel maps to a locale key; `error` stays the English
+/// sentence for the CLI, the logs and a panel that does not know the code yet (SPEC §panel.i18n).
+pub fn admin_error_code(status: StatusCode, code: &str, message: &str) -> Response {
+    (status, Json(json!({ "error": message, "code": code }))).into_response()
+}
+
 pub fn admin_json(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
 }

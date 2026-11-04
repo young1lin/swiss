@@ -209,6 +209,85 @@ describe("a connection whose consoles live on the server (SPEC §data.agent Tabs
   });
 });
 
+describe("the same connection open in another window (SPEC §data.agent Tabs)", () => {
+  /** Load these records as this window's first read of the connection. */
+  async function loaded(conn: string, records: ConsoleRecord[]): Promise<void> {
+    enter(conn);
+    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: records }] : undefined;
+    await tabs.dbConsolesLoad(conn);
+  }
+
+  it("coming back to the window catches a clean console up to what the other window saved", async () => {
+    await loaded("win1", [rec({ id: "w-1", tab: "Report", sql: "as loaded", revision: 2 })]);
+    const t = dbTabs().find((x) => x.kind === "sql" && x.id === "w-1") as DbSqlTab;
+    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [
+      rec({ id: "w-1", tab: "Report", sql: "as loaded;", revision: 3, updatedAt: 30 }),
+      rec({ id: "w-2", tab: "Opened there", sql: "SELECT 2", revision: 1, createdAt: 40 }),
+      rec({ id: "w-3", tab: "Closed there", open: false, sql: "SELECT 3", revision: 2, closedAt: 50 }),
+    ] }] : undefined;
+    calls = [];
+
+    window.dispatchEvent(new Event("focus"));
+    await settle();
+
+    expect(calls.some((c) => c.method === "GET" && onConsoles(c)), "focus reads the store again").toBe(true);
+    expect(t).toMatchObject({ sqlText: "as loaded;", revision: 3, updatedAt: 30 });
+    expect((document.getElementById("dbSql") as HTMLTextAreaElement).value, "the editor in front shows it").toBe("as loaded;");
+    expect(dbTabs().some((x) => x.kind === "sql" && x.id === "w-2"), "a console opened there joins the strip").toBe(true);
+    expect(dbTab(), "without taking the front").toBe(t);
+    expect(closed.dbClosedFor("win1").map((e) => e.id)).toEqual(["w-3"]);
+    expect(posted(), "catching up never writes").toEqual([]);
+  });
+
+  it("never rewrites a draft: the draft's own save meets the newer record and asks", async () => {
+    await loaded("win2", [rec({ id: "w-4", sql: "as loaded", revision: 2 })]);
+    const t = dbTabs().find((x) => x.kind === "sql" && x.id === "w-4") as DbSqlTab;
+    dbSetSqlText(t, "my draft");
+    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [rec({ id: "w-4", sql: "theirs", revision: 3 })] }] : undefined;
+
+    await tabs.dbConsolesRefresh("win2");
+
+    expect(t).toMatchObject({ sqlText: "my draft", revision: 2 });
+    expect(store.dbConsoleSyncState("win2", "w-4")).toBe("pending");
+  });
+
+  it("a clean console closed there closes here and is filed in Recently closed", async () => {
+    await loaded("win3", [rec({ id: "w-5", sql: "kept", revision: 2 }), rec({ id: "w-6", sql: "other", revision: 1, createdAt: 5 })]);
+    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [
+      rec({ id: "w-5", sql: "kept", revision: 3, open: false, closedAt: 60 }),
+      rec({ id: "w-6", sql: "other", revision: 1, createdAt: 5 }),
+    ] }] : undefined;
+
+    await tabs.dbConsolesRefresh("win3");
+
+    expect(dbTabs().some((x) => x.kind === "sql" && x.id === "w-5")).toBe(false);
+    expect(dbTabs().some((x) => x.kind === "sql" && x.id === "w-6")).toBe(true);
+    expect(closed.dbClosedFor("win3").map((e) => [e.id, e.text])).toEqual([["w-5", "kept"]]);
+  });
+
+  it("closing a clean console the other window changed files the newer record instead of refusing", async () => {
+    await loaded("win4", [rec({ id: "w-7", tab: "Report", sql: "as loaded", revision: 2 })]);
+    route = (c) => {
+      if (!onConsoles(c)) return undefined;
+      if (c.method === "GET") return [200, { consoles: [rec({ id: "w-7", tab: "Report", sql: "as loaded;", revision: 3 })] }];
+      if (c.method === "POST") {
+        const sent = c.body?.console as ConsoleRecord;
+        if (sent.revision === 3) return [200, { console: { ...sent, revision: 4, closedAt: 90 } }];
+        return [409, { error: "conflict: console changed; reload the server record before saving", code: "console.changed" }];
+      }
+      return undefined;
+    };
+    const at = dbTabs().findIndex((x) => x.kind === "sql" && x.id === "w-7");
+
+    tabs.dbCloseTab(at);
+    await settle();
+
+    expect(dbTabs().some((x) => x.kind === "sql" && x.id === "w-7"), "the close went through").toBe(false);
+    expect(posted().at(-1)).toMatchObject({ id: "w-7", open: false, sql: "as loaded;", revision: 3 });
+    expect(closed.dbClosedFor("win4").map((e) => [e.id, e.text])).toEqual([["w-7", "as loaded;"]]);
+  });
+});
+
 describe("a refused console save (SPEC §data.agent Tabs)", () => {
   /** Load one open console and type over it, so the next save compares against revision 2. */
   async function draftOver(conn: string, id: string): Promise<DbSqlTab> {
@@ -243,6 +322,30 @@ describe("a refused console save (SPEC §data.agent Tabs)", () => {
     expect(t.revision).toBe(3);
     expect(store.dbConsoleSyncState("srv5", "srv-6")).toBe("clean");
     expect(document.getElementById("toast")?.textContent).toBe(tr("dataTabs.consoleReloaded"));
+  });
+
+  it("says the refusal above the editor, in the reader's words, with both ways out", async () => {
+    const t = await draftOver("srv7", "srv-8");
+    route = (c) => {
+      if (!onConsoles(c)) return undefined;
+      if (c.method === "GET") return [200, { consoles: [rec({ id: "srv-8", tab: "Report", sql: "newer", revision: 3 })] }];
+      if (c.method === "POST") return [409, { error: "conflict: console changed; reload the server record before saving", code: "console.changed" }];
+      return undefined;
+    };
+    const bar = document.getElementById("dbConsoleConflict") as HTMLElement;
+    expect(bar.hidden, "a saved console shows no bar").toBe(true);
+    expect(await store.dbConsoleFlush("srv7", true)).toBe(false);
+
+    expect(bar.hidden).toBe(false);
+    expect(bar.textContent).toContain(tr("dataTabs.consoleNotSaved"));
+    expect(bar.textContent, "the server's code, not its English sentence").toContain(tr("served.consoleChanged"));
+    expect(bar.textContent).not.toContain("conflict:");
+    bar.querySelector<HTMLButtonElement>("[data-dbconflict='server']")!.click();
+    await settle();
+
+    expect(t.sqlText).toBe("newer");
+    expect(store.dbConsoleSyncState("srv7", "srv-8")).toBe("clean");
+    expect(bar.hidden, "resolved, the bar goes").toBe(true);
   });
 
   it("keeps the draft when the reader chooses it, and saves it over the newer record", async () => {

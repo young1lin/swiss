@@ -31,7 +31,7 @@
 import { $, api, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
                                       
-import { locale, tr } from "../i18n.js";
+import { locale, tr, trn } from "../i18n.js";
 import { JV_LINES, actionBtn, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, scrollBox, section, setActionBusy, sheet, showSheet, speaker, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
                                                                        
 import { call, takeWantedRun } from "./llm-core.js";
@@ -978,6 +978,33 @@ function answerNodes(text        )           {
   return t.startsWith("{") || t.startsWith("[") ? bodyBlocks(t) : [markdownNode(text, { class: "tc-md", copy: true })];
 }
 
+/** One ask's work, as its fold's summary: rounds, tool calls (none said when none), tokens and
+ *  time. The same line live (counted from the stream's usage and tool frames) and restored
+ *  (summed from the ask's calls),
+ *  so a reloaded conversation reads as it streamed (2026-11-04: the two said it differently). */
+export function workSummary(o                                                                                            )         {
+  return [
+    trn(o.rounds, "llm.work.rounds.one", "llm.work.rounds.other"),
+    o.tools ? trn(o.tools, "llm.work.tools.one", "llm.work.tools.other") : null,
+    tr("llm.history.tokens", { i: compact(o.tokensIn), o: compact(o.tokensOut) }),
+    o.ms != null && Number.isFinite(o.ms) && o.ms >= 0 ? span(o.ms) : null,
+  ].filter(Boolean).join(" · ");
+}
+
+/** An ask's work out of its rounds' calls: tokens summed, time from the first call's start to
+ *  the last one's end. */
+function askWork(ask          , tools        )         {
+  const calls = ask.rounds.map((r) => r.call).filter((c)                       => c != null);
+  const first = calls[0], last = calls[calls.length - 1];
+  const ms = first && last ? Date.parse(last.at) + last.ms - Date.parse(first.at) : null;
+  return workSummary({
+    rounds: ask.rounds.length, tools,
+    tokensIn: calls.reduce((n, c) => n + (c.tokensIn || 0), 0),
+    tokensOut: calls.reduce((n, c) => n + (c.tokensOut || 0), 0),
+    ms,
+  });
+}
+
 /** One ask on the sheet: its prompt, its steps, its answer and errors. A running run's
  *  `run` rides on the ask it works on now, its last. */
 function askNodes(ask          , n        , system               , run                    , bodies                           , asTurn                                  , artifact                              )           {
@@ -985,7 +1012,7 @@ function askNodes(ask          , n        , system               , run          
   const steps = stepNodes(ask, n, run, bodies);
   const tools = ask.rounds.reduce((sum, r) => sum + r.tools.length, 0);
   const asked = n === 0 ? system : null;
-  const process = formFold({ summary: tr("llm.history.stepsNote", { rounds: ask.rounds.length, tools }) },
+  const process = formFold({ summary: askWork(ask, tools) },
     h("div", { data: { lhsteps: String(n) } }, flow(steps)));
   process.setAttribute("data-lhprocess", String(n));
   if (run?.live) process.setAttribute("open", "");

@@ -17,7 +17,8 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it, vi } from "vitest";
-import { transcriptTurn } from "../src/ui/index.js";
+import { fmtMs, transcriptTurn } from "../src/ui/index.js";
+import { workSummary } from "../src/views/llm-history.js";
 import { streamAsk } from "../src/views/llm-stream.js";
 
 /** Frames arrive independently of cancellation, like a transport still closing its socket. */
@@ -90,6 +91,88 @@ describe("a streaming answer's process", () => {
     } finally {
       wire.end();
       globalThis.fetch = previous;
+    }
+  });
+
+  it("sums the work under its fold in the line a restored ask reads, its chevron kept; a steer folds what came before on its own line", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const wire = streaming();
+    const column = document.createElement("div");
+    const previous = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(wire.body));
+    const summaries = (): string[] => Array.from(column.querySelectorAll(".tc-code > details > summary")).map((s) => s.textContent || "");
+    try {
+      const ask = streamAsk("/stream", {}, { alive: () => true, onRunId: () => undefined }, (t) => {
+        const node = transcriptTurn(t);
+        column.appendChild(node);
+        return node;
+      }, new AbortController().signal);
+      wire.push("run", { runId: 3 });
+      wire.push("delta", { kind: "thinking", text: "Inspect the schema" });
+      wire.push("usage", { tokensIn: 1_200, tokensOut: 30 });
+      wire.push("tool", { name: "run_sql", arguments: "{}" });
+      wire.push("toolResult", { name: "run_sql", ok: true, text: "1 row" });
+      await paint();
+      vi.advanceTimersByTime(4_000);
+      wire.push("steer", { id: "q1", text: "only the active ones" });
+      await paint();
+      expect(summaries()).toEqual([workSummary({ rounds: 1, tools: 1, tokensIn: 1_200, tokensOut: 30, ms: 4_000 })]);
+      expect(summaries()[0]).toBe("1 round · 1 tool call · 1.2K in / 30 out · " + fmtMs(4_000));
+      wire.push("delta", { kind: "thinking", text: "Filter them" });
+      wire.push("usage", { tokensIn: 1_300, tokensOut: 40 });
+      wire.push("tool", { name: "run_sql", arguments: "{}" });
+      wire.push("toolResult", { name: "run_sql", ok: true, text: "1 row" });
+      wire.push("usage", { tokensIn: 1_400, tokensOut: 50 });
+      await paint();
+      vi.advanceTimersByTime(2_000);
+      wire.push("final", { text: "Two are active." });
+      wire.push("done", { runId: 3, ok: true, ms: 6_000, turns: 3, tokensIn: 3_900, tokensOut: 120 });
+      wire.end();
+      await expect(ask).resolves.toEqual({});
+      expect(summaries(), "the fold after the steer counts its own rounds and time").toEqual([
+        workSummary({ rounds: 1, tools: 1, tokensIn: 1_200, tokensOut: 30, ms: 4_000 }),
+        workSummary({ rounds: 2, tools: 1, tokensIn: 2_700, tokensOut: 90, ms: 2_000 }),
+      ]);
+      for (const s of column.querySelectorAll(".tc-code > details > summary")) expect(s.querySelector(".fold-chev")).not.toBeNull();
+    } finally {
+      wire.end();
+      globalThis.fetch = previous;
+      vi.useRealTimers();
+    }
+  });
+
+  it("without usage frames the run's totals say the work: in the fold when there was one, else as the answer's fact line", async () => {
+    for (const worked of [true, false]) {
+      const wire = streaming();
+      const column = document.createElement("div");
+      const previous = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => new Response(wire.body));
+      try {
+        const ask = streamAsk("/stream", {}, { alive: () => true, onRunId: () => undefined }, (t) => {
+          const node = transcriptTurn(t);
+          column.appendChild(node);
+          return node;
+        }, new AbortController().signal);
+        if (worked) {
+          wire.push("tool", { name: "run_sql", arguments: "{}" });
+          wire.push("toolResult", { name: "run_sql", ok: true, text: "1 row" });
+        }
+        wire.push("final", { text: "Done." });
+        wire.push("done", { runId: 4, ok: true, ms: 900, turns: 3, tokensIn: 100, tokensOut: 20 });
+        wire.end();
+        await expect(ask).resolves.toEqual({});
+        const said = workSummary({ rounds: 3, tools: worked ? 1 : 0, tokensIn: 100, tokensOut: 20, ms: 900 });
+        if (worked) {
+          expect(column.querySelector(".tc-code > details > summary")?.textContent).toBe(said);
+          expect(said).toBe("3 rounds · 1 tool call · 100 in / 20 out · " + fmtMs(900));
+        } else {
+          expect(column.querySelector("details")).toBeNull();
+          expect(column.lastElementChild?.textContent).toBe(said);
+        }
+      } finally {
+        wire.end();
+        globalThis.fetch = previous;
+      }
     }
   });
 

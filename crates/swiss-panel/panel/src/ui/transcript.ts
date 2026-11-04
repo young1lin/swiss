@@ -47,6 +47,9 @@ export interface TranscriptTurn {
    *  the reader sent them: a quiet glyph closing the turn (.tc-acts). An answer's code blocks
    *  carry their own Copy whether or not the turn has one. */
   copy?: string;
+  /** What went with the turn, under its body: the page references a Data agent message
+   *  carried, as one quiet fold. */
+  foot?: HChild;
   /** The caller's hooks on the turn node (an id for tests, data for listeners). */
   data?: AttrMap;
 }
@@ -82,6 +85,7 @@ export function transcriptTurn(t: TranscriptTurn): HTMLElement {
       h("span", { class: "tc-role" }, t.role),
       t.at == null ? null : h("span", { class: "tc-at" }, t.at)),
     body,
+    t.foot ?? null,
     t.copy ? h("div", { class: "tc-acts" }, copyBtn(t.copy)) : null);
 }
 

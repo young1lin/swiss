@@ -621,9 +621,17 @@
     .tc-turn.assistant:last-child { padding-bottom: var(--s1); }
     .tc-head { display: flex; align-items: baseline; gap: var(--s2); }
     .tc-role { font-size: var(--f-caption); font-weight: var(--w-emph); letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); }
-    /* The speaker mark (speaker()): a person or a robot in a quiet ring, where the role word
-       was; the robot wears the accent, so the model's turns read apart at a glance. */
-    .tc-role:has(> .tc-who) { align-self: center; line-height: 0; }
+    /* The speaker mark (speaker()): a person or a robot in a quiet ring, in the margin beside
+       the turn, not on a row of its own (2026-11-04): the robot left of the model's turns -
+       every assistant turn of the column keeps the indent, so the work, the answer and the
+       waiting line align under it - the person right of the reader's bubble. The robot wears
+       the accent, so the model's turns read apart at a glance. */
+    .tc-col:has(.tc-who) { --tc-gutter: calc(var(--s5) + var(--s2)); }
+    .tc-col:has(.tc-who) > .tc-turn.assistant { padding-left: var(--tc-gutter); }
+    .tc-col:has(.tc-who) > .tc-turn.user { margin-right: var(--tc-gutter); }
+    .tc-turn:has(> .tc-head .tc-who) { position: relative; }
+    .tc-role:has(> .tc-who) { position: absolute; left: 0; line-height: 0; }
+    .tc-turn.user .tc-role:has(> .tc-who) { left: calc(100% + var(--s2)); }
     .tc-who { display: inline-flex; align-items: center; justify-content: center; width: var(--s5); height: var(--s5); border-radius: 50%; color: var(--text-2); box-shadow: inset 0 0 0 1px var(--sep); }
     .tc-who .ic { width: var(--ic-m); height: var(--ic-m); }
     .tc-who.assistant { color: var(--accent); }

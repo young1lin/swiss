@@ -291,7 +291,10 @@ function renderDbView(): void {
   // The console and the results share the column: a dock (ui/dock.ts) trades one for the
   // other, the way a desktop SQL client's editor and result panes do. Its hint is the head's
   // meta line (renderDbToolbar), so the editor meets its edge.
+  // A refused save is said above the editor, with both ways out (data-tabs.ts
+  // dbPaintConsoleConflict); hidden while the console in front is saved.
   const consoleEl = h("div", { class: "db-console", id: "dbConsole", hidden: true },
+    h("div", { id: "dbConsoleConflict", hidden: true }),
     h("div", { class: "db-sql-wrap" },
       h("pre", { class: "db-sql-hl db-sql-face", id: "dbSqlHl", aria: { hidden: "true" } }),
       h("textarea", {

@@ -11,11 +11,34 @@ use axum::Extension;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
-use swiss_host::reply::{admin_error, admin_json};
+use swiss_host::reply::{admin_error, admin_error_code, admin_json};
 use swiss_host::services::RuntimeServices;
 
 const TEXT_MAX: usize = 2_000_000;
 const PATH_COMPONENT: usize = 200;
+
+// The store's refusals: the English sentence the CLI, the logs and the model read, and beside it
+// on the wire the stable code the panel says in the reader's language (SPEC §panel.i18n).
+const EXISTS: &str = "conflict: console already exists; kept the server record";
+const REMOVED: &str = "conflict: console was removed; kept the local draft";
+const CHANGED: &str = "conflict: console changed; reload the server record before saving";
+const CHANGED_DELETE: &str = "conflict: console changed; reload before deleting";
+const TOO_LARGE: &str = "console identity, title or text exceeds its limit";
+
+/// The wire code of one of the store's own refusals; anything else (an I/O error) has none.
+fn code_of(message: &str) -> Option<&'static str> {
+    [(EXISTS, "console.exists"), (REMOVED, "console.removed"), (CHANGED, "console.changed"),
+        (CHANGED_DELETE, "console.changedDelete"), (TOO_LARGE, "console.tooLarge")]
+        .into_iter().find(|(said, _)| *said == message).map(|(_, code)| code)
+}
+
+/// A refusal as the page reads it: with its code when it is one of the store's own.
+fn refusal(status: StatusCode, message: &str) -> Response {
+    match code_of(message) {
+        Some(code) => admin_error_code(status, code, message),
+        None => admin_error(status, message),
+    }
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
@@ -118,7 +141,7 @@ impl ConsoleStore {
         let path = if legacy.exists() { legacy } else { self.path(conn, id) };
         let Some(before) = Self::read(&path)? else { return Ok(false); };
         if revision.is_some_and(|revision| revision != before.revision) {
-            return Err("conflict: console changed; reload before deleting".into());
+            return Err(CHANGED_DELETE.into());
         }
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
         Ok(true)
@@ -150,19 +173,19 @@ impl ConsoleStore {
             || console.id.chars().any(char::is_control) || console.tab.chars().count() > 500
             || console.agent_tab.as_ref().is_some_and(|name| name.chars().count() > 500)
             || console.sql.len() > TEXT_MAX {
-            return Err("console identity, title or text exceeds its limit".into());
+            return Err(TOO_LARGE.into());
         }
         let _guard = self.write.lock().map_err(|_| "console store lock failed")?;
         let legacy = self.legacy_path(conn, &console.id);
         let path = if legacy.exists() { legacy } else { self.path(conn, &console.id) };
         let before = Self::read(&path)?;
         match (mode, before.is_some()) {
-            (SaveMode::Create, true) => return Err("conflict: console already exists; kept the server record".into()),
-            (SaveMode::Update, false) => return Err("conflict: console was removed; kept the local draft".into()),
+            (SaveMode::Create, true) => return Err(EXISTS.into()),
+            (SaveMode::Update, false) => return Err(REMOVED.into()),
             _ => {},
         }
         if before.as_ref().map_or(0, |v| v.revision) != console.revision {
-            return Err("conflict: console changed; reload the server record before saving".into());
+            return Err(CHANGED.into());
         }
         let now = chrono::Utc::now().timestamp_millis();
         if let Some(before) = before {
@@ -209,7 +232,7 @@ pub async fn save(Extension(store): Extension<Arc<ConsoleStore>>, Extension(serv
     };
     match store.put(conn, console, mode) {
         Ok(console) => admin_json(StatusCode::OK, json!({ "console": console })),
-        Err(e) => admin_error(if e.starts_with("conflict:") { StatusCode::CONFLICT } else { StatusCode::BAD_REQUEST }, &e),
+        Err(e) => refusal(if e.starts_with("conflict:") { StatusCode::CONFLICT } else { StatusCode::BAD_REQUEST }, &e),
     }
 }
 
@@ -226,7 +249,7 @@ pub async fn remove(Extension(store): Extension<Arc<ConsoleStore>>, Extension(se
     let Some(id) = query.id.as_deref().filter(|id| !id.is_empty()) else { return crate::llm_api::bad("id is required unless closed=true") };
     match store.remove(&query.conn, id, query.revision) {
         Ok(removed) => admin_json(StatusCode::OK, json!({ "removed": removed })),
-        Err(e) => admin_error(StatusCode::CONFLICT, &e),
+        Err(e) => refusal(StatusCode::CONFLICT, &e),
     }
 }
 

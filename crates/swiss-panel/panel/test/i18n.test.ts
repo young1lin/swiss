@@ -21,7 +21,7 @@
    are part of what is being asserted. */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { LANG_KEY, install, langPref, loadLocale, locale, moduleDbMessage, nextLang, setLang, tr, trn } from "../src/i18n.js";
+import { LANG_KEY, install, langPref, loadLocale, locale, moduleDbMessage, nextLang, servedError, setLang, tr, trn } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 
 /* A minimal storage: node has none, and a throwing one must be installable to cover the
@@ -124,6 +124,19 @@ describe("i18n lookup and preference (SPEC §panel.i18n)", () => {
     expect(moduleDbMessage(raw)).toBe("此连接只读（logs/mcp.db）：写入会改掉这个模块自己的数据库（这里只执行读取（SELECT、WITH、TABLE、VALUES、SHOW、DESCRIBE、EXPLAIN），不能执行 INSERT）");
     expect(moduleDbMessage("this connection is query-only (logs/mcp.db): a write would change this module's own database")).toBe("此连接只读（logs/mcp.db）：写入会改掉这个模块自己的数据库");
     expect(moduleDbMessage("no such table: notes")).toBe("no such table: notes");
+  });
+
+  it("servedError says a gateway refusal by its code, and falls back to the server's sentence, then the caller's", () => {
+    const changed = { error: "conflict: console changed; reload the server record before saving", code: "console.changed" };
+    expect(servedError(changed, "fallback")).toBe(tr("served.consoleChanged"));
+    expect(servedError({ error: "no such table: notes" }, "fallback"), "an engine error passes through as sent").toBe("no such table: notes");
+    expect(servedError({ error: "a newer refusal", code: "console.unknownYet" }, "fallback"), "a code this build does not know shows its sentence").toBe("a newer refusal");
+    expect(servedError({}, "fallback")).toBe("fallback");
+    expect(servedError(null, "fallback")).toBe("fallback");
+    expect(servedError({ code: "toString" }, "fallback"), "only the table's own codes are keys").toBe("fallback");
+    install("zh-CN", zh);
+    expect(servedError(changed, "fallback")).toBe(zh["served.consoleChanged"]);
+    expect(servedError({ error: "x", code: "console.tooLarge" }, "fallback")).toBe(zh["served.consoleTooLarge"]);
   });
 
   it("loadLocale installs the real dictionary only for a Chinese preference", async () => {

@@ -26,8 +26,9 @@ import { dbClosedAdd, dbClosedAdopt, dbClosedById, dbClosedClear, dbClosedDrop, 
 import type { DbClosedTab } from "./data-closed.js";
 import {
   dbClosedEntry, dbConsoleAdopt, dbConsoleClearClosed, dbConsoleFlush, dbConsoleForget, dbConsoleOnSettled, dbConsolePut, dbConsoleRebase,
-  dbConsoleRecord, dbConsoleStage, dbConsoleStoreList, dbConsoleStoreOn, dbConsoleSyncState,
+  dbConsoleRecord, dbConsoleStage, dbConsoleStoreList, dbConsoleStoreOn, dbConsoleSyncReason, dbConsoleSyncState,
 } from "./data-console-store.js";
+import type { PutResult } from "./data-console-store.js";
 import type { ConsoleRecord } from "./data-console-sync.js";
 import { dbIsRedis, dbLoadRedisValue } from "./data-browsers.js";
 import { dbIsMongo, mongoAfterTabSwitch, mongoCurrentDb } from "./data-mongo.js";
@@ -41,6 +42,8 @@ import { dbIsPg, renderDbTables } from "./data-view.js";
 import { dbKeyShown, redisTypeGlyph } from "./data-tree.js";
 import { tr, trn } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
+import { btn } from "./ui/button.js";
+import { failNote } from "./ui/page.js";
 import { heldDot } from "./ui/status.js";
 import { objTab } from "./ui/tab.js";
 import { dayKey, dayLabel, timeLabel } from "./ui/timeline.js";
@@ -202,6 +205,91 @@ export async function dbConsolesLoad(conn: string): Promise<void> {
     dbConsoleLoading.delete(conn);
   }
 }
+
+/* The same connection is often open in two windows - the desktop GUI and a browser tab. The
+   store used to be read once per visit, so the window that did not make an edit kept showing
+   the text it loaded, and its next save or close was refused as stale with nothing on the
+   page saying why. Coming back to a window now reads the store again and catches up wherever
+   this page holds no work of its own:
+   - a clean tab whose record moved on takes the newer text, title and revision;
+   - a clean tab closed elsewhere closes here too and is filed in Recently closed;
+   - consoles opened elsewhere join the strip without taking the front.
+   A tab with a draft is never rewritten: its save is refused and the console's conflict bar
+   asks the reader (dbPaintConsoleConflict). A local close, restore or resolve that runs while
+   the read is in flight bumps the epoch, and the stale answer is dropped whole. */
+let dbConsoleEpoch = 0;
+let dbConsoleRefreshing = false;
+export async function dbConsolesRefresh(conn: string): Promise<void> {
+  if (!conn || dbConsoleRefreshing || !dbConsoleLoaded.has(conn) || !dbConsoleStoreOn(conn)) return;
+  dbConsoleRefreshing = true;
+  const epoch = dbConsoleEpoch;
+  try {
+    const records = await dbConsoleStoreList(conn, true);
+    if (!records || dbConn().conn !== conn || epoch !== dbConsoleEpoch || !dbIsMounted()) return;
+    const byId = new Map(records.map((r) => [r.id, r]));
+    const tabs = dbTabs();
+    const live = dbTab();
+    let shownChanged = false;
+    const gone = new Set<DbTab>();
+    for (const t of tabs) {
+      if (t.kind !== "sql" || t.analysisId) continue;
+      const record = byId.get(t.id);
+      if (!record || record.revision <= (t.revision || 0) || dbConsoleSyncState(conn, t.id) !== "clean") continue;
+      if (!record.open) { gone.add(t); dbConsoleForget(conn, t.id); continue; }
+      t.sqlText = record.sql;
+      t.revision = record.revision;
+      if (record.createdAt) t.createdAt = record.createdAt;
+      if (record.updatedAt) t.updatedAt = record.updatedAt;
+      if (record.tab && record.tab !== dbTabTitle(t)) {
+        const fallback = tr(dbConsoleSpeaksCommands() ? "dataTabs.command" : "dataTabs.sql");
+        t.custom = record.tab !== fallback ? record.tab : undefined;
+      }
+      dbConsoleAdopt(conn, record);
+      if (t === live) shownChanged = true;
+    }
+    dbClosedAdopt(conn, records.filter((r) => !r.open).map((r) => dbClosedEntry(conn, r)));
+    const have = new Set(tabs.filter((t: DbTab): t is DbSqlTab => t.kind === "sql").map((t) => t.id));
+    const add = records.filter((r) => r.open && !have.has(r.id))
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.id.localeCompare(b.id))
+      .map(dbConsoleTabOf);
+    if (gone.size || add.length) {
+      let next = tabs.filter((t: DbTab): boolean => !gone.has(t));
+      if (add.length) next = next.filter(dbTabVisible).concat(add);
+      if (!next.length) next.push(dbHomeTab());
+      const at = next.indexOf(live);
+      dbResetTabs(next, at >= 0 ? at : Math.min(dbActiveIndex(), next.length - 1));
+      // The console in front went away: the pane follows the strip to its new active tab.
+      if (at < 0) { dbAfterTabSwitch(true); return; }
+    }
+    if (shownChanged) dbShowConsoleText(live as DbSqlTab);
+    renderDbTabs();
+  } finally {
+    dbConsoleRefreshing = false;
+  }
+}
+
+/** Put a tab's new text in the editor in front, keeping the caret where the reader left it
+ *  (clamped to the new text) when the editor has focus. */
+function dbShowConsoleText(t: DbSqlTab): void {
+  const ta = $<HTMLTextAreaElement>("dbSql");
+  if (!ta || dbSqlTab() !== t) return;
+  const focused = document.activeElement === ta;
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  ta.value = t.sqlText;
+  if (focused) ta.setSelectionRange(Math.min(start, ta.value.length), Math.min(end, ta.value.length));
+  dbSqlPaint();
+}
+
+/** A window coming back to the front (focus) or a browser tab becoming visible again is the
+ *  moment another window may have written this connection's consoles. */
+function dbConsolesCatchUp(): void {
+  if (document.visibilityState === "hidden" || !dbIsMounted()) return;
+  const conn = dbConn().conn;
+  if (conn) void dbConsolesRefresh(conn);
+}
+// Guarded: a test environment without a window still imports this module.
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("focus", dbConsolesCatchUp);
+if (typeof document !== "undefined" && typeof document.addEventListener === "function") document.addEventListener("visibilitychange", dbConsolesCatchUp);
 
 /* --- pure: what a tab is, and what it is worth ---------------------------------------------------- */
 
@@ -389,6 +477,7 @@ function dbTabRenameInput(t: DbTab, scope: string | null): HTMLInputElement {
  *  grid below it. Every control is an address answered by #pane's delegated click (SPEC §panel.toolchain) —
  *  the index it carries is re-read against live state when the click lands. */
 function renderDbTabs(): void {
+  dbPaintConsoleConflict();
   const strip = $("dbTabStrip");
   if (!strip) return;
   // No connection, no objects: the strip would be a band holding one "+ SQL" for a console
@@ -411,7 +500,7 @@ function renderDbTabs(): void {
     const n = dbTabPending(t);
     const filters = t.kind === "table" ? t.filters.length : 0;
     // A refused console save is state the reader must see: the local draft is intact, but the
-    // server has a newer record until they resolve it from the card's own menu.
+    // server refused it until the reader resolves it (the console's conflict bar, or the card's menu).
     const conflict = t.kind === "sql" && dbConsoleSyncState(dbConn().conn, t.id) === "failed";
     // The library's object tab (SPEC §panel.pages): the shape Terminal's sessions wear too. It carries
     // the roving tabindex and the close; the rename (right-click) swaps the name for an input
@@ -537,11 +626,36 @@ function dbTabRenameCommit(value: string): void {
   renderDbTabs();
 }
 
+/** The console's conflict bar (#dbConsoleConflict, above the editor): a refused save is said
+ *  where the reader is typing - why it was refused, in their language, and both ways out -
+ *  instead of only as a red dot whose answer hid in the card's right-click menu. Repainted
+ *  with the strip, so a save that settles, a tab switch and a language flip all reach it. */
+function dbPaintConsoleConflict(): void {
+  const bar = $("dbConsoleConflict");
+  if (!bar) return;
+  const t = dbTab();
+  const conn = dbConn().conn;
+  const failed = t.kind === "sql" && !t.analysisId && dbConsoleSyncState(conn, t.id) === "failed";
+  bar.hidden = !failed;
+  if (!failed) { if (bar.firstChild) fill(bar); return; }
+  const id = t.id;
+  const reload = btn(tr("dataTabs.reloadConsoleServer"), { data: { dbconflict: "server" } });
+  const keep = btn(tr("dataTabs.keepConsoleDraft"), { kind: "primary", data: { dbconflict: "draft" } });
+  reload.onclick = (): void => { void dbConsoleResolve(id, "server"); };
+  keep.onclick = (): void => { void dbConsoleResolve(id, "draft"); };
+  fill(bar, failNote({
+    text: tr("dataTabs.consoleNotSaved"),
+    why: dbConsoleSyncReason(conn, id) || "",
+    action: [reload, keep],
+  }));
+}
+
 /** Resolve a refused console save, never silently: either take the record the server holds now,
  *  or keep the reader's draft and write it over that record on purpose. */
 async function dbConsoleResolve(id: string, choice: "server" | "draft"): Promise<void> {
   const conn = dbConn().conn;
   if (!conn) return;
+  dbConsoleEpoch++;
   const records = await dbConsoleStoreList(conn, true);
   if (dbConn().conn !== conn) return;
   const record = records ? records.find((r) => r.id === id) || null : null;
@@ -757,6 +871,7 @@ async function dbRestoreClosed(id: string): Promise<void> {
   const conn = dbConn().conn;
   if (!conn) return;
   if (dbConsoleStoreOn(conn)) {
+    dbConsoleEpoch++;
     const records = await dbConsoleStoreList(conn, true);
     if (dbConn().conn !== conn) return;
     const record = records ? records.find((r) => r.id === id) || null : null;
@@ -800,14 +915,31 @@ async function dbFileClosedStored(gone: DbTab[]): Promise<boolean> {
   if (!conn) return true;
   const sqlTabs = gone.filter((t: DbTab): t is DbSqlTab => t.kind === "sql" && !t.analysisId);
   if (!sqlTabs.length) return true;
+  dbConsoleEpoch++;
   for (const tab of sqlTabs) {
     const record = dbConsoleRecord(conn, tab, dbTabTitle(tab));
-    const result = await dbConsolePut(conn, { ...record, open: false }, tab.revision ? "update" : "create");
+    let result = await dbConsolePut(conn, { ...record, open: false }, tab.revision ? "update" : "create");
+    // Another window saved this console after this page last read it. A tab without a draft
+    // of its own has nothing to lose here: the newer server record is what gets filed, and
+    // the close goes through instead of being refused as stale.
+    if (!result.ok && result.code === "console.changed" && dbConsoleSyncState(conn, tab.id) === "clean") {
+      result = await dbCloseServerCopy(conn, tab.id) || result;
+    }
     if (!result.ok) { toast(result.error || tr("dataTabs.consoleSaveFailed"), true); return false; }
     dbClosedAdd(conn, dbClosedEntry(conn, result.console));
     dbConsoleForget(conn, tab.id);
   }
   return true;
+}
+
+/** Close the record the server holds now (dbFileClosedStored's retry): already closed
+ *  elsewhere is a close that happened; gone is null, and the caller keeps the refusal. */
+async function dbCloseServerCopy(conn: string, id: string): Promise<PutResult | null> {
+  const records = await dbConsoleStoreList(conn, true);
+  const record = records ? records.find((r) => r.id === id) : undefined;
+  if (!record) return null;
+  if (!record.open) return { ok: true, console: record };
+  return dbConsolePut(conn, { ...record, open: false, closedAt: null }, "update");
 }
 
 /* A page reload or a closed browser tab takes every console with it: each one with text, the

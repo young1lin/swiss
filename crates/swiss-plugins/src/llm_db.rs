@@ -2544,6 +2544,11 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
         "runId": run_id, "agent": name, "conn": conn, "provider": chat.provider, "model": chat.model,
         "continued": continued,
     }));
+    // What went with the reader's words, as the model reads it: the page shows the same patch
+    // under the asked turn that a restored conversation parses back out of the prompt.
+    if let Some(sent) = reference_patch.as_ref().and_then(|patch| patch.get(TASK)) {
+        sse_send(&tx, "references", json!({ "references": sent }));
+    }
     let started = Instant::now();
     let max_turns = agent.turns();
     tokio::spawn(async move {
@@ -3147,8 +3152,13 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{saved}");
         let saved: Value = serde_json::from_str(&saved).expect("saved");
         assert_eq!(saved["console"]["revision"], 1);
-        let (status, _, _) = call_text(&app, "POST", "/api/llm/db/consoles", Some(body)).await;
+        let (status, _, stale) = call_text(&app, "POST", "/api/llm/db/consoles", Some(body)).await;
         assert_eq!(status, StatusCode::CONFLICT);
+        // The refusal carries its code beside the English sentence: the page says it in the
+        // reader's language (SPEC §panel.i18n).
+        let stale: Value = serde_json::from_str(&stale).expect("refusal");
+        assert_eq!(stale["code"], "console.changed", "{stale}");
+        assert!(stale["error"].as_str().is_some_and(|e| e.starts_with("conflict: console changed")), "{stale}");
         let (_, _, list) = call_text(&app, "GET", "/api/llm/db/consoles?conn=mm", None).await;
         assert!(list.contains("select 1"));
         let (_, _, other) = call_text(&app, "GET", "/api/llm/db/consoles?conn=mm2", None).await;
@@ -3270,10 +3280,15 @@ mod tests {
             "pageContext": { "conn": "mm", "database": "shop", "sql": "select 1", "rows": [{ "id": 7 }] } });
         let (_, _, first) = call_text(&app, "POST", "/api/llm/db/stream", Some(request.clone())).await;
         let run_id = events_of(&first)[0].1["runId"].as_i64().expect("run");
+        // The page is told what went with the words, right after the run: the patch the model reads.
+        let sent = |text: &str| events_of(text).into_iter().find(|(name, _)| name == "references").map(|(_, payload)| payload["references"].clone());
+        assert_eq!(events_of(&first)[1].0, "references", "{first}");
+        assert_eq!(sent(&first), Some(json!({ "conn": "mm", "database": "shop", "sql": "select 1", "rows": [{ "id": 7 }] })), "{first}");
         request["runId"] = json!(run_id);
         request["prompt"] = json!("second");
         let (_, _, second) = call_text(&app, "POST", "/api/llm/db/stream", Some(request.clone())).await;
         assert_eq!(events_of(&second).last().expect("done").1["ok"], true, "{second}");
+        assert_eq!(sent(&second), None, "nothing changed, nothing went with the words: {second}");
         let requests = captured.lock().expect("captured").clone();
         let previous: Value = serde_json::from_str(&requests[0]).expect("ask");
         let repeated: Value = serde_json::from_str(&requests[1]).expect("ask");
@@ -3283,7 +3298,8 @@ mod tests {
         assert_eq!(messages[1], previous["messages"][1], "earlier user content stays identical");
         request["prompt"] = json!("third");
         request["pageContext"]["sql"] = json!("select 2");
-        call_text(&app, "POST", "/api/llm/db/stream", Some(request.clone())).await;
+        let (_, _, third) = call_text(&app, "POST", "/api/llm/db/stream", Some(request.clone())).await;
+        assert_eq!(sent(&third), Some(json!({ "sql": "select 2" })), "{third}");
         let requests = captured.lock().expect("captured").clone();
         let changed = spoken(&requests[2]).last().expect("user").1.clone();
         assert!(changed.contains("select 2") && !changed.contains("shop") && !changed.contains("\"rows\""), "{changed}");

@@ -7,7 +7,7 @@
  * console itself. */
 import type { DbSqlTab } from "./types/state.js";
 import { api, toast } from "./util.js";
-import { tr } from "./i18n.js";
+import { servedError, tr } from "./i18n.js";
 import { dbTabs } from "./db-state.js";
 import { ConsoleSync, type ConsoleRecord, type SyncState } from "./data-console-sync.js";
 import type { DbClosedTab } from "./data-closed.js";
@@ -16,7 +16,17 @@ import type { DbClosedTab } from "./data-closed.js";
  *  to still exist, and the agent's own path auto-creates (db_consoles.rs SaveMode). */
 type Mode = "auto" | "create" | "update";
 
-export type PutResult = { ok: true; console: ConsoleRecord } | { ok: false; conflict: boolean; error: string };
+/** A refusal keeps the server's wire `code` (`console.changed`) so a caller can act on what
+ *  was refused, and `error` is already in the reader's language (servedError). */
+export type PutResult = { ok: true; console: ConsoleRecord } | { ok: false; conflict: boolean; error: string; code?: string };
+
+type Refusal = { error?: string; code?: string };
+
+function refused(status: number, j: Refusal): { ok: false; conflict: boolean; error: string; code?: string } {
+  const out: { ok: false; conflict: boolean; error: string; code?: string } = { ok: false, conflict: status === 409, error: servedError(j, storeError(status)) };
+  if (typeof j.code === "string") out.code = j.code;
+  return out;
+}
 
 const enabled = new Set<string>();
 const sync = new ConsoleSync(async (conn, record) => {
@@ -32,8 +42,8 @@ function storeError(status: number): string {
 async function put(conn: string, record: ConsoleRecord, mode: Mode): Promise<PutResult> {
   try {
     const r = await api("/api/llm/db/consoles", { method: "POST", body: JSON.stringify({ conn, console: record, mode }) });
-    const j = await r.json().catch(() => { return {}; }) as { console?: ConsoleRecord; error?: string };
-    if (!r.ok || !j.console) return { ok: false, conflict: r.status === 409, error: j.error || storeError(r.status) };
+    const j = await r.json().catch(() => { return {}; }) as { console?: ConsoleRecord } & Refusal;
+    if (!r.ok || !j.console) return refused(r.status, j);
     return { ok: true, console: j.console };
   } catch {
     return { ok: false, conflict: false, error: tr("util.requestFailedGatewayRunning") };
@@ -144,6 +154,11 @@ export function dbConsoleSyncState(conn: string | null, id: string): SyncState {
   return conn ? sync.state(conn, id) : "clean";
 }
 
+/** The refused save's reason, for the console's conflict bar; null when nothing failed. */
+export function dbConsoleSyncReason(conn: string | null, id: string): string | null {
+  return conn ? sync.reason(conn, id) : null;
+}
+
 export function dbConsoleValue(conn: string, id: string): ConsoleRecord | null {
   return sync.value(conn, id);
 }
@@ -181,8 +196,8 @@ export async function dbConsoleRemove(conn: string, id: string, revision: number
   try {
     const query = "?conn=" + encodeURIComponent(conn) + "&id=" + encodeURIComponent(id) + (revision == null ? "" : "&revision=" + revision);
     const r = await api("/api/llm/db/consoles" + query, { method: "DELETE" });
-    const j = await r.json().catch(() => { return {}; }) as { removed?: boolean; error?: string };
-    if (!r.ok) return { ok: false, conflict: r.status === 409, error: j.error || storeError(r.status) };
+    const j = await r.json().catch(() => { return {}; }) as { removed?: boolean } & Refusal;
+    if (!r.ok) return refused(r.status, j);
     sync.forget(conn, id);
     return { ok: true, removed: j.removed === true };
   } catch {
@@ -196,8 +211,8 @@ export async function dbConsoleClearClosed(conn: string): Promise<boolean> {
   try {
     const r = await api("/api/llm/db/consoles?conn=" + encodeURIComponent(conn) + "&closed=true", { method: "DELETE" });
     if (!r.ok) {
-      const j = await r.json().catch(() => { return {}; }) as { error?: string };
-      toast(j.error || storeError(r.status), true);
+      const j = await r.json().catch(() => { return {}; }) as Refusal;
+      toast(servedError(j, storeError(r.status)), true);
       return false;
     }
     return true;

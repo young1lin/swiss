@@ -2705,6 +2705,10 @@ describe("ui/copy - copyBtn and copyText", () => {
     expect(got).toEqual(["the answer"]);
     expect(transcriptTurn({ side: "user", role: "user", text: "hi" }).querySelector(".tc-acts")).toBeNull();
     expect(transcriptTurn({ side: "user", role: "user", text: "hi", copy: "hi" }).querySelector(".tc-acts > .copy-btn")).not.toBeNull();
+    // What went with the words sits under them, ahead of the Copy that closes the turn.
+    const foot = document.createElement("details");
+    const sent = transcriptTurn({ side: "user", role: "user", text: "hi", foot, copy: "hi" });
+    expect(Array.from(sent.children).slice(1).map((c) => c.className || c.tagName)).toEqual(["tc-text", "DETAILS", "tc-acts"]);
   });
 });
 

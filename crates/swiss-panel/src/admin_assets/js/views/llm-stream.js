@@ -27,7 +27,7 @@ import { fill, h } from "../h.js";
 import { tr } from "../i18n.js";
 import { factLine, flow, flowIO, flowToggle, fmtMs, formFold, note, scrollBox, speaker, splitJsonBlock, transcriptText, transcriptTurn } from "../ui/index.js";
                                                      
-import { firstLine, jsonBlock, stepLine, thinkLine, toolIcon } from "./llm-history.js";
+import { firstLine, jsonBlock, stepLine, thinkLine, toolIcon, workSummary } from "./llm-history.js";
 
 /** One streamed ask (SPEC §llm.api): POST the body to a stream route, read the answer as
  *  server-sent events, paint every happening on the dialog's column as it arrives.
@@ -76,6 +76,21 @@ export async function streamAsk(
   let answerEl                     = null;
   let answerText = "";
   let doneSeen = false;
+  /** The work under the open fold, for its summary (workSummary, the line a restored ask
+   *  reads): rounds and tokens from each round's usage frame, tool calls from the tool frames,
+   *  time from the fold's start. A steer folds it and starts the next, where a restored
+   *  conversation splits the ask. */
+  let work = { rounds: 0, tools: 0, tokensIn: 0, tokensOut: 0, since: Date.now() };
+  let steered = false;
+  const num = (v         , or = 0)         => (typeof v === "number" && Number.isFinite(v) ? v : or);
+  /** A fold's summary says `text`; its chevron stays (it sits inside the summary). */
+  const relabel = (fold                    , text        )       => {
+    const summary = fold?.querySelector(":scope > summary");
+    if (!summary) return;
+    const chev = summary.querySelector(".fold-chev");
+    summary.textContent = text;
+    if (chev) summary.prepend(chev);
+  };
   let cancelled = false;
   let reader                                                 = null;
   const pending                                                                       = [];
@@ -139,8 +154,7 @@ export async function streamAsk(
   const foldProcess = (label = tr("llm.test.worked"))       => {
     if (!process) return;
     process.open = false;
-    const summary = process.querySelector("summary");
-    if (summary) summary.textContent = label;
+    relabel(process, label);
   };
   /* The model's silence, counted (2026-11-04: one GLM round sat 127 s before its first token
      and the column showed nothing, so the pane read as frozen). From the moment the model is
@@ -254,6 +268,7 @@ export async function streamAsk(
           answerText += text;
         }
       } else if (name === "tool") {
+        work.tools++;
         closeThought();
         closeWords();
         const tool = String(payload.name || "");
@@ -297,11 +312,9 @@ export async function streamAsk(
       } else if (name === "steer") {
         // The reader's words went in between two steps: the work so far folds, the
         // words land as the reader's turn, and the next step opens a fold beneath them.
-        if (process) {
-          process.open = false;
-          const summary = process.querySelector("summary");
-          if (summary) summary.textContent = tr("llm.test.worked");
-        }
+        foldProcess(work.rounds ? workSummary({ ...work, ms: Date.now() - work.since }) : undefined);
+        work = { rounds: 0, tools: 0, tokensIn: 0, tokensOut: 0, since: Date.now() };
+        steered = true;
         process = null;
         processBody = null;
         closeThought();
@@ -317,30 +330,31 @@ export async function streamAsk(
         addTurn({ role: process ? null : speaker("assistant"), text, markdown: true, copy: text.trim() ? text : undefined });
       } else if (name === "done") {
         doneSeen = true;
-        if (process) {
-          process.open = false;
-          const summary = process.querySelector("summary");
-          if (summary) summary.textContent = tr("llm.test.worked");
-        }
+        foldProcess();
         const id = payload.runId;
         if (typeof id === "number") hooks.onRunId(id, false);
         if (payload.ok === false) {
           if (payload.cancelled === true) cancelled = true;
           else error = typeof payload.error === "string" ? payload.error : "the run failed";
         } else {
-          const meta = tr("llm.test.doneMeta", {
-            turns: String(payload.turns ?? 1),
-            in: String(payload.tokensIn ?? 0),
-            out: String(payload.tokensOut ?? 0),
-            ms: String(payload.ms ?? 0),
-          });
-          const summary = process?.querySelector("summary");
-          if (summary) summary.textContent = tr("llm.test.worked") + " · " + meta;
+          // The rounds' own usage when they said it (per fold, as restored); the run's totals
+          // from a runtime that sends no usage frames. A steered ask's last fold timed itself.
+          const meta = workSummary(work.rounds
+            ? { ...work, ms: steered ? Date.now() - work.since : num(payload.ms, Date.now() - work.since) }
+            : { rounds: num(payload.turns, 1), tools: work.tools, tokensIn: num(payload.tokensIn), tokensOut: num(payload.tokensOut), ms: typeof payload.ms === "number" ? payload.ms : null });
+          if (process) relabel(process, meta);
           else addTurn({ role: null, code: [factLine([meta])] });
         }
         closeThought();
         answerEl = null;
-      } else hooks.onFrame?.(name, payload);
+      } else {
+        if (name === "usage") {
+          work.rounds++;
+          work.tokensIn += num(payload.tokensIn);
+          work.tokensOut += num(payload.tokensOut);
+        }
+        hooks.onFrame?.(name, payload);
+      }
     };
     for (;;) {
       const chunk = await reader.read();

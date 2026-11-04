@@ -7,7 +7,7 @@
  * console itself. */
                                                  
 import { api, toast } from "./util.js";
-import { tr } from "./i18n.js";
+import { servedError, tr } from "./i18n.js";
 import { dbTabs } from "./db-state.js";
 import { ConsoleSync,                                    } from "./data-console-sync.js";
                                                     
@@ -16,7 +16,17 @@ import { ConsoleSync,                                    } from "./data-console-
  *  to still exist, and the agent's own path auto-creates (db_consoles.rs SaveMode). */
                                          
 
-                                                                                                               
+/** A refusal keeps the server's wire `code` (`console.changed`) so a caller can act on what
+ *  was refused, and `error` is already in the reader's language (servedError). */
+                                                                                                                              
+
+                                                 
+
+function refused(status        , j         )                                                                 {
+  const out                                                                 = { ok: false, conflict: status === 409, error: servedError(j, storeError(status)) };
+  if (typeof j.code === "string") out.code = j.code;
+  return out;
+}
 
 const enabled = new Set        ();
 const sync = new ConsoleSync(async (conn, record) => {
@@ -32,8 +42,8 @@ function storeError(status        )         {
 async function put(conn        , record               , mode      )                     {
   try {
     const r = await api("/api/llm/db/consoles", { method: "POST", body: JSON.stringify({ conn, console: record, mode }) });
-    const j = await r.json().catch(() => { return {}; })                                               ;
-    if (!r.ok || !j.console) return { ok: false, conflict: r.status === 409, error: j.error || storeError(r.status) };
+    const j = await r.json().catch(() => { return {}; })                                         ;
+    if (!r.ok || !j.console) return refused(r.status, j);
     return { ok: true, console: j.console };
   } catch {
     return { ok: false, conflict: false, error: tr("util.requestFailedGatewayRunning") };
@@ -144,6 +154,11 @@ export function dbConsoleSyncState(conn               , id        )            {
   return conn ? sync.state(conn, id) : "clean";
 }
 
+/** The refused save's reason, for the console's conflict bar; null when nothing failed. */
+export function dbConsoleSyncReason(conn               , id        )                {
+  return conn ? sync.reason(conn, id) : null;
+}
+
 export function dbConsoleValue(conn        , id        )                       {
   return sync.value(conn, id);
 }
@@ -181,8 +196,8 @@ export async function dbConsoleRemove(conn        , id        , revision        
   try {
     const query = "?conn=" + encodeURIComponent(conn) + "&id=" + encodeURIComponent(id) + (revision == null ? "" : "&revision=" + revision);
     const r = await api("/api/llm/db/consoles" + query, { method: "DELETE" });
-    const j = await r.json().catch(() => { return {}; })                                         ;
-    if (!r.ok) return { ok: false, conflict: r.status === 409, error: j.error || storeError(r.status) };
+    const j = await r.json().catch(() => { return {}; })                                   ;
+    if (!r.ok) return refused(r.status, j);
     sync.forget(conn, id);
     return { ok: true, removed: j.removed === true };
   } catch {
@@ -196,8 +211,8 @@ export async function dbConsoleClearClosed(conn        )                   {
   try {
     const r = await api("/api/llm/db/consoles?conn=" + encodeURIComponent(conn) + "&closed=true", { method: "DELETE" });
     if (!r.ok) {
-      const j = await r.json().catch(() => { return {}; })                      ;
-      toast(j.error || storeError(r.status), true);
+      const j = await r.json().catch(() => { return {}; })           ;
+      toast(servedError(j, storeError(r.status)), true);
       return false;
     }
     return true;

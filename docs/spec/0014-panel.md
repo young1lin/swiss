@@ -865,11 +865,27 @@ never shown again, and a forgotten one is re-stored, never revealed.
 
 ## §panel.i18n — Languages
 
-English and Simplified Chinese. The scope is the **panel's own copy**: a string the server
-sends is data, shown as sent inside a translated frame (`{name}` placeholders); identifiers —
-names, keys, SQL, paths — are never translated. A module-database refusal the gateway writes
-in English is the exception next to `wireLabel`: `moduleDbMessage` maps that known sentence,
-and an engine error still passes through.
+English and Simplified Chinese. The scope is the **panel's own copy and the gateway's own
+refusals**. A string the server relays is data, shown as sent inside a translated frame
+(`{name}` placeholders): an engine error, a provider's message, a row. Identifiers (names,
+keys, SQL, paths) are never translated.
+
+**Gateway refusals carry a code.** A refusal the gateway itself writes and the panel shows
+(a stale console revision, a limit) answers `{error, code, params?}` (`admin_error_code` in
+swiss-host `reply.rs`):
+- `code` is a stable dotted id (`console.changed`) that never changes once shipped;
+- `error` is the English sentence the CLI, the logs and an older panel read;
+- `params` are the values the sentence names.
+
+`servedError(body, fallback)` (i18n.ts) turns the code into a `served.*` key through its
+`SERVED_CODES` table and fills it from `params`. A code the build does not know yet shows
+`error` as sent, and a body without one shows the caller's fallback. A new refusal adds its
+code on the server and its key in both locales in the same change.
+
+The codes so far are the console store's: `console.exists`, `console.removed`,
+`console.changed`, `console.changedDelete` and `console.tooLarge` (SPEC §data.agent Tabs).
+Two English sentences predate codes and are mapped by their text: `wireLabel` for a served
+nav label, and `moduleDbMessage` for a module-database refusal.
 
 - **Keys are symbolic**, `<module>.<semanticId>` (`addSheet.addMcp`), in `locales/en.ts` and
   `locales/zh.ts` (TS sources, about 1,800 entries each). English is a static import and the
@@ -888,7 +904,11 @@ and an engine error still passes through.
 - **The flip** (文/A in the context bar) is `setLang` → repaint the chrome → re-navigate the
   current page, without a reload. A page whose `canLeave()` refuses blocks it, and then the
   preference is not written. Blocked storage keeps the choice in memory; a failed Chinese load
-  falls back to English.
+  falls back to English. A view that keeps nodes across repaints redraws them in the new words.
+  Before 2026-11-04 the Data agent's column kept the old language's labels (System prompt, its
+  work line, Sent with) after the rest of the page flipped. Now it reads its conversation again
+  and redraws it, leaving a reply that is still streaming until it ends (`a language flip
+  redraws the restored column…`).
 - **No context mechanism**: a string that needs different words in two places gets two keys.
 - **Chinese style**: full-width punctuation after Han characters.
 

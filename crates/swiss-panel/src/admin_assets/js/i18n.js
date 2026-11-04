@@ -142,6 +142,34 @@ export function wireLabel(served        )         {
   return Object.prototype.hasOwnProperty.call(WIRE_LABELS, served) ? WIRE_LABELS[served] : served;
 }
 
+/** Gateway refusals by their wire code (SPEC §panel.i18n): a route that refuses answers
+ *  `{error, code, params?}`, the English sentence for the CLI and the logs and a stable code
+ *  this table turns into the reader's language. A code added on the server lands here, in
+ *  both locales, in the same change. */
+const SERVED_CODES                         = {
+  "console.exists": tk("served.consoleExists"),
+  "console.removed": tk("served.consoleRemoved"),
+  "console.changed": tk("served.consoleChanged"),
+  "console.changedDelete": tk("served.consoleChangedDelete"),
+  "console.tooLarge": tk("served.consoleTooLarge"),
+};
+
+/** A refusal's words: its code's own copy, filled from `params`; a code this build does not
+ *  know yet, or a body with none (an engine error), shows the server's `error` as sent, and
+ *  a body without even that, `fallback`. */
+export function servedError(body         , fallback        )         {
+  const b = body && typeof body === "object" ? body                                                          : {};
+  const key = typeof b.code === "string" && Object.prototype.hasOwnProperty.call(SERVED_CODES, b.code) ? SERVED_CODES[b.code] : null;
+  if (key) {
+    const vars                                  = {};
+    if (b.params && typeof b.params === "object") {
+      for (const [k, v] of Object.entries(b.params)) if (typeof v === "string" || typeof v === "number") vars[k] = v;
+    }
+    return tr(key, vars);
+  }
+  return typeof b.error === "string" && b.error ? b.error : fallback;
+}
+
 const QUERY_ONLY_HEAD = "this connection is query-only (";
 const QUERY_ONLY_TAIL = "): a write would change this module's own database";
 const READ_HEAD = "only a read runs here (SELECT, WITH, TABLE, VALUES, SHOW, DESCRIBE, EXPLAIN), not ";

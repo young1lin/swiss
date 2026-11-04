@@ -1237,8 +1237,7 @@ describe("the LLM plugin - Agents", () => {
     expect(live).toContain("read");
     expect(live).toContain("notes.md");
     expect(live).toContain("913 B");
-    expect(live).toContain("3 turns");
-    expect(live).toContain("210 / 64");
+    expect(live).toContain("3 rounds · 1 tool call · 210 in / 64 out");
 
     await click("[data-latest=cc]");
     expect(document.querySelector("#laTestPrompt")).toBe(null);
@@ -1711,9 +1710,9 @@ describe("the LLM plugin - Agents live dialogue", () => {
     expect(sent("POST", "/api/llm/agents/test/cancel").map((c) => c.body)).toEqual([{ runId: 41 }]);
     const streamSignal = signals.filter((s) => s.path === "/api/llm/agents/test/stream").pop();
     expect(streamSignal?.signal.aborted).toBe(true);
-    // A cancelled loop says cancelled - the success meta (N turns) never paints.
+    // A cancelled loop says cancelled - the success meta (N rounds) never paints.
     expect(document.querySelector("[data-lacancelled]")).not.toBe(null);
-    expect(text("#laTestOut")).not.toMatch(/\d+ turns/);
+    expect(text("#laTestOut")).not.toMatch(/\d+ rounds?\b/);
     // A late frame from the cancelled loop paints nothing.
     live.push("delta", { kind: "text", text: "ZOMBIE" });
     live.end();
@@ -1745,7 +1744,7 @@ describe("the LLM plugin - Agents live dialogue", () => {
     const stopAfter = document.querySelector<HTMLButtonElement>("#laTestStop");
     expect(stopAfter === null || stopAfter.disabled).toBe(true);
     expect(sent("POST", "/api/llm/agents/test/cancel").length).toBe(0);
-    expect(text("#laTestOut")).toMatch(/2 turns/);
+    expect(text("#laTestOut")).toContain("2 rounds · 40 in / 6 out");
     // Idle: New closes the open run on the server before clearing the column.
     await click("#laTestFresh");
     expect(sent("POST", "/api/llm/history/runs/41/close").length).toBe(1);
@@ -1953,7 +1952,7 @@ describe("the LLM plugin - Agents live dialogue", () => {
     await click("[data-latest=distiller]");
     await click("#laTestRun");
     expect(text("#laTestOut")).toContain("ended without an answer");
-    expect(text("#laTestOut")).not.toMatch(/\d+ turns/);
+    expect(text("#laTestOut")).not.toMatch(/\d+ rounds?\b/);
     // The half-said conversation survives: Ask stays armed and still names the run.
     expect(q<HTMLButtonElement>("#laTestRun").disabled).toBe(false);
     whole = true;
@@ -2009,7 +2008,7 @@ describe("the LLM plugin - Agents live dialogue", () => {
     await click("#laTestRun");
     // The cancelled marker, and neither the failure word nor the success meta.
     expect(document.querySelector("[data-lacancelled]")).not.toBe(null);
-    expect(text("#laTestOut")).not.toMatch(/\d+ turns/);
+    expect(text("#laTestOut")).not.toMatch(/\d+ rounds?\b/);
     expect(q<HTMLButtonElement>("#laTestRun").disabled).toBe(false);
     whole = true;
     await click("#laTestRun");
