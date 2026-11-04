@@ -384,6 +384,22 @@ async fn separate_agent_requests_resume_the_server_owned_console_by_identity() {
     let (app, _, _, bus) = app_with_bus(frames, db_agent()).await;
     let mut peer = crate::db_consoles::bus_tests::Peer::open(bus).await;
     peer.subscribe("mm").await;
+    // Prove the same encoded event path preserves a page origin before agent saves (SPEC §bus.wire).
+    let page = peer.request(v1::ConsolesId::ConsolesPut, v1::ConsolePut {
+        conn: "mm".into(), console: Some(v1::ConsoleRecord {
+            id: "page-control".into(), tab: "Page control".into(), sql: "SELECT 0;".into(), open: true, ..Default::default()
+        }), mode: v1::SaveMode::Create as i32,
+    }).await;
+    assert!(page.fault.is_none(), "{:?}", page.fault);
+    let event = peer.event().await;
+    assert_eq!((event.id, event.key.as_str(), event.origin.as_str()), (v1::ConsolesId::ConsolesChanged as u32, "mm", "page-a"));
+    let record = v1::ConsoleSaved::decode(event.body.as_slice()).expect("page saved").console.expect("record");
+    assert_eq!((record.id.as_str(), record.revision), ("page-control", 1));
+    let removed = peer.request(v1::ConsolesId::ConsolesRemove, v1::ConsoleRemove {
+        conn: "mm".into(), id: record.id, revision: record.revision,
+    }).await;
+    assert!(removed.fault.is_none(), "{:?}", removed.fault);
+    assert_eq!(peer.event().await.id, v1::ConsolesId::ConsolesRemoved as u32);
     let request = json!({ "agent": "data", "conn": "mm", "prompt": "stage a query", "consoleStore": true });
     let (status, _, first) = call_text(&app, "POST", "/api/llm/db/stream", Some(request.clone())).await;
     assert_eq!(status, StatusCode::OK, "{first}");
@@ -404,8 +420,9 @@ async fn separate_agent_requests_resume_the_server_owned_console_by_identity() {
     assert_eq!(saved.consoles.len(), 1);
     assert_eq!((&saved.consoles[0].id, saved.consoles[0].sql.as_str(), saved.consoles[0].revision), (&id, "SELECT 11;\n\nSELECT 22;", 2));
     let event = peer.event().await;
-    assert_eq!((event.id, event.origin.as_str()), (v1::ConsolesId::ConsolesChanged as u32, ""), "the continuation also publishes");
-    assert_eq!(v1::ConsoleSaved::decode(event.body.as_slice()).expect("saved").console.expect("record").revision, 2);
+    assert_eq!((event.id, event.key.as_str(), event.origin.as_str()), (v1::ConsolesId::ConsolesChanged as u32, "mm", ""), "the continuation also publishes");
+    let record = v1::ConsoleSaved::decode(event.body.as_slice()).expect("saved").console.expect("record");
+    assert_eq!((record.id.as_str(), record.revision), (id.as_str(), 2));
     // The same path carries a page's origin, so the empty one above is the agent's own, not a
     // field the event lost on the way.
     let edit = v1::ConsoleRecord { sql: "SELECT 33;".into(), ..saved.consoles[0].clone() };
