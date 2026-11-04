@@ -280,7 +280,7 @@ impl Ask for ClaudeAsk {
         let env = self.agent.child_env(self.telemetry.as_ref())?;
         let prompt = format!("{prompt}{}", this_run(&self.agent.narrow(&CLAUDE_OFFER)));
         let args = self.args();
-        let ask = spawn_and_collect(&program, root, &args, &env, self.agent.timeout_ms, &prompt);
+        let ask = spawn_and_collect(&program, root, &args, &env, &prompt);
         run_recorded(&self.history, &self.agent, "claude", &prompt, ask).await
     }
 
@@ -289,7 +289,7 @@ impl Ask for ClaudeAsk {
         let env = self.agent.child_env(self.telemetry.as_ref())?;
         let prompt = format!("{prompt}{}", this_run(&[]));
         let args = self.args_for(&[], schema);
-        let ask = spawn_and_collect(&program, root, &args, &env, self.agent.timeout_ms, &prompt);
+        let ask = spawn_and_collect(&program, root, &args, &env, &prompt);
         run_recorded(&self.history, &self.agent, "claude", &prompt, ask).await
     }
 
@@ -301,7 +301,7 @@ impl Ask for ClaudeAsk {
         let tools = self.agent.narrow(&CLAUDE_OFFER);
         let prompt = format!("{prompt}{}", this_run(&tools));
         let args = self.args_for(&tools, schema);
-        let ask = spawn_and_collect(&program, root, &args, &env, self.agent.timeout_ms, &prompt);
+        let ask = spawn_and_collect(&program, root, &args, &env, &prompt);
         run_recorded(&self.history, &self.agent, "claude", &prompt, ask).await
     }
 
@@ -346,12 +346,14 @@ pub fn set_children_seat(registry: std::sync::Arc<swiss_host::services::children
 /// object (Windows) or private process group (Unix) owns its subtree, the PID
 /// ledger carries it until its death is confirmed, and a seated registry shows
 /// the row on the Process page - stoppable there, killed with the gateway.
+///
+/// No time cap: the runner runs as long as its work takes. The sync's Stop drops this
+/// future (`kill_on_drop` ends the child) and the Process-page row kills its tree.
 pub(super) async fn spawn_and_collect(
     program: &Path,
     root: &Path,
     args: &[String],
     env: &[(String, String)],
-    timeout_ms: u64,
     prompt: &str,
 ) -> Result<String, String> {
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -482,20 +484,8 @@ pub(super) async fn spawn_and_collect(
             let status = child.wait().await;
             (stdout, stderr, status)
         };
-        let (stdout, stderr, status) = match tokio::time::timeout(Duration::from_millis(timeout_ms), read).await {
-            Ok(done) => done,
-            Err(_) => {
-                // Kill and CONFIRM the death before dropping the ledger note: a
-                // note outliving its pid is a reuse hazard at the next boot's
-                // reap, and kill_on_drop alone never awaits the death.
-                let _ = child.kill().await;
-                unnote(pid);
-                return Err(format!(
-                    "the sync runner took longer than {} s and was killed",
-                    timeout_ms / 1000
-                ));
-            }
-        };
+        // No clock bounds the read: a runner works as long as its work takes.
+        let (stdout, stderr, status) = read.await;
         // The wait answered: the child is dead, the note can go.
         unnote(pid);
         let status = status.map_err(|err| format!("the sync runner did not finish: {err}"))?;
@@ -557,7 +547,7 @@ impl PiAsk {
         let env = self.agent.child_env(None)?;
         let prompt = format!("{prompt}{}", this_run(tools));
         let spawn = async {
-            let answer = spawn_and_collect(&program, root, &self.args_for(tools), &env, self.agent.timeout_ms, &prompt).await?;
+            let answer = spawn_and_collect(&program, root, &self.args_for(tools), &env, &prompt).await?;
             if answer.trim().is_empty() {
                 return Err(format!(
                     "the {} agent's pi produced no text; check its command, its model and pi's models.json",

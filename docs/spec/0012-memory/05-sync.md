@@ -26,8 +26,9 @@ falls back); `transcripts` (`claude-code` |
 layout; default `$CLAUDE_CONFIG_DIR/projects` when that is set, then `~/.claude/projects`,
 then `$DSH_HOME/sessions` when that is set, then `~/.dsh/sessions`); `auto` (true: nudges
 queue runs; false: only Sync now does); `minIntervalSec` (0..86 400, 600). The runner's own
-keys (`runner`, `provider`, `command`, `model`, `env`, `timeoutMs`) moved to the llm plugin's
-agents and are refused with that sentence, never silently ignored. Whether an agent exists is the
+keys (`runner`, `provider`, `command`, `model`, `env`) moved to the llm plugin's
+agents and are refused with that sentence, never silently ignored; `timeoutMs` went with no
+successor (no agent run has a time cap, §llm.agents) and reads as any unknown field. Whether an agent exists is the
 llm row's business, asked when a run starts (the two rows save apart): the llm plugin stopped, no
 agent of a named name or a provider it names gone fails the run at start with that sentence,
 nothing written, and the sync sheet shows the same sentence beforehand; a run no layer gave
@@ -157,8 +158,9 @@ commit, no new text - starts no runner: the run is `empty` and the state moves.
 `Read,Grep,Glob` offer narrowed by the agent's `tools` (none taken: an empty `--tools`, every
 tool off, and no `--allowedTools`), P its `systemPrompt` - its cwd the project's root, the prompt on stdin, the gateway's environment plus the agent's env (after the OTEL env
 when it reports, §llm.telemetry) plus `SWISS_MEMORY_SYNC=1` (without the variables that mark a
-parent Claude Code session), no console window, stdout capped at 4 MiB, the process tree killed
-at the agent's `timeoutMs`; a `pi` child runs the same way. `--restricted` takes away every
+parent Claude Code session), no console window, stdout capped at 4 MiB, no time cap - the
+sync's Stop ends the child and its Process-page row kills its tree; a `pi` child runs the
+same way. `--restricted` takes away every
 command-running tool and WebFetch, ignores the user's and the project's settings files (none of
 their hooks runs) and keeps the file tools inside the checkout; `--strict-mcp-config` with no
 `--mcp-config` leaves it no MCP server. The **prompt** opens with the marker

@@ -547,7 +547,7 @@ impl Toolbox for LeadTools<'_> {
     }
 }
 
-/// One request under the agent's system prompt and deadline, filed as a whole one-ask run
+/// One request under the agent's system prompt, with no time cap, filed as a whole one-ask run
 /// of `runtime` (SPEC llm.history): a fill, a chat runtime's question, a worker's task. The
 /// call row records itself inside [provider::answer].
 pub(crate) async fn answer_once(agent: &AgentConfig, chat: &Chat, session: &Session, runtime: &str, prompt: &str) -> Result<Answered, String> {
@@ -564,18 +564,9 @@ pub(crate) async fn answer_once(agent: &AgentConfig, chat: &Chat, session: &Sess
     };
     run.note("user", prompt);
     let system = agent.system_prompt();
-    let asked = provider::answer(&chat, system.as_deref(), prompt, session);
-    let answered = match tokio::time::timeout(std::time::Duration::from_millis(agent.timeout_ms), asked).await {
-        Ok(Ok(answered)) => answered,
-        Ok(Err(err)) => {
-            run.fail(&err);
-            return Err(err);
-        }
-        Err(_) => {
-            let err = format!("the {} agent took longer than {} s", agent.name, agent.timeout_ms / 1000);
-            // The ask was in flight when the deadline hit: file the wait itself (SPEC
-            // llm.history - the round trip happened, it just never answered).
-            chat.record_timeout(run.id(), system.as_deref(), prompt, agent.timeout_ms);
+    let answered = match provider::answer(&chat, system.as_deref(), prompt, session).await {
+        Ok(answered) => answered,
+        Err(err) => {
             run.fail(&err);
             return Err(err);
         }
@@ -585,8 +576,8 @@ pub(crate) async fn answer_once(agent: &AgentConfig, chat: &Chat, session: &Sess
     Ok(answered)
 }
 
-/// The `builtin` runtime as a sync runner: the agent's chat client, system prompt, tools,
-/// turn cap and timeout, and the run's reporting session.
+/// The `builtin` runtime as a sync runner: the agent's chat client, system prompt, tools
+/// and turn cap, and the run's reporting session.
 pub struct BuiltinAsk {
     agent: AgentConfig,
     chat: Chat,
@@ -598,31 +589,19 @@ impl BuiltinAsk {
         BuiltinAsk { agent, chat, session }
     }
 
-    /// The agent's loop over `tools` under its deadline.
+    /// The agent's loop over `tools`, with no time cap: it runs as long as its work
+    /// takes, and the sync's Stop drops it where it stands.
     async fn looped(&self, prompt: &str, tools: &mut dyn Toolbox) -> Result<LoopOutcome, String> {
         let system = self.agent.system_prompt();
         let system = system.as_deref().unwrap_or(DEFAULT_SYSTEM_PROMPT);
-        // The recorder lives HERE, outside the deadline: a timeout drops the loop
-        // future, and the dialogue it had already noted still files (SPEC llm.history:
-        // multi-turn loops record like single asks, including the ones the deadline
-        // killed). run_loop borrows it and finishes it on its own terminal paths.
+        // run_loop borrows the recorder and finishes it on its own terminal paths
+        // (SPEC llm.history: multi-turn loops record like single asks).
         let mut run = self.chat.run_recorder("builtin");
         // The memory sync watches nothing live: the event sink is a no-op, the
         // dialogue still files exactly as before.
         let mut on_event = |_event: swiss_llm::agent::LoopEvent| {};
-        let looped = run_loop(&self.chat, system, prompt, tools, self.agent.max_turns, &self.session, &mut run, &mut on_event);
-        match tokio::time::timeout(std::time::Duration::from_millis(self.agent.timeout_ms), looped).await {
-            Ok(Ok(outcome)) => Ok(outcome),
-            Ok(Err(err)) => Err(err), // run_loop noted and finished its own failure
-            Err(_) => {
-                let err = format!("the {} agent took longer than {} s", self.agent.name, self.agent.timeout_ms / 1000);
-                // The round trip in flight when the deadline hit never answered, so
-                // nothing inside will record it: file the wait itself.
-                self.chat.record_timeout(run.id(), Some(system), prompt, self.agent.timeout_ms);
-                run.fail(&err);
-                Err(err)
-            }
-        }
+        // A failure is noted and filed by run_loop itself.
+        run_loop(&self.chat, system, prompt, tools, self.agent.max_turns, &self.session, &mut run, &mut on_event).await
     }
 }
 
@@ -1387,5 +1366,41 @@ mod tests {
         assert!(addendum(&OFFER).contains("sync tool") && addendum(&OFFER).contains("bash runs"));
         assert!(addendum(&["read"]).contains("the one JSON object") && !addendum(&["read"]).contains("bash"));
         assert!(addendum(&[]).contains("no tools to look with"));
+    }
+
+    /// No clock cuts a memory agent: a builtin agent's one-ask fill and its looped
+    /// recheck, and a chat agent's question, whose provider answers only after 61 s - past
+    /// the 60 s the row's retired timeoutMs still names, which once cut them - land their
+    /// answers. The wire's paused clock skips the wait; the elapsed checks prove each waited.
+    #[tokio::test]
+    async fn a_memory_agent_runs_as_long_as_its_work_takes() {
+        use crate::llm_api::tests::{one_round_answer, sse_wire_capturing_after};
+        let slow = std::time::Duration::from_secs(61);
+        let (base, captured) = sse_wire_capturing_after(slow, vec![one_round_answer(); 3]).await;
+        let row = json!({
+            "providers": { "local": { "style": "openai", "baseUrl": base + "/v1", "models": [{ "id": "tiny" }] } },
+            "agents": {
+                "distiller": { "provider": "local", "maxTurns": 4, "tools": [], "timeoutMs": 60_000 },
+                "asker": { "runtime": "chat", "provider": "local", "timeoutMs": 60_000 }
+            }
+        });
+        let state = swiss_llm::LlmState::new();
+        state.apply(swiss_llm::LlmConfig::parse(&row).expect("a row with the retired timeoutMs still parses"));
+        let builtin = crate::memory_sync::runner(&state, "distiller").expect("the builtin runner");
+        let chat = crate::memory_sync::runner(&state, "asker").expect("the chat runner");
+        let dir = root();
+        let waited = tokio::time::Instant::now();
+        let filled = builtin.fill(&dir, "judge the material", &json!({})).await.expect("the fill lands");
+        assert!(filled.contains("done."), "{filled}");
+        assert!(waited.elapsed() >= slow, "the fill waited the whole 61 s");
+        let waited = tokio::time::Instant::now();
+        let looked = builtin.look(&dir, "check the claim", &json!({})).await.expect("the recheck lands");
+        assert!(looked.contains("done."), "{looked}");
+        assert!(waited.elapsed() >= slow, "the looped recheck waited the whole 61 s");
+        let waited = tokio::time::Instant::now();
+        let asked = chat.ask(&dir, "say what you see").await.expect("the chat ask lands");
+        assert!(asked.contains("done."), "{asked}");
+        assert!(waited.elapsed() >= slow, "the chat ask waited the whole 61 s");
+        assert_eq!(captured.lock().expect("captured").len(), 3, "one request each, no retry behind a cut");
     }
 }

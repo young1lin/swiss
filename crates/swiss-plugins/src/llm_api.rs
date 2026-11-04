@@ -244,7 +244,6 @@ async fn status(State(state): State<Arc<LlmState>>) -> Response {
                 "runtime": a.runtime.as_str(),
                 "provider": a.provider,
                 "model": a.model,
-                "timeoutMs": a.timeout_ms,
                 "concurrency": a.concurrency,
                 "report": a.report,
                 "reports": reports,
@@ -1841,12 +1840,12 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(moved);
     }
 
-    /// No clock cuts a Test: a provider that answers only after the agent's whole
-    /// timeoutMs has passed still lands its answer, in the blocking lane, in the live one
-    /// the panel streams and in the store-less one. The wire's paused clock skips the
-    /// wait; the elapsed check proves each lane really waited past timeoutMs.
+    /// No clock cuts a Test: a provider that answers only after 61 s - past the 60 s the
+    /// row's retired timeoutMs still names, which once cut it - lands its answer, in the
+    /// blocking lane, in the live one the panel streams and in the store-less one. The
+    /// wire's paused clock skips the wait; the elapsed check proves each lane really waited.
     #[tokio::test]
-    async fn a_test_runs_as_long_as_its_work_takes_past_the_agents_timeout() {
+    async fn a_test_runs_as_long_as_its_work_takes() {
         let slow = Duration::from_secs(61);
         let (base, _captured) = sse_wire_capturing_after(slow, vec![one_round_answer(); 3]).await;
         let row = json!({
@@ -1866,21 +1865,21 @@ pub(crate) mod tests {
         let (status, body) = call(&app, "POST", "/api/llm/agents/test", Some(json!({ "agent": "distiller", "prompt": "take your time" }))).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!((&body["ok"], &body["text"]), (&json!(true), &json!("done.")), "{body}");
-        assert!(waited.elapsed() >= slow, "the blocking lane waited past timeoutMs");
+        assert!(waited.elapsed() >= slow, "the blocking lane waited the whole 61 s");
         let waited = tokio::time::Instant::now();
         let (status, _ct, text) =
             call_text(&app, "POST", "/api/llm/agents/test/stream", Some(json!({ "agent": "distiller", "prompt": "take your time" }))).await;
         assert_eq!(status, StatusCode::OK, "{text}");
         let (_, done) = events_of(&text).into_iter().find(|(name, _)| name == "done").expect("a done frame");
         assert_eq!((&done["ok"], &done["text"]), (&json!(true), &json!("done.")), "{done}");
-        assert!(waited.elapsed() >= slow, "the live lane waited past timeoutMs");
+        assert!(waited.elapsed() >= slow, "the live lane waited the whole 61 s");
         let waited = tokio::time::Instant::now();
         let (status, _ct, text) =
             call_text(&storeless, "POST", "/api/llm/agents/test/stream", Some(json!({ "agent": "distiller", "prompt": "take your time" }))).await;
         assert_eq!(status, StatusCode::OK, "{text}");
         let (_, done) = events_of(&text).into_iter().find(|(name, _)| name == "done").expect("a done frame");
         assert_eq!((&done["ok"], &done["text"], &done["runId"]), (&json!(true), &json!("done."), &Value::Null), "{done}");
-        assert!(waited.elapsed() >= slow, "the store-less lane waited past timeoutMs");
+        assert!(waited.elapsed() >= slow, "the store-less lane waited the whole 61 s");
         history.close().await.expect("close");
     }
 

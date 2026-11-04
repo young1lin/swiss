@@ -35,7 +35,7 @@ async fn the_sync_runner_is_a_seated_gateway_child() {
         let program = program.to_string();
         let dir = dir.clone();
         tokio::spawn(async move {
-            spawn_and_collect(std::path::Path::new(&program), &dir, &args, &[], 30_000, "").await
+            spawn_and_collect(std::path::Path::new(&program), &dir, &args, &[], "").await
         })
     };
     let mut seen = false;
@@ -147,7 +147,7 @@ async fn a_spawned_runner_works_in_the_checkout() {
     let dir = scratch("cwd");
     git_at(&dir, &["init", "-q"]);
     let args = vec!["rev-parse".to_string(), "--show-toplevel".to_string()];
-    let out = spawn_and_collect(Path::new("git"), &dir, &args, &[], 30_000, "").await.expect("git");
+    let out = spawn_and_collect(Path::new("git"), &dir, &args, &[], "").await.expect("git");
     let shown = PathBuf::from(out.trim()).canonicalize().expect("toplevel");
     assert_eq!(shown, dir.canonicalize().expect("dir"), "the child's working directory is the checkout");
 }

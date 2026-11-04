@@ -55,8 +55,6 @@ const TOKENS_MAX = 131_072;
 const CONTEXT_KIB_MIN = 64;
 const CONTEXT_KIB_MAX = 8192;
 const CONCURRENCY_MAX = 16;
-const TIMEOUT_MIN_S = 60;
-const TIMEOUT_MAX_S = 7200;
 /** The server's cap (swiss-llm agent.rs PROMPT_MAX): a spawned CLI takes the prompt on its
  *  command line, which Windows caps at 32767 UTF-16 units. */
 const PROMPT_MAX = 20_000;
@@ -160,8 +158,7 @@ function setupView(a             )              {
     a.maxTokens != null ? kvRow(tr("llm.agents.maxTokens"), String(a.maxTokens)) : null,
     a.maxContextKiB != null ? kvRow(tr("llm.agents.maxContext"), String(a.maxContextKiB)) : null,
     asks ? kvRow(tr("llm.agents.effort"), a.effort ? tr(EFFORT_LABELS[a.effort] || a.effort) : tr("llm.agents.effortDefault")) : null,
-    kvRow(tr("llm.agents.concurrency"), String(a.concurrency)),
-    kvRow(tr("llm.agents.timeout"), String(Math.round(a.timeoutMs / 1000))));
+    kvRow(tr("llm.agents.concurrency"), String(a.concurrency)));
 }
 
 /** The system prompt in force, as sent: a builtin, chat or db agent's runtime default (marked) and
@@ -306,9 +303,6 @@ async function openAgent(name               , preset                     = null)
   const secrets = input("laSecrets", (e.secrets || []).join(", "), "api-key, group:deploy");
   const secretsField = field({ label: tr("llm.agents.secrets"), control: secrets, hint: tr("llm.agents.secretsWhy") });
   const toolsWhy = h("span", { id: "laToolsWhy" });
-  // Seconds on screen, milliseconds in the row; an unchanged field keeps the stored number.
-  const shownTimeout = e.timeoutMs == null ? "" : String(Math.round(e.timeoutMs / 1000));
-  const timeout = input("laTimeout", shownTimeout, "1800");
   const report = h("input", { id: "laReport", type: "checkbox", checked: e.report !== false });
   const reportWhy = h("span", { id: "laReportWhy" });
   const err = hint("", { id: "laErr", bad: true, hidden: true, live: true });
@@ -452,13 +446,6 @@ async function openAgent(name               , preset                     = null)
     const boxes = Array.from(tools.querySelectorAll                  ("[data-latool]"));
     const taken = boxes.filter((b) => b.checked).map((b) => b.dataset.latool || "");
     if (boxes.length && taken.length < boxes.length) next.tools = taken;
-    if (timeout.value.trim() === shownTimeout && e.timeoutMs != null) {
-      next.timeoutMs = e.timeoutMs;
-    } else {
-      const s = wholeField(timeout.value, tr("llm.agents.timeout"), TIMEOUT_MIN_S, TIMEOUT_MAX_S);
-      if (isError(s)) return s.error;
-      if (s != null) next.timeoutMs = s * 1000;
-    }
     const at = wholeField(concurrency.value, tr("llm.agents.concurrency"), 1, CONCURRENCY_MAX);
     if (isError(at)) return at.error;
     if (at != null) next.concurrency = at;
@@ -483,9 +470,7 @@ async function openAgent(name               , preset                     = null)
       toolsField,
       secretsField,
       formCap(tr("llm.agents.capRun")),
-      pair(
-        field({ label: tr("llm.agents.timeout"), control: timeout, hint: tr("llm.agents.timeoutWhy") }),
-        field({ label: tr("llm.agents.concurrency"), control: concurrency, hint: concurrencyWhy })),
+      field({ label: tr("llm.agents.concurrency"), control: concurrency, hint: concurrencyWhy }),
       checkField({ label: tr("llm.agents.report"), control: report, hint: reportWhy }),
       err,
     ],

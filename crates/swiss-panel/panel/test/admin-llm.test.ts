@@ -131,7 +131,7 @@ function status(): Body {
     const own = Array.isArray(a.tools) ? a.tools as string[] : null;
     return {
       name, runtime: rt, provider: a.provider ?? null, model: a.model ?? (asks ? firstOf(p, "chat") : null),
-      timeoutMs: a.timeoutMs ?? 1_800_000, report, concurrency: a.concurrency ?? (asks ? 4 : 1),
+      report, concurrency: a.concurrency ?? (asks ? 4 : 1),
       reports: !report || !t || t.enabled === false ? "off" : rt === "claude" ? "child" : "swiss",
       systemPrompt: a.systemPrompt ?? null, systemPromptDefault: DEFAULT_PROMPTS[rt],
       tools: own, toolsInForce: own ? names.filter((n) => own.includes(n)) : names,
@@ -978,9 +978,8 @@ describe("the LLM plugin - Agents", () => {
     expect(kv("distiller", "setup")).toEqual([
       ["Runtime", "built-in"], ["Provider", "glm"], ["Model", "glm-5.3-flash"], ["Max turns", "24"], ["Max tokens", "131072"], ["Request budget (KiB)", "1024"],
       ["Thinking effort", "The model's default"], ["Concurrency", "4"],
-      ["Run timeout (s)", "1800"],
     ]);
-    expect(kv("cc", "setup").map((r) => r[0])).toEqual(["Runtime", "Command", "Concurrency", "Run timeout (s)"]);
+    expect(kv("cc", "setup").map((r) => r[0])).toEqual(["Runtime", "Command", "Concurrency"]);
     // No prompt of its own: the runtime's default, marked as such; every tool taken.
     expect(detail("distiller")).toContain("System promptdefault" + DEFAULT_PROMPT);
     expect(tools("distiller").map((t) => t[0])).toEqual(["read", "bash", "sync", "delegate", "list", "job_output", "job_kill"]);
@@ -1023,9 +1022,8 @@ describe("the LLM plugin - Agents", () => {
     await click("#laSave");
     expect(text("#laErr")).toBe("Request budget (KiB): a whole number from 64 to 8192");
     type("#laContext", "2048");
-    type("#laTimeout", "600");
     await click("#laSave");
-    expect((puts()[0].agents as Body).summarizer).toEqual({ runtime: "builtin", provider: "ollama", model: "qwen3.5:4b", maxTurns: 8, maxContextKiB: 2048, timeoutMs: 600_000 });
+    expect((puts()[0].agents as Body).summarizer).toEqual({ runtime: "builtin", provider: "ollama", model: "qwen3.5:4b", maxTurns: 8, maxContextKiB: 2048 });
     expect(text("#toast")).toBe("Agent summarizer saved");
   });
 
@@ -1184,17 +1182,18 @@ describe("the LLM plugin - Agents", () => {
     expect((puts()[0].agents as Body)["pi-glm"]).toEqual({ runtime: "pi", model: "glm/glm-5.3-flash" });
   });
 
-  it("Edit switches runtime and drops the old runtime's fields; an unchanged timeout keeps its milliseconds", async () => {
+  it("Edit switches runtime and drops the old runtime's fields and the retired timeoutMs", async () => {
     row.agents = { distiller: { runtime: "builtin", provider: "glm", maxTurns: 12, timeoutMs: 90_500 } };
     await agents.mount();
     await click("[data-lamore=distiller]");
     await menuPick("Edit");
     expect(q<HTMLInputElement>("#laName").disabled).toBe(true);
-    expect(q<HTMLInputElement>("#laTimeout").value).toBe("91");
+    // No run has a time cap: the sheet asks none, and the save leaves the stored one out.
+    expect(document.querySelector("#laTimeout")).toBe(null);
     change("#laRuntime", "chat");
     expect(q("#laTurns").closest("[hidden]")).not.toBe(null);
     await click("#laSave");
-    expect((puts()[0].agents as Body).distiller).toEqual({ runtime: "chat", provider: "glm", timeoutMs: 90_500 });
+    expect((puts()[0].agents as Body).distiller).toEqual({ runtime: "chat", provider: "glm" });
   });
 
   it("Test: a builtin agent answers one reported prompt; a claude agent is checked with --version", async () => {

@@ -1682,11 +1682,11 @@ fn db_agent() -> Value {
 }
 
 /// No clock cuts a Data conversation: a send, and its compaction, whose provider answers
-/// only after the agent's whole timeoutMs still land - the send its answer, the
-/// compaction its checkpoint. The wire's paused clock skips the wait; the elapsed checks
-/// prove each one really waited past timeoutMs.
+/// only after 61 s - past the 60 s the row's retired timeoutMs still names, which once
+/// cut them - land: the send its answer, the compaction its checkpoint. The wire's paused
+/// clock skips the wait; the elapsed checks prove each one really waited.
 #[tokio::test]
-async fn a_send_and_its_compaction_run_as_long_as_their_work_takes_past_the_agents_timeout() {
+async fn a_send_and_its_compaction_run_as_long_as_their_work_takes() {
     let slow = std::time::Duration::from_secs(61);
     let frames = vec![one_round_answer(), answer_with("## Requests and Intent\n- count the posts")];
     let agents = json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 4, "timeoutMs": 60_000 } });
@@ -1697,14 +1697,14 @@ async fn a_send_and_its_compaction_run_as_long_as_their_work_takes_past_the_agen
     let events = events_of(&text);
     let (_, done) = events.iter().find(|(name, _)| name == "done").expect("a done frame");
     assert_eq!((&done["ok"], &done["text"]), (&json!(true), &json!("done.")), "{done}");
-    assert!(waited.elapsed() >= slow, "the send waited past timeoutMs");
+    assert!(waited.elapsed() >= slow, "the send waited the whole 61 s");
     let from = events[0].1["runId"].as_i64().expect("run id");
     let waited = tokio::time::Instant::now();
     let (status, _ct, text) = call_text(&app, "POST", "/api/llm/db/compact", Some(json!({ "agent": "data", "conn": "mm", "runId": from }))).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     let (_, done) = events_of(&text).into_iter().find(|(name, _)| name == "done").expect("a done frame");
     assert_eq!((&done["ok"], &done["compacted"]), (&json!(true), &json!(true)), "{done}");
-    assert!(waited.elapsed() >= slow, "the compaction waited past timeoutMs");
+    assert!(waited.elapsed() >= slow, "the compaction waited the whole 61 s");
 }
 
 /// The text of a captured request's messages, role by role.

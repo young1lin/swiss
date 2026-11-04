@@ -166,7 +166,6 @@ impl PluginFactory for LlmPlugin {
                                 "concurrency": { "type": "integer", "minimum": 1, "maximum": 16, "description": "How many of this agent's tasks one consumer runs at once (4 for builtin/chat, 1 for claude/pi when unset)." },
                                 "command": { "type": "string", "description": "claude/pi: a bare name found on PATH, or an absolute path." },
                                 "env": { "type": "object", "description": "claude/pi: extra env for the child; a credential-named value must be a reference." },
-                                "timeoutMs": { "type": "integer", "minimum": 60000, "maximum": 7200000 },
                                 "report": { "type": "boolean", "description": "Whether this agent's runs are reported while telemetry is on." },
                                 "systemPrompt": { "type": "string", "maxLength": 20000, "description": "builtin/chat: appended to the built-in default system message, which is always sent. claude/pi: appended to the child's own system prompt." },
                                 "tools": {

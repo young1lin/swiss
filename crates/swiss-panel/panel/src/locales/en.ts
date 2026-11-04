@@ -3939,8 +3939,6 @@ const en: Record<string, string> = {
   "llm.agents.env": "Environment",
   "llm.agents.envPh": "ANTHROPIC_BASE_URL=https://relay",
   "llm.agents.envWhy": "One NAME=value a line, for the child only. A credential-named value must be a reference.",
-  "llm.agents.timeout": "Run timeout (s)",
-  "llm.agents.timeoutWhy": "60 to 7200 seconds; 1800 when empty. A memory task or a spawned runtime's run past it is stopped; a Test and a Data conversation have no time limit and run until done or stopped.",
   "llm.agents.report": "Report runs",
   "llm.agents.reportSwiss": "Swiss sends each run's events to the collector set under Reporting.",
   "llm.agents.reportClaude": "The child gets the OTEL env and reports itself to the collector set under Reporting.",

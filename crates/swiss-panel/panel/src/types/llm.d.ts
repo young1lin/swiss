@@ -93,7 +93,6 @@ export interface LlmAgentEntry {
   concurrency?: number;
   command?: string;
   env?: Record<string, string>;
-  timeoutMs?: number;
   report?: boolean;
   systemPrompt?: string;
   /** Unset takes every tool a task offers; `[]` none. */
@@ -151,7 +150,6 @@ export interface LlmAgentRow {
   runtime: LlmRuntime;
   provider: string | null;
   model: string | null;
-  timeoutMs: number;
   report: boolean;
   reports: "swiss" | "child" | "off";
   maxTokens?: number;

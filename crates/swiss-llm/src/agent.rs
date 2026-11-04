@@ -73,9 +73,6 @@ const TOKENS_MAX: u64 = 131_072;
 pub const CONTEXT_KIB_DEFAULT: u32 = 1024;
 const CONTEXT_KIB_MIN: u64 = 64;
 const CONTEXT_KIB_MAX: u64 = 8192;
-pub const TIMEOUT_DEFAULT_MS: u64 = 1_800_000;
-const TIMEOUT_MIN_MS: u64 = 60_000;
-const TIMEOUT_MAX_MS: u64 = 7_200_000;
 const MODEL_MAX: usize = 200;
 const ENV_MAX: usize = 32;
 /// The most entries an agent's `secrets` grant lists.
@@ -87,7 +84,11 @@ const ENV_VALUE_MAX: usize = 2000;
 pub const PROMPT_MAX: usize = 20_000;
 
 /// The keys every agent may carry; [Runtime::keys] narrows them.
-const COMMON_KEYS: [&str; 5] = ["runtime", "timeoutMs", "report", "systemPrompt", "concurrency"];
+const COMMON_KEYS: [&str; 4] = ["runtime", "report", "systemPrompt", "concurrency"];
+/// Keys an agent once took and nothing reads any more: a row saved with one still parses,
+/// whatever it holds, and the panel's next save leaves it out. `timeoutMs` capped a task's
+/// time; no agent run has a time cap now (SPEC §llm.agents).
+const RETIRED_KEYS: [&str; 1] = ["timeoutMs"];
 /// Every runtime-specific key, for the error that names a stale one.
 const RUNTIME_KEYS: [&str; 10] =
     ["provider", "model", "maxTurns", "maxTokens", "maxContextKiB", "effort", "command", "env", "tools", "secrets"];
@@ -503,8 +504,6 @@ pub struct AgentConfig {
     pub command: String,
     /// claude/pi: extra env for the child; credential-named values are references only.
     pub env: Vec<(String, String)>,
-    /// The whole task's cap.
-    pub timeout_ms: u64,
     /// Whether this agent's runs are reported when the telemetry block is on.
     pub report: bool,
     /// The agent's own system prompt, sent after [Runtime::default_prompt]; read the one in
@@ -554,7 +553,9 @@ fn parse_agent(name: &str, value: &Value, providers: &BTreeMap<String, ProviderE
     };
     // A field another runtime reads is refused by name, so a runtime switch that leaves a
     // stale field behind is said, never silently ignored.
-    if let Some(key) = obj.keys().find(|k| !COMMON_KEYS.contains(&k.as_str()) && !runtime.keys().contains(&k.as_str())) {
+    if let Some(key) = obj.keys().find(|k| {
+        !COMMON_KEYS.contains(&k.as_str()) && !RETIRED_KEYS.contains(&k.as_str()) && !runtime.keys().contains(&k.as_str())
+    }) {
         return Err(if RUNTIME_KEYS.contains(&key.as_str()) {
             format!("{place}.{key} does not apply to the {} runtime", runtime.as_str())
         } else {
@@ -612,7 +613,6 @@ fn parse_agent(name: &str, value: &Value, providers: &BTreeMap<String, ProviderE
         return Err(format!("{place}.command holds a path separator; it must be absolute (or a bare name found on PATH)"));
     }
     let env = parse_env(obj.get("env"), &place)?;
-    let timeout_ms = whole(obj, &place, "timeoutMs", TIMEOUT_MIN_MS, TIMEOUT_MAX_MS)?.unwrap_or(TIMEOUT_DEFAULT_MS);
     let report = match flag(obj, &place, "report")? {
         Some(true) if runtime == Runtime::Pi => {
             return Err(format!("{place}.report: pi has no telemetry hook, so a pi agent cannot report"))
@@ -645,7 +645,6 @@ fn parse_agent(name: &str, value: &Value, providers: &BTreeMap<String, ProviderE
         concurrency,
         command,
         env,
-        timeout_ms,
         report,
         system_prompt,
         tools,
@@ -1014,8 +1013,9 @@ pub async fn run_loop(
 /// that goes away (false) ends the round truthfully, exactly as a route-side cancel.
 ///
 /// The run recorder comes from the CALLER (created via [Chat::run_recorder] or the
-/// conversation lane): a consumer-side timeout drops this whole future, and the creator
-/// must still be able to file the dialogue it watched - so the loop borrows the
+/// conversation lane): a consumer may drop this whole future (a memory sync's Stop, a
+/// blocking request that went away), and the creator must still be able to file the
+/// dialogue it watched - so the loop borrows the
 /// recorder, notes every turn into it, and finishes it on its own terminal paths only.
 /// A route-side cancel (a [CancelFlag](crate::history::CancelFlag) on the recorder)
 /// drops the round where it stood: a provider stream mid-flight files the prefix that
@@ -1732,7 +1732,7 @@ mod tests {
         let cc = &parsed["cc"];
         assert_eq!((cc.runtime, cc.command.as_str(), cc.provider.as_deref()), (Runtime::Claude, "claude", None));
         let pi = &parsed["pi"];
-        assert_eq!((pi.command.as_str(), pi.timeout_ms, pi.report), ("pi", 600_000, false));
+        assert_eq!((pi.command.as_str(), pi.report), ("pi", false), "a row saved with the retired timeoutMs still parses");
         // No prompt and no tools set: the runtime's defaults.
         assert_eq!((distiller.system_prompt().as_deref(), distiller.tools.as_ref()), (Some(DEFAULT_SYSTEM_PROMPT), None));
         assert_eq!(cc.system_prompt(), None, "a spawned runtime appends nothing of its own");
@@ -1922,7 +1922,6 @@ mod tests {
             (json!({ "a": { "runtime": "claude", "effort": "low" } }), "effort does not apply to the claude runtime"),
             (json!({ "a": { "provider": "glm", "concurrency": 0 } }), "concurrency"),
             (json!({ "a": { "provider": "glm", "concurrency": 17 } }), "concurrency"),
-            (json!({ "a": { "provider": "glm", "timeoutMs": 5 } }), "timeoutMs"),
             (json!({ "a": { "provider": "glm", "colour": "red" } }), "no \"colour\" field"),
             (json!({ "a": { "runtime": "claude", "env": { "API_TOKEN": "tok-literal" } } }), "credential-named"),
             (json!({ "a": { "runtime": "claude", "env": { "SWISS_X": "1" } } }), "SWISS_"),

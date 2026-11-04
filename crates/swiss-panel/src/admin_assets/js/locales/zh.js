@@ -3847,8 +3847,6 @@ const zh                         = {
   "llm.agents.env": "环境变量",
   "llm.agents.envPh": "ANTHROPIC_BASE_URL=https://relay",
   "llm.agents.envWhy": "每行一条 NAME=value，仅给子进程。凭据类名称的值须为引用。",
-  "llm.agents.timeout": "运行超时（秒）",
-  "llm.agents.timeoutWhy": "60 到 7200 秒；留空为 1800。记忆任务和外部运行时的运行超时会被终止；测试和数据页的智能体对话不限时，跑完或手动停止为止。",
   "llm.agents.report": "上报运行",
   "llm.agents.reportSwiss": "swiss 把每次运行的事件发送到“上报”中设置的收集器。",
   "llm.agents.reportClaude": "子进程拿到 OTEL 环境变量，自行上报到“上报”中设置的收集器。",

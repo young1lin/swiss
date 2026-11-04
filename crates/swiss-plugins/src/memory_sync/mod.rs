@@ -86,7 +86,7 @@ pub use self::daily_review::*;
 const KEYS: [&str; 6] = ["agent", "lead", "transcripts", "transcriptDirs", "auto", "minIntervalSec"];
 /// The keys the block carried before runners moved to the llm plugin's agents: refused
 /// with the way forward, never silently ignored.
-const MOVED: [&str; 6] = ["runner", "provider", "command", "model", "env", "timeoutMs"];
+const MOVED: [&str; 5] = ["runner", "provider", "command", "model", "env"];
 /// What a sync run's reporting session names as its consumer.
 const CONSUMER: &str = "memory.sync";
 

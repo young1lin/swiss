@@ -194,8 +194,9 @@ async fn a_round_a_restart_cut_is_released_by_the_next_handle() {
     .expect("the restart scenario settles within the bound");
 }
 
-/// A deadline that dropped the drive mid-tool (a Data or Test loop past its agent's
-/// timeoutMs): the tool round sealed on its wire, then the deadline filed its stand-in -
+/// A deadline that dropped the drive mid-tool (as a Data or Test loop past its agent's
+/// timeoutMs once was; no agent run has a time cap now, but the rows such a cut filed
+/// stay continuable): the tool round sealed on its wire, then the deadline filed its stand-in -
 /// the wait, no wire facts, no replay - and the drive went away. The stand-in seals
 /// nothing the model was told, so the door reads past it: the same provider, model and
 /// wire continue, the cut call reads UNKNOWN, and the stand-in stays on record.
