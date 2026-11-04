@@ -42,7 +42,6 @@ const FROZEN: Record<string, number> = {
   "sidebar.ts": 1,
   "views/tokens.ts": 6,
   "detail.ts": 8,
-  "main.ts": 1,
   "page-core.ts": 2,
   "page-registry.ts": 5,
   "pane.ts": 4,

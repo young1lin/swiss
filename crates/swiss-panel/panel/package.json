@@ -16,9 +16,14 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
-    "check": "npm run typecheck && npm run lint && npm run build:check && npm run test"
+    "proto": "node proto.mjs",
+    "proto:check": "node proto.mjs --check",
+    "check": "npm run proto:check && npm run typecheck && npm run lint && npm run build:check && npm run test"
   },
   "devDependencies": {
+    "@bufbuild/buf": "1.75.0",
+    "@bufbuild/protobuf": "2.16.0",
+    "@bufbuild/protoc-gen-es": "2.16.0",
     "@types/node": "^24.19.0",
     "eslint": "^10.11.0",
     "happy-dom": "^20.14.5",

@@ -94,6 +94,18 @@ The bundle carries its own dependencies, each under its license:
 - `lodash-es` also carries Underscore.js: Copyright OpenJS Foundation and other contributors;
   Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors.
 
+### @bufbuild/protobuf 2.16.0 — Apache-2.0 AND BSD-3-Clause
+
+The event-bus runtime (`crates/swiss-panel/src/admin_assets/js/vendor/protobuf/2.16.0/`),
+the import closure of `@bufbuild/protobuf` 2.16.0 `dist/esm` that the generated codecs and
+the bus client use. The npm tarball ships no separate LICENSE file; each vendored file
+carries its own header, copied byte-identical.
+https://github.com/bufbuild/protobuf-es (package `packages/protobuf`).
+
+- Apache-2.0, Copyright 2021-2026 Buf Technologies, Inc. — every file in the closure except
+  `wire/varint.js`.
+- BSD-3-Clause, Copyright 2008 Google Inc. — `wire/varint.js`.
+
 ## 2. Reproduced in source
 
 ### Lucide icon path data — ISC

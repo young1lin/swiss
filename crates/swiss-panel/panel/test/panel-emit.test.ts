@@ -24,7 +24,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-const { listEmitted, listSources, emitOne } = await import(new URL("../build.mjs", import.meta.url).href) as {
+const { listCopied, listEmitted, listSources, emitOne } = await import(new URL("../build.mjs", import.meta.url).href) as {
+  listCopied: () => string[];
   listEmitted: () => string[];
   listSources: () => string[];
   emitOne: (rel: string) => string;
@@ -45,8 +46,21 @@ describe("panel emit freshness (SPEC §panel.toolchain)", () => {
     expect(stale, "stale emissions - run: npm run build").toEqual([]);
   });
 
+  it("copied protobuf codecs match their generated sources", () => {
+    const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+    const stale: string[] = [];
+    for (const rel of listCopied()) {
+      const from = readFileSync(join(srcDir, rel));
+      let to: Buffer | null = null;
+      try { to = readFileSync(join(outDir, rel)); } catch { to = null; }
+      if (to === null || Buffer.compare(from, to) !== 0) stale.push(rel);
+    }
+    expect(stale, "stale copied codecs - run: npm run build").toEqual([]);
+    expect(listCopied().length).toBeGreaterThan(0);
+  });
+
   it("no orphan .js: every non-vendor emitted file has a .ts source", () => {
-    const sources = new Set(listSources().map((p) => p.replace(/\.ts$/, ".js")));
+    const sources = new Set(listSources().map((p) => p.replace(/\.ts$/, ".js")).concat(listCopied()));
     const orphans = listEmitted().filter((js) => !sources.has(js));
     expect(orphans, "a module was deleted in panel/src but its emission remains - delete both").toEqual([]);
   });

@@ -4214,6 +4214,15 @@ const zh                         = {
   "analysis.sqlChanged": "SQL 已变更",
   "analysis.copyIds": "复制分析及版本 ID",
   "analysis.conditionsJson": "请填写有效的 JSON 条件，原有结构化条件将完整保留。",
+  "bus.reconnecting": "正在重新连接",
+  "served.busUnavailable": "处理此请求的模块没有在运行。",
+  "served.busUnknown": "没有这条消息。",
+  "served.busBadBody": "请求内容无法读取。",
+  "served.busNotRelayable": "这条消息不能转发。",
+  "served.busLimit": "此连接已达到上限。",
+  "served.busOffline": "面板未连接。",
+  "served.busTimeout": "面板没有及时收到回复。",
+  "served.busTooLarge": "这条消息太大，无法发送。",
 };
 
 export default zh;

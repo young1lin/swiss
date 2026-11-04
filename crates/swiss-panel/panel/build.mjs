@@ -38,7 +38,7 @@
  */
 
 import { watch } from "node:fs";
-import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -62,6 +62,38 @@ export function listSources() {
   };
   walk("");
   return out;
+}
+
+/* Generated protobuf codecs (SPEC §bus.codegen). Copied verbatim: ts-blank-space must
+   not see them, and a *_pb.js in the served tree is not an orphan. */
+export function listCopied() {
+  const out = [];
+  const walk = (rel) => {
+    for (const f of readdirSync(join(srcDir, rel), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const p = rel ? rel + "/" + f.name : f.name;
+      if (f.isDirectory()) walk(p);
+      else if (f.name.endsWith("_pb.js")) out.push(p);
+    }
+  };
+  walk("");
+  return out;
+}
+
+function copyCodecs() {
+  const written = [];
+  const unchanged = [];
+  for (const rel of listCopied()) {
+    const from = join(srcDir, rel);
+    const to = join(outDir, rel);
+    const next = readFileSync(from);
+    let prev = null;
+    try { prev = readFileSync(to); } catch { /* first copy */ }
+    if (prev !== null && Buffer.compare(prev, next) === 0) { unchanged.push(rel); continue; }
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(from, to);
+    written.push(rel);
+  }
+  return { written, unchanged };
 }
 
 /* All emitted files under js/ that are ours, same path shape. vendor/ is hand-placed and
@@ -110,20 +142,28 @@ export function emitAll() {
     writeFileSync(jsPath, content, { flag: "w" }); // LF in, LF out: nothing is transformed
     written.push(rel);
   }
-  return { written, unchanged };
+  const copied = copyCodecs();
+  return { written: written.concat(copied.written), unchanged: unchanged.concat(copied.unchanged) };
 }
 
 /* --check: freshness plus orphan detection, no writes. Returns the problems found. */
 export function checkAll() {
   const stale = [];
   const orphans = [];
-  const sources = new Set(listSources().map((p) => p.replace(/\.ts$/, ".js")));
+  const sources = new Set(listSources().map((p) => p.replace(/\.ts$/, ".js")).concat(listCopied()));
   for (const rel of listSources()) {
     const jsPath = join(outDir, rel.replace(/\.ts$/, ".js"));
     let prev = null;
     try { prev = readFileSync(jsPath, "utf8"); } catch { prev = null; }
     if (prev === null) stale.push(rel + " -> missing " + rel.replace(/\.ts$/, ".js"));
     else if (prev !== emitOne(rel)) stale.push(rel + " -> emitted .js is stale, run: npm run build");
+  }
+  for (const rel of listCopied()) {
+    const jsPath = join(outDir, rel);
+    let prev = null;
+    try { prev = readFileSync(jsPath); } catch { prev = null; }
+    const next = readFileSync(join(srcDir, rel));
+    if (prev === null || Buffer.compare(prev, next) !== 0) stale.push(rel + " -> copied _pb.js is stale, run: npm run build");
   }
   for (const js of listEmitted()) {
     if (!sources.has(js)) orphans.push(js + " has no panel/src counterpart");

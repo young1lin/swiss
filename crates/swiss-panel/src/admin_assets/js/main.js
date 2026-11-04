@@ -38,11 +38,13 @@ import { exitImmersive, immersiveOn, initImmersive } from "./immersive.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
 import { loadTokens } from "./views/tokens.js";
-import { knownPanelVersion, setFoldMap, setKnownPanelVersion, setListFilter } from "./ui-state.js";
+import { setFoldMap, setKnownPanelVersion, setListFilter } from "./ui-state.js";
 import { setTunFolds } from "./tunnel-state.js";
 import { setJobFolds } from "./job-state.js";
-import { gatewayInfo, mcpDetail, selectedMcp, setGatewayInfo } from "./mcp-state.js";
-import { initLangButton, loadLocale, paintChrome, tk, tr } from "./i18n.js";
+import { mcpDetail, selectedMcp, setGatewayInfo } from "./mcp-state.js";
+import { installBus } from "./bus/bus.js";
+import { mountBusLine, repaintBusLine } from "./bus/line.js";
+import { initLangButton, loadLocale, paintChrome, setBusLinePainter, tk, tr } from "./i18n.js";
 import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
                                              
 import { CODE_SCHEMES, codeSchemeFor } from "./ui/code-scheme.js";
@@ -60,9 +62,9 @@ paintChrome();
 initDesktop();
 
 
-/** A new panel build has landed. Reload in place — the same tab, never a new one — but only
- *  when the reload cannot destroy work: no buffered data-view edits, no open sheet, nothing
- *  being typed. Otherwise say so once and keep checking on later polls. */
+/** A new panel build has landed (SPEC §bus.link). Reload in place — the same tab, never a
+ *  new one — but only when the reload cannot destroy work: no buffered data-view edits, no
+ *  open sheet, nothing being typed. Otherwise say so once; a later WELCOME or BUILD tries again. */
 /* One-shot guard for the version toast, module-scoped (SPEC §panel.lint): it once rode on the
    function object itself (maybeReloadPanel._warned), typed by a Function augmentation. */
 let warnedNewPanel = false;
@@ -90,19 +92,12 @@ function showApp()       {
 }
 
 /** Host facts the panel needs once: the token's env var name, and the named-token list (no
- *  secrets) for the management view. */
+ *  secrets) for the management view. The panel stamp arrives on the bus WELCOME, not here
+ *  (SPEC §bus.link); this poll stays until the token list has its own phase. */
 async function loadInfo()                {
   try {
     const r = await api("/api/info");
-    if (r.ok) {
-      setGatewayInfo(await r.json());
-      // First sight records the stamp; a LATER, DIFFERENT one means the panel was rebuilt —
-      // reload in place when nothing unsaved would be lost (checked in maybeReloadPanel).
-      if (knownPanelVersion() === null) setKnownPanelVersion(gatewayInfo()?.panelVersion || null);
-      else if (gatewayInfo()?.panelVersion && gatewayInfo()?.panelVersion !== knownPanelVersion()) {
-        maybeReloadPanel(gatewayInfo()?.panelVersion );
-      }
-    }
+    if (r.ok) setGatewayInfo(await r.json());
     await loadTokens();
   } catch (e) { /* the token list just stays empty */ }
 }
@@ -218,6 +213,13 @@ function poll()       {
   void loadInfo();
   void pollPage();
 }
+
+setBusLinePainter(repaintBusLine);
+installBus({
+  reload: maybeReloadPanel,
+  info: () => api("/api/info"),
+  notice: mountBusLine,
+});
 
 setInterval(poll, 6000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") poll(); });

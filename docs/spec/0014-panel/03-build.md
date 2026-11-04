@@ -73,7 +73,10 @@ The panel is written in TypeScript and served as the JavaScript it erases to (AD
   deletes and never touches `js/vendor/`.
 - **The emit is committed** and marked `linguist-generated`, so the binary builds with no Node
   on the machine. It is never edited by hand. `panel-emit.test` re-emits in memory and fails
-  on a stale file or an orphan.
+  on a stale file or an orphan. Generated `*_pb.js` files are copied verbatim, not erased;
+  they are not orphans. `npm run proto:check` regenerates the codecs into a scratch directory
+  and fails on any difference, and `npm run check` runs it. ESLint ignores `src/bus/pb/`
+  and the vendored protobuf declarations: both are byte-identical to their generators.
 - **tsconfig**: `strict`, `verbatimModuleSyntax`, `erasableSyntaxOnly` (nothing that needs a
   transform: no enums, no namespaces, no parameter properties), `isolatedModules`, target
   es2022, module esnext, resolution bundler, lib es2022 + dom + dom.iterable. Two projects: the
@@ -143,18 +146,21 @@ CDN:
 | `cytoscape` | 3.34.3 | Memory: the project graph and a note's neighbourhood (§memory.panel), loaded on first use |
 | `markdown-it` | 15.0.2 | Every Markdown the panel draws (`ui/markdown.ts`): notes, hubs, briefs, previews |
 | `@mermaid-js/tiny` (mermaid's tiny build) | 12.1.0 | A ```` ```mermaid ```` fence in that Markdown, drawn as its diagram; loaded on first use |
+| `@bufbuild/protobuf` | 2.16.0 | The event-bus runtime (SPEC §bus.codegen). The import closure of `dist/esm` that the generated codecs and the bus client use, byte-identical, pinned by SHA-256 |
 
 - Files live in `src/admin_assets/js/vendor/<pkg>/<version>/` beside the package's `LICENSE`,
   byte-identical to the npm dist files — no patches. xterm adds `load-classic.js` and one
   `index.js` shim per package; the cytoscape and mermaid shims reuse that loader. An upstream
   that ships a self-contained ES module (shlex, markdown-it's `dist/browser/*.esm.min.mjs`) is
   re-exported as it is; the server types `.mjs` as JavaScript. The xterm addon-search, cytoscape,
-  markdown-it and mermaid bundles are pinned by SHA-256 in the panel tests.
+  markdown-it and mermaid bundles, and the `@bufbuild/protobuf` closure, are pinned by SHA-256 in the panel tests.
 - A vendored library is MIT, BSD, ISC, Apache-2.0 or MPL-2.0, as `deny.toml` holds the crates, and
   so is everything it bundles. That is why mermaid is its tiny build: the full `mermaid.min.js`
   bundles the Eclipse ELK layout engine (EPL-2.0). Tiny lacks mindmap and architecture diagrams
   and KaTeX; such a fence stays as code, the reason in its title. `THIRD_PARTY_NOTICES.md` lists
   each vendored library and what it bundles.
 - The types are a hand-written mirror in `panel/src/vendor/<pkg>/<version>/index.d.ts` that
-  declares only the exports the panel uses.
+  declares only the exports the panel uses. `@bufbuild/protobuf` is the exception: its upstream
+  `.d.ts` files are copied as they are, because the generated declarations reference the
+  runtime's real types.
 - An upgrade is one commit: the new directory, the import change, the old directory deleted.

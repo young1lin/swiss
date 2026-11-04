@@ -55,7 +55,8 @@ export default defineConfig({
   plugins: [vendorVerbatim],
   resolve: {
     alias: [
-      { find: /(^|\/)\.\.?\/vendor\//, replacement: vendorDir + "/" },
+      // `../vendor/`, `./vendor/`, and the generated codecs' deeper `../../../../../vendor/`.
+      { find: /^(?:\.\/|(?:\.\.\/)+)vendor\//, replacement: vendorDir + "/" },
       { find: /^\/admin\/js\//, replacement: srcDir + "/" },
     ],
   },

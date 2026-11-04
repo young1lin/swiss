@@ -36,6 +36,9 @@
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
+  /* Generated codecs and the vendored protobuf declarations are byte-identical
+     upstream (SPEC §bus.codegen, SPEC §panel.vendor), so house style does not edit them. */
+  { ignores: ["src/bus/pb/**", "src/vendor/protobuf/**"] },
   {
     files: ["src/**/*.ts", "test/**/*.ts"],
     languageOptions: {
@@ -143,7 +146,6 @@ export default tseslint.config(
       "src/views/plugins.ts",
       "src/views/tokens.ts",
       "src/detail.ts",
-      "src/main.ts",
       "src/page-core.ts",
       "src/page-registry.ts",
       "src/pane.ts",

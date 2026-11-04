@@ -1,0 +1,16 @@
+# Generates the panel's bus codecs (SPEC §bus.codegen). target=js+dts keeps the
+# declarations beside the JavaScript; target=ts would emit `export enum`, which
+# erasableSyntaxOnly rejects. rewrite_imports is added by proto.mjs: its targets
+# are resolved against this file's output directory.
+version: v2
+inputs:
+  - directory: ../../swiss-bus/proto
+plugins:
+  - local: protoc-gen-es.cmd
+    out: src/bus/pb
+    opt:
+      - target=js+dts
+      - import_extension=js
+      # From the output root (src/bus/pb). The plugin adds the file's own
+      # directory, which lands on src/vendor and on the served js/vendor.
+      - rewrite_imports=@bufbuild/protobuf/codegenv2:../../vendor/protobuf/2.16.0/codegenv2/index.js

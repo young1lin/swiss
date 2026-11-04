@@ -4318,6 +4318,15 @@ const en                         = {
   "analysis.sqlChanged": "SQL changed",
   "analysis.copyIds": "Copy analysis and version IDs",
   "analysis.conditionsJson": "Enter conditions as valid JSON. Existing structured conditions are preserved.",
+  "bus.reconnecting": "Reconnecting",
+  "served.busUnavailable": "The module that serves this request is not running.",
+  "served.busUnknown": "There is no such message.",
+  "served.busBadBody": "The request could not be read.",
+  "served.busNotRelayable": "This message is not a relay.",
+  "served.busLimit": "This connection reached its limit.",
+  "served.busOffline": "The panel is not connected.",
+  "served.busTimeout": "The panel did not get an answer in time.",
+  "served.busTooLarge": "That message is too large to send.",
 };
 
 export default en;

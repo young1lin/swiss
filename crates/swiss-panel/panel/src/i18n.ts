@@ -152,6 +152,14 @@ const SERVED_CODES: Record<string, string> = {
   "console.changed": tk("served.consoleChanged"),
   "console.changedDelete": tk("served.consoleChangedDelete"),
   "console.tooLarge": tk("served.consoleTooLarge"),
+  "bus.unavailable": tk("served.busUnavailable"),
+  "bus.unknown": tk("served.busUnknown"),
+  "bus.badBody": tk("served.busBadBody"),
+  "bus.notRelayable": tk("served.busNotRelayable"),
+  "bus.limit": tk("served.busLimit"),
+  "bus.offline": tk("served.busOffline"),
+  "bus.timeout": tk("served.busTimeout"),
+  "bus.tooLarge": tk("served.busTooLarge"),
 };
 
 /** A refusal's words: its code's own copy, filled from `params`; a code this build does not
@@ -168,6 +176,12 @@ export function servedError(body: unknown, fallback: string): string {
     return tr(key, vars);
   }
   return typeof b.error === "string" && b.error ? b.error : fallback;
+}
+
+/** A bus fault uses the same code table as an HTTP refusal (SPEC §bus.wire, SPEC §panel.i18n). */
+export function servedFault(fault: { code?: string; message?: string; params?: { [key: string]: string } } | null | undefined): string {
+  if (!fault) return "";
+  return servedError({ error: fault.message, code: fault.code, params: fault.params }, fault.message || "");
 }
 
 const QUERY_ONLY_HEAD = "this connection is query-only (";
@@ -257,6 +271,10 @@ export async function loadLocale(): Promise<void> {
    language flip. i18n cannot import main.ts — the entry module — so the callback is the one
    edge, and it is the same single source for those two strings. */
 let repaintThemeBtn: (() => void) | null = null;
+let repaintBusLine: (() => void) | null = null;
+
+/** The reconnecting line is chrome too (SPEC §bus.link). main.ts owns the node. */
+export function setBusLinePainter(fn: () => void): void { repaintBusLine = fn; }
 
 /** Repaint the static chrome index.html carries in English (SPEC §panel.i18n): in English this
  *  writes the same strings back (a no-op); in Chinese it swaps them. The 文/A button's own
@@ -289,6 +307,7 @@ export function paintChrome(): void {
     top.setAttribute("aria-label", tr("ui.toTop"));
   }
   if (repaintThemeBtn) repaintThemeBtn();
+  if (repaintBusLine) repaintBusLine();
 }
 
 /** The button's title is the one string in the panel written in the TARGET language
