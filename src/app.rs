@@ -137,6 +137,10 @@ pub struct AppContext {
     /// boot sequence from RuntimeServices; unset in test compositions, where there are no
     /// children to measure and the routes answer empty instead of guessing.
     pub children: std::sync::OnceLock<Arc<swiss_host::services::children::ChildRegistry>>,
+    /// The event bus (SPEC §bus). Set once by the boot from RuntimeServices, the same
+    /// hub plugins register handlers on. Unset in a composition that never wired one:
+    /// `GET /api/bus` then answers 503 rather than upgrading into nothing.
+    pub bus: std::sync::OnceLock<Arc<swiss_bus::Bus>>,
     handlers: Mutex<HashMap<String, CachedHandler>>,
 }
 
@@ -170,6 +174,7 @@ impl AppContext {
             autostart: std::sync::OnceLock::new(),
             user_path: std::sync::OnceLock::new(),
             children: std::sync::OnceLock::new(),
+            bus: std::sync::OnceLock::new(),
             handlers: Mutex::new(HashMap::new()),
         });
         // The scopes this context owns natively (SPEC §host.groups): the managed store holds the
@@ -371,6 +376,31 @@ async fn session_gate(State(ctx): State<Arc<AppContext>>, req: Request, next: Ne
             StatusCode::UNAUTHORIZED,
             "not signed in - run `swiss open` to sign this browser in",
         ),
+    }
+}
+
+/// `GET /api/bus` (SPEC §bus.security). The session gate has already required the CLI key
+/// or the cookie. The upgrade also needs an `Origin` whose authority equals `Host`, unless
+/// that key is what opened the request. A missing hub answers 503, the same honest shape
+/// as a catalog the boot never installed.
+async fn bus_upgrade(
+    State(ctx): State<Arc<AppContext>>,
+    headers: HeaderMap,
+    ws: Result<
+        axum::extract::ws::WebSocketUpgrade,
+        axum::extract::ws::rejection::WebSocketUpgradeRejection,
+    >,
+) -> Response {
+    let cli = ctx.session.get().is_some_and(|session| session.cli_key_ok(&headers));
+    if let Some(reason) = crate::session::bus_origin_reason(&headers, cli) {
+        return admin_error(StatusCode::FORBIDDEN, &reason);
+    }
+    let Some(bus) = ctx.bus.get().cloned() else {
+        return admin_error(StatusCode::SERVICE_UNAVAILABLE, "the event bus is not running");
+    };
+    match ws {
+        Ok(ws) => swiss_bus::accept(ws, bus),
+        Err(rejection) => rejection.into_response(),
     }
 }
 
@@ -739,6 +769,9 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         .route("/admin/{*path}", get(panel_asset))
         .route("/health", get(health))
         .route("/health/check", get(health_check))
+        // One socket per page (SPEC §bus). The session gate covers it with every /api/*;
+        // the handler adds the Origin rule the handshake needs (SPEC §bus.security).
+        .route("/api/bus", get(bus_upgrade))
         .merge(swiss_data::history::mounted(
             swiss_data::dbbrowser_api::dbbrowser_router::<Arc<AppContext>>(
                 // The W3 seam (SPEC §host.seats): /api/db leases through the connection catalog the MCP

@@ -32,7 +32,7 @@ descriptor, an action and a page — never by editing a match arm in the host (`
 A cargo workspace that still ships one static `swiss.exe`. The edges are the architecture:
 
 ```
-swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-panel, swiss-process, swiss-remote, swiss-memory, swiss-llm }  ←  swiss
+swiss-core  ←  swiss-bus  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-panel, swiss-process, swiss-remote, swiss-memory, swiss-llm }  ←  swiss
 ```
 
 `swiss-core` knows nothing about gateways (paths, logging, sealed files, platform calls).
@@ -91,6 +91,10 @@ TypeScript erased to JS line-for-line, with the emit COMMITTED under
 node. Edit the `.ts`, run `npm run build`, never hand-edit the emit. The gate is `npm run check`
 in `crates/swiss-panel/panel/` (typecheck + eslint + emit freshness + the vitest suite). The
 panel is the spec for the admin API: a `/api/*` shape change ships on both sides in one commit.
+
+Live server state reaches the panel on the event bus (`GET /api/bus`, SPEC §bus), not on a new
+`setInterval` poll. A new message is defined in `crates/swiss-bus/proto` and both codecs are
+regenerated in the same commit.
 
 ## Commands
 

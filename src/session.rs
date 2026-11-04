@@ -249,18 +249,38 @@ pub fn cross_origin_reason(method: &Method, headers: &HeaderMap) -> Option<Strin
     }
     let host = header_text(headers, header::HOST).unwrap_or("");
     match header_text(headers, header::ORIGIN) {
-        Some(origin) => {
-            let authority = origin
-                .strip_prefix("http://")
-                .or_else(|| origin.strip_prefix("https://"));
-            if !host.is_empty() && authority.is_some_and(|a| a.eq_ignore_ascii_case(host)) {
-                None
-            } else {
-                Some(format!("Origin \"{origin}\" is not this panel"))
-            }
-        }
+        Some(origin) if origin_names_host(origin, host) => None,
+        Some(origin) => Some(format!("Origin \"{origin}\" is not this panel")),
         None if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) => None,
         None => Some("a signed-in browser's write must carry Origin".into()),
+    }
+}
+
+/// `Origin`'s authority equals `Host`, port included, the host compared case-insensitively
+/// (SPEC §host.session, SPEC §bus.security). Shared so the bus upgrade does not keep a
+/// second copy of the comparison.
+fn origin_names_host(origin: &str, host: &str) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+    origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+        .is_some_and(|authority| authority.eq_ignore_ascii_case(host))
+}
+
+/// Why `GET /api/bus` must still be refused after the session gate, or None when the
+/// upgrade may proceed (SPEC §bus.security). A WebSocket handshake is not covered by
+/// `SameSite` or CORS, so the request must carry an `Origin` that names this `Host`.
+/// A missing Origin is the one exception, and only when the CLI key is what the gate
+/// accepted: no browser can send that key. A foreign Origin is refused even then.
+pub fn bus_origin_reason(headers: &HeaderMap, cli_key_accepted: bool) -> Option<String> {
+    let host = header_text(headers, header::HOST).unwrap_or("");
+    match header_text(headers, header::ORIGIN) {
+        Some(origin) if origin_names_host(origin, host) => None,
+        Some(origin) => Some(format!("Origin \"{origin}\" is not this panel")),
+        None if cli_key_accepted => None,
+        None => Some("the event bus upgrade must carry Origin".into()),
     }
 }
 
@@ -336,6 +356,27 @@ mod tests {
         assert_eq!(provenance(Method::GET, &[]), None);
         assert!(provenance(Method::POST, &[]).is_some());
         assert!(provenance(Method::DELETE, &[]).is_some());
+    }
+
+    #[test]
+    fn the_bus_upgrade_requires_an_origin_that_names_this_host() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:19999"));
+        assert!(bus_origin_reason(&headers, false).is_some(), "a missing Origin is refused");
+        assert!(bus_origin_reason(&headers, true).is_none(), "the CLI key is the one exception");
+
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://127.0.0.1:19999"));
+        assert!(bus_origin_reason(&headers, false).is_none());
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://127.0.0.1:19999"));
+        headers.insert(header::HOST, HeaderValue::from_static("Localhost:19999"));
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://localhost:19999"));
+        assert!(bus_origin_reason(&headers, false).is_none(), "the host is compared case-insensitively");
+
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:19999"));
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://127.0.0.1:5173"));
+        assert!(bus_origin_reason(&headers, true).is_some(), "the key does not excuse a foreign Origin");
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://127.0.0.1:19999.evil.test"));
+        assert!(bus_origin_reason(&headers, true).is_some());
     }
 
     #[test]

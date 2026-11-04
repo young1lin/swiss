@@ -66,6 +66,12 @@ struct Gate {
 /// A gateway with a session installed (or not), and one extra-tree route to prove the second
 /// router is behind the gate too.
 fn gateway(with_session: bool) -> Gate {
+    gateway_configured(with_session, false)
+}
+
+/// `with_bus` installs the hub `GET /api/bus` upgrades into (SPEC §bus). Left unset, that
+/// route answers 503 after the session gate, which is what a composition without one does.
+fn gateway_configured(with_session: bool, with_bus: bool) -> Gate {
     sandbox();
     let dir = std::env::temp_dir().join(format!("swiss-session-{}", swiss_core::util::random_hex(8)));
     std::fs::create_dir_all(&dir).expect("scratch dir");
@@ -88,6 +94,9 @@ fn gateway(with_session: bool) -> Gate {
     let cookie = session.issue_cookie().split(';').next().expect("name=value").to_string();
     if with_session {
         let _ = ctx.session.set(session);
+    }
+    if with_bus {
+        let _ = ctx.bus.set(swiss_bus::Bus::new(Arc::new(String::new)));
     }
     let extra = axum::Router::new()
         .route("/api/extra-tree", get(|| async { "extra" }).post(|| async { "wrote" }));
@@ -345,6 +354,87 @@ async fn without_a_session_installed_the_gate_fails_closed() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, _, _) = send(&g.app, socket(get_req("/").body(Body::empty()).unwrap())).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+fn bus_upgrade(pairs: &[(&str, &str)]) -> Request<Body> {
+    let mut req = get_req("/api/bus")
+        .header(header::CONNECTION, "upgrade")
+        .header(header::UPGRADE, "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==");
+    for (name, value) in pairs {
+        req = req.header(*name, *value);
+    }
+    socket(req.body(Body::empty()).unwrap())
+}
+
+#[tokio::test]
+async fn the_bus_upgrade_refuses_a_missing_or_foreign_origin() {
+    // SPEC §bus.security. The session gate lets a GET through with no Origin, and it
+    // trusts Sec-Fetch-Site over Origin, so these are the cases the handler itself
+    // has to refuse. oneshot carries no hyper upgrade, so a request the Origin rule
+    // accepts answers 426 from the websocket extractor instead of 101. A 426 on a
+    // case below that expects 403 means the Origin rule is gone.
+    let g = gateway_configured(true, true);
+    let (status, _, body) = send(&g.app, bus_upgrade(&[])).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    let cookie = [(header::COOKIE.as_str(), g.cookie.as_str())];
+    let (status, _, body) = send(&g.app, bus_upgrade(&cookie)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "a cookie with no Origin: {body}");
+
+    let (status, _, body) = send(
+        &g.app,
+        bus_upgrade(&[
+            (header::COOKIE.as_str(), g.cookie.as_str()),
+            ("sec-fetch-site", "same-origin"),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "same-origin does not replace Origin: {body}");
+
+    let (status, _, body) = send(
+        &g.app,
+        bus_upgrade(&[
+            (header::COOKIE.as_str(), g.cookie.as_str()),
+            ("sec-fetch-site", "same-origin"),
+            ("origin", "http://127.0.0.1:5173"),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "a foreign Origin: {body}");
+
+    let (status, _, body) = send(
+        &g.app,
+        bus_upgrade(&[(CLI_KEY_HEADER, g.cli_key.as_str()), ("origin", "http://127.0.0.1:5173")]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "the CLI key does not excuse a foreign Origin: {body}");
+
+    let (status, _, body) = send(&g.app, bus_upgrade(&[(CLI_KEY_HEADER, g.cli_key.as_str())])).await;
+    assert_eq!(status, StatusCode::UPGRADE_REQUIRED, "the harness has no Origin: {body}");
+
+    let (status, _, body) = send(
+        &g.app,
+        bus_upgrade(&[
+            (header::COOKIE.as_str(), g.cookie.as_str()),
+            ("origin", "http://127.0.0.1:19999"),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UPGRADE_REQUIRED, "the panel's own Origin: {body}");
+
+    let bare = gateway_configured(true, false);
+    let (status, _, body) = send(
+        &bare.app,
+        bus_upgrade(&[
+            (header::COOKIE.as_str(), bare.cookie.as_str()),
+            ("origin", "http://127.0.0.1:19999"),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("not running"), "{body}");
 }
 
 #[tokio::test]

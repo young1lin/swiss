@@ -1,0 +1,22 @@
+// PANEL.PREFS (SPEC §bus.registry). Module 14, sub 1, a relay: only the fields the person
+// just changed are set, and the hub forwards the body unread.
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+enum PanelSub {
+  PANEL_SUB_UNSPECIFIED = 0;
+  PANEL_SUB_PREFS = 1;
+}
+
+enum PrefsId {
+  PREFS_ID_UNSPECIFIED = 0;
+  PREFS_CHANGED = 1;
+}
+
+// A language, theme or code-scheme choice. Unset fields did not change.
+message Prefs {
+  optional string lang = 1;
+  optional string theme = 2;
+  optional string code_scheme = 3;
+}

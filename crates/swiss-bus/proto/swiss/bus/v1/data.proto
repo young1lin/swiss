@@ -1,0 +1,90 @@
+// DATA.CONSOLES (SPEC §bus.registry, SPEC §data.console). Module 6, sub 1.
+// Writes name the revision they read. A stale write is refused; nothing is merged
+// (SPEC §bus.editing).
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+enum DataSub {
+  DATA_SUB_UNSPECIFIED = 0;
+  DATA_SUB_CONSOLES = 1;
+}
+
+enum ConsolesId {
+  CONSOLES_ID_UNSPECIFIED = 0;
+  CONSOLES_LIST = 1;
+  CONSOLES_PUT = 2;
+  CONSOLES_REMOVE = 3;
+  CONSOLES_CLEAR_CLOSED = 4;
+  CONSOLES_CHANGED = 5;
+  CONSOLES_REMOVED = 6;
+  CONSOLES_CLEARED = 7;
+}
+
+// The same three modes the store already applies (SPEC §data.console). AUTO is 0 on purpose.
+enum SaveMode {
+  SAVE_MODE_AUTO = 0;
+  SAVE_MODE_CREATE = 1;
+  SAVE_MODE_UPDATE = 2;
+}
+
+// One server-owned console. agent_tab and closed_at are present only when set.
+message ConsoleRecord {
+  string id = 1;
+  string tab = 2;
+  bool agent = 3;
+  optional string agent_tab = 4;
+  bool open = 5;
+  string sql = 6;
+  uint64 revision = 7 [jstype = JS_NUMBER];
+  int64 created_at = 8 [jstype = JS_NUMBER];
+  int64 updated_at = 9 [jstype = JS_NUMBER];
+  optional int64 closed_at = 10 [jstype = JS_NUMBER];
+}
+
+// LIST. after "" is the first page; then the previous page's next (SPEC §bus.requests).
+message ConsolesPage {
+  string conn = 1;
+  string after = 2;
+}
+
+// consoles are in id order. next is the last id sent, or "" when the page is the last.
+message ConsoleList {
+  repeated ConsoleRecord consoles = 1;
+  string next = 2;
+}
+
+message ConsolePut {
+  string conn = 1;
+  ConsoleRecord console = 2;
+  SaveMode mode = 3;
+}
+
+// The saved record. CHANGED carries the same body; the frame's key is the connection.
+message ConsoleSaved {
+  ConsoleRecord console = 1;
+}
+
+message ConsoleRemove {
+  string conn = 1;
+  string id = 2;
+  uint64 revision = 3 [jstype = JS_NUMBER];
+}
+
+message ConsoleRemoved {
+  string id = 1;
+  bool removed = 2;
+}
+
+message ConsolesOf {
+  string conn = 1;
+}
+
+message ConsolesCleared {
+  uint32 cleared = 1;
+}
+
+// REMOVED. The frame's key is the connection.
+message ConsoleGone {
+  string id = 1;
+}

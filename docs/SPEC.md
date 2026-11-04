@@ -80,11 +80,12 @@ in §decisions.
 | 0011 | [§process](spec/0011-process.md) | `swiss-process` | The process plugin: the supervisor, managed apps, the children view, the Process page |
 | 0012 | [§memory](spec/0012-memory/README.md) | `swiss-memory` | Long-term project memory: records, projects, one MCP endpoint, the CLI |
 | 0013 | [§llm](spec/0013-llm.md) | `swiss-llm` | The model hub: named providers, the embedding model, agents and their OTLP telemetry |
-| 0014 | [§panel](spec/0014-panel.md) | `swiss-panel` | The admin panel: navigation, design system, UI library, TypeScript, i18n |
+| 0014 | [§panel](spec/0014-panel/README.md) | `swiss-panel` | The admin panel: navigation, design system, UI library, TypeScript, i18n |
 | 0015 | [§security](spec/0015-security.md) | — | The security model in one place |
 | 0016 | [§testing](spec/0016-testing.md) | `swiss-it` | The gates, the suites, the integration harness, live verification |
 | 0017 | [§release](spec/0017-release.md) | — | CI, release artefacts, open-source hygiene |
 | 0018 | [§decisions](spec/0018-decisions.md) | — | ADR-001 … the decision log |
+| 0019 | [§bus](spec/0019-bus.md) | `swiss-bus` | The event bus: one WebSocket per page, protobuf frames, generated codecs |
 
 ## Anchor map
 
@@ -286,19 +287,19 @@ in §decisions.
 - [§llm.panel — The Providers, Embedding, Agents and History pages](spec/0013-llm.md#llmpanel--the-providers-embedding-agents-and-history-pages)
 - [§llm.roadmap — Not built yet](spec/0013-llm.md#llmroadmap--not-built-yet)
 
-### 0014 · [§panel — The admin panel](spec/0014-panel.md)
+### 0014 · [§panel — The admin panel](spec/0014-panel/README.md)
 
-- [§panel.nav — Navigation, the shell and page layouts](spec/0014-panel.md#panelnav--navigation-the-shell-and-page-layouts)
-- [§panel.design — The design language](spec/0014-panel.md#paneldesign--the-design-language)
-- [§panel.code — Code blocks and their colour schemes](spec/0014-panel.md#panelcode--code-blocks-and-their-colour-schemes)
-- [§panel.ui — The UI library](spec/0014-panel.md#panelui--the-ui-library)
-- [§panel.pages — Per-page look rules](spec/0014-panel.md#panelpages--per-page-look-rules)
-- [§panel.groups — The grouped list](spec/0014-panel.md#panelgroups--the-grouped-list)
-- [§panel.settings — System, Plugins, Secrets](spec/0014-panel.md#panelsettings--system-plugins-secrets)
-- [§panel.i18n — Languages](spec/0014-panel.md#paneli18n--languages)
-- [§panel.toolchain — TypeScript, the build and the emit](spec/0014-panel.md#paneltoolchain--typescript-the-build-and-the-emit)
-- [§panel.lint — The lint ratchet](spec/0014-panel.md#panellint--the-lint-ratchet)
-- [§panel.vendor — Vendored browser libraries](spec/0014-panel.md#panelvendor--vendored-browser-libraries)
+- [§panel.nav — Navigation, the shell and page layouts](spec/0014-panel/01-shell.md#panelnav--navigation-the-shell-and-page-layouts)
+- [§panel.design — The design language](spec/0014-panel/01-shell.md#paneldesign--the-design-language)
+- [§panel.code — Code blocks and their colour schemes](spec/0014-panel/01-shell.md#panelcode--code-blocks-and-their-colour-schemes)
+- [§panel.ui — The UI library](spec/0014-panel/01-shell.md#panelui--the-ui-library)
+- [§panel.pages — Per-page look rules](spec/0014-panel/02-pages.md#panelpages--per-page-look-rules)
+- [§panel.groups — The grouped list](spec/0014-panel/02-pages.md#panelgroups--the-grouped-list)
+- [§panel.settings — System, Plugins, Secrets](spec/0014-panel/02-pages.md#panelsettings--system-plugins-secrets)
+- [§panel.i18n — Languages](spec/0014-panel/03-build.md#paneli18n--languages)
+- [§panel.toolchain — TypeScript, the build and the emit](spec/0014-panel/03-build.md#paneltoolchain--typescript-the-build-and-the-emit)
+- [§panel.lint — The lint ratchet](spec/0014-panel/03-build.md#panellint--the-lint-ratchet)
+- [§panel.vendor — Vendored browser libraries](spec/0014-panel/03-build.md#panelvendor--vendored-browser-libraries)
 
 ### 0015 · [§security — The security model in one place](spec/0015-security.md)
 
@@ -360,3 +361,15 @@ in §decisions.
 - [ADR-036 — Managed apps outlive the gateway, and nothing restarts them](spec/0018-decisions.md#adr-036--managed-apps-outlive-the-gateway-and-nothing-restarts-them)
 - [ADR-037 — Memory's agents are chosen by layer and pooled](spec/0018-decisions.md#adr-037--memorys-agents-are-chosen-by-layer-and-pooled)
 - [ADR-038 — The window shell uses the system webview](spec/0018-decisions.md#adr-038--the-window-shell-uses-the-system-webview)
+- [ADR-039 — The event bus: one WebSocket, protobuf frames, generated codecs](spec/0018-decisions.md#adr-039--the-event-bus-one-websocket-protobuf-frames-generated-codecs)
+
+### 0019 · [§bus — The event bus](spec/0019-bus.md)
+
+- [§bus.wire — Frames](spec/0019-bus.md#buswire--frames)
+- [§bus.registry — Modules, subs and messages](spec/0019-bus.md#busregistry--modules-subs-and-messages)
+- [§bus.link — Connecting, staying connected, leaving](spec/0019-bus.md#buslink--connecting-staying-connected-leaving)
+- [§bus.topics — Subscribing, events and resync](spec/0019-bus.md#bustopics--subscribing-events-and-resync)
+- [§bus.requests — Requests and handlers](spec/0019-bus.md#busrequests--requests-and-handlers)
+- [§bus.editing — One person edits](spec/0019-bus.md#busediting--one-person-edits)
+- [§bus.codegen — The generated code](spec/0019-bus.md#buscodegen--the-generated-code)
+- [§bus.security — Who may connect](spec/0019-bus.md#bussecurity--who-may-connect)

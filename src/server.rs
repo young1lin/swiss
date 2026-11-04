@@ -182,10 +182,15 @@ pub async fn run_gateway() -> Result<(), String> {
     // bounded run pool and the one child-process supervisor are constructed here, owned by
     // no plugin — the /api/actions and /api/runs surface reads them even while every
     // provider is disabled.
-    let services = swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo {
-        port: cfg.port,
-        is_daemon,
-    });
+    // The panel stamp is injected here so the bus crate never names the panel
+    // (SPEC §bus.link). WELCOME and BUILD carry whatever this function returns.
+    let services = swiss_host::services::RuntimeServices::with_stamp(
+        swiss_host::services::BootInfo {
+            port: cfg.port,
+            is_daemon,
+        },
+        Arc::new(swiss_panel::admin::panel_version_stamp),
+    );
     // Run numbering continues across restarts (SPEC §remote.history): the remote record is
     // keyed by run id, and a counter that restarted at 0 every boot filed two runs under
     // one number.
@@ -343,6 +348,9 @@ pub async fn run_gateway() -> Result<(), String> {
     // The /api/db routes lease through the SAME catalog instance the MCP plugin will
     // register into — set before build_app mounts the router (SPEC §host.seats).
     let _ = ctx.catalog.set(services.catalog.clone());
+    // The same hub the plugins will register on (SPEC §bus). Set before the listener
+    // accepts, like the catalog beside it.
+    let _ = ctx.bus.set(services.bus.clone());
     // The consoles' history (SPEC §data.history): constructed closed here so the /api/db mount
     // can carry it; the Data plugin's start opens logs/data.db and its stop closes it.
     let data_history = swiss_data::history::DataHistory::new(swiss_core::paths::data_path(&["logs"]));
@@ -537,6 +545,10 @@ pub async fn run_gateway() -> Result<(), String> {
     // signal on Windows) or Ctrl-C.
     let mut shutdown_rx = ctx.shutdown.subscribe();
     let mut graceful_rx = ctx.shutdown.subscribe();
+    // BYE SHUTDOWN goes out while the sockets are still the server's to write
+    // (SPEC §bus.link). services.shutdown() repeats the wait after the listener is gone,
+    // which returns at once when this one already drained the links.
+    let bus = services.bus.clone();
     let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
@@ -546,6 +558,7 @@ pub async fn run_gateway() -> Result<(), String> {
             changed = graceful_rx.changed() => { let _ = changed; },
             _ = tokio::signal::ctrl_c() => {},
         }
+        bus.shutdown().await;
     });
     // Run until the trigger fires, then give in-flight requests 3s to drain: a connected client
     // can hold a request open, and Node force-exited after 3s rather than wait.

@@ -1,0 +1,17 @@
+[package]
+name = "swiss-bus-protogen"
+version = "0.1.4"
+edition = "2021"
+publish = false
+description = "Generates crates/swiss-bus/src/pb from the .proto sources. Excluded from the workspace so prost-build never enters the shipping graph (SPEC §bus.codegen)."
+
+# Not a workspace member (the root Cargo.toml excludes this directory). The empty
+# table makes `cargo run --manifest-path` treat this as its own workspace; without
+# it cargo refuses to build an excluded package that sits inside the parent tree.
+# Its lockfile is its own.
+[workspace]
+
+[dependencies]
+prost-build = "=0.14.4"
+protox = "0.9"
+sha2 = { version = "0.11", default-features = false }

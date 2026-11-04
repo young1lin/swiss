@@ -131,10 +131,20 @@ pub struct RuntimeServices {
     /// not on the plugin instance, because enable rebuilds the instance on the
     /// same services set.
     boot_pass_taken: AtomicBool,
+    /// The event bus (SPEC §bus). One hub for the process; plugins register handlers
+    /// on start and drop them on stop. The stamp is injected so a test bus carries
+    /// an empty one and the gateway carries the panel's.
+    pub bus: Arc<swiss_bus::Bus>,
 }
 
 impl RuntimeServices {
     pub fn new(boot: BootInfo) -> Arc<Self> {
+        Self::with_stamp(boot, Arc::new(String::new))
+    }
+
+    /// `stamp` is what WELCOME and BUILD carry (SPEC §bus.link). The composition passes
+    /// the panel stamp; tests keep [`new`](Self::new)'s empty one.
+    pub fn with_stamp(boot: BootInfo, stamp: swiss_bus::Stamp) -> Arc<Self> {
         let actions = Arc::new(ActionRegistry::new());
         let children = ChildRegistry::new();
         let module_dbs = Arc::new(module_db::ModuleDbSeat::new());
@@ -151,12 +161,15 @@ impl RuntimeServices {
             module_dbs,
             maintenance: Arc::new(maintenance::MaintenanceSeat::new()),
             boot_pass_taken: AtomicBool::new(false),
+            bus: swiss_bus::Bus::new(stamp),
         })
     }
 
-    /// Cancel and await every run, whoever produced it — the gateway's own teardown, after
-    /// the plugins have stopped. Returns how many runs were still in flight.
+    /// Tell every bus link the process is stopping, then cancel and await every run.
+    /// Returns how many runs were still in flight. The bus wait returns as soon as
+    /// the links have gone (SPEC §bus.link).
     pub async fn shutdown(&self) -> usize {
+        self.bus.shutdown().await;
         self.runs.shutdown_all().await
     }
 

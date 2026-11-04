@@ -646,3 +646,25 @@ Rejected:
   toolchain (Hutch) and a days-old 2.x; only its CEF mode differs, at hundreds of MB.
 - **An installer, MSIX or auto-update.** The release archive stays the channel (§host.ops):
   `update` checks, the exe swaps by hand.
+
+## ADR-039 — The event bus: one WebSocket, protobuf frames, generated codecs
+
+**Accepted.** Spec: §bus. Pages kept other windows' changes out of sight until a reload or a
+focus, and every live view polled on its own timer. One socket per page now carries requests,
+events and relays; module numbers are chapter numbers; the codecs are generated from one
+`.proto` set; writes go over the bus from the first delivery because nothing is released yet.
+Single-user editing is the product's shape, so concurrent edits are refused by revision, not
+merged; a merge, if ever, is three-way.
+
+Rejected:
+
+- **SSE for events plus HTTP for writes.** Two transports, and no page-to-page path for relays.
+- **JSON frames.** No schema, no generated types, and every new message hand-checked twice.
+- **A hand-written codec.** A grammar written here (§arch.deps); the owner chose generation.
+- **protoc, or prost-build in a build script.** A system binary, or the generator in every
+  build's graph; protox outside the workspace needs neither.
+- **ts-proto, protobuf.js.** ts-proto emits `enum` (not erasable) and needs protoc or buf
+  anyway; protobuf.js's static output is a CommonJS-era runtime.
+- **OT or CRDT (Yjs, Automerge).** They solve two people typing at once, which this product
+  does not have.
+- **The terminal's socket.** A per-session byte pump with its own tickets; unrelated.

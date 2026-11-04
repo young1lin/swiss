@@ -1,0 +1,197 @@
+[
+  {
+    "bodyType": "Ping",
+    "body": {
+      "sentMs": 1793784600000
+    },
+    "name": "ping",
+    "hex": "1001180220012807420708c0ab93af9a34",
+    "module": 0,
+    "sub": 1,
+    "id": 2,
+    "kind": "REQUEST",
+    "seq": 7,
+    "replyTo": 0,
+    "key": "",
+    "origin": ""
+  },
+  {
+    "bodyType": "Pong",
+    "body": {
+      "sentMs": 1793784600000,
+      "serverMs": 1793784600003
+    },
+    "name": "pong",
+    "hex": "10011802200228093007420e08c0ab93af9a3410c3ab93af9a34",
+    "module": 0,
+    "sub": 1,
+    "id": 2,
+    "kind": "RESPONSE",
+    "seq": 9,
+    "replyTo": 7,
+    "key": "",
+    "origin": ""
+  },
+  {
+    "bodyType": "Hello",
+    "body": {
+      "protocol": 1,
+      "pageId": "page-a",
+      "build": "stamp-a"
+    },
+    "name": "hello",
+    "hex": "1001180120012801421308011206706167652d611a077374616d702d61",
+    "module": 0,
+    "sub": 1,
+    "id": 1,
+    "kind": "REQUEST",
+    "seq": 1,
+    "replyTo": 0,
+    "key": "",
+    "origin": ""
+  },
+  {
+    "bodyType": "Welcome",
+    "body": {
+      "protocol": 1,
+      "connId": "7",
+      "build": "stamp-a",
+      "heartbeatMs": 20000,
+      "maxFrame": 4194304,
+      "serverMs": 1793784600000
+    },
+    "name": "welcome",
+    "hex": "10011801200228013001421e08011201371a077374616d702d6120a09c01288080800230c0ab93af9a34",
+    "module": 0,
+    "sub": 1,
+    "id": 1,
+    "kind": "RESPONSE",
+    "seq": 1,
+    "replyTo": 1,
+    "key": "",
+    "origin": ""
+  },
+  {
+    "bodyType": "Bye",
+    "body": {
+      "reason": "SLOW"
+    },
+    "name": "bye-slow",
+    "hex": "100118032003280442020802",
+    "module": 0,
+    "sub": 1,
+    "id": 3,
+    "kind": "EVENT",
+    "seq": 4,
+    "replyTo": 0,
+    "key": "",
+    "origin": ""
+  },
+  {
+    "bodyType": "Topics",
+    "body": {
+      "topics": [
+        {
+          "module": 6,
+          "sub": 1,
+          "key": "alpha"
+        }
+      ]
+    },
+    "name": "subscribe",
+    "hex": "1002180120012803420d0a0b080610011a05616c706861",
+    "module": 0,
+    "sub": 2,
+    "id": 1,
+    "kind": "REQUEST",
+    "seq": 3,
+    "replyTo": 0,
+    "key": "",
+    "origin": ""
+  },
+  {
+    "bodyType": "ConsolePut",
+    "body": {
+      "conn": "alpha"
+    },
+    "name": "consoles-put",
+    "hex": "0806100118022001280442460a05616c706861123b0a026331120773637261746368180122076167656e742d312801320873656c656374203138034080d095ffbc3148e4d095ffbc315080d095ffbc311802",
+    "module": 6,
+    "sub": 1,
+    "id": 2,
+    "kind": "REQUEST",
+    "seq": 4,
+    "replyTo": 0,
+    "key": "",
+    "origin": ""
+  },
+  {
+    "bodyType": "",
+    "body": {},
+    "fault": {
+      "code": "console.changed",
+      "message": "conflict: console changed; reload the server record before saving",
+      "params": {
+        "id": "c1"
+      }
+    },
+    "name": "consoles-changed-fault",
+    "hex": "0806100118022002280830044a5e0a0f636f6e736f6c652e6368616e67656412080a026964120263311a41636f6e666c6963743a20636f6e736f6c65206368616e6765643b2072656c6f61642074686520736572766572207265636f7264206265666f726520736176696e67",
+    "module": 6,
+    "sub": 1,
+    "id": 2,
+    "kind": "RESPONSE",
+    "seq": 8,
+    "replyTo": 4,
+    "key": "",
+    "origin": ""
+  },
+  {
+    "bodyType": "ConsoleSaved",
+    "body": {
+      "id": "c1"
+    },
+    "origin": "page-a",
+    "key": "alpha",
+    "name": "consoles-changed",
+    "hex": "080610011805200328093a05616c706861423d0a3b0a026331120773637261746368180122076167656e742d312801320873656c656374203138034080d095ffbc3148e4d095ffbc315080d095ffbc315206706167652d61",
+    "module": 6,
+    "sub": 1,
+    "id": 5,
+    "kind": "EVENT",
+    "seq": 9,
+    "replyTo": 0
+  },
+  {
+    "bodyType": "ConsoleList",
+    "body": {
+      "next": "c1"
+    },
+    "name": "consoles-list",
+    "hex": "08061001180120022806300542410a3b0a026331120773637261746368180122076167656e742d312801320873656c656374203138034080d095ffbc3148e4d095ffbc315080d095ffbc3112026331",
+    "module": 6,
+    "sub": 1,
+    "id": 1,
+    "kind": "RESPONSE",
+    "seq": 6,
+    "replyTo": 5,
+    "key": "",
+    "origin": ""
+  },
+  {
+    "bodyType": "Prefs",
+    "body": {
+      "lang": "zh"
+    },
+    "origin": "left",
+    "name": "prefs-relay",
+    "hex": "080e100118012004280242040a027a6852046c656674",
+    "module": 14,
+    "sub": 1,
+    "id": 1,
+    "kind": "RELAY",
+    "seq": 2,
+    "replyTo": 0,
+    "key": ""
+  }
+]

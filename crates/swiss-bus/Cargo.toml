@@ -1,0 +1,29 @@
+[package]
+name = "swiss-bus"
+version.workspace = true
+description = "The event bus: one WebSocket per page, protobuf frames, generated codecs (SPEC §bus)."
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# A foundation crate, like swiss-core (SPEC §arch.crates): swiss-host and the subsystems
+# that publish may name it. It names none of them.
+
+[dependencies]
+swiss-core = { path = "../swiss-core" }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "sync", "time"] }
+prost = { version = "0.14", default-features = false, features = ["derive", "std"] }
+bytes = "1"
+
+[dev-dependencies]
+# The codegen digest (SPEC §bus.codegen). Already in the workspace through swiss-core.
+sha2 = { version = "0.11", default-features = false }
+# Paused time for the HELLO deadline and the idle limit. The shipping crate does not enable it.
+tokio = { version = "1", features = ["macros", "rt", "sync", "time", "test-util"] }
+# golden.json is the shared fixture (SPEC §bus.codegen). Dev-only; the shipping graph
+# already links this crate through swiss-core.
+serde_json = { version = "1", features = ["raw_value"] }

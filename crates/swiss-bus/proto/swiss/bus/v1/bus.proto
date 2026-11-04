@@ -1,0 +1,118 @@
+// The event bus envelope and the bus's own messages (SPEC §bus.wire, SPEC §bus.registry).
+// A module's number is its SPEC chapter number. 0 is the bus itself. Numbers are never
+// reused: a retired message leaves a reserved line.
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+// The owning module. 0 is omitted on the wire, which is why PING's bytes do not carry it.
+enum Module {
+  MODULE_BUS = 0;
+  MODULE_DATA = 6;
+  MODULE_PANEL = 14;
+}
+
+enum Kind {
+  KIND_UNSPECIFIED = 0;
+  KIND_REQUEST = 1;
+  KIND_RESPONSE = 2;
+  KIND_EVENT = 3;
+  KIND_RELAY = 4;
+}
+
+// Why a link is ending (SPEC §bus.link). The server sends Bye and then closes.
+enum ByeReason {
+  BYE_REASON_UNSPECIFIED = 0;
+  BYE_SHUTDOWN = 1;
+  BYE_SLOW = 2;
+  BYE_PROTOCOL = 3;
+  BYE_IDLE = 4;
+  BYE_LIMIT = 5;
+}
+
+// A refusal. code is a served-code id (SPEC §panel.i18n); message is the English sentence.
+message Fault {
+  string code = 1;
+  map<string, string> params = 2;
+  string message = 3;
+}
+
+// One WebSocket binary message (SPEC §bus.wire). The router reads this and nothing inside body.
+message Frame {
+  uint32 module = 1;
+  uint32 sub = 2;
+  uint32 id = 3;
+  Kind kind = 4;
+  uint32 seq = 5;
+  uint32 reply_to = 6;
+  string key = 7;
+  bytes body = 8;
+  Fault fault = 9;
+  string origin = 10;
+}
+
+// BUS subs. 0 is not a sub.
+enum BusSub {
+  BUS_SUB_UNSPECIFIED = 0;
+  BUS_SUB_LINK = 1;
+  BUS_SUB_TOPIC = 2;
+}
+
+enum LinkId {
+  LINK_ID_UNSPECIFIED = 0;
+  LINK_ID_HELLO = 1;
+  LINK_ID_PING = 2;
+  LINK_ID_BYE = 3;
+  LINK_ID_BUILD = 4;
+}
+
+enum TopicId {
+  TOPIC_ID_UNSPECIFIED = 0;
+  TOPIC_ID_SUBSCRIBE = 1;
+  TOPIC_ID_UNSUBSCRIBE = 2;
+}
+
+// The page's first frame (SPEC §bus.link). protocol 1 is the only one this build speaks.
+message Hello {
+  uint32 protocol = 1;
+  string page_id = 2;
+  string build = 3;
+}
+
+message Welcome {
+  uint32 protocol = 1;
+  string conn_id = 2;
+  string build = 3;
+  uint64 heartbeat_ms = 4 [jstype = JS_NUMBER];
+  uint32 max_frame = 5;
+  uint64 server_ms = 6 [jstype = JS_NUMBER];
+}
+
+message Ping {
+  uint64 sent_ms = 1 [jstype = JS_NUMBER];
+}
+
+message Pong {
+  uint64 sent_ms = 1 [jstype = JS_NUMBER];
+  uint64 server_ms = 2 [jstype = JS_NUMBER];
+}
+
+message Bye {
+  ByeReason reason = 1;
+}
+
+// A debug build's assets changed under a live link (SPEC §bus.link).
+message Build {
+  string build = 1;
+}
+
+// One topic. key "" in a subscription means every key of that sub (SPEC §bus.topics).
+message Topic {
+  uint32 module = 1;
+  uint32 sub = 2;
+  string key = 3;
+}
+
+message Topics {
+  repeated Topic topics = 1;
+}

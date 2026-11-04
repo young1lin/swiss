@@ -5639,6 +5639,7 @@ dependencies = [
  "sha2 0.11.0",
  "shlex",
  "socket2",
+ "swiss-bus",
  "swiss-core",
  "swiss-data",
  "swiss-host",
@@ -5661,6 +5662,19 @@ dependencies = [
  "tray-icon",
  "windows",
  "wry",
+]
+
+[[package]]
+name = "swiss-bus"
+version = "0.1.4"
+dependencies = [
+ "axum",
+ "bytes",
+ "prost",
+ "serde_json",
+ "sha2 0.11.0",
+ "swiss-core",
+ "tokio",
 ]
 
 [[package]]
@@ -5718,6 +5732,7 @@ dependencies = [
  "sha2 0.11.0",
  "shlex",
  "sqlx",
+ "swiss-bus",
  "swiss-core",
  "thiserror 2.0.21",
  "time",

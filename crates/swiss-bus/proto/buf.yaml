@@ -1,0 +1,9 @@
+# Lint the bus sources (SPEC §bus.codegen). MODULE_BUS and SAVE_MODE_AUTO are meaningful
+# zeros on purpose, so the zero-value suffix rule is excepted and nothing else is.
+version: v2
+lint:
+  use:
+    - STANDARD
+  except:
+    - ENUM_ZERO_VALUE_SUFFIX
+  disallow_comment_ignores: true

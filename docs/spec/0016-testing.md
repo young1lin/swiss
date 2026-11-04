@@ -24,6 +24,10 @@ npm run check                                            # in crates/swiss-panel
   message says it was not run.
 - **A manifest change** also runs `cargo tree -d -e normal,build` and `cargo deny check`
   (§arch.deps, §release.ci).
+- **The event-bus codecs** (SPEC §bus.codegen). The swiss-bus suite recomputes the SHA-256
+  over `crates/swiss-bus/proto/**/*.proto` and fails with the generator command when the
+  committed Rust file is stale. The same suite decodes `crates/swiss-bus/testdata/golden.json`
+  and re-encodes every frame to the same bytes.
 - **Deploys re-run the gates.** `scripts/deploy.ps1` runs gate 1, then gate 2 (setting
   `DOCKER_HOST` for that one run and removing it after), then clippy, then the panel's
   `npm run check`; any failure stops with "production left untouched" (§host.ops).

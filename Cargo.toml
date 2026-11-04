@@ -1,6 +1,9 @@
 [workspace]
 members = [
     "crates/swiss-core",
+    # The event bus (SPEC §bus). A foundation crate: swiss-host holds it, and a
+    # subsystem that publishes may name it. It names none of them.
+    "crates/swiss-bus",
     "crates/swiss-host",
     "crates/swiss-mcp",
     "crates/swiss-data",
@@ -27,6 +30,9 @@ members = [
     # targets and a machine without Docker sees no difference at all.
     "crates/swiss-it",
 ]
+# The protobuf generator (SPEC §bus.codegen). prost-build and protox stay out of the
+# shipping graph and out of `cargo test --workspace`. It has its own lockfile.
+exclude = ["crates/swiss-bus/protogen"]
 resolver = "2"
 
 # Shared by every member crate (`<field>.workspace = true`): one author, one license, one
@@ -59,6 +65,8 @@ path = "src/main.rs"
 
 [dependencies]
 swiss-core = { path = "crates/swiss-core" }
+# The event bus (SPEC §bus). The composition mounts GET /api/bus and injects the panel stamp.
+swiss-bus = { path = "crates/swiss-bus" }
 swiss-host = { path = "crates/swiss-host" }
 swiss-mcp = { path = "crates/swiss-mcp" }
 swiss-data = { path = "crates/swiss-data" }
