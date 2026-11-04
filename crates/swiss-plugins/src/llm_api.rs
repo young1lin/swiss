@@ -47,12 +47,8 @@ use swiss_llm::provider::{self, Chat, ModelEntry, ModelKind};
 use swiss_llm::telemetry::{self, Session};
 use swiss_llm::LlmState;
 
-/// A provider or agent Test waits this long for its answer.
+/// A provider Test waits this long for its answer.
 const ASK_TIMEOUT: Duration = Duration::from_secs(90);
-/// A builtin agent's Test loop runs this long at most, whatever the agent's own
-/// (larger) task timeout: a Test is a click in a sheet, not a batch job. The
-/// dialogue it managed in that window still files.
-pub(crate) const LOOP_TIMEOUT: Duration = Duration::from_secs(300);
 /// A spawned runtime's `--version` check.
 const VERSION_TIMEOUT: Duration = Duration::from_secs(15);
 /// The answer's ceiling for a Test: room for a reasoning model to think before it speaks.
@@ -543,7 +539,7 @@ impl TestPlan {
             runtime: agent.runtime,
             taken,
             max_turns: agent.turns(),
-            bound: if agent.runtime == Runtime::Chat { ASK_TIMEOUT } else { LOOP_TIMEOUT },
+            bound: agent.deadline(),
             root, agent: agent.clone(), services,
         })
     }
@@ -629,7 +625,7 @@ pub(crate) fn loop_answer(
         Ok(Err(err)) => json!({ "ok": false, "error": err, "ms": ms_since(started) }),
         Err(_) => {
             let waited = bound.as_millis() as u64;
-            let err = format!("the test loop took longer than {} s", waited / 1000);
+            let err = format!("the agent took longer than {} s (its timeoutMs)", waited / 1000);
             chat.record_timeout(run.id(), Some(system), prompt, waited);
             run.fail(&err);
             json!({ "ok": false, "error": err, "ms": waited })
@@ -1820,6 +1816,8 @@ pub(crate) mod tests {
     /// nothing more. A chat agent opens under its prompt alone and asks as given.
     #[test]
     fn a_moved_directory_is_told_in_the_turn_and_a_kept_one_is_not() {
+        // The scratch home first: its first use moves the home every read below compares.
+        let _ = swiss_core::paths::test_home();
         let state = LlmState::new();
         state.apply(LlmConfig::parse(&json!({
             "providers": { "local": { "style": "openai", "baseUrl": "http://127.0.0.1:9/v1", "models": [{ "id": "tiny" }] } },
@@ -1852,6 +1850,30 @@ pub(crate) mod tests {
         assert_eq!(asking.opening("be brief", &chat), "be brief");
         assert_eq!(asking.task("go", "be brief", &[]), "go");
         let _ = std::fs::remove_dir_all(moved);
+    }
+
+    /// A Test drives under the agent's own timeoutMs, a chat agent's as a builtin's, never a
+    /// shorter fixed cap; a deadline names the setting that bounds it.
+    #[tokio::test]
+    async fn a_test_drives_under_the_agents_own_timeout_and_a_deadline_names_it() {
+        let state = LlmState::new();
+        state.apply(LlmConfig::parse(&json!({
+            "providers": { "local": { "style": "openai", "baseUrl": "http://127.0.0.1:9/v1", "models": [{ "id": "tiny" }] } },
+            "agents": { "distiller": { "provider": "local", "timeoutMs": 3_600_000 }, "asker": { "runtime": "chat", "provider": "local" } }
+        }))
+        .expect("row"));
+        let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
+        let agent = state.agent("distiller").expect("agent");
+        let plan = TestPlan::of(&agent, &Map::new(), services.clone()).expect("plan");
+        assert_eq!(plan.bound, Duration::from_secs(3600));
+        let asker = state.agent("asker").expect("asker");
+        assert_eq!(TestPlan::of(&asker, &Map::new(), services).expect("plan").bound, Duration::from_secs(1800), "the default timeoutMs");
+        let chat = agent.chat(&state.config().providers).expect("chat");
+        let mut run = chat.run_recorder("builtin");
+        let elapsed = tokio::time::timeout(Duration::ZERO, std::future::pending::<Result<LoopOutcome, String>>()).await;
+        let answer = loop_answer(elapsed, &chat, &mut run, "be brief", "go", plan.bound, Instant::now());
+        assert_eq!(answer["error"], "the agent took longer than 3600 s (its timeoutMs)", "{answer}");
+        assert_eq!((&answer["ok"], &answer["ms"]), (&json!(false), &json!(3_600_000)));
     }
 
     #[test]

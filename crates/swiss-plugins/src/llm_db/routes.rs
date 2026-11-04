@@ -40,7 +40,7 @@ use swiss_llm::history::{within, CancelFlag, LlmHistory, ReplayState, RunContext
 use swiss_llm::provider::{Chat, ModelKind};
 use swiss_llm::LlmState;
 
-use crate::llm_api::{awaited_sink, bad, body_of, field, loop_answer, ok, refuse, sse_of, sse_send, LOOP_TIMEOUT, SSE_FRAMES};
+use crate::llm_api::{awaited_sink, bad, body_of, field, loop_answer, ok, refuse, sse_of, sse_send, SSE_FRAMES};
 use crate::llm_db_memory::DbMemory;
 
 use super::{
@@ -498,6 +498,7 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
     }
     let started = Instant::now();
     let max_turns = agent.turns();
+    let bound = agent.deadline();
     tokio::spawn(async move {
         // A MongoDB conversation works in the database in view unless the model names another.
         let in_view = if kind == DbKind::Mongo { schema } else { None };
@@ -518,7 +519,7 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
                 &chat, &system, &prior, &prompt, &mut tools, max_turns, &session, &mut run, &mut on_event,
             );
             tokio::pin!(looped);
-            tokio::time::timeout(LOOP_TIMEOUT, async {
+            tokio::time::timeout(bound, async {
                 loop {
                     tokio::select! {
                         _ = tx.closed(), if !cancel.requested() => cancel.request(),
@@ -529,7 +530,7 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
             .await
         };
         steer.close();
-        let answer = loop_answer(driven, &chat, &mut run, &system, &prompt, LOOP_TIMEOUT, started);
+        let answer = loop_answer(driven, &chat, &mut run, &system, &prompt, bound, started);
         let _ = tx.send(Event::default().event("done").data(answer.to_string())).await;
         state.unseat(&seat);
     });
@@ -748,6 +749,7 @@ pub async fn compact(State(state): State<Arc<LlmState>>, Extension(services): Ex
         "compacting": true,
     }));
     let started = Instant::now();
+    let bound = agent.deadline();
     tokio::spawn(async move {
         let mut on_event = awaited_sink(&tx, &cancel);
         let driven = {
@@ -755,7 +757,7 @@ pub async fn compact(State(state): State<Arc<LlmState>>, Extension(services): Ex
                 &chat, &system, &prior, &instruction, COMPACT_FRAMING, tools, &session, &mut run, &mut on_event,
             );
             tokio::pin!(looped);
-            tokio::time::timeout(LOOP_TIMEOUT, async {
+            tokio::time::timeout(bound, async {
                 loop {
                     tokio::select! {
                         _ = tx.closed(), if !cancel.requested() => cancel.request(),
@@ -773,7 +775,7 @@ pub async fn compact(State(state): State<Arc<LlmState>>, Extension(services): Ex
             _ => None,
         };
         let landed = matches!(&driven, Ok(Ok(outcome)) if !outcome.cancelled) && spoiled.is_none();
-        let mut answer = loop_answer(driven, &chat, &mut run, &system, &instruction, LOOP_TIMEOUT, started);
+        let mut answer = loop_answer(driven, &chat, &mut run, &system, &instruction, bound, started);
         if let Some(why) = spoiled {
             run.fail(why);
             answer = json!({ "ok": false, "error": why, "ms": answer["ms"] });
