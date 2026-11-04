@@ -763,6 +763,9 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     await settle();
     expect(sent("/api/llm/agents/test/cancel")).toEqual([{ runId: 42 }]);
     expect(bodyText()).toContain(tr("llm.test.cancelled"));
+    const cancelled = [...document.querySelectorAll(".tc-turn")].find((t) => t.textContent === tr("llm.test.cancelled"));
+    expect(cancelled, "the cancelled line is its own turn").toBeDefined();
+    expect(cancelled?.querySelector(".tc-who"), "the cancelled line carries no speaker mark").toBe(null);
     expect(round.disabled).toBe(false);
     expect(round.getAttribute("aria-label"), "stopped: the round button sends again").toBe(tr("dataAgent.send"));
     wire.end();

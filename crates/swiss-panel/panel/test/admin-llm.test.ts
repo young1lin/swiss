@@ -1712,6 +1712,7 @@ describe("the LLM plugin - Agents live dialogue", () => {
     expect(streamSignal?.signal.aborted).toBe(true);
     // A cancelled loop says cancelled - the success meta (N rounds) never paints.
     expect(document.querySelector("[data-lacancelled]")).not.toBe(null);
+    expect(document.querySelector("[data-lacancelled] .tc-who"), "the cancelled line carries no speaker mark").toBe(null);
     expect(text("#laTestOut")).not.toMatch(/\d+ rounds?\b/);
     // A late frame from the cancelled loop paints nothing.
     live.push("delta", { kind: "text", text: "ZOMBIE" });
@@ -2008,6 +2009,7 @@ describe("the LLM plugin - Agents live dialogue", () => {
     await click("#laTestRun");
     // The cancelled marker, and neither the failure word nor the success meta.
     expect(document.querySelector("[data-lacancelled]")).not.toBe(null);
+    expect(document.querySelector("[data-lacancelled] .tc-who"), "the cancelled line carries no speaker mark").toBe(null);
     expect(text("#laTestOut")).not.toMatch(/\d+ rounds?\b/);
     expect(q<HTMLButtonElement>("#laTestRun").disabled).toBe(false);
     whole = true;

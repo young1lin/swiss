@@ -1263,7 +1263,8 @@ async function send(talk      , text        , reveal = true)                   {
   if (talk.gen !== myGen) return true;
   talk.live = false;
   talk.controller = null;
-  if (outcome.cancelled) addTurn(talk, { role: speaker("assistant"), text: tr("llm.test.cancelled"), dim: true });
+  // A status line, not speech: no speaker mark (the reply is headed once, llm-stream.ts).
+  if (outcome.cancelled) addTurn(talk, { role: null, text: tr("llm.test.cancelled"), dim: true });
   else if (outcome.error) addTurn(talk, { role: tr("llm.history.role.error"), text: outcome.error, mono: true });
   if (outcome.ended) addTurn(talk, { role: tr("llm.history.role.error"), text: tr("llm.test.streamEnded"), mono: true });
   // A refusal over the conversation (closed elsewhere, or one opened elsewhere): take the
@@ -1377,7 +1378,7 @@ function onStop()       {
   talk.controller = null;
   unsteer(talk);
   if (talk.runId != null) cancelRun(talk.runId);
-  addTurn(talk, { role: speaker("assistant"), text: tr("llm.test.cancelled"), dim: true });
+  addTurn(talk, { role: null, text: tr("llm.test.cancelled"), dim: true });
   controls(talk);
 }
 

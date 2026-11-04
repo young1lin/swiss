@@ -34,7 +34,7 @@ import { fill, h } from "../h.js";
 import { tk, tr, trn } from "../i18n.js";
 import {
   btn, card, chatQueue, checkField, closeSheet, dot, emptyNode, failNote, field, formCap, formFold, hint, kvRow, moreBtn, note, pair, paneBody,
-  paneHead, popupMenu, proseText, relTime, row, section, sheet, showSheet, speaker, tag, transcript, transcriptTurn, valueBlock,
+  paneHead, popupMenu, proseText, relTime, row, section, sheet, showSheet, tag, transcript, transcriptTurn, valueBlock,
 } from "../ui/index.js";
 import type { ChatQueued, RowCol, TranscriptTurn } from "../ui/index.js";
 import { actionBtn } from "../ui/action.js";
@@ -775,7 +775,8 @@ function openTest(a: LlmAgentRow): void {
       // run id STAYS - the conversation never silently forks onto a fresh one.
       run.disabled = outcome.locked === true;
       if (outcome.cancelled) {
-        const said = addTurn({ role: speaker("assistant"), text: tr("llm.test.cancelled"), dim: true });
+        // A status line, not speech: no speaker mark (the reply is headed once, llm-stream.ts).
+        const said = addTurn({ role: null, text: tr("llm.test.cancelled"), dim: true });
         said.setAttribute("data-lacancelled", "");
       } else if (outcome.error) {
         addTurn({ role: tr("llm.history.role.error"), text: outcome.error, mono: true });
@@ -814,7 +815,7 @@ function openTest(a: LlmAgentRow): void {
     }
     // transcriptTurn() spreads its data record as raw props (transcript.ts), which
     // never reaches an attribute - markers ride on the returned node instead.
-    const said = addTurn({ role: speaker("assistant"), text: tr("llm.test.cancelled"), dim: true });
+    const said = addTurn({ role: null, text: tr("llm.test.cancelled"), dim: true });
     said.setAttribute("data-lacancelled", "");
   };
   const onFresh = async (): Promise<void> => {
