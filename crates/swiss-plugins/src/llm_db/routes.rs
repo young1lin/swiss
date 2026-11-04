@@ -498,7 +498,6 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
     }
     let started = Instant::now();
     let max_turns = agent.turns();
-    let bound = agent.deadline();
     tokio::spawn(async move {
         // A MongoDB conversation works in the database in view unless the model names another.
         let in_view = if kind == DbKind::Mongo { schema } else { None };
@@ -513,24 +512,22 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
         tools.references = reference_patch;
         let mut on_event = awaited_sink(&tx, &cancel);
         // The drive in its own block, as the Test's: the pinned future holds the recorder,
-        // and the timeout filing below borrows it only once the future has dropped.
+        // and the answer below borrows it only once the future has dropped. No clock cuts
+        // the drive: it runs as long as its work takes; Stop or the reader leaving ends it.
         let driven = {
             let looped = swiss_llm::agent::run_loop_continued(
                 &chat, &system, &prior, &prompt, &mut tools, max_turns, &session, &mut run, &mut on_event,
             );
             tokio::pin!(looped);
-            tokio::time::timeout(bound, async {
-                loop {
-                    tokio::select! {
-                        _ = tx.closed(), if !cancel.requested() => cancel.request(),
-                        outcome = &mut looped => return outcome,
-                    }
+            loop {
+                tokio::select! {
+                    _ = tx.closed(), if !cancel.requested() => cancel.request(),
+                    outcome = &mut looped => break outcome,
                 }
-            })
-            .await
+            }
         };
         steer.close();
-        let answer = loop_answer(driven, &chat, &mut run, &system, &prompt, bound, started);
+        let answer = loop_answer(driven, &chat, &run, started);
         let _ = tx.send(Event::default().event("done").data(answer.to_string())).await;
         state.unseat(&seat);
     });
@@ -685,7 +682,7 @@ pub async fn reopen(State(state): State<Arc<LlmState>>, Extension(services): Ext
 /// /compact, closing it), and the checkpoint opens a new conversation in the same scope:
 /// its next send replays COMPACT_FRAMING and the checkpoint, never the condensed turns,
 /// which History keeps whole under the closed run. Any failure - the model's error, a
-/// cancel, a checkpoint cut at maxTokens or never written, the time bound - files the new
+/// cancel, a checkpoint cut at maxTokens or never written - files the new
 /// run failed and reopens the old one as it was (done: compacted false, runId the old one,
 /// or null when it could not reopen).
 pub async fn compact(State(state): State<Arc<LlmState>>, Extension(services): Extension<Arc<RuntimeServices>>, bytes: Bytes) -> Response {
@@ -749,7 +746,6 @@ pub async fn compact(State(state): State<Arc<LlmState>>, Extension(services): Ex
         "compacting": true,
     }));
     let started = Instant::now();
-    let bound = agent.deadline();
     tokio::spawn(async move {
         let mut on_event = awaited_sink(&tx, &cancel);
         let driven = {
@@ -757,25 +753,22 @@ pub async fn compact(State(state): State<Arc<LlmState>>, Extension(services): Ex
                 &chat, &system, &prior, &instruction, COMPACT_FRAMING, tools, &session, &mut run, &mut on_event,
             );
             tokio::pin!(looped);
-            tokio::time::timeout(bound, async {
-                loop {
-                    tokio::select! {
-                        _ = tx.closed(), if !cancel.requested() => cancel.request(),
-                        outcome = &mut looped => return outcome,
-                    }
+            loop {
+                tokio::select! {
+                    _ = tx.closed(), if !cancel.requested() => cancel.request(),
+                    outcome = &mut looped => break outcome,
                 }
-            })
-            .await
+            }
         };
         // A round that answered but left no checkpoint to carry on from fails too.
         let spoiled = match &driven {
-            Ok(Ok(outcome)) if outcome.cancelled => None,
-            Ok(Ok(outcome)) if outcome.cut => Some("the checkpoint stopped at the model's output limit (maxTokens): nothing was compacted"),
-            Ok(Ok(outcome)) if outcome.capped || outcome.summary.trim().is_empty() => Some("the model wrote no checkpoint: nothing was compacted"),
+            Ok(outcome) if outcome.cancelled => None,
+            Ok(outcome) if outcome.cut => Some("the checkpoint stopped at the model's output limit (maxTokens): nothing was compacted"),
+            Ok(outcome) if outcome.capped || outcome.summary.trim().is_empty() => Some("the model wrote no checkpoint: nothing was compacted"),
             _ => None,
         };
-        let landed = matches!(&driven, Ok(Ok(outcome)) if !outcome.cancelled) && spoiled.is_none();
-        let mut answer = loop_answer(driven, &chat, &mut run, &system, &instruction, bound, started);
+        let landed = matches!(&driven, Ok(outcome) if !outcome.cancelled) && spoiled.is_none();
+        let mut answer = loop_answer(driven, &chat, &run, started);
         if let Some(why) = spoiled {
             run.fail(why);
             answer = json!({ "ok": false, "error": why, "ms": answer["ms"] });

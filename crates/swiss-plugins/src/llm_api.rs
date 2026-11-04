@@ -494,14 +494,14 @@ fn told_directory(system: &str, prior: &[Value]) -> Option<String> {
 }
 
 /// How a provider-asking agent's Test drives the loop, the same in every lane
-/// (blocking, live, store-less): a chat agent asks once with no tools under the
-/// single-ask deadline; a builtin agent runs the loop a consumer runs - the tools
-/// it takes of the Test's offer, its turn cap - under the loop deadline.
+/// (blocking, live, store-less): a chat agent asks once with no tools; a builtin
+/// agent runs the loop a consumer runs - the tools it takes of the Test's offer, its
+/// turn cap. No lane caps the time: a loop runs as long as its work takes, and only
+/// Stop or the reader going away ends it early.
 struct TestPlan {
     runtime: Runtime,
     taken: Vec<&'static str>,
     max_turns: u32,
-    bound: Duration,
     root: std::path::PathBuf,
     agent: AgentConfig,
     services: Arc<RuntimeServices>,
@@ -536,7 +536,6 @@ impl TestPlan {
             runtime: agent.runtime,
             taken,
             max_turns: agent.turns(),
-            bound: agent.deadline(),
             root, agent: agent.clone(), services,
         })
     }
@@ -597,36 +596,21 @@ impl TestPlan {
     }
 }
 
-/// A Test drive's answer, whichever end it met. The loop files its own terminal
-/// paths; a deadline drops the loop future but not its recorder, so the timeout
-/// arm files the dropped round trip and fails the run here.
-pub(crate) fn loop_answer(
-    driven: Result<Result<LoopOutcome, String>, tokio::time::error::Elapsed>,
-    chat: &Chat,
-    run: &mut RunRecorder,
-    system: &str,
-    prompt: &str,
-    bound: Duration,
-    started: Instant,
-) -> Value {
+/// A Test drive's answer, whichever end it met: an answer, a cancel or the loop's
+/// own failure. The loop files every one of them itself, and nothing outside it
+/// cuts a drive short, so the answer only reports.
+pub(crate) fn loop_answer(driven: Result<LoopOutcome, String>, chat: &Chat, run: &RunRecorder, started: Instant) -> Value {
     let mut answer = match driven {
-        Ok(Ok(outcome)) if outcome.cancelled => {
+        Ok(outcome) if outcome.cancelled => {
             json!({ "ok": false, "error": "cancelled", "cancelled": true, "ms": ms_since(started) })
         }
-        Ok(Ok(outcome)) => json!({
+        Ok(outcome) => json!({
             "ok": true, "model": chat.model, "ms": ms_since(started),
             "text": clip(&outcome.summary, ANSWER_MAX), "capped": outcome.capped,
             "turns": outcome.turns, "tokensIn": outcome.tokens.input, "tokensOut": outcome.tokens.output,
         }),
         // The loop noted and filed its own failure; the answer says it.
-        Ok(Err(err)) => json!({ "ok": false, "error": err, "ms": ms_since(started) }),
-        Err(_) => {
-            let waited = bound.as_millis() as u64;
-            let err = format!("the agent took longer than {} s (its timeoutMs)", waited / 1000);
-            chat.record_timeout(run.id(), Some(system), prompt, waited);
-            run.fail(&err);
-            json!({ "ok": false, "error": err, "ms": waited })
-        }
+        Err(err) => json!({ "ok": false, "error": err, "ms": ms_since(started) }),
     };
     if let Some(id) = run.id() {
         answer["runId"] = json!(id);
@@ -683,8 +667,6 @@ async fn agent_test(State(state): State<Arc<LlmState>>, Extension(services): Ext
     let base = agent.system_prompt();
     let system = plan.opening(base.as_deref().unwrap_or(swiss_llm::agent::DEFAULT_SYSTEM_PROMPT), &chat);
     let tasked = plan.task(&prompt, &system, &[]);
-    // The recorder lives here, outside the deadline: a timeout drops the loop
-    // future, and the dialogue it had already noted still files.
     let mut run = chat.run_recorder(agent.runtime.as_str());
     // BLOCKING ORDER (SPEC llm.history): the one-shot's row is RESERVED and its
     // refusal heard BEFORE the provider ask - an admitted reserve is what
@@ -705,9 +687,8 @@ async fn agent_test(State(state): State<Arc<LlmState>>, Extension(services): Ext
     // This blocking request cannot be continued. Its jobs end with the request even
     // when the one-shot transcript is recorded in history.
     let mut tools = plan.tools(&chat, &session, None, None);
-    let looped = swiss_llm::agent::run_loop(&chat, &system, &tasked, &mut tools, plan.max_turns, &session, &mut run, &mut on_event);
-    let driven = tokio::time::timeout(plan.bound, looped).await;
-    let mut answer = loop_answer(driven, &chat, &mut run, &system, &tasked, plan.bound, started);
+    let driven = swiss_llm::agent::run_loop(&chat, &system, &tasked, &mut tools, plan.max_turns, &session, &mut run, &mut on_event).await;
+    let mut answer = loop_answer(driven, &chat, &run, started);
     if session.reporting() {
         answer["session"] = json!(session.id());
     }
@@ -922,9 +903,8 @@ async fn agent_test_stream(State(state): State<Arc<LlmState>>, Extension(service
         let mut on_event = awaited_sink(&tx, &cancel);
         let tasked = plan.task(&prompt, &system, &prior);
         // The drive lives in its OWN lexical block: the pinned future holds
-        // the run recorder mutably, and the honest timeout filing below may
-        // only borrow run once the future has actually dropped. Scope, not an
-        // early return, not a second timeout.
+        // the run recorder mutably, and the answer below may only borrow run
+        // once the future has actually dropped.
         let driven = {
             let looped = swiss_llm::agent::run_loop_continued(
                 &chat, &system, &prior, &tasked, &mut tools, plan.max_turns, &session, &mut run, &mut on_event,
@@ -935,26 +915,24 @@ async fn agent_test_stream(State(state): State<Arc<LlmState>>, Extension(service
             // every response body drops. The flag is requested, then the drive is
             // awaited to completion: IT files the honest tail; the engine is never
             // dropped whole. Once the cancel is requested the watch arm disarms,
-            // and the drive is the only thing left to wait for.
-            tokio::time::timeout(plan.bound, async {
-                loop {
-                    tokio::select! {
-                        _ = tx.closed(), if !cancel.requested() => {
-                            cancel.request();
-                        }
-                        outcome = &mut looped => return outcome,
+            // and the drive is the only thing left to wait for. No clock cuts the
+            // drive: it runs as long as its work takes.
+            loop {
+                tokio::select! {
+                    _ = tx.closed(), if !cancel.requested() => {
+                        cancel.request();
                     }
+                    outcome = &mut looped => break outcome,
                 }
-            })
-            .await
+            }
         };
-        if cancel.requested() || driven.is_err() {
+        if cancel.requested() {
             crate::llm_shell::cancel_conversation(&plan.services.runs, run_id).await;
         }
         // No round takes words from here on: a post now is refused, and what is left
         // the reader sends as its next turn (every steer frame flew before done).
         steer.close();
-        let answer = loop_answer(driven, &chat, &mut run, &system, &tasked, plan.bound, started);
+        let answer = loop_answer(driven, &chat, &run, started);
         // The closing frame waits its turn (bounded); a closed channel here is
         // the disconnect the cancel already handled.
         let _ = tx.send(Event::default().event("done").data(answer.to_string())).await;
@@ -998,16 +976,14 @@ async fn stateless_test(
             &chat, &system, &[], &tasked, &mut tools, plan.max_turns, &session, &mut run, &mut on_event,
         );
         tokio::pin!(looped);
-        tokio::time::timeout(plan.bound, async {
-            loop {
-                tokio::select! {
-                    _ = tx.closed(), if !cancel.requested() => cancel.request(),
-                    outcome = &mut looped => return outcome,
-                }
+        loop {
+            tokio::select! {
+                _ = tx.closed(), if !cancel.requested() => cancel.request(),
+                outcome = &mut looped => break outcome,
             }
-        }).await
+        }
     };
-    let answer = loop_answer(driven, &chat, &mut run, &system, &tasked, plan.bound, started);
+    let answer = loop_answer(driven, &chat, &run, started);
     let _ = tx.send(Event::default().event("done").data(answer.to_string())).await;
 }
 
@@ -1416,6 +1392,15 @@ pub(crate) mod tests {
     /// The same wire as [sse_wire], but every request body is captured: the tests
     /// that must see what the loop RESENT (round preservation) read the asks back.
     pub(crate) async fn sse_wire_capturing(frames: Vec<String>) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        sse_wire_capturing_after(Duration::ZERO, frames).await
+    }
+
+    /// [sse_wire_capturing] with a slow provider: each answer waits `delay` after its
+    /// request has arrived. The clock stands still only while the provider thinks
+    /// (paused, it jumps the wait at once, then runs on), so the wait costs no real time,
+    /// a history store keeps its own clock outside it, and any timer started before it -
+    /// a cap on the drive - sees the whole delay pass. Needs a current-thread runtime.
+    pub(crate) async fn sse_wire_capturing_after(delay: Duration, frames: Vec<String>) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
         let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = captured.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -1442,6 +1427,11 @@ pub(crate) mod tests {
                     if buf.len() >= head_end + 4 + length {
                         if let Some(body) = buf.get(head_end + 4..head_end + 4 + length) {
                             sink.lock().expect("captured").push(String::from_utf8_lossy(body).into_owned());
+                        }
+                        if !delay.is_zero() {
+                            tokio::time::pause();
+                            tokio::time::sleep(delay).await;
+                            tokio::time::resume();
                         }
                         let answer = format!(
                             "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
@@ -1851,28 +1841,47 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(moved);
     }
 
-    /// A Test drives under the agent's own timeoutMs, a chat agent's as a builtin's, never a
-    /// shorter fixed cap; a deadline names the setting that bounds it.
+    /// No clock cuts a Test: a provider that answers only after the agent's whole
+    /// timeoutMs has passed still lands its answer, in the blocking lane, in the live one
+    /// the panel streams and in the store-less one. The wire's paused clock skips the
+    /// wait; the elapsed check proves each lane really waited past timeoutMs.
     #[tokio::test]
-    async fn a_test_drives_under_the_agents_own_timeout_and_a_deadline_names_it() {
+    async fn a_test_runs_as_long_as_its_work_takes_past_the_agents_timeout() {
+        let slow = Duration::from_secs(61);
+        let (base, _captured) = sse_wire_capturing_after(slow, vec![one_round_answer(); 3]).await;
+        let row = json!({
+            "providers": { "local": { "style": "openai", "baseUrl": base + "/v1", "models": [{ "id": "tiny" }] } },
+            "agents": { "distiller": { "provider": "local", "maxTurns": 4, "tools": [], "timeoutMs": 60_000 } }
+        });
         let state = LlmState::new();
-        state.apply(LlmConfig::parse(&json!({
-            "providers": { "local": { "style": "openai", "baseUrl": "http://127.0.0.1:9/v1", "models": [{ "id": "tiny" }] } },
-            "agents": { "distiller": { "provider": "local", "timeoutMs": 3_600_000 }, "asker": { "runtime": "chat", "provider": "local" } }
-        }))
-        .expect("row"));
-        let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
-        let agent = state.agent("distiller").expect("agent");
-        let plan = TestPlan::of(&agent, &Map::new(), services.clone()).expect("plan");
-        assert_eq!(plan.bound, Duration::from_secs(3600));
-        let asker = state.agent("asker").expect("asker");
-        assert_eq!(TestPlan::of(&asker, &Map::new(), services).expect("plan").bound, Duration::from_secs(1800), "the default timeoutMs");
-        let chat = agent.chat(&state.config().providers).expect("chat");
-        let mut run = chat.run_recorder("builtin");
-        let elapsed = tokio::time::timeout(Duration::ZERO, std::future::pending::<Result<LoopOutcome, String>>()).await;
-        let answer = loop_answer(elapsed, &chat, &mut run, "be brief", "go", plan.bound, Instant::now());
-        assert_eq!(answer["error"], "the agent took longer than 3600 s (its timeoutMs)", "{answer}");
-        assert_eq!((&answer["ok"], &answer["ms"]), (&json!(false), &json!(3_600_000)));
+        state.apply(LlmConfig::parse(&row).expect("row"));
+        let dir = swiss_core::paths::test_home().join(format!("llm-api-long-{}", swiss_core::util::random_hex(8)));
+        let history = swiss_llm::history::LlmHistory::open(&dir).await.expect("open");
+        state.install_history(history.clone());
+        let app = mount(state);
+        let storeless = LlmState::new();
+        storeless.apply(LlmConfig::parse(&row).expect("row"));
+        let storeless = mount(storeless);
+        let waited = tokio::time::Instant::now();
+        let (status, body) = call(&app, "POST", "/api/llm/agents/test", Some(json!({ "agent": "distiller", "prompt": "take your time" }))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!((&body["ok"], &body["text"]), (&json!(true), &json!("done.")), "{body}");
+        assert!(waited.elapsed() >= slow, "the blocking lane waited past timeoutMs");
+        let waited = tokio::time::Instant::now();
+        let (status, _ct, text) =
+            call_text(&app, "POST", "/api/llm/agents/test/stream", Some(json!({ "agent": "distiller", "prompt": "take your time" }))).await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let (_, done) = events_of(&text).into_iter().find(|(name, _)| name == "done").expect("a done frame");
+        assert_eq!((&done["ok"], &done["text"]), (&json!(true), &json!("done.")), "{done}");
+        assert!(waited.elapsed() >= slow, "the live lane waited past timeoutMs");
+        let waited = tokio::time::Instant::now();
+        let (status, _ct, text) =
+            call_text(&storeless, "POST", "/api/llm/agents/test/stream", Some(json!({ "agent": "distiller", "prompt": "take your time" }))).await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let (_, done) = events_of(&text).into_iter().find(|(name, _)| name == "done").expect("a done frame");
+        assert_eq!((&done["ok"], &done["text"], &done["runId"]), (&json!(true), &json!("done."), &Value::Null), "{done}");
+        assert!(waited.elapsed() >= slow, "the store-less lane waited past timeoutMs");
+        history.close().await.expect("close");
     }
 
     #[test]

@@ -796,12 +796,6 @@ impl AgentConfig {
         }
     }
 
-    /// How long one send may drive, whoever drives it (a task, a Test, a Data
-    /// conversation, its compaction): the agent's own `timeoutMs`, the whole task's cap.
-    pub fn deadline(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(self.timeout_ms)
-    }
-
     /// The chat client a builtin or chat agent asks through, at its own effort.
     pub fn chat(&self, providers: &BTreeMap<String, ProviderEntry>) -> Result<Chat, String> {
         self.chat_at(providers, self.effort)

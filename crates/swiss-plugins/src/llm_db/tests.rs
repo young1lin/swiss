@@ -21,7 +21,7 @@
 use super::*;
 use super::super::{CHANNELS_NAMED, DB_COMPACT_INSTRUCTION, PAYLOAD_SHOWN, TABLES_NAMED};
 use super::super::routes::{collections_fact, keyspace_fact, pubsub_fact, tables_fact};
-use crate::llm_api::tests::{call, call_text, events_of, one_round_answer, sse_wire_capturing};
+use crate::llm_api::tests::{call, call_text, events_of, one_round_answer, sse_wire_capturing, sse_wire_capturing_after};
 use axum::http::StatusCode;
 use swiss_host::dbbrowser::BrowserFlavor;
 use swiss_host::services::RuntimeServices;
@@ -1135,7 +1135,14 @@ async fn app(frames: Vec<String>, agents: Value) -> (axum::Router, Arc<std::sync
 }
 
 async fn app_with_bus(frames: Vec<String>, agents: Value) -> (axum::Router, Arc<std::sync::Mutex<Vec<String>>>, Arc<StubPg>, Arc<swiss_bus::Bus>) {
-    let (base, captured) = sse_wire_capturing(frames).await;
+    app_on(sse_wire_capturing(frames).await, agents).await
+}
+
+/// The Data app over a given provider wire (its base URL and its captured asks).
+async fn app_on(
+    (base, captured): (String, Arc<std::sync::Mutex<Vec<String>>>),
+    agents: Value,
+) -> (axum::Router, Arc<std::sync::Mutex<Vec<String>>>, Arc<StubPg>, Arc<swiss_bus::Bus>) {
     let state = LlmState::new();
     state.apply(LlmConfig::parse(&json!({
         "providers": {
@@ -1672,6 +1679,32 @@ fn answer_with(text: &str) -> String {
 
 fn db_agent() -> Value {
     json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 4 } })
+}
+
+/// No clock cuts a Data conversation: a send, and its compaction, whose provider answers
+/// only after the agent's whole timeoutMs still land - the send its answer, the
+/// compaction its checkpoint. The wire's paused clock skips the wait; the elapsed checks
+/// prove each one really waited past timeoutMs.
+#[tokio::test]
+async fn a_send_and_its_compaction_run_as_long_as_their_work_takes_past_the_agents_timeout() {
+    let slow = std::time::Duration::from_secs(61);
+    let frames = vec![one_round_answer(), answer_with("## Requests and Intent\n- count the posts")];
+    let agents = json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 4, "timeoutMs": 60_000 } });
+    let (app, _captured, _pg, _bus) = app_on(sse_wire_capturing_after(slow, frames).await, agents).await;
+    let waited = tokio::time::Instant::now();
+    let (status, _ct, text) = call_text(&app, "POST", "/api/llm/db/stream", Some(json!({ "agent": "data", "conn": "mm", "prompt": "count the posts" }))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let events = events_of(&text);
+    let (_, done) = events.iter().find(|(name, _)| name == "done").expect("a done frame");
+    assert_eq!((&done["ok"], &done["text"]), (&json!(true), &json!("done.")), "{done}");
+    assert!(waited.elapsed() >= slow, "the send waited past timeoutMs");
+    let from = events[0].1["runId"].as_i64().expect("run id");
+    let waited = tokio::time::Instant::now();
+    let (status, _ct, text) = call_text(&app, "POST", "/api/llm/db/compact", Some(json!({ "agent": "data", "conn": "mm", "runId": from }))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let (_, done) = events_of(&text).into_iter().find(|(name, _)| name == "done").expect("a done frame");
+    assert_eq!((&done["ok"], &done["compacted"]), (&json!(true), &json!(true)), "{done}");
+    assert!(waited.elapsed() >= slow, "the compaction waited past timeoutMs");
 }
 
 /// The text of a captured request's messages, role by role.
