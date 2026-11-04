@@ -54,7 +54,7 @@ import {
 // below: data-tabs reaches back for renderDbTables, and both sides only call across it inside
 // functions, never at module scope.
 import {
-  dbAfterTabSwitch, dbConsolesLoad, dbLastTableTab, dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsContext,
+  dbAfterTabSwitch, dbConsolesLoad, dbConsolesRelease, dbLastTableTab, dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsContext,
   dbTabsPending, dbTabPending, renderDbTabs,
 } from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
@@ -225,7 +225,7 @@ async function loadDbView()                {
   // dbReplaceConn installs a new record when this entry had none (or the old one left the
   // registry). `d` is that previous record, so its conn is not the one now on screen.
   const opened = dbConn().conn;
-  if (opened) void dbConsolesLoad(opened);
+  if (opened) void dbConsolesLoad(opened); else dbConsolesRelease();
 }
 
 /** Paint the live session whole, then fetch only what it lacks (SPEC §data.sessions). What the session

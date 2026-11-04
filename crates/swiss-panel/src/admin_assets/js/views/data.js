@@ -16,6 +16,7 @@
 
 import { $ } from "../util.js";
 import { dbConnLabel, dbDropAllEdits, dbOkToLeave, dbPendingAll, dbSessionPinned, loadDbView } from "../data-view.js";
+import { dbConsolesRelease } from "../data-tabs.js";
 import { dbConn, dbSuspendView } from "../db-state.js";
 import { dbPubsubStop } from "../data-pubsub.js";
 import { dbSqlHighlightClear } from "../data-filters.js";
@@ -36,6 +37,7 @@ export function unmount() {
   dbDropAllEdits();
   // A live pub/sub feed is a subscription on the server: it ends with the page (SPEC §data.pubsub).
   dbPubsubStop();
+  dbConsolesRelease();
   dbSuspendView(dbSessionPinned);
   // Take the workspace framing back off (data-view.js's renderDbView adds it) so the next
   // page — whatever it is — starts from the pane's ordinary padding.

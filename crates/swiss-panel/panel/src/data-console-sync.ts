@@ -1,5 +1,8 @@
-/* Per-console serialization for browser edits. A failed compare-and-swap keeps the draft and
- * stops retries until the caller explicitly resolves it; it never rebases text silently. */
+/* One person, two windows are two views of the same work (SPEC §bus.editing).
+ * Per-console serialization and compare-and-swap refuse concurrent edits; nothing is
+ * lost or merged silently. A future merge must be three-way: base = the record at
+ * the draft's starting revision, ours = the draft, theirs = the current record.
+ * A refused draft stays until the person resolves it; text never rebases silently. */
 export interface ConsoleRecord {
   id: string;
   tab: string;
@@ -12,6 +15,9 @@ export interface ConsoleRecord {
   updatedAt: number;
   closedAt: number | null;
 }
+
+// An unanswered transport write remains pending for resync (SPEC §bus.requests).
+export class ConsolePending extends Error {}
 
 type Write = (conn: string, record: ConsoleRecord) => Promise<ConsoleRecord>;
 interface Item { value: ConsoleRecord; generation: number; saved: number; failed: boolean; reason?: string; active?: Promise<boolean> }
@@ -100,7 +106,7 @@ export class ConsoleSync {
         item.value.closedAt = saved.closedAt;
         item.saved = generation;
       } catch (e) {
-        item.failed = true;
+        item.failed = !(e instanceof ConsolePending);
         item.reason = e instanceof Error ? e.message : String(e);
         return false;
       }

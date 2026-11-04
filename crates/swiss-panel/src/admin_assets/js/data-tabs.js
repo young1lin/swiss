@@ -25,11 +25,14 @@ import { dbActiveIndex, dbConn, dbIsMounted, dbOnSqlTextChanged, dbParkedNames, 
 import { dbClosedAdd, dbClosedAdopt, dbClosedById, dbClosedClear, dbClosedDrop, dbClosedEmpty, dbClosedFor, dbClosedLocalFor, dbClosedLocalForget, dbClosedLocalOnly, dbClosedRemember, dbClosedTake } from "./data-closed.js";
                                                     
 import {
-  dbClosedEntry, dbConsoleAdopt, dbConsoleClearClosed, dbConsoleFlush, dbConsoleForget, dbConsoleOnSettled, dbConsolePut, dbConsoleRebase,
+  consoleFromWire, dbClosedEntry, dbConsoleAdopt, dbConsoleClearClosed, dbConsoleFlush, dbConsoleForget, dbConsoleOnSettled, dbConsolePut, dbConsoleRebase,
   dbConsoleRecord, dbConsoleStage, dbConsoleStoreList, dbConsoleStoreOn, dbConsoleSyncReason, dbConsoleSyncState,
 } from "./data-console-store.js";
                                                          
                                                             
+import { busOn, busOnResync, pageId } from "./bus/bus.js";
+import { Module } from "./bus/pb/swiss/bus/v1/bus_pb.js";
+import { ConsoleGoneSchema, ConsoleSavedSchema, ConsolesClearedSchema, ConsolesId, DataSub } from "./bus/pb/swiss/bus/v1/data_pb.js";
 import { dbIsRedis, dbLoadRedisValue } from "./data-browsers.js";
 import { dbIsMongo, mongoAfterTabSwitch, mongoCurrentDb } from "./data-mongo.js";
 import { dbActivityPollStop, dbActivityStart } from "./data-activity.js";
@@ -130,25 +133,11 @@ function dbConsoleTabOf(record               )           {
   return t;
 }
 
-/** Put the open records the page does not already have back on the strip, oldest first, and
- *  bring the newest in front. True when the strip changed. */
-function dbAdoptConsoles(records                 )          {
-  const tabs = dbTabs();
-  const open = new Set(tabs.filter((t       )          => t.kind === "sql").map((t) => (t            ).id));
-  const add = records.filter((r) => r.open && !open.has(r.id))
-    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.id.localeCompare(b.id))
-    .map(dbConsoleTabOf);
-  if (!add.length) return false;
-  const next          = tabs.filter(dbTabVisible).concat(add);
-  dbResetTabs(next, next.length - 1);
-  return true;
-}
-
 /** Where this connection's own legacy drafts are imported from, once: localStorage entries and
  *  open consoles born before the store answered. Create-only - a record already on the server
  *  always wins, and a refused import keeps the local copy for the next visit. */
-async function dbConsoleMigrate(conn        , records                 )                {
-  const known = new Set(records.map((r) => r.id));
+async function dbConsoleMigrate(conn        , records                 , removed             )                {
+  const known = new Set(records.map((r) => r.id).concat([...removed]));
   const migrated           = [];
   for (const e of dbClosedLocalFor(conn)) {
     if (known.has(e.id)) { migrated.push(e.id); continue; }
@@ -180,91 +169,189 @@ async function dbConsoleMigrate(conn        , records                 )         
 const dbConsoleLoaded = new Set        ();
 const dbConsoleLoading = new Set        ();
 export async function dbConsolesLoad(conn        )                {
-  if (!conn || dbConsoleLoaded.has(conn) || dbConsoleLoading.has(conn)) return;
+  if (!conn || dbConsoleLoading.has(conn)) return;
+  dbSubscribeConsoles(conn);
+  if (dbConsoleLoaded.has(conn)) { await dbConsolesRefresh(conn); return; }
   dbConsoleLoading.add(conn);
+  const epoch = dbConsoleEpoch;
+  const read = dbBeginConsoleRead(conn);
   try {
-    const records = await dbConsoleStoreList(conn);
+    const snapshot = await dbConsoleStoreList(conn);
+    const records = snapshot?.filter(r => !read.removed.has(r.id) && (!read.cleared || r.open));
     if (!records) { dbClosedLocalOnly(conn); return; }
-    if (dbConn().conn !== conn) return;
-    dbClosedAdopt(conn, records.filter((r) => !r.open).map((r) => dbClosedEntry(conn, r)));
-    for (const t of dbTabs()) {
-      if (t.kind !== "sql") continue;
-      const record = records.find((r) => r.id === t.id && r.open);
-      if (!record) continue;
-      t.revision = record.revision;
-      if (record.createdAt) t.createdAt = record.createdAt;
-      if (record.updatedAt) t.updatedAt = record.updatedAt;
+    if (dbConn().conn !== conn || epoch !== dbConsoleEpoch) return;
+    const emptyStrip = !dbTabs().some(dbTabVisible);
+    for (const record of records.slice().sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))) {
+      if (epoch !== dbConsoleEpoch) break;
+      applyServerConsole(conn, record);
     }
-    const adopted = dbAdoptConsoles(records);
-    await dbConsoleMigrate(conn, records);
+    if (emptyStrip) {
+      const newest = records.filter(r => r.open).sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id))[0];
+      const at = newest ? dbTabs().findIndex(t => t.kind === "sql" && t.id === newest.id) : -1;
+      if (at >= 0) { dbSetActive(at); dbAfterTabSwitch(true); }
+    }
+    await dbConsoleMigrate(conn, records, read.removed);
     if (dbConn().conn !== conn) return;
     dbConsoleLoaded.add(conn);
-    if (adopted) dbAfterTabSwitch();
-    else { renderDbTabs(); renderDbTables(); }
+    renderDbTabs(); renderDbTables();
   } finally {
+    dbConsoleReads.delete(conn);
     dbConsoleLoading.delete(conn);
   }
 }
 
-/* The same connection is often open in two windows - the desktop GUI and a browser tab. The
-   store used to be read once per visit, so the window that did not make an edit kept showing
-   the text it loaded, and its next save or close was refused as stale with nothing on the
-   page saying why. Coming back to a window now reads the store again and catches up wherever
-   this page holds no work of its own:
-   - a clean tab whose record moved on takes the newer text, title and revision;
-   - a clean tab closed elsewhere closes here too and is filed in Recently closed;
-   - consoles opened elsewhere join the strip without taking the front.
-   A tab with a draft is never rewritten: its save is refused and the console's conflict bar
-   asks the reader (dbPaintConsoleConflict). A local close, restore or resolve that runs while
-   the read is in flight bumps the epoch, and the stale answer is dropped whole. */
+/* One person has two views of the same work (SPEC §bus.editing). A clean tab follows
+   revisions; a draft is never rewritten or silently merged. A future merge is three-way:
+   base = the record at the draft's starting revision, ours = the draft, theirs = current.
+   The epoch drops a read overtaken by a local close, restore or conflict resolution. */
 let dbConsoleEpoch = 0;
-let dbConsoleRefreshing = false;
-export async function dbConsolesRefresh(conn        )                {
-  if (!conn || dbConsoleRefreshing || !dbConsoleLoaded.has(conn) || !dbConsoleStoreOn(conn)) return;
-  dbConsoleRefreshing = true;
-  const epoch = dbConsoleEpoch;
-  try {
-    const records = await dbConsoleStoreList(conn, true);
-    if (!records || dbConn().conn !== conn || epoch !== dbConsoleEpoch || !dbIsMounted()) return;
-    const byId = new Map(records.map((r) => [r.id, r]));
-    const tabs = dbTabs();
-    const live = dbTab();
-    let shownChanged = false;
-    const gone = new Set       ();
-    for (const t of tabs) {
-      if (t.kind !== "sql" || t.analysisId) continue;
-      const record = byId.get(t.id);
-      if (!record || record.revision <= (t.revision || 0) || dbConsoleSyncState(conn, t.id) !== "clean") continue;
-      if (!record.open) { gone.add(t); dbConsoleForget(conn, t.id); continue; }
-      t.sqlText = record.sql;
-      t.revision = record.revision;
-      if (record.createdAt) t.createdAt = record.createdAt;
-      if (record.updatedAt) t.updatedAt = record.updatedAt;
-      if (record.tab && record.tab !== dbTabTitle(t)) {
-        const fallback = tr(dbConsoleSpeaksCommands() ? "dataTabs.command" : "dataTabs.sql");
-        t.custom = record.tab !== fallback ? record.tab : undefined;
+const dbConsoleRefreshing = new Set        ();
+const dbConsoleSubscriptions = new Map                    ();
+const dbConsoleSeen = new Map                                    ();
+                                                                                     
+const dbConsoleReads = new Map                     ();
+function dbBeginConsoleRead(conn        )              {
+  const read = { events: new Set        (), removed: new Set        (), cleared: false };
+  dbConsoleReads.set(conn, read);
+  return read;
+}
+
+/** An unmounted Data page holds no console topic (SPEC §bus.topics). Revisit reads again. */
+export function dbConsolesRelease()       {
+  for (const off of dbConsoleSubscriptions.values()) off();
+  dbConsoleSubscriptions.clear();
+}
+
+function dbSubscribeConsoles(conn        )       {
+  if (dbConsoleSubscriptions.has(conn)) return;
+  // Subscribe to the visible connection only; a parked view subscribes and reads on
+  // revisit. Every topic we hold is re-read on WELCOME (SPEC §bus.topics).
+  dbConsolesRelease();
+  const off                    = [];
+  dbClosedAdopt(conn, []);
+  off.push(busOnResync(() => {
+    if (dbConn().conn !== conn) return;
+    if (dbConsoleLoaded.has(conn)) void dbConsolesRefresh(conn);
+    else void dbConsolesLoad(conn);
+  }));
+  const topic = { module: Module.DATA, sub: DataSub.CONSOLES, key: conn };
+  off.push(busOn(topic, ConsolesId.CONSOLES_CHANGED, ConsoleSavedSchema, (saved, origin) => {
+    if (origin === pageId || !saved.console) return;
+    const read = dbConsoleReads.get(conn);
+    read?.events.add(saved.console.id);
+    read?.removed.delete(saved.console.id);
+    applyServerConsole(conn, consoleFromWire(saved.console));
+  }));
+  off.push(busOn(topic, ConsolesId.CONSOLES_REMOVED, ConsoleGoneSchema, (gone) => {
+    const read = dbConsoleReads.get(conn);
+    read?.removed.add(gone.id);
+    read?.events.delete(gone.id);
+    dbRemoveServerConsole(conn, gone.id);
+  }));
+  off.push(busOn(topic, ConsolesId.CONSOLES_CLEARED, ConsolesClearedSchema, () => {
+    const read = dbConsoleReads.get(conn);
+    if (read) read.cleared = true;
+    for (const record of dbConsoleSeen.get(conn)?.values() || []) {
+      if (!record.open) {
+        read?.removed.add(record.id);
+        read?.events.delete(record.id);
+        dbRemoveServerConsole(conn, record.id);
       }
-      dbConsoleAdopt(conn, record);
-      if (t === live) shownChanged = true;
     }
-    dbClosedAdopt(conn, records.filter((r) => !r.open).map((r) => dbClosedEntry(conn, r)));
-    const have = new Set(tabs.filter((t       )                => t.kind === "sql").map((t) => t.id));
-    const add = records.filter((r) => r.open && !have.has(r.id))
-      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.id.localeCompare(b.id))
-      .map(dbConsoleTabOf);
-    if (gone.size || add.length) {
-      let next = tabs.filter((t       )          => !gone.has(t));
-      if (add.length) next = next.filter(dbTabVisible).concat(add);
-      if (!next.length) next.push(dbHomeTab());
-      const at = next.indexOf(live);
-      dbResetTabs(next, at >= 0 ? at : Math.min(dbActiveIndex(), next.length - 1));
-      // The console in front went away: the pane follows the strip to its new active tab.
-      if (at < 0) { dbAfterTabSwitch(true); return; }
+    dbClosedEmpty(conn);
+    if (dbConn().conn === conn) renderDbTabs();
+  }));
+  dbConsoleSubscriptions.set(conn, () => { for (const stop of off) stop(); });
+}
+
+/** Events, the first read and reconnect reads all use this revision gate (SPEC §bus.topics).
+ *  A pending write whose answer was lost adopts matching state; different draft text stays. */
+export function applyServerConsole(conn        , record               )       {
+  if (dbConn().conn !== conn) return;
+  let seen = dbConsoleSeen.get(conn);
+  if (!seen) { seen = new Map(); dbConsoleSeen.set(conn, seen); }
+  const before = seen.get(record.id);
+  if (before && record.revision < before.revision) return;
+  seen.set(record.id, record);
+  const tabs = dbTabs(), live = dbTab();
+  const tab = tabs.find((t)                => t.kind === "sql" && !t.analysisId && t.id === record.id);
+  if (tab) {
+    if (record.revision <= (tab.revision || 0)) return;
+    if (!tab.revision && dbConsoleSyncState(conn, tab.id) === "clean"
+      && (tab.sqlText !== record.sql || dbTabTitle(tab) !== record.tab
+        || (tab.agent === true) !== record.agent || (tab.agentTab || null) !== record.agentTab)) {
+      dbConsoleStage(conn, tab, dbTabTitle(tab));
     }
-    if (shownChanged) dbShowConsoleText(live            );
+    const state = dbConsoleSyncState(conn, tab.id);
+    if (state !== "clean" && !(state === "pending" && record.open && tab.sqlText === record.sql
+      && dbTabTitle(tab) === record.tab && (tab.agent === true) === record.agent
+      && (tab.agentTab || null) === record.agentTab)) return;
+    dbConsoleAdopt(conn, record);
+    if (!record.open) {
+      dbClosedAdd(conn, dbClosedEntry(conn, record));
+      dbDropCleanConsole(conn, record.id);
+      return;
+    }
+    tab.sqlText = record.sql;
+    tab.revision = record.revision;
+    tab.createdAt = record.createdAt || null;
+    tab.updatedAt = record.updatedAt || null;
+    tab.agent = record.agent || undefined;
+    tab.agentTab = record.agentTab || undefined;
+    const fallback = tr(dbConsoleSpeaksCommands() ? "dataTabs.command" : "dataTabs.sql");
+    tab.custom = record.tab && record.tab !== fallback ? record.tab : undefined;
+    dbClosedDrop(conn, record.id);
+    if (tab === live) dbShowConsoleText(tab);
+  } else if (!record.open) {
+    dbConsoleAdopt(conn, record);
+    dbClosedAdd(conn, dbClosedEntry(conn, record));
+  } else {
+    dbConsoleAdopt(conn, record);
+    dbClosedDrop(conn, record.id);
+    const next = tabs.filter(dbTabVisible).concat(dbConsoleTabOf(record));
+    const at = next.indexOf(live);
+    dbResetTabs(next, at >= 0 ? at : 0);
+    if (at < 0) dbAfterTabSwitch(true);
+  }
+  renderDbTabs();
+}
+
+function dbDropCleanConsole(conn        , id        )       {
+  if (dbConn().conn !== conn || dbConsoleSyncState(conn, id) !== "clean") return;
+  const tabs = dbTabs(), live = dbTab();
+  const next = tabs.filter((t) => t.kind !== "sql" || t.id !== id || t.analysisId);
+  if (next.length === tabs.length) return;
+  dbConsoleForget(conn, id);
+  if (!next.length) next.push(dbHomeTab());
+  const at = next.indexOf(live);
+  dbResetTabs(next, at >= 0 ? at : Math.min(dbActiveIndex(), next.length - 1));
+  if (at < 0) dbAfterTabSwitch(true); else renderDbTabs();
+}
+
+function dbRemoveServerConsole(conn        , id        )       {
+  dbConsoleSeen.get(conn)?.delete(id);
+  dbClosedDrop(conn, id);
+  dbDropCleanConsole(conn, id);
+}
+
+export async function dbConsolesRefresh(conn        )                {
+  if (!conn || dbConsoleRefreshing.has(conn) || !dbConsoleLoaded.has(conn) || !dbConsoleStoreOn(conn)) return;
+  dbConsoleRefreshing.add(conn);
+  const epoch = dbConsoleEpoch;
+  const read = dbBeginConsoleRead(conn);
+  try {
+    const snapshot = await dbConsoleStoreList(conn, true);
+    const records = snapshot?.filter(r => !read.removed.has(r.id) && (!read.cleared || r.open));
+    if (!records || dbConn().conn !== conn || epoch !== dbConsoleEpoch || !dbIsMounted()) return;
+    const known = new Set(records.map((r) => r.id).concat([...read.events]));
+    for (const id of dbConsoleSeen.get(conn)?.keys() || []) {
+      if (!known.has(id)) dbRemoveServerConsole(conn, id);
+    }
+    for (const record of records) applyServerConsole(conn, record);
     renderDbTabs();
   } finally {
-    dbConsoleRefreshing = false;
+    dbConsoleReads.delete(conn);
+    dbConsoleRefreshing.delete(conn);
   }
 }
 
@@ -279,17 +366,6 @@ function dbShowConsoleText(t          )       {
   if (focused) ta.setSelectionRange(Math.min(start, ta.value.length), Math.min(end, ta.value.length));
   dbSqlPaint();
 }
-
-/** A window coming back to the front (focus) or a browser tab becoming visible again is the
- *  moment another window may have written this connection's consoles. */
-function dbConsolesCatchUp()       {
-  if (document.visibilityState === "hidden" || !dbIsMounted()) return;
-  const conn = dbConn().conn;
-  if (conn) void dbConsolesRefresh(conn);
-}
-// Guarded: a test environment without a window still imports this module.
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("focus", dbConsolesCatchUp);
-if (typeof document !== "undefined" && typeof document.addEventListener === "function") document.addEventListener("visibilitychange", dbConsolesCatchUp);
 
 /* --- pure: what a tab is, and what it is worth ---------------------------------------------------- */
 

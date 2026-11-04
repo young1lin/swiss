@@ -104,7 +104,7 @@ export function busRequest<Q extends DescMessage, R extends DescMessage>(
   reply: R,
 ): Promise<MessageShape<R>> {
   return linkRequest(route.module, route.sub, route.id, key, toBinary(route.schema, req)).then((frame) => {
-    if (frame.fault && frame.fault.code) {
+    if (frame.fault) {
       const params: Record<string, string> = {};
       for (const [k, v] of Object.entries(frame.fault.params)) if (typeof v === "string") params[k] = v;
       return Promise.reject(new BusFault(frame.fault.code, frame.fault.message, params));

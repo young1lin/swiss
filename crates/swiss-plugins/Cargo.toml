@@ -16,6 +16,10 @@ publish.workspace = true
 # is not rebuilt when only the root's files change.
 [dependencies]
 swiss-core = { path = "../swiss-core" }
+# DATA.CONSOLES uses the existing bus and prost codecs (SPEC §bus.requests).
+# Both already ship; this adds no codec, runtime or transitive crate.
+swiss-bus = { path = "../swiss-bus" }
+prost = { version = "0.14", default-features = false, features = ["derive", "std"] }
 swiss-host = { path = "../swiss-host" }
 swiss-mcp = { path = "../swiss-mcp" }
 swiss-terminal = { path = "../swiss-terminal" }

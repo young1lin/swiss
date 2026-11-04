@@ -39,6 +39,7 @@ mod tools;
 
 pub use routes::{compact, context, conversations, open_conversation, reopen, stream};
 
+/// The task a Data conversation files under; its subject is the connection.
 pub const TASK: &str = "data.agent";
 /// The lease holder name the catalog sees.
 const HOLDER: &str = "data.agent";

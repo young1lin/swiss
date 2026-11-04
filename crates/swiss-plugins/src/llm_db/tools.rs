@@ -474,7 +474,7 @@ impl DbTools {
             id: tab.id.clone(), tab: tab.tab.clone(), agent: tab.agent, agent_tab: tab.agent_tab.clone(),
             open: tab.open, sql: tab.sql_text.clone().ok_or("original console text unavailable; sync the draft before using the console store")?,
             revision: tab.revision, created_at: tab.created_at, updated_at: tab.updated_at, closed_at: None,
-        }, if tab.revision == 0 { crate::db_consoles::SaveMode::Create } else { crate::db_consoles::SaveMode::Update })?;
+        }, if tab.revision == 0 { crate::db_consoles::SaveMode::Create } else { crate::db_consoles::SaveMode::Update }, "")?;
         tab.revision = saved.revision;
         tab.created_at = saved.created_at;
         tab.updated_at = saved.updated_at;

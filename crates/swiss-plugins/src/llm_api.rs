@@ -68,11 +68,12 @@ const DEFAULT_PROMPT: &str = "Reply with one short sentence that names the model
 pub(crate) const SSE_FRAMES: usize = 32;
 
 pub fn mount(state: Arc<LlmState>, services: Arc<RuntimeServices>) -> Router {
-    mount_with_analysis(state, services, crate::analysis::AnalysisStore::home())
+    let analysis = crate::analysis::AnalysisStore::home();
+    let consoles = crate::db_consoles::ConsoleStore::at(analysis.root().with_file_name("consoles"), services.bus.clone());
+    mount_with_analysis(state, services, analysis, consoles)
 }
 
-pub fn mount_with_analysis(state: Arc<LlmState>, services: Arc<RuntimeServices>, analysis: Arc<crate::analysis::AnalysisStore>) -> Router {
-    let consoles = crate::db_consoles::ConsoleStore::at(analysis.root().with_file_name("consoles"));
+pub fn mount_with_analysis(state: Arc<LlmState>, services: Arc<RuntimeServices>, analysis: Arc<crate::analysis::AnalysisStore>, consoles: Arc<crate::db_consoles::ConsoleStore>) -> Router {
     Router::new()
         .route("/api/llm/status", get(status))
         .route("/api/llm/providers/test", post(provider_test))
@@ -84,7 +85,6 @@ pub fn mount_with_analysis(state: Arc<LlmState>, services: Arc<RuntimeServices>,
         .route("/api/llm/agents/test/steer", post(agent_test_steer))
         .route("/api/llm/agents/test/steer/withdraw", post(agent_test_withdraw))
         .route("/api/llm/db/stream", post(crate::llm_db::stream))
-        .route("/api/llm/db/consoles", get(crate::db_consoles::list).post(crate::db_consoles::save).delete(crate::db_consoles::remove))
         .route("/api/llm/db/conversation", get(crate::llm_db::open_conversation))
         .route("/api/llm/db/conversations", get(crate::llm_db::conversations))
         .route("/api/llm/db/context", get(crate::llm_db::context))

@@ -409,7 +409,9 @@ pub async fn run_gateway() -> Result<(), String> {
     if interrupted > 0 {
         swiss_core::log::log("info", "analysis ledger recovered", Some(serde_json::json!({ "interrupted": interrupted })));
     }
-    let llm_plugin = Arc::new(swiss_plugins::llm::LlmPlugin::new(services.clone(), llm_state.clone()));
+    let console_store = swiss_plugins::db_consoles::ConsoleStore::at(
+        analysis_store.root().with_file_name("consoles"), services.bus.clone());
+    let llm_plugin = Arc::new(swiss_plugins::llm::LlmPlugin::new(services.clone(), llm_state.clone(), console_store.clone()));
     // The memory plugin (SPEC §memory): the #memory page, the /api/knowledge
     // routes and the builtin memory MCP (twelve tools under /mcp/memory, every one
     // scoped by the caller's cwd). It requires "llm" for the semantic tier and sync
@@ -478,7 +480,7 @@ pub async fn run_gateway() -> Result<(), String> {
         // the structured 503 here too.
         .merge(swiss_plugins::memory_api::mount(memory_state))
         // Same guard and boundary: the /api/llm tree is owned by the llm plugin.
-        .merge(swiss_plugins::llm_api::mount_with_analysis(llm_state, services.clone(), analysis_store.clone()))
+        .merge(swiss_plugins::llm_api::mount_with_analysis(llm_state, services.clone(), analysis_store.clone(), console_store))
         // The /api/analysis tree belongs to the same plugin (route_owner /api/analysis): the
         // analyses, their revisions, executions and paged results (SPEC §data.analysis).
         .merge(swiss_plugins::analysis_api::mount(analysis_store, services.clone()))

@@ -14,6 +14,8 @@ import {
 } from "../src/db-state.js";
 import { tr } from "../src/i18n.js";
 import type { DbSqlTab } from "../src/types/state.js";
+import { consolePeer, ConsolePeer } from "./console-bus-fixture.js";
+import { pageId } from "../src/bus/bus.js";
 import type { ConsoleRecord } from "../src/data-console-sync.js";
 import { dbConn, dbPage } from "./db-fixtures.js";
 
@@ -28,8 +30,9 @@ function shellSkeleton(): string {
   return Array.from(new Set(ids)).map((id) => '<div id="' + id + '"></div>').join("");
 }
 
-interface Call { method: string; url: string; body: Record<string, unknown> | null }
+interface Call { topic?: string; method: string; url: string; body: Record<string, unknown> | null }
 let calls: Call[] = [];
+let peer: ConsolePeer;
 /** A test's own answers; anything it leaves falls through to one empty page. */
 let route: (c: Call) => [number, unknown] | undefined = () => undefined;
 
@@ -77,8 +80,8 @@ function enter(conn: string): void {
   view.renderDbView();
 }
 
-const onConsoles = (c: Call): boolean => c.url.startsWith("/api/llm/db/consoles");
-const posted = (): ConsoleRecord[] => calls.filter((c) => c.method === "POST" && onConsoles(c))
+const onConsoles = (c: Call): boolean => c.topic === "DATA.CONSOLES";
+const posted = (): ConsoleRecord[] => calls.filter((c) => c.method === "PUT" && onConsoles(c))
   .map((c) => c.body?.console as ConsoleRecord);
 
 /** Run the microtasks a chain of awaits and immediate-answer fetches needs. */
@@ -97,6 +100,15 @@ beforeEach(() => {
   vi.useFakeTimers();
   calls = [];
   route = () => undefined;
+  peer = consolePeer();
+  peer.answer = (c) => {
+    calls.push(c);
+    const [status, body] = route(c) || [200, { consoles: [] }];
+    const data = body as Record<string, unknown>;
+    if (status >= 400) return { fault: { code: typeof data.code === "string" ? data.code : status === 409 ? "console.changed" : "",
+      message: String(data.error || "") } };
+    return { body: data };
+  };
   localStorage.clear();
   document.body.innerHTML = shellSkeleton();
   unmountDbView();
@@ -117,15 +129,15 @@ describe("a connection whose consoles live on the server (SPEC §data.agent Tabs
     };
     await view.loadDbView();
     await settle();
-    const hit = calls.find((c) => c.method === "GET" && c.url.startsWith("/api/llm/db/consoles"));
-    expect(hit && decodeURIComponent(hit.url), "the opened connection, not the empty record load captured").toContain("conn=proof-entry");
+    const hit = calls.find((c) => c.method === "LIST" && onConsoles(c));
+    expect(hit?.body?.conn, "the opened connection, not the empty record load captured").toBe("proof-entry");
   });
 
   it("puts its open consoles back on the strip and its closed ones in Recently closed", async () => {
     enter("srv1");
     const open = rec({ id: "srv-1", tab: "Report", agent: true, agentTab: "Report", sql: "select  1\n", revision: 3, createdAt: 100, updatedAt: 200 });
     const shut = rec({ id: "srv-2", tab: "Old", open: false, sql: "SELECT 2;\n", revision: 2, createdAt: 50, updatedAt: 60, closedAt: 70 });
-    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [open, shut] }] : undefined;
+    route = (c) => onConsoles(c) && c.method === "LIST" ? [200, { consoles: [open, shut] }] : undefined;
 
     await tabs.dbConsolesLoad("srv1");
 
@@ -158,8 +170,8 @@ describe("a connection whose consoles live on the server (SPEC §data.agent Tabs
     const shut = rec({ id: "srv-3", tab: "Old", open: false, sql: "server copy", revision: 4, closedAt: 60 });
     route = (c) => {
       if (!onConsoles(c)) return undefined;
-      if (c.method === "GET") return [200, { consoles: [shut] }];
-      if (c.method === "POST") return [200, { console: { ...(c.body?.console as ConsoleRecord), revision: 5, createdAt: 900, updatedAt: 900 } }];
+      if (c.method === "LIST") return [200, { consoles: [shut] }];
+      if (c.method === "PUT") return [200, { console: { ...(c.body?.console as ConsoleRecord), revision: 5, createdAt: 900, updatedAt: 900 } }];
       return undefined;
     };
 
@@ -167,7 +179,7 @@ describe("a connection whose consoles live on the server (SPEC §data.agent Tabs
 
     expect(posted().map((r) => r.id), "only the draft the server never saw is created").toEqual(["local-1"]);
     expect(posted()[0]).toMatchObject({ revision: 0, sql: "SELECT 9", open: true });
-    expect(calls.filter((c) => c.method === "POST").every((c) => c.body?.mode === "create")).toBe(true);
+    expect(calls.filter((c) => c.method === "PUT").every((c) => c.body?.mode === "create")).toBe(true);
     expect(local.revision).toBe(5);
     expect(closed.dbClosedFor("srv2").map((e) => [e.id, e.text])).toEqual([["srv-3", "server copy"]]);
     expect(closed.dbClosedLocalFor("srv2"), "migrated entries leave this browser").toEqual([]);
@@ -176,19 +188,19 @@ describe("a connection whose consoles live on the server (SPEC §data.agent Tabs
   it("re-reads a closed console before reopening it, so a newer edit is what comes back", async () => {
     enter("srv3");
     const shut = rec({ id: "srv-4", tab: "Old", open: false, sql: "as closed", revision: 2, closedAt: 70 });
-    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [shut] }] : undefined;
+    route = (c) => onConsoles(c) && c.method === "LIST" ? [200, { consoles: [shut] }] : undefined;
     await tabs.dbConsolesLoad("srv3");
 
     route = (c) => {
       if (!onConsoles(c)) return undefined;
-      if (c.method === "GET") return [200, { consoles: [{ ...shut, sql: "edited elsewhere", revision: 3 }] }];
-      if (c.method === "POST") return [200, { console: { ...(c.body?.console as ConsoleRecord), revision: 4 } }];
+      if (c.method === "LIST") return [200, { consoles: [{ ...shut, sql: "edited elsewhere", revision: 3 }] }];
+      if (c.method === "PUT") return [200, { console: { ...(c.body?.console as ConsoleRecord), revision: 4 } }];
       return undefined;
     };
     await tabs.dbRestoreClosed("srv-4");
 
     expect(posted()[0]).toMatchObject({ id: "srv-4", open: true, closedAt: null, sql: "edited elsewhere", revision: 3 });
-    expect(calls.filter((c) => c.method === "POST").every((c) => c.body?.mode === "update")).toBe(true);
+    expect(calls.filter((c) => c.method === "PUT").every((c) => c.body?.mode === "update")).toBe(true);
     const t = dbTabs().find((x) => x.kind === "sql" && x.id === "srv-4") as DbSqlTab;
     expect(t).toMatchObject({ sqlText: "edited elsewhere", revision: 4, custom: "Old" });
     expect(closed.dbClosedById("srv3", "srv-4"), "it is no longer closed").toBeNull();
@@ -197,10 +209,10 @@ describe("a connection whose consoles live on the server (SPEC §data.agent Tabs
   it("does not reopen an id the server deleted meanwhile", async () => {
     enter("srv4");
     const shut = rec({ id: "srv-5", open: false, sql: "gone", revision: 2, closedAt: 70 });
-    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [shut] }] : undefined;
+    route = (c) => onConsoles(c) && c.method === "LIST" ? [200, { consoles: [shut] }] : undefined;
     await tabs.dbConsolesLoad("srv4");
 
-    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [] }] : undefined;
+    route = (c) => onConsoles(c) && c.method === "LIST" ? [200, { consoles: [] }] : undefined;
     await tabs.dbRestoreClosed("srv-5");
 
     expect(dbTabs().some((t) => t.kind === "sql" && t.id === "srv-5")).toBe(false);
@@ -213,24 +225,22 @@ describe("the same connection open in another window (SPEC §data.agent Tabs)", 
   /** Load these records as this window's first read of the connection. */
   async function loaded(conn: string, records: ConsoleRecord[]): Promise<void> {
     enter(conn);
-    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: records }] : undefined;
+    route = (c) => onConsoles(c) && c.method === "LIST" ? [200, { consoles: records }] : undefined;
     await tabs.dbConsolesLoad(conn);
   }
 
-  it("coming back to the window catches a clean console up to what the other window saved", async () => {
+  it("a bus event catches a clean console up to what the other window saved", async () => {
     await loaded("win1", [rec({ id: "w-1", tab: "Report", sql: "as loaded", revision: 2 })]);
     const t = dbTabs().find((x) => x.kind === "sql" && x.id === "w-1") as DbSqlTab;
-    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [
-      rec({ id: "w-1", tab: "Report", sql: "as loaded;", revision: 3, updatedAt: 30 }),
-      rec({ id: "w-2", tab: "Opened there", sql: "SELECT 2", revision: 1, createdAt: 40 }),
-      rec({ id: "w-3", tab: "Closed there", open: false, sql: "SELECT 3", revision: 2, closedAt: 50 }),
-    ] }] : undefined;
     calls = [];
-
-    window.dispatchEvent(new Event("focus"));
+    const ta = document.getElementById("dbSql") as HTMLTextAreaElement;
+    ta.focus(); ta.setSelectionRange(2, 4);
+    peer.changed("win1", rec({ id: "w-1", tab: "Report", sql: "as loaded;", revision: 3, updatedAt: 30 }));
+    peer.changed("win1", rec({ id: "w-2", tab: "Opened there", sql: "SELECT 2", revision: 1, createdAt: 40 }));
+    peer.changed("win1", rec({ id: "w-3", tab: "Closed there", open: false, sql: "SELECT 3", revision: 2, closedAt: 50 }));
     await settle();
-
-    expect(calls.some((c) => c.method === "GET" && onConsoles(c)), "focus reads the store again").toBe(true);
+    expect(calls.filter(onConsoles), "events need no read").toEqual([]);
+    expect([ta.selectionStart, ta.selectionEnd]).toEqual([2, 4]);
     expect(t).toMatchObject({ sqlText: "as loaded;", revision: 3, updatedAt: 30 });
     expect((document.getElementById("dbSql") as HTMLTextAreaElement).value, "the editor in front shows it").toBe("as loaded;");
     expect(dbTabs().some((x) => x.kind === "sql" && x.id === "w-2"), "a console opened there joins the strip").toBe(true);
@@ -243,34 +253,197 @@ describe("the same connection open in another window (SPEC §data.agent Tabs)", 
     await loaded("win2", [rec({ id: "w-4", sql: "as loaded", revision: 2 })]);
     const t = dbTabs().find((x) => x.kind === "sql" && x.id === "w-4") as DbSqlTab;
     dbSetSqlText(t, "my draft");
-    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [rec({ id: "w-4", sql: "theirs", revision: 3 })] }] : undefined;
-
-    await tabs.dbConsolesRefresh("win2");
-
+    peer.changed("win2", rec({ id: "w-4", sql: "theirs", revision: 3 }));
+    await settle();
     expect(t).toMatchObject({ sqlText: "my draft", revision: 2 });
     expect(store.dbConsoleSyncState("win2", "w-4")).toBe("pending");
   });
 
   it("a clean console closed there closes here and is filed in Recently closed", async () => {
     await loaded("win3", [rec({ id: "w-5", sql: "kept", revision: 2 }), rec({ id: "w-6", sql: "other", revision: 1, createdAt: 5 })]);
-    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [
-      rec({ id: "w-5", sql: "kept", revision: 3, open: false, closedAt: 60 }),
-      rec({ id: "w-6", sql: "other", revision: 1, createdAt: 5 }),
-    ] }] : undefined;
-
-    await tabs.dbConsolesRefresh("win3");
-
+    peer.changed("win3", rec({ id: "w-5", sql: "kept", revision: 3, open: false, closedAt: 60 }));
+    await settle();
     expect(dbTabs().some((x) => x.kind === "sql" && x.id === "w-5")).toBe(false);
     expect(dbTabs().some((x) => x.kind === "sql" && x.id === "w-6")).toBe(true);
     expect(closed.dbClosedFor("win3").map((e) => [e.id, e.text])).toEqual([["w-5", "kept"]]);
+  });
+
+  it("ignores duplicate, older and own-origin events", async () => {
+    await loaded("event-order", [rec({ id: "echo", sql: "saved", revision: 4 })]);
+    const tab = dbTab() as DbSqlTab;
+    for (const revision of [3, 4]) peer.changed("event-order", rec({ id: "echo", sql: "late", revision }));
+    peer.changed("event-order", rec({ id: "echo", sql: "echo", revision: 5 }), pageId);
+    await settle();
+    expect(tab).toMatchObject({ sqlText: "saved", revision: 4 });
+    expect(store.dbConsoleSyncState("event-order", "echo")).toBe("clean");
+  });
+
+  it("adopts a pending draft that matches the saved record after a lost response", async () => {
+    await loaded("event-pending", [rec({ id: "pending", tab: "Report", sql: "old", revision: 2 })]);
+    const tab = dbTab() as DbSqlTab;
+    dbSetSqlText(tab, "saved draft");
+    expect(store.dbConsoleSyncState("event-pending", "pending")).toBe("pending");
+    peer.changed("event-pending", rec({ id: "pending", tab: "Report", sql: "saved draft", revision: 3 }));
+    await settle();
+    expect(tab).toMatchObject({ sqlText: "saved draft", revision: 3 });
+    expect(store.dbConsoleSyncState("event-pending", "pending")).toBe("clean");
+    expect(posted()).toEqual([]);
+  });
+
+  it("a save whose response is lost stays pending and becomes clean on reconnect", async () => {
+    await loaded("event-lost-response", [rec({ id: "lost", tab: "Report", sql: "old", revision: 2 })]);
+    const tab = dbTab() as DbSqlTab;
+    dbSetSqlText(tab, "saved there");
+    let finish: ((reply: import("./console-bus-fixture.js").Reply) => void) | undefined;
+    peer.answer = () => new Promise(resolve => { finish = resolve; });
+    const flush = store.dbConsoleFlush("event-lost-response", true);
+    await settle();
+    peer.close();
+    expect(await flush).toBe(false);
+    expect(store.dbConsoleSyncState("event-lost-response", "lost")).toBe("pending");
+    await vi.advanceTimersByTimeAsync(500);
+    peer = ConsolePeer.current;
+    peer.answer = () => ({ body: { consoles: [rec({ id: "lost", tab: "Report", sql: "saved there", revision: 3 })] } });
+    peer.open();
+    await settle();
+    expect(tab).toMatchObject({ sqlText: "saved there", revision: 3 });
+    expect(store.dbConsoleSyncState("event-lost-response", "lost")).toBe("clean");
+    expect(peer.calls.every(c => c.method === "LIST")).toBe(true);
+    if (!finish) throw new Error("save was not sent");
+    finish({ body: { console: rec({ id: "lost", sql: "saved there", revision: 3 }) } });
+    await settle();
+  });
+
+  it("REMOVED drops clean tabs and history, keeps drafts, and CLEARED drops only closed records", async () => {
+    await loaded("event-delete", [rec({ id: "clean" }), rec({ id: "draft" }),
+      rec({ id: "closed", open: false }), rec({ id: "other-closed", open: false })]);
+    const draft = dbTabs().find((t): t is DbSqlTab => t.kind === "sql" && t.id === "draft");
+    if (!draft) throw new Error("draft not loaded");
+    dbSetSqlText(draft, "my draft");
+    peer.removed("event-delete", "clean");
+    peer.removed("event-delete", "draft");
+    peer.removed("event-delete", "closed");
+    await settle();
+    expect(dbTabs().some(t => t.kind === "sql" && t.id === "clean")).toBe(false);
+    expect(dbTabs().includes(draft)).toBe(true);
+    expect(draft.sqlText).toBe("my draft");
+    expect(closed.dbClosedFor("event-delete").map(e => e.id)).toEqual(["other-closed"]);
+    peer.cleared("event-delete");
+    await settle();
+    expect(closed.dbClosedFor("event-delete")).toEqual([]);
+    expect(dbTabs().includes(draft)).toBe(true);
+  });
+
+  it("subscribes before paged reads and keeps a newer event received between pages", async () => {
+    enter("event-pages");
+    peer.answer = c => {
+      expect(peer.subscriptions).toContain("event-pages");
+      if (c.body?.after === "") {
+        peer.changed("event-pages", rec({ id: "a", sql: "newest", revision: 3 }));
+        return { body: { consoles: [rec({ id: "a", sql: "older", revision: 2 })], next: "a" } };
+      }
+      expect(c.body?.after).toBe("a");
+      return { body: { consoles: [rec({ id: "b", sql: "page 2" })], next: "" } };
+    };
+    await tabs.dbConsolesLoad("event-pages");
+    expect(dbTabs().filter(t => t.kind === "sql").map(t => [t.id, t.sqlText])).toEqual([["a", "newest"], ["b", "page 2"]]);
+    expect(posted()).toEqual([]);
+  });
+
+  it("a rename made before the first read is kept as a pending draft", async () => {
+    enter("event-first-rename");
+    const tab = freshTab("sql");
+    Object.assign(tab, { id: "renamed", custom: "My name", sqlText: "same SQL" });
+    dbTabs().splice(0, dbTabs().length, tab);
+    peer.answer = () => ({ body: { consoles: [rec({ id: "renamed", tab: "Server name", sql: "same SQL", revision: 3 })] } });
+    await tabs.dbConsolesLoad("event-first-rename");
+    expect(tab.custom).toBe("My name");
+    expect(store.dbConsoleSyncState("event-first-rename", "renamed")).toBe("pending");
+    expect(posted()).toEqual([]);
+  });
+
+  it("leaving Data releases its topic until the connection is revisited", async () => {
+    await loaded("event-leave", [rec({ id: "parked" })]);
+    const dataPage = await import("../src/views/data.js");
+    dataPage.unmount();
+    expect(peer.sent.at(-1)).toMatchObject({ module: 0, sub: 2, id: 2 });
+    peer.close();
+    await vi.advanceTimersByTimeAsync(500);
+    peer = ConsolePeer.current;
+    peer.open();
+    await settle();
+    expect(peer.calls).toEqual([]);
+    mountDbView();
+    enter("event-leave");
+    peer.answer = () => ({ body: { consoles: [rec({ id: "parked", sql: "changed while away", revision: 2 })] } });
+    await tabs.dbConsolesLoad("event-leave");
+    expect(peer.subscriptions).toContain("event-leave");
+    expect(dbTabs().find(t => t.kind === "sql" && t.id === "parked")).toMatchObject({ sqlText: "changed while away", revision: 2 });
+  });
+
+  it("remote removals and clear between pages preserve unrelated open records", async () => {
+    enter("event-page-delete");
+    peer.answer = c => {
+      if (c.body?.after === "") {
+        return { body: { consoles: [rec({ id: "a" }), rec({ id: "closed", open: false })], next: "closed" } };
+      }
+      peer.removed("event-page-delete", "a");
+      peer.cleared("event-page-delete");
+      return { body: { consoles: [rec({ id: "z", sql: "still open" })], next: "" } };
+    };
+    await tabs.dbConsolesLoad("event-page-delete");
+    expect(dbTabs().filter(t => t.kind === "sql").map(t => [t.id, t.sqlText])).toEqual([["z", "still open"]]);
+    expect(closed.dbClosedFor("event-page-delete")).toEqual([]);
+    peer.answer = c => {
+      if (c.body?.after === "") return { body: { consoles: [rec({ id: "z", sql: "new open", revision: 3 })], next: "z" } };
+      peer.removed("event-page-delete", "unrelated");
+      peer.cleared("event-page-delete");
+      return { body: { consoles: [rec({ id: "zz", open: false })], next: "" } };
+    };
+    await tabs.dbConsolesRefresh("event-page-delete");
+    expect(dbTabs().filter(t => t.kind === "sql").map(t => [t.id, t.sqlText])).toEqual([["z", "new open"]]);
+    expect(closed.dbClosedFor("event-page-delete")).toEqual([]);
+  });
+
+  it("a reconnect re-subscribes then reconciles missed changes and removals", async () => {
+    await loaded("event-resync", [rec({ id: "keep", sql: "old" }), rec({ id: "gone" })]);
+    const current = dbTab();
+    peer.close();
+    await vi.advanceTimersByTimeAsync(500);
+    peer = ConsolePeer.current;
+    peer.answer = c => {
+      expect(peer.subscriptions).toContain("event-resync");
+      expect(c.method).toBe("LIST");
+      return { body: { consoles: [rec({ id: "keep", sql: "new", revision: 2 })] } };
+    };
+    peer.open();
+    await settle();
+    expect(dbTabs().some(t => t.kind === "sql" && t.id === "gone")).toBe(false);
+    expect(current).toMatchObject({ id: "keep", sqlText: "new", revision: 2 });
+  });
+
+  it("a local close overtakes an in-flight resync without reopening the tab", async () => {
+    await loaded("event-epoch", [rec({ id: "closing", sql: "kept", revision: 2 })]);
+    let answerRead: ((value: import("./console-bus-fixture.js").Reply) => void) | undefined;
+    peer.answer = c => c.method === "LIST" ? new Promise(resolve => { answerRead = resolve; })
+      : { body: { console: rec({ id: "closing", sql: "kept", open: false, revision: 3, closedAt: 60 }) } };
+    const read = tabs.dbConsolesRefresh("event-epoch");
+    await settle();
+    tabs.dbCloseTab(dbActiveIndex());
+    await settle();
+    if (!answerRead) throw new Error("read not pending");
+    answerRead({ body: { consoles: [rec({ id: "closing", sql: "stale read", revision: 4 })] } });
+    await read;
+    expect(dbTabs().some(t => t.kind === "sql" && t.id === "closing")).toBe(false);
+    expect(closed.dbClosedFor("event-epoch").map(e => [e.id, e.text])).toEqual([["closing", "kept"]]);
   });
 
   it("closing a clean console the other window changed files the newer record instead of refusing", async () => {
     await loaded("win4", [rec({ id: "w-7", tab: "Report", sql: "as loaded", revision: 2 })]);
     route = (c) => {
       if (!onConsoles(c)) return undefined;
-      if (c.method === "GET") return [200, { consoles: [rec({ id: "w-7", tab: "Report", sql: "as loaded;", revision: 3 })] }];
-      if (c.method === "POST") {
+      if (c.method === "LIST") return [200, { consoles: [rec({ id: "w-7", tab: "Report", sql: "as loaded;", revision: 3 })] }];
+      if (c.method === "PUT") {
         const sent = c.body?.console as ConsoleRecord;
         if (sent.revision === 3) return [200, { console: { ...sent, revision: 4, closedAt: 90 } }];
         return [409, { error: "conflict: console changed; reload the server record before saving", code: "console.changed" }];
@@ -293,7 +466,7 @@ describe("a refused console save (SPEC §data.agent Tabs)", () => {
   async function draftOver(conn: string, id: string): Promise<DbSqlTab> {
     enter(conn);
     const open = rec({ id, tab: "Report", sql: "as stored", revision: 2 });
-    route = (c) => onConsoles(c) && c.method === "GET" ? [200, { consoles: [open] }] : undefined;
+    route = (c) => onConsoles(c) && c.method === "LIST" ? [200, { consoles: [open] }] : undefined;
     await tabs.dbConsolesLoad(conn);
     const t = dbTabs().find((x) => x.kind === "sql" && x.id === id) as DbSqlTab;
     dbSetSqlText(t, "my draft");
@@ -305,8 +478,8 @@ describe("a refused console save (SPEC §data.agent Tabs)", () => {
     let revision = 2;
     route = (c) => {
       if (!onConsoles(c)) return undefined;
-      if (c.method === "GET") return [200, { consoles: [rec({ id: "srv-6", tab: "Report", sql: "newer", revision: ++revision })] }];
-      if (c.method === "POST") return [409, { error: "conflict: console changed; reload before saving" }];
+      if (c.method === "LIST") return [200, { consoles: [rec({ id: "srv-6", tab: "Report", sql: "newer", revision: ++revision })] }];
+      if (c.method === "PUT") return [409, { error: "conflict: console changed; reload before saving" }];
       return undefined;
     };
     expect(await store.dbConsoleFlush("srv5"), "the send path must see the refusal").toBe(false);
@@ -328,8 +501,8 @@ describe("a refused console save (SPEC §data.agent Tabs)", () => {
     const t = await draftOver("srv7", "srv-8");
     route = (c) => {
       if (!onConsoles(c)) return undefined;
-      if (c.method === "GET") return [200, { consoles: [rec({ id: "srv-8", tab: "Report", sql: "newer", revision: 3 })] }];
-      if (c.method === "POST") return [409, { error: "conflict: console changed; reload the server record before saving", code: "console.changed" }];
+      if (c.method === "LIST") return [200, { consoles: [rec({ id: "srv-8", tab: "Report", sql: "newer", revision: 3 })] }];
+      if (c.method === "PUT") return [409, { error: "conflict: console changed; reload the server record before saving", code: "console.changed" }];
       return undefined;
     };
     const bar = document.getElementById("dbConsoleConflict") as HTMLElement;
@@ -353,8 +526,8 @@ describe("a refused console save (SPEC §data.agent Tabs)", () => {
     let revision = 2;
     route = (c) => {
       if (!onConsoles(c)) return undefined;
-      if (c.method === "GET") return [200, { consoles: [rec({ id: "srv-7", tab: "Report", sql: "newer", revision: ++revision })] }];
-      if (c.method === "POST") {
+      if (c.method === "LIST") return [200, { consoles: [rec({ id: "srv-7", tab: "Report", sql: "newer", revision: ++revision })] }];
+      if (c.method === "PUT") {
         const sent = c.body?.console as ConsoleRecord;
         if (c.body?.mode === "update" && sent.revision === 3) return [200, { console: { ...sent, revision: 4 } }];
         return [409, { error: "conflict: console changed; reload before saving" }];

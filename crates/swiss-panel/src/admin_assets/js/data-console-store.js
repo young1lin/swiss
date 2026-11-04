@@ -1,18 +1,25 @@
-/* SPEC §data.agent Tabs: the server owns Agent consoles once this page has read its store.
- * This module is the page's only door to `/api/llm/db/consoles`: it serializes an open
- * console's edits through ConsoleSync (one compare-and-swap at a time), writes a closed
- * console's record directly, and adopts the revision the server answered with back onto the
- * tab, so the next edit compares against what is really stored. A store the gateway refuses
- * or does not have leaves the page on its local snapshot - never half on, never blocking the
- * console itself. */
+/* One person, two windows are two views of the same work (SPEC §bus.editing).
+ * Compare-and-swap refuses concurrent edits: nothing is lost or merged silently.
+ * A future merge must be three-way: base = the record at the draft's starting
+ * revision, ours = the draft, theirs = the current record.
+ * DATA.CONSOLES is the only transport (SPEC §bus.requests); ConsoleSync keeps
+ * debounce, serialized writes and pending/failed drafts across reconnects. */
                                                  
-import { api, toast } from "./util.js";
-import { servedError, tr } from "./i18n.js";
-import { dbTabs } from "./db-state.js";
-import { ConsoleSync,                                    } from "./data-console-sync.js";
+import { toast } from "./util.js";
+import { servedFault, tr } from "./i18n.js";
+import { dbConn, dbTabs } from "./db-state.js";
+import { ConsolePending, ConsoleSync,                                    } from "./data-console-sync.js";
                                                     
+import { busRequest, BusFault } from "./bus/bus.js";
+import { create } from "./bus/codec.js";
+import { Module } from "./bus/pb/swiss/bus/v1/bus_pb.js";
+import {
+  ConsoleListSchema, ConsolePutSchema, ConsoleRecordSchema, ConsoleRemoveSchema, ConsoleRemovedSchema,
+  ConsoleSavedSchema, ConsolesClearedSchema, ConsolesId, ConsolesOfSchema, ConsolesPageSchema,
+  DataSub, SaveMode,                                   
+} from "./bus/pb/swiss/bus/v1/data_pb.js";
 
-/** The POST body's mode: a new page console is create-only, a later save requires the record
+/** The request's mode: a new page console is create-only, a later save requires the record
  *  to still exist, and the agent's own path auto-creates (db_consoles.rs SaveMode). */
                                          
 
@@ -20,34 +27,42 @@ import { ConsoleSync,                                    } from "./data-console-
  *  was refused, and `error` is already in the reader's language (servedError). */
                                                                                                                               
 
-                                                 
+const route = { module: Module.DATA, sub: DataSub.CONSOLES };
 
-function refused(status        , j         )                                                                 {
-  const out                                                                 = { ok: false, conflict: status === 409, error: servedError(j, storeError(status)) };
-  if (typeof j.code === "string") out.code = j.code;
-  return out;
+export function consoleFromWire(record             )                {
+  return { ...record, revision: Number(record.revision), createdAt: Number(record.createdAt),
+    updatedAt: Number(record.updatedAt), agentTab: record.agentTab ?? null,
+    closedAt: record.closedAt === undefined ? null : Number(record.closedAt) };
+}
+
+function refused(error         )                                                                 {
+  if (error instanceof BusFault) return {
+    ok: false, conflict: ["console.exists", "console.removed", "console.changed", "console.changedDelete"].includes(error.code),
+    error: servedFault(error), code: error.code,
+  };
+  return { ok: false, conflict: false, error: tr("util.requestFailedGatewayRunning") };
 }
 
 const enabled = new Set        ();
 const sync = new ConsoleSync(async (conn, record) => {
   const result = await put(conn, record, record.revision === 0 ? "create" : "update");
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) {
+    if (result.code === "bus.offline" || result.code === "bus.timeout") throw new ConsolePending(result.error);
+    throw new Error(result.error);
+  }
   return result.console;
 });
 
-function storeError(status        )         {
-  return tr("dataTabs.consoleStoreHttp", { n: status });
-}
-
 async function put(conn        , record               , mode      )                     {
   try {
-    const r = await api("/api/llm/db/consoles", { method: "POST", body: JSON.stringify({ conn, console: record, mode }) });
-    const j = await r.json().catch(() => { return {}; })                                         ;
-    if (!r.ok || !j.console) return refused(r.status, j);
-    return { ok: true, console: j.console };
-  } catch {
-    return { ok: false, conflict: false, error: tr("util.requestFailedGatewayRunning") };
-  }
+    const reply = await busRequest({ ...route, id: ConsolesId.CONSOLES_PUT, schema: ConsolePutSchema }, "",
+      create(ConsolePutSchema, { conn, console: create(ConsoleRecordSchema, {
+        ...record, revision: BigInt(record.revision), createdAt: BigInt(record.createdAt), updatedAt: BigInt(record.updatedAt),
+        agentTab: record.agentTab ?? undefined, closedAt: record.closedAt == null ? undefined : BigInt(record.closedAt),
+      }), mode: mode === "create" ? SaveMode.CREATE : mode === "update" ? SaveMode.UPDATE : SaveMode.AUTO }), ConsoleSavedSchema);
+    if (!reply.console) return refused(new BusFault("bus.badBody", "", {}));
+    return { ok: true, console: consoleFromWire(reply.console) };
+  } catch (error) { return refused(error); }
 }
 
 /** A closed record as Recently closed reads it: the same id the strip would have used, its
@@ -79,13 +94,16 @@ export function dbConsoleStoreList(conn        , force = false)                 
   if (running && !force) return running;
   const read = (async ()                                  => {
     try {
-      const r = await api("/api/llm/db/consoles?conn=" + encodeURIComponent(conn));
-      if (!r.ok) return null;
-      const j = await r.json()                                  ;
-      if (!Array.isArray(j.consoles)) return null;
+      const records                  = [];
+      let after = "";
+      do {
+        const page = await busRequest({ ...route, id: ConsolesId.CONSOLES_LIST, schema: ConsolesPageSchema }, "",
+          create(ConsolesPageSchema, { conn, after }), ConsoleListSchema);
+        records.push(...page.consoles.map(consoleFromWire));
+        after = page.next;
+      } while (after);
       enabled.add(conn);
-      for (const record of j.consoles) sync.seed(conn, record);
-      return j.consoles;
+      return records;
     } catch {
       return null;
     }
@@ -129,6 +147,7 @@ export function dbConsoleStage(conn        , tab          , title        )      
 /** Adopt the revisions just saved: the tab keeps its text, and the next save compares against
  *  the record the server now holds. Only the live connection's tabs are touched. */
 function adoptSaved(conn        )       {
+  if (dbConn().conn !== conn) return;
   for (const t of dbTabs()) {
     if (t.kind !== "sql") continue;
     const saved = sync.value(conn, t.id);
@@ -194,30 +213,22 @@ export async function dbConsolePut(conn        , record               , mode    
 /** Forget one record the page proved it saw (the restore that found it gone). */
 export async function dbConsoleRemove(conn        , id        , revision               )                                                      {
   try {
-    const query = "?conn=" + encodeURIComponent(conn) + "&id=" + encodeURIComponent(id) + (revision == null ? "" : "&revision=" + revision);
-    const r = await api("/api/llm/db/consoles" + query, { method: "DELETE" });
-    const j = await r.json().catch(() => { return {}; })                                   ;
-    if (!r.ok) return refused(r.status, j);
+    const reply = await busRequest({ ...route, id: ConsolesId.CONSOLES_REMOVE, schema: ConsoleRemoveSchema }, "",
+      create(ConsoleRemoveSchema, { conn, id, revision: BigInt(revision ?? 0) }), ConsoleRemovedSchema);
     sync.forget(conn, id);
-    return { ok: true, removed: j.removed === true };
-  } catch {
-    return { ok: false, conflict: false, error: tr("util.requestFailedGatewayRunning") };
-  }
+    return { ok: true, removed: reply.removed };
+  } catch (error) { return refused(error); }
 }
 
 /** Clear this connection's closed history on the server. Open consoles are work in progress
  *  and stay; false keeps the list exactly as it was. */
 export async function dbConsoleClearClosed(conn        )                   {
   try {
-    const r = await api("/api/llm/db/consoles?conn=" + encodeURIComponent(conn) + "&closed=true", { method: "DELETE" });
-    if (!r.ok) {
-      const j = await r.json().catch(() => { return {}; })           ;
-      toast(servedError(j, storeError(r.status)), true);
-      return false;
-    }
+    await busRequest({ ...route, id: ConsolesId.CONSOLES_CLEAR_CLOSED, schema: ConsolesOfSchema }, "",
+      create(ConsolesOfSchema, { conn }), ConsolesClearedSchema);
     return true;
-  } catch {
-    toast(tr("util.requestFailedGatewayRunning"), true);
+  } catch (error) {
+    toast(refused(error).error, true);
     return false;
   }
 }

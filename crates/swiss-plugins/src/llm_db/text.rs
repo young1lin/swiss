@@ -35,6 +35,7 @@ use super::{
     TABLES_LISTED,
 };
 
+/// What a dialect needs said before the model writes for it.
 pub(super) fn dialect_notes(dialect: &str) -> &'static str {
     match dialect {
         "pg" => "PostgreSQL. Double-quote an identifier that needs it; in LIKE, _ and % are wildcards (escape them with a backslash: 'custom\\_%'); top-N per group is ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) filtered in an outer query; a table outside the search_path is schema-qualified.",

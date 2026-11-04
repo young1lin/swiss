@@ -38,6 +38,7 @@ use swiss_llm::{LlmConfig, LlmState};
 pub const PLUGIN_ID: &str = "llm";
 
 pub struct LlmPlugin {
+    consoles: Arc<crate::db_consoles::ConsoleStore>,
     /// The runtime services, for the maintenance seat the opened history needs
     /// (SPEC host.history): the retention timer only reaches stores that
     /// registered a seat, so the llm share's snapshot would never refresh
@@ -47,8 +48,8 @@ pub struct LlmPlugin {
 }
 
 impl LlmPlugin {
-    pub fn new(services: Arc<swiss_host::services::RuntimeServices>, state: Arc<LlmState>) -> Self {
-        LlmPlugin { services, state }
+    pub fn new(services: Arc<swiss_host::services::RuntimeServices>, state: Arc<LlmState>, consoles: Arc<crate::db_consoles::ConsoleStore>) -> Self {
+        LlmPlugin { services, state, consoles }
     }
 }
 
@@ -234,11 +235,16 @@ impl LlmPlugin {
             config: check(config)?,
             logs_dir,
             history: tokio::sync::Mutex::new(None),
+            consoles: self.consoles.clone(),
+            console_handler: tokio::sync::Mutex::new(None),
         }))
     }
 }
 
 struct LlmInstance {
+    consoles: Arc<crate::db_consoles::ConsoleStore>,
+    // The serving instance owns the bus seat (SPEC §bus.requests).
+    console_handler: tokio::sync::Mutex<Option<swiss_bus::Registration>>,
     services: Arc<swiss_host::services::RuntimeServices>,
     state: Arc<LlmState>,
     /// The row the instance was created with (a later row arrives through apply_config).
@@ -254,6 +260,7 @@ struct LlmInstance {
 impl PluginInstance for LlmInstance {
     async fn start(self: Arc<Self>, scope: &mut PluginScope) -> Result<(), String> {
         crate::llm_shell::register(&self.services)?;
+        *self.console_handler.lock().await = Some(self.consoles.register(self.services.clone()));
         self.state.apply(self.config.clone());
         // The module history (SPEC §llm.history): opens before anything can record, so
         // the first call of the session files too. A failed open is a warned, degraded
@@ -305,6 +312,7 @@ impl PluginInstance for LlmInstance {
     }
 
     async fn stop(&self) {
+        self.console_handler.lock().await.take();
         self.state.stop();
         // Live conversations first (SPEC llm.agents Test): request every
         // cancel, then let the drives settle BOUNDED - each one files its
@@ -371,9 +379,15 @@ mod tests {
         swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo::default())
     }
 
+    fn test_plugin(services: Arc<swiss_host::services::RuntimeServices>, state: Arc<LlmState>) -> LlmPlugin {
+        let root = std::env::temp_dir().join(format!("swiss-llm-consoles-{}", swiss_core::util::random_hex(8)));
+        let consoles = crate::db_consoles::ConsoleStore::at(root, services.bus.clone());
+        LlmPlugin::new(services, state, consoles)
+    }
+
     #[test]
     fn the_descriptor_carries_four_pages_and_the_llm_routes() {
-        let d = LlmPlugin::new(test_services(), LlmState::new()).descriptor();
+        let d = test_plugin(test_services(), LlmState::new()).descriptor();
         assert_eq!(d.id, "llm");
         let pages: Vec<&str> = d.pages.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(pages, ["llm-providers", "llm-embedding", "llm-agents", "llm-history"]);
@@ -383,7 +397,7 @@ mod tests {
 
     #[test]
     fn a_pasted_credential_is_refused_under_any_name() {
-        let plugin = LlmPlugin::new(test_services(), LlmState::new());
+        let plugin = test_plugin(test_services(), LlmState::new());
         assert!(plugin.validate_config(&json!({ "enabled": true })).is_ok());
         assert!(plugin.validate_config(&json!({ "oops": 1 })).is_err());
         let token = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
@@ -406,7 +420,7 @@ mod tests {
             swiss_core::util::random_hex(8)
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let plugin = LlmPlugin::new(test_services(), LlmState::new());
+        let plugin = test_plugin(test_services(), LlmState::new());
         let instance = plugin
             .create_at(&json!({ "enabled": true }), dir.join("logs"))
             .await
@@ -417,13 +431,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stopping_the_real_plugin_unregisters_its_console_bus_handler() {
+        use swiss_bus::pb::v1;
+        let services = test_services();
+        services.catalog.register(Arc::new(crate::db_consoles::bus_tests::Catalog), "test").expect("catalog");
+        let plugin = test_plugin(services.clone(), LlmState::new());
+        let root = std::env::temp_dir().join(format!("swiss-bus-stop-{}", swiss_core::util::random_hex(8)));
+        let instance = plugin.create_at(&json!({}), root.join("logs")).await.expect("create");
+        let mut scope = PluginScope::new(PLUGIN_ID);
+        instance.clone().start(&mut scope).await.expect("start");
+        let mut peer = crate::db_consoles::bus_tests::Peer::open(services.bus.clone()).await;
+        assert!(peer.list("mm").await.consoles.is_empty());
+        instance.stop().await;
+        scope.shutdown().await;
+        let after = peer.request(v1::ConsolesId::ConsolesList,
+            v1::ConsolesPage { conn: "mm".into(), after: String::new() }).await;
+        assert_eq!(after.fault.expect("stopped plugin").code, swiss_bus::UNAVAILABLE);
+        std::fs::remove_dir_all(root).expect("scratch cleanup");
+    }
+
+    #[tokio::test]
     async fn a_row_applies_in_place_and_stop_takes_it_off_the_air() {
         // create() opens the history under the data dir's logs/, so the scratch home goes
         // in first: without it the start writes into the real ~/.swiss.
         swiss_core::paths::test_home();
         let state = LlmState::new();
         let services = test_services();
-        let plugin = LlmPlugin::new(services.clone(), state.clone());
+        let plugin = test_plugin(services.clone(), state.clone());
         let row = json!({
             "providers": { "ollama": { "style": "openai", "baseUrl": "http://127.0.0.1:11434/v1",
                                        "models": [{ "id": "qwen3.5:4b" }, { "id": "bge-m3", "kind": "embedding" }] } },

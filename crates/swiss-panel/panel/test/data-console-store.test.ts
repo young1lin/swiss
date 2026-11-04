@@ -10,6 +10,7 @@ import {
   dbConsoleClearClosed, dbConsoleFlush, dbConsoleForget, dbConsolePut, dbConsoleRebase, dbConsoleRecord, dbConsoleStage,
   dbConsoleStoreList, dbConsoleStoreOff, dbConsoleStoreOn, dbConsoleSyncState,
 } from "../src/data-console-store.js";
+import { consolePeer, type ConsolePeer, type Reply, type ConsoleCall } from "./console-bus-fixture.js";
 import type { ConsoleRecord } from "../src/data-console-sync.js";
 
 const record = (over: Partial<ConsoleRecord> = {}): ConsoleRecord => ({
@@ -27,22 +28,17 @@ const consoleTab = (sql: string, revision = 0): DbSqlTab => {
   return tab;
 };
 
-type Reply = { status?: number; body?: unknown };
 let replies: Reply[];
-let bodies: { url: string; method: string; body: Record<string, unknown> }[];
+let bodies: ConsoleCall[];
+let peer: ConsolePeer;
 
 beforeEach(() => {
   document.body.innerHTML = '<div id="toast"></div>';
   vi.useFakeTimers();
   replies = [];
-  bodies = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: unknown, init?: RequestInit) => {
-    const method = init?.method || "GET";
-    const parsed = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
-    bodies.push({ url: String(url), method, body: parsed });
-    const next = replies.shift() || { status: 200, body: { consoles: [] } };
-    return { ok: (next.status || 200) < 400, status: next.status || 200, json: async () => next.body ?? {} };
-  }));
+  peer = consolePeer();
+  bodies = peer.calls;
+  peer.answer = () => replies.shift() || { body: { consoles: [] } };
   dbConsoleStoreOff("c");
   dbConsoleForget("c", "tab-1");
   dbConsoleStoreOff("other");
@@ -61,7 +57,7 @@ describe("server console store", () => {
     const list = await dbConsoleStoreList("c");
     expect(list).toHaveLength(1);
     expect(dbConsoleStoreOn("c")).toBe(true);
-    expect(bodies[0].url).toContain("/api/llm/db/consoles?conn=c");
+    expect(bodies[0]).toMatchObject({ method: "LIST", body: { conn: "c", after: "" } });
   });
 
   it("creates a new console once and updates it against the revision the server returned", async () => {
@@ -70,13 +66,13 @@ describe("server console store", () => {
     replies.push({ body: { console: record({ revision: 1, sql: "SELECT 1" }) } });
     dbConsoleStage("c", consoleTab("SELECT 1"), "Report");
     expect(await dbConsoleFlush("c")).toBe(true);
-    expect(bodies.at(-1)).toMatchObject({ method: "POST", body: { mode: "create", conn: "c" } });
-    expect((bodies.at(-1)?.body.console as ConsoleRecord).revision).toBe(0);
+    expect(bodies.at(-1)).toMatchObject({ method: "PUT", body: { mode: "create", conn: "c" } });
+    expect((bodies.at(-1)?.body?.console as ConsoleRecord).revision).toBe(0);
     replies.push({ body: { console: record({ revision: 2, sql: "SELECT 2" }) } });
     dbConsoleStage("c", consoleTab("SELECT 2", 1), "Report");
     expect(await dbConsoleFlush("c")).toBe(true);
     expect(bodies.at(-1)).toMatchObject({ body: { mode: "update" } });
-    expect((bodies.at(-1)?.body.console as ConsoleRecord).revision).toBe(1);
+    expect((bodies.at(-1)?.body?.console as ConsoleRecord).revision).toBe(1);
     expect(dbConsoleSyncState("c", "tab-1")).toBe("clean");
   });
 
@@ -92,11 +88,11 @@ describe("server console store", () => {
     await vi.advanceTimersByTimeAsync(250);
     dbConsoleStage("other", consoleTab("SELECT 2"), "Other report");
     await vi.advanceTimersByTimeAsync(250);
-    expect(bodies.filter(b => b.method === "POST").map(b => b.body.conn)).toEqual(["c"]);
+    expect(bodies.filter(b => b.method === "PUT").map(b => b.body?.conn)).toEqual(["c"]);
     expect(dbConsoleSyncState("c", "tab-1")).toBe("clean");
     expect(dbConsoleSyncState("other", "tab-1")).toBe("pending");
     await vi.advanceTimersByTimeAsync(250);
-    expect(bodies.filter(b => b.method === "POST").map(b => b.body)).toMatchObject([
+    expect(bodies.filter(b => b.method === "PUT").map(b => b.body)).toMatchObject([
       { conn: "c", console: { sql: "SELECT 1" } },
       { conn: "other", console: { sql: "SELECT 2" } },
     ]);
@@ -110,10 +106,10 @@ describe("server console store", () => {
     await vi.advanceTimersByTimeAsync(250);
     dbConsoleStage("c", consoleTab("SELECT 2"), "Report");
     await vi.advanceTimersByTimeAsync(499);
-    expect(bodies.filter(b => b.method === "POST")).toHaveLength(0);
+    expect(bodies.filter(b => b.method === "PUT")).toHaveLength(0);
     replies.push({ body: { console: record({ sql: "SELECT 2" }) } });
     await vi.advanceTimersByTimeAsync(1);
-    expect(bodies.filter(b => b.method === "POST").map(b => b.body)).toMatchObject([
+    expect(bodies.filter(b => b.method === "PUT").map(b => b.body)).toMatchObject([
       { conn: "c", console: { sql: "SELECT 2" } },
     ]);
     expect(dbConsoleSyncState("c", "tab-1")).toBe("clean");
@@ -122,7 +118,7 @@ describe("server console store", () => {
   it("keeps a refused draft without retrying it, until the reader rebases on the newer record", async () => {
     replies.push({ body: { consoles: [] } });
     await dbConsoleStoreList("c");
-    replies.push({ status: 409, body: { error: "conflict: console changed" } });
+    replies.push({ fault: { code: "console.changed", message: "conflict: console changed" } });
     dbConsoleStage("c", consoleTab("unsaved", 3), "Report");
     expect(await dbConsoleFlush("c")).toBe(false);
     expect(dbConsoleSyncState("c", "tab-1")).toBe("failed");
@@ -132,8 +128,8 @@ describe("server console store", () => {
     dbConsoleRebase("c", record({ revision: 7, sql: "server" }));
     replies.push({ body: { console: record({ revision: 8, sql: "unsaved" }) } });
     expect(await dbConsoleFlush("c")).toBe(true);
-    expect((bodies.at(-1)?.body.console as ConsoleRecord).revision).toBe(7);
-    expect((bodies.at(-1)?.body.console as ConsoleRecord).sql).toBe("unsaved");
+    expect((bodies.at(-1)?.body?.console as ConsoleRecord).revision).toBe(7);
+    expect((bodies.at(-1)?.body?.console as ConsoleRecord).sql).toBe("unsaved");
     expect(dbConsoleSyncState("c", "tab-1")).toBe("clean");
   });
 
@@ -149,10 +145,9 @@ describe("server console store", () => {
   it("clears closed history on the server and keeps it when the delete fails", async () => {
     replies.push({ body: { consoles: [] } });
     await dbConsoleStoreList("c");
-    replies.push({ status: 500, body: { error: "disk" } });
+    replies.push({ fault: { code: "", message: "disk" } });
     expect(await dbConsoleClearClosed("c")).toBe(false);
-    expect(bodies.at(-1)).toMatchObject({ method: "DELETE" });
-    expect(bodies.at(-1)?.url).toContain("closed=true");
+    expect(bodies.at(-1)).toMatchObject({ method: "CLEAR_CLOSED", body: { conn: "c" } });
     replies.push({ body: { cleared: 2 } });
     expect(await dbConsoleClearClosed("c")).toBe(true);
   });

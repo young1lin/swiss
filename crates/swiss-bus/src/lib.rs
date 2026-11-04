@@ -25,7 +25,7 @@ mod route;
 pub mod pb;
 
 pub use hub::{Answer, Bus, Call, Handler, Registration, Stamp};
-pub use link::{Io, IoMsg};
+pub use link::{run, Io, IoMsg};
 pub use route::accept;
 
 #[cfg(test)]

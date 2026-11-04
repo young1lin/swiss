@@ -325,36 +325,44 @@ fn page_context_is_bounded_data_scoped_to_one_connection() {
 }
 
 #[tokio::test]
-async fn persistent_consoles_survive_a_new_router_and_reject_stale_edits() {
-    let (app, _, _) = app(vec![one_round_answer()], db_agent()).await;
-    let body = json!({ "conn": "mm", "console": { "id": "persist-test", "tab": "Report", "agent": true, "agentTab": "Report", "open": true, "sql": "select 1", "revision": 0 } });
-    let (status, _, saved) = call_text(&app, "POST", "/api/llm/db/consoles", Some(body.clone())).await;
-    assert_eq!(status, StatusCode::OK, "{saved}");
-    let saved: Value = serde_json::from_str(&saved).expect("saved");
-    assert_eq!(saved["console"]["revision"], 1);
-    let (status, _, stale) = call_text(&app, "POST", "/api/llm/db/consoles", Some(body)).await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    // The refusal carries its code beside the English sentence: the page says it in the
-    // reader's language (SPEC §panel.i18n).
-    let stale: Value = serde_json::from_str(&stale).expect("refusal");
-    assert_eq!(stale["code"], "console.changed", "{stale}");
-    assert!(stale["error"].as_str().is_some_and(|e| e.starts_with("conflict: console changed")), "{stale}");
-    let (_, _, list) = call_text(&app, "GET", "/api/llm/db/consoles?conn=mm", None).await;
-    assert!(list.contains("select 1"));
-    let (_, _, other) = call_text(&app, "GET", "/api/llm/db/consoles?conn=mm2", None).await;
-    assert!(!other.contains("select 1"));
+async fn persistent_consoles_survive_a_new_bus_handler_and_reject_stale_edits() {
+    use prost::Message;
+    use swiss_bus::pb::v1;
+    let root = std::env::temp_dir().join(format!("swiss-console-restart-{}", swiss_core::util::random_hex(8)));
+    let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
+    services.catalog.register(Arc::new(Stub::new(1)), "test").expect("catalog");
+    let store = crate::db_consoles::ConsoleStore::at(root.clone(), services.bus.clone());
+    let guard = store.register(services.clone());
+    let mut peer = crate::db_consoles::bus_tests::Peer::open(services.bus.clone()).await;
+    let body = v1::ConsolePut { conn: "mm".into(), console: Some(v1::ConsoleRecord {
+        id: "persist-test".into(), tab: "Report".into(), agent: true, agent_tab: Some("Report".into()),
+        open: true, sql: "select 1".into(), ..Default::default()
+    }), mode: v1::SaveMode::Auto as i32 };
+    let saved = peer.request(v1::ConsolesId::ConsolesPut, body.clone()).await;
+    assert!(saved.fault.is_none());
+    assert_eq!(v1::ConsoleSaved::decode(saved.body.as_slice()).expect("saved").console.expect("console").revision, 1);
+    let stale = peer.request(v1::ConsolesId::ConsolesPut, body).await.fault.expect("conflict");
+    assert_eq!(stale.code, "console.changed");
+    assert!(stale.message.starts_with("conflict: console changed"));
+    drop(guard);
+    drop(store);
+    let restarted = crate::db_consoles::ConsoleStore::at(root.clone(), services.bus.clone());
+    let _guard = restarted.register(services.clone());
+    assert_eq!(peer.list("mm").await.consoles[0].sql, "select 1");
+    assert!(peer.list("mm2").await.consoles.is_empty());
+    std::fs::remove_dir_all(root).expect("scratch cleanup");
 }
 
 #[tokio::test]
 async fn agent_stage_persists_without_a_connected_page() {
     let root = swiss_core::paths::test_home().join(format!("agent-console-{}", swiss_core::util::random_hex(8)));
-    let store = crate::db_consoles::ConsoleStore::at(root.clone());
+    let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
     let (catalog, _) = catalog(1);
     let mut tools = DbTools::new(catalog.clone(), "mm", DbKind::Sql, None);
     tools.consoles = Some(store);
     let answer = tools.call("stage_sql", &json!({ "sql": "SELECT 42", "tab": "Report" })).await;
     assert!(answer.ok, "{answer:?}");
-    let restarted = crate::db_consoles::ConsoleStore::at(root.clone());
+    let restarted = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
     let saved = restarted.list("mm").expect("restored after restart");
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].sql, "SELECT 42;");
@@ -371,28 +379,32 @@ async fn separate_agent_requests_resume_the_server_owned_console_by_identity() {
         tool_ask("stage_sql", json!({ "sql": "SELECT 11", "tab": "Report" })), one_round_answer(),
         tool_ask("stage_sql", json!({ "sql": "SELECT 22", "tab": "Report" })), one_round_answer(),
     ];
-    let (app, _, _) = app(frames, db_agent()).await;
+    let (app, _, _, bus) = app_with_bus(frames, db_agent()).await;
+    let mut peer = crate::db_consoles::bus_tests::Peer::open(bus).await;
+    peer.subscribe("mm").await;
     let request = json!({ "agent": "data", "conn": "mm", "prompt": "stage a query", "consoleStore": true });
     let (status, _, first) = call_text(&app, "POST", "/api/llm/db/stream", Some(request.clone())).await;
     assert_eq!(status, StatusCode::OK, "{first}");
     let run_id = events_of(&first)[0].1["runId"].as_i64().expect("open conversation");
-    let (_, saved) = call(&app, "GET", "/api/llm/db/consoles?conn=mm", None).await;
-    let first_tab = &saved["consoles"][0];
-    let id = first_tab["id"].as_str().expect("server id").to_string();
-    assert_eq!((first_tab["sql"].as_str(), first_tab["revision"].as_u64()), (Some("SELECT 11;"), Some(1)));
+    let saved = peer.list("mm").await;
+    let first_tab = &saved.consoles[0];
+    let id = first_tab.id.clone();
+    assert_eq!((first_tab.sql.as_str(), first_tab.revision), ("SELECT 11;", 1));
+    assert_eq!(peer.event().await.origin, "", "agent saves have no page origin");
     let mut continued = request;
     continued["runId"] = json!(run_id);
     let (status, _, second) = call_text(&app, "POST", "/api/llm/db/stream", Some(continued)).await;
     assert_eq!(status, StatusCode::OK, "{second}");
-    let (_, saved) = call(&app, "GET", "/api/llm/db/consoles?conn=mm", None).await;
-    assert_eq!(saved["consoles"].as_array().map(Vec::len), Some(1), "{saved}");
-    assert_eq!((&saved["consoles"][0]["id"], &saved["consoles"][0]["sql"], &saved["consoles"][0]["revision"]), (&json!(id), &json!("SELECT 11;\n\nSELECT 22;"), &json!(2)));
+    let saved = peer.list("mm").await;
+    assert_eq!(saved.consoles.len(), 1);
+    assert_eq!((&saved.consoles[0].id, saved.consoles[0].sql.as_str(), saved.consoles[0].revision), (&id, "SELECT 11;\n\nSELECT 22;", 2));
+    assert_eq!(peer.event().await.origin, "", "the continuation also publishes");
 }
 
 #[tokio::test]
 async fn agent_staging_saves_a_stored_manual_console_without_taking_ownership() {
     let root = swiss_core::paths::test_home().join(format!("agent-manual-{}", swiss_core::util::random_hex(8)));
-    let store = crate::db_consoles::ConsoleStore::at(root.clone());
+    let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
     let original = "  SELECT 1;\n \t\n";
     let saved = store.save("mm", crate::db_consoles::Console { id: "manual".into(), tab: "Manual".into(), agent: false, open: true, sql: original.into(), ..Default::default() }).expect("save draft");
     let (catalog, _) = catalog(1);
@@ -409,7 +421,7 @@ async fn agent_staging_saves_a_stored_manual_console_without_taking_ownership() 
 #[tokio::test]
 async fn agent_staging_preserves_trailing_whitespace_in_a_stored_console() {
     let root = swiss_core::paths::test_home().join(format!("agent-whitespace-{}", swiss_core::util::random_hex(8)));
-    let store = crate::db_consoles::ConsoleStore::at(root.clone());
+    let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
     let original = "  SELECT 1;\n\n-- trailing note\n \t\n";
     store.save("mm", crate::db_consoles::Console { id: "one".into(), tab: "Report".into(), agent: true, agent_tab: Some("Report".into()), open: true, sql: original.into(), ..Default::default() }).expect("save draft");
     let (catalog, _) = catalog(1);
@@ -423,7 +435,7 @@ async fn agent_staging_preserves_trailing_whitespace_in_a_stored_console() {
 #[tokio::test]
 async fn store_refuses_to_reconstruct_manual_console_from_statement_snapshot() {
     let root = swiss_core::paths::test_home().join(format!("agent-no-raw-{}", swiss_core::util::random_hex(8)));
-    let store = crate::db_consoles::ConsoleStore::at(root.clone());
+    let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
     let snapshot: ConsoleTab = serde_json::from_value(json!({ "id": "manual", "tab": "Manual", "open": true,
         "agent": false, "statements": [{ "sql": "SELECT 1;" }] })).expect("snapshot");
     let (catalog, _) = catalog(1);
@@ -438,7 +450,7 @@ async fn store_refuses_to_reconstruct_manual_console_from_statement_snapshot() {
 #[tokio::test]
 async fn agent_staging_preserves_the_existing_console_bytes() {
     let root = swiss_core::paths::test_home().join(format!("agent-draft-{}", swiss_core::util::random_hex(8)));
-    let store = crate::db_consoles::ConsoleStore::at(root.clone());
+    let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
     let original = "  SELECT 1;\n\n\n  -- keep spacing\nSELECT 2;";
     store.save("mm", crate::db_consoles::Console { id: "one".into(), tab: "Report".into(), agent: true, agent_tab: Some("Report".into()), open: true, sql: original.into(), ..Default::default() }).expect("save draft");
     let (catalog, _) = catalog(1);
@@ -1086,6 +1098,11 @@ fn run_sql_ask() -> String {
 }
 
 async fn app(frames: Vec<String>, agents: Value) -> (axum::Router, Arc<std::sync::Mutex<Vec<String>>>, Arc<StubPg>) {
+    let (router, captured, pg, _) = app_with_bus(frames, agents).await;
+    (router, captured, pg)
+}
+
+async fn app_with_bus(frames: Vec<String>, agents: Value) -> (axum::Router, Arc<std::sync::Mutex<Vec<String>>>, Arc<StubPg>, Arc<swiss_bus::Bus>) {
     let (base, captured) = sse_wire_capturing(frames).await;
     let state = LlmState::new();
     state.apply(LlmConfig::parse(&json!({
@@ -1103,9 +1120,13 @@ async fn app(frames: Vec<String>, agents: Value) -> (axum::Router, Arc<std::sync
     let pg = stub.pg.clone();
     services.catalog.register(stub, "mcp").expect("register");
     let analysis = crate::analysis::AnalysisStore::at(dir.join("analysis"));
-    let app = crate::llm_api::mount_with_analysis(state, services.clone(), analysis.clone())
-        .merge(crate::analysis_api::mount(analysis, services));
-    (app, captured, pg)
+    let consoles = crate::db_consoles::ConsoleStore::at(dir.join("consoles"), services.bus.clone());
+    let guard = Arc::new(consoles.register(services.clone()));
+    let bus = services.bus.clone();
+    let app = crate::llm_api::mount_with_analysis(state, services.clone(), analysis.clone(), consoles)
+        .merge(crate::analysis_api::mount(analysis, services))
+        .layer(axum::Extension(guard));
+    (app, captured, pg, bus)
 }
 
 /// The whole send: the run frame, the tool ask, the db frame with the full result

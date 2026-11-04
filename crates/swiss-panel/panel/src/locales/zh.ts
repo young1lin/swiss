@@ -4192,7 +4192,6 @@ const zh: Record<string, string> = {
   "dataTabs.migrationFailed": "无法保存 Console 身份，本次访问中 ID 保持稳定。请释放浏览器存储后再刷新。",
   "dataTabs.editFailed": "无法应用 Console 修改，已保留原文。",
   "dataTabs.storageFull": "无法保存关闭的控制台：存储已满或不可用，页签已保留。",
-  "dataTabs.consoleStoreHttp": "控制台存储返回 HTTP {n}",
   "dataTabs.consoleConflict": "未保存，本地草稿已保留。打开此控制台即可处理。",
   "dataTabs.consoleNotSaved": "本地草稿已保留，尚未保存。",
   "dataTabs.consoleSaveFailed": "无法保存此控制台；本地草稿已保留。",

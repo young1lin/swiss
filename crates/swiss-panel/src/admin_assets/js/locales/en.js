@@ -4296,7 +4296,6 @@ const en                         = {
   "dataTabs.migrationFailed": "Could not save console identities. They remain stable for this visit; free browser storage before reloading.",
   "dataTabs.editFailed": "Could not apply the console change. Its original text was kept.",
   "dataTabs.storageFull": "Could not save the closed console. Storage is full or unavailable; the tab stays open.",
-  "dataTabs.consoleStoreHttp": "Console storage answered HTTP {n}",
   "dataTabs.consoleConflict": "Not saved; your draft is kept. Open this console to resolve it.",
   "dataTabs.consoleNotSaved": "Your draft is kept and not saved.",
   "dataTabs.consoleSaveFailed": "Could not save this console; your draft is kept.",

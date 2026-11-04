@@ -381,47 +381,41 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   is open, the text, a monotonic revision, `createdAt`, `updatedAt` and `closedAt`. Those
   survive a reload and a gateway restart. A read creates no file, and nothing new is started to
   hold them (`sealed_consoles_survive_store_restart_with_identity_close_state_and_cas`).
-  `GET /api/llm/db/consoles?conn=` lists one connection, after the catalog leases it.
-  `POST` `{conn, console, mode?}` writes one. `mode` is `auto` when absent (create a missing
-  record, compare one that exists), `create` (a legacy import and a page's first save: an id
-  already stored is 409 `conflict: console already exists…` and the server record stays), or
-  `update` (a later save: a record that is gone is 409 `conflict: console was removed…` and is
-  not recreated). The write then compare-and-swaps `revision`; a stale one is 409
-  `conflict: console changed…` (`legacy_import_is_create_only_and_a_removed_record_is_not_recreated`,
-  `persistent_consoles_survive_a_new_router_and_reject_stale_edits`). Each of these refusals
-  carries a `code` beside its English `error`: `console.exists`, `console.removed`,
-  `console.changed`, `console.changedDelete` and `console.tooLarge`. The page says the code in
-  the reader's language (SPEC §panel.i18n `servedError`), never the English sentence. The page
-  keeps the draft and paints a red dot on the card (`.db-tab-dot.err`). Above the editor, a
-  conflict bar (`#dbConsoleConflict`) says why the save was refused and offers *Reload the
-  server's copy* and *Keep my draft and save it*; the card's menu offers the same two. A failed
-  save does not retry until one of those is chosen (`says the refusal above the editor, in the
-  reader's words, with both ways out`). `createdAt` stays; `updatedAt` moves only when the text or the title does.
-  `DELETE ?conn=&id=&revision=` removes one record when the revision matches, and is 409
-  `conflict: console changed; reload before deleting` when it does not; an id already gone
-  answers `{removed: false}`. `DELETE ?conn=&closed=true` removes only the closed records and
-  answers `{cleared}`; open consoles stay (`clearing_history_drops_closed_consoles_only`).
+  DATA.CONSOLES on the event bus (SPEC §bus.registry) carries every read and write, after
+  the catalog leases the connection. LIST takes `{conn, after}` and answers records in id
+  order, cut before 2 MiB, with `next` the last id or empty at the end. PUT takes
+  `{conn, console, mode}`: auto creates a missing record and compares an existing one;
+  create refuses an existing id; update refuses a removed record. The write compares the
+  revision and refuses a stale one. Refusal faults retain `console.exists`, `console.removed`,
+  `console.changed`, `console.changedDelete` and `console.tooLarge`; the page says the code
+  in the reader's language (SPEC §panel.i18n), and keeps the draft and its conflict bar.
+  REMOVE compares the revision, refuses stale deletion, and answers `removed: false` for
+  an absent record. CLEAR_CLOSED removes only closed records; open work stays. Every write
+  publishes CHANGED, REMOVED or CLEARED while holding the store's write lock, so events leave
+  in commit order. The requesting page's id is the origin; agent saves use an empty origin.
+  The LLM plugin instance owns the handler guard: stopping it unregisters DATA.CONSOLES and
+  later requests answer `bus.unavailable` (SPEC §bus.requests).
   The page reads a connection on entry, puts the open records back on the strip, fills Recently
   closed from the closed ones, and imports older local drafts with `create` only, once, never
   over a record the server already has.
 
-  **Another window on the same connection** (the desktop GUI beside a browser tab). Before
-  2026-11-04 a window that did not make an edit kept the text it loaded until reload, and its
-  next save or close was refused as stale with a raw English toast. Now each time the window
-  regains focus or the tab becomes visible, the page reads the store again and catches up
-  wherever it holds no work of its own:
-  - a clean tab whose record moved on takes the newer text, title and revision, and the editor
-    keeps the caret;
-  - a clean tab closed elsewhere closes here too and is filed in Recently closed;
-  - a console opened elsewhere joins the strip without taking the front.
+  **Another window on the same connection** (the desktop GUI beside a browser tab).
+  Subscribe, then read: `applyServerConsole(conn, record)` reconciles events, the first read
+  and reconnect reads by revision (SPEC §bus.topics). Duplicate, late and already-applied
+  records do nothing. There is no focus or visibility catch-up:
+  - a clean tab takes a newer text, title and revision, keeping the caret;
+  - a clean tab closed elsewhere closes here and enters Recently closed;
+  - a console opened elsewhere joins the strip without taking the front;
+  - a draft is never rewritten: a stale save meets the conflict bar;
+  - a pending tab matching the server's saved state adopts its revision and becomes clean,
+    including a save whose response was lost before reconnect;
+  - REMOVED drops a clean tab and its history entry, keeping drafts; CLEARED drops closed
+    records only. A reconnect read also reconciles deletions missed while offline.
 
-  A tab with a draft is never rewritten: its own save meets the newer record and the conflict
-  bar asks. A local close, restore or resolve that runs while the read is in flight drops that
-  read's answer whole. Closing a clean tab that another window changed files the server's newer
-  record instead of refusing the close: on `console.changed` the page reads the record and
-  closes that revision (`coming back to the window catches a clean console up…`, `never
-  rewrites a draft…`, `a clean console closed there closes here…`, `closing a clean console the
-  other window changed files the newer record instead of refusing`).
+  One person has two views of the same work, so nothing is lost or merged silently
+  (SPEC §bus.editing). A local close, restore or conflict resolution bumps the epoch and
+  drops an older read whole. Closing a clean tab changed elsewhere reads and files the
+  server's newer revision on `console.changed`, retaining the close retry and conflict bar.
 
   Typing debounces 500 ms per connection; editing another
   connection cannot cancel a parked draft's save. A send flushes first and is
