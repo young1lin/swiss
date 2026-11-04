@@ -93,6 +93,74 @@ describe("a streaming answer's process", () => {
     }
   });
 
+  it("counts the model's silence at the column's end, says Stop past 20 s, and clears on its next frame", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    const wire = streaming();
+    const column = document.createElement("div");
+    const previous = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(wire.body));
+    const line = (): HTMLElement | null => column.querySelector<HTMLElement>("[data-lawait]");
+    try {
+      const ask = streamAsk("/stream", {}, { alive: () => true, onRunId: () => undefined }, (t) => {
+        const node = transcriptTurn(t);
+        column.appendChild(node);
+        return node;
+      }, new AbortController().signal);
+      wire.push("run", { runId: 7 });
+      await paint();
+      vi.advanceTimersByTime(2000);
+      expect(line(), "a normal first token never flashes the line").toBeNull();
+      vi.advanceTimersByTime(1000);
+      expect(line()?.textContent).toContain("Waiting for the model · 3 s");
+      expect(line()?.querySelector(".spin"), "it leads with the spinner").toBeTruthy();
+      vi.advanceTimersByTime(17000);
+      expect(line()?.textContent).toContain("Waiting for the model · 20 s · Stop cancels this round");
+      wire.push("delta", { kind: "thinking", text: "Inspect the schema" });
+      await paint();
+      expect(line(), "the model spoke").toBeNull();
+      wire.push("tool", { name: "run_sql", arguments: "{}" });
+      wire.push("toolResult", { name: "run_sql", ok: true, text: "1 row" });
+      await paint();
+      vi.advanceTimersByTime(3000);
+      expect(line(), "the last tool answered: the model is asked again").not.toBeNull();
+      expect(column.lastElementChild?.contains(line())).toBe(true);
+      wire.push("done", { runId: 7, ok: true });
+      wire.end();
+      await expect(ask).resolves.toEqual({});
+      expect(line()).toBeNull();
+    } finally {
+      wire.end();
+      globalThis.fetch = previous;
+      vi.useRealTimers();
+    }
+  });
+
+  it("Stop takes the waiting line away", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    const wire = streaming();
+    const column = document.createElement("div");
+    const stop = new AbortController();
+    const previous = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(wire.body));
+    try {
+      const ask = streamAsk("/stream", {}, { alive: () => true, onRunId: () => undefined }, (t) => {
+        const node = transcriptTurn(t);
+        column.appendChild(node);
+        return node;
+      }, stop.signal);
+      await paint();
+      vi.advanceTimersByTime(5000);
+      expect(column.querySelector("[data-lawait]")).not.toBeNull();
+      stop.abort();
+      expect(column.querySelector("[data-lawait]")).toBeNull();
+      await expect(ask).resolves.toEqual({ cancelled: true });
+    } finally {
+      wire.end();
+      globalThis.fetch = previous;
+      vi.useRealTimers();
+    }
+  });
+
   it("Stop immediately folds the work, retains partial words and releases a pending read", async () => {
     const wire = streaming();
     const column = document.createElement("div");

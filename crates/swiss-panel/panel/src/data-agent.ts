@@ -56,7 +56,7 @@ import { moduleDbMessage, tr } from "./i18n.js";
 import { targetEl, toast } from "./util.js";
 import {
   setIconBtn, btn, chatAfterWrite, chatFollow, chatPane, chatQueue, chatStats, dot, emptyNode, factLine, flow, formActions, formCap, formFold, grip, gripFold, gripFolded, hint, iconBtn, iconNode, note,
-  popupMenu, relTime, transcript, transcriptTurn,
+  popupMenu, relTime, speaker, transcript, transcriptTurn,
 } from "./ui/index.js";
 import type { ChatContext, ChatQueue, ChatQueued, ChatStats, ChatUsage, FlowStep, MenuItem, TranscriptTurn } from "./ui/index.js";
 import type { LlmEffort, LlmModelRow, LlmToolInfo } from "./types/llm.js";
@@ -898,7 +898,7 @@ const MOVED_RE = /\n\n<environment>\nThe (?:model answering|write mode) changed 
  *  markdown would take as escapes and emphasis. Its Copy gives the words back as sent. */
 function askedTurn(text: string): TranscriptTurn {
   const said = text.replace(MOVED_RE, "");
-  return { side: "user", role: tr("llm.history.role.user"), text: said, copy: said };
+  return { side: "user", role: speaker("user"), text: said, copy: said };
 }
 
 /** The column a turn lands on, built on first paint. */
@@ -1158,7 +1158,7 @@ async function send(talk: Talk, text: string, reveal = true): Promise<boolean> {
   if (talk.gen !== myGen) return true;
   talk.live = false;
   talk.controller = null;
-  if (outcome.cancelled) addTurn(talk, { role: tr("llm.history.role.assistant"), text: tr("llm.test.cancelled"), dim: true });
+  if (outcome.cancelled) addTurn(talk, { role: speaker("assistant"), text: tr("llm.test.cancelled"), dim: true });
   else if (outcome.error) addTurn(talk, { role: tr("llm.history.role.error"), text: outcome.error, mono: true });
   if (outcome.ended) addTurn(talk, { role: tr("llm.history.role.error"), text: tr("llm.test.streamEnded"), mono: true });
   // A refusal over the conversation (closed elsewhere, or one opened elsewhere): take the
@@ -1272,7 +1272,7 @@ function onStop(): void {
   talk.controller = null;
   unsteer(talk);
   if (talk.runId != null) cancelRun(talk.runId);
-  addTurn(talk, { role: tr("llm.history.role.assistant"), text: tr("llm.test.cancelled"), dim: true });
+  addTurn(talk, { role: speaker("assistant"), text: tr("llm.test.cancelled"), dim: true });
   controls(talk);
 }
 

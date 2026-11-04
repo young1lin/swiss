@@ -20,14 +20,16 @@
  * this shape owns the reading rhythm and the speaker's position. */
                                                
 import { h } from "../h.js";
+import { tr } from "../i18n.js";
 import { copyBtn } from "./copy.js";
+import { iconNode } from "./icon.js";
 import { markdownNode } from "./markdown.js";
 import { tag } from "./status.js";
 
                                  
                                                                      
                               
-                                                                               
+                                                                                                    
                
                                                                                       
               
@@ -57,6 +59,14 @@ export function transcriptText(text        , o                                  
   if (o.mono) cls.push("mono");
   if (o.dim) cls.push("dim");
   return h("div", { class: cls.join(" ") }, text);
+}
+
+/** Who spoke, as a mark at a turn's head: a person for the reader, a robot for the model
+ *  (2026-11-04: the USER/ASSISTANT words read as labels, not speakers). The localized word
+ *  stays the mark's accessible name and its tooltip. */
+export function speaker(who                      )              {
+  const word = tr(who === "user" ? "llm.history.role.user" : "llm.history.role.assistant");
+  return h("span", { class: "tc-who " + who, title: word }, iconNode(who === "user" ? "user" : "bot", word));
 }
 
 /** One turn: its one-word head and its content, nothing hidden. */

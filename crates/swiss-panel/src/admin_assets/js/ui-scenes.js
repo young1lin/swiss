@@ -33,7 +33,7 @@ import { tk, tr } from "./i18n.js";
 import {
   actionBtn, btn, card, decodeStrings, dot, emptyNode, filterInput, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, moreBtn,
   pageFoot, pager, pane, paneHead, pickPanel, pickerRow, portChip, resHead, row, section, seg, setActionBusy, sideRow, sw, tag, timeline, timelineMeta, valueBlock,
-  flow, flowIO, flowToggle, formFold, transcript, transcriptText, resultTable, resultChart,
+  flow, flowIO, flowToggle, formFold, speaker, transcript, transcriptText, resultTable, resultChart,
 } from "./ui/index.js";
                                                   
 
@@ -248,11 +248,11 @@ function conversation()              {
   });
   work.onclick = (e)       => { if ((e.target           ).closest(".fl-sum")) flowToggle(work, "read"); };
   return h("div", { class: "shell" }, pane({}, transcript([
-    { side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.s.tUser") },
-    { role: tr("gallery.s.roleAssistant"), code: [formFold({ summary: tr("llm.test.worked") }, work)] },
+    { side: "user", role: speaker("user"), text: tr("gallery.s.tUser") },
+    { role: speaker("assistant"), code: [formFold({ summary: tr("llm.test.worked") }, work)] },
     { role: tr("gallery.s.roleFinal"), text: tr("gallery.s.tFinal"), markdown: true },
-    { side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.s.tUser") },
-    { role: tr("gallery.s.roleAssistant"), text: tr("gallery.s.tFinal"), markdown: true },
+    { side: "user", role: speaker("user"), text: tr("gallery.s.tUser") },
+    { role: speaker("assistant"), text: tr("gallery.s.tFinal"), markdown: true },
   ])));
 }
 

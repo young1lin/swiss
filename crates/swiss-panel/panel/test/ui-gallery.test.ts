@@ -191,6 +191,7 @@ const SIG: Record<string, string> = {
   factLine: ".fl-facts > .fl-fact + .fl-sep",
   transcript: ".tc-col .tc-turn ~ .tc-turn",
   transcriptTurn: ".tc-turn > .tc-head .tc-role",
+  speaker: ".tc-who.user ~ .tc-who.assistant",
   transcriptText: ".tc-text",
   toolChip: ".tc-chip code",
   jsonCodeNode: "pre.jv",

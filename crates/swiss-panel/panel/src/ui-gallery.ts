@@ -39,7 +39,7 @@ import {
   initSelects, redacted, initSheet, inlineForm, jsonCodeNode, diffNode, kvRow, markdownNode, menuOpen, moreBtn, note, objTab, openFieldSheet,
   grip, pageFoot, pager, pair, pane, paneHead, pickList, pickRow, popupMenu, refLink, relTime, resHead, resultChart, row, section,
   scrollBox, seg, sheet, sheetOpen, showSheet, sideRow, spinner, split, sw, tag, timeline, timelineMeta, timelineToggle, toTop,
-  textNode, tokenCodeNode, transcript, transcriptText, transcriptTurn, toolChip, valueBlock, proseText, codeSchemeFor, workspace, wsBar, wsHead, wsScroll, wsSide, wsSplit,
+  speaker, textNode, tokenCodeNode, transcript, transcriptText, transcriptTurn, toolChip, valueBlock, proseText, codeSchemeFor, workspace, wsBar, wsHead, wsScroll, wsSide, wsSplit,
 } from "./ui/index.js";
 import type { DotState, FlowStep, GraphEdge, GraphGroup, GraphKey, GraphNode, TimelineItem } from "./ui/index.js";
 
@@ -448,8 +448,8 @@ function chatSample(): HTMLElement {
     subject: CONN_SAMPLE,
     tools: [iconBtn("plus", tr("gallery.d.chatNew"), { ghost: true }), iconBtn("x", tr("gallery.d.chatClose"), { ghost: true })],
     body: transcript([
-      { side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.d.chatAsk"), copy: tr("gallery.d.chatAsk") },
-      { role: tr("gallery.s.roleAssistant"), text: chatAnswer(), markdown: true, copy: chatAnswer() },
+      { side: "user", role: speaker("user"), text: tr("gallery.d.chatAsk"), copy: tr("gallery.d.chatAsk") },
+      { role: speaker("assistant"), text: chatAnswer(), markdown: true, copy: chatAnswer() },
     ]),
     context: formActions(...references),
     input: h("textarea", { rows: 2, placeholder: tr("gallery.d.chatAskPh") }),
@@ -603,7 +603,7 @@ function catalogue(now: number): HTMLElement {
       [tr("gallery.st.tabHeld"), objTab({ name: "customers", selected: false, icon: "table", data: {}, mark: heldDot(tr("gallery.d.heldTwo")), close: { label: tr("gallery.d.closeTab"), data: {} } })],
       [tr("gallery.st.tabCount"), objTab({ name: "audit_log", selected: false, icon: "table", data: {}, count: { n: 2, title: tr("gallery.d.twoFilters") }, close: { label: tr("gallery.d.closeTab"), data: {} } })],
     ]),
-    entry(["transcript", "transcriptText", "transcriptTurn", "toolChip"], tk("gallery.c.transcript"), tk("gallery.c.transcriptNote"), [
+    entry(["transcript", "transcriptText", "transcriptTurn", "toolChip", "speaker"], tk("gallery.c.transcript"), tk("gallery.c.transcriptNote"), [
       [tr("gallery.st.transcriptFull"), transcript([
         { role: tag(tr("gallery.s.roleSystem")), text: tr("gallery.s.tSystem"), dim: true },
         { side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.s.tUser"), markdown: true },
@@ -613,6 +613,7 @@ function catalogue(now: number): HTMLElement {
       ])],
       [tr("gallery.st.transcriptTurn"), transcriptTurn({ role: tag(tr("gallery.s.roleTool")), text: "notes.md\t913 B\t2026-10-05 08:39", mono: true })],
       [tr("gallery.st.transcriptText"), transcriptText(tr("gallery.s.tThink"), { dim: true })],
+      [tr("gallery.st.speaker"), h("span", null, speaker("user"), " ", speaker("assistant"))],
     ]),
     entry(["timeline", "timelineMeta"], tk("gallery.c.timeline"), tk("gallery.c.timelineNote"), [], [
       timeline(sampleCalls(now), { now, open: new Set(["g3"]), body: callBody }),
@@ -763,8 +764,8 @@ function openDemoSheet(): void {
 
 /** The chat variant: only the transcript scrolls as turns arrive; input and actions stay put. */
 function openDemoChat(): void {
-  const out = transcript([{ side: "user", role: tr("gallery.s.roleUser"), text: tr("gallery.s.tUser") },
-    { role: tr("gallery.s.roleAssistant"), text: tr("gallery.s.tFinal"), markdown: true }]);
+  const out = transcript([{ side: "user", role: speaker("user"), text: tr("gallery.s.tUser") },
+    { role: speaker("assistant"), text: tr("gallery.s.tFinal"), markdown: true }]);
   const input = h("textarea", { rows: 3, aria: { label: tr("llm.test.prompt") } });
   const close = btn(tr("llm.close"));
   const send = btn(tr("llm.test.run"), { kind: "primary" });
@@ -773,8 +774,8 @@ function openDemoChat(): void {
   close.onclick = closeSheet;
   send.onclick = (): void => {
     if (!input.value.trim()) return;
-    out.appendChild(transcriptTurn({ side: "user", role: tr("gallery.s.roleUser"), text: input.value }));
-    out.appendChild(transcriptTurn({ role: tr("gallery.s.roleAssistant"), text: tr("gallery.s.tFinal"), markdown: true }));
+    out.appendChild(transcriptTurn({ side: "user", role: speaker("user"), text: input.value }));
+    out.appendChild(transcriptTurn({ role: speaker("assistant"), text: tr("gallery.s.tFinal"), markdown: true }));
     input.value = "";
     input.focus();
   };

@@ -25,7 +25,7 @@ import { targetEl } from "../util.js";
 import { fill, h } from "../h.js";
 import type { HChild } from "../h.js";
 import { tr } from "../i18n.js";
-import { factLine, flow, flowIO, flowToggle, fmtMs, formFold, note, scrollBox, splitJsonBlock, transcriptText, transcriptTurn } from "../ui/index.js";
+import { factLine, flow, flowIO, flowToggle, fmtMs, formFold, note, scrollBox, speaker, splitJsonBlock, transcriptText, transcriptTurn } from "../ui/index.js";
 import type { TranscriptTurn } from "../ui/index.js";
 import { firstLine, jsonBlock, stepLine, thinkLine, toolIcon } from "./llm-history.js";
 
@@ -43,6 +43,11 @@ import { firstLine, jsonBlock, stepLine, thinkLine, toolIcon } from "./llm-histo
  *  frame carries a code - `busy` is recoverable, any other code locks the asks until
  *  New (the caller decides from `locked`). A body that ends without `done` is the
  *  caller's "ended without an answer" - never a quiet success. */
+/** The model's silence shows once it outlasts a normal first token (4-5 s on GLM), so a
+ *  quick round never flashes the line; past WAIT_HINT_MS the line says Stop is the way out. */
+const WAIT_SHOW_MS = 3000;
+const WAIT_HINT_MS = 20000;
+
 export interface StreamHooks {
   /** False once the caller stopped or cleared this loop: its frames paint nothing. */
   alive(): boolean;
@@ -81,7 +86,7 @@ export async function streamAsk(
       processBody = h("div", null);
       process = formFold({ summary: tr("llm.test.working") }, processBody) as HTMLDetailsElement;
       process.open = true;
-      addTurn({ role: tr("llm.history.role.assistant"), code: [process] });
+      addTurn({ role: speaker("assistant"), code: [process] });
     }
     const node = transcriptTurn(t);
     processBody.appendChild(node);
@@ -91,7 +96,7 @@ export async function streamAsk(
    *  the markdown it is (as History renders a round's prose in place). */
   const closeWords = (): void => {
     if (answerEl && answerText.trim()) {
-      answerEl.replaceWith(transcriptTurn({ role: tr("llm.history.role.assistant"), text: answerText, markdown: true }));
+      answerEl.replaceWith(transcriptTurn({ role: speaker("assistant"), text: answerText, markdown: true }));
       // (words between steps: their code blocks copy, the turn has no Copy of its own)
     }
     answerEl = null;
@@ -137,6 +142,36 @@ export async function streamAsk(
     const summary = process.querySelector("summary");
     if (summary) summary.textContent = label;
   };
+  /* The model's silence, counted (2026-11-04: one GLM round sat 127 s before its first token
+     and the column showed nothing, so the pane read as frozen). From the moment the model is
+     asked - the stream opened, a round's last tool answered, a steer taken - until its next
+     frame, a quiet line at the column's end counts the wait; any frame of the model's own,
+     Stop or the stream's end takes it away. */
+  let wait: { since: number; timer: ReturnType<typeof setInterval>; turn: HTMLElement | null; words: HTMLElement } | null = null;
+  const stopWait = (): void => {
+    const w = wait;
+    if (!w) return;
+    clearInterval(w.timer);
+    w.turn?.remove();
+    wait = null;
+  };
+  const tickWait = (): void => {
+    const w = wait;
+    if (!w) return;
+    if (!hooks.alive()) { stopWait(); return; }
+    const ms = Date.now() - w.since;
+    if (ms < WAIT_SHOW_MS) return;
+    const elapsed = tr("ui.sec", { n: String(Math.floor(ms / 1000)) });
+    w.words.textContent = tr(ms >= WAIT_HINT_MS ? "llm.test.waitingStop" : "llm.test.waiting", { elapsed });
+    if (!w.turn) {
+      w.turn = addTurn({ role: null, code: [note(w.words, { busy: true, data: { lawait: "" } })] });
+      hooks.onPaint?.();
+    }
+  };
+  const startWait = (): void => {
+    stopWait();
+    wait = { since: Date.now(), timer: setInterval(tickWait, 1000), turn: null, words: h("span") };
+  };
   const settleInterrupted = (): void => {
     closeThought();
     // Keep partial words readable after Stop even when the caller has retired this send.
@@ -152,6 +187,7 @@ export async function streamAsk(
     hooks.onPaint?.();
   };
   const abort = (): void => {
+    stopWait();
     if (!doneSeen) settleInterrupted();
     // A custom transport may not reject its pending read on fetch's AbortSignal.
     void reader?.cancel().catch(() => { /* the fetch may already have aborted */ });
@@ -183,6 +219,7 @@ export async function streamAsk(
       };
     }
     reader = response.body.getReader();
+    startWait();
     const decoder = new TextDecoder();
     let buffer = "";
     let error: string | undefined;
@@ -190,6 +227,8 @@ export async function streamAsk(
       if (!hooks.alive()) return; // a stopped loop's frame is not this dialog's
       let payload: Record<string, unknown> = {};
       try { payload = JSON.parse(data) as Record<string, unknown>; } catch { payload = {}; }
+      // The model spoke (or the run closed): its silence is over.
+      if (name === "delta" || name === "tool" || name === "final" || name === "done") stopWait();
       if (name === "run") {
         const id = payload.runId;
         if (typeof id === "number") hooks.onRunId(id, payload.continued === true);
@@ -206,7 +245,7 @@ export async function streamAsk(
           // Words said once the work began stand in it, in order: after the step
           // before them, before the tool asks they lead to. Words before any work
           // open the column; the final lifts the closing round's words out below.
-          const turn: TranscriptTurn = { role: tr("llm.history.role.assistant"), text };
+          const turn: TranscriptTurn = { role: speaker("assistant"), text };
           answerEl = processBody ? addProcess(turn) : addTurn(turn);
           answerText = text;
         } else {
@@ -253,6 +292,8 @@ export async function streamAsk(
         if (index >= 0) pending.splice(index, 1)[0].result(String(payload.text || ""), payload.ok !== false);
         else addTurn({ role: tr("llm.history.role.tool"), code: [formFold({ summary: String(payload.name || tr("llm.history.result")) }, transcriptText(String(payload.text || ""), { mono: true }))] });
         hooks.onToolResult?.(payload);
+        // The round's last tool answered: the model is asked again.
+        if (!pending.length) startWait();
       } else if (name === "steer") {
         // The reader's words went in between two steps: the work so far folds, the
         // words land as the reader's turn, and the next step opens a fold beneath them.
@@ -266,13 +307,14 @@ export async function streamAsk(
         closeThought();
         closeWords();
         hooks.onSteer?.(String(payload.id || ""), String(payload.text || ""));
+        startWait(); // the model reads the words next; the count restarts under them
       } else if (name === "final") {
         // The closing answer renders as the markdown it is, whole, its Copy closing it.
         closeThought();
         if (answerEl) answerEl.remove();
         foldProcess();
         const text = String(payload.text || "");
-        addTurn({ role: process ? null : tr("llm.history.role.assistant"), text, markdown: true, copy: text.trim() ? text : undefined });
+        addTurn({ role: process ? null : speaker("assistant"), text, markdown: true, copy: text.trim() ? text : undefined });
       } else if (name === "done") {
         doneSeen = true;
         if (process) {
@@ -325,6 +367,7 @@ export async function streamAsk(
     if (signal.aborted) return { cancelled: true };
     return { error: err instanceof Error ? err.message : String(err) };
   } finally {
+    stopWait();
     signal.removeEventListener("abort", abort);
     // Event callbacks assigned the disclosure while the stream was being read.
     const work = process as HTMLDetailsElement | null;

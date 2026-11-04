@@ -32,7 +32,7 @@ import { $, api, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
                                       
 import { locale, tr } from "../i18n.js";
-import { JV_LINES, actionBtn, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, scrollBox, section, setActionBusy, sheet, showSheet, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
+import { JV_LINES, actionBtn, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, scrollBox, section, setActionBusy, sheet, showSheet, speaker, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
                                                                        
 import { call, takeWantedRun } from "./llm-core.js";
 
@@ -853,7 +853,7 @@ function promptNodes(text        )           {
 /** A sent prompt has the same preview and context fold before and after restoring it; its Copy
  *  gives the whole prompt back. */
 export function promptTurn(text        )                 {
-  return { side: "user", role: tr("llm.history.role.user"), code: promptNodes(text), copy: text };
+  return { side: "user", role: speaker("user"), code: promptNodes(text), copy: text };
 }
 
 /** A tool's glyph by what its name says it does: a shell, a search, a write, a read, a store,
@@ -992,7 +992,7 @@ function askNodes(ask          , n        , system               , run          
   return [
     asked?.trim() ? fold(tr("llm.history.systemPrompt"), asked) : null,
     ask.prompt ? transcriptTurn(asTurn(ask.prompt)) : null,
-    transcriptTurn({ side: "assistant", role: tr("llm.history.role.assistant"), code: [
+    transcriptTurn({ side: "assistant", role: speaker("assistant"), code: [
       steps.length ? process : null,
       ...ask.rounds.flatMap(r => r.tools.map(tool => artifact?.(tool))),
       ask.answer != null ? h("div", { data: { lhanswer: String(n) } }, ...answerNodes(ask.answer)) : null,

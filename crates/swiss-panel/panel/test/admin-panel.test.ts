@@ -64,12 +64,13 @@ describe("admin panel assets", () => {
     // the chat's statistics (SPEC §panel.ui: i-gauge, the activity pill's glyph), and the skill
     // installer (i-download), and chat's return-to-bottom (i-arrow-down), and the action pair's
     // six verb glyphs (SPEC §panel.design rule 7: i-power-off, i-stop, i-pause, i-refresh-cw,
-    // i-rotate-cw, i-upload, with the three notes that say why a pair may not share one) — still
+    // i-rotate-cw, i-upload, with the three notes that say why a pair may not share one), and the
+    // transcript's speaker marks (SPEC §llm: i-user, i-bot, where the role words were) — still
     // small, still no markup. The Apache-2.0 banner is stripped
     // before counting: it is a fixed licence cost, not shell content, and it must never buy
     // anyone headroom.
     const shellBody = shell.replace(/^<!--[\s\S]*?-->\s*/, "");
-    expect(shellBody.split("\n").length).toBeLessThan(200);
+    expect(shellBody.split("\n").length).toBeLessThan(202);
   });
 
   it("links the whole module graph: every import resolves to a file that exports the name", () => {

@@ -62,7 +62,7 @@ export { collapseRuns, dayLabel, fmtMs, relTime, timeLabel, timeline, timelineMe
                                                                 
 export { factLine, flow, flowHead, flowIO, flowProse, flowToggle, scrollBox } from "./flow.js";
                                                     
-export { transcript, transcriptText, transcriptTurn, toolChip } from "./transcript.js";
+export { speaker, transcript, transcriptText, transcriptTurn, toolChip } from "./transcript.js";
                                                       
 export { chatAfterWrite, chatCommands, chatFollow, chatGrow, chatPane, chatQueue } from "./chat.js";
                                                                                                  

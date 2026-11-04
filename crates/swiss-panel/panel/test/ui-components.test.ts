@@ -37,7 +37,7 @@ import {
   ACTION_ICON, actionBtn, fmtMs, groupNode, heldDot, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
   setActionBtn, setActionBusy,
   objTab, pager, paneBody, paneHead, pickPanel, pickerRow, portChip, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
-  relTime, timeLabel, timeline, timelineMeta, timelineToggle, toTop, transcript, transcriptText, transcriptTurn, toolChip, valueBlock,
+  relTime, speaker, timeLabel, timeline, timelineMeta, timelineToggle, toTop, transcript, transcriptText, transcriptTurn, toolChip, valueBlock,
 } from "../src/ui/index.js";
 import {
   catChip, docHead, dotSize, graphElements, graphHops, graphLayoutOf, graphLegend, graphPalette, graphStyle, graphView, groupElementId, markdownNode,
@@ -378,6 +378,22 @@ describe("ui/transcript", () => {
     expect(node.querySelector(".tc-turn.assistant")?.textContent).toContain("reply");
     const rules = parseCss(sheet("ui.css"));
     expect(rules.find((r) => r.selectors.includes(".tc-turn.user"))?.decls.find((d) => d.prop === "align-self")?.value).toBe("flex-end");
+  });
+
+  it("marks the reader and the model with a person and a robot, the word kept as their name", () => {
+    const node = transcript([{ side: "user", role: speaker("user"), text: "hello" }, { role: speaker("assistant"), text: "reply" }]);
+    const marks = Array.from(node.querySelectorAll<HTMLElement>(".tc-head .tc-role > .tc-who"));
+    expect(marks.map((m) => m.className)).toEqual(["tc-who user", "tc-who assistant"]);
+    expect(marks.map((m) => m.querySelector("use")?.getAttribute("href"))).toEqual(["#i-user", "#i-bot"]);
+    expect(marks.map((m) => m.title)).toEqual(["user", "assistant"]);
+    expect(marks.map((m) => m.querySelector("svg")?.getAttribute("aria-label"))).toEqual(["user", "assistant"]);
+    expect(node.querySelector(".tc-head")?.textContent, "no role word on screen").toBe("");
+    install("zh-CN", zh);
+    expect(speaker("assistant").title).toBe(tr("llm.history.role.assistant"));
+    const sprite = readFileSync(new NodeURL("../../src/admin_assets/index.html", import.meta.url), "utf8");
+    for (const id of ["i-user", "i-bot"]) expect(sprite, id).toContain(`<symbol id="${id}"`);
+    const rules = parseCss(sheet("ui.css"));
+    expect(rules.find((r) => r.selectors.includes(".tc-who"))?.decls.find((d) => d.prop === "border-radius")?.value).toBe("50%");
   });
 
   it("renders every turn as chat - the role in one word, the content in its register", () => {
