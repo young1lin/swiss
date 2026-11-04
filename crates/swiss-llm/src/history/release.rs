@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{LazyLock, Mutex, Weak};
 
+use super::runs::LastRound;
 use super::*;
 
 /// The answer a released round gives a tool call whose result never landed.
@@ -125,25 +126,20 @@ impl LlmHistory {
         if self.live.has(run_id) || holder.as_deref().is_some_and(|holder| holder_drives(holder, run_id)) {
             return Released::Busy;
         }
-        // The last sealed round's tool calls, as they flew. An answer that failed asked
-        // none; a body that will not read leaves nothing honest to pair.
-        let calls: Vec<Value> = match last_call {
-            None => Vec::new(),
-            Some(call_id) => {
-                let body = match self.read_call_body(call_id).await {
-                    Ok(Some(body)) if body["bodyGone"] == false => body,
-                    _ => return Released::Unprovable,
-                };
-                let Some(sealed) = body["body"].as_str().and_then(|text| serde_json::from_str::<Value>(text).ok()) else {
-                    return Released::Unprovable;
-                };
-                match sealed.pointer("/response") {
-                    Some(response) if response.get("error").is_none() => {
-                        response["toolCalls"].as_array().cloned().unwrap_or_default()
-                    }
-                    _ => Vec::new(),
+        // The last sealed round's tool calls, as they flew: past a deadline's stand-in,
+        // the round it cut (see last_round). An answer that failed asked none; a body
+        // that will not read leaves nothing honest to pair. The token below stays the
+        // newest call of any kind, so a call filed meanwhile still moves it.
+        let calls: Vec<Value> = match self.last_round(run_id, None).await {
+            Ok(LastRound::None) => Vec::new(),
+            Ok(LastRound::Sealed(sealed)) => match sealed.pointer("/response") {
+                Some(response) if response.get("error").is_none() => {
+                    response["toolCalls"].as_array().cloned().unwrap_or_default()
                 }
-            }
+                _ => Vec::new(),
+            },
+            Ok(LastRound::Gone | LastRound::Undecodable) => return Released::Unprovable,
+            Err(_) => return Released::Busy,
         };
         // What the run's tail already answers, by wire id: a settled earlier round's
         // results, or the audit tail an interrupted dispatch queued. An unreadable tail

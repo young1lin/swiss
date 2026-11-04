@@ -33,7 +33,11 @@ fn home(name: &str) -> std::path::PathBuf {
 
 /// File one tool round of run `id` under `attempt`: the model asked `calls` (name, id).
 fn file_tool_round(history: &LlmHistory, id: i64, attempt: Option<u64>, calls: &[(&str, &str)]) {
-    let wire = json!({});
+    file_tool_round_on(history, id, attempt, calls, &json!({}));
+}
+
+/// The same round, sealed beside the wire facts it flew on.
+fn file_tool_round_on(history: &LlmHistory, id: i64, attempt: Option<u64>, calls: &[(&str, &str)], wire: &Value) {
     let replay = json!([{ "role": "user", "text": "count the rows" }]);
     let texts = ["Checking.".to_string()];
     let tool_calls: Vec<(String, String, String)> =
@@ -47,7 +51,7 @@ fn file_tool_round(history: &LlmHistory, id: i64, attempt: Option<u64>, calls: &
             system: None,
             prompt: "count the rows",
             turn: Some(0),
-            wire: Some(&wire),
+            wire: Some(wire),
             request: None,
             replay: Some(&replay),
             attempt,
@@ -188,4 +192,63 @@ async fn a_round_a_restart_cut_is_released_by_the_next_handle() {
     })
     .await
     .expect("the restart scenario settles within the bound");
+}
+
+/// A deadline that dropped the drive mid-tool (a Data or Test loop past its agent's
+/// timeoutMs): the tool round sealed on its wire, then the deadline filed its stand-in -
+/// the wait, no wire facts, no replay - and the drive went away. The stand-in seals
+/// nothing the model was told, so the door reads past it: the same provider, model and
+/// wire continue, the cut call reads UNKNOWN, and the stand-in stays on record.
+#[tokio::test]
+async fn a_deadline_that_dropped_the_drive_leaves_the_conversation_continuable_on_its_wire() {
+    tokio::time::timeout(BOUND, async {
+        let dir = home("llm-hist-release-deadline");
+        let history = LlmHistory::open(&dir).await.expect("open");
+        let wire = json!({ "endpoint": "https://glm.example/v4/messages", "headers": { "x-style": "anthropic" } });
+        let mut run = history.open_conversation("alpha", "builtin", Some("glm"), Some("glm-5.3")).await;
+        let id = run.id().expect("reserved");
+        let attempt = run.begin_round().await.expect("the mark commits");
+        file_tool_round_on(&history, id, Some(attempt), &[("run_sql", "call_slow")], &wire);
+        history.flush().await;
+        history.record_chat_timeout_in_run(id, ChatTimeout {
+            provider: "glm",
+            model: "glm-5.3",
+            agent: Some("alpha"),
+            system: None,
+            prompt: "count the rows",
+            turn: None,
+            waited_ms: 1_800_000,
+        });
+        history.flush().await;
+        drop(run);
+        let resumed = history
+            .resume_conversation(id, "alpha", "builtin", Some("glm"), Some("glm-5.3"), Some(&wire))
+            .await;
+        let mut resumed = match resumed {
+            Ok(resumed) => resumed,
+            Err(why) => panic!("the provider, model and wire are the ones in force; a deadline strands nothing: {why:?}"),
+        };
+        match history.replay_state(id).await {
+            ReplayState::Continuable { prior } => assert!(
+                prior.iter().any(|message| message["id"] == "call_slow" && message["text"] == RELEASED_RESULT),
+                "the call the deadline cut reads UNKNOWN: {prior:?}"
+            ),
+            ReplayState::Refused(why) => panic!("the conversation must replay past the stand-in: {why}"),
+            ReplayState::Fresh => panic!("the sealed tool round must not disappear"),
+        }
+        assert!(resumed.begin_round().await.is_ok(), "the next round claims on the released attempt");
+        let calls: i64 = history
+            .store
+            .query(move |pool| {
+                Box::pin(async move {
+                    sqlx::query_scalar("SELECT count(*) FROM call WHERE run_id = ?").bind(id).fetch_one(&pool).await
+                })
+            })
+            .await
+            .expect("count the calls");
+        assert_eq!(calls, 2, "the deadline's stand-in stays on record beside the round it cut");
+        history.close().await.expect("close");
+    })
+    .await
+    .expect("the deadline scenario settles within the bound");
 }

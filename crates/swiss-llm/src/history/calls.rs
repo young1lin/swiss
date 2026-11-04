@@ -153,7 +153,9 @@ impl LlmHistory {
     /// The same dropped round trip, associated with the RESERVED run it served:
     /// the row joins its run by id like every other round of it. It settles no
     /// attempt - the outbound may have flown and nothing seals it, so a
-    /// conversation's round stays in flight and continuation refuses.
+    /// conversation's round stays in flight until the next send's door releases
+    /// it; the continuation guards read past this stand-in to the round it cut
+    /// (runs.rs last_round).
     pub fn record_chat_timeout_in_run(&self, run_id: i64, call: ChatTimeout<'_>) {
         self.record_chat_timeout_scoped(Some(run_id), call);
     }

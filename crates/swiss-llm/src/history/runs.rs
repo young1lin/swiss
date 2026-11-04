@@ -142,45 +142,26 @@ impl LlmHistory {
         // would read the old dialogue. A run whose body there was pruned cannot
         // prove its provenance and refuses the same way; a run with no call to
         // them yet - none at all, or the reader just moved it to them - has
-        // nothing to contradict.
+        // nothing to contradict. A deadline's stand-in claims no wire, so the
+        // round it cut is the one that testifies (see [Self::last_round]).
         if let Some(wire) = wire {
-            let (held_provider, held_model) = (provider.clone(), model.clone());
-            let latest_call: Option<i64> = self
-                .store
-                .query(move |pool| {
-                    Box::pin(async move {
-                        let row = sqlx::query(
-                            "SELECT id FROM call WHERE run_id = ? AND provider IS ? AND model IS ? ORDER BY id DESC LIMIT 1",
-                        )
-                        .bind(run_id)
-                        .bind(&held_provider)
-                        .bind(&held_model)
-                        .fetch_optional(&pool)
-                        .await?;
-                        row.map(|row| row.try_get(0)).transpose()
-                    })
-                })
-                .await
-                .ok()
-                .flatten();
-            if let Some(call_id) = latest_call {
-                match self.read_call_body(call_id).await {
-                    Ok(Some(body)) if body["bodyGone"] == false => {
-                        let asked = body["body"].as_str().and_then(|text| serde_json::from_str::<Value>(text).ok());
-                        let held = asked.as_ref().and_then(|ask| ask.get("request"));
-                        let endpoint_matches = held
-                            .and_then(|request| request.get("endpoint"))
-                            .is_some_and(|held| held == wire.get("endpoint").unwrap_or(&Value::Null));
-                        let headers_match = held
-                            .and_then(|request| request.get("headers"))
-                            .is_some_and(|held| held == wire.get("headers").unwrap_or(&Value::Null));
-                        if !endpoint_matches || !headers_match {
-                            return Err(ResumeError::ContextChanged);
-                        }
+            let held_to = provider.as_deref().zip(model.as_deref());
+            match self.last_round(run_id, held_to).await {
+                Ok(LastRound::Sealed(asked)) => {
+                    let held = asked.get("request");
+                    let endpoint_matches = held
+                        .and_then(|request| request.get("endpoint"))
+                        .is_some_and(|held| held == wire.get("endpoint").unwrap_or(&Value::Null));
+                    let headers_match = held
+                        .and_then(|request| request.get("headers"))
+                        .is_some_and(|held| held == wire.get("headers").unwrap_or(&Value::Null));
+                    if !endpoint_matches || !headers_match {
+                        return Err(ResumeError::ContextChanged);
                     }
-                    // Pruned or unreadable: the provenance cannot be verified.
-                    _ => return Err(ResumeError::ContextChanged),
                 }
+                // Pruned or unreadable: the provenance cannot be verified.
+                Ok(LastRound::Gone | LastRound::Undecodable) => return Err(ResumeError::ContextChanged),
+                Ok(LastRound::None) | Err(_) => {}
             }
         }
         // The CANONICAL activity gate (SPEC llm.history). A mark still in
@@ -200,43 +181,17 @@ impl LlmHistory {
         } else if pending != 0 {
             return Err(ResumeError::NoCanonical);
         }
-        let evidenced = self
-            .store
-            .query(
-                move |pool| {
-                    Box::pin(async move {
-                        let last_call = sqlx::query(
-                            "SELECT id FROM call WHERE run_id = ? ORDER BY id DESC LIMIT 1",
-                        )
-                        .bind(run_id)
-                        .fetch_optional(&pool)
-                        .await?
-                        .map(|row| row.try_get::<i64, _>(0))
-                        .transpose()?;
-                        Ok::<Option<i64>, sqlx::Error>(last_call)
-                    })
-                },
-            )
-            .await;
-        let last_call = evidenced.map_err(|_| ResumeError::Gone)?;
-        match last_call {
+        match self.last_round(run_id, None).await.map_err(|_| ResumeError::Gone)? {
             // No sealed round at all - unused, or every round was interrupted
             // before its call could file: the dialogue the model knows starts
             // with the next send (see [Self::replay_state]).
-            None => {}
-            Some(call_id) => {
-                let canonical = match self.read_call_body(call_id).await {
-                    Ok(Some(body)) if body["bodyGone"] == false => body,
-                    _ => return Err(ResumeError::NoCanonical),
-                };
-                let replayable = canonical["body"]
-                    .as_str()
-                    .and_then(|text| serde_json::from_str::<Value>(text).ok())
-                    .is_some_and(|body| body.pointer("/request/replay").is_some());
-                if !replayable {
+            LastRound::None => {}
+            LastRound::Sealed(canonical) => {
+                if canonical.pointer("/request/replay").is_none() {
                     return Err(ResumeError::NoCanonical);
                 }
             }
+            LastRound::Gone | LastRound::Undecodable => return Err(ResumeError::NoCanonical),
         }
         let mut run = self.run_recorder(&agent, &runtime, row_provider.as_deref(), row_model.as_deref());
         run.kind = Some(1);
@@ -402,23 +357,14 @@ impl LlmHistory {
                     .bind(run_id)
                     .fetch_optional(&pool)
                     .await?;
-                    let Some(row) = row else { return Ok::<Option<(i64, Option<String>, Option<i64>)>, sqlx::Error>(None) };
+                    let Some(row) = row else { return Ok::<Option<(i64, Option<String>)>, sqlx::Error>(None) };
                     let pending: i64 = row.try_get(0)?;
                     let tail: Option<String> = row.try_get(1)?;
-                    // Fallible decode with transpose: a present-but-corrupt
-                    // id column PROPAGATES as the query error (the read then
-                    // fails closed below), never silently an absent call.
-                    let last_call = sqlx::query("SELECT id FROM call WHERE run_id = ? ORDER BY id DESC LIMIT 1")
-                        .bind(run_id)
-                        .fetch_optional(&pool)
-                        .await?
-                        .map(|row| row.try_get::<i64, _>(0))
-                        .transpose()?;
-                    Ok(Some((pending, tail, last_call)))
+                    Ok(Some((pending, tail)))
                 })
             })
             .await;
-        let Some((pending, tail, last_call)) = held.ok().flatten() else {
+        let Some((pending, tail)) = held.ok().flatten() else {
             return ReplayState::Refused("the run is not an open conversation");
         };
         // The activity protocol's closed shapes: a mark still in flight (an
@@ -432,23 +378,24 @@ impl LlmHistory {
             // [Self::resume_conversation]).
             return ReplayState::Refused("this conversation has a round in flight: wait for it, or Stop it, and send again");
         }
-        let Some(call_id) = last_call else {
+        // Activity exists: the canonical body must exist with it, or the tail
+        // cannot be proven - fail closed rather than replay a guess. A
+        // present-but-corrupt id column fails the read the same way, never
+        // silently an absent call.
+        let sealed = match self.last_round(run_id, None).await {
+            Ok(LastRound::Sealed(sealed)) => sealed,
             // No sealed round: reserved and never asked, or every round was
             // interrupted before its call filed (noted turns, nothing the
             // model answered on record). Either way the context the model
             // knows is empty and the next send is its first word - the noted
             // turns stay in the transcript, never replayed as a guess.
-            return ReplayState::Fresh;
-        };
-        // Activity exists: the canonical body must exist with it, or the tail
-        // cannot be proven - fail closed rather than replay a guess.
-        let body = match self.read_call_body(call_id).await {
-            Ok(Some(body)) if body["bodyGone"] == false => body,
-            _ => return ReplayState::Refused("this conversation's last round has no sealed body: start a New one"),
-        };
-        let text = body["body"].as_str().and_then(|text| serde_json::from_str::<Value>(text).ok());
-        let Some(sealed) = text else {
-            return ReplayState::Refused("this conversation's last body did not decode: start a New one");
+            Ok(LastRound::None) => return ReplayState::Fresh,
+            Ok(LastRound::Undecodable) => {
+                return ReplayState::Refused("this conversation's last body did not decode: start a New one");
+            }
+            Ok(LastRound::Gone) | Err(_) => {
+                return ReplayState::Refused("this conversation's last round has no sealed body: start a New one");
+            }
         };
         let mut prior: Vec<Value> = sealed
             .pointer("/request/replay")
@@ -544,6 +491,62 @@ impl LlmHistory {
         }
         ReplayState::Continuable { prior }
     }
+
+    /// The run's newest round, read past any deadline stand-ins ([stands_in_for_a_deadline]);
+    /// `of` narrows it to one provider and model. Every continuation guard reads the dialogue's
+    /// end through here, so a deadline strands no conversation (SPEC llm.history). A body that
+    /// is gone or will not decode cannot prove it is a stand-in and answers as itself.
+    pub(super) async fn last_round(&self, run_id: i64, of: Option<(&str, &str)>) -> Result<LastRound, String> {
+        let of = of.map(|(provider, model)| (provider.to_string(), model.to_string()));
+        let mut before = i64::MAX;
+        loop {
+            let held_to = of.clone();
+            // Fallible decode with transpose: a present-but-corrupt id column
+            // propagates as the query error, never silently an absent call.
+            let next = self
+                .store
+                .query(move |pool| {
+                    Box::pin(async move {
+                        let row = match &held_to {
+                            Some((provider, model)) => {
+                                sqlx::query(
+                                    "SELECT id FROM call WHERE run_id = ? AND id < ? AND provider IS ? AND model IS ? ORDER BY id DESC LIMIT 1",
+                                )
+                                .bind(run_id)
+                                .bind(before)
+                                .bind(provider)
+                                .bind(model)
+                                .fetch_optional(&pool)
+                                .await?
+                            }
+                            None => {
+                                sqlx::query("SELECT id FROM call WHERE run_id = ? AND id < ? ORDER BY id DESC LIMIT 1")
+                                    .bind(run_id)
+                                    .bind(before)
+                                    .fetch_optional(&pool)
+                                    .await?
+                            }
+                        };
+                        row.map(|row| row.try_get::<i64, _>(0)).transpose()
+                    })
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            let Some(id) = next else { return Ok(LastRound::None) };
+            let body = match self.read_call_body(id).await {
+                Ok(Some(body)) if body["bodyGone"] == false => body,
+                _ => return Ok(LastRound::Gone),
+            };
+            let Some(sealed) = body["body"].as_str().and_then(|text| serde_json::from_str::<Value>(text).ok()) else {
+                return Ok(LastRound::Undecodable);
+            };
+            if !stands_in_for_a_deadline(&sealed) {
+                return Ok(LastRound::Sealed(sealed));
+            }
+            before = id;
+        }
+    }
+
     /// Close an open conversation NEUTRALLY (the reader pressed New): at_end now,
     /// ok stays NULL - a user's clear is not a failure - idempotent, read-only
     /// afterwards. Ok(None) = no such conversation.
@@ -708,4 +711,26 @@ impl LlmHistory {
             .await
             .map_err(|e| e.to_string())
     }
+}
+
+/// What [LlmHistory::last_round] found at the end of a run's dialogue.
+pub(super) enum LastRound {
+    /// No round on record, deadline stand-ins aside.
+    None,
+    /// The newest round: its sealed body, decoded.
+    Sealed(Value),
+    /// The newest call's body is pruned or will not read.
+    Gone,
+    /// The newest call's body is on record but does not decode.
+    Undecodable,
+}
+
+/// A deadline's stand-in ([LlmHistory::record_chat_timeout_in_run]): the round trip a
+/// deadline dropped, filed with the wait and no wire facts, no replay and no answer. It
+/// seals nothing the model was told or said, so the guards read past it to the round it
+/// cut. A round that flew and timed out on the wire carries its replay and stays itself.
+fn stands_in_for_a_deadline(sealed: &Value) -> bool {
+    sealed.pointer("/response/kind").and_then(Value::as_str) == Some("timeout")
+        && sealed.pointer("/request/replay").is_none()
+        && sealed.pointer("/request/endpoint").is_none()
 }
