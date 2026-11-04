@@ -146,7 +146,7 @@ collections, keys), writes the statement or command for this connection, runs it
 result on the page - the reader does not have to think the query through. Each kind has tools
 of its own (below) and every kind the connection's memory; the pane, the conversations, Queue,
 History, Memory and Compact are one.
-Code: `crates/swiss-plugins/src/llm_db.rs` (snapshot, tools, routes), `llm_db_memory.rs` (the
+Code: `crates/swiss-plugins/src/llm_db/` (snapshot, tools, routes), `llm_db_memory.rs` (the
 memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and the panel's
 `data-agent.ts` and `data-agent-memory.ts`, with `dbAgentStatement` in `data-sql.ts`.
 
