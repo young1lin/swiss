@@ -22,12 +22,15 @@
 
 mod apply;
 mod check;
+mod machine;
 mod manifest;
 mod plan;
 mod plugins;
 mod refuse;
+mod remote;
 mod report;
 mod sources;
+mod tunnels;
 
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
@@ -193,6 +196,7 @@ async fn run_on(mode: Mode, up: &GatewayUp, parsed: &Manifest, input: &Input, op
     if mode == Mode::Apply {
         apply::write_all(&gw, parsed, &input.base, &mut items, &mut warnings).await;
         plugins::check(&gw, parsed, options, &mut items).await;
+        tunnels::check(&gw, parsed, options, &mut items, &mut warnings).await;
         check::check_all(&gw, parsed, options, &mut items, &mut warnings).await;
     }
     let mut report = Report {
@@ -216,7 +220,7 @@ fn say_who_acts_next(report: &mut Report, file: &str) {
             .map(|item| item.name.clone())
             .collect()
     };
-    let (secrets, sign_ins) = (waiting("secret"), waiting("mcp"));
+    let (secrets, sign_ins, host_keys) = (waiting("secret"), waiting("mcp"), waiting("connection"));
     if !secrets.is_empty() {
         let what = format!(
             "store {} on the panel's Secrets page, or pipe each into swiss secret set <name> from your own shell",
@@ -228,7 +232,11 @@ fn say_who_acts_next(report: &mut Report, file: &str) {
         let what = format!("authorize {} on the panel's MCP page", sign_ins.join(", "));
         report.next_step("human", what, "only a human can sign in");
     }
-    if !secrets.is_empty() || !sign_ins.is_empty() {
+    if !host_keys.is_empty() {
+        report.next_step("human", format!("compare the reported SSH fingerprints for {} with a trusted source, then set hostKey in the manifest", host_keys.join(", ")),
+                         "only a human can confirm the server's identity");
+    }
+    if !secrets.is_empty() || !sign_ins.is_empty() || !host_keys.is_empty() {
         report.next_step("agent", format!("swiss setup apply {file}"), "once that is done");
     }
 }

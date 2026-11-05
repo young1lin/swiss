@@ -23,6 +23,16 @@ use super::TunnelManager;
 use swiss_host::config::is_env_ref;
 use swiss_host::mask::MASK;
 
+/// What a row shows for a stored credential: a reference is not the secret and rides as itself,
+/// and anything else is the sentinel an edit sends back through unmask_conn.
+fn masked_credential(stored: &str) -> &str {
+    if stored.is_empty() || is_env_ref(&Value::String(stored.to_string())) {
+        stored
+    } else {
+        MASK
+    }
+}
+
 impl TunnelManager {
     pub fn is_active(&self, id: &str) -> bool {
         let state = self
@@ -181,11 +191,7 @@ impl TunnelManager {
                     row.insert("proxyUsername".into(), json!(u));
                 }
                 if let Some(pw) = &c.proxy_password {
-                    let sentinel = !is_env_ref(&Value::String(pw.clone())) && !pw.is_empty();
-                    row.insert(
-                        "proxyPassword".into(),
-                        json!(if sentinel { MASK } else { pw.as_str() }),
-                    );
+                    row.insert("proxyPassword".into(), json!(masked_credential(pw)));
                 }
                 if let Some(jump) = &c.jump {
                     row.insert("jump".into(), json!(jump));
@@ -196,6 +202,15 @@ impl TunnelManager {
                 // appended after the frozen prefix — the SPEC §tunnels.panel rule.
                 if let Some(kp) = &c.key_path {
                     row.insert("keyPath".into(), json!(kp));
+                }
+                // The two credentials ride by proxyPassword's rule. The edit sheet echoes what
+                // the row gave it, so a row without them sent an empty field back, which
+                // destroyed a stored passphrase and refused a save on password auth. A manifest
+                // compares a reference against them too.
+                for (key, value) in [("passphrase", &c.passphrase), ("password", &c.password)] {
+                    if let Some(value) = value {
+                        row.insert(key.into(), json!(masked_credential(value)));
+                    }
                 }
                 Value::Object(row)
             })
@@ -312,9 +327,10 @@ mod tests {
         };
         let keys = |c: &Value| c.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
 
-        // A plain row keeps the exact historical shape: nothing new appears. bastion is
-        // the plain case here — password auth, no proxy, no jump, no key path; the shared
-        // add_conn helper happens to carry a key path, so it no longer qualifies.
+        // A plain row keeps the exact historical shape, then its credential: nothing else
+        // appears. bastion is the plain case here — password auth, no proxy, no jump, no key
+        // path; the shared add_conn helper happens to carry a key path, so it no longer
+        // qualifies.
         let plain_row = by_name("bastion");
         assert_eq!(
             keys(&plain_row),
@@ -328,9 +344,11 @@ mod tests {
                 "state",
                 "ruleCount",
                 "activeRules",
+                "password",
             ]
         );
         assert_eq!(plain_row["id"], json!(bastion.id));
+        assert_eq!(plain_row["password"], json!(swiss_host::mask::MASK));
 
         // The proxy trio: plaintext URL and username, the sentinel — never the secret.
         let clash_row = by_name("clash");
@@ -340,10 +358,10 @@ mod tests {
         assert!(clash_row.get("jump").is_none());
         // Appended after the frozen prefix, in the §1.2 field order.
         let clash_keys = keys(&clash_row);
-        assert_eq!(clash_keys[..9], keys(&plain_row)[..]);
+        assert_eq!(clash_keys[..9], keys(&plain_row)[..9]);
         assert_eq!(
             clash_keys[9..],
-            vec!["proxy", "proxyUsername", "proxyPassword"]
+            vec!["proxy", "proxyUsername", "proxyPassword", "password"]
         );
 
         // The jump: a plaintext id, and no proxy keys on a jumping row.
@@ -363,7 +381,57 @@ mod tests {
         assert_eq!(keyed_row["keyPath"], json!("~/.ssh/alt_ed25519"));
         assert!(plain_row.get("keyPath").is_none());
         let keyed_keys = keys(&keyed_row);
-        assert_eq!(keyed_keys[..9], keys(&plain_row)[..]);
+        assert_eq!(keyed_keys[..9], keys(&plain_row)[..9]);
         assert_eq!(keyed_keys[9..], vec!["keyPath"]);
+    }
+
+    /// SPEC §tunnels.store: "editing an unrelated field never destroys a stored secret". The
+    /// edit sheet echoes what the row gave it, so a row holding no passphrase sent an empty one
+    /// back. A literal rides as the sentinel and a reference as itself, and neither stored value
+    /// can reach a row as plaintext.
+    #[test]
+    fn a_row_carries_a_credential_by_the_same_rule_as_the_proxy_password() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager(&store);
+        let add = |name: &str, auth_type: AuthType, passphrase: Option<&str>, password: Option<&str>| {
+            store
+                .lock()
+                .unwrap()
+                .add_connection(&ConnInput {
+                    name: name.into(),
+                    host: "10.0.0.7".into(),
+                    port: 22.0,
+                    username: "u".into(),
+                    auth_type,
+                    key_path: (auth_type == AuthType::Key).then(|| "~/.ssh/id".to_string()),
+                    passphrase: passphrase.map(str::to_string),
+                    password: password.map(str::to_string),
+                    ..Default::default()
+                })
+                .expect("the connection")
+        };
+        add("literal-key", AuthType::Key, Some("key-words"), None);
+        add("reference-key", AuthType::Key, Some("${secret://key-pass}"), None);
+        add("literal-password", AuthType::Password, None, Some("pass-words"));
+        add("reference-password", AuthType::Password, None, Some("${secret://ssh-pass}"));
+
+        let rows = m.rows();
+        let row = |name: &str| {
+            rows["connections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["name"] == json!(name))
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(row("literal-key")["passphrase"], json!(MASK));
+        assert_eq!(row("reference-key")["passphrase"], json!("${secret://key-pass}"));
+        assert_eq!(row("literal-password")["password"], json!(MASK));
+        assert_eq!(row("reference-password")["password"], json!("${secret://ssh-pass}"));
+        assert!(row("literal-key").get("password").is_none());
+        assert!(row("literal-password").get("passphrase").is_none());
+        let printed = rows.to_string();
+        assert!(!printed.contains("key-words") && !printed.contains("pass-words"), "{printed}");
     }
 }

@@ -95,8 +95,9 @@ pub fn valid_id(id: &str) -> bool {
 }
 
 /// An absolute POSIX path with no dot segments: starts with '/', non-trivial, and
-/// neither '.' nor '..' appears as a segment.
-fn valid_abs_posix(path: &str) -> bool {
+/// neither '.' nor '..' appears as a segment. Public because a manifest is refused by the same
+/// rule before anything is written (SPEC §host.setup).
+pub fn valid_abs_posix(path: &str) -> bool {
     if !path.starts_with('/') || path.len() < 2 || path.contains('\\') || path.contains('\0') {
         return false;
     }

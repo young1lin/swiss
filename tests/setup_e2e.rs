@@ -165,6 +165,7 @@ fn no_secret_value_ever_reaches_the_output() {
 fn a_new_home_converges_on_its_first_apply() {
     let instance = Instance::new();
     let manifest = serde_json::json!({
+        "machine": { "skills": ["swiss"] },
         "plugins": {
             "jobs": { "config": { "definitions": { "e2e-job": {
                 "trigger": { "kind": "manual" },
@@ -182,13 +183,13 @@ fn a_new_home_converges_on_its_first_apply() {
     let document: serde_json::Value = serde_json::from_slice(&first.stdout).expect("one JSON document on stdout");
     assert_eq!(first.status.code(), Some(0), "{document}");
     assert_eq!(document["gateway"]["started"], serde_json::json!(true), "{document}");
-    assert_eq!(document["summary"]["created"], serde_json::json!(1), "{document}");
+    assert_eq!(document["summary"]["created"], serde_json::json!(2), "{document}");
     assert_eq!(document["summary"]["updated"], serde_json::json!(2), "{document}");
 
     let again = instance.run(&["setup", "apply", &file, "--no-check"], &[]);
     let document: serde_json::Value = serde_json::from_slice(&again.stdout).expect("one JSON document on stdout");
     assert_eq!(again.status.code(), Some(0), "{document}");
-    assert_eq!(document["summary"]["unchanged"], serde_json::json!(3), "{document}");
+    assert_eq!(document["summary"]["unchanged"], serde_json::json!(4), "{document}");
 }
 
 /// The answer to one `swiss api` call, success or not, as text.

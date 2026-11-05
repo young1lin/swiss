@@ -542,8 +542,8 @@ export interface ApiTunnelsResponse {
 
 /** One connection row - tunnel/manager/report.rs rows() builds it key by key (not from
  *  types.rs SshConnDef::to_json()): the frozen id..activeRules prefix, then the
- *  SPEC §tunnels.panel fields and keyPath, each absent when unset. Secrets ride
- *  masked (proxyPassword) or absent (passphrase, password). */
+ *  SPEC §tunnels.panel fields, keyPath and the two credentials, each absent when unset.
+ *  A credential rides as the sentinel or as its reference, never as itself. */
 export interface ApiTunnelConnectionRow {
   id: string;
   name: string;
@@ -564,6 +564,8 @@ export interface ApiTunnelConnectionRow {
   proxyUsername?: string;
   proxyPassword?: string;
   jump?: string;
+  passphrase?: string;
+  password?: string;
 }
 
 /** One rule row - tunnel/manager/report.rs rule_row_of(): types.rs RuleDef::to_json() plus the

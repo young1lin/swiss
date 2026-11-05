@@ -919,8 +919,9 @@ fn parse_proxy_port(raw: &str) -> Result<u16, String> {
 /// tiny — `scheme://host[:port]` — because the dialer (§2) is a hand-written client, not a
 /// URL library; anything richer (userinfo, path, query) is refused by name so it cannot
 /// silently mean something else at connect time. Portless URLs store WITH their scheme's
-/// default port (http -> 80, socks5 -> 1080): what is on disk is what is dialed.
-fn normalize_proxy(input: &str) -> Result<String, String> {
+/// default port (http -> 80, socks5 -> 1080): what is on disk is what is dialed. Public because a
+/// manifest compares what it names with what is on disk (SPEC §host.setup).
+pub fn normalize_proxy(input: &str) -> Result<String, String> {
     let url = input.trim();
     let scheme_msg = || {
         format!(

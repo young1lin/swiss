@@ -96,9 +96,13 @@ or a whole-field reference (`${ENV}` or `${secret://name}`, §host.vault); the r
 lands on disk, and it resolves **at connect time**, strictly — a missing reference refuses the
 connection before any socket opens, naming the reference. The API masks secrets outbound and
 restores the sentinel inbound (`mask_conn`/`unmask_conn`), so editing an unrelated field never
-destroys a stored secret; `proxyPassword` rides the rows as the sentinel unless it is a
+destroys a stored secret; `password`, `passphrase` and `proxyPassword` ride the rows as the sentinel unless each is a
 reference, which is not a secret and passes as itself. The rows also carry `keyPath`, so a save
 never rewrites a custom path to the default.
+
+A connection Test uses a throwaway client and persists no host key. Its optional `fingerprint`
+reports the key presented by an unpinned server or the actual key on a mismatch; a matching stored
+key leaves it absent. This lets `setup apply` ask for confirmation without pinning it (§host.setup).
 
 ## §tunnels.ssh — The SSH client
 

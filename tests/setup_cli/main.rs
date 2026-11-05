@@ -110,23 +110,23 @@ async fn record(requests: Requests, hooks: Hooks, request: Request<Body>, next: 
 }
 
 async fn gateway() -> Gateway {
-    compose(json!({}), true, false).await
+    compose(json!({}), true, false, false).await
 }
 
 /// A gateway booted on this config file.
 async fn gateway_with(raw: Value) -> Gateway {
-    compose(raw, true, false).await
+    compose(raw, true, false, false).await
 }
 
 /// The llm plugin opens one database under the home this binary shares, so only the tests about it
 /// compose it.
 async fn gateway_with_llm(raw: Value) -> Gateway {
-    compose(raw, true, true).await
+    compose(raw, true, true, false).await
 }
 
 /// The built-ins on the real host, composed as `src/server.rs` composes them. `start` false leaves the
 /// boot to the test: the port is open and no plugin has started, which is how a new gateway first reads.
-async fn compose(raw: Value, start: bool, llm: bool) -> Gateway {
+async fn compose(raw: Value, start: bool, llm: bool, remote: bool) -> Gateway {
     sandbox();
     let dir = std::env::temp_dir().join(format!("swiss-setup-{}", swiss_core::util::random_hex(8)));
     std::fs::create_dir_all(&dir).expect("create the scratch directory");
@@ -157,7 +157,7 @@ async fn compose(raw: Value, start: bool, llm: bool) -> Gateway {
         tunnels: tunnels.clone(),
         tunnel_manager,
         services: services.clone(),
-        call_log: calls,
+        call_log: calls.clone(),
         traffic,
         logs_dir: dir.join("logs"),
         process_state: process_state.clone(),
@@ -168,6 +168,13 @@ async fn compose(raw: Value, start: bool, llm: bool) -> Gateway {
         .merge(swiss_jobs::jobs::api::mount(jobs))
         .merge(swiss_host::services::api::mount(services.clone()))
         .merge(swiss_process::api::mount(process_state));
+    if remote {
+        let state = swiss_remote::api::RemoteState::new();
+        host.register(Arc::new(swiss_plugins::remote::RemotePlugin::new(
+            services.clone(), state.clone(), registry.clone(), calls, dir.join("logs"),
+        ))).expect("the remote plugin registers");
+        extra = extra.merge(swiss_remote::api::mount(state));
+    }
     if llm {
         let state = swiss_llm::LlmState::new();
         let analysis = swiss_plugins::analysis::AnalysisStore::at(dir.join("analysis"));
@@ -201,6 +208,91 @@ async fn compose(raw: Value, start: bool, llm: bool) -> Gateway {
 
 fn input(manifest: Value, base: &Path) -> Input {
     Input { text: manifest.to_string(), base: base.to_path_buf(), file: "swiss.setup.json".into() }
+}
+
+// SPEC §host.setup: names resolve to gateway ids, a plan writes nothing, and a second apply
+// does not rewrite a connection, rule or target that already matches.
+#[tokio::test]
+async fn machine_tunnels_and_remote_converge_without_a_second_write() {
+    let gw = compose(json!({}), true, false, true).await;
+    let manifest = input(json!({
+        "machine": { "skills": [] },
+        "tunnels": {
+            "connections": {
+                "z-hop": { "host": "127.0.0.1", "username": "u", "keyPath": "~/.ssh/id" },
+                "a-far": { "host": "127.0.0.2", "username": "u", "keyPath": "~/.ssh/id", "jump": "z-hop" },
+            },
+            "rules": { "db": { "connection": "a-far", "localPort": 21306, "targetPort": 3306 } },
+        },
+        "remote": { "targets": { "box": { "endpoint": "a-far", "root": "/srv/app", "caps": ["exec", "files"] } } },
+    }), Path::new(""));
+    let (planned, code) = plan_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{planned}");
+    assert_eq!(planned["summary"]["willCreate"], json!(4), "{planned}");
+    assert!(gw.writes().is_empty(), "{:?}", gw.writes());
+
+    let (first, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{first}");
+    assert_eq!(first["summary"]["created"], json!(4), "{first}");
+    let writes = gw.writes();
+    let (again, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{again}");
+    assert_eq!(again["summary"]["unchanged"], json!(4), "{again}");
+    assert_eq!(gw.writes(), writes, "a converged apply writes nothing");
+}
+
+#[tokio::test]
+async fn a_tunnel_secret_blocks_its_dependents_and_an_unpinned_rule_stays_stopped() {
+    let gw = gateway().await;
+    let manifest = input(json!({
+        "secrets": { "ssh-later": "ask" },
+        "tunnels": {
+            "connections": {
+                "later": { "host": "127.0.0.1", "username": "u", "authType": "password", "password": "${secret://ssh-later}" },
+                "keyed": { "host": "127.0.0.1", "username": "u", "keyPath": "~/.ssh/id" },
+            },
+            "rules": {
+                "waiting": { "connection": "later", "localPort": 21307, "targetPort": 3306 },
+                "held": { "connection": "keyed", "localPort": 21308, "targetPort": 3306, "start": true },
+            },
+        },
+    }), Path::new(""));
+    let (document, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 4, "{document}");
+    assert_eq!(item(&document, "connection", "later")["by"], json!(["secret:ssh-later"]));
+    assert_eq!(item(&document, "rule", "waiting")["by"], json!(["connection:later"]));
+    assert_eq!(item(&document, "rule", "held")["status"], json!("blocked"));
+    assert_eq!(item(&document, "rule", "held")["saved"], json!(true));
+    assert!(gw.writes().iter().all(|(_, path)| !path.ends_with("/start") && !path.ends_with("/test")), "{:?}", gw.writes());
+    let (_, rows) = gw_get(gw.port, "/api/tunnels").await;
+    assert_eq!(rows["connections"].as_array().expect("connections").len(), 1);
+    assert_eq!(rows["rules"][0]["state"], json!("stopped"), "{rows}");
+}
+
+#[tokio::test]
+async fn a_manifest_turns_on_tunnels_and_preserves_a_password_on_panel_edit() {
+    let gw = gateway_with(json!({ "plugins": { "tunnels": { "disabled": true } } })).await;
+    assert_eq!(gw.host.plugin("tunnels").expect("registered").state().as_str(), "disabled");
+    let base = scratch_with("value", "local-test-password\n");
+    let manifest = input(json!({
+        "secrets": { "ssh-on": "file:value" },
+        "plugins": { "tunnels": { "enabled": true } },
+        "tunnels": { "connections": { "by-password": {
+            "host": "127.0.0.1", "username": "u", "authType": "password", "password": "${secret://ssh-on}",
+        } } },
+    }), &base);
+    let (document, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{document}");
+    let (_, rows) = gw_get(gw.port, "/api/tunnels").await;
+    let mut row = rows["connections"][0].clone();
+    assert_eq!(row["password"], json!("${secret://ssh-on}"));
+    row["name"] = json!("renamed");
+    let id = row["id"].as_str().expect("the id");
+    let (status, answer) = gw_write(gw.port, reqwest::Method::PUT, &format!("/api/tunnels/connections/{id}"), row.clone()).await;
+    assert_eq!(status, 200, "{answer}");
+    let (_, rows) = gw_get(gw.port, "/api/tunnels").await;
+    assert_eq!(rows["connections"][0]["password"], json!("${secret://ssh-on}"));
+    assert!(!rows.to_string().contains("local-test-password"));
 }
 
 fn scratch_with(file: &str, text: &str) -> std::path::PathBuf {
@@ -862,7 +954,7 @@ async fn a_manifest_turns_on_the_plugin_its_mcps_need() {
 // gateway waits for the boot rather than reading "not started yet" as no gateway.
 #[tokio::test]
 async fn a_gateway_mid_boot_is_waited_for() {
-    let gw = compose(json!({}), false, false).await;
+    let gw = compose(json!({}), false, false, false).await;
     let manifest = json!({ "mcps": { "early-echo": { "type": "echo" } } });
     assert_eq!(gw_get(gw.port, "/api/mcps").await.0, 503, "nothing has started");
     let host = gw.host.clone();

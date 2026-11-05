@@ -93,16 +93,20 @@ pub async fn wait_until_started(gw: &Gateway) -> Result<Rows, String> {
 
 /// Why this gateway cannot answer for its MCPs, when it cannot.
 pub fn mcp_off_reason(rows: &Rows) -> Option<String> {
-    let row = rows.get("mcp");
+    plugin_off_reason(rows, "mcp")
+}
+
+pub(super) fn plugin_off_reason(rows: &Rows, id: &str) -> Option<String> {
+    let row = rows.get(id);
     let state = row.and_then(|row| row["state"].as_str()).unwrap_or_default();
-    let how = "plugins.mcp.enabled: true in the manifest, or swiss api POST /api/plugins/mcp/enable, turns it on";
+    let how = format!("plugins.{id}.enabled: true in the manifest, or swiss api POST /api/plugins/{id}/enable, turns it on");
     match state {
         "active" => None,
         "failed" => {
             let error = row.and_then(|row| row["lastError"].as_str()).unwrap_or("no detail");
-            Some(format!("the mcp plugin failed to start: {}; {how}", literal::mask(error)))
+            Some(format!("the {id} plugin failed to start: {}; {how}", literal::mask(error)))
         }
-        _ => Some(format!("the mcp plugin is off; {how}")),
+        _ => Some(format!("the {id} plugin is off; {how}")),
     }
 }
 

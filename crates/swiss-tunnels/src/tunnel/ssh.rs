@@ -956,39 +956,48 @@ impl SshConnection {
     /// Never the live one: Test has to prove the credentials and the host key end to end, which
     /// is exactly what a probe on an already-authenticated session cannot do. Note the throwaway
     /// runs WITHOUT the persistence hook — a successful Test of a keyless connection stores
-    /// nothing (the first real connect is what learns and persists the fingerprint).
+    /// nothing (the first real connect is what learns and persists the fingerprint). Its hook
+    /// only remembers the key it was shown, and the result reports it, so a caller can ask a
+    /// human before anything pins it (SPEC §host.setup).
     ///
     /// SPEC §tunnels.jump: a jump def rides a throwaway CHAIN — one one-off client per hop,
     /// resolved through the defs argument at dial time. Nothing is shared with the
     /// manager's connection table, and no hop learns a host key.
     pub async fn test(def: &SshConnDef, defs: Option<JumpDefs>) -> TestResult {
         let t0 = std::time::Instant::now();
+        let shown: Arc<Mutex<Option<String>>> = Arc::default();
+        let remember = shown.clone();
+        let on_host_key: HostKeyCallback = Arc::new(move |fingerprint: &str| {
+            *remember.lock().unwrap_or_else(|e| e.into_inner()) = Some(fingerprint.to_string());
+        });
+        let mut hooks = SshHooks {
+            on_host_key: Some(on_host_key),
+            ..SshHooks::default()
+        };
         // Without a resolver (no store at hand) a jump def cannot look its hop up — a
         // config failure reported by the dial, not a silent direct connection.
-        let hooks = match (&def.jump, defs) {
-            (Some(_), Some(defs)) => SshHooks {
-                jump: Some(throwaway_dialer(defs)),
-                ..SshHooks::default()
-            },
-            _ => SshHooks::default(),
-        };
+        if let (Some(_), Some(defs)) = (&def.jump, defs) {
+            hooks.jump = Some(throwaway_dialer(defs));
+        }
         let probe = SshConnection::new(def.clone(), hooks);
         let result = probe.connect().await;
         let banner = probe.banner();
+        let shown = shown.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if let Err(err) = result {
-            let mut out = TestResult {
+            let mismatch = err
+                .detail
+                .as_ref()
+                .and_then(|detail| detail.get("actual"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let out = TestResult {
                 ok: false,
                 ms: t0.elapsed().as_millis() as u64,
                 error: Some(err.message.clone()),
                 kind: Some(err.kind.as_str().to_string()),
-                fingerprint: None,
+                fingerprint: mismatch.or(shown),
                 banner,
             };
-            if let Some(detail) = &err.detail {
-                if let Some(actual) = detail.get("actual").and_then(Value::as_str) {
-                    out.fingerprint = Some(actual.to_string());
-                }
-            }
             let _ = probe.end().await;
             return out;
         }
@@ -999,7 +1008,7 @@ impl SshConnection {
             banner,
             error: None,
             kind: None,
-            fingerprint: None,
+            fingerprint: shown,
         }
     }
 }
@@ -1130,7 +1139,9 @@ pub struct TestResult {
     pub banner: Option<String>,
     pub error: Option<String>,
     pub kind: Option<String>,
-    /// Set on a host-key mismatch, so the panel can offer "trust this key".
+    /// The key the server presented when a stored one did not match, so the panel can offer
+    /// "trust this key", or the key an unpinned connection was shown, so a caller can ask
+    /// someone before pinning it. Absent when a stored key matched.
     pub fingerprint: Option<String>,
 }
 

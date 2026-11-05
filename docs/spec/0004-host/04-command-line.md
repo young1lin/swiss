@@ -173,6 +173,25 @@ a name stays exactly as written, and one that is not a valid MCP name is refused
 | `secrets` | name | Source of the value. `env:VAR`, `file:PATH`, `dotenv:PATH#KEY` or `ask`. Relative paths resolve against the manifest's folder, or the working directory for stdin, and a leading `~/` against the home directory |
 | `plugins` | the plugin's id | `{enabled?, config?}`. `config` is a merge patch over the plugin's row (§host.config): objects merge, arrays and everything else replace, and what it does not name stays, so `plugins.jobs.config.definitions.backup` adds one job. Validated by the plugin's own validator, under `plan` too |
 | `mcps` | name | The whole MCP definition (§mcp.defs), keys per type |
+| `machine` | setting or skill name | Optional `path` and `autostart` booleans use the panel's routes. `skills` is an explicit list of shipped names, installed in the caller's skill directories as `swiss skill install` does; `true` is refused, and no skill is removed |
+| `tunnels.connections` | name | Whole connection definition (§tunnels.store), with `jump` naming another connection. `port` defaults to 22, `authType` to `key`; key auth needs `keyPath`, password auth needs `password`. A stored group and host key stay when omitted |
+| `tunnels.rules` | name | `connection` names a connection, `localPort` and `targetPort` are required. `targetHost` defaults to loopback, `autoReconnect` to false, `reconnectInterval` to 10 seconds. Omitted `mcps` and group stay. `start: true` asks for a start after checks; otherwise no new rule is started |
+| `remote.targets` | id | `endpoint` names a connection and `root` is an absolute POSIX workspace path. Optional `caps` uses §remote.targets' capabilities and includes `exec`; a new target defaults to `exec`, an existing target keeps omitted capabilities, label, group and timeout |
+
+Names in tunnel and remote references resolve against this manifest or the gateway. Two stored
+connections or rules sharing a name fail that item with their ids; no match is guessed. Jump hops
+are written before the connections using them, and cycles, conflicting local ports, unknown fields
+and unsupported reference locations are refused before any write. Tunnel credentials are whole-field
+references, never literals. `setup schema machine`, `tunnels` and `remote` describe these sections.
+
+**Host-key confirmation.** `hostKey`, when supplied, is an OpenSSH SHA256 fingerprint. A successful
+connection check with no pin returns `needs-input`, code `connection.host-key`, `fingerprint` and
+`saved: true` when newly saved. The next step asks a human to compare it with a trusted source and
+put `hostKey` in the manifest. The test pins nothing. A requested rule start is held if the connection
+or any jump has no pin, even under `--no-check`. Saving an edit can restart an existing running rule
+inside the manager: if that restart would use an unconfirmed key, the item fails as
+`connection.host-key-required` or `rule.host-key-required` before the write. Pin it first or stop the
+affected rule. A mismatched key fails the check as `check.host-key`, reporting the presented fingerprint.
 
 **Refused before anything is written** (exit 2, every problem listed, with its path, and no gateway
 asked or started):
@@ -238,9 +257,17 @@ holds cannot be read yet; `apply` turns it on and then decides each MCP against 
   carries its revision.
 
 **The order.** Secrets, plugins (config, then enable, so a plugin turned on starts on what the manifest
-says), then MCPs, each added with `start: false`, then every check, after every write. A failed item does
+says), machine settings and chosen skills, connections (jump hops first), rules saved without an
+explicit start, remote targets, then MCPs, each added with `start: false`, then every check, after every write. A failed item does
 not stop the rest; what depends on it is `blocked`. A plugin write the gateway refuses is code
 `plugin.write`.
+
+Disabled `tunnels` or `remote` plugins fail their items with `tunnels.plugin-off` or
+`remote.plugin-off`; a manifest enabling them carries a plan warning and decides the items again
+after enabling. Disabling a plugin while naming items that need it is refused. A connection's failed
+secret or jump blocks its dependent connections, rules and targets. Every named connection is tested
+through `/api/tunnels/connections/{id}/test` unless `--no-check`; targets are saved without executing
+remote commands. Rule starts run only after connection checks and the host-key guard.
 
 **The checks.** At most four run at once, each bounded at 75 s, and an unchanged MCP is checked too:
 exit 0 says every check passed, and a rerun is how an Agent learns its fix landed.

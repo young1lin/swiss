@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 
 /* SPEC §tunnels.panel: the connection sheet's Advanced fold (proxy + jump) and the transport
    tags on the connection row. The wire half lives in manager/report.rs's rows test — here the
@@ -51,7 +51,12 @@ class FakeNode extends NodeStub {
   _text = "";
   get textContent(): string { return this._text; }
   set textContent(v: string) { if (v === "") { this.children = []; this._html = ""; } this._text = v; }
-  value = "";
+  private _value = "";
+  get value(): string {
+    if (this.tag === "SELECT") return this._value || this.children.find((option) => option.selected)?.value || this.children[0]?.value || "";
+    return this._value;
+  }
+  set value(v: string) { this._value = v; }
   placeholder = "";
   checked = false;
   selected = false;
@@ -333,6 +338,22 @@ describe("the connection sheet's Advanced fold (SPEC §tunnels.panel)", () => {
     fillSheet({ pass: MASK });
     await mods.sheets.saveConn(null);
     expect(lastSaveBody().proxyPassword).toBe(MASK);
+  });
+
+  it.each(["key", "password"])("keeps an untouched %s credential while editing another field", async (authType) => {
+    const credential = authType === "key" ? "passphrase" : "password";
+    for (const value of [MASK, "${secret://ssh-pass}"]) {
+      const def = { id: "c2", name: "db", host: "10.0.0.9", port: 22, username: "u", authType,
+        keyPath: "C:/keys/id_rsa", [credential]: value };
+      seedTunData([def]);
+      openSheet(def);
+      // The auth fields paint after the async key listing, as in the real sheet.
+      await vi.waitFor(() => { expect(get("c-pass").value).toBe(value); });
+      setVal("c-name", "renamed");
+      await mods.sheets.saveConn(def);
+      expect(lastSaveBody()[credential]).toBe(value);
+      expect(lastSaveBody().name).toBe("renamed");
+    }
   });
 
   it("lands a refused save inline and keeps the sheet open", async () => {

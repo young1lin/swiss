@@ -190,8 +190,8 @@ impl TunnelManager {
         if res.ok && def.host_key.is_none() {
             // The throwaway test client runs WITHOUT the persistence hook, so a successful Test
             // of a keyless connection stores nothing — the first real connect (a rule start) is
-            // what learns and persists the fingerprint. Re-read only so the caller sees whatever
-            // IS stored.
+            // what learns and persists the fingerprint. The result says what it was shown, and
+            // this re-read says whatever IS stored.
             if let Some(stored) = self
                 .with_store(|s| s.connection(id))
                 .and_then(|c| c.host_key)
@@ -252,8 +252,82 @@ mod tests {
         add_conn, add_rule, built_len, conn_input, echo_server, free_port, manager, nth,
         port_is_free, round_trip, rule_input, scratch, state_of,
     };
+    use crate::tunnel::store::ConnInput;
+    use crate::tunnel::types::AuthType;
 
     // --- edits ------------------------------------------------------------------------------
+
+    /// SPEC §tunnels.store: a Test stores nothing, and it does say what it was shown, which is
+    /// how a key gets confirmed by someone before anything pins it. A real SSH handshake, with
+    /// real auth, on a throwaway client.
+    #[tokio::test]
+    async fn a_keyless_test_reports_the_key_it_was_shown_and_pins_nothing() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager(&store);
+        let port = crate::tunnel::sshtest::spawn_ssh_server().await;
+        let conn = store
+            .lock()
+            .unwrap()
+            .add_connection(&ConnInput {
+                name: "keyless".into(),
+                host: "127.0.0.1".into(),
+                port: f64::from(port),
+                username: "u".into(),
+                auth_type: AuthType::Password,
+                password: Some("p".into()),
+                ..Default::default()
+            })
+            .expect("the connection");
+
+        let answer = m.test_connection(&conn.id).await.expect("a test answer");
+
+        assert_eq!(answer["ok"], json!(true), "{answer}");
+        let fingerprint = answer["fingerprint"].as_str().expect("the key it was shown");
+        assert!(fingerprint.starts_with("SHA256:"), "{fingerprint}");
+        assert!(answer.get("hostKey").is_none(), "nothing is stored, so nothing reads as stored");
+        let stored = store.lock().unwrap().connection(&conn.id).expect("the row");
+        assert_eq!(stored.host_key, None, "a Test pins nothing");
+
+        // Pinning what it reported is the confirmation: the same key passes and reports nothing.
+        store
+            .lock()
+            .unwrap()
+            .set_host_key(&conn.id, fingerprint)
+            .expect("the pin");
+        let again = m.test_connection(&conn.id).await.expect("a test answer");
+        assert_eq!(again["ok"], json!(true), "{again}");
+        assert!(again.get("fingerprint").is_none(), "{again}");
+    }
+
+    /// SPEC §tunnels.store: the host key a Test met differs from the pinned one, and the answer
+    /// names what it was shown, which is what the panel's Trust stores.
+    #[tokio::test]
+    async fn a_test_on_the_wrong_pin_reports_what_it_met() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager(&store);
+        let port = crate::tunnel::sshtest::spawn_ssh_server().await;
+        let conn = store
+            .lock()
+            .unwrap()
+            .add_connection(&ConnInput {
+                name: "pinned".into(),
+                host: "127.0.0.1".into(),
+                port: f64::from(port),
+                username: "u".into(),
+                auth_type: AuthType::Password,
+                password: Some("p".into()),
+                host_key: Some("SHA256:not-this-key".into()),
+                ..Default::default()
+            })
+            .expect("the connection");
+
+        let answer = m.test_connection(&conn.id).await.expect("a test answer");
+
+        assert_eq!(answer["ok"], json!(false), "{answer}");
+        assert_eq!(answer["kind"], json!("hostkey"), "{answer}");
+        let met = answer["fingerprint"].as_str().expect("the key it met");
+        assert!(met.starts_with("SHA256:") && met != "SHA256:not-this-key", "{met}");
+    }
 
     #[tokio::test]
     async fn restarts_a_running_rule_on_the_new_port_and_frees_the_old_one() {

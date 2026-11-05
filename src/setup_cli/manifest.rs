@@ -33,10 +33,10 @@ use swiss_mcp::mcp_import::{entry_to_def, EntryMapping, ENTRY_KEYS};
 pub const VERSION: u64 = 1;
 
 /// Every key a manifest's top level takes.
-const TOP_LEVEL: [&str; 6] = ["version", "secrets", "plugins", "mcps", "mcpServers", "servers"];
+const TOP_LEVEL: [&str; 9] = ["version", "machine", "secrets", "plugins", "tunnels", "remote", "mcps", "mcpServers", "servers"];
 
 /// The sections `swiss setup schema` describes, by name.
-const SECTIONS: [&str; 3] = ["secrets", "plugins", "mcps"];
+const SECTIONS: [&str; 6] = ["machine", "secrets", "plugins", "tunnels", "remote", "mcps"];
 
 /// The keys that ride on every MCP definition, beside those of its type.
 const EVERY_TYPE: [&str; 3] = ["type", "lazy", "idleMs"];
@@ -90,10 +90,20 @@ impl Warning {
 
 #[derive(Debug, Default)]
 pub struct Manifest {
+    pub machine: super::machine::Machine,
     pub secrets: BTreeMap<String, SecretSpec>,
     pub plugins: BTreeMap<String, PluginEntry>,
     pub mcps: BTreeMap<String, McpEntry>,
+    pub connections: BTreeMap<String, super::tunnels::ConnectionEntry>,
+    pub rules: BTreeMap<String, super::tunnels::RuleEntry>,
+    pub targets: BTreeMap<String, super::remote::TargetEntry>,
     pub warnings: Vec<Warning>,
+}
+
+impl Manifest {
+    pub fn turns_on(&self, id: &str) -> bool {
+        self.plugins.get(id).is_some_and(|entry| entry.enabled == Some(true))
+    }
 }
 
 /// Read a manifest, or say everything wrong with it. `gateway_port` is what an entry pointing at
@@ -115,12 +125,20 @@ pub fn parse(text: &str, gateway_port: u16) -> Result<Manifest, Vec<Problem>> {
     let mut manifest = Manifest::default();
     read_secrets(top.get("secrets"), &mut manifest, &mut problems);
     read_plugins(top.get("plugins"), &mut manifest, &mut problems);
+    manifest.machine = super::machine::read_section(top.get("machine"), &mut problems);
+    super::tunnels::read_section(top.get("tunnels"), gateway_port, &mut manifest, &mut problems);
+    super::remote::read_section(top.get("remote"), &mut manifest, &mut problems);
     for block in ["mcps", "mcpServers", "servers"] {
         read_mcps(top, block, gateway_port, &mut manifest, &mut problems);
     }
     let turns_mcp_off = manifest.plugins.get("mcp").is_some_and(|entry| entry.enabled == Some(false));
     if turns_mcp_off && !manifest.mcps.is_empty() {
         problems.push(Problem::new("plugins.mcp.enabled", "this manifest names MCPs, and they need this plugin on"));
+    }
+    for (id, needed) in [("tunnels", super::tunnels::names_any(&manifest)), ("remote", !manifest.targets.is_empty())] {
+        if needed && manifest.plugins.get(id).is_some_and(|entry| entry.enabled == Some(false)) {
+            problems.push(Problem::new(format!("plugins.{id}.enabled"), "this manifest names items that need this plugin on"));
+        }
     }
     if problems.is_empty() {
         Ok(manifest)
@@ -205,7 +223,7 @@ fn read_plugins(section: Option<&Value>, manifest: &mut Manifest, problems: &mut
 }
 
 /// The daemon reads these, in an environment this process cannot see.
-fn warn_of_env_refs(env_refs: Vec<(String, String)>, manifest: &mut Manifest) {
+pub(super) fn warn_of_env_refs(env_refs: Vec<(String, String)>, manifest: &mut Manifest) {
     for (where_, var) in env_refs {
         manifest.warnings.push(Warning::new(
             "ref.env-unverifiable",
@@ -350,6 +368,9 @@ fn client_entry(
 /// What a manifest may say: the whole of it, or one section. Unknown section: the refusal.
 pub fn schema(section: Option<&str>) -> Result<Value, String> {
     let describe = |name: &str| match name {
+        "machine" => super::machine::schema(),
+        "tunnels" => super::tunnels::schema(),
+        "remote" => super::remote::schema(),
         "secrets" => json!({
             "identity": "the secret's name",
             "name": SECRET_NAME_RULE,

@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 
 use super::manifest::{Manifest, McpEntry, SecretSpec, Warning};
 use super::plan::{decide_mcp, read_mcps, read_source};
-use super::plugins;
+use super::{machine, plugins, remote, tunnels};
 use super::report::{Item, Status};
 use super::sources::Source;
 use super::store_secret;
@@ -67,6 +67,13 @@ pub async fn write_all(
     if warnings.iter().any(|warning| warning.code == "mcp.plugin-off") {
         decide_mcps_again(gw, manifest, items, warnings).await;
     }
+    machine::write(gw, &manifest.machine, items).await;
+    if warnings.iter().any(|warning| matches!(warning.code, "tunnels.plugin-off" | "remote.plugin-off")) {
+        decide_tunnels_again(gw, manifest, items, warnings).await;
+    }
+    tunnels::write_connections(gw, manifest, items, &failed).await;
+    tunnels::write_rules(gw, manifest, items).await;
+    remote::write(gw, manifest, items).await;
     for item in items.iter_mut().filter(|item| item.kind == "mcp" && item.status != Status::Failed) {
         let Some(entry) = manifest.mcps.get(&item.name) else {
             continue;
@@ -81,8 +88,39 @@ pub async fn write_all(
     }
 }
 
-fn blocked_by(secrets: &BTreeSet<String>, failed: &BTreeSet<String>) -> Vec<Value> {
+pub(super) fn blocked_by(secrets: &BTreeSet<String>, failed: &BTreeSet<String>) -> Vec<Value> {
     secrets.intersection(failed).map(|secret| json!(format!("secret:{secret}"))).collect()
+}
+
+/// A plugin turned on after the plan can now say what it already holds.
+async fn decide_tunnels_again(gw: &Gateway, manifest: &Manifest, items: &mut [Item], warnings: &mut Vec<Warning>) {
+    let read = async {
+        let rows = plugins::read_rows(gw).await?;
+        let tunnels = tunnels::read_state(gw, manifest, &rows).await?;
+        let remote = remote::read_state(gw, manifest, &rows).await?;
+        Ok::<_, String>((tunnels, remote))
+    };
+    match read.await {
+        Ok((tunnels, remote)) => {
+            warnings.retain(|warning| !matches!(warning.code, "tunnels.plugin-off" | "remote.plugin-off" | "connection.unpinned"));
+            let unsettled = items.iter().filter(|item| item.kind == "secret" && matches!(item.status, Status::Failed | Status::NeedsInput))
+                .map(|item| item.name.clone()).collect();
+            // Failed starts must be reported as off, rather than optimistically planned again.
+            let actual = Manifest { connections: manifest.connections.clone(), rules: manifest.rules.clone(),
+                                    targets: manifest.targets.clone(), ..Manifest::default() };
+            let decided = super::plan::decide_tunnels_and_remote(&actual, &tunnels, &remote, &unsettled, warnings);
+            for fresh in decided {
+                if let Some(item) = items.iter_mut().find(|item| item.kind == fresh.kind && item.name == fresh.name) {
+                    *item = fresh;
+                }
+            }
+        }
+        Err(error) => {
+            for item in items.iter_mut().filter(|item| matches!(item.kind, "connection" | "rule" | "target")) {
+                fail(item, "setup.read", swiss_core::secure::literal::mask(&error));
+            }
+        }
+    }
 }
 
 /// The plan could not read what a plugin that was off holds, and the manifest has just turned it on.

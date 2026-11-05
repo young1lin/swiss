@@ -100,7 +100,7 @@ impl Item {
         self
     }
 
-    fn check_failed(&self) -> bool {
+    pub(super) fn check_failed(&self) -> bool {
         self.extra.get("check").is_some_and(|check| check["ok"] == json!(false))
     }
 

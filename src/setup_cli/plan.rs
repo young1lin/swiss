@@ -25,6 +25,7 @@ use serde_json::{json, Value};
 
 use super::manifest::{Manifest, McpEntry, SecretSpec, Warning};
 use super::plugins::{self, Rows, Stored};
+use super::{machine, remote, tunnels};
 use super::report::{Item, Status};
 use super::sources::{trim_newline, Source};
 use crate::remote_cli::Gateway;
@@ -42,6 +43,9 @@ pub struct Options {
 /// What the gateway holds of what the manifest names.
 #[derive(Debug, Default)]
 pub struct State {
+    pub machine: machine::MachineState,
+    pub tunnels: tunnels::TunnelState,
+    pub remote: remote::RemoteState,
     pub secrets: BTreeSet<String>,
     /// Each named plugin the gateway has.
     pub plugins: BTreeMap<String, Stored>,
@@ -65,7 +69,10 @@ pub async fn read_state(gw: &Gateway, manifest: &Manifest, rows: &Rows, may_dry_
     let plugin_ids = rows.keys().cloned().collect();
     let mcp_off = if manifest.mcps.is_empty() { None } else { plugins::mcp_off_reason(rows) };
     let mcps = if manifest.mcps.is_empty() || mcp_off.is_some() { BTreeMap::new() } else { read_mcps(gw, manifest).await? };
-    Ok(State { secrets, plugins, plugin_ids, mcps, mcp_off })
+    let machine = machine::read_state(gw, &manifest.machine).await;
+    let tunnels = tunnels::read_state(gw, manifest, rows).await?;
+    let remote = remote::read_state(gw, manifest, rows).await?;
+    Ok(State { secrets, plugins, plugin_ids, mcps, mcp_off, machine, tunnels, remote })
 }
 
 /// Each named MCP that exists, with its masked definition. Only a serving mcp plugin can say.
@@ -112,7 +119,9 @@ pub fn decide(
     // human too, so it is one item of its own rather than a detail of every MCP using it.
     let provided = |name: &String| manifest.secrets.contains_key(name) || state.secrets.contains(name);
     let mut missing: BTreeSet<&String> = BTreeSet::new();
-    for referenced in manifest.plugins.values().map(|entry| &entry.secrets).chain(manifest.mcps.values().map(|entry| &entry.secrets)) {
+    for referenced in manifest.plugins.values().map(|entry| &entry.secrets)
+        .chain(manifest.mcps.values().map(|entry| &entry.secrets))
+        .chain(manifest.connections.values().map(|entry| &entry.secrets)) {
         missing.extend(referenced.iter().filter(|name| !provided(name)));
     }
     for name in missing {
@@ -130,6 +139,8 @@ pub fn decide(
     for (id, entry) in &manifest.plugins {
         items.push(plugins::decide(id, entry, state.plugins.get(id), &known, &unsettled, warnings));
     }
+    items.extend(machine::decide(&manifest.machine, &state.machine));
+    items.extend(decide_tunnels_and_remote(manifest, &state.tunnels, &state.remote, &unsettled, warnings));
     let turned_on = manifest.plugins.get("mcp").is_some_and(|entry| entry.enabled == Some(true));
     if state.mcp_off.is_some() && turned_on {
         warnings.push(Warning::new(
@@ -145,6 +156,25 @@ pub fn decide(
             _ => decide_mcp(name, entry, state.mcps.get(name), &unsettled, warnings),
         });
     }
+    items
+}
+
+pub(super) fn decide_tunnels_and_remote(
+    manifest: &Manifest,
+    tunnels: &tunnels::TunnelState,
+    remote: &remote::RemoteState,
+    unsettled: &BTreeSet<String>,
+    warnings: &mut Vec<Warning>,
+) -> Vec<Item> {
+    for (id, off) in [("tunnels", &tunnels.off), ("remote", &remote.off)] {
+        if off.is_some() && manifest.turns_on(id) {
+            tunnels::plugin_warning(id, warnings);
+        }
+    }
+    let mut items = tunnels::decide_connections(manifest, tunnels, unsettled, warnings);
+    let planned = tunnels::after_connections(manifest, tunnels, &items);
+    items.extend(tunnels::decide_rules(manifest, &planned, &items));
+    items.extend(remote::decide(manifest, remote, &planned, &items));
     items
 }
 
