@@ -24,9 +24,10 @@
 //! route sits inside the loopback guard like the rest of /api — this layer never widens who
 //! may ask.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::Response;
@@ -99,10 +100,17 @@ pub fn client_path_guard(host: &PluginHost) -> Option<Response> {
 
 /// The structured 503 a not-serving plugin answers on every path it owns. Same `{error}`
 /// shape subsystems.rs answers for boot-time absence — the panel's toast shows it verbatim —
-/// with the live state named: disabled, starting, stopping, or failed (with the reason).
+/// with the live state named: not started yet, starting, stopping, failed (with the reason), or
+/// disabled.
 pub fn unavailable(host: &PluginHost, id: &str) -> Response {
     let state = host.plugin(id).map(|e| (e.state(), e.last_error()));
     let message = match state {
+        // An entry begins Disabled and a boot starts its plugins behind the open port, so a row
+        // nobody disabled reads this way until the boot reaches it. Saying "disabled by the config"
+        // here would send the reader to look for a setting that was never made.
+        Some((super::descriptor::PluginState::Disabled, _)) if !host.store().plugin_disabled(id) => {
+            format!("{id} plugin has not started yet; retry shortly.")
+        }
         Some((super::descriptor::PluginState::Starting, _)) => {
             format!("{id} plugin is starting; retry shortly.")
         }
@@ -192,6 +200,7 @@ async fn get_config(State(host): State<Arc<PluginHost>>, Path(id): Path<String>)
 async fn put_config(
     State(host): State<Arc<PluginHost>>,
     Path(id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
     body: NodeBody,
 ) -> Response {
     let Some(entry) = host.plugin(&id) else {
@@ -204,6 +213,18 @@ async fn put_config(
     // are checked server-side; the frontend is never the authority).
     if let Err(err) = entry.factory().validate_config(&config) {
         return admin_error(StatusCode::BAD_REQUEST, &format!("invalid config: {err}"));
+    }
+    // A question, not a save (SPEC §host.config): what a save would say, with the row and its
+    // revision left where they are. `swiss setup plan` asks it, and a plan writes nothing.
+    if query.get("dryRun").is_some_and(|value| value == "1") {
+        if !config.is_object() {
+            return admin_error(StatusCode::BAD_REQUEST, "plugin config must be an object");
+        }
+        let warnings = entry.factory().config_warnings(&config);
+        return admin_json(
+            StatusCode::OK,
+            json!({ "dryRun": true, "revision": host.revision(), "warnings": warnings }),
+        );
     }
     let expected = body
         .0

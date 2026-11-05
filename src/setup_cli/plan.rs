@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-//! What the manifest would change on this gateway (SPEC §host.setup). Reads only: `GET`s, and a
-//! secret's source read and dropped, so a source that cannot be read shows before any write.
+//! What the manifest would change on this gateway (SPEC §host.setup). Reads only: `GET`s, a plugin
+//! patch put to its validator with `?dryRun=1`, which persists nothing, and a secret's source read
+//! and dropped, so a source that cannot be read shows before any write.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -23,6 +24,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use super::manifest::{Manifest, McpEntry, SecretSpec, Warning};
+use super::plugins::{self, Rows, Stored};
 use super::report::{Item, Status};
 use super::sources::{trim_newline, Source};
 use crate::remote_cli::Gateway;
@@ -41,11 +43,17 @@ pub struct Options {
 #[derive(Debug, Default)]
 pub struct State {
     pub secrets: BTreeSet<String>,
+    /// Each named plugin the gateway has.
+    pub plugins: BTreeMap<String, Stored>,
+    /// Every plugin id it has.
+    pub plugin_ids: Vec<String>,
     /// Each named MCP that exists, with its masked definition.
     pub mcps: BTreeMap<String, Value>,
+    /// The manifest names MCPs and the plugin that holds them is not serving, for this reason.
+    pub mcp_off: Option<String>,
 }
 
-pub async fn read_state(gw: &Gateway, manifest: &Manifest) -> Result<State, String> {
+pub async fn read_state(gw: &Gateway, manifest: &Manifest, rows: &Rows, may_dry_run: bool) -> Result<State, String> {
     let vault = gw.get("/api/secrets").await?;
     let secrets = vault["secrets"]
         .as_array()
@@ -53,6 +61,15 @@ pub async fn read_state(gw: &Gateway, manifest: &Manifest) -> Result<State, Stri
         .iter()
         .filter_map(|name| name.as_str().map(str::to_string))
         .collect();
+    let plugins = plugins::read_named(gw, manifest, rows, may_dry_run).await?;
+    let plugin_ids = rows.keys().cloned().collect();
+    let mcp_off = if manifest.mcps.is_empty() { None } else { plugins::mcp_off_reason(rows) };
+    let mcps = if manifest.mcps.is_empty() || mcp_off.is_some() { BTreeMap::new() } else { read_mcps(gw, manifest).await? };
+    Ok(State { secrets, plugins, plugin_ids, mcps, mcp_off })
+}
+
+/// Each named MCP that exists, with its masked definition. Only a serving mcp plugin can say.
+pub async fn read_mcps(gw: &Gateway, manifest: &Manifest) -> Result<BTreeMap<String, Value>, String> {
     let listing = gw.get("/api/mcps").await?;
     let existing: BTreeSet<&str> = listing["mcps"]
         .as_array()
@@ -65,7 +82,7 @@ pub async fn read_state(gw: &Gateway, manifest: &Manifest) -> Result<State, Stri
         let details = gw.get(&format!("/api/mcps/{name}/details")).await?;
         mcps.insert(name.clone(), details["config"].clone());
     }
-    Ok(State { secrets, mcps })
+    Ok(mcps)
 }
 
 /// The value this source holds, as `secret set` would store it, or why not. Holds a value only for
@@ -95,8 +112,8 @@ pub fn decide(
     // human too, so it is one item of its own rather than a detail of every MCP using it.
     let provided = |name: &String| manifest.secrets.contains_key(name) || state.secrets.contains(name);
     let mut missing: BTreeSet<&String> = BTreeSet::new();
-    for entry in manifest.mcps.values() {
-        missing.extend(entry.secrets.iter().filter(|name| !provided(name)));
+    for referenced in manifest.plugins.values().map(|entry| &entry.secrets).chain(manifest.mcps.values().map(|entry| &entry.secrets)) {
+        missing.extend(referenced.iter().filter(|name| !provided(name)));
     }
     for name in missing {
         items.push(
@@ -109,8 +126,24 @@ pub fn decide(
         .filter(|item| matches!(item.status, Status::Failed | Status::NeedsInput))
         .map(|item| item.name.clone())
         .collect();
+    let known: Vec<&str> = state.plugin_ids.iter().map(String::as_str).collect();
+    for (id, entry) in &manifest.plugins {
+        items.push(plugins::decide(id, entry, state.plugins.get(id), &known, &unsettled, warnings));
+    }
+    let turned_on = manifest.plugins.get("mcp").is_some_and(|entry| entry.enabled == Some(true));
+    if state.mcp_off.is_some() && turned_on {
+        warnings.push(Warning::new(
+            "mcp.plugin-off",
+            "plugins.mcp",
+            "the mcp plugin is off, so what it holds cannot be read here; apply turns it on first and decides each MCP again",
+        ));
+    }
     for (name, entry) in &manifest.mcps {
-        items.push(decide_mcp(name, entry, state.mcps.get(name), &unsettled, warnings));
+        items.push(match &state.mcp_off {
+            Some(reason) if !turned_on => decide_mcp(name, entry, None, &BTreeSet::new(), warnings)
+                .failed("mcp.plugin-off", reason),
+            _ => decide_mcp(name, entry, state.mcps.get(name), &unsettled, warnings),
+        });
     }
     items
 }
@@ -147,7 +180,7 @@ fn decide_secret(
     }
 }
 
-fn decide_mcp(
+pub(super) fn decide_mcp(
     name: &str,
     entry: &McpEntry,
     stored: Option<&Value>,
@@ -228,7 +261,7 @@ mod tests {
         Manifest {
             secrets: secrets.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
             mcps: mcps.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
-            warnings: Vec::new(),
+            ..Manifest::default()
         }
     }
 

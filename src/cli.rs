@@ -167,7 +167,7 @@ On Windows or macOS, double-click the app or run swiss without arguments to open
   secret set <name> [--from <env:VAR|file:PATH|dotenv:PATH#KEY>]
                    store a vault secret from that source or from piped stdin, never from the
                    command line; starts the gateway if it is down; prints one JSON document
-  setup schema [section]
+  setup schema [section | plugins.<id>]
                    what a manifest may say (SPEC §host.setup)
   setup plan <file|-> [--rotate-secrets]
                    what a manifest would change on this gateway; writes nothing and starts no

@@ -8,6 +8,11 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Added
 
+- A manifest's `plugins` section turns a plugin on or off and merges a patch over its row, keeping
+  what the patch does not name, so `swiss setup` can add one job or one LLM provider. `plan` asks the
+  plugin's own validator through the new `PUT /api/plugins/{id}/config?dryRun=1`, a provider is checked
+  by its model listing, which is not billed, and `swiss setup schema plugins.<id>` prints what a row
+  takes (SPEC §host.setup).
 - `swiss setup apply <file|->` makes a manifest's `secrets` and `mcps` true on this gateway, then
   checks each MCP. It only adds, so the same file applied twice writes nothing, and the exit code says
   whether it converged, failed or waits for a human (SPEC §host.setup).
@@ -854,6 +859,10 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- A plugin the boot has not reached yet says it has not started, rather than that
+  `gateway.config.json` disabled it, a row nobody wrote (SPEC §host.plugins).
+- `mcp`, `tunnels`, `data` and `terminal` refuse a config key they do not read on a save, instead of
+  storing it and ignoring it. A row an older build saved still boots (SPEC §host.config).
 - `swiss export > bundle.json` writes one JSON document (SPEC §host.cli). Log lines used to land
   in it, so the export exited 0 and the import then failed. A file that cannot be read now stops
   the export with exit 1, and nothing on stdout.

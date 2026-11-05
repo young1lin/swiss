@@ -129,13 +129,12 @@ fn no_secret_value_ever_reaches_the_output() {
     let file = path.to_string_lossy().into_owned();
     let env = [("E2E_SECRET_VALUE", FROM_ENV)];
 
-    // This first plan starts the gateway. A new home may hold the MCP plugin off, so turn it on here,
-    // until a manifest's `plugins` section can say so itself.
-    let _ = instance.run(&["setup", "plan", &file], &env);
-    let enabled = instance.run(&["api", "POST", "/api/plugins/mcp/enable", "{}"], &[]);
-    assert!(enabled.status.success(), "{}", String::from_utf8_lossy(&enabled.stderr));
-
+    // This plan starts the gateway, and waits out the boot behind its open port.
     let plan = instance.run(&["setup", "plan", &file], &env);
+    let planned: serde_json::Value = serde_json::from_slice(&plan.stdout).expect("one JSON document on stdout");
+    assert_eq!(plan.status.code(), Some(0), "{planned}");
+    assert_eq!(planned["gateway"]["started"], serde_json::json!(true), "{planned}");
+
     let apply = instance.run(&["setup", "apply", &file], &env);
     let again = instance.run(&["setup", "apply", &file], &env);
 
@@ -158,4 +157,88 @@ fn no_secret_value_ever_reaches_the_output() {
     for value in [FROM_ENV, FROM_FILE, FROM_DOTENV] {
         assert!(!logs.contains(value), "{value} in the gateway's logs");
     }
+}
+
+// SPEC §host.setup: a home that has never run a gateway converges on its first apply, with no call to
+// anything but the command itself.
+#[test]
+fn a_new_home_converges_on_its_first_apply() {
+    let instance = Instance::new();
+    let manifest = serde_json::json!({
+        "plugins": {
+            "jobs": { "config": { "definitions": { "e2e-job": {
+                "trigger": { "kind": "manual" },
+                "action": { "type": "process.exec", "input": { "program": "nosuchprogram" } },
+            } } } },
+            "llm": { "config": { "providers": { "local": { "style": "openai", "baseUrl": "http://127.0.0.1:1/v1" } } } },
+        },
+        "mcps": { "e2e-echo": { "type": "echo" } },
+    });
+    let path = instance.home.join("swiss.setup.json");
+    std::fs::write(&path, manifest.to_string()).expect("the manifest");
+    let file = path.to_string_lossy().into_owned();
+
+    let first = instance.run(&["setup", "apply", &file, "--no-check"], &[]);
+    let document: serde_json::Value = serde_json::from_slice(&first.stdout).expect("one JSON document on stdout");
+    assert_eq!(first.status.code(), Some(0), "{document}");
+    assert_eq!(document["gateway"]["started"], serde_json::json!(true), "{document}");
+    assert_eq!(document["summary"]["created"], serde_json::json!(1), "{document}");
+    assert_eq!(document["summary"]["updated"], serde_json::json!(2), "{document}");
+
+    let again = instance.run(&["setup", "apply", &file, "--no-check"], &[]);
+    let document: serde_json::Value = serde_json::from_slice(&again.stdout).expect("one JSON document on stdout");
+    assert_eq!(again.status.code(), Some(0), "{document}");
+    assert_eq!(document["summary"]["unchanged"], serde_json::json!(3), "{document}");
+}
+
+/// The answer to one `swiss api` call, success or not, as text.
+fn api_text(output: &Output) -> String {
+    format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))
+}
+
+// SPEC §host.config: "A generic guarantee": every plugin the real server composes refuses a key it does
+// not read, at the top of its row and one level down in each closed object its schema names. A key saved
+// and ignored is the failure a manifest cannot otherwise see.
+#[test]
+fn every_plugin_with_a_schema_refuses_an_unknown_key() {
+    let instance = Instance::new();
+    let path = instance.home.join("empty.json");
+    std::fs::write(&path, "{}").expect("the manifest");
+    let started = instance.run(&["setup", "plan", &path.to_string_lossy()], &[]);
+    assert_eq!(started.status.code(), Some(0), "{}", api_text(&started));
+
+    let listed = instance.run(&["api", "GET", "/api/plugins"], &[]);
+    let inventory: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("the inventory");
+    let ids: Vec<String> = inventory["plugins"]
+        .as_array()
+        .expect("plugins")
+        .iter()
+        .filter_map(|row| row["id"].as_str().map(str::to_string))
+        .collect();
+    assert!(ids.len() >= 5, "{ids:?}");
+
+    let refuses = |id: &str, config: serde_json::Value, place: &str| {
+        let body = serde_json::json!({ "config": config }).to_string();
+        let answer = instance.run(&["api", "PUT", &format!("/api/plugins/{id}/config?dryRun=1"), &body], &[]);
+        let text = api_text(&answer);
+        assert!(!answer.status.success(), "{id} took an unknown key {place}: {text}");
+        assert!(text.contains("zz-unknown"), "{id} did not name the key {place}: {text}");
+    };
+    let mut nested = 0;
+    for id in &ids {
+        refuses(id, serde_json::json!({ "zz-unknown": 1 }), "at the top");
+
+        let held = instance.run(&["api", "GET", &format!("/api/plugins/{id}/config")], &[]);
+        let held: serde_json::Value = serde_json::from_slice(&held.stdout).expect("the config answer");
+        for (key, property) in held["schema"]["properties"].as_object().into_iter().flatten() {
+            let closed = property["type"] == serde_json::json!("object")
+                && property["properties"].is_object()
+                && property.get("additionalProperties").is_none_or(|more| *more == serde_json::json!(false));
+            if closed {
+                refuses(id, serde_json::json!({ key.clone(): { "zz-unknown": 1 } }), &format!("under {key}"));
+                nested += 1;
+            }
+        }
+    }
+    assert!(nested >= 3, "only {nested} closed objects were looked into");
 }

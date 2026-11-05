@@ -92,6 +92,14 @@ impl Item {
         self.extra.insert(key.to_string(), value.into());
     }
 
+    /// This item did not happen, for this reason.
+    pub fn failed(mut self, code: &str, error: &str) -> Self {
+        self.status = Status::Failed;
+        self.note("code", code);
+        self.note("error", error);
+        self
+    }
+
     fn check_failed(&self) -> bool {
         self.extra.get("check").is_some_and(|check| check["ok"] == json!(false))
     }

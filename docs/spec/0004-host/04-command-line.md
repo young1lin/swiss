@@ -113,7 +113,7 @@ and drives the same `/api/*` routes the panel uses, signed with the CLI key (§h
 holds no state and adds nothing to the daemon.
 
 ```text
-swiss setup schema [section]             what a manifest may say
+swiss setup schema [section | plugins.<id>]   what a manifest may say
 swiss setup plan <file|-> [--rotate-secrets]   what it would change here; writes nothing
 swiss setup apply <file|-> [--no-check] [--rotate-secrets]   make it so, then check what it made
 ```
@@ -121,8 +121,11 @@ swiss setup apply <file|-> [--no-check] [--rotate-secrets]   make it so, then ch
 `-` reads stdin. A file or stdin may carry a BOM or be UTF-16, which is what Windows PowerShell 5
 writes, and a terminal stdin is refused. Each prints one JSON document on stdout, progress goes to
 stderr, and none prompts. `setup plan` and `setup apply` start the gateway without a browser if it is
-down, and say that they did, but only once the manifest has been read and found sound; `setup schema` needs no
-gateway.
+down, and say that they did, but only once the manifest has been read and found sound. A gateway answers
+before its plugins have started (§host.plugins): an entry reads `disabled` until the boot reaches it,
+and `idle` is not a start. So both wait for the boot to finish, up to 60 s
+(`a_gateway_mid_boot_is_waited_for`). `setup schema` needs a gateway only for `plugins.<id>`, what that
+plugin's row takes, which only the plugin knows; the row itself stays out of the answer.
 
 **The manifest.**
 
@@ -134,6 +137,16 @@ gateway.
     "glm-key": "dotenv:.env#ZAI_API_KEY",
     "deploy-key-pass": "file:~/.config/acme/pass",
     "prod-db-password": "ask"
+  },
+  "plugins": {
+    "llm": { "config": { "providers": { "glm": {
+      "style": "anthropic", "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+      "apiKey": "${secret://glm-key}"
+    } } } },
+    "jobs": { "config": { "definitions": { "backup": {
+      "trigger": { "kind": "cron", "expression": "0 3 * * *" },
+      "action": { "type": "process.exec", "input": { "program": "restic", "args": ["backup", "."] } }
+    } } } }
   },
   "mcps": {
     "github": {
@@ -158,6 +171,7 @@ a name stays exactly as written, and one that is not a valid MCP name is refused
 | Section | Identity | Meaning |
 |---|---|---|
 | `secrets` | name | Source of the value. `env:VAR`, `file:PATH`, `dotenv:PATH#KEY` or `ask`. Relative paths resolve against the manifest's folder, or the working directory for stdin, and a leading `~/` against the home directory |
+| `plugins` | the plugin's id | `{enabled?, config?}`. `config` is a merge patch over the plugin's row (§host.config): objects merge, arrays and everything else replace, and what it does not name stays, so `plugins.jobs.config.definitions.backup` adds one job. Validated by the plugin's own validator, under `plan` too |
 | `mcps` | name | The whole MCP definition (§mcp.defs), keys per type |
 
 **Refused before anything is written** (exit 2, every problem listed, with its path, and no gateway
@@ -172,27 +186,44 @@ asked or started):
   the same way, and so is a malformed reference. There is no override. A credential-named slot that
   holds something else has a way out: the value goes in the vault, and the slot holds the reference;
 - the mask sentinel, which only a masked read can have produced;
-- `null`, a `version` other than 1, a bad secret or MCP name, one name in two MCP blocks, or a source
-  syntax this build does not know.
+- `null`, a `version` other than 1, a bad secret or MCP name, one name in two MCP blocks, a source
+  syntax this build does not know, or `plugins.mcp.enabled: false` in a manifest that names MCPs.
 
 A `${ENV_VAR}` reference is accepted with the warning `ref.env-unverifiable`: the CLI cannot see the
 daemon's environment, and a missing variable expands to empty (§host.refs). `${secret://name}` is the
 form to write.
 
-**What a plan reads.** GETs, and each secret's source, which is read here in the caller's process and
-dropped; it never reaches the output. It starts no MCP and writes nothing
+**What a plan reads.** GETs, each secret's source, which is read here in the caller's process and
+dropped and never reaches the output, and each changed plugin row put to its validator with
+`?dryRun=1`, which persists nothing. A gateway on another build is not asked, because an older one would
+save what it was only asked about: that plugin carries the warning `plugin.not-validated`, and `apply`
+is what validates it. A plan starts no MCP and writes nothing
 (`plan_writes_nothing_and_starts_nothing`). An existing secret stays `unchanged`, because the vault
 cannot be read back and a write rebuilds every MCP using it. `--rotate-secrets` says what a rewrite
 from each readable source would do, and a source it cannot read keeps the stored value with the
-warning `secret.not-rotated`. A secret a definition references that neither the manifest nor the
-vault provides is an item of its own: `needs-input`, code `secret.missing`. An MCP using a secret
-that is `failed` or `needs-input` is `blocked`, naming it in `by`.
+warning `secret.not-rotated`. A secret a definition or a plugin patch references that neither the
+manifest nor the vault provides is an item of its own: `needs-input`, code `secret.missing`. An MCP or a
+plugin using a secret that is `failed` or `needs-input` is `blocked`, naming it in `by`.
 
 An MCP is compared by building the manifest's definition with `build_def`, masking it as the gateway
 masks a read-back, and comparing the two
 (`a_definition_already_on_the_gateway_reads_as_unchanged`). A definition the mask reaches into, such
 as a command holding `-p8080:80`, cannot show a change there, so `unchanged` carries the warning
 `mcp.compare-masked`. A gateway running a build other than the CLI's adds `gateway.stale-build`.
+
+A plugin is compared by merging its patch over the row and comparing the result, and by whether it is
+as `enabled` asks (`a_plugin_patch_keeps_the_rest_of_the_row`). Asked on and `failed` reads as a change,
+so a rerun retries the start. What its validator refuses is `failed`, code `plugin.invalid`, and an id
+the gateway does not have is `failed`, code `plugin.unknown`, naming the nearest and never put in a URL;
+neither stops the rest. A warning its validator returns is the warning `plugin.warning`. A manifest holds
+no `null`, so a patch cannot remove a key: one an older build left, which the plugin no longer reads, fails
+the merged validation as `plugin.invalid`, and removing it is `swiss api`.
+
+MCPs live in the `mcp` plugin. If someone turned it off, every named MCP is `failed`, code
+`mcp.plugin-off`, saying how to turn it on; a manifest naming none is not affected. A manifest that says
+`plugins.mcp.enabled: true` carries the warning `mcp.plugin-off` under `plan`, because what the plugin
+holds cannot be read yet; `apply` turns it on and then decides each MCP against what it finds
+(`a_manifest_turns_on_the_plugin_its_mcps_need`).
 
 **What apply promises.**
 
@@ -202,10 +233,14 @@ as a command holding `-p8080:80`, cannot show a change there, so `unchanged` car
   (`apply_twice_is_all_unchanged_and_writes_nothing`).
 - A stored secret is not rewritten, because the vault cannot be read back and a write rebuilds every
   MCP using it. `--rotate-secrets` rewrites those with a readable source.
-- A race retries: a 409 on the vault `rev` reads it again and retries, three times.
+- A race retries: a 409 on a vault `rev` or a plugin `revision` re-reads, re-merges and retries, three
+  times, so what the other writer saved stays (`a_conflict_rereads_and_retries`). Every plugin write
+  carries its revision.
 
-**The order.** Secrets, then MCPs, each added with `start: false`, then every check, after every
-write. A failed item does not stop the rest; what depends on it is `blocked`.
+**The order.** Secrets, plugins (config, then enable, so a plugin turned on starts on what the manifest
+says), then MCPs, each added with `start: false`, then every check, after every write. A failed item does
+not stop the rest; what depends on it is `blocked`. A plugin write the gateway refuses is code
+`plugin.write`.
 
 **The checks.** At most four run at once, each bounded at 75 s, and an unchanged MCP is checked too:
 exit 0 says every check passed, and a rerun is how an Agent learns its fix landed.
@@ -217,10 +252,17 @@ exit 0 says every check passed, and a rerun is how an Agent learns its fix lande
 | Any other type | Started, tools listed |
 | OAuth | Not started or checked; `needs-input`, code `mcp.oauth`, until authorized |
 
+| Plugin | Check |
+|---|---|
+| Any | Enabled and `failed` is a failed check, code `plugin.start`, under `--no-check` too. A row the running plugin did not take is code `plugin.apply` |
+| `llm` | `POST /api/llm/providers/models` for each provider the patch names, unchanged or not: a listing. Never `providers/test`, which is billed. An endpoint with no listing fails here, code `check.provider`, and `--no-check` is the way past it |
+
 A failure reads `check: {ok: false, code, error}`, with code `check.start`, `check.tools`,
-`check.unreachable` or `check.timeout`. `--no-check` skips the checks and leaves a `proc` to its first
-request; every other MCP still starts, and a start that fails is still reported. An MCP someone
-stopped stays stopped, with the warning `mcp.left-stopped`, and a typed one is still tested.
+`check.unreachable`, `check.timeout`, `check.provider`, `plugin.start` or `plugin.apply`. A provider's
+failure names the provider and not its address (`a_provider_is_checked_by_its_listing`). `--no-check`
+skips the MCP and provider checks and leaves a `proc` to its first request; every other MCP still starts,
+and a start that fails is still reported. An MCP someone stopped stays stopped, with the warning
+`mcp.left-stopped`, and a typed one is still tested.
 
 **The output.** One document, on success and on failure alike. It never holds a credential, a
 token, a one-time link or a secret's value.
@@ -252,8 +294,10 @@ token, a one-time link or a secret's value.
 
 `status` is one of `created`, `updated`, `unchanged`, `failed`, `blocked`, `needs-input`; under `plan`
 the first two read `will-create` and `will-update`. A saved item whose check fails keeps its status and
-sets `ok` false. `executes` names what a `proc` MCP will run, so whoever reviews a manifest can read it. A refused
-manifest prints `{ok: false, mode, problems: [{path, message}]}`, and bad usage or an unavailable
+sets `ok` false. `executes` names what a `proc` MCP will run, so whoever reviews a manifest can read it, under `plan`
+too; a job patched into `plugins.jobs` is listed the same way, as a map by name, read from the patch, and
+so are a `process` app's `start` and `stop` and an `llm` agent's `command`. A plugin's row never reaches
+the document. A refused manifest prints `{ok: false, mode, problems: [{path, message}]}`, and bad usage or an unavailable
 gateway prints `{ok: false, error}`, with `mode` for the latter.
 
 | Exit | Meaning |
@@ -264,5 +308,5 @@ gateway prints `{ok: false, error}`, with `mode` for the latter.
 | 3 | The gateway is unavailable and could not be started |
 | 4 | Nothing failed, but items wait for a human |
 
-**A manifest is code.** A `proc` entry names a program, and `apply` can write and run it. `executes` is
-what makes that reviewable, and `plan` never runs any of it.
+**A manifest is code.** A `proc` entry names a program, a job or a plugin row can name another, and
+`apply` can write and run them. `executes` is what makes that reviewable, and `plan` never runs any of it.

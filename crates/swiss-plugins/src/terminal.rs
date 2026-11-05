@@ -165,6 +165,12 @@ impl PluginFactory for TerminalPlugin {
     }
 
     fn validate_config(&self, config: &Value) -> Result<(), String> {
+        TerminalConfig::refuse_unknown_keys(config)?;
+        TerminalConfig::parse(config).map(|_| ())
+    }
+
+    /// A key an older build saved reads as nothing here, so it cannot stop the plugin at boot.
+    fn validate_config_for_start(&self, config: &Value) -> Result<(), String> {
         TerminalConfig::parse(config).map(|_| ())
     }
 

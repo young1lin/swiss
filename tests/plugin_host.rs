@@ -1033,6 +1033,85 @@ async fn config_api_validates_before_persisting_and_serves_the_schema() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+// SPEC §host.config: `?dryRun=1` "validates and returns the warnings without persisting".
+#[tokio::test]
+async fn a_dry_run_answers_as_a_save_would_and_nothing_moves() {
+    let (app, host, _registry) = full_app("dryrun", json!({})).await;
+    let before = host.revision();
+    let job = json!({ "config": { "definitions": { "nightly": {
+        "trigger": { "kind": "manual" },
+        "action": { "type": "no.such.capability" },
+    } } } });
+
+    let (status, body, text) = send(&app, json_body("PUT", "/api/plugins/jobs/config?dryRun=1", job.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let body = body.expect("JSON");
+    assert_eq!(body["dryRun"], json!(true));
+    assert_eq!(body["revision"], json!(before));
+    assert!(body["warnings"][0].as_str().expect("a warning").contains("no.such.capability"), "{body}");
+    assert!(body.get("config").is_none(), "a dry run hands nothing back: {body}");
+    assert_eq!(host.revision(), before);
+    assert_eq!(host.store().plugin_config("jobs"), json!({}));
+
+    // What a save would refuse, this refuses, in the same words.
+    let bad = json!({ "config": { "zz-unknown": 1 } });
+    let (dry_status, dry_body, _) = send(&app, json_body("PUT", "/api/plugins/jobs/config?dryRun=1", bad.clone())).await;
+    let (real_status, real_body, _) = send(&app, json_body("PUT", "/api/plugins/jobs/config", bad)).await;
+    assert_eq!(dry_status, StatusCode::BAD_REQUEST);
+    assert_eq!(real_status, StatusCode::BAD_REQUEST);
+    assert_eq!(dry_body, real_body);
+    let (status, _, _) = send(&app, json_body("PUT", "/api/plugins/data/config?dryRun=1", json!({ "config": [1, 2] }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(host.revision(), before);
+
+    // Only `1` is the question: anything else is the save it always was.
+    let (status, _, text) = send(&app, json_body("PUT", "/api/plugins/jobs/config?dryRun=0", job)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_ne!(host.revision(), before);
+}
+
+// SPEC §host.config: a plugin that reads nothing from its row refuses every key, and a row an older
+// build saved does not stop it starting.
+#[tokio::test]
+async fn a_plugin_with_no_settings_refuses_a_key_and_still_boots_past_an_old_one() {
+    let (app, _host, _registry) = full_app("nokeys", json!({})).await;
+    for id in ["mcp", "tunnels", "data"] {
+        let uri = format!("/api/plugins/{id}/config");
+        let (status, body, _) = send(&app, json_body("PUT", &uri, json!({ "config": { "zz-unknown": 1 } }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{id}");
+        assert!(body.expect("JSON")["error"].as_str().expect("an error").contains("zz-unknown"), "{id}");
+        let (status, _, text) = send(&app, json_body("PUT", &uri, json!({ "config": {} }))).await;
+        assert_eq!(status, StatusCode::OK, "{id}: {text}");
+    }
+
+    let old = json!({ "plugins": { "mcp": { "config": { "left": 1 } }, "tunnels": { "config": { "left": 1 } }, "data": { "config": { "left": 1 } } } });
+    let (_app, host, _registry) = full_app("oldrows", old).await;
+    for id in ["mcp", "tunnels", "data"] {
+        let entry = host.plugin(id).expect("registered");
+        assert_eq!(entry.state(), PluginState::Active, "{id}: {:?}", entry.last_error());
+    }
+}
+
+// SPEC §host.plugins: the plugins start behind the open port, so a row nobody disabled must not be
+// reported as disabled while the boot has yet to reach it.
+#[tokio::test]
+async fn a_plugin_the_boot_has_not_reached_does_not_read_as_disabled() {
+    let message = |response: axum::response::Response| async move {
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024).await.expect("a body");
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    let (host, _counters) = new_host(json!({}));
+    assert_eq!(host.plugin("alpha").expect("registered").state(), PluginState::Disabled);
+    let told = message(swiss_host::host::api::unavailable(&host, "alpha")).await;
+    assert!(told.contains("has not started yet"), "{told}");
+    assert!(!told.contains("disabled"), "{told}");
+
+    let (host, _counters) = new_host(json!({ "plugins": { "alpha": { "disabled": true } } }));
+    host.start_enabled().await;
+    let told = message(swiss_host::host::api::unavailable(&host, "alpha")).await;
+    assert!(told.contains("disabled by gateway.config.json"), "{told}");
+}
+
 /// SPEC §jobs.config+S5: the jobs config row is validated against the v2 definition model,
 /// and the refusal is honest about what is wrong. The S1 stage-gate refusals (misfire
 /// "run-once" and friends) OPENED at S5: what was a 400 naming the stage now saves and

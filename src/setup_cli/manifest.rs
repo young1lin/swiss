@@ -30,20 +30,24 @@ use swiss_host::config::ServerDef;
 use swiss_mcp::mcp_import::{entry_to_def, EntryMapping, ENTRY_KEYS};
 
 /// The only version this build reads.
-const VERSION: u64 = 1;
+pub const VERSION: u64 = 1;
 
 /// Every key a manifest's top level takes.
-const TOP_LEVEL: [&str; 5] = ["version", "secrets", "mcps", "mcpServers", "servers"];
+const TOP_LEVEL: [&str; 6] = ["version", "secrets", "plugins", "mcps", "mcpServers", "servers"];
 
 /// The sections `swiss setup schema` describes, by name.
-const SECTIONS: [&str; 2] = ["secrets", "mcps"];
+const SECTIONS: [&str; 3] = ["secrets", "plugins", "mcps"];
 
 /// The keys that ride on every MCP definition, beside those of its type.
 const EVERY_TYPE: [&str; 3] = ["type", "lazy", "idleMs"];
 
+/// What one entry of `plugins` takes.
+const PLUGIN_KEYS: [&str; 2] = ["enabled", "config"];
+
 const SECRET_NAME_RULE: &str = "a secret's name is a lowercase letter, then lowercase letters, digits or -, 64 at most";
 const MCP_NAME_RULE: &str = "an MCP's name starts with a letter or digit, then letters, digits, _ or -, 63 at most";
 const THE_SOURCES: &str = "a secret's entry says where its value is: env:VAR, file:PATH, dotenv:PATH#KEY or ask";
+const PLUGIN_RULE: &str = "plugins maps a plugin's id to { enabled, config }";
 
 /// Where a secret's value is.
 #[derive(Debug, PartialEq, Eq)]
@@ -58,6 +62,15 @@ pub enum SecretSpec {
 pub struct McpEntry {
     pub def: ServerDef,
     /// The vault names its definition references.
+    pub secrets: BTreeSet<String>,
+}
+
+/// One plugin: whether it runs, and a merge patch over its row. Neither says anything when left out.
+#[derive(Debug)]
+pub struct PluginEntry {
+    pub enabled: Option<bool>,
+    pub config: Option<Value>,
+    /// The vault names its patch references.
     pub secrets: BTreeSet<String>,
 }
 
@@ -78,6 +91,7 @@ impl Warning {
 #[derive(Debug, Default)]
 pub struct Manifest {
     pub secrets: BTreeMap<String, SecretSpec>,
+    pub plugins: BTreeMap<String, PluginEntry>,
     pub mcps: BTreeMap<String, McpEntry>,
     pub warnings: Vec<Warning>,
 }
@@ -100,8 +114,13 @@ pub fn parse(text: &str, gateway_port: u16) -> Result<Manifest, Vec<Problem>> {
     }
     let mut manifest = Manifest::default();
     read_secrets(top.get("secrets"), &mut manifest, &mut problems);
+    read_plugins(top.get("plugins"), &mut manifest, &mut problems);
     for block in ["mcps", "mcpServers", "servers"] {
         read_mcps(top, block, gateway_port, &mut manifest, &mut problems);
+    }
+    let turns_mcp_off = manifest.plugins.get("mcp").is_some_and(|entry| entry.enabled == Some(false));
+    if turns_mcp_off && !manifest.mcps.is_empty() {
+        problems.push(Problem::new("plugins.mcp.enabled", "this manifest names MCPs, and they need this plugin on"));
     }
     if problems.is_empty() {
         Ok(manifest)
@@ -136,6 +155,65 @@ fn read_secrets(section: Option<&Value>, manifest: &mut Manifest, problems: &mut
             },
             _ => problems.push(Problem::new(path, THE_SOURCES)),
         }
+    }
+}
+
+fn read_plugins(section: Option<&Value>, manifest: &mut Manifest, problems: &mut Vec<Problem>) {
+    let Some(section) = section.filter(|s| !s.is_null()) else {
+        return;
+    };
+    let Some(entries) = section.as_object() else {
+        problems.push(Problem::new("plugins", PLUGIN_RULE));
+        return;
+    };
+    for (id, entry) in entries {
+        let path = join("plugins", id);
+        if entry.is_null() {
+            continue;
+        }
+        let Some(fields) = entry.as_object() else {
+            problems.push(Problem::new(path, PLUGIN_RULE));
+            continue;
+        };
+        for key in fields.keys().filter(|key| !PLUGIN_KEYS.contains(&key.as_str())) {
+            problems.push(Problem::unknown_field(join(&path, key), key, PLUGIN_KEYS));
+        }
+        let enabled = match fields.get("enabled") {
+            None | Some(Value::Null) => None,
+            Some(Value::Bool(wanted)) => Some(*wanted),
+            Some(_) => {
+                problems.push(Problem::new(join(&path, "enabled"), "enabled is true or false"));
+                None
+            }
+        };
+        let mut scan = Scan::default();
+        let config = match fields.get("config") {
+            None | Some(Value::Null) => None,
+            Some(config @ Value::Object(_)) => {
+                scan_definition(&join(&path, "config"), config, &mut scan);
+                Some(config.clone())
+            }
+            Some(_) => {
+                problems.push(Problem::new(join(&path, "config"), "a plugin's config is an object, merged over its row"));
+                None
+            }
+        };
+        problems.append(&mut scan.problems);
+        warn_of_env_refs(scan.env_refs, manifest);
+        manifest.plugins.insert(id.clone(), PluginEntry { enabled, config, secrets: scan.secrets });
+    }
+}
+
+/// The daemon reads these, in an environment this process cannot see.
+fn warn_of_env_refs(env_refs: Vec<(String, String)>, manifest: &mut Manifest) {
+    for (where_, var) in env_refs {
+        manifest.warnings.push(Warning::new(
+            "ref.env-unverifiable",
+            where_,
+            format!(
+                "${{{var}}} is read from the gateway's environment, which this command cannot see, and a missing variable expands to empty; ${{secret://name}} is the form to write"
+            ),
+        ));
     }
 }
 
@@ -190,15 +268,7 @@ fn read_mcps(
             problems.append(&mut scan.problems);
             continue;
         }
-        for (where_, var) in scan.env_refs {
-            manifest.warnings.push(Warning::new(
-                "ref.env-unverifiable",
-                where_,
-                format!(
-                    "${{{var}}} is read from the gateway's environment, which this command cannot see, and a missing variable expands to empty; ${{secret://name}} is the form to write"
-                ),
-            ));
-        }
+        warn_of_env_refs(std::mem::take(&mut scan.env_refs), manifest);
         match build_def(&body, &[]) {
             Ok(def) => {
                 manifest.mcps.insert(name.clone(), McpEntry { def, secrets: scan.secrets });
@@ -285,6 +355,13 @@ pub fn schema(section: Option<&str>) -> Result<Value, String> {
             "name": SECRET_NAME_RULE,
             "value": "env:VAR | file:PATH | dotenv:PATH#KEY | ask",
             "paths": "relative to the manifest's folder, or the working directory for stdin; ~/ is the home directory",
+        }),
+        "plugins" => json!({
+            "identity": "the plugin's id",
+            "enabled": "true or false; left out, the plugin stays as it is",
+            "config": "a merge patch over the plugin's row: objects merge, arrays and everything else replace, and what it does not name stays",
+            "validated": "by the plugin's own validator, under plan too",
+            "perPlugin": "swiss setup schema plugins.<id> prints what that plugin's row takes; it reads the gateway",
         }),
         _ => {
             let types: Map<String, Value> = DEF_KEYS
@@ -470,6 +547,54 @@ mod tests {
         assert!(manifest.warnings[0].message.contains("${DB_PASS}"));
     }
 
+    // SPEC §host.setup: `plugins` is refused key by key, like every other section.
+    #[test]
+    fn a_plugin_entry_takes_two_keys_of_two_shapes() {
+        let problems = told(json!({ "plugins": {
+            "jobs": { "enable": true, "config": { "x": 1 } },
+            "llm": { "enabled": "yes", "config": [1] },
+            "data": "on",
+        } }));
+        let paths: Vec<&str> = problems.iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(paths, ["plugins.jobs.enable", "plugins.llm.enabled", "plugins.llm.config", "plugins.data"]);
+        assert_eq!(problems[0].1, "unknown field; did you mean enabled?");
+        assert!(told(json!({ "plugins": [] }))[0].1.contains("{ enabled, config }"));
+        assert_eq!(told(json!({ "plugins": { "jobs": { "config": { "a": null } } } }))[0].0, "plugins.jobs.config.a");
+    }
+
+    // SPEC §host.setup: a patch is read like a definition, and a word it reads as a count is a count.
+    #[test]
+    fn a_plugin_patch_holds_references_and_no_literal() {
+        let reads = parsed(json!({ "plugins": { "llm": { "config": {
+            "providers": { "glm": { "style": "anthropic", "baseUrl": "https://open.bigmodel.cn/api/anthropic", "apiKey": "${secret://glm-key}" } },
+            "agents": { "lead": { "provider": "glm", "model": "m", "maxTokens": 128000, "maxContextKiB": 512 } },
+        } } } }))
+        .expect("no literal here");
+        assert!(reads.plugins["llm"].secrets.contains("glm-key"));
+        assert_eq!(reads.plugins["llm"].enabled, None);
+
+        let problems = told(json!({ "plugins": { "llm": { "config": { "providers": { "glm": { "apiKey": VALUE } } } } } }));
+        assert_eq!(problems[0].0, "plugins.llm.config.providers.glm.apiKey");
+        assert!(!format!("{problems:?}").contains(VALUE), "{problems:?}");
+
+        let warned = parsed(json!({ "plugins": { "llm": { "config": { "providers": { "glm": { "apiKey": "${GLM_KEY}" } } } } } }))
+            .expect("accepted");
+        assert_eq!(warned.warnings[0].code, "ref.env-unverifiable");
+        assert_eq!(warned.warnings[0].path, "plugins.llm.config.providers.glm.apiKey");
+    }
+
+    // SPEC §host.setup: a file cannot ask for MCPs and for the plugin that holds them to be off.
+    #[test]
+    fn mcps_refuse_a_manifest_turning_their_plugin_off() {
+        let problems = told(json!({
+            "plugins": { "mcp": { "enabled": false } },
+            "mcps": { "a": { "type": "echo" } },
+        }));
+        assert_eq!(problems[0].0, "plugins.mcp.enabled");
+        assert!(parsed(json!({ "plugins": { "mcp": { "enabled": false } } })).is_ok());
+        assert!(parsed(json!({ "plugins": { "mcp": { "enabled": true } }, "mcps": { "a": { "type": "echo" } } })).is_ok());
+    }
+
     #[test]
     fn the_manifest_examples_read() {
         let manifest = parsed(json!({
@@ -513,6 +638,8 @@ mod tests {
         assert_eq!(one["section"], json!("secrets"));
         assert!(one["schema"]["value"].as_str().unwrap_or_default().contains("ask"));
         assert!(schema(Some("secret")).unwrap_err().contains("did you mean secrets"));
+        let plugins = schema(Some("plugins")).expect("the section needs no gateway");
+        assert!(plugins["schema"]["config"].as_str().unwrap_or_default().contains("merge patch"));
         assert!(schema(Some("zzzzzzzz")).unwrap_err().contains("there are"));
     }
 }

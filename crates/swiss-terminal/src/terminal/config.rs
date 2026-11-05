@@ -37,6 +37,19 @@ pub const DEFAULT_GRACE_SECONDS: u64 = 60;
 /// SPEC §terminal.sessions: how long a full send queue is tolerated before the session is closed.
 pub const DEFAULT_STALL_SECONDS: u64 = 30;
 
+/// Every key a row can hold, and every key of its `local` block. The schema in the plugin lists the same.
+const ROW_KEYS: [&str; 8] = [
+    "local",
+    "allowedTargets",
+    "maxSessions",
+    "maxSessionsPerTarget",
+    "idleTimeoutMinutes",
+    "graceSeconds",
+    "stallSeconds",
+    "recording",
+];
+const LOCAL_KEYS: [&str; 2] = ["enabled", "shell"];
+
 /// What the terminal plugin was configured with.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalConfig {
@@ -80,6 +93,22 @@ impl Default for TerminalConfig {
 }
 
 impl TerminalConfig {
+    /// What a save refuses beyond [`TerminalConfig::parse`]: a key this plugin never reads, which would
+    /// save and do nothing, the same limit the user believes in and does not have. Apart from `parse`
+    /// because a boot reads through `parse`, and a key an older build saved must not stop a start
+    /// (SPEC §host.config).
+    pub fn refuse_unknown_keys(config: &Value) -> Result<(), String> {
+        let fields = config.as_object().ok_or("terminal config must be an object")?;
+        if let Some(key) = fields.keys().find(|key| !ROW_KEYS.contains(&key.as_str())) {
+            return Err(format!("terminal config has no {key:?} field"));
+        }
+        let local = fields.get("local").and_then(Value::as_object);
+        if let Some(key) = local.and_then(|local| local.keys().find(|key| !LOCAL_KEYS.contains(&key.as_str()))) {
+            return Err(format!("terminal config has no local.{key} field"));
+        }
+        Ok(())
+    }
+
     /// One config row -> a config. Absent keys take the default; a present key of the
     /// wrong shape is an error naming the key, never a silent fallback.
     pub fn parse(config: &Value) -> Result<Self, String> {
@@ -194,6 +223,31 @@ fn span(value: Option<&Value>, key: &str, default: u64) -> Result<u64, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // SPEC §host.config: a save refuses a key the plugin never reads, and a boot reads past one.
+    #[test]
+    fn a_key_never_read_is_refused_on_a_save_and_kept_out_of_a_boot() {
+        for (row, named) in [
+            (json!({ "maxSesions": 2 }), "maxSesions"),
+            (json!({ "local": { "enable": true } }), "local.enable"),
+        ] {
+            let refused = TerminalConfig::refuse_unknown_keys(&row).expect_err("refused");
+            assert!(refused.contains(named), "{refused}");
+            assert!(TerminalConfig::parse(&row).is_ok(), "an old row still boots");
+        }
+        let every = json!({
+            "local": { "enabled": true, "shell": "sh" },
+            "allowedTargets": ["a"],
+            "maxSessions": 4,
+            "maxSessionsPerTarget": 2,
+            "idleTimeoutMinutes": 1,
+            "graceSeconds": 1,
+            "stallSeconds": 1,
+            "recording": false,
+        });
+        assert_eq!(TerminalConfig::refuse_unknown_keys(&every), Ok(()));
+        assert!(TerminalConfig::refuse_unknown_keys(&json!([])).is_err());
+    }
 
     #[test]
     fn an_empty_config_is_the_documented_defaults() {

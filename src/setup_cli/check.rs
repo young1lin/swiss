@@ -35,10 +35,10 @@ use swiss_host::config::ServerDef;
 use swiss_mcp::oauth::is_oauth;
 
 /// A manifest may name many children, on a machine that may be short of memory.
-const CHECKS_AT_ONCE: usize = 4;
+pub(super) const CHECKS_AT_ONCE: usize = 4;
 
 /// Past a proc's 60 s handshake, so the gateway's own answer is what normally ends a slow one.
-const CHECK_BOUND: Duration = Duration::from_secs(75);
+pub(super) const CHECK_BOUND: Duration = Duration::from_secs(75);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Probe {

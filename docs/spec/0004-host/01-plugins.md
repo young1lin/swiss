@@ -125,7 +125,7 @@ registration (`host/engine.rs`): a silently shadowed route would be a boundary h
 |---|---|
 | `GET /api/plugins` | `{revision, plugins[], pages[]}`; each row `{id, kind, label, version, enabled, state, configRevision, pages[], lastError?, requires?, requiresMet?}`. Compiled (the descriptor), desired (the store row) and actual (`configRevision`) drifting apart is the visible gap of a restart or apply that has not happened |
 | `POST /api/plugins/{id}/enable\|disable` | write the row, then reconcile; disable really stops the instance |
-| `GET/PUT /api/plugins/{id}/config` | GET `{config, schema, revision}`; PUT validates (400, nothing persisted), CAS-writes (409), reconciles, answers `{revision, config, schema, warnings, applied[, error]}` |
+| `GET/PUT /api/plugins/{id}/config` | GET `{config, schema, revision}`; PUT validates (400, nothing persisted), CAS-writes (409), reconciles, answers `{revision, config, schema, warnings, applied[, error]}`. `PUT …?dryRun=1` validates the same way and answers `{dryRun, revision, warnings}`, persisting nothing |
 | `/api/actions`, `/api/runs…` | §host.actions |
 | `/api/tokens…` | §host.tokens — host-owned though the Token page sits in the MCP group, so disabling MCP takes the page off the air but leaves the credential API and CLI serving |
 | `/api/secrets…` | §host.vault |

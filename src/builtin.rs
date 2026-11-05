@@ -100,6 +100,18 @@ pub struct BuiltinDeps {
     pub data_history: Arc<swiss_data::history::DataHistory>,
 }
 
+/// The row of a plugin that reads nothing from it refuses every key, so a typo in a manifest or a
+/// script is told it did nothing rather than saved and ignored (SPEC §host.config).
+fn takes_no_keys(id: &str, config: &Value) -> Result<(), String> {
+    let fields = config
+        .as_object()
+        .ok_or_else(|| format!("{id} config must be an object"))?;
+    match fields.keys().next() {
+        Some(key) => Err(format!("{id} config has no {key:?} field")),
+        None => Ok(()),
+    }
+}
+
 /// Register every built-in of this build, in inventory/page order: MCP+Traffic, Tunnels,
 /// Data, Jobs. Boot STARTS them in the reverse (see PluginHost::register) so tunnels come up
 /// before the MCPs that may ride them.
@@ -172,6 +184,15 @@ impl PluginFactory for McpPlugin {
             restart_on_config_change: false,
             requires: Vec::new(),
         }
+    }
+
+    fn validate_config(&self, config: &Value) -> Result<(), String> {
+        takes_no_keys(MCP_ID, config)
+    }
+
+    /// A row an older build saved reads as nothing here, so it cannot stop the plugin at boot.
+    fn validate_config_for_start(&self, _config: &Value) -> Result<(), String> {
+        Ok(())
     }
 
     async fn create(&self, _config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
@@ -433,6 +454,15 @@ impl PluginFactory for TunnelsPlugin {
         }
     }
 
+    fn validate_config(&self, config: &Value) -> Result<(), String> {
+        takes_no_keys(TUNNELS_ID, config)
+    }
+
+    /// A row an older build saved reads as nothing here, so it cannot stop the plugin at boot.
+    fn validate_config_for_start(&self, _config: &Value) -> Result<(), String> {
+        Ok(())
+    }
+
     async fn create(&self, _config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
         Ok(Arc::new(TunnelsInstance {
             tunnels: self.tunnels.clone(),
@@ -571,6 +601,15 @@ impl PluginFactory for DataPlugin {
             // a met/unmet verdict, so "disable MCP" no longer silently paralyses Data.
             requires: vec!["connection-catalog".into()],
         }
+    }
+
+    fn validate_config(&self, config: &Value) -> Result<(), String> {
+        takes_no_keys(DATA_ID, config)
+    }
+
+    /// A row an older build saved reads as nothing here, so it cannot stop the plugin at boot.
+    fn validate_config_for_start(&self, _config: &Value) -> Result<(), String> {
+        Ok(())
     }
 
     async fn create(&self, _config: &Value) -> Result<Arc<dyn PluginInstance>, String> {

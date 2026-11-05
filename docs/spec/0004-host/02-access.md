@@ -70,7 +70,11 @@ root-level subsystem rows and versioned `plugins.<id>` rows `{kind?, disabled?, 
 - **Validation layers.** PUT runs `validate_config` (rejected values are not persisted);
   boot runs `validate_config_for_start` (jobs drops bad definitions left by an older
   validator with a warning instead of failing the plugin); `warnings` report "storable but not
-  runnable now" (an unregistered action).
+  runnable now" (an unregistered action). A generic guarantee: every plugin refuses a key it does
+  not read on a save (`every_plugin_with_a_schema_refuses_an_unknown_key`), the ones whose row holds
+  no settings included, because a key saved and ignored is a setting the user believes in and does
+  not have. A boot reads past such a key, on `mcp`, `tunnels`, `data` and `terminal`, so one an older
+  build saved cannot stop a start.
 - **Port.** `SWISS_PORT` > the config > 19999. `--port` is saved into the config (sealed,
   atomic) as the new default; illegal values are refused ("takes a number between 1 and
   65535").

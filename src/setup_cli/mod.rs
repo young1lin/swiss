@@ -24,6 +24,7 @@ mod apply;
 mod check;
 mod manifest;
 mod plan;
+mod plugins;
 mod refuse;
 mod report;
 mod sources;
@@ -42,7 +43,8 @@ use report::{Mode, Report, Status, EXIT_FAILED, EXIT_NO_GATEWAY, EXIT_REFUSED};
 use sources::{trim_newline, Source};
 use swiss_core::secure::secretstore::valid_name;
 
-/// A 409 on the vault's `rev` means someone else wrote first: read again, this many times.
+/// A 409 on the vault's `rev` or a plugin's `revision` means someone else wrote first: read again,
+/// this many times.
 const CONFLICT_RETRIES: usize = 3;
 
 const SECRET_USAGE: &str = "usage: swiss secret set <name> [--from <env:VAR|file:PATH|dotenv:PATH#KEY>]\n\
@@ -52,7 +54,7 @@ const TERMINAL_REFUSAL: &str = "stdin is a terminal, and a value typed here woul
     use --from env:VAR, file:PATH or dotenv:PATH#KEY, or have whoever holds it store it on the \
     panel's Secrets page.";
 
-const SETUP_USAGE: &str = "usage: swiss setup schema [section]\n       \
+const SETUP_USAGE: &str = "usage: swiss setup schema [section | plugins.<id>]\n       \
     swiss setup plan <file|-> [--rotate-secrets]\n       \
     swiss setup apply <file|-> [--no-check] [--rotate-secrets]\n\
     A file or stdin (-) holds one JSON manifest; swiss setup schema says what it may hold.";
@@ -62,7 +64,7 @@ pub async fn setup_main(argv: Vec<String>) -> i32 {
     match argv.split_first() {
         Some((sub, rest)) if sub == "plan" => run_manifest(Mode::Plan, rest).await,
         Some((sub, rest)) if sub == "apply" => run_manifest(Mode::Apply, rest).await,
-        Some((sub, rest)) if sub == "schema" => setup_schema(rest),
+        Some((sub, rest)) if sub == "schema" => setup_schema(rest).await,
         Some((sub, _)) if matches!(sub.as_str(), "help" | "-h" | "--help") => {
             println!("{SETUP_USAGE}");
             0
@@ -71,18 +73,52 @@ pub async fn setup_main(argv: Vec<String>) -> i32 {
     }
 }
 
-fn setup_schema(argv: &[String]) -> i32 {
+async fn setup_schema(argv: &[String]) -> i32 {
     let section = match argv {
         [] => None,
         [section] => Some(section.as_str()),
         _ => return refuse(SETUP_USAGE),
     };
+    // What one plugin's row takes is the plugin's to say, so this one needs a gateway.
+    if let Some(id) = section.and_then(|section| section.strip_prefix("plugins.")) {
+        return print_outcome(match ensure_gateway().await {
+            Ok(up) => plugin_schema_at(up.port, id).await,
+            Err(error) => (json!({ "ok": false, "error": error }), EXIT_NO_GATEWAY),
+        });
+    }
     match manifest::schema(section) {
         Ok(document) => {
             print_document(&document);
             0
         }
         Err(refusal) => refuse(&refusal),
+    }
+}
+
+/// What the gateway on `port` says this plugin's row takes. Its rows, which may hold a credential,
+/// stay out of the answer, and an id it does not list never reaches a URL.
+pub async fn plugin_schema_at(port: u16, id: &str) -> (Value, i32) {
+    let gw = Gateway::at(port);
+    let unavailable = |error: String| (json!({ "ok": false, "error": error }), EXIT_NO_GATEWAY);
+    let rows = match plugins::read_rows(&gw).await {
+        Ok(rows) => rows,
+        Err(error) => return unavailable(error),
+    };
+    if !rows.contains_key(id) {
+        let known: Vec<&str> = rows.keys().map(String::as_str).collect();
+        let error = match refuse::nearest(id, &known) {
+            Some(near) => format!("no such plugin; did you mean {near}?"),
+            None => format!("no such plugin; there are: {}", known.join(", ")),
+        };
+        return (json!({ "ok": false, "error": error }), EXIT_REFUSED);
+    }
+    match gw.get(&format!("/api/plugins/{id}/config")).await {
+        Ok(answer) => {
+            let section = format!("plugins.{id}");
+            let document = json!({ "ok": true, "version": manifest::VERSION, "section": section, "schema": answer["schema"] });
+            (document, 0)
+        }
+        Err(error) => unavailable(error),
     }
 }
 
@@ -138,9 +174,12 @@ async fn run_at(mode: Mode, port: u16, input: &Input, options: Options) -> (Valu
 
 async fn run_on(mode: Mode, up: &GatewayUp, parsed: &Manifest, input: &Input, options: Options) -> (Value, i32) {
     let gw = Gateway::at(up.port);
+    let own_build = env!("SWISS_GIT_HASH");
     let gateway_state = async {
         let info = gw.get("/api/info").await?;
-        let state = plan::read_state(&gw, parsed).await?;
+        let rows = plugins::wait_until_started(&gw).await?;
+        let may_dry_run = info["build"]["hash"].as_str() == Some(own_build);
+        let state = plan::read_state(&gw, parsed, &rows, may_dry_run).await?;
         Ok::<_, String>((info, state))
     };
     let (info, state) = match gateway_state.await {
@@ -149,10 +188,11 @@ async fn run_on(mode: Mode, up: &GatewayUp, parsed: &Manifest, input: &Input, op
     };
     let build = info["build"]["hash"].as_str();
     let mut warnings = parsed.warnings.clone();
-    warnings.extend(plan::stale_build(build, env!("SWISS_GIT_HASH")));
+    warnings.extend(plan::stale_build(build, own_build));
     let mut items = plan::decide(parsed, &state, &input.base, options, &mut warnings);
     if mode == Mode::Apply {
-        apply::write_all(&gw, parsed, &input.base, &mut items).await;
+        apply::write_all(&gw, parsed, &input.base, &mut items, &mut warnings).await;
+        plugins::check(&gw, parsed, options, &mut items).await;
         check::check_all(&gw, parsed, options, &mut items, &mut warnings).await;
     }
     let mut report = Report {

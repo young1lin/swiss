@@ -24,16 +24,24 @@ use std::path::Path;
 use reqwest::Method;
 use serde_json::{json, Value};
 
-use super::manifest::{Manifest, McpEntry, SecretSpec};
-use super::plan::read_source;
+use super::manifest::{Manifest, McpEntry, SecretSpec, Warning};
+use super::plan::{decide_mcp, read_mcps, read_source};
+use super::plugins;
 use super::report::{Item, Status};
 use super::sources::Source;
 use super::store_secret;
 use crate::remote_cli::Gateway;
 use swiss_host::config::ServerDef;
 
-/// Secrets first, because a definition resolves what it references when it is built.
-pub async fn write_all(gw: &Gateway, manifest: &Manifest, base: &Path, items: &mut [Item]) {
+/// Secrets first, because a definition resolves what it references when it is built, then plugins,
+/// because the MCPs live in one.
+pub async fn write_all(
+    gw: &Gateway,
+    manifest: &Manifest,
+    base: &Path,
+    items: &mut [Item],
+    warnings: &mut Vec<Warning>,
+) {
     for item in items.iter_mut().filter(|item| item.kind == "secret") {
         if let Some(SecretSpec::From(source)) = manifest.secrets.get(&item.name) {
             write_secret(gw, source, base, item).await;
@@ -44,20 +52,62 @@ pub async fn write_all(gw: &Gateway, manifest: &Manifest, base: &Path, items: &m
         .filter(|item| item.kind == "secret" && item.status == Status::Failed)
         .map(|item| item.name.clone())
         .collect();
-    for item in items.iter_mut().filter(|item| item.kind == "mcp") {
+    for item in items.iter_mut().filter(|item| item.kind == "plugin" && item.status != Status::Failed) {
+        let Some(entry) = manifest.plugins.get(&item.name) else {
+            continue;
+        };
+        let by = blocked_by(&entry.secrets, &failed);
+        if by.is_empty() {
+            plugins::write(gw, entry, item).await;
+        } else {
+            item.status = Status::Blocked;
+            item.note("by", by);
+        }
+    }
+    if warnings.iter().any(|warning| warning.code == "mcp.plugin-off") {
+        decide_mcps_again(gw, manifest, items, warnings).await;
+    }
+    for item in items.iter_mut().filter(|item| item.kind == "mcp" && item.status != Status::Failed) {
         let Some(entry) = manifest.mcps.get(&item.name) else {
             continue;
         };
-        let by: Vec<Value> = entry
-            .secrets
-            .intersection(&failed)
-            .map(|secret| json!(format!("secret:{secret}")))
-            .collect();
+        let by = blocked_by(&entry.secrets, &failed);
         if by.is_empty() {
             write_mcp(gw, entry, item).await;
         } else {
             item.status = Status::Blocked;
             item.note("by", by);
+        }
+    }
+}
+
+fn blocked_by(secrets: &BTreeSet<String>, failed: &BTreeSet<String>) -> Vec<Value> {
+    secrets.intersection(failed).map(|secret| json!(format!("secret:{secret}"))).collect()
+}
+
+/// The plan could not read what a plugin that was off holds, and the manifest has just turned it on.
+/// Now it can, and the rest of the run writes from what it finds. A plugin that did not come up
+/// fails every MCP it would have held.
+async fn decide_mcps_again(gw: &Gateway, manifest: &Manifest, items: &mut [Item], warnings: &mut Vec<Warning>) {
+    let off = match plugins::read_rows(gw).await {
+        Ok(rows) => plugins::mcp_off_reason(&rows),
+        Err(error) => Some(error),
+    };
+    let stored = match off {
+        Some(reason) => Err(reason),
+        None => read_mcps(gw, manifest).await,
+    };
+    warnings.retain(|warning| warning.code != "mcp.plugin-off");
+    let unsettled = BTreeSet::new();
+    for item in items.iter_mut().filter(|item| item.kind == "mcp" && item.status != Status::Blocked) {
+        let Some(entry) = manifest.mcps.get(&item.name) else {
+            continue;
+        };
+        match &stored {
+            Ok(stored) => {
+                item.status = decide_mcp(&item.name, entry, stored.get(&item.name), &unsettled, warnings).status;
+            }
+            Err(reason) => fail(item, "mcp.plugin-off", reason.clone()),
         }
     }
 }
@@ -108,7 +158,7 @@ fn create_body(name: &str, def: &ServerDef) -> Value {
     Value::Object(body)
 }
 
-fn fail(item: &mut Item, code: &str, error: String) {
+pub(super) fn fail(item: &mut Item, code: &str, error: String) {
     item.status = Status::Failed;
     item.note("code", code);
     item.note("error", error);
