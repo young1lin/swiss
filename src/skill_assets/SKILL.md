@@ -39,10 +39,10 @@ for remote commands, file transfer, and run history.
    or on macOS `shasum -a 256 <archive>`. A mismatch is a hard stop.
 4. Extract `swiss.exe` or `swiss` to the approved, stable location on PATH, not an
    ephemeral npx or agent cache. Keep the accompanying license and notice files.
-5. Check `swiss --version` and `swiss status`. Run `swiss skill install` to install
-   the embedded `swiss`, `swiss-remote` and `swiss-memory` skills for supported local AI
-   clients.
-   Re-run it after an update so the skills match the binary.
+5. Check `swiss --version` and `swiss status`. Show the user `swiss skill list`, ask which
+   skills they want, then run `swiss skill install <name>...`. Never pick for them.
+6. After an update, run `swiss skill install --installed`: skills ship inside the binary, so
+   the copies on disk do not change by themselves. It refreshes what is there and adds nothing.
 
 macOS packages are experimental: the default master-key source is not implemented, so a
 fresh instance cannot persist first-run state. Do not promise a working macOS setup or

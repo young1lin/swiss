@@ -134,7 +134,7 @@ impl UpdateInfo {
             }
         }
         out.push_str(
-            "\nto update (all state lives outside the binary — nothing migrates):\n  swiss stop\n  replace swiss(.exe) with the downloaded binary\n  swiss start\n",
+            "\nto update (all state lives outside the binary — nothing migrates):\n  swiss stop\n  replace swiss(.exe) with the downloaded binary\n  swiss skill install --installed   (skills ship in the binary; this refreshes the copies you have)\n  swiss start\n",
         );
         out
     }
@@ -175,6 +175,8 @@ mod tests {
         assert!(text.contains("no releases published yet"));
         assert!(text.contains("swiss stop"));
         assert!(text.contains("swiss start"));
+        // SPEC §host.cli: a copy on disk does not change by itself, so the update says to refresh it.
+        assert!(text.contains("swiss skill install --installed"));
     }
 
     #[test]

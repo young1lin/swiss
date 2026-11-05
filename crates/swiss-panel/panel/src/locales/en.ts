@@ -19,7 +19,7 @@
 
 const en: Record<string, string> = {
   "system.skills": "AI skills",
-  "system.skillsHint": "Checks for SKILL.md in ~/.claude/skills, ~/.codex/skills and ~/.agents/skills.",
+  "system.skillsHint": "Checks for SKILL.md in ~/.claude/skills (or $CLAUDE_CONFIG_DIR/skills) and ~/.agents/skills.",
   "system.skillInstalled": "Installed",
   "system.skillMissing": "Not installed",
   "system.skillUnknown": "Cannot check",

@@ -80,17 +80,20 @@ fn setup_machine(user_path: FakeUserPath) -> Harness {
 }
 
 #[tokio::test]
-async fn shipped_skill_status_is_read_only_and_reports_all_three_roots() {
+async fn shipped_skill_status_is_read_only_and_reports_both_roots() {
     let h = setup_machine(FakeUserPath::default());
     let (status, body) = h.get("/api/skills").await;
     assert_eq!(status, StatusCode::OK);
     let skills = body["skills"].as_array().expect("skills array");
     assert_eq!(skills.len(), 3);
     for skill in skills {
+        assert!(skill["description"].as_str().is_some_and(|d| !d.is_empty()), "{skill}");
+        assert!(skill["loadsByItself"].is_boolean(), "{skill}");
         let locations = skill["locations"].as_array().expect("locations");
-        assert_eq!(locations.len(), 3);
+        assert_eq!(locations.iter().map(|l| l["root"].as_str()).collect::<Vec<_>>(), [Some(".claude"), Some(".agents")]);
         for location in locations {
             assert!(location["installed"].is_boolean() || location["installed"].is_null());
+            assert!(location["state"].is_string(), "{location}");
             assert!(location["path"].as_str().is_some_and(|p| p.ends_with("SKILL.md")));
             assert!(std::path::Path::new(location["path"].as_str().expect("path")).starts_with(swiss_core::paths::data_dir()), "skill inspection must stay in the sandbox");
         }
@@ -102,9 +105,11 @@ async fn shipped_skill_status_is_read_only_and_reports_all_three_roots() {
 #[tokio::test]
 async fn selected_skill_install_refuses_arbitrary_names_roots_and_paths() {
     let h = setup_machine(FakeUserPath::default());
-    for body in [json!({}), json!({ "name": "../other", "root": ".codex" }),
+    for body in [json!({}), json!({ "name": "../other", "root": ".agents" }),
         json!({ "name": "swiss", "root": "../other" }),
-        json!({ "name": "swiss", "root": ".codex", "path": "C:/other" })] {
+        json!({ "name": "swiss", "root": ".codex" }),
+        json!({ "name": "swiss", "root": ".cursor" }),
+        json!({ "name": "swiss", "root": ".agents", "path": "C:/other" })] {
         let (status, _) = h.post("/api/skills/install", body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }

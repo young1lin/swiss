@@ -18,11 +18,15 @@ let installWait: Promise<void> | null = null;
 let installFailure = false;
 function skillReply(): Response {
   return new Response(JSON.stringify({ skills: ["swiss", "swiss-memory", "swiss-remote"].map(name => ({
-    name, locations: [".claude", ".codex", ".agents"].map((root, i) => ({
-      root, path: "/user/" + root + "/skills/" + name + "/SKILL.md",
-      installed: i === 0 || installedTargets.has(name + ":" + root) ? true : i === 1 ? false : null,
-      ...(i === 2 ? { error: "permission denied" } : {}),
-    })),
+    name, locations: [".claude", ".agents"].map(root => {
+      const unreadable = name === "swiss" && root === ".agents";
+      const installed = installedTargets.has(name + ":" + root) || (name === "swiss" && root === ".claude");
+      return {
+        root, path: "/user/" + root + "/skills/" + name + "/SKILL.md",
+        installed: unreadable ? null : installed,
+        ...(unreadable ? { error: "permission denied" } : {}),
+      };
+    }),
   })) }));
 }
 beforeEach(() => {
@@ -68,15 +72,15 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
     expect(writes).toContainEqual({ path: "/api/user-path", enabled: true });
   });
 
-  it("shows every skill's three locations and distinguishes missing from an unreadable path", async () => {
+  it("shows every skill's two locations and distinguishes missing from an unreadable path", async () => {
     await system.mount();
     const rows = document.querySelectorAll("[data-skill]");
     expect(rows).toHaveLength(3);
     const first = rows[0];
     expect(first?.textContent).toContain("swiss");
     expect(first?.textContent).toContain("Installed");
-    expect(first?.textContent).toContain("Not installed");
     expect(first?.textContent).toContain("Cannot check");
+    expect(rows[1]?.textContent).toContain("Not installed");
     expect(first?.querySelector('[data-skill-root=".agents"]')?.getAttribute("title")).toContain("permission denied");
     expect(writes).toEqual([]);
     expect(skillReads).toBe(1);
@@ -94,7 +98,7 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
     const shell = document.createElement("template");
     shell.innerHTML = readFileSync(join(assetsDir, "index.html"), "utf8");
     const icons = document.querySelectorAll("[data-skill-install] use");
-    expect(icons).toHaveLength(9);
+    expect(icons).toHaveLength(6);
     for (const icon of icons) {
       const target = icon.getAttribute("href") || "#missing";
       expect(shell.content.querySelector(target)?.children.length || 0, target).toBeGreaterThan(0);
@@ -103,13 +107,13 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
 
   it("installs only the chosen skill and directory and offers updates for existing copies", async () => {
     await system.mount();
-    expect(document.querySelectorAll("[data-skill-install]")).toHaveLength(9);
-    const selector = '[data-skill-install="swiss-memory"][data-skill-directory=".codex"]';
-    expect(document.querySelector(selector)?.getAttribute("aria-label")).toBe("Install swiss-memory in .codex");
+    expect(document.querySelectorAll("[data-skill-install]")).toHaveLength(6);
+    const selector = '[data-skill-install="swiss-memory"][data-skill-directory=".agents"]';
+    expect(document.querySelector(selector)?.getAttribute("aria-label")).toBe("Install swiss-memory in .agents");
     document.querySelector<HTMLButtonElement>(selector)?.click();
-    await vi.waitFor(() => { expect(document.querySelector(selector)?.getAttribute("aria-label")).toBe("Update swiss-memory in .codex"); });
-    expect(skillWrites).toEqual([{ name: "swiss-memory", root: ".codex" }]);
-    expect(document.querySelector('[data-skill="swiss"] [data-skill-root=".codex"]')?.textContent).toContain("Not installed");
+    await vi.waitFor(() => { expect(document.querySelector(selector)?.getAttribute("aria-label")).toBe("Update swiss-memory in .agents"); });
+    expect(skillWrites).toEqual([{ name: "swiss-memory", root: ".agents" }]);
+    expect(document.querySelector('[data-skill="swiss-remote"] [data-skill-root=".agents"]')?.textContent).toContain("Not installed");
     expect(writes).toEqual([]);
   });
 
@@ -118,13 +122,13 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
     installWait = new Promise(resolve => { finish = resolve; });
     installFailure = true;
     await system.mount();
-    const selector = '[data-skill-install="swiss"][data-skill-directory=".codex"]';
+    const selector = '[data-skill-install="swiss-memory"][data-skill-directory=".agents"]';
     document.querySelector<HTMLButtonElement>(selector)?.click();
     expect(document.querySelector<HTMLButtonElement>(selector)?.disabled).toBe(true);
-    expect(document.querySelector<HTMLButtonElement>('[data-skill-install="swiss-remote"][data-skill-directory=".codex"]')?.disabled).toBe(false);
+    expect(document.querySelector<HTMLButtonElement>('[data-skill-install="swiss-remote"][data-skill-directory=".agents"]')?.disabled).toBe(false);
     finish?.();
     await vi.waitFor(() => { expect(document.querySelector<HTMLButtonElement>(selector)?.disabled).toBe(false); });
-    expect(document.querySelector(selector)?.getAttribute("aria-label")).toBe("Install swiss in .codex");
+    expect(document.querySelector(selector)?.getAttribute("aria-label")).toBe("Install swiss-memory in .agents");
     expect(document.querySelector("#toast")?.textContent).toContain("permission denied");
   });
 
@@ -132,7 +136,7 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
     let finish: (() => void) | undefined;
     installWait = new Promise(resolve => { finish = resolve; });
     await system.mount();
-    document.querySelector<HTMLButtonElement>('[data-skill-install="swiss"][data-skill-directory=".codex"]')?.click();
+    document.querySelector<HTMLButtonElement>('[data-skill-install="swiss-memory"][data-skill-directory=".agents"]')?.click();
     system.unmount(); setCurrentView("mcp"); document.querySelector("#pane")!.textContent = "another page";
     finish?.();
     await vi.waitFor(() => { expect(installedTargets.size).toBe(1); });

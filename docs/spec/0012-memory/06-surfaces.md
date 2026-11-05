@@ -90,8 +90,8 @@ data from the past". A hand-written `ServerHandler` in the root crate
 reading and writing alike: the brief, which read tool fits what an agent holds (`memory_ask`
 among them), the documents and the code index, how to treat what it reads, when and how to save,
 the hub, the runs that keep memory current (queued only on the user's request), every tool and
-the CLI. It is model-invoked; `swiss skill install` writes it beside the other two (§host.cli),
-and it names each of the twelve tools in its table
+the CLI. It is model-invoked, `swiss skill install` writes it when the user chooses it
+(§host.cli), and it names each of the twelve tools in its table
 (`skill_install::tests::the_memory_skill_is_the_one_for_reading_and_writing_and_names_every_tool`).
 
 ## §memory.api — `/api/knowledge`

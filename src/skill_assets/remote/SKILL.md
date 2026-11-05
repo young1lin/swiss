@@ -231,7 +231,7 @@ target that has one, `swiss remote notes <alias>` prints it, and `--write`/`--ap
 stdin or `--file`) set or extend it. The verbs are flags, so a target named `write` stays
 readable. The files are `~/.swiss/remote-notes/<alias>.md` (under `$SWISS_HOME` when the
 home is overridden) when a file tool is truly all you have. Notes live in the gateway home,
-never in the skill directory - `swiss skill install` replaces that wholesale on every upgrade.
+never in the skill directory, which only the client reading that directory would see.
 
 - Belongs: command lines that worked (build/test/deploy), service and log locations, ports,
   the remote `$HOME`, a project-to-path map ("proj X deploys to /srv/x").

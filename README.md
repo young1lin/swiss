@@ -34,8 +34,9 @@ Compare the archive's SHA-256 with its line in `SHA256SUMS`
 (`Get-FileHash <archive> -Algorithm SHA256` on Windows, `sha256sum <archive>`
 on Linux, or `shasum -a 256 <archive>` on macOS). Extract it, then put
 `swiss.exe` or `swiss` on your PATH (`swiss path on` does it for your user). Each archive also includes `LICENSE`, `NOTICE`,
-`THIRD_PARTY_NOTICES.md`, and standalone `skills/swiss/SKILL.md` and
-`skills/swiss-remote/SKILL.md` for inspection before installing or running the binary.
+`THIRD_PARTY_NOTICES.md`, and standalone `skills/swiss/SKILL.md`,
+`skills/swiss-remote/SKILL.md` and `skills/swiss-memory/SKILL.md` for inspection before
+installing or running the binary.
 
 ¹ macOS builds store the master key in the user's login Keychain. Desktop bundles use the
   system WKWebView and require macOS 14 or newer. Local preview bundles use ad-hoc signing,
@@ -47,7 +48,8 @@ on Linux, or `shasum -a 256 <archive>` on macOS). Extract it, then put
 
 ```
 swiss --version        # verify the installed binary
-swiss skill install    # install the embedded swiss, swiss-remote and swiss-memory AI skills
+swiss skill list       # the AI skills this binary ships, and where each is installed
+swiss skill install    # asks per skill whether to install it; the default is no
 swiss status           # check whether a gateway is already running
 swiss start            # start the gateway on 127.0.0.1:19999 and open the panel
 swiss token            # the bearer token an MCP client authenticates with
@@ -59,9 +61,16 @@ verification, and local checks. [`swiss-remote`](src/skill_assets/remote/SKILL.m
 configured remote targets, file transfer, and run history.
 [`swiss-memory`](src/skill_assets/memory/SKILL.md) is the one skill for project memory: how
 to find what it holds, ask it a question, and save what is worth keeping. All three are
-embedded in the binary and installed to `~/.agents/skills`, `~/.claude/skills`, and
-`~/.cursor/skills`; run `swiss skill install` again after upgrading. No skill starts
-the gateway or exposes tokens just because an agent loads it.
+embedded in the binary, and none lands until you choose it: `swiss skill install` asks per
+skill, refusing and listing them when there is no terminal to ask at, and `swiss skill install
+<name>...` installs exactly those (`--all` for every one). A skill goes to `~/.claude/skills` for
+Claude Code (`$CLAUDE_CONFIG_DIR/skills` when that is set) and `~/.agents/skills` for every other
+client. An install replaces `SKILL.md` and leaves anything else you keep in that directory.
+
+A new version may change a skill, and a copy on disk does not change by itself: `swiss skill
+list` marks one that differs from this binary as `outdated`, and `swiss skill install --installed`
+refreshes the copies you have and adds none. No skill starts the gateway or exposes tokens just
+because an agent loads it.
 
 Or build from source: Rust stable, `cargo build --release` — the same single binary. Linux
 additionally needs `cmake` and a C compiler (the TLS stack builds aws-lc-rs). Node is not
@@ -74,7 +83,7 @@ On either desktop, running `swiss` without arguments or `swiss gui` opens the sa
 The explicit `swiss gui` command returns after launching it; use `swiss gui -f` to keep the
 window in the foreground. The panel and AI skills are embedded in the single executable.
 **Settings → System** shows skill installation in
-`~/.claude/skills`, `~/.codex/skills` and `~/.agents/skills`, alongside startup and PATH settings.
+`~/.claude/skills` and `~/.agents/skills`, alongside startup and PATH settings.
 
 1. `swiss start` brings the gateway up on `127.0.0.1:19999` and opens the panel.
 2. On the MCP page, **Add an MCP**: a stdio command (`npx …`, `uvx …`), a remote HTTP MCP,
@@ -127,6 +136,7 @@ the opposite of the memory budget this project exists for.
 swiss update     # "up to date", or the newest release and its download link
 swiss stop
 # replace swiss(.exe) with the binary extracted from the new release archive
+swiss skill install --installed   # the new binary's skills, over the copies you already have
 swiss start
 ```
 

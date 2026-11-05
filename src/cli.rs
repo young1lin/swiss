@@ -20,6 +20,8 @@
 //! driver pool just to print a line. The server is reached as a subprocess (`start`) or over
 //! loopback HTTP (everything else).
 
+use std::io::IsTerminal;
+
 use serde_json::Value;
 
 use crate::daemon::{
@@ -28,7 +30,7 @@ use crate::daemon::{
 };
 use crate::pidfile::log_file_path;
 use crate::port::as_listen_port;
-use crate::skill_install::install_skill;
+use crate::skill_install::{CopyState, Places, SkillStatus};
 
 pub const COMMANDS: &[&str] = &[
     "start",
@@ -52,11 +54,17 @@ pub const COMMANDS: &[&str] = &[
 #[derive(Debug, Default, PartialEq)]
 pub struct Parsed {
     pub cmd: String,
-    /// The subcommand slot `skill` (only `install`), `autostart` and `path` (`on`/`off`, or
+    /// The subcommand slot `skill` (`list`, `install`), `autostart` and `path` (`on`/`off`, or
     /// nothing for the status read) share.
     pub sub: Option<String>,
     /// The positional file argument for 'import'.
     pub file: Option<String>,
+    /// The skills named after `skill install`.
+    pub names: Vec<String>,
+    /// `skill install --all`: every shipped skill, said out loud.
+    pub all: bool,
+    /// `skill install --installed`: refresh what is there, add nothing.
+    pub installed: bool,
     pub port: Option<u16>,
     /// A --port that was given but is not a usable port. Refused before anything is acted on.
     pub bad_port: bool,
@@ -95,7 +103,6 @@ pub trait Ops {
     fn export_state(&self) -> Result<Value, String>;
     fn import_state(&self, bundle: &Value) -> Result<Vec<String>, String>;
     async fn foreground(&self, port: Option<u16>);
-    fn skill_install(&self) -> Result<Vec<String>, String>;
 
     // The autostart and path commands carry no daemon state, so the trait ships them as
     // defaults over the library fns: RealOps needs nothing hand-written. A test fake that
@@ -136,7 +143,13 @@ On Windows or macOS, double-click the app or run swiss without arguments to open
   export           dump every state file as JSON to stdout (vault values masked) — the recovery /
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
-  skill install    install swiss, swiss-remote and swiss-memory in each AI client's skills directory
+  skill list [--json]
+                   each AI skill this binary ships: what it does, whether it loads by itself,
+                   where it is installed, and whether that copy still matches this binary
+  skill install [<name>... | --all | --installed]
+                   with no names, asks per skill at a terminal (default no) and refuses without
+                   one. --installed refreshes the copies already there and adds none: run it
+                   after replacing the executable
   autostart [on|off]
                    show, enable or disable start-at-sign-in — a registry Run value on
                    Windows, a LaunchAgent on macOS, a systemd user unit on Linux
@@ -180,6 +193,8 @@ pub fn parse_argv(argv: &[String]) -> Parsed {
                 p.cmd = arg.clone();
             } else if matches!(p.cmd.as_str(), "skill" | "autostart" | "path") && p.sub.is_none() {
                 p.sub = Some(arg.clone());
+            } else if p.cmd == "skill" {
+                p.names.push(arg.clone());
             } else if p.file.is_none() {
                 p.file = Some(arg.clone());
             }
@@ -231,6 +246,8 @@ pub fn parse_argv(argv: &[String]) -> Parsed {
             "--force" => p.force = true,
             "--json" => p.json = true,
             "--no-open" => p.no_open = true,
+            "--all" if p.cmd == "skill" => p.all = true,
+            "--installed" if p.cmd == "skill" => p.installed = true,
             "-h" | "--help" => p.help = true,
             "-v" | "--version" => p.version = true,
             other => p.unknown.push(other.to_string()),
@@ -746,29 +763,187 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
             }
         },
         "skill" => {
-            if p.sub.as_deref() != Some("install") {
-                match p.sub {
-                    Some(sub) => io.err(&format!("unknown skill subcommand: {sub}")),
-                    None => io.err("usage: swiss skill install"),
-                }
-                return 1;
-            }
-            match ops.skill_install() {
-                Ok(targets) => {
-                    io.out("skills installed:");
-                    for t in &targets {
-                        io.out(&format!("  {t}"));
-                    }
-                    0
-                }
+            let places = match Places::of_this_user() {
+                Ok(places) => places,
                 Err(err) => {
                     io.err(&err);
-                    1
+                    return 1;
                 }
-            }
+            };
+            let mut ask = ask_at_terminal;
+            let terminal = std::io::stdin().is_terminal();
+            skill_command(&p, io, &places, terminal.then_some(&mut ask as &mut dyn FnMut(&str) -> String))
         }
         _ => 1,
     }
+}
+
+/// Exit code of a skill command that refused and wrote nothing, as `swiss secret set` does.
+const SKILL_REFUSED: i32 = 2;
+
+/// One question to the person at this terminal. EOF reads as an empty answer, which is a no.
+fn ask_at_terminal(question: &str) -> String {
+    use std::io::Write;
+    eprint!("{question}");
+    let _ = std::io::stderr().flush();
+    let mut answer = String::new();
+    let _ = std::io::stdin().read_line(&mut answer);
+    answer
+}
+
+fn how_a_skill_runs(skill: &SkillStatus) -> &'static str {
+    if skill.loads_by_itself {
+        "loads by itself when a task matches"
+    } else {
+        "runs only when you ask for it"
+    }
+}
+
+/// What `skill list` prints, and what a refusal shows so the choice can be made.
+fn skill_lines(rows: &[SkillStatus]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for skill in rows {
+        lines.push(format!("{} ({})", skill.name, how_a_skill_runs(skill)));
+        lines.push(format!("  {}", skill.description));
+        for place in &skill.locations {
+            let state = match (place.state, &place.error) {
+                (CopyState::Current, _) => "current".to_string(),
+                (CopyState::Outdated, _) => "outdated".to_string(),
+                (CopyState::Absent, _) => "not installed".to_string(),
+                (CopyState::Unreadable, Some(err)) => format!("cannot check ({err})"),
+                (CopyState::Unreadable, None) => "cannot check".to_string(),
+            };
+            lines.push(format!("  {:<8} {state:<13} {}", place.root, place.path));
+        }
+    }
+    lines
+}
+
+/// `swiss skill …` (SPEC §host.cli). `ask` reaches the person at a terminal, and is None without
+/// one: which skills land is the user's answer, so nothing here picks a default for them.
+fn skill_command(
+    p: &Parsed,
+    io: &dyn Io,
+    places: &Places,
+    ask: Option<&mut dyn FnMut(&str) -> String>,
+) -> i32 {
+    match p.sub.as_deref() {
+        Some("list") => skill_list(p, io, places),
+        Some("install") => skill_install(p, io, places, ask),
+        Some(other) => {
+            io.err(&format!("unknown skill subcommand: {other}"));
+            1
+        }
+        None => {
+            io.err("usage: swiss skill list [--json] | swiss skill install [<name>... | --all | --installed]");
+            1
+        }
+    }
+}
+
+fn skill_list(p: &Parsed, io: &dyn Io, places: &Places) -> i32 {
+    if !p.names.is_empty() || p.all || p.installed {
+        io.err("swiss skill list takes only --json");
+        return SKILL_REFUSED;
+    }
+    let rows = places.status();
+    if p.json {
+        let document = serde_json::json!({ "skills": rows });
+        io.out(&serde_json::to_string_pretty(&document).unwrap_or_default());
+        return 0;
+    }
+    for line in skill_lines(&rows) {
+        io.out(&line);
+    }
+    if rows.iter().flat_map(|s| &s.locations).any(|l| l.state == CopyState::Outdated) {
+        io.out("");
+        io.out("an outdated copy differs from this binary: swiss skill install --installed");
+    }
+    0
+}
+
+fn skill_install(
+    p: &Parsed,
+    io: &dyn Io,
+    places: &Places,
+    ask: Option<&mut dyn FnMut(&str) -> String>,
+) -> i32 {
+    let selectors = usize::from(!p.names.is_empty()) + usize::from(p.all) + usize::from(p.installed);
+    if selectors > 1 {
+        io.err("swiss skill install takes one of: names, --all, --installed");
+        return SKILL_REFUSED;
+    }
+    if p.installed {
+        return skill_refresh(io, places);
+    }
+    let chosen = if p.all {
+        crate::skill_install::shipped_names()
+    } else if !p.names.is_empty() {
+        p.names.clone()
+    } else if let Some(ask) = ask {
+        let chosen = skill_prompt(io, places, ask);
+        if chosen.is_empty() {
+            io.out("no skills installed");
+            return 0;
+        }
+        chosen
+    } else {
+        io.err("nothing installed: which skills land is the user's choice, and no terminal is here to ask.");
+        for line in skill_lines(&places.status()) {
+            io.err(&line);
+        }
+        io.err("Ask the user, then: swiss skill install <name>...  (or --all)");
+        return SKILL_REFUSED;
+    };
+    match places.install_named(&chosen) {
+        Ok(files) => {
+            io.out("skills installed:");
+            for file in &files {
+                io.out(&format!("  {file}"));
+            }
+            0
+        }
+        Err(err) if err.starts_with("unknown skill") => {
+            io.err(&err);
+            SKILL_REFUSED
+        }
+        Err(err) => {
+            io.err(&err);
+            1
+        }
+    }
+}
+
+/// One question per skill, default no.
+fn skill_prompt(io: &dyn Io, places: &Places, ask: &mut dyn FnMut(&str) -> String) -> Vec<String> {
+    let mut chosen = Vec::new();
+    for skill in places.status() {
+        io.out(&format!("{} ({})", skill.name, how_a_skill_runs(&skill)));
+        io.out(&format!("  {}", skill.description));
+        let answer = ask(&format!("Install {}? [y/N] ", skill.name));
+        if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            chosen.push(skill.name);
+        }
+    }
+    chosen
+}
+
+fn skill_refresh(io: &dyn Io, places: &Places) -> i32 {
+    let refresh = places.refresh_installed();
+    if refresh.replaced.is_empty() && refresh.failed.is_empty() {
+        io.out("nothing to refresh: no installed copy differs from this binary");
+        return 0;
+    }
+    if !refresh.replaced.is_empty() {
+        io.out("skills refreshed:");
+        for file in &refresh.replaced {
+            io.out(&format!("  {file}"));
+        }
+    }
+    for failure in &refresh.failed {
+        io.err(failure);
+    }
+    i32::from(!refresh.failed.is_empty())
 }
 
 /// The `--json` shape of status — camelCase, absent-not-null, the Node build's StatusResult,
@@ -966,9 +1141,6 @@ impl Ops for RealOps {
             std::process::exit(1);
         }
     }
-    fn skill_install(&self) -> Result<Vec<String>, String> {
-        install_skill()
-    }
 }
 
 struct PrintIo;
@@ -1142,9 +1314,162 @@ mod tests {
         let p = parse_argv(&argv(&["update"]));
         assert_eq!(p.cmd, "update");
 
-        // skill shares the same subcommand slot.
+        // skill shares the same subcommand slot, and only skill takes names and these two flags.
         let p = parse_argv(&argv(&["skill", "install"]));
         assert_eq!(p.sub.as_deref(), Some("install"));
+        let p = parse_argv(&argv(&["skill", "install", "swiss", "swiss-memory", "--all", "--installed"]));
+        assert_eq!(p.names, ["swiss", "swiss-memory"]);
+        assert!(p.all && p.installed && p.unknown.is_empty());
+        let p = parse_argv(&argv(&["status", "--all", "--installed"]));
+        assert_eq!(p.unknown, ["--all", "--installed"]);
+    }
+
+    /// A home of the test's own, and what the command printed.
+    struct SkillBench {
+        home: std::path::PathBuf,
+        out: std::sync::Mutex<Vec<String>>,
+        err: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl Io for SkillBench {
+        fn out(&self, s: &str) {
+            self.out.lock().expect("out").push(s.to_string());
+        }
+        fn err(&self, s: &str) {
+            self.err.lock().expect("err").push(s.to_string());
+        }
+    }
+
+    impl Drop for SkillBench {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.home);
+        }
+    }
+
+    impl SkillBench {
+        fn new() -> Self {
+            let home = std::env::temp_dir()
+                .join(format!("swiss-skill-cli-{}", swiss_core::util::random_hex(8)));
+            std::fs::create_dir_all(&home).expect("a home");
+            Self { home, out: Default::default(), err: Default::default() }
+        }
+
+        fn places(&self) -> Places {
+            Places { home: self.home.clone(), claude_config: None }
+        }
+
+        fn run(&self, args: &[&str], ask: Option<&mut dyn FnMut(&str) -> String>) -> i32 {
+            let mut full = vec!["skill"];
+            full.extend_from_slice(args);
+            skill_command(&parse_argv(&argv(&full)), self, &self.places(), ask)
+        }
+
+        fn nothing_was_written(&self) -> bool {
+            std::fs::read_dir(&self.home).expect("list the home").next().is_none()
+        }
+
+        fn out_text(&self) -> String {
+            self.out.lock().expect("out").join("\n")
+        }
+
+        fn err_text(&self) -> String {
+            self.err.lock().expect("err").join("\n")
+        }
+    }
+
+    // SPEC §host.cli: which skills land is the user's answer, so a script gets the list, not a default.
+    #[test]
+    fn no_terminal_and_no_names_refuses_and_installs_nothing() {
+        let bench = SkillBench::new();
+        assert_eq!(bench.run(&["install"], None), SKILL_REFUSED);
+        assert!(bench.nothing_was_written());
+        let said = bench.err_text();
+        for name in ["swiss", "swiss-remote", "swiss-memory", "swiss skill install <name>"] {
+            assert!(said.contains(name), "{name}: {said}");
+        }
+    }
+
+    // SPEC §host.cli: Enter on every question is a no.
+    #[test]
+    fn a_terminal_prompt_defaults_to_no() {
+        let bench = SkillBench::new();
+        let mut asked = Vec::new();
+        let mut enter = |question: &str| {
+            asked.push(question.to_string());
+            "\n".to_string()
+        };
+        assert_eq!(bench.run(&["install"], Some(&mut enter)), 0);
+        assert_eq!(asked.len(), 3, "one question per skill: {asked:?}");
+        assert!(asked.iter().all(|q| q.contains("[y/N]")), "{asked:?}");
+        assert!(bench.nothing_was_written());
+
+        let mut only_memory = |question: &str| {
+            if question.contains("swiss-memory") { "Yes\r\n".to_string() } else { "n\n".to_string() }
+        };
+        assert_eq!(bench.run(&["install"], Some(&mut only_memory)), 0);
+        for root in [".claude", ".agents"] {
+            let skills = bench.home.join(root).join("skills");
+            assert!(skills.join("swiss-memory/SKILL.md").is_file(), "{root}");
+            assert!(!skills.join("swiss").exists(), "{root}");
+            assert!(!skills.join("swiss-remote").exists(), "{root}");
+        }
+    }
+
+    #[test]
+    fn a_named_install_never_asks_and_an_unknown_name_refuses() {
+        let bench = SkillBench::new();
+        let mut never = |question: &str| -> String { panic!("asked {question}") };
+        assert_eq!(bench.run(&["install", "nope"], Some(&mut never)), SKILL_REFUSED);
+        assert!(bench.nothing_was_written());
+        assert_eq!(bench.run(&["install", "swiss"], Some(&mut never)), 0);
+        assert!(bench.home.join(".agents/skills/swiss/SKILL.md").is_file());
+        assert!(!bench.home.join(".agents/skills/swiss-memory").exists());
+        assert_eq!(bench.run(&["install", "--all"], None), 0);
+        assert!(bench.home.join(".claude/skills/swiss-memory/SKILL.md").is_file());
+    }
+
+    #[test]
+    fn two_selectors_at_once_are_refused() {
+        let bench = SkillBench::new();
+        for args in [
+            &["install", "swiss", "--all"][..],
+            &["install", "swiss", "--installed"],
+            &["install", "--all", "--installed"],
+            &["list", "swiss"],
+            &["list", "--all"],
+        ] {
+            assert_eq!(bench.run(args, None), SKILL_REFUSED, "{args:?}");
+        }
+        assert!(bench.nothing_was_written());
+    }
+
+    // SPEC §host.cli: the list says what a skill does, how it loads, where it is and whether that
+    // copy still matches, and it points at the command that brings an old copy up to date.
+    #[test]
+    fn the_list_names_an_outdated_copy_and_its_remedy() {
+        let bench = SkillBench::new();
+        assert_eq!(bench.run(&["list"], None), 0);
+        assert!(bench.nothing_was_written(), "listing creates nothing");
+        assert!(bench.out_text().contains("swiss-memory (loads by itself"), "{}", bench.out_text());
+        assert!(bench.out_text().contains("swiss (runs only when you ask"), "{}", bench.out_text());
+        assert!(!bench.out_text().contains("--installed"), "{}", bench.out_text());
+
+        let file = bench.home.join(".agents/skills/swiss/SKILL.md");
+        std::fs::create_dir_all(file.parent().expect("a directory")).expect("mkdir");
+        std::fs::write(&file, "an older copy").expect("an old copy");
+        bench.out.lock().expect("out").clear();
+        assert_eq!(bench.run(&["list"], None), 0);
+        assert!(bench.out_text().contains("outdated"), "{}", bench.out_text());
+        assert!(bench.out_text().contains("swiss skill install --installed"), "{}", bench.out_text());
+
+        assert_eq!(bench.run(&["install", "--installed"], None), 0);
+        bench.out.lock().expect("out").clear();
+        assert_eq!(bench.run(&["list", "--json"], None), 0);
+        let document: Value = serde_json::from_str(&bench.out_text()).expect("one JSON document");
+        let swiss = &document["skills"][0];
+        assert_eq!(swiss["loadsByItself"], serde_json::json!(false));
+        assert_eq!(swiss["locations"][1]["state"], serde_json::json!("current"));
+        assert_eq!(swiss["locations"][0]["state"], serde_json::json!("absent"));
     }
 
     #[test]

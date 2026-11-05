@@ -224,8 +224,8 @@ never shown again, and a forgotten one is re-stored, never revealed.
   (`/api/user-path`): the OS is the store, no revision (§host.cli). A PATH change toasts that
   only new terminals see it. A gateway without a route shows no row for it.
 - **AI skills** reads `GET /api/skills` on mount and explicit Refresh. Each shipped skill
-  (`swiss`, `swiss-memory`, `swiss-remote`) has one row, with a status for `.claude`, `.codex`
-  and `.agents`. A `SKILL.md` file means installed; a missing file means not installed;
+  (`swiss`, `swiss-memory`, `swiss-remote`) has one row, with a status for `.claude` and
+  `.agents` (§host.cli). A `SKILL.md` file means installed; a missing file means not installed;
   an unreadable path means cannot check, with the path and error on hover. The page never
   installs on mount or Refresh. Each skill/directory cell has a download action that installs
   or updates only that target through `POST /api/skills/install`; its accessible label names

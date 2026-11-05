@@ -404,7 +404,7 @@ agent's glob miss once read as "no notes" and the memory went unused).
 **The skills.** `src/skill_assets/SKILL.md` (`swiss`: what the gateway is, its boundaries, the
 panel and `swiss --help`) and `src/skill_assets/remote/SKILL.md` (`swiss-remote`: the command
 reference, the MCP tools, the UTF-8 and audit contracts, the notes). `swiss skill install`
-writes both, with `swiss-memory` (§memory.mcp The skill) (§host.cli).
+writes the ones the user chooses, `swiss-memory` (§memory.mcp The skill) among them (§host.cli).
 `disable-model-invocation: true` is the owner's choice; keep it.
 
 ## §remote.mcp — `/mcp/remote`
