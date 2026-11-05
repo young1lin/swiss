@@ -8,6 +8,10 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Added
 
+- `swiss setup plan <file|->` reads a JSON manifest of `secrets` and `mcps`, or a client's own
+  `.mcp.json`, and says what it would change on this gateway, as one JSON document, without writing
+  anything. `swiss setup schema` says what a manifest may hold. A credential typed into a manifest is
+  refused without being quoted, with every problem listed at once (SPEC §host.setup).
 - `swiss secret set <name> [--from env:VAR|file:PATH|dotenv:PATH#KEY]` stores a vault secret with
   its value off the command line, and `swiss api --body-file <path|->` takes a request body from a
   file or stdin, where Windows PowerShell 5.1 cannot strip its quotes (SPEC §host.cli).

@@ -14,28 +14,31 @@
  * limitations under the License.
  */
 
-//! Configuring swiss from the command line, for an Agent or a script (SPEC §host.cli). Everything
+//! Configuring swiss from the command line, for an Agent or a script (SPEC §host.setup). Everything
 //! here runs inside the CLI process and reaches the gateway through the same `/api/*` routes the
 //! panel uses, signed with the CLI key; it holds no state and adds nothing to the daemon.
 //!
 //! One document on stdout for every outcome, and it never holds a secret's value.
 
+mod manifest;
+mod plan;
+mod refuse;
+mod report;
 mod sources;
 
 use std::io::{IsTerminal, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 
-use crate::daemon::{start_daemon, StartOptions, StartResult};
-use crate::remote_cli::{decode_text, Gateway};
+use crate::daemon::{resolve_port, start_daemon, StartOptions, StartResult};
+use crate::remote_cli::{decode_text, read_path_or_stdin, Gateway};
+use manifest::Manifest;
+pub use plan::Options;
+use report::{Mode, Report, Status, EXIT_FAILED, EXIT_NO_GATEWAY, EXIT_REFUSED};
 use sources::{trim_newline, Source};
 use swiss_core::secure::secretstore::valid_name;
-
-const EXIT_FAILED: i32 = 1;
-const EXIT_REFUSED: i32 = 2;
-const EXIT_NO_GATEWAY: i32 = 3;
 
 /// A 409 on the vault's `rev` means someone else wrote first: read again, this many times.
 const CONFLICT_RETRIES: usize = 3;
@@ -46,6 +49,154 @@ const SECRET_USAGE: &str = "usage: swiss secret set <name> [--from <env:VAR|file
 const TERMINAL_REFUSAL: &str = "stdin is a terminal, and a value typed here would echo. Pipe it in, \
     use --from env:VAR, file:PATH or dotenv:PATH#KEY, or have whoever holds it store it on the \
     panel's Secrets page.";
+
+const SETUP_USAGE: &str = "usage: swiss setup schema [section]\n       \
+    swiss setup plan <file|-> [--rotate-secrets]\n\
+    A file or stdin (-) holds one JSON manifest; swiss setup schema says what it may hold.";
+
+/// The entry from cli.rs: argv is everything after `swiss setup`.
+pub async fn setup_main(argv: Vec<String>) -> i32 {
+    match argv.split_first() {
+        Some((sub, rest)) if sub == "plan" => setup_plan(rest).await,
+        Some((sub, rest)) if sub == "schema" => setup_schema(rest),
+        Some((sub, _)) if matches!(sub.as_str(), "help" | "-h" | "--help") => {
+            println!("{SETUP_USAGE}");
+            0
+        }
+        _ => refuse(SETUP_USAGE),
+    }
+}
+
+fn setup_schema(argv: &[String]) -> i32 {
+    let section = match argv {
+        [] => None,
+        [section] => Some(section.as_str()),
+        _ => return refuse(SETUP_USAGE),
+    };
+    match manifest::schema(section) {
+        Ok(document) => {
+            print_document(&document);
+            0
+        }
+        Err(refusal) => refuse(&refusal),
+    }
+}
+
+async fn setup_plan(argv: &[String]) -> i32 {
+    let args = match parse_manifest_args(argv) {
+        Ok(args) => args,
+        Err(refusal) => return refuse(&refusal),
+    };
+    let stdin = std::io::stdin();
+    let input = match read_manifest(&args.file, stdin.is_terminal(), &mut stdin.lock()) {
+        Ok(input) => input,
+        Err(refusal) => return refuse(&refusal),
+    };
+    // Before any gateway starts: a file that is wrong has nothing to ask one.
+    let parsed = match manifest::parse(&input.text, resolve_port()) {
+        Ok(parsed) => parsed,
+        Err(problems) => return print_outcome(report::refused(Mode::Plan, &problems)),
+    };
+    let up = match ensure_gateway().await {
+        Ok(up) => up,
+        Err(error) => return print_outcome(report::no_gateway(Mode::Plan, &error)),
+    };
+    print_outcome(plan_on(&up, &parsed, &input, args.options).await)
+}
+
+/// One manifest, once it is text.
+pub struct Input {
+    pub text: String,
+    /// What its relative paths resolve against.
+    pub base: PathBuf,
+    /// How a next step names this file: what was typed on the command line.
+    pub file: String,
+}
+
+/// A plan against the gateway already on `port`: everything `setup plan` does but read its file
+/// and start a gateway.
+pub async fn plan_at(port: u16, input: &Input, options: Options) -> (Value, i32) {
+    match manifest::parse(&input.text, port) {
+        Ok(parsed) => plan_on(&GatewayUp { port, started: false }, &parsed, input, options).await,
+        Err(problems) => report::refused(Mode::Plan, &problems),
+    }
+}
+
+async fn plan_on(up: &GatewayUp, parsed: &Manifest, input: &Input, options: Options) -> (Value, i32) {
+    let gw = Gateway::at(up.port);
+    let gateway_state = async {
+        let info = gw.get("/api/info").await?;
+        let state = plan::read_state(&gw, parsed).await?;
+        Ok::<_, String>((info, state))
+    };
+    let (info, state) = match gateway_state.await {
+        Ok(found) => found,
+        Err(error) => return report::no_gateway(Mode::Plan, &error),
+    };
+    let build = info["build"]["hash"].as_str();
+    let mut warnings = parsed.warnings.clone();
+    warnings.extend(plan::stale_build(build, env!("SWISS_GIT_HASH")));
+    let items = plan::decide(parsed, &state, &input.base, options, &mut warnings);
+    let mut report = Report {
+        mode: Mode::Plan,
+        gateway: json!({ "port": up.port, "started": up.started, "build": build }),
+        items,
+        warnings,
+        next: Vec::new(),
+    };
+    let waiting: Vec<&str> = report
+        .items
+        .iter()
+        .filter(|item| item.kind == "secret" && item.status == Status::NeedsInput)
+        .map(|item| item.name.as_str())
+        .collect();
+    if !waiting.is_empty() {
+        let what = format!(
+            "store {} on the panel's Secrets page, or pipe each into swiss secret set <name> from your own shell",
+            waiting.join(", ")
+        );
+        report.next_step("human", what, "only a human has these values");
+        let again = format!("swiss setup plan {}", input.file);
+        report.next_step("agent", again, "after the secrets are stored");
+    }
+    report.finish()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ManifestArgs {
+    file: String,
+    options: Options,
+}
+
+fn parse_manifest_args(argv: &[String]) -> Result<ManifestArgs, String> {
+    let mut file = None;
+    let mut options = Options::default();
+    for word in argv {
+        match word.as_str() {
+            "--rotate-secrets" => options.rotate_secrets = true,
+            flag if flag.starts_with('-') && flag != "-" => return Err(SETUP_USAGE.into()),
+            _ if file.is_some() => return Err(SETUP_USAGE.into()),
+            _ => file = Some(word.clone()),
+        }
+    }
+    let file = file.ok_or(SETUP_USAGE)?;
+    Ok(ManifestArgs { file, options })
+}
+
+/// The manifest's text, from a file or from stdin for `-`. A terminal is refused before a byte is
+/// read: nothing would ever end the read.
+fn read_manifest(file: &str, stdin_is_terminal: bool, stdin: &mut dyn Read) -> Result<Input, String> {
+    if file == "-" && stdin_is_terminal {
+        return Err("stdin is a terminal; pipe the manifest in, or name its file".into());
+    }
+    let raw = read_path_or_stdin(file, stdin)?;
+    let text = decode_text(&raw).ok_or_else(|| format!("{file} is not text"))?;
+    let base = match file {
+        "-" => PathBuf::new(),
+        _ => Path::new(file).parent().map(Path::to_path_buf).unwrap_or_default(),
+    };
+    Ok(Input { text, base, file: file.to_string() })
+}
 
 /// The entry from cli.rs: argv is everything after `swiss secret`.
 pub async fn secret_main(argv: Vec<String>) -> i32 {
@@ -242,6 +393,11 @@ fn print_document(document: &Value) {
     println!("{}", serde_json::to_string_pretty(document).unwrap_or_default());
 }
 
+fn print_outcome((document, code): (Value, i32)) -> i32 {
+    print_document(&document);
+    code
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,6 +418,45 @@ mod tests {
     impl Read for Untouchable {
         fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
             panic!("a terminal must not be read");
+        }
+    }
+
+    // SPEC §host.setup: "`-` reads stdin", which may carry what Windows PowerShell 5 writes.
+    #[test]
+    fn a_manifest_reads_from_a_file_or_stdin_in_any_encoding() {
+        let utf16: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain("{}".encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        let input = read_manifest("-", false, &mut &utf16[..]).expect("UTF-16 from stdin");
+        assert_eq!(input.text, "{}");
+        assert_eq!(input.base, PathBuf::new());
+
+        let bom = b"\xEF\xBB\xBF{}";
+        assert_eq!(read_manifest("-", false, &mut &bom[..]).expect("a BOM").text, "{}");
+
+        let err = read_manifest("-", true, &mut Untouchable).err().expect("a terminal is refused");
+        assert!(err.contains("terminal"), "{err}");
+        let err = read_manifest("-", false, &mut &[0x41, 0xFF, 0x42][..]).err().expect("not text");
+        assert!(err.contains("not text"), "{err}");
+
+        let dir = std::env::temp_dir().join(format!("swiss-setup-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("m.json");
+        std::fs::write(&path, "{}").expect("a scratch manifest");
+        let file = path.to_string_lossy().into_owned();
+        let input = read_manifest(&file, true, &mut Untouchable).expect("a file needs no stdin");
+        assert_eq!(input.base, dir);
+    }
+
+    #[test]
+    fn a_manifest_command_takes_one_file_and_refuses_what_it_does_not_know() {
+        let plain = ManifestArgs { file: "m.json".into(), options: Options::default() };
+        assert_eq!(parse_manifest_args(&argv(&["m.json"])), Ok(plain));
+        let rotating = ManifestArgs { file: "-".into(), options: Options { rotate_secrets: true } };
+        assert_eq!(parse_manifest_args(&argv(&["--rotate-secrets", "-"])), Ok(rotating));
+        for words in [vec![], vec!["a", "b"], vec!["a", "--force"], vec!["-", "-"], vec!["a", "-"]] {
+            assert!(parse_manifest_args(&argv(&words)).is_err(), "{words:?}");
         }
     }
 

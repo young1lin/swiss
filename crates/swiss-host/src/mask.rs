@@ -33,18 +33,18 @@ use crate::config::{is_env_ref, ServerDef};
 pub use swiss_core::secure::literal::MASK;
 
 /// Whole-key match: exactly one of these names, case-insensitive.
-const SECRET_KEYS: [&str; 5] = ["password", "pass", "passphrase", "secret", "token"];
+pub const SECRET_KEYS: [&str; 5] = ["password", "pass", "passphrase", "secret", "token"];
 
 /// Substring wordlist for env VAR names. An env var is named by someone who knows what it holds,
 /// so the list is broader than the definition-key one.
-fn is_secret_env_key(name: &str) -> bool {
+pub fn is_secret_env_key(name: &str) -> bool {
     contains_any_ci(name, &["pass", "secret", "token", "key", "credential"])
 }
 
 /// Substring wordlist for header names. `auth` is the one that matters: a remote MCP's API key
 /// travels in `Authorization`. Over-matching is harmless — a masked value the panel sends back
 /// is restored from what is stored.
-fn is_secret_header_key(name: &str) -> bool {
+pub fn is_secret_header_key(name: &str) -> bool {
     contains_any_ci(
         name,
         &[
@@ -322,7 +322,7 @@ fn unmask_command(next: &str, current: Option<&Value>) -> String {
 /// `Bearer ${secret://x}`: one auth scheme, one space, one whole reference. It holds no credential,
 /// and a reader must see it to know the header is right. Anything else beside a reference may be a
 /// literal, and so may a reference's default, so both stay masked.
-fn is_scheme_and_reference(v: &Value) -> bool {
+pub fn is_scheme_and_reference(v: &Value) -> bool {
     let Some((scheme, reference)) = v.as_str().and_then(|s| s.split_once(' ')) else {
         return false;
     };

@@ -902,7 +902,7 @@ fn read_stdin_file(spec: &str) -> Result<String, String> {
 }
 
 /// The bytes a path holds, or everything `stdin` gives for `-`.
-fn read_path_or_stdin(spec: &str, stdin: &mut dyn std::io::Read) -> Result<Vec<u8>, String> {
+pub(crate) fn read_path_or_stdin(spec: &str, stdin: &mut dyn std::io::Read) -> Result<Vec<u8>, String> {
     if spec == "-" {
         let mut raw = Vec::new();
         stdin

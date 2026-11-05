@@ -310,12 +310,17 @@ fn js_coerce_string(v: &Value) -> String {
     }
 }
 
-enum EntryMapping {
+/// What one client entry becomes: a definition, or the reason there is none.
+pub enum EntryMapping {
     Def(ServerDef),
     Skip(&'static str),
 }
 
-fn entry_to_def(entry: &Value, gateway_port: u16) -> EntryMapping {
+/// The keys of a client entry [entry_to_def] reads. A client may carry others for itself, which no
+/// definition takes.
+pub const ENTRY_KEYS: [&str; 7] = ["type", "command", "args", "env", "cwd", "url", "headers"];
+
+pub fn entry_to_def(entry: &Value, gateway_port: u16) -> EntryMapping {
     let Some(e) = entry.as_object() else {
         return EntryMapping::Skip("not an object");
     };

@@ -128,6 +128,7 @@ in §decisions.
 - [§host.seats — Capability seats](spec/0004-host.md#hostseats--capability-seats)
 - [§host.memory — The memory reading](spec/0004-host.md#hostmemory--the-memory-reading)
 - [§host.cli — The command line](spec/0004-host.md#hostcli--the-command-line)
+- [§host.setup — Configuring from the command line](spec/0004-host.md#hostsetup--configuring-from-the-command-line)
 - [§host.gui — The panel in its own window](spec/0004-host.md#hostgui--the-panel-in-its-own-window)
 - [§host.daemon — Daemon, pid file, logs, build stamp](spec/0004-host.md#hostdaemon--daemon-pid-file-logs-build-stamp)
 - [§host.ops — Production, the test instance, deploys](spec/0004-host.md#hostops--production-the-test-instance-deploys)

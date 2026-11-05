@@ -105,6 +105,32 @@ pub fn names_secret(s: &str, name: &str) -> bool {
         || s.contains(&format!("${{{SECRET_SCHEME}{name}:"))
 }
 
+/// One reference a string names, as the scanner reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Named {
+    Secret { name: String, has_default: bool },
+    Env(String),
+}
+
+/// Every reference in one string and the text around them, with nothing resolved and no store
+/// read: the question a manifest asks of a value before it is saved (SPEC §host.setup). The error
+/// is the scanner's, which quotes the start of a malformed reference, so a caller that may be
+/// holding a credential does not repeat it.
+pub fn references(input: &str) -> Result<(Vec<Named>, String), String> {
+    let mut named = Vec::new();
+    let rest = scan(input, &mut |reference| {
+        named.push(match reference {
+            Ref::Secret { name, default, .. } => Named::Secret {
+                name: name.to_string(),
+                has_default: default.is_some(),
+            },
+            Ref::Env(name) => Named::Env(name.to_string()),
+        });
+        Ok(Some(String::new()))
+    })?;
+    Ok((named, rest))
+}
+
 /// What one vault reference stood for after [secret_refs_aside]: the name, and the text the
 /// stand-in carries - the stored value, or the reference's own default when the vault does
 /// not hold the name (`stored` false: the operator's literal, never masked).
@@ -322,6 +348,30 @@ mod tests {
     use super::*;
     use crate::paths;
     use serde_json::json;
+
+    // SPEC §host.setup: what a string references, without resolving any of it, and what is left of
+    // the string around those references. A malformed reference is the error it is at resolve time.
+    #[test]
+    fn references_lists_what_a_string_names_and_what_surrounds_it() {
+        let (named, rest) = references("Bearer ${secret://gh-token}").expect("well formed");
+        assert_eq!(named, [Named::Secret { name: "gh-token".into(), has_default: false }]);
+        assert_eq!(rest, "Bearer ");
+
+        let (named, rest) = references("${HOST}:${secret://p:fallback}/${lowercase}").expect("well formed");
+        assert_eq!(
+            named,
+            [
+                Named::Env("HOST".into()),
+                Named::Secret { name: "p".into(), has_default: true },
+            ]
+        );
+        assert_eq!(rest, ":/${lowercase}");
+
+        assert!(references("${secret://Not_A_Name}").is_err());
+        let (named, rest) = references("plain").expect("no reference at all");
+        assert!(named.is_empty());
+        assert_eq!(rest, "plain");
+    }
 
     /// Plant a vault value under a name unique to this test (one scratch home serves the whole
     /// binary — unique names keep parallel tests from reading each other's secrets).

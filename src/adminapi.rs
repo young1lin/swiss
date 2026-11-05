@@ -63,7 +63,7 @@ fn tunnel_links(ctx: &AppContext) -> Option<Arc<dyn TunnelLinks>> {
 
 /// `NAME_RE` in the Node build, hand-rolled (ADR-007): first char alphanumeric, then up to 62 of
 /// [A-Za-z0-9_-].
-fn is_valid_name(name: &str) -> bool {
+pub fn is_valid_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     if bytes.is_empty() || bytes.len() > 63 || !bytes[0].is_ascii_alphanumeric() {
         return false;

@@ -165,7 +165,7 @@ fn words(name: &str) -> Vec<String> {
 /// Whether a name holds a credential: its LAST word is one (`DB_PASSWORD` yes,
 /// `DB_PASSWORD_FILE` no - that holds a path; `--no-auth-warning` no). `PWD`, the working
 /// directory, is not.
-fn credential_name(name: &str) -> bool {
+pub fn credential_name(name: &str) -> bool {
     if name.eq_ignore_ascii_case("PWD") || name.eq_ignore_ascii_case("OLDPWD") {
         return false;
     }
@@ -208,7 +208,7 @@ const FLAG_WORDS: [&str; 13] = [
 
 /// Whether a bounded value is typed-in text rather than a reference, placeholder, path, flag,
 /// mask or flag word ([module docs](self)). `min` is the shortest value counted.
-fn literal(value: &str, min: usize) -> bool {
+pub fn typed_in(value: &str, min: usize) -> bool {
     let Some(first) = value.chars().next() else {
         return false;
     };
@@ -248,7 +248,7 @@ fn value_at(text: &str, at: usize, min: usize) -> Option<(usize, usize)> {
             (at, at + run)
         }
     };
-    literal(&text[start..end], min).then_some((start, end))
+    typed_in(&text[start..end], min).then_some((start, end))
 }
 
 fn hit(slot: String, (start, end): (usize, usize)) -> Literal {
@@ -389,7 +389,7 @@ fn url_passwords(text: &str, out: &mut Vec<Literal>) {
         if bytes.get(end) != Some(&b'@') {
             continue;
         }
-        if literal(&text[colon + 1..end], 1) {
+        if typed_in(&text[colon + 1..end], 1) {
             out.push(hit("a URL's password".into(), (colon + 1, end)));
         }
     }

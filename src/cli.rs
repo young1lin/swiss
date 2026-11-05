@@ -167,6 +167,11 @@ On Windows or macOS, double-click the app or run swiss without arguments to open
   secret set <name> [--from <env:VAR|file:PATH|dotenv:PATH#KEY>]
                    store a vault secret from that source or from piped stdin, never from the
                    command line; starts the gateway if it is down; prints one JSON document
+  setup schema [section]
+                   what a manifest may say (SPEC §host.setup)
+  setup plan <file|-> [--rotate-secrets]
+                   what a manifest would change on this gateway; writes nothing and starts no
+                   MCP; starts the gateway if it is down; prints one JSON document
 
 options
   -p, --port <n>   listen on this port (saved as the new default)
@@ -1189,6 +1194,8 @@ pub async fn main(argv: Vec<String>) -> i32 {
         Some("api") => return crate::remote_cli::api_main(argv[1..].to_vec()).await,
         // Refuses what the generic parser would quietly keep: a value in the wrong place.
         Some("secret") => return crate::setup_cli::secret_main(argv[1..].to_vec()).await,
+        // A manifest command prints one document, and refuses a flag rather than ignoring it.
+        Some("setup") => return crate::setup_cli::setup_main(argv[1..].to_vec()).await,
         // `memory` carries its own argv contract too (SPEC §memory.cli): the offline
         // CLI over the SAME store the gateway holds, opened directly - and `--stdin`
         // bodies must survive the generic parser untouched.
