@@ -39,8 +39,14 @@ fn line(level: &str, msg: &str, extra: Option<Value>) -> Value {
     line
 }
 
+/// Logs go to stderr because stdout belongs to the command: `swiss export > bundle.json`, `swiss
+/// api` and `swiss secret set` print one document there, and a state migration can log during any
+/// of them (SPEC §host.daemon). A daemon sends both streams to its log file, so nothing is lost.
+/// The line and its newline are one write, so a killed process leaves no half-joined lines.
 pub fn log(level: &str, msg: &str, extra: Option<Value>) {
-    println!("{}", line(level, msg, extra));
+    let mut text = line(level, msg, extra).to_string();
+    text.push('\n');
+    eprint!("{text}");
 }
 
 pub fn info(msg: &str) {
@@ -94,8 +100,8 @@ mod tests {
 
     #[test]
     fn the_line_is_one_json_object_per_line() {
-        // It is printed with `println!`, so a newline inside the serialized form would split one
-        // event into two unparseable lines.
+        // It is printed as one line, so a newline inside the serialized form would split one event
+        // into two unparseable lines.
         let rendered = line("error", "boom\nsecond line", Some(json!({ "a": "b\nc" }))).to_string();
         assert!(!rendered.contains('\n'), "{rendered}");
         let back: Value = serde_json::from_str(&rendered).expect("one line, one object");

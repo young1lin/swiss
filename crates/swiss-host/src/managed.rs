@@ -28,7 +28,7 @@ use crate::groups::Groups;
 use crate::token::TokenRec;
 use swiss_core::log;
 use swiss_core::paths::data_path;
-use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
+use swiss_core::secure::statefile::{read_secure_json, replace_secure_json};
 
 /// A user-added MCP: its definition + whether it should auto-start.
 #[derive(Debug, Clone)]
@@ -903,7 +903,7 @@ impl ManagedStore {
                 ),
             );
         }
-        write_secure_json(&self.path, &Value::Object(root))
+        replace_secure_json(&self.path, &Value::Object(root), Value::is_object)
     }
 }
 
@@ -1125,6 +1125,23 @@ mod tests {
         assert!(err.to_lowercase().contains("could not save"), "{err}");
     }
 
+    // SPEC §core.sealed: a loader answers empty for a file it cannot read, so the boot goes on, and
+    // the first add used to replace every managed MCP with that one. An earlier version of this
+    // test required exactly that, as "the next save repairs it".
+    #[test]
+    fn a_managed_file_that_cannot_be_read_is_never_written_over() {
+        let path = scratch();
+        std::fs::write(&path, "{ not json").expect("plant a torn file");
+        let store = ManagedStore::open_at(path.clone());
+        assert!(store.all().is_empty());
+        assert!(store.get_tokens().is_empty());
+        let err = store
+            .add(entry("a", json!({ "type": "echo" }), true))
+            .unwrap_err();
+        assert!(err.contains("stays as it is"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).expect("kept"), "{ not json");
+    }
+
     #[test]
     fn replaces_the_file_only_with_complete_content() {
         let path = scratch();
@@ -1190,22 +1207,6 @@ mod tests {
         assert!(store.get_tokens().is_empty());
         assert!(load_managed(&path).is_empty());
         assert_eq!(load_managed_token(&path), None);
-    }
-
-    #[test]
-    fn a_torn_file_reads_as_empty_and_the_next_save_repairs_it() {
-        // The documented failure mode: an unparseable managed.json makes every loader answer
-        // empty rather than throwing the boot. The first successful persist writes it whole.
-        let path = scratch();
-        std::fs::write(&path, "{not json at all").unwrap();
-        let store = ManagedStore::open_at(path.clone());
-        assert!(store.all().is_empty());
-        assert!(store.get_tokens().is_empty());
-
-        store
-            .add(entry("a", json!({ "type": "echo" }), true))
-            .unwrap();
-        assert_eq!(names(&load_managed(&path)), vec!["a"]);
     }
 
     #[test]

@@ -33,7 +33,9 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::RwLock;
 
-use super::statefile::{read_secure_json, write_secure_json};
+use serde_json::Value;
+
+use super::statefile::{left_in_place, read_secure_json, write_secure_json};
 use crate::paths::data_path;
 
 /// Where the encrypted env store lives.
@@ -86,42 +88,60 @@ fn is_env_key(key: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn read_store(path: &Path) -> HashMap<String, String> {
-    let Ok(Some(raw)) = read_secure_json(path) else {
-        return HashMap::new();
-    };
-    let Some(obj) = raw.as_object() else {
-        return HashMap::new();
-    };
-    obj.iter()
-        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-        .collect()
+/// The store as it is on disk. Absent is empty, a first run. A file that is there and cannot be
+/// read is an error and never reads as empty (SPEC §core.sealed).
+fn read_store(path: &Path) -> Result<HashMap<String, String>, String> {
+    match read_secure_json(path)? {
+        None => Ok(HashMap::new()),
+        Some(Value::Object(obj)) => Ok(obj
+            .iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+            .collect()),
+        Some(_) => Err(format!("{}: expected a JSON object", path.display())),
+    }
 }
 
-/// Overwrite the sealed store in one shot.
+/// Overwrite the sealed store in one shot, unless the store there cannot be read.
 pub fn write_env_store(store: &HashMap<String, String>, path: &Path) -> Result<(), String> {
+    read_store(path).map_err(left_in_place)?;
     let value = serde_json::to_value(store).map_err(|e| e.to_string())?;
     write_secure_json(path, &value)
 }
 
-/// The sealed env store, with any legacy plaintext '.env' folded in and removed.
+/// What the store and its legacy '.env' hold, for a boot and a lookup, which go on when the store
+/// cannot be read: the reason is logged, the '.env' still serves this process, and neither file
+/// changes. [load_env_store] is the read that stops there.
+pub fn read_env_store(path: &Path) -> HashMap<String, String> {
+    load_env_store(path).unwrap_or_else(|err| {
+        crate::log::error(
+            "the env store cannot be read; it stays as it is",
+            Some(serde_json::json!({ "err": err })),
+        );
+        std::fs::read_to_string(data_path(&[".env"]))
+            .map(|text| parse_env_text(&text))
+            .unwrap_or_default()
+    })
+}
+
+/// The sealed env store, with any legacy plaintext '.env' folded in and removed. Err when the
+/// store cannot be read: nothing is written and the '.env' stays (SPEC §core.sealed).
 ///
 /// Deletion is verify-then-delete: the just-written sealed store is read back and must contain
 /// every legacy key with its exact value before the plaintext file goes. A failed seal leaves
 /// '.env' in place and the merged values readable in-process, so the boot still works and the
 /// next boot retries.
-pub fn read_env_store(path: &Path) -> HashMap<String, String> {
-    let mut store = read_store(path);
+pub fn load_env_store(path: &Path) -> Result<HashMap<String, String>, String> {
+    let mut store = read_store(path)?;
     let legacy_path = data_path(&[".env"]);
     let Ok(legacy_text) = std::fs::read_to_string(&legacy_path) else {
-        return store;
+        return Ok(store);
     };
     let legacy = parse_env_text(&legacy_text);
     // Sealed values win: they were written later.
     let mut merged = legacy.clone();
     merged.extend(store.iter().map(|(k, v)| (k.clone(), v.clone())));
     match write_env_store(&merged, path).map(|_| {
-        let verify = read_store(path);
+        let verify = read_store(path).unwrap_or_default();
         let safe = legacy.iter().all(|(k, v)| verify.get(k) == Some(v));
         safe
     }) {
@@ -143,7 +163,7 @@ pub fn read_env_store(path: &Path) -> HashMap<String, String> {
             store = merged;
         }
     }
-    store
+    Ok(store)
 }
 
 /// Set 'key' only when absent; true when it was written (the ensureEnvKey contract).
@@ -206,6 +226,37 @@ mod tests {
             parse_env_text("# comment\nA=1\nB=hello world\nC=\"quoted\"\nD='sq'\nexport E=\nnot a pair\n9bad=x\n"),
             expect
         );
+    }
+
+    // SPEC §core.sealed: a store that cannot be read, with a legacy .env beside it, used to come
+    // out as the .env alone, with the store overwritten and the .env deleted.
+    #[test]
+    fn a_store_that_cannot_be_read_keeps_itself_and_its_legacy_env() {
+        let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        let home = crate::paths::test_home();
+        crate::secure::key::use_test_master_key();
+        let path = home.join("env-store-torn.json");
+        let legacy = home.join(".env");
+        std::fs::write(&path, "{ not json").expect("plant a torn store");
+        std::fs::write(&legacy, "FROM_LEGACY=value\n").expect("plant a legacy .env");
+
+        assert!(load_env_store(&path).is_err());
+        assert!(write_env_store(&HashMap::new(), &path).is_err());
+        assert_eq!(set_env_default("FRESH", "value", &path), None);
+
+        // The lenient read still serves this process from the .env, and writes nothing.
+        let served = read_env_store(&path);
+        assert_eq!(served.get("FROM_LEGACY").map(String::as_str), Some("value"));
+
+        assert_eq!(std::fs::read_to_string(&path).expect("kept"), "{ not json");
+        assert_eq!(std::fs::read_to_string(&legacy).expect("kept"), "FROM_LEGACY=value\n");
+
+        std::fs::write(&path, "[1, 2]").expect("plant a store of the wrong shape");
+        assert!(load_env_store(&path).unwrap_err().contains("expected a JSON object"));
+        assert!(write_env_store(&HashMap::new(), &path).is_err());
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&legacy);
     }
 
     #[test]

@@ -30,7 +30,7 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
-use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
+use swiss_core::secure::statefile::{read_secure_json, replace_secure_json};
 
 /// The capabilities a target may declare.
 pub const KNOWN_CAPABILITIES: [&str; 3] = ["exec", "files", "sync"];
@@ -318,7 +318,10 @@ impl TargetStore {
         // Two shapes on disk: the object R8 writes ({ groups, targets }) and the bare
         // row array every earlier build sealed. The array reads as "no groups", which
         // renders exactly as the pre-groups page did - one undivided list.
-        let raw = read_secure_json(&path).ok().flatten();
+        let raw = read_secure_json(&path).unwrap_or_else(|err| {
+            swiss_core::log::warn("remote targets load failed", Some(json!({ "err": err })));
+            None
+        });
         let (names, rows) = match &raw {
             Some(Value::Array(rows)) => (Vec::new(), rows.clone()),
             Some(Value::Object(obj)) => (
@@ -528,7 +531,8 @@ impl TargetStore {
     fn save(&self) -> Result<(), String> {
         let rows: Vec<Value> = self.targets.iter().map(RemoteTarget::to_json).collect();
         let doc = json!({ "groups": self.groups.names(), "targets": rows });
-        write_secure_json(&self.path, &doc)
+        // A bare row array is the shape every earlier build sealed (see `open`).
+        replace_secure_json(&self.path, &doc, |found| found.is_object() || found.is_array())
             .map_err(|err| format!("could not write {}: {err}", self.path.display()))
     }
 }
@@ -605,6 +609,20 @@ mod tests {
             std::env::temp_dir().join(format!("swiss-rmt-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch");
         dir
+    }
+
+    // SPEC §core.sealed: the store opens empty on a file it cannot read, so the first add used to
+    // replace every target with that one.
+    #[test]
+    fn a_target_file_that_cannot_be_read_is_never_written_over() {
+        let dir = scratch();
+        let path = dir.join("remote.json");
+        std::fs::write(&path, "{ not json").expect("plant a torn file");
+        let mut store = TargetStore::open(path.clone());
+        let err = store.add(target("kept")).unwrap_err();
+        assert!(err.contains("stays as it is"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).expect("kept"), "{ not json");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -46,7 +46,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use swiss_core::paths::data_path;
-use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
+use swiss_core::secure::statefile::{read_secure_json, replace_secure_json};
 
 use crate::adapters::rest::{encode_uri_component, form_encode};
 
@@ -661,7 +661,14 @@ fn store() -> &'static RwLock<HashMap<String, StoredCredentials>> {
                 .iter()
                 .filter_map(|(name, v)| StoredCredentials::from_json(v).map(|c| (name.clone(), c)))
                 .collect(),
-            _ => HashMap::new(),
+            Ok(_) => HashMap::new(),
+            Err(err) => {
+                swiss_core::log::warn(
+                    "mcp oauth load failed",
+                    Some(serde_json::json!({ "err": err })),
+                );
+                HashMap::new()
+            }
         };
         RwLock::new(map)
     })
@@ -711,8 +718,14 @@ pub fn clear_credentials(name: &str) -> Result<(), String> {
 }
 
 fn persist_locked(map: &HashMap<String, StoredCredentials>) -> Result<(), String> {
+    persist_to(&store_path(), map)
+}
+
+/// The map loads empty from a file it cannot read, so a new grant must not replace the file: the
+/// other grants would be gone even once the key comes back (SPEC §core.sealed).
+fn persist_to(path: &std::path::Path, map: &HashMap<String, StoredCredentials>) -> Result<(), String> {
     let value = Value::Object(map.iter().map(|(k, v)| (k.clone(), v.to_json())).collect());
-    write_secure_json(&store_path(), &value)
+    replace_secure_json(path, &value, Value::is_object)
         .map_err(|err| format!("persisting oauth credentials failed: {err}"))
 }
 
@@ -987,6 +1000,26 @@ mod tests {
     //! the secret then REQUIRED on the token POST, mandatory state, S256 verification and the
     //! RFC 8707 resource check. Nothing here touches the network beyond 127.0.0.1.
     use super::*;
+
+    // ---- the sealed file ------------------------------------------------------------------
+
+    // SPEC §core.sealed: a torn grant file stays, and a new grant is refused rather than landing
+    // over it.
+    #[test]
+    fn a_grant_file_that_cannot_be_read_is_never_written_over() {
+        swiss_core::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-oauth-torn-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let path = dir.join("mcp-oauth.json");
+        std::fs::write(&path, "{ not json").expect("plant a torn file");
+        let err = persist_to(&path, &HashMap::new()).unwrap_err();
+        assert!(err.contains("stays as it is"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).expect("kept"), "{ not json");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // ---- provider defaults ---------------------------------------------------------------
 

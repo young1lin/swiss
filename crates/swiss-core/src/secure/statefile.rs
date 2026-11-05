@@ -22,7 +22,7 @@
 //! is read, then immediately re-saved sealed — the migration is "boot once and the plaintext is
 //! gone". Writing only ever produces an envelope.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -86,16 +86,95 @@ pub fn read_secure_json(path: &Path) -> Result<Option<Value>, String> {
 
 /// Write a state file as a sealed envelope, atomically (tmp + rename — see atomic_json.rs).
 pub fn write_secure_json(path: &Path, data: &Value) -> Result<(), String> {
+    write_text_atomic(path, &seal_text(data)?)
+}
+
+/// The envelope a value seals to, as the text that lands in the file.
+fn seal_text(data: &Value) -> Result<String, String> {
     let candidates = key::master_key_candidates()?;
     let Some(first) = candidates.first() else {
         return Err("no master key available to seal with".into());
     };
     let payload = serde_json::to_string_pretty(data).unwrap_or_else(|_| "{}".into());
     let envelope = envelope::seal(&first.key, first.id, &payload);
-    let text =
-        serde_json::to_string_pretty(&serde_json::to_value(&envelope).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-    write_text_atomic(path, &text)
+    serde_json::to_string_pretty(&serde_json::to_value(&envelope).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+/// What a refusal adds to the reason a state file could not be read (SPEC §core.sealed).
+pub fn left_in_place(err: String) -> String {
+    format!(
+        "{err} (The file stays as it is: nothing writes over a state file that cannot be read. \
+         Restore it, or move it aside to start without it.)"
+    )
+}
+
+/// Is the file absent, or readable and of a shape its store `holds`? Anything else is refused.
+fn check_replaceable(path: &Path, holds: fn(&Value) -> bool) -> Result<(), String> {
+    match read_secure_json(path).map_err(left_in_place)? {
+        Some(found) if !holds(&found) => Err(left_in_place(format!(
+            "{}: not the shape this store holds",
+            path.display()
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// Write over a state file whose contents exist nowhere else. Refused when the file is there and
+/// cannot be opened, or holds a shape `holds` does not accept (SPEC §core.sealed): the store read
+/// it as empty at boot, so a write would swap everything it holds for one edit, and a key that
+/// comes back could no longer recover it. Files a boot rewrites anyway (the session, run state) use
+/// [write_secure_json].
+pub fn replace_secure_json(
+    path: &Path,
+    data: &Value,
+    holds: fn(&Value) -> bool,
+) -> Result<(), String> {
+    check_replaceable(path, holds)?;
+    write_secure_json(path, data)
+}
+
+/// Replace several state files as one (SPEC §core.sealed). Each holds a JSON object. Any file that
+/// cannot be read, or holds something else, refuses the whole set before anything is written,
+/// everything is sealed before the first file changes, and a write that fails puts back the ones
+/// before it.
+pub fn replace_all_secure_json(files: &[(PathBuf, Value)]) -> Result<(), String> {
+    replace_all_with(files, write_text_atomic)
+}
+
+fn replace_all_with(
+    files: &[(PathBuf, Value)],
+    mut write: impl FnMut(&Path, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut plan = Vec::with_capacity(files.len());
+    for (path, data) in files {
+        check_replaceable(path, Value::is_object)?;
+        // Taken after the read above, which seals a legacy plaintext file: the bytes put back are
+        // never plaintext. Absent means there is nothing to put back, and the file goes again.
+        let before = std::fs::read_to_string(path).ok();
+        plan.push((path.as_path(), seal_text(data)?, before));
+    }
+    for (landed, (path, sealed, _)) in plan.iter().enumerate() {
+        let Err(err) = write(path, sealed) else {
+            continue;
+        };
+        let mut stuck = Vec::new();
+        for (path, _, before) in &plan[..landed] {
+            let back = match before {
+                Some(text) => write(path, text),
+                None => std::fs::remove_file(path).map_err(|e| e.to_string()),
+            };
+            if let Err(why) = back {
+                stuck.push(format!("{}: {why}", path.display()));
+            }
+        }
+        return Err(if stuck.is_empty() {
+            format!("{err}; every file is back as it was")
+        } else {
+            format!("{err}; these could not be put back: {}", stuck.join(", "))
+        });
+    }
+    Ok(())
 }
 
 // Keep write_json_atomic linked in for the state layer's future non-sealed uses.
@@ -126,6 +205,92 @@ mod tests {
             "tokenEnv": "SWISS_TOKEN",
             "servers": { "db": { "type": "mysql", "password": "hunter2-in-the-clear" } },
         })
+    }
+
+    // SPEC §core.sealed: a file that cannot be read is still somebody's only copy.
+    #[test]
+    fn a_file_that_cannot_be_read_is_never_written_over() {
+        let dir = scratch();
+        let torn = dir.join("torn.json");
+        std::fs::write(&torn, "{ not json").expect("plant a torn file");
+        let err = replace_secure_json(&torn, &json!({ "fresh": true }), Value::is_object).unwrap_err();
+        assert!(err.contains("stays as it is"), "{err}");
+        assert_eq!(std::fs::read_to_string(&torn).expect("still there"), "{ not json");
+
+        // An absent file and a readable one are ordinary writes.
+        let plain = dir.join("plain.json");
+        replace_secure_json(&plain, &json!({ "n": 1 }), Value::is_object).expect("absent");
+        replace_secure_json(&plain, &json!({ "n": 2 }), Value::is_object).expect("readable");
+        assert_eq!(read_secure_json(&plain).expect("readable"), Some(json!({ "n": 2 })));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // SPEC §core.sealed: a store reads a payload of another shape as empty, the same trap as a torn
+    // file, so the one edit that follows would replace it.
+    #[test]
+    fn a_payload_of_another_shape_is_never_written_over() {
+        let dir = scratch();
+        let path = dir.join("other.json");
+        write_secure_json(&path, &json!(["kept"])).expect("seal");
+
+        let err = replace_secure_json(&path, &json!({ "fresh": true }), Value::is_object).unwrap_err();
+        assert!(err.contains("not the shape") && err.contains("stays as it is"), "{err}");
+        assert!(replace_all_secure_json(&[(path.clone(), json!({ "fresh": true }))]).is_err());
+        assert_eq!(read_secure_json(&path).expect("readable"), Some(json!(["kept"])));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // SPEC §core.sealed: one bad file in a set stops the set before the first write.
+    #[test]
+    fn a_set_with_an_unreadable_file_changes_nothing() {
+        let dir = scratch();
+        let good = dir.join("good.json");
+        let torn = dir.join("torn.json");
+        write_secure_json(&good, &json!({ "n": "old" })).expect("seal");
+        std::fs::write(&torn, "{ not json").expect("plant a torn file");
+
+        let files = [
+            (good.clone(), json!({ "n": "new" })),
+            (torn.clone(), json!({ "n": "new" })),
+        ];
+        assert!(replace_all_secure_json(&files).is_err());
+        assert_eq!(read_secure_json(&good).expect("readable"), Some(json!({ "n": "old" })));
+        assert_eq!(std::fs::read_to_string(&torn).expect("still there"), "{ not json");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // SPEC §core.sealed: a write that fails part way leaves the set as it found it.
+    #[test]
+    fn a_failed_write_puts_back_the_files_before_it() {
+        let dir = scratch();
+        let existing = dir.join("existing.json");
+        let created = dir.join("created.json");
+        let refused = dir.join("refused.json");
+        write_secure_json(&existing, &json!({ "n": "old" })).expect("seal");
+        let files = [
+            (existing.clone(), json!({ "n": "new" })),
+            (created.clone(), json!({ "n": "new" })),
+            (refused.clone(), json!({ "n": "new" })),
+        ];
+
+        let err = replace_all_with(&files, |path, text| {
+            if path == refused {
+                return Err("disk full".to_string());
+            }
+            write_text_atomic(path, text)
+        })
+        .unwrap_err();
+
+        assert!(err.contains("disk full") && err.contains("back as it was"), "{err}");
+        assert_eq!(read_secure_json(&existing).expect("readable"), Some(json!({ "n": "old" })));
+        assert!(!created.exists(), "a file the set created goes again");
+        assert!(!refused.exists());
+
+        replace_all_secure_json(&files).expect("the whole set lands when nothing refuses");
+        for (path, _) in &files {
+            assert_eq!(read_secure_json(path).expect("readable"), Some(json!({ "n": "new" })));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

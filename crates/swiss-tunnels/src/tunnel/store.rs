@@ -31,7 +31,7 @@ use super::types::{
 use std::collections::BTreeMap;
 
 use swiss_core::log;
-use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
+use swiss_core::secure::statefile::{read_secure_json, replace_secure_json};
 use swiss_host::groups::Groups;
 
 /// The one grouping vocabulary (SPEC §host.groups): the FIRST group is the sink slot for unassigned
@@ -117,7 +117,8 @@ pub struct TunnelStore {
 }
 
 impl TunnelStore {
-    /// Loads (best effort — a corrupt file logs and leaves the store empty, like the Node build).
+    /// Loads (best effort — a corrupt file logs and leaves the store empty, like the Node build;
+    /// every save then refuses until the file can be read, SPEC §core.sealed).
     pub fn new(path: impl Into<PathBuf>, gateway_port: u16) -> Self {
         let mut store = TunnelStore {
             conns: Vec::new(),
@@ -302,7 +303,7 @@ impl TunnelStore {
             // "the list is verbatim" - see the loader. Every save writes it.
             "tunnelGroupsV2": true,
         });
-        write_secure_json(&self.path, &body)
+        replace_secure_json(&self.path, &body, Value::is_object)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1461,6 +1462,20 @@ mod tests {
         let (dir, s) = temp_store("fresh");
         assert!(s.is_fresh());
         assert!(s.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // SPEC §core.sealed: the store opens empty on a file it cannot read, so the first add used to
+    // replace every connection with that one.
+    #[test]
+    fn a_tunnels_file_that_cannot_be_read_is_never_written_over() {
+        swiss_core::secure::key::use_test_master_key();
+        let (dir, _) = temp_store("torn");
+        let path = dir.join("tunnels.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        let mut s = TunnelStore::new(&path, 19999);
+        assert!(s.add_connection(&conn_input("bastion")).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
         std::fs::remove_dir_all(&dir).ok();
     }
 

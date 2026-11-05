@@ -92,7 +92,7 @@ pub trait Ops {
     async fn login_url(&self, port: u16) -> Result<String, String>;
     fn token(&self) -> Option<String>;
     fn creds(&self) -> (String, Option<String>);
-    fn export_state(&self) -> Value;
+    fn export_state(&self) -> Result<Value, String>;
     fn import_state(&self, bundle: &Value) -> Result<Vec<String>, String>;
     async fn foreground(&self, port: Option<u16>);
     fn skill_install(&self) -> Result<Vec<String>, String>;
@@ -619,13 +619,19 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
             open_signed_in(ops, port, &url_for(port), io).await;
             0
         }
-        "export" => {
-            io.err(
-                "warning: config passwords, the gateway token and OAuth grants are in the clear below (vault secrets are masked) — redirect to a file, protect it, delete it when done",
-            );
-            io.out(&serde_json::to_string_pretty(&ops.export_state()).unwrap_or_default());
-            0
-        }
+        "export" => match ops.export_state() {
+            Ok(bundle) => {
+                io.err(
+                    "warning: config passwords, the gateway token and OAuth grants are in the clear below (vault secrets are masked) — redirect to a file, protect it, delete it when done",
+                );
+                io.out(&serde_json::to_string_pretty(&bundle).unwrap_or_default());
+                0
+            }
+            Err(err) => {
+                io.err(&format!("nothing was exported: {err}"));
+                1
+            }
+        },
         "import" => {
             let Some(file) = &p.file else {
                 io.err("usage: swiss import <file written by swiss export>");
@@ -939,7 +945,7 @@ impl Ops for RealOps {
     fn creds(&self) -> (String, Option<String>) {
         read_creds()
     }
-    fn export_state(&self) -> Value {
+    fn export_state(&self) -> Result<Value, String> {
         daemon::export_state()
     }
     fn import_state(&self, bundle: &Value) -> Result<Vec<String>, String> {

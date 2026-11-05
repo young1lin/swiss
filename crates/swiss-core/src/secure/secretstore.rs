@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
-use super::statefile::{read_secure_json, write_secure_json};
+use super::statefile::{left_in_place, read_secure_json, write_secure_json};
 use crate::paths::data_path;
 
 /// Where the sealed vault lives.
@@ -94,18 +94,28 @@ fn vault() -> &'static RwLock<Vault> {
     })
 }
 
-/// Read the sealed file into a Vault. An absent file is an empty vault at rev 0 — first run.
-fn read_file(path: &Path) -> Vault {
-    let empty = || Vault {
+fn empty_vault() -> Vault {
+    Vault {
         rev: 0,
         secrets: HashMap::new(),
         groups: vec!["default".to_string()],
         member_groups: HashMap::new(),
         order: Vec::new(),
+    }
+}
+
+/// Read the sealed file into a Vault. An absent file is an empty vault at rev 0 — first run. A
+/// file that is there and cannot be read is an error and never reads as empty (SPEC §core.sealed).
+fn read_file(path: &Path) -> Result<Vault, String> {
+    let Some(raw) = read_secure_json(path)? else {
+        return Ok(empty_vault());
     };
-    let Ok(Some(raw)) = read_secure_json(path) else {
-        return empty();
-    };
+    if !raw.is_object() || raw.get("secrets").is_some_and(|s| !s.is_object()) {
+        return Err(format!(
+            "{}: expected a JSON object holding a secrets object",
+            path.display()
+        ));
+    }
     let groups = raw
         .get("groups")
         .and_then(|v| v.as_array())
@@ -115,7 +125,7 @@ fn read_file(path: &Path) -> Vault {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    Vault {
+    Ok(Vault {
         rev: raw.get("rev").and_then(|v| v.as_u64()).unwrap_or(0),
         secrets: raw
             .get("secrets")
@@ -152,16 +162,29 @@ fn read_file(path: &Path) -> Vault {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),
-    }
+    })
 }
 
 /// The load-time step: fill the in-process vault. Called once at boot, next to
-/// `inject_env_store`.
+/// `inject_env_store`. A file that cannot be read boots an empty vault, so every reference to it
+/// fails by name, and every mutation refuses until the file can be read (SPEC §core.sealed).
 pub fn inject_vault(path: &Path) {
-    let loaded = read_file(path);
+    let loaded = read_file(path).unwrap_or_else(|err| {
+        crate::log::error(
+            "the secret vault cannot be read; it stays as it is",
+            Some(serde_json::json!({ "err": err })),
+        );
+        empty_vault()
+    });
     if let Ok(mut v) = vault().write() {
         *v = loaded;
     }
+}
+
+/// The rev and the names on disk, for `swiss export`, which never carries a value.
+pub fn stored_names(path: &Path) -> Result<(u64, Vec<String>), String> {
+    let stored = read_file(path)?;
+    Ok((stored.rev, stored.secrets.into_keys().collect()))
 }
 
 /// The one lookup a `secret://name` reference resolves against (refs.rs).
@@ -363,17 +386,24 @@ impl MutateError {
     }
 }
 
+/// The file's shape for one vault.
+fn file_value(vault: &Vault) -> serde_json::Value {
+    serde_json::json!({
+        "rev": vault.rev,
+        "secrets": vault.secrets,
+        "groups": vault.groups,
+        "secretGroups": vault.member_groups,
+        "order": vault.order,
+    })
+}
+
 /// Persist a candidate vault, then commit it to the static on success — a failed seal leaves
 /// the in-process vault exactly as it was, so a later PUT built on the old rev still matches.
+/// A file that cannot be read refuses the write: an empty vault at boot must not become the file
+/// on the first edit (SPEC §core.sealed).
 fn persist_then_commit(path: &Path, candidate: Vault) -> Result<u64, MutateError> {
-    let value = serde_json::json!({
-        "rev": candidate.rev,
-        "secrets": candidate.secrets,
-        "groups": candidate.groups,
-        "secretGroups": candidate.member_groups,
-        "order": candidate.order,
-    });
-    write_secure_json(path, &value).map_err(MutateError::Seal)?;
+    read_file(path).map_err(|err| MutateError::Seal(left_in_place(err)))?;
+    write_secure_json(path, &file_value(&candidate)).map_err(MutateError::Seal)?;
     let rev = candidate.rev;
     if let Ok(mut v) = vault().write() {
         *v = candidate;
@@ -429,46 +459,33 @@ pub fn put_secret(
     )
 }
 
-/// Bulk restore for 'swiss import' (SPEC §host.vault): merge imported entries into the vault,
-/// imported values winning over what is stored — the same semantics the env section of a
-/// bundle has. Nothing is deleted: a name absent from the bundle keeps its value, because an
-/// import is a restore, not a mirror. Entries whose name is not valid or whose value is not a
-/// string are skipped, not fatal — the env section of a bundle tolerates the same, and one bad
-/// hand-edited entry must not cost the operator the other forty.
-pub fn import_secrets(
+/// Bulk restore for 'swiss import' (SPEC §host.vault): what the file becomes once imported entries
+/// merge into it, imported values winning over what is stored — the same semantics the env
+/// section of a bundle has. Nothing is deleted: a name absent from the bundle keeps its value,
+/// because an import is a restore, not a mirror. Entries whose name is not valid or whose value
+/// is not a string are skipped, not fatal — the env section of a bundle tolerates the same, and
+/// one bad hand-edited entry must not cost the operator the other forty. The caller writes the
+/// result together with the rest of the bundle. A file that cannot be read is an error.
+pub fn merged_for_import(
     path: &Path,
     entries: &serde_json::Map<String, serde_json::Value>,
-) -> Result<u64, MutateError> {
+) -> Result<serde_json::Value, String> {
     // Merge against the FILE, not the in-process vault: 'swiss import' runs in a fresh CLI
     // process where nothing has injected the vault yet, and the merge promise (a name the
     // bundle does not mention keeps its value) is about what is stored on disk.
     // The bundle restores VALUES; the group model on disk rides along untouched - the
     // same keep-what-is-there promise a name the bundle does not mention already has.
-    let Vault {
-        rev,
-        mut secrets,
-        groups,
-        member_groups,
-        order,
-    } = read_file(path);
+    let mut merged = read_file(path).map_err(left_in_place)?;
+    merged.rev += 1;
     for (name, value) in entries {
         if !valid_name(name) {
             continue;
         }
         if let Some(s) = value.as_str() {
-            secrets.insert(name.clone(), s.to_string());
+            merged.secrets.insert(name.clone(), s.to_string());
         }
     }
-    persist_then_commit(
-        path,
-        Vault {
-            rev: rev + 1,
-            secrets,
-            groups,
-            member_groups,
-            order,
-        },
-    )
+    Ok(file_value(&merged))
 }
 
 /// Remove one secret. Absent names answer NotFound rather than quietly bumping the rev.
@@ -551,6 +568,40 @@ mod tests {
         name_bad("1starts-with-digit");
         name_bad("-leading-dash");
         name_bad(&"x".repeat(65));
+    }
+
+    // SPEC §core.sealed: the vault boots empty on a file it cannot read, and the first edit used to
+    // make that empty vault the file. Every value it held was gone even if the key came back.
+    #[test]
+    fn a_vault_file_that_cannot_be_read_is_never_written_over() {
+        let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        let home = crate::paths::test_home();
+        crate::secure::key::use_test_master_key();
+        let path = home.join("secrets-torn.json");
+
+        for (planted, shape) in [
+            ("{ not json", "torn"),
+            ("[1, 2]", "not an object"),
+            (r#"{"secrets": "nope"}"#, "secrets is not an object"),
+        ] {
+            std::fs::write(&path, planted).expect("plant the file");
+            inject_vault(&path);
+            let rev = vault_rev();
+            assert!(
+                matches!(
+                    put_secret(&path, "torn-vault-value", "v", rev),
+                    Err(MutateError::Seal(_))
+                ),
+                "{shape}"
+            );
+            assert!(merged_for_import(&path, &serde_json::Map::new()).is_err(), "{shape}");
+            assert!(stored_names(&path).is_err(), "{shape}");
+            assert_eq!(vault_lookup("torn-vault-value"), None, "{shape}");
+        }
+        std::fs::write(&path, "{ not json").expect("plant again");
+        let _ = put_secret(&path, "torn-vault-value", "v", vault_rev());
+        assert_eq!(std::fs::read_to_string(&path).expect("kept"), "{ not json");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

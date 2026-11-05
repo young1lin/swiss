@@ -32,8 +32,10 @@ use crate::pidfile::{
 use crate::port::{as_listen_port_value, env_listen_port, DEFAULT_PORT};
 use swiss_core::paths::{data_dir, data_path};
 use swiss_core::platform::tree_kill;
-use swiss_core::secure::envstore::{read_env_store, write_env_store};
-use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
+use swiss_core::secure::envstore::{load_env_store, read_env_store};
+use swiss_core::secure::statefile::{
+    left_in_place, read_secure_json, replace_all_secure_json, write_secure_json,
+};
 
 const POLL_MS: u64 = 150;
 const LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
@@ -236,49 +238,50 @@ pub const SECRET_MASK: &str = "******";
 /// credential) needs an operator-initiated export on a machine that can still read the files.
 /// The vault is the exception: its values leave as [SECRET_MASK] and are typed in again on the
 /// far side. Everything else rides whole - config passwords, the gateway token, OAuth grants -
-/// so the bundle is still a file to protect.
-pub fn export_state() -> Value {
-    json!({
+/// so the bundle is still a file to protect. A state file that cannot be read stops the export:
+/// a bundle that quietly lacked it would only be found out after the move (SPEC §host.cli).
+pub fn export_state() -> Result<Value, String> {
+    let env = load_env_store(&swiss_core::secure::envstore::env_store_path())?;
+    Ok(json!({
         "version": 1,
         "exportedAt": swiss_core::log::iso_now(),
-        "config": read_secure_json(&data_path(&["gateway.config.json"])).ok().flatten(),
-        "managed": read_secure_json(&data_path(&["managed.json"])).ok().flatten(),
-        "tunnels": read_secure_json(&data_path(&["tunnels.json"])).ok().flatten(),
+        "config": read_secure_json(&data_path(&["gateway.config.json"]))?,
+        "managed": read_secure_json(&data_path(&["managed.json"]))?,
+        "tunnels": read_secure_json(&data_path(&["tunnels.json"]))?,
         // OAuth grants ride too (SPEC §mcp.oauth): values included for the same reason the vault
         // is — this bundle is already the one plaintext escape, and without this section a
         // machine move would silently drop every MCP grant.
-        "oauth": read_secure_json(&swiss_mcp::oauth::store_path()).ok().flatten(),
-        "env": Value::Object(env_store()
+        "oauth": read_secure_json(&swiss_mcp::oauth::store_path())?,
+        "env": Value::Object(env
             .into_iter()
             .map(|(k, v)| (k, Value::String(v)))
             .collect()),
         // The vault rides by NAME only (SPEC §host.vault, revised 2026-09-28): every value is
         // SECRET_MASK, so a bundle read by anyone - a backup, a terminal scrollback, a
         // support attachment - hands over no key. An import re-enters them by hand.
-        "secrets": masked_vault(),
-    })
+        "secrets": masked_vault()?,
+    }))
 }
 
 /// The vault section of the bundle: the stored shape with every value replaced by the mask.
-fn masked_vault() -> Value {
-    let stored = read_secure_json(&swiss_core::secure::secretstore::secret_store_path())
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| json!({ "rev": 0, "secrets": {} }));
-    let names = stored
-        .get("secrets")
-        .and_then(Value::as_object)
-        .map(|m| {
-            m.keys()
-                .map(|k| (k.clone(), Value::String(SECRET_MASK.to_string())))
-                .collect::<serde_json::Map<String, Value>>()
-        })
-        .unwrap_or_default();
-    json!({ "rev": stored.get("rev").cloned().unwrap_or_else(|| json!(0)), "secrets": names })
+fn masked_vault() -> Result<Value, String> {
+    let (rev, names) = swiss_core::secure::secretstore::stored_names(
+        &swiss_core::secure::secretstore::secret_store_path(),
+    )?;
+    let names: serde_json::Map<String, Value> = names
+        .into_iter()
+        .map(|name| (name, Value::String(SECRET_MASK.to_string())))
+        .collect();
+    Ok(json!({ "rev": rev, "secrets": names }))
 }
 
-/// Restore a bundle: every section is re-sealed under THIS machine's key as it lands. Returns
-/// the restored file names.
+/// The sections a bundle may carry, each an object or nothing at all.
+const BUNDLE_SECTIONS: [&str; 6] = ["config", "managed", "tunnels", "oauth", "env", "secrets"];
+
+/// Restore a bundle as one change (SPEC §host.cli): every section is checked and every file worked
+/// out first, then all of them land re-sealed under THIS machine's key, or none do. A state file
+/// that cannot be read refuses the whole bundle and stays as it is. Returns the restored file
+/// names.
 pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
     let Some(obj) = bundle.as_object() else {
         return Err("not a state bundle (expected JSON written by 'swiss export')".into());
@@ -291,33 +294,36 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
                 .unwrap_or_else(|| "null".into())
         ));
     }
-    let mut restored: Vec<String> = Vec::new();
-    let mut seal = |key: &str, file: &str| -> Result<(), String> {
-        match obj.get(key) {
-            Some(value) if !value.is_null() => {
-                write_secure_json(&data_path(&[file]), value)?;
-                restored.push(file.to_string());
-                Ok(())
-            }
-            _ => Ok(()),
+    for section in BUNDLE_SECTIONS {
+        if obj.get(section).is_some_and(|v| !v.is_null() && !v.is_object()) {
+            return Err(format!(
+                "the bundle's {section} section is not an object; nothing was imported"
+            ));
         }
-    };
-    seal("config", "gateway.config.json")?;
-    seal("managed", "managed.json")?;
-    seal("tunnels", "tunnels.json")?;
+    }
+    let mut files: Vec<(std::path::PathBuf, Value)> = Vec::new();
     // A running gateway reads OAuth credentials from its in-memory map, so an import while
     // it runs lands on restart — exactly the vault's behavior for the same shape.
-    seal("oauth", "mcp-oauth.json")?;
-    if let Some(env) = obj.get("env").filter(|v| v.is_object()) {
+    for (key, file) in [
+        ("config", "gateway.config.json"),
+        ("managed", "managed.json"),
+        ("tunnels", "tunnels.json"),
+        ("oauth", "mcp-oauth.json"),
+    ] {
+        if let Some(value) = obj.get(key).filter(|v| !v.is_null()) {
+            files.push((data_path(&[file]), value.clone()));
+        }
+    }
+    if let Some(env) = obj.get("env").and_then(Value::as_object) {
         // Imported values win over whatever is already stored.
-        let mut merged = env_store();
-        for (k, v) in env.as_object().expect("checked object") {
+        let path = swiss_core::secure::envstore::env_store_path();
+        let mut merged = load_env_store(&path).map_err(left_in_place)?;
+        for (k, v) in env {
             if let Some(s) = v.as_str() {
                 merged.insert(k.clone(), s.to_string());
             }
         }
-        write_env_store(&merged, &swiss_core::secure::envstore::env_store_path())?;
-        restored.push("env.json".into());
+        files.push((path, json!(merged)));
     }
     if let Some(vault) = obj.get("secrets") {
         // Accept the export shape ({rev, secrets: {name -> value}}) or a bare map; imported
@@ -336,15 +342,19 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
             .filter(|(_, v)| v.as_str() != Some(SECRET_MASK))
             .collect();
         if !entries.is_empty() {
-            swiss_core::secure::secretstore::import_secrets(
-                &swiss_core::secure::secretstore::secret_store_path(),
-                &entries,
-            )
-            .map_err(|e| e.message())?;
-            restored.push("secrets.json".into());
+            let path = swiss_core::secure::secretstore::secret_store_path();
+            let merged = swiss_core::secure::secretstore::merged_for_import(&path, &entries)?;
+            files.push((path, merged));
         }
     }
-    Ok(restored)
+    // The home may not exist yet: an import is how a new machine gets its first state.
+    swiss_core::platform::mkdir_private(&data_dir());
+    replace_all_secure_json(&files)?;
+    Ok(files
+        .iter()
+        .filter_map(|(path, _)| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect())
 }
 
 /// Record `rec` as the port's daemon — unless the file names a DIFFERENT process that is still
@@ -901,7 +911,13 @@ mod tests {
 
     /// Remove every file and variable this module reads.
     fn clear_state() {
-        for file in ["gateway.config.json", "managed.json", "tunnels.json"] {
+        for file in [
+            "gateway.config.json",
+            "managed.json",
+            "tunnels.json",
+            "mcp-oauth.json",
+            "secrets.json",
+        ] {
             let _ = std::fs::remove_file(data_path(&[file]));
         }
         let _ = std::fs::remove_file(swiss_core::secure::envstore::env_store_path());
@@ -977,8 +993,11 @@ mod tests {
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
             .collect();
-        write_env_store(&store, &swiss_core::secure::envstore::env_store_path())
-            .expect("seal the env");
+        swiss_core::secure::envstore::write_env_store(
+            &store,
+            &swiss_core::secure::envstore::env_store_path(),
+        )
+        .expect("seal the env");
     }
 
     fn plant(port: u16, pid: u32) -> u32 {
@@ -1253,7 +1272,7 @@ mod tests {
         );
         seal_env(&[("SWISS_TOKEN", "tok")]);
 
-        let bundle = export_state();
+        let bundle = export_state().expect("the export");
         assert_eq!(bundle["version"], json!(1));
         assert_eq!(bundle["config"]["port"], json!(18084));
         assert_eq!(bundle["managed"], json!({ "mcps": [] }));
@@ -1278,7 +1297,7 @@ mod tests {
             ],
             "the vault exports as masks, so an import restores no secrets file"
         );
-        assert_eq!(export_state()["config"]["port"], json!(18084));
+        assert_eq!(export_state().expect("the export")["config"]["port"], json!(18084));
         assert_eq!(read_gateway_token().as_deref(), Some("tok"));
         clear_state();
     }
@@ -1291,7 +1310,7 @@ mod tests {
             "secrets.json",
             json!({ "rev": 4, "secrets": { "stripe-key": "sk_old", "keep-me": "v" } }),
         );
-        let bundle = export_state();
+        let bundle = export_state().expect("the export");
         assert_eq!(
             bundle["secrets"]["secrets"]["stripe-key"],
             json!(SECRET_MASK),
@@ -1345,7 +1364,7 @@ mod tests {
             "secrets.json",
             json!({ "rev": 2, "secrets": { "zhipu-key": "real-value", "other": "v2" } }),
         );
-        let bundle = export_state();
+        let bundle = export_state().expect("the export");
         let out = serde_json::to_string(&bundle).expect("serialises");
         assert!(!out.contains("real-value"), "no value in the bundle: {out}");
         assert_eq!(
@@ -1383,9 +1402,65 @@ mod tests {
         import_state(&json!({ "version": 1, "env": { "SWISS_TOKEN": "new" } }))
             .expect("the bundle imports");
 
-        let env = export_state()["env"].clone();
+        let env = export_state().expect("the export")["env"].clone();
         assert_eq!(env["SWISS_TOKEN"], json!("new")); // imported values win
         assert_eq!(env["DB_PASSWORD"], json!("hunter2")); // untouched
+        clear_state();
+    }
+
+    // SPEC §host.cli: a bundle that quietly lacked a file would only be found out after the move.
+    #[tokio::test]
+    async fn an_export_stops_at_a_file_it_cannot_read() {
+        let _lock = daemon_state().await;
+        for file in [
+            "gateway.config.json",
+            "managed.json",
+            "tunnels.json",
+            "mcp-oauth.json",
+            "env.json",
+            "secrets.json",
+        ] {
+            clear_state();
+            std::fs::write(data_path(&[file]), "{ not json").expect("plant a torn file");
+            let err = export_state().unwrap_err();
+            assert!(err.contains(file), "{file}: {err}");
+            assert_eq!(
+                std::fs::read_to_string(data_path(&[file])).expect("kept"),
+                "{ not json"
+            );
+        }
+        clear_state();
+    }
+
+    // SPEC §host.cli: a section is refused before any file changes, so a bundle cannot half land.
+    #[tokio::test]
+    async fn a_bad_section_or_an_unreadable_target_changes_nothing() {
+        let _lock = daemon_state().await;
+        seal("gateway.config.json", json!({ "port": 1 }));
+
+        let err = import_state(&json!({
+            "version": 1, "config": { "port": 2 }, "env": "not an object"
+        }))
+        .unwrap_err();
+        assert!(err.contains("env section"), "{err}");
+        assert_eq!(export_state().expect("the export")["config"]["port"], json!(1));
+
+        std::fs::write(data_path(&["secrets.json"]), "{ not json").expect("plant a torn vault");
+        let err = import_state(&json!({
+            "version": 1,
+            "config": { "port": 2 },
+            "env": { "NEW_KEY": "value" },
+            "secrets": { "secrets": { "new-name": "value" } }
+        }))
+        .unwrap_err();
+        assert!(err.contains("secrets.json") && err.contains("stays as it is"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(data_path(&["secrets.json"])).expect("kept"),
+            "{ not json"
+        );
+        assert!(!data_path(&["env.json"]).exists(), "the env section did not land either");
+        std::fs::remove_file(data_path(&["secrets.json"])).expect("clear the torn vault");
+        assert_eq!(export_state().expect("the export")["config"]["port"], json!(1));
         clear_state();
     }
 

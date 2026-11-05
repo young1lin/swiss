@@ -296,6 +296,24 @@ mod tests {
         .to_string()
     }
 
+    // SPEC §core.sealed: the boot read a torn store as "no token yet" and sealed a fresh one over
+    // every value it held. Now the torn file stays, the seed adds nothing, and load_config stops
+    // the boot for want of a token.
+    #[test]
+    fn a_first_run_never_writes_over_an_env_store_it_cannot_read() {
+        let sb = Sandbox::new();
+        std::fs::create_dir_all(&sb.home).expect("create the home");
+        std::fs::write(sb.home.join("env.json"), "{ not json").expect("plant a torn store");
+
+        let report = sb.boot();
+
+        assert_eq!(report.new_token, None);
+        assert_eq!(
+            std::fs::read_to_string(sb.home.join("env.json")).expect("kept"),
+            "{ not json"
+        );
+    }
+
     #[test]
     fn seeds_a_working_gateway_on_a_machine_that_has_nothing() {
         let sb = Sandbox::new();
