@@ -8,6 +8,9 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Added
 
+- `swiss secret set <name> [--from env:VAR|file:PATH|dotenv:PATH#KEY]` stores a vault secret with
+  its value off the command line, and `swiss api --body-file <path|->` takes a request body from a
+  file or stdin, where Windows PowerShell 5.1 cannot strip its quotes (SPEC §host.cli).
 - SQL analyses persist business conditions, revisions, executions and result pages. The Data
   agent and workspace share stable task/result references for follow-up questions, reruns,
   checks, charts, comparisons, saved work and exports (SPEC §data.analysis).
@@ -637,6 +640,27 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Changed
 
+- Which AI skills land is now your choice (SPEC §host.cli). Before this change, `swiss skill
+  install` wrote all three skills to `.agents`, `.claude` and `.cursor`, while the panel read
+  `.claude`, `.codex` and `.agents`.
+
+  Now:
+  - `swiss skill install` asks per skill at a terminal, and the default is no. Without a terminal
+    it refuses with exit 2 and lists them, so **a script running the bare command now fails**:
+    it names the skills, or passes `--all`.
+  - A skill goes to `.claude` for Claude Code (`$CLAUDE_CONFIG_DIR/skills` when set) and `.agents`
+    for every other client. Copies an older build left in `.cursor` or `.codex` stay as they are,
+    are not refreshed, and can be removed by hand.
+  - `swiss skill list` shows what each skill does, whether it loads by itself, and whether each
+    copy still matches this binary. After replacing the executable, `swiss skill install
+    --installed` refreshes the copies you have and adds none. It also replaces a `SKILL.md` you
+    edited by hand.
+- MCP definitions refuse a key the type does not take, by name, on add, edit, replace and the
+  connection test (SPEC §mcp.defs). Before this change the key was silently dropped, so a typo
+  did nothing. A proc MCP's Call timeout field now takes effect, and `idleMs` works on every type.
+- A read-back keeps `<scheme> ${reference}`, such as `Bearer ${secret://x}`, as written, since it
+  holds no credential (SPEC §host.refs). Anything else beside a reference stays masked.
+- Gateway logs go to stderr. Anything reading `swiss serve` on stdout sees no log lines now.
 - The LLM page's *Add provider* offers presets for the vendors a setup reaches for (SPEC
   §llm surfaces Providers). Before this change, it offered only Ollama, GLM and OpenAI (with
   `gpt-4.1-mini`). Now it also offers Anthropic, Google Gemini, DeepSeek, Kimi, Qwen (Alibaba
@@ -823,6 +847,19 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- `swiss export > bundle.json` writes one JSON document (SPEC §host.cli). Log lines used to land
+  in it, so the export exited 0 and the import then failed. A file that cannot be read now stops
+  the export with exit 1, and nothing on stdout.
+- A state file that cannot be read is no longer treated as empty and written over (SPEC
+  §core.sealed). Before this change, a damaged or foreign `env.json` was replaced at boot with a
+  new token, and export and import could overwrite it too. Now absent means first run, and any
+  other failure is an error that keeps the file. **A gateway whose `env.json` cannot be read
+  refuses to boot and logs why**: restore the master key, or move the file aside.
+- `swiss import` checks every section and target first, then lands the files as one change.
+- `swiss skill install` no longer deletes what you kept beside a skill, and a failed replacement
+  keeps the old copy (SPEC §host.cli). Every write replaces `SKILL.md` alone. A client scanning its
+  skills directory can no longer fail an install on Windows: the retry now covers the sharing
+  violation it actually hits.
 - The panel e2e suite walks the three views later work added, in a real browser.
   The Data walk registers a lazy mysql def aimed at a port nothing answers - the
   analysis ledger's list and create never touch the database (analysis_api.rs) -

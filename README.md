@@ -5,9 +5,10 @@
 A developer's pocket multitool — one tiny local process, every tool behind one loopback port.
 
 swiss serves on `127.0.0.1:19999`: every MCP server an AI client needs, on HTTP paths under
-`/mcp/<name>`, plus database browsing, SSH tunnels, scheduled jobs, remote execution and a web
-terminal — one static binary with its admin panel embedded, no script runtime, no
-`node_modules`, no npx wrapper.
+`/mcp/<name>`, plus database browsing with an agent beside the console, SSH tunnels, scheduled
+jobs, remote execution, a web terminal, supervised processes, long-term project memory, and the
+LLM providers and agents behind them — one binary with its admin panel embedded, no script
+runtime, no `node_modules`, no npx wrapper.
 
 **Why it exists:** memory. The Node.js gateway it replaced measured 113.8 MB RSS on a typical
 workload; the same workload here reads **22.4 MB** (private bytes 8.6 MB). The numbers are
@@ -29,6 +30,9 @@ Download the archive for your OS and `SHA256SUMS` from
 | `swiss-<version>-x86_64-apple-darwin.tar.gz` | macOS (Intel) — experimental¹ |
 
 The Linux binaries need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, or later).
+
+This page describes the source, and the newest release can trail it:
+[CHANGELOG.md](CHANGELOG.md) lists what is still unreleased.
 
 Compare the archive's SHA-256 with its line in `SHA256SUMS`
 (`Get-FileHash <archive> -Algorithm SHA256` on Windows, `sha256sum <archive>`
@@ -81,7 +85,8 @@ needed to build; see [CONTRIBUTING.md](CONTRIBUTING.md).
 On Windows, double-click `swiss.exe`; on macOS, open `swiss.app` to use the desktop GUI.
 On either desktop, running `swiss` without arguments or `swiss gui` opens the same window.
 The explicit `swiss gui` command returns after launching it; use `swiss gui -f` to keep the
-window in the foreground. The panel and AI skills are embedded in the single executable.
+window in the foreground. Linux has no desktop window: the gateway serves and a browser looks.
+The panel and AI skills are embedded in the single executable.
 **Settings → System** shows skill installation in
 `~/.claude/skills` and `~/.agents/skills`, alongside startup and PATH settings.
 
@@ -120,8 +125,15 @@ window in the foreground. The panel and AI skills are embedded in the single exe
 - **A bearer token for `/mcp/*`**, checked before the body is read, so other tools on the
   machine cannot use your MCP servers unchallenged. The terminal WebSocket adds a single-use
   ticket that burns in 10 seconds.
-- **Credentials stay out of records.** Run records mask resolved credential values before
-  anything is stored.
+- **Credentials stay out of run records, within limits.** Run output has every value a reference
+  resolved to masked before it is stored, when that value is 8 bytes or longer. A shorter value,
+  or a program that re-encodes its own secret, gets past it. A terminal recording is not masked:
+  it keeps what the shell echoed, in sealed parts, so treat recordings as sensitive.
+- **What the Data page's agent can write.** On MySQL and PostgreSQL a write it drafts lands in the
+  console for you to run. Switch a connection to *Auto writes* and one narrow INSERT, REPLACE,
+  UPDATE or DELETE runs by itself in a transaction, committed only if it changed at most 1,000
+  rows. DDL, and an UPDATE or DELETE with no real WHERE, stay yours to run. On MongoDB and Redis
+  its writes are always left for you.
 
 If you forward the port over SSH, the far side gains the token boundary — not the loopback one.
 The full model is [SPEC §security](docs/spec/0015-security.md).
@@ -140,11 +152,29 @@ swiss skill install --installed   # the new binary's skills, over the copies you
 swiss start
 ```
 
-Nothing migrates during an update: all state lives in sealed files under the swiss home
-directory (`%USERPROFILE%\.swiss` on Windows, `~/.swiss` elsewhere), never inside the
-binary. Moving machines uses `swiss export > bundle.json` and `swiss import bundle.json`.
-On Windows the seal binds to your user (DPAPI); on Linux it binds to the machine via the
+Nothing migrates during an update: all state lives under the swiss home directory
+(`%USERPROFILE%\.swiss` on Windows, `~/.swiss` elsewhere), never inside the binary.
+
+## Your data, and moving machines
+
+State files and history bodies in the home are sealed. On Windows the seal binds to your user
+(DPAPI); on macOS the key sits in your login Keychain; on Linux it binds to the machine via the
 world-readable machine-id, not to your user — treat shared hosts accordingly.
+
+Not everything is sealed, and for the rest the home's private placement is the only boundary:
+
+- `memory/store.sqlite3` and the code index beside it are plain SQLite.
+- A module's history database seals its bodies but not its index, and the LLM record keeps about
+  2 KiB of each call and turn in the clear.
+- The gateway log, job run lines and managed apps' capture files are plain text.
+
+So don't publish or hand over the home directory.
+
+`swiss export > bundle.json` then `swiss import bundle.json` carries config, managed state,
+tunnels, OAuth, env and secrets to another machine, and that is not everything. `remote.json`, the
+memory store, the LLM records and each module's history stay behind. Vault values come out masked,
+so set them again on the new machine. The rest of the bundle is plaintext, tokens and env values
+included: keep it out of a repository and delete it once it has landed.
 
 ## Start at sign-in, and swiss on your PATH
 

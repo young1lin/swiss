@@ -83,7 +83,8 @@ together with its lockfile.
   or screenshots of a real instance: fixtures, examples and seeds use neutral names
   (`acme_app_*`, `shop_*`, `jdoe`, a target called `dev`), and screenshots taken against a real
   instance are git-ignored, never committed. State files, logs and recordings are ignored
-  (`gateway.config.json`, `managed.json`, `master.key`, `.env*`, `*.log`, `*.cast`).
+  (`gateway.config.json`, `managed.json`, `secrets.json`, `env.json`, `mcp-oauth.json`,
+  `remote.json`, `master.key`, `/memory/`, `.env*`, `*.log`, `*.cast`).
 - **No absolute personal paths.** The repository is `<repo>`, a home directory is `~`, a remote
   example path is `/home/dev/app`; a script finds its files relative to itself.
 - **The brand.** The mark is a red (`#DA291C`) rounded square with three tools fanned open —

@@ -16,7 +16,7 @@ and a change that weakens any line of it is a security change whatever else it d
 | Admin surface | Loopback **and** a credential: a single-use login token → a signed `HttpOnly; SameSite=Strict` cookie that counts only from the panel's own origin, or the rotating CLI key in `X-Swiss-Key` | §host.session |
 | MCP clients | Named bearer tokens, compared timing-safe before the body is read | §host.tokens |
 | Terminal stream | A 10 s single-use ticket bound to one session on top of the loopback guard, so loosening `Origin` can never loosen the terminal | §terminal.api |
-| At rest | Every state file sealed (AES-256-GCM under a key derived from the device-bound master key); unix modes 0700/0600 | §core.sealed, §core.masterkey, §core.home |
+| At rest | State files and module history bodies sealed (AES-256-GCM under a key derived from the device-bound master key); unix modes 0700/0600. What stays plain is listed below | §core.sealed, §core.masterkey, §core.home, §host.history |
 | Credentials in config | References only — `${ENV}` or `${secret://name}`; one resolver at every use point | §host.refs |
 | The vault | Values go in and never come out; not merged into any child environment | §host.vault |
 | Models | A provider key is a reference resolved per client and scrubbed from every provider error; a Test asks the saved row, never a URL or key from a request; agent telemetry carries prompt text only with `logPrompts`, its headers resolved only into the export or a child's env | §llm.providers, §llm.api, §llm.telemetry |
@@ -49,16 +49,24 @@ the bind past loopback — the config loader refuses it.
 **Honest notes inside the boundary.**
 
 - On Windows the seal key is DPAPI-bound to the user; on Linux the machine-id binds to the
-  machine, not the user, so on a shared host another local user can derive it. macOS has no
-  master-key source yet (§core.masterkey).
+  machine, not the user, so on a shared host another local user can derive it. macOS keeps it in
+  the user's login Keychain (§core.masterkey).
+- Not everything under the home is sealed, and for the rest its private placement is the boundary.
+  `memory/store.sqlite3` and `memory/code.sqlite3` are plain SQLite (ADR-031, §memory.store). A
+  module history seals its bodies and not its index, and the LLM record keeps a ~2 KiB plaintext
+  preview of each call and turn (§llm.history). The gateway log, the job run lines and a managed
+  app's capture file are plain text. A machine with no master-key source stores history bodies
+  unsealed (§host.history).
 - A bearer token **can** be read back in plaintext (`GET /api/tokens/{id}/secret`). Tokens and
   vault secrets are two credential classes with two threat models: a token is compared in
   plaintext anyway and sits in `managed.json`; the separate route makes the read an explicit
   act and saves a rotate before every copy of a connect command. Vault values never come back.
 - No zeroize (ADR-007): resolved values must stay resident to be used; the attack surface is
   the file and the children, not the heap.
-- Masking cannot catch a program that re-encodes its own secret; output access and file modes
-  remain the wall behind it.
+- Masking matches a resolved value's own bytes, at 8 bytes or more: a shorter value, or a program
+  that re-encodes its own secret, gets past it, and output access and file modes remain the wall
+  behind it. It does not reach the terminal, whose recording keeps the output as it came, an echoed
+  secret included, in sealed parts (§terminal.recording).
 
 ## §security.reporting — Disclosure
 
