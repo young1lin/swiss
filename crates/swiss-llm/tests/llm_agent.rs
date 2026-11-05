@@ -190,7 +190,7 @@ async fn cancel_during_a_pending_tool_records_unknown_and_files_prior_results() 
         "You are a test.",
         "check both",
         &mut toolbox,
-        4,
+        true,
         &session,
         &mut run,
         &mut on_event,
@@ -356,7 +356,7 @@ async fn a_stop_during_the_model_wait_after_a_tool_round_leaves_the_conversation
     let session = Session::disabled();
     let mut on_event = |_event: LoopEvent| {};
     let stop = cancel.clone();
-    let drive = run_loop(&chat, "You are a test.", "check it", &mut toolbox, 4, &session, &mut run, &mut on_event);
+    let drive = run_loop(&chat, "You are a test.", "check it", &mut toolbox, true, &session, &mut run, &mut on_event);
     let driven = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         tokio::pin!(drive);
         loop {
@@ -426,7 +426,7 @@ async fn a_stop_whose_cancelled_round_cannot_file_still_leaves_the_conversation_
     let mut on_event = |_event: LoopEvent| {};
     let stop = cancel.clone();
     let wedge = history.clone();
-    let drive = run_loop(&chat, "You are a test.", "check it", &mut toolbox, 4, &session, &mut run, &mut on_event);
+    let drive = run_loop(&chat, "You are a test.", "check it", &mut toolbox, true, &session, &mut run, &mut on_event);
     let driven = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         tokio::pin!(drive);
         loop {
@@ -497,7 +497,7 @@ async fn a_round_over_the_chats_context_budget_refuses_before_it_flies() {
     let small = swiss_llm::provider::Chat::new(entry, Some("tiny"), 64).expect("chat").with_context_kib(64);
     assert_eq!(small.context_cap(), 64 * 1024);
     let mut run = small.run_recorder("builtin");
-    let refused = run_loop(&small, "You are a test.", &prompt, &mut toolbox, 4, &session, &mut run, &mut on_event).await;
+    let refused = run_loop(&small, "You are a test.", &prompt, &mut toolbox, true, &session, &mut run, &mut on_event).await;
     let why = refused.expect_err("70 KiB of prompt is over a 64 KiB budget");
     assert!(why.contains("64 KiB budget") && why.contains("maxContextKiB"), "{why}");
 
@@ -505,7 +505,7 @@ async fn a_round_over_the_chats_context_budget_refuses_before_it_flies() {
     let mut run = roomy.run_recorder("builtin");
     let driven = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        run_loop(&roomy, "You are a test.", &prompt, &mut toolbox, 4, &session, &mut run, &mut on_event),
+        run_loop(&roomy, "You are a test.", &prompt, &mut toolbox, true, &session, &mut run, &mut on_event),
     )
     .await
     .expect("bounded")
@@ -589,7 +589,7 @@ async fn words_sent_mid_run_go_in_after_the_tool_answers() {
     };
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        run_loop(&chat, "You are a test.", "check it", &mut toolbox, 4, &session, &mut run, &mut on_event),
+        run_loop(&chat, "You are a test.", "check it", &mut toolbox, true, &session, &mut run, &mut on_event),
     )
     .await
     .expect("bounded")
@@ -663,7 +663,7 @@ async fn words_the_closing_round_never_reached_stay_in_the_inbox() {
     };
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        run_loop(&chat, "You are a test.", "read it", &mut toolbox, 4, &session, &mut run, &mut on_event),
+        run_loop(&chat, "You are a test.", "read it", &mut toolbox, true, &session, &mut run, &mut on_event),
     )
     .await
     .expect("bounded")
@@ -753,7 +753,7 @@ async fn a_stored_value_in_a_tool_answer_reaches_the_model_masked() {
     };
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        run_loop(&chat, "You are a test.", "read the env", &mut Leaky, 4, &session, &mut run, &mut on_event),
+        run_loop(&chat, "You are a test.", "read the env", &mut Leaky, true, &session, &mut run, &mut on_event),
     )
     .await
     .expect("bounded")

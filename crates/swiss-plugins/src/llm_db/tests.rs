@@ -1780,6 +1780,25 @@ fn db_agent() -> Value {
     json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 4 } })
 }
 
+#[tokio::test]
+async fn a_db_conversation_finishes_work_past_the_retired_round_limits() {
+    let mut replies: Vec<String> = (0..65).map(|n| tool_ask("stage_sql", json!({
+        "consoleId": "inspection", "description": format!("Step {n}"), "sql": format!("SELECT {n}")
+    }))).collect();
+    replies.push(one_round_answer());
+    let (app, captured, _) = app(replies, json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 24 } })).await;
+    let (status, _, text) = call_text(&app, "POST", "/api/llm/db/stream", Some(json!({
+        "agent": "data", "conn": "mm", "prompt": "finish all 65 steps", "consoleTabs": [
+            { "id": "inspection", "tab": "Inspection", "agent": true, "open": true, "statements": [] }
+        ]
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let events = events_of(&text);
+    assert_eq!(events.iter().filter(|(name, _)| name == "toolResult").count(), 65, "all work must finish before the closing answer");
+    assert_eq!(captured.lock().expect("requests").len(), 66);
+    assert_eq!(events.iter().find(|(name, _)| name == "done").expect("done").1["text"], "done.");
+}
+
 /// No clock cuts a Data conversation: a send, and its compaction, whose provider answers
 /// only after 61 s - past the 60 s the row's retired timeoutMs still names, which once
 /// cut them - land: the send its answer, the compaction its checkpoint. The wire's paused

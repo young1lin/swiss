@@ -259,9 +259,6 @@ async fn status(State(state): State<Arc<LlmState>>) -> Response {
                 shown["maxTokens"] = json!(a.max_tokens);
                 shown["maxContextKiB"] = json!(a.max_context_kib);
                 shown["effort"] = json!(a.effort.map(|e| e.as_str()));
-                if matches!(a.runtime, Runtime::Builtin | Runtime::Db) {
-                    shown["maxTurns"] = json!(a.max_turns);
-                }
                 if a.runtime == Runtime::Builtin {
                     // The grant as written, and the stored names it reaches now.
                     shown["secrets"] = json!(a.secrets);
@@ -494,13 +491,13 @@ fn told_directory(system: &str, prior: &[Value]) -> Option<String> {
 
 /// How a provider-asking agent's Test drives the loop, the same in every lane
 /// (blocking, live, store-less): a chat agent asks once with no tools; a builtin
-/// agent runs the loop a consumer runs - the tools it takes of the Test's offer, its
-/// turn cap. No lane caps the time: a loop runs as long as its work takes, and only
+/// agent runs the loop a consumer runs with the tools it takes of the Test's offer.
+/// No lane caps the time or round count: a loop runs as long as its work takes, and only
 /// Stop or the reader going away ends it early.
 struct TestPlan {
     runtime: Runtime,
     taken: Vec<&'static str>,
-    max_turns: u32,
+    allow_tool_rounds: bool,
     root: std::path::PathBuf,
     agent: AgentConfig,
     services: Arc<RuntimeServices>,
@@ -534,7 +531,7 @@ impl TestPlan {
         Ok(TestPlan {
             runtime: agent.runtime,
             taken,
-            max_turns: agent.turns(),
+            allow_tool_rounds: agent.allows_tools(),
             root, agent: agent.clone(), services,
         })
     }
@@ -605,7 +602,7 @@ pub(crate) fn loop_answer(driven: Result<LoopOutcome, String>, chat: &Chat, run:
         }
         Ok(outcome) => json!({
             "ok": true, "model": chat.model, "ms": ms_since(started),
-            "text": clip(&outcome.summary, ANSWER_MAX), "capped": outcome.capped,
+            "text": clip(&outcome.summary, ANSWER_MAX),
             "turns": outcome.turns, "tokensIn": outcome.tokens.input, "tokensOut": outcome.tokens.output,
         }),
         // The loop noted and filed its own failure; the answer says it.
@@ -686,7 +683,7 @@ async fn agent_test(State(state): State<Arc<LlmState>>, Extension(services): Ext
     // This blocking request cannot be continued. Its jobs end with the request even
     // when the one-shot transcript is recorded in history.
     let mut tools = plan.tools(&chat, &session, None, None);
-    let driven = swiss_llm::agent::run_loop(&chat, &system, &tasked, &mut tools, plan.max_turns, &session, &mut run, &mut on_event).await;
+    let driven = swiss_llm::agent::run_loop(&chat, &system, &tasked, &mut tools, plan.allow_tool_rounds, &session, &mut run, &mut on_event).await;
     let mut answer = loop_answer(driven, &chat, &run, started);
     if session.reporting() {
         answer["session"] = json!(session.id());
@@ -906,7 +903,7 @@ async fn agent_test_stream(State(state): State<Arc<LlmState>>, Extension(service
         // once the future has actually dropped.
         let driven = {
             let looped = swiss_llm::agent::run_loop_continued(
-                &chat, &system, &prior, &tasked, &mut tools, plan.max_turns, &session, &mut run, &mut on_event,
+                &chat, &system, &prior, &tasked, &mut tools, plan.allow_tool_rounds, &session, &mut run, &mut on_event,
             );
             tokio::pin!(looped);
             // Silent-wire watch (SPEC llm.agents Test): a reader that went away
@@ -972,7 +969,7 @@ async fn stateless_test(
     let mut run = RunRecorder::none();
     let driven = {
         let looped = swiss_llm::agent::run_loop_continued(
-            &chat, &system, &[], &tasked, &mut tools, plan.max_turns, &session, &mut run, &mut on_event,
+            &chat, &system, &[], &tasked, &mut tools, plan.allow_tool_rounds, &session, &mut run, &mut on_event,
         );
         tokio::pin!(looped);
         loop {
@@ -1514,7 +1511,8 @@ pub(crate) mod tests {
         assert_eq!((cc["systemPrompt"].as_str(), &cc["systemPromptDefault"]), (Some("Prefer Grep."), &Value::Null), "{cc}");
         assert_eq!((&cc["tools"], &cc["toolsInForce"]), (&Value::Null, &json!(["Read", "Grep", "Glob"])), "no list: the whole catalog");
         let distiller = agents.iter().find(|a| a["name"] == "distiller").expect("distiller");
-        assert_eq!((distiller["maxTurns"].as_u64(), distiller["model"].as_str()), (Some(8), Some("tiny")));
+        assert!(distiller.get("maxTurns").is_none());
+        assert_eq!(distiller["model"].as_str(), Some("tiny"));
         assert_eq!(distiller["systemPrompt"], Value::Null);
         assert!(distiller["systemPromptDefault"].as_str().unwrap_or_default().starts_with("You are an agent"), "{distiller}");
         assert_eq!((&distiller["tools"], &distiller["toolsInForce"]), (&json!(["read", "sync"]), &json!(["read", "sync"])));
@@ -1986,7 +1984,7 @@ pub(crate) mod tests {
 
     /// A chat agent's Test asks exactly as its runtime does in every lane: one
     /// request, no tools, the prompt as given. The live lane once offered it the
-    /// Test's tools and the builtin turn cap; the blocking lane filed its run
+    /// Test's tools and the builtin loop; the blocking lane filed its run
     /// with no turns. Both are observed on the wire and in the record.
     #[tokio::test]
     async fn the_test_offers_every_configured_tool_and_honors_a_selected_subset() {

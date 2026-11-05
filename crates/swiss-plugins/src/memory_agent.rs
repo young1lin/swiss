@@ -16,7 +16,7 @@
 
 //! Memory's tools for a `builtin` agent (SPEC §memory.sync): read, bash and sync over one
 //! checkout, handed to swiss-llm's [run_loop]. The loop - asking, feeding tool answers
-//! back, the turn cap, the reporting - is the llm plugin's; what a tool may touch is
+//! back, the cancellation, the reporting - is the llm plugin's; what a tool may touch is
 //! decided here. The patch in the prompt is untrusted input, so the surface stays one
 //! the worst prompt injection can abuse into... reading git history.
 //!
@@ -301,7 +301,7 @@ pub const LOOK_OFFER: [&str; 2] = ["read", "bash"];
 
 /// The section appended to a recheck's question: the tools it took, the turns it has, and
 /// that its last message is the answer.
-fn look_addendum(tools: &[&str], turns: u32) -> String {
+fn look_addendum(tools: &[&str]) -> String {
     let mut p = String::from("## This run\n");
     if tools.contains(&"read") {
         p.push_str("read opens one file of the checkout (from a line on, for a long one). ");
@@ -316,10 +316,7 @@ fn look_addendum(tools: &[&str], turns: u32) -> String {
     if tools.is_empty() {
         p.push_str("You have no tools this run: judge from the material above alone. ");
     } else {
-        p.push_str(&format!(
-            "Look before you judge, and judge only what you looked at. This run has {turns} model turns in all and the \
-             answer takes the last one: call several tools in one turn when you can. "
-        ));
+        p.push_str("Look before you judge, and judge only what you looked at. ");
     }
     p.push_str("Your last message is the answer: the one JSON object the task asks for, nothing else.\n");
     p
@@ -577,7 +574,7 @@ pub(crate) async fn answer_once(agent: &AgentConfig, chat: &Chat, session: &Sess
 }
 
 /// The `builtin` runtime as a sync runner: the agent's chat client, system prompt, tools
-/// and turn cap, and the run's reporting session.
+/// and cancellation, and the run's reporting session.
 pub struct BuiltinAsk {
     agent: AgentConfig,
     chat: Chat,
@@ -601,7 +598,7 @@ impl BuiltinAsk {
         // dialogue still files exactly as before.
         let mut on_event = |_event: swiss_llm::agent::LoopEvent| {};
         // A failure is noted and filed by run_loop itself.
-        run_loop(&self.chat, system, prompt, tools, self.agent.max_turns, &self.session, &mut run, &mut on_event).await
+        run_loop(&self.chat, system, prompt, tools, self.agent.allows_tools(), &self.session, &mut run, &mut on_event).await
     }
 }
 
@@ -614,13 +611,10 @@ impl Ask for BuiltinAsk {
         let outcome = self.looped(&prompt, &mut tools).await?;
         let closing = closing_line(&outcome.summary, &mut tools.filed);
         let summary = if closing.is_empty() {
-            // The loop ended without a text answer - the model was still working at the
-            // turn cap, or its answer stopped at maxTokens while it was still thinking -
-            // and the ops it filed are all it managed; say so, never silence.
+            // The loop ended without a text answer, possibly at maxTokens while still
+            // thinking. The ops it filed are all it managed; say so, never silence.
             let why = if outcome.cut {
                 format!("the answer stopped at the {}-token cap (maxTokens) before its closing line", self.agent.max_tokens)
-            } else if outcome.capped {
-                format!("stopped at the {}-turn cap without a closing line", self.agent.max_turns)
             } else {
                 "the loop ended without a closing line".to_string()
             };
@@ -656,10 +650,10 @@ impl Ask for BuiltinAsk {
     async fn look(&self, root: &Path, prompt: &str, _schema: &Value) -> Result<String, String> {
         let taken = self.agent.narrow(&LOOK_OFFER);
         let mut tools = MemoryTools::looking(root, &taken);
-        let prompt = format!("{prompt}\n\n{}", look_addendum(&taken, self.agent.max_turns));
+        let prompt = format!("{prompt}\n\n{}", look_addendum(&taken));
         let outcome = self.looped(&prompt, &mut tools).await?;
         if outcome.summary.trim().is_empty() {
-            return Err(format!("the look stopped at the {}-turn cap before it answered", self.agent.max_turns));
+            return Err("the look ended without an answer".into());
         }
         Ok(json!({
             "type": "result",
@@ -717,7 +711,7 @@ impl Ask for BuiltinAsk {
     async fn rag(&self, prompt: &str, tools: &mut dyn Toolbox) -> Result<String, String> {
         let outcome = self.looped(prompt, tools).await?;
         if outcome.summary.trim().is_empty() {
-            return Err(format!("the question stopped at the {}-turn cap before it answered", self.agent.max_turns));
+            return Err("the question ended without an answer".into());
         }
         Ok(outcome.summary)
     }
@@ -1284,10 +1278,11 @@ mod tests {
     }
 
     #[test]
-    fn a_look_offers_read_and_bash_and_budgets_its_turns() {
-        let said = look_addendum(&LOOK_OFFER, 24);
-        assert!(said.contains("git grep -n -w NAME") && said.contains("24 model turns") && said.contains("one JSON object"));
-        assert!(look_addendum(&[], 24).contains("no tools"));
+    fn a_look_offers_read_and_bash_without_a_round_budget() {
+        let said = look_addendum(&LOOK_OFFER);
+        assert!(said.contains("git grep -n -w NAME") && said.contains("judge only what you looked at") && said.contains("one JSON object"));
+        assert!(!said.contains("model turns"));
+        assert!(look_addendum(&[]).contains("no tools"));
         let tools = MemoryTools::looking(&root(), &LOOK_OFFER);
         let names: Vec<String> = tools.specs().into_iter().map(|spec| spec.name).collect();
         assert_eq!(names, ["read", "bash"]);

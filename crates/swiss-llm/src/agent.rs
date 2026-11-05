@@ -18,7 +18,7 @@
 //! whether it reports. Five runtimes, the ways swiss asks a model:
 //!
 //! - `builtin` - swiss's own tool loop ([run_loop]) over a provider: the consumer hands
-//!   in its tools, the loop asks, calls them, feeds the answers back, at most `maxTurns`.
+//!   in its tools, the loop asks, calls them, feeds the answers back until a closing answer.
 //! - `chat` - one request, one answer, no tools: for a model too small to call tools.
 //! - `claude` - a spawned Claude Code; the consumer composes its flags, the agent carries
 //!   the binary, the model, the env - and, when it reports, the OTEL env that makes the
@@ -61,8 +61,6 @@ pub const CONCURRENCY_MAX: u64 = 16;
 /// What a provider-asking agent runs at once when it sets no `concurrency`; a spawned
 /// runtime (a whole child process per task) runs one.
 pub const CONCURRENCY_DEFAULT: u32 = 4;
-pub const TURNS_DEFAULT: u32 = 24;
-pub const TURNS_MAX: u32 = 64;
 /// What one answer of a builtin or chat agent may run to when it sets no `maxTokens`: the most
 /// GLM accepts (its `max_tokens` range is 1..131072), so a thinking model is not cut mid-thought.
 pub const TOKENS_DEFAULT: u32 = 131_072;
@@ -86,12 +84,12 @@ pub const PROMPT_MAX: usize = 20_000;
 /// The keys every agent may carry; [Runtime::keys] narrows them.
 const COMMON_KEYS: [&str; 4] = ["runtime", "report", "systemPrompt", "concurrency"];
 /// Keys an agent once took and nothing reads any more: a row saved with one still parses,
-/// whatever it holds, and the panel's next save leaves it out. `timeoutMs` capped a task's
-/// time; no agent run has a time cap now (SPEC §llm.agents).
-const RETIRED_KEYS: [&str; 1] = ["timeoutMs"];
+/// whatever it holds, and the panel's next save leaves it out. Tasks have no time or
+/// tool-round cap now (SPEC §llm.agents).
+const RETIRED_KEYS: [&str; 2] = ["timeoutMs", "maxTurns"];
 /// Every runtime-specific key, for the error that names a stale one.
-const RUNTIME_KEYS: [&str; 10] =
-    ["provider", "model", "maxTurns", "maxTokens", "maxContextKiB", "effort", "command", "env", "tools", "secrets"];
+const RUNTIME_KEYS: [&str; 9] =
+    ["provider", "model", "maxTokens", "maxContextKiB", "effort", "command", "env", "tools", "secrets"];
 
 /// How hard a builtin or chat agent's model thinks before it answers. Unset, the model
 /// thinks as it does by default (or as its id's suffix says, "glm-5.3-flash-low").
@@ -424,10 +422,10 @@ impl Runtime {
     /// holds no secret: what it touches is the connection the page lends it.
     fn keys(&self) -> &'static [&'static str] {
         match self {
-            Runtime::Builtin => &["provider", "model", "maxTurns", "maxTokens", "maxContextKiB", "effort", "tools", "secrets"],
+            Runtime::Builtin => &["provider", "model", "maxTokens", "maxContextKiB", "effort", "tools", "secrets"],
             Runtime::Chat => &["provider", "model", "maxTokens", "maxContextKiB", "effort"],
             Runtime::Claude | Runtime::Pi => &["command", "model", "env", "tools"],
-            Runtime::Db => &["provider", "model", "maxTurns", "maxTokens", "maxContextKiB", "effort"],
+            Runtime::Db => &["provider", "model", "maxTokens", "maxContextKiB", "effort"],
         }
     }
 
@@ -490,8 +488,6 @@ pub struct AgentConfig {
     /// none, resolved at parse). claude: `--model` when set. pi: the `provider/model` id,
     /// required.
     pub model: Option<String>,
-    /// builtin: the turn cap.
-    pub max_turns: u32,
     /// builtin/chat: the answer's ceiling per request.
     pub max_tokens: u32,
     /// builtin/chat: the most one request carries, in KiB - the system prompt, the tools,
@@ -593,7 +589,6 @@ fn parse_agent(name: &str, value: &Value, providers: &BTreeMap<String, ProviderE
         }
         (None, model)
     };
-    let max_turns = whole(obj, &place, "maxTurns", 1, TURNS_MAX as u64)?.map(|n| n as u32).unwrap_or(TURNS_DEFAULT);
     let max_tokens = whole(obj, &place, "maxTokens", TOKENS_MIN, TOKENS_MAX)?.map(|n| n as u32).unwrap_or(TOKENS_DEFAULT);
     let max_context_kib = whole(obj, &place, "maxContextKiB", CONTEXT_KIB_MIN, CONTEXT_KIB_MAX)?
         .map(|n| n as u32)
@@ -641,7 +636,6 @@ fn parse_agent(name: &str, value: &Value, providers: &BTreeMap<String, ProviderE
         runtime,
         provider,
         model,
-        max_turns,
         max_tokens,
         max_context_kib,
         effort,
@@ -789,13 +783,9 @@ impl AgentConfig {
         }
     }
 
-    /// The model requests one task may make: a builtin agent's `maxTurns`, one for a
-    /// `chat` agent (it carries no `maxTurns`; the parsed default is not its cap).
-    pub fn turns(&self) -> u32 {
-        match self.runtime {
-            Runtime::Chat => 1,
-            _ => self.max_turns,
-        }
+    /// Chat answers once from text alone; builtin and DB agents may keep using tools.
+    pub fn allows_tools(&self) -> bool {
+        matches!(self.runtime, Runtime::Builtin | Runtime::Db)
     }
 
     /// The chat client a builtin or chat agent asks through, at its own effort.
@@ -892,12 +882,10 @@ pub trait Toolbox: Send {
 /// How a loop ended.
 #[derive(Debug, Clone, Default)]
 pub struct LoopOutcome {
-    /// The model's closing text; empty when it was still calling tools at the cap.
+    /// The model's closing text; empty when cancelled or when it answered without text.
     pub summary: String,
     /// Model requests made.
     pub turns: u32,
-    /// Whether the loop stopped at `max_turns` rather than on a closing answer.
-    pub capped: bool,
     /// Whether the closing answer stopped at the request's `max_tokens`: its text is a
     /// partial one, empty when the model was still thinking.
     pub cut: bool,
@@ -988,7 +976,7 @@ pub async fn run_loop(
     system: &str,
     prompt: &str,
     toolbox: &mut dyn Toolbox,
-    max_turns: u32,
+    allow_tool_rounds: bool,
     session: &Session,
     run: &mut crate::history::RunRecorder,
     on_event: &mut (dyn FnMut(LoopEvent) + Send),
@@ -997,11 +985,11 @@ pub async fn run_loop(
         on_event(event);
         Box::pin(std::future::ready(true)) as Delivered
     };
-    drive_loop(chat, system, &[], prompt, toolbox, max_turns, session, run, &mut delivered, None).await
+    drive_loop(chat, system, &[], prompt, toolbox, allow_tool_rounds, session, run, &mut delivered, None).await
 }
 
 /// The builtin runtime: ask, run the tools the model calls, feed their answers back, until
-/// the model answers without a tool call or the cap. Every request and tool call lands in
+/// the model answers without a tool call. Every request and tool call lands in
 /// the session (a disabled session reports nothing). A failed request ends the loop with
 /// its short message; a tool's error does not - it goes back to the model.
 ///
@@ -1025,7 +1013,7 @@ pub async fn run_loop(
 /// arrived, a running tool's fate is recorded UNKNOWN, and the run stays open.
 //
 // Nine parameters, each load-bearing: the chat, the two prompts, the prior log, the
-// tools, the cap, the session, the recorder and the live sink. A parameter object
+// tools, the tool mode, the session, the recorder and the live sink. A parameter object
 // would weld one call site's shape into a permanent type for a lint's comfort.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_loop_continued(
@@ -1034,12 +1022,12 @@ pub async fn run_loop_continued(
     prior: &[Value],
     prompt: &str,
     toolbox: &mut dyn Toolbox,
-    max_turns: u32,
+    allow_tool_rounds: bool,
     session: &Session,
     run: &mut crate::history::RunRecorder,
     on_event: OnEvent<'_>,
 ) -> Result<LoopOutcome, String> {
-    drive_loop(chat, system, prior, prompt, toolbox, max_turns, session, run, on_event, None).await
+    drive_loop(chat, system, prior, prompt, toolbox, allow_tool_rounds, session, run, on_event, None).await
 }
 
 /// What a compaction asks with: the conversation's own tools declared - a replay that
@@ -1060,9 +1048,8 @@ impl Toolbox for Declared {
 
 /// A compaction (SPEC §llm.agents Compaction): one ask that condenses a conversation into
 /// a checkpoint, filed as the opening round of the run that carries the dialogue on. The
-/// conversation's `tools` are declared and none runs: a call answers as an error and the
-/// one round's cap ends the loop without a checkpoint (an empty summary, a failed
-/// compaction). The `prior` log replays for this ask alone, the `instruction` after it;
+/// conversation's `tools` are declared and none runs: a tool call fails the text-only
+/// request without a checkpoint. The `prior` log replays for this ask alone, the `instruction` after it;
 /// the round seals `framing` as its user turn, so a continuation replays the framing and
 /// the checkpoint (the reply), never the turns it condensed. The run notes the system it
 /// asked under, the instruction as its `compact` turn and the checkpoint as its answer.
@@ -1080,7 +1067,7 @@ pub async fn run_compaction(
     run: &mut crate::history::RunRecorder,
     on_event: OnEvent<'_>,
 ) -> Result<LoopOutcome, String> {
-    drive_loop(chat, system, prior, instruction, &mut Declared(tools), 1, session, run, on_event, Some(framing)).await
+    drive_loop(chat, system, prior, instruction, &mut Declared(tools), false, session, run, on_event, Some(framing)).await
 }
 
 /// What every call row of one round shares: who asked, the exact request and the
@@ -1179,7 +1166,7 @@ async fn drive_loop(
     prior: &[Value],
     prompt: &str,
     toolbox: &mut dyn Toolbox,
-    max_turns: u32,
+    allow_tool_rounds: bool,
     session: &Session,
     run: &mut crate::history::RunRecorder,
     on_event: OnEvent<'_>,
@@ -1243,7 +1230,7 @@ async fn drive_loop(
     }
     run.note(if fold.is_some() { "compact" } else { "user" }, prompt);
     let mut outcome = LoopOutcome::default();
-    for _ in 0..max_turns {
+    loop {
         if run.cancel_requested() {
             outcome.cancelled = true;
             // The notes that are real are filed; a conversation stays open for
@@ -1404,7 +1391,11 @@ async fn drive_loop(
             return Ok(outcome);
         }
         run.note("assistant", &text);
-        let dispatched = dispatch(&calls, toolbox, &injected, run, session, &prompt_id, on_event).await;
+        // Text-only asks still settle every wire id if the provider sends an unexpected
+        // call, but never run a tool or make a second provider request.
+        let mut unavailable = Declared(Vec::new());
+        let served: &mut dyn Toolbox = if allow_tool_rounds { toolbox } else { &mut unavailable };
+        let dispatched = dispatch(&calls, served, &injected, run, session, &prompt_id, on_event).await;
         if dispatched.aborted {
             // The interrupted round's AUTHORITATIVE completion: every call of
             // the round answered by its exact wire id - the results in hand,
@@ -1448,10 +1439,12 @@ async fn drive_loop(
             run.fail(&format!("the round's results could not settle: {why}"));
             return Err(format!("the round's results could not settle: {why}"));
         }
+        if !allow_tool_rounds {
+            let why = "the model returned tool calls to a text-only request";
+            run.fail(why);
+            return Err(why.into());
+        }
     }
-    outcome.capped = true;
-    run.fail("the run stopped at the turn cap");
-    Ok(outcome)
 }
 
 /// What one round's tool dispatch left behind.
@@ -1722,7 +1715,7 @@ mod tests {
         assert!(parsed["deep"].secrets.is_empty());
         let distiller = &parsed["distiller"];
         assert_eq!(distiller.runtime, Runtime::Builtin);
-        assert_eq!((distiller.model.as_deref(), distiller.max_turns, distiller.max_tokens), (Some("glm-5.3-flash"), 8, TOKENS_DEFAULT));
+        assert_eq!((distiller.model.as_deref(), distiller.max_tokens), (Some("glm-5.3-flash"), TOKENS_DEFAULT));
         // An answer runs to the most GLM takes unless the agent says less, and may say exactly that.
         assert_eq!((TOKENS_DEFAULT, parsed["deep"].max_tokens), (131_072, 131_072));
         assert!(distiller.report);
@@ -1760,7 +1753,7 @@ mod tests {
         assert_eq!(parsed["ask"].system_prompt.as_deref(), Some("Answer in one line."));
         // A chat agent takes no tool whatever a task offers, and asks once.
         assert!(parsed["ask"].narrow(&["read", "bash", "sync"]).is_empty());
-        assert_eq!((parsed["ask"].turns(), d.turns()), (1, TURNS_DEFAULT));
+        assert_eq!((parsed["ask"].allows_tools(), d.allows_tools()), (false, true));
         assert_eq!(parsed["cc"].narrow(&["Read", "Grep", "Glob"]), ["Read", "Glob"]);
         assert_eq!(parsed["cc"].system_prompt().as_deref(), Some("Prefer Grep."), "a CLI's own prompt goes first, this after it");
         assert_eq!(parsed["pi"].tools.as_deref(), Some(&["read".to_string(), "ls".to_string()][..]));
@@ -1822,7 +1815,7 @@ mod tests {
         }))
         .expect("agents");
         let db = &parsed["db"];
-        assert_eq!((db.runtime, db.model.as_deref(), db.effort, db.turns()), (Runtime::Db, Some("glm-5.3-flash"), Some(Effort::Medium), 12));
+        assert_eq!((db.runtime, db.model.as_deref(), db.effort, db.allows_tools()), (Runtime::Db, Some("glm-5.3-flash"), Some(Effort::Medium), true));
         assert!(db.runtime.asks_provider() && db.report, "it asks its provider and reports as swiss");
         assert_eq!(db.system_prompt().as_deref(), Some(DB_AGENT_PROMPT), "the database prompt, not the task default");
         assert_eq!(parsed["house"].system_prompt().as_deref(), Some(format!("{DB_AGENT_PROMPT}\n\nAlways LIMIT 100.").as_str()));
@@ -1912,13 +1905,11 @@ mod tests {
             (json!({ "a": { "provider": "glm", "systemPrompt": "bell \u{7}" } }), "systemPrompt"),
             (json!({ "a": { "provider": "glm", "systemPrompt": 3 } }), "systemPrompt must be a string"),
             (json!({ "a": { "provider": "glm", "command": "claude" } }), "command does not apply to the builtin runtime"),
-            (json!({ "a": { "runtime": "chat", "provider": "glm", "maxTurns": 3 } }), "maxTurns does not apply to the chat runtime"),
             (json!({ "a": { "runtime": "claude", "provider": "glm" } }), "provider does not apply to the claude runtime"),
             (json!({ "a": { "runtime": "pi" } }), "model is required for pi"),
             (json!({ "a": { "runtime": "pi", "model": "flat" } }), "provider/model"),
             (json!({ "a": { "runtime": "pi", "model": "g/m", "report": true } }), "cannot report"),
             (json!({ "a": { "runtime": "codex" } }), "runtime must be"),
-            (json!({ "a": { "provider": "glm", "maxTurns": 0 } }), "maxTurns"),
             (json!({ "a": { "provider": "glm", "maxTokens": 131073 } }), "maxTokens"),
             (json!({ "a": { "provider": "glm", "maxContextKiB": 32 } }), "maxContextKiB"),
             (json!({ "a": { "provider": "glm", "maxContextKiB": 8193 } }), "maxContextKiB"),

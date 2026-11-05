@@ -331,8 +331,8 @@ shows, else calls it a file that mentions the name; a rule a document states in 
 outside a comment. How it works them
 depends on the runner:
 
-- **A builtin agent loops** over those tools in its own bounded loop (the agent's `max_turns`
-  and `timeout_ms`, §llm.agents): search, follow, read, answer. `mode` is "tools". When the
+- **A builtin agent loops** over those tools until it answers, is stopped, or a request fails
+  (§llm.agents): search, follow, read, answer. No fixed round or task time limit applies. `mode` is "tools". When the
   scope has a checkout (a cwd, or a project's first root) it also takes the recheck's `read`
   and `bash` over the checkout's top - the working tree a cwd is in (§memory.scope): the
   repository's top from a subdirectory, a linked worktree itself, so a branch's new files are

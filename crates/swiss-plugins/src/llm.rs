@@ -159,7 +159,6 @@ impl PluginFactory for LlmPlugin {
                                 "runtime": { "type": "string", "enum": ["builtin", "chat", "claude", "pi"] },
                                 "provider": { "type": "string", "description": "builtin/chat: the providers entry it asks." },
                                 "model": { "type": "string", "description": "builtin/chat: one of the provider's chat models, its first when unset. claude: --model. pi: provider/model, required." },
-                                "maxTurns": { "type": "integer", "minimum": 1, "maximum": 64 },
                                 "maxTokens": { "type": "integer", "minimum": 256, "maximum": 131072 },
                                 "maxContextKiB": { "type": "integer", "minimum": 64, "maximum": 8192, "description": "builtin/chat: the most one request carries, in KiB (1024 when unset); a conversation past it takes no further send." },
                                 "effort": { "type": "string", "enum": ["low", "medium", "high", "max"], "description": "builtin/chat: how hard the model thinks before it answers; unset leaves the model's own default." },

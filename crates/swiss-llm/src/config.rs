@@ -452,7 +452,7 @@ mod tests {
         assert_eq!(config.providers.keys().cloned().collect::<Vec<_>>(), vec!["glm", "ollama"]);
         let embedding = config.embedding.as_ref().expect("embedding");
         assert_eq!((embedding.provider.as_str(), embedding.model.as_str()), ("ollama", "bge-m3"));
-        assert_eq!(config.agent("distiller").expect("agent").max_turns, 12);
+        assert_eq!(config.agent("distiller").expect("agent").runtime, crate::agent::Runtime::Builtin);
         assert!(config.telemetry.as_ref().expect("telemetry").enabled);
         // An empty row is a valid row: nothing configured yet.
         assert_eq!(LlmConfig::parse(&json!({})).expect("empty"), LlmConfig::default());

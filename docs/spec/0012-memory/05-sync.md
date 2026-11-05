@@ -47,13 +47,14 @@ shell's, nothing expanded, and the checks run on the unquoted words, but no shel
 unquoted pipe, `;`, `&`, redirection or backtick is refused out loud, and a miss answers
 "nothing matched" rather than an empty stream), both answers redacted like
 the walk's material, and `sync` (files one proposal operation, checked on the spot - an error
-goes back to the model), at most the agent's `maxTurns`; at the end the filed operations are the
+goes back to the model), until a closing answer, cancellation, or a request failure, without a
+fixed round limit; at the end the filed operations are the
 proposal and the closing line its summary. A model that closes with the whole proposal document
 instead (GLM does) gives its `summary` as the line, and when it filed nothing by call its
 operations go through the same check, the refused ones counted in the summary; an agent that
 took no `sync` answers the document as its closing message, filed through the same check. A loop
-that ends without a closing line - at the turn cap, or its last answer stopped at `maxTokens`
-while the model was still thinking - says which in the summary; when it filed nothing either the
+that ends without a closing line - including an answer stopped at `maxTokens`
+while the model was still thinking - says why in the summary; when it filed nothing either the
 run fails, so its commits wait for the next run rather than pass as synced. `chat`
 - one request with the prompt, the proposal read from its text. `claude` - the worker below.
 `pi` - `<command> -p --mode text --no-session --tools <T> --model <provider/model>

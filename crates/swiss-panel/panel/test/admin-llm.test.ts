@@ -138,7 +138,6 @@ function status(): Body {
       ...(rt === "claude" || rt === "pi" ? { command: a.command ?? rt, program: "C:/Users/me/.local/bin/" + rt + ".exe" } : {}),
       // As the server shows them: the resolved limits of a provider-asking runtime.
       ...(asks ? { maxTokens: a.maxTokens ?? 131072, maxContextKiB: a.maxContextKiB ?? 1024, effort: a.effort ?? null } : {}),
-      ...(rt === "builtin" || rt === "db" ? { maxTurns: a.maxTurns ?? 24 } : {}),
       ...(rt === "builtin" ? { secrets: a.secrets ?? [],
         secretsInForce: ((a.secrets ?? []) as string[]).filter((g) => g !== "*" && !g.startsWith("group:")) } : {}),
     };
@@ -976,7 +975,7 @@ describe("the LLM plugin - Agents", () => {
     const tools = (n: string): Array<[string, string]> => kv(n, "tools");
     // What it runs on comes first: the sub line opening hides, and the limits.
     expect(kv("distiller", "setup")).toEqual([
-      ["Runtime", "built-in"], ["Provider", "glm"], ["Model", "glm-5.3-flash"], ["Max turns", "24"], ["Max tokens", "131072"], ["Request budget (KiB)", "1024"],
+      ["Runtime", "built-in"], ["Provider", "glm"], ["Model", "glm-5.3-flash"], ["Max tokens", "131072"], ["Request budget (KiB)", "1024"],
       ["Thinking effort", "The model's default"], ["Concurrency", "4"],
     ]);
     expect(kv("cc", "setup").map((r) => r[0])).toEqual(["Runtime", "Command", "Concurrency"]);
@@ -999,6 +998,17 @@ describe("the LLM plugin - Agents", () => {
     expect(text("[data-larow=quick]")).toContain("no tools");
   });
 
+  it("an agent has no round limit control and drops the retired setting when saved", async () => {
+    row.agents = { distiller: { runtime: "builtin", provider: "glm", maxTurns: 24 } };
+    await agents.mount();
+    expect(text("[data-larow=distiller]")).not.toContain("Max turns");
+    await click("[data-lamore=distiller]");
+    await menuPick("Edit");
+    expect(document.querySelector("#laTurns")).toBe(null);
+    await click("#laSave");
+    expect((puts()[0].agents as Body).distiller).not.toHaveProperty("maxTurns");
+  });
+
   it("a builtin agent picks one of its provider's chat models; a provider listing none is refused", async () => {
     row.providers = { ...row.providers, bare: { style: "openai", baseUrl: "http://127.0.0.1:8000/v1" } };
     await agents.mount();
@@ -1013,17 +1023,13 @@ describe("the LLM plugin - Agents", () => {
     // The provider's chat models only - bge-m3 is an embedding model.
     expect(options("#laModelPick")).toEqual([["", "The provider's default (now qwen3.5:4b)"], ["qwen3.5:4b", "qwen3.5:4b"]]);
     change("#laModelPick", "qwen3.5:4b");
-    type("#laTurns", "99");
-    await click("#laSave");
-    expect(text("#laErr")).toBe("Max turns: a whole number from 1 to 64");
-    type("#laTurns", "8");
     // The request budget, in KiB, within its range.
     type("#laContext", "32");
     await click("#laSave");
     expect(text("#laErr")).toBe("Request budget (KiB): a whole number from 64 to 8192");
     type("#laContext", "2048");
     await click("#laSave");
-    expect((puts()[0].agents as Body).summarizer).toEqual({ runtime: "builtin", provider: "ollama", model: "qwen3.5:4b", maxTurns: 8, maxContextKiB: 2048 });
+    expect((puts()[0].agents as Body).summarizer).toEqual({ runtime: "builtin", provider: "ollama", model: "qwen3.5:4b", maxContextKiB: 2048 });
     expect(text("#toast")).toBe("Agent summarizer saved");
   });
 
@@ -1191,7 +1197,7 @@ describe("the LLM plugin - Agents", () => {
     // No run has a time cap: the sheet asks none, and the save leaves the stored one out.
     expect(document.querySelector("#laTimeout")).toBe(null);
     change("#laRuntime", "chat");
-    expect(q("#laTurns").closest("[hidden]")).not.toBe(null);
+    expect(document.querySelector("#laTurns")).toBe(null);
     await click("#laSave");
     expect((puts()[0].agents as Body).distiller).toEqual({ runtime: "chat", provider: "glm" });
   });
@@ -1247,7 +1253,7 @@ describe("the LLM plugin - Agents", () => {
     expect(text("#laTestOut")).toContain("ANTHROPIC_AUTH_TOKEN, OTEL_LOGS_EXPORTER");
   });
 
-  it("a db agent serves the Data page alone: its prompt and four tools fixed, a turn cap, no secrets, no Test", async () => {
+  it("a db agent serves the Data page alone: its prompt and four tools fixed, no secrets, no Test", async () => {
     row.agents = { ...row.agents, data: { runtime: "db", provider: "glm", effort: "medium" } };
     await agents.mount();
     expect(text("[data-larow=data] .lrow-sub")).toBe("DB · glm · glm-5.3-flash");
@@ -1263,16 +1269,15 @@ describe("the LLM plugin - Agents", () => {
     expect(q<HTMLSelectElement>("#laRuntime").value).toBe("db");
     expect(text("#laRuntimeWhy")).toContain("Serves the Data page alone");
     expect(text("#laPromptBase")).toBe(DB_PROMPT);
-    expect(q("#laTurns").closest("[hidden]")).toBe(null);
+    expect(document.querySelector("#laTurns")).toBe(null);
     expect(q("#laSecrets").closest("[hidden]"), "no shell, no secrets").not.toBe(null);
     // The four tools are the page's: all taken, none to uncheck, none written.
     const boxes = [...document.querySelectorAll<HTMLInputElement>("#laTools [data-latool]")];
     expect(boxes.map((b) => [b.dataset.latool, b.checked, b.disabled])).toEqual([
       ["list_tables", true, true], ["describe_table", true, true], ["run_sql", true, true], ["stage_sql", true, true],
     ]);
-    type("#laTurns", "12");
     await click("#laSave");
-    expect((puts()[0].agents as Body).data).toEqual({ runtime: "db", provider: "glm", maxTurns: 12, effort: "medium" });
+    expect((puts()[0].agents as Body).data).toEqual({ runtime: "db", provider: "glm", effort: "medium" });
   });
 
   it("sent from the Data page to make one, the Add sheet opens once, preset to the db runtime and named db", async () => {

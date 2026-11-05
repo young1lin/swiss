@@ -3824,8 +3824,6 @@ const zh                         = {
   "llm.agents.piModelPh": "glm/glm-5.3-flash",
   "llm.agents.piModelWhy": "必填：pi 的 ~/.pi/agent/models.json 中定义的 \"provider/model\" ID。",
   "llm.agents.maxTokens": "最大 token 数",
-  "llm.agents.maxTurns": "最大轮数",
-  "llm.agents.maxTurnsWhy": "循环停止前的工具轮数——留空为 24，最多 64。",
   "llm.agents.maxContext": "单次请求上限（KiB）",
   "llm.agents.maxContextWhy": "一次请求最多携带的内容：系统提示、工具、回放的对话和新提示合计。留空为 1024，范围 {min} 到 {max}；对话超过它就不能再继续发送。",
   "llm.agents.effort": "思考强度",

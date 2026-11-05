@@ -21,7 +21,7 @@ use super::*;
 
 /// One conversation being noted turn by turn. Created from a history (or
 /// [RunRecorder::none] when there is none), it accumulates notes in memory - a run is
-/// bounded by its turn cap and its file reads - and files the run row and every turn
+/// bounded by its request context and its file reads - and files the run row and every turn
 /// in one queued transaction at [finish](RunRecorder::finish).
 pub struct RunRecorder {
     pub(super) history: Option<Arc<LlmHistory>>,

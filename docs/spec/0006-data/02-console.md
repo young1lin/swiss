@@ -204,7 +204,7 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   Manual drafts retain their exact bytes and their normal compare-and-swap protection.
 - **The prompt is the db runtime's.** The conversation opens under `DB_AGENT_PROMPT`, the
   agent's own prompt after it, a blank line between (a house style, a language to answer in);
-  the agent's provider, model, effort and turn cap run it. After the prompts an `# Environment` snapshot names the connection, its
+  the agent's provider, model and effort run it, without a fixed round limit. After the prompts an `# Environment` snapshot names the connection, its
   dialect with that dialect's notes (identifier quoting, `_` and `%` as LIKE wildcards and
   their escape, top-N per group through `ROW_NUMBER() OVER (PARTITION BY …)`), the schema in
   view on the page, its tables - every name when there are 100 at most, else only how many,

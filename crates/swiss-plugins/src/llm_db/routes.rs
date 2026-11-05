@@ -497,7 +497,7 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
         sse_send(&tx, "references", json!({ "references": sent }));
     }
     let started = Instant::now();
-    let max_turns = agent.turns();
+    let allow_tool_rounds = agent.allows_tools();
     tokio::spawn(async move {
         // A MongoDB conversation works in the database in view unless the model names another.
         let in_view = if kind == DbKind::Mongo { schema } else { None };
@@ -516,7 +516,7 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
         // the drive: it runs as long as its work takes; Stop or the reader leaving ends it.
         let driven = {
             let looped = swiss_llm::agent::run_loop_continued(
-                &chat, &system, &prior, &prompt, &mut tools, max_turns, &session, &mut run, &mut on_event,
+                &chat, &system, &prior, &prompt, &mut tools, allow_tool_rounds, &session, &mut run, &mut on_event,
             );
             tokio::pin!(looped);
             loop {
@@ -764,7 +764,7 @@ pub async fn compact(State(state): State<Arc<LlmState>>, Extension(services): Ex
         let spoiled = match &driven {
             Ok(outcome) if outcome.cancelled => None,
             Ok(outcome) if outcome.cut => Some("the checkpoint stopped at the model's output limit (maxTokens): nothing was compacted"),
-            Ok(outcome) if outcome.capped || outcome.summary.trim().is_empty() => Some("the model wrote no checkpoint: nothing was compacted"),
+            Ok(outcome) if outcome.summary.trim().is_empty() => Some("the model wrote no checkpoint: nothing was compacted"),
             _ => None,
         };
         let landed = matches!(&driven, Ok(outcome) if !outcome.cancelled) && spoiled.is_none();

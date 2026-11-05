@@ -3916,8 +3916,6 @@ const en                         = {
   "llm.agents.piModelPh": "glm/glm-5.3-flash",
   "llm.agents.piModelWhy": "Required: the \"provider/model\" id pi's ~/.pi/agent/models.json defines.",
   "llm.agents.maxTokens": "Max tokens",
-  "llm.agents.maxTurns": "Max turns",
-  "llm.agents.maxTurnsWhy": "Tool rounds before the loop stops - 24 when empty, at most 64.",
   "llm.agents.maxContext": "Request budget (KiB)",
   "llm.agents.maxContextWhy": "The most one request carries: the system prompt, the tools, the dialogue replayed and the new prompt. 1024 when empty, from {min} to {max}; a conversation past it takes no further send.",
   "llm.agents.effort": "Thinking effort",

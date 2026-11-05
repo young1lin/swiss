@@ -81,7 +81,6 @@ export interface LlmAgentEntry {
   runtime?: LlmRuntime;
   provider?: string;
   model?: string;
-  maxTurns?: number;
   maxTokens?: number;
   /** builtin/chat: the most one request carries, in KiB; unset is 1024. */
   maxContextKiB?: number;
@@ -155,7 +154,6 @@ export interface LlmAgentRow {
   maxTokens?: number;
   /** builtin/chat: the request budget in force, in KiB. */
   maxContextKiB?: number;
-  maxTurns?: number;
   /** builtin: the grant as written, and the stored names it reaches now. */
   secrets?: string[];
   secretsInForce?: string[];
@@ -261,7 +259,6 @@ export interface LlmStreamDoneFrame {
   turns?: number;
   tokensIn?: number;
   tokensOut?: number;
-  capped?: boolean;
   session?: string;
 }
 

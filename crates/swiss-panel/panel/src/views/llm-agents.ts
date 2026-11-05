@@ -49,7 +49,6 @@ import { streamAsk } from "./llm-stream.js";
 import type { StreamHooks, StreamOutcome } from "./llm-stream.js";
 
 const AGENTS_MAX = 16;
-const TURNS_MAX = 64;
 const TOKENS_MIN = 256;
 const TOKENS_MAX = 131_072;
 const CONTEXT_KIB_MIN = 64;
@@ -150,7 +149,6 @@ function setupView(a: LlmAgentRow): HTMLElement {
       ? kvRow(tr("llm.agents.provider"), a.provider || "-")
       : kvRow(tr("llm.agents.command"), h("code", null, a.program || a.command || "-")),
     a.model ? kvRow(tr("llm.agents.model"), h("code", null, a.model)) : null,
-    a.maxTurns != null ? kvRow(tr("llm.agents.maxTurns"), String(a.maxTurns)) : null,
     a.secrets && a.secrets.length
       ? kvRow(tr("llm.agents.secrets"), a.secrets.join(", ") + " · " + tr("llm.agents.secretsReach", { count: (a.secretsInForce || []).length }),
         { title: (a.secretsInForce || []).join(", ") })
@@ -284,7 +282,6 @@ async function openAgent(name: string | null, preset: AgentPreset | null = null)
   const pickWhy = h("span", { id: "laModelPickWhy" });
   const model = input("laModel", e.model);
   const maxTokens = input("laTokens", e.maxTokens, "131072");
-  const maxTurns = input("laTurns", e.maxTurns, "24");
   const maxContext = input("laContext", e.maxContextKiB, "1024");
   const effort = h("select", { id: "laEffort" },
     h("option", { value: "" }, tr("llm.agents.effortDefault")),
@@ -312,17 +309,14 @@ async function openAgent(name: string | null, preset: AgentPreset | null = null)
   const rt = (): LlmRuntime => RUNTIMES.find((r) => r === runtime.value) || "builtin";
   const defaultPrompt = (): string | null => st.defaultPrompts[rt()];
 
-  const turnsField = field({ label: tr("llm.agents.maxTurns"), control: maxTurns, hint: tr("llm.agents.maxTurnsWhy") });
   const askPart = h("div", { id: "laAsk" },
     pair(
       field({ label: tr("llm.agents.provider"), control: provider, required: true, hint: providers.length ? null : tr("llm.agents.noProvider") }),
       field({ label: tr("llm.agents.model"), control: pick, hint: pickWhy })),
     pair(
       field({ label: tr("llm.agents.maxTokens"), control: maxTokens, hint: tr("llm.wholeRange", { min: TOKENS_MIN, max: TOKENS_MAX }) }),
-      turnsField),
-    pair(
-      field({ label: tr("llm.agents.maxContext"), control: maxContext, hint: tr("llm.agents.maxContextWhy", { min: CONTEXT_KIB_MIN, max: CONTEXT_KIB_MAX }) }),
-      field({ label: tr("llm.agents.effort"), control: effort, hint: tr("llm.agents.effortWhy") })));
+      field({ label: tr("llm.agents.maxContext"), control: maxContext, hint: tr("llm.agents.maxContextWhy", { min: CONTEXT_KIB_MIN, max: CONTEXT_KIB_MAX }) })),
+    field({ label: tr("llm.agents.effort"), control: effort, hint: tr("llm.agents.effortWhy") }));
   const modelWhy = h("span", { id: "laModelWhy" });
   const cliPart = h("div", { id: "laCli" },
     pair(
@@ -376,7 +370,6 @@ async function openAgent(name: string | null, preset: AgentPreset | null = null)
     const isPi = r === "pi";
     askPart.hidden = !asks;
     cliPart.hidden = asks;
-    turnsField.hidden = r !== "builtin" && r !== "db";
     secretsField.hidden = r !== "builtin";
     concurrency.placeholder = asks ? "4" : "1";
     concurrencyWhy.textContent = asks ? tr("llm.agents.concurrencyWhyAsk") : tr("llm.agents.concurrencyWhyCli");
@@ -413,11 +406,6 @@ async function openAgent(name: string | null, preset: AgentPreset | null = null)
       const k = wholeField(maxContext.value, tr("llm.agents.maxContext"), CONTEXT_KIB_MIN, CONTEXT_KIB_MAX);
       if (isError(k)) return k.error;
       if (k != null) next.maxContextKiB = k;
-      if (r === "builtin" || r === "db") {
-        const n = wholeField(maxTurns.value, tr("llm.agents.maxTurns"), 1, TURNS_MAX);
-        if (isError(n)) return n.error;
-        if (n != null) next.maxTurns = n;
-      }
       if (r === "builtin") {
         const grant = secrets.value.split(",").map((s) => s.trim()).filter(Boolean);
         const bad = grant.find((g) => !grantable(g));
@@ -503,7 +491,7 @@ async function openAgent(name: string | null, preset: AgentPreset | null = null)
   (name ? runtime : nameIn).focus();
 }
 
-/** builtin runs the real loop - its tools, its turn cap, the dialogue filed as a run
+/** builtin runs the real loop - its tools, the dialogue filed as a run
  *  with turns; chat answers one prompt (it takes no tools by design); claude and pi prove
  *  the binary with --version and list the env it would get.
  *

@@ -1592,10 +1592,10 @@ describe("the Memory page - sync settings", () => {
 
   /** The llm plugin's agents, as GET /api/llm/status lists them. */
   const AGENTS = [
-    { name: "distiller", runtime: "builtin", provider: "ollama", model: "qwen3.5:4b", report: true, reports: "swiss", maxTurns: 24, maxTokens: 8192 },
+    { name: "distiller", runtime: "builtin", provider: "ollama", model: "qwen3.5:4b", report: true, reports: "swiss", maxTokens: 8192 },
     { name: "cc", runtime: "claude", provider: null, model: null, report: true, reports: "child", command: "claude", program: "C:/Users/me/.local/bin/claude.exe" },
     // The Data page's own: never offered to a memory task.
-    { name: "data", runtime: "db", provider: "glm", model: "glm-5.3-flash", report: true, reports: "swiss", maxTurns: 24 },
+    { name: "data", runtime: "db", provider: "glm", model: "glm-5.3-flash", report: true, reports: "swiss" },
   ];
 
   /** The routes the sheet reads: the overview, the queue, the llm plugin's agents, the
