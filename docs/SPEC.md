@@ -31,7 +31,7 @@ introduction and the list of its parts, and numbered part files (`01-record.md`,
 sections between files; it never renames an anchor.
 
 **Anchors.** Code comments, tests and skills cite a rule as `SPEC §host.vault`; the part before
-the first dot names the chapter, so `§host.vault` lives in `spec/0004-host.md` and
+the first dot names the chapter, so `§mcp.proc` lives in `spec/0005-mcp.md` and
 `§memory.init` in one of the parts of `spec/0012-memory/` (the map says which). A decision is
 cited by its number, `ADR-018`, and lives in §decisions. An anchor is a contract: renaming one
 means rewriting every citation in the same commit (`git grep 'SPEC §'`).
@@ -70,7 +70,7 @@ in §decisions.
 | 0001 | [§product](spec/0001-product.md) | — | What swiss is, the four properties, the memory record |
 | 0002 | [§arch](spec/0002-arch.md) | — | Crates and edges, runtime model, dependency policy, Rust rules, declared exceptions |
 | 0003 | [§core](spec/0003-core.md) | `swiss-core` | The data directory, the sealed envelope, the master key |
-| 0004 | [§host](spec/0004-host.md) | `swiss-host`, `swiss-plugins`, `swiss` | Plugin host, lifecycle, routes, wire rules, security boundary, session, config, vault, groups, CLI, daemon |
+| 0004 | [§host](spec/0004-host/README.md) | `swiss-host`, `swiss-plugins`, `swiss` | Plugin host, lifecycle, routes, wire rules, security boundary, session, config, vault, groups, CLI, daemon |
 | 0005 | [§mcp](spec/0005-mcp.md) | `swiss-mcp` | The MCP plugin: endpoint, protocol eras, registry, adapters, OAuth, revisions, call log |
 | 0006 | [§data](spec/0006-data/README.md) | `swiss-data` | The Data plugin: connections, browsers, SQL console, Redis, tabs |
 | 0007 | [§tunnels](spec/0007-tunnels.md) | `swiss-tunnels` | SSH connections, forward rules, proxy and jump hosts |
@@ -110,28 +110,28 @@ in §decisions.
 - [§core.sealed — The sealed envelope (frozen)](spec/0003-core.md#coresealed--the-sealed-envelope-frozen)
 - [§core.masterkey — The master key](spec/0003-core.md#coremasterkey--the-master-key)
 
-### 0004 · [§host — The host](spec/0004-host.md)
+### 0004 · [§host — The host](spec/0004-host/README.md)
 
-- [§host.plugins — The plugin contract](spec/0004-host.md#hostplugins--the-plugin-contract)
-- [§host.lifecycle — States, start, stop, config changes](spec/0004-host.md#hostlifecycle--states-start-stop-config-changes)
-- [§host.routes — Route trees and host-owned routes](spec/0004-host.md#hostroutes--route-trees-and-host-owned-routes)
-- [§host.wire — HTTP wire rules](spec/0004-host.md#hostwire--http-wire-rules)
-- [§host.boundary — The loopback boundary](spec/0004-host.md#hostboundary--the-loopback-boundary)
-- [§host.session — The admin session](spec/0004-host.md#hostsession--the-admin-session)
-- [§host.tokens — MCP client tokens](spec/0004-host.md#hosttokens--mcp-client-tokens)
-- [§host.config — Config and the config store](spec/0004-host.md#hostconfig--config-and-the-config-store)
-- [§host.refs — Credentials and the resolver](spec/0004-host.md#hostrefs--credentials-and-the-resolver)
-- [§host.vault — The secret vault](spec/0004-host.md#hostvault--the-secret-vault)
-- [§host.groups — Groups](spec/0004-host.md#hostgroups--groups)
-- [§host.actions — Actions and runs](spec/0004-host.md#hostactions--actions-and-runs)
-- [§host.history — Module-owned log storage (mechanics)](spec/0004-host.md#hosthistory--module-owned-log-storage-mechanics)
-- [§host.seats — Capability seats](spec/0004-host.md#hostseats--capability-seats)
-- [§host.memory — The memory reading](spec/0004-host.md#hostmemory--the-memory-reading)
-- [§host.cli — The command line](spec/0004-host.md#hostcli--the-command-line)
-- [§host.setup — Configuring from the command line](spec/0004-host.md#hostsetup--configuring-from-the-command-line)
-- [§host.gui — The panel in its own window](spec/0004-host.md#hostgui--the-panel-in-its-own-window)
-- [§host.daemon — Daemon, pid file, logs, build stamp](spec/0004-host.md#hostdaemon--daemon-pid-file-logs-build-stamp)
-- [§host.ops — Production, the test instance, deploys](spec/0004-host.md#hostops--production-the-test-instance-deploys)
+- [§host.plugins — The plugin contract](spec/0004-host/01-plugins.md#hostplugins--the-plugin-contract)
+- [§host.lifecycle — States, start, stop, config changes](spec/0004-host/01-plugins.md#hostlifecycle--states-start-stop-config-changes)
+- [§host.routes — Route trees and host-owned routes](spec/0004-host/01-plugins.md#hostroutes--route-trees-and-host-owned-routes)
+- [§host.wire — HTTP wire rules](spec/0004-host/01-plugins.md#hostwire--http-wire-rules)
+- [§host.boundary — The loopback boundary](spec/0004-host/02-access.md#hostboundary--the-loopback-boundary)
+- [§host.session — The admin session](spec/0004-host/02-access.md#hostsession--the-admin-session)
+- [§host.tokens — MCP client tokens](spec/0004-host/02-access.md#hosttokens--mcp-client-tokens)
+- [§host.config — Config and the config store](spec/0004-host/02-access.md#hostconfig--config-and-the-config-store)
+- [§host.refs — Credentials and the resolver](spec/0004-host/02-access.md#hostrefs--credentials-and-the-resolver)
+- [§host.vault — The secret vault](spec/0004-host/02-access.md#hostvault--the-secret-vault)
+- [§host.groups — Groups](spec/0004-host/03-shared.md#hostgroups--groups)
+- [§host.actions — Actions and runs](spec/0004-host/03-shared.md#hostactions--actions-and-runs)
+- [§host.history — Module-owned log storage (mechanics)](spec/0004-host/03-shared.md#hosthistory--module-owned-log-storage-mechanics)
+- [§host.seats — Capability seats](spec/0004-host/03-shared.md#hostseats--capability-seats)
+- [§host.memory — The memory reading](spec/0004-host/03-shared.md#hostmemory--the-memory-reading)
+- [§host.cli — The command line](spec/0004-host/04-command-line.md#hostcli--the-command-line)
+- [§host.setup — Configuring from the command line](spec/0004-host/04-command-line.md#hostsetup--configuring-from-the-command-line)
+- [§host.gui — The panel in its own window](spec/0004-host/05-running.md#hostgui--the-panel-in-its-own-window)
+- [§host.daemon — Daemon, pid file, logs, build stamp](spec/0004-host/05-running.md#hostdaemon--daemon-pid-file-logs-build-stamp)
+- [§host.ops — Production, the test instance, deploys](spec/0004-host/05-running.md#hostops--production-the-test-instance-deploys)
 
 ### 0005 · [§mcp — The MCP plugin](spec/0005-mcp.md)
 

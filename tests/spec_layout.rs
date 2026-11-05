@@ -89,7 +89,7 @@ struct Section {
 struct Chapter {
     number: String,
     slug: String,
-    /// The file carrying the title, as the front page links it: `spec/0004-host.md`, or
+    /// The file carrying the title, as the front page links it: `spec/0005-mcp.md`, or
     /// `spec/0012-memory/README.md` for a chapter in parts.
     link: String,
     /// The title text after `# `, e.g. `§host — The host`.
@@ -385,7 +385,7 @@ fn parse(file: &File, last_adr: &mut u32, errors: &mut Vec<String>) -> Parsed {
     Parsed { title, sections }
 }
 
-/// The chapter table's rows up to the crate column: `| 0004 | [§host](spec/0004-host.md) |`.
+/// The chapter table's rows up to the crate column: `| 0005 | [§mcp](spec/0005-mcp.md) |`.
 fn expected_table(chapters: &[Chapter]) -> Vec<String> {
     chapters
         .iter()
