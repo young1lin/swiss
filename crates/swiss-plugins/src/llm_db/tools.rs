@@ -1365,7 +1365,7 @@ impl Toolbox for DbTools {
                     "run_sql",
                     "Run ONE statement. A read (SELECT, WITH, TABLE, VALUES, SHOW, DESCRIBE, EXPLAIN) runs in a read-only transaction that is rolled back. A write is refused here - stage it - unless the snapshot says Writes: auto: then one INSERT, REPLACE, UPDATE or DELETE (an UPDATE or DELETE only with a WHERE that narrows it) runs and is committed when it changes no more rows than that line allows; any other write, or one past that, is not run but placed in the console, and the result says why. It lands in the user's console and its whole result opens on their page; you read the row count, the columns and the first rows.",
                     json!({ "type": "object", "properties": {
-                        "sql": { "type": "string", "description": "One raw statement. Any whitespace or layout is accepted; the application formats its display." },
+                        "sql": { "type": "string", "description": "One SQL statement." },
                         "limit": { "type": "integer", "description": "Rows to fetch when the statement has no LIMIT of its own (default and most: the page's row limit)." },
                         "consoleId": console_id,
                         "description": description
@@ -1374,7 +1374,7 @@ impl Toolbox for DbTools {
                 spec(
                     "stage_sql",
                     "Place a statement in the user's console without running it - for anything that writes or changes schema and run_sql does not run itself. The user reviews and runs it.",
-                    json!({ "type": "object", "properties": { "consoleId": console_id, "description": description, "sql": { "type": "string", "description": "Raw SQL; display formatting is handled by the application." } }, "required": ["consoleId", "description", "sql"] }),
+                    json!({ "type": "object", "properties": { "consoleId": console_id, "description": description, "sql": { "type": "string", "description": "SQL to place in the console." } }, "required": ["consoleId", "description", "sql"] }),
                 ),
             ],
             DbKind::Mongo => {

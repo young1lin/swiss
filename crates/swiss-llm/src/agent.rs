@@ -249,7 +249,6 @@ limit.\n\
 list_console_tabs. open_console returns JSON with consoleId. run_sql and stage_sql require consoleId, description and sql. \
 Always pass that ID: names are display labels and may be duplicated; IDs survive renames and closing. \
 description is one short sentence in the user's language, shown as a -- comment above the SQL. \
-Send raw SQL in any layout: the application formats its display and executes the original statement. \
 One tab, one kind of work: create a different console for a different question or writes apart from the reads \
 that found their rows. When a console already holds many statements, create a new purpose-named one \
 for the next specific subtask.\n\
@@ -1872,12 +1871,13 @@ mod tests {
             "One tab, one kind of work",
             "already holds many statements",
             "run_sql and stage_sql require consoleId, description and sql",
-            "the application formats its display",
         ] {
             assert!(DB_AGENT_PROMPT.contains(rule), "{rule}");
         }
         // Static: nothing of a connection, a day or a model, so every conversation shares it.
         assert!(!DB_AGENT_PROMPT.contains("{{") && !DB_AGENT_PROMPT.contains("2026"));
+        assert!(!DB_AGENT_PROMPT.contains("Send raw SQL in any layout"));
+        assert!(!DB_AGENT_PROMPT.contains("formats its display"));
     }
 
     #[test]

@@ -376,6 +376,8 @@ async fn sql_calls_require_an_existing_console_id_and_a_statement_description() 
     for tool in ["run_sql", "stage_sql"] {
         let spec = tools.specs().into_iter().find(|spec| spec.name == tool).expect("SQL tool");
         assert_eq!(spec.schema["required"], json!(["consoleId", "description", "sql"]));
+        let sql_help = spec.schema["properties"]["sql"]["description"].as_str().expect("SQL help");
+        assert!(!sql_help.contains("format") && !sql_help.contains("layout") && !sql_help.contains("whitespace"));
         assert!(spec.schema["properties"].get("tab").is_none());
         assert!(spec.schema["properties"].get("tabId").is_none());
         assert!(spec.schema["properties"].get("format").is_none());

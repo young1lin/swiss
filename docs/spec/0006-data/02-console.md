@@ -353,6 +353,7 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   Newlines and other control characters in the description are refused before any effects.
   SQL run/stage accept neither `console`, `tab`, `tabId` nor `format`. SQL may use arbitrary
   whitespace: the application formats the display, while execution receives the original SQL.
+  SQL layout and display formatting are not discussed in the agent prompt or run/stage tool instructions.
   Explicitly targeting a manual console appends there and marks it agent-managed, preserving
   its existing stored bytes. MongoDB and Redis retain optional `tab`/`tabId` and their default
   Agent slot. Names and IDs are validated before any side effects.
