@@ -189,6 +189,46 @@ async fn an_mcp_builder_refuses_a_missing_vault_reference() {
     assert_eq!(adapter.kind().to_string(), "http");
 }
 
+// SPEC §mcp.defs: the page that shows a header shows a scheme and a reference as written, and a
+// save of what it read keeps them.
+#[tokio::test]
+async fn a_bearer_reference_reads_back_as_written() {
+    let _guard = VAULT_LOCK.lock().await;
+    let h = setup();
+    let rev = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    h.put("/api/secrets/bearer-read-back", json!({ "value": "tok", "rev": rev })).await;
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({
+                "name": "bearer", "type": "http", "url": "https://example.test/mcp", "enabled": false,
+                "headers": {
+                    "Authorization": "Bearer ${secret://bearer-read-back}",
+                    "Proxy-Authorization": "Bearer sk-live-123",
+                },
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    let (status, details) = h.get("/api/mcps/bearer/details").await;
+    assert_eq!(status, StatusCode::OK, "{details}");
+    let headers = &details["config"]["headers"];
+    assert_eq!(headers["Authorization"], json!("Bearer ${secret://bearer-read-back}"));
+    assert!(!details.to_string().contains("sk-live-123"), "a literal stays masked: {details}");
+
+    let (status, body) = h
+        .put(
+            "/api/mcps/bearer",
+            json!({ "type": "http", "url": "https://example.test/two", "headers": headers }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let stored = h.def_of("bearer");
+    assert_eq!(stored["headers"]["Authorization"], json!("Bearer ${secret://bearer-read-back}"));
+    assert_eq!(stored["headers"]["Proxy-Authorization"], json!("Bearer sk-live-123"), "the literal is restored");
+}
+
 #[tokio::test]
 async fn the_rest_connection_test_fails_honestly_on_a_missing_vault_reference() {
     // The rest branch of /api/mcpdefs/test resolves the WHOLE def before its one plain GET

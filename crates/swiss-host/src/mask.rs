@@ -319,11 +319,30 @@ fn unmask_command(next: &str, current: Option<&Value>) -> String {
 
 // --- records (env / headers) ---------------------------------------------------------------------
 
+/// `Bearer ${secret://x}`: one auth scheme, one space, one whole reference. It holds no credential,
+/// and a reader must see it to know the header is right. Anything else beside a reference may be a
+/// literal, and so may a reference's default, so both stay masked.
+fn is_scheme_and_reference(v: &Value) -> bool {
+    let Some((scheme, reference)) = v.as_str().and_then(|s| s.split_once(' ')) else {
+        return false;
+    };
+    let has_default = reference
+        .strip_prefix("${secret://")
+        .is_some_and(|rest| rest.contains(':'));
+    !scheme.is_empty()
+        && scheme.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        && reference.starts_with("${")
+        && !has_default
+        && is_env_ref(&Value::String(reference.to_string()))
+}
+
 fn mask_record(rec: &Map<String, Value>, is_secret: fn(&str) -> bool) -> Map<String, Value> {
     rec.iter()
         .map(|(k, v)| {
-            let masked =
-                !is_env_ref(v) && is_secret(k) && v.as_str().is_some_and(|s| !s.is_empty());
+            let masked = !is_env_ref(v)
+                && !is_scheme_and_reference(v)
+                && is_secret(k)
+                && v.as_str().is_some_and(|s| !s.is_empty());
             (
                 k.clone(),
                 if masked {
@@ -648,6 +667,45 @@ mod tests {
         assert_eq!(out["env"]["PLAIN"], json!("y"));
         assert_eq!(out["headers"]["Authorization"], json!(MASK));
         assert_eq!(out["headers"]["Accept"], json!("json"));
+    }
+
+    // SPEC §mcp.defs: a scheme and one whole reference hold no credential, anything else may.
+    #[test]
+    fn a_scheme_and_a_reference_survive_masking() {
+        for kept in [
+            "Bearer ${secret://api-key}",
+            "Bearer ${API_KEY}",
+            "token ${secret://api-key}",
+            "X-Scheme-2 ${API_KEY}",
+        ] {
+            let out = mask(json!({ "headers": { "Authorization": kept }, "env": { "AUTH_TOKEN": kept } }));
+            assert_eq!(out["headers"]["Authorization"], json!(kept));
+            assert_eq!(out["env"]["AUTH_TOKEN"], json!(kept));
+        }
+        for hidden in [
+            "Bearer sk-live-123",
+            "Bearer ${secret://api-key} sk-live-123",
+            "Bearer sk-${API_KEY}",
+            "Bearer  ${API_KEY}",
+            "Bearer ${secret://api-key:sk-live-123}",
+            "Bearer secret://api-key",
+            "sk live ${API_KEY}",
+            " ${API_KEY}",
+        ] {
+            let out = mask(json!({ "headers": { "Authorization": hidden } }));
+            assert_eq!(out["headers"]["Authorization"], json!(MASK), "{hidden}");
+        }
+
+        // Kept on the way out means an edit sends the same text back, with nothing to restore.
+        let stored = ServerDef(
+            json!({ "headers": { "Authorization": "Bearer ${secret://api-key}" } })
+                .as_object()
+                .cloned()
+                .unwrap(),
+        );
+        let body = json!({ "headers": { "Authorization": "Bearer ${secret://api-key}" } });
+        let out = unmask_body(body.as_object().unwrap(), Some(&stored));
+        assert_eq!(out["headers"]["Authorization"], json!("Bearer ${secret://api-key}"));
     }
 
     #[test]
