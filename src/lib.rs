@@ -36,6 +36,7 @@ pub mod process_cli;
 pub mod remote_cli;
 pub mod server;
 pub mod session;
+pub mod setup_cli;
 pub mod skill_install;
 pub mod subsystems;
 pub mod update_check;

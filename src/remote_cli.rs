@@ -254,14 +254,14 @@ pub fn query_encode(raw: &str) -> String {
 
 /// One gateway client: base URL, the CLI key the admin API wants (SPEC §host.session, attached per
 /// request) and the bearer token the MCP side knows this user by.
-struct Gateway {
+pub(crate) struct Gateway {
     client: reqwest::Client,
     base: String,
     token: Option<String>,
 }
 
 impl Gateway {
-    fn at(port: u16) -> Self {
+    pub(crate) fn at(port: u16) -> Self {
         Gateway {
             client: crate::daemon::loopback_client(),
             base: format!("http://127.0.0.1:{port}"),
@@ -269,7 +269,7 @@ impl Gateway {
         }
     }
 
-    async fn get(&self, path: &str) -> Result<Value, String> {
+    pub(crate) async fn get(&self, path: &str) -> Result<Value, String> {
         self.send(reqwest::Method::GET, path, None).await
     }
 
@@ -287,6 +287,21 @@ impl Gateway {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, String> {
+        let (status, value) = self.exchange(method, path, body).await?;
+        if !status.is_success() {
+            let message = value["error"].as_str().unwrap_or("no detail");
+            return Err(format!("{} {message}", status.as_u16()));
+        }
+        Ok(value)
+    }
+
+    /// One call and its status, however it went: what a caller that acts on a status needs.
+    pub(crate) async fn exchange(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<(reqwest::StatusCode, Value), String> {
         let mut request = crate::daemon::with_cli_key(
             self.client.request(method, format!("{}{path}", self.base)),
         );
@@ -305,11 +320,7 @@ impl Gateway {
             Ok(v) => v,
             Err(_) => Value::Null,
         };
-        if !status.is_success() {
-            let message = value["error"].as_str().unwrap_or("no detail");
-            return Err(format!("{} {message}", status.as_u16()));
-        }
-        Ok(value)
+        Ok((status, value))
     }
 }
 /// The entry from cli.rs: argv is everything AFTER `swiss remote` / `swiss run`.
@@ -883,27 +894,29 @@ async fn cmd_exec(gw: Gateway, a: &RemoteArgs) -> i32 {
 
 /// Read what --stdin-file names: a path, or `-` for this process's own stdin.
 fn read_stdin_file(spec: &str) -> Result<String, String> {
-    use std::io::Read as _;
     if spec.is_empty() {
         return Err("--stdin-file needs a path, or - for this process's stdin".into());
     }
-    if spec == "-" {
-        let mut raw = Vec::new();
-        std::io::stdin()
-            .lock()
-            .read_to_end(&mut raw)
-            .map_err(|err| format!("cannot read stdin: {err}"))?;
-        return stdin_text(&raw, "stdin");
-    }
-    let raw = std::fs::read(spec).map_err(|err| format!("cannot read {spec}: {err}"))?;
-    stdin_text(&raw, spec)
+    let raw = read_path_or_stdin(spec, &mut std::io::stdin().lock())?;
+    stdin_text(&raw, if spec == "-" { "stdin" } else { spec })
 }
 
-/// The text a --stdin-file read becomes (SPEC §remote.cli): UTF-8 exactly as it is -
-/// quotes, CRLF and all. A byte-order mark goes (it would be the script's first word),
-/// and a UTF-16 file that starts with one - what Windows PowerShell 5's `>` writes - is
-/// decoded. Other non-UTF-8 bytes are refused: stdin travels as JSON text.
-pub fn stdin_text(raw: &[u8], from: &str) -> Result<String, String> {
+/// The bytes a path holds, or everything `stdin` gives for `-`.
+fn read_path_or_stdin(spec: &str, stdin: &mut dyn std::io::Read) -> Result<Vec<u8>, String> {
+    if spec == "-" {
+        let mut raw = Vec::new();
+        stdin
+            .read_to_end(&mut raw)
+            .map_err(|err| format!("cannot read stdin: {err}"))?;
+        return Ok(raw);
+    }
+    std::fs::read(spec).map_err(|err| format!("cannot read {spec}: {err}"))
+}
+
+/// Bytes the CLI was handed as text: UTF-8 exactly as it is - quotes, CRLF and all. A byte-order
+/// mark goes (it would be the text's first word), and a UTF-16 file that starts with one - what
+/// Windows PowerShell 5's `>` writes - is decoded. `None` for anything else.
+pub(crate) fn decode_text(raw: &[u8]) -> Option<String> {
     let decoded = |encoding: &'static encoding_rs::Encoding, body: &[u8]| {
         let mut decoder = encoding.new_decoder_without_bom_handling();
         let mut out = vec![0u8; decoder.max_utf8_buffer_length_without_replacement(body.len())?];
@@ -915,11 +928,16 @@ pub fn stdin_text(raw: &[u8], from: &str) -> Result<String, String> {
             _ => None,
         }
     };
-    let text = match encoding_rs::Encoding::for_bom(raw) {
+    match encoding_rs::Encoding::for_bom(raw) {
         Some((encoding, bom)) => decoded(encoding, &raw[bom..]),
         None => std::str::from_utf8(raw).ok().map(str::to_string),
     }
-    .ok_or_else(|| {
+}
+
+/// The text a --stdin-file read becomes (SPEC §remote.cli), which is `decode_text`'s, with a limit:
+/// stdin travels as JSON text.
+pub fn stdin_text(raw: &[u8], from: &str) -> Result<String, String> {
+    let text = decode_text(raw).ok_or_else(|| {
         format!("{from} is not UTF-8 text; stdin is sent as text - upload a binary file with swiss remote push and redirect from it")
     })?;
     if text.len() > swiss_remote::actions::STDIN_MAX_BYTES {
@@ -1609,41 +1627,20 @@ async fn cmd_pull(gw: Gateway, a: &RemoteArgs) -> i32 {
 // --- `swiss run`: the run surface, shared with every submit --------------------------------
 
 /// The entry for `swiss run ...` (argv is everything after `swiss run`).
-/// `swiss api <METHOD> </api/...> [json-body]` (SPEC §host.session): one admin API call with the CLI key
-/// attached - how a script reaches /api/* now that it needs a credential, without the key ever
-/// being printed or passed on a command line. The answer's JSON goes to stdout; an HTTP error
-/// goes to stderr with exit 1.
+/// `swiss api <METHOD> </api/...> [json-body | --body-file <path|->]` (SPEC §host.session, §host.cli):
+/// one admin API call with the CLI key attached - how a script reaches /api/* now that it needs a
+/// credential, without the key ever being printed or passed on a command line. The answer's JSON
+/// goes to stdout; an HTTP error goes to stderr with exit 1.
 pub async fn api_main(argv: Vec<String>) -> i32 {
-    const USAGE: &str = "usage: swiss api <GET|POST|PUT|PATCH|DELETE> </api/...> [json-body]";
-    let (method, path, body) = match argv.as_slice() {
-        [m, p] => (m, p, None),
-        [m, p, b] => (m, p, Some(b)),
-        _ => {
-            eprintln!("{USAGE}");
+    let call = api_call(&argv, &mut std::io::stdin().lock());
+    let call = match call {
+        Ok(call) => call,
+        Err(refusal) => {
+            eprintln!("{refusal}");
             return 2;
         }
     };
-    let Ok(method) = reqwest::Method::from_bytes(method.to_ascii_uppercase().as_bytes()) else {
-        eprintln!("{USAGE}");
-        return 2;
-    };
-    let Some(path) = api_path(path) else {
-        eprintln!(
-            "the path must start with /api/ (or api/ - Git Bash rewrites a leading slash into a \
-             Windows path unless MSYS_NO_PATHCONV=1) - {USAGE}"
-        );
-        return 2;
-    };
-    let path = path.as_str();
-    let body = match body.map(|b| serde_json::from_str::<Value>(b)) {
-        None => None,
-        Some(Ok(v)) => Some(v),
-        Some(Err(err)) => {
-            eprintln!("the body is not JSON: {err}");
-            return 2;
-        }
-    };
-    match Gateway::at(resolve_port()).send(method, path, body).await {
+    match Gateway::at(resolve_port()).send(call.method, &call.path, call.body).await {
         Ok(value) => {
             println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
             0
@@ -1653,6 +1650,53 @@ pub async fn api_main(argv: Vec<String>) -> i32 {
             1
         }
     }
+}
+
+const API_USAGE: &str =
+    "usage: swiss api <GET|POST|PUT|PATCH|DELETE> </api/...> [json-body | --body-file <path|->]";
+
+/// One call `swiss api` was asked to make.
+#[derive(Debug)]
+struct ApiCall {
+    method: reqwest::Method,
+    path: String,
+    body: Option<Value>,
+}
+
+/// Read the command line, and the body wherever it says it is: argv, a file, or `stdin` for `-`.
+/// A body off argv is the one to use for anything that matters: a value on argv lands in the
+/// process list and the transcript, and Windows PowerShell 5.1 strips its quotes. A file or stdin
+/// may carry a BOM or be UTF-16, which is what that same shell writes.
+fn api_call(argv: &[String], stdin: &mut dyn std::io::Read) -> Result<ApiCall, String> {
+    let [method, path, rest @ ..] = argv else {
+        return Err(API_USAGE.into());
+    };
+    let method = reqwest::Method::from_bytes(method.to_ascii_uppercase().as_bytes())
+        .map_err(|_| API_USAGE.to_string())?;
+    let path = api_path(path).ok_or_else(|| {
+        format!(
+            "the path must start with /api/ (or api/ - Git Bash rewrites a leading slash into a \
+             Windows path unless MSYS_NO_PATHCONV=1) - {API_USAGE}"
+        )
+    })?;
+    let text = match rest {
+        [] => None,
+        [flag, spec] if flag == "--body-file" => {
+            let raw = read_path_or_stdin(spec, stdin)?;
+            let from = if spec == "-" { "stdin" } else { spec.as_str() };
+            Some(decode_text(&raw).ok_or_else(|| format!("{from} is not UTF-8 text"))?)
+        }
+        [flag] if flag == "--body-file" => {
+            return Err("--body-file needs a path, or - for this process's stdin".into())
+        }
+        [inline] => Some(inline.clone()),
+        _ => return Err(API_USAGE.into()),
+    };
+    let body = text
+        .map(|text| serde_json::from_str::<Value>(&text))
+        .transpose()
+        .map_err(|err| format!("the body is not JSON: {err}"))?;
+    Ok(ApiCall { method, path, body })
 }
 
 /// The admin path `swiss api` was given, as the gateway routes it: `/api/...`, or `api/...` with
@@ -2045,6 +2089,68 @@ mod tests {
         assert_eq!(api_path("C:/Program Files/Git/api/mcps"), None);
         assert_eq!(api_path("/health"), None);
         assert_eq!(api_path("/apix/mcps"), None);
+    }
+
+    // SPEC §host.cli: a body from a file or stdin arrives as the same JSON, whatever wrote it.
+    #[tokio::test]
+    async fn api_body_file_and_stdin_reach_the_gateway() {
+        let app = axum::Router::new().route(
+            "/api/echo",
+            axum::routing::post(|axum::Json(body): axum::Json<Value>| async move { axum::Json(body) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let port = listener.local_addr().expect("a bound address").port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let gw = Gateway::at(port);
+        let sent = |argv_: Vec<String>, stdin: Vec<u8>| {
+            let call = api_call(&argv_, &mut stdin.as_slice()).expect("a call");
+            let gw = &gw;
+            async move {
+                assert_eq!(call.method, reqwest::Method::POST);
+                gw.send(call.method, &call.path, call.body).await.expect("an answer")
+            }
+        };
+
+        let wanted = json!({ "value": "a \"quoted\" 中文 value" });
+        let text = wanted.to_string();
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in text.encode_utf16() {
+            utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        let mut bom = vec![0xEF, 0xBB, 0xBF];
+        bom.extend_from_slice(text.as_bytes());
+
+        let dir = std::env::temp_dir().join(format!("swiss-api-body-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        for (name, bytes) in [("utf8", text.as_bytes()), ("bom", bom.as_slice()), ("utf16", utf16.as_slice())] {
+            let file = dir.join(name);
+            std::fs::write(&file, bytes).expect("write");
+            let spec = file.to_string_lossy().into_owned();
+            let words = argv(&["post", "/api/echo", "--body-file", &spec]);
+            assert_eq!(sent(words, Vec::new()).await, wanted, "{name} file");
+
+            let words = argv(&["POST", "api/echo", "--body-file", "-"]);
+            assert_eq!(sent(words, bytes.to_vec()).await, wanted, "{name} on stdin");
+        }
+        let words = argv(&["POST", "/api/echo", &text]);
+        assert_eq!(sent(words, Vec::new()).await, wanted, "argv still works");
+
+        let refused = |words: &[&str], stdin: &[u8]| {
+            api_call(&argv(words), &mut { stdin }).expect_err("a refusal")
+        };
+        assert!(refused(&["POST", "/api/echo", "--body-file"], b"").contains("needs a path"));
+        assert!(refused(&["POST", "/api/echo", "--body-file", "-"], b"{not json").contains("not JSON"));
+        assert!(refused(&["POST", "/api/echo", "--body-file", "-"], &[0x41, 0xFF]).contains("stdin is not UTF-8"));
+        let missing = dir.join("absent").to_string_lossy().into_owned();
+        assert!(refused(&["POST", "/api/echo", "--body-file", &missing], b"").contains("cannot read"));
+        assert!(refused(&["POST", "/api/echo", "{}", "extra"], b"").starts_with("usage:"));
+        assert!(refused(&["POST", "/health"], b"").contains("must start with /api/"));
+        assert!(refused(&["POST"], b"").starts_with("usage:"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

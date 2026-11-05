@@ -147,9 +147,13 @@ On Windows or macOS, double-click the app or run swiss without arguments to open
   remote …         run commands and move files on SSH targets (swiss remote help)
   run …            a run's status / logs / cancel; `run audit` lists the last 7 days of
                    remote runs - who ran what, where, with what result
-  api <METHOD> <path> [json]
+  api <METHOD> <path> [json | --body-file <path|->]
                    one admin API call, signed with this machine's CLI key (SPEC §host.session) -
-                   what a script uses instead of curl; prints the JSON answer
+                   what a script uses instead of curl; prints the JSON answer. --body-file reads
+                   the body from a file or stdin (-), so a value stays off the command line
+  secret set <name> [--from <env:VAR|file:PATH|dotenv:PATH#KEY>]
+                   store a vault secret from that source or from piped stdin, never from the
+                   command line; starts the gateway if it is down; prints one JSON document
 
 options
   -p, --port <n>   listen on this port (saved as the new default)
@@ -1005,6 +1009,8 @@ pub async fn main(argv: Vec<String>) -> i32 {
         Some("run") => return crate::remote_cli::run_main(argv[1..].to_vec()).await,
         // A body is free-form JSON the generic parser must not touch.
         Some("api") => return crate::remote_cli::api_main(argv[1..].to_vec()).await,
+        // Refuses what the generic parser would quietly keep: a value in the wrong place.
+        Some("secret") => return crate::setup_cli::secret_main(argv[1..].to_vec()).await,
         // `memory` carries its own argv contract too (SPEC §memory.cli): the offline
         // CLI over the SAME store the gateway holds, opened directly - and `--stdin`
         // bodies must survive the generic parser untouched.
