@@ -20,6 +20,8 @@ The delivery order of §9 is the work; this brief itself lands first.
 
 > 1. 对的，skills 也要，避免 skill。2. 另外两个不变，是 tar.gz 3. 可以，你的建议可以。4. .claude 是 Claude Code 的，.agents 是其他所有的，只需要这两个装就行了
 
+> skill 有可能随着版本更新而更新的，这个也要说清楚
+
 So: an Agent, given a description of what the user wants, operates one CLI and a whole machine's
 worth of swiss configuration lands, correctly, without the Agent learning the admin API route by
 route and without a credential passing through its transcript. It finds out how from one document
@@ -323,7 +325,8 @@ not write. `plan` never runs any of it.
 **`SETUP.md`** is the one set of instructions for installing and configuring swiss, kept at the
 repository's root and embedded with `include_str!`. In order, it covers: what swiss is; how to tell
 what state this machine is in; installing (approval, download, checksum, PATH); asking which skills
-to add; the configuration loop; the rules that are never bent; and what each exit code and
+to add; updating (replace the executable, then refresh the skills that are there, because they ship
+inside it and may have changed); the configuration loop; the rules that are never bent; and what each exit code and
 `needs-input` asks of the human. Field lists stay in `swiss setup schema`, so the document cannot go
 stale against the binary. `the_setup_guide_names_every_command_and_exit_code` holds it to the commands.
 
@@ -333,7 +336,8 @@ stale against the binary. `the_setup_guide_names_every_command_and_exit_code` ho
   --body-file <path|->]`. The `skill install` paragraph becomes:
 
   ```text
-  swiss skill list [--json]        each skill: what it does, whether it loads by itself, where it is
+  swiss skill list [--json]        each skill: what it does, whether it loads by itself, where it is,
+                                   and whether that copy still matches this binary
   swiss skill install              at a terminal, asks per skill, default no;
                                    with no terminal, refuses with exit 2 and the list
   swiss skill install <name>...    exactly these
@@ -348,6 +352,13 @@ stale against the binary. `the_setup_guide_names_every_command_and_exit_code` ho
   `~/.cursor/skills` or `~/.codex/skills` are not touched and not refreshed. Whether a skill loads by
   itself is read from its `disable-model-invocation` line, not written twice. `POST
   /api/skills/install` also writes `SETUP.md` for the `swiss` skill.
+
+  Skills ship inside the binary, so a new version may change them, and a copy on disk does not change
+  by itself. `skill list` marks a copy that differs from this binary's as `outdated`. Updating swiss
+  is therefore two steps: replace the executable, then `swiss skill install --installed`. `SETUP.md`,
+  the `swiss` skill and what `swiss update` prints all say so. Nothing refreshes a skill behind the
+  user's back: no gateway boot, no panel load. A refresh replaces `SKILL.md` and leaves anything else
+  the user put in that directory.
 - **§release (`0017-release.md:40`).** Each archive also holds `SETUP.md` at its root. The release
   publishes `SETUP.md` as an asset of its own, and `SHA256SUMS` covers it. The ADR entry at
   `0018-decisions.md:47` names it among the contents. Windows stays `.zip`; Linux and macOS stay
@@ -442,6 +453,7 @@ does). `tests/setup_e2e.rs` spawns the real binary on a private `SWISS_HOME` and
 | `installed_refreshes_and_never_adds` | `src/skill_install.rs` | A declined skill stays absent through an update, per directory |
 | `skills_go_to_exactly_the_two_directories` | `src/skill_install.rs` | `.claude` (or the config dir) and `.agents`; nothing in `.cursor` or `.codex`, which the panel route refuses too |
 | `list_says_which_skills_load_by_themselves` | `src/skill_install.rs` | `swiss-memory` yes, the other two no, read from the frontmatter |
+| `list_marks_a_copy_older_than_this_binary` | `src/skill_install.rs` | A changed `SKILL.md` reads `outdated`, the shipped text `current`; `--installed` brings it back |
 | `a_manifest_skills_true_is_refused` | `src/setup_cli/` | Only named skills, and only those land |
 | `the_ask_link_prefills_without_submitting` | `crates/swiss-panel/panel/test/` | Panel behaviour, both locales |
 
