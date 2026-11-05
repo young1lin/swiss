@@ -69,6 +69,8 @@ import { dbAgentOpenConsole, dbAgentConsoleEdit, dbAgentStatement, dbConsoleTabs
 import { dbMemoryRefresh, dbMemoryView } from "./data-agent-memory.js";
 import { dbOpenTab } from "./data-tabs.js";
 import { dbConsoleFlush, dbConsoleStoreOn } from "./data-console-store.js";
+import { applyServerConsole } from "./data-tabs.js";
+                                                            
 import { dbAnalysisContext, dbAnalysisContextLabel, dbAnalysisOpen, dbAnalysisReference } from "./data-analysis.js";
 import { dbHistoryRefresh } from "./data-history.js";
 import { dbPubsubAgentRead, dbPubsubAgentStop } from "./data-pubsub.js";
@@ -784,14 +786,19 @@ function applyDbFrame(talk      , payload                         , ran         
   }
   // A console tab of the agent's own, by the name it gave (SPEC §data.agent Tabs) - or by
   // the id that outlives a close and a reload - or one statement of one rewritten or
-  // dropped. A run or stage naming it lands there, one naming none in the Agent tab.
+  // dropped. SQL run/stage calls always name the purpose of their console.
   const tab = typeof payload.tab === "string" ? payload.tab : undefined;
   // The tab's id, when the server knows it: the address that tells two consoles of one name
   // apart and survives a rename (SPEC §data.agent Tabs).
   const tabId = typeof payload.tabId === "string" && payload.tabId ? payload.tabId : undefined;
-  // The store-backed record's revision the frame was produced against (SPEC §data.agent Tabs):
-  // the page's formatted text is written back on top of exactly that record.
+  // The committed snapshot shares the bus revision gate, whichever transport arrives first.
   const revision = typeof payload.consoleRevision === "number" && Number.isSafeInteger(payload.consoleRevision) ? payload.consoleRevision : null;
+  if (payload.console && typeof payload.console === "object" && revision != null) {
+    const saved = payload.console                 ;
+    if (saved.id === tabId && saved.revision === revision && typeof saved.sql === "string") {
+      applyServerConsole(talk.conn, saved, true);
+    }
+  }
   if (payload.kind === "console") {
     dbAgentOpenConsole(payload);
     return;
@@ -802,7 +809,7 @@ function applyDbFrame(talk      , payload                         , ran         
   if (!sql) return;
   const db = typeof payload.db === "string" ? payload.db : undefined;
   if (payload.create === true && tabId) {
-    if (!dbAgentOpenConsole({ create: true, tabId, tab, format: false })) return;
+    if (!dbAgentOpenConsole({ create: true, tabId, tab, format: false, consoleRevision: revision })) return;
   }
   if (payload.kind === "stage") {
     dbAgentStatement(sql, null, ran, db, tab, tabId, payload.format !== false, revision);
@@ -1245,15 +1252,13 @@ async function send(talk      , text        , reveal = true)                   {
       // The agent saved or deleted a note of the connection's memory: its Memory view, when
       // that is what the column shows, reads again.
       if (payload.kind === "memory") { dbMemoryRefresh(talk.hist); return; }
-      // Frames apply in order, and a console frame waits for the page's formatted text to reach
-      // the store before the next one is read: the agent's next tool must see what is on screen.
+      // Keep results in stream order; committed console text is adopted without a page save.
       const frameGen = talk.gen;
       frames = frames.then(async () => {
         if (talk.gen !== frameGen) return;
         // Apply when this connection returns; never write into the one now in front.
         if (dbConn().conn !== talk.conn) { talk.pendingDb.push({ payload, ran }); return; }
         applyDbFrame(talk, payload, ran);
-        if (typeof payload.tabId === "string" && typeof payload.consoleRevision === "number") await dbConsoleFlush(talk.conn, true);
       }).catch(() => { /* one frame's refusal is shown on its tab; the stream carries on */ });
     },
   }, (t                )              => (talk.gen === myGen ? addTurn(talk, t) : h("span")), mine.signal);

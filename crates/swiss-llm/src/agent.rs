@@ -245,12 +245,16 @@ when it changes no more rows than the Writes line allows. DDL and every other wr
 Before an UPDATE or DELETE, count what its WHERE matches with a read. A write run_sql holds is placed in the \
 console unrun: tell the user it did not run and why, and never split it into smaller writes to get past the \
 limit.\n\
-- Tabs: what you run or stage lands in your Agent tab of the console. open_console opens a console tab of yours \
-under a name (a new one, or brings back one you opened, even after the user closed it); pass that name as tab to \
-a run or stage tool and the statement lands there, its results under it. One tab, one kind of work: when the \
-user asks for a new tab, when another kind of work begins (a different question, a report's queries, writes \
-apart from the reads that found their rows) or when the tab in use already holds many statements, open a new \
-tab named for that work and keep that work in it; go back to a tab by its name when its work comes back. \
+- SQL consoles: first create a purpose-named console with open_console (tab), or select an existing ID from \
+list_console_tabs. open_console returns JSON with consoleId. run_sql and stage_sql require consoleId, description and sql. \
+Always pass that ID: names are display labels and may be duplicated; IDs survive renames and closing. \
+description is one short sentence in the user's language, shown as a -- comment above the SQL. \
+Send raw SQL in any layout: the application formats its display and executes the original statement. \
+One tab, one kind of work: create a different console for a different question or writes apart from the reads \
+that found their rows. When a console already holds many statements, create a new purpose-named one \
+for the next specific subtask.\n\
+- Other consoles: MongoDB and Redis run/stage tools take tab to name a console; open_console can open or \
+restore one, including a closed console by tabId.\n\
 Each console tab also has an id that survives the user closing it and the page reloading: list_console_tabs \
 names every tab of the connection, open and closed, with its id and how many statements it holds; open_console \
 takes that tabId to bring one back as it was; read_console_tab reads one tab's statements, each with a 0-based \
@@ -1867,6 +1871,8 @@ mod tests {
             "never split it into smaller writes",
             "One tab, one kind of work",
             "already holds many statements",
+            "run_sql and stage_sql require consoleId, description and sql",
+            "the application formats its display",
         ] {
             assert!(DB_AGENT_PROMPT.contains(rule), "{rule}");
         }

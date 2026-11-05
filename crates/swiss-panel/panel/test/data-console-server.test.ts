@@ -63,6 +63,8 @@ const tabs = await import("../src/data-tabs.js");
 const closed = await import("../src/data-closed.js");
 const store = await import("../src/data-console-store.js");
 const view = await import("../src/data-view.js");
+const sql = await import("../src/data-sql.js");
+const { dbFormatSql } = await import("../src/data-sql-format.js");
 
 /** One record as the gateway answers it. */
 function rec(over: Partial<ConsoleRecord> = {}): ConsoleRecord {
@@ -143,9 +145,9 @@ describe("a connection whose consoles live on the server (SPEC §data.agent Tabs
 
     const strip = dbTabs().filter((t): t is DbSqlTab => t.kind === "sql");
     expect(strip).toHaveLength(1);
-    // The bytes are the reader's: a record is restored exactly as stored, never reformatted.
+    // Agent consoles are formatted views; the committed record is never written back.
     expect(strip[0]).toMatchObject({
-      id: "srv-1", sqlText: "select  1\n", revision: 3, createdAt: 100, updatedAt: 200,
+      id: "srv-1", sqlText: dbFormatSql("select  1\n"), revision: 3, createdAt: 100, updatedAt: 200,
       agent: true, agentTab: "Report", custom: "Report",
     });
     expect(dbActiveIndex(), "the newest console is in front").toBe(dbTabs().indexOf(strip[0]));
@@ -228,6 +230,72 @@ describe("the same connection open in another window (SPEC §data.agent Tabs)", 
     route = (c) => onConsoles(c) && c.method === "LIST" ? [200, { consoles: records }] : undefined;
     await tabs.dbConsolesLoad(conn);
   }
+
+  it.each(["event-first", "result-first"])("two agent SQL calls stay formatted and clean with %s delivery", async (order) => {
+    const conn = "agent-race-" + order;
+    let saved = rec({ id: "agent-race", tab: "Eligible users", agent: true, agentTab: "Eligible users", sql: "" });
+    await loaded(conn, [saved]);
+    calls = [];
+    route = c => {
+      if (!onConsoles(c)) return undefined;
+      if (c.method === "LIST") return [200, { consoles: [saved] }];
+      return [409, { code: "console.changed", error: "The console changed." }];
+    };
+    const first = "-- List eligible users\nselect id,name from users where active=true;";
+    const second = "-- Count eligible users\nselect count(*) from users where active=true;";
+    const ran = new Set<string>();
+    for (const statement of [first, second]) {
+      saved = { ...saved, sql: saved.sql ? saved.sql + "\n\n" + statement : statement, revision: saved.revision + 1 };
+      if (order === "event-first") { peer.changed(conn, saved, ""); await settle(); }
+      sql.dbAgentStatement(statement, null, ran, undefined, saved.tab, saved.id, true, saved.revision);
+      if (order === "result-first") { peer.changed(conn, saved, ""); await settle(); }
+    }
+    await vi.advanceTimersByTimeAsync(500);
+    const tab = dbTabs().find((t): t is DbSqlTab => t.kind === "sql" && t.id === saved.id);
+    expect(tab?.sqlText).toBe(dbFormatSql(first + "\n\n" + second));
+    expect(store.dbConsoleSyncState(conn, saved.id)).toBe("clean");
+    expect(posted(), "formatting a server-owned agent update never writes it back").toEqual([]);
+  });
+
+  it.each(["closed", "removed", "cleared"])("a late SQL result cannot restore a console already %s", async (action) => {
+    const conn = "late-agent-" + action;
+    const saved = rec({ id: "late-agent", tab: "Eligible users", agent: true, agentTab: "Eligible users", sql: "select 1;" });
+    await loaded(conn, [saved]);
+    peer.changed(conn, { ...saved, open: false, revision: 2, closedAt: 20 }, "");
+    if (action === "removed") peer.removed(conn, saved.id);
+    if (action === "cleared") peer.cleared(conn);
+    await settle();
+    // The query was committed before that close and finishes only afterwards.
+    tabs.applyServerConsole(conn, saved, true);
+    sql.dbAgentStatement(saved.sql, null, new Set(), undefined, saved.tab, saved.id, true, saved.revision);
+    sql.dbAgentOpenConsole({ tabId: saved.id, tab: saved.tab, consoleRevision: saved.revision });
+    expect(dbTabs().some(t => t.kind === "sql" && t.id === saved.id)).toBe(false);
+    expect(closed.dbClosedFor(conn).some(t => t.id === saved.id)).toBe(action === "closed");
+  });
+
+  it.each([false, true])("a late result keeps a locally closed console closed, cleared=%s", async (clear) => {
+    const conn = "local-close-agent-" + clear;
+    const saved = rec({ id: "local-agent", tab: "Eligible users", agent: true, agentTab: "Eligible users", sql: "select 1;" });
+    await loaded(conn, [saved]);
+    route = c => {
+      if (onConsoles(c) && c.method === "PUT") return [200, { console: { ...(c.body?.console as ConsoleRecord), revision: 2, closedAt: 20 } }];
+      if (onConsoles(c) && c.method === "CLEAR_CLOSED") return [200, { cleared: 1 }];
+      return undefined;
+    };
+    tabs.dbCloseTab(dbTabs().findIndex(t => t.kind === "sql" && t.id === saved.id));
+    await settle();
+    expect(dbTabs().some(t => t.kind === "sql" && t.id === saved.id)).toBe(false);
+    if (clear) {
+      for (const item of tabs.dbClosedMenuItems()) {
+        if ("label" in item && item.label === tr("dataTabs.clearClosed") && "fn" in item) item.fn?.();
+      }
+      await settle();
+    }
+    tabs.applyServerConsole(conn, saved, true);
+    sql.dbAgentStatement(saved.sql, null, new Set(), undefined, saved.tab, saved.id, true, saved.revision);
+    expect(dbTabs().some(t => t.kind === "sql" && t.id === saved.id)).toBe(false);
+    expect(closed.dbClosedFor(conn).some(t => t.id === saved.id)).toBe(!clear);
+  });
 
   it("a bus event catches a clean console up to what the other window saved", async () => {
     await loaded("win1", [rec({ id: "w-1", tab: "Report", sql: "as loaded", revision: 2 })]);
@@ -475,9 +543,9 @@ describe("the same connection open in another window (SPEC §data.agent Tabs)", 
 
 describe("a refused console save (SPEC §data.agent Tabs)", () => {
   /** Load one open console and type over it, so the next save compares against revision 2. */
-  async function draftOver(conn: string, id: string): Promise<DbSqlTab> {
+  async function draftOver(conn: string, id: string, agent = false): Promise<DbSqlTab> {
     enter(conn);
-    const open = rec({ id, tab: "Report", sql: "as stored", revision: 2 });
+    const open = rec({ id, tab: "Report", agent, sql: "select 1;", revision: 2 });
     route = (c) => onConsoles(c) && c.method === "LIST" ? [200, { consoles: [open] }] : undefined;
     await tabs.dbConsolesLoad(conn);
     const t = dbTabs().find((x) => x.kind === "sql" && x.id === id) as DbSqlTab;
@@ -485,17 +553,19 @@ describe("a refused console save (SPEC §data.agent Tabs)", () => {
     return t;
   }
 
-  it("marks the card, then takes the server's copy when the reader asks for it", async () => {
-    const t = await draftOver("srv5", "srv-6");
+  it.each([false, true])("marks the card, then loads the server copy with agent=%s", async (agent) => {
+    const conn = "srv5-" + agent;
+    const t = await draftOver(conn, "srv-6", agent);
+    const text = "-- Inspect posts\nselect id,name from posts;";
     let revision = 2;
     route = (c) => {
       if (!onConsoles(c)) return undefined;
-      if (c.method === "LIST") return [200, { consoles: [rec({ id: "srv-6", tab: "Report", sql: "newer", revision: ++revision })] }];
+      if (c.method === "LIST") return [200, { consoles: [rec({ id: "srv-6", tab: "Report", agent, sql: text, revision: ++revision })] }];
       if (c.method === "PUT") return [409, { error: "conflict: console changed; reload before saving" }];
       return undefined;
     };
-    expect(await store.dbConsoleFlush("srv5"), "the send path must see the refusal").toBe(false);
-    expect(store.dbConsoleSyncState("srv5", "srv-6")).toBe("failed");
+    expect(await store.dbConsoleFlush(conn), "the send path must see the refusal").toBe(false);
+    expect(store.dbConsoleSyncState(conn, "srv-6")).toBe("failed");
 
     const card = document.querySelector(`#dbTabStrip [data-dbtab="${dbActiveIndex()}"]`) as HTMLElement;
     expect(card.querySelector(".db-tab-dot.err")?.getAttribute("title")).toBe(tr("dataTabs.consoleConflict"));
@@ -503,9 +573,9 @@ describe("a refused console save (SPEC §data.agent Tabs)", () => {
     menuRow(tr("dataTabs.reloadConsoleServer")).click();
     await settle();
 
-    expect(t.sqlText).toBe("newer");
+    expect(t.sqlText).toBe(agent ? dbFormatSql(text) : text);
     expect(t.revision).toBe(3);
-    expect(store.dbConsoleSyncState("srv5", "srv-6")).toBe("clean");
+    expect(store.dbConsoleSyncState(conn, "srv-6")).toBe("clean");
     expect(document.getElementById("toast")?.textContent).toBe(tr("dataTabs.consoleReloaded"));
   });
 

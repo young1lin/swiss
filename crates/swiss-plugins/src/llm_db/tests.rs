@@ -354,18 +354,112 @@ async fn persistent_consoles_survive_a_new_bus_handler_and_reject_stale_edits() 
 }
 
 #[tokio::test]
+async fn sql_calls_require_an_existing_console_id_and_a_statement_description() {
+    let (catalog, pg) = catalog(1);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None);
+    for tool in ["run_sql", "stage_sql"] {
+        for args in [
+            json!({ "sql": "SELECT 1", "description": "Count eligible users" }),
+            json!({ "sql": "SELECT 1", "consoleId": "", "description": "Count eligible users" }),
+            json!({ "sql": "SELECT 1", "console": "Eligible users", "description": "Count eligible users" }),
+            json!({ "sql": "SELECT 1", "consoleId": "unknown", "description": "Count eligible users" }),
+            json!({ "sql": "SELECT 1", "consoleId": "unknown" }),
+            json!({ "sql": "SELECT 1", "consoleId": "unknown", "description": "" }),
+            json!({ "sql": "SELECT 1", "consoleId": "unknown", "description": "Count\nDELETE FROM users" }),
+        ] {
+            let answer = tools.call(tool, &args).await;
+            assert!(!answer.ok, "{tool} accepted {args}: {answer:?}");
+        }
+    }
+    assert!(tools.tabs.is_empty(), "refusals create no console");
+    assert!(pg.ran.lock().expect("reads").is_empty(), "refusals execute nothing");
+    for tool in ["run_sql", "stage_sql"] {
+        let spec = tools.specs().into_iter().find(|spec| spec.name == tool).expect("SQL tool");
+        assert_eq!(spec.schema["required"], json!(["consoleId", "description", "sql"]));
+        assert!(spec.schema["properties"].get("tab").is_none());
+        assert!(spec.schema["properties"].get("tabId").is_none());
+        assert!(spec.schema["properties"].get("format").is_none());
+    }
+}
+
+#[tokio::test]
+async fn sql_purposes_are_saved_once_while_execution_keeps_the_original_query() {
+    let root = swiss_core::paths::test_home().join(format!("sql-purpose-{}", swiss_core::util::random_hex(8)));
+    let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
+    let (catalog, pg) = catalog(1);
+    let (tx, mut rx) = mpsc::channel(8);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, Some(tx));
+    tools.consoles = Some(store.clone());
+    let opened = tools.call("open_console", &json!({ "tab": "达标用户核查" })).await;
+    assert!(opened.ok, "{opened:?}");
+    let opened: Value = serde_json::from_str(&opened.text).expect("console identity");
+    let id = opened["consoleId"].as_str().expect("returned ID");
+    let _ = rx.try_recv().expect("open frame");
+    let raw = "select id,name from posts where id=1";
+    for (tool, purpose) in [("run_sql", "列出当前达标的 14 个 expert.trade.go 用户"), ("stage_sql", "复核达标用户的来源")] {
+        let answer = tools.call(tool, &json!({ "consoleId": id, "description": purpose, "sql": raw })).await;
+        assert!(answer.ok, "{answer:?}");
+        let frame = rx.try_recv().expect("one frame");
+        let response = axum::response::IntoResponse::into_response(axum::response::Sse::new(
+            futures_util::stream::iter([Ok::<_, std::convert::Infallible>(frame)])));
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("SSE body");
+        let events = events_of(std::str::from_utf8(&bytes).expect("UTF-8 SSE"));
+        let frame = &events[0].1;
+        let saved = store.list("mm").expect("saved console");
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].tab, "达标用户核查");
+        assert_eq!(frame["console"]["sql"], json!(saved[0].sql));
+        assert!(frame["sql"].as_str().expect("display SQL").starts_with(&format!("-- {purpose}\n")));
+    }
+    assert_eq!(pg.ran.lock().expect("reads")[0].0, raw);
+    assert_eq!(store.list("mm").expect("saved")[0].sql,
+        format!("-- 列出当前达标的 14 个 expert.trade.go 用户\n{raw};\n\n-- 复核达标用户的来源\n{raw};"));
+    std::fs::remove_dir_all(root).expect("scratch cleanup");
+}
+
+#[tokio::test]
+async fn same_named_consoles_are_created_and_targeted_by_distinct_ids() {
+    let (catalog, pg) = catalog(1);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None);
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let opened = tools.call("open_console", &json!({ "tab": "用户扩展表数据概览" })).await;
+        assert!(opened.ok, "{opened:?}");
+        let opened: Value = serde_json::from_str(&opened.text).expect("console identity");
+        ids.push(opened["consoleId"].as_str().expect("returned ID").to_string());
+    }
+    assert_ne!(ids[0], ids[1]);
+    tools.tabs[1].tab = "Renamed overview".into();
+    let raw = "select\t1 as n\n  from posts where id = 1";
+    assert!(tools.call("run_sql", &json!({ "consoleId": ids[1], "description": "核查第二个页签", "sql": raw })).await.ok);
+    assert!(tools.tabs[0].statements.is_empty());
+    assert_eq!(tools.tabs[1].statements.len(), 1);
+    assert_eq!(pg.ran.lock().expect("reads")[0].0, raw, "formatting never changes executed SQL");
+    for bad in [json!(null), json!(42), json!(""), json!("missing")] {
+        assert!(!tools.call("open_console", &json!({ "tab": "Unexpected", "tabId": bad })).await.ok);
+        assert!(!tools.call("run_sql", &json!({ "consoleId": bad, "description": "No target", "sql": raw })).await.ok);
+    }
+    assert_eq!(tools.tabs.len(), 2, "invalid IDs never create a fallback console");
+    assert_eq!(pg.ran.lock().expect("reads").len(), 1);
+}
+
+#[tokio::test]
 async fn agent_stage_persists_without_a_connected_page() {
     let root = swiss_core::paths::test_home().join(format!("agent-console-{}", swiss_core::util::random_hex(8)));
     let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
     let (catalog, _) = catalog(1);
     let mut tools = DbTools::new(catalog.clone(), "mm", DbKind::Sql, None);
     tools.consoles = Some(store);
-    let answer = tools.call("stage_sql", &json!({ "sql": "SELECT 42", "tab": "Report" })).await;
+    let opened = tools.call("open_console", &json!({ "tab": "Report" })).await;
+    assert!(opened.ok, "{opened:?}");
+    let opened: Value = serde_json::from_str(&opened.text).expect("console identity");
+    let id = opened["consoleId"].as_str().expect("returned ID");
+    let answer = tools.call("stage_sql", &json!({ "description": "Inspect posts", "sql": "SELECT 42", "consoleId": id })).await;
     assert!(answer.ok, "{answer:?}");
     let restarted = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
     let saved = restarted.list("mm").expect("restored after restart");
     assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].sql, "SELECT 42;");
+    assert_eq!(saved[0].sql, "-- Inspect posts\nSELECT 42;");
     let mut next = DbTools::new(catalog, "mm", DbKind::Sql, None);
     next.consoles = Some(restarted);
     let read = next.call("read_console_tab", &json!({ "tabId": saved[0].id })).await;
@@ -378,8 +472,8 @@ async fn separate_agent_requests_resume_the_server_owned_console_by_identity() {
     use prost::Message as _;
     use swiss_bus::pb::v1;
     let frames = vec![
-        tool_ask("stage_sql", json!({ "sql": "SELECT 11", "tab": "Report" })), one_round_answer(),
-        tool_ask("stage_sql", json!({ "sql": "SELECT 22", "tab": "Report" })), one_round_answer(),
+        tool_ask("stage_sql", json!({ "description": "Inspect posts", "sql": "SELECT 11", "consoleId": "report" })), one_round_answer(),
+        tool_ask("stage_sql", json!({ "description": "Inspect posts", "sql": "SELECT 22", "consoleId": "report" })), one_round_answer(),
     ];
     let (app, _, _, bus) = app_with_bus(frames, db_agent()).await;
     let mut peer = crate::db_consoles::bus_tests::Peer::open(bus).await;
@@ -400,6 +494,13 @@ async fn separate_agent_requests_resume_the_server_owned_console_by_identity() {
     }).await;
     assert!(removed.fault.is_none(), "{:?}", removed.fault);
     assert_eq!(peer.event().await.id, v1::ConsolesId::ConsolesRemoved as u32);
+    let created = peer.request(v1::ConsolesId::ConsolesPut, v1::ConsolePut {
+        conn: "mm".into(), console: Some(v1::ConsoleRecord {
+            id: "report".into(), tab: "Report".into(), agent: true, open: true, ..Default::default()
+        }), mode: v1::SaveMode::Create as i32,
+    }).await;
+    assert!(created.fault.is_none(), "{:?}", created.fault);
+    peer.event().await;
     let request = json!({ "agent": "data", "conn": "mm", "prompt": "stage a query", "consoleStore": true });
     let (status, _, first) = call_text(&app, "POST", "/api/llm/db/stream", Some(request.clone())).await;
     assert_eq!(status, StatusCode::OK, "{first}");
@@ -407,22 +508,22 @@ async fn separate_agent_requests_resume_the_server_owned_console_by_identity() {
     let saved = peer.list("mm").await;
     let first_tab = &saved.consoles[0];
     let id = first_tab.id.clone();
-    assert_eq!((first_tab.sql.as_str(), first_tab.revision), ("SELECT 11;", 1));
+    assert_eq!((first_tab.sql.as_str(), first_tab.revision), ("-- Inspect posts\nSELECT 11;", 2));
     let event = peer.event().await;
     assert_eq!((event.id, event.key.as_str(), event.origin.as_str()), (v1::ConsolesId::ConsolesChanged as u32, "mm", ""), "agent saves have no page origin");
     let record = v1::ConsoleSaved::decode(event.body.as_slice()).expect("saved").console.expect("record");
-    assert_eq!((record.id.as_str(), record.revision), (id.as_str(), 1));
+    assert_eq!((record.id.as_str(), record.revision), (id.as_str(), 2));
     let mut continued = request;
     continued["runId"] = json!(run_id);
     let (status, _, second) = call_text(&app, "POST", "/api/llm/db/stream", Some(continued)).await;
     assert_eq!(status, StatusCode::OK, "{second}");
     let saved = peer.list("mm").await;
     assert_eq!(saved.consoles.len(), 1);
-    assert_eq!((&saved.consoles[0].id, saved.consoles[0].sql.as_str(), saved.consoles[0].revision), (&id, "SELECT 11;\n\nSELECT 22;", 2));
+    assert_eq!((&saved.consoles[0].id, saved.consoles[0].sql.as_str(), saved.consoles[0].revision), (&id, "-- Inspect posts\nSELECT 11;\n\n-- Inspect posts\nSELECT 22;", 3));
     let event = peer.event().await;
     assert_eq!((event.id, event.key.as_str(), event.origin.as_str()), (v1::ConsolesId::ConsolesChanged as u32, "mm", ""), "the continuation also publishes");
     let record = v1::ConsoleSaved::decode(event.body.as_slice()).expect("saved").console.expect("record");
-    assert_eq!((record.id.as_str(), record.revision), (id.as_str(), 2));
+    assert_eq!((record.id.as_str(), record.revision), (id.as_str(), 3));
     // The same path carries a page's origin, so the empty one above is the agent's own, not a
     // field the event lost on the way.
     let edit = v1::ConsoleRecord { sql: "SELECT 33;".into(), ..saved.consoles[0].clone() };
@@ -430,11 +531,11 @@ async fn separate_agent_requests_resume_the_server_owned_console_by_identity() {
     assert!(page.fault.is_none(), "{:?}", page.fault);
     let event = peer.event().await;
     assert_eq!(event.origin, "page-a", "a page's write names its page");
-    assert_eq!(v1::ConsoleSaved::decode(event.body.as_slice()).expect("saved").console.expect("record").revision, 3);
+    assert_eq!(v1::ConsoleSaved::decode(event.body.as_slice()).expect("saved").console.expect("record").revision, 4);
 }
 
 #[tokio::test]
-async fn agent_staging_saves_a_stored_manual_console_without_taking_ownership() {
+async fn an_explicit_console_id_appends_to_the_selected_manual_console() {
     let root = swiss_core::paths::test_home().join(format!("agent-manual-{}", swiss_core::util::random_hex(8)));
     let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
     let original = "  SELECT 1;\n \t\n";
@@ -442,11 +543,14 @@ async fn agent_staging_saves_a_stored_manual_console_without_taking_ownership() 
     let (catalog, _) = catalog(1);
     let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None);
     tools.consoles = Some(store.clone());
-    assert!(tools.call("stage_sql", &json!({ "tabId": "manual", "sql": "SELECT 2" })).await.ok);
-    let after = store.list("mm").expect("saved").remove(0);
-    assert_eq!(after.sql, format!("{original}\n\nSELECT 2;"));
-    assert!(!after.agent);
-    assert!(after.revision > saved.revision);
+    assert!(tools.call("stage_sql", &json!({ "description": "Inspect posts", "consoleId": "manual", "sql": "SELECT 2" })).await.ok);
+    let after = store.list("mm").expect("saved");
+    assert_eq!(after.len(), 1);
+    let manual = &after[0];
+    assert_eq!(manual.id, "manual");
+    assert_eq!(manual.sql, format!("{original}\n\n-- Inspect posts\nSELECT 2;"));
+    assert!(manual.agent);
+    assert_eq!(manual.revision, saved.revision + 1);
     std::fs::remove_dir_all(root).expect("cleanup scratch");
 }
 
@@ -459,8 +563,8 @@ async fn agent_staging_preserves_trailing_whitespace_in_a_stored_console() {
     let (catalog, _) = catalog(1);
     let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None);
     tools.consoles = Some(store.clone());
-    assert!(tools.call("stage_sql", &json!({ "tabId": "one", "sql": "SELECT 3" })).await.ok);
-    assert_eq!(store.list("mm").expect("saved")[0].sql, format!("{original}\n\nSELECT 3;"));
+    assert!(tools.call("stage_sql", &json!({ "description": "Inspect posts", "consoleId": "one", "sql": "SELECT 3" })).await.ok);
+    assert_eq!(store.list("mm").expect("saved")[0].sql, format!("{original}\n\n-- Inspect posts\nSELECT 3;"));
     std::fs::remove_dir_all(root).expect("cleanup scratch");
 }
 
@@ -488,10 +592,10 @@ async fn agent_staging_preserves_the_existing_console_bytes() {
     let (catalog, _) = catalog(1);
     let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None);
     tools.consoles = Some(store.clone());
-    assert!(tools.call("stage_sql", &json!({ "tabId": "one", "sql": "SELECT 3" })).await.ok);
-    assert_eq!(store.list("mm").expect("saved")[0].sql, format!("{original}\n\nSELECT 3;"));
+    assert!(tools.call("stage_sql", &json!({ "description": "Inspect posts", "consoleId": "one", "sql": "SELECT 3" })).await.ok);
+    assert_eq!(store.list("mm").expect("saved")[0].sql, format!("{original}\n\n-- Inspect posts\nSELECT 3;"));
     assert!(tools.call("edit_console_sql", &json!({ "tabId": "one", "index": 0, "sql": "SELECT 9;" })).await.ok);
-    assert_eq!(store.list("mm").expect("edited")[0].sql, "  SELECT 9;\n\n\n  -- keep spacing\nSELECT 2;\n\nSELECT 3;");
+    assert_eq!(store.list("mm").expect("edited")[0].sql, "  SELECT 9;\n\n\n  -- keep spacing\nSELECT 2;\n\n-- Inspect posts\nSELECT 3;");
     assert!(tools.call("delete_console_sql", &json!({ "tabId": "one", "index": 2 })).await.ok);
     assert_eq!(store.list("mm").expect("deleted")[0].sql, "  SELECT 9;\n\n\n  -- keep spacing\nSELECT 2;");
     std::fs::remove_dir_all(root).expect("cleanup scratch");
@@ -552,60 +656,55 @@ fn context_tags_survive_replay_but_never_trust_user_text_or_a_checkpoint() {
 }
 
 #[tokio::test]
-async fn sql_format_preferences_reach_the_page_without_changing_execution() {
+async fn sql_calls_reject_format_overrides_without_executing_or_creating_a_console() {
     let (catalog, pg) = catalog(1);
-    let (tx, mut rx) = mpsc::channel(8);
-    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, Some(tx));
-    let raw = "select id,name from posts where id=1";
-    assert!(tools.call("run_sql", &json!({ "sql": raw, "format": false })).await.ok);
-    assert_eq!(pg.ran.lock().expect("ran")[0].0, raw);
-    assert!(sent(&mut rx)[0].contains("\"format\":false"));
-    let before = tools.tabs.len();
-    assert!(!tools.call("stage_sql", &json!({ "sql": raw, "format": "false" })).await.ok);
-    assert_eq!(tools.tabs.len(), before);
-    assert!(tools.call("stage_sql", &json!({ "sql": raw })).await.ok);
-    let frames = sent(&mut rx);
-    assert!(!frames[0].contains("\"format\""), "omission means the default format on the page");
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None);
+    for tool in ["run_sql", "stage_sql"] {
+        let answer = tools.call(tool, &json!({ "consoleId": "t-2", "description": "Inspect posts", "sql": "SELECT 1", "format": false })).await;
+        assert!(!answer.ok, "{answer:?}");
+    }
+    assert!(tools.tabs.is_empty());
+    assert!(pg.ran.lock().expect("ran").is_empty());
 }
 
 #[tokio::test]
-async fn implicit_console_creation_and_raw_blocks_share_ids_and_indices_with_the_page() {
+async fn explicit_console_creation_and_raw_blocks_share_ids_and_indices_with_the_page() {
     let (catalog, _) = catalog(1);
     let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None);
-    assert!(tools.call("stage_sql", &json!({ "tab": "Fresh", "sql": "SELECT 1" })).await.ok);
+    assert!(tools.call("open_console", &json!({ "tab": "Fresh" })).await.ok);
     let id = tools.tabs[0].id.clone();
+    assert!(tools.call("stage_sql", &json!({ "description": "Inspect posts", "consoleId": id, "sql": "SELECT 1" })).await.ok);
     assert!(tools.call("list_console_tabs", &json!({})).await.text.contains(&id));
     tools.tabs[0].open = false;
-    assert!(tools.call("stage_sql", &json!({ "tabId": id, "sql": "SELECT 2" })).await.ok);
+    assert!(tools.call("stage_sql", &json!({ "description": "Inspect posts", "consoleId": id, "sql": "SELECT 2" })).await.ok);
     assert!(tools.tabs[0].open);
     assert!(tools.call("open_console", &json!({ "tabId": id, "sql": "SELECT 3\n \n-- fourth\nSELECT 4", "format": false })).await.ok);
     assert_eq!(tools.tabs[0].statements.len(), 4);
     assert!(tools.call("edit_console_sql", &json!({ "tabId": id, "index": 3, "sql": "SELECT 40" })).await.ok);
     assert_eq!(tools.tabs[0].statements[3].sql, "SELECT 40");
-    assert!(tools.call("stage_sql", &json!({ "sql": "SELECT 5" })).await.ok);
+    assert!(tools.call("open_console", &json!({ "tab": "Inspection" })).await.ok);
     let default_id = tools.tabs[1].id.clone();
-    assert!(tools.call("stage_sql", &json!({ "sql": "SELECT 6" })).await.ok);
+    assert!(tools.call("stage_sql", &json!({ "description": "Inspect posts", "consoleId": default_id, "sql": "SELECT 5" })).await.ok);
+    assert!(tools.call("stage_sql", &json!({ "description": "Inspect posts", "consoleId": default_id, "sql": "SELECT 6" })).await.ok);
     assert_eq!(tools.tabs.len(), 2);
     assert_eq!(tools.tabs[1].id, default_id);
     assert_eq!(tools.tabs[1].statements.len(), 2);
 }
 
 #[tokio::test]
-async fn default_agent_console_keeps_identity_within_a_send() {
+async fn purpose_named_console_keeps_identity_when_reopened() {
     let (catalog, _) = catalog(1);
     let mut tools = DbTools::new(catalog.clone(), "mm", DbKind::Sql, None);
-    assert!(tools.call("open_console", &json!({ "tab": "Agent", "sql": "SELECT 1" })).await.ok);
+    assert!(tools.call("open_console", &json!({ "tab": "Post inspection" })).await.ok);
     let id = tools.tabs[0].id.clone();
-    assert!(tools.call("stage_sql", &json!({ "sql": "SELECT 2" })).await.ok);
+    let args = json!({ "consoleId": id, "description": "Inspect posts", "sql": "SELECT 1" });
+    assert!(tools.call("stage_sql", &args).await.ok);
+    let id = tools.tabs[0].id.clone();
+    tools.tabs[0].open = false;
+    assert!(tools.call("stage_sql", &args).await.ok);
     assert_eq!(tools.tabs.len(), 1);
     assert_eq!(tools.tabs[0].id, id);
-
-    let closed: ConsoleTab = serde_json::from_value(json!({ "id": "closed", "tab": "Agent", "open": false, "agent": true, "agentTab": "" })).expect("console");
-    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None).showing(vec![closed]);
-    assert!(tools.call("open_console", &json!({ "tabId": "closed" })).await.ok);
-    assert!(tools.call("stage_sql", &json!({ "sql": "SELECT 3" })).await.ok);
-    assert_eq!(tools.tabs.len(), 1);
-    assert_eq!(tools.tabs[0].id, "closed");
+    assert!(tools.tabs[0].open);
 }
 
 #[tokio::test]
@@ -613,7 +712,7 @@ async fn renamed_agent_console_keeps_its_original_slot_in_the_next_send() {
     let (catalog, _) = catalog(1);
     let tab: ConsoleTab = serde_json::from_value(json!({ "id": "named", "tab": "Renamed", "open": true, "agent": true, "agentTab": "Original" })).expect("console");
     let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None).showing(vec![tab]);
-    assert!(tools.call("stage_sql", &json!({ "tab": "Original", "sql": "SELECT 1" })).await.ok);
+    assert!(tools.call("stage_sql", &json!({ "description": "Inspect posts", "consoleId": "named", "sql": "SELECT 1" })).await.ok);
     assert_eq!(tools.tabs.len(), 1);
     assert_eq!(tools.tabs[0].id, "named");
     assert_eq!(tools.tabs[0].statements.len(), 1);
@@ -648,12 +747,16 @@ async fn console_open_validates_format_and_updates_the_same_send_snapshot() {
     assert!(pg.ran.lock().expect("ran").is_empty(), "opening does not run SQL");
 }
 
+fn inspection_console() -> ConsoleTab {
+    ConsoleTab { id: "inspection".into(), tab: "Inspection".into(), agent: true, open: true, sql_text: Some(String::new()), ..Default::default() }
+}
+
 #[tokio::test]
 async fn a_read_reaches_the_page_whole_and_the_model_reads_its_first_rows_clipped() {
     let (catalog, pg) = catalog(80);
     let (tx, mut rx) = mpsc::channel::<Event>(8);
-    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, Some(tx));
-    let answer = tools.call("run_sql", &json!({ "sql": "SELECT * FROM posts" })).await;
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, Some(tx)).showing(vec![inspection_console()]);
+    let answer = tools.call("run_sql", &json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "SELECT * FROM posts" })).await;
     assert!(answer.ok, "{}", answer.text);
     assert!(answer.text.starts_with("80 row(s). The whole result is open on the user's page."), "{}", answer.text);
     assert!(answer.text.contains("The first 50, one JSON array per row:"), "{}", answer.text);
@@ -661,19 +764,19 @@ async fn a_read_reaches_the_page_whole_and_the_model_reads_its_first_rows_clippe
     assert!(answer.text.contains('…'), "a long cell is clipped: {}", answer.text);
     assert_eq!(frames(&mut rx), 1, "one db frame for the page");
     // A refused write is the model's answer and the page's failed tab, never a run.
-    let refused = tools.call("run_sql", &json!({ "sql": "DELETE FROM posts" })).await;
+    let refused = tools.call("run_sql", &json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "DELETE FROM posts" })).await;
     assert!(!refused.ok && refused.text.contains("not DELETE"), "{}", refused.text);
     assert_eq!(frames(&mut rx), 1);
     // A staged write goes to the console and nowhere near the connection.
-    let staged = tools.call("stage_sql", &json!({ "sql": "DELETE FROM posts WHERE id = 'p1'" })).await;
+    let staged = tools.call("stage_sql", &json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "DELETE FROM posts WHERE id = 'p1'" })).await;
     assert!(staged.ok && staged.text.contains("has NOT run"));
     assert_eq!(frames(&mut rx), 1);
     assert_eq!(pg.ran.lock().expect("ran").len(), 2, "the stage ran nothing");
     // The page's row limit is the default and the most; a model may only ask fewer.
-    let mut tools = DbTools::new(tools.catalog.clone(), "mm", DbKind::Sql, None).limited(500);
-    tools.call("run_sql", &json!({ "sql": "SELECT 1" })).await;
-    tools.call("run_sql", &json!({ "sql": "SELECT 2", "limit": 9999 })).await;
-    tools.call("run_sql", &json!({ "sql": "SELECT 3", "limit": 20 })).await;
+    let mut tools = DbTools::new(tools.catalog.clone(), "mm", DbKind::Sql, None).limited(500).showing(vec![inspection_console()]);
+    tools.call("run_sql", &json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "SELECT 1" })).await;
+    tools.call("run_sql", &json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "SELECT 2", "limit": 9999 })).await;
+    tools.call("run_sql", &json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "SELECT 3", "limit": 20 })).await;
     let limits: Vec<Option<i64>> = pg.ran.lock().expect("ran").iter().skip(2).map(|(_, limit)| *limit).collect();
     assert_eq!(limits, [Some(500), Some(500), Some(20)]);
 }
@@ -683,8 +786,8 @@ async fn a_read_reaches_the_page_whole_and_the_model_reads_its_first_rows_clippe
 #[tokio::test]
 async fn a_staged_write_never_reaches_the_write_path() {
     let (catalog, pg) = catalog(2);
-    let mut staged = DbTools::new(catalog, "mm", DbKind::Sql, None);
-    let refused = staged.call("run_sql", &json!({ "sql": "DELETE FROM posts WHERE id = 'p1'" })).await;
+    let mut staged = DbTools::new(catalog, "mm", DbKind::Sql, None).showing(vec![inspection_console()]);
+    let refused = staged.call("run_sql", &json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "DELETE FROM posts WHERE id = 'p1'" })).await;
     assert!(!refused.ok && refused.text.contains("not DELETE"), "{}", refused.text);
     assert!(pg.wrote.lock().expect("wrote").is_empty());
 }
@@ -716,7 +819,7 @@ fn the_snapshot_names_a_few_tables_and_counts_many() {
 #[tokio::test]
 async fn the_structure_and_the_listing_read_as_lines() {
     let (catalog, _pg) = catalog(0);
-    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None).showing(vec![inspection_console()]);
     let listed = tools.call("list_tables", &json!({ "grep": "post" })).await;
     assert_eq!(listed.text, "1 of 1 table(s): schema.name, type, about how many rows\npublic.posts  table  ~42 rows");
     let described = tools.call("describe_table", &json!({ "table": "posts" })).await;
@@ -724,7 +827,7 @@ async fn the_structure_and_the_listing_read_as_lines() {
         described.text,
         "public.posts\nColumns:\n- id text PRIMARY KEY NOT NULL\n- type text  -- post kind\nIndexes:\n- posts_pkey (id) primary"
     );
-    let empty = tools.call("run_sql", &json!({ "sql": "SELECT 1 WHERE false" })).await;
+    let empty = tools.call("run_sql", &json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "SELECT 1 WHERE false" })).await;
     assert_eq!(empty.text, "0 row(s). The whole result is open on the user's page.");
     assert!(!tools.call("describe_table", &json!({})).await.ok);
     let elsewhere = DbTools::new(tools.catalog.clone(), "web", DbKind::Sql, None).call("list_tables", &json!({})).await;
@@ -1121,12 +1224,7 @@ async fn a_redis_send_opens_on_the_keyspace_with_the_redis_tools() {
 }
 
 fn run_sql_ask() -> String {
-    concat!(
-        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"run_sql\",\"arguments\":\"{\\\"sql\\\":\\\"SELECT id FROM posts\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
-        "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"tiny\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":2,\"total_tokens\":11}}\n\n",
-        "data: [DONE]\n\n"
-    )
-    .to_string()
+    tool_ask("run_sql", json!({ "consoleId": "inspection", "description": "Inspect posts", "sql": "SELECT id FROM posts" }))
 }
 
 async fn app(frames: Vec<String>, agents: Value) -> (axum::Router, Arc<std::sync::Mutex<Vec<String>>>, Arc<StubPg>) {
@@ -1176,13 +1274,13 @@ async fn app_on(
 async fn a_send_runs_the_read_shows_it_on_the_page_and_files_under_the_connection() {
     let (app, captured, pg) = app(vec![run_sql_ask(), one_round_answer()], json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 4, "systemPrompt": "Answer in Chinese." } })).await;
     let (status, _ct, text) = call_text(&app, "POST", "/api/llm/db/stream",
-        Some(json!({ "agent": "data", "conn": "mm", "prompt": "five posts per type", "schema": "public", "rowLimit": 1000 }))).await;
+        Some(json!({ "agent": "data", "conn": "mm", "prompt": "five posts per type", "schema": "public", "rowLimit": 1000, "consoleTabs": [{ "id": "inspection", "tab": "Inspection", "agent": true, "open": true, "statements": [] }] }))).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     let events = events_of(&text);
     let names: Vec<&str> = events.iter().map(|(name, _)| name.as_str()).collect();
     assert_eq!(names, ["run", "usage", "tool", "db", "toolResult", "delta", "usage", "final", "done"], "{text}");
     let (_, db) = &events[3];
-    assert_eq!((db["kind"].as_str(), db["sql"].as_str()), (Some("run"), Some("SELECT id FROM posts")));
+    assert_eq!((db["kind"].as_str(), db["sql"].as_str()), (Some("run"), Some("-- Inspect posts\nSELECT id FROM posts")));
     assert_eq!(db["reply"]["rows"].as_array().map(Vec::len), Some(3));
     assert!(db["reply"]["elapsedMs"].is_u64());
     assert_eq!(pg.ran.lock().expect("ran")[0], ("SELECT id FROM posts".to_string(), Some(1000)), "the console's row limit");
@@ -1304,30 +1402,30 @@ async fn a_sql_send_creates_a_persisted_analysis_and_returns_a_reference() {
 }
 
 /// open_console opens a console tab of the agent's under a name, and a run or stage naming
-/// it lands there: each db frame carries the tab, one without a tab carries none (the
-/// Agent tab), and a tab past the name's length or on two lines is refused before anything
+/// it lands there: each SQL db frame carries the purpose-named console. A name past
+/// the length limit or on two lines is refused before anything
 /// reaches the page or the connection.
 #[tokio::test]
-async fn open_console_opens_a_named_tab_and_a_run_naming_it_lands_there() {
+async fn open_console_returns_an_id_and_a_run_addresses_that_id() {
     let asks = vec![
-        tool_ask("open_console", json!({ "tab": "Revenue report" })),
-        tool_ask("run_sql", json!({ "sql": "SELECT id FROM posts", "tab": "Revenue report" })),
+        tool_ask("open_console", json!({ "tabId": "report" })),
+        tool_ask("run_sql", json!({ "description": "Inspect posts", "sql": "SELECT id FROM posts", "consoleId": "report" })),
         tool_ask("open_console", json!({ "tab": "Cleanup", "sql": "DELETE FROM posts WHERE id = 'p1'" })),
-        tool_ask("stage_sql", json!({ "sql": "SELECT 1", "tab": "x".repeat(TAB_MAX + 1) })),
-        tool_ask("run_sql", json!({ "sql": "SELECT 1", "tab": "two\nlines" })),
+        tool_ask("stage_sql", json!({ "description": "Inspect posts", "sql": "SELECT 1", "consoleId": "x".repeat(TAB_ID_MAX + 1) })),
+        tool_ask("run_sql", json!({ "description": "Inspect posts", "sql": "SELECT 1", "consoleId": "two\nlines" })),
         tool_ask("open_console", json!({})),
-        tool_ask("stage_sql", json!({ "sql": "SELECT 2" })),
+        tool_ask("stage_sql", json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "SELECT 2" })),
         one_round_answer(),
     ];
     let (app, _captured, pg) = app(asks, json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 10 } })).await;
-    let (status, _ct, text) = call_text(&app, "POST", "/api/llm/db/stream", Some(json!({ "agent": "data", "conn": "mm", "prompt": "a revenue tab" }))).await;
+    let (status, _ct, text) = call_text(&app, "POST", "/api/llm/db/stream", Some(json!({ "agent": "data", "conn": "mm", "prompt": "a revenue tab", "consoleTabs": [{ "id": "report", "tab": "Revenue report", "agent": true, "open": true, "statements": [] }, { "id": "inspection", "tab": "Inspection", "agent": true, "open": true, "statements": [] }] }))).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     let events = events_of(&text);
     let db: Vec<&Value> = events.iter().filter(|(name, _)| name == "db").map(|(_, frame)| frame).collect();
     assert_eq!(db.len(), 4, "{text}");
     let id = db[0]["tabId"].as_str().expect("new console id");
     assert!(!id.is_empty());
-    assert_eq!(*db[0], json!({ "kind": "console", "tab": "Revenue report", "tabId": id, "create": true, "format": true }));
+    assert_eq!(*db[0], json!({ "kind": "console", "tab": "Revenue report", "tabId": id, "create": false, "format": true }));
     assert_eq!(db[1]["tabId"], id);
     assert_eq!((db[1]["kind"].as_str(), db[1]["tab"].as_str()), (Some("run"), Some("Revenue report")), "{}", db[1]);
     assert_eq!(db[1]["reply"]["rows"].as_array().map(Vec::len), Some(3));
@@ -1335,18 +1433,18 @@ async fn open_console_opens_a_named_tab_and_a_run_naming_it_lands_there() {
     assert_eq!(db[2]["sql"], "DELETE FROM posts WHERE id = 'p1'");
     assert_eq!(db[2]["create"], true);
     assert_eq!(db[2]["format"], true);
-    assert_eq!((db[3]["kind"].as_str(), db[3]["sql"].as_str()), (Some("stage"), Some("SELECT 2")));
-    assert!(db[3]["tabId"].is_string() && db[3]["create"] == true, "the default Agent console has a same-send identity");
+    assert_eq!((db[3]["kind"].as_str(), db[3]["sql"].as_str()), (Some("stage"), Some("-- Inspect posts\nSELECT 2")));
+    assert!(db[3]["tabId"].is_string() && db[3]["create"] != true, "the new named console has a same-send identity");
     let answers: Vec<(bool, &str)> = events
         .iter()
         .filter(|(name, _)| name == "toolResult")
         .map(|(_, frame)| (frame["ok"].as_bool().unwrap_or(false), frame["text"].as_str().unwrap_or_default()))
         .collect();
     assert_eq!(answers.len(), 7, "{text}");
-    assert!(answers[0].0 && answers[0].1.starts_with("Opened the console tab Revenue report. Pass tab \"Revenue report\" to run_sql and stage_sql"), "{:?}", answers[0]);
-    assert!(answers[2].0 && answers[2].1.contains("with the sql placed in it. It has NOT run."), "{:?}", answers[2]);
-    assert!(!answers[3].0 && answers[3].1.contains("at most 40 characters"), "{:?}", answers[3]);
-    assert!(!answers[4].0 && answers[4].1.contains("on one line"), "{:?}", answers[4]);
+    assert!(answers[0].0 && serde_json::from_str::<Value>(answers[0].1).expect("identity")["consoleId"] == "report", "{:?}", answers[0]);
+    assert!(answers[2].0 && serde_json::from_str::<Value>(answers[2].1).expect("identity")["staged"] == true, "{:?}", answers[2]);
+    assert!(!answers[3].0 && answers[3].1.contains("at most 64 characters"), "{:?}", answers[3]);
+    assert!(!answers[4].0 && answers[4].1.contains("one line"), "{:?}", answers[4]);
     assert!(!answers[5].0 && answers[5].1.starts_with("tab is required"), "{:?}", answers[5]);
     assert_eq!(pg.ran.lock().expect("ran").len(), 1, "the refused run reached no connection");
 }
@@ -1406,7 +1504,7 @@ async fn console_tabs_are_listed_read_and_edited_by_id() {
     assert!(answers[1].1.contains("[0]\nDELETE FROM posts"), "{:?}", answers[1]);
     assert!(answers[2].0 && answers[2].1.starts_with("Sent to the page: statement 1 of the console tab \"Revenue report\" (t-open) replaced"), "{:?}", answers[2]);
     assert!(answers[3].0 && answers[3].1.contains("statement 0 of the console tab \"Revenue report\" (t-open) deleted"), "{:?}", answers[3]);
-    assert!(answers[4].0 && answers[4].1.starts_with("Opened the console tab Cleanup."), "{:?}", answers[4]);
+    assert!(answers[4].0 && serde_json::from_str::<Value>(answers[4].1).expect("identity")["consoleId"] == "t-closed", "{:?}", answers[4]);
     assert!(!answers[5].0 && answers[5].1.contains("no console tab with id nope") && answers[5].1.contains("list_console_tabs"), "{:?}", answers[5]);
     assert!(!answers[6].0 && answers[6].1.contains("index 4 is past the console tab \"Cleanup\" (t-closed)") && answers[6].1.contains("0 to 0"), "{:?}", answers[6]);
     assert!(!answers[7].0 && answers[7].1.contains("no console tab with id nope"), "{:?}", answers[7]);
@@ -1469,16 +1567,16 @@ async fn a_console_reads_back_its_own_delete_and_replace_in_one_send() {
 #[tokio::test]
 async fn a_console_opened_by_id_takes_the_statements_that_follow() {
     let console = json!([
-        { "id": "t-1", "tab": "SQL", "open": true, "agent": true, "statements": [] },
-        { "id": "t-2", "tab": "SQL", "open": true, "agent": true, "statements": [] },
+        { "id": "t-1", "tab": "Post inspection", "open": true, "agent": true, "statements": [] },
+        { "id": "t-2", "tab": "Post inspection", "open": true, "agent": true, "statements": [] },
         { "id": "t-notes", "tab": "Notes", "open": true, "agent": false, "statements": [] },
     ]);
     let asks = vec![
         tool_ask("open_console", json!({ "tabId": "t-2" })),
-        tool_ask("stage_sql", json!({ "tab": "SQL", "sql": "SELECT 2" })),
-        tool_ask("run_sql", json!({ "tab": "SQL", "sql": "SELECT 3" })),
+        tool_ask("stage_sql", json!({ "description": "Inspect posts", "consoleId": "t-2", "sql": "SELECT 2" })),
+        tool_ask("run_sql", json!({ "description": "Inspect posts", "consoleId": "t-2", "sql": "SELECT 3" })),
         tool_ask("open_console", json!({ "tabId": "t-2", "sql": "SELECT 4" })),
-        tool_ask("stage_sql", json!({ "tab": "Notes", "sql": "SELECT 5" })),
+        tool_ask("stage_sql", json!({ "description": "Inspect posts", "consoleId": "t-notes", "sql": "SELECT 5" })),
         one_round_answer(),
     ];
     let (app, _captured, pg) = app(asks, json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 12 } })).await;
@@ -1494,24 +1592,23 @@ async fn a_console_opened_by_id_takes_the_statements_that_follow() {
     let db: Vec<&Value> = events.iter().filter(|(name, _)| name == "db").map(|(_, frame)| frame).collect();
     assert_eq!(db.len(), 5, "{text}");
     assert_eq!((db[0]["kind"].as_str(), db[0]["tabId"].as_str()), (Some("console"), Some("t-2")), "{}", db[0]);
-    for (frame, sql) in [(db[1], "SELECT 2"), (db[2], "SELECT 3"), (db[3], "SELECT 4")] {
-        assert_eq!((frame["sql"].as_str(), frame["tab"].as_str(), frame["tabId"].as_str()), (Some(sql), Some("SQL"), Some("t-2")), "{frame}");
+    for (frame, sql) in [(db[1], "-- Inspect posts\nSELECT 2"), (db[2], "-- Inspect posts\nSELECT 3"), (db[3], "SELECT 4")] {
+        assert_eq!((frame["sql"].as_str(), frame["tab"].as_str(), frame["tabId"].as_str()), (Some(sql), Some("Post inspection"), Some("t-2")), "{frame}");
     }
     assert_eq!((db[3]["kind"].as_str(), db[3]["tabId"].as_str()), (Some("console"), Some("t-2")), "{}", db[3]);
-    // A console of the reader's own: named, never taken by id - the page opens or finds it by name.
-    assert_eq!((db[4]["sql"].as_str(), db[4]["tab"].as_str(), db[4]["tabId"].is_null()), (Some("SELECT 5"), Some("Notes"), false), "{}", db[4]);
+    // An explicit ID also selects the reader's console when names overlap.
+    assert_eq!((db[4]["sql"].as_str(), db[4]["tab"].as_str(), db[4]["tabId"].is_null()), (Some("-- Inspect posts\nSELECT 5"), Some("Notes"), false), "{}", db[4]);
     assert_eq!(pg.ran.lock().expect("ran").len(), 1, "the run reached the connection");
 }
 
-/// A name that one console of the agent's carries resolves to its id even before open_console
-/// names it: the page then holds the statement in that tab, never in a second one of the name.
+/// Execution addresses IDs even when multiple consoles carry the same label.
 #[tokio::test]
-async fn a_name_of_one_agent_console_resolves_to_its_id() {
+async fn an_explicit_id_distinguishes_an_agent_console_from_a_same_named_manual_console() {
     let console = json!([
         { "id": "t-only", "tab": "Revenue report", "open": true, "agent": true, "statements": [] },
         { "id": "t-reader", "tab": "Revenue report", "open": true, "agent": false, "statements": [] },
     ]);
-    let asks = vec![tool_ask("stage_sql", json!({ "tab": "revenue report", "sql": "SELECT 1" })), one_round_answer()];
+    let asks = vec![tool_ask("stage_sql", json!({ "description": "Inspect posts", "consoleId": "t-only", "sql": "SELECT 1" })), one_round_answer()];
     let (app, _captured, _pg) = app(asks, json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 4 } })).await;
     let (status, _ct, text) = call_text(
         &app,
@@ -1524,8 +1621,7 @@ async fn a_name_of_one_agent_console_resolves_to_its_id() {
     let events = events_of(&text);
     let db: Vec<&Value> = events.iter().filter(|(name, _)| name == "db").map(|(_, frame)| frame).collect();
     assert_eq!(db.len(), 1, "{text}");
-    // The name matches the agent's console only, case aside: the reader's console of that name
-    // is not a tab the agent may take, so it is the agent's one that is addressed.
+    // The selected ID wins regardless of labels or ownership.
     assert_eq!((db[0]["tabId"].as_str(), db[0]["tab"].as_str()), (Some("t-only"), Some("Revenue report")), "{}", db[0]);
 }
 
@@ -1630,15 +1726,15 @@ async fn an_auto_write_runs_when_narrow_and_is_held_past_the_gate_or_the_cap() {
         ("UPDATE posts SET hidden = true WHERE type = 'old'", "it changes 5000 rows and a write changes at most 1000 on its own, so it was rolled back"),
     ];
     let mut asks = vec![
-        tool_ask("run_sql", json!({ "sql": "UPDATE posts SET hidden = true WHERE id = 'p1'", "tab": "Cleanup" })),
-        tool_ask("run_sql", json!({ "sql": "INSERT INTO posts (id) VALUES ('p9')" })),
+        tool_ask("run_sql", json!({ "description": "Inspect posts", "sql": "UPDATE posts SET hidden = true WHERE id = 'p1'", "consoleId": "cleanup" })),
+        tool_ask("run_sql", json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "INSERT INTO posts (id) VALUES ('p9')" })),
     ];
-    asks.extend(held.iter().map(|(sql, _)| tool_ask("run_sql", json!({ "sql": sql }))));
-    asks.push(tool_ask("run_sql", json!({ "sql": "DELETE FROM missing WHERE id = 1" })));
-    asks.push(tool_ask("run_sql", json!({ "sql": "SELECT id FROM posts" })));
+    asks.extend(held.iter().map(|(sql, _)| tool_ask("run_sql", json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": sql }))));
+    asks.push(tool_ask("run_sql", json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "DELETE FROM missing WHERE id = 1" })));
+    asks.push(tool_ask("run_sql", json!({ "description": "Inspect posts", "consoleId": "inspection", "sql": "SELECT id FROM posts" })));
     asks.push(one_round_answer());
     let (app, _captured, pg) = app(asks, json!({ "data": { "runtime": "db", "provider": "local", "maxTurns": 12 } })).await;
-    let body = json!({ "agent": "data", "conn": "mm", "prompt": "tidy up", "writes": "auto" });
+    let body = json!({ "agent": "data", "conn": "mm", "prompt": "tidy up", "writes": "auto", "consoleTabs": [{ "id": "cleanup", "tab": "Cleanup", "agent": true, "open": true, "statements": [] }, { "id": "inspection", "tab": "Inspection", "agent": true, "open": true, "statements": [] }] });
     let (status, _ct, text) = call_text(&app, "POST", "/api/llm/db/stream", Some(body)).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     let events = events_of(&text);
@@ -1656,7 +1752,8 @@ async fn an_auto_write_runs_when_narrow_and_is_held_past_the_gate_or_the_cap() {
     assert_eq!(answers[1], (true, "It ran and was committed: 3 row(s) changed, the insert took id 41."));
     for (i, (sql, why)) in held.iter().enumerate() {
         let (frame, answer) = (db[2 + i], answers[2 + i]);
-        assert_eq!((frame["kind"].as_str(), frame["sql"].as_str()), (Some("stage"), Some(*sql)), "{frame}");
+        assert_eq!(frame["kind"], "stage");
+        assert_eq!(frame["sql"], format!("-- Inspect posts\n{sql}"));
         assert!(frame["held"].as_str().is_some_and(|held| held.contains(why)), "{frame}");
         assert!(answer.0 && answer.1.starts_with("Held, not run: ") && answer.1.contains(why) && answer.1.ends_with(STAGED), "{sql}: {answer:?}");
     }

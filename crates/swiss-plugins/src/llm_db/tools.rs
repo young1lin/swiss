@@ -378,6 +378,9 @@ impl ConsoleTab {
 pub struct DbTools {
     pub(super) analysis: Option<Arc<crate::analysis::AnalysisStore>>,
     pub(super) consoles: Option<Arc<crate::db_consoles::ConsoleStore>>,
+    /// The last committed record travels with its result. Bus events may reach the page before
+    /// or after that result; both carry the same revision and neither needs a browser write.
+    saved_console: Option<crate::db_consoles::Console>,
     pub(super) catalog: Arc<CatalogRegistry>,
     pub(super) conn: String,
     pub(super) kind: DbKind,
@@ -412,6 +415,7 @@ impl DbTools {
         DbTools {
             analysis: None,
             consoles: None,
+            saved_console: None,
             catalog, conn: conn.to_string(), kind, page, references: None, limit: RUN_LIMIT, db: None, memory: DbMemory::of(conn),
             writes: Writes::Staged, tabs: Vec::new(), tabs_partial: false, target: None,
         }
@@ -478,6 +482,7 @@ impl DbTools {
         tab.revision = saved.revision;
         tab.created_at = saved.created_at;
         tab.updated_at = saved.updated_at;
+        self.saved_console = Some(saved);
         Ok(())
     }
 
@@ -493,6 +498,9 @@ impl DbTools {
         if self.consoles.is_some() {
             if let Some(tab) = frame.get("tabId").and_then(Value::as_str).and_then(|id| self.tabs.iter().find(|tab| tab.id == id)) {
                 frame["consoleRevision"] = json!(tab.revision);
+                if let Some(saved) = self.saved_console.as_ref().filter(|saved| saved.id == tab.id && saved.revision == tab.revision) {
+                    frame["console"] = json!(saved);
+                }
             }
         }
         if let Some(page) = &self.page {
@@ -561,15 +569,15 @@ impl DbTools {
     pub(super) async fn run_sql(&mut self, args: &Value) -> ToolAnswer {
         let Some(sql) = string_arg(args, "sql") else { return refused("sql is required") };
         if sql.chars().count() > SQL_MAX { return refused(format!("sql: at most {SQL_MAX} characters")); }
-        let mut at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
+        let (mut at, display) = match self.sql_landing(args, &sql) { Ok(at) => at, Err(why) => return refused(why) };
         let limit = self.run_limit(args);
         let (_lease, browser) = match self.sql() { Ok(held) => held, Err(why) => return refused(why) };
         // In auto mode what is no read is a write to try: run_agent_write's gate and cap decide.
         if self.writes == Writes::Auto && assert_read_statement(&sql).is_err() {
-            if let Err(why) = self.append_sql_snapshot(&mut at, &sql) { return refused(why); }
-            return self.write_sql(browser.as_ref(), &sql, &at).await;
+            if let Err(why) = self.append_sql_snapshot(&mut at, &display) { return refused(why); }
+            return self.write_sql(browser.as_ref(), &sql, &display, &at).await;
         }
-        if let Err(why) = self.append_sql_snapshot(&mut at, &sql) { return refused(why); }
+        if let Err(why) = self.append_sql_snapshot(&mut at, &display) { return refused(why); }
         let started = Instant::now();
         let bound = json!(limit);
         match self.catalog.sql_history.observe(&self.conn, browser.label(), _lease.dialect(),
@@ -577,11 +585,11 @@ impl DbTools {
             Ok(mut reply) => {
                 reply["elapsedMs"] = json!(started.elapsed().as_millis() as u64);
                 let text = result_text(&reply);
-                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "reply": reply }), &at)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": display, "reply": reply }), &at)).await;
                 answered(text)
             }
             Err(why) => {
-                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "error": why }), &at)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": display, "error": why }), &at)).await;
                 refused(format!("the statement failed: {why}"))
             }
         }
@@ -589,22 +597,22 @@ impl DbTools {
 
     /// A write run_sql was given in auto mode: run and committed within the cap, else held -
     /// placed in the console unrun as stage_sql would, the frame and the answer saying why.
-    pub(super) async fn write_sql(&self, browser: &dyn DbBrowser, sql: &str, at: &Landing) -> ToolAnswer {
+    pub(super) async fn write_sql(&self, browser: &dyn DbBrowser, sql: &str, display: &str, at: &Landing) -> ToolAnswer {
         let started = Instant::now();
         match self.catalog.sql_history.observe(&self.conn, browser.label(), browser.dialect().as_str(),
             browser.run_agent_write(sql, WRITE_ROWS_MAX), |why| match why { WriteRefusal::Held(why) | WriteRefusal::Failed(why) => why.clone() }).await {
             Ok(mut reply) => {
                 reply["elapsedMs"] = json!(started.elapsed().as_millis() as u64);
                 let text = written_text(&reply);
-                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "reply": reply, "wrote": true }), at)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": display, "reply": reply, "wrote": true }), at)).await;
                 answered(text)
             }
             Err(WriteRefusal::Held(why)) => {
-                self.to_page(in_tab(json!({ "kind": "stage", "sql": sql, "held": why }), at)).await;
+                self.to_page(in_tab(json!({ "kind": "stage", "sql": display, "held": why }), at)).await;
                 answered(format!("Held, not run: {why}. {STAGED}"))
             }
             Err(WriteRefusal::Failed(why)) => {
-                self.to_page(in_tab(json!({ "kind": "run", "sql": sql, "error": why }), at)).await;
+                self.to_page(in_tab(json!({ "kind": "run", "sql": display, "error": why }), at)).await;
                 refused(format!("the statement failed: {why}"))
             }
         }
@@ -622,10 +630,25 @@ impl DbTools {
     pub(super) async fn stage_sql(&mut self, args: &Value) -> ToolAnswer {
         let Some(sql) = string_arg(args, "sql") else { return refused("sql is required") };
         if sql.chars().count() > SQL_MAX { return refused(format!("sql: at most {SQL_MAX} characters")); }
-        let mut at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
-        if let Err(why) = self.append_sql_snapshot(&mut at, &sql) { return refused(why); }
-        self.to_page(in_tab(json!({ "kind": "stage", "sql": sql }), &at)).await;
+        let (mut at, display) = match self.sql_landing(args, &sql) { Ok(at) => at, Err(why) => return refused(why) };
+        if let Err(why) = self.append_sql_snapshot(&mut at, &display) { return refused(why); }
+        self.to_page(in_tab(json!({ "kind": "stage", "sql": display }), &at)).await;
         answered(STAGED)
+    }
+
+    /// SQL calls address an existing console by identity. The intention is a single comment
+    /// line for the reader; arbitrary input whitespace never changes database execution.
+    fn sql_landing(&self, args: &Value, sql: &str) -> Result<(Landing, String), String> {
+        let id = string_arg(args, "consoleId").ok_or("consoleId is required: use an ID from open_console or list_console_tabs")?;
+        let description = string_arg(args, "description").ok_or("description is required: briefly explain this statement")?;
+        if description.chars().count() > 500 || description.chars().any(char::is_control) {
+            return Err("description must be one line, at most 500 characters".into());
+        }
+        if ["console", "tab", "tabId", "format"].iter().any(|key| args.get(key).is_some()) {
+            return Err("SQL calls take consoleId, description and sql (and run_sql may take limit)".into());
+        }
+        let at = self.landing(&json!({ "tabId": id }))?;
+        Ok((at, format!("-- {description}\n{sql}")))
     }
 
     pub(super) fn append_sql_snapshot(&mut self, at: &mut Landing, sql: &str) -> Result<(), String> {
@@ -634,6 +657,8 @@ impl DbTools {
         if let Some(tab) = at.id.as_ref().and_then(|id| self.tabs.iter_mut().find(|t| &t.id == id)) {
             let mut text = sql.trim().to_string();
             if !text.ends_with(';') { text.push_str(if text.lines().last().is_some_and(|line| line.contains("--")) { "\n;" } else { ";" }); }
+            tab.agent = true;
+            if tab.agent_tab.is_none() { tab.agent_tab = Some(tab.tab.clone()); }
             tab.append_text(&text);
             tab.statements.extend(console_blocks(&text));
             tab.open = true;
@@ -671,15 +696,25 @@ impl DbTools {
     /// this conversation opened it before. A statement given with it is staged there, as the
     /// kind's stage tool would.
     pub(super) async fn open_console(&mut self, args: &Value) -> ToolAnswer {
+        if args.get("tabId").is_some() && string_arg(args, "tabId").is_none() {
+            return refused("tabId must be a nonempty console ID from list_console_tabs");
+        }
         let format = match args.get("format") {
             None => true,
             Some(Value::Bool(value)) => *value,
             _ => return refused("format must be a boolean; omit it for true"),
         };
-        let mut at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
+        let landing = if self.kind == DbKind::Sql && string_arg(args, "tabId").is_none() {
+            tab_of(args).map(|name| Landing { name, ..Landing::default() })
+        } else { self.landing(args) };
+        let mut at = match landing { Ok(at) => at, Err(why) => return refused(why) };
         let Some(tab) = at.name.clone() else {
             return refused("tab is required: the tab's name, e.g. Revenue report (or tabId, one from list_console_tabs)");
         };
+        if self.kind == DbKind::Sql && at.id.is_none()
+            && ["agent", "sql", "console", "query"].contains(&tab.to_lowercase().as_str()) {
+            return refused("tab must name the purpose of the work, e.g. Eligible users, rather than Agent or SQL");
+        }
         let (statement, run, stage) = match self.kind {
             DbKind::Sql => ("sql", "run_sql", "stage_sql"),
             DbKind::Mongo => ("command", "run_mongo", "stage_mongo"),
@@ -721,6 +756,9 @@ impl DbTools {
         let mut frame = in_tab(json!({ "kind": "console", "create": create, "format": format }), &at);
         if let Some(text) = &text { frame["sql"] = json!(text); }
         self.to_page(frame).await;
+        if self.kind == DbKind::Sql {
+            return answered(json!({ "consoleId": id, "name": tab, "staged": text.is_some(), "executed": false }).to_string());
+        }
         let then = format!("Pass tab \"{tab}\" to {run} and {stage} to land there; without it they land in the Agent tab. Console ID: {id}.");
         if text.is_some() {
             answered(format!("Opened the console tab {tab} with the {statement} placed in it. It has NOT run. {then}"))
@@ -1235,13 +1273,13 @@ pub(super) fn open_console_spec(kind: DbKind) -> ToolSpec {
         })),
         DbKind::Redis => ("run_redis", "stage_redis", json!({ "command": { "type": "string", "description": "A command line to place in it, not run." } })),
     };
-    let mut properties = json!({ "tab": name, "tabId": id, "format": { "type": "boolean", "default": true, "description": "Format SQL after opening or restoring; only false preserves original whitespace. Never runs SQL; ignored for Redis and MongoDB." } });
+    let mut properties = json!({ "tab": name, "tabId": id });
     if let (Some(all), Some(more)) = (properties.as_object_mut(), statement.as_object()) {
         all.extend(more.clone());
     }
     spec(
         "open_console",
-        &format!("Open a console tab of yours on the user's page under a name - a new one, or the one of that name you opened before brought to the front, or the one a tabId from list_console_tabs names, a closed one restored with its statements - for work the user should see apart from the Agent tab: when they ask for a new tab, or a separate piece of work (a report's queries, a script to review). Then pass the same tab to {run} and {stage}: what they run or place lands there, its results under it. Given a statement, it is placed in the tab without running, as {stage} would."),
+        &format!("Create a console named for the purpose of the work (tab), or open an existing console by tabId from list_console_tabs. SQL answers JSON with consoleId: pass that ID to run_sql and stage_sql. Names are labels, never SQL execution addresses. A supplied statement is placed there without running. MongoDB and Redis {run} and {stage} use tab or tabId."),
         json!({ "type": "object", "properties": properties }),
     )
 }
@@ -1303,6 +1341,8 @@ impl Toolbox for DbTools {
         // The id is the address: two consoles can share a name, and a renamed one no longer
         // answers to the name the agent opened it under.
         let tab_id = json!({ "type": "string", "description": "The console tab's id from list_console_tabs. Wins over tab: it tells two tabs of one name apart." });
+        let console_id = json!({ "type": "string", "description": "Required existing console ID from open_console or list_console_tabs. Never a tab name. Call open_console with a purpose name first if no suitable console exists.", "maxLength": TAB_ID_MAX });
+        let description = json!({ "type": "string", "description": "One short sentence in the user's language explaining this statement. Saved above the SQL as a -- comment. One line, at most 500 characters.", "maxLength": 500 });
         let mut specs = match self.kind {
             DbKind::Sql => vec![
                 spec(
@@ -1325,16 +1365,16 @@ impl Toolbox for DbTools {
                     "run_sql",
                     "Run ONE statement. A read (SELECT, WITH, TABLE, VALUES, SHOW, DESCRIBE, EXPLAIN) runs in a read-only transaction that is rolled back. A write is refused here - stage it - unless the snapshot says Writes: auto: then one INSERT, REPLACE, UPDATE or DELETE (an UPDATE or DELETE only with a WHERE that narrows it) runs and is committed when it changes no more rows than that line allows; any other write, or one past that, is not run but placed in the console, and the result says why. It lands in the user's console and its whole result opens on their page; you read the row count, the columns and the first rows.",
                     json!({ "type": "object", "properties": {
-                        "sql": { "type": "string", "description": "One statement." },
+                        "sql": { "type": "string", "description": "One raw statement. Any whitespace or layout is accepted; the application formats its display." },
                         "limit": { "type": "integer", "description": "Rows to fetch when the statement has no LIMIT of its own (default and most: the page's row limit)." },
-                        "tab": tab,
-                        "tabId": tab_id
-                    }, "required": ["sql"] }),
+                        "consoleId": console_id,
+                        "description": description
+                    }, "required": ["consoleId", "description", "sql"] }),
                 ),
                 spec(
                     "stage_sql",
                     "Place a statement in the user's console without running it - for anything that writes or changes schema and run_sql does not run itself. The user reviews and runs it.",
-                    json!({ "type": "object", "properties": { "sql": { "type": "string" }, "tab": tab, "tabId": tab_id }, "required": ["sql"] }),
+                    json!({ "type": "object", "properties": { "consoleId": console_id, "description": description, "sql": { "type": "string", "description": "Raw SQL; display formatting is handled by the application." } }, "required": ["consoleId", "description", "sql"] }),
                 ),
             ],
             DbKind::Mongo => {
@@ -1432,11 +1472,6 @@ impl Toolbox for DbTools {
             }
         };
         if self.kind == DbKind::Sql {
-            for spec in &mut specs {
-                if spec.name == "run_sql" || spec.name == "stage_sql" {
-                    spec.schema["properties"]["format"] = sql_format_spec();
-                }
-            }
             specs.push(crate::llm_db_analysis::spec());
         }
         specs.push(open_console_spec(self.kind));

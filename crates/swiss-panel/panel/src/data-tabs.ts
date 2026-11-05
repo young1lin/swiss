@@ -25,7 +25,7 @@ import { dbActiveIndex, dbConn, dbIsMounted, dbOnSqlTextChanged, dbParkedNames, 
 import { dbClosedAdd, dbClosedAdopt, dbClosedById, dbClosedClear, dbClosedDrop, dbClosedEmpty, dbClosedFor, dbClosedLocalFor, dbClosedLocalForget, dbClosedLocalOnly, dbClosedRemember, dbClosedTake } from "./data-closed.js";
 import type { DbClosedTab } from "./data-closed.js";
 import {
-  consoleFromWire, dbClosedEntry, dbConsoleAdopt, dbConsoleClearClosed, dbConsoleFlush, dbConsoleForget, dbConsoleOnSettled, dbConsolePut, dbConsoleRebase,
+  consoleFromWire, dbClosedEntry, dbConsoleAdopt, dbConsoleClearClosed, dbConsoleDisplay, dbConsoleFlush, dbConsoleForget, dbConsoleOnSettled, dbConsolePut, dbConsoleRebase,
   dbConsoleRecord, dbConsoleStage, dbConsoleStoreList, dbConsoleStoreOn, dbConsoleSyncReason, dbConsoleSyncState,
 } from "./data-console-store.js";
 import type { PutResult } from "./data-console-store.js";
@@ -110,19 +110,18 @@ export function dbConsoleTouch(tab: DbSqlTab): void {
   dbConsoleStage(conn, tab, dbTabTitle(tab));
 }
 
-// Every dbSetSqlText edit (typing, formatting, an agent frame) reaches the store through here;
+// Every local dbSetSqlText edit (typing or manual formatting) reaches the store through here;
 // the store's debounce coalesces the burst. Registered once, at module load.
 dbOnSqlTextChanged((tab) => { dbConsoleTouch(tab); });
 // A save finishes after the keystroke that staged it. The strip has to learn the refusal
 // then, or the red dot waits for some later, unrelated repaint.
 dbConsoleOnSettled((conn) => { if (dbConn().conn === conn) renderDbTabs(); });
 
-/** A server record as a strip tab: identity, text, agent slot and lifetime, never reformatted -
- *  the bytes stored are the reader's. */
+/** A server record as a strip tab. Agent SQL gets a formatted view without another save. */
 function dbConsoleTabOf(record: ConsoleRecord): DbSqlTab {
   const t = freshTab("sql");
   t.id = record.id;
-  t.sqlText = record.sql;
+  t.sqlText = dbConsoleDisplay(dbConn().conn || "", record);
   t.agent = record.agent === true;
   if (record.agentTab) t.agentTab = record.agentTab;
   const fallback = tr(dbConsoleSpeaksCommands() ? "dataTabs.command" : "dataTabs.sql");
@@ -208,6 +207,7 @@ let dbConsoleEpoch = 0;
 const dbConsoleRefreshing = new Set<string>();
 const dbConsoleSubscriptions = new Map<string, () => void>();
 const dbConsoleSeen = new Map<string, Map<string, ConsoleRecord>>();
+const dbConsoleRemoved = new Map<string, Set<string>>();
 interface ConsoleRead { events: Set<string>; removed: Set<string>; cleared: boolean }
 const dbConsoleReads = new Map<string, ConsoleRead>();
 function dbBeginConsoleRead(conn: string): ConsoleRead {
@@ -266,11 +266,17 @@ function dbSubscribeConsoles(conn: string): void {
 
 /** Events, the first read and reconnect reads all use this revision gate (SPEC §bus.topics).
  *  A pending write whose answer was lost adopts matching state; different draft text stays. */
-export function applyServerConsole(conn: string, record: ConsoleRecord): void {
+export function applyServerConsole(conn: string, record: ConsoleRecord, fromFrame = false): void {
   if (dbConn().conn !== conn) return;
+  // Bus removal wins over an independently delayed SSE result. Only a fresh store
+  // record (event or read) can confirm that this identity has been created again.
+  const removed = dbConsoleRemoved.get(conn);
+  if (fromFrame && removed?.has(record.id)) return;
   let seen = dbConsoleSeen.get(conn);
   if (!seen) { seen = new Map(); dbConsoleSeen.set(conn, seen); }
+  if (!fromFrame && removed?.delete(record.id)) seen.delete(record.id);
   const before = seen.get(record.id);
+  if (fromFrame && before && record.updatedAt < before.updatedAt) return;
   if (before && record.revision < before.revision) return;
   seen.set(record.id, record);
   const tabs = dbTabs(), live = dbTab();
@@ -278,12 +284,12 @@ export function applyServerConsole(conn: string, record: ConsoleRecord): void {
   if (tab) {
     if (record.revision <= (tab.revision || 0)) return;
     if (!tab.revision && dbConsoleSyncState(conn, tab.id) === "clean"
-      && (tab.sqlText !== record.sql || dbTabTitle(tab) !== record.tab
+      && (tab.sqlText !== dbConsoleDisplay(conn, record) || dbTabTitle(tab) !== record.tab
         || (tab.agent === true) !== record.agent || (tab.agentTab || null) !== record.agentTab)) {
       dbConsoleStage(conn, tab, dbTabTitle(tab));
     }
     const state = dbConsoleSyncState(conn, tab.id);
-    if (state !== "clean" && !(state === "pending" && record.open && tab.sqlText === record.sql
+    if (state !== "clean" && !(state === "pending" && record.open && tab.sqlText === dbConsoleDisplay(conn, record)
       && dbTabTitle(tab) === record.tab && (tab.agent === true) === record.agent
       && (tab.agentTab || null) === record.agentTab)) return;
     dbConsoleAdopt(conn, record);
@@ -292,7 +298,7 @@ export function applyServerConsole(conn: string, record: ConsoleRecord): void {
       dbDropCleanConsole(conn, record.id);
       return;
     }
-    tab.sqlText = record.sql;
+    tab.sqlText = dbConsoleDisplay(conn, record);
     tab.revision = record.revision;
     tab.createdAt = record.createdAt || null;
     tab.updatedAt = record.updatedAt || null;
@@ -329,6 +335,9 @@ function dbDropCleanConsole(conn: string, id: string): void {
 }
 
 function dbRemoveServerConsole(conn: string, id: string): void {
+  let removed = dbConsoleRemoved.get(conn);
+  if (!removed) { removed = new Set(); dbConsoleRemoved.set(conn, removed); }
+  removed.add(id);
   dbConsoleSeen.get(conn)?.delete(id);
   dbClosedDrop(conn, id);
   dbDropCleanConsole(conn, id);
@@ -740,8 +749,9 @@ async function dbConsoleResolve(id: string, choice: "server" | "draft"): Promise
   const t = dbTabs()[at] as DbSqlTab;
   if (choice === "server") {
     if (!record) { toast(tr("dataTabs.idMissing"), true); return; }
-    if (t.sqlText !== record.sql && !confirm(tr("dataTabs.reloadConsoleConfirm"))) return;
-    t.sqlText = record.sql;
+    const display = dbConsoleDisplay(conn, record);
+    if (t.sqlText !== display && !confirm(tr("dataTabs.reloadConsoleConfirm"))) return;
+    t.sqlText = display;
     if (record.createdAt) t.createdAt = record.createdAt;
     if (record.updatedAt) t.updatedAt = record.updatedAt;
     t.revision = record.revision;
@@ -863,6 +873,9 @@ async function dbClearClosedHistory(): Promise<void> {
   if (!conn) return;
   if (dbConsoleStoreOn(conn)) {
     if (!(await dbConsoleClearClosed(conn))) return;
+    for (const entry of dbClosedFor(conn)) {
+      if (!dbConsoleSeen.get(conn)?.get(entry.id)?.open) dbRemoveServerConsole(conn, entry.id);
+    }
     dbClosedEmpty(conn);
   } else if (!dbClosedClear(conn)) {
     toast(tr("dataTabs.storageFull"), true);
@@ -1002,6 +1015,7 @@ async function dbFileClosedStored(gone: DbTab[]): Promise<boolean> {
       result = await dbCloseServerCopy(conn, tab.id) || result;
     }
     if (!result.ok) { toast(result.error || tr("dataTabs.consoleSaveFailed"), true); return false; }
+    dbConsoleSeen.get(conn)?.set(tab.id, result.console);
     dbClosedAdd(conn, dbClosedEntry(conn, result.console));
     dbConsoleForget(conn, tab.id);
   }

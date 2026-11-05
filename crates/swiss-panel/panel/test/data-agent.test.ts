@@ -33,11 +33,15 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dbConn as dbConnState, dbSqlTab, dbTab, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
+import { dbConn as dbConnState, dbResetTabs, dbSqlTab, dbTab, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
 import { install, tr, trn } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 import { dbConn, dbPage } from "./db-fixtures.js";
 import type { DbSqlTab } from "../src/types/state.js";
+import { consolePeer } from "./console-bus-fixture.js";
+import { dbConsoleSyncState } from "../src/data-console-store.js";
+import { dbFormatSql } from "../src/data-sql-format.js";
+import type { ConsoleRecord } from "../src/data-console-sync.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -1698,4 +1702,39 @@ it("keeps the connection beside the DB picker and every composer control inside 
   for (const id of ["dbAgentWrites", "dbAgentModel", "dbAgentSend"]) {
     expect(q("#" + id).closest(".chat-editor"), id).toBe(editor);
   }
+});
+
+
+it("adopts committed SSE snapshots without a bus event or another save, and ignores late snapshots", async () => {
+  const conn = "committed-sql";
+  const peer = consolePeer();
+  let frames: string[] = [];
+  route = c => c.path === "/api/llm/db/stream" ? [200, { __sse: frames }] : undefined;
+  await openOn(conn);
+  dbResetTabs([freshTab("table")], 0);
+  await tabs.dbConsolesLoad(conn);
+  const first = "-- 列出达标用户\nselect id,name from users where active=true;";
+  const second = "-- 统计达标用户\nselect count(*) from users where active=true;";
+  const saved: ConsoleRecord = { id: "eligible-users", tab: "达标用户核查", agent: true, agentTab: "达标用户核查",
+    open: true, sql: first, revision: 1, createdAt: 10, updatedAt: 10, closedAt: null };
+  const newer = { ...saved, sql: first + "\n\n" + second, revision: 2 };
+  frames = [
+    sseFrame("run", { runId: 907, agent: "db", continued: false }),
+    sseFrame("db", { kind: "run", create: true, tabId: saved.id, tab: saved.tab, consoleRevision: 1, console: saved, sql: first, reply: RUN }),
+    sseFrame("db", { kind: "run", tabId: saved.id, tab: saved.tab, consoleRevision: 2, console: newer, sql: second, reply: RUN }),
+    sseFrame("db", { kind: "console", tabId: saved.id, tab: saved.tab, consoleRevision: 1, console: saved }),
+    sseFrame("done", { ok: true, runId: 907, ms: 1, turns: 1, tokensIn: 1, tokensOut: 1 }),
+  ];
+  await ask("核查达标用户");
+  peer.changed(conn, saved, "");
+  peer.changed(conn, newer, "");
+  await settle();
+  const tab = dbTabs().find((t): t is DbSqlTab => t.kind === "sql" && t.id === saved.id);
+  expect(tab?.custom).toBe(saved.tab);
+  expect(tab?.sqlText).toBe(dbFormatSql(newer.sql));
+  expect(q<HTMLTextAreaElement>("#dbSql").value).toBe(tab?.sqlText);
+  expect(tab?.revision).toBe(2);
+  expect(tab?.sqlResults).toHaveLength(2);
+  expect(dbConsoleSyncState(conn, saved.id)).toBe("clean");
+  expect(peer.calls.filter(c => c.method === "PUT")).toEqual([]);
 });

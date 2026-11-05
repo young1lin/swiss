@@ -951,11 +951,12 @@ function dbConsoleTabs(): DbConsoleTabWire[] {
 /** The console tab this id names: open (brought to the front) or closed (restored with its
  *  text under the same id, data-closed.ts). Null when the page has neither - the tab was
  *  forgotten, or another browser tab closed and cleared it. */
-function dbConsoleById(id: string): DbSqlTab | null {
+function dbConsoleById(id: string, restore = true): DbSqlTab | null {
   const at = dbTabs().findIndex((t: DbTab): boolean => t.kind === "sql" && !t.analysisId && t.id === id);
   if (at >= 0) {
     dbActivateTab(at);
   } else {
+    if (!restore) return null;
     const closed = dbClosedById(dbConn().conn, id);
     if (!closed) return null;
     if (!dbClaimClosed(closed)) return null;
@@ -987,6 +988,11 @@ export function dbAgentOpenConsole(frame: Record<string, unknown>): boolean {
   if (frame.format !== undefined && typeof frame.format !== "boolean") { toast(tr("dataTabs.formatFailed"), true); return false; }
   const id = typeof frame.tabId === "string" ? frame.tabId : undefined;
   const name = typeof frame.tab === "string" ? frame.tab : undefined;
+  if (id && typeof frame.consoleRevision === "number" && dbConsoleStoreOn(dbConn().conn)) {
+    if (!dbConsoleById(id, false)) return false;
+    dockShow("db-console", "bottom");
+    return true;
+  }
   let t: DbSqlTab | null;
   if (id && frame.create === true && !dbTabs().some(t => t.kind === "sql" && t.id === id) && !dbClosedById(dbConn().conn, id)) {
     dbOpenTabForce({ kind: "sql" });
@@ -1072,6 +1078,7 @@ function dbConsoleEdit(tabId: string, op: string, index: number, sql?: string, e
  *  reason on the browser console, because there is nothing to show the reader and no better
  *  guess to make. The server has already said the request was SENT, not done. */
 function dbAgentConsoleEdit(frame: Record<string, unknown>): void {
+  if (typeof frame.consoleRevision === "number" && dbConsoleStoreOn(dbConn().conn)) return;
   const tabId = typeof frame.tabId === "string" ? frame.tabId : "";
   const raw = typeof frame.index === "number" ? frame.index : -1;
   const index = raw >= 0 ? Math.floor(raw) : -1;
@@ -1110,9 +1117,9 @@ function dbAgentConsoleEdit(frame: Record<string, unknown>): void {
    A staged one (a write the agent leaves to the reader) only lands in the console. The agent's
    run supersedes a Run still in flight on the results. `db`: the database a MongoDB command ran on. */
 function dbAgentStatement(sql: string, outcome: { reply?: Record<string, unknown>; error?: string } | null, ran: Set<string>, db?: string, tab?: string, id?: string, format = true, revision?: number | null): void {
-  const d = dbAgentTab(tab, id);
+  const committed = revision != null && dbConsoleStoreOn(dbConn().conn);
+  const d = committed && id ? dbConsoleById(id, false) : dbAgentTab(tab, id);
   if (!d) return;
-  if (revision != null) d.revision = revision;
   const mongo = dbIsMongo();
   const redis = dbIsRedis();
   const text = sql.trim();
@@ -1124,13 +1131,13 @@ function dbAgentStatement(sql: string, outcome: { reply?: Record<string, unknown
     : /;\s*$/.test(text) ? text : text + (/--[^\n]*$/.test(text) ? "\n;" : ";");
   const stmt = dbAgentFormat(raw, format);
   const before = d.sqlText;
-  dbSetSqlText(d, before ? before + "\n\n" + stmt : stmt);
+  if (!committed) dbSetSqlText(d, before ? before + "\n\n" + stmt : stmt);
   const ta = $<HTMLTextAreaElement>("dbSql");
   if (ta) {
     ta.value = d.sqlText;
     // The caret stands in the new block, so Ctrl+Enter runs it again - unless the reader is typing there.
     if (document.activeElement !== ta) {
-      ta.selectionStart = ta.selectionEnd = d.sqlText.length - stmt.length;
+      ta.selectionStart = ta.selectionEnd = Math.max(0, d.sqlText.length - stmt.length);
       ta.scrollTop = ta.scrollHeight;
     }
   }

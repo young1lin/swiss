@@ -119,14 +119,14 @@ in `logs/data.db` (owner `data`, §host.history), never in the browser. A row is
 `open_console` accepts `tabId` alone. An unknown ID fails; a known closed console is restored
 under that ID before any editing. A new console receives its ID before the tool answers and enters
 the running conversation's tab snapshot, so later tools in the same send can address it. This also
-covers implicit run/stage creation (including the default Agent console) and restoration. Raw SQL
+covers purpose-named SQL run/stage creation and restoration. Raw SQL
 uses the same blank-line block indices as the panel; semicolons within a block remain intact.
 An oversized console's statements may be omitted from the bounded Agent snapshot, explicitly
 marked as omitted; the model may open that console but cannot read or edit unknown indices.
 An incomplete tab list is reported and cannot justify creating an apparently missing tab.
-`format` is boolean, defaults to true, and formats SQL through the console's dialect formatter
-after restoration and optional placement. Only explicit false preserves whitespace. Commands on
-Redis and MongoDB do not go through the SQL formatter. Opening never executes a statement.
+Agent-owned SQL consoles always display through the dialect formatter. The stored SQL is the
+canonical text; formatting is a view and never triggers a save. Manual consoles retain exact
+bytes. Redis and MongoDB do not go through the SQL formatter. Opening never executes a statement.
 
 Consoles keep `createdAt` and `updatedAt` in epoch milliseconds, independently of the monotonic
 LRU stamp and of the closed-history `at`. Only a changed name or text updates `updatedAt`.
@@ -198,10 +198,10 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   blocks off the stored prompt by their fixed leads - display only, never a basis for the
   next patch. A removal (`null`) shows nothing; a send that changed nothing has no fold; the
   turn's Copy gives the words alone.
-  Agent SQL written by run_sql, stage_sql and edit_console_sql is formatted on the page by
-  default, including closed-tab replacements. Only the incoming block is formatted; prior
-  drafts, including trailing whitespace, and the exact SQL executed by the server stay intact. `format: false` preserves
-  the incoming whitespace, as it does for open_console; a non-boolean is refused.
+  Agent-owned SQL consoles display formatted committed text, including restoration and edits.
+  The page never writes formatting back. SQL execution receives the original `sql` argument;
+  `description` becomes a single `-- description` line above its saved/displayed statement.
+  Manual drafts retain their exact bytes and their normal compare-and-swap protection.
 - **The prompt is the db runtime's.** The conversation opens under `DB_AGENT_PROMPT`, the
   agent's own prompt after it, a blank line between (a house style, a language to answer in);
   the agent's provider, model, effort and turn cap run it. After the prompts an `# Environment` snapshot names the connection, its
@@ -242,8 +242,8 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   `the_snapshot_counts_a_keyspace_and_names_a_few_collections`).
 - **Tools reach this connection only**, each call leasing it for that call alone (§host.seats):
   `list_tables {grep?, schema?}` (up to 500: schema.name, type, about how many rows),
-  `describe_table {table, schema?}` (columns, keys, indexes), `run_sql {sql}` and
-  `stage_sql {sql}`. `run_sql` runs ONE read (in auto mode a narrow write too, Writes below):
+  `describe_table {table, schema?}` (columns, keys, indexes),
+  `run_sql {consoleId, description, sql, limit?}` and `stage_sql {consoleId, description, sql}`. `run_sql` runs ONE read (in auto mode a narrow write too, Writes below):
   the read gate (`assert_read_statement`: SELECT,
   WITH without a data-modifying CTE, TABLE, VALUES, SHOW, DESCRIBE, EXPLAIN; never INTO
   OUTFILE or DUMPFILE; MySQL DDL, which commits implicitly, stops here), then a read-only
@@ -295,8 +295,8 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   writes and scripts never run; the console's own guard holds after it. An array past the
   console's reply cap comes back cut, saying so
   (`a_redis_read_reaches_the_page_and_a_scan_says_where_it_stands`).
-- **It works on the page.** Every statement lands in the agent's own console tab (named
-  **Agent**, opened when first needed) - or in a console tab of its own it named (Tabs, below)
+- **It works on the page.** Every statement lands in the agent's own console tab:
+  purpose-named for SQL, the default **Agent** slot for commands (Tabs, below)
   - each as its own block after the ones before, the caret
   in the newest so Ctrl+Enter reruns it unless the reader is typing there; the reader's own
   consoles are never touched. A statement ends with its `;`; a MongoDB command lands in the
@@ -341,29 +341,21 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   and the answer closes with the statement or command last run, exactly as run, in a code
   block (`sql`, `json` for a MongoDB command document, `redis` for a Redis line), then a
   few lines on what the result shows - not the rows again, the page has them.
-- **Tabs.** `open_console {tab, sql? | command? (db?)}` opens a console tab of the agent's own
-  under a name (one line, 40 characters at most): a new one, or the one of that name brought to
-  the front; given the kind's statement it places it there unrun, as the stage tool would. Every
-  run and stage tool takes `tab` too, and a statement naming one lands in that tab, its result
-  tabs under it; one naming none - or *Agent* - lands in the Agent tab. The db frames carry it
-  (`{kind: "console", tab}`, and `tab` on a run's or stage's); a bad name is refused before
-  anything reaches the page or the connection. The page keys the tab by that name
-  (`agentTab`), titled with it, so a later send - another conversation too - finds it again
-  while it is open, and the reader may rename it. The prompt keeps one tab to one kind of
-  work: the agent opens a new one, named for its work, when the reader asks for a new tab,
-  when another kind of work begins (a different question, a report's queries, writes apart
-  from the reads that found their rows) or when the tab in use already holds many
-  statements, and goes back to a tab by its name when its work comes back. A tab of the
-  agent's the reader closed waits under Recently closed (§data.tabs) with its text and the
-  name the agent knows it by; `open_console` or a run naming it brings it back whole, the
-  agent's again, and a later statement replaces its text as in an open one. The Agent tab
-  itself waits there too but opens empty when next needed. The reserved wire name `Agent`
-  (case insensitive) means the default slot in every locale; a closed snapshot preserves its
-  slot, so restoring it by ID and then staging without a name keeps that same identity. Asked to put SQL in a new tab, the
-  agent could only use the Agent tab; the reader then asked for a tab a kind of work and for
-  closed tabs to come back (2026-10-29;
-  `open_console_opens_a_named_tab_and_a_run_naming_it_lands_there`, `a console tab of the
-  agent's own`, `a console tab of the agent's the reader closed comes back`).
+- **Tabs.** SQL `run_sql` and `stage_sql` require `consoleId`, `description` and `sql`.
+  First create a purpose-named console with `open_console {tab}`, whose JSON answer includes
+  `consoleId`, or select an existing ID from `list_console_tabs`. `open_console {tabId}` restores
+  that ID; supplying only a name always creates a new SQL console. Names are display labels
+  and may be duplicated; execution only addresses an existing ID, surviving rename and close.
+  Creation requires one purpose line of at most 40 characters, never generic Agent, SQL,
+  Console or Query. Related queries reuse the ID; a different question or write workflow gets
+  its own console. `description` is one nonempty line of at most 500 characters in the user's
+  language, saved as `-- description` above the SQL; it never enters database execution.
+  Newlines and other control characters in the description are refused before any effects.
+  SQL run/stage accept neither `console`, `tab`, `tabId` nor `format`. SQL may use arbitrary
+  whitespace: the application formats the display, while execution receives the original SQL.
+  Explicitly targeting a manual console appends there and marks it agent-managed, preserving
+  its existing stored bytes. MongoDB and Redis retain optional `tab`/`tabId` and their default
+  Agent slot. Names and IDs are validated before any side effects.
 - **A tab's id.** Every console tab carries an id (the strip's own, §data.tabs), and the tools
   address a tab by it: `list_console_tabs` lists the connection's tabs - open, then the ones
   still in Recently closed - with each one's id, name, state and how many statements it holds;
@@ -427,9 +419,12 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   console (`separate_agent_requests_resume_the_server_owned_console_by_identity`). A snapshot
   that carries statements and not the original text is refused and writes nothing
   (`store_refuses_to_reconstruct_manual_console_from_statement_snapshot`). The page still sends
-  its tab snapshot; the store is what a later send and a restart read. A frame is applied, then
-  flushed, before the next frame is applied; a refused frame flush stays on the card and the
-  stream continues. Neither tool runs a statement: an edit or a
+  its tab snapshot; the store is what a later send and a restart read. Each console frame
+  carries the committed `console` record and `consoleRevision`. SSE and bus records share
+  one revision gate: either may arrive first; duplicate and older snapshots do nothing.
+  Result frames add results only, never append the same SQL again or save formatted text.
+  Thus overlapping tool calls cannot create an artificial human-draft conflict. Actual human
+  drafts still keep their conflict bar rather than being overwritten. Neither tool runs a statement: an edit or a
   delete is text, not execution. Before this a tab could only be named and the statements inside
   one could not be touched at all (2026-11-01; `is minted at birth, survives the close into
   Recently closed, and the snapshot lists open and closed tabs alike`, `two consoles sharing a

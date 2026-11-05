@@ -8,6 +8,7 @@
 import { toast } from "./util.js";
 import { servedFault, tr } from "./i18n.js";
 import { dbConn, dbTabs } from "./db-state.js";
+import { dbFormatSql } from "./data-sql-format.js";
 import { ConsolePending, ConsoleSync,                                    } from "./data-console-sync.js";
                                                     
 import { busRequest, BusFault } from "./bus/bus.js";
@@ -69,7 +70,7 @@ async function put(conn        , record               , mode      )             
  *  stored name (empty means the page's own label for this kind) and its lifetime. */
 export function dbClosedEntry(conn        , record               )              {
   const entry              = {
-    id: record.id, conn, text: record.sql, at: record.closedAt || record.updatedAt || 0,
+    id: record.id, conn, text: dbConsoleDisplay(conn, record), at: record.closedAt || record.updatedAt || 0,
     createdAt: record.createdAt || null, updatedAt: record.updatedAt || null, revision: record.revision,
   };
   if (record.tab) entry.custom = record.tab;
@@ -80,6 +81,15 @@ export function dbClosedEntry(conn        , record               )              
 /** Is this connection's page backed by the server store? False until a successful read. */
 export function dbConsoleStoreOn(conn               )          {
   return !!conn && enabled.has(conn);
+}
+
+/** Agent SQL is a formatted view of the committed text. Formatting never creates another
+ *  writer competing with the next tool call. Manual consoles retain their exact bytes. */
+export function dbConsoleDisplay(conn        , record               )         {
+  const connection = dbConn().conns.find(c => c.name === conn);
+  if (!record.agent || connection?.dialect === "redis" || connection?.dialect === "mongo") return record.sql;
+  try { return dbFormatSql(record.sql, { dialect: connection?.dialect === "pg" ? "pg" : "mysql" }); }
+  catch { return record.sql; }
 }
 
 export function dbConsoleStoreOff(conn        )       {
