@@ -281,7 +281,7 @@ impl Gateway {
         self.send(reqwest::Method::DELETE, path, None).await
     }
 
-    async fn send(
+    pub(crate) async fn send(
         &self,
         method: reqwest::Method,
         path: &str,

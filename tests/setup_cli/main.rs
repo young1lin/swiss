@@ -28,7 +28,7 @@ use axum::response::Response;
 use serde_json::{json, Value};
 
 use swiss::app::{build_app, AppContext};
-use swiss::setup_cli::{plan_at, Input, Options};
+use swiss::setup_cli::{apply_at, plan_at, Input, Options};
 use swiss_host::managed::ManagedStore;
 use swiss_host::token::TokenManager;
 use swiss_mcp::registry::Registry;
@@ -149,7 +149,7 @@ async fn plan_writes_nothing_and_starts_nothing() {
     assert_eq!(document["summary"]["needsInput"], json!(1));
     assert_eq!(document["summary"]["blocked"], json!(1));
     assert_eq!(document["next"][0]["who"], json!("human"));
-    assert_eq!(document["next"][1]["do"], json!("swiss setup plan swiss.setup.json"));
+    assert_eq!(document["next"][1]["do"], json!("swiss setup apply swiss.setup.json"));
 
     assert!(gw.writes().is_empty(), "{:?}", gw.writes());
     assert!(!gw.requests().is_empty());
@@ -250,4 +250,250 @@ async fn no_gateway_exits_3() {
     assert_eq!(code, 3, "{document}");
     assert_eq!(document["ok"], json!(false));
     assert!(document["error"].is_string(), "{document}");
+}
+
+const NO_CHECK: Options = Options { rotate_secrets: false, no_check: true };
+
+/// A rest MCP answering on the gateway itself: `POST /api/mcpdefs/test` takes any HTTP answer as
+/// reachable, so this one checks out with no network at all.
+fn rest_here(port: u16, secret: &str) -> Value {
+    json!({
+        "type": "rest",
+        "baseUrl": format!("http://127.0.0.1:{port}/api/info"),
+        "headers": { "Authorization": format!("Bearer ${{secret://{secret}}}") },
+        "tools": [{ "name": "x", "request": { "method": "GET", "path": "/x" } }],
+    })
+}
+
+// SPEC §host.setup: "the same manifest applied twice reports only `unchanged` the second time".
+#[tokio::test]
+async fn apply_twice_is_all_unchanged_and_writes_nothing() {
+    let gw = gateway().await;
+    let base = scratch_with("value", "twice-value\n");
+    let mut manifest = json!({
+        "version": 1,
+        "secrets": { "twice-key": "file:value" },
+        "mcps": {
+            "twice-echo": { "type": "echo" },
+            "twice-tool": { "command": "nosuchprogram", "args": ["--flag", "1"] },
+            "twice-rest": rest_here(gw.port, "twice-key"),
+        },
+    });
+
+    let (document, code) = apply_at(gw.port, &input(manifest.clone(), &base), NO_CHECK).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(document["ok"], json!(true));
+    assert_eq!(document["mode"], json!("apply"));
+    assert_eq!(document["summary"]["created"], json!(4), "{document}");
+    assert_eq!(item(&document, "mcp", "twice-tool")["executes"], json!("nosuchprogram --flag 1"));
+    assert!(item(&document, "mcp", "twice-tool").get("check").is_none(), "{document}");
+    assert!(gw.registry.has("twice-tool"));
+    let lifecycle = |name: &str| {
+        let entry = gw.registry.get(name).expect("registered");
+        let lifecycle = entry.data.read().expect("the entry").lifecycle.as_str();
+        lifecycle
+    };
+    // `--no-check` leaves a child to the first request that wants it, and the rest are up.
+    assert_eq!(lifecycle("twice-tool"), "idle");
+    assert_eq!(lifecycle("twice-echo"), "started");
+    assert_eq!(lifecycle("twice-rest"), "started");
+
+    let before = gw.writes().len();
+    let (document, code) = apply_at(gw.port, &input(manifest.clone(), &base), NO_CHECK).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(document["summary"]["unchanged"], json!(4), "{document}");
+    assert_eq!(document["summary"]["created"], json!(0), "{document}");
+    assert_eq!(gw.writes().len(), before, "{:?}", gw.writes());
+
+    // A check is not a write, and an unchanged item is checked all the same: only the throwaway test
+    // reaches the gateway, because what is already running needs no start.
+    manifest["mcps"].as_object_mut().expect("mcps").remove("twice-tool");
+    let (document, code) = apply_at(gw.port, &input(manifest, &base), Options::default()).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(item(&document, "mcp", "twice-echo")["status"], json!("unchanged"));
+    assert_eq!(item(&document, "mcp", "twice-echo")["check"]["ok"], json!(true), "{document}");
+    assert!(
+        item(&document, "mcp", "twice-echo")["check"]["detail"].as_str().expect("a detail").ends_with("tools"),
+        "{document}"
+    );
+    assert_eq!(item(&document, "mcp", "twice-rest")["check"]["ok"], json!(true), "{document}");
+    assert_eq!(
+        gw.writes()[before..],
+        [("POST".to_string(), "/api/mcpdefs/test".to_string())],
+        "{:?}",
+        gw.writes()
+    );
+}
+
+// SPEC §host.setup: an item is keyed by name, and only the one that differs is written.
+#[tokio::test]
+async fn a_changed_definition_is_updated_and_only_that_one() {
+    let gw = gateway().await;
+    let mut manifest = json!({ "mcps": {
+        "same": { "command": "nosuchprogram" },
+        "moved": { "command": "nosuchprogram", "args": ["--port", "1"] },
+    } });
+    let (document, code) = apply_at(gw.port, &input(manifest.clone(), Path::new("")), NO_CHECK).await;
+    assert_eq!(code, 0, "{document}");
+
+    manifest["mcps"]["moved"]["args"] = json!(["--port", "2"]);
+    let before = gw.writes().len();
+    let (document, code) = apply_at(gw.port, &input(manifest, Path::new("")), NO_CHECK).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(item(&document, "mcp", "same")["status"], json!("unchanged"));
+    assert_eq!(item(&document, "mcp", "moved")["status"], json!("updated"));
+    assert_eq!(document["summary"]["updated"], json!(1));
+    assert_eq!(gw.writes()[before..], [("PUT".to_string(), "/api/mcps/moved".to_string())]);
+    let entry = gw.registry.get("moved").expect("registered");
+    let command = entry.data.read().expect("the entry").def.get_str("command").map(str::to_string);
+    assert_eq!(command.as_deref(), Some("nosuchprogram --port 2"));
+}
+
+// SPEC §host.setup: a secret with no source blocks what uses it, the rest go ahead, and the same file
+// converges once a human has stored it.
+#[tokio::test]
+async fn a_missing_secret_blocks_its_users_and_exits_4() {
+    let gw = gateway().await;
+    let manifest = json!({
+        "secrets": { "wait-key": "ask" },
+        "mcps": { "wait-rest": rest_here(gw.port, "wait-key"), "wait-free": { "type": "echo" } },
+    });
+
+    let (document, code) = apply_at(gw.port, &input(manifest.clone(), Path::new("")), Options::default()).await;
+    assert_eq!(code, 4, "{document}");
+    assert_eq!(document["ok"], json!(false));
+    assert_eq!(item(&document, "secret", "wait-key")["status"], json!("needs-input"));
+    assert_eq!(item(&document, "mcp", "wait-rest")["status"], json!("blocked"));
+    assert_eq!(item(&document, "mcp", "wait-rest")["by"], json!(["secret:wait-key"]));
+    assert_eq!(item(&document, "mcp", "wait-free")["status"], json!("created"));
+    assert_eq!(item(&document, "mcp", "wait-free")["check"]["ok"], json!(true), "{document}");
+    assert!(!gw.registry.has("wait-rest"), "a blocked item writes nothing");
+    assert!(gw.registry.has("wait-free"), "a blocked item stops nothing else");
+    assert_eq!(document["next"][0]["who"], json!("human"));
+    assert_eq!(document["next"][1]["do"], json!("swiss setup apply swiss.setup.json"));
+
+    let rev = gw_get(gw.port, "/api/secrets").await.1["rev"].clone();
+    let body = json!({ "value": "stored-by-a-human", "rev": rev });
+    let (status, _) = gw_write(gw.port, reqwest::Method::PUT, "/api/secrets/wait-key", body).await;
+    assert_eq!(status, 200);
+
+    let (document, code) = apply_at(gw.port, &input(manifest, Path::new("")), Options::default()).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(item(&document, "secret", "wait-key")["status"], json!("unchanged"));
+    assert_eq!(item(&document, "mcp", "wait-rest")["status"], json!("created"));
+    assert_eq!(item(&document, "mcp", "wait-rest")["check"]["ok"], json!(true), "{document}");
+    assert_eq!(document["next"], json!([]));
+    assert!(!document.to_string().contains("stored-by-a-human"), "{document}");
+}
+
+// SPEC §host.setup: "A saved item whose check fails keeps its status and sets `ok` false".
+#[tokio::test]
+async fn a_failed_check_exits_1_with_the_item_saved() {
+    let gw = gateway().await;
+    let manifest = json!({ "mcps": {
+        "gone-web": { "type": "http", "url": "http://127.0.0.1:1/mcp" },
+        "gone-tool": { "command": "nosuchprogram" },
+        "fine": { "type": "echo" },
+    } });
+
+    let (document, code) = apply_at(gw.port, &input(manifest.clone(), Path::new("")), Options::default()).await;
+    assert_eq!(code, 1, "{document}");
+    assert_eq!(document["ok"], json!(false));
+    for name in ["gone-web", "gone-tool"] {
+        let saved = item(&document, "mcp", name);
+        assert_eq!(saved["status"], json!("created"), "{document}");
+        assert_eq!(saved["check"]["ok"], json!(false), "{document}");
+        assert!(saved["check"]["code"].as_str().expect("a code").starts_with("check."), "{document}");
+        assert!(saved["check"]["error"].is_string(), "{document}");
+        assert!(gw.registry.has(name), "the definition stays saved");
+    }
+    assert_eq!(item(&document, "mcp", "fine")["check"]["ok"], json!(true), "{document}");
+
+    // Nothing is left to write, and the same answer comes back until the fix lands.
+    let before = gw.writes().iter().filter(|(_, path)| !is_probe(path)).count();
+    let (document, code) = apply_at(gw.port, &input(manifest, Path::new("")), Options::default()).await;
+    assert_eq!(code, 1, "{document}");
+    assert_eq!(item(&document, "mcp", "gone-web")["status"], json!("unchanged"));
+    assert_eq!(item(&document, "mcp", "gone-web")["check"]["ok"], json!(false), "{document}");
+    assert_eq!(gw.writes().iter().filter(|(_, path)| !is_probe(path)).count(), before);
+}
+
+fn is_probe(path: &str) -> bool {
+    path == "/api/mcpdefs/test" || path.ends_with("/start")
+}
+
+// SPEC §host.setup: an OAuth MCP "is not checked and reads `needs-input` until it is authorized".
+#[tokio::test]
+async fn an_oauth_mcp_is_saved_and_waits_for_a_sign_in() {
+    let gw = gateway().await;
+    let manifest = json!({ "mcps": { "design": { "type": "figma" } } });
+    let (document, code) = apply_at(gw.port, &input(manifest, Path::new("")), Options::default()).await;
+    assert_eq!(code, 4, "{document}");
+    let waiting = item(&document, "mcp", "design");
+    assert_eq!(waiting["status"], json!("needs-input"));
+    assert_eq!(waiting["code"], json!("mcp.oauth"));
+    assert!(waiting.get("check").is_none(), "{document}");
+    assert!(gw.registry.has("design"), "the definition is saved");
+    assert_eq!(gw.registry.get("design").expect("registered").data.read().expect("the entry").lifecycle.as_str(), "stopped");
+    assert!(document["next"][0]["do"].as_str().expect("a step").contains("design"), "{document}");
+    assert_eq!(document["next"][1]["who"], json!("agent"));
+}
+
+// SPEC §host.setup: a stop is someone's choice, and neither an edit nor a check undoes it.
+#[tokio::test]
+async fn what_someone_stopped_stays_stopped_and_the_document_says_so() {
+    let gw = gateway().await;
+    let manifest = json!({ "mcps": { "held": { "type": "echo" } } });
+    let (document, code) = apply_at(gw.port, &input(manifest.clone(), Path::new("")), Options::default()).await;
+    assert_eq!(code, 0, "{document}");
+    let (status, _) = gw_write(gw.port, reqwest::Method::POST, "/api/mcps/held/stop", json!({})).await;
+    assert_eq!(status, 200);
+
+    let before = gw.writes().len();
+    let (document, code) = apply_at(gw.port, &input(manifest, Path::new("")), Options::default()).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(item(&document, "mcp", "held")["status"], json!("unchanged"));
+    assert_eq!(document["warnings"][0]["code"], json!("mcp.left-stopped"));
+    assert_eq!(document["warnings"][0]["path"], json!("mcps.held"));
+    assert_eq!(gw.writes().len(), before, "{:?}", gw.writes());
+    assert_eq!(gw.registry.get("held").expect("registered").data.read().expect("the entry").lifecycle.as_str(), "stopped");
+}
+
+// SPEC §host.setup: "`--rotate-secrets` rewrites those with a readable source".
+#[tokio::test]
+async fn a_rotation_rewrites_only_what_was_asked_for() {
+    let gw = gateway().await;
+    let base = scratch_with("value", "first\n");
+    let manifest = json!({ "secrets": { "turned-key": "file:value" } });
+    let (document, code) = apply_at(gw.port, &input(manifest.clone(), &base), NO_CHECK).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(item(&document, "secret", "turned-key")["status"], json!("created"));
+    // The vault is per process and other tests write it, so this reads the value, never the rev.
+    let stored = || swiss_core::secure::secretstore::vault_lookup("turned-key");
+    assert_eq!(stored().as_deref(), Some("first"));
+    std::fs::write(base.join("value"), "second\n").expect("a new value at the source");
+
+    let (document, code) = apply_at(gw.port, &input(manifest.clone(), &base), NO_CHECK).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(item(&document, "secret", "turned-key")["status"], json!("unchanged"));
+    assert_eq!(stored().as_deref(), Some("first"), "a stored secret is not rewritten unasked");
+
+    let rotating = Options { rotate_secrets: true, no_check: true };
+    let (document, code) = apply_at(gw.port, &input(manifest, &base), rotating).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(item(&document, "secret", "turned-key")["status"], json!("updated"));
+    assert_eq!(stored().as_deref(), Some("second"));
+}
+
+// SPEC §host.setup: exit 2 writes nothing, under `apply` as under `plan`.
+#[tokio::test]
+async fn a_refused_manifest_applies_nothing() {
+    let gw = gateway().await;
+    let manifest = json!({ "mcps": { "db": { "type": "mysql", "password": "S3ntinelValue9" }, "fine": { "type": "echo" } } });
+    let (document, code) = apply_at(gw.port, &input(manifest, Path::new("")), Options::default()).await;
+    assert_eq!(code, 2, "{document}");
+    assert_eq!(document["mode"], json!("apply"));
+    assert!(!document.to_string().contains("S3ntinelValue9"), "{document}");
+    assert!(gw.requests().is_empty(), "{:?}", gw.requests());
+    assert!(!gw.registry.has("fine"));
 }

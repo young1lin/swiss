@@ -172,6 +172,9 @@ On Windows or macOS, double-click the app or run swiss without arguments to open
   setup plan <file|-> [--rotate-secrets]
                    what a manifest would change on this gateway; writes nothing and starts no
                    MCP; starts the gateway if it is down; prints one JSON document
+  setup apply <file|-> [--no-check] [--rotate-secrets]
+                   make this gateway hold what a manifest names, then check that it works; adds
+                   and updates, never removes; prints one JSON document
 
 options
   -p, --port <n>   listen on this port (saved as the new default)

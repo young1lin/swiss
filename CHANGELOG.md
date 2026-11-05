@@ -8,6 +8,9 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Added
 
+- `swiss setup apply <file|->` makes a manifest's `secrets` and `mcps` true on this gateway, then
+  checks each MCP. It only adds, so the same file applied twice writes nothing, and the exit code says
+  whether it converged, failed or waits for a human (SPEC §host.setup).
 - `swiss setup plan <file|->` reads a JSON manifest of `secrets` and `mcps`, or a client's own
   `.mcp.json`, and says what it would change on this gateway, as one JSON document, without writing
   anything. `swiss setup schema` says what a manifest may hold. A credential typed into a manifest is

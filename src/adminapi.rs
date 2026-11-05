@@ -115,6 +115,11 @@ pub struct DefKeys {
     pub other: &'static [&'static str],
 }
 
+/// What `POST /api/mcpdefs/test` can test. The panel's Test button offers exactly this list
+/// (fields.ts TESTABLE_TYPES); mariadb answers through the mysql-family adapter's ping like mysql
+/// itself.
+pub const TESTABLE_TYPES: [&str; 7] = ["mysql", "mariadb", "redis", "pg", "mongo", "http", "rest"];
+
 /// The keys of every definition type, and the only place they are listed: `build_def` refuses
 /// any other key by name, and the direct adapters' fields are copied from here. A typo that was
 /// dropped would read as a saved setting that does nothing.
@@ -1363,9 +1368,6 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         // under /api/mcps (an MCP named "test" would shadow its own edit/delete routes).
         "/api/mcpdefs/test",
         post(|State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
-            // The panel's Test button offers exactly this list (fields.ts TESTABLE_TYPES);
-            // mariadb answers through the mysql-family adapter's ping like mysql itself.
-            const TESTABLE_TYPES: [&str; 7] = ["mysql", "mariadb", "redis", "pg", "mongo", "http", "rest"];
             const TEST_TIMEOUT_MS: u64 = 5000;
             let body = body.0;
             let type_ = body.get("type").and_then(Value::as_str).unwrap_or("").to_string();

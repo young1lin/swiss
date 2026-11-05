@@ -38,7 +38,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError, RwLock};
 
 use super::statefile::{left_in_place, read_secure_json, write_secure_json};
 use crate::paths::data_path;
@@ -336,6 +336,7 @@ pub fn set_vault_groups(
             "at least one group must remain".to_string(),
         ));
     }
+    let _one = one_mutation();
     let current = vault().read().map(|v| (v.rev, v.secrets.clone())).ok();
     let Some((rev, secrets)) = current else {
         return Err(MutateError::Seal("vault lock poisoned".into()));
@@ -386,6 +387,15 @@ impl MutateError {
     }
 }
 
+static MUTATION: Mutex<()> = Mutex::new(());
+
+/// One mutation at a time: the rev compare, the sealed write and the commit are one step, or two
+/// writers on one rev both pass the compare and the second silently drops the first (SPEC
+/// §host.vault). A poisoned lock still serves: persist-then-commit leaves no half-done state behind.
+fn one_mutation() -> MutexGuard<'static, ()> {
+    MUTATION.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// The file's shape for one vault.
 fn file_value(vault: &Vault) -> serde_json::Value {
     serde_json::json!({
@@ -421,6 +431,7 @@ pub fn put_secret(
     if !valid_name(name) {
         return Err(MutateError::InvalidName(name.to_string()));
     }
+    let _one = one_mutation();
     // A value write must not touch the group model (SPEC §host.groups) or the row order
     // (SPEC §host.vault): the groups, the member map and the order ride along untouched - a new
     // name carries no assignment, renders in the first group and ranks after every
@@ -490,6 +501,7 @@ pub fn merged_for_import(
 
 /// Remove one secret. Absent names answer NotFound rather than quietly bumping the rev.
 pub fn delete_secret(path: &Path, name: &str, expect_rev: u64) -> Result<u64, MutateError> {
+    let _one = one_mutation();
     let current = vault().read().map(|v| (v.rev, v.secrets.clone())).ok();
     let Some((rev, mut secrets)) = current else {
         return Err(MutateError::Seal("vault lock poisoned".into()));
@@ -642,6 +654,41 @@ mod tests {
             Err(MutateError::NotFound) => {}
             other => panic!("expected NotFound, got {other:?}"),
         }
+    }
+
+    // SPEC §host.vault: the rev is a compare-and-swap. Writers on one rev used to each pass the
+    // compare and then overwrite one another, so a write answered 200 and was gone.
+    #[test]
+    fn of_several_writers_on_one_rev_exactly_one_lands() {
+        let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        let path = crate::paths::test_home().join("secrets.json");
+        inject_vault(&path);
+        let rev = vault_rev();
+        let names: Vec<String> = (0..8).map(|n| format!("race-{n}")).collect();
+
+        let start = std::sync::Barrier::new(names.len());
+        let answers: Vec<(String, Result<u64, MutateError>)> = std::thread::scope(|scope| {
+            let writers: Vec<_> = names
+                .iter()
+                .map(|name| {
+                    let (path, start) = (&path, &start);
+                    scope.spawn(move || {
+                        start.wait();
+                        (name.clone(), put_secret(path, name, "v", rev))
+                    })
+                })
+                .collect();
+            writers.into_iter().map(|w| w.join().expect("a writer")).collect()
+        });
+
+        let landed: Vec<&String> = answers.iter().filter(|(_, a)| a.is_ok()).map(|(n, _)| n).collect();
+        assert_eq!(landed.len(), 1, "{answers:?}");
+        assert_eq!(vault_rev(), rev + 1);
+        for (name, answer) in &answers {
+            assert_eq!(vault_has(name), answer.is_ok(), "{answers:?}");
+            assert!(matches!(answer, Ok(_) | Err(MutateError::RevMismatch { .. })), "{answers:?}");
+        }
+        let _ = delete_secret(&path, landed[0], vault_rev());
     }
 
     #[test]

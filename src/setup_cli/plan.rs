@@ -33,6 +33,8 @@ use swiss_host::mask::{mask_command, mask_def};
 pub struct Options {
     /// Rewrite secrets that already exist, from their sources.
     pub rotate_secrets: bool,
+    /// Write, but do not check that what was written works.
+    pub no_check: bool,
 }
 
 /// What the gateway holds of what the manifest names.
@@ -255,7 +257,8 @@ mod tests {
                 ..State::default()
             };
             let mut warnings = Vec::new();
-            let items = decide(manifest, &state, &base, Options { rotate_secrets: rotate }, &mut warnings);
+            let options = Options { rotate_secrets: rotate, ..Options::default() };
+            let items = decide(manifest, &state, &base, options, &mut warnings);
             (items, warnings)
         };
         let readable = manifest(vec![("a", from_file("value"))], vec![]);

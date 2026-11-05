@@ -20,6 +20,8 @@
 //!
 //! One document on stdout for every outcome, and it never holds a secret's value.
 
+mod apply;
+mod check;
 mod manifest;
 mod plan;
 mod refuse;
@@ -51,13 +53,15 @@ const TERMINAL_REFUSAL: &str = "stdin is a terminal, and a value typed here woul
     panel's Secrets page.";
 
 const SETUP_USAGE: &str = "usage: swiss setup schema [section]\n       \
-    swiss setup plan <file|-> [--rotate-secrets]\n\
+    swiss setup plan <file|-> [--rotate-secrets]\n       \
+    swiss setup apply <file|-> [--no-check] [--rotate-secrets]\n\
     A file or stdin (-) holds one JSON manifest; swiss setup schema says what it may hold.";
 
 /// The entry from cli.rs: argv is everything after `swiss setup`.
 pub async fn setup_main(argv: Vec<String>) -> i32 {
     match argv.split_first() {
-        Some((sub, rest)) if sub == "plan" => setup_plan(rest).await,
+        Some((sub, rest)) if sub == "plan" => run_manifest(Mode::Plan, rest).await,
+        Some((sub, rest)) if sub == "apply" => run_manifest(Mode::Apply, rest).await,
         Some((sub, rest)) if sub == "schema" => setup_schema(rest),
         Some((sub, _)) if matches!(sub.as_str(), "help" | "-h" | "--help") => {
             println!("{SETUP_USAGE}");
@@ -82,8 +86,8 @@ fn setup_schema(argv: &[String]) -> i32 {
     }
 }
 
-async fn setup_plan(argv: &[String]) -> i32 {
-    let args = match parse_manifest_args(argv) {
+async fn run_manifest(mode: Mode, argv: &[String]) -> i32 {
+    let args = match parse_manifest_args(mode, argv) {
         Ok(args) => args,
         Err(refusal) => return refuse(&refusal),
     };
@@ -95,13 +99,13 @@ async fn setup_plan(argv: &[String]) -> i32 {
     // Before any gateway starts: a file that is wrong has nothing to ask one.
     let parsed = match manifest::parse(&input.text, resolve_port()) {
         Ok(parsed) => parsed,
-        Err(problems) => return print_outcome(report::refused(Mode::Plan, &problems)),
+        Err(problems) => return print_outcome(report::refused(mode, &problems)),
     };
     let up = match ensure_gateway().await {
         Ok(up) => up,
-        Err(error) => return print_outcome(report::no_gateway(Mode::Plan, &error)),
+        Err(error) => return print_outcome(report::no_gateway(mode, &error)),
     };
-    print_outcome(plan_on(&up, &parsed, &input, args.options).await)
+    print_outcome(run_on(mode, &up, &parsed, &input, args.options).await)
 }
 
 /// One manifest, once it is text.
@@ -116,13 +120,23 @@ pub struct Input {
 /// A plan against the gateway already on `port`: everything `setup plan` does but read its file
 /// and start a gateway.
 pub async fn plan_at(port: u16, input: &Input, options: Options) -> (Value, i32) {
+    run_at(Mode::Plan, port, input, options).await
+}
+
+/// An apply against the gateway already on `port`: everything `setup apply` does but read its file
+/// and start a gateway.
+pub async fn apply_at(port: u16, input: &Input, options: Options) -> (Value, i32) {
+    run_at(Mode::Apply, port, input, options).await
+}
+
+async fn run_at(mode: Mode, port: u16, input: &Input, options: Options) -> (Value, i32) {
     match manifest::parse(&input.text, port) {
-        Ok(parsed) => plan_on(&GatewayUp { port, started: false }, &parsed, input, options).await,
-        Err(problems) => report::refused(Mode::Plan, &problems),
+        Ok(parsed) => run_on(mode, &GatewayUp { port, started: false }, &parsed, input, options).await,
+        Err(problems) => report::refused(mode, &problems),
     }
 }
 
-async fn plan_on(up: &GatewayUp, parsed: &Manifest, input: &Input, options: Options) -> (Value, i32) {
+async fn run_on(mode: Mode, up: &GatewayUp, parsed: &Manifest, input: &Input, options: Options) -> (Value, i32) {
     let gw = Gateway::at(up.port);
     let gateway_state = async {
         let info = gw.get("/api/info").await?;
@@ -131,35 +145,52 @@ async fn plan_on(up: &GatewayUp, parsed: &Manifest, input: &Input, options: Opti
     };
     let (info, state) = match gateway_state.await {
         Ok(found) => found,
-        Err(error) => return report::no_gateway(Mode::Plan, &error),
+        Err(error) => return report::no_gateway(mode, &error),
     };
     let build = info["build"]["hash"].as_str();
     let mut warnings = parsed.warnings.clone();
     warnings.extend(plan::stale_build(build, env!("SWISS_GIT_HASH")));
-    let items = plan::decide(parsed, &state, &input.base, options, &mut warnings);
+    let mut items = plan::decide(parsed, &state, &input.base, options, &mut warnings);
+    if mode == Mode::Apply {
+        apply::write_all(&gw, parsed, &input.base, &mut items).await;
+        check::check_all(&gw, parsed, options, &mut items, &mut warnings).await;
+    }
     let mut report = Report {
-        mode: Mode::Plan,
+        mode,
         gateway: json!({ "port": up.port, "started": up.started, "build": build }),
         items,
         warnings,
         next: Vec::new(),
     };
-    let waiting: Vec<&str> = report
-        .items
-        .iter()
-        .filter(|item| item.kind == "secret" && item.status == Status::NeedsInput)
-        .map(|item| item.name.as_str())
-        .collect();
-    if !waiting.is_empty() {
+    say_who_acts_next(&mut report, &input.file);
+    report.finish()
+}
+
+/// What waits for a human, and that an Agent runs the same file again afterwards.
+fn say_who_acts_next(report: &mut Report, file: &str) {
+    let waiting = |kind: &str| -> Vec<String> {
+        report
+            .items
+            .iter()
+            .filter(|item| item.kind == kind && item.status == Status::NeedsInput)
+            .map(|item| item.name.clone())
+            .collect()
+    };
+    let (secrets, sign_ins) = (waiting("secret"), waiting("mcp"));
+    if !secrets.is_empty() {
         let what = format!(
             "store {} on the panel's Secrets page, or pipe each into swiss secret set <name> from your own shell",
-            waiting.join(", ")
+            secrets.join(", ")
         );
         report.next_step("human", what, "only a human has these values");
-        let again = format!("swiss setup plan {}", input.file);
-        report.next_step("agent", again, "after the secrets are stored");
     }
-    report.finish()
+    if !sign_ins.is_empty() {
+        let what = format!("authorize {} on the panel's MCP page", sign_ins.join(", "));
+        report.next_step("human", what, "only a human can sign in");
+    }
+    if !secrets.is_empty() || !sign_ins.is_empty() {
+        report.next_step("agent", format!("swiss setup apply {file}"), "once that is done");
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -168,12 +199,13 @@ struct ManifestArgs {
     options: Options,
 }
 
-fn parse_manifest_args(argv: &[String]) -> Result<ManifestArgs, String> {
+fn parse_manifest_args(mode: Mode, argv: &[String]) -> Result<ManifestArgs, String> {
     let mut file = None;
     let mut options = Options::default();
     for word in argv {
         match word.as_str() {
             "--rotate-secrets" => options.rotate_secrets = true,
+            "--no-check" if mode == Mode::Apply => options.no_check = true,
             flag if flag.starts_with('-') && flag != "-" => return Err(SETUP_USAGE.into()),
             _ if file.is_some() => return Err(SETUP_USAGE.into()),
             _ => file = Some(word.clone()),
@@ -452,11 +484,21 @@ mod tests {
     #[test]
     fn a_manifest_command_takes_one_file_and_refuses_what_it_does_not_know() {
         let plain = ManifestArgs { file: "m.json".into(), options: Options::default() };
-        assert_eq!(parse_manifest_args(&argv(&["m.json"])), Ok(plain));
-        let rotating = ManifestArgs { file: "-".into(), options: Options { rotate_secrets: true } };
-        assert_eq!(parse_manifest_args(&argv(&["--rotate-secrets", "-"])), Ok(rotating));
+        assert_eq!(parse_manifest_args(Mode::Plan, &argv(&["m.json"])), Ok(plain));
+        let rotating = ManifestArgs {
+            file: "-".into(),
+            options: Options { rotate_secrets: true, ..Options::default() },
+        };
+        assert_eq!(parse_manifest_args(Mode::Plan, &argv(&["--rotate-secrets", "-"])), Ok(rotating));
+        let unchecked = ManifestArgs {
+            file: "m.json".into(),
+            options: Options { no_check: true, ..Options::default() },
+        };
+        assert_eq!(parse_manifest_args(Mode::Apply, &argv(&["--no-check", "m.json"])), Ok(unchecked));
+        // A plan checks nothing, so a flag saying not to has no business there.
+        assert!(parse_manifest_args(Mode::Plan, &argv(&["--no-check", "m.json"])).is_err());
         for words in [vec![], vec!["a", "b"], vec!["a", "--force"], vec!["-", "-"], vec!["a", "-"]] {
-            assert!(parse_manifest_args(&argv(&words)).is_err(), "{words:?}");
+            assert!(parse_manifest_args(Mode::Apply, &argv(&words)).is_err(), "{words:?}");
         }
     }
 

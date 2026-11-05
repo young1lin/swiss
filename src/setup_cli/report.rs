@@ -30,8 +30,6 @@ pub const EXIT_NEEDS_HUMAN: i32 = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Plan,
-    // `setup apply` constructs it in the next commit.
-    #[allow(dead_code)]
     Apply,
 }
 
@@ -86,8 +84,12 @@ impl Item {
     }
 
     pub fn with(mut self, key: &str, value: impl Into<Value>) -> Self {
-        self.extra.insert(key.to_string(), value.into());
+        self.note(key, value);
         self
+    }
+
+    pub fn note(&mut self, key: &str, value: impl Into<Value>) {
+        self.extra.insert(key.to_string(), value.into());
     }
 
     fn check_failed(&self) -> bool {
