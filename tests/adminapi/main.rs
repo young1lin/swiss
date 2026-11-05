@@ -43,6 +43,7 @@ mod scope_tokens;
 mod scope_jobs;
 mod oauth;
 mod machine;
+mod mcp_keys;
 mod revisions;
 mod knowledge;
 

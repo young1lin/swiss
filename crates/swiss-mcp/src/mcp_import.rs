@@ -135,7 +135,7 @@ fn quote_arg(s: &str) -> String {
     out
 }
 
-fn join_command(command: &str, args: &[String]) -> String {
+pub fn join_command(command: &str, args: &[String]) -> String {
     std::iter::once(command)
         .chain(args.iter().map(String::as_str))
         .map(quote_arg)

@@ -66,7 +66,6 @@ async fn a_mongo_def_keeps_its_connection_fields_and_needs_a_url() {
                 "name": "m1", "type": "mongo",
                 "url": "mongodb://app:${MONGO_PW}@127.0.0.1:27017/?authSource=admin",
                 "database": "shop", "maxRows": 50, "allowDestructive": "true",
-                "host": "dropped", "allowEval": true,
             }),
         )
         .await;
@@ -76,9 +75,21 @@ async fn a_mongo_def_keeps_its_connection_fields_and_needs_a_url() {
     assert_eq!(config["type"], json!("mongo"));
     assert_eq!(config["database"], json!("shop"));
     assert_eq!(config["maxRows"], json!(50));
-    // A form's "true" lands as the boolean, and fields the type does not read are dropped.
+    // A form's "true" lands as the boolean.
     assert_eq!(config["allowDestructive"], json!(true));
-    assert!(config.get("host").is_none() && config.get("allowEval").is_none(), "{config}");
+
+    // SPEC §mcp.defs: a field the type does not read is refused, not dropped.
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({
+                "name": "m2", "type": "mongo", "url": "mongodb://127.0.0.1:27017/",
+                "allowEval": true,
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap_or_default().contains("'allowEval'"), "{body}");
 }
 
 #[tokio::test]

@@ -108,56 +108,82 @@ fn tag_of(type_: &str, def: &ServerDef) -> String {
 
 // --- definition building --------------------------------------------------------------------
 
-/// Connection fields each direct adapter reads. Anything else in the request body is dropped, so
-/// the panel can edit a definition without polluting it.
-const DIRECT_FIELDS: [(&str, &[&str]); 5] = [
-    (
-        "mysql",
-        &[
-            "description",
-            "host",
-            "port",
-            "user",
-            "password",
-            "database",
-            "timezone",
-            "maxRows",
-        ],
-    ),
+/// One row of the definition key table (SPEC §mcp.defs).
+pub struct DefKeys {
+    pub type_: &'static str,
+    pub required: &'static [&'static str],
+    pub other: &'static [&'static str],
+}
+
+/// The keys of every definition type, and the only place they are listed: `build_def` refuses
+/// any other key by name, and the direct adapters' fields are copied from here. A typo that was
+/// dropped would read as a saved setting that does nothing.
+pub static DEF_KEYS: [DefKeys; 11] = [
+    DefKeys {
+        type_: "proc",
+        required: &["command"],
+        other: &["args", "description", "env", "cwd", "exposeResources", "exposePrompts", "timeoutMs"],
+    },
+    DefKeys {
+        type_: "http",
+        required: &["url"],
+        other: &["description", "headers", "exposeResources", "exposePrompts", "proxy", "auth", "oauthClientName"],
+    },
+    DefKeys {
+        type_: "rest",
+        required: &["baseUrl", "tools"],
+        other: &["description", "headers", "timeoutMs", "proxy"],
+    },
+    DefKeys {
+        type_: "mysql",
+        required: &[],
+        other: &["description", "host", "port", "user", "password", "database", "timezone", "maxRows"],
+    },
     // SPEC §mcp.panel: MariaDB is its own type with the mysql wire protocol's fields verbatim.
-    (
-        "mariadb",
-        &[
-            "description",
-            "host",
-            "port",
-            "user",
-            "password",
-            "database",
-            "timezone",
-            "maxRows",
-        ],
-    ),
-    (
-        "redis",
-        &[
-            "description",
-            "host",
-            "port",
-            "password",
-            "db",
-            "allowDestructive",
-            "allowEval",
-        ],
-    ),
-    ("pg", &["description", "url", "maxRows"]),
+    DefKeys {
+        type_: "mariadb",
+        required: &[],
+        other: &["description", "host", "port", "user", "password", "database", "timezone", "maxRows"],
+    },
+    // An empty pg connection string is the dangerous one: libpq falls back to PGHOST/PGDATABASE,
+    // so the MCP would quietly point at whatever the environment happens to name rather than
+    // failing. mysql/redis default to localhost on their standard port, which is a stated default,
+    // not a surprise.
+    DefKeys {
+        type_: "pg",
+        required: &["url"],
+        other: &["description", "maxRows"],
+    },
+    DefKeys {
+        type_: "redis",
+        required: &[],
+        other: &["description", "host", "port", "password", "db", "allowDestructive", "allowEval"],
+    },
     // SPEC §mcp.db: the connection string carries hosts, credentials and options; `database`
-    // overrides the URL's path for the tools' default database.
-    (
-        "mongo",
-        &["description", "url", "database", "maxRows", "allowDestructive"],
-    ),
+    // overrides the URL's path for the tools' default database. The URL is required for the same
+    // reason as pg's: it is the whole address, and there is no honest default to fall back to.
+    DefKeys {
+        type_: "mongo",
+        required: &["url"],
+        other: &["description", "database", "maxRows", "allowDestructive"],
+    },
+    DefKeys {
+        type_: "zai-vision",
+        required: &["apiKey"],
+        other: &["mode", "model", "baseUrl", "description", "timeoutMs", "proxy", "exposeResources", "exposePrompts"],
+    },
+    DefKeys {
+        type_: "figma",
+        required: &[],
+        other: &["description", "proxy", "exposeResources", "exposePrompts"],
+    },
+    DefKeys {
+        type_: "echo",
+        required: &[],
+        other: &[],
+    },
 ];
+
 const BOOL_FIELDS: [&str; 5] = [
     "readonly",
     "allowDestructive",
@@ -165,13 +191,6 @@ const BOOL_FIELDS: [&str; 5] = [
     "exposeResources",
     "exposePrompts",
 ];
-/// Fields without which the adapter has nothing to connect to. An empty pg connection
-/// string is the dangerous one: libpq falls back to PGHOST/PGDATABASE, so the MCP would
-/// quietly point at whatever the environment happens to name rather than failing.
-/// mysql/redis default to localhost on their standard port, which is a
-/// stated default, not a surprise. A mongo URL is required for the same reason as pg's: the
-/// URL is the whole address, and there is no honest default to fall back to.
-const REQUIRED_FIELD: [(&str, &str); 2] = [("pg", "url"), ("mongo", "url")];
 
 fn as_bool(v: &Value) -> bool {
     matches!(v, Value::Bool(true))
@@ -184,9 +203,54 @@ fn str_field(body: &Value, key: &str) -> Option<String> {
     body.get(key).and_then(Value::as_str).map(|s| s.to_string())
 }
 
+/// Refuse a key outside the type's row of the table. `type`, `lazy` and `idleMs` ride on every
+/// definition; `route_keys` are the ones this route reads for itself, like the add route's `name`.
+fn refuse_unknown_keys(keys: &DefKeys, body: &Value, route_keys: &[&str]) -> Result<(), String> {
+    let Some(fields) = body.as_object() else {
+        return Ok(());
+    };
+    let takes = |key: &str| keys.required.contains(&key) || keys.other.contains(&key);
+    let Some(unknown) = fields
+        .keys()
+        .find(|key| !matches!(key.as_str(), "type" | "lazy" | "idleMs") && !route_keys.contains(&key.as_str()) && !takes(key))
+    else {
+        return Ok(());
+    };
+    let listed: Vec<&str> = keys.required.iter().chain(keys.other).copied().collect();
+    Err(format!(
+        "unknown key '{unknown}' for a {} MCP (it takes: {})",
+        keys.type_,
+        listed.join(", ")
+    ))
+}
+
+/// A positive `timeoutMs` is kept as written; anything else leaves the adapter's default.
+fn keep_timeout(body: &Value, def: &mut Map<String, Value>) {
+    if let Some(timeout) = body.get("timeoutMs") {
+        if timeout.as_f64().is_some_and(|n| n > 0.0) {
+            def.insert("timeoutMs".into(), timeout.clone());
+        }
+    }
+}
+
+/// The argv a body gives beside `command`; refused rather than read as none when it is not a list
+/// of strings.
+fn args_of(body: &Value) -> Result<Vec<String>, String> {
+    let refused = || "args must be an array of strings".to_string();
+    match body.get("args") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| item.as_str().map(str::to_string).ok_or_else(refused))
+            .collect(),
+        Some(_) => Err(refused()),
+    }
+}
+
 /// Build a ServerDef from an admin add/edit request body — port of `buildDef`/`buildTypedDef`.
-pub fn build_def(body: &Value) -> Result<ServerDef, String> {
-    let mut def = build_typed_def(body)?;
+/// `route_keys` are the body's keys the calling route reads itself, which are no part of the def.
+pub fn build_def(body: &Value, route_keys: &[&str]) -> Result<ServerDef, String> {
+    let mut def = build_typed_def(body, route_keys)?;
     // `lazy` rides on every type — it is what the panel's "Start automatically" checkbox writes
     // (inverted). A proc is lazy by default; anything else opts in explicitly (see is_lazy).
     if let Some(lazy) = body.get("lazy") {
@@ -194,10 +258,14 @@ pub fn build_def(body: &Value) -> Result<ServerDef, String> {
             def.set("lazy", Value::Bool(as_bool(lazy)));
         }
     }
+    // How long a lazy MCP may idle before it is reaped (SPEC §mcp.registry); 0 opts out.
+    if let Some(idle) = body.get("idleMs").filter(|v| v.as_f64().is_some_and(|n| n >= 0.0)) {
+        def.set("idleMs", idle.clone());
+    }
     Ok(def)
 }
 
-fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
+fn build_typed_def(body: &Value, route_keys: &[&str]) -> Result<ServerDef, String> {
     let type_ = str_field(body, "type")
         .unwrap_or_default()
         .trim()
@@ -207,6 +275,25 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
     } else {
         type_
     };
+    let Some(keys) = DEF_KEYS.iter().find(|row| row.type_ == type_) else {
+        return Err(format!(
+            "unknown type: {type_} (supported: mysql | mariadb | redis | pg | mongo | proc | http | rest | echo | figma | zai-vision)"
+        ));
+    };
+    // The figma type (SPEC §mcp.figma): the panel asks for a name, the type decides the rest —
+    // endpoint, OAuth credential mode, client name. A url or auth key on a figma def would be
+    // a second way to say what the type already says, so refuse them in the type's own words: the
+    // def cannot be configured wrong.
+    if type_ == "figma" {
+        for conflicting in ["url", "auth", "oauthClientName", "headers"] {
+            if body.get(conflicting).is_some() {
+                return Err(format!(
+                    "{conflicting} is decided by the figma type; remove it (endpoint and OAuth are built in)"
+                ));
+            }
+        }
+    }
+    refuse_unknown_keys(keys, body, route_keys)?;
     let mut def = Map::new();
     def.insert("type".into(), json!(type_));
 
@@ -218,6 +305,14 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         if command.is_empty() {
             return Err("command is required".into());
         }
+        // Only the joined line is stored: the proc adapter reads one command, and an import has
+        // always written it this way.
+        let args = args_of(body)?;
+        let command = if args.is_empty() {
+            command
+        } else {
+            swiss_mcp::mcp_import::join_command(&command, &args)
+        };
         def.insert("command".into(), json!(command));
         if let Some(description) = str_field(body, "description") {
             if !description.trim().is_empty() {
@@ -243,23 +338,12 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
                 }
             }
         }
+        keep_timeout(body, &mut def);
         return Ok(ServerDef(def));
     }
-    // The figma type (SPEC §mcp.figma): the panel asks for a name, the type decides the rest —
-    // endpoint, OAuth credential mode, client name. A url or auth key on a figma def would be
-    // a second way to say what the type already says, so refuse them: the def cannot be
-    // configured wrong. The proxy is not the type's to decide - it is this machine's route to
-    // Figma - so it is the one network key a figma def takes.
+    // The proxy is not the figma type's to decide - it is this machine's route to Figma - so it is
+    // the one network key a figma def takes.
     if type_ == "figma" {
-        for conflicting in ["url", "auth", "oauthClientName", "headers"] {
-            if let Some(v) = body.get(conflicting) {
-                if !v.is_null() && v.as_str() != Some("") {
-                    return Err(format!(
-                        "{conflicting} is decided by the figma type; remove it (endpoint and OAuth are built in)"
-                    ));
-                }
-            }
-        }
         if let Some(description) = str_field(body, "description") {
             if !description.trim().is_empty() {
                 def.insert("description".into(), json!(description.trim()));
@@ -324,11 +408,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
                 def.insert("description".into(), json!(description.trim()));
             }
         }
-        if let Some(timeout) = body.get("timeoutMs") {
-            if !timeout.is_null() && timeout.as_f64().is_some_and(|n| n > 0.0) {
-                def.insert("timeoutMs".into(), timeout.clone());
-            }
-        }
+        keep_timeout(body, &mut def);
         if let Some(proxy) = str_field(body, "proxy") {
             if !proxy.trim().is_empty() {
                 def.insert("proxy".into(), json!(proxy.trim()));
@@ -344,7 +424,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         return Ok(ServerDef(def));
     }
     // A remote MCP is configured, not launched: where it is, and the headers its API key travels
-    // in. Shaped by hand rather than DIRECT_FIELDS because `headers` is a map, and because an
+    // in. Shaped by hand rather than copied from DEF_KEYS because `headers` is a map, and because an
     // http MCP with no url has nothing to connect to at all.
     if type_ == "http" {
         let url = str_field(body, "url")
@@ -424,11 +504,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
                 def.insert("headers".into(), headers.clone());
             }
         }
-        if let Some(timeout) = body.get("timeoutMs") {
-            if !timeout.is_null() && timeout.as_f64().is_some_and(|n| n > 0.0) {
-                def.insert("timeoutMs".into(), timeout.clone());
-            }
-        }
+        keep_timeout(body, &mut def);
         if let Some(proxy) = str_field(body, "proxy") {
             if !proxy.trim().is_empty() {
                 def.insert("proxy".into(), json!(proxy.trim()));
@@ -439,17 +515,8 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
     if type_ == "echo" {
         return Ok(ServerDef(def));
     }
-    let Some(allowed) = DIRECT_FIELDS
-        .iter()
-        .find(|(t, _)| *t == type_)
-        .map(|(_, f)| *f)
-    else {
-        return Err(format!(
-            "unknown type: {type_} (supported: mysql | mariadb | redis | pg | mongo | proc | http | rest | echo | figma | zai-vision)"
-        ));
-    };
-    for k in allowed {
-        let Some(v) = body.get(k) else { continue };
+    for k in keys.required.iter().chain(keys.other) {
+        let Some(v) = body.get(*k) else { continue };
         if v.is_null() || v.as_str() == Some("") {
             continue;
         }
@@ -460,10 +527,8 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         };
         def.insert(k.to_string(), value);
     }
-    if let Some((_, need)) = REQUIRED_FIELD.iter().find(|(t, _)| *t == type_) {
-        if def.get(*need).is_none() {
-            return Err(format!("{need} is required for a {type_} MCP"));
-        }
+    if let Some(need) = keys.required.iter().find(|need| def.get(**need).is_none()) {
+        return Err(format!("{need} is required for a {type_} MCP"));
     }
     Ok(ServerDef(def))
 }
@@ -1214,13 +1279,16 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             if ctx.registry.has(&name) || ctx.store.has(&name) {
                 return admin_error(StatusCode::CONFLICT, &format!("name already exists: {name}"));
             }
-            let def = match build_def(&body) {
+            let def = match build_def(&body, &["name", "enabled", "start"]) {
                 Ok(def) => def,
                 Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
             };
             let type_ = def.type_().to_string();
             let enabled = body.get("enabled").map(as_bool) .unwrap_or(true);
-            match add_managed(&ctx, &name, def, enabled, enabled).await {
+            // SPEC §mcp.defs: never stored. Starting a child holds this answer for its whole
+            // handshake, so a caller adding many says not to; a disabled MCP never starts.
+            let start = enabled && body.get("start").map(as_bool).unwrap_or(true);
+            match add_managed(&ctx, &name, def, enabled, start).await {
                 Ok(lifecycle) => admin_json(StatusCode::CREATED, json!({ "name": name, "type": type_, "lifecycle": lifecycle })),
                 Err(err) => {
                     let status = if err.contains("already registered") { StatusCode::CONFLICT } else { StatusCode::BAD_REQUEST };
@@ -1315,7 +1383,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             // rest is tested with one plain request rather than an adapter: its tools are
             // authored calls into a metered API and must not be fired on a button press.
             if type_ == "rest" {
-                let def = match build_def(&body) {
+                let def = match build_def(&body, &[]) {
                     Ok(def) => def,
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 };
@@ -1381,7 +1449,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 };
             }
 
-            let adapter = match build_def(&body) {
+            let adapter = match build_def(&body, &[]) {
                 // No child seat: a probe's child lives for one handshake — a row nobody
                 // can click on the Process page would only lie about it.
                 Ok(def) => match swiss_mcp::adapters::make_adapter(&def, "test", &ctx.calls, None) {
@@ -1630,7 +1698,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     Some(obj) => unmask_body(obj, Some(&current_def)),
                     None => Map::new(),
                 };
-                let def = match build_def(&Value::Object(unmasked)) {
+                let def = match build_def(&Value::Object(unmasked), &["note"]) {
                     Ok(def) => def,
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 };
@@ -2062,7 +2130,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 Some(obj) => unmask_body(obj, current.as_ref()),
                 None => Map::new(),
             };
-            let def = match build_def(&Value::Object(unmasked)) {
+            let def = match build_def(&Value::Object(unmasked), &[]) {
                 Ok(def) => def,
                 Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
             };

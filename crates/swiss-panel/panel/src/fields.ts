@@ -291,7 +291,7 @@ function translateOauth(body: Record<string, unknown>): Record<string, unknown> 
 }
 
 /* --- pg url <-> fields (SPEC §mcp.panel) ------------------------------------------------------------------ */
-/* The def keeps ONE url string (the engine, the mask/unmask machinery and DIRECT_FIELDS all
+/* The def keeps ONE url string (the engine, the mask/unmask machinery and DEF_KEYS all
  * read it); the form edits the pieces. The pair below is the only place the split happens,
  * used on open AND on every submit path. Two things must survive verbatim:
  *   - ${...} refs (a ${secret://name} password contains ':' and '/', which the url grammar
