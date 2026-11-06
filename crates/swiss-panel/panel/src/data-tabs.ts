@@ -22,11 +22,11 @@ import type { ApiDbDatabase } from "./types/api.js";
 import { $, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
 import { dbActiveIndex, dbConn, dbIsMounted, dbOnSqlTextChanged, dbParkedNames, dbParkedTabs, dbResetTabs, dbSetActive, dbSqlTab, dbTab, dbTabs, freshTab } from "./db-state.js";
-import { dbClosedAdd, dbClosedAdopt, dbClosedById, dbClosedClear, dbClosedDrop, dbClosedEmpty, dbClosedFor, dbClosedLocalFor, dbClosedLocalForget, dbClosedLocalOnly, dbClosedRemember, dbClosedTake } from "./data-closed.js";
+import { dbClosedAdd, dbClosedAdopt, dbClosedById, dbClosedClear, dbClosedDrop, dbClosedEmpty, dbClosedFor, dbClosedLocalFor, dbClosedLocalForget, dbClosedLocalOnly, dbClosedRemember, dbClosedTake, dbConsoleBlank } from "./data-closed.js";
 import type { DbClosedTab } from "./data-closed.js";
 import {
   consoleFromWire, dbClosedEntry, dbConsoleAdopt, dbConsoleClearClosed, dbConsoleDisplay, dbConsoleFlush, dbConsoleForget, dbConsoleOnSettled, dbConsolePut, dbConsoleRebase,
-  dbConsoleRecord, dbConsoleStage, dbConsoleStoreList, dbConsoleStoreOn, dbConsoleSyncReason, dbConsoleSyncState,
+  dbConsoleRecord, dbConsoleRemove, dbConsoleStage, dbConsoleStoreList, dbConsoleStoreOn, dbConsoleSyncReason, dbConsoleSyncState,
 } from "./data-console-store.js";
 import type { PutResult } from "./data-console-store.js";
 import type { ConsoleRecord } from "./data-console-sync.js";
@@ -162,6 +162,17 @@ async function dbConsoleMigrate(conn: string, records: ConsoleRecord[], removed:
   }
 }
 
+/** Forget the blank closed records an older page filed. Best effort and quiet: the list already
+ *  leaves them out, and a refused one is tried on the next visit. Each compares its revision, so
+ *  text written since stays. */
+async function dbConsolePurgeBlank(conn: string, records: ConsoleRecord[]): Promise<void> {
+  for (const r of records) {
+    if (r.open || !dbConsoleBlank(r.sql)) continue;
+    const result = await dbConsoleRemove(conn, r.id, r.revision);
+    if (!result.ok && !result.conflict) return; // offline: the rest would only fail the same way
+  }
+}
+
 /** Enter a connection: read the store once, restore its open consoles, fill Recently closed and
  *  import this browser's older drafts. A gateway without the store leaves the page exactly on
  *  its local snapshot. */
@@ -193,6 +204,7 @@ export async function dbConsolesLoad(conn: string): Promise<void> {
     if (dbConn().conn !== conn) return;
     dbConsoleLoaded.add(conn);
     renderDbTabs(); renderDbTables();
+    void dbConsolePurgeBlank(conn, records);
   } finally {
     dbConsoleReads.delete(conn);
     dbConsoleLoading.delete(conn);
@@ -998,7 +1010,7 @@ function dbFileClosedNow(gone: DbTab[]): boolean {
 
 /** File the consoles among these tabs on a store-backed connection. The close is a
  *  compare-and-swap first: a refused write keeps the tab open rather than closing work the
- *  server never received. */
+ *  server never received. A blank console is not filed: its record goes instead. */
 async function dbFileClosedStored(gone: DbTab[]): Promise<boolean> {
   const conn = dbConn().conn;
   if (!conn) return true;
@@ -1006,15 +1018,21 @@ async function dbFileClosedStored(gone: DbTab[]): Promise<boolean> {
   if (!sqlTabs.length) return true;
   dbConsoleEpoch++;
   for (const tab of sqlTabs) {
-    const record = dbConsoleRecord(conn, tab, dbTabTitle(tab));
-    let result = await dbConsolePut(conn, { ...record, open: false }, tab.revision ? "update" : "create");
+    const blank = dbConsoleBlank(tab.sqlText);
+    // A save on its way lands first, or it would bring back the record about to go.
+    if (blank && dbConsoleSyncState(conn, tab.id) === "pending") await dbConsoleFlush(conn, true);
+    if (blank && !tab.revision) { dbConsoleForget(conn, tab.id); continue; }
+    let result: PutResult | { ok: true; removed: boolean } = blank
+      ? await dbConsoleRemove(conn, tab.id, tab.revision || 0)
+      : await dbConsolePut(conn, { ...dbConsoleRecord(conn, tab, dbTabTitle(tab)), open: false }, tab.revision ? "update" : "create");
     // Another window saved this console after this page last read it. A tab without a draft
     // of its own has nothing to lose here: the newer server record is what gets filed, and
     // the close goes through instead of being refused as stale.
-    if (!result.ok && result.code === "console.changed" && dbConsoleSyncState(conn, tab.id) === "clean") {
+    if (!result.ok && (result.code === "console.changed" || result.code === "console.changedDelete") && dbConsoleSyncState(conn, tab.id) === "clean") {
       result = await dbCloseServerCopy(conn, tab.id) || result;
     }
     if (!result.ok) { toast(result.error || tr("dataTabs.consoleSaveFailed"), true); return false; }
+    if ("removed" in result) { dbRemoveServerConsole(conn, tab.id); dbConsoleForget(conn, tab.id); continue; }
     dbConsoleSeen.get(conn)?.set(tab.id, result.console);
     dbClosedAdd(conn, dbClosedEntry(conn, result.console));
     dbConsoleForget(conn, tab.id);
@@ -1306,11 +1324,11 @@ function dbCloseTab(i: number): void {
   const proceed = (): void => {
     if (t.kind === "activity") dbActivityPollStop();
     if (t.kind === "pubsub") dbPubsubStop();
-    const active = dbActiveIndex();
-    const next = tabs.filter((_: DbTab, j: number): boolean => { return j !== i; });
-    let idx = active;
-    if (i === active) idx = Math.min(i, next.length - 1);
-    else if (i < active) idx = active - 1;
+    // By identity: a blank console's REMOVED event can reset the strip before its reply lands.
+    const live = dbTab();
+    const next = dbTabs().filter((x: DbTab): boolean => { return x !== t; });
+    const kept = next.indexOf(live);
+    const idx = kept >= 0 ? kept : Math.min(i, next.length - 1);
     if (!next.length) next.push(dbHomeTab());
     dbResetTabs(next, Math.max(0, idx));
     dbAfterTabSwitch();

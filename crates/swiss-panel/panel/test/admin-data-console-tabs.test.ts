@@ -235,13 +235,53 @@ describe("a console tab's id (SPEC §data.agent Tabs)", () => {
     }
   }, 20_000);
 
-  it("restores a blank console by its stable id", () => {
-    const t = consoleTab("", "");
+  const CLOSED_KEY = "swiss.dbClosedTabs";
+
+  it.each([
+    ["holding nothing", "", undefined, false],
+    ["holding only whitespace", " \n\t ", undefined, false],
+    ["the reader named", "", "Report", false],
+    ["of the agent's", "", "Report", true],
+  ])("forgets a console %s on close: nothing comes back, and its id is unknown", (_what, text, name, agent) => {
+    const t = consoleTab(text, name);
+    if (agent) { t.agent = true; t.agentTab = name; }
     const id = t.id;
     tabs.dbCloseTab(dbActiveIndex());
-    expect(closed.dbClosedById("c", id)?.id).toBe(id);
-    expect(sql.dbAgentOpenConsole({ tabId: id, format: false })).toBe(true);
-    expect(live().id).toBe(id);
+    expect(dbTabs().some((x) => x.kind === "sql" && x.id === id), "the close went through").toBe(false);
+    expect(closed.dbClosedById("c", id)).toBeNull();
+    expect(localStorage.getItem(CLOSED_KEY)).toBeNull();
+    expect(sql.dbConsoleTabs()).toEqual([]);
+    expect(sql.dbAgentOpenConsole({ tabId: id, format: false })).toBe(false);
+  });
+
+  it("takes the blank entries an older page filed off the list and out of the browser", () => {
+    localStorage.setItem(CLOSED_KEY, JSON.stringify([
+      { id: "old-blank", conn: "c", text: "", at: 1, custom: "Named" },
+      { id: "old-space", conn: "c", text: "  \n", at: 2, agent: true, agentTab: "Report" },
+      { id: "old-text", conn: "c", text: "SELECT 1", at: 3 },
+    ]));
+    expect(closed.dbClosedFor("c").map((e) => e.id)).toEqual(["old-text"]);
+    expect((JSON.parse(localStorage.getItem(CLOSED_KEY) || "[]") as { id: string }[]).map((e) => e.id)).toEqual(["old-text"]);
+  });
+
+  it("closes a blank console on a full list, which it neither needs nor touches", () => {
+    const full = Array.from({ length: 200 }, (_, i) => ({ id: "full-" + i, conn: "c", text: "SELECT " + i, at: i + 1 }));
+    localStorage.setItem(CLOSED_KEY, JSON.stringify(full));
+    const stored = localStorage.getItem(CLOSED_KEY);
+    const id = consoleTab("").id;
+    tabs.dbCloseTab(dbActiveIndex());
+    expect(dbTabs().some((x) => x.kind === "sql" && x.id === id), "a text console would have been refused here").toBe(false);
+    expect(localStorage.getItem(CLOSED_KEY)).toBe(stored);
+  });
+
+  it("deleting a closed console's last statement takes it off the list", () => {
+    const id = consoleTab("SELECT 1;\n\nSELECT 2;", "Report").id;
+    tabs.dbCloseTab(dbActiveIndex());
+    expect(sql.dbConsoleEdit(id, "delete", 0, undefined, "SELECT 1;")).toBe(true);
+    expect(closed.dbClosedById("c", id)?.text, "a statement is left: it stays").toBe("SELECT 2;");
+    expect(sql.dbConsoleEdit(id, "delete", 0, undefined, "SELECT 2;")).toBe(true);
+    expect(closed.dbClosedById("c", id)).toBeNull();
+    expect(localStorage.getItem(CLOSED_KEY)).toBeNull();
   });
 
   it("sends the canonical agent slot for closed consoles", () => {

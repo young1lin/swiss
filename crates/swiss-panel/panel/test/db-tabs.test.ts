@@ -778,6 +778,23 @@ describe("a closed console can be brought back (SPEC §data.tabs)", () => {
     dbSwapConn("d", () => false);
     expect(labels(tabs.dbClosedMenuItems())[0], "Clear forgets this connection's alone").toBe("SQL · SELECT 9");
   });
+
+  it("a blank console is not filed by its ×, a bulk close, a database switch or the page going", () => {
+    consoleTab("");
+    tabs.dbCloseTab(dbActiveIndex());
+    expect(tabs.dbClosedMenuItems(), "its ×").toEqual([]);
+    consoleTab(" \n", "Named");
+    consoleTab("SELECT 1");
+    tabs.dbCloseAllTabs();
+    expect(labels(tabs.dbClosedMenuItems()), "a bulk close files the one with text").toEqual(["SQL · SELECT 1", "-", "Clear the list"]);
+    pick(tabs.dbClosedMenuItems(), "Clear the list");
+    consoleTab("");
+    tabs.dbResetTabsForConn();
+    expect(tabs.dbClosedMenuItems(), "a database switch").toEqual([]);
+    consoleTab("");
+    window.dispatchEvent(new Event("pagehide"));
+    expect(tabs.dbClosedMenuItems(), "the page going").toEqual([]);
+  });
 });
 
 /* A type-level pin: the union is the split's safety net, so the three record shapes stay

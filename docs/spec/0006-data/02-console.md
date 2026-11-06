@@ -135,10 +135,17 @@ Recently closed is sorted by valid update time descending, then close time and s
 grouped by browser-local calendar day (Today, Yesterday, then date), with unknown updates in their
 own final group. Search removes empty groups. No within-day time windows are used. A row exposes
 its SQL summary and update time; its details include ID and creation, update and close times.
-Closed consoles deduplicate by connection and ID, including blank consoles and two consoles holding
-identical SQL. The 200-entry and one-million-character bounds reject a close that would exceed
-them, with a storage warning; they never silently discard an older console to make room. A failed
-history removal prevents restoration and warns; a failed clear warns and retains the history.
+A console holding no text (whitespace counts as none) is not filed, whatever its name or owner:
+closing one forgets it, its record goes with a REMOVE at its revision, and its ID then answers as
+unknown. A clean tab whose record changed elsewhere files the newer record instead, and a draft the
+store refused keeps its tab and conflict bar. A blank closed record an older page filed stays out of
+the list, and the connection's first read in a page removes it the same way. An agent edit that
+deletes a closed console's last statement takes it off the list. An open blank console stays on the
+strip across a reload. Closed consoles deduplicate by connection and ID, and two consoles holding
+identical SQL stay separate. The 200-entry and one-million-character bounds reject a close that
+would exceed them, with a storage warning; they never silently discard an older console to make
+room. A failed history removal prevents restoration and warns; a failed clear warns and retains the
+history.
 
 A MySQL, PostgreSQL, SQLite, MongoDB or Redis connection's page has an agent at its end edge: the
 reader asks in their own words, and the agent reads how the data is laid out (tables,
@@ -364,10 +371,11 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   and the name its first line comments it with; `edit_console_sql {tabId, index, sql}` replaces
   exactly that statement and `delete_console_sql {tabId, index}` drops it, the tab staying -
   empty, when that was its last. `open_console` takes `tabId` beside `tab`, and wins: a closed
-  tab comes back under its own id, its statements with it. The id outlives a rename, a close
-  (Recently closed files the tab under its own id and restores it with that id), another console
-  of the same name and a page reload; a name outlives none of those, and two tabs called *SQL*
-  were otherwise one address. The server owns the consoles. Each one is a sealed record under
+  tab comes back under its own id, its statements with it. The id outlives a rename, the close
+  of a console holding text (Recently closed files the tab under its own id and restores it with
+  that id), another console of the same name and a page reload; a name outlives none of those,
+  and two tabs called *SQL* were otherwise one address. The server owns the consoles. Each one
+  is a sealed record under
   `llm/consoles/` (the sibling of `llm/analysis`): the connection and the id are hex-encoded, a
   component past 200 hex characters is split, and a short path already on disk is still read.
   A record holds the id, the title, whether it is the agent's and the name it knows, whether it
@@ -391,8 +399,8 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   The LLM plugin instance owns the handler guard: stopping it unregisters DATA.CONSOLES and
   later requests answer `bus.unavailable` (SPEC §bus.requests).
   The page reads a connection on entry, puts the open records back on the strip, fills Recently
-  closed from the closed ones, and imports older local drafts with `create` only, once, never
-  over a record the server already has.
+  closed from the closed ones holding text (§data.tabs), and imports older local drafts holding
+  text with `create` only, once, never over a record the server already has.
 
   **Another window on the same connection** (the desktop GUI beside a browser tab).
   Subscribe, then read: `applyServerConsole(conn, record)` reconciles events, the first read

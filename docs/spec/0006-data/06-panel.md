@@ -17,9 +17,9 @@ Part 06 of [§data](README.md), chapter 0006 of the [swiss specification](../../
   The overflow menu lists every tab plus Close others / to the right / all. The wheel scrolls
   it, middle-click closes, right-click offers rename and close left/right. Card tabs are a third
   shape, distinct from underline tabs and pills (§panel.design).
-- **Recently closed.** Consoles with text, a custom name or Agent ownership are saved before
-  close, database reset and page exit. They retain stable ID, text, names, creation/update times
-  and separate close time. Equal text never merges identities. Storage holds at most 200 entries
+- **Recently closed.** Consoles with text are saved before close, database reset and page exit;
+  a blank one is forgotten, whatever its name or owner. They retain stable ID, text, names,
+  creation/update times and separate close time. Equal text never merges identities. Storage holds at most 200 entries
   and one million characters across connections; older saved entries expire first, while a close
   that cannot save its incoming consoles is refused. Failed page-exit saves request the browser's
   leave confirmation. Restoration checks capacity before removing history, preserves identity

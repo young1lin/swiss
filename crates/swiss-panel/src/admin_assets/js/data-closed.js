@@ -86,9 +86,15 @@ export function dbClosedLocalOnly(conn        )       {
   remote.delete(conn);
 }
 
+/** A console holding nothing but whitespace: nothing to come back to, so it is never filed,
+ *  whatever its name or owner (SPEC §data.tabs). */
+export function dbConsoleBlank(text        )          {
+  return text.trim() === "";
+}
+
 export function dbClosedAdd(conn        , entry             )       {
   const list = (remote.get(conn) || []).filter((e) => e.id !== entry.id);
-  remote.set(conn, sortClosed([entry, ...list]));
+  remote.set(conn, sortClosed(dbConsoleBlank(entry.text) ? list : [entry, ...list]));
 }
 
 export function dbClosedDrop(conn        , id        )       {
@@ -128,7 +134,10 @@ function readClosed()                {
   try { raw = JSON.parse(localStorage.getItem(CLOSED_KEY) || "[]"); } catch { return []; }
   if (!Array.isArray(raw)) return [];
   let repaired = false;
-  const list                = raw.filter(closedEntry).map((e              , index        )              => {
+  const stored = raw.filter(closedEntry);
+  // A blank console an older page filed goes here, so no reader of the list meets one.
+  const kept = stored.filter((e              )          => !dbConsoleBlank(e.text));
+  const list                = kept.map((e              , index        )              => {
     if (e.id) return e               ;
     // An entry filed before ids: minted here and written back, so the id a tool read once
     // still addresses it on the next visit.
@@ -138,7 +147,8 @@ function readClosed()                {
     if (!id) { id = dbNewTabId(); if (legacyIds.size >= CLOSED_MAX) legacyIds.delete(legacyIds.keys().next().value || ""); legacyIds.set(key, id); }
     return { ...e, id };
   });
-  if (repaired && !writeClosed(list) && !migrationWarned) { migrationWarned = true; toast(tr("dataTabs.migrationFailed"), true); }
+  // Only a lost id is worth a warning: a blank entry that stays is tried again on the next read.
+  if ((repaired || kept.length < stored.length) && !writeClosed(list) && repaired && !migrationWarned) { migrationWarned = true; toast(tr("dataTabs.migrationFailed"), true); }
   return list;
 }
 
@@ -152,14 +162,14 @@ function writeClosed(list               )          {
   } catch { return false; }
 }
 
-/** File the consoles about to close, each under its connection, including blank consoles whose
- *  IDs can already have been copied. Refiling the same ID updates its entry; equal text in different
- *  consoles remains separate work. A failed save refuses the close. */
+/** File the consoles about to close, each under its connection; a blank one is simply gone.
+ *  Refiling the same ID updates its entry; equal text in different consoles remains separate
+ *  work. A failed save refuses the close. */
 export function dbClosedRemember(gone                                   )          {
   const fresh                = [];
   const now = Date.now();
   for (const { conn, tab } of gone) {
-    if (!conn || tab.analysisId) continue;
+    if (!conn || tab.analysisId || dbConsoleBlank(tab.sqlText)) continue;
     const e              = { id: tab.id, conn, text: tab.sqlText, at: now,
       createdAt: tab.createdAt ?? null, updatedAt: tab.updatedAt ?? null };
     if (tab.custom) e.custom = tab.custom;
@@ -208,13 +218,15 @@ export function dbClosedById(conn               , id        )                   
 
 /** Rewrite a closed console's text where it sits - a statement the agent edited or deleted
  *  while the tab was closed. Its id and place in the list stay, so the tab it comes back as
- *  is still the one that was asked for. False when it is gone already. */
+ *  is still the one that was asked for; deleting its last statement takes it off the list.
+ *  False when it is gone already. */
 export function dbClosedSetText(id        , text        , conn         )          {
   if (conn && remoteOn.has(conn)) {
     const list = remote.get(conn) || [];
     const at = list.findIndex((e) => e.id === id);
     if (at < 0) return false;
     if (list[at].text === text) return true;
+    if (dbConsoleBlank(text)) { dbClosedDrop(conn, id); return true; }
     remote.set(conn, sortClosed(list.map((e, i) => i === at ? { ...e, text, updatedAt: Date.now() } : e)));
     return true;
   }
@@ -222,8 +234,11 @@ export function dbClosedSetText(id        , text        , conn         )        
   const at = list.findIndex((e) => e.id === id && (conn === undefined || e.conn === conn));
   if (at < 0) return false;
   if (list[at].text === text) return true;
-  list[at].text = text;
-  list[at].updatedAt = Date.now();
+  if (dbConsoleBlank(text)) list.splice(at, 1);
+  else {
+    list[at].text = text;
+    list[at].updatedAt = Date.now();
+  }
   return writeClosed(list);
 }
 

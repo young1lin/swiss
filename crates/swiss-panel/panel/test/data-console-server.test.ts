@@ -396,7 +396,7 @@ describe("the same connection open in another window (SPEC §data.agent Tabs)", 
 
   it("REMOVED drops clean tabs and history, keeps drafts, and CLEARED drops only closed records", async () => {
     await loaded("event-delete", [rec({ id: "clean" }), rec({ id: "draft" }),
-      rec({ id: "closed", open: false }), rec({ id: "other-closed", open: false })]);
+      rec({ id: "closed", open: false, sql: "SELECT 1" }), rec({ id: "other-closed", open: false, sql: "SELECT 2" })]);
     const draft = dbTabs().find((t): t is DbSqlTab => t.kind === "sql" && t.id === "draft");
     if (!draft) throw new Error("draft not loaded");
     dbSetSqlText(draft, "my draft");
@@ -538,6 +538,167 @@ describe("the same connection open in another window (SPEC §data.agent Tabs)", 
     expect(dbTabs().some((x) => x.kind === "sql" && x.id === "w-7"), "the close went through").toBe(false);
     expect(posted().at(-1)).toMatchObject({ id: "w-7", open: false, sql: "as loaded;", revision: 3 });
     expect(closed.dbClosedFor("win4").map((e) => [e.id, e.text])).toEqual([["w-7", "as loaded;"]]);
+  });
+
+  /* A blank console is not filed (SPEC §data.tabs): its record goes instead. */
+  const writes = (): [string, string, number][] => calls.filter((c) => onConsoles(c) && c.method !== "LIST")
+    .map((c) => [c.method, String(c.body?.id ?? (c.body?.console as ConsoleRecord).id), Number(c.body?.revision ?? (c.body?.console as ConsoleRecord).revision)]);
+  const onStrip = (id: string): boolean => dbTabs().some((t) => t.kind === "sql" && t.id === id);
+  const atOf = (id: string): number => dbTabs().findIndex((t) => t.kind === "sql" && t.id === id);
+  const saveAndRemove = (c: Call): [number, unknown] | undefined => {
+    if (!onConsoles(c)) return undefined;
+    if (c.method === "REMOVE") return [200, { removed: true }];
+    if (c.method === "PUT") { const sent = c.body?.console as ConsoleRecord; return [200, { console: { ...sent, revision: sent.revision + 1 } }]; }
+    return undefined;
+  };
+
+  it("closing a blank console removes its record at its revision, and files nothing", async () => {
+    await loaded("blank-close", [rec({ id: "empty", sql: "", revision: 4 })]);
+    route = saveAndRemove;
+    tabs.dbCloseTab(atOf("empty"));
+    await settle();
+    expect(writes()).toEqual([["REMOVE", "empty", 4]]);
+    expect(onStrip("empty")).toBe(false);
+    expect(closed.dbClosedFor("blank-close")).toEqual([]);
+  });
+
+  it("a console emptied just now saves first, so the removal compares against the record it left", async () => {
+    await loaded("blank-emptied", [rec({ id: "was-full", sql: "SELECT 1", revision: 2 })]);
+    dbSetSqlText(dbTab() as DbSqlTab, "");
+    route = saveAndRemove;
+    tabs.dbCloseTab(atOf("was-full"));
+    await settle();
+    expect(writes()).toEqual([["PUT", "was-full", 2], ["REMOVE", "was-full", 3]]);
+    expect(onStrip("was-full")).toBe(false);
+    expect(closed.dbClosedFor("blank-emptied")).toEqual([]);
+  });
+
+  it("a + closed before its first save reached the store leaves no record", async () => {
+    await loaded("blank-new", []);
+    route = saveAndRemove;
+    tabs.dbOpenTabForce({ kind: "sql" });
+    const id = (dbTab() as DbSqlTab).id;
+    tabs.dbCloseTab(atOf(id));
+    await settle();
+    expect(writes()).toEqual([["PUT", id, 0], ["REMOVE", id, 1]]);
+    expect(onStrip(id)).toBe(false);
+    expect(closed.dbClosedFor("blank-new")).toEqual([]);
+  });
+
+  it("a blank console the store never received closes without a word to it", async () => {
+    await loaded("blank-offline", []);
+    route = (c) => onConsoles(c) && c.method === "PUT" ? [500, { error: "down" }] : undefined;
+    tabs.dbOpenTabForce({ kind: "sql" });
+    const id = (dbTab() as DbSqlTab).id;
+    tabs.dbCloseTab(atOf(id));
+    await settle();
+    expect(writes().map((w) => w[0]), "only the save that failed").toEqual(["PUT"]);
+    expect(onStrip(id)).toBe(false);
+    expect(store.dbConsoleSyncState("blank-offline", id)).toBe("clean");
+    expect(closed.dbClosedFor("blank-offline")).toEqual([]);
+  });
+
+  it("REMOVED landing before the reply keeps the tab the reader was on in front", async () => {
+    await loaded("blank-order", [rec({ id: "a", sql: "1" }), rec({ id: "b", sql: "" }), rec({ id: "c", sql: "3" }), rec({ id: "d", sql: "4" })]);
+    tabs.dbActivateTab(atOf("d"));
+    route = (c) => {
+      if (!onConsoles(c) || c.method !== "REMOVE") return undefined;
+      peer.removed("blank-order", "b");
+      return [200, { removed: true }];
+    };
+    tabs.dbCloseTab(atOf("b"));
+    await settle();
+    expect(dbTabs().filter((t) => t.kind === "sql").map((t) => t.id)).toEqual(["a", "c", "d"]);
+    expect((dbTab() as DbSqlTab).id).toBe("d");
+  });
+
+  it("a clean blank tab whose record changed in another window files the newer record", async () => {
+    await loaded("blank-stale", [rec({ id: "s", sql: "", revision: 2 })]);
+    route = (c) => {
+      if (!onConsoles(c)) return undefined;
+      if (c.method === "REMOVE") return [409, { error: "changed", code: "console.changedDelete" }];
+      if (c.method === "LIST") return [200, { consoles: [rec({ id: "s", sql: "written there", revision: 3 })] }];
+      const sent = c.body?.console as ConsoleRecord;
+      return [200, { console: { ...sent, revision: 4, closedAt: 90 } }];
+    };
+    tabs.dbCloseTab(atOf("s"));
+    await settle();
+    expect(onStrip("s")).toBe(false);
+    expect(posted().at(-1)).toMatchObject({ id: "s", open: false, sql: "written there", revision: 3 });
+    expect(closed.dbClosedFor("blank-stale").map((e) => [e.id, e.text])).toEqual([["s", "written there"]]);
+  });
+
+  it("a blank draft the store refused keeps its tab and its conflict", async () => {
+    await loaded("blank-refused", [rec({ id: "r", sql: "SELECT 1", revision: 2 })]);
+    const tab = dbTab() as DbSqlTab;
+    dbSetSqlText(tab, "");
+    route = (c) => {
+      if (!onConsoles(c)) return undefined;
+      if (c.method === "REMOVE") return [409, { error: "changed", code: "console.changedDelete" }];
+      return c.method === "PUT" ? [409, { error: "changed", code: "console.changed" }] : undefined;
+    };
+    await store.dbConsoleFlush("blank-refused", true);
+    expect(store.dbConsoleSyncState("blank-refused", "r")).toBe("failed");
+    tabs.dbCloseTab(atOf("r"));
+    await settle();
+    expect(dbTabs().includes(tab), "the close is refused").toBe(true);
+    expect(store.dbConsoleSyncState("blank-refused", "r")).toBe("failed");
+    expect(closed.dbClosedFor("blank-refused")).toEqual([]);
+  });
+
+  it("the first read leaves out the blank closed records an older page filed and removes each at its revision", async () => {
+    enter("blank-entry");
+    const records = [
+      rec({ id: "closed-blank", open: false, sql: "", revision: 3, closedAt: 5 }),
+      rec({ id: "closed-space", open: false, sql: " \n", revision: 4, closedAt: 6 }),
+      rec({ id: "closed-agent", tab: "Report", agent: true, agentTab: "Report", open: false, sql: "", revision: 5, closedAt: 7 }),
+      rec({ id: "closed-text", open: false, sql: "SELECT 1", revision: 6, closedAt: 8 }),
+      rec({ id: "open-blank", sql: "", revision: 7 }),
+    ];
+    route = (c) => {
+      if (!onConsoles(c)) return undefined;
+      return c.method === "LIST" ? [200, { consoles: records }] : [200, { removed: true }];
+    };
+    await tabs.dbConsolesLoad("blank-entry");
+    await settle();
+    expect(closed.dbClosedFor("blank-entry").map((e) => e.id)).toEqual(["closed-text"]);
+    expect(writes()).toEqual([["REMOVE", "closed-blank", 3], ["REMOVE", "closed-space", 4], ["REMOVE", "closed-agent", 5]]);
+    expect(onStrip("open-blank"), "an open blank console stays on the strip").toBe(true);
+  });
+
+  it("a removal the store cannot answer stops quietly and stays out of the list", async () => {
+    enter("blank-entry-down");
+    route = (c) => {
+      if (!onConsoles(c)) return undefined;
+      if (c.method === "LIST") return [200, { consoles: [rec({ id: "x", open: false, sql: "", revision: 3 }), rec({ id: "y", open: false, sql: "", revision: 4 })] }];
+      return [500, { error: "down" }];
+    };
+    await tabs.dbConsolesLoad("blank-entry-down");
+    await settle();
+    expect(writes(), "the first failure ends the pass").toEqual([["REMOVE", "x", 3]]);
+    expect(closed.dbClosedFor("blank-entry-down")).toEqual([]);
+    expect(document.querySelector("#toast")?.textContent || "", "no word about it").toBe("");
+  });
+
+  it("a blank closed record another window files is not listed, and its clean tab goes", async () => {
+    await loaded("blank-event", [rec({ id: "e", sql: "", revision: 2 })]);
+    peer.changed("blank-event", rec({ id: "e", sql: "", open: false, revision: 3, closedAt: 9 }));
+    await settle();
+    expect(onStrip("e")).toBe(false);
+    expect(closed.dbClosedFor("blank-event")).toEqual([]);
+  });
+
+  it("a blank entry in the browser's older list is not imported", async () => {
+    const conn = "blank-migrate";
+    localStorage.setItem("swiss.dbClosedTabs", JSON.stringify([
+      { id: "l-blank", conn, text: "", at: 1, custom: "Named" }, { id: "l-text", conn, text: "SELECT 1", at: 2 },
+    ]));
+    enter(conn);
+    route = saveAndRemove;
+    await tabs.dbConsolesLoad(conn);
+    await settle();
+    expect(posted().map((r) => r.id)).toEqual(["l-text"]);
+    expect(localStorage.getItem("swiss.dbClosedTabs"), "and the browser's copy is done with").toBeNull();
   });
 });
 
