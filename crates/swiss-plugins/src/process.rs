@@ -431,8 +431,7 @@ mod tests {
 
     /// A control the way create() builds the real one, with every path in
     /// this scratch dir: the sweep needs only the declared apps and the
-    /// capture dir, and the sealed record set_apps writes pins the test
-    /// master key through swiss-core's test-utils feature.
+    /// capture dir.
     fn sweep_control(dir: &std::path::Path, apps: Vec<AppConfig>) -> Arc<AppControl> {
         let (exit_tx, _exit_rx) = tokio::sync::mpsc::unbounded_channel();
         let clock = Arc::new(WallClock);

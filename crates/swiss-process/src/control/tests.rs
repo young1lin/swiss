@@ -1284,6 +1284,52 @@ fn exit_line(app: &str, pid: u32, code: i32) -> ExitLine {
     }
 }
 
+/// A boot sets the table first and reads the record second. The first `set_apps` used to save the
+/// record it held, still empty, so every gateway erased what the last one left: a running app
+/// without ports read as `unknown` and could not be stopped (SPEC §process.apps; 2026-11-06, walked
+/// in WSL).
+#[tokio::test]
+async fn a_new_gateway_reads_the_record_the_last_one_left() {
+    let app = read_app(&json!({ "name": "svc", "start": { "program": "svc" } }));
+    let last = rig(vec![app.clone()], 999);
+    last.control.record.lock().unwrap().insert(app.name.clone(), TrackedRecord {
+        pid: 50,
+        created_at: 7,
+        image: "svc".to_string(),
+    });
+    last.control.save_tracked();
+    last.probe.state.lock().unwrap().procs.insert(50, OwnerFact {
+        pid: 50,
+        image: "svc".to_string(),
+        created_at: 7,
+    });
+
+    let next = AppControl::new(ControlDeps {
+        rules: ConfigRules {
+            gateway_port: 19999,
+            gateway_image: "swiss.exe".to_string(),
+        },
+        boot: BootInfo {
+            port: 19999,
+            is_daemon: true,
+        },
+        probe: last.probe.clone(),
+        spawner: last.spawner.clone(),
+        killer: last.killer.clone(),
+        clock: Arc::new(FakeClock),
+        record_path: last.dir.join("record.json"),
+        history: last.history.clone(),
+        capture_dir: last.dir.join("apps"),
+        gateway_pid: 1000,
+    });
+    next.set_apps(vec![app]);
+    next.load_tracked().await;
+
+    let rows = next.rows().await;
+    assert_eq!(rows[0].status, "running", "{}", rows[0].status);
+    assert_eq!(rows[0].pid, Some(50));
+}
+
 #[tokio::test(start_paused = true)]
 async fn an_exit_line_only_lands_for_the_tracked_process() {
     let app = read_app(&json!({ "name": "svc", "start": { "program": "svc" } }));

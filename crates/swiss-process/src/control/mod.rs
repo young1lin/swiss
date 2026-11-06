@@ -412,14 +412,20 @@ impl AppControl {
 
     pub fn set_apps(&self, apps: Vec<AppConfig>) {
         // Records for apps that left the config are not the config's business
-        // to keep: they drop with the row.
+        // to keep: they drop with the row. Only that is worth a save: a boot's
+        // first call runs before load_tracked has read the file, so the map is
+        // still empty here and saving it would erase what the last gateway left.
         let names: HashSet<String> = apps.iter().map(|a| a.name.clone()).collect();
-        self.record
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|name, _| names.contains(name));
+        let dropped = {
+            let mut record = self.record.lock().unwrap_or_else(|e| e.into_inner());
+            let before = record.len();
+            record.retain(|name, _| names.contains(name));
+            record.len() != before
+        };
         *self.apps.lock().unwrap_or_else(|e| e.into_inner()) = apps;
-        self.save_tracked();
+        if dropped {
+            self.save_tracked();
+        }
     }
 
     pub fn apps(&self) -> Vec<AppConfig> {

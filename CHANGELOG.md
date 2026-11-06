@@ -871,6 +871,10 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- A managed app without ports stays known across a gateway restart. Every boot saved an empty
+  tracked record before reading the file, so a running app read as `unknown` and
+  `swiss process stop` could not stop it, and an app that starts with swiss gained one more running
+  copy on each restart (SPEC §process.apps).
 - Claude setup lists MCPs without an unsupported scope option. Codex setup and copied panel
   snippets use `http_headers` so the client sends the gateway bearer (SPEC §host.setup).
 - A plugin the boot has not reached yet says it has not started, rather than that
