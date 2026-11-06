@@ -178,7 +178,7 @@ describe("a streaming answer's process", () => {
       wire.push("steer", { id: "q1", text: "only the active ones" });
       await paint();
       expect(summaries()).toEqual([workSummary({ rounds: 1, tools: 1, tokensIn: 1_200, tokensOut: 30, ms: 4_000 })]);
-      expect(summaries()[0]).toBe("1 round · 1 tool call · 1.2K in / 30 out · " + fmtMs(4_000));
+      expect(summaries()[0]).toBe("1 step · 1 tool call · 1.2K in / 30 out · " + fmtMs(4_000));
       wire.push("delta", { kind: "thinking", text: "Filter them" });
       wire.push("usage", { tokensIn: 1_300, tokensOut: 40 });
       wire.push("tool", { name: "run_sql", arguments: "{}" });
@@ -225,7 +225,7 @@ describe("a streaming answer's process", () => {
         const said = workSummary({ rounds: 3, tools: worked ? 1 : 0, tokensIn: 100, tokensOut: 20, ms: 900 });
         if (worked) {
           expect(column.querySelector(".tc-code > details > summary")?.textContent).toBe(said);
-          expect(said).toBe("3 rounds · 1 tool call · 100 in / 20 out · " + fmtMs(900));
+          expect(said).toBe("3 steps · 1 tool call · 100 in / 20 out · " + fmtMs(900));
         } else {
           expect(column.querySelector("details")).toBeNull();
           expect(column.lastElementChild?.textContent).toBe(said);
@@ -258,7 +258,7 @@ describe("a streaming answer's process", () => {
       expect(line()?.textContent).toContain("Waiting for the model · 3 s");
       expect(line()?.querySelector(".spin"), "it leads with the spinner").toBeTruthy();
       vi.advanceTimersByTime(17000);
-      expect(line()?.textContent).toContain("Waiting for the model · 20 s · Stop cancels this round");
+      expect(line()?.textContent).toContain("Waiting for the model · 20 s · Stop cancels this step");
       wire.push("delta", { kind: "thinking", text: "Inspect the schema" });
       await paint();
       expect(line(), "the model spoke").toBeNull();

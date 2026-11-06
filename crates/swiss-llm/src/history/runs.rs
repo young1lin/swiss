@@ -324,8 +324,7 @@ impl LlmHistory {
     }
 
     /// The system note the run filed on its first send (None when it filed
-    /// none): the continuation guard - a changed first word is a New run,
-    /// never a mid-dialogue swap.
+    /// none): continuations replay it even after the configured prompt changes.
     /// It reads the turn list and that one turn's body - never the whole dialogue, whose
     /// every call body a long conversation would decode on each send.
     pub async fn system_note_of(&self, run_id: i64) -> Option<String> {
@@ -339,6 +338,26 @@ impl LlmHistory {
         let seq = turn["seq"].as_i64().unwrap_or(0);
         let body = self.read_turn_body(run_id, seq).await.ok().flatten();
         Some(body.and_then(|v| v["body"].as_str().map(str::to_string)).unwrap_or_default())
+    }
+
+    /// The last sealed request's canonical tool definitions, sorted by name for
+    /// inspection independently of its provider wire. Missing or
+    /// unreadable history is unknown, never a reason to reject a conversation.
+    pub async fn tool_definitions_of(&self, run_id: i64) -> Option<Vec<Value>> {
+        let LastRound::Sealed(saved) = self.last_round(run_id, None).await.ok()? else { return None };
+        let request = saved.get("request")?;
+        let mut definitions = Vec::new();
+        if let Some(tools) = request.get("tools") {
+            for tool in tools.as_array()? {
+                definitions.push(json!({
+                    "name": tool.get("name")?.as_str()?,
+                    "description": tool.get("description").and_then(Value::as_str).unwrap_or_default(),
+                    "parameters": tool.get("schema")?,
+                }));
+            }
+        }
+        definitions.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        Some(definitions)
     }
 
     /// The continuation canonical prior context (see [ReplayState]): the last

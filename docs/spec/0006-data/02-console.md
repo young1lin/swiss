@@ -431,6 +431,17 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   Recently closed, and the snapshot lists open and closed tabs alike`, `two consoles sharing a
   name are told apart by id`, `edit and delete reach a tab that is closed`, `a tab the reader
   renamed answers to its id`).
+- **Inspect the model instructions.** Above the conversation, Tools and System prompt (current)
+  start collapsed. Each tool expands to its actual model-facing description and complete
+  parameter JSON Schema, fetched on demand from the execution definitions for this connection
+  kind. The current prompt reads the run's saved system note, including the original connection
+  and memory snapshot; before the first send it shows the base and says the snapshot is pending.
+  Reopening or starting New selects that conversation's prompt; late reads cannot overwrite
+  another run or generation. Updating defaults, the agent prompt or tools never makes saved
+  dialogue unusable: Continue and compaction keep the recorded prompt and messages, and the
+  next send uses the current tools. Inspection shows prompt/tool differences as notices;
+  the latest default and agent prompts expand separately for comparison. Work summaries count model **steps**, matching the footer, while
+  user sends remain **turns**.
 - **Its account under the box** (`chatStats`, §panel.ui), centred: the turns the reader
   took, the steps the model ran and its output speed, opening Session statistics (LLM time,
   tool time, the average time to first token, tokens per second); the tokens the

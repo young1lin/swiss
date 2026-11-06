@@ -538,7 +538,7 @@ describe("llm history page", () => {
     expect(view.runHow({ runtime: "builtin", rounds: 1, tools: {} })).toBe("single request");
     expect(view.runHow({ runtime: "claude", rounds: 0, tools: {} })).toBe("claude process");
     expect(view.runHow({ runtime: "builtin", rounds: 2, tools: {} })).toBe("2 requests, no tools");
-    expect(view.runHow({ runtime: "builtin", rounds: 3, tools: { delegate: 1, read: 2 } })).toBe("tool loop · 3 rounds · read ×2 · delegate ×1");
+    expect(view.runHow({ runtime: "builtin", rounds: 3, tools: { delegate: 1, read: 2 } })).toBe("tool loop · 3 steps · read ×2 · delegate ×1");
     expect(view.sourceLabel("memory:12")).toBe("memory run 12");
     expect(view.sourceLabel("memory:r-a1e84e8c")).toBe("memory run r-a1e84e8c"); // a sync run's id is not a number
     expect(view.sourceLabel("cron:nightly")).toBe("cron:nightly");
@@ -595,7 +595,7 @@ describe("llm history page", () => {
     await mount();
     const runRow = q("[data-hrun='9']");
     expect(runRow.textContent).toContain("Recheck held notes · orders (6 notes)");
-    expect(runRow.textContent).toContain("tool loop · 3 rounds · read ×2 · delegate ×1");
+    expect(runRow.textContent).toContain("tool loop · 3 steps · read ×2 · delegate ×1");
     expect(runRow.textContent).toContain("5.2K / 480");
     const taskCall = Array.from(document.querySelectorAll("[data-hcall]")).find((r) => { return r.getAttribute("data-hcall") === "11"; });
     expect(taskCall!.textContent).toContain("recheck · Recheck held notes · orders (6 notes)");
@@ -746,12 +746,12 @@ describe("llm history page", () => {
 
   it("the live words: the round and the step, what streamed, a spawned runtime's wait", () => {
     const live = { elapsedMs: 65_000, round: 2, step: "tool" as const, tool: "read_file", stepMs: 3000, streamed: 0 };
-    expect(view.liveText(live, "builtin")).toBe("Round 2 · running read_file · 3.0 s");
+    expect(view.liveText(live, "builtin")).toBe("Step 2 · running read_file · 3.0 s");
     expect(view.liveText({ ...live, round: 3, step: "model", tool: null, streamed: 1200 }, "builtin"))
-      .toBe("Round 3 · waiting on the model · 3.0 s · 1.2K chars streamed");
+      .toBe("Step 3 · waiting on the model · 3.0 s · 1.2K chars streamed");
     expect(view.liveText({ ...live, round: 0, step: "model", tool: null }, "builtin")).toBe("Waiting on the model · 3.0 s");
     expect(view.liveText({ ...live, round: 0, step: "model", tool: null }, "claude")).toBe("Waiting on claude · 3.0 s");
-    expect(view.runBrief({ ...LIVE_RUN })).toBe("Round 2 · running read_file · 3.0 s · 65 s in all");
+    expect(view.runBrief({ ...LIVE_RUN })).toBe("Step 2 · running read_file · 3.0 s · 65 s in all");
     expect(view.runBrief({ ...RUN, rounds: 1, tools: {}, tokensIn: 1200, tokensOut: 80 })).toBe("single request · 1.2K / 80 · 20 s");
   });
 
@@ -763,7 +763,7 @@ describe("llm history page", () => {
     await mount();
     const row = q("[data-hrun='12']");
     expect(row.querySelector("[data-lhstate='live']")?.getAttribute("title")).toBe("Running");
-    expect(row.textContent).toContain("Round 2 · running read_file");
+    expect(row.textContent).toContain("Step 2 · running read_file");
     expect(row.textContent).toContain("65 s"); // its time so far, not the filed span
     expect(document.querySelector("[data-hrun='3'] [data-lhstate]")).toBe(null);
   });
@@ -880,7 +880,7 @@ describe("llm history page", () => {
       await click("[data-hrun='12']");
       await settle();
       expect(text("#sheet")).toContain("Running");
-      expect(text("#sheet")).toContain("Round 2 · running read_file");
+      expect(text("#sheet")).toContain("Step 2 · running read_file");
       // The tool call still waiting on its result shimmers, a pulse before its duration.
       const items = Array.from(document.querySelectorAll<HTMLElement>("#sheet [data-lhsteps='0'] .fl-step"));
       const last = items[items.length - 1];
@@ -923,7 +923,7 @@ describe("llm history page", () => {
       expect(calls.some((c) => c.path === "/api/llm/history/runs/12/dialogue")).toBe(true);
       const items = Array.from(document.querySelectorAll<HTMLElement>("#sheet [data-lhsteps='0'] .fl-step"));
       const last = items[items.length - 1];
-      expect(last.textContent).toContain("Round 3 · waiting on the model");
+      expect(last.textContent).toContain("Step 3 · waiting on the model");
       expect(last.textContent).toContain("1.2K chars streamed");
       expect(last.classList.contains("live")).toBe(true);
       // The pending tool call of the earlier round is no longer the step in flight.

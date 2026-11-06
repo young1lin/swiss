@@ -494,42 +494,47 @@ impl<'a> LeadTools<'a> {
     }
 }
 
+/// The same lead definitions serve execution and on-demand inspection.
+pub(crate) fn lead_specs(taken: &[&'static str], roster: &[Worker]) -> Vec<ToolSpec> {
+    let mut task = json!({
+        "task": {"type": "string", "description": "what to find out, said whole: the worker sees nothing else"},
+        "paths": {"type": "array", "maxItems": DELEGATE_PATHS_MAX, "items": {"type": "string"},
+                  "description": "files of the checkout the worker reads"},
+        "effort": {"type": "string", "enum": ["low", "medium", "high", "max"],
+                   "description": "how hard the worker thinks; unset, its own default"}
+    });
+    if !roster.is_empty() {
+        let names: Vec<&str> = roster.iter().map(|w| w.name.as_str()).collect();
+        task["agent"] = json!({"type": "string", "enum": names, "description": "the worker that takes it; unset, the freest"});
+    }
+    let all = vec![
+        ToolSpec {
+            name: "read".into(),
+            description: "Read one file from the checkout, at most 64 KiB a read; from and lines read a long file a window at a time".into(),
+            schema: read_schema("path relative to the checkout root"),
+        },
+        ToolSpec {
+            name: "delegate".into(),
+            description: "Hand pieces of the work to worker agents, all at once. Each task says what to find out and names the files the worker reads; each answer comes back as text, in the order given.".into(),
+            schema: json!({
+                "type": "object", "additionalProperties": false, "required": ["tasks"],
+                "properties": {"tasks": {
+                    "type": "array", "minItems": 1, "maxItems": DELEGATE_TASKS_MAX,
+                    "items": {
+                        "type": "object", "additionalProperties": false, "required": ["task"],
+                        "properties": task
+                    }
+                }}
+            }),
+        },
+    ];
+    all.into_iter().filter(|spec| taken.contains(&spec.name.as_str())).collect()
+}
+
 #[async_trait]
 impl Toolbox for LeadTools<'_> {
     fn specs(&self) -> Vec<ToolSpec> {
-        let mut task = json!({
-            "task": {"type": "string", "description": "what to find out, said whole: the worker sees nothing else"},
-            "paths": {"type": "array", "maxItems": DELEGATE_PATHS_MAX, "items": {"type": "string"},
-                      "description": "files of the checkout the worker reads"},
-            "effort": {"type": "string", "enum": ["low", "medium", "high", "max"],
-                       "description": "how hard the worker thinks; unset, its own default"}
-        });
-        if !self.roster.is_empty() {
-            let names: Vec<&str> = self.roster.iter().map(|w| w.name.as_str()).collect();
-            task["agent"] = json!({"type": "string", "enum": names, "description": "the worker that takes it; unset, the freest"});
-        }
-        let all = vec![
-            ToolSpec {
-                name: "read".into(),
-                description: "Read one file from the checkout, at most 64 KiB a read; from and lines read a long file a window at a time".into(),
-                schema: read_schema("path relative to the checkout root"),
-            },
-            ToolSpec {
-                name: "delegate".into(),
-                description: "Hand pieces of the work to worker agents, all at once. Each task says what to find out and names the files the worker reads; each answer comes back as text, in the order given.".into(),
-                schema: json!({
-                    "type": "object", "additionalProperties": false, "required": ["tasks"],
-                    "properties": {"tasks": {
-                        "type": "array", "minItems": 1, "maxItems": DELEGATE_TASKS_MAX,
-                        "items": {
-                            "type": "object", "additionalProperties": false, "required": ["task"],
-                            "properties": task
-                        }
-                    }}
-                }),
-            },
-        ];
-        all.into_iter().filter(|spec| self.taken.contains(&spec.name.as_str())).collect()
+        lead_specs(&self.taken, &self.roster)
     }
 
     async fn call(&mut self, name: &str, args: &Value) -> ToolAnswer {

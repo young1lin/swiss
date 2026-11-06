@@ -40,9 +40,10 @@ import {
 import { actionBtn } from "../ui/action.js";
                                                                                                                                                                
 import {
-  NAME_RE, call, credentialLeak, isError, linesToMap, loadRow, loadStatus, mapToLines, modelsOf, putRow, runtimeWord, takeAgentPreset, testNode, toolSummary, wholeField,
+  NAME_RE, call, credentialLeak, isError, linesToMap, loadRow, loadStatus, mapToLines, modelsOf, putRow, runtimeWord, takeAgentPreset, testNode, wholeField,
 } from "./llm-core.js";
                                                  
+import { toolDetails } from "./agent-inspection.js";
 import { conversationNode, promptTurn } from "./llm-history.js";
                                                     
 import { streamAsk } from "./llm-stream.js";
@@ -162,6 +163,10 @@ function setupView(a             )              {
 /** The system prompt in force, as sent: a builtin, chat or db agent's runtime default (marked) and
  *  its own after it, a CLI's own with the agent's appended, or the CLI's own alone. */
 function promptView(a             )              {
+  return formFold({ summary: tr("llm.agents.systemPrompt"), scroll: true }, promptContent(a));
+}
+
+function promptContent(a             )              {
   const label = tr("llm.agents.systemPrompt");
   const data = { lablock: "prompt" };
   if (a.systemPromptDefault) {
@@ -180,8 +185,8 @@ function toolsView(a             )              {
   const catalog = catalogOf(a.runtime);
   if (!catalog.length) return valueBlock({ label, data, text: tr("llm.agents.toolsChat") });
   return valueBlock({ label, data }, catalog.map((t) => kvRow(t.name, a.toolsInForce.includes(t.name)
-    ? toolSummary(a.runtime, t)
-    : [tag(tr("llm.agents.toolOff")), " ", toolSummary(a.runtime, t)])));
+    ? toolDetails(a.runtime, t, { agent: a.name })
+    : [tag(tr("llm.agents.toolOff")), " ", toolDetails(a.runtime, t, { agent: a.name })])));
 }
 
 function agentRow(a             )              {
@@ -357,7 +362,7 @@ async function openAgent(name               , preset                     = null)
     fill(tools, catalogOf(r).map((t) => checkField({
       label: h("code", null, t.name),
       control: h("input", { type: "checkbox", checked: fixed || (own ? own.includes(t.name) : true), disabled: fixed, data: { latool: t.name } }),
-      hint: toolSummary(r, t),
+      hint: toolDetails(r, t, { agent: name || undefined }),
     })));
     toolsWhy.textContent = tr(TOOLS_WHY[r]);
     toolsField.hidden = !catalogOf(r).length;
@@ -453,8 +458,9 @@ async function openAgent(name               , preset                     = null)
       askPart,
       cliPart,
       formCap(tr("llm.agents.capBehavior")),
-      promptBaseField,
-      field({ label: tr("llm.agents.systemPrompt"), control: prompt, hint: promptWhy }),
+      formFold({ id: "laSystemPrompt", summary: tr("llm.agents.systemPrompt") },
+        promptBaseField,
+        field({ label: tr("llm.agents.systemPrompt"), control: prompt, hint: promptWhy })),
       toolsField,
       secretsField,
       formCap(tr("llm.agents.capRun")),
@@ -530,7 +536,7 @@ function openTest(a             )       {
   const cwd = input("laTestCwd", "", tr("llm.test.cwdPh"));
   const toolPicks = catalogOf(a.runtime).map((t) => {
     const control = h("input", { type: "checkbox", value: t.name, checked: a.toolsInForce.includes(t.name), disabled: !a.toolsInForce.includes(t.name) });
-    return { control, node: checkField({ label: t.name, control, hint: toolSummary(a.runtime, t) }) };
+    return { control, node: checkField({ label: t.name, control, hint: toolDetails(a.runtime, t, { agent: a.name, cwd: ()         => cwd.value }) }) };
   });
   const pickedTools = h("span", null, a.toolsInForce.join(" · ") || tr("llm.agents.toolsNone"));
   const testTools = formFold({ summary: [tr("llm.test.tools"), " · ", pickedTools] },

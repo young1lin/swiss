@@ -984,7 +984,7 @@ function answerNodes(text        )           {
  *  so a reloaded conversation reads as it streamed (2026-11-04: the two said it differently). */
 export function workSummary(o                                                                                            )         {
   return [
-    trn(o.rounds, "llm.work.rounds.one", "llm.work.rounds.other"),
+    trn(o.rounds, "ui.chat.steps.one", "ui.chat.steps.other"),
     o.tools ? trn(o.tools, "llm.work.tools.one", "llm.work.tools.other") : null,
     tr("llm.history.tokens", { i: compact(o.tokensIn), o: compact(o.tokensOut) }),
     o.ms != null && Number.isFinite(o.ms) && o.ms >= 0 ? span(o.ms) : null,

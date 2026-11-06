@@ -83,8 +83,8 @@ const OPEN_RUN_EXISTS: &str = "this agent already has an open conversation: cont
 
 /// Guard and build the conversation a send joins. `joining` names the run to
 /// continue; None opens a new one. `runtime` is the label the run row files
-/// under, `system` the agent's system prompt in force - a continuation's
-/// dialogue must have opened with it, alone or closed by its snapshot.
+/// under, `system` the agent's system prompt in force for a new conversation.
+/// A continuation keeps its recorded system prompt across configuration updates.
 pub async fn join(
     history: &Arc<LlmHistory>,
     joining: Option<i64>,
@@ -139,8 +139,8 @@ pub async fn retarget(history: &Arc<LlmHistory>, run_id: i64, agent: &str, chat:
 }
 
 /// The guards a continuation passes, the budget aside: the run reopens on its own row
-/// (its agent and scope, the provider, model and wire in force), its dialogue opened
-/// with `system`, and its canonical prior context reads. Hands back the reopened
+/// (its agent and scope, the provider, model and wire in force), and its canonical
+/// prior context reads. Hands back the reopened
 /// recorder, that prior and the system as noted; a refusal lets the recorder go.
 async fn resume(
     history: &Arc<LlmHistory>,
@@ -148,7 +148,7 @@ async fn resume(
     agent: &str,
     runtime: &str,
     chat: &Chat,
-    system: &str,
+    _system: &str,
 ) -> Result<(RunRecorder, Vec<Value>, Option<String>), LaneError> {
     // The effective context in force NOW (endpoint + header fingerprint); the
     // resume guard compares it against the run's first sealed call.
@@ -176,16 +176,9 @@ async fn resume(
                 "that conversation is still answering: wait for it, or Stop it, and send again",
             ),
         })?;
-    // The system prompt in force: the dialogue's own first word. A changed one
-    // changes every answer that follows - a New run, not a mid-dialogue swap.
+    // The recorded prompt remains the dialogue's first word. Updating defaults must
+    // neither rewrite it nor strand the conversation; consumers may show the difference.
     let noted = history.system_note_of(joining).await;
-    if noted.as_deref().is_some_and(|noted| !opened_with(noted, system)) {
-        run.release();
-        return Err(refused(
-            "context-changed",
-            "the agent's system prompt changed since that conversation opened: start a New one",
-        ));
-    }
     // The CANONICAL prior context (SPEC llm.history): sealed structure only.
     // Every ambiguous shape (an unresolved activity mark, a pre-protocol or
     // pruned body, the migration's legacy mark) refuses here.
@@ -335,8 +328,9 @@ pub async fn undo_fold(history: &Arc<LlmHistory>, folded: i64, from: i64, agent:
 }
 
 /// Whether a dialogue's noted first word is `system`, alone or closed by the
-/// snapshot it opened with ([SNAPSHOT_HEADING]).
-fn opened_with(noted: &str, system: &str) -> bool {
+/// snapshot it opened with ([SNAPSHOT_HEADING]). Informational only: a difference
+/// never blocks continuing, reopening or compacting recorded dialogue.
+pub fn opened_with(noted: &str, system: &str) -> bool {
     noted == system
         || noted
             .strip_prefix(system)
@@ -452,8 +446,8 @@ mod tests {
     }
 
     /// A dialogue that opened with the agent's prompt closed by its snapshot continues
-    /// under that prompt and hands the noted system back to replay; one whose prompt
-    /// changed, or that carries anything but a snapshot after it, refuses.
+    /// under that prompt and hands the noted system back to replay, even after the
+    /// configured prompt changes. A new default never invalidates recorded dialogue.
     #[tokio::test]
     async fn a_continuation_replays_the_snapshot_its_dialogue_opened_with() {
         let (history, dir) = store().await;
@@ -468,8 +462,12 @@ mod tests {
         history.flush().await;
         let again = join(&history, Some(run_id), "alpha", "builtin", &chat, "be brief").await.expect("continued");
         assert_eq!(again.system.as_deref(), Some(opened.as_str()), "the snapshot replays as noted");
-        assert_eq!(code(join(&history, Some(run_id), "alpha", "builtin", &chat, "be terse").await), "context-changed");
-        assert_eq!(code(join(&history, Some(run_id), "alpha", "builtin", &chat, "be").await), "context-changed");
+        for current in ["be terse", "be"] {
+            let continued = join(&history, Some(run_id), "alpha", "builtin", &chat, current).await.expect("a changed default still continues");
+            assert_eq!(continued.system.as_deref(), Some(opened.as_str()));
+            assert_eq!(continued.prior, again.prior, "the dialogue remains intact");
+            continued.run.release();
+        }
         assert!(!opened_with("be brief\n\nand cite paths", "be brief"), "only a snapshot may follow the prompt");
         assert!(opened_with("be brief", "be brief"));
         history.close().await.expect("close");
@@ -558,8 +556,8 @@ mod tests {
     }
 
     /// History's Continue: a closed conversation reopens in its own scope, the open one
-    /// closing; a run that cannot go on - another scope's, a failed one, one whose prompt
-    /// changed - refuses and leaves both as they were.
+    /// closing, including after a prompt edit; another scope's or a failed run still
+    /// refuses and leaves both as they were.
     #[tokio::test]
     async fn a_closed_conversation_reopens_in_its_scope_and_a_refusal_puts_both_back() {
         let (history, dir) = store().await;
@@ -588,8 +586,12 @@ mod tests {
         let elsewhere = answered(&history, &chat, "my", "be brief", true).await;
         assert_eq!(refused(elsewhere, "be brief", "pg").await, "gone");
         assert_eq!(open().await, Some(second), "a refusal leaves the open one open");
-        // The agent's prompt changed since it opened: it cannot go on, and closes again.
-        assert_eq!(refused(first, "be terse", "pg").await, "context-changed");
+        // A prompt edit does not strand a saved conversation, including History's Continue.
+        within(data("pg"), reopen(&history, first, "alpha", "builtin", &chat, "be terse", false)).await.expect("a changed prompt reopens");
+        let continued = within(data("pg"), join(&history, Some(first), "alpha", "builtin", &chat, "be terse")).await.expect("and continues");
+        assert_eq!(continued.system.as_deref(), Some("be brief"));
+        continued.run.release();
+        within(data("pg"), reopen(&history, second, "alpha", "builtin", &chat, "be terse", false)).await.expect("swap back");
         assert_eq!(open().await, Some(second));
         // A failed conversation never reopens.
         history.fail_conversation(first).await.expect("failed");
@@ -642,12 +644,12 @@ mod tests {
         assert_eq!(code(joined(&history, run_id, &first).await), "context-changed", "the row names the pick");
         // A refused reopen puts the row back; a reopen that moves goes on.
         history.close_run(run_id).await.expect("closed").expect("the run exists");
-        match reopened(&history, run_id, &first, "be terse", true).await {
-            Err(LaneError::Refused { code, .. }) => assert_eq!(code, "context-changed"),
+        match within(data("pg"), reopen(&history, run_id, "alpha", "chat", &first, "be terse", true)).await {
+            Err(LaneError::Refused { code, .. }) => assert_eq!(code, "gone"),
             other => panic!("expected a refusal, got {other:?}"),
         }
         reopened(&history, run_id, &picked, "be brief", false).await.expect("the row still names the pick");
-        reopened(&history, run_id, &first, "be brief", true).await.expect("the open one moves back");
+        reopened(&history, run_id, &first, "be terse", true).await.expect("the open one moves back after a prompt edit");
         joined(&history, run_id, &first).await.expect("and continues there");
         history.close().await.expect("close");
         let _ = std::fs::remove_dir_all(dir);
@@ -663,7 +665,7 @@ mod tests {
         let chat = chat();
         let opened = format!("be brief\n\n{SNAPSHOT_HEADING}\n- Connection: pg");
         let from = answered(&history, &chat, "pg", &opened, false).await;
-        let folded = within(data("pg"), fold(&history, from, "alpha", "builtin", &chat, "be brief")).await.expect("folded");
+        let folded = within(data("pg"), fold(&history, from, "alpha", "builtin", &chat, "be terse")).await.expect("folded after a prompt edit");
         let Fold { lane, prior, system, from: condensed } = folded;
         assert_eq!((condensed, system.as_str()), (from, opened.as_str()), "the new run opens with the old one's system");
         assert_eq!(prior.first().and_then(|turn| turn["text"].as_str()), Some("count the posts"), "{prior:?}");

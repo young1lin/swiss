@@ -36,20 +36,25 @@ impl<'a> TestTools<'a> {
     }
 }
 
+/// Shared with the inspector; constructing definitions performs no file, shell or model calls.
+pub(crate) fn specs(root: &Path, taken: &[&'static str], shell: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    let mut specs: Vec<ToolSpec> = MemoryTools::new(root, taken).specs().into_iter().filter(|s| s.name != "bash").collect();
+    specs.extend(crate::memory_agent::lead_specs(taken, &[]).into_iter().filter(|s| s.name == "delegate"));
+    specs.extend(FsTools::new(root, taken).specs());
+    specs.extend(shell);
+    let catalog = swiss_llm::agent::Runtime::Builtin.tools();
+    // The shell's model-facing name (powershell on Windows) sorts at its key's place.
+    specs.sort_by_key(|s| {
+        let name = if s.name == crate::llm_shell::TOOL { "bash" } else { s.name.as_str() };
+        catalog.iter().position(|t| t.name == name).unwrap_or(usize::MAX)
+    });
+    specs
+}
+
 #[async_trait]
 impl Toolbox for TestTools<'_> {
     fn specs(&self) -> Vec<ToolSpec> {
-        let mut specs: Vec<ToolSpec> = self.memory.specs().into_iter().filter(|s| s.name != "bash").collect();
-        specs.extend(LeadTools::new(&self.root, &self.taken, Some(&self.worker)).specs().into_iter().filter(|s| s.name == "delegate"));
-        specs.extend(self.files.specs());
-        specs.extend(self.shell.specs());
-        let catalog = swiss_llm::agent::Runtime::Builtin.tools();
-        // The shell's model-facing name (powershell on Windows) sorts at its key's place.
-        specs.sort_by_key(|s| {
-            let name = if s.name == crate::llm_shell::TOOL { "bash" } else { s.name.as_str() };
-            catalog.iter().position(|t| t.name == name).unwrap_or(usize::MAX)
-        });
-        specs
+        specs(&self.root, &self.taken, self.shell.specs())
     }
 
     async fn call(&mut self, name: &str, args: &Value) -> ToolAnswer {

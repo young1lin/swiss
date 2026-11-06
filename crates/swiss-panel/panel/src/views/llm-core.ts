@@ -23,7 +23,7 @@
    default the status filled in is never written back as if the operator had typed it.
    ================================================================================================ */
 import { api } from "../util.js";
-import { tk, tr } from "../i18n.js";
+import { servedError, tk, tr, trn } from "../i18n.js";
 import { card, dot, kvRow } from "../ui/index.js";
 import type { LlmAgentRow, LlmModelKind, LlmRow, LlmRuntime, LlmStatus, LlmTestReply, LlmToolInfo } from "../types/llm.js";
 
@@ -131,8 +131,7 @@ export async function call<T>(method: "GET" | "PUT" | "POST", path: string, body
     const r = await api(path, body === undefined ? { method } : { method, body: JSON.stringify(body) });
     const j: unknown = await r.json().catch((): unknown => null);
     if (r.ok) return { data: j as T, err: "" };
-    const msg = typeof j === "object" && j !== null && "error" in j && typeof j.error === "string" ? j.error : "";
-    return { data: null, err: msg || tr("util.httpN", { n: r.status }) };
+    return { data: null, err: servedError(j, tr("util.httpN", { n: r.status })) };
   } catch {
     return { data: null, err: tr("util.requestFailedGatewayRunning") };
   }
@@ -261,7 +260,7 @@ export function testNode(r: LlmTestReply): HTMLElement {
     r.program ? kvRow(tr("llm.test.program"), r.program, { mono: true }) : null,
     r.protocol ? kvRow(tr("llm.test.collector"), r.protocol + " " + (r.endpoint || ""), { mono: true }) : null,
     r.dims ? kvRow(tr("llm.test.dims"), String(r.dims)) : null,
-    r.turns != null ? kvRow(tr("llm.test.turns"), tr("llm.history.turnCount", { n: r.turns })) : null,
+    r.turns != null ? kvRow(tr("llm.test.turns"), trn(r.turns, "ui.chat.steps.one", "ui.chat.steps.other")) : null,
     r.tokensIn != null || r.tokensOut != null
       ? kvRow(tr("llm.test.tokens"), (r.tokensIn ?? 0) + " / " + (r.tokensOut ?? 0), { mono: true })
       : null,

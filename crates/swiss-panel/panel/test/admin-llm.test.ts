@@ -933,6 +933,18 @@ function toolChecks(): Array<[string, boolean]> {
 }
 
 describe("the LLM plugin - Agents", () => {
+  it("keeps system prompts collapsed in create, edit and the expanded record", async () => {
+    await agents.mount();
+    const prompt = document.querySelector("[data-larow=distiller] [data-lablock=prompt]");
+    expect(prompt?.closest<HTMLDetailsElement>(".fold")?.open).toBe(false);
+    await click("[data-lamore=distiller]");
+    await menuPick("Edit");
+    expect(document.querySelector<HTMLDetailsElement>("#laSystemPrompt")?.open).toBe(false);
+    await click("#laCancel");
+    await click("#laAdd");
+    expect(document.querySelector<HTMLDetailsElement>("#laSystemPrompt")?.open).toBe(false);
+  });
+
   it("Test lists every allowed tool and sends the subset the user selected", async () => {
     await agents.mount();
     await click("[data-latest=distiller]");
@@ -1242,7 +1254,7 @@ describe("the LLM plugin - Agents", () => {
     expect(live).toContain("read");
     expect(live).toContain("notes.md");
     expect(live).toContain("913 B");
-    expect(live).toContain("3 rounds · 1 tool call · 210 in / 64 out");
+    expect(live).toContain("3 steps · 1 tool call · 210 in / 64 out");
 
     await click("[data-latest=cc]");
     expect(document.querySelector("#laTestPrompt")).toBe(null);
@@ -1717,7 +1729,7 @@ describe("the LLM plugin - Agents live dialogue", () => {
     // A cancelled loop says cancelled - the success meta (N rounds) never paints.
     expect(document.querySelector("[data-lacancelled]")).not.toBe(null);
     expect(document.querySelector("[data-lacancelled] .tc-who"), "the cancelled line carries no speaker mark").toBe(null);
-    expect(text("#laTestOut")).not.toMatch(/\d+ rounds?\b/);
+    expect(text("#laTestOut")).not.toMatch(/\d+ steps?\b/);
     // A late frame from the cancelled loop paints nothing.
     live.push("delta", { kind: "text", text: "ZOMBIE" });
     live.end();
@@ -1749,7 +1761,7 @@ describe("the LLM plugin - Agents live dialogue", () => {
     const stopAfter = document.querySelector<HTMLButtonElement>("#laTestStop");
     expect(stopAfter === null || stopAfter.disabled).toBe(true);
     expect(sent("POST", "/api/llm/agents/test/cancel").length).toBe(0);
-    expect(text("#laTestOut")).toContain("2 rounds · 40 in / 6 out");
+    expect(text("#laTestOut")).toContain("2 steps · 40 in / 6 out");
     // Idle: New closes the open run on the server before clearing the column.
     await click("#laTestFresh");
     expect(sent("POST", "/api/llm/history/runs/41/close").length).toBe(1);
@@ -1957,7 +1969,7 @@ describe("the LLM plugin - Agents live dialogue", () => {
     await click("[data-latest=distiller]");
     await click("#laTestRun");
     expect(text("#laTestOut")).toContain("ended without an answer");
-    expect(text("#laTestOut")).not.toMatch(/\d+ rounds?\b/);
+    expect(text("#laTestOut")).not.toMatch(/\d+ steps?\b/);
     // The half-said conversation survives: Ask stays armed and still names the run.
     expect(q<HTMLButtonElement>("#laTestRun").disabled).toBe(false);
     whole = true;
@@ -2014,7 +2026,7 @@ describe("the LLM plugin - Agents live dialogue", () => {
     // The cancelled marker, and neither the failure word nor the success meta.
     expect(document.querySelector("[data-lacancelled]")).not.toBe(null);
     expect(document.querySelector("[data-lacancelled] .tc-who"), "the cancelled line carries no speaker mark").toBe(null);
-    expect(text("#laTestOut")).not.toMatch(/\d+ rounds?\b/);
+    expect(text("#laTestOut")).not.toMatch(/\d+ steps?\b/);
     expect(q<HTMLButtonElement>("#laTestRun").disabled).toBe(false);
     whole = true;
     await click("#laTestRun");

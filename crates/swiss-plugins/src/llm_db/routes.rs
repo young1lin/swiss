@@ -273,8 +273,8 @@ impl Pick {
 }
 
 /// What every Data route that drives a conversation works from: the db agent, its prompt
-/// in force (DB_AGENT_PROMPT and the agent's own after it - what a continuation must still
-/// match), the history, the chat recording into it, the connection's seat - one stream per
+/// in force (DB_AGENT_PROMPT and the agent's own after it), the history, the chat recording
+/// into it, the connection's seat - one stream per
 /// agent and connection, the agent's other connections beside it - and its kind, which
 /// names the conversation's tools.
 pub(super) struct Desk {
@@ -603,30 +603,59 @@ pub async fn context(
         Ok(desk) => desk,
         Err(refused) => return refused,
     };
-    let (system, prior) = if let Some(run_id) = run_id {
+    let inspect = params.get("inspect").is_some_and(|v| v == "true");
+    if inspect {
+        if let Some(id) = run_id {
+            let belongs = history.read_turns(id).await.ok().flatten().is_some_and(|run| {
+                run["agent"] == name.as_str() && run["task"] == TASK && run["subject"] == conn.as_str()
+            });
+            if !belongs {
+                return swiss_host::reply::admin_error_code(StatusCode::CONFLICT, "llm.context.conversation", "The conversation does not belong to this agent and connection");
+            }
+        }
+    }
+    let (system, prior, snapshot_pending) = if let Some(run_id) = run_id {
         within(scope(conn), async {
-            let system = history.system_note_of(run_id).await.unwrap_or(base);
+            let saved = history.system_note_of(run_id).await;
+            let snapshot_pending = saved.is_none();
+            let system = saved.unwrap_or_else(|| base.clone());
             let prior = match history.replay_state(run_id).await {
                 ReplayState::Continuable { prior } => prior,
                 _ => Vec::new(),
             };
-            (system, prior)
+            (system, prior, snapshot_pending)
         })
         .await
     } else {
         // Before the first send only the base prompt and tool definitions exist. Do not query
         // the database to make the connection snapshot just to paint an idle context meter.
-        (base, Vec::new())
+        (base.clone(), Vec::new(), true)
     };
     // The next send's own definitions, intention parameter and all: weighing the bare specs made
     // the estimate read under what the stream's first round reported (agent::intentioned).
     let specs = swiss_llm::agent::intentioned(DbTools::new(services.catalog.clone(), conn, kind, None).specs());
     let tools = swiss_llm::agent::tools_bytes(&specs);
     let dialogue = serde_json::to_vec(&prior).map(|bytes| bytes.len()).unwrap_or(0);
-    ok(json!({
+    let mut shown = json!({
         "ok": true, "bytes": system.len() + tools + dialogue, "cap": chat.context_cap(),
         "system": system.len(), "tools": tools,
-    }))
+    });
+    if inspect {
+        let prompt_changed = !snapshot_pending && !conversation::opened_with(&system, &base);
+        let mut current: Vec<Value> = specs.iter().map(|spec| json!({
+            "name": spec.name, "description": spec.description, "parameters": spec.schema,
+        })).collect();
+        current.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        let tools_changed = if let Some(id) = run_id {
+            history.tool_definitions_of(id).await.map(|saved| saved != current)
+        } else { None };
+        shown["systemPrompt"] = json!(system);
+        shown["snapshotPending"] = json!(snapshot_pending);
+        shown["promptChanged"] = json!(prompt_changed);
+        shown["toolsChanged"] = json!(tools_changed);
+        if prompt_changed { shown["latestSystemPrompt"] = json!(base); }
+    }
+    ok(shown)
 }
 
 /// POST /api/llm/db/reopen {agent, conn, runId, provider?, model?, effort?}: carry an earlier
@@ -635,8 +664,8 @@ pub async fn context(
 /// of this agent here that passes the continuation guards, moved to the model the pane's
 /// menu names when it names one; {ok, runId}. 409 busy while a send or compaction
 /// works the connection, gone for a run that cannot go on (failed, a round left
-/// unresolved, another connection's), context-changed when the agent's prompt changed
-/// since it opened - both runs then stay as they were.
+/// unresolved, another connection's). A prompt or tool update never prevents reopening:
+/// the recorded prompt replays and the next send offers the current tools.
 pub async fn reopen(State(state): State<Arc<LlmState>>, Extension(services): Extension<Arc<RuntimeServices>>, bytes: Bytes) -> Response {
     let body = match body_of(&bytes, &["agent", "conn", "runId", "provider", "model", "effort"]) {
         Ok(body) => body,

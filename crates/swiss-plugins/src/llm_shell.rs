@@ -186,6 +186,24 @@ pub(crate) async fn cancel_conversation(runs: &Arc<RunCoordinator>, id: i64) -> 
     ids.len()
 }
 
+/// The execution and inspection paths share the same model-facing definitions.
+pub(crate) fn specs(root: &Path, taken: &[&'static str], granted: bool) -> Vec<ToolSpec> {
+    vec![
+        ToolSpec { name: TOOL.into(), description: describe(root, granted),
+            schema: json!({"type":"object","additionalProperties":false,"required":["command"],"properties":{
+                "command":{"type":"string"},"description":{"type":"string","description":"A short explanation of this command"},
+                "workdir":{"type":"string","description":"Absolute directory, or relative to the test working directory"},
+                "cwd":{"type":"string","description":"Alias for workdir; supply only one"},
+                "timeoutMs":{"type":"integer","minimum":1,"maximum":TIMEOUT_MAX,"default":TIMEOUT_DEFAULT},
+                "run_in_background":{"type":"boolean","default":false}
+            }}) },
+        ToolSpec { name: "job_output".into(), description: format!("Read a {SHELL} job's state and bounded output from cursor. timeoutMs waits up to 30 seconds for new output or completion. Jobs belong to this conversation."),
+            schema: json!({"type":"object","additionalProperties":false,"required":["job_id"],"properties":{"job_id":{"type":"integer","minimum":0},"cursor":{"type":"integer","minimum":0},"timeoutMs":{"type":"integer","minimum":0,"maximum":30000,"default":0}}}) },
+        ToolSpec { name: "job_kill".into(), description: format!("Cancel a {SHELL} job and its process tree, then return its final state and output."),
+            schema: json!({"type":"object","additionalProperties":false,"required":["job_id"],"properties":{"job_id":{"type":"integer","minimum":0}}}) },
+    ].into_iter().filter(|s| key(&s.name).is_some_and(|k| taken.contains(&k))).collect()
+}
+
 pub(crate) struct ShellTools {
     root: PathBuf,
     taken: Vec<&'static str>,
@@ -207,20 +225,7 @@ impl ShellTools {
     }
 
     pub(crate) fn specs(&self) -> Vec<ToolSpec> {
-        vec![
-            ToolSpec { name: TOOL.into(), description: describe(&self.root, !self.grant.is_empty()),
-                schema: json!({"type":"object","additionalProperties":false,"required":["command"],"properties":{
-                    "command":{"type":"string"},"description":{"type":"string","description":"A short explanation of this command"},
-                    "workdir":{"type":"string","description":"Absolute directory, or relative to the test working directory"},
-                    "cwd":{"type":"string","description":"Alias for workdir; supply only one"},
-                    "timeoutMs":{"type":"integer","minimum":1,"maximum":TIMEOUT_MAX,"default":TIMEOUT_DEFAULT},
-                    "run_in_background":{"type":"boolean","default":false}
-                }}) },
-            ToolSpec { name: "job_output".into(), description: format!("Read a {SHELL} job's state and bounded output from cursor. timeoutMs waits up to 30 seconds for new output or completion. Jobs belong to this conversation."),
-                schema: json!({"type":"object","additionalProperties":false,"required":["job_id"],"properties":{"job_id":{"type":"integer","minimum":0},"cursor":{"type":"integer","minimum":0},"timeoutMs":{"type":"integer","minimum":0,"maximum":30000,"default":0}}}) },
-            ToolSpec { name: "job_kill".into(), description: format!("Cancel a {SHELL} job and its process tree, then return its final state and output."),
-                schema: json!({"type":"object","additionalProperties":false,"required":["job_id"],"properties":{"job_id":{"type":"integer","minimum":0}}}) },
-        ].into_iter().filter(|s| key(&s.name).is_some_and(|k| self.taken.contains(&k))).collect()
+        specs(&self.root, &self.taken, !self.grant.is_empty())
     }
 
     fn owned(&self, id: u64) -> Result<RunView, String> {

@@ -56,7 +56,7 @@ import { locale, moduleDbMessage, tr } from "./i18n.js";
 import { targetEl, toast } from "./util.js";
 import {
   setIconBtn, btn, chatAfterWrite, chatFollow, chatPane, chatQueue, chatStats, dot, emptyNode, factLine, flow, formActions, formCap, formFold, grip, gripFold, gripFolded, hint, iconBtn, iconNode, note,
-  popupMenu, relTime, speaker, tokenCodeNode, transcript, transcriptTurn,
+  popupMenu, proseText, relTime, speaker, tokenCodeNode, transcript, transcriptTurn,
 } from "./ui/index.js";
                                      
                                                                                                                                   
@@ -75,7 +75,8 @@ import { dbAnalysisContext, dbAnalysisContextLabel, dbAnalysisOpen, dbAnalysisRe
 import { dbHistoryRefresh } from "./data-history.js";
 import { dbPubsubAgentRead, dbPubsubAgentStop } from "./data-pubsub.js";
 import { mongoAgentSchema, mongoCurrentDb } from "./data-mongo.js";
-import { call, loadStatus, presetAgent, toolSummary } from "./views/llm-core.js";
+import { call, loadStatus, presetAgent } from "./views/llm-core.js";
+import { toolDetails } from "./views/agent-inspection.js";
 import { conversationNode, firstLine, jsonBlock, runHow, sourceLabel } from "./views/llm-history.js";
                                                                                       
 import { streamAsk } from "./views/llm-stream.js";
@@ -100,6 +101,7 @@ const COMPACT_RE = /^\/compact(?:\s+([\s\S]*))?$/;
 
 /** One conversation: an agent on a connection. */
                 
+                                                                               
                 
                
                                                                       
@@ -568,6 +570,7 @@ function tally(talk      , p                         , carries = true)       {
  *  call's count, gives the tokens a byte while no round of this visit has. A send that started
  *  meanwhile says it itself, frame by frame. */
 async function weigh(talk      , prompt = 0)                {
+  talk.inspection?.refresh();
   const id = talk.runId, gen = talk.gen;
   const r = await call                      ("GET", "/api/llm/db/context?agent=" + encodeURIComponent(talk.agent) + "&conn=" + encodeURIComponent(talk.conn) + (id == null ? "" : "&runId=" + id));
   const c = r.data;
@@ -712,7 +715,7 @@ function renderDbAgent()       {
   relocalize(talk);
   const changed = !body.contains(talk.out);
   if (talk.hist) fill(body, talk.hist);
-  else fill(body, toolsNode(conn.kind), h("div", { id: "dbAgentEmpty", hidden: hasTurns(talk) }, hint(tr("dataAgent.start"))), talk.out);
+  else fill(body, toolsNode(conn.kind), promptNode(talk), h("div", { id: "dbAgentEmpty", hidden: hasTurns(talk) }, hint(tr("dataAgent.start"))), talk.out);
   if (queued) fill(queued, talk.queue.node);
   paintStats(talk);
   controls(talk);
@@ -830,9 +833,56 @@ function toolsNode(kind        )                     {
   if (!tools.length) return null;
   const fold = formFold({ id: "dbAgentTools", summary: [tr("dataAgent.tools"), " · ", tr("dataAgent.toolsCount", { n: tools.length })] },
     hint(tr("dataAgent.toolsHint")),
-    tools.map((t) => factLine([h("code", null, t.name), toolSummary("db", t)], { data: { dbtool: t.name } })))                      ;
+    tools.map((t) => {
+      const detail = toolDetails("db", t, { kind, named: true });
+      detail.dataset.dbtool = t.name;
+      return detail;
+    }))                      ;
   fold.open = toolsOpen;
   fold.ontoggle = ()       => { toolsOpen = fold.open; };
+  return fold;
+}
+
+/** The saved opening of this conversation, including its connection snapshot. Read only
+ *  when expanded; a fresh conversation shows the base and says what has not been added yet. */
+function promptNode(talk      )              {
+  if (talk.inspection?.lang === locale()) return talk.inspection.fold;
+  const content = h("div");
+  const fold = formFold({ id: "dbAgentSystemPrompt", summary: tr("llm.inspect.currentPrompt"), scroll: true }, content)                      ;
+  let request = 0;
+  let loaded = "";
+  let opened = false;
+  const refresh = ()       => {
+    if (!fold.open) return;
+    const id = talk.runId, gen = talk.gen;
+    const key = String(id) + ":" + gen;
+    if (loaded === key) return;
+    loaded = key;
+    const serial = ++request;
+    fill(content, hint(tr("llm.inspect.loading")));
+    void call                                                                                                                                         ("GET", "/api/llm/db/context?agent=" + encodeURIComponent(talk.agent)
+      + "&conn=" + encodeURIComponent(talk.conn) + (id == null ? "" : "&runId=" + id) + "&inspect=true").then((r) => {
+      if (serial !== request || talk.runId !== id || talk.gen !== gen) { if (serial === request) loaded = ""; return; }
+      if (!r.data || typeof r.data.systemPrompt !== "string") {
+        loaded = "";
+        fill(content, hint(r.err || tr("util.requestFailedGatewayRunning"), { bad: true }));
+        return;
+      }
+      fill(content, r.data.snapshotPending ? hint(tr("llm.inspect.snapshotPending")) : null,
+        r.data.promptChanged ? hint(tr("llm.inspect.promptChanged")) : null,
+        r.data.toolsChanged ? hint(tr("llm.inspect.toolsChanged")) : null,
+        proseText(r.data.systemPrompt),
+        r.data.promptChanged && r.data.latestSystemPrompt != null
+          ? formFold({ summary: tr("llm.inspect.latestPrompt"), scroll: true }, proseText(r.data.latestSystemPrompt)) : null);
+      if (r.data.snapshotPending && id != null) loaded = "";
+    });
+  };
+  fold.ontoggle = ()       => {
+    if (opened === fold.open) return;
+    opened = fold.open;
+    if (opened) { loaded = ""; refresh(); }
+  };
+  talk.inspection = { lang: locale(), fold, refresh };
   return fold;
 }
 
@@ -1403,6 +1453,7 @@ async function onNew()                {
   }
   talk.runId = null;
   talk.gen++;
+  talk.inspection = undefined;
   talk.restored = true;
   talk.hist = null;
   talk.usage = noUsage();

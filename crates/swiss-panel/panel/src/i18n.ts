@@ -148,6 +148,10 @@ export function wireLabel(served: string): string {
  *  this table turns into the reader's language. A code added on the server lands here, in
  *  both locales, in the same change. */
 const SERVED_CODES: Record<string, string> = {
+  "llm.tools.runtime": tk("served.llmToolsRuntime"),
+  "llm.tools.tool": tk("served.llmToolsTool"),
+  "llm.tools.directory": tk("served.llmToolsDirectory"),
+  "llm.context.conversation": tk("served.llmContextConversation"),
   "console.exists": tk("served.consoleExists"),
   "console.removed": tk("served.consoleRemoved"),
   "console.changed": tk("served.consoleChanged"),

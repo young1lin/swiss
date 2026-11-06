@@ -1243,6 +1243,14 @@ async fn app_on(
     (base, captured): (String, Arc<std::sync::Mutex<Vec<String>>>),
     agents: Value,
 ) -> (axum::Router, Arc<std::sync::Mutex<Vec<String>>>, Arc<StubPg>, Arc<swiss_bus::Bus>) {
+    let (app, captured, pg, bus, _) = app_on_state((base, captured), agents).await;
+    (app, captured, pg, bus)
+}
+
+async fn app_on_state(
+    (base, captured): (String, Arc<std::sync::Mutex<Vec<String>>>),
+    agents: Value,
+) -> (axum::Router, Arc<std::sync::Mutex<Vec<String>>>, Arc<StubPg>, Arc<swiss_bus::Bus>, Arc<LlmState>) {
     let state = LlmState::new();
     state.apply(LlmConfig::parse(&json!({
         "providers": {
@@ -1262,10 +1270,47 @@ async fn app_on(
     let consoles = crate::db_consoles::ConsoleStore::at(dir.join("consoles"), services.bus.clone());
     let guard = Arc::new(consoles.register(services.clone()));
     let bus = services.bus.clone();
-    let app = crate::llm_api::mount_with_analysis(state, services.clone(), analysis.clone(), consoles)
+    let app = crate::llm_api::mount_with_analysis(state.clone(), services.clone(), analysis.clone(), consoles)
         .merge(crate::analysis_api::mount(analysis, services))
         .layer(axum::Extension(guard));
-    (app, captured, pg, bus)
+    (app, captured, pg, bus, state)
+}
+
+#[tokio::test]
+async fn prompt_updates_preserve_a_saved_conversation_and_report_only_the_difference() {
+    let wire = sse_wire_capturing(vec![answer_with("one"), answer_with("two"), answer_with("three")]).await;
+    let (app, captured, _, _, state) = app_on_state(wire, db_agent()).await;
+    let (status, _, text) = call_text(&app, "POST", "/api/llm/db/stream", Some(json!({ "agent": "data", "conn": "mm", "prompt": "first" }))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let id = events_of(&text)[0].1["runId"].as_i64().expect("conversation");
+    let original = spoken(&captured.lock().expect("requests")[0])[0].1.clone();
+    let path = format!("/api/llm/db/context?agent=data&conn=mm&runId={id}&inspect=true");
+    let (_, initial) = call(&app, "GET", &path, None).await;
+    assert_eq!((initial["promptChanged"].clone(), initial["toolsChanged"].clone()), (json!(false), json!(false)));
+    let mut config = (*state.config()).clone();
+    config.agents.get_mut("data").expect("agent").system_prompt = Some("New rules for new conversations.".into());
+    state.apply(config);
+    let (_, changed) = call(&app, "GET", &path, None).await;
+    assert_eq!(changed["systemPrompt"], original, "inspection keeps the actual opening");
+    assert_eq!(changed["promptChanged"], true);
+    assert!(changed["latestSystemPrompt"].as_str().is_some_and(|s| s.ends_with("New rules for new conversations.")));
+    for (prompt, reopen) in [("second", false), ("third", true)] {
+        if reopen {
+            state.history().expect("history").close_run(id).await.expect("close");
+            let (status, opened) = call(&app, "POST", "/api/llm/db/reopen", Some(json!({ "agent": "data", "conn": "mm", "runId": id }))).await;
+            assert_eq!(status, StatusCode::OK, "{opened}");
+        }
+        let (status, _, text) = call_text(&app, "POST", "/api/llm/db/stream", Some(json!({ "agent": "data", "conn": "mm", "runId": id, "prompt": prompt }))).await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        assert!(text.contains("event: final"), "{text}");
+    }
+    let asks = captured.lock().expect("requests");
+    assert_eq!(asks.len(), 3);
+    for ask in asks.iter().skip(1) {
+        let words = spoken(ask);
+        assert_eq!(words[0].1, original, "the original system prompt replays unchanged");
+        assert!(words.iter().any(|(_, text)| text == "first"), "the original dialogue remains");
+    }
 }
 
 /// The whole send: the run frame, the tool ask, the db frame with the full result
@@ -1320,6 +1365,19 @@ async fn a_send_runs_the_read_shows_it_on_the_page_and_files_under_the_connectio
         "{weighed}"
     );
     assert!(weight(&weighed, "bytes") > weight(&weighed, "system") + tools_weight, "{weighed}");
+    let (_, inspected) = call(&app, "GET", &format!("/api/llm/db/context?agent=data&conn=mm&runId={run_id}&inspect=true"), None).await;
+    assert_eq!(inspected["systemPrompt"].as_str(), Some(system.as_str()), "the actual saved opening, including the connection snapshot");
+    assert_eq!(inspected["snapshotPending"], false);
+    assert_eq!((inspected["promptChanged"].clone(), inspected["toolsChanged"].clone()), (json!(false), json!(false)));
+    let (_, definitions) = call(&app, "GET", "/api/llm/tools?runtime=db&tool=run_sql&kind=sql", None).await;
+    let sent = first["tools"].as_array().expect("provider tools").iter().find(|t| t["function"]["name"] == "run_sql").expect("sent run_sql");
+    let shown = &definitions["definitions"][0];
+    for field in ["name", "description", "parameters"] {
+        assert_eq!(shown[field], sent["function"][field], "inspection matches the actual provider request: {field}");
+    }
+    let (status, wrong) = call(&app, "GET", &format!("/api/llm/db/context?agent=data&conn=mm2&runId={run_id}&inspect=true"), None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(wrong["code"], "llm.context.conversation");
     let (status, fresh) = call(&app, "GET", "/api/llm/db/context?agent=data&conn=mm", None).await;
     assert_eq!(status, StatusCode::OK, "{fresh}");
     assert_eq!(weight(&fresh, "cap"), 1024 * 1024, "{fresh}");
@@ -1327,6 +1385,9 @@ async fn a_send_runs_the_read_shows_it_on_the_page_and_files_under_the_connectio
     assert!(weight(&fresh, "system") > 0, "{fresh}");
     // An empty replay is still serialized as [], the same framing the stream weighs.
     assert_eq!(weight(&fresh, "bytes"), weight(&fresh, "system") + tools_weight + 2, "{fresh}");
+    let (_, inspected) = call(&app, "GET", "/api/llm/db/context?agent=data&conn=mm&inspect=true", None).await;
+    assert_eq!(inspected["snapshotPending"], true);
+    assert!(inspected["systemPrompt"].as_str().is_some_and(|s| !s.contains("- Connection:")));
     assert_eq!(captured.lock().expect("captured").len(), 2, "weighing never invokes the model");
     assert_eq!(pg.ran.lock().expect("ran").len(), 1, "weighing never queries the database");
     let (status, invalid) = call(&app, "GET", "/api/llm/db/context?agent=data&conn=mm&runId=invalid", None).await;

@@ -839,6 +839,59 @@ function historyRow(id: number, head: string | null, extra: Record<string, unkno
 }
 
 describe("around the conversation (SPEC §data.agent)", () => {
+  it("loads the current system prompt only when expanded, including the saved connection snapshot", async () => {
+    route = (c) => c.path.endsWith("&inspect=true")
+      ? [200, { systemPrompt: "Default rules\nAgent rules\n# Environment\nConnection: t-shop", snapshotPending: false }] : undefined;
+    await openOn("t-shop");
+    const fold = q<HTMLDetailsElement>("#dbAgentSystemPrompt");
+    expect(fold.open).toBe(false);
+    expect(calls.some((c) => c.path.endsWith("&inspect=true"))).toBe(false);
+    fold.open = true;
+    fold.dispatchEvent(new Event("toggle"));
+    await settle();
+    expect(fold.textContent).toContain("Agent rules\n# Environment\nConnection: t-shop");
+    expect(calls.filter((c) => c.path.endsWith("&inspect=true"))).toHaveLength(1);
+    q<HTMLButtonElement>("#dbAgentNew").click();
+    await settle();
+    expect(q<HTMLDetailsElement>("#dbAgentSystemPrompt").open).toBe(false);
+    expect(q("#dbAgentSystemPrompt").textContent).not.toContain("Connection: t-shop");
+  });
+
+  it("shows prompt and tool changes without disabling a saved conversation", async () => {
+    route = (c) => c.path.endsWith("&inspect=true")
+      ? [200, { systemPrompt: "Recorded original rules", snapshotPending: false, promptChanged: true, toolsChanged: true, latestSystemPrompt: "Latest configured rules" }] : undefined;
+    await openOn("changed-rules");
+    const fold = q<HTMLDetailsElement>("#dbAgentSystemPrompt");
+    fold.open = true;
+    fold.dispatchEvent(new Event("toggle"));
+    await settle();
+    expect(fold.textContent).toContain("Recorded original rules");
+    expect(fold.textContent).toContain(tr("llm.inspect.promptChanged"));
+    expect(fold.textContent).toContain(tr("llm.inspect.toolsChanged"));
+    const latest = fold.querySelector<HTMLDetailsElement>("details")!;
+    expect(latest.open).toBe(false);
+    expect(latest.textContent).toContain("Latest configured rules");
+    expect(q<HTMLButtonElement>("#dbAgentSend").disabled).toBe(false);
+    await ask("continue with the saved dialogue");
+    expect(sent("/api/llm/db/stream")).toHaveLength(1);
+  });
+
+  it("expands a tool to its actual model description and complete parameter schema", async () => {
+    route = (c) => c.path === "/api/llm/status" ? [200, { ...STATUS, catalog: { db: TOOLS } }]
+      : c.path.startsWith("/api/llm/tools?") ? [200, { definitions: [{ context: "sql", name: "run_sql", description: "Full execution contract", parameters: { type: "object", required: ["consoleId"], properties: { consoleId: { type: "string", description: "A stable console ID" } } } }] }] : undefined;
+    await openOn("t-shop");
+    const fold = q<HTMLDetailsElement>("[data-tool-definition=run_sql]");
+    expect(fold.open).toBe(false);
+    expect(calls.some((c) => c.path.startsWith("/api/llm/tools?"))).toBe(false);
+    fold.open = true;
+    fold.dispatchEvent(new Event("toggle"));
+    await settle();
+    expect(fold.textContent).toContain("Full execution contract");
+    expect(fold.textContent).toContain("A stable console ID");
+    expect(fold.textContent).toContain('"required"');
+    expect(calls.find((c) => c.path.startsWith("/api/llm/tools?"))?.path).toContain("kind=sql");
+  });
+
   it("names the conversation's tools above it: the names on the line, what each does inside", async () => {
     route = (c) => (c.path === "/api/llm/status" ? [200, { ...STATUS, catalog: { db: TOOLS } }] : undefined);
     await openOn("t-shop");

@@ -2309,7 +2309,7 @@ describe("the Memory page - sync settings", () => {
       expect(q('#memSyncRuns [data-mrun="r-7"]').classList.contains("live")).toBe(true);
       expect(row("r-7")).toContain("asking the agent about the commits");
       expect(row("r-7")).toContain("Agent runs: 2, 1 running");
-      expect(row("r-7")).toContain("Round 2 · running read_file · 3.0 s · 65 s in all");
+      expect(row("r-7")).toContain("Step 2 · running read_file · 3.0 s · 65 s in all");
       const lines = [...document.querySelectorAll<HTMLElement>('#memSyncRuns [data-mrun="r-7"] [data-magentrun]')].map((l) => l.dataset.magentrun);
       expect(lines).toEqual(["41", "40"]);
       expect(document.querySelector('#memSyncRuns [data-magentrun="41"] [data-lhstate="live"]')).toBeTruthy();

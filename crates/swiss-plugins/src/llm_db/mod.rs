@@ -38,6 +38,7 @@ mod text;
 mod tools;
 
 pub use routes::{compact, context, conversations, open_conversation, reopen, stream};
+pub(crate) use {text::DbKind, tools::DbTools};
 
 /// The task a Data conversation files under; its subject is the connection.
 pub const TASK: &str = "data.agent";

@@ -38,7 +38,7 @@ use swiss_host::services::RuntimeServices;
 use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
 
-use swiss_host::reply::{admin_error, admin_json};
+use swiss_host::reply::{admin_error, admin_error_code, admin_json};
 use swiss_llm::agent::{db_tools_on, AgentConfig, LoopOutcome, Runtime, DB_KINDS};
 use swiss_llm::conversation::{self, LaneError};
 use swiss_llm::embedding::EmbedClient;
@@ -69,6 +69,7 @@ pub(crate) const SSE_FRAMES: usize = 32;
 pub fn mount_with_analysis(state: Arc<LlmState>, services: Arc<RuntimeServices>, analysis: Arc<crate::analysis::AnalysisStore>, consoles: Arc<crate::db_consoles::ConsoleStore>) -> Router {
     Router::new()
         .route("/api/llm/status", get(status))
+        .route("/api/llm/tools", get(tool_definitions))
         .route("/api/llm/providers/test", post(provider_test))
         .route("/api/llm/providers/models", post(provider_models))
         .route("/api/llm/embedding/test", post(embedding_test))
@@ -197,6 +198,58 @@ fn catalog() -> Value {
 /// appended) - what a new agent's sheet shows before there is a row to read it from.
 fn default_prompts() -> Value {
     Value::Object(RUNTIMES.iter().map(|r| (r.as_str().to_string(), json!(r.default_prompt()))).collect())
+}
+
+/// Full model-facing definitions, fetched only when the operator expands a tool. A builtin
+/// has different toolboxes for interactive work and memory tasks; show the contexts separately.
+async fn tool_definitions(
+    State(state): State<Arc<LlmState>>,
+    Extension(services): Extension<Arc<RuntimeServices>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    use swiss_llm::agent::{intentioned, Toolbox};
+    let Some(runtime) = params.get("runtime").and_then(|r| RUNTIMES.iter().find(|r2| r2.as_str() == r)) else {
+        return admin_error_code(StatusCode::BAD_REQUEST, "llm.tools.runtime", "unknown runtime");
+    };
+    let Some(tool) = params.get("tool").filter(|t| runtime.tools().iter().any(|known| known.name == t.as_str())) else {
+        return admin_error_code(StatusCode::BAD_REQUEST, "llm.tools.tool", "unknown tool");
+    };
+    let mut definitions = Vec::new();
+    let mut append = |context: &str, specs| {
+        for spec in intentioned(specs) {
+            let key = if *runtime == Runtime::Builtin && spec.name == crate::llm_shell::TOOL { "bash" } else { &spec.name };
+            if key == tool {
+                definitions.push(json!({ "context": context, "name": spec.name, "description": spec.description, "parameters": spec.schema }));
+            }
+        }
+    };
+    match runtime {
+        Runtime::Db => {
+            for (kind, name) in [(crate::llm_db::DbKind::Sql, "sql"), (crate::llm_db::DbKind::Mongo, "mongo"), (crate::llm_db::DbKind::Redis, "redis")] {
+                if params.get("kind").is_none_or(|on| on == name) {
+                    append(name, crate::llm_db::DbTools::new(services.catalog.clone(), "", kind, None).specs());
+                }
+            }
+        }
+        Runtime::Builtin => {
+            let home = swiss_core::paths::home_dir();
+            let root = match params.get("cwd").filter(|p| !p.is_empty()) {
+                Some(path) => match crate::llm_tools::pinned(&home, path) {
+                    Ok(root) if root.is_dir() => root,
+                    _ => return admin_error_code(StatusCode::BAD_REQUEST, "llm.tools.directory", "cwd must name a directory under the home directory"),
+                },
+                None => home,
+            };
+            let taken: Vec<_> = runtime.tools().iter().map(|t| t.name).collect();
+            let config = state.config();
+            let granted = params.get("agent").and_then(|name| config.agents.get(name)).is_some_and(|a| !a.secrets.is_empty());
+            append("interactive", crate::llm_test_tools::specs(&root, &taken, crate::llm_shell::specs(&root, &taken, granted)));
+            append("memory", crate::memory_agent::MemoryTools::new(&root, &taken).specs());
+            append("lead", crate::memory_agent::lead_specs(&taken, &[]));
+        }
+        _ => (), // External CLIs own their schemas; Swiss must not invent definitions for them.
+    }
+    ok(json!({ "ok": true, "definitions": definitions }))
 }
 
 /// GET /api/llm/status: what each page shows beside the row - the providers as the row
@@ -1486,6 +1539,31 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn tool_inspection_uses_the_execution_schemas_including_intention_and_kind() {
+        use swiss_llm::agent::Toolbox;
+        let state = LlmState::new();
+        state.apply(row());
+        let app = mount(state);
+        let (status, shown) = call(&app, "GET", "/api/llm/tools?runtime=db&tool=run_sql&kind=sql", None).await;
+        assert_eq!(status, StatusCode::OK, "{shown}");
+        let catalog = Arc::new(swiss_host::services::catalog::CatalogRegistry::new());
+        let actual = swiss_llm::agent::intentioned(crate::llm_db::DbTools::new(catalog, "connection", crate::llm_db::DbKind::Sql, None).specs());
+        let sql = actual.iter().find(|t| t.name == "run_sql").expect("run_sql");
+        assert_eq!(shown["definitions"], json!([{ "context": "sql", "name": sql.name, "description": sql.description, "parameters": sql.schema }]));
+        assert!(shown["definitions"][0]["parameters"]["required"].as_array().expect("required").contains(&json!("description")));
+        let (_, shown) = call(&app, "GET", "/api/llm/tools?runtime=db&tool=open_console&kind=redis", None).await;
+        assert_eq!(shown["definitions"].as_array().map(Vec::len), Some(1));
+        assert_eq!(shown["definitions"][0]["context"], "redis");
+        let (_, shown) = call(&app, "GET", "/api/llm/tools?runtime=builtin&tool=bash", None).await;
+        let interactive = &shown["definitions"][0];
+        assert_eq!(interactive["name"], crate::llm_shell::TOOL);
+        assert!(interactive["parameters"]["properties"]["workdir"].is_object());
+        assert!(shown["definitions"].as_array().expect("variants").iter().any(|d| d["context"] == "memory"));
+        let (_, shown) = call(&app, "GET", "/api/llm/tools?runtime=claude&tool=Read", None).await;
+        assert_eq!(shown["definitions"], json!([]), "the CLI owns its definitions");
+    }
+
+    #[tokio::test]
     async fn status_shows_the_row_with_references_and_how_agents_report() {
         let state = LlmState::new();
         state.apply(row());
@@ -1923,7 +2001,7 @@ pub(crate) mod tests {
         let dir = swiss_core::paths::test_home().join(format!("llm-api-sep-{}", swiss_core::util::random_hex(8)));
         let history = swiss_llm::history::LlmHistory::open(&dir).await.expect("open");
         state.install_history(history);
-        let app = mount(state);
+        let app = mount(state.clone());
         let prompt = "scan the notes under the project root";
         let (status, _ct, text) =
             call_text(&app, "POST", "/api/llm/agents/test/stream", Some(json!({ "agent": "distiller", "prompt": prompt }))).await;
@@ -1947,6 +2025,12 @@ pub(crate) mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         let decoded: Value = serde_json::from_str(body["body"].as_str().expect("sealed body text")).expect("the body decodes");
         assert_eq!(decoded["request"]["prompt"].as_str(), Some(prompt));
+        // A saved conversation survives both prompt edits and newly available tools.
+        let mut changed = (*state.config()).clone();
+        let agent = changed.agents.get_mut("distiller").expect("agent");
+        agent.system_prompt = Some("Changed default for future conversations.".into());
+        agent.tools = Some(vec!["read".into(), "glob".into()]);
+        state.apply(changed);
         let (status, _ct, text) = call_text(
             &app, "POST", "/api/llm/agents/test/stream",
             Some(json!({ "agent": "distiller", "runId": run_id, "prompt": "and the second ask" })),
@@ -1957,6 +2041,9 @@ pub(crate) mod tests {
         let (replayed, asked) = system_and_user(&second);
         assert_eq!(replayed, system, "the continuation replays the snapshot it opened with");
         assert_eq!(asked, "and the second ask", "the same directory adds no note");
+        let tools = second["tools"].as_array().expect("current tools");
+        assert_eq!(tools.len(), 2, "the new tool is available without abandoning the dialogue");
+        assert!(tools.iter().any(|tool| tool["function"]["name"] == "glob"));
     }
 
     /// The stateless branch (no history store) opens with the same snapshot and asks the
