@@ -1519,6 +1519,48 @@ describe("the LLM plugin - Agents live dialogue", () => {
     await settle();
   });
 
+  it("a reply's turns leave a reader who has gone up where they are; their own words bring them back", async () => {
+    let live = liveBody();
+    override = (c) => {
+      if (c.method === "POST" && isStream(c)) return [200, { __sseLive: live.body }];
+      return undefined;
+    };
+    await agents.mount();
+    await click("[data-latest=distiller]");
+    const scroller = q("#laTestOut").closest<HTMLElement>(".sheet-body")!;
+    // Each turn adds a hundred pixels, so the sheet grows as the turns land.
+    const height = (): number => 900 + document.querySelectorAll("#laTestOut .tc-turn").length * 100;
+    let top = 0;
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 200 },
+      scrollHeight: { get: height },
+      scrollTop: { get: () => top, set: (v: number) => { top = Math.max(0, Math.min(v, height() - 200)); } },
+    });
+    type("#laTestPrompt", "first");
+    await click("#laTestRun");
+    expect(top, "the reader's own words").toBe(height() - 200);
+    // Still at the end: the next turn is followed, the typewriter's carriage.
+    live.push("run", { runId: 60, agent: "distiller", continued: true });
+    await settle();
+    expect(document.querySelector("#laTestOut [data-laresume]")).not.toBeNull();
+    expect(top, "a reader at the end stays at the end").toBe(height() - 200);
+    // Gone up to read a tool's definition: the rest of the reply lands below, unseen.
+    top = 100;
+    const before = height();
+    live.push("final", { text: "Done." });
+    live.push("done", { ok: true, runId: 60, ms: 10, turns: 1, tokensIn: 1, tokensOut: 1 });
+    live.end();
+    await settle();
+    expect(height(), "the reply did land").toBeGreaterThan(before);
+    expect(top, "and the reader stayed").toBe(100);
+    live = liveBody();
+    type("#laTestPrompt", "second");
+    await click("#laTestRun");
+    expect(top, "their own words bring them back").toBe(height() - 200);
+    live.end();
+    await settle();
+  });
+
   it("a restore that lands after a new ask started never overwrites the streaming dialogue", async () => {
     // The old dialogue's read is slow; the user asks and the new Q&A streams onto
     // the column. When the old dialogue finally lands it must paint nothing: the

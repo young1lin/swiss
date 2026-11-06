@@ -2443,6 +2443,72 @@ describe("ui/chat - chatPane", () => {
     p.remove();
   });
 
+  it("the reader takes the tail: a step up of any size, a scroll down short of the end, a fold opened; a shorter column does not", () => {
+    const fold = h("details", null, h("summary", null, "Tools"), h("div", null, "schema")) as HTMLDetailsElement;
+    const p = chatPane({ cap: "Agent", body: fold, input: h("textarea"), actions: [] });
+    document.body.appendChild(p);
+    const body = p.querySelector<HTMLElement>(".chat-body")!;
+    let height = 900;
+    let top = 0;
+    Object.defineProperties(body, {
+      clientHeight: { value: 200 },
+      scrollHeight: { get: () => height },
+      scrollTop: { get: () => top, set: (v: number) => { top = Math.max(0, Math.min(v, height - 200)); } },
+    });
+    const scrollTo = (to: number): void => { body.scrollTop = to; body.dispatchEvent(new Event("scroll")); };
+    const wheelUp = (): void => { body.dispatchEvent(Object.assign(new Event("wheel"), { deltaY: -4 })); };
+    const grow = (by: number): number => { height += by; chatFollow(p); return top; };
+    chatFollow(p);
+    expect(top).toBe(700);
+
+    // Ten pixels up: inside the band that counts as "at the end", still the reader's move.
+    scrollTo(690);
+    expect(grow(100), "a small step up lets go").toBe(690);
+    scrollTo(800);
+    expect(grow(100), "back at the end, following again").toBe(900);
+
+    // A wheel's first frame lets go before any scroll event lands.
+    wheelUp();
+    expect(grow(100), "the wheel going up lets go").toBe(900);
+    chatFollow(p, true);
+    expect(top).toBe(1000);
+
+    // The column grew and has not been painted: the reader's move down stops short of the end.
+    height += 300;
+    scrollTo(1100);
+    expect(grow(100), "a scroll down short of the end lets go").toBe(1100);
+    chatFollow(p, true);
+    expect(top).toBe(1400);
+
+    // The column shrank: the browser clamps to the new end, which is no move of the reader's.
+    height = 1000;
+    top = 800;
+    body.dispatchEvent(new Event("scroll"));
+    expect(grow(100), "a shorter column keeps the tail").toBe(900);
+
+    // A fold being opened lets go, so the scrollbar it brings cannot carry the row off.
+    // A plain event: happy-dom flips a fold mid-bubble on a mouse click, a browser after the dispatch,
+    // and the pane reads the fold's state as a browser leaves it.
+    const clickSummary = (): void => { fold.querySelector("summary")!.dispatchEvent(new Event("click", { bubbles: true })); };
+    fold.open = false;
+    clickSummary();
+    expect(grow(100), "opening a fold lets go").toBe(900);
+    chatFollow(p, true);
+    expect(top).toBe(1000);
+    // One being closed does not: nothing new is being read.
+    fold.open = true;
+    clickSummary();
+    expect(grow(100), "closing a fold keeps the tail").toBe(1100);
+
+    // With nowhere to go up to, the wheel gives nothing up.
+    height = 150;
+    chatFollow(p, true);
+    expect(top).toBe(0);
+    wheelUp();
+    expect(grow(850), "the wheel over a column at its top is idle").toBe(800);
+    p.remove();
+  });
+
   it("the words box grows with its words, a write by the page included; a box not laid out keeps its rows", () => {
     const input = h("textarea", { rows: 2 });
     const p = chatPane({ cap: "Agent", body: null, input, actions: [] });

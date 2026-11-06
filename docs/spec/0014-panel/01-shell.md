@@ -380,10 +380,14 @@ literal.
   what was sent while an answer streams, waiting its turn (a `chatQueue`'s node, below, no
   room taken while empty). `stats` stands under that line: the conversation's account (a
   `chatStats`'s node, below, hidden while it has nothing to say). The page wires the
-  controls; the pane follows the latest content until the reader scrolls up. A circular
-  **Back to bottom** button above the composer appears while away from the end; it returns
-  there and resumes following. Sending a new prompt also resumes following. Layout changes
-  after markdown, process folds and composer resizing keep a following reader at the end.
+  controls; the pane follows the latest content until the reader leaves it: a step up of any
+  size, a scroll down that stops short of the end, or a fold they open, whose row stays under
+  the click. A circular **Back to bottom** button above the composer appears while away from
+  the end; it returns there and resumes following. Sending a new prompt also resumes
+  following. Layout changes after markdown, process folds and composer resizing keep a
+  following reader at the end. A body that scrolls in place inside the column (a long prompt,
+  a long thought) hands the wheel on at its end, so a pointer resting there never holds the
+  column still.
   The words box's manners are the pane's own:
   - **It grows with its words** (`chatGrow`): its rows are the floor, `max-height: 40vh` the
     cap, a scroll past it, no drag handle. It refits on every write - typed, pasted, or set

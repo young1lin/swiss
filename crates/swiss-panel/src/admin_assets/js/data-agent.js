@@ -156,6 +156,8 @@ let agentsLoading = false;
 /** The db runtime's tools, as the status names them: the line above every conversation. */
 let catalog                = [];
 let toolsOpen = false;
+/** The Tools fold as last built, and what it was built from (toolsNode). */
+let toolsFold                                                                                       = null;
 
 /** A model and how hard it thinks: what an agent answers with. */
                      
@@ -829,17 +831,24 @@ function applyDbFrame(talk      , payload                         , ran         
  *  what the model may call here, before the reader asks anything. The db catalog holds every
  *  kind's tools; this connection's kind picks its own (a tool naming no kind shows everywhere). */
 function toolsNode(kind        )                     {
+  // The pane repaints on every send and every answer's end: the same node goes back in, or the
+  // tool the reader has open would close and the column drop out from under them.
+  if (toolsFold && toolsFold.kind === kind && toolsFold.lang === locale() && toolsFold.from === catalog) return toolsFold.node;
   const tools = catalog.filter((t) => !t.on || t.on === kind);
-  if (!tools.length) return null;
-  const fold = formFold({ id: "dbAgentTools", summary: [tr("dataAgent.tools"), " · ", tr("dataAgent.toolsCount", { n: tools.length })] },
-    hint(tr("dataAgent.toolsHint")),
-    tools.map((t) => {
-      const detail = toolDetails("db", t, { kind, named: true });
-      detail.dataset.dbtool = t.name;
-      return detail;
-    }))                      ;
-  fold.open = toolsOpen;
-  fold.ontoggle = ()       => { toolsOpen = fold.open; };
+  let fold                            = null;
+  if (tools.length) {
+    const made = formFold({ id: "dbAgentTools", summary: [tr("dataAgent.tools"), " · ", tr("dataAgent.toolsCount", { n: tools.length })] },
+      hint(tr("dataAgent.toolsHint")),
+      tools.map((t) => {
+        const detail = toolDetails("db", t, { kind, named: true });
+        detail.dataset.dbtool = t.name;
+        return detail;
+      }))                      ;
+    made.open = toolsOpen;
+    made.ontoggle = ()       => { toolsOpen = made.open; };
+    fold = made;
+  }
+  toolsFold = { kind, lang: locale(), from: catalog, node: fold };
   return fold;
 }
 

@@ -250,10 +250,12 @@ export function chatQueue(o               )            {
 
 const following = new WeakMap                                       ();
 
-/** Content growth does not give up the tail; an upward reading gesture does (DSH's policy).
- *  The button sits above the composer, outside the scrolling transcript. */
+/** Content growth does not give up the tail; reading does (DSH's policy, widened): a step up of
+ *  any size, a scroll down that stops short of the end, a fold the reader opens. The button sits
+ *  above the composer, outside the scrolling transcript. */
 function bindFollow(pane             , body             , latest                   )       {
-  const nearEnd = ()          => body.scrollHeight - body.clientHeight - body.scrollTop <= 24;
+  const fromEnd = ()         => body.scrollHeight - body.clientHeight - body.scrollTop;
+  const nearEnd = ()          => fromEnd() <= 24;
   let tail = true;
   let lastTop = body.scrollTop;
   let frame                = null;
@@ -274,12 +276,22 @@ function bindFollow(pane             , body             , latest                
   };
   following.set(pane, update);
   latest.onclick = ()       => { update(true); };
-  body.addEventListener("wheel", (e) => { if (e.deltaY < 0) tail = false; }, { passive: true });
+  // A column with nowhere to go up to has nothing to give up: the wheel over a short one is idle.
+  body.addEventListener("wheel", (e) => { if (e.deltaY < 0 && body.scrollTop > 0) tail = false; }, { passive: true });
+  // Before the fold opens: the scrollbar it may bring resizes the body, and that must not carry
+  // the row the reader just clicked up and out of view.
+  body.addEventListener("click", (e) => {
+    const fold = (e.target           ).closest("summary")?.parentElement;
+    if (fold instanceof HTMLDetailsElement && !fold.open) { tail = false; update(false); }
+  });
   body.addEventListener("scroll", () => {
-    const end = nearEnd();
-    if (body.scrollTop < lastTop || end) tail = end;
-    lastTop = body.scrollTop;
-    latest.hidden = end;
+    // paint() records its own writes, so a move seen here is the reader's, or a shorter column
+    // clamping to its end, which is the one way up that keeps the tail.
+    const top = body.scrollTop;
+    if (top < lastTop) tail = fromEnd() <= 1;
+    else if (top > lastTop) tail = nearEnd();
+    lastTop = top;
+    latest.hidden = nearEnd();
   });
   if (typeof ResizeObserver !== "undefined") {
     const size = new ResizeObserver(() => {

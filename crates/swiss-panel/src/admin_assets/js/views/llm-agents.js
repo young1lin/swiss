@@ -622,12 +622,15 @@ function openTest(a             )       {
     if (!out.firstElementChild) fill(out, transcript([]));
     return out.firstElementChild               ;
   };
-  /** One more turn on the column, kept in view - the typewriter's carriage. */
+  /** One more turn on the column, kept in view - the typewriter's carriage - unless the reader
+   *  has gone up to read (a tool's definition above, an earlier turn). Their own words always
+   *  bring them back. */
   const addTurn = (t                )              => {
+    const scroller = out.closest(".sheet-body")                      ;
+    const reading = !!scroller && t.side !== "user" && scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop > 24;
     const node = transcriptTurn(t);
     column().appendChild(node);
-    const scroller = out.closest(".sheet-body")                      ;
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    if (scroller && !reading) scroller.scrollTop = scroller.scrollHeight;
     return node;
   };
   /** The server's open run for this agent, as the sheet opens. The id commits the

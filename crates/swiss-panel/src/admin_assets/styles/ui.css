@@ -578,8 +578,9 @@
     .fl-body > .btn { align-self: flex-start; }
     .fl-body > .note { padding-top: 0; }
     /* A step's prose body past the prose cap (a round's thinking): it scrolls in place, so the
-       answer below it stays where the reader can see it. */
-    .fl-scroll { max-height: var(--fl-prose-h); overflow: auto; overscroll-behavior: contain; }
+       answer below it stays where the reader can see it. At its end the wheel passes on to the
+       column; a pointer resting over it must not hold the whole page still. */
+    .fl-scroll { max-height: var(--fl-prose-h); overflow: auto; }
     .fl-prose { padding: var(--s1) var(--s2) var(--s2) calc(var(--s2) + var(--fl-lead) + var(--s3)); font-size: var(--f-body); line-height: 1.6; overflow-wrap: anywhere; }
     .fl-prose > :first-child { margin-top: 0; }
     .fl-prose > :last-child { margin-bottom: 0; }
@@ -961,8 +962,8 @@
     details.fold[open] > summary .fold-chev { transform: rotate(90deg); }
     @media (prefers-reduced-motion: reduce) { details.fold .fold-chev { transition: none; } }
     /* A body past the prose cap scrolls in place (formFold's `scroll`): the prompt parts, a
-       system prompt, a long thought. */
-    details.fold > .fold-body.scroll { max-height: var(--fl-prose-h); overflow: auto; overscroll-behavior: contain; }
+       system prompt, a long thought. At its end the wheel passes on, as .fl-scroll's does. */
+    details.fold > .fold-body.scroll { max-height: var(--fl-prose-h); overflow: auto; }
     details.fold > summary .tag { margin-left: var(--s1); }
     details.fold > .fold-body { display: grid; gap: var(--s2); padding-top: var(--s3); }
 

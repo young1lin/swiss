@@ -880,6 +880,11 @@ All notable changes to swiss are recorded here. The format follows
   `state`, `limit` and `offset` and never cuts a row, and `read_console_tab` takes `offset` and
   pages a long console by whole statement. With the console store on, the page no longer sends
   its tab snapshot; the tools read the store (SPEC §data.agent Tabs).
+- Reading a tool's definition in the Data agent pane no longer fights the page. Opening a tool
+  keeps its row under the click instead of throwing it off-screen, any step up or a scroll down
+  short of the end stops the pane following, and a send or an answer's end no longer closes the
+  open tool. A body that scrolls in place hands the wheel on at its end, and the Test dialog
+  leaves a reader who has gone up where they are (SPEC §panel.ui).
 - Closing an empty Data console no longer files it in Recently closed, whatever its name or owner,
   so opening one and closing it leaves nothing behind. The blank rows already there leave the list
   and the store on the next visit to the connection (SPEC §data.tabs).

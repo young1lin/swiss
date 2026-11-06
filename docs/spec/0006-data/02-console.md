@@ -169,8 +169,9 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   never retried by its own repaint. Enter sends, Shift+Enter breaks the line. The words box
   starts at two rows and grows with its words up to 40 % of the window, then scrolls
   (`chatPane`'s own, §panel.ui), so a long question stays readable whole. Streaming text and
-  thinking follow the bottom while the reader is there; scrolling up pauses following and
-  reveals **Back to bottom** above the composer. Its press resumes following, as does an
+  thinking follow the bottom while the reader is there; scrolling away from it or opening a
+  fold pauses following, and away from it **Back to bottom** shows above the composer. Its
+  press resumes following, as does an
   explicit send; queued sends preserve a reader's position. Work opens while running and
   folds as soon as the final answer arrives or Stop is pressed, without waiting for the
   transport to close. Stopped partial answer text stays visible outside the folded work.

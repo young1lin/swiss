@@ -947,7 +947,8 @@ describe("around the conversation (SPEC §data.agent)", () => {
   });
 
   it("names the conversation's tools above it: the names on the line, what each does inside", async () => {
-    route = (c) => (c.path === "/api/llm/status" ? [200, { ...STATUS, catalog: { db: TOOLS } }] : undefined);
+    route = (c) => c.path === "/api/llm/status" ? [200, { ...STATUS, catalog: { db: TOOLS } }]
+      : c.path.startsWith("/api/llm/tools?") ? [200, { definitions: [] }] : undefined;
     await openOn("t-shop");
     const tools = q<HTMLDetailsElement>("#dbAgentBody #dbAgentTools");
     expect(q("#dbAgentBody").firstElementChild, "first, above the conversation").toBe(tools);
@@ -965,9 +966,18 @@ describe("around the conversation (SPEC §data.agent)", () => {
     tools.dispatchEvent(new Event("toggle"));
     agent.renderDbAgent();
     expect(q<HTMLDetailsElement>("#dbAgentTools").open).toBe(true);
+    // So does a tool opened inside it, in place: the pane repaints on every send and answer's end,
+    // and a rebuilt fold would close it and drop the column out from under the reader.
+    const listTables = q<HTMLDetailsElement>("[data-dbtool='list_tables']");
+    listTables.open = true;
+    await settle();
+    agent.renderDbAgent();
+    expect(q("#dbAgentTools"), "the same fold goes back in").toBe(tools);
+    expect(q<HTMLDetailsElement>("[data-dbtool='list_tables']").open).toBe(true);
     // Each connection's kind names its own, in the panel's words: Redis its streams and pub/sub too.
     dbConnState().conns.push(dbConn("t-cache", "redis"), dbConn("t-docs", "mongo"));
     await switchTo("t-cache");
+    expect(q("#dbAgentTools"), "another kind, another fold").not.toBe(tools);
     expect(q("#dbAgentTools summary").textContent).toBe(tr("dataAgent.tools") + " · " + tr("dataAgent.toolsCount", { n: 10 }));
     expect(q("[data-dbtool='run_redis']").textContent).toContain(tr("llm.tool.db.runRedis"));
     expect(q("[data-dbtool='list_channels']").textContent).toContain(tr("llm.tool.db.listChannels"));
