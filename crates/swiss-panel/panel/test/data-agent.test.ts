@@ -508,6 +508,60 @@ describe("the agent's pane (SPEC §data.agent)", () => {
     expect(labels.some(label => label.startsWith("Revenue report ·"))).toBe(false);
   });
 
+  /* The ask box is the reader's while the agent works: what the agent opens comes to the front,
+     and the caret stays where the reader is typing (SPEC §data.agent). */
+  it("the agent's consoles come to the front and the caret stays in the ask box", async () => {
+    let frames: string[] = [];
+    route = (c) => (c.method === "POST" && c.path === "/api/llm/db/stream" ? [200, { __sse: frames }] : undefined);
+    await openOn("s-caret");
+    const box = q<HTMLTextAreaElement>("#dbAgentAsk");
+    const front = (): string => (dbTab() as DbSqlTab).custom || "";
+    // Counted while the run lands: focus handed back at its end would hide a caret taken mid-run.
+    let taken = 0;
+    box.addEventListener("blur", () => { taken++; });
+    const run = (...steps: Record<string, unknown>[]): string[] => [
+      sseFrame("run", { runId: 8, agent: "db", continued: false }),
+      ...steps.map((step) => sseFrame("db", step)),
+      sseFrame("final", { text: "Done." }),
+      sseFrame("done", { ok: true, runId: 8, ms: 1, turns: 1, tokensIn: 1, tokensOut: 1 }),
+    ];
+    const reply = { columns: ["n"], rows: [{ n: 1 }], rowCount: 1, elapsedMs: 1 };
+    // A new console, a statement landing in it, and a second new one.
+    frames = run({ kind: "console", tab: "Report" }, { kind: "run", sql: "SELECT 1 FROM posts", tab: "Report", reply },
+      { kind: "console", tab: "Second" });
+    box.focus();
+    await ask("show me");
+    expect(front()).toBe("Second");
+    expect(taken, "a new console leaves the caret").toBe(0);
+    // Back to a console already open.
+    frames = run({ kind: "console", tab: "Report" });
+    await ask("the report again");
+    expect(front()).toBe("Report");
+    expect(taken, "an open console brought forward leaves the caret").toBe(0);
+    // Back from Recently closed, by its name.
+    tabs.dbCloseTab(dbTabs().indexOf(dbTab()));
+    box.focus();
+    taken = 0;
+    frames = run({ kind: "console", tab: "Report" });
+    await ask("once more");
+    expect(front()).toBe("Report");
+    expect(taken, "a closed console restored leaves the caret").toBe(0);
+    // By the id a tool holds, an open one and a new one.
+    const second = dbTabs().find((t): t is DbSqlTab => t.kind === "sql" && t.custom === "Second");
+    frames = run({ kind: "console", tabId: second?.id });
+    await ask("the second by id");
+    expect(front()).toBe("Second");
+    expect(taken, "an open console addressed by id leaves the caret").toBe(0);
+    frames = run({ kind: "console", tabId: "made-by-id", tab: "Third", create: true });
+    await ask("a third by id");
+    expect(front()).toBe("Third");
+    expect(taken, "a console created by id leaves the caret").toBe(0);
+    expect(document.activeElement).toBe(box);
+    // The reader's own + still means "I am going to type here".
+    tabs.dbOpenTabForce({ kind: "sql" });
+    expect(document.activeElement, "the reader's + takes it").toBe(q("#dbSql"));
+  });
+
   it("on MongoDB a command lands in the console's shell syntax and its documents in the results, the database in view the default", async () => {
     let frames: string[] = [];
     route = (c) => {

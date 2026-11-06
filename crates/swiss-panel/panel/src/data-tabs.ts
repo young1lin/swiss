@@ -921,9 +921,10 @@ function dbClosedMenuItems(): MenuItem[] {
 
 /** Open a closed console as a tab from the page's own copy - the frame path, where a restore
  *  must land before the statement that named it arrives. `revision` keeps the store's address
- *  so the next save compares against the record instead of recreating it. */
+ *  so the next save compares against the record instead of recreating it. It leaves the caret
+ *  alone: a frame must not take it, and the reader's restore gives it to the console afterwards. */
 function dbOpenClosedCached(e: DbClosedTab, revision: number = e.revision || 0): DbSqlTab | null {
-  dbOpenTabForce({ kind: "sql" });
+  dbOpenTabForce({ kind: "sql" }, true);
   const t = dbSqlTab();
   if (!t) return null;
   t.id = e.id;
@@ -1256,8 +1257,9 @@ function dbOpenTab(spec: DbTabSpec): void {
  *  with a console open just activated the old one. The cap still helps when it can (a
  *  clean tab is evicted with the usual toast), but when every tab holds work the + goes
  *  OVER instead of refusing — the operator explicitly asked for this tab, and DB_TAB_MAX
- *  defends a memory budget, not the right to say no to a direct request. */
-function dbOpenTabForce(spec: DbTabSpec): void {
+ *  defends a memory budget, not the right to say no to a direct request. The agent's opens
+ *  come through here too, with `keepCaret` (dbActivateTab). */
+function dbOpenTabForce(spec: DbTabSpec, keepCaret?: boolean): void {
   const tabs = dbTabs();
   const live = dbTab();
   const next = tabs.filter(dbTabVisible);
@@ -1271,7 +1273,7 @@ function dbOpenTabForce(spec: DbTabSpec): void {
   dbLeaveTab(live);
   next.push(dbBuildTab(spec));
   dbResetTabs(next, next.length - 1);
-  dbAfterTabSwitch();
+  dbAfterTabSwitch(keepCaret);
   // A new console exists on the server from birth: its id can already be handed to a tool,
   // and a blank console is work the reader may type into after a reload.
   const made = dbSqlTab();
@@ -1298,14 +1300,14 @@ function dbDropTableTabs(table: string | null, schema: string | null): void {
   if (at >= 0) renderDbTabs(); else dbAfterTabSwitch();
 }
 
-/** Bring the i'th tab to the pane. `byKeyboard` says the move came from the strip's own arrows
- *  or Ctrl+Tab, which is the one case where the console must NOT take the caret: the walk has to
- *  be able to continue past it. */
-function dbActivateTab(i: number, byKeyboard?: boolean): void {
+/** Bring the i'th tab to the pane. `keepCaret` says the console must NOT take the caret: the move
+ *  came from the strip's own arrows or Ctrl+Tab, where the walk has to be able to continue past
+ *  it, or from the agent, whose work never pulls the reader out of what they are typing. */
+function dbActivateTab(i: number, keepCaret?: boolean): void {
   if (i === dbActiveIndex()) { renderDbTabs(); return; }
   dbLeaveTab(dbTab());
   dbSetActive(i);
-  dbAfterTabSwitch(byKeyboard);
+  dbAfterTabSwitch(keepCaret);
 }
 
 /** Close it. A tab holding buffered writes asks first (SPEC §data.tabs) and a refusal keeps it
@@ -1381,7 +1383,7 @@ function dbLeaveTab(t: DbTab): void {
 
 /** Everything the pane owes a new active tab: the console's text, the chrome, the grid, and the
  *  fetch for whatever the tab dropped while it was in the background. */
-function dbAfterTabSwitch(byKeyboard?: boolean): void {
+function dbAfterTabSwitch(keepCaret?: boolean): void {
   const t = dbTab();
   // The console is the sql tab's body now (SPEC §data.tabs), so the textarea is seeded from the tab
   // being shown — otherwise the previous console's text sits in the new one's box.
@@ -1410,7 +1412,8 @@ function dbAfterTabSwitch(byKeyboard?: boolean): void {
   // Landing on a console by pointer means "I am going to type here"; landing on it mid-walk
   // does not. Taking the caret on the keyboard path turned the arrows into a one-way trip:
   // the next ArrowLeft moved the textarea's caret instead of the strip (found live, T2 walk).
-  if (t.kind === "sql" && !t.analysisId && ta && !byKeyboard) ta.focus();
+  // Nor does the agent bringing one forward: the reader's next words went into the console.
+  if (t.kind === "sql" && !t.analysisId && ta && !keepCaret) ta.focus();
 }
 
 export {

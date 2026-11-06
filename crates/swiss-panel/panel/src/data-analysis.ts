@@ -69,7 +69,8 @@ export async function dbAnalysisOpen(id: string, conn = dbConn().conn, resultId?
   let at = dbTabs().findIndex(t => t.kind === "sql" && t.analysisId === id);
   if (at < 0) {
     const before = dbTab();
-    dbOpenTabForce({ kind: "sql" });
+    // It becomes an analysis tab on the next line, which has no console to take the caret.
+    dbOpenTabForce({ kind: "sql" }, true);
     const made = dbTab();
     if (made.kind !== "sql" || made === before) return;
     made.analysisId = id;

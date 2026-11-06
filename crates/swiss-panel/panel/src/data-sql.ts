@@ -849,16 +849,17 @@ function dbAgentTab(tab?: string, id?: string): DbSqlTab | null {
   if (byId) return dbAgentOwn(byId, name);
   if (id) { toast(tr("dataTabs.idMissing"), true); return null; }
   const at = dbTabs().findIndex((t): boolean => { return t.kind === "sql" && !t.analysisId && t.agent === true && (t.agentTab || "") === name; });
-  if (at >= 0) dbActivateTab(at);
+  // The tab comes forward and the caret stays with the reader (SPEC §data.agent), here and below.
+  if (at >= 0) dbActivateTab(at, true);
   else {
     // A rename the agent never made: the card's own title is the only name that tab answers to.
     const renamed = name ? dbTabs().findIndex((t): boolean => { return t.kind === "sql" && !t.analysisId && t.agent === true && dbTabTitle(t) === name; }) : -1;
-    if (renamed >= 0) dbActivateTab(renamed);
+    if (renamed >= 0) dbActivateTab(renamed, true);
     else {
       const conn = dbConn().conn;
       const back = name && conn ? dbClosedFor(conn).find(x => x.agent && x.agentTab === name) : null;
       if (back) { const restored = dbClaimClosed(back); return restored ? dbAgentOwn(restored, name) : null; }
-      dbOpenTabForce({ kind: "sql" });
+      dbOpenTabForce({ kind: "sql" }, true);
       const made = dbSqlTab();
       if (!made) return null;
       made.agent = true;
@@ -954,7 +955,7 @@ function dbConsoleTabs(): DbConsoleTabWire[] {
 function dbConsoleById(id: string, restore = true): DbSqlTab | null {
   const at = dbTabs().findIndex((t: DbTab): boolean => t.kind === "sql" && !t.analysisId && t.id === id);
   if (at >= 0) {
-    dbActivateTab(at);
+    dbActivateTab(at, true);
   } else {
     if (!restore) return null;
     const closed = dbClosedById(dbConn().conn, id);
@@ -995,7 +996,7 @@ export function dbAgentOpenConsole(frame: Record<string, unknown>): boolean {
   }
   let t: DbSqlTab | null;
   if (id && frame.create === true && !dbTabs().some(t => t.kind === "sql" && t.id === id) && !dbClosedById(dbConn().conn, id)) {
-    dbOpenTabForce({ kind: "sql" });
+    dbOpenTabForce({ kind: "sql" }, true);
     t = dbSqlTab();
     if (!t) return false;
     t.id = id;

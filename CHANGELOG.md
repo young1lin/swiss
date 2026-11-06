@@ -879,6 +879,9 @@ All notable changes to swiss are recorded here. The format follows
 - Closing an empty Data console no longer files it in Recently closed, whatever its name or owner,
   so opening one and closing it leaves nothing behind. The blank rows already there leave the list
   and the store on the next visit to the connection (SPEC §data.tabs).
+- A console the Data agent opens or addresses no longer takes the caret. It comes to the front while
+  the reader keeps typing in the ask box; every frame used to move their next words into the console
+  (SPEC §data.agent).
 - Editing an SSH connection on the Tunnels page keeps its stored password and key passphrase. The
   rows the page read left them out, so saving the form erased them (SPEC §tunnels.store).
 - On Linux and macOS a gateway started by `swiss start` takes a session of its own, so it outlives

@@ -306,8 +306,11 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   purpose-named for SQL, the default **Agent** slot for commands (Tabs, below)
   - each as its own block after the ones before, the caret
   in the newest so Ctrl+Enter reruns it unless the reader is typing there; the reader's own
-  consoles are never touched. A statement ends with its `;`; a MongoDB command lands in the
-  console's shell syntax (its Format), a Redis command as its line. A run's reply opens as a
+  consoles are never touched. A tab the agent opens or addresses comes to the front without
+  taking the keyboard focus, so the reader's words stay in the ask box while a run lands; the
+  reader's own + or restore does give the console the caret. A statement ends with its `;`; a
+  MongoDB command lands in the console's shell syntax (its Format), a Redis command as its line.
+  A run's reply opens as a
   result tab like a Run's (a failure as the failed tab), the runs of one send gathering as
   tabs with the newest in front, a send's first run in a tab starting that tab's over; the
   agent's run supersedes a Run still in flight. A MongoDB reply is the console's code block, its tab *find posts* (the
