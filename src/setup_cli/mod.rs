@@ -94,7 +94,7 @@ fn setup_guide(argv: &[String]) -> i32 {
     if !argv.is_empty() {
         return refuse(SETUP_USAGE);
     }
-    println!("{}", include_str!("../../SETUP.md"));
+    print!("{}", include_str!("../../SETUP.md"));
     0
 }
 

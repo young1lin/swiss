@@ -299,6 +299,20 @@ mod tests {
     // SPEC §core.sealed: the boot read a torn store as "no token yet" and sealed a fresh one over
     // every value it held. Now the torn file stays, the seed adds nothing, and load_config stops
     // the boot for want of a token.
+    // SPEC §host.setup: `show` prints what `DEF_KEYS` knows and `plan` compares that with what is
+    // stored. A seeded key the table did not take kept a new home's own manifest from planning as
+    // unchanged, and applying it deleted the key.
+    #[test]
+    fn every_seeded_definition_survives_the_table_it_is_compared_through() {
+        let seed = seed_config();
+        let servers = seed["servers"].as_object().expect("seeded servers");
+        assert!(!servers.is_empty());
+        for (name, def) in servers {
+            let built = crate::adminapi::build_def(def, &[]).expect(name);
+            assert_eq!(Value::Object(built.0), *def, "{name}");
+        }
+    }
+
     #[test]
     fn a_first_run_never_writes_over_an_env_store_it_cannot_read() {
         let sb = Sandbox::new();

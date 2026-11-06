@@ -200,20 +200,27 @@ pub async fn write(gw: &Gateway, machine: &Machine, items: &mut [Item]) {
     }
 }
 
-/// What the route answers is the seat read back, so a write it could not make shows here.
 async fn write_seat(gw: &Gateway, machine: &Machine, item: &mut Item) {
     let found = SEATS.iter().find(|(key, _)| *key == item.name).map(|(_, route)| *route);
     let (Some(route), Some(wanted)) = (found, machine.seat(&item.name)) else {
         return;
     };
-    match gw.send(Method::PUT, route, Some(json!({ "enabled": wanted }))).await {
-        Ok(answer) if answer["enabled"] == json!(wanted) => {}
-        Ok(answer) => {
-            let detail = answer["detail"].as_str().unwrap_or("no detail");
-            fail(item, "machine.write", format!("it did not change: {}", literal::mask(detail)));
-        }
-        Err(error) => fail(item, "machine.write", literal::mask(&error)),
+    let written = match gw.send(Method::PUT, route, Some(json!({ "enabled": wanted }))).await {
+        Ok(answer) => read_back(&answer, wanted),
+        Err(error) => Err(literal::mask(&error)),
+    };
+    if let Err(error) = written {
+        fail(item, "machine.write", error);
     }
+}
+
+/// What the route answers is the seat read back, so a write it could not make shows here.
+fn read_back(answer: &Value, wanted: bool) -> Result<(), String> {
+    if answer["enabled"] == json!(wanted) {
+        return Ok(());
+    }
+    let detail = answer["detail"].as_str().unwrap_or("no detail");
+    Err(format!("it did not change: {}", literal::mask(detail)))
 }
 
 /// Every copy not already this binary's. The rest of each directory is the user's.
@@ -287,5 +294,59 @@ mod tests {
         );
         assert_eq!(items[0].extra["code"], json!("machine.unavailable"));
         assert_eq!(items[5].extra["code"], json!("skill.read"));
+    }
+
+    // SPEC §host.setup: "the same manifest applied again reports only `unchanged`", so a seat is
+    // written only when what it reports differs from what the manifest says.
+    #[test]
+    fn a_seat_is_written_only_when_it_differs() {
+        let machine = Machine { path: Some(true), autostart: Some(false), skills: vec![] };
+        let mut state = MachineState::default();
+        state.seats.insert("path", Ok(false));
+        state.seats.insert("autostart", Ok(false));
+        let items = decide(&machine, &state);
+        let read: Vec<(&str, Status)> = items.iter().map(|i| (i.name.as_str(), i.status)).collect();
+        assert_eq!(read, [("autostart", Status::Unchanged), ("path", Status::Updated)]);
+    }
+
+    // SPEC §host.setup: "Additive: what the manifest does not name is untouched."
+    #[test]
+    fn a_seat_left_out_is_not_an_item() {
+        let mut state = MachineState::default();
+        state.seats.insert("path", Ok(false));
+        assert!(decide(&Machine::default(), &state).is_empty());
+
+        let mut problems = Vec::new();
+        let read = read_section(Some(&json!({ "path": null, "autostart": null, "skills": null })), &mut problems);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!((read.path, read.autostart), (None, None));
+        assert!(read.skills.is_empty());
+        let absent = read_section(None, &mut problems);
+        assert_eq!((absent.path, absent.autostart), (None, None));
+    }
+
+    #[test]
+    fn a_section_that_is_not_an_object_is_refused() {
+        assert_eq!(told(json!(true))[0].0, "machine");
+        assert_eq!(told(json!(["path"]))[0].0, "machine");
+    }
+
+    // SPEC §host.setup: a seat is judged by the state its route reads back, so an answer that still
+    // holds the old state, or says nothing, is a failed write.
+    #[test]
+    fn a_write_is_judged_by_the_state_it_reads_back() {
+        assert_eq!(read_back(&json!({ "enabled": true }), true), Ok(()));
+        assert_eq!(read_back(&json!({ "enabled": false }), false), Ok(()));
+        let stuck = json!({ "enabled": false, "detail": "symlink: ~/.local/bin/swiss" });
+        assert_eq!(read_back(&stuck, true), Err("it did not change: symlink: ~/.local/bin/swiss".to_string()));
+        assert_eq!(read_back(&json!({}), false), Err("it did not change: no detail".to_string()), "silence is not off");
+    }
+
+    #[test]
+    fn a_credential_in_a_seats_detail_is_masked() {
+        let leaking = json!({ "enabled": false, "detail": "app --password=pa55word" });
+        let error = read_back(&leaking, true).expect_err("the seat did not move");
+        assert!(!error.contains("pa55word"), "{error}");
+        assert!(error.contains("--password"), "the rest of the detail stays: {error}");
     }
 }

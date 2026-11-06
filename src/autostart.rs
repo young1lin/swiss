@@ -188,9 +188,19 @@ mod provider {
     /// default.target.wants — written directly instead of shelling out to "systemctl --user
     /// enable" (AGENTS.md: no subprocess where a file write exists). systemd picks both up at
     /// the next session; a daemon-reload would need the subprocess we just refused.
+    ///
+    /// The unit runs `start` once and supervises nothing, like the Run value and the LaunchAgent:
+    /// `Type=oneshot` with `RemainAfterExit`. The default type, `simple`, reads the exit of `start`
+    /// as the service ending and kills the gateway with the rest of the cgroup; a new session does
+    /// not leave a cgroup. `Type=forking` keeps it up but has the manager guess the main process,
+    /// and an app that outlived an earlier gateway spoils the guess: the unit then reads as active
+    /// with no gateway, and `systemctl stop` leaves one running (2026-11-06, both walked under a
+    /// real user manager in WSL). `ExecStop` asks the gateway to stop, ignoring the answer because
+    /// it may already be gone. `KillMode=process` then leaves the apps alone, since they outlive
+    /// the gateway (SPEC §process.detached).
     pub fn unit_body(exe: &str) -> String {
         format!(
-            "[Unit]\nDescription=swiss gateway (developer toolbox)\n\n[Service]\nExecStart=\"{exe}\" start --no-open\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n"
+            "[Unit]\nDescription=swiss gateway (developer toolbox)\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=\"{exe}\" start --no-open\nExecStop=-\"{exe}\" stop\nKillMode=process\n\n[Install]\nWantedBy=default.target\n"
         )
     }
 
@@ -347,5 +357,16 @@ mod tests {
         let body = provider::unit_body("/home/ab/swiss");
         assert!(body.contains("ExecStart=\"/home/ab/swiss\" start --no-open"));
         assert!(body.contains("WantedBy=default.target"));
+    }
+
+    // SPEC §host.cli: `start` exits once its detached gateway serves, and an app the gateway started
+    // outlives it. The manager tracks neither: it runs `start` once and `stop` when asked.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_unit_runs_the_start_once_and_leaves_the_apps_alone() {
+        let body = provider::unit_body("/home/ab/swiss");
+        assert!(body.contains("\nType=oneshot\nRemainAfterExit=yes\n"), "{body}");
+        assert!(body.contains("\nExecStop=-\"/home/ab/swiss\" stop\n"), "{body}");
+        assert!(body.contains("\nKillMode=process\n"), "{body}");
     }
 }

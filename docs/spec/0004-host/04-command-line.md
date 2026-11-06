@@ -41,7 +41,8 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   `http_headers.Authorization`), the block the panel copies. Cursor is a merge into `~/.cursor/mcp.json`.
   The bearer is a token labelled `client-<client>`, reused when that label exists and minted
   otherwise, and it is never printed. `--mcp` repeats; without it, every MCP the gateway has.
-  An existing entry is left unchanged unless `--replace`. `next` says to restart the client.
+  An existing entry is left unchanged unless `--replace`. When an entry was written, `next` says
+  to restart the client; a plan, an unchanged entry and a failed one owe no restart.
 - **Skill inspection.** `GET /api/skills`, behind the admin session, checks only the three
   embedded skill names in the two directories a skill goes to (below). It reads each `SKILL.md`,
   creates nothing, and returns `{skills: [{name, description, loadsByItself, locations: [{root,
@@ -64,8 +65,15 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   change, creating the home on a new machine; env and secrets merge (imported values win, nothing
   deleted). The CLI warns that the rest of the bundle is plaintext.
 - **`autostart`** — start at sign-in: a registry Run value on Windows, a LaunchAgent on macOS,
-  a systemd user unit on Linux. The OS registration is the store (no revision to race);
-  `GET/PUT /api/autostart` read and apply it.
+  a systemd user unit on Linux. All three run `start` once and supervise nothing, so a gateway that
+  crashes stays down until someone starts it. The unit is `Type=oneshot` with `RemainAfterExit=yes`.
+  The default type would have the manager kill the gateway when `start` exits, and `Type=forking`
+  has it guess the main process, which fails once an app that outlived an earlier gateway
+  (§process.detached) is in the cgroup. `ExecStop` runs `stop` and ignores its answer, because the
+  gateway may already be gone, and `KillMode=process` leaves those apps running. So
+  `systemctl --user status swiss` says the start ran, and `swiss status` says whether a gateway is
+  up. The OS registration is the store (no revision to race); `GET/PUT /api/autostart` read and
+  apply it.
 - **`path`** — swiss on the current user's PATH. Windows: this exe's folder as an entry of the
   user's own `Path` (HKCU\Environment, its REG_EXPAND_SZ type kept), then a
   `WM_SETTINGCHANGE` broadcast as `setx` sends. An entry counts as on however it is written
@@ -300,6 +308,12 @@ says), machine settings and chosen skills, connections (jump hops first), rules 
 explicit start, remote targets, then MCPs, each added with `start: false`, then every check, then clients.
 A failed item does not stop the rest; what depends on it is `blocked`. A plugin write the gateway refuses is code
 `plugin.write`.
+
+A machine setting is judged by the state its route reads back. A write the seat refused, or an answer
+that still holds the old state, is `failed`, code `machine.write`, and a rerun tries it again
+(`a_seat_write_that_did_not_land_fails_and_is_tried_again`). A seat that cannot be read is code
+`machine.unavailable`. A skill copy that cannot be read is code `skill.read` and is not overwritten, and
+one that cannot be written is code `skill.write`.
 
 Disabled `tunnels` or `remote` plugins fail their items with `tunnels.plugin-off` or
 `remote.plugin-off`; a manifest enabling them carries a plan warning and decides the items again

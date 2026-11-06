@@ -193,6 +193,120 @@ fn a_new_home_converges_on_its_first_apply() {
     assert_eq!(document["summary"]["unchanged"], serde_json::json!(4), "{document}");
 }
 
+// SPEC §host.setup: `show` prints this gateway's state as a manifest. On a home that has only been
+// seeded, that is what the gateway already holds, so planning it finds nothing to do. Only `plan`
+// runs here: on Windows the seats it reads are the real ones.
+#[test]
+fn a_new_homes_own_manifest_plans_as_unchanged() {
+    let instance = Instance::new();
+    let shown = instance.run(&["setup", "show"], &[]);
+    let document: serde_json::Value = serde_json::from_slice(&shown.stdout).expect("one JSON document on stdout");
+    assert_eq!(shown.status.code(), Some(0), "{document}");
+    let path = instance.home.join("shown.json");
+    std::fs::write(&path, document["manifest"].to_string()).expect("the manifest");
+
+    let planned = instance.run(&["setup", "plan", &path.to_string_lossy()], &[]);
+    let document: serde_json::Value = serde_json::from_slice(&planned.stdout).expect("one JSON document on stdout");
+    assert_eq!(planned.status.code(), Some(0), "{document}");
+    let items = document["items"].as_array().expect("the items");
+    assert!(items.iter().any(|item| item["kind"] == "mcp" && item["name"] == "echo"), "{document}");
+    assert!(items.iter().all(|item| item["status"] == "unchanged"), "{document}");
+}
+
+// SPEC §host.setup: the guide is the file the archive ships, and reading it starts nothing.
+#[test]
+fn the_guide_is_setup_md_byte_for_byte() {
+    let instance = Instance::new();
+    let guide = instance.run(&["setup", "guide"], &[]);
+    assert_eq!(guide.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&guide.stdout), include_str!("../SETUP.md"));
+    assert_eq!(instance.run(&["status"], &[]).status.code(), Some(3), "no gateway came up");
+}
+
+// SPEC §host.daemon: the gateway a command starts leads a session of its own, so the shell that ran
+// the command can end without its hangup reaching the gateway. An Agent's shell ends after every call.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_gateway_the_command_starts_leads_its_own_session() {
+    let instance = Instance::new();
+    let shown = instance.run(&["setup", "show"], &[]);
+    assert_eq!(shown.status.code(), Some(0));
+    let status = instance.run(&["status", "--json"], &[]);
+    let document: serde_json::Value = serde_json::from_slice(&status.stdout).expect("one JSON document on stdout");
+    let pid = document["pid"].as_u64().expect("the pid the start recorded").to_string();
+    assert_eq!(session_of(&pid), pid, "{document}");
+    assert_ne!(session_of("self"), pid, "{document}");
+}
+
+/// The session a process belongs to. `stat` puts it fourth after the name, and the name is in
+/// parentheses and may hold spaces, so the count starts past the last parenthesis.
+#[cfg(target_os = "linux")]
+fn session_of(pid: &str) -> String {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).expect("the process's stat");
+    let (_, fields) = stat.rsplit_once(')').expect("a stat line");
+    fields.split_whitespace().nth(3).expect("a session").to_string()
+}
+
+// SPEC §host.cli: on Linux `path` is a `~/.local/bin/swiss` symlink and `autostart` a systemd user unit,
+// both under HOME, and "a real file in the way is refused". So only here can a test drive the real
+// seats. On Windows the same routes change the real HKCU Path and Run value: keep this Linux-only.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_manifest_moves_the_real_seats_under_a_private_home() {
+    let instance = Instance::new();
+    let user = instance.home.join("user");
+    let link = user.join(".local/bin/swiss");
+    let unit = user.join(".config/systemd/user/swiss.service");
+    let wants = user.join(".config/systemd/user/default.target.wants/swiss.service");
+    let path = instance.home.join("swiss.setup.json");
+    let file = path.to_string_lossy().into_owned();
+    let run = |verb: &str, on: bool| {
+        let manifest = serde_json::json!({ "machine": { "path": on, "autostart": on } });
+        std::fs::write(&path, manifest.to_string()).expect("the manifest");
+        let output = instance.run(&["setup", verb, &file], &[]);
+        let document: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one JSON document on stdout");
+        (document, output.status.code())
+    };
+
+    let (planned, code) = run("plan", true);
+    assert_eq!(code, Some(0), "{planned}");
+    assert_eq!(planned["summary"]["willUpdate"], serde_json::json!(2), "{planned}");
+    assert!(std::fs::symlink_metadata(&link).is_err() && !unit.exists(), "a plan writes nothing");
+
+    let (applied, code) = run("apply", true);
+    assert_eq!(code, Some(0), "{applied}");
+    assert_eq!(applied["summary"]["updated"], serde_json::json!(2), "{applied}");
+    assert!(std::fs::symlink_metadata(&link).expect("the link").file_type().is_symlink());
+    assert_eq!(
+        std::fs::canonicalize(&link).expect("the link resolves"),
+        std::fs::canonicalize(env!("CARGO_BIN_EXE_swiss")).expect("the binary"),
+    );
+    let body = std::fs::read_to_string(&unit).expect("the unit");
+    assert!(body.contains("start --no-open"), "{body}");
+    assert!(wants.exists(), "the unit is enabled");
+
+    let (again, code) = run("apply", true);
+    assert_eq!(code, Some(0), "{again}");
+    assert_eq!(again["summary"]["unchanged"], serde_json::json!(2), "{again}");
+
+    let (off, code) = run("apply", false);
+    assert_eq!(code, Some(0), "{off}");
+    assert_eq!(off["summary"]["updated"], serde_json::json!(2), "{off}");
+    assert!(std::fs::symlink_metadata(&link).is_err(), "the link is gone");
+    assert!(!unit.exists() && std::fs::symlink_metadata(&wants).is_err(), "the unit is gone");
+
+    std::fs::write(&link, "the user's own").expect("a file in the way");
+    let (refused, code) = run("apply", true);
+    assert_eq!(code, Some(1), "{refused}");
+    let seat = refused["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["name"] == serde_json::json!("path")))
+        .expect("the path item");
+    assert_eq!(seat["code"], serde_json::json!("machine.write"), "{refused}");
+    assert_eq!(std::fs::read_to_string(&link).expect("still there"), "the user's own");
+    assert!(unit.exists(), "a failed item does not stop the rest");
+}
+
 /// The answer to one `swiss api` call, success or not, as text.
 fn api_text(output: &Output) -> String {
     format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))

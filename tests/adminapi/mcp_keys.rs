@@ -226,6 +226,29 @@ fn idle_ms_rides_on_every_type() {
     }
 }
 
+// SPEC §mcp.defs: a description is the one key `echo` takes; anything else is still refused by name.
+#[tokio::test]
+async fn an_echo_keeps_its_description_and_refuses_anything_else() {
+    let h = setup();
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({ "name": "said", "type": "echo", "description": "a note", "start": false }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(h.def_of("said").get("description"), Some(&json!("a note")));
+
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({ "name": "typo", "type": "echo", "descripton": "a note", "start": false }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"].as_str().unwrap_or_default().contains("descripton"), "{body}");
+}
+
 // SPEC §mcp.defs: `start` decides whether an add starts the MCP, and a disabled one never starts.
 #[tokio::test]
 async fn start_false_adds_without_starting() {

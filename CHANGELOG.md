@@ -20,6 +20,11 @@ All notable changes to swiss are recorded here. The format follows
 - `swiss setup show` prints this gateway's state as a manifest, with secret names as `ask` and the
   mask sentinel where a credential was. A reference is kept. Giving that manifest back to `plan`
   is refused, because the mask is not the credential (SPEC §host.setup).
+- A manifest's `machine`, `tunnels` and `remote` sections configure the rest of a machine. `machine`
+  sets the user's PATH and start-at-sign-in through the panel's routes and installs the skills it
+  names, and never removes one. `tunnels` adds SSH connections, jump hops first, and forwarding rules,
+  which start only on `start: true` once the host key is pinned. `remote` adds targets by connection
+  name (SPEC §host.setup).
 - A manifest's `plugins` section turns a plugin on or off and merges a patch over its row, keeping
   what the patch does not name, so `swiss setup` can add one job or one LLM provider. `plan` asks the
   plugin's own validator through the new `PUT /api/plugins/{id}/config?dryRun=1`, a provider is checked
@@ -871,10 +876,24 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- Editing an SSH connection on the Tunnels page keeps its stored password and key passphrase. The
+  rows the page read left them out, so saving the form erased them (SPEC §tunnels.store).
+- On Linux and macOS a gateway started by `swiss start` takes a session of its own, so it outlives
+  the terminal or Agent shell that started it. It used to share that session and die with it
+  (SPEC §host.daemon).
 - A managed app without ports stays known across a gateway restart. Every boot saved an empty
   tracked record before reading the file, so a running app read as `unknown` and
   `swiss process stop` could not stop it, and an app that starts with swiss gained one more running
   copy on each restart (SPEC §process.apps).
+- On Linux, start at sign-in keeps the gateway running. The systemd unit took the exit of
+  `swiss start` for the end of the service, so the manager killed the gateway right after it came
+  up, with no restart and no error. The unit now runs `swiss start` once, as Windows and macOS do,
+  and `systemctl --user stop swiss` runs `swiss stop` and leaves managed apps running. A gateway
+  that crashes stays down until someone starts it. `swiss autostart on` rewrites a unit already
+  installed (SPEC §host.cli).
+- `echo` definitions take a `description`, as every other type does. The one a new home seeds used
+  to be dropped by `swiss setup show`, so that manifest planned as an update and applying it
+  deleted the text (SPEC §mcp.defs).
 - Claude setup lists MCPs without an unsupported scope option. Codex setup and copied panel
   snippets use `http_headers` so the client sends the gateway bearer (SPEC §host.setup).
 - A plugin the boot has not reached yet says it has not started, rather than that

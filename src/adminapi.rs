@@ -185,7 +185,7 @@ pub static DEF_KEYS: [DefKeys; 11] = [
     DefKeys {
         type_: "echo",
         required: &[],
-        other: &[],
+        other: &["description"],
     },
 ];
 
@@ -515,9 +515,6 @@ fn build_typed_def(body: &Value, route_keys: &[&str]) -> Result<ServerDef, Strin
                 def.insert("proxy".into(), json!(proxy.trim()));
             }
         }
-        return Ok(ServerDef(def));
-    }
-    if type_ == "echo" {
         return Ok(ServerDef(def));
     }
     for k in keys.required.iter().chain(keys.other) {

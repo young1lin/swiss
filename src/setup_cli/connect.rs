@@ -189,10 +189,15 @@ pub async fn sync(
     }
 }
 
+/// A restart is owed only for a list that was written: a plan writes nothing, and an unchanged or
+/// failed item left the client as it was.
 pub fn note_restart(report: &mut Report) {
+    if report.mode == Mode::Plan {
+        return;
+    }
     let mut clients = std::collections::BTreeSet::new();
     for item in &report.items {
-        if item.kind == "client" {
+        if item.kind == "client" && matches!(item.status, Status::Created | Status::Updated) {
             if let Some(name) = item.extra.get("client").and_then(Value::as_str) {
                 clients.insert(name.to_string());
             }
@@ -500,5 +505,36 @@ fn write_atomic(path: &Path, body: &str) -> Result<(), String> {
             let _ = std::fs::remove_file(&tmp);
             Err(format!("could not replace {}: {err}", path.display()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn next_after(mode: Mode, status: Status) -> Vec<Value> {
+        let mut report = Report {
+            mode,
+            gateway: json!({}),
+            items: vec![Item::new("client", "cursor:echo", status).with("client", "cursor")],
+            warnings: Vec::new(),
+            next: Vec::new(),
+        };
+        note_restart(&mut report);
+        report.next
+    }
+
+    // SPEC §host.setup: when a command wrote a client's entry, `next` says to restart that client.
+    #[test]
+    fn only_a_written_entry_owes_a_restart() {
+        for mode in [Mode::Apply, Mode::Connect] {
+            for status in [Status::Created, Status::Updated] {
+                assert_eq!(next_after(mode, status)[0]["do"], json!("restart cursor"));
+            }
+            for status in [Status::Unchanged, Status::Failed, Status::Blocked, Status::NeedsInput] {
+                assert_eq!(next_after(mode, status), Vec::<Value>::new(), "{status:?}");
+            }
+        }
+        assert_eq!(next_after(Mode::Plan, Status::Created), Vec::<Value>::new());
     }
 }

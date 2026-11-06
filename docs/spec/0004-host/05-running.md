@@ -66,9 +66,11 @@ dispatch; `gui --help` and `gui --version` finish without opening a window.
 
 ## §host.daemon — Daemon, pid file, logs, build stamp
 
-- **Detach.** `swiss start` spawns `serve` with `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`
-  and no job object, so the daemon survives the CLI. Only "my own child is still alive" counts
-  as started — the loser of a racy double start cannot report success.
+- **Detach.** `swiss start`, and any `swiss setup` or `swiss connect` that has to start a
+  gateway, spawns `serve` with no job object: `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW` on
+  Windows, a new session (`detach_command`, `setsid`) on Unix. So the daemon survives the CLI and
+  the terminal or Agent shell that ran it. Only "my own child is still alive" counts as started —
+  the loser of a racy double start cannot report success.
 - **Attribution.** `start` hands its own pid and argv to the daemon in `SWISS_SPAWNER` (removed
   from the environment at boot); the first log line, `gateway booted`, records it with the
   parent process, so "who started this instance" is answerable after the fact.

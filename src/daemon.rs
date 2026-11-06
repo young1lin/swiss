@@ -499,7 +499,8 @@ fn tail_log(path: &Path) -> String {
 /// child from our console's Ctrl-C group (closing the terminal must not signal it),
 /// CREATE_NO_WINDOW keeps it invisible, and routing stdio to a file means no inherited terminal
 /// handles (and gives `swiss logs` something to read). No job object is attached, so the child
-/// keeps running when this process exits.
+/// keeps running when this process exits. On Unix the same detach is a session of its own: the
+/// child shares nothing a terminal hangup is delivered to.
 pub async fn start_daemon(opts: StartOptions) -> StartResult {
     if let Some(port) = opts.port {
         persist_listen_port(port);
@@ -580,6 +581,11 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
         // and `swiss start` looked hung after it had finished (2026-09-20). Ours stay ours.
         swiss_core::platform::keep_std_handles_from_children();
     }
+    // Without this the daemon stayed in the launching shell's session and foreground group, and
+    // died when that shell ended. An Agent's shell ends after every call (2026-11-06, walked in
+    // WSL: the gateway `swiss setup` started was gone by the next command).
+    #[cfg(unix)]
+    swiss_core::platform::detach_command(&mut command);
     let child = match command.spawn() {
         Ok(child) => child,
         Err(err) => {

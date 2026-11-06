@@ -42,29 +42,64 @@ use swiss_tunnels::tunnel::manager::TunnelManager;
 
 const TOKEN: &str = "setup-tok-0123456789abcdef";
 
-/// A seat that answers a fixed boolean and refuses a write. `show` reads it; nothing in this
-/// suite may reach the operator's PATH or login items.
+/// What a fake seat does with a write.
+#[derive(Clone, Copy)]
+enum SeatWrite {
+    Lands,
+    /// Fails, as a locked-down profile does.
+    Refused,
+    /// Answers without moving, so the state it reads back disagrees with what was asked.
+    NoEffect,
+}
+
+/// A seat held in memory: nothing in this suite may reach the operator's PATH or login items.
 struct FakeSeat {
-    enabled: bool,
+    state: Mutex<(bool, SeatWrite)>,
+}
+
+impl FakeSeat {
+    fn new(enabled: bool) -> Arc<Self> {
+        Arc::new(FakeSeat { state: Mutex::new((enabled, SeatWrite::Lands)) })
+    }
+
+    fn enabled(&self) -> bool {
+        self.state.lock().expect("the seat").0
+    }
+
+    fn writes(&self, write: SeatWrite) {
+        self.state.lock().expect("the seat").1 = write;
+    }
+
+    fn write(&self, enabled: bool) -> Result<(), String> {
+        let mut state = self.state.lock().expect("the seat");
+        match state.1 {
+            SeatWrite::Lands => state.0 = enabled,
+            SeatWrite::NoEffect => {}
+            SeatWrite::Refused => return Err("the test seat refuses this write".into()),
+        }
+        Ok(())
+    }
 }
 
 impl swiss::autostart::AutoStart for FakeSeat {
     fn status(&self) -> swiss::autostart::AutoStartState {
-        swiss::autostart::AutoStartState { enabled: self.enabled, detail: String::new(), command: String::new() }
+        swiss::autostart::AutoStartState { enabled: self.enabled(), detail: "the test seat".into(), command: String::new() }
     }
 
-    fn set(&self, _enabled: bool) -> Result<swiss::autostart::AutoStartState, String> {
-        Err("the test seat is not written".into())
+    fn set(&self, enabled: bool) -> Result<swiss::autostart::AutoStartState, String> {
+        self.write(enabled)?;
+        Ok(swiss::autostart::AutoStart::status(self))
     }
 }
 
 impl swiss::userpath::UserPath for FakeSeat {
     fn status(&self) -> swiss::userpath::UserPathState {
-        swiss::userpath::UserPathState { enabled: self.enabled, detail: String::new(), dir: String::new() }
+        swiss::userpath::UserPathState { enabled: self.enabled(), detail: "the test seat".into(), dir: String::new() }
     }
 
-    fn set(&self, _enabled: bool) -> Result<swiss::userpath::UserPathState, String> {
-        Err("the test seat is not written".into())
+    fn set(&self, enabled: bool) -> Result<swiss::userpath::UserPathState, String> {
+        self.write(enabled)?;
+        Ok(swiss::userpath::UserPath::status(self))
     }
 }
 
@@ -99,6 +134,8 @@ struct Gateway {
     host: Arc<PluginHost>,
     requests: Requests,
     hooks: Hooks,
+    autostart: Arc<FakeSeat>,
+    user_path: Arc<FakeSeat>,
 }
 
 impl Gateway {
@@ -164,8 +201,9 @@ async fn compose(raw: Value, start: bool, llm: bool, remote: bool) -> Gateway {
     let tokens = Arc::new(TokenManager::new(managed.clone(), Some(TOKEN)));
     let ctx = AppContext::new(registry.clone(), tokens, managed.clone(), calls.clone(), traffic.clone(), "SWISS_TOKEN", 19999);
     // Seats stay fakes: a real read would consult this machine's login items and PATH.
-    assert!(ctx.autostart.set(Arc::new(FakeSeat { enabled: false })).is_ok(), "autostart is set once");
-    assert!(ctx.user_path.set(Arc::new(FakeSeat { enabled: true })).is_ok(), "the user path is set once");
+    let (autostart, user_path) = (FakeSeat::new(false), FakeSeat::new(true));
+    assert!(ctx.autostart.set(autostart.clone()).is_ok(), "autostart is set once");
+    assert!(ctx.user_path.set(user_path.clone()).is_ok(), "the user path is set once");
 
     let config_store = ConfigStore::from_loaded(dir.join("gateway.config.json"), raw);
     let services = swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo::default());
@@ -233,7 +271,7 @@ async fn compose(raw: Value, start: bool, llm: bool, remote: bool) -> Gateway {
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
-    Gateway { port, registry, host, requests, hooks }
+    Gateway { port, registry, host, requests, hooks, autostart, user_path }
 }
 
 fn input(manifest: Value, base: &Path) -> Input {
@@ -269,6 +307,88 @@ async fn machine_tunnels_and_remote_converge_without_a_second_write() {
     assert_eq!(code, 0, "{again}");
     assert_eq!(again["summary"]["unchanged"], json!(4), "{again}");
     assert_eq!(gw.writes(), writes, "a converged apply writes nothing");
+}
+
+// SPEC §host.setup: `path` and `autostart` "use the panel's routes", a plan writes nothing, and the
+// same manifest applied again reports only `unchanged`.
+#[tokio::test]
+async fn machine_seats_go_through_the_panels_routes_and_converge() {
+    let gw = gateway().await;
+    let seats = || (gw.user_path.enabled(), gw.autostart.enabled());
+    assert_eq!(seats(), (true, false), "where compose leaves them");
+    let manifest = input(json!({ "machine": { "path": false, "autostart": true } }), Path::new(""));
+
+    let (planned, code) = plan_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{planned}");
+    assert_eq!(planned["summary"]["willUpdate"], json!(2), "{planned}");
+    assert!(gw.writes().is_empty(), "{:?}", gw.writes());
+    assert_eq!(seats(), (true, false), "a plan moves neither seat");
+
+    let (first, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{first}");
+    assert_eq!(first["summary"]["updated"], json!(2), "{first}");
+    assert_eq!(seats(), (false, true));
+    assert_eq!(gw.count("PUT", "/api/user-path"), 1, "{:?}", gw.writes());
+    assert_eq!(gw.count("PUT", "/api/autostart"), 1, "{:?}", gw.writes());
+    let writes = gw.writes();
+    assert_eq!(writes.len(), 2, "{writes:?}");
+
+    let (again, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{again}");
+    assert_eq!(again["summary"]["unchanged"], json!(2), "{again}");
+    assert_eq!(gw.writes(), writes, "a converged apply writes nothing");
+}
+
+// SPEC §host.setup: "Additive: what the manifest does not name is untouched."
+#[tokio::test]
+async fn a_seat_the_manifest_leaves_out_is_neither_read_nor_written() {
+    let gw = gateway().await;
+    let manifest = input(json!({ "machine": { "autostart": true } }), Path::new(""));
+    let (document, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(item(&document, "machine", "autostart")["status"], json!("updated"), "{document}");
+    assert!(gw.autostart.enabled());
+    assert!(gw.user_path.enabled(), "the seat it did not name stays");
+    assert!(gw.requests().iter().all(|(_, target)| target != "/api/user-path"), "{:?}", gw.requests());
+}
+
+// SPEC §host.setup: "A failed item does not stop the rest".
+#[tokio::test]
+async fn a_refused_seat_fails_its_item_and_the_rest_still_land() {
+    let gw = gateway().await;
+    gw.autostart.writes(SeatWrite::Refused);
+    let manifest = input(json!({
+        "machine": { "path": false, "autostart": true },
+        "mcps": { "after-the-seat": { "type": "echo" } },
+    }), Path::new(""));
+    let (document, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 1, "{document}");
+    let refused = item(&document, "machine", "autostart");
+    assert_eq!(refused["status"], json!("failed"), "{document}");
+    assert_eq!(refused["code"], json!("machine.write"), "{document}");
+    assert!(refused["error"].as_str().is_some_and(|error| error.contains("refuses this write")), "{document}");
+    assert!(!gw.autostart.enabled());
+    assert!(!gw.user_path.enabled(), "the other seat still moved");
+    assert_eq!(item(&document, "mcp", "after-the-seat")["status"], json!("created"), "{document}");
+}
+
+// SPEC §host.setup: a seat is judged by the state its route reads back, and a rerun tries it again.
+#[tokio::test]
+async fn a_seat_write_that_did_not_land_fails_and_is_tried_again() {
+    let gw = gateway().await;
+    gw.autostart.writes(SeatWrite::NoEffect);
+    let manifest = input(json!({ "machine": { "autostart": true } }), Path::new(""));
+    let (document, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 1, "{document}");
+    let stuck = item(&document, "machine", "autostart");
+    assert_eq!(stuck["code"], json!("machine.write"), "{document}");
+    assert_eq!(stuck["error"], json!("it did not change: the test seat"), "{document}");
+
+    gw.autostart.writes(SeatWrite::Lands);
+    let (document, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{document}");
+    assert_eq!(item(&document, "machine", "autostart")["status"], json!("updated"), "{document}");
+    assert!(gw.autostart.enabled());
 }
 
 #[tokio::test]
@@ -1346,6 +1466,7 @@ async fn connect_writes_the_client_and_not_the_document() {
     let (second, code) = connect_on(gw.port, false, "claude", &names, false, &env).await;
     assert_eq!(code, 0, "{second}");
     assert_eq!(second["items"][0]["status"], json!("unchanged"));
+    assert_eq!(second["next"], json!([]), "nothing was written, so nothing needs a restart: {second}");
     let calls = std::fs::read_to_string(dir.join("calls.txt")).expect("claude's argv");
     assert_eq!(calls.matches("mcp add").count(), 1, "an existing entry is not rewritten");
 }
