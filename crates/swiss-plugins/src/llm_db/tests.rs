@@ -1512,8 +1512,9 @@ async fn open_console_returns_an_id_and_a_run_addresses_that_id() {
     assert_eq!(pg.ran.lock().expect("ran").len(), 1, "the refused run reached no connection");
 }
 
-/// The console's tabs live on the page, so each send carries them (consoleTabs) and the
-/// tools address one by the id that survives a close: list names them all, read gives one
+/// The console's tabs live on the page, so a send without a console store carries them
+/// (consoleTabs), and a store-backed send reads the store's records instead. The tools address
+/// one by the id that survives a close: list names them all, read gives one
 /// tab's statements, edit and delete send one statement's change, open_console's tabId
 /// brings a closed one back - while an id or an index the page does not have is refused
 /// before any frame goes out.
@@ -2020,4 +2021,240 @@ async fn only_a_db_agent_on_a_data_connection_streams() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "a prompt is required");
     let (status, body) = call(&app, "POST", "/api/llm/db/stream", Some(json!({ "agent": "data", "conn": "mm", "prompt": "hi", "rowLimit": 0 }))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+/// `count` open snapshot tabs, numbered: ids t000, t001, ..., each with one statement.
+fn listed_tabs(count: usize) -> Vec<ConsoleTab> {
+    (0..count)
+        .map(|i| serde_json::from_value(json!({
+            "id": format!("t{i:03}"), "tab": format!("Tab {i:03}"), "open": true, "statements": [{ "sql": "SELECT 1" }],
+        })).expect("console"))
+        .collect()
+}
+
+/// The rows of a list answer: the lines that start a tab's row.
+fn rows_of(text: &str) -> Vec<&str> {
+    text.lines().filter(|line| line.starts_with("- ")).collect()
+}
+
+/// A record for the console store, with the given id, name and state.
+fn stored(id: &str, tab: &str, open: bool) -> crate::db_consoles::Console {
+    crate::db_consoles::Console {
+        id: id.into(), tab: tab.into(), agent: true, agent_tab: Some(tab.into()), open, sql: "SELECT 1".into(),
+        revision: 0, created_at: 0, updated_at: 0, closed_at: None,
+    }
+}
+
+#[tokio::test]
+async fn the_list_pages_fifty_tabs_and_names_the_next_offset() {
+    let (catalog, _) = catalog(1);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None).showing(listed_tabs(60));
+    let first = tools.call("list_console_tabs", &json!({})).await;
+    assert!(first.ok && first.text.starts_with("The page's console tabs on this connection (60 open, 0 closed)."), "{}", first.text);
+    assert!(first.text.contains("Showing 1-50 of 60, open first, then closed newest first. More with offset=50."), "{}", first.text);
+    assert_eq!(rows_of(&first.text).len(), 50, "{}", first.text);
+    let second = tools.call("list_console_tabs", &json!({ "offset": 50 })).await;
+    assert!(second.ok && second.text.contains("Showing 51-60 of 60, open first, then closed newest first."), "{}", second.text);
+    assert!(!second.text.contains("More with offset"), "{}", second.text);
+    let rows = rows_of(&second.text);
+    assert_eq!(rows.len(), 10, "{}", second.text);
+    assert!(rows[0].starts_with("- t050 - "), "{}", second.text);
+}
+
+#[tokio::test]
+async fn open_tabs_list_first_then_closed_ones_newest_first_from_the_store() {
+    let root = swiss_core::paths::test_home().join(format!("tabs-order-{}", swiss_core::util::random_hex(8)));
+    let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
+    // Each record is written a few milliseconds after the one before, so the times order them.
+    for (id, open) in [("c-old", false), ("o-first", true), ("c-mid", false), ("c-new", false), ("o-second", true)] {
+        store.put("mm", stored(id, id, open), crate::db_consoles::SaveMode::Create, "").expect("saved");
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    let (catalog, _) = catalog(1);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None);
+    tools.consoles = Some(store.clone());
+    let listed = tools.call("list_console_tabs", &json!({})).await;
+    assert!(listed.ok, "{}", listed.text);
+    let rows = rows_of(&listed.text);
+    let ids: Vec<&str> = rows.iter().map(|row| row.split(' ').nth(1).unwrap_or_default()).collect();
+    assert_eq!(ids, ["o-second", "o-first", "c-new", "c-mid", "c-old"], "{}", listed.text);
+    // The list sorts a copy: the tabs keep the store's own order, which is not the list's.
+    let kept: Vec<String> = tools.tabs.iter().map(|tab| tab.id.clone()).collect();
+    assert_ne!(kept, ids, "the store order differs, so the list order is a real sort");
+    let again = tools.call("list_console_tabs", &json!({})).await;
+    assert_eq!(tools.tabs.iter().map(|tab| tab.id.clone()).collect::<Vec<_>>(), kept);
+    assert_eq!(rows_of(&again.text), rows);
+    std::fs::remove_dir_all(root).expect("scratch cleanup");
+}
+
+/// Snapshot tabs for the grep and state tests: a revenue tab by name, a tab whose statement
+/// holds an upper-case column, a closed tab in Chinese, and one whose match sits far into a line.
+fn searched_tabs() -> Vec<ConsoleTab> {
+    serde_json::from_value(json!([
+        { "id": "rev", "tab": "Revenue Report", "open": true, "statements": [{ "sql": "SELECT 1" }] },
+        { "id": "usr", "tab": "Users", "open": true, "statements": [{ "sql": "SELECT id\nFROM users\nWHERE Email LIKE '%@x.com'" }] },
+        { "id": "zh", "tab": "达标用户核查", "open": false, "statements": [{ "sql": "-- 查询\nselect 收入 from 订单" }] },
+        { "id": "far", "tab": "Far", "open": true, "statements": [{ "sql": format!("{}SELECT revenue_total FROM t", "x".repeat(500)) }] },
+    ])).expect("consoles")
+}
+
+#[tokio::test]
+async fn grep_finds_tabs_by_name_or_statement_and_shows_the_matching_line() {
+    let (catalog, _) = catalog(1);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None).showing(searched_tabs());
+    // A name match shows no line; a statement match shows the statement's index and its line.
+    let by_name = tools.call("list_console_tabs", &json!({ "grep": "REVENUE" })).await;
+    assert!(by_name.ok && by_name.text.contains("- rev - \"Revenue Report\", open, 1 statement\n"), "{}", by_name.text);
+    assert_eq!(by_name.text.matches("\n    [").count(), 1, "only the far tab's statement shows a line: {}", by_name.text);
+    assert!(by_name.text.contains("- far - \"Far\", open, 1 statement\n    [0] …"), "{}", by_name.text);
+    assert!(by_name.text.contains("revenue_total FROM t"), "a match far into a long line is shown: {}", by_name.text);
+    let by_statement = tools.call("list_console_tabs", &json!({ "grep": "EMAIL like" })).await;
+    assert!(by_statement.text.contains("- usr - \"Users\", open, 1 statement\n    [0] WHERE Email LIKE '%@x.com'\n"), "{}", by_statement.text);
+    let chinese = tools.call("list_console_tabs", &json!({ "grep": "收入" })).await;
+    assert!(chinese.text.contains("- zh - \"达标用户核查\", closed, 1 statement\n    [0] select 收入 from 订单\n"), "{}", chinese.text);
+    let chinese_name = tools.call("list_console_tabs", &json!({ "grep": "达标" })).await;
+    assert!(chinese_name.text.contains("- zh - \"达标用户核查\", closed, 1 statement\n"), "{}", chinese_name.text);
+    assert!(!chinese_name.text.contains("\n    ["), "{}", chinese_name.text);
+    let none = tools.call("list_console_tabs", &json!({ "grep": "nothing-here" })).await;
+    assert!(none.ok && none.text.contains("No console tab matches grep \"nothing-here\"."), "{}", none.text);
+    assert!(!none.text.contains("read_console_tab reads one by tabId"), "no usage hint on a miss: {}", none.text);
+}
+
+#[tokio::test]
+async fn state_filters_the_list_and_an_unknown_state_is_refused() {
+    let (catalog, _) = catalog(1);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None).showing(searched_tabs());
+    let closed = tools.call("list_console_tabs", &json!({ "state": "closed" })).await;
+    assert_eq!(rows_of(&closed.text).len(), 1, "{}", closed.text);
+    assert!(closed.text.contains("Showing 1-1 of 1 matching state closed, open first, then closed newest first."), "{}", closed.text);
+    assert!(rows_of(&closed.text)[0].starts_with("- zh - "), "{}", closed.text);
+    let open = tools.call("list_console_tabs", &json!({ "state": "open" })).await;
+    assert_eq!(rows_of(&open.text).len(), 3, "{}", open.text);
+    let both = tools.call("list_console_tabs", &json!({ "state": null })).await;
+    assert_eq!(rows_of(&both.text).len(), 4, "{}", both.text);
+    for bad in [json!("later"), json!(""), json!(7)] {
+        let answer = tools.call("list_console_tabs", &json!({ "state": bad })).await;
+        assert!(!answer.ok && answer.text == "state must be open or closed; omit it for both", "{}", answer.text);
+    }
+}
+
+#[tokio::test]
+async fn limit_is_clamped_and_an_offset_past_the_end_says_so() {
+    let (catalog, _) = catalog(1);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None).showing(listed_tabs(250));
+    let least = tools.call("list_console_tabs", &json!({ "limit": 0 })).await;
+    assert_eq!(rows_of(&least.text).len(), 1, "{}", least.text);
+    assert!(least.text.contains("Showing 1-1 of 250, open first, then closed newest first. More with offset=1."), "{}", least.text);
+    let most = tools.call("list_console_tabs", &json!({ "limit": 9999 })).await;
+    assert_eq!(rows_of(&most.text).len(), 200, "{}", most.text);
+    assert!(most.text.contains("More with offset=200."), "{}", most.text);
+    let past = tools.call("list_console_tabs", &json!({ "offset": 999 })).await;
+    assert!(past.ok && past.text.contains("Showing none of the 250: offset 999 is past the last."), "{}", past.text);
+}
+
+#[tokio::test]
+async fn a_long_list_never_cuts_a_row_and_its_next_offset_resumes_exactly() {
+    let tabs: Vec<ConsoleTab> = (0..300)
+        .map(|i| serde_json::from_value(json!({
+            "id": format!("t{i:03}"), "tab": format!("{i:03} {}", "n".repeat(500)), "open": true, "statements": [{ "sql": "SELECT 1" }],
+        })).expect("console"))
+        .collect();
+    let (catalog, _) = catalog(1);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None).showing(tabs).partially_showing(true);
+    let answer = tools.call("list_console_tabs", &json!({ "limit": 200 })).await;
+    assert!(answer.ok, "{}", answer.text);
+    assert!(answer.text.chars().count() <= ANSWER_TEXT_MAX, "{} characters", answer.text.chars().count());
+    assert!(answer.text.contains("The snapshot omitted additional console tabs; this list is incomplete."), "{}", answer.text);
+    assert!(answer.text.contains("read_console_tab reads one by tabId"), "{}", answer.text);
+    let rows = rows_of(&answer.text);
+    assert!(!rows.is_empty() && rows.len() < 200, "the budget, not the limit, ends the rows: {}", rows.len());
+    for row in &rows {
+        assert!(row.ends_with(", open, 1 statement") && row.contains('…'), "a row is whole and its name clipped: {row}");
+    }
+    let more: usize = answer.text.split("More with offset=").nth(1)
+        .and_then(|rest| rest.split('.').next())
+        .and_then(|n| n.parse().ok())
+        .expect("a More offset");
+    assert_eq!(more, rows.len(), "the next offset is the first row not shown");
+    let next = tools.call("list_console_tabs", &json!({ "limit": 200, "offset": more })).await;
+    assert!(rows_of(&next.text)[0].starts_with(&format!("- t{more:03} - ")), "{}", next.text);
+}
+
+#[tokio::test]
+async fn a_store_backed_list_sees_every_record_and_grep_reaches_the_oldest() {
+    let root = swiss_core::paths::test_home().join(format!("tabs-store-{}", swiss_core::util::random_hex(8)));
+    let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
+    for i in 0..60 {
+        store.put("mm", stored(&format!("r{i:02}"), &format!("Record {i:02}"), true), crate::db_consoles::SaveMode::Create, "").expect("saved");
+    }
+    let (catalog, _) = catalog(1);
+    // The page sent no snapshot at all: the store is the whole list.
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None);
+    tools.consoles = Some(store.clone());
+    let all = tools.call("list_console_tabs", &json!({})).await;
+    assert!(all.text.starts_with("The page's console tabs on this connection (60 open, 0 closed)."), "{}", all.text);
+    assert!(all.text.contains("Showing 1-50 of 60, open first"), "{}", all.text);
+    let oldest = tools.call("list_console_tabs", &json!({ "grep": "record 00" })).await;
+    assert!(oldest.text.contains("- r00 - \"Record 00\", open, 1 statement\n"), "{}", oldest.text);
+    assert!(oldest.text.contains("Showing 1-1 of 1 matching grep \"record 00\", open first"), "{}", oldest.text);
+    std::fs::remove_dir_all(root).expect("scratch cleanup");
+}
+
+#[tokio::test]
+async fn a_tool_that_reads_no_tab_never_reads_the_store() {
+    let root = swiss_core::paths::test_home().join(format!("tabs-corrupt-{}", swiss_core::util::random_hex(8)));
+    let store = crate::db_consoles::ConsoleStore::at(root.clone(), swiss_bus::Bus::new(Arc::new(String::new)));
+    // The connection "mm" keeps its records under the hex of its name; one corrupt record there
+    // makes every store read fail, and only the tools that address a tab read the store.
+    let dir = root.join("6d6d");
+    std::fs::create_dir_all(&dir).expect("store dir");
+    std::fs::write(dir.join("corrupt.json"), "{ not json").expect("corrupt record");
+    let (catalog, _) = catalog(1);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, None).remembering(DbMemory::at(&root.join("memory"), "mm"));
+    tools.consoles = Some(store);
+    let read = tools.call("read_memory", &json!({})).await;
+    assert!(read.ok, "{}", read.text);
+    let listed = tools.call("list_console_tabs", &json!({})).await;
+    assert!(!listed.ok && listed.text.contains("not valid JSON"), "{}", listed.text);
+    std::fs::remove_dir_all(root).expect("scratch cleanup");
+}
+
+#[tokio::test]
+async fn a_long_console_tab_reads_in_pages_by_statement_and_keeps_its_tail() {
+    let statements: Vec<Value> = (0..30).map(|i| json!({ "sql": format!("SELECT {i:02} {}", "x".repeat(900)) })).collect();
+    let tab: ConsoleTab = serde_json::from_value(json!({ "id": "long", "tab": "Long", "open": true, "statements": statements })).expect("console");
+    let (registry, _) = catalog(1);
+    let mut tools = DbTools::new(registry, "mm", DbKind::Sql, None).showing(vec![tab]);
+    let mut offset: i64 = 0;
+    let mut seen: Vec<String> = Vec::new();
+    loop {
+        let answer = tools.call("read_console_tab", &json!({ "tabId": "long", "offset": offset })).await;
+        assert!(answer.ok, "{}", answer.text);
+        assert!(answer.text.chars().count() <= ANSWER_TEXT_MAX, "{} characters", answer.text.chars().count());
+        assert!(answer.text.contains("edit_console_sql replaces one of them by tabId long"), "{}", answer.text);
+        seen.extend(answer.text.lines().filter(|line| line.starts_with('[')).map(str::to_string));
+        match answer.text.split("More with offset=").nth(1) {
+            Some(rest) => offset = rest.split('.').next().and_then(|n| n.parse().ok()).expect("a next offset"),
+            None => break,
+        }
+    }
+    assert_eq!(seen, (0..30).map(|i| format!("[{i}]")).collect::<Vec<_>>(), "following More reaches every statement once");
+    let past = tools.call("read_console_tab", &json!({ "tabId": "long", "offset": 30 })).await;
+    assert!(!past.ok && past.text == "offset 30 is past the console tab \"Long\" (long), which holds 30 statements - 0 to 29", "{}", past.text);
+    // One statement over the whole budget: not shown from the start, but clipped with its
+    // not-shown line when it opens the answer.
+    let big: ConsoleTab = serde_json::from_value(json!({ "id": "big", "tab": "Big", "open": true, "statements": [
+        { "sql": "SELECT 1" }, { "sql": "y".repeat(13_000) }, { "sql": "SELECT 2" },
+    ] })).expect("console");
+    let (registry, _) = catalog(1);
+    let mut tools = DbTools::new(registry, "mm", DbKind::Sql, None).showing(vec![big]);
+    let before = tools.call("read_console_tab", &json!({ "tabId": "big" })).await;
+    assert!(before.text.contains("Statements 0-0 of 3 shown. More with offset=1."), "{}", before.text);
+    assert!(!before.text.contains("is not shown"), "{}", before.text);
+    let clipped = tools.call("read_console_tab", &json!({ "tabId": "big", "offset": 1 })).await;
+    assert!(clipped.ok && clipped.text.contains("\n[1]\n"), "{}", clipped.text);
+    assert!(clipped.text.contains("Statement 1 is 13000 characters and its end is not shown."), "{}", clipped.text);
+    assert!(clipped.text.contains("Statements 1-1 of 3 shown. More with offset=2."), "{}", clipped.text);
+    assert!(clipped.text.chars().count() <= ANSWER_TEXT_MAX, "{} characters", clipped.text.chars().count());
+    assert!(clipped.text.contains("edit_console_sql replaces one of them by tabId big"), "{}", clipped.text);
 }

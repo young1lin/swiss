@@ -380,8 +380,10 @@ pub(super) fn shut_steer() -> Arc<Steer> {
 /// Only a db agent works here, and only on a MySQL, PostgreSQL, MongoDB or Redis connection.
 /// schema is the page's schema in view, or its database on MongoDB. rowLimit is the
 /// console's: a run without a limit of its own brings back that many rows or documents.
-/// consoleTabs is the console's tabs, open and closed, with their ids, names and statements -
-/// the page's own record, which list_console_tabs and read_console_tab answer from.
+/// consoleTabs is the console's tabs, open and closed, with their ids, names and statements,
+/// sent when the connection has no console store - the page's record then, which
+/// list_console_tabs and read_console_tab answer from. With the store (consoleStore) the page
+/// sends none: the tools read the store's records.
 /// provider, model and effort are the pane's menu (each absent the agent's own): a
 /// continuation moves to that model, the model told so after the reader's words. writes is
 /// the pane's switch on a SQL connection, stage (absent) or auto (SPEC §data.agent Writes): in
@@ -442,7 +444,8 @@ pub async fn stream(State(state): State<Arc<LlmState>>, Extension(services): Ext
         Some(Value::Bool(true)) => true,
         _ => return bad("consoleStore must be a boolean"),
     };
-    // The console's tabs, open and closed, as the page holds them: the only place they exist.
+    // The console's tabs, open and closed, as the page holds them without a console store; with
+    // one, the page sends none and the tools read the store's records.
     let console_tabs = match console_tabs_of(&body) {
         Ok(tabs) => tabs,
         Err(why) => return bad(why),

@@ -46,6 +46,17 @@ use super::text::*;
 pub(super) const STAGED: &str = "Placed in the user's console. It has NOT run: the user reviews it and runs it themselves.";
 /// The longest name a console tab of the agent's takes (open_console, a run's or stage's tab).
 pub(super) const TAB_MAX: usize = 40;
+/// The most console tabs list_console_tabs lists when the model names no limit.
+pub(super) const TABS_LISTED: i64 = 50;
+/// The most console tabs one list_console_tabs answer lists, whatever limit the model asks.
+pub(super) const TABS_LISTED_MAX: i64 = 200;
+/// The most characters of a console tab's name a list row shows; the rest is clipped.
+pub(super) const TAB_NAME_SHOWN: usize = 80;
+/// The most characters of a statement's line a grep answer shows around its match.
+pub(super) const GREP_LINE_SHOWN: usize = 120;
+/// The room a read_console_tab answer keeps for its tail: the more-statements note, the change
+/// note and the edit hint, which always survive.
+const READ_TAIL_RESERVE: usize = 600;
 /// The longest console tab id taken back from the model: the page's are ~14 characters, this
 /// only refuses a paste that could not be one.
 pub(super) const TAB_ID_MAX: usize = 64;
@@ -294,7 +305,8 @@ pub(super) fn console_blocks(text: &str) -> Vec<ConsoleStatement> {
 /// A console tab as the page sent it (SPEC §data.agent Tabs): the id that survives a close and
 /// a reload, the name on its card, whether it is open - and, closed, still in Recently closed -
 /// whether it is a console of the agent's own, and the statements it holds. The page owns every
-/// one of these; the tools here read this snapshot and post frames, never the tab itself.
+/// one of these; the tools here read this snapshot - or, with a console store, its records
+/// (refresh_consoles) - and post frames, never the tab itself.
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ConsoleTab {
@@ -317,6 +329,9 @@ pub struct ConsoleTab {
     pub(super) created_at: i64,
     #[serde(skip)]
     pub(super) updated_at: i64,
+    /// When a closed tab left the page, from the store: the order closed tabs list by.
+    #[serde(skip)]
+    pub(super) closed_at: Option<i64>,
     /// Exact stored text, including indentation and separators between statements.
     #[serde(skip)]
     pub(super) sql_text: Option<String>,
@@ -372,6 +387,48 @@ impl ConsoleTab {
     }
 }
 
+/// Whether a tab's name or one of its statements holds the needle (already lowercase). A tab
+/// whose statements are omitted can match by name only.
+fn tab_matches(tab: &ConsoleTab, needle: &str) -> bool {
+    tab.tab.to_lowercase().contains(needle) || tab.statements.iter().any(|statement| statement.sql.to_lowercase().contains(needle))
+}
+
+/// One listed tab's row: its id, name, state and statement count. Under a grep whose needle the
+/// name did not hold, the first statement that holds it follows, with its index and its line.
+fn tab_row(tab: &ConsoleTab, needle: Option<&str>) -> String {
+    let mut row = format!("- {} - \"{}\", {}, {}\n", tab.id, clip(&tab.tab, TAB_NAME_SHOWN), tab.state(), tab.count());
+    if let Some(needle) = needle.filter(|needle| !tab.tab.to_lowercase().contains(*needle)) {
+        let found = tab.statements.iter().enumerate()
+            .find_map(|(index, statement)| grep_line(&statement.sql, needle).map(|line| (index, line)));
+        if let Some((index, line)) = found { row.push_str(&format!("    [{index}] {line}\n")); }
+    }
+    row
+}
+
+/// The first line of a statement that holds the needle (already lowercase), trimmed, cut to
+/// GREP_LINE_SHOWN characters that start 40 before the match, with `…` where either end was cut.
+/// None when no line holds it. Works on characters, so non-ASCII text is safe.
+fn grep_line(sql: &str, needle: &str) -> Option<String> {
+    let wanted: Vec<char> = needle.chars().collect();
+    if wanted.is_empty() { return None; }
+    let line = sql.lines().map(str::trim).find(|line| line.to_lowercase().contains(needle))?;
+    let chars: Vec<char> = line.chars().collect();
+    // The lowercased characters, each with the index of the original character it came from.
+    let mut lowered: Vec<(char, usize)> = Vec::with_capacity(chars.len());
+    for (index, c) in chars.iter().enumerate() {
+        lowered.extend(c.to_lowercase().map(|lower| (lower, index)));
+    }
+    let found = lowered.windows(wanted.len()).position(|window| window.iter().zip(&wanted).all(|((c, _), w)| c == w));
+    let at = found.map_or(0, |pos| lowered[pos].1);
+    let start = at.saturating_sub(40);
+    let end = (start + GREP_LINE_SHOWN).min(chars.len());
+    let mut snippet = String::new();
+    if start > 0 { snippet.push('…'); }
+    snippet.extend(&chars[start..end]);
+    if end < chars.len() { snippet.push('…'); }
+    Some(snippet)
+}
+
 /// The Data agent's tools, on one connection of one kind. `page` is the stream to the Data
 /// page: each statement or command the agent runs or stages goes there as a `db` frame
 /// (awaited, so it lands between the call's tool and toolResult frames).
@@ -399,8 +456,9 @@ pub struct DbTools {
     pub(super) writes: Writes,
     /// The console tabs the page sent with this send, open and closed: what list_console_tabs
     /// and read_console_tab answer from, and the ids open_console and the edit tools resolve.
-    /// The conversation's own view of it: an edit or a delete this send sends is applied here
-    /// too, so a read after it lists what the page now holds instead of the tab as the send
+    /// On a store-backed connection the page sends none and refresh_consoles fills this from the
+    /// store. The conversation's own view of it: an edit or a delete this send sends is applied
+    /// here too, so a read after it lists what the page now holds instead of the tab as the send
     /// began - the snapshot alone would hand back indices that no longer name the statement.
     pub(super) tabs: Vec<ConsoleTab>,
     pub(super) tabs_partial: bool,
@@ -466,7 +524,7 @@ impl DbTools {
             id: entry.id, tab: entry.tab, open: entry.open, agent: entry.agent,
             agent_tab: entry.agent_tab, statements: console_blocks(&entry.sql), sql_text: Some(entry.sql),
             revision: entry.revision, created_at: entry.created_at, updated_at: entry.updated_at,
-            ..ConsoleTab::default()
+            closed_at: entry.closed_at, ..ConsoleTab::default()
         }));
         Ok(())
     }
@@ -770,18 +828,72 @@ impl DbTools {
     /// The console tabs the page holds on this connection - open, and the closed ones still in
     /// Recently closed - each with its id, name, state and how many statements it holds. What
     /// every other console tool addresses.
-    pub(super) fn list_console_tabs(&self, _args: &Value) -> ToolAnswer {
+    /// The tabs in pages: grep, state and limit narrow them, offset skips the ones before, and the
+    /// first lines give the totals and the offset of the next page. Never cut mid-row.
+    pub(super) fn list_console_tabs(&self, args: &Value) -> ToolAnswer {
         if self.tabs.is_empty() && !self.tabs_partial {
             return answered("No console tabs on the page: none open, none closed, on this connection.");
         }
         let open = self.tabs.iter().filter(|tab| tab.open).count();
-        let mut out = format!("The page's console tabs on this connection ({} open, {} closed):\n", open, self.tabs.len() - open);
-        for tab in &self.tabs {
-            out.push_str(&format!("- {} - \"{}\", {}, {}\n", tab.id, tab.tab, tab.state(), tab.count()));
-        }
+        let mut out = format!("The page's console tabs on this connection ({open} open, {} closed).\n", self.tabs.len() - open);
         if self.tabs_partial { out.push_str("The snapshot omitted additional console tabs; this list is incomplete.\n"); }
-        out.push_str("\nread_console_tab reads one by tabId; edit_console_sql and delete_console_sql take a tabId and a statement's index; open_console with that tabId brings the tab to the front, a closed one restored with its statements.");
-        answered(clip(&out, ANSWER_TEXT_MAX))
+        let grep = string_arg(args, "grep");
+        let needle = grep.as_ref().map(|grep| grep.to_lowercase());
+        // None is both states; Some(true) the open tabs only, Some(false) the closed ones only.
+        let state = match args.get("state") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(text)) if matches!(text.as_str(), "open" | "closed") => Some(text.as_str() == "open"),
+            Some(_) => return refused("state must be open or closed; omit it for both"),
+        };
+        let limit = args.get("limit").and_then(Value::as_i64).map_or(TABS_LISTED, |n| n.clamp(1, TABS_LISTED_MAX)) as usize;
+        let offset = args.get("offset").and_then(Value::as_i64).unwrap_or(0).max(0) as usize;
+        // The view is a copy: self.tabs keeps its order, other code holds indices into it. Open
+        // tabs come first, then the closed ones, newest first; a page snapshot has no times, so
+        // its tabs keep the page's order.
+        let mut view: Vec<&ConsoleTab> = self.tabs.iter()
+            .filter(|tab| state.is_none_or(|want| tab.open == want))
+            .filter(|tab| needle.as_deref().is_none_or(|needle| tab_matches(tab, needle)))
+            .collect();
+        view.sort_by_key(|tab| (!tab.open, std::cmp::Reverse(tab.closed_at.unwrap_or(tab.updated_at))));
+        let matching = view.len();
+        let mut parts = Vec::new();
+        if let Some(grep) = &grep { parts.push(format!("grep \"{}\"", clip(grep, TAB_NAME_SHOWN))); }
+        if let Some(want) = state { parts.push(format!("state {}", if want { "open" } else { "closed" })); }
+        let filters = parts.join(", ");
+        let what = if filters.is_empty() { String::new() } else { format!(" matching {filters}") };
+        if matching == 0 {
+            if filters.is_empty() { out.push_str("No console tab is in the list the page sent."); }
+            else { out.push_str(&format!("No console tab matches {filters}.")); }
+            return answered(out);
+        }
+        if offset >= matching {
+            out.push_str(&format!("Showing none of the {matching}{what}: offset {offset} is past the last."));
+            return answered(out);
+        }
+        let usage = "\nread_console_tab reads one by tabId; edit_console_sql and delete_console_sql take a tabId and a statement's index; open_console with that tabId brings the tab to the front, a closed one restored with its statements.";
+        let line_two = |last: usize| -> String {
+            let mut line = format!("Showing {}-{last} of {matching}{what}, open first, then closed newest first.", offset + 1);
+            if last < matching { line.push_str(&format!(" More with offset={last}.")); }
+            line.push('\n');
+            line
+        };
+        // Rows go in while the whole answer, with the head and the usage sentence counted, stays
+        // within the limit; the first row always goes in.
+        let mut used = out.chars().count() + usage.chars().count();
+        let mut rows = String::new();
+        let mut shown = 0;
+        for tab in view.iter().skip(offset).take(limit) {
+            let row = tab_row(tab, needle.as_deref());
+            let row_len = row.chars().count();
+            if shown > 0 && used + row_len + line_two(offset + shown + 1).chars().count() > ANSWER_TEXT_MAX { break; }
+            used += row_len;
+            rows.push_str(&row);
+            shown += 1;
+        }
+        out.push_str(&line_two(offset + shown));
+        out.push_str(&rows);
+        out.push_str(usage);
+        answered(out)
     }
 
     /// One console tab's statements in order: each one's 0-based index, its text, and the name
@@ -797,16 +909,45 @@ impl DbTools {
         if tab.statements.is_empty() {
             return answered(format!("The console tab \"{}\" ({}) holds no statement.", tab.tab, tab.id));
         }
+        let offset = args.get("offset").and_then(Value::as_i64).unwrap_or(0).max(0) as usize;
+        if offset >= tab.statements.len() {
+            return refused(format!(
+                "offset {offset} is past the console tab \"{}\" ({}), which holds {} - 0 to {}",
+                tab.tab, tab.id, tab.count(), tab.statements.len() - 1
+            ));
+        }
         let mut out = format!("The console tab \"{}\" ({}), {}:\n", tab.tab, tab.id, tab.state());
-        for (index, statement) in tab.statements.iter().enumerate() {
+        // Whole statements while they fit beside the tail; the first one alone may be clipped.
+        let room = ANSWER_TEXT_MAX - READ_TAIL_RESERVE;
+        let mut next = offset;
+        for (index, statement) in tab.statements.iter().enumerate().skip(offset) {
             let title = statement.title.as_deref().map(|title| format!(" {title}")).unwrap_or_default();
-            out.push_str(&format!("\n[{index}]{title}\n{}\n", statement.sql));
+            let row = format!("\n[{index}]{title}\n{}\n", statement.sql);
+            if out.chars().count() + row.chars().count() <= room {
+                out.push_str(&row);
+                next = index + 1;
+                continue;
+            }
+            if index == offset {
+                let note = format!("Statement {index} is {} characters and its end is not shown.\n", statement.sql.chars().count());
+                let head = format!("\n[{index}]{title}\n");
+                let keep = room.saturating_sub(out.chars().count() + head.chars().count() + note.chars().count() + 2);
+                out.push_str(&head);
+                out.push_str(&clip(&statement.sql, keep));
+                out.push('\n');
+                out.push_str(&note);
+                next = index + 1;
+            }
+            break;
+        }
+        if next < tab.statements.len() {
+            out.push_str(&format!("\nStatements {offset}-{} of {} shown. More with offset={next}.", next - 1, tab.statements.len()));
         }
         if tab.changed {
             out.push_str("\nThis conversation changed this tab during this send: the statements above are as those changes left it, not as the page last reported it. The page applies each frame as it arrives and its console is the truth - a new send carries it back.");
         }
         out.push_str(&format!("\nedit_console_sql replaces one of them by tabId {} and its index; delete_console_sql drops one.", tab.id));
-        answered(clip(&out, ANSWER_TEXT_MAX))
+        answered(out)
     }
 
     /// One statement of one console tab replaced. The page owns the text, so this sends the
@@ -1306,13 +1447,22 @@ pub(super) fn console_specs() -> Vec<ToolSpec> {
     vec![
         spec(
             "list_console_tabs",
-            "List every console tab on this connection - the open ones, then the closed ones still in Recently closed - with its id, name, whether it is open and how many statements it holds. Read-only.",
-            json!({ "type": "object", "properties": {} }),
+            "List this connection's console tabs: the open ones, then the closed ones still in Recently closed, newest first, each with its id, name, whether it is open and how many statements it holds. The first lines give the totals and the next offset. With many tabs, pass grep rather than paging through them. Read-only.",
+            json!({ "type": "object", "properties": {
+                "grep": { "type": "string", "description": "Keep the tabs whose name or statements contain this text, ignoring case. A tab found by a statement shows that statement's index and the line it matched." },
+                "state": { "type": "string", "enum": ["open", "closed"], "description": "Only the open tabs or only the closed ones. Omit for both." },
+                "limit": { "type": "integer", "description": "The most tabs to return: 50 when omitted, at most 200." },
+                "offset": { "type": "integer", "description": "How many matching tabs to skip, as the previous answer's More says." }
+            } }),
         ),
         spec(
             "read_console_tab",
             "Read one console tab's statements in order: each one's 0-based index, its text and the name its first line comments it with.",
-            json!({ "type": "object", "properties": { "tabId": tab_id, "tab": tab } }),
+            json!({ "type": "object", "properties": {
+                "tabId": tab_id,
+                "tab": tab,
+                "offset": { "type": "integer", "description": "The 0-based statement to start from, as the previous answer's More says. Omit to start at the first." }
+            } }),
         ),
         spec(
             "edit_console_sql",
@@ -1325,6 +1475,13 @@ pub(super) fn console_specs() -> Vec<ToolSpec> {
             json!({ "type": "object", "properties": { "tabId": tab_id, "index": index }, "required": ["tabId", "index"] }),
         ),
     ]
+}
+
+/// The tools that read or change a console tab, so need the store's records fresh before they
+/// run. Every other tool works without the tabs, so it never touches the store.
+fn reads_console_tabs(name: &str) -> bool {
+    matches!(name, "run_sql" | "stage_sql" | "run_mongo" | "stage_mongo" | "run_redis" | "stage_redis"
+        | "open_console" | "list_console_tabs" | "read_console_tab" | "edit_console_sql" | "delete_console_sql")
 }
 
 pub(super) fn spec(name: &str, description: &str, schema: Value) -> ToolSpec {
@@ -1481,10 +1638,13 @@ impl Toolbox for DbTools {
     }
 
     async fn call(&mut self, name: &str, args: &Value) -> ToolAnswer {
-        if let Err(why) = self.refresh_consoles() { return refused(why); }
         // Only the connection kind's own and the memory: another kind's name is no tool here.
         if !db_tools_on(self.kind.as_str()).iter().chain(db_tools_shared()).any(|tool| tool.name == name) {
             return refused(format!("no tool named {name}"));
+        }
+        // Only the tools that address a console tab read the store's records, fresh for each call.
+        if reads_console_tabs(name) {
+            if let Err(why) = self.refresh_consoles() { return refused(why); }
         }
         match name {
             "analysis" => {

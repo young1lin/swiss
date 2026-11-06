@@ -368,10 +368,17 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   its existing stored bytes. MongoDB and Redis retain optional `tab`/`tabId` and their default
   Agent slot. Names and IDs are validated before any side effects.
 - **A tab's id.** Every console tab carries an id (the strip's own, §data.tabs), and the tools
-  address a tab by it: `list_console_tabs` lists the connection's tabs - open, then the ones
-  still in Recently closed - with each one's id, name, state and how many statements it holds;
-  `read_console_tab {tabId | tab}` reads one, each statement with its 0-based index, its text
-  and the name its first line comments it with; `edit_console_sql {tabId, index, sql}` replaces
+  address a tab by it: `list_console_tabs {grep?, state?, limit?, offset?}` pages the
+  connection's tabs - 50 by default, at most 200 - open ones first, then the ones still in
+  Recently closed, each newest first (a page snapshot keeps the page's order). `grep` matches
+  a tab's name or any of its statements
+  (case-insensitive) and shows the first matching line of each tab that matched by statement;
+  `state` is `open` or `closed`. The answer states the totals, the shown range and
+  `More with offset=N.` when more remain; a row is never cut, and the answer stays within the
+  answer budget. `read_console_tab {tabId | tab, offset?}` reads one in whole statements, each
+  with its 0-based index, its text and the name its first line comments it with; a long console
+  pages by statement under the same budget and ends with `More with offset=N.` when cut.
+  `edit_console_sql {tabId, index, sql}` replaces
   exactly that statement and `delete_console_sql {tabId, index}` drops it, the tab staying -
   empty, when that was its last. `open_console` takes `tabId` beside `tab`, and wins: a closed
   tab comes back under its own id, its statements with it. The id outlives a rename, the close
@@ -430,8 +437,9 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   each call and commit the text before the frame, so a page that has gone still leaves the
   console (`separate_agent_requests_resume_the_server_owned_console_by_identity`). A snapshot
   that carries statements and not the original text is refused and writes nothing
-  (`store_refuses_to_reconstruct_manual_console_from_statement_snapshot`). The page still sends
-  its tab snapshot; the store is what a later send and a restart read. Each console frame
+  (`store_refuses_to_reconstruct_manual_console_from_statement_snapshot`). With the store on,
+  the page sends no `consoleTabs`: the tools that address a tab read the store, which is what
+  a later send and a restart read. Each console frame
   carries the committed `console` record and `consoleRevision`. SSE and bus records share
   one revision gate: either may arrive first; duplicate and older snapshots do nothing.
   Result frames add results only, never append the same SQL again or save formatted text.

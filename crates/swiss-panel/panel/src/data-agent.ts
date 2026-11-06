@@ -1247,10 +1247,12 @@ async function send(talk: Talk, text: string, reveal = true): Promise<boolean> {
   const context = dbAgentContext();
   if (schema && !omitted().has("database")) body.schema = schema;
   if (conn?.name === talk.conn) body.pageContext = context.pageContext;
-  // The console's tabs exist only here, so each send carries them (open and closed): the ids,
-  // names and statements list_console_tabs, read_console_tab and open_console's tabId read.
-  // None to send - nothing open, nothing in Recently closed - is the same as an empty list.
-  const consoleTabs = conn && conn.name === talk.conn ? dbConsoleTabs() : [];
+  // On a store-backed connection the send above has flushed every draft and the tools read the
+  // store, so nothing is sent. Without a store the snapshot is the only record the tools can
+  // read, so each send carries the tabs (open and closed): the ids, names and statements
+  // list_console_tabs, read_console_tab and open_console's tabId read. None to send - nothing
+  // open, nothing in Recently closed - is the same as an empty list.
+  const consoleTabs = conn && conn.name === talk.conn && !dbConsoleStoreOn(talk.conn) ? dbConsoleTabs() : [];
   if (consoleTabs.length) body.consoleTabs = consoleTabs.slice(0, 1024);
   if (consoleTabs.length > 1024) body.consoleTabsPartial = true;
   if (consoleTabs.length > 1024 || consoleTabs.some(tab => tab.statementsOmitted)) toast(tr("dataAgent.consoleSnapshotLimited"), true);

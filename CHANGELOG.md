@@ -876,6 +876,10 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- The Data agent's console tools read long lists in pages: `list_console_tabs` takes `grep`,
+  `state`, `limit` and `offset` and never cuts a row, and `read_console_tab` takes `offset` and
+  pages a long console by whole statement. With the console store on, the page no longer sends
+  its tab snapshot; the tools read the store (SPEC §data.agent Tabs).
 - Closing an empty Data console no longer files it in Recently closed, whatever its name or owner,
   so opening one and closing it leaves nothing behind. The blank rows already there leave the list
   and the store on the next visit to the connection (SPEC §data.tabs).

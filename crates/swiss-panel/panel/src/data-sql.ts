@@ -905,10 +905,10 @@ export interface DbConsoleTabWire {
 }
 
 /** The console tabs the page holds on the connection, open ones in strip order then the closed
- *  ones, newest first (SPEC §data.agent Tabs). The page is the only place they exist, so this
- *  snapshot rides every send (data-agent.ts) and is what list_console_tabs, read_console_tab and
- *  open_console's tabId read. An edit the agent makes after this send is not in it until the
- *  next one. */
+ *  ones, newest first (SPEC §data.agent Tabs). Without a console store this snapshot rides every
+ *  send (data-agent.ts) and is what list_console_tabs, read_console_tab and open_console's tabId
+ *  read. With the store the page sends none: the tools read the store's records. An edit the
+ *  agent makes after this send is not in it until the next one. */
 function dbConsoleTabs(): DbConsoleTabWire[] {
   const rows: DbConsoleTabWire[] = [];
   const wire = (id: string, tab: string, open: boolean, text: string, agent: boolean): DbConsoleTabWire => {

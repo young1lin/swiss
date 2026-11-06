@@ -792,3 +792,38 @@ describe("a refused console save (SPEC §data.agent Tabs)", () => {
     expect(document.getElementById("toast")?.textContent).toBe(tr("dataTabs.consoleDraftSaved"));
   });
 });
+
+describe("the agent's request with the console store on (SPEC §data.agent Tabs)", () => {
+  it("sends consoleStore and no consoleTabs, because the server reads the tabs", async () => {
+    const STATUS = {
+      serving: true, providers: [], embedding: null, catalog: {}, defaultPrompts: {}, telemetry: {},
+      agents: [{ name: "db", runtime: "db" }],
+    };
+    const byId = <T extends HTMLElement>(id: string): T => {
+      const el = document.getElementById(id) as T | null;
+      if (!el) throw new Error("no #" + id);
+      return el;
+    };
+    route = (c) => {
+      if (onConsoles(c)) return c.method === "LIST" ? [200, { consoles: [rec({ id: "srv-9", sql: "SELECT 1" })] }] : undefined;
+      if (c.url === "/api/llm/status") return [200, STATUS];
+      if (c.url === "/api/llm/db/stream") return [400, { error: "stop" }];
+      return undefined;
+    };
+    // Before the view is built: building it reads the pane's agents.
+    enter("store-send");
+    await tabs.dbConsolesLoad("store-send");
+    expect(store.dbConsoleStoreOn("store-send"), "the store turned on after a successful LIST").toBe(true);
+
+    byId<HTMLButtonElement>("dbAgentBtn").click();
+    await vi.advanceTimersByTimeAsync(500);
+    byId<HTMLTextAreaElement>("dbAgentAsk").value = "count the rows";
+    byId<HTMLButtonElement>("dbAgentSend").click();
+    await vi.advanceTimersByTimeAsync(500);
+
+    const body = calls.filter((c) => c.method === "POST" && c.url === "/api/llm/db/stream").at(-1)?.body;
+    expect(body, "the agent's request was sent").toBeTruthy();
+    expect(body).toMatchObject({ consoleStore: true });
+    expect(body, "with the store on the page sends no consoleTabs").not.toHaveProperty("consoleTabs");
+  });
+});
