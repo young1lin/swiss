@@ -7,7 +7,8 @@ Guidance for AI coding agents working in this repo. `CLAUDE.md` points here.
 **swiss** is the developer's pocket multitool: one local process that holds the small tools a
 developer reaches for while writing code — MCP servers, database browsing, SSH tunnels,
 scheduled jobs, terminals, remote execution — behind one loopback port (`127.0.0.1:19999`) and
-one panel, shipped as a single static `.exe`. MCP servers live on HTTP paths under `/mcp/`
+one panel, shipped as a single static `.exe`. To install or configure swiss rather than change
+it, read `SETUP.md`. MCP servers live on HTTP paths under `/mcp/`
 (SPEC §mcp.endpoint, ADR-018); the root belongs to the host.
 
 What the system does, and why, lives in one specification: `docs/SPEC.md` is its front page (how

@@ -21,13 +21,14 @@
 //! binary.
 //!
 //! Which skills land is the user's answer, so nothing here installs by default and a refresh never
-//! adds one. An install replaces `SKILL.md` and nothing else: the rest of the directory is the
-//! user's, and a replacement that fails leaves the copy that was there.
+//! adds one. An install replaces `SKILL.md` and, for the `swiss` skill, `SETUP.md` beside it. The
+//! rest of the directory is the user's, and a replacement that fails leaves the copy that was there.
 
 use std::path::PathBuf;
 
 /// All shipped skills are embedded at compile time; Node is never needed to build the exe.
 const SKILL_MD: &str = include_str!("skill_assets/SKILL.md");
+const SETUP_MD: &str = include_str!("../SETUP.md");
 const REMOTE_SKILL_MD: &str = include_str!("skill_assets/remote/SKILL.md");
 const MEMORY_SKILL_MD: &str = include_str!("skill_assets/memory/SKILL.md");
 
@@ -149,10 +150,20 @@ impl Places {
         self.root_dir(root).join(name).join("SKILL.md")
     }
 
+    fn setup_file(&self, root: &str) -> PathBuf {
+        self.root_dir(root).join(SKILL_NAME).join("SETUP.md")
+    }
+
+    fn setup_current(&self, root: &str) -> bool {
+        std::fs::read(self.setup_file(root)).ok().is_some_and(|found| found == SETUP_MD.as_bytes())
+    }
+
     fn location(&self, root: &str, name: &str, body: &str) -> SkillLocation {
         let path = self.skill_file(root, name);
         let (installed, state, error) = match std::fs::read(&path) {
-            Ok(found) if found == body.as_bytes() => (Some(true), CopyState::Current, None),
+            Ok(found) if found == body.as_bytes() && (name != SKILL_NAME || self.setup_current(root)) => {
+                (Some(true), CopyState::Current, None)
+            }
             Ok(_) => (Some(true), CopyState::Outdated, None),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 (Some(false), CopyState::Absent, None)
@@ -197,6 +208,25 @@ impl Places {
         let result = std::fs::write(&staged, body)
             .and_then(|_| retry_busy(|| std::fs::rename(&staged, &target)))
             .map_err(|e| format!("could not install {name} in {root}: {e}"));
+        if result.is_err() {
+            let _ = std::fs::remove_file(&staged);
+            return result;
+        }
+        if name == SKILL_NAME {
+            return self.write_setup(root);
+        }
+        result
+    }
+
+    /// `SETUP.md` beside the swiss skill, staged the same way `SKILL.md` is.
+    fn write_setup(&self, root: &str) -> Result<(), String> {
+        let target = self.setup_file(root);
+        let directory = target.parent().ok_or_else(|| "SETUP.md has a directory".to_string())?;
+        std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+        let staged = directory.join(format!(".SETUP-{}.tmp", swiss_core::util::random_hex(12)));
+        let result = std::fs::write(&staged, SETUP_MD)
+            .and_then(|_| retry_busy(|| std::fs::rename(&staged, &target)))
+            .map_err(|e| format!("could not install SETUP.md in {root}: {e}"));
         if result.is_err() {
             let _ = std::fs::remove_file(&staged);
         }
@@ -597,7 +627,8 @@ mod tests {
         for body in [SKILL_MD, REMOTE_SKILL_MD] {
             assert!(body.contains("disable-model-invocation: true"));
         }
-        assert!(SKILL_MD.contains("SHA256SUMS"));
+        assert!(SKILL_MD.contains("SETUP.md"));
+        assert!(SETUP_MD.contains("SHA256SUMS"));
         assert!(!SKILL_MD.contains("swiss remote exec"));
         assert!(REMOTE_SKILL_MD.contains("swiss remote exec"));
         assert!(!REMOTE_SKILL_MD.contains("SHA256SUMS"));
@@ -606,8 +637,40 @@ mod tests {
     // SPEC §host.cli: an update is two steps, and the skill that walks an update says so.
     #[test]
     fn the_swiss_skill_says_how_an_update_reaches_the_skills() {
-        assert!(SKILL_MD.contains("swiss skill install --installed"));
+        assert!(SKILL_MD.contains("SETUP.md"));
         assert!(SKILL_MD.contains("swiss skill list"));
+        assert!(SETUP_MD.contains("swiss skill install --installed"));
+    }
+
+    #[test]
+    fn the_swiss_skill_points_at_setup_md() {
+        assert!(SKILL_MD.contains("disable-model-invocation: true"));
+        assert!(SKILL_MD.contains("SETUP.md"));
+        assert!(SKILL_MD.contains("swiss setup guide"));
+        assert!(!loads_by_itself(SKILL_MD));
+    }
+
+    #[test]
+    fn both_install_paths_write_setup_md_beside_the_skill() {
+        let home = TempHome::new();
+        // `swiss skill install` and POST /api/skills/install both land here.
+        home.places().install_named(&names(&["swiss"])).expect("the cli path");
+        home.places().install_one("swiss", ".claude").expect("the route path");
+        for root in [".claude", ".agents"] {
+            let setup = home.0.join(root).join("skills").join("swiss").join("SETUP.md");
+            assert_eq!(std::fs::read_to_string(&setup).expect("SETUP.md"), SETUP_MD);
+        }
+        home.places().install_one("swiss-remote", ".claude").expect("another skill");
+        assert!(!home.0.join(".claude/skills/swiss-remote/SETUP.md").exists());
+    }
+
+    #[test]
+    fn the_release_carries_setup_md() {
+        let workflow = include_str!("../.github/workflows/build.yml");
+        assert!(workflow.contains("cp SETUP.md dist-stage/SETUP.md"));
+        assert!(workflow.contains("cp SETUP.md dist-stage/skills/swiss/SETUP.md"));
+        assert!(workflow.contains("cp SETUP.md dist-bin/SETUP.md"));
+        assert!(workflow.contains("SETUP.md > SHA256SUMS"));
     }
 
     #[test]

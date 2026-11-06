@@ -219,6 +219,11 @@ jobs:
           cp src/skill_assets/SKILL.md dist-stage/skills/swiss/SKILL.md
           cp src/skill_assets/remote/SKILL.md dist-stage/skills/swiss-remote/SKILL.md
           cp src/skill_assets/memory/SKILL.md dist-stage/skills/swiss-memory/SKILL.md
+          cp SETUP.md dist-stage/SETUP.md
+          cp SETUP.md dist-stage/skills/swiss/SETUP.md
+          if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
+            cp SETUP.md dist-bin/SETUP.md
+          fi
           if [ "${{ runner.os }}" = "Windows" ]; then
             pwsh -NoProfile -Command "Compress-Archive -Path 'dist-stage/*' -DestinationPath 'dist-bin/${ASSET}.zip'"
           else
@@ -301,7 +306,7 @@ jobs:
       - name: Generate SHA-256 checksums
         run: |
           cd dist-bin
-          sha256sum swiss-*.zip swiss-*.tar.gz > SHA256SUMS
+          sha256sum swiss-*.zip swiss-*.tar.gz SETUP.md > SHA256SUMS
           sha256sum -c SHA256SUMS
       - uses: softprops/action-gh-release@v3
         with:

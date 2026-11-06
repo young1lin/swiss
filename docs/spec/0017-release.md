@@ -39,12 +39,13 @@ The workflow is `.github/workflows/build.yml`.
   targets build on Ubuntu 22.04 runners: a binary needs at least its build host's glibc, so the
   archives hold the floor at glibc 2.35 (Ubuntu 22.04, Debian 12). Each archive
   is `swiss-<version>-<target>` (`.zip` on Windows, `.tar.gz` elsewhere; a manual run's version
-  is `dev-<sha8>`) and holds the binary, `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md` and the
-  three skills (`skills/swiss/SKILL.md`, `skills/swiss-remote/SKILL.md`,
-  `skills/swiss-memory/SKILL.md`, from `src/skill_assets`).
+  is `dev-<sha8>`) and holds the binary, `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`,
+  `SETUP.md` and the three skills (`skills/swiss/SKILL.md`, `skills/swiss/SETUP.md`,
+  `skills/swiss-remote/SKILL.md`, `skills/swiss-memory/SKILL.md`, from `src/skill_assets`
+  and the root `SETUP.md`).
 - **`release`** — needs `tag-version`, `check`, `dist`, `panel`, `deny` and `integration`;
-  writes and verifies `SHA256SUMS` over the archives and publishes a GitHub Release with
-  generated notes.
+  writes and verifies `SHA256SUMS` over the archives and `SETUP.md`, and publishes a GitHub
+  Release with generated notes. `SETUP.md` is its own asset as well as a file in every archive.
 
 TLS: Windows links schannel, unix links rustls, so no unix binary depends on system OpenSSL.
 The macOS desktop bundle is assembled by `scripts/package_macos.py` from the matching

@@ -6,7 +6,7 @@ Part 04 of [§host](README.md), chapter 0004 of the [swiss specification](../../
 
 `swiss start | stop | restart | status | logs | token | creds | open | gui | export | import
 <file> | skill list [--json] | skill install [<name>... | --all | --installed] | autostart [on|off] |
-path [on|off] | update | serve | remote … | run … | process … | api <METHOD> <path> [json | --body-file <path|->] | secret set <name> [--from <source>] | setup …`. Options: `-p/--port` (start: listen and save as default; others: which instance),
+path [on|off] | update | serve | remote … | run … | process … | api <METHOD> <path> [json | --body-file <path|->] | secret set <name> [--from <source>] | secret ask <name>... [--wait <seconds>] | connect <claude|codex|cursor> [--mcp <name>]... [--replace] | setup …`. Options: `-p/--port` (start: listen and save as default; others: which instance),
 `-f` (start: foreground; logs: follow), `--no-open`, `-n/--lines` (default 200), `--force`,
 `--json`, `-h`, `-v`. `swiss --help` is the reference text; `remote` and `run` are §remote,
 `process` is §process.cli.
@@ -28,6 +28,20 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   `{ok, gateway: {port, started}, items: [{kind, name, status, refreshed, failed}]}`, or `{ok: false,
   error}` when refused. Exit 0: stored and every MCP using it rebuilt; 1: not stored, or an MCP did
   not rebuild; 2: refused, nothing written; 3: the gateway could not start.
+- **`secret ask`** — opens the panel's Secrets page on the names a human still has to type
+  (`#secrets?ask=a,b`), by the same one-time sign-in `swiss open` uses. The link is not printed.
+  It returns at once with exit 4. `--wait <seconds>` polls `GET /api/secrets` until every name
+  exists, and then the exit is 0. A name already stored is left out of the page. With no desktop
+  to open, it says so and names the two other ways: forward the port over SSH and open the panel,
+  or pipe the value into `swiss secret set` from the human's own shell. The page shows one row
+  per missing name, the name fixed and the value focused, and it does not store anything by itself.
+- **`connect`** — points Claude, Codex or Cursor at this gateway's MCPs. Claude is configured by
+  `claude mcp add --transport http -s user`, so `$CLAUDE_CONFIG_DIR` is honoured. Codex is a
+  `[mcp_servers.<name>]` block in `$CODEX_HOME/config.toml` (`type`, `url`, and
+  `http_headers.Authorization`), the block the panel copies. Cursor is a merge into `~/.cursor/mcp.json`.
+  The bearer is a token labelled `client-<client>`, reused when that label exists and minted
+  otherwise, and it is never printed. `--mcp` repeats; without it, every MCP the gateway has.
+  An existing entry is left unchanged unless `--replace`. `next` says to restart the client.
 - **Skill inspection.** `GET /api/skills`, behind the admin session, checks only the three
   embedded skill names in the two directories a skill goes to (below). It reads each `SKILL.md`,
   creates nothing, and returns `{skills: [{name, description, loadsByItself, locations: [{root,
@@ -35,9 +49,11 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   refused the check; `state` is `absent`, `current`, `outdated` or `unreadable`. There is no idle
   scanner.
 - **Selected skill installation.** `POST /api/skills/install` accepts `{name, root}`, restricted
-  to the three embedded names and `.claude` / `.agents`. It stages and atomically replaces only
-  that target's `SKILL.md`, preserving other files and skills, then returns the current inspection
-  shape. Unknown targets and extra request fields are refused before filesystem access. Writes run
+  to the three embedded names and `.claude` / `.agents`. It stages and atomically replaces that
+  target's `SKILL.md` and, for the `swiss` skill, `SETUP.md` beside it, preserving other files and
+  skills, then returns the current inspection shape. A `swiss` copy whose `SETUP.md` is missing or
+  differs is `outdated`. Unknown targets and extra request fields are refused before filesystem
+  access. Writes run
   on the blocking pool and require the same admin session.
 - **`export` / `import`** — the one plaintext escape: a v1 bundle of config, managed, tunnels,
   OAuth, env and secrets (vault values masked, §host.vault). It moves those six and no more:
@@ -88,14 +104,15 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
 
   Skills ship inside the binary, so a new version may change them, and a copy on disk does not
   change by itself. `skill list` marks a copy that differs from this binary's as `outdated`, which
-  includes a `SKILL.md` edited by hand. Updating swiss is therefore two steps: replace the
-  executable, then `swiss skill install --installed`; the `swiss` skill and what `swiss update`
-  prints both say so. No gateway boot and no panel load refreshes a skill behind the user's back
+  includes a `SKILL.md` edited by hand, or a `swiss` copy whose `SETUP.md` differs. Updating swiss
+  is therefore two steps: replace the executable, then `swiss skill install --installed`;
+  `SETUP.md`, which the `swiss` skill points at, and what `swiss update` prints both say so. No gateway boot and no panel load refreshes a skill behind the user's back
   (`cli::tests::no_terminal_and_no_names_refuses_and_installs_nothing`,
   `a_terminal_prompt_defaults_to_no`, `skill_install::tests::installed_refreshes_and_never_adds`).
 
-  Every write stages `SKILL.md` beside the target and renames it over, so what the user keeps in
-  that directory stays and a replacement that fails leaves the old copy
+  Every write stages `SKILL.md` beside the target and renames it over, and the `swiss` skill's
+  `SETUP.md` the same way, so what the user keeps in that directory stays and a replacement that
+  fails leaves the old copy
   (`a_reinstall_keeps_what_the_user_put_beside_the_skill`,
   `a_failed_replacement_keeps_the_old_copy`). A denied rename is tried again for about a second:
   Windows refuses one while another process holds the file open, and an AI client watching its
@@ -114,6 +131,8 @@ holds no state and adds nothing to the daemon.
 
 ```text
 swiss setup schema [section | plugins.<id>]   what a manifest may say
+swiss setup show                         this gateway's state as a manifest, without values
+swiss setup guide                        print SETUP.md; no gateway
 swiss setup plan <file|-> [--rotate-secrets]   what it would change here; writes nothing
 swiss setup apply <file|-> [--no-check] [--rotate-secrets]   make it so, then check what it made
 ```
@@ -121,11 +140,25 @@ swiss setup apply <file|-> [--no-check] [--rotate-secrets]   make it so, then ch
 `-` reads stdin. A file or stdin may carry a BOM or be UTF-16, which is what Windows PowerShell 5
 writes, and a terminal stdin is refused. Each prints one JSON document on stdout, progress goes to
 stderr, and none prompts. `setup plan` and `setup apply` start the gateway without a browser if it is
-down, and say that they did, but only once the manifest has been read and found sound. A gateway answers
-before its plugins have started (§host.plugins): an entry reads `disabled` until the boot reaches it,
-and `idle` is not a start. So both wait for the boot to finish, up to 60 s
+down, and say that they did, but only once the manifest has been read and found sound. `setup show`
+starts it the same way, having nothing to read first. A gateway answers before its plugins have
+started (§host.plugins): an entry reads `disabled` until the boot reaches it, and `idle` is not a
+start. So plan, apply and show wait for the boot to finish, up to 60 s
 (`a_gateway_mid_boot_is_waited_for`). `setup schema` needs a gateway only for `plugins.<id>`, what that
 plugin's row takes, which only the plugin knows; the row itself stays out of the answer.
+`setup guide` prints the embedded `SETUP.md` and does not start a gateway. Both skill install
+paths write that file beside the `swiss` skill.
+
+`setup show` prints that state as a version-1 manifest and writes nothing. A secret's name is `ask`,
+because the vault cannot be read back and the source is not stored. A slot that held a credential
+holds the mask sentinel; a `${secret://name}` or `${ENV_VAR}` reference is kept, since it is not the
+value, and a reference's default is masked with the rest of the slot because the default is typed
+text. `machine.path` and `machine.autostart` are the booleans those seats report, and stay out when
+this process cannot read them. `skills` names the shipped skills present in the caller's directories.
+A plugin that is not serving is left out of the sections it holds, and so is a connection or rule
+name that two rows share. Absence means untouched, and show does not guess or delete. Giving that
+manifest to `plan` or `apply` is refused wherever the mask sits
+(`show_prints_a_manifest_whose_mask_plan_refuses`).
 
 **The manifest.**
 
@@ -158,6 +191,11 @@ plugin's row takes, which only the plugin knows; the row itself stays out of the
       "type": "mysql", "host": "127.0.0.1", "port": 13306, "user": "reader",
       "password": "${secret://prod-db-password}", "database": "app"
     }
+  },
+  "clients": {
+    "claude": {},
+    "codex": { "mcps": ["github"] },
+    "cursor": { "mcps": "*" }
   }
 }
 ```
@@ -177,6 +215,7 @@ a name stays exactly as written, and one that is not a valid MCP name is refused
 | `tunnels.connections` | name | Whole connection definition (§tunnels.store), with `jump` naming another connection. `port` defaults to 22, `authType` to `key`; key auth needs `keyPath`, password auth needs `password`. A stored group and host key stay when omitted |
 | `tunnels.rules` | name | `connection` names a connection, `localPort` and `targetPort` are required. `targetHost` defaults to loopback, `autoReconnect` to false, `reconnectInterval` to 10 seconds. Omitted `mcps` and group stay. `start: true` asks for a start after checks; otherwise no new rule is started |
 | `remote.targets` | id | `endpoint` names a connection and `root` is an absolute POSIX workspace path. Optional `caps` uses §remote.targets' capabilities and includes `exec`; a new target defaults to `exec`, an existing target keeps omitted capabilities, label, group and timeout |
+| `clients` | claude, codex or cursor | `{mcps?}`. Left out, the MCPs this manifest names. `"*"` is every MCP the gateway has. An existing client entry is left unchanged; `swiss connect --replace` rewrites it |
 
 Names in tunnel and remote references resolve against this manifest or the gateway. Two stored
 connections or rules sharing a name fail that item with their ids; no match is guessed. Jump hops
@@ -258,8 +297,8 @@ holds cannot be read yet; `apply` turns it on and then decides each MCP against 
 
 **The order.** Secrets, plugins (config, then enable, so a plugin turned on starts on what the manifest
 says), machine settings and chosen skills, connections (jump hops first), rules saved without an
-explicit start, remote targets, then MCPs, each added with `start: false`, then every check, after every write. A failed item does
-not stop the rest; what depends on it is `blocked`. A plugin write the gateway refuses is code
+explicit start, remote targets, then MCPs, each added with `start: false`, then every check, then clients.
+A failed item does not stop the rest; what depends on it is `blocked`. A plugin write the gateway refuses is code
 `plugin.write`.
 
 Disabled `tunnels` or `remote` plugins fail their items with `tunnels.plugin-off` or
@@ -312,8 +351,8 @@ token, a one-time link or a secret's value.
   ],
   "warnings": [],
   "next": [
-    { "who": "human", "do": "store prod-db-password on the panel's Secrets page, or pipe each into swiss secret set <name> from your own shell",
-      "why": "only a human has these values" },
+    { "who": "human", "do": "swiss secret ask prod-db-password",
+      "why": "no source for this secret" },
     { "who": "agent", "do": "swiss setup apply swiss.setup.json", "why": "once that is done" }
   ]
 }

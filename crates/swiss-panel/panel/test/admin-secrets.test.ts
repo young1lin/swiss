@@ -96,6 +96,7 @@ beforeEach(() => {
   calls = [];
   confirmAnswer = true;
   replies = {};
+  location.hash = "#secrets";
   document.body.innerHTML = shellSkeleton();
 });
 
@@ -103,6 +104,19 @@ describe("the Secrets page (SPEC §host.vault)", () => {
   it("the view module exists at the entry every page descriptor points at", () => {
     const entry = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "views", "secrets.ts");
     expect(existsSync(entry), entry).toBe(true);
+  });
+
+  it("the_ask_link_prefills_without_submitting", async () => {
+    body = { secrets: ["already"], rev: 1 };
+    location.hash = "#secrets?ask=already,prod-db-password,another-one,NotAName";
+    await view.mount();
+    const names = Array.from(document.querySelectorAll("[data-skaskname]")).map((el) => (el as HTMLInputElement).value);
+    expect(names).toEqual(["prod-db-password", "another-one"]);
+    expect((document.querySelector("[data-skaskname]") as HTMLInputElement).readOnly).toBe(true);
+    const value = document.querySelector("[data-skaskvalue]") as HTMLInputElement;
+    expect(value.value).toBe("");
+    expect(document.activeElement).toBe(value);
+    expect(calls.filter((call) => call.method === "PUT")).toEqual([]);
   });
 
   it("renders names and their references — never a value", async () => {

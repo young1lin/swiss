@@ -167,8 +167,18 @@ On Windows or macOS, double-click the app or run swiss without arguments to open
   secret set <name> [--from <env:VAR|file:PATH|dotenv:PATH#KEY>]
                    store a vault secret from that source or from piped stdin, never from the
                    command line; starts the gateway if it is down; prints one JSON document
+  secret ask <name>... [--wait <seconds>]
+                   open the Secrets page on those names; the sign-in link is not printed;
+                   --wait polls until each name is stored
+  connect <claude|codex|cursor> [--mcp <name>]... [--replace]
+                   point that client at this gateway's MCPs; the token is never printed;
+                   an existing entry stays unless --replace
   setup schema [section | plugins.<id>]
                    what a manifest may say (SPEC §host.setup)
+  setup show       this gateway's state as a manifest, without values; starts the
+                   gateway if it is down; prints one JSON document
+  setup guide      print SETUP.md, the procedure for installing and configuring swiss;
+                   does not start a gateway
   setup plan <file|-> [--rotate-secrets]
                    what a manifest would change on this gateway; writes nothing and starts no
                    MCP; starts the gateway if it is down; prints one JSON document
@@ -1067,6 +1077,16 @@ fn windows_open_command(url: &str) -> std::process::Command {
 }
 
 pub(crate) fn open_in_browser(url: &str) {
+    let _ = try_open_in_browser(url);
+}
+
+/// Open `url` the way `swiss open` does. `SWISS_OPEN_SINK`, when set, is a file the URL is
+/// written to instead: a test points it there so a run never opens a browser. The URL is not
+/// printed on either path.
+pub(crate) fn try_open_in_browser(url: &str) -> Result<(), String> {
+    if let Some(path) = std::env::var_os("SWISS_OPEN_SINK") {
+        return std::fs::write(path, url).map_err(|err| format!("could not open the panel ({err})"));
+    }
     // The platform default opener, detached and hidden.
     #[cfg(windows)]
     let mut command = windows_open_command(url);
@@ -1089,11 +1109,13 @@ pub(crate) fn open_in_browser(url: &str) {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let _ = command
+    command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn();
+        .spawn()
+        .map(|_| ())
+        .map_err(|_| "no desktop to open".to_string())
 }
 
 /// The real-world Ops: daemon.rs functions + this-binary foreground.
@@ -1197,6 +1219,7 @@ pub async fn main(argv: Vec<String>) -> i32 {
         Some("api") => return crate::remote_cli::api_main(argv[1..].to_vec()).await,
         // Refuses what the generic parser would quietly keep: a value in the wrong place.
         Some("secret") => return crate::setup_cli::secret_main(argv[1..].to_vec()).await,
+        Some("connect") => return crate::setup_cli::connect_main(argv[1..].to_vec()).await,
         // A manifest command prints one document, and refuses a flag rather than ignoring it.
         Some("setup") => return crate::setup_cli::setup_main(argv[1..].to_vec()).await,
         // `memory` carries its own argv contract too (SPEC §memory.cli): the offline

@@ -31,6 +31,7 @@ pub const EXIT_NEEDS_HUMAN: i32 = 4;
 pub enum Mode {
     Plan,
     Apply,
+    Connect,
 }
 
 impl Mode {
@@ -38,6 +39,7 @@ impl Mode {
         match self {
             Mode::Plan => "plan",
             Mode::Apply => "apply",
+            Mode::Connect => "connect",
         }
     }
 }
@@ -59,8 +61,8 @@ impl Status {
         match (self, mode) {
             (Status::Created, Mode::Plan) => ("will-create", "willCreate"),
             (Status::Updated, Mode::Plan) => ("will-update", "willUpdate"),
-            (Status::Created, Mode::Apply) => ("created", "created"),
-            (Status::Updated, Mode::Apply) => ("updated", "updated"),
+            (Status::Created, Mode::Apply | Mode::Connect) => ("created", "created"),
+            (Status::Updated, Mode::Apply | Mode::Connect) => ("updated", "updated"),
             (Status::Unchanged, _) => ("unchanged", "unchanged"),
             (Status::Failed, _) => ("failed", "failed"),
             (Status::Blocked, _) => ("blocked", "blocked"),

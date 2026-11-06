@@ -401,17 +401,26 @@ async function reloadPluginInventory()                                     {
   return inventory;
 }
 
+/** A hash is `#page` or `#page?ask=a,b`. The page id is what the registry knows; the query
+ *  stays on the hash so a deep link survives the navigation that lands it. */
+function hashTarget(hash        )                                {
+  const raw = hash.replace(/^#\/?/, "");
+  const cut = raw.indexOf("?");
+  if (cut < 0) return { id: raw, query: "" };
+  return { id: raw.slice(0, cut), query: raw.slice(cut) };
+}
+
 function initPages()                {
   if (boot) return boot;
   boot = (async () => {
     try { await reloadPluginInventory(); }
     catch (error) { toast(errText(error), true); paintNavigation(); }
-    let wanted = (location.hash || "#mcps").replace(/^#\/?/, "");
+    let wanted = hashTarget(location.hash || "#mcps").id;
     if (!registry.get(wanted)) wanted = registry.list()[0] && registry.list()[0].id;
     trackPaneScroll($("pane"));
     if (wanted) await navigatePage(wanted, true);
     window.addEventListener("hashchange", () => {
-      const id = location.hash.replace(/^#\/?/, "");
+      const id = hashTarget(location.hash).id;
       if (registry.get(id)) void navigatePage(id);
     });
     // Leaving focus mode dispatches a resize (immersive.ts) - the rail has width again.
@@ -451,7 +460,10 @@ async function navigatePage(id        , force          )                {
    * full-bleed - a framing difference only, the shell's chrome is drawn either way). */
   document.querySelector             (".sidebar") .hidden = layoutOf(page) !== "resource";
   paintNavigation();
-  history.replaceState(null, "", page.path || "#" + id);
+  const base = page.path || "#" + id;
+  const here = hashTarget(location.hash);
+  const keep = hashTarget(base).id === id && here.id === id ? here.query : "";
+  history.replaceState(null, "", base + keep);
   resetPaneScroll($("pane"));
   // A switched-off plugin's page is the one empty shape (the glyph says "off"); a page still
   // loading is a quiet busy line until its mount paints over it.

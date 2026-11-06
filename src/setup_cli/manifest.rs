@@ -33,10 +33,12 @@ use swiss_mcp::mcp_import::{entry_to_def, EntryMapping, ENTRY_KEYS};
 pub const VERSION: u64 = 1;
 
 /// Every key a manifest's top level takes.
-const TOP_LEVEL: [&str; 9] = ["version", "machine", "secrets", "plugins", "tunnels", "remote", "mcps", "mcpServers", "servers"];
+const TOP_LEVEL: [&str; 10] = [
+    "version", "machine", "secrets", "plugins", "tunnels", "remote", "mcps", "mcpServers", "servers", "clients",
+];
 
 /// The sections `swiss setup schema` describes, by name.
-const SECTIONS: [&str; 6] = ["machine", "secrets", "plugins", "tunnels", "remote", "mcps"];
+const SECTIONS: [&str; 7] = ["machine", "secrets", "plugins", "tunnels", "remote", "mcps", "clients"];
 
 /// The keys that ride on every MCP definition, beside those of its type.
 const EVERY_TYPE: [&str; 3] = ["type", "lazy", "idleMs"];
@@ -97,7 +99,24 @@ pub struct Manifest {
     pub connections: BTreeMap<String, super::tunnels::ConnectionEntry>,
     pub rules: BTreeMap<String, super::tunnels::RuleEntry>,
     pub targets: BTreeMap<String, super::remote::TargetEntry>,
+    pub clients: BTreeMap<String, ClientEntry>,
     pub warnings: Vec<Warning>,
+}
+
+/// Which MCPs one client should be pointed at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientMcps {
+    /// The key was left out: the MCPs this manifest names.
+    Manifest,
+    /// `"*"`: every MCP the gateway has.
+    All,
+    Names(Vec<String>),
+}
+
+/// One client entry. `swiss connect` is what applies it, and an existing entry is left as it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientEntry {
+    pub mcps: ClientMcps,
 }
 
 impl Manifest {
@@ -131,6 +150,7 @@ pub fn parse(text: &str, gateway_port: u16) -> Result<Manifest, Vec<Problem>> {
     for block in ["mcps", "mcpServers", "servers"] {
         read_mcps(top, block, gateway_port, &mut manifest, &mut problems);
     }
+    read_clients(top.get("clients"), &mut manifest, &mut problems);
     let turns_mcp_off = manifest.plugins.get("mcp").is_some_and(|entry| entry.enabled == Some(false));
     if turns_mcp_off && !manifest.mcps.is_empty() {
         problems.push(Problem::new("plugins.mcp.enabled", "this manifest names MCPs, and they need this plugin on"));
@@ -365,6 +385,66 @@ fn client_entry(
     }
 }
 
+const CLIENTS: [&str; 3] = ["claude", "codex", "cursor"];
+
+/// `clients` maps a client to the MCPs it should reach. Absent `mcps` means the ones this
+/// manifest names; `"*"` means every MCP the gateway has.
+fn read_clients(section: Option<&Value>, manifest: &mut Manifest, problems: &mut Vec<Problem>) {
+    let Some(section) = section.filter(|value| !value.is_null()) else {
+        return;
+    };
+    let Some(entries) = section.as_object() else {
+        problems.push(Problem::new("clients", "clients maps claude, codex or cursor to { mcps? }"));
+        return;
+    };
+    for (name, entry) in entries {
+        let path = join("clients", name);
+        if !CLIENTS.contains(&name.as_str()) {
+            let message = match nearest(name, &CLIENTS) {
+                Some(near) => format!("unknown client; did you mean {near}?"),
+                None => format!("unknown client; there are: {}", CLIENTS.join(", ")),
+            };
+            problems.push(Problem::new(path, message));
+            continue;
+        }
+        let Some(entry) = entry.as_object() else {
+            problems.push(Problem::new(path, "a client is { mcps? }"));
+            continue;
+        };
+        for key in entry.keys() {
+            if key != "mcps" {
+                problems.push(Problem::unknown_field(join(&path, key), key, ["mcps"]));
+            }
+        }
+        let mcps = match entry.get("mcps") {
+            None => ClientMcps::Manifest,
+            Some(Value::String(star)) if star == "*" => ClientMcps::All,
+            Some(Value::Array(items)) => {
+                if items.len() == 1 && items[0].as_str() == Some("*") {
+                    ClientMcps::All
+                } else {
+                    let mut names = Vec::new();
+                    for (index, item) in items.iter().enumerate() {
+                        match item.as_str() {
+                            Some(name) if is_valid_name(name) => names.push(name.to_string()),
+                            _ => problems.push(Problem::new(
+                                format!("{path}.mcps[{index}]"),
+                                "an MCP name, or \"*\" on its own",
+                            )),
+                        }
+                    }
+                    ClientMcps::Names(names)
+                }
+            }
+            _ => {
+                problems.push(Problem::new(join(&path, "mcps"), "a list of MCP names, or \"*\""));
+                ClientMcps::Manifest
+            }
+        };
+        manifest.clients.insert(name.clone(), ClientEntry { mcps });
+    }
+}
+
 /// What a manifest may say: the whole of it, or one section. Unknown section: the refusal.
 pub fn schema(section: Option<&str>) -> Result<Value, String> {
     let describe = |name: &str| match name {
@@ -383,6 +463,11 @@ pub fn schema(section: Option<&str>) -> Result<Value, String> {
             "config": "a merge patch over the plugin's row: objects merge, arrays and everything else replace, and what it does not name stays",
             "validated": "by the plugin's own validator, under plan too",
             "perPlugin": "swiss setup schema plugins.<id> prints what that plugin's row takes; it reads the gateway",
+        }),
+        "clients" => json!({
+            "identity": "claude, codex or cursor",
+            "mcps": "left out, the MCPs this manifest names; \"*\", every MCP the gateway has; or a list of names",
+            "existing": "an entry the client already has is left unchanged; swiss connect --replace rewrites it",
         }),
         _ => {
             let types: Map<String, Value> = DEF_KEYS
@@ -643,6 +728,15 @@ mod tests {
     fn a_file_that_is_no_manifest_says_so() {
         assert!(parse("not json", PORT).unwrap_err()[0].message.starts_with("not JSON"));
         assert!(parse("[]", PORT).unwrap_err()[0].message.contains("one JSON object"));
+    }
+
+    #[test]
+    fn clients_name_a_client_and_refuse_any_other() {
+        let manifest = parsed(json!({ "clients": { "codex": { "mcps": ["db"] }, "cursor": {} } })).expect("clients");
+        assert!(matches!(manifest.clients["codex"].mcps, ClientMcps::Names(_)));
+        assert!(matches!(manifest.clients["cursor"].mcps, ClientMcps::Manifest));
+        assert!(parsed(json!({ "clients": { "cursor": { "mcps": "*" } } })).expect("all").clients["cursor"].mcps == ClientMcps::All);
+        assert!(told(json!({ "clients": { "windsurf": {} } })).iter().any(|(path, _)| path == "clients.windsurf"));
     }
 
     // SPEC §host.setup: one table says which keys a type takes, and the schema prints that table.

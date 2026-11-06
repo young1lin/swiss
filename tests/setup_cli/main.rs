@@ -30,7 +30,7 @@ use serde_json::{json, Value};
 
 use swiss::app::{build_app, AppContext};
 use swiss::builtin;
-use swiss::setup_cli::{apply_at, plan_at, plugin_schema_at, Input, Options};
+use swiss::setup_cli::{apply_at, ask_on, connect_on, plan_at, plugin_schema_at, show_at, ConnectEnv, Input, Options};
 use swiss_core::secure::secretstore;
 use swiss_host::config_store::ConfigStore;
 use swiss_host::host::PluginHost;
@@ -41,6 +41,32 @@ use swiss_mcp::registry::Registry;
 use swiss_tunnels::tunnel::manager::TunnelManager;
 
 const TOKEN: &str = "setup-tok-0123456789abcdef";
+
+/// A seat that answers a fixed boolean and refuses a write. `show` reads it; nothing in this
+/// suite may reach the operator's PATH or login items.
+struct FakeSeat {
+    enabled: bool,
+}
+
+impl swiss::autostart::AutoStart for FakeSeat {
+    fn status(&self) -> swiss::autostart::AutoStartState {
+        swiss::autostart::AutoStartState { enabled: self.enabled, detail: String::new(), command: String::new() }
+    }
+
+    fn set(&self, _enabled: bool) -> Result<swiss::autostart::AutoStartState, String> {
+        Err("the test seat is not written".into())
+    }
+}
+
+impl swiss::userpath::UserPath for FakeSeat {
+    fn status(&self) -> swiss::userpath::UserPathState {
+        swiss::userpath::UserPathState { enabled: self.enabled, detail: String::new(), dir: String::new() }
+    }
+
+    fn set(&self, _enabled: bool) -> Result<swiss::userpath::UserPathState, String> {
+        Err("the test seat is not written".into())
+    }
+}
 
 /// Point the whole test binary at a scratch data dir and one deterministic master key before
 /// anything can read either, so nothing lands in the operator's real `~/.swiss`.
@@ -55,6 +81,7 @@ fn sandbox() {
             std::env::set_var("USERPROFILE", home.join("user"));
             std::env::set_var("HOME", home.join("user"));
             std::env::set_var("CLAUDE_CONFIG_DIR", home.join("user/.claude"));
+            std::env::set_var("CODEX_HOME", home.join("user/.codex"));
             std::env::set_var("SWISS_MASTER_KEY", "ab".repeat(32));
         }
     });
@@ -136,6 +163,9 @@ async fn compose(raw: Value, start: bool, llm: bool, remote: bool) -> Gateway {
     let managed = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
     let tokens = Arc::new(TokenManager::new(managed.clone(), Some(TOKEN)));
     let ctx = AppContext::new(registry.clone(), tokens, managed.clone(), calls.clone(), traffic.clone(), "SWISS_TOKEN", 19999);
+    // Seats stay fakes: a real read would consult this machine's login items and PATH.
+    assert!(ctx.autostart.set(Arc::new(FakeSeat { enabled: false })).is_ok(), "autostart is set once");
+    assert!(ctx.user_path.set(Arc::new(FakeSeat { enabled: true })).is_ok(), "the user path is set once");
 
     let config_store = ConfigStore::from_loaded(dir.join("gateway.config.json"), raw);
     let services = swiss_host::services::RuntimeServices::new(swiss_host::services::BootInfo::default());
@@ -1111,4 +1141,211 @@ async fn a_plugin_schema_comes_from_the_gateway_and_the_row_does_not() {
     drop(listener);
     let (document, code) = plugin_schema_at(port, "jobs").await;
     assert_eq!(code, 3, "{document}");
+}
+
+// SPEC §host.setup: show prints a manifest without values, and the mask it prints is refused when
+// that manifest is given back to plan. The literal arrives through the admin route, which still
+// accepts one; a manifest cannot.
+#[tokio::test]
+async fn show_prints_a_manifest_whose_mask_plan_refuses() {
+    const LITERAL: &str = "show-literal-9f3a";
+    const VAULT: &str = "show-vault-9f3a";
+    let gw = gateway().await;
+    let (status, vault) = gw_get(gw.port, "/api/secrets").await;
+    assert_eq!(status, 200, "{vault}");
+    let (status, answer) = gw_write(gw.port, reqwest::Method::PUT, "/api/secrets/show-key", json!({ "value": VAULT, "rev": vault["rev"] })).await;
+    assert_eq!(status, 200, "{answer}");
+    let (status, answer) = gw_write(gw.port, reqwest::Method::POST, "/api/mcps", json!({
+        "name": "db", "type": "mysql", "host": "127.0.0.1", "password": LITERAL, "start": false,
+    })).await;
+    assert_eq!(status, 201, "{answer}");
+    let (status, answer) = gw_write(gw.port, reqwest::Method::POST, "/api/mcps", json!({
+        "name": "web", "type": "http", "url": "http://127.0.0.1:1/mcp",
+        "headers": { "Authorization": "Bearer ${secret://show-key}" }, "start": false,
+    })).await;
+    assert_eq!(status, 201, "{answer}");
+    let (status, answer) = gw_write(gw.port, reqwest::Method::POST, "/api/tunnels/connections", json!({
+        "name": "bastion", "host": "127.0.0.1", "username": "u", "authType": "password", "password": LITERAL,
+    })).await;
+    assert_eq!(status, 201, "{answer}");
+    let writes = gw.writes();
+
+    let (shown, code) = show_at(gw.port).await;
+
+    assert_eq!(code, 0, "{shown}");
+    assert_eq!(shown["ok"], json!(true));
+    assert_eq!(shown["mode"], json!("show"));
+    assert_eq!(shown["gateway"]["port"], json!(gw.port));
+    assert_eq!(shown["gateway"]["started"], json!(false));
+    assert_eq!(shown["manifest"]["version"], json!(1));
+    assert_eq!(shown["manifest"]["machine"]["path"], json!(true));
+    assert_eq!(shown["manifest"]["machine"]["autostart"], json!(false));
+    assert!(shown["manifest"]["machine"].get("skills").is_none(), "{shown}");
+    assert_eq!(shown["manifest"]["secrets"]["show-key"], json!("ask"));
+    assert_eq!(shown["manifest"]["mcps"]["db"]["password"], json!(swiss_host::mask::MASK));
+    assert_eq!(shown["manifest"]["mcps"]["web"]["headers"]["Authorization"], json!("Bearer ${secret://show-key}"));
+    assert_eq!(shown["manifest"]["tunnels"]["connections"]["bastion"]["password"], json!(swiss_host::mask::MASK));
+    assert_eq!(shown["manifest"]["tunnels"]["connections"]["bastion"]["host"], json!("127.0.0.1"));
+    let text = shown.to_string();
+    assert!(!text.contains(LITERAL), "{text}");
+    assert!(!text.contains(VAULT), "{text}");
+    assert!(shown["warnings"].as_array().expect("warnings").is_empty(), "{shown}");
+    assert_eq!(gw.writes(), writes, "show writes nothing");
+
+    let (refused, code) = plan_at(gw.port, &input(shown["manifest"].clone(), Path::new("")), Options::default()).await;
+    assert_eq!(code, 2, "{refused}");
+    assert_eq!(refused["ok"], json!(false));
+    assert_eq!(refused["mode"], json!("plan"));
+    let problems = refused["problems"].as_array().expect("problems");
+    assert!(
+        problems.iter().any(|problem| problem["path"] == json!("mcps.db.password") && problem["message"].as_str().unwrap_or("").contains("setup show")),
+        "{refused}"
+    );
+    assert!(
+        problems.iter().any(|problem| problem["path"] == json!("tunnels.connections.bastion.password")),
+        "{refused}"
+    );
+    let text = refused.to_string();
+    assert!(!text.contains(LITERAL), "{text}");
+    assert!(!text.contains(VAULT), "{text}");
+    assert_eq!(gw.writes(), writes, "planning the shown manifest writes nothing");
+}
+
+// SPEC §host.setup: the sign-in link opens the asked names and never reaches the document.
+#[tokio::test]
+async fn secret_ask_opens_the_page_without_printing_the_link() {
+    let gw = gateway().await;
+    let ticket = format!("http://127.0.0.1:{}/?token=ticket-sentinel-9f3a", gw.port);
+    let opened = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let record = opened.clone();
+    let names = vec!["prod-db-password".to_string()];
+    let (document, code) = ask_on(
+        gw.port,
+        false,
+        &names,
+        None,
+        || {
+            let ticket = ticket.clone();
+            async move { Ok(ticket) }
+        },
+        move |url| {
+            *record.lock().expect("the opened url") = url.to_string();
+            Ok(())
+        },
+    )
+    .await;
+    assert_eq!(code, 4, "{document}");
+    assert_eq!(document["items"][0]["status"], json!("needs-input"));
+    let text = document.to_string();
+    assert!(!text.contains("ticket-sentinel-9f3a"), "the link reached the document");
+    assert!(!text.contains("token="), "the link reached the document");
+    let url = opened.lock().expect("the opened url").clone();
+    assert!(url.contains("token=ticket-sentinel-9f3a"), "the browser was not given the link");
+    assert!(url.contains("#secrets?ask=prod-db-password"), "{url}");
+
+    let (status, vault) = gw_get(gw.port, "/api/secrets").await;
+    assert_eq!(status, 200, "{vault}");
+    let (status, stored) = gw_write(
+        gw.port,
+        reqwest::Method::PUT,
+        "/api/secrets/prod-db-password",
+        json!({ "value": "typed-by-a-human", "rev": vault["rev"] }),
+    )
+    .await;
+    assert_eq!(status, 200, "{stored}");
+    let (again, code) = ask_on(
+        gw.port,
+        false,
+        &names,
+        None,
+        || async { Err("minted".into()) },
+        |_| panic!("a stored name is not opened"),
+    )
+    .await;
+    assert_eq!(code, 0, "{again}");
+    assert_eq!(again["items"][0]["status"], json!("unchanged"));
+    assert!(!again.to_string().contains("typed-by-a-human"));
+}
+
+fn bearer_of(text: &str) -> String {
+    text.split("Bearer ")
+        .nth(1)
+        .map(|rest| rest.chars().take_while(|ch| ch.is_ascii_hexdigit()).collect())
+        .filter(|secret: &String| secret.len() >= 16)
+        .unwrap_or_default()
+}
+
+fn absent(document: &Value, secret: &str) {
+    assert!(!secret.is_empty(), "the client was given no token");
+    assert!(!document.to_string().contains(secret), "the token reached the document");
+    assert!(!document.to_string().contains("token="), "a login link reached the document");
+}
+
+/// A `claude` that records its argv and answers `mcp list` from the names `mcp add` stored.
+fn fake_claude(dir: &std::path::Path) -> std::path::PathBuf {
+    std::fs::create_dir_all(dir).expect("the fake's directory");
+    #[cfg(windows)]
+    {
+        let path = dir.join("claude.cmd");
+        std::fs::write(
+            &path,
+            "@echo off\r\necho %*>>\"%~dp0calls.txt\"\r\nif \"%2\"==\"list\" (\r\n  if not \"%3\"==\"\" exit /b 1\r\n  if exist \"%~dp0names.txt\" type \"%~dp0names.txt\"\r\n  exit /b 0\r\n)\r\nif \"%2\"==\"add\" (\r\n  echo %7>>\"%~dp0names.txt\"\r\n  exit /b 0\r\n)\r\nif \"%2\"==\"remove\" exit /b 0\r\nexit /b 1\r\n",
+        )
+        .expect("the fake claude");
+        path
+    }
+    #[cfg(not(windows))]
+    {
+        let path = dir.join("claude");
+        std::fs::write(
+            &path,
+            "#!/bin/sh\ndir=$(CDPATH= cd -- \"$(dirname \"$0\")\" && pwd)\nprintf '%s\\n' \"$*\" >> \"$dir/calls.txt\"\nif [ \"$2\" = \"list\" ]; then\n  [ \"$#\" -eq 2 ] || exit 1\n  [ -f \"$dir/names.txt\" ] && cat \"$dir/names.txt\"\n  exit 0\nfi\nif [ \"$2\" = \"add\" ]; then\n  printf '%s\\n' \"$7\" >> \"$dir/names.txt\"\n  exit 0\nfi\nif [ \"$2\" = \"remove\" ]; then exit 0; fi\nexit 1\n",
+        )
+        .expect("the fake claude");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("the fake is runnable");
+        path
+    }
+}
+
+// SPEC §host.setup: a client's token is written into its config and never into the document.
+#[tokio::test]
+async fn connect_writes_the_client_and_not_the_document() {
+    let gw = gateway().await;
+    let manifest = input(
+        json!({
+            "mcps": { "echo-link": { "type": "echo" } },
+            "clients": { "cursor": { "mcps": ["echo-link"] }, "codex": {} },
+        }),
+        Path::new(""),
+    );
+    let (document, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{document}");
+    let home = std::path::PathBuf::from(std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).expect("a home"));
+    let cursor = std::fs::read_to_string(home.join(".cursor/mcp.json")).expect("cursor mcp.json");
+    let codex = std::fs::read_to_string(home.join(".codex/config.toml")).expect("codex config");
+    absent(&document, &bearer_of(&cursor));
+    absent(&document, &bearer_of(&codex));
+    assert!(cursor.contains("\"type\": \"http\""), "the panel's cursor shape");
+    assert!(codex.contains("\nhttp_headers = { \"Authorization\" = \"Bearer "), "Codex must receive its HTTP authentication header");
+    let cursor_bytes = std::fs::read(home.join(".cursor/mcp.json")).expect("cursor bytes");
+    let (again, code) = apply_at(gw.port, &manifest, NO_CHECK).await;
+    assert_eq!(code, 0, "{again}");
+    assert!(again["items"].as_array().unwrap().iter().all(|item| item["status"] == json!("unchanged")), "{again}");
+    assert_eq!(std::fs::read(home.join(".cursor/mcp.json")).expect("cursor bytes"), cursor_bytes);
+
+    let dir = std::env::temp_dir().join(format!("swiss-connect-{}", swiss_core::util::random_hex(6)));
+    let program = fake_claude(&dir);
+    let env = ConnectEnv { home: dir.clone(), codex_home: dir.join(".codex"), claude: program };
+    let names = vec!["echo-link".to_string()];
+    let (connected, code) = connect_on(gw.port, false, "claude", &names, false, &env).await;
+    assert_eq!(code, 0, "{connected}");
+    let calls = std::fs::read_to_string(dir.join("calls.txt")).expect("claude's argv");
+    absent(&connected, &bearer_of(&calls));
+    assert!(connected["next"][0]["do"].as_str().unwrap_or("").contains("restart claude"), "{connected}");
+    let (second, code) = connect_on(gw.port, false, "claude", &names, false, &env).await;
+    assert_eq!(code, 0, "{second}");
+    assert_eq!(second["items"][0]["status"], json!("unchanged"));
+    let calls = std::fs::read_to_string(dir.join("calls.txt")).expect("claude's argv");
+    assert_eq!(calls.matches("mcp add").count(), 1, "an existing entry is not rewritten");
 }

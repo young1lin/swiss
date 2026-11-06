@@ -46,6 +46,7 @@ impl Instance {
             .env("USERPROFILE", self.home.join("user"))
             .env("HOME", self.home.join("user"))
             .env_remove("CLAUDE_CONFIG_DIR")
+            .env_remove("CODEX_HOME")
             .current_dir(&self.home)
             .stdin(std::process::Stdio::null());
         command
@@ -242,4 +243,77 @@ fn every_plugin_with_a_schema_refuses_an_unknown_key() {
         }
     }
     assert!(nested >= 3, "only {nested} closed objects were looked into");
+}
+
+fn bearer_of(text: &str) -> String {
+    text.split("Bearer ")
+        .nth(1)
+        .map(|rest| rest.chars().take_while(|ch| ch.is_ascii_hexdigit()).collect())
+        .unwrap_or_default()
+}
+
+fn plant_claude(dir: &Path) {
+    std::fs::create_dir_all(dir).expect("the fake's directory");
+    #[cfg(windows)]
+    std::fs::write(
+        dir.join("claude.cmd"),
+        "@echo off\r\necho %*>>\"%~dp0calls.txt\"\r\nif \"%2\"==\"list\" (\r\n  if not \"%3\"==\"\" exit /b 1\r\n  if exist \"%~dp0names.txt\" type \"%~dp0names.txt\"\r\n  exit /b 0\r\n)\r\nif \"%2\"==\"add\" (\r\n  echo %7>>\"%~dp0names.txt\"\r\n  exit /b 0\r\n)\r\nif \"%2\"==\"remove\" exit /b 0\r\nexit /b 1\r\n",
+    )
+    .expect("the fake claude");
+    #[cfg(not(windows))]
+    {
+        let path = dir.join("claude");
+        std::fs::write(
+            &path,
+            "#!/bin/sh\ndir=$(CDPATH= cd -- \"$(dirname \"$0\")\" && pwd)\nprintf '%s\\n' \"$*\" >> \"$dir/calls.txt\"\nif [ \"$2\" = \"list\" ]; then\n  [ \"$#\" -eq 2 ] || exit 1\n  [ -f \"$dir/names.txt\" ] && cat \"$dir/names.txt\"\n  exit 0\nfi\nif [ \"$2\" = \"add\" ]; then\n  printf '%s\\n' \"$7\" >> \"$dir/names.txt\"\n  exit 0\nfi\nexit 0\n",
+        )
+        .expect("the fake claude");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("runnable");
+    }
+}
+
+// SPEC §host.setup: neither a client token nor a one-time link reaches the output.
+#[test]
+fn no_token_or_link_reaches_the_output() {
+    let instance = Instance::new();
+    let bin = instance.home.join("bin");
+    plant_claude(&bin);
+    let manifest = serde_json::json!({
+        "mcps": { "e2e-echo": { "type": "echo" } },
+        "clients": { "claude": {}, "codex": {}, "cursor": {} },
+    });
+    let path = instance.home.join("swiss.setup.json");
+    std::fs::write(&path, manifest.to_string()).expect("the manifest");
+    #[cfg(windows)]
+    let path_var = format!("{};{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    #[cfg(not(windows))]
+    let path_var = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    let file = path.to_string_lossy().into_owned();
+    let apply = instance.run(&["setup", "apply", &file, "--no-check"], &[("PATH", path_var.as_str())]);
+    let stdout = String::from_utf8_lossy(&apply.stdout);
+    let stderr = String::from_utf8_lossy(&apply.stderr);
+    assert!(apply.status.success(), "{stdout}{stderr}");
+    let user = instance.home.join("user");
+    let cursor = std::fs::read_to_string(user.join(".cursor/mcp.json")).expect("cursor mcp.json");
+    let codex = std::fs::read_to_string(user.join(".codex/config.toml")).expect("codex config");
+    let calls = std::fs::read_to_string(bin.join("calls.txt")).expect("claude's argv");
+    for secret in [bearer_of(&cursor), bearer_of(&codex), bearer_of(&calls)] {
+        assert!(secret.len() >= 16, "a client was given no token");
+        assert!(!stdout.contains(&secret), "the token reached stdout");
+        assert!(!stderr.contains(&secret), "the token reached stderr");
+        assert!(!instance.logs().contains(&secret), "the token reached the gateway log");
+    }
+    assert!(!stdout.contains("token="), "a login link reached stdout");
+    let sink = instance.home.join("opened.txt");
+    let sink_arg = sink.to_string_lossy().into_owned();
+    let asked = instance.run(&["secret", "ask", "e2e-ask-name"], &[("SWISS_OPEN_SINK", sink_arg.as_str())]);
+    let asked_out = String::from_utf8_lossy(&asked.stdout);
+    let asked_err = String::from_utf8_lossy(&asked.stderr);
+    assert_eq!(asked.status.code(), Some(4), "{asked_out}{asked_err}");
+    assert!(!asked_out.contains("token="), "a login link reached stdout");
+    assert!(!asked_err.contains("token="), "a login link reached stderr");
+    let opened = std::fs::read_to_string(&sink).expect("the opener's sink");
+    assert!(opened.contains("#secrets?ask=e2e-ask-name"), "the page was not the asked names");
+    assert!(opened.contains("token="), "the browser was not given a sign-in link");
 }

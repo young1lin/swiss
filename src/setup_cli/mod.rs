@@ -21,7 +21,9 @@
 //! One document on stdout for every outcome, and it never holds a secret's value.
 
 mod apply;
+mod ask;
 mod check;
+mod connect;
 mod machine;
 mod manifest;
 mod plan;
@@ -29,6 +31,7 @@ mod plugins;
 mod refuse;
 mod remote;
 mod report;
+mod show;
 mod sources;
 mod tunnels;
 
@@ -41,7 +44,10 @@ use serde_json::{json, Value};
 use crate::daemon::{resolve_port, start_daemon, StartOptions, StartResult};
 use crate::remote_cli::{decode_text, read_path_or_stdin, Gateway};
 use manifest::Manifest;
+pub use ask::ask_on;
+pub use connect::{connect_on, ConnectEnv};
 pub use plan::Options;
+pub use show::show_at;
 use report::{Mode, Report, Status, EXIT_FAILED, EXIT_NO_GATEWAY, EXIT_REFUSED};
 use sources::{trim_newline, Source};
 use swiss_core::secure::secretstore::valid_name;
@@ -50,17 +56,23 @@ use swiss_core::secure::secretstore::valid_name;
 /// this many times.
 const CONFLICT_RETRIES: usize = 3;
 
-const SECRET_USAGE: &str = "usage: swiss secret set <name> [--from <env:VAR|file:PATH|dotenv:PATH#KEY>]\n\
-    The value comes from the source, or from piped stdin. It is never taken from the command line.";
+const SECRET_USAGE: &str = "usage: swiss secret set <name> [--from <env:VAR|file:PATH|dotenv:PATH#KEY>]\n       \
+    swiss secret ask <name>... [--wait <seconds>]\n\
+    set takes the value from the source or from piped stdin, never from the command line. \
+    ask opens the panel on those names and does not print the sign-in link.";
 
 const TERMINAL_REFUSAL: &str = "stdin is a terminal, and a value typed here would echo. Pipe it in, \
     use --from env:VAR, file:PATH or dotenv:PATH#KEY, or have whoever holds it store it on the \
     panel's Secrets page.";
 
 const SETUP_USAGE: &str = "usage: swiss setup schema [section | plugins.<id>]\n       \
+    swiss setup show\n       \
+    swiss setup guide\n       \
     swiss setup plan <file|-> [--rotate-secrets]\n       \
     swiss setup apply <file|-> [--no-check] [--rotate-secrets]\n\
-    A file or stdin (-) holds one JSON manifest; swiss setup schema says what it may hold.";
+    A file or stdin (-) holds one JSON manifest. swiss setup schema says what it may hold, \
+    swiss setup show prints what this gateway has, without values, \
+    and swiss setup guide prints SETUP.md without a gateway.";
 
 /// The entry from cli.rs: argv is everything after `swiss setup`.
 pub async fn setup_main(argv: Vec<String>) -> i32 {
@@ -68,12 +80,33 @@ pub async fn setup_main(argv: Vec<String>) -> i32 {
         Some((sub, rest)) if sub == "plan" => run_manifest(Mode::Plan, rest).await,
         Some((sub, rest)) if sub == "apply" => run_manifest(Mode::Apply, rest).await,
         Some((sub, rest)) if sub == "schema" => setup_schema(rest).await,
+        Some((sub, rest)) if sub == "show" => setup_show(rest).await,
+        Some((sub, rest)) if sub == "guide" => setup_guide(rest),
         Some((sub, _)) if matches!(sub.as_str(), "help" | "-h" | "--help") => {
             println!("{SETUP_USAGE}");
             0
         }
         _ => refuse(SETUP_USAGE),
     }
+}
+
+fn setup_guide(argv: &[String]) -> i32 {
+    if !argv.is_empty() {
+        return refuse(SETUP_USAGE);
+    }
+    println!("{}", include_str!("../../SETUP.md"));
+    0
+}
+
+async fn setup_show(argv: &[String]) -> i32 {
+    if !argv.is_empty() {
+        return refuse(SETUP_USAGE);
+    }
+    let up = match ensure_gateway().await {
+        Ok(up) => up,
+        Err(error) => return print_outcome((json!({ "ok": false, "mode": "show", "error": error }), EXIT_NO_GATEWAY)),
+    };
+    print_outcome(show::show_on(up.port, up.started).await)
 }
 
 async fn setup_schema(argv: &[String]) -> i32 {
@@ -199,6 +232,16 @@ async fn run_on(mode: Mode, up: &GatewayUp, parsed: &Manifest, input: &Input, op
         tunnels::check(&gw, parsed, options, &mut items, &mut warnings).await;
         check::check_all(&gw, parsed, options, &mut items, &mut warnings).await;
     }
+    if !parsed.clients.is_empty() {
+        match connect::ConnectEnv::of_this_user() {
+            Ok(env) => connect::sync(&gw, up.port, parsed, mode, &env, &mut items, &mut warnings).await,
+            Err(error) => {
+                for name in parsed.clients.keys() {
+                    items.push(report::Item::new("client", name, Status::Failed).with("client", name.clone()).failed("clients.home", &error));
+                }
+            }
+        }
+    }
     let mut report = Report {
         mode,
         gateway: json!({ "port": up.port, "started": up.started, "build": build }),
@@ -222,11 +265,7 @@ fn say_who_acts_next(report: &mut Report, file: &str) {
     };
     let (secrets, sign_ins, host_keys) = (waiting("secret"), waiting("mcp"), waiting("connection"));
     if !secrets.is_empty() {
-        let what = format!(
-            "store {} on the panel's Secrets page, or pipe each into swiss secret set <name> from your own shell",
-            secrets.join(", ")
-        );
-        report.next_step("human", what, "only a human has these values");
+        report.next_step("human", format!("swiss secret ask {}", secrets.join(" ")), "no source for this secret");
     }
     if !sign_ins.is_empty() {
         let what = format!("authorize {} on the panel's MCP page", sign_ins.join(", "));
@@ -239,6 +278,7 @@ fn say_who_acts_next(report: &mut Report, file: &str) {
     if !secrets.is_empty() || !sign_ins.is_empty() || !host_keys.is_empty() {
         report.next_step("agent", format!("swiss setup apply {file}"), "once that is done");
     }
+    connect::note_restart(report);
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -278,10 +318,35 @@ fn read_manifest(file: &str, stdin_is_terminal: bool, stdin: &mut dyn Read) -> R
     Ok(Input { text, base, file: file.to_string() })
 }
 
+/// The entry from cli.rs: argv is everything after `swiss connect`.
+pub async fn connect_main(argv: Vec<String>) -> i32 {
+    if argv.iter().any(|word| word == "--help" || word == "-h") {
+        println!("{}", connect::usage());
+        return 0;
+    }
+    let args = match connect::parse(&argv) {
+        Ok(args) => args,
+        Err(refusal) => return refuse(&refusal),
+    };
+    let env = match connect::ConnectEnv::of_this_user() {
+        Ok(env) => env,
+        Err(error) => return refuse(&error),
+    };
+    let up = match ensure_gateway().await {
+        Ok(up) => up,
+        Err(error) => {
+            print_document(&json!({ "ok": false, "mode": "connect", "error": error }));
+            return EXIT_NO_GATEWAY;
+        }
+    };
+    print_outcome(connect::connect_on(up.port, up.started, &args.client, &args.mcps, args.replace, &env).await)
+}
+
 /// The entry from cli.rs: argv is everything after `swiss secret`.
 pub async fn secret_main(argv: Vec<String>) -> i32 {
     match argv.split_first() {
         Some((sub, rest)) if sub == "set" => secret_set(rest).await,
+        Some((sub, rest)) if sub == "ask" => secret_ask(rest).await,
         Some((sub, _)) if matches!(sub.as_str(), "help" | "-h" | "--help") => {
             println!("{SECRET_USAGE}");
             0
@@ -439,6 +504,29 @@ async fn store_secret(gw: &Gateway, name: &str, value: &str) -> Result<Stored, S
     Err("the vault kept changing while this wrote; run it again".into())
 }
 
+async fn secret_ask(argv: &[String]) -> i32 {
+    if matches!(argv, [word] if word == "--help" || word == "-h") {
+        println!("{SECRET_USAGE}");
+        return 0;
+    }
+    let args = match ask::parse(argv) {
+        Ok(args) => args,
+        Err(refusal) => return refuse(&refusal),
+    };
+    let up = match ensure_gateway().await {
+        Ok(up) => up,
+        Err(error) => {
+            print_document(&json!({ "ok": false, "mode": "ask", "error": error }));
+            return EXIT_NO_GATEWAY;
+        }
+    };
+    let port = up.port;
+    print_outcome(
+        ask::ask_on(port, up.started, &args.names, args.wait, || crate::daemon::login_url(port), crate::cli::try_open_in_browser)
+            .await,
+    )
+}
+
 /// The document for one `secret set`, and its exit code. A stored value that an MCP could not
 /// rebuild on is still stored; `ok` false says the machine is not yet right.
 fn set_report(up: &GatewayUp, name: &str, stored: Result<Stored, String>) -> (Value, i32) {
@@ -488,6 +576,30 @@ mod tests {
     use axum::routing::{get, put};
 
     const SENTINEL: &str = "sk-live-sentinel-7f3a";
+
+    #[test]
+    fn the_setup_guide_names_every_command_and_exit_code() {
+        let guide = include_str!("../../SETUP.md");
+        for command in [
+            "swiss --version",
+            "swiss status",
+            "swiss skill list",
+            "swiss skill install",
+            "swiss setup schema",
+            "swiss setup show",
+            "swiss setup plan",
+            "swiss setup apply",
+            "swiss setup guide",
+            "swiss secret set",
+            "swiss secret ask",
+            "swiss connect",
+        ] {
+            assert!(guide.contains(command), "{command}");
+        }
+        for code in ["exit code 0", "exit code 1", "exit code 2", "exit code 3", "exit code 4"] {
+            assert!(guide.contains(code), "{code}");
+        }
+    }
 
     fn argv(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()

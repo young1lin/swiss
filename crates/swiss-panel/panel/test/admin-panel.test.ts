@@ -230,7 +230,7 @@ describe("admin panel assets", () => {
       // is never one, so a bare base class keeps frag() on the appendChild path.
       Node: class {},
       localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
-      location: { reload: () => {} },
+      location: { hash: "", reload: () => {} },
       history: { replaceState: () => {}, pushState: () => {} },
       matchMedia: () => ({ matches: false, addEventListener: () => {}, addListener: () => {} }),
       confirm: () => true, alert: () => {},

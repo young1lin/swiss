@@ -96,12 +96,11 @@ function claudeSnippet(name: string, secret: string): string {
     ' --header "Authorization: Bearer ' + secret + '"';
 }
 
-/** Codex has no one-line add for an HTTP server, so copy this block into ~/.codex/config.toml. */
 function codexSnippet(name: string, secret: string): string {
   return "[mcp_servers." + name + "]\n" +
     'type = "http"\n' +
     'url = "' + endpointUrl(name) + '"\n' +
-    'headers = { "Authorization" = "Bearer ' + secret + '" }';
+    'http_headers = { "Authorization" = "Bearer ' + secret + '" }';
 }
 
 /** A `.mcp.json` entry for project-scoped Claude Code; the secret is inline. */

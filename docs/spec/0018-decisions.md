@@ -44,7 +44,8 @@ permits finishing it, which stays a deferred optimisation.
 ## ADR-006 — How it ships
 
 **Accepted — GitHub Releases.** CI builds five targets and attaches one archive per target (the
-binary, the licence files and the skills) plus `SHA256SUMS` to a GitHub Release on a `v*` tag
+binary, the licence files, `SETUP.md` and the skills) plus `SETUP.md` itself and `SHA256SUMS`
+to a GitHub Release on a `v*` tag
 (§release.ci). There is no npm package and no npm publish step; the per-platform
 `optionalDependencies` package remains possible release plumbing on top of the same artefacts.
 Open: `-C target-feature=+crt-static` is not applied — the Windows binary links the CRT

@@ -260,6 +260,39 @@ function groupSelectNode()                    {
   return sel;
 }
 
+/** Names a `#secrets?ask=` link still wants. A stored name is left out, and so is one the vault
+ *  would refuse. The page does not store them: each row waits for Store. */
+function askedNames()           {
+  const raw = location.hash.replace(/^#\/?/, "");
+  const query = raw.slice(raw.indexOf("?") + 1);
+  const ask = raw.includes("?") ? new URLSearchParams(query).get("ask") || "" : "";
+  const seen           = [];
+  for (const part of ask.split(",")) {
+    const name = part.trim();
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) continue;
+    if (secrets.list.includes(name) || seen.includes(name)) continue;
+    seen.push(name);
+  }
+  return seen;
+}
+
+function askSection()                     {
+  const names = askedNames();
+  if (!names.length) return null;
+  return section({ note: tr("secrets.askLead") }, ...names.map((name, index)              => {
+    return inlineForm(
+      h("input", { value: name, readOnly: true, data: { skaskname: name } }),
+      h("input", {
+        type: "password",
+        data: { skaskvalue: name },
+        placeholder: tr("secrets.valueWriteOnlyNever"),
+        autofocus: index === 0,
+      }),
+      btn(tr("secrets.store"), { kind: "primary", data: { skaskstore: name } }),
+    );
+  }));
+}
+
 function render()       {
   painted = signature();
   // No location title: the context bar already says "Settings / Secrets". One sentence (U11):
@@ -270,6 +303,7 @@ function render()       {
       desc: [tr("secrets.descLead"), h("code", null, "${secret://name}"), tr("secrets.descTail")],
       actions: [iconBtn("folder-plus", tr("secrets.newGroup"), { id: "skNewGroup" })],
     }),
+    askSection(),
     // The inline create form (SPEC §panel.groups): one row, the Group select beside the primary.
     inlineForm(
       h("input", { id: "skName", placeholder: tr("secrets.nameLowercaseKebabZ") }),
@@ -281,6 +315,7 @@ function render()       {
   const chip = $("countChip");
   if (chip) chip.textContent = countText();
   wire();
+  document.querySelector                  ("[data-skaskvalue]")?.focus();
 }
 
 function wire()       {
@@ -288,8 +323,9 @@ function wire()       {
   // it would fire under whichever view mounts next.
   $                  ("skName").oninput = syncStoreLabel;
   $("pane").onclick = async (event            )                => {
-    const hit = targetEl(event)?.closest             ("[data-skcopy],[data-skmore],#skStore,#skNewGroup");
+    const hit = targetEl(event)?.closest             ("[data-skcopy],[data-skmore],#skStore,#skNewGroup,[data-skaskstore]");
     if (!hit) return;
+    if (hit.dataset.skaskstore) { await storeAsked(hit.dataset.skaskstore); return; }
     if (hit.id === "skStore") { await storeSecret(); return; }
     if (hit.id === "skNewGroup") {
       newGroupFlow("secrets", secrets.groups || ["default"], ()                => {
@@ -308,6 +344,22 @@ function wire()       {
       ]);
     }
   };
+}
+
+/** One asked name. The row's name is fixed; this stores only the value the person typed. */
+async function storeAsked(name        )                {
+  const box = document.querySelector                  ('[data-skaskvalue="' + name + '"]');
+  const value = box?.value || "";
+  if (!value) { toast(tr("secrets.secretNeedsBothName"), true); return; }
+  if (secrets.list.includes(name) && !confirm(tr("secrets.replaceSecretNameConfirm", { name }))) return;
+  const j = await apiJson                        ("/api/secrets/" + encodeURIComponent(name), {
+    method: "PUT",
+    body: JSON.stringify({ value: value, rev: secrets.rev }),
+  });
+  if (!j) return;
+  await loadSecrets();
+  render();
+  storedToast(name, false, j);
 }
 
 /** Store one secret, then redraw from the vault's own answer. The rev goes with the write;

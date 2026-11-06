@@ -2160,6 +2160,7 @@ const zh: Record<string, string> = {
   "secrets.groupSecretListsUnder": "该密钥所属的分组",
   "secrets.descLead": "只写的保管库。以 ",
   "secrets.descTail": " 引用一个值；值不再显示。",
+  "secrets.askLead": "这些名字还缺一个值。按下存入之前，什么都不会写入。",
   "secrets.newGroup": "新建分组",
   "secrets.nameLowercaseKebabZ": "名称——小写 kebab(a-z 0-9 -)",
   "secrets.valueWriteOnlyNever": "值——只写，不再显示",

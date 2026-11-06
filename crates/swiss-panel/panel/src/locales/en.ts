@@ -2227,6 +2227,7 @@ const en: Record<string, string> = {
   "secrets.groupSecretListsUnder": "The group this secret lists under",
   "secrets.descLead": "Write-only vault. Reference a value as ",
   "secrets.descTail": "; it is never shown again.",
+  "secrets.askLead": "These names still need a value. Nothing is stored until you press Store.",
   "secrets.newGroup": "New group",
   "secrets.nameLowercaseKebabZ": "Name — lowercase kebab (a-z 0-9 -)",
   "secrets.valueWriteOnlyNever": "Value — write-only, never shown again",

@@ -147,6 +147,8 @@ const paint = async (view: string, body: unknown, status = 200) => {
   await registry.reloadPluginInventory();
 };
 
+const browserLocation = { hash: "" };
+
 beforeAll(async () => {
   const prevDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const prevFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
@@ -176,7 +178,8 @@ beforeAll(async () => {
     },
     fetch: (path: unknown) => responder(String(path)),
     // navigatePage calls history.replaceState after landing; node has no history global.
-    history: { replaceState: () => {} },
+    location: browserLocation,
+    history: { replaceState: (_state: unknown, _title: string, url: string) => { browserLocation.hash = url; } },
     // Data's canLeave asks "discard uncommitted changes?" - the veto test answers no.
     confirm: () => false,
     localStorage: {
@@ -251,6 +254,17 @@ describe("the plugin rail (global navigation)", () => {
     expect(rail).toContain('title="MCP — Plugin disabled"');
     // Other groups are untouched.
     expect(rail).not.toMatch(/data-group="tunnels"[^>]*aria-disabled/);
+  });
+
+  it("keeps a deep-link query on its page and drops it on a different page", async () => {
+    await paint("mcps", inventory);
+    responder = (path: string) => Promise.resolve(
+      path === "/api/plugins" ? jsonResponse(200, inventory) : jsonResponse(500, { error: "stub" }));
+    browserLocation.hash = "#traffic?ask=key-one";
+    await registry.navigatePage("traffic", true);
+    expect(browserLocation.hash).toBe("#traffic?ask=key-one");
+    await registry.navigatePage("jobs");
+    expect(browserLocation.hash).toBe("#jobs");
   });
 
   it("a seat reopens the plugin's LAST page; data-view stays the first page id (SPEC §panel.nav)", async () => {

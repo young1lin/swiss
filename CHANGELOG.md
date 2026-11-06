@@ -8,6 +8,18 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Added
 
+- `swiss setup guide` prints `SETUP.md`. The same file ships in every release archive and as its
+  own asset, and both skill install paths write it beside the `swiss` skill (SPEC §host.setup,
+  §release).
+- `swiss connect <claude|codex|cursor>` points that client at this gateway's MCPs. The bearer is a
+  token labelled `client-<client>`, reused or minted, and never printed. A manifest's `clients`
+  section does the same thing (SPEC §host.setup).
+- `swiss secret ask <name>...` opens the Secrets page on those names and does not print the
+  sign-in link. It exits 4 at once, or 0 when `--wait` sees every name stored. With no desktop
+  it names the port-forward and `swiss secret set` (SPEC §host.setup).
+- `swiss setup show` prints this gateway's state as a manifest, with secret names as `ask` and the
+  mask sentinel where a credential was. A reference is kept. Giving that manifest back to `plan`
+  is refused, because the mask is not the credential (SPEC §host.setup).
 - A manifest's `plugins` section turns a plugin on or off and merges a patch over its row, keeping
   what the patch does not name, so `swiss setup` can add one job or one LLM provider. `plan` asks the
   plugin's own validator through the new `PUT /api/plugins/{id}/config?dryRun=1`, a provider is checked
@@ -859,6 +871,8 @@ All notable changes to swiss are recorded here. The format follows
 
 ### Fixed
 
+- Claude setup lists MCPs without an unsupported scope option. Codex setup and copied panel
+  snippets use `http_headers` so the client sends the gateway bearer (SPEC §host.setup).
 - A plugin the boot has not reached yet says it has not started, rather than that
   `gateway.config.json` disabled it, a row nobody wrote (SPEC §host.plugins).
 - `mcp`, `tunnels`, `data` and `terminal` refuse a config key they do not read on a save, instead of

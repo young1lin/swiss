@@ -72,6 +72,8 @@ describe("connect snippets carry the /mcp/ domain prefix (SPEC §mcp.endpoint)",
   it("the codex config block carries the prefixed URL", () => {
     const s = mods.codexSnippet("redis", "sekret");
     expect(s).toContain('url = "http://127.0.0.1:19999/mcp/redis"');
+    expect(s).toContain('http_headers = { "Authorization" = "Bearer sekret" }');
+    expect(s).not.toMatch(/^headers\s*=/m);
   });
 
   it("the .mcp.json entry carries the prefixed URL", () => {
