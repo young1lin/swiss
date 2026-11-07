@@ -313,6 +313,13 @@ async fn knowledge_cli_links_and_graph() {
 #[tokio::test]
 async fn knowledge_cli_hook_never_fails_the_session() {
     let scratch = Scratch::new("hook");
+    // The hook's two-second budget buys a WARM home: by the time a session starts, the
+    // gateway (or any earlier command) has long since opened and migrated the store. A
+    // cold create alone can eat the whole budget on a slow CI disk - the runner's temp
+    // disk held the first pool acquire for seconds - so open the store once here, before
+    // anything is timed against that budget.
+    let (exit, warm) = scratch.run(&["project", "list", "--json"]).await;
+    assert_eq!(exit, 0, "{}", warm.text());
     let out = Capture::new();
     let argv: Vec<String> = ["brief", "--hook"].iter().map(|s| s.to_string()).collect();
     let (tx, rx) = tokio::sync::oneshot::channel();
