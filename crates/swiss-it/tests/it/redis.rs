@@ -954,6 +954,20 @@ async fn stream_groups_reports_pending_and_lag() {
 }
 
 
+/// Every version names its commands and their key positions, DOCS or not: redis 6 answers
+/// COMMAND INFO without names with nothing, so the catalog asks a bare COMMAND there. Run it
+/// against redis 6.2 (SWISS_IT_REDIS_URL) as well as the harness's own.
+#[tokio::test]
+async fn the_catalog_names_every_command_with_or_without_command_docs() {
+    let (_f, b) = browser("r50_names").await;
+    let v = b.command_catalog().await.expect("the catalog");
+    let rows = v["commands"].as_array().expect("commands");
+    assert!(rows.len() > 150, "a real redis has hundreds of commands, got {}", rows.len());
+    let zrange = rows.iter().find(|r| r["name"] == json!("ZRANGEBYSCORE")).expect("ZRANGEBYSCORE is named");
+    assert_eq!(zrange["firstKey"], json!(1), "{zrange}");
+    assert_eq!(zrange["arity"], json!(-4), "{zrange}");
+}
+
 #[tokio::test]
 async fn the_catalog_spells_tokened_blocks_and_carries_the_key_specs_of_moving_keys() {
     // 2026-09-29: against a real redis 7 - the token leads its block (ZRANGEBYSCORE's LIMIT,

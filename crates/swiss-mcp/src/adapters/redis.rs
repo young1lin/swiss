@@ -1149,11 +1149,18 @@ pub async fn read_command_catalog(handle: &RedisHandle) -> Result<Value, String>
     };
     // An ACL can grant one introspection command and not the other: DOCS alone is still a
     // catalog of names and syntax, so INFO failing only fails the call when DOCS did too.
-    let info = match handle.pipeline(&info_cmd).await {
+    let mut info = match handle.pipeline(&info_cmd).await {
         Ok(r) => r.into_iter().next().unwrap_or(Value::Null),
         Err(e) if docs.is_null() => return Err(e),
         Err(_) => Value::Null,
     };
+    // COMMAND INFO with no names lists every command only from redis 7; redis 6 answers it
+    // with nothing, while a bare COMMAND lists them all on every version.
+    if info.as_array().is_some_and(Vec::is_empty) {
+        if let Ok(r) = handle.pipeline(&[("COMMAND".to_string(), Vec::new())]).await {
+            info = r.into_iter().next().unwrap_or(Value::Null);
+        }
+    }
     let documented = parse_command_docs(&docs);
     let has_docs = !documented.is_empty();
     let catalog = merge_command_catalog(documented, parse_command_info(&info));

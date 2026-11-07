@@ -38,6 +38,9 @@ All notable changes to swiss are recorded here. The format follows
   failed; the name now splits into its schema - on MySQL the database - and the table. A
   MySQL "no such table" names the database it looked in, not the connection's default (SPEC
   §data.agent).
+- The Redis console's command catalog is no longer empty on redis 6. `COMMAND INFO` without
+  names lists every command only from redis 7; on an empty answer the gateway asks a bare
+  `COMMAND`, so names and key positions complete on 6.x too (SPEC §data.redis-console).
 
 ## [0.2.0] - 2026-11-08
 

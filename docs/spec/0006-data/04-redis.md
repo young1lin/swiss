@@ -60,7 +60,9 @@ Part 04 of [§data](README.md), chapter 0006 of the [swiss specification](../../
 - **The command catalog comes from the server.** `GET /redis-commands` asks `COMMAND DOCS`
   (words: summary, syntax, group, since, tokens) and `COMMAND INFO` (arity, first/last key,
   step, and redis 7 key specs) **separately** — redis 6 has no DOCS, and a pipelined failure
-  would sink both — and merges them (`documented:false` when DOCS failed). Container commands
+  would sink both — and merges them (`documented:false` when DOCS failed). `COMMAND INFO`
+  without names lists every command only from redis 7; redis 6 answers it with nothing, so an
+  empty answer asks a bare `COMMAND`, which lists them on every version. Container commands
   keep their own row and flatten their subcommands (`XINFO STREAM`). The panel asks once per
   connection; nothing is cached server-side and the panel keeps no command table.
 - **Completion** reads only the caret's line: word 0 completes command names (never on an
