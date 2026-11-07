@@ -687,6 +687,10 @@ mod tests {
     /// does not create it, and a failed persist would silently drop the very Stop these tests set
     /// up, leaving them green for the wrong reason.
     fn scratch_store() -> Arc<ManagedStore> {
+        // Pin the key before the first persist seals anything: these stores write for real, and
+        // whichever other test happens to install the deterministic key mid-run would strand a
+        // file sealed under the OS source — an explicit SWISS_MASTER_KEY never mixes with it.
+        swiss_core::secure::key::use_test_master_key();
         let dir =
             std::env::temp_dir().join(format!("swiss-server-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("create the scratch directory");

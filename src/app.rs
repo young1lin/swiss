@@ -892,6 +892,10 @@ mod tests {
     use super::*;
 
     fn scratch_store() -> ManagedStore {
+        // Pin the key before the first persist seals anything: these stores write for real, and
+        // whichever other test happens to install the deterministic key mid-run would strand a
+        // file sealed under the OS source — an explicit SWISS_MASTER_KEY never mixes with it.
+        swiss_core::secure::key::use_test_master_key();
         // A unique scratch path per call; the test never needs to clean up, only to not collide.
         let dir = std::env::temp_dir().join(format!(
             "swiss-visual-order-{}-{}",
