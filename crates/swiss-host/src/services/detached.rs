@@ -262,23 +262,39 @@ mod tests {
     #[test]
     fn the_spawn_path_puts_the_registry_path_first_and_dedups() {
         let sep = separator().to_string();
-        // Raw strings: Windows PATH entries carry backslashes, and this test is about the
-        // bytes, not about escape discipline.
-        let user = split_path(&format!(r"C:\usr\bin{sep}C:\usr\tools"));
-        let machine = split_path(&format!(r"C:\win\system32{sep}c:\USR\BIN"));
-        let extras = vec![PathBuf::from(r"C:\Users\dev\.cargo\bin")];
-        let out = compose_detached_path(&user, &machine, &extras, r"C:\fallback");
-        let expected = format!(
-            r"C:\usr\bin{sep}C:\usr\tools{sep}C:\win\system32{sep}C:\Users\dev\.cargo\bin"
-        );
-        // The case-insensitive dup of C:\\usr\\bin is dropped on Windows; on POSIX the
-        // same spelling survives because case there is significant.
-        if cfg!(windows) {
-            assert_eq!(out, expected);
+        // The fixture speaks the platform's own spelling, because the separator is
+        // the platform's too: on POSIX a drive letter's colon would split mid-entry.
+        // Both spellings give the machine half the exact dup of the user's second
+        // entry, which folds on every platform, plus a case-variant dup besides,
+        // which folds only where same_dir lowercases - Windows alone. Raw strings
+        // on the Windows side: this test is about the bytes, not escape discipline.
+        let (raw_user, raw_machine, extra, fallback, expected) = if cfg!(windows) {
+            (
+                format!(r"C:\usr\bin{sep}C:\usr\tools"),
+                format!(r"C:\win\system32{sep}C:\usr\tools{sep}c:\USR\BIN"),
+                r"C:\Users\dev\.cargo\bin",
+                r"C:\fallback",
+                format!(r"C:\usr\bin{sep}C:\usr\tools{sep}C:\win\system32{sep}C:\Users\dev\.cargo\bin"),
+            )
         } else {
-            assert!(out.starts_with(r"C:\usr\bin:"), "{out}");
-            assert!(out.matches(r"C:\usr\bin").count() == 2, "{out}");
-        }
+            (
+                format!("/usr/local/bin{sep}/usr/bin"),
+                format!("/bin{sep}/usr/bin{sep}/USR/BIN"),
+                "/home/dev/.cargo/bin",
+                "/fallback",
+                format!("/usr/local/bin{sep}/usr/bin{sep}/bin{sep}/USR/BIN{sep}/home/dev/.cargo/bin"),
+            )
+        };
+        let extras = vec![PathBuf::from(extra)];
+        // The registry's user half leads, the machine half follows, the login
+        // extras trail; the exact dup has folded, the case-variant only on Windows.
+        let out = compose_detached_path(
+            &split_path(&raw_user),
+            &split_path(&raw_machine),
+            &extras,
+            fallback,
+        );
+        assert_eq!(out, expected);
 
         // An unreadable registry (nothing from either source) falls back to the gateway's
         // own PATH — the row's last resort, not a silent empty PATH.
