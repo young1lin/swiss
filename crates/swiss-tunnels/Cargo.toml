@@ -21,8 +21,10 @@ thiserror = "2"
 # MSVC tools. `rsa` for ~/.ssh/id_rsa; `des` only to decrypt legacy PEM keys. No flate2:
 # servers negotiate `none` compression for tunnels.
 russh = { version = "0.65.1", default-features = false, features = ["ring", "rsa", "des"] }
-# SFTP over the russh session channel (SPEC §remote.actions). v3.0.0 tests against russh 0.63.2
-# itself and is transport-agnostic: no second TLS stack, no second runtime, no thread
+# SFTP over the russh session channel (SPEC §remote.actions). v3.0.x still tests against russh
+# 0.63.2 while this crate runs 0.65; it holds no russh dependency of its own and only reads and
+# writes the channel stream it is handed, so the bump does not reach it. Transport-agnostic
+# also means: no second TLS stack, no second runtime, no thread
 # pool — its only new native crates are dashmap and serde_bytes (verified with
 # cargo tree -d before adopting). The optional async-trait feature stays off.
 russh-sftp = { version = "3.0.0", default-features = false }
