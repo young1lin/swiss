@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{json, Value};
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::{BrowserFlavor, RedisBrowser};
+use swiss_host::dbbrowser::{BrowserFlavor, PubSubWatch, RedisBrowser};
 use swiss_it::engine::{engine, Kind};
 use swiss_it::seed::{fresh, fresh_redis_exclusive, fresh_redis_with_neighbor, Fresh, REDIS_SEED_KEYS};
 use swiss_mcp::adapters::redis::RedisEngine;
@@ -1182,4 +1182,38 @@ async fn a_key_name_that_is_not_utf8_is_walked_as_its_bytes_and_marked() {
     assert_eq!(row["type"], json!("string"), "TYPE was asked of the real bytes: {row}");
     let ttl = row["ttl"].as_i64().expect("a ttl");
     assert!((1..=600).contains(&ttl), "and so was TTL: {row}");
+}
+
+/// SPEC §data.pubsub against a real server: an ACL that denies the channel answers SUBSCRIBE
+/// with NOPERM, and the browser's subscribe is the refusal in the adapter's own sentence, not a
+/// feed that never speaks. The default user's channels are narrowed for two calls and restored
+/// before any assertion (the IT servers' default user starts with every channel); the exclusive
+/// lease keeps every other redis test in this binary off the server meanwhile.
+#[tokio::test]
+async fn a_subscribe_an_acl_denies_is_refused_in_the_adapters_sentence() {
+    let (f, _exclusive) = fresh_redis_exclusive("pubsub_acl").await;
+    let def: ServerDef = serde_json::from_value(f.def.clone()).expect("the redis def parses");
+    let browser = match RedisEngine::new(&def, "it-redis-acl").browser() {
+        Some(BrowserFlavor::Redis(b)) => b,
+        _ => panic!("the redis engine must expose a redis browser"),
+    };
+    let watch = |channel: &str| PubSubWatch { channels: vec![channel.to_string()], patterns: Vec::new() };
+    let mut admin = raw_conn(&f.def).await;
+    redis::cmd("ACL")
+        .arg(&["SETUSER", "default", "resetchannels", "&swiss-it-allowed"])
+        .query_async::<()>(&mut admin)
+        .await
+        .expect("narrow the default user's channels");
+    let denied = browser.subscribe(&watch("swiss-it-denied")).await.map(|_| ());
+    let allowed = browser.subscribe(&watch("swiss-it-allowed")).await.map(|_| ());
+    redis::cmd("ACL")
+        .arg(&["SETUSER", "default", "allchannels"])
+        .query_async::<()>(&mut admin)
+        .await
+        .expect("restore the default user's channels");
+
+    let err = denied.expect_err("a denied channel is the Err, never a silent feed");
+    assert!(err.starts_with("the server refused SUBSCRIBE: "), "{err}");
+    assert!(err.to_ascii_lowercase().contains("perm"), "the server's NOPERM survives: {err}");
+    allowed.expect("a channel the ACL allows still subscribes");
 }

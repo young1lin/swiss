@@ -195,9 +195,11 @@ async fn confirm(sink: &PubSubSink, watch: &PubSubWatch) -> Result<(), String> {
 
 /// The refusal sentence is the adapter's own (SPEC §data.pubsub). The newer redis-rs hands the
 /// server's -ERR answer to SUBSCRIBE to the call itself; the older one read it as done and left
-/// the PING check below to say it - whichever shape, the sentence is the same.
+/// the PING check below to say it - whichever shape, the sentence is the same. Any error reply
+/// is a refusal: redis-rs files the codes it knows (ERR, NOPERM from an ACL) under `Server`
+/// and every other code (a proxy's own) under `Extension`, both written by the server.
 fn refusal(e: redis::RedisError) -> String {
-    if matches!(e.kind(), redis::ErrorKind::Server(_)) {
+    if matches!(e.kind(), redis::ErrorKind::Server(_) | redis::ErrorKind::Extension) {
         format!("the server refused SUBSCRIBE: {e}")
     } else {
         e.to_string()
@@ -591,6 +593,31 @@ mod tests {
         let err = open_feed(&handle, &watch).await.unwrap_err();
         assert!(err.starts_with("the server refused SUBSCRIBE"), "{err}");
         assert_eq!(handle.subscriptions.load(Ordering::SeqCst), 0);
+    }
+
+    /// The error reply arrives at the SUBSCRIBE call itself: an ACL's NOPERM (a code redis-rs
+    /// knows) and a proxy's own code (one it files as an extension) read the same sentence, and
+    /// the server's own words survive in it.
+    #[tokio::test]
+    async fn an_acl_or_proxy_code_at_subscribe_reads_as_the_refusal() {
+        for reply in [
+            "-NOPERM No permissions to access a channel\r\n",
+            "-PROXYDENY pub/sub is not offered here\r\n",
+        ] {
+            let port = fake_redis(Duration::ZERO, move |verb, _| match verb {
+                "SUBSCRIBE" => reply.as_bytes().to_vec(),
+                "PING" => b"+PONG\r\n".to_vec(),
+                _ => b"+OK\r\n".to_vec(),
+            })
+            .await;
+            let handle = handle_at(port).await;
+            let watch = PubSubWatch { channels: vec!["c".into()], patterns: Vec::new() };
+            let err = open_feed(&handle, &watch).await.unwrap_err();
+            assert!(err.starts_with("the server refused SUBSCRIBE: "), "{reply:?} -> {err}");
+            let (_, words) = reply.trim_end().split_once(' ').expect("a code and its words");
+            assert!(err.contains(words), "the server's own words survive: {err}");
+            assert_eq!(handle.subscriptions.load(Ordering::SeqCst), 0, "{reply:?} holds no place");
+        }
     }
 
     #[tokio::test]

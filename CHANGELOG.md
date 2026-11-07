@@ -16,6 +16,9 @@ All notable changes to swiss are recorded here. The format follows
   opens, beside any records already there and never over one; a stray entry whose name the home
   already holds stays in `~/llm` and is named in the log (SPEC §core.home, §data.analysis,
   §data.tabs).
+- A Redis pub/sub refusal carrying a code redis-rs does not know (a proxy's own, filed as an
+  extension error) reads as the same "the server refused SUBSCRIBE" sentence as `-ERR` and an
+  ACL's `NOPERM` (SPEC §data.pubsub).
 
 ## [0.2.0] - 2026-11-08
 
