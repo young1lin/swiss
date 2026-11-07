@@ -119,7 +119,10 @@ fn launcher(port: u16) {
     // second path; one that does not, gets the first.
     let spawned = match command.spawn() {
         Ok(child) => Ok(child),
-        Err(err) if cfg!(windows) && err.raw_os_error() == Some(5) => {
+        // Windows-only, like the helper it calls: os error 5 is a Job Object refusal,
+        // and detach_command_without_breakaway exists only in platform::windows.
+        #[cfg(windows)]
+        Err(err) if err.raw_os_error() == Some(5) => {
             eprintln!("it-app launcher: the job forbids breakaway, serving inside it");
             let mut shared = Command::new(&exe);
             shared.arg("serve").arg(port.to_string());
