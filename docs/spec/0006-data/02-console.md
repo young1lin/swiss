@@ -250,7 +250,10 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   `the_snapshot_counts_a_keyspace_and_names_a_few_collections`).
 - **Tools reach this connection only**, each call leasing it for that call alone (§host.seats):
   `list_tables {grep?, schema?}` (up to 500: schema.name, type, about how many rows),
-  `describe_table {table, schema?}` (columns, keys, indexes),
+  `describe_table {table, schema?}` (columns, keys, indexes; a table written the way
+  `list_tables` prints it, `schema.name` with or without quotes, splits into the two - on
+  MySQL the schema is the database - unless a schema given apart disagrees, which leaves the
+  dotted name whole),
   `run_sql {consoleId, description, sql, limit?}` and `stage_sql {consoleId, description, sql}`. `run_sql` runs ONE read (in auto mode a narrow write too, Writes below):
   the read gate (`assert_read_statement`: SELECT,
   WITH without a data-modifying CTE, TABLE, VALUES, SHOW, DESCRIBE, EXPLAIN; never INTO

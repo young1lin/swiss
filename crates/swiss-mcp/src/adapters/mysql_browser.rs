@@ -161,7 +161,7 @@ impl MysqlBrowser {
         );
         let columns = columns?;
         if columns.is_empty() {
-            return Err(format!("no such table: {}.{table}", self.database));
+            return Err(format!("no such table: {db}.{table}"));
         }
         let primary: Vec<String> = primary?
             .iter()

@@ -54,7 +54,7 @@ impl DbBrowser for StubPg {
     }
     async fn read_table(&self, _o: &Value) -> Result<Value, String> { Err("unused".into()) }
     async fn describe_table(&self, o: &Value) -> Result<Value, String> {
-        Ok(json!({ "schema": "public", "table": o["table"], "primaryKey": ["id"],
+        Ok(json!({ "schema": o.get("schema").cloned().unwrap_or(json!("public")), "table": o["table"], "primaryKey": ["id"],
             "columns": [{ "name": "id", "dataType": "text", "nullable": false, "isPrimaryKey": true, "defaultValue": null, "comment": null },
                         { "name": "type", "dataType": "text", "nullable": true, "isPrimaryKey": false, "defaultValue": null, "comment": "post kind" }],
             "indexes": [{ "name": "posts_pkey", "unique": true, "primary": true, "columns": ["id"] }], "foreignKeys": [] }))
@@ -834,6 +834,38 @@ async fn the_structure_and_the_listing_read_as_lines() {
     assert!(!tools.call("describe_table", &json!({})).await.ok);
     let elsewhere = DbTools::new(tools.catalog.clone(), "web", DbKind::Sql, None).call("list_tables", &json!({})).await;
     assert!(!elsewhere.ok && elsewhere.text.contains("works on MySQL, PostgreSQL, SQLite, MongoDB and Redis"), "{}", elsewhere.text);
+}
+
+/// list_tables prints schema.name, and a model passes that back as the table: it is split
+/// into the schema (MySQL: the database) and the table, quotes off; a schema given apart
+/// wins over none and, when it disagrees, leaves the dotted name whole.
+#[tokio::test]
+async fn a_table_named_as_the_listing_prints_it_is_described() {
+    let (catalog, _pg) = catalog(0);
+    let (tx, mut rx) = mpsc::channel::<Event>(8);
+    let mut tools = DbTools::new(catalog, "mm", DbKind::Sql, Some(tx));
+    for (args, heading) in [
+        (json!({ "table": "demo.posts" }), "demo.posts"),
+        (json!({ "table": "`demo`.`posts`" }), "demo.posts"),
+        (json!({ "table": "\"demo\" . \"posts\"" }), "demo.posts"),
+        (json!({ "table": "demo.posts", "schema": "demo" }), "demo.posts"),
+        (json!({ "table": "posts", "schema": "demo" }), "demo.posts"),
+        (json!({ "table": "posts" }), "public.posts"),
+        (json!({ "table": "a.b", "schema": "demo" }), "demo.a.b"),
+    ] {
+        let described = tools.call("describe_table", &args).await;
+        assert!(described.ok && described.text.starts_with(&format!("{heading}
+Columns:")), "{args}: {}", described.text);
+    }
+    let frames = sent(&mut rx);
+    assert!(frames[0].contains(r#""table":"posts""#) && frames[0].contains(r#""schema":"demo""#), "{}", frames[0]);
+    assert!(frames[6].contains(r#""table":"a.b""#), "{}", frames[6]);
+    assert_eq!(table_name("demo.user"), (Some("demo".into()), "user".into()));
+    assert_eq!(table_name(" `my.db`.`user` "), (Some("my.db".into()), "user".into()), "a dot in quotes is the name's");
+    assert_eq!(table_name("user"), (None, "user".into()));
+    assert_eq!(table_name("`user`"), (None, "user".into()));
+    assert_eq!(table_name("a.b.c"), (None, "a.b.c".into()), "three parts are left whole");
+    assert_eq!(table_name(".user"), (None, ".user".into()));
 }
 
 /// What the agent finds and describes the reader sees: a listing sends its grep for the

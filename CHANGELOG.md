@@ -33,6 +33,11 @@ All notable changes to swiss are recorded here. The format follows
   made of the number (`299.0`), so the string form stays the exact one. The agent's tool
   descriptions and prompt give the string form and an insert example (SPEC
   §data.mongo-panel).
+- The Data agent's `describe_table` takes a table the way `list_tables` prints it. Given
+  `demo.user` (or `` `demo`.`user` ``), it looked up a table literally named `demo.user` and
+  failed; the name now splits into its schema - on MySQL the database - and the table. A
+  MySQL "no such table" names the database it looked in, not the connection's default (SPEC
+  §data.agent).
 
 ## [0.2.0] - 2026-11-08
 

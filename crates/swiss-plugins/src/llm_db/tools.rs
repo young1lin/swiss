@@ -643,10 +643,18 @@ impl DbTools {
     }
 
     pub(super) async fn describe_table(&self, args: &Value) -> ToolAnswer {
-        let Some(table) = string_arg(args, "table") else { return refused("table is required") };
+        let Some(written) = string_arg(args, "table") else { return refused("table is required") };
         let (_lease, browser) = match self.sql() { Ok(held) => held, Err(why) => return refused(why) };
+        // list_tables prints schema.name, so a model passes demo.user back as the table: the
+        // name splits into its schema (MySQL: its database) and the table. A schema given
+        // apart that disagrees leaves the name whole, as a dotted name of its own.
+        let (named, bare) = table_name(&written);
+        let (table, schema) = match (named, string_arg(args, "schema")) {
+            (Some(named), Some(given)) if named != given => (written, Some(given)),
+            (named, given) => (bare, given.or(named)),
+        };
         let mut o = json!({ "table": table });
-        if let Some(schema) = string_arg(args, "schema") { o["schema"] = json!(schema); }
+        if let Some(schema) = schema { o["schema"] = json!(schema); }
         match browser.describe_table(&o).await {
             Ok(detail) => {
                 // The table opens on the page at its Structure, under the schema the tree names it by.
@@ -1548,8 +1556,8 @@ impl Toolbox for DbTools {
                     "describe_table",
                     "A table's columns (type, key, nullability, default, comment), indexes and foreign keys.",
                     json!({ "type": "object", "properties": {
-                        "table": { "type": "string" },
-                        "schema": { "type": "string", "description": "The table's schema (PostgreSQL, default public) or database (MySQL)." }
+                        "table": { "type": "string", "description": "The table: bare (users), or as list_tables prints it (public.users, shop.users)." },
+                        "schema": { "type": "string", "description": "The table's schema (PostgreSQL, default public) or database (MySQL, default the connection's), when the table does not name it." }
                     }, "required": ["table"] }),
                 ),
                 spec(

@@ -525,6 +525,30 @@ pub(super) fn heard_text(heard: &Heard) -> String {
     clip(&text, ANSWER_TEXT_MAX)
 }
 
+/// A table name as a model writes it - bare (`user`), or qualified the way list_tables prints
+/// it (`demo.user`, `` `demo`.`user` ``, `"public"."users"`): its schema, when it names one,
+/// and the table, quotes off. A dot inside quotes is part of the name; a name of more than two
+/// parts is left whole.
+pub(super) fn table_name(written: &str) -> (Option<String>, String) {
+    let mut parts = Vec::new();
+    let mut part = String::new();
+    let mut quote = None;
+    for c in written.trim().chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            None if c == '`' || c == '"' => quote = Some(c),
+            None if c == '.' => parts.push(std::mem::take(&mut part).trim().to_string()),
+            _ => part.push(c),
+        }
+    }
+    parts.push(part.trim().to_string());
+    match parts.as_slice() {
+        [table] if !table.is_empty() => (None, table.clone()),
+        [schema, table] if !schema.is_empty() && !table.is_empty() => (Some(schema.clone()), table.clone()),
+        _ => (None, written.trim().to_string()),
+    }
+}
+
 pub(super) fn string_arg(args: &Value, key: &str) -> Option<String> {
     args.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }

@@ -226,6 +226,23 @@ async fn read_table_duplicates_keyless_note_and_wide_columns() {
     assert_eq!(wide["total"], 3);
 }
 
+/// A table named with its database - the connection's own or another - is described there,
+/// and a missing one is reported in the database it was looked up in, not the default.
+#[tokio::test]
+async fn a_table_named_with_its_database_is_described_there() {
+    let (f, b) = browser("w4_named").await;
+    let users = b
+        .describe_table(&json!({ "table": "users", "schema": f.name }))
+        .await
+        .expect("users, its database named");
+    assert_eq!(users["primaryKey"], json!(["id"]));
+    let elsewhere = b
+        .describe_table(&json!({ "table": "nope", "schema": "information_schema" }))
+        .await
+        .expect_err("no such table in information_schema");
+    assert!(elsewhere.contains("no such table: information_schema.nope"), "{elsewhere}");
+}
+
 #[tokio::test]
 async fn describe_table_columns_pk_fk_indexes_and_ddl() {
     let (_f, b) = browser("w4_structure").await;
