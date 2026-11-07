@@ -1354,6 +1354,8 @@ pub(crate) mod tests {
     pub(crate) fn mount(state: Arc<LlmState>) -> Router {
         let services = RuntimeServices::new(swiss_host::services::BootInfo::default());
         crate::llm_shell::register(&services).expect("shell action");
+        // The scratch home first: AnalysisStore::home() reads SWISS_HOME, never the real ~/.swiss.
+        swiss_core::paths::test_home();
         let analysis = crate::analysis::AnalysisStore::home();
         let consoles = crate::db_consoles::ConsoleStore::at(analysis.root().with_file_name("consoles"), services.bus.clone());
         mount_with_analysis(state, services, analysis, consoles)
