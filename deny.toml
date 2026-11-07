@@ -33,6 +33,18 @@ ignore = [
     # run on the loopback host against keys the same user already owns, and no upstream has a
     # fixed release; rsa 0.10 is tracked and the ignore goes away with it.
     { id = "RUSTSEC-2023-0071", reason = "no fixed release; both call sites act on the local user's own keys" },
+
+    # RUSTSEC-2024-0436, `paste` is no longer maintained. It is a build-time proc-macro of
+    # genai 0.6.x (swiss-llm's provider layer) that expands token pasting; the macro output
+    # ships in the binary, the crate's code never runs. genai moving off paste (or swiss-llm
+    # off genai) retires this ignore.
+    { id = "RUSTSEC-2024-0436", reason = "build-time proc-macro of genai 0.6.x; its code never runs in swiss" },
+
+    # RUSTSEC-2024-0370, `proc-macro-error` is no longer maintained. It sits under the gtk-rs
+    # 0.18 bindings of the desktop GUI stack (glib-macros -> glib -> gtk/tao/wry), Linux and
+    # macOS targets only, compile-time only. gtk-rs has not moved off it; the ignore goes when
+    # they do.
+    { id = "RUSTSEC-2024-0370", reason = "compile-time only, under the gtk-rs 0.18 GUI bindings; no fixed release upstream" },
 ]
 
 [licenses]
