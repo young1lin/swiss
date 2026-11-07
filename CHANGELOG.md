@@ -4,6 +4,16 @@ All notable changes to swiss are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- The analysis ledger and the console store live under the gateway's home. `AnalysisStore::home()`
+  joined `llm/` onto the user's home instead of the gateway's, so 0.2.0 sealed consoles and analyses
+  into `~/llm` beside the one home that owns every other byte of state (`~/.swiss`, SPEC §core.home);
+  the event-bus console store rode the same root. A `~/llm` left by 0.2.0 moves by hand
+  (`mv ~/llm ~/.swiss/llm`) - sealed records are path-independent (SPEC §data.analysis, §data.tabs).
+
 ## [0.2.0] - 2026-11-08
 
 ### Added

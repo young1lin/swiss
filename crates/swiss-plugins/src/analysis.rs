@@ -332,9 +332,11 @@ impl AnalysisStore {
         Arc::new(AnalysisStore { root, write: Mutex::new(()), cancels: Mutex::new(HashMap::new()) })
     }
 
-    /// Where every analysis lives, next to the Data agent's own memory notes.
+    /// Where every analysis lives, next to the Data agent's own memory notes. Under the
+    /// gateway's own home (`~/.swiss`), not the user's: `home_dir()` here strayed state
+    /// outside the one home the gateway keeps (paths.rs), landing consoles in `~/llm`.
     pub fn home() -> Arc<AnalysisStore> {
-        AnalysisStore::at(swiss_core::paths::home_dir().join("llm").join("analysis"))
+        AnalysisStore::at(swiss_core::paths::data_dir().join("llm").join("analysis"))
     }
 
     pub fn root(&self) -> &Path {
@@ -1728,6 +1730,15 @@ mod tests {
         let store = store();
         assert!(store.get("../../gateway.config").is_err());
         assert!(store.rows("..", "..", 0, 1).is_err());
+    }
+
+    /// The home's own address (SPEC §core.home): joining onto the user's home once landed the
+    /// ledger - and with it the console store, which rides this root - in `~/llm` outside the
+    /// one home that owns every byte of state.
+    #[test]
+    fn the_home_is_the_gateway_home_not_the_users() {
+        assert!(AnalysisStore::home().root().starts_with(swiss_core::paths::data_dir()),
+            "the ledger lives under the gateway home (~/.swiss), never the user's own");
     }
 
     #[tokio::test]
