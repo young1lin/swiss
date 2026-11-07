@@ -136,7 +136,7 @@ impl russh::server::Handler for TestHandler {
     async fn auth_publickey(
         &mut self,
         _user: &str,
-        _key: &russh::keys::ssh_key::PublicKey,
+        _key: russh::server::VerifiedPublicKey<'_>,
     ) -> Result<russh::server::Auth, Self::Error> {
         Ok(match self.auth {
             TestAuth::AcceptAll => russh::server::Auth::Accept,
