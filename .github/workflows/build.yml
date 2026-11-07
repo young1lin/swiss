@@ -276,7 +276,10 @@ jobs:
   # docker is preinstalled there and the SQL wire is not platform-shaped; mac and
   # Windows runners skip it (the local Windows machine runs the same gate on deploys).
   integration:
-    runs-on: ubuntu-latest
+    # ubuntu-22.04 on purpose: ubuntu-latest moved to kernel 6.19+, which mongo:8 refuses
+    # to start on at all (SERVER-121912), so every mongo test would fail before running.
+    # 22.04's kernel still starts it; the image table stays the certified versions.
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
