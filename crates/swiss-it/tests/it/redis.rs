@@ -905,7 +905,8 @@ async fn the_command_catalog_comes_from_the_server_itself() {
     );
     let syntax = set["syntax"].as_str().unwrap_or("");
     assert!(syntax.starts_with("key value"), "SET's syntax: {syntax}");
-    assert!(syntax.contains("[NX|XX]"), "a one-of of pure tokens: {syntax}");
+    // Redis 7 prints [NX|XX]; 8 adds IFEQ and its kin to the same one-of.
+    assert!(syntax.contains("[NX|XX]") || syntax.contains("[NX|XX|"), "a one-of of tokens: {syntax}");
     assert_eq!(set["firstKey"], json!(1), "COMMAND INFO's key position");
     assert_eq!(set["group"], json!("string"));
     let tokens = set["tokens"].as_array().expect("tokens");
