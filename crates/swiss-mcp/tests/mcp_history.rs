@@ -279,7 +279,100 @@ async fn traffic_pages_are_metadata_only_and_clients_survive_clear() {
     let clients_after = history.traffic_clients().await;
     assert_eq!(clients_after.len(), 1, "clients survive a clear");
     assert_eq!(clients_after[0]["label"], json!("claude 1"));
+    assert_eq!(clients_after[0]["count"], json!(0), "cleared records no longer count");
     let _ = history.close().await;
+}
+
+#[tokio::test]
+async fn traffic_client_counts_follow_selected_clear_and_new_requests() {
+    let home = swiss_core::paths::test_home().join("mcp-hist-client-count-clear");
+    let history = McpHistory::open(&home.join("logs")).await.unwrap();
+    let log = TrafficLog::memory();
+    log.attach_history(history.clone()).await;
+    for name in ["dsh", "dsh", "other"] {
+        log.record_traffic("db", Some(&json!({
+            "method": "initialize", "params": { "clientInfo": { "name": name, "version": "1" } },
+        })), Some(name), true, 1, None);
+    }
+    let before = history.traffic_clients().await;
+    let dsh = before.iter().find(|c| c["key"] == "n:dsh").unwrap();
+    assert_eq!(dsh["count"], json!(2));
+
+    log.clear_traffic(Some("n:dsh")).await;
+    let page = history.read_traffic(&TrafficQuery { client: Some("n:dsh"), ..traffic_query() }).await;
+    assert_eq!(page["total"], json!(0));
+    let clients = history.traffic_clients().await;
+    let cleared = clients.iter().find(|c| c["key"] == "n:dsh").unwrap();
+    assert_eq!(cleared["count"], json!(0));
+    for field in ["label", "tokens", "mcps", "lastAt", "lastSeq"] {
+        assert_eq!(cleared[field], dsh[field], "clear preserves client identity: {field}");
+    }
+    assert_eq!(clients.iter().find(|c| c["key"] == "n:other").unwrap()["count"], json!(1));
+    log.clear_traffic(Some("n:dsh")).await;
+    log.record_traffic("db", Some(&json!({ "method": "tools/list" })), Some("dsh"), true, 1, None);
+    let clients = history.traffic_clients().await;
+    let resumed = clients.iter().find(|c| c["key"] == "n:dsh").unwrap();
+    assert_eq!(resumed["count"], json!(1), "new requests start counting from zero");
+    assert_eq!(resumed["label"], json!("dsh 1"), "no new handshake is needed");
+    log.clear_traffic(None).await;
+    assert!(history.traffic_clients().await.iter().all(|c| c["count"] == 0));
+    history.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn traffic_client_counts_repair_previously_cleared_v1_archives() {
+    let home = swiss_core::paths::test_home().join("mcp-hist-client-count-upgrade");
+    let logs = home.join("logs");
+    let history = McpHistory::open(&logs).await.unwrap();
+    let log = TrafficLog::memory();
+    log.attach_history(history.clone()).await;
+    for name in ["dsh", "other"] {
+        log.record_traffic("db", Some(&json!({
+            "method": "initialize", "params": { "clientInfo": { "name": name, "version": "1" } },
+        })), Some(name), true, 1, None);
+    }
+    let before = history.traffic_clients().await;
+    history.close().await.unwrap();
+    // Recreate v1's clear: records are gone but the client's old tally survives.
+    let url = format!("sqlite://{}?mode=rw", logs.join("mcp.db").to_string_lossy().replace('\\', "/"));
+    let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect(&url).await.unwrap();
+    sqlx::query("DROP TRIGGER IF EXISTS traffic_client_count_delete").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM traffic WHERE client_key = 'n:dsh'").execute(&pool).await.unwrap();
+    sqlx::query("UPDATE client_dim SET count = 126 WHERE client_key = 'n:dsh'").execute(&pool).await.unwrap();
+    sqlx::query("UPDATE meta SET value = '1' WHERE key = 'schema_version'").execute(&pool).await.unwrap();
+    pool.close().await;
+
+    let history = McpHistory::open(&logs).await.unwrap();
+    let clients = history.traffic_clients().await;
+    let dsh = clients.iter().find(|c| c["key"] == "n:dsh").unwrap();
+    assert_eq!(dsh["count"], json!(0), "the stale 126 is repaired on upgrade");
+    assert_eq!(dsh["label"], json!("dsh 1"));
+    assert_eq!(dsh["tokens"], json!(["dsh"]));
+    assert_eq!(clients.iter().find(|c| c["key"] == "n:other"), before.iter().find(|c| c["key"] == "n:other"));
+    history.clear_traffic(Some("n:other")).await;
+    assert!(history.traffic_clients().await.iter().all(|c| c["count"] == 0));
+    history.close().await.unwrap();
+    let history = McpHistory::open(&logs).await.unwrap();
+    assert!(history.traffic_clients().await.iter().all(|c| c["count"] == 0), "a second open keeps the repaired counts");
+    history.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn traffic_client_counts_follow_retention_deletes() {
+    let home = swiss_core::paths::test_home().join("mcp-hist-client-count-sweep");
+    let history = McpHistory::open(&home.join("logs")).await.unwrap();
+    history.record_traffic(["2001-01-01T00:00:00.000Z", "2099-01-01T00:00:00.000Z"].into_iter().enumerate().map(|(i, at)| TrafficEntry {
+        seq: i as u64 + 1, at: at.into(), mcp: "db".into(), method: "tools/list".into(),
+        client: Some("dsh".into()), client_name: Some("dsh".into()), client_version: Some("1".into()),
+        params: None, body: "{}".into(), response: None, ok: true, ms: 1,
+    }).collect());
+    assert_eq!(history.traffic_clients().await[0]["count"], json!(2));
+    history.sweep(1).await;
+    assert_eq!(history.read_traffic(&traffic_query()).await["total"], json!(1));
+    assert_eq!(history.traffic_clients().await[0]["count"], json!(1));
+    history.sweep(1).await;
+    assert_eq!(history.traffic_clients().await[0]["count"], json!(1));
+    history.close().await.unwrap();
 }
 
 #[tokio::test]

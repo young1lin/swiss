@@ -41,7 +41,7 @@ use swiss_host::history::store::{Durability, ModuleHistoryStore, OwnerPolicy};
 use crate::calls::{CallEntry, CallRecord, CallSource};
 use crate::traffic::TrafficEntry;
 
-/// The MCP owner's schema, version 1. The version discipline is the host's
+/// The MCP owner's schema. The version discipline is the host's
 /// (`history::schema`): DDL and stamp commit in one transaction, and an unknown newer
 /// version refuses the open with the store untouched.
 static MCP_SCHEMA: &[SchemaStep] = &[SchemaStep::new(
@@ -109,6 +109,21 @@ static MCP_SCHEMA: &[SchemaStep] = &[SchemaStep::new(
             last_at TEXT NOT NULL,
             last_seq INTEGER NOT NULL
         )",
+    ],
+), SchemaStep::new(
+    2,
+    &[
+        // v1 kept lifetime tallies after a clear. Repair existing summaries once;
+        // polling must stay proportional to clients, not scan the traffic archive.
+        "UPDATE client_dim SET count = (
+            SELECT COUNT(*) FROM traffic WHERE traffic.client_key = client_dim.client_key
+        )",
+        // Clear and retention both delete traffic rows. Keep their counts in the
+        // same transaction while preserving the client's identity and last seen.
+        "CREATE TRIGGER traffic_client_count_delete AFTER DELETE ON traffic
+         BEGIN
+            UPDATE client_dim SET count = count - 1 WHERE client_key = OLD.client_key;
+         END",
     ],
 )];
 
@@ -744,8 +759,8 @@ impl McpHistory {
             .flatten()
     }
 
-    /// Every client the archive has seen, folded to one row each — computed from the
-    /// client dimension, which a clear of the rows never touches.
+    /// Every client the archive has seen, folded to one row each. Identity survives
+    /// clears; the count tracks the interactions still held in the archive.
     pub async fn traffic_clients(&self) -> Vec<Value> {
         self.flush().await;
         self.store
@@ -781,8 +796,8 @@ impl McpHistory {
     }
 
     /// Drop recorded interactions — one client's rows, or everything. The client
-    /// dimension survives either way: Clear wipes the log, not the gateway's memory of
-    /// which token is which client.
+    /// identity survives either way; the deletion trigger decrements its count in
+    /// the same transaction. Clear never forgets which token is which client.
     pub async fn clear_traffic(&self, client_key: Option<&str>) {
         let key = client_key.map(str::to_string);
         let submitted = self.store.submit(64, move |pool| {
