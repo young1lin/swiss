@@ -407,7 +407,12 @@ impl Store {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .min_connections(0)
-            .acquire_timeout(Duration::from_secs(5))
+            // A cold open creates the file, flips it to WAL and migrates - plain local disk
+            // work that a slow, scanner-laden disk (a CI runner's temp disk) can hold well
+            // past five seconds, and a pool acquire can only be slow, never wedged (no
+            // network in it); 30 s is sqlx's own default for the same reason. Contention
+            // between openers stays the busy_timeout's business above.
+            .acquire_timeout(Duration::from_secs(30))
             .connect_with(opts)
             .await
             .map_err(|err| MemError::store(format!("open {}: {err}", path.display())))?;
