@@ -234,6 +234,12 @@ impl DataHistory {
         self.store.close().await
     }
 
+    /// Re-enroll under a declared share (the composition root's seam, and the tests'
+    /// wedge shape). The open-time enrollment stays [QuotaPolicy::default].
+    pub fn set_quota(&self, policy: swiss_host::history::quota::QuotaPolicy) {
+        self.store.set_quota(policy, false);
+    }
+
     /// Record one run. Synchronous bounded admission: the queue takes it now or refuses it,
     /// and a refusal warns once - a history write never fails the run it records.
     pub fn record(&self, run: NewRun) {
@@ -345,6 +351,92 @@ impl DataHistory {
             .map_err(|e| e.to_string())?;
         self.store.flush_barrier().await.map_err(|e| e.to_string())?;
         Ok(gone.load(Ordering::Relaxed))
+    }
+
+    /// The hourly maintenance seat's body (SPEC §host.history, §data.history): the row
+    /// bound swept first, on submit_exempt - a quota that refuses its own reclamation
+    /// can never get the bytes back, and the share would wedge with no exit (the store
+    /// contract) - then the compaction a reclaimed file needs (VACUUM plus a TRUNCATE
+    /// checkpoint: in WAL mode the vacuum's rewrite lands in the log, and a log left at
+    /// that size counts against the share as much as the free pages did), and the
+    /// store's own pass (checkpoint, ledger reconciliation) with the usage refresh that
+    /// ends it. Without this pass an open that measured a file already at its share
+    /// denies every write forever: the per-write trim rides ADMITTED writes, so a
+    /// denied one can never start the reclaim, and the boot sweep is what un-wedges a
+    /// restart.
+    pub async fn maintain(&self) {
+        let gone = Arc::new(AtomicU64::new(0));
+        let count = gone.clone();
+        let submitted = self.store.submit_exempt(128, move |pool| {
+            Box::pin(async move {
+                let r = sqlx::query(
+                    "DELETE FROM runs WHERE id <= \
+                     (SELECT id FROM runs ORDER BY id DESC LIMIT 1 OFFSET ?)",
+                )
+                .bind(KEEP_ROWS)
+                .execute(&pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                count.store(r.rows_affected(), Ordering::Relaxed);
+                Ok(())
+            })
+        });
+        let swept = match submitted {
+            Ok(()) => {
+                // The sweep lands before anything prices the file: a compaction ahead
+                // of it would rewrite pages the sweep is about to free.
+                self.store.flush_barrier().await.map_err(|e| e.to_string())
+            }
+            Err(e) => Err(e.to_string()),
+        };
+        if let Err(err) = swept {
+            self.warn_once(format!("the data history sweep was refused: {err}"));
+        }
+        let gone = gone.load(Ordering::Relaxed);
+        let share = self.store.share().unwrap_or(u64::MAX);
+        let on_disk = swiss_host::history::quota::measure(&self.store.policy().db_file).total();
+        if gone > 0 || on_disk > share {
+            // The hourly pass of a healthy store does not pay a rewrite: the compaction
+            // runs only when the sweep freed pages or the file sits over its share -
+            // the wedged shape this whole pass exists to end. A busy reader makes
+            // either step fail; the next pass tries again.
+            let compacted = self
+                .store
+                .submit_exempt(64, |pool| {
+                    Box::pin(async move {
+                        sqlx::query("VACUUM").execute(&pool).await.map_err(|e| e.to_string())?;
+                        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                            .execute(&pool)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        Ok(())
+                    })
+                })
+                .map_err(|e| e.to_string());
+            if let Err(err) = compacted {
+                self.warn_once(format!("the data history compaction failed: {err}"));
+            }
+        }
+        let receipt = match self.store.maintain().await {
+            Ok(receipt) => receipt,
+            Err(err) => {
+                self.warn_once(format!("the data history maintain failed: {err}"));
+                return;
+            }
+        };
+        let after = swiss_host::history::quota::measure(&self.store.policy().db_file).total();
+        if gone > 0 || receipt.vacuumed || after != on_disk {
+            swiss_core::log::log(
+                "info",
+                "data.db maintained",
+                Some(json!({
+                    "rows": gone,
+                    "vacuumed": receipt.vacuumed,
+                    "bytesBefore": on_disk,
+                    "bytesAfter": after,
+                })),
+            );
+        }
     }
 
     fn warn_once(&self, message: String) {
@@ -497,6 +589,49 @@ mod tests {
         again.open().await.expect("reopen");
         assert_eq!(again.page("b", None, None, 10).await.expect("b").0.len(), 1, "kept on disk");
         again.close().await.expect("close");
+    }
+
+    #[tokio::test]
+    async fn the_maintenance_pass_keeps_a_table_inside_the_row_bound() {
+        let h = DataHistory::new(scratch("maintain"));
+        h.open().await.expect("open");
+        h.record(run("t", "SELECT 1", true));
+        h.record(run("t", "SELECT 2", true));
+        h.maintain().await;
+        let (rows, _) = h.page("t", None, None, 10).await.expect("page");
+        assert_eq!(rows.len(), 2, "a table inside the row bound survives the pass");
+        h.close().await.expect("close");
+    }
+
+    /// The reported wedge, reproduced and answered: a store enrolled over a share
+    /// smaller than its file denies every write - the per-write trim rides ADMITTED
+    /// writes, so a denied one can never start the reclaim - and the maintenance pass
+    /// is the only thing that buys the bytes back and re-opens admission.
+    #[tokio::test]
+    async fn a_store_over_its_share_denies_then_resumes_after_the_maintenance_pass() {
+        let h = DataHistory::new(scratch("wedge"));
+        h.open().await.expect("open");
+        let fat = format!("SELECT {}", "x".repeat(STMT_MAX - 10));
+        h.record(run("t", &fat, true));
+        h.record(run("t", &fat, true));
+        // The operator's clear: the rows go but their pages stay (nothing vacuums
+        // yet), and the fresh enrollment measures that file - the shape of a restart
+        // over a store that filled its share.
+        h.clear("t").await.expect("clear");
+        // The share sits between the reclaimed floor (the empty schema, plus the
+        // 32 KB -shm sidecar an open WAL connection always carries) and the fat file.
+        let shares = std::collections::BTreeMap::from([("data".to_string(), 96 * 1024u64)]);
+        h.set_quota(swiss_host::history::quota::QuotaPolicy::from_shares(shares));
+        h.record(run("t", "SELECT denied", true));
+        let (rows, _) = h.page("t", None, None, 10).await.expect("page");
+        assert!(rows.is_empty(), "the over-share write was refused");
+        h.maintain().await;
+        let (rows, _) = h.page("t", None, None, 10).await.expect("page");
+        assert!(rows.is_empty(), "nothing landed during the pass itself");
+        h.record(run("t", "SELECT back", true));
+        let (rows, _) = h.page("t", None, None, 10).await.expect("page");
+        assert_eq!(rows.len(), 1, "admission resumed once the pass reclaimed and re-priced");
+        h.close().await.expect("close");
     }
 
     #[tokio::test]

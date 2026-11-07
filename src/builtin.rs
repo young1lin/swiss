@@ -651,11 +651,31 @@ impl PluginInstance for DataInstance {
                 .module_dbs
                 .publish(DATA_ID, self.history.database_file());
             self.services.catalog.sql_history.install(self.history.clone());
+            // The hourly maintenance seat (SPEC §host.history): checkpoint, conditional
+            // VACUUM, ledger reconciliation and the row-bound sweep, run by the server's
+            // retention timer while this database is open. Without a seat nothing ever
+            // refreshes the quota snapshot this open measured, and a file at its share
+            // denies every write with no path back under it.
+            {
+                let history = self.history.clone();
+                self.services.maintenance.register(
+                    DATA_ID,
+                    std::sync::Arc::new(move || {
+                        let history = history.clone();
+                        Box::pin(async move {
+                            history.maintain().await;
+                        })
+                    }),
+                );
+            }
         }
         Ok(())
     }
 
     async fn stop(&self) {
+        // The seat first: a stopped module holds no hook, so the hourly pass never
+        // touches a closing database (SPEC §host.history).
+        self.services.maintenance.unregister(DATA_ID);
         // Request leases die with their requests, and the boundary dropping /api/db IS their
         // release; leases still held elsewhere are the provider's drain's business. The one
         // thing Data holds is its history, closed bounded here.

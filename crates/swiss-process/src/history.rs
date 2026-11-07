@@ -210,6 +210,12 @@ impl ProcessHistory {
         self.store.close().await
     }
 
+    /// Re-enroll under a declared share (the composition root's seam, and the tests'
+    /// wedge shape). The open-time enrollment stays [QuotaPolicy::default].
+    pub fn set_quota(&self, policy: swiss_host::history::quota::QuotaPolicy) {
+        self.store.set_quota(policy, false);
+    }
+
     /// Append one outcome. Synchronous bounded admission: the queue either takes the
     /// insert now or refuses it; a refusal warns once and still returns Ok - a
     /// history write never fails the action it records (SPEC §process.apps). The
@@ -413,6 +419,92 @@ impl ProcessHistory {
         Ok(())
     }
 
+    /// The hourly maintenance seat's body (SPEC §host.history, §process.apps): the row
+    /// bound swept first, on submit_exempt - a quota that refuses its own reclamation
+    /// can never get the bytes back, and the share would wedge with no exit (the store
+    /// contract) - then the compaction a reclaimed file needs (VACUUM plus a TRUNCATE
+    /// checkpoint: in WAL mode the vacuum's rewrite lands in the log, and a log left at
+    /// that size counts against the share as much as the free pages did), and the
+    /// store's own pass (checkpoint, ledger reconciliation) with the usage refresh that
+    /// ends it. Without this pass an open that measured a file already at its share
+    /// denies every write forever: the per-write trim rides ADMITTED writes, so a
+    /// denied one can never start the reclaim, and the boot sweep is what un-wedges a
+    /// restart.
+    pub async fn maintain(&self) {
+        let gone = Arc::new(AtomicU64::new(0));
+        let count = gone.clone();
+        let submitted = self.store.submit_exempt(128, move |pool| {
+            Box::pin(async move {
+                let r = sqlx::query(
+                    "DELETE FROM history WHERE id NOT IN \
+                     (SELECT id FROM history ORDER BY id DESC LIMIT ?)",
+                )
+                .bind(KEEP_ROWS)
+                .execute(&pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                count.store(r.rows_affected(), Ordering::Relaxed);
+                Ok(())
+            })
+        });
+        let swept = match submitted {
+            Ok(()) => {
+                // The sweep lands before anything prices the file: a compaction ahead
+                // of it would rewrite pages the sweep is about to free.
+                self.store.flush_barrier().await.map_err(|e| e.to_string())
+            }
+            Err(e) => Err(e.to_string()),
+        };
+        if let Err(err) = swept {
+            self.warn_once(format!("the process history sweep was refused: {err}"));
+        }
+        let gone = gone.load(Ordering::Relaxed);
+        let share = self.store.share().unwrap_or(u64::MAX);
+        let on_disk = swiss_host::history::quota::measure(&self.store.policy().db_file).total();
+        if gone > 0 || on_disk > share {
+            // The hourly pass of a healthy store does not pay a rewrite: the compaction
+            // runs only when the sweep freed pages or the file sits over its share -
+            // the wedged shape this whole pass exists to end. A busy reader makes
+            // either step fail; the next pass tries again.
+            let compacted = self
+                .store
+                .submit_exempt(64, |pool| {
+                    Box::pin(async move {
+                        sqlx::query("VACUUM").execute(&pool).await.map_err(|e| e.to_string())?;
+                        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                            .execute(&pool)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        Ok(())
+                    })
+                })
+                .map_err(|e| e.to_string());
+            if let Err(err) = compacted {
+                self.warn_once(format!("the process history compaction failed: {err}"));
+            }
+        }
+        let receipt = match self.store.maintain().await {
+            Ok(receipt) => receipt,
+            Err(err) => {
+                self.warn_once(format!("the process history maintain failed: {err}"));
+                return;
+            }
+        };
+        let after = swiss_host::history::quota::measure(&self.store.policy().db_file).total();
+        if gone > 0 || receipt.vacuumed || after != on_disk {
+            swiss_core::log::log(
+                "info",
+                "process.db maintained",
+                Some(serde_json::json!({
+                    "rows": gone,
+                    "vacuumed": receipt.vacuumed,
+                    "bytesBefore": on_disk,
+                    "bytesAfter": after,
+                })),
+            );
+        }
+    }
+
     /// Warn once per open, whatever went wrong: the operator sees it in the
     /// gateway log, the action never sees it at all.
     fn warn_once(&self, message: String) {
@@ -521,6 +613,50 @@ mod tests {
         let newest = history.read(None, 1).await;
         assert_eq!(newest.len(), 1);
         assert_eq!(newest[0].ts, 3);
+        history.close().await.expect("close");
+    }
+
+    #[tokio::test]
+    async fn the_maintenance_pass_keeps_a_table_inside_the_row_bound() {
+        let history = ProcessHistory::new(scratch("maintain"));
+        history.open().await.expect("open");
+        history.append(&entry(1, "cc-otel", "start", true)).expect("append");
+        history.append(&entry(2, "svc", "start", true)).expect("append");
+        history.maintain().await;
+        let all = history.read(None, 10).await;
+        assert_eq!(all.len(), 2, "a table inside the row bound survives the pass");
+        history.close().await.expect("close");
+    }
+
+    /// The same enrollment every module takes: a share smaller than the live data
+    /// refuses writes - the honest denial - and the maintenance pass neither panics
+    /// nor eats rows it was never allowed to touch. The reclamation side of the same
+    /// pass (sweep, compact, re-price) is pinned by the data history's wedge test and
+    /// the llm store's own; the process row bound is 5,000 rows, out of unit-test
+    /// reach at honest sizes.
+    #[tokio::test]
+    async fn an_over_share_store_refuses_writes_and_the_pass_keeps_its_rows() {
+        let history = ProcessHistory::new(scratch("overshare"));
+        history.open().await.expect("open");
+        let mut fat = entry(1, "cc-otel", "start", true);
+        fat.message = "x".repeat(48 * 1024);
+        history.append(&fat).expect("append");
+        // Not the same row twice: the UNIQUE tail reads identical fields as one
+        // outcome recorded twice (the import's rule), so the second fat entry
+        // carries its own identity.
+        let mut fat2 = entry(2, "cc-otel", "start", true);
+        fat2.message = "y".repeat(48 * 1024);
+        history.append(&fat2).expect("append");
+        let landed = history.read(None, 10).await;
+        assert_eq!(landed.len(), 2);
+        let shares = std::collections::BTreeMap::from([("process".to_string(), 32 * 1024u64)]);
+        history.set_quota(swiss_host::history::quota::QuotaPolicy::from_shares(shares));
+        history.append(&entry(3, "cc-otel", "stop", true)).expect("append is refused, not failed");
+        let all = history.read(None, 10).await;
+        assert_eq!(all.len(), 2, "the over-share write was refused");
+        history.maintain().await;
+        let all = history.read(None, 10).await;
+        assert_eq!(all.len(), 2, "live rows over a share too small for them are kept, not eaten");
         history.close().await.expect("close");
     }
 
