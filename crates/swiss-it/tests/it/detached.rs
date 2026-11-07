@@ -295,19 +295,20 @@ async fn a_detached_child_survives_its_spawners_session() {
     wait_no_it_app().await;
     let port = free_port();
     let child = start_role("session", &["serve", &port.to_string()]).await;
+    let pid = child.pid;
     let _leash = KillOnDrop::leash(child);
     let owner = wait_listening(port).await.expect("serve never listened");
-    assert_eq!(owner, child.pid);
+    assert_eq!(owner, pid);
 
     // setsid proof, read from the kernel: field 5 is pgrp, field 6 is session, both
     // counted after the last ')' because comm may contain spaces (SPEC §process.detached).
-    let stat = std::fs::read_to_string(format!("/proc/{}/stat", child.pid)).expect("stat");
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).expect("stat");
     let tail = &stat[stat.rfind(')').unwrap() + 1..];
     let fields: Vec<&str> = tail.split_whitespace().collect();
     let pgrp: u32 = fields[2].parse().expect("pgrp");
     let session: u32 = fields[3].parse().expect("session");
-    assert_eq!(pgrp, child.pid, "the child shares a process group with its spawner");
-    assert_eq!(session, child.pid, "the child shares a session with its spawner");
+    assert_eq!(pgrp, pid, "the child shares a process group with its spawner");
+    assert_eq!(session, pid, "the child shares a session with its spawner");
 }
 
 #[tokio::test]
@@ -415,9 +416,10 @@ async fn an_app_never_holds_the_gateway_log_open() {
         let _ = std::fs::remove_file(&log);
         std::fs::write(&log, b"the gateway's own log\n").expect("write the stand-in log");
         let child = start_role("log", &["flood"]).await;
+        let pid = child.pid;
         let _leash = KillOnDrop::leash(child);
         let leaked = wait_for(5_000, || {
-            let holds = std::fs::read_dir(format!("/proc/{}/fd", child.pid))
+            let holds = std::fs::read_dir(format!("/proc/{pid}/fd"))
                 .ok()?
                 .filter_map(|e| e.ok())
                 .filter_map(|e| std::fs::read_link(e.path()).ok())
