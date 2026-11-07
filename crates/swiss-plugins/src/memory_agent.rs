@@ -1138,7 +1138,9 @@ mod tests {
         assert!(read_tool(&dir, &json!({"path": "gateway.config.json"})).contains("credential"));
         assert_eq!(read_tool(&dir, &json!({"path": "leak.txt"})), "random [redacted:mixed_token] word");
         assert!(read_tool(&dir, &json!({"path": "../outside.txt"})).contains("outside"));
-        assert!(read_tool(&dir, &json!({"path": "C:/Windows/win.ini"})).contains("outside"));
+        // A drive-qualified path is absolute only on Windows; elsewhere a root-absolute file stands in.
+        let outside = if cfg!(windows) { "C:/Windows/win.ini" } else { "/etc/passwd" };
+        assert!(read_tool(&dir, &json!({ "path": outside })).contains("outside"));
         assert!(read_tool(&dir, &json!({})).starts_with("error:"));
     }
 

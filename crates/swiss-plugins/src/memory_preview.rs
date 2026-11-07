@@ -758,7 +758,10 @@ mod tests {
     fn relative_paths_stay_inside() {
         assert_eq!(relative("./src\\main.rs").expect("ok"), "src/main.rs");
         assert_eq!(relative("").expect("root"), "");
-        for bad in ["/etc/passwd", "../x", "src/../../x", "C:/Windows/win.ini", "a\u{7}b"] {
+        // A drive-qualified path is absolute only where drives exist; on Linux it names
+        // a plain directory inside the repo, so a root-absolute path stands in.
+        let outside = if cfg!(windows) { "C:/Windows/win.ini" } else { "/etc/hostname" };
+        for bad in ["/etc/passwd", "../x", "src/../../x", outside, "a\u{7}b"] {
             assert!(relative(bad).is_err(), "{bad} must be refused");
         }
     }

@@ -439,8 +439,11 @@ mod tests {
         std::fs::write(root.join("note.txt"), "hello").expect("write");
         let absolute = root.join("note.txt");
         assert!(read_tool(&root, &json!({ "path": absolute.to_string_lossy() })).contains("hello"));
+        // The outside pick is platform-shaped: a drive-qualified path is absolute only
+        // on Windows, so elsewhere a root-absolute file stands in.
+        let outside = if cfg!(windows) { "C:\\Windows\\win.ini" } else { "/etc/passwd" };
         assert!(
-            read_tool(&root, &json!({"path": "C:\\Windows\\win.ini"})).contains("outside"),
+            read_tool(&root, &json!({ "path": outside })).contains("outside"),
             "an absolute path outside the root must refuse"
         );
     }
