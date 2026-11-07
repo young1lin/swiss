@@ -206,9 +206,11 @@ async fn flush_barrier_includes_unpolled_accepted_writes() {
 #[tokio::test]
 async fn stale_generation_handles_cannot_write_after_close() {
     let f = factory();
-    let mut policy = scratch_policy("l3-stale.db");
-    policy.close_timeout = Duration::from_millis(150);
-    let store = f.create("mcp", policy);
+    // The default 2 s deadline, not a fast one: the FIRST close must still miss it (the
+    // gated write never completes), but this test's final close must succeed, and a pool
+    // release on a loaded CI runner can outlast a deadline meant only for the first
+    // ("pool release timed out" with nothing unresolved, twice on windows runners).
+    let store = f.create("mcp", scratch_policy("l3-stale.db"));
     store.open().await.expect("open");
     let first_generation = store.generation();
 
