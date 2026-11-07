@@ -713,7 +713,7 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
             (
                 "traffic".into(),
                 "mcp".into(),
-                "#traffic".into(),
+                "#mcps-traffic".into(),
                 false,
                 20,
                 "page".into()
@@ -721,7 +721,7 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
             (
                 "tokens".into(),
                 "mcp".into(),
-                "#tokens".into(),
+                "#mcps-tokens".into(),
                 false,
                 30,
                 "page".into()

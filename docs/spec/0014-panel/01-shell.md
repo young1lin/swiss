@@ -15,7 +15,7 @@ Part 01 of [§panel](README.md), chapter 0014 of the [swiss specification](../..
 
 **Navigation is data.** The panel has no hard-coded page list: pages come from the plugin
 descriptors (§host.plugins) through `GET /api/plugins`, each a `PageDescriptor` — `id`,
-`pluginId`, `label`, `order`, `path` (`#id`), `entry` (the view module's URL), `sidebar`,
+`pluginId`, `label`, `order`, `path` (the canonical hash route), `entry` (the view module's URL), `sidebar`,
 `layout`. The host pages are added by the panel itself: System (order 1000), Plugins (1001)
 and Secrets (1002), `pluginId: "host"`, shown as the Settings plugin. The built-in pages:
 
@@ -38,9 +38,14 @@ and Secrets (1002), `pluginId: "host"`, shown as the Settings plugin. The built-
   **smallest** order among its pages, pages sort by order inside it, ties keep registration
   order. A plugin that is disabled, failed, waiting for a dependency or not built keeps its
   pages registered and marked unavailable: its seat stays, and its page paints that state.
-- **Routing** is the hash: `#id`. An unknown hash lands on the first page; no hash is `#mcps`.
-  A `hashchange` to a registered id navigates; `canLeave()` returning false puts the old hash
-  back and stays.
+- **Routing** follows each descriptor's `path`: MCP's default Servers page is `#mcps`, with
+  `#mcps-traffic` and `#mcps-tokens` as its sibling pages, matching Remote's `#remote` /
+  `#remote-runs` convention. Stable ids (`traffic`, `tokens`) and module URLs stay unchanged;
+  old `#traffic` / `#tokens` links resolve by id and are replaced by the canonical path,
+  preserving the hash query. An unknown initial hash lands on the first page; no hash is
+  `#mcps`. A `hashchange` to a registered path or id navigates; `canLeave()` returning false
+  restores the active page's canonical path and stays. Page membership comes from
+  `pluginId`, never from a route prefix.
 - **Layouts** (`layoutOf`) frame the page body and nothing else — the shell always draws the
   rail and the context bar. `resource`: master-detail, the shell's sidebar holds the list;
   `page`: a content page under a measure; `workspace`: full-bleed, no padding, no measure, no

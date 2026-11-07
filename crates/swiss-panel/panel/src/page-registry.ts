@@ -30,8 +30,8 @@ import { emptyNode, note } from "./ui/page.js";
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
 const legacy: PageDescriptor[] = [
   { id: "mcps", pluginId: "mcp", label: tk("pageRegistry.mcps"), sidebar: true },
-  { id: "traffic", pluginId: "mcp", label: tk("pageRegistry.traffic") },
-  { id: "tokens", pluginId: "mcp", label: tk("pageRegistry.token") },
+  { id: "traffic", pluginId: "mcp", label: tk("pageRegistry.traffic"), path: "#mcps-traffic" },
+  { id: "tokens", pluginId: "mcp", label: tk("pageRegistry.token"), path: "#mcps-tokens" },
   { id: "tunnels", pluginId: "tunnels", label: tk("pageRegistry.sshConnections") },
   { id: "tunnel-forwards", pluginId: "tunnels", label: tk("pageRegistry.portForwards") },
   { id: "data", pluginId: "data", label: tk("pageRegistry.data") },
@@ -401,13 +401,14 @@ async function reloadPluginInventory(): Promise<ApiPluginsResponse | null> {
   return inventory;
 }
 
-/** A hash is `#page` or `#page?ask=a,b`. The page id is what the registry knows; the query
- *  stays on the hash so a deep link survives the navigation that lands it. */
+/** A hash names a descriptor's path; stable page ids remain aliases for existing links.
+ *  The query stays on the hash so a deep link survives the navigation that lands it. */
 function hashTarget(hash: string): { id: string; query: string } {
   const raw = hash.replace(/^#\/?/, "");
   const cut = raw.indexOf("?");
-  if (cut < 0) return { id: raw, query: "" };
-  return { id: raw.slice(0, cut), query: raw.slice(cut) };
+  const route = cut < 0 ? raw : raw.slice(0, cut);
+  const page = registry.list().find((p) => { return p.path === "#" + route; });
+  return { id: page ? page.id : route, query: cut < 0 ? "" : raw.slice(cut) };
 }
 
 function initPages(): Promise<void> {
@@ -431,9 +432,16 @@ function initPages(): Promise<void> {
 
 async function navigatePage(id: string, force?: boolean): Promise<void> {
   const page = registry.get(id);
-  if (!page || (!force && active && active.id === id)) return;
+  if (!page) return;
+  const base = page.path || "#" + id;
+  const here = hashTarget(location.hash);
+  const keep = hashTarget(base).id === id && here.id === id ? here.query : "";
+  if (!force && active && active.id === id) {
+    history.replaceState(null, "", base + keep);
+    return;
+  }
   if (active && active.module.canLeave && !active.module.canLeave()) {
-    history.replaceState(null, "", "#" + active.id);
+    history.replaceState(null, "", registry.get(active.id)?.path || "#" + active.id);
     return;
   }
   const ticket = ++sequence;
@@ -460,9 +468,6 @@ async function navigatePage(id: string, force?: boolean): Promise<void> {
    * full-bleed - a framing difference only, the shell's chrome is drawn either way). */
   document.querySelector<HTMLElement>(".sidebar")!.hidden = layoutOf(page) !== "resource";
   paintNavigation();
-  const base = page.path || "#" + id;
-  const here = hashTarget(location.hash);
-  const keep = hashTarget(base).id === id && here.id === id ? here.query : "";
   history.replaceState(null, "", base + keep);
   resetPaneScroll($("pane"));
   // A switched-off plugin's page is the one empty shape (the glyph says "off"); a page still
@@ -492,4 +497,4 @@ async function refreshPage(): Promise<void> {
   catch (error) { toast(errText(error), true); }
 }
 
-export { currentPageCount, fitRailLabels, fitTabs, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR, refreshPage, reloadPluginInventory };
+export { currentPageCount, fitRailLabels, fitTabs, hashTarget, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR, refreshPage, reloadPluginInventory };

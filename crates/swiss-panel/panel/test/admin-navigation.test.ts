@@ -132,8 +132,8 @@ const inventory = {
   ],
   pages: [
     { id: "mcps", pluginId: "mcp", label: "Servers", order: 10, sidebar: true, layout: "resource", path: "#mcps", entry: "/admin/js/views/mcps.js" },
-    { id: "traffic", pluginId: "mcp", label: "Traffic", order: 20, layout: "page", path: "#traffic", entry: "/admin/js/views/traffic.js" },
-    { id: "tokens", pluginId: "mcp", label: "Token", order: 30, layout: "page", path: "#tokens", entry: "/admin/js/views/tokens.js" },
+    { id: "traffic", pluginId: "mcp", label: "Traffic", order: 20, layout: "page", path: "#mcps-traffic", entry: "/admin/js/views/traffic.js" },
+    { id: "tokens", pluginId: "mcp", label: "Token", order: 30, layout: "page", path: "#mcps-tokens", entry: "/admin/js/views/tokens.js" },
     { id: "tunnels", pluginId: "tunnels", label: "SSH Connections", order: 30, layout: "page", path: "#tunnels", entry: "/admin/js/views/tunnels.js" },
     { id: "tunnel-forwards", pluginId: "tunnels", label: "Port Forwards", order: 35, layout: "page", path: "#tunnel-forwards", entry: "/admin/js/views/tunnel-forwards.js" },
     { id: "jobs", pluginId: "jobs", label: "Jobs", order: 50, layout: "page", path: "#jobs", entry: "/admin/js/views/jobs.js" },
@@ -206,6 +206,36 @@ const byId = (id: string): FakeNode => els.get(id) as FakeNode;
  * the refit regression below stages real widths on these nodes. */
 const tabLinks = (): FakeNode[] => (byId("pageTabs").kids as FakeNode[]).filter((k) => k.tag === "a");
 
+describe("descriptor-owned hash routes", () => {
+  it.each([
+    ["#mcps", "mcps", ""],
+    ["#mcps-traffic?ask=key-one", "traffic", "?ask=key-one"],
+    ["#/mcps-tokens", "tokens", ""],
+    ["#traffic?ask=key-one", "traffic", "?ask=key-one"],
+    ["#tokens", "tokens", ""],
+    ["#unknown", "unknown", ""],
+  ])("resolves %s to its stable page id", async (hash, id, query) => {
+    await paint("mcps", inventory);
+    expect(registry.hashTarget(hash)).toEqual({ id, query });
+  });
+
+  it("resolves another plugin's contributed path without naming that plugin in the shell", async () => {
+    await paint("mcps", { ...inventory, pages: inventory.pages.concat([
+      { id: "reports", pluginId: "example", label: "Reports", order: 90, layout: "page", path: "#example-reports", entry: "/admin/plugins/reports.js" },
+    ]) });
+    expect(registry.hashTarget("#example-reports?filter=failed")).toEqual({ id: "reports", query: "?filter=failed" });
+  });
+
+  it("canonicalizes an old link even when its page is already active", async () => {
+    await paint("mcps", inventory);
+    responder = () => Promise.resolve(jsonResponse(500, { error: "stub" }));
+    await registry.navigatePage("traffic", true);
+    browserLocation.hash = "#traffic?ask=key-two";
+    await registry.navigatePage("traffic");
+    expect(browserLocation.hash).toBe("#mcps-traffic?ask=key-two");
+  });
+});
+
 describe("the plugin rail (global navigation)", () => {
   it("orders Settings as System, Plugins, Secrets", async () => {
     await paint("system", inventory);
@@ -262,7 +292,7 @@ describe("the plugin rail (global navigation)", () => {
       path === "/api/plugins" ? jsonResponse(200, inventory) : jsonResponse(500, { error: "stub" }));
     browserLocation.hash = "#traffic?ask=key-one";
     await registry.navigatePage("traffic", true);
-    expect(browserLocation.hash).toBe("#traffic?ask=key-one");
+    expect(browserLocation.hash).toBe("#mcps-traffic?ask=key-one");
     await registry.navigatePage("jobs");
     expect(browserLocation.hash).toBe("#jobs");
   });
@@ -369,7 +399,7 @@ describe("the plugin context bar (page navigation)", () => {
     const tabs = byId("pageTabs");
     expect(tabs.hidden).toBe(false);
     expect(tabLinks().map((t) => t.attrs["data-page"])).toEqual(["mcps", "traffic", "tokens"]);
-    expect(tabLinks().map((t) => t.href)).toEqual(["#mcps", "#traffic", "#tokens"]);
+    expect(tabLinks().map((t) => t.href)).toEqual(["#mcps", "#mcps-traffic", "#mcps-tokens"]);
     expect(tabLinks()[0].attrs["aria-current"]).toBe("page");
     expect(tabLinks()[1].attrs["aria-current"]).toBeUndefined();
     // The ⋯ seat exists (overflow safety net) but hides while everything fits.
@@ -506,6 +536,7 @@ describe("layouts (SPEC §panel.nav)", () => {
     expect(byId("ctxBar").hidden).toBe(false);
     expect(byId("pageTitle").innerHTML).toContain('ctx-name">MCP</span>');
     expect(tabLinks().map((t) => t.attrs["data-page"])).toEqual(["mcps", "traffic", "tokens"]);
+    expect(tabLinks().map((t) => t.href)).toEqual(["#mcps", "#mcps-traffic", "#mcps-tokens"]);
   });
 
   it("the legacy manifest grows the same two tunnels pages as the inventory", async () => {

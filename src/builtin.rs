@@ -171,12 +171,18 @@ impl PluginFactory for McpPlugin {
             config_schema: json!({ "type": "object", "properties": {} }),
             pages: vec![
                 page("mcps", MCP_ID, "Servers", 10, true, "resource"),
-                page("traffic", MCP_ID, "Traffic", 20, false, "page"),
+                PageDescriptor {
+                    path: "#mcps-traffic".into(),
+                    ..page("traffic", MCP_ID, "Traffic", 20, false, "page")
+                },
                 // Token management sits beside Servers and Traffic because the token exists
                 // FOR MCP clients — every connect command embeds one, Traffic attributes by
                 // it. The PAGE belongs to the MCP group; the /api/tokens routes stay HOST-
                 // owned (below), so the credential keeps working whatever a plugin does.
-                page("tokens", MCP_ID, "Token", 30, false, "page"),
+                PageDescriptor {
+                    path: "#mcps-tokens".into(),
+                    ..page("tokens", MCP_ID, "Token", 30, false, "page")
+                },
             ],
             routes: vec!["/api/mcps".into(), "/api/traffic".into()],
             // The plugin reads nothing from a config row today; restarting every hosted MCP
@@ -959,7 +965,7 @@ mod tests {
             .expect("the MCP plugin contributes the tokens page");
         assert_eq!(tokens.label, "Token");
         assert_eq!(tokens.entry, "/admin/js/views/tokens.js");
-        assert_eq!(tokens.path, "#tokens");
+        assert_eq!(tokens.path, "#mcps-tokens");
         assert!(!tokens.sidebar, "the Token page has no sidebar of its own");
         assert!(
             !descriptor.routes.iter().any(|r| r.contains("tokens")),
