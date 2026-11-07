@@ -20,6 +20,13 @@
 //! killed by a drop guard - these tests may never leave a process behind, because a
 //! leaked `flood` sleeps for a minute in a temp directory nothing cleans.
 //!
+//! Two structural answers back that up: an ownership read accepts only an it-app pid
+//! (this binary's hundred-plus sibling tests bind and drop ephemeral ports around us,
+//! and a same-numbered foreign listener is a collision to retry on a fresh port,
+//! never a false owner), and the lock's guard sweeps every it-app on its way out -
+//! panic or not - so one failing test cannot leave the live serve that fails every
+//! later test's opening precondition.
+//!
 //! What this group pins, on Windows unless noted:
 //!
 //! - breakaway: a child spawned by a process inside a kill-on-close job ESCAPES the
@@ -45,11 +52,37 @@ use swiss_host::services::detached::{spawn_detached, DetachedChild, DetachedSpec
 const IT_APP: &str = env!("CARGO_BIN_EXE_it-app");
 
 /// The detached group spawns it-app processes and asserts on their COUNT; two tests
-/// running at once would read each other's. One lock, held for the whole test body.
+/// running at once would read each other's. One lock, held for the whole test body by
+/// DetachedGuard, which mops on release.
 static DETACHED: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// DETACHED held through the test body with the mop armed: a panicking test's own drop
+/// guards kill only the pids they know - the launcher's pid, the handle's child - which
+/// stops covering the process tree once a launcher handed a serve off. The sweep runs
+/// while the lock is still held, and nothing outside this module starts an it-app, so
+/// it cannot touch another test's process.
+struct DetachedGuard(Option<tokio::sync::MutexGuard<'static, ()>>);
+
+impl DetachedGuard {
+    /// Take the module's lock; whatever happens next, release means a world with no
+    /// it-app left in it.
+    async fn enter() -> Self {
+        Self(Some(DETACHED.lock().await))
+    }
+}
+
+impl Drop for DetachedGuard {
+    fn drop(&mut self) {
+        mop_all_it_apps();
+        // Release the lock only after the mop: the sweep owns the world it cleans.
+        drop(self.0.take());
+    }
+}
+
 /// A port nothing holds right now: bind :0, read the port, drop the listener. The
-/// caller re-binds it within milliseconds through the helper it spawns.
+/// caller re-binds it within milliseconds through the helper it spawns - and a sibling
+/// test's own bind can steal that window, which the port-bearing starter below answers
+/// with a fresh port, not a false owner.
 fn free_port() -> u16 {
     std::net::TcpListener::bind(("127.0.0.1", 0))
         .and_then(|l| l.local_addr())
@@ -77,6 +110,25 @@ async fn start_role(tag: &str, args: &[&str]) -> DetachedChild {
     spawn_detached(&spec)
         .await
         .unwrap_or_else(|err| panic!("{tag}: the spawn failed: {err}"))
+}
+
+/// Start a port-bearing role (`serve`, or `launcher` for the handed-off tree) on a port
+/// that is still OURS when it listens. free_port's bind→drop→rebind window can be
+/// stolen by a sibling test's listener; a stolen port kills serve on EADDRINUSE while
+/// the listener table shows a foreign owner. That is not a verdict on the spawn seam -
+/// it is a port collision, answered with a fresh port, up to three times.
+async fn start_ported(tag: &str, role: &str) -> (DetachedChild, u16) {
+    for _ in 0..3 {
+        let port = free_port();
+        let mut child = start_role(tag, &[role, &port.to_string()]).await;
+        if wait_listening(port).await.is_some() {
+            return (child, port);
+        }
+        // Dead on a stolen bind, or never listening: either way not the witness.
+        let _ = tree_kill(child.pid);
+        let _ = child.child.start_kill();
+    }
+    panic!("{tag}: no port stayed ours through three attempts");
 }
 
 /// The drop guard every helper is started under: tree-kill first (the tree, not the
@@ -122,23 +174,26 @@ async fn wait_for<T>(ms: u64, mut f: impl FnMut() -> Option<T>) -> Option<T> {
     }
 }
 
-/// The pid that owns a LISTEN on the port, straight from the platform table.
-fn port_owner(port: u16) -> Option<u32> {
+/// The pid of OUR helper listening on the port, straight from the platform table: the
+/// row must both match the port and name an it-app process. A same-numbered listener
+/// of another test reads as nobody - a stolen port is a collision to retry on a fresh
+/// port, never a false owner.
+fn our_listener(port: u16) -> Option<u32> {
     tcp_listeners()
         .ok()?
         .into_iter()
-        .find(|(p, _)| *p == port)
+        .find(|(p, pid)| *p == port && is_it_app(*pid))
         .map(|(_, pid)| pid)
 }
 
-/// Wait until the port has an owner and hand it over.
+/// Wait until our helper owns a LISTEN on the port and hand its pid over.
 async fn wait_listening(port: u16) -> Option<u32> {
-    wait_for(10_000, || port_owner(port)).await
+    wait_for(10_000, || our_listener(port)).await
 }
 
-/// How many it-app processes are alive right now. Failure reads as a huge count,
-/// never zero: "cannot tell" must not fake "gone".
-fn it_app_count() -> usize {
+/// One snapshot of the it-app pids alive right now; None when the process table itself
+/// could not be read.
+fn it_app_snapshot() -> Option<Vec<u32>> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
@@ -149,11 +204,11 @@ fn it_app_count() -> usize {
         unsafe {
             let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
             if snap == INVALID_HANDLE_VALUE {
-                return usize::MAX;
+                return None;
             }
             let mut entry: PROCESSENTRY32W = std::mem::zeroed();
             entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-            let mut seen = 0usize;
+            let mut seen = Vec::new();
             let mut ok = Process32FirstW(snap, &mut entry);
             while ok != 0 {
                 let end = entry
@@ -163,31 +218,70 @@ fn it_app_count() -> usize {
                     .unwrap_or(entry.szExeFile.len());
                 let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
                 if name.eq_ignore_ascii_case("it-app.exe") {
-                    seen += 1;
+                    seen.push(entry.th32ProcessID);
                 }
                 ok = Process32NextW(snap, &mut entry);
             }
             CloseHandle(snap);
-            seen
+            Some(seen)
         }
     }
     #[cfg(not(windows))]
     {
         std::fs::read_dir("/proc")
+            .ok()
             .map(|entries| {
                 entries
                     .filter_map(|e| e.ok())
                     .filter(|e| {
                         e.file_name().to_string_lossy().chars().all(|c| c.is_ascii_digit())
                     })
-                    .filter(|e| {
+                    .filter_map(|e| {
+                        let pid = e.file_name().to_string_lossy().parse::<u32>().ok()?;
                         std::fs::read_to_string(e.path().join("cmdline"))
-                            .map(|cmd| cmd.contains("it-app"))
-                            .unwrap_or(false)
+                            .ok()
+                            .filter(|cmd| cmd.contains("it-app"))
+                            .map(|_| pid)
                     })
-                    .count()
+                    .collect()
             })
-            .unwrap_or(usize::MAX)
+    }
+}
+
+/// How many it-app processes are alive right now. Failure reads as a huge count,
+/// never zero: "cannot tell" must not fake "gone".
+fn it_app_count() -> usize {
+    it_app_snapshot().map_or(usize::MAX, |pids| pids.len())
+}
+
+/// The pids behind the count, for the mop; a table that cannot be read mops nothing -
+/// the count's contract above keeps that from faking "gone" where it is asserted.
+fn it_app_pids() -> Vec<u32> {
+    it_app_snapshot().unwrap_or_default()
+}
+
+/// Whether a pid is one of ours - the helper binary, by its own name or cmdline. The
+/// ownership answers accept only such a pid: a row that names anything else (or a pid
+/// whose /proc cannot be read, another user's listener) is nobody's witness.
+fn is_it_app(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        it_app_pids().contains(&pid)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
+            .map(|cmd| cmd.contains("it-app"))
+            .unwrap_or(false)
+    }
+}
+
+/// Kill every it-app alive - the panicking path's answer to the module's own rule that
+/// these tests never leave a process behind. Runs under the DETACHED lock, and nothing
+/// outside this module starts an it-app, so the sweep is exactly the module's own.
+fn mop_all_it_apps() {
+    for pid in it_app_pids() {
+        let _ = tree_kill(pid);
     }
 }
 
@@ -201,7 +295,7 @@ async fn wait_no_it_app() {
 async fn a_detached_child_survives_its_spawners_kill_on_close_job() {
     #[cfg(windows)]
     {
-        let _guard = DETACHED.lock().await;
+        let _guard = DetachedGuard::enter().await;
         wait_no_it_app().await;
         let port = free_port();
         // The spawner is a REAL launcher process placed in a kill-on-close job, the
@@ -270,7 +364,7 @@ async fn a_detached_child_survives_its_spawners_kill_on_close_job() {
             // The proof: destroying the job (last handle closed, KILL_ON_CLOSE fires on
             // whatever is still a member) leaves the app alive on its port.
             CloseHandle(job);
-            let still = wait_for(3_000, || port_owner(port).filter(|_| process_created_at(owner).is_some()))
+            let still = wait_for(3_000, || our_listener(port).filter(|_| process_created_at(owner).is_some()))
                 .await
                 .unwrap_or_default();
             assert_eq!(still, owner, "the app died with its spawner's job");
@@ -282,22 +376,20 @@ async fn a_detached_child_survives_its_spawners_kill_on_close_job() {
     {
         // The Windows trap has no analogue here; the session test below is the Unix
         // survival proof. Keeping the name in the file on every platform (SPEC
-        // §process.verify) while running nothing would be the lie, so assert that.
-        let _ = DETACHED.lock().await;
-        assert!(!cfg!(windows));
+        // §process.verify) while running nothing would be the lie - so this arm is
+        // cfg'd to exactly the platforms that have nothing to prove.
     }
 }
 
 #[cfg(not(windows))]
 #[tokio::test]
 async fn a_detached_child_survives_its_spawners_session() {
-    let _guard = DETACHED.lock().await;
+    let _guard = DetachedGuard::enter().await;
     wait_no_it_app().await;
-    let port = free_port();
-    let child = start_role("session", &["serve", &port.to_string()]).await;
+    let (child, port) = start_ported("session", "serve").await;
     let pid = child.pid;
     let _leash = KillOnDrop::leash(child);
-    let owner = wait_listening(port).await.expect("serve never listened");
+    let owner = our_listener(port).expect("serve never listened");
     assert_eq!(owner, pid);
 
     // setsid proof, read from the kernel: field 5 is pgrp, field 6 is session, both
@@ -313,7 +405,7 @@ async fn a_detached_child_survives_its_spawners_session() {
 
 #[tokio::test]
 async fn a_megabyte_of_output_never_blocks_the_app() {
-    let _guard = DETACHED.lock().await;
+    let _guard = DetachedGuard::enter().await;
     wait_no_it_app().await;
     let cap = capture("flood");
     let _ = std::fs::remove_file(&cap);
@@ -336,7 +428,7 @@ async fn a_megabyte_of_output_never_blocks_the_app() {
 async fn an_app_never_holds_the_gateway_log_open() {
     #[cfg(windows)]
     {
-        let _guard = DETACHED.lock().await;
+        let _guard = DetachedGuard::enter().await;
         wait_no_it_app().await;
         // The spawner's own stdout stands in for gateway-<port>.log, aliased to a real
         // file exactly the way the daemon's boot does, and marked inheritable so the
@@ -408,7 +500,7 @@ async fn an_app_never_holds_the_gateway_log_open() {
     }
     #[cfg(not(windows))]
     {
-        let _guard = DETACHED.lock().await;
+        let _guard = DetachedGuard::enter().await;
         wait_no_it_app().await;
         // The Unix proof: read the child's ACTUAL descriptor table and assert none of
         // it resolves to the spawner's log - not "probably", file by file.
@@ -434,16 +526,15 @@ async fn an_app_never_holds_the_gateway_log_open() {
 
 #[tokio::test]
 async fn a_launcher_child_is_found_as_the_owner_of_its_port() {
-    let _guard = DETACHED.lock().await;
+    let _guard = DetachedGuard::enter().await;
     wait_no_it_app().await;
-    let port = free_port();
-    let launcher = start_role("owner", &["launcher", &port.to_string()]).await;
+    let (launcher, port) = start_ported("owner", "launcher").await;
     let launcher_pid = launcher.pid;
     let leash = KillOnDrop::leash(launcher);
 
     // The launcher exits 0 by design; the listener it left behind must be owned by
     // the CHILD pid, found through the same listener table a status probe reads.
-    let owner = wait_listening(port).await.expect("the launcher's child never listened");
+    let owner = our_listener(port).expect("the launcher's child never listened");
     let owner_leash = PidKillOnDrop(owner);
     assert_ne!(
         owner, launcher_pid,
@@ -465,13 +556,11 @@ async fn a_launcher_child_is_found_as_the_owner_of_its_port() {
 
 #[tokio::test]
 async fn creation_time_is_stable_for_a_live_pid_and_absent_for_a_dead_one() {
-    let _guard = DETACHED.lock().await;
+    let _guard = DetachedGuard::enter().await;
     wait_no_it_app().await;
-    let port = free_port();
-    let child = start_role("stable", &["serve", &port.to_string()]).await;
+    let (child, _port) = start_ported("stable", "serve").await;
     let pid = child.pid;
     let _leash = KillOnDrop::leash(child);
-    wait_listening(port).await.expect("serve never listened");
 
     let first = process_created_at(pid).expect("no creation time for a live pid");
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -486,14 +575,13 @@ async fn creation_time_is_stable_for_a_live_pid_and_absent_for_a_dead_one() {
 
 #[tokio::test]
 async fn tree_kill_ends_a_detached_tree_and_reports_no_survivors() {
-    let _guard = DETACHED.lock().await;
+    let _guard = DetachedGuard::enter().await;
     wait_no_it_app().await;
-    let port = free_port();
     // A real tree: launcher spawns serve through the detach seam; on Windows serve's
     // hidden console adds a grandchild to the walk.
-    let launcher = start_role("tree", &["launcher", &port.to_string()]).await;
+    let (launcher, port) = start_ported("tree", "launcher").await;
     let _leash = KillOnDrop::leash(launcher);
-    let owner = wait_listening(port).await.expect("the tree never listened");
+    let owner = our_listener(port).expect("the tree never listened");
 
     let survivors = tree_kill(owner);
     assert!(
@@ -501,9 +589,10 @@ async fn tree_kill_ends_a_detached_tree_and_reports_no_survivors() {
         "tree_kill reported survivors: {survivors:?}"
     );
 
-    // The tree is gone: no owner on the port, no it-app anywhere, the whole point of
-    // the creation-time-checked walk being that nothing is missed and nothing extra dies.
-    let freed = wait_for(10_000, || port_owner(port).is_none().then_some(())).await;
+    // The tree is gone: no it-app owner on the port (a same-numbered listener of
+    // another test is not our survivor), no it-app anywhere - the whole point of the
+    // creation-time-checked walk being that nothing is missed and nothing extra dies.
+    let freed = wait_for(10_000, || our_listener(port).is_none().then_some(())).await;
     assert!(freed.is_some(), "the port still has an owner after the tree kill");
     wait_no_it_app().await;
 }
