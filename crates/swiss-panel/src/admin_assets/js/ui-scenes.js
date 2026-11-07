@@ -186,7 +186,14 @@ function resource(now        )              {
 function events(now        )              {
   return h("div", { class: "shell" },
     pane({ wide: true },
-      paneHead({ desc: tr("gallery.s.trafficDesc"), actions: [moreBtn(tr("gallery.s.trafficActions"))] }),
+      paneHead({ desc: tr("traffic.desc"), sub: tr("traffic.nInteractions.other", { n: "6" }), actions: [
+        seg([{ id: "actions", label: tr("traffic.actions") }, { id: "all", label: tr("traffic.everything") }], "actions", { label: tr("traffic.show") }),
+        h("select", { aria: { label: tr("traffic.filterClient") } },
+          h("option", { value: "" }, tr("traffic.allClients")),
+          h("option", { value: "claude-code" }, tr("traffic.clientCount", { client: "claude-code", n: "3" })),
+          h("option", { value: "cursor" }, tr("traffic.clientCount", { client: "cursor", n: "3" }))),
+        moreBtn(tr("traffic.moreActivityActions")),
+      ] }),
       timeline(traffic(now), { now, body: callBody })));
 }
 
@@ -311,7 +318,7 @@ export const SCENES          = [
   { id: "resource", titleKey: tk("gallery.scene.resource"), build: resource,
     uses: ["sideRow", "dot", "iconNode", "groupNode", "pane", "paneBody", "resHead", "btn", "moreBtn", "seg", "section", "filterInput", "card", "timeline", "timelineMeta", "valueBlock", "jsonCodeNode", "pager", "row", "sw"] },
   { id: "event", titleKey: tk("gallery.scene.event"), build: events,
-    uses: ["pane", "paneHead", "moreBtn", "timeline"] },
+    uses: ["pane", "paneHead", "seg", "moreBtn", "timeline"] },
   { id: "empty", titleKey: tk("gallery.scene.empty"), build: empty,
     uses: ["pane", "emptyNode"] },
   { id: "process", titleKey: tk("gallery.scene.process"), build: processPage,

@@ -379,6 +379,8 @@ describe("SPEC §panel.ui - the scenes", () => {
 
   it("the event scene: three days, a folded run, a failure as a red tag, the who column", async () => {
     await go("#scene-event");
+    expect(app().querySelector(".pane-head select")?.getAttribute("aria-label")).toBe(tr("traffic.filterClient"));
+    expect(app().querySelector(".pane-head option")?.textContent).toBe(tr("traffic.allClients"));
     expect(app().querySelectorAll(".tl-day")).toHaveLength(3);
     expect(app().querySelector(".tl-n")!.textContent).toBe(tr("ui.timesN", { n: 2 }));
     expect(app().querySelectorAll(".tl-item .tag.bad")).toHaveLength(1);

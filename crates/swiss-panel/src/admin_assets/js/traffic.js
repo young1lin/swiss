@@ -22,7 +22,7 @@ import { readableBody } from "./logs.js";
 import { currentView } from "./ui-state.js";
 import { locale, tr, trn } from "./i18n.js";
 import {
-  btn, card, closeMenu, collapseRuns, emptyNode, iconBtn, menuOpen, moreBtn, note, pager, paneBody, popupMenu, section, seg,
+  btn, closeMenu, collapseRuns, emptyNode, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, seg, selectOpen,
   timeline, timelineMeta, timelineToggle, valueBlock,
 } from "./ui/index.js";
                                                   
@@ -59,17 +59,16 @@ export function clearTrafficView()       {
 }
 
 /* --- traffic: who (token + self-reported client) asked what, across every MCP -----------------
-   Two sections: a "Clients" summary (who has been talking to the gateway, and which MCPs), and an
-   "Activity" log underneath. The log defaults to "Actions" (tools/call, resources/read, …) so the
-   protocol handshake stops drowning out the things you actually want to see. Click a client to filter
-   the log to it.
+   One event list, with the client dropdown and Actions / Everything in its page head, matching
+   Remote Runs. The log defaults to "Actions" (tools/call, resources/read, …) so the protocol
+   handshake stops drowning out the things you actually want to see.
 
    The gateway speaks stateless HTTP — there is no session table, so "clients" is folded from recorded
    interaction traffic: last-seen is the honest signal. The newest entries are tailed to disk and
    restored on boot, so a gateway restart no longer blanks this view. */
 /** Identity for grouping moved server-side (traffic.ts folds clients itself); the panel-side
  *  copy had no callers left. */
-/** Relative "x ago"; refreshes every poll (6s) because renderTraffic re-runs while the view is open. */
+/** Relative time shared with the tool-run history. */
 function ago(iso        )         {
   const ms = Date.now() - new Date(iso).getTime();
   if (ms < 5000) return tr("traffic.justNow");
@@ -98,11 +97,13 @@ async function loadTraffic()                {
   traffic.total = j.total || 0;
   traffic.all = j.totalUnfiltered || 0;
   traffic.more = !!j.more;
-  if (currentView() !== "traffic") return;
+  // Keep an open picker and its focused option attached; the next closed-state load
+  // applies the latest counts because the painted signature remains unchanged here.
+  if (currentView() !== "traffic" || selectOpen()) return;
   // Skip the rebuild when nothing changed: a 6s poll would otherwise collapse every expanded row and
   // reset scroll while you are reading one. Filter/refresh/view-entry call renderTraffic() directly.
-  const sig = (traffic.rows.length ? traffic.rows[0].seq : 0) + ":" + traffic.rows.length +
-    ":" + traffic.total + ":" + traffic.clients.length;
+  const sig = JSON.stringify([traffic.rows[0]?.seq || 0, traffic.rows.length, traffic.total, traffic.all,
+    traffic.clients.map(c => [c.key, c.label, c.count])]);
   if (traffic.sig === sig) return;
   traffic.sig = sig;
   renderTraffic();
@@ -218,6 +219,9 @@ function trafficTimeline(entries                 )              {
 }
 
 function renderTraffic()       {
+  const previousClient = document.getElementById("trClient");
+  const focusedClient = !!previousClient && (document.activeElement === previousClient ||
+    (previousClient.nextElementSibling?.matches(".dd") && document.activeElement === previousClient.nextElementSibling));
   // `entries` is one page; `clients`, `total` and `all` describe the whole ring (server-computed).
   const entries = traffic.rows || [];
   const clients = traffic.clients || [];
@@ -225,43 +229,18 @@ function renderTraffic()       {
   const all = traffic.all || 0;
   const sel = traffic.client;
 
-  // Clients — who has been talking to the gateway, folded from recorded traffic (stateless: no live
-  // connection to query). Click a row to filter the activity log to that client.
-  let clientBlock        ;
-  if (clients.length) {
-    // One line per client (SPEC §panel.nav): name, token, paths, last seen, request count — a
-    // five-column grid (the page's own table, views.css .cli-*), not a card-per-client.
-    const head = h("div", { class: "cli-head" },
-      h("span", null, tr("traffic.client")), h("span", null, tr("traffic.token")), h("span", null, tr("traffic.paths")),
-      h("span", null, tr("traffic.last")), h("span", { class: "cli-n" }, tr("traffic.requests")), h("span"));
-    const rows = clients.map((c) => {
-      const isSel = sel === c.key;
-      const mcps = (c.mcps || []).map((m) => { return tr("pane.mcpPath", { name: m }); }).join(" ");
-      const tokens = c.tokens || [];
-      const tokenLine = tokens.length ? tokens.join(", ") : tr("traffic.token2");
-      return h("div", { class: "cli-row" + (isSel ? " sel" : ""), data: { ckey: c.key }, role: "button", tabIndex: 0 },
-        h("span", { class: "cli-name" }, h("code", null, c.label)),
-        h("span", { class: "cli-token" }, tokenLine),
-        h("span", { class: "cli-paths" }, mcps),
-        h("span", { class: "cli-last" }, ago(c.lastAt)),
-        h("span", { class: "cli-n" }, c.count.toLocaleString(locale())),
-        isSel
-          ? iconBtn("x", tr("traffic.stopFiltering"), { ghost: true, data: { cclr: "" } })
-          : h("span", { class: "cli-x" }));
-    });
-    clientBlock = section({ cap: tr("traffic.clientsN", { n: clients.length }) }, card(head, rows));
-  } else {
-    clientBlock = section({ cap: tr("traffic.clients") }, note(tr("traffic.clientsWhenClientSends")));
-  }
-
-  // Activity — its filter is the section's own (it narrows the activity, nothing else on the
-  // page), and Clear waits behind the section's ⋯ (a destructive verb gets no standing button).
+  // One event list is the page, as on Remote Runs: the head owns its filters and Clear.
+  // Identity survives a clear, so zero-count clients remain available in the dropdown.
+  const options = [h("option", { value: "", selected: !sel }, tr("traffic.allClients")),
+    ...clients.map(c => h("option", { value: c.key, selected: sel === c.key },
+      tr("traffic.clientCount", { client: c.label, n: c.count.toLocaleString(locale()) })))];
   const countTxt = total !== all
     ? tr("traffic.nAllInteractions", { n: total.toLocaleString(locale()), all: all.toLocaleString(locale()) })
     : trn(total, "traffic.nInteractions.one", "traffic.nInteractions.other", { n: total.toLocaleString(locale()) });
   const tools = [
     seg([{ id: "actions", label: tr("traffic.actions") }, { id: "all", label: tr("traffic.everything") }],
       traffic.filter === "all" ? "all" : "actions", { key: "filter", label: tr("traffic.show") }),
+    h("select", { id: "trClient", aria: { label: tr("traffic.filterClient") } }, options),
     moreBtn(tr("traffic.moreActivityActions"), { id: "trMore" }),
   ];
   let body        ;
@@ -288,11 +267,17 @@ function renderTraffic()       {
     : null;
 
   // The wide frame: an interaction row is time + method + params + who + timing on one line. The
-  // wiring below queries nothing: ONE delegated click and ONE delegated keydown on #pane (SPEC §panel.toolchain)
+  // wiring below queries nothing: ONE delegated click and ONE delegated change on #pane (SPEC §panel.toolchain)
   // answer every control, rows and pager included.
   fill($("pane"), paneBody({ wide: true },
-    clientBlock,
-    section({ cap: tr("traffic.activity"), note: countTxt, tools }, body, pages)));
+    paneHead({ desc: tr("traffic.desc"), sub: countTxt, actions: tools }), body, pages));
+  // Let the shared select's MutationObserver attach its face before restoring focus.
+  if (focusedClient) queueMicrotask(() => {
+    const client = document.getElementById("trClient");
+    const face = client?.nextElementSibling;
+    if (face instanceof HTMLElement && face.matches(".dd")) face.focus();
+    else client?.focus();
+  });
 
   // Every control below re-queries rather than re-filtering in place: the server owns the filter now,
   // so a page of "actions only for claude-code" can only come from asking for exactly that.
@@ -302,13 +287,6 @@ function renderTraffic()       {
     if (!t) return;
     const fbtn = t.closest             ("[data-filter]");
     if (fbtn) { traffic.filter = fbtn.dataset.filter                     ; trafficReload(true); return; }
-    if (t.closest("[data-cclr]")) { ev.stopPropagation(); traffic.client = null; trafficReload(true); return; }
-    const crow = t.closest             ("[data-ckey]");
-    if (crow) {
-      traffic.client = traffic.client === crow.dataset.ckey ? null : crow.dataset.ckey          ;
-      trafficReload(true);
-      return;
-    }
     if (t.id === "trPrev") { trafficPageStep(-1); return; }
     if (t.id === "trNext") { trafficPageStep(1); return; }
     const more = t.closest             ("#trMore");
@@ -328,13 +306,14 @@ function renderTraffic()       {
     const item = sum ? sum.closest             ("[data-tseq]") : null;
     if (item) toggleTraffic(Number(item.dataset.tseq));
   };
-  pane.onkeydown = (ev               )       => {
-    if (ev.key !== "Enter" && ev.key !== " ") return;
-    const t = targetEl(ev);
-    if (!t) return;
-    const crow = t.closest             ("[data-ckey]");
-    if (crow) { ev.preventDefault(); crow.click(); }
+  // Native select semantics, with the shared dropdown's keyboard and focus behavior.
+  pane.onchange = (ev       )       => {
+    const client = targetEl(ev)?.closest                   ("#trClient");
+    if (!client) return;
+    traffic.client = client.value || null;
+    trafficReload(true);
   };
+  pane.onkeydown = null;
 }
 
 /** Clear the selected client only when one is filtered ("Clear client"); otherwise clear all. */

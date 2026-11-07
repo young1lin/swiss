@@ -125,25 +125,6 @@
     .keylist button:hover { background: var(--hover); }
     .mcp-picks { display: grid; gap: var(--s1); max-height: 168px; overflow-y: auto; padding: var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: 8px; }
 
-    /* Traffic clients (SPEC §panel.nav): one line per client in a five-column grid — name, token,
-       paths, last seen, request count — instead of a two-line card row. Same grid for the
-       header so the columns line up; the last column is the clear-filter slot, usually empty. */
-    .cli-head, .cli-row {
-      display: grid; grid-template-columns: minmax(160px, 1fr) auto minmax(0, 2fr) auto auto auto;
-      gap: var(--s3); align-items: center; min-height: 36px; padding: var(--s1) var(--s4);
-    }
-    .cli-head { font-size: var(--f-caption); color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--sep-soft); }
-    .cli-row { cursor: pointer; }
-    /* No separators (SPEC §panel.design): one-line rows in a column grid read as a table without them,
-       and the hover band marks the row the pointer is on. */
-    .cli-row:hover { background: var(--hover); }
-    .cli-row.sel { background: color-mix(in srgb, var(--accent) 9%, transparent); }
-    .cli-name code { font-weight: var(--w-name); }
-    .cli-token, .cli-paths { font-family: var(--mono); font-size: var(--f-label); color: var(--text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .cli-last { font-size: var(--f-label); color: var(--text-3); white-space: nowrap; }
-    .cli-n { font-variant-numeric: tabular-nums; text-align: right; font-size: var(--f-label); color: var(--text-2); }
-    .cli-x { width: 25px; } /* the clear button's width, reserved so counts stay aligned */
-
     /* --- data view (the DBeaver-style browser; SPEC §data.tabs, §data.grid) ---------------------- */
     .pane > .db-root { max-width: none; }
     /* The workspace shares the shell canvas and sidebar surfaces (SPEC §panel.nav). */

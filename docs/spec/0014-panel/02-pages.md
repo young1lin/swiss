@@ -36,9 +36,12 @@ and is relabelled by the chrome repaint.
   a row with a dot.
 - `.two` is always a grid, and `:is(.fld,.two) + :is(.fld,.two)` spaces them.
 
-**Traffic.** No page title. An Actions / Everything `seg` on the Activity section; Clear
-behind `⋯`. The activity is an event list whose who column is client · server; the client
-table sits in a card. The page loads the MCP list for its count.
+**Traffic.** One content-page event list, matching Remote Runs: no page title or section
+caption; `paneHead` holds the description and interaction count, with Actions / Everything,
+the client dropdown and `⋯` at its right. All clients removes the client filter; each named
+option shows the retained interaction count, including zero after a clear. Clear behind
+`⋯` affects only the selected client, or all traffic when All clients is selected. The
+activity's who column is client · server. The page loads the MCP list for its count.
 
 **Token.** A one-line description; `folder-plus` for New group; the token id in mono;
 `row()`s with a tag. The one-time secret shows once, in a form card.
