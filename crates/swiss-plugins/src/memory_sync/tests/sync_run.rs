@@ -182,7 +182,7 @@ async fn a_first_dry_run_leaves_the_baseline_for_the_first_real_run() {
     }
     let repo_dir = repo("dry-first");
     let transcripts = scratch("dry-first-transcripts");
-    let munged = transcripts.join(swiss_memory::transcript::munge(&repo_dir.display().to_string()));
+    let munged = transcripts.join(swiss_memory::transcript::munge(&bound_root(&repo_dir)));
     std::fs::create_dir_all(&munged).expect("dir");
     std::fs::write(munged.join("s.jsonl"), "{\"x\":1}\n").expect("file");
     let config = transcripts_config(&transcripts);
@@ -214,7 +214,7 @@ async fn a_dry_run_over_an_empty_range_keeps_the_cursors() {
     }
     let repo_dir = repo("dry-empty");
     let transcripts = scratch("dry-empty-transcripts");
-    let munged = transcripts.join(swiss_memory::transcript::munge(&repo_dir.display().to_string()));
+    let munged = transcripts.join(swiss_memory::transcript::munge(&bound_root(&repo_dir)));
     std::fs::create_dir_all(&munged).expect("dir");
     std::fs::write(munged.join("s.jsonl"), "{\"x\":1}\n").expect("file");
     let config = transcripts_config(&transcripts);
@@ -246,7 +246,7 @@ async fn a_dsh_session_reaches_the_prompt_beside_a_claude_code_one() {
         return;
     }
     let repo_dir = repo("dsh");
-    let cwd = swiss_memory::scope::display(&repo_dir);
+    let cwd = bound_root(&repo_dir);
     let transcripts = scratch("dsh-transcripts");
     let config = transcripts_config(&transcripts);
     let (service, project) = service_with_project("dsh", &repo_dir).await;

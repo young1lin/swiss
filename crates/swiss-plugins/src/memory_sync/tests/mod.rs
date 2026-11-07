@@ -99,6 +99,14 @@ fn repo(label: &str) -> PathBuf {
     dir
 }
 
+/// A checkout's path as the service binds a project's root: canonical, the verbatim
+/// prefix off. Transcript session directories are named after this form, never the
+/// raw path - a temp dir whose text is not its canonical form (a Windows 8.3 short
+/// name, as a CI runner's temp is) would munge into a name no walk finds.
+fn bound_root(dir: &Path) -> String {
+    swiss_memory::scope::display(&dir.canonicalize().expect("the checkout canonicalizes"))
+}
+
 fn named(names: &[&str]) -> Choice {
     Choice::Named(names.iter().map(|n| n.to_string()).collect())
 }

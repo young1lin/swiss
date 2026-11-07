@@ -28,7 +28,9 @@ async fn the_sync_runner_is_a_seated_gateway_child() {
     let (program, args): (&str, Vec<String>) = if cfg!(windows) {
         ("cmd", ["/c", "ping", "-n", "2", "127.0.0.1"].iter().map(|s| s.to_string()).collect())
     } else {
-        ("sh", ["-c", "sleep 2"].iter().map(|s| s.to_string()).collect())
+        // The child must print and outlive its seat row: `sleep` alone stays silent,
+        // and the answer's assert wants words.
+        ("sh", ["-c", "echo seated; sleep 2"].iter().map(|s| s.to_string()).collect())
     };
     let dir = scratch("runner-seat");
     let run = {
