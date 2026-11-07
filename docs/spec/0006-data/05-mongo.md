@@ -137,3 +137,11 @@ collection tab, and its console is a command console (§data.mongo-panel).
 - **The console** runs one command document per run (a blank line starts the next) against the
   sidebar's database, prints the reply as a code block, and offers templates by scope (server,
   database, collection, write) and Format.
+- **The command goes first** (`command_first`), on every path that sends a document - the
+  console, the Data agent's reads and stages, `mongo_command` - before a gate reads it: the
+  server takes the first key as the command, and a model writes the keys in any order
+  (`{"documents": [...], "insert": "orders"}` was "no such command: 'documents'"). A key that
+  names a command, holding what a command takes (a name, a number or a flag; a document only
+  under `explain`), moves to the front, the rest keep their order - the `find` document of a
+  `split` stays an option. A name wins over a flag (`aggregate` beside `explain: true`); two
+  that could each be it, neither first, are refused rather than guessed.

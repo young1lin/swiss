@@ -30,6 +30,7 @@ use swiss_host::dbbrowser::{pubsub_watch, DbBrowser, RedisBrowser, WriteRefusal}
 use swiss_host::mongobrowser::MongoBrowser;
 use swiss_host::services::catalog::{CatalogRegistry, ConnectionLease};
 use swiss_llm::agent::{db_tools_on, db_tools_shared, ToolAnswer, ToolSpec, Toolbox};
+use swiss_mcp::adapters::mongo::command_first;
 use swiss_mcp::adapters::sql::assert_read_statement;
 
 use crate::llm_api::{clip, field};
@@ -241,11 +242,28 @@ pub(super) fn in_tab(mut frame: Value, at: &Landing) -> Value {
     frame
 }
 
+/// The command a run_mongo, stage_mongo or open_console names, made what the server reads:
+/// the document, its text as the page shows it, and its database (the call's db, else one the
+/// document carried).
+pub(super) struct MongoCommand {
+    pub(super) doc: serde_json::Map<String, Value>,
+    pub(super) text: String,
+    pub(super) db: Option<String>,
+}
+
+/// What a model reads of a Mongo command document: the command's collection, its options,
+/// values in Extended JSON (a Decimal128's digits as a string, so none are lost), the
+/// database apart.
+pub(super) const MONGO_COMMAND_HELP: &str = "One database command document: the command with its collection, then its options, e.g. {\"find\": \"posts\", \"filter\": {\"type\": \"x\"}, \"limit\": 5} or {\"insert\": \"orders\", \"documents\": [{\"total\": {\"$numberDecimal\": \"299.00\"}}]}. Values are Extended JSON; a Decimal128 or Int64 gives its digits as a string. The database goes in db, not in the document.";
+
 /// The command document a run_mongo or stage_mongo names - an object, or the same as JSON
-/// text (a model sometimes sends it so) - and its text as the page shows it.
-pub(super) fn command_of(args: &Value) -> Result<(serde_json::Map<String, Value>, String), String> {
-    const SHAPE: &str = "a database command document, its first key the command, e.g. {\"find\": \"posts\", \"filter\": {}, \"limit\": 5}";
-    let command = match args.get("command") {
+/// text (a model sometimes sends it so). A model writes the keys in any order, so the command
+/// is put first ([command_first]); it sometimes wraps the document in a second `command`, or
+/// names the database inside it - no command takes a top-level `db` - and both are read as
+/// meant.
+pub(super) fn command_of(args: &Value) -> Result<MongoCommand, String> {
+    const SHAPE: &str = "a database command document, e.g. {\"find\": \"posts\", \"filter\": {}, \"limit\": 5}";
+    let mut command = match args.get("command") {
         Some(Value::Object(map)) => map.clone(),
         Some(Value::String(text)) => match serde_json::from_str::<Value>(text) {
             Ok(Value::Object(map)) => map,
@@ -253,14 +271,29 @@ pub(super) fn command_of(args: &Value) -> Result<(serde_json::Map<String, Value>
         },
         _ => return Err(format!("command is required: {SHAPE}")),
     };
+    if let (1, Some(Value::Object(inner))) = (command.len(), command.get("command")) {
+        command = inner.clone();
+    }
+    let given = string_arg(args, "db");
+    let inside = match command.get("db") {
+        Some(Value::String(db)) if !db.trim().is_empty() => Some(db.trim().to_string()),
+        _ => None,
+    };
+    if let Some(db) = &inside {
+        if given.as_ref().is_some_and(|given| given != db) {
+            return Err(format!("db is named twice: {} beside the command, {db} inside it - name it once, beside it", given.unwrap_or_default()));
+        }
+        command.remove("db");
+    }
     if command.is_empty() {
         return Err(format!("command is empty: {SHAPE}"));
     }
+    let command = command_first(command)?;
     let text = Value::Object(command.clone()).to_string();
     if text.chars().count() > SQL_MAX {
         return Err(format!("command: at most {SQL_MAX} characters"));
     }
-    Ok((command, text))
+    Ok(MongoCommand { doc: command, text, db: given.or(inside) })
 }
 
 /// The command line a run_redis or stage_redis names: one line.
@@ -786,7 +819,7 @@ impl DbTools {
                     Some(text) if !text.trim().is_empty() && text.chars().count() <= SQL_MAX => text.to_string(),
                     _ => return refused(format!("sql must be nonempty text, at most {SQL_MAX} characters")),
                 },
-                DbKind::Mongo => match command_of(args) { Ok((_, text)) => text, Err(why) => return refused(why) },
+                DbKind::Mongo => match command_of(args) { Ok(command) => command.text, Err(why) => return refused(why) },
                 DbKind::Redis => match line_of(args) { Ok(text) => text, Err(why) => return refused(why) },
             };
             Some(value)
@@ -1137,11 +1170,12 @@ impl DbTools {
     }
 
     pub(super) async fn run_mongo(&mut self, args: &Value) -> ToolAnswer {
-        let (command, text) = match command_of(args) { Ok(both) => both, Err(why) => return refused(why) };
+        let MongoCommand { doc: command, text, db } = match command_of(args) { Ok(command) => command, Err(why) => return refused(why) };
         let mut at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
         let limit = self.run_limit(args);
         let (_lease, browser) = match self.mongo() { Ok(held) => held, Err(why) => return refused(why) };
-        let db = match self.mongo_db(browser.as_ref(), args).await { Ok(db) => db, Err(why) => return refused(why) };
+        let named = json!({ "db": db });
+        let db = match self.mongo_db(browser.as_ref(), &named).await { Ok(db) => db, Err(why) => return refused(why) };
         if let Err(why) = self.append_command_snapshot(&mut at, &text) { return refused(why); }
         let started = Instant::now();
         match browser.run_read_command(&db, &command, limit).await {
@@ -1163,9 +1197,9 @@ impl DbTools {
     }
 
     pub(super) async fn stage_mongo(&mut self, args: &Value) -> ToolAnswer {
-        let (_command, text) = match command_of(args) { Ok(both) => both, Err(why) => return refused(why) };
+        let MongoCommand { text, db, .. } = match command_of(args) { Ok(command) => command, Err(why) => return refused(why) };
         let mut at = match self.landing(args) { Ok(at) => at, Err(why) => return refused(why) };
-        let db = string_arg(args, "db").or_else(|| self.db.clone());
+        let db = db.or_else(|| self.db.clone());
         if let Err(why) = self.append_command_snapshot(&mut at, &text) { return refused(why); }
         self.to_page(in_tab(json!({ "kind": "stage", "sql": text, "db": db }), &at)).await;
         answered(STAGED)
@@ -1409,7 +1443,7 @@ pub(super) fn open_console_spec(kind: DbKind) -> ToolSpec {
     let (run, stage, statement) = match kind {
         DbKind::Sql => ("run_sql", "stage_sql", json!({ "sql": { "type": "string", "description": "Statements to place in it, not run." } })),
         DbKind::Mongo => ("run_mongo", "stage_mongo", json!({
-            "command": { "type": "object", "description": "A command document to place in it, not run." },
+            "command": { "type": "object", "description": format!("A command document to place in it, not run. {MONGO_COMMAND_HELP}") },
             "db": { "type": "string", "description": "The command's database (default: the one in view on the user's page)." }
         })),
         DbKind::Redis => ("run_redis", "stage_redis", json!({ "command": { "type": "string", "description": "A command line to place in it, not run." } })),
@@ -1536,7 +1570,7 @@ impl Toolbox for DbTools {
             ],
             DbKind::Mongo => {
                 let db = json!({ "type": "string", "description": "The database (default: the one in view on the user's page)." });
-                let command = json!({ "type": "object", "description": "One database command document, its first key the command: {\"find\": \"posts\", \"filter\": {\"type\": \"x\"}, \"limit\": 5}." });
+                let command = json!({ "type": "object", "description": MONGO_COMMAND_HELP });
                 vec![
                     spec(
                         "list_collections",

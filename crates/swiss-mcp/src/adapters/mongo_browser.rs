@@ -35,7 +35,7 @@ use swiss_host::mongobrowser::{
 
 use super::direct::Lazy;
 use super::mongo::{
-    assert_command_allowed, assert_read_command, describe_collection, doc_json, ejson, err_text, find_command, num, to_bson, to_doc, Ejson,
+    assert_command_allowed, assert_read_command, command_first, describe_collection, doc_json, ejson, err_text, find_command, num, to_bson, to_doc, Ejson,
     without_gossip, MongoHandle, ServerFacts,
 };
 
@@ -493,8 +493,10 @@ impl MongoBrowser for MongoDataBrowser {
     }
 
     async fn run_command(&self, db: &str, command: &Map<String, Value>) -> Result<Value, String> {
-        assert_command_allowed(command, self.allow_destructive)?;
-        let cmd = to_doc(command, "command")?;
+        // The command first whatever order it was typed or staged in, before the gate reads it.
+        let command = command_first(command.clone())?;
+        assert_command_allowed(&command, self.allow_destructive)?;
+        let cmd = to_doc(&command, "command")?;
         let handle = self.conn.get().await?;
         let reply = handle.command(db, cmd).await?;
         Ok(json!({ "reply": doc_json(without_gossip(reply), Ejson::Canonical) }))
@@ -652,7 +654,9 @@ impl MongoBrowser for MongoDataBrowser {
 
     async fn run_read_command(&self, db: &str, command: &Map<String, Value>, limit: i64) -> Result<Value, String> {
         // SPEC §data.agent: the read gate first - an allowlist, so a write never reaches the
-        // console guard, which would let it run - and no destructive opt-in either way.
+        // console guard, which would let it run - and no destructive opt-in either way. The
+        // gates read the first key, so the command goes first.
+        let command = &command_first(command.clone())?;
         assert_read_command(command)?;
         assert_command_allowed(command, false)?;
         let (cmd, cursor) = agent_read(command)?;

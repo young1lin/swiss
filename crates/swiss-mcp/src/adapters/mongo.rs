@@ -358,6 +358,74 @@ pub fn command_destroys(cmd: &Map<String, Value>) -> bool {
     }
 }
 
+/// Command names a command document leads with, lowercased: the ones a person or a model
+/// sends, reads and writes alike. [command_first] finds the command among the keys by them.
+const COMMAND_NAMES: &[&str] = &[
+    "find", "aggregate", "count", "distinct", "getmore", "explain", "mapreduce", "listcollections", "listindexes",
+    "listdatabases", "listsearchindexes", "collstats", "dbstats", "datasize", "dbhash", "validate", "buildinfo",
+    "serverstatus", "hostinfo", "ping", "hello", "ismaster", "connectionstatus", "top", "replsetgetstatus", "currentop",
+    "getlog", "getparameter", "getcmdlineopts", "profile", "usersinfo", "rolesinfo",
+    "insert", "update", "delete", "findandmodify", "bulkwrite", "create", "createindexes", "dropindexes", "drop",
+    "dropdatabase", "renamecollection", "collmod", "createsearchindexes", "updatesearchindex", "dropsearchindex",
+    "converttocapped", "clonecollectionascapped", "emptycapped", "compact", "reindex", "killop", "killcursors",
+    "setparameter", "createuser", "updateuser", "dropuser", "grantrolestouser", "revokerolesfromuser", "createrole",
+    "droprole", "shardcollection", "movechunk", "fsync", "logrotate",
+];
+
+/// A command document with its command first. The server reads the command from the first
+/// key, and a model writes an object's keys in any order - often sorted, so
+/// `{"documents": [...], "insert": "orders"}` reaches the server as a command named
+/// `documents`. The command is the key [COMMAND_NAMES] holds whose value a command takes - a
+/// name, a number or a flag; a document or a list is an option's (the `update` of a
+/// `findAndModify`, the `find` of a `split`) except under `explain`, which holds the command
+/// it explains. Where two keys could be, a flag is an option (`explain: true` beside
+/// `aggregate`), and a tie the first key does not settle is refused rather than guessed. An
+/// `explain`'s inner command is put first the same way. A document naming no known command
+/// stays as it came, for the server to judge.
+pub fn command_first(cmd: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let rank = |v: &Value| match v {
+        Value::Bool(_) => 0,
+        Value::String(_) => 2,
+        _ => 1,
+    };
+    let takes = |k: &str| match &cmd[k] {
+        Value::Object(_) | Value::Array(_) => k.eq_ignore_ascii_case("explain"),
+        _ => true,
+    };
+    let named: Vec<&String> =
+        cmd.keys().filter(|k| COMMAND_NAMES.contains(&k.to_ascii_lowercase().as_str()) && takes(k)).collect();
+    let best = named.iter().map(|k| rank(&cmd[k.as_str()])).max();
+    let top: Vec<&String> = named.into_iter().filter(|k| Some(rank(&cmd[k.as_str()])) == best).collect();
+    let first = cmd.keys().next();
+    let name = match top.as_slice() {
+        [] => return Ok(cmd),
+        [one] => (*one).clone(),
+        many if first.is_some_and(|f| many.contains(&f)) => first.cloned().unwrap_or_default(),
+        many => {
+            let names: Vec<&str> = many.iter().map(|k| k.as_str()).collect();
+            return Err(format!(
+                "the command is unclear: {} could each be it - put the command's key first",
+                names.join(", ")
+            ));
+        }
+    };
+    let mut cmd = if first == Some(&name) {
+        cmd
+    } else {
+        let mut ordered = Map::with_capacity(cmd.len());
+        let value = cmd.get(&name).cloned().unwrap_or(Value::Null);
+        ordered.insert(name.clone(), value);
+        ordered.extend(cmd.into_iter().filter(|(k, _)| *k != name));
+        ordered
+    };
+    if name.eq_ignore_ascii_case("explain") {
+        if let Some(Value::Object(inner)) = cmd.get_mut(&name) {
+            *inner = command_first(std::mem::take(inner))?;
+        }
+    }
+    Ok(cmd)
+}
+
 /// The one policy mongo_command and the Data view's console share. Decided before a socket is
 /// touched: a refused call never connects.
 pub fn assert_command_allowed(cmd: &Map<String, Value>, allow_destructive: bool) -> Result<(), String> {
@@ -1536,7 +1604,7 @@ impl MongoEngine {
 
     async fn call_command(&self, args: &Value) -> Result<Value, String> {
         let command = match args.get("command").map(doc_value) {
-            Some(Value::Object(m)) => m,
+            Some(Value::Object(m)) => command_first(m)?,
             _ => return Err("command must be a document, e.g. {\"ping\": 1}".into()),
         };
         // Refused before connecting: a refused call never opens a socket.
@@ -2170,6 +2238,49 @@ mod tests {
         assert!(assert_read_command(&Map::new()).unwrap_err().contains("find"));
         let insert = assert_read_command(&cmd(json!({ "insert": "posts", "documents": [] }))).unwrap_err();
         assert!(insert.contains("insert") && insert.contains("staged"), "{insert}");
+    }
+
+    /// The keys of a command document in order, the way the server reads them.
+    fn keys(m: &Map<String, Value>) -> Vec<&str> {
+        m.keys().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn the_command_goes_first_whatever_order_the_keys_came_in() {
+        // The shapes a model sent: keys sorted, the command last or in the middle.
+        let insert = command_first(cmd(json!({ "documents": [{ "b": 1, "a": 2 }], "insert": "orders", "ordered": true }))).unwrap();
+        assert_eq!(keys(&insert), ["insert", "documents", "ordered"], "the rest keep their order");
+        assert_eq!(keys(insert["documents"][0].as_object().unwrap()), ["b", "a"], "a document's own fields are untouched");
+        let find = command_first(cmd(json!({ "filter": {}, "limit": 10, "find": "orders", "sort": { "total": -1, "at": 1 } }))).unwrap();
+        assert_eq!(keys(&find), ["find", "filter", "limit", "sort"]);
+        assert_eq!(keys(find["sort"].as_object().unwrap()), ["total", "at"], "a sort keeps its order");
+        // Two keys that name commands: a flag is an option, and so is a document.
+        let agg = command_first(cmd(json!({ "explain": true, "pipeline": [], "aggregate": "orders" }))).unwrap();
+        assert_eq!(keys(&agg)[0], "aggregate");
+        let fam = command_first(cmd(json!({ "query": {}, "update": { "$set": { "a": 1 } }, "findAndModify": "orders" }))).unwrap();
+        assert_eq!(keys(&fam)[0], "findAndModify");
+        let upd = command_first(cmd(json!({ "updates": [{ "q": {}, "u": {} }], "update": "orders" }))).unwrap();
+        assert_eq!(keys(&upd), ["update", "updates"]);
+        // An explain's inner command too.
+        let explained = command_first(cmd(json!({ "verbosity": "queryPlanner", "explain": { "filter": {}, "find": "orders" } }))).unwrap();
+        assert_eq!(keys(&explained), ["explain", "verbosity"]);
+        assert_eq!(keys(explained["explain"].as_object().unwrap()), ["find", "filter"]);
+        // Already right, or naming no command this list knows: as it came.
+        let ordered = cmd(json!({ "count": "orders", "query": {} }));
+        assert_eq!(command_first(ordered.clone()).unwrap(), ordered);
+        let unknown = cmd(json!({ "someNewCommand": 1, "option": "x" }));
+        assert_eq!(keys(&command_first(unknown).unwrap()), ["someNewCommand", "option"]);
+        // A command this list does not know, with an option named like one it does: a
+        // document there is the option's value, never a command's.
+        let split = cmd(json!({ "split": "db.orders", "find": { "_id": 5 } }));
+        assert_eq!(command_first(split.clone()).unwrap(), split);
+        let fam_only = cmd(json!({ "findAndModify": "orders", "update": { "$set": { "a": 1 } } }));
+        assert_eq!(command_first(fam_only.clone()).unwrap(), fam_only);
+        // A tie the first key does not settle is refused, never guessed.
+        let tie = command_first(cmd(json!({ "documents": [], "insert": "a", "delete": "b" }))).unwrap_err();
+        assert!(tie.contains("insert") && tie.contains("delete") && tie.contains("first"), "{tie}");
+        let settled = command_first(cmd(json!({ "insert": "a", "delete": "b" }))).unwrap();
+        assert_eq!(keys(&settled)[0], "insert");
     }
 
     // ---- where it points ----------------------------------------------------------------------

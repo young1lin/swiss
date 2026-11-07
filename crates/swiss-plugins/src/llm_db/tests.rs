@@ -932,6 +932,53 @@ async fn a_mongo_read_reaches_the_page_and_the_model_reads_its_first_documents()
     assert_eq!(tail, [("app".to_string(), 100), ("app".to_string(), 5)]);
 }
 
+/// A model writes a command's keys in any order, wraps it in a second command, or names the
+/// database inside it: the server reads each as meant, the command first; two databases
+/// that disagree are refused, not guessed between.
+#[tokio::test]
+async fn a_mongo_command_is_read_as_meant_whatever_order_its_keys_came_in() {
+    let first = |args: Value| command_of(&args).map(|c| (c.doc.keys().next().cloned().unwrap_or_default(), c.text, c.db));
+    let sorted = first(json!({ "command": { "documents": [{ "total": { "$numberDecimal": "299.00" } }], "insert": "orders" } })).expect("insert");
+    assert_eq!(sorted.0, "insert");
+    assert_eq!(sorted.1, r#"{"insert":"orders","documents":[{"total":{"$numberDecimal":"299.00"}}]}"#);
+    let text = first(json!({ "command": "{\"filter\": {}, \"limit\": 10, \"find\": \"orders\", \"sort\": {\"total\": -1, \"at\": 1}}" })).expect("find");
+    assert_eq!(text.1, r#"{"find":"orders","filter":{},"limit":10,"sort":{"total":-1,"at":1}}"#, "a sort keeps its own order");
+    let nested = first(json!({ "command": { "command": { "count": "orders" } } })).expect("nested");
+    assert_eq!((nested.0.as_str(), nested.2), ("count", None));
+    let inside = first(json!({ "command": { "db": "demo", "count": "orders" } })).expect("db inside");
+    assert_eq!((inside.1.as_str(), inside.2.as_deref()), (r#"{"count":"orders"}"#, Some("demo")));
+    let agreed = first(json!({ "command": { "count": "orders", "db": "demo" }, "db": "demo" })).expect("db twice, the same");
+    assert_eq!(agreed.2.as_deref(), Some("demo"));
+    let twice = first(json!({ "command": { "count": "orders", "db": "demo" }, "db": "logs" })).expect_err("two databases");
+    assert!(twice.contains("db is named twice: logs beside the command, demo inside it"), "{twice}");
+    assert!(first(json!({ "command": { "db": "demo" } })).expect_err("only a db").contains("command is empty"));
+    let unclear = first(json!({ "command": { "filter": {}, "count": "a", "find": "b" } })).expect_err("two commands");
+    assert!(unclear.contains("unclear"), "{unclear}");
+
+    // Through the tools: the stub reads the command first and the database the model meant.
+    let (catalog, stub) = stubs(0);
+    let (tx, mut rx) = mpsc::channel::<Event>(8);
+    let mut tools = DbTools::new(catalog, "docs", DbKind::Mongo, Some(tx)).in_db(Some("app".into()));
+    let found = tools.call("run_mongo", &json!({ "command": { "filter": {}, "limit": 3, "find": "posts" } })).await;
+    assert!(found.ok, "{}", found.text);
+    let counted = tools.call("run_mongo", &json!({ "command": { "command": { "query": {}, "count": "posts", "db": "logs" } } })).await;
+    assert!(counted.ok, "{}", counted.text);
+    let refused = tools.call("run_mongo", &json!({ "command": { "count": "posts", "db": "logs" }, "db": "app" })).await;
+    assert!(!refused.ok && refused.text.contains("named twice"), "{}", refused.text);
+    let ran = stub.mongo.ran.lock().expect("ran").clone();
+    let seen: Vec<(&str, String)> = ran.iter().map(|(db, cmd, _)| (db.as_str(), cmd.as_object().and_then(|m| m.keys().next().cloned()).unwrap_or_default())).collect();
+    assert_eq!(seen, [("app", "find".to_string()), ("logs", "count".to_string())], "the refusal ran nothing");
+    assert!(ran[1].1.get("db").is_none(), "no command takes a top-level db");
+    let _ = sent(&mut rx);
+    let staged = tools.call("stage_mongo", &json!({ "command": { "documents": [{ "n": 1 }], "insert": "posts", "db": "logs" } })).await;
+    assert!(staged.ok && staged.text.contains("has NOT run"), "{}", staged.text);
+    let frames = sent(&mut rx);
+    assert_eq!(frames.len(), 1, "{frames:?}");
+    assert!(frames[0].contains(r#""kind":"stage""#) && frames[0].contains(r#""db":"logs""#), "{}", frames[0]);
+    let (insert, documents) = (frames[0].find("insert"), frames[0].find("documents"));
+    assert!(insert.is_some() && insert < documents, "the command first on the page: {}", frames[0]);
+}
+
 #[tokio::test]
 async fn the_collections_and_a_description_read_as_lines() {
     let (catalog, _stub) = stubs(0);

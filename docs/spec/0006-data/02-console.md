@@ -266,8 +266,10 @@ memory), the `db` runtime and its prompt in `crates/swiss-llm/src/agent.rs`, and
   how many documents; a view, what it is on), `describe_collection {collection, db?}` (the
   fields a sample of 50 documents holds, each one's types and how often present, the indexes,
   size and count), `run_mongo {command, db?, limit?}` and `stage_mongo {command, db?}`, the
-  command a document (an object or its JSON text, its first key the command) and `db` the
-  database in view when unsent. `run_mongo` runs ONE read: the read gate
+  command a document (an object or its JSON text, its keys in any order - the command goes
+  first, §data.mongo-panel; one wrapped in a second `command` is unwrapped, and a `db` written
+  inside it is lifted out, refused when it names another database than the call's) and `db`
+  the database in view when unsent. `run_mongo` runs ONE read: the read gate
   (`assert_read_command`: find, aggregate, count, distinct, listCollections, listIndexes,
   collStats, dbStats, dataSize, explain, listDatabases, buildInfo, serverStatus, hostInfo,
   ping, hello, isMaster, connectionStatus, top, replSetGetStatus - never an aggregation that

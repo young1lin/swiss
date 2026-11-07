@@ -19,6 +19,13 @@ All notable changes to swiss are recorded here. The format follows
 - A Redis pub/sub refusal carrying a code redis-rs does not know (a proxy's own, filed as an
   extension error) reads as the same "the server refused SUBSCRIBE" sentence as `-ERR` and an
   ACL's `NOPERM` (SPEC §data.pubsub).
+- A MongoDB command document runs whatever order its keys came in. The server takes the first
+  key as the command, and a model writes them in any order, so a Data agent's staged
+  `{"documents": [...], "insert": "orders"}` failed in the console with "no such command:
+  'documents'". The console, the agent's reads and stages and `mongo_command` now put the
+  command first before any gate reads it, and refuse a document two commands could each head.
+  The agent's tools also unwrap a command nested in a second `command` and lift a `db` written
+  inside the document (SPEC §data.mongo-panel, §data.agent).
 
 ## [0.2.0] - 2026-11-08
 
