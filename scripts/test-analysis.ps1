@@ -1,8 +1,10 @@
 # Copyright 2026 young1lin. Licensed under the Apache License, Version 2.0.
 # Real database acceptance on disposable containers, never the user's database.
 [CmdletBinding()]
-param([string]$Distro = 'Ubuntu', [switch]$Full)
+param([string]$Distro = '', [switch]$Full)
 $ErrorActionPreference = 'Stop'
+# An empty -Distro means the default distro: name the wsl prefix once, use it everywhere.
+$wslDistroArgs = if ($Distro) { @('-d', $Distro) } else { @() }
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $prefix = 'swiss-analysis-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $fixturePassword = [guid]::NewGuid().ToString('N')
@@ -12,7 +14,7 @@ $keys = @('SWISS_ANALYSIS_MYSQL_PORT','SWISS_ANALYSIS_MYSQL_PASSWORD','SWISS_ANA
 $previousEnv = @{}
 foreach ($key in $keys) { $previousEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process') }
 function Docker {
-    $output = & wsl -d $Distro -- docker @args
+    $output = & wsl @wslDistroArgs -- docker @args
     if ($LASTEXITCODE -ne 0) { throw 'fixture Docker command failed' }
     return $output
 }
@@ -42,7 +44,7 @@ try {
         $bridgeStart.UseShellExecute = $false
         $bridgeStart.CreateNoWindow = $true
         $bridgeStart.RedirectStandardError = $true
-        foreach ($arg in @('-d', $Distro, '--exec', 'socat', "TCP4-LISTEN:${bridgePort},bind=127.0.0.1,reuseaddr,fork", 'UNIX-CONNECT:/var/run/docker.sock')) { $bridgeStart.ArgumentList.Add($arg) }
+        foreach ($arg in (@($wslDistroArgs) + @('--exec', 'socat', "TCP4-LISTEN:${bridgePort},bind=127.0.0.1,reuseaddr,fork", 'UNIX-CONNECT:/var/run/docker.sock'))) { $bridgeStart.ArgumentList.Add($arg) }
         $bridgeProcess = [Diagnostics.Process]::Start($bridgeStart)
         $bridgeReady = $false
         for ($attempt = 0; $attempt -lt 30; $attempt++) {
@@ -56,7 +58,7 @@ try {
         $env:SWISS_IT_MONGO_URL = "mongodb://127.0.0.1:$mongoPort/?directConnection=true&replicaSet=rs0"
         $mongoReady = $false
         for ($attempt = 0; $attempt -lt 30; $attempt++) {
-            & wsl -d $Distro -- docker exec "$prefix-mongo" mongosh --quiet --eval "try { rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]}) } catch(e) {}" 2>$null | Out-Null
+            & wsl @wslDistroArgs -- docker exec "$prefix-mongo" mongosh --quiet --eval "try { rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]}) } catch(e) {}" 2>$null | Out-Null
             if ($LASTEXITCODE -eq 0) { $mongoReady = $true; break }
             Start-Sleep -Seconds 1
         }
@@ -65,7 +67,7 @@ try {
     # Wait on engine readiness, not a fixed boot delay. Credentials never appear in output.
     $ready = $false
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
-        & wsl -d $Distro -- docker exec -e "MYSQL_PWD=$fixturePassword" "$prefix-mysql" mysqladmin --protocol=TCP --host=127.0.0.1 ping -uroot --silent 2>$null | Out-Null
+        & wsl @wslDistroArgs -- docker exec -e "MYSQL_PWD=$fixturePassword" "$prefix-mysql" mysqladmin --protocol=TCP --host=127.0.0.1 ping -uroot --silent 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) { $ready = $true; break }
         Start-Sleep -Seconds 1
     }
@@ -81,9 +83,9 @@ try {
         }
     } finally { Pop-Location }
 } finally {
-    foreach ($name in $created) { & wsl -d $Distro -- docker rm -f $name 2>$null | Out-Null }
+    foreach ($name in $created) { & wsl @wslDistroArgs -- docker rm -f $name 2>$null | Out-Null }
     if ($bridgeProcess) {
-        & wsl -d $Distro --exec pkill -f -- "^socat TCP4-LISTEN:${bridgePort}," 2>$null | Out-Null
+        & wsl @($wslDistroArgs) --exec pkill -f -- "^socat TCP4-LISTEN:${bridgePort}," 2>$null | Out-Null
         if (-not $bridgeProcess.HasExited) { $bridgeProcess.Kill() }
         $bridgeProcess.Dispose()
     }

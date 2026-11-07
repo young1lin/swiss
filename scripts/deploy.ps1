@@ -89,8 +89,8 @@ function Phase($message) {
 }
 function Get-FreeMemoryGiB {
     # kernel32, not CIM: a WMI query here costs longer than the decision. The smaller of free
-    # RAM and the commit headroom (RAM plus paging file, less what is committed): this box's
-    # paging file is small, and on 2026-10-13 a gate run sized from 9 GB of free RAM ran out
+    # RAM and the commit headroom (RAM plus paging file, less what is committed): the build
+    # host's paging file is small, and on 2026-10-13 a gate run sized from 9 GB of free RAM ran out
     # of commit instead (os error 1455, seven rustc/rust-lld at once) with RAM still free.
     if (-not ('SwissDeploy.Kernel32' -as [type])) {
         Add-Type -Namespace SwissDeploy -Name Kernel32 -MemberDefinition @'
@@ -137,8 +137,8 @@ function Get-TreeStamp {
 function Get-CargoJobs([string]$kind) {
     # Leave 2 GB for the editor. Dev rustc is about 1 GB; opt-level=z about 2 GB.
     # Floor 2 (a full box still makes progress), cap 4 for both: the workspace's test
-    # binaries link through rust-lld at well over 1 GB each, and 4 is what this box
-    # sustains (the agents' -j 4 rule).
+    # binaries link through rust-lld at well over 1 GB each, and 4 is the ceiling
+    # the agents' -j 4 rule set.
     $free = Get-FreeMemoryGiB
     if ($null -eq $free) { return 2 }
     $budget = [Math]::Max(0.0, $free - 2.0)
@@ -172,8 +172,8 @@ if (-not $SkipGates -and -not $Quick) {
     cargo test --workspace
     if ($LASTEXITCODE -ne 0) { Fail "tests failed - production left untouched" }
     # Gate 2 (SPEC §testing.it): the real-database suite. Docker lives in WSL at
-    # tcp://127.0.0.1:2375 when localhost forwarding works - on this box it does not
-    # (WSL is in NAT mode under a localhost proxy), so resolve the endpoint instead of
+    # tcp://127.0.0.1:2375 when localhost forwarding works - a NAT-mode WSL behind a
+    # localhost proxy does not forward it, so resolve the endpoint instead of
     # hardcoding it: loopback first (Docker Desktop machines keep working), then the
     # WSL address of the first running distro, whose dockerd binds 0.0.0.0:2375. A diff
     # that never touched a database path can still afford the ~20 s: a deploy is the
@@ -185,7 +185,7 @@ if (-not $SkipGates -and -not $Quick) {
         # ErrorActionPreference Stop turns into a terminating error (PS 5.1) - go through
         # cmd so the warning dies inside the child instead of killing the deploy.
         $wslIp_ = (cmd /c "wsl hostname -I 2>nul" | Select-Object -First 1)
-        if (-not $wslIp_) { $wslIp_ = (wsl -d Ubuntu -u root -- hostname -I 2>$null | Select-Object -First 1) }
+        if (-not $wslIp_) { $wslIp_ = (wsl -u root -- hostname -I 2>$null | Select-Object -First 1) }
         if ($wslIp_) { $dockerHost_ = 'tcp://' + ($wslIp_.ToString().Trim().Split(' ')[0]) + ':2375' }
     }
     Phase ("integration gate docker at " + $dockerHost_)

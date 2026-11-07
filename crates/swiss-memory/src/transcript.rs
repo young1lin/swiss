@@ -769,7 +769,7 @@ mod tests {
         assert!(!within("/srv", "/srv/app"));
         assert!(within(r"C:\Users\dev\swiss\crates", r"\\?\C:\Users\dev\swiss"));
         if cfg!(windows) {
-            assert!(within(r"c:\dev\swiss", r"C:\Users\dev\swiss"));
+            assert!(within(r"c:\users\dev\swiss", r"C:\Users\dev\swiss"));
         }
     }
 
