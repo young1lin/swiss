@@ -403,7 +403,8 @@ pub async fn run_gateway() -> Result<(), String> {
     let llm_state = swiss_llm::LlmState::new();
     // The Data agent's analysis ledger (SPEC §data.analysis): opened once, and reconciled here -
     // an execution the previous process left "running" is marked interrupted before any route can
-    // report it as still going.
+    // report it as still going. The tree 0.2.0 left in ~/llm is adopted first (SPEC §core.home).
+    swiss_plugins::analysis::AnalysisStore::adopt_stray_home();
     let analysis_store = swiss_plugins::analysis::AnalysisStore::home();
     let interrupted = analysis_store.reconcile();
     if interrupted > 0 {

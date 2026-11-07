@@ -11,8 +11,11 @@ All notable changes to swiss are recorded here. The format follows
 - The analysis ledger and the console store live under the gateway's home. `AnalysisStore::home()`
   joined `llm/` onto the user's home instead of the gateway's, so 0.2.0 sealed consoles and analyses
   into `~/llm` beside the one home that owns every other byte of state (`~/.swiss`, SPEC §core.home);
-  the event-bus console store rode the same root. A `~/llm` left by 0.2.0 moves by hand
-  (`mv ~/llm ~/.swiss/llm`) - sealed records are path-independent (SPEC §data.analysis, §data.tabs).
+  the event-bus console store rode the same root. Boot adopts the `~/llm` 0.2.0 left: a gateway
+  on the default home moves `analysis` and `consoles` into `~/.swiss/llm` before either store
+  opens, beside any records already there and never over one; a stray entry whose name the home
+  already holds stays in `~/llm` and is named in the log (SPEC §core.home, §data.analysis,
+  §data.tabs).
 
 ## [0.2.0] - 2026-11-08
 

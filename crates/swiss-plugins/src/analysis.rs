@@ -339,6 +339,20 @@ impl AnalysisStore {
         AnalysisStore::at(swiss_core::paths::data_dir().join("llm").join("analysis"))
     }
 
+    /// Adopts the tree 0.2.0 left in `~/llm` (SPEC §core.home): `analysis` and `consoles` move
+    /// into the gateway home's `llm/`, beside which [AnalysisStore::home] and the console store
+    /// open. Boot calls it once, before either store exists; nothing in it is overwritten.
+    pub fn adopt_stray_home() {
+        let data_dir = swiss_core::paths::data_dir();
+        let Some(stray) = stray_llm(&data_dir, &swiss_core::paths::home_dir()) else { return };
+        let report = adopt(&stray, &data_dir.join("llm"));
+        if report.moved > 0 || !report.left.is_empty() {
+            swiss_core::log::log("info", "llm state adopted from ~/llm", Some(json!({
+                "from": stray.display().to_string(), "moved": report.moved, "left": report.left,
+            })));
+        }
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -1169,6 +1183,62 @@ fn bounded(text: &str) -> String {
     text.chars().take(NOTE_MAX).collect()
 }
 
+/// Where 0.2.0 sealed the ledger and the consoles: `~/llm`, the user's home rather than the
+/// gateway's. Only the default home adopts it. 0.2.0 wrote every instance's records to that one
+/// directory, so an instance under a `$SWISS_HOME` of its own (a scratch or test home) never
+/// carries off the default instance's records.
+fn stray_llm(data_dir: &Path, user_home: &Path) -> Option<PathBuf> {
+    (data_dir == swiss_core::paths::default_data_dir_in(user_home)).then(|| user_home.join("llm"))
+}
+
+/// What one adoption did: how many renames moved a tree or an entry, and the stray paths left in
+/// place because the home already holds an entry of that name (or the rename failed).
+#[derive(Debug, Default, PartialEq)]
+struct Adopted {
+    moved: usize,
+    left: Vec<String>,
+}
+
+fn adopt(stray: &Path, llm: &Path) -> Adopted {
+    let mut report = Adopted::default();
+    for name in ["analysis", "consoles"] {
+        let from = stray.join(name);
+        if from.is_dir() {
+            move_merging(&from, &llm.join(name), &mut report);
+        }
+    }
+    // `~/llm` is a plain name the user may also use: it goes only once nothing else is in it.
+    let _ = std::fs::remove_dir(stray);
+    report
+}
+
+/// Moves `from` to `to`: whole, in one rename, when `to` is free; otherwise entry by entry into
+/// the directory already there. A file both sides hold stays where it is - both copies survive,
+/// and the stray one is named in the report for the user to settle.
+fn move_merging(from: &Path, to: &Path, report: &mut Adopted) {
+    if !to.exists() {
+        if let Some(parent) = to.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::rename(from, to) {
+            Ok(()) => report.moved += 1,
+            Err(e) => report.left.push(format!("{}: {e}", from.display())),
+        }
+        return;
+    }
+    let entries = match (from.is_dir() && to.is_dir()).then(|| std::fs::read_dir(from)) {
+        Some(Ok(entries)) => entries,
+        _ => {
+            report.left.push(from.display().to_string());
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        move_merging(&entry.path(), &to.join(entry.file_name()), report);
+    }
+    let _ = std::fs::remove_dir(from);
+}
+
 fn run_id_cancel_guard(store: &AnalysisStore, run: &str) -> Result<(), String> {
     let mut map = store.cancels.lock().map_err(|_| "the analysis store is poisoned")?;
     map.insert(run.to_string(), Arc::new(Cancel { flag: AtomicBool::new(false), wake: Notify::new() }));
@@ -1737,8 +1807,84 @@ mod tests {
     /// one home that owns every byte of state.
     #[test]
     fn the_home_is_the_gateway_home_not_the_users() {
-        assert!(AnalysisStore::home().root().starts_with(swiss_core::paths::data_dir()),
+        // Pin the scratch home before reading it: test_home() installs SWISS_HOME lazily, so a
+        // sibling test installing it between two reads here would compare two different homes.
+        // Equality, not a prefix: the scratch user profile sits inside the scratch home, so the
+        // old `~/llm` began with it too.
+        let home = swiss_core::paths::test_home();
+        assert_eq!(AnalysisStore::home().root(), home.join("llm").join("analysis"),
             "the ledger lives under the gateway home (~/.swiss), never the user's own");
+    }
+
+    fn adopt_scratch() -> PathBuf {
+        std::env::temp_dir().join(format!("swiss-adopt-{}", random_hex(6)))
+    }
+
+    fn plant(path: PathBuf, text: &str) {
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("dirs");
+        std::fs::write(path, text).expect("plant");
+    }
+
+    fn read(path: PathBuf) -> String {
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// 0.2.0's stray tree moves whole into a home that has neither tree, and a second boot finds
+    /// nothing to do. A file of the user's own keeps `~/llm` where it is.
+    #[test]
+    fn the_stray_trees_move_whole_and_a_foreign_file_keeps_its_folder() {
+        let base = adopt_scratch();
+        let (stray, llm) = (base.join("llm"), base.join(".swiss").join("llm"));
+        plant(stray.join("analysis").join("t1").join("task.json"), "ledger");
+        plant(stray.join("consoles").join("6d79").join("a.json"), "sealed");
+        plant(stray.join("notes.txt"), "mine");
+        std::fs::create_dir_all(llm.join("db-memory")).expect("the home's own llm dir");
+
+        assert_eq!(adopt(&stray, &llm), Adopted { moved: 2, left: Vec::new() });
+        assert_eq!(read(llm.join("analysis").join("t1").join("task.json")), "ledger");
+        assert_eq!(read(llm.join("consoles").join("6d79").join("a.json")), "sealed");
+        assert!(!stray.join("analysis").exists() && !stray.join("consoles").exists());
+        assert_eq!(read(stray.join("notes.txt")), "mine", "the user's own file is never touched");
+
+        assert_eq!(adopt(&stray, &llm), Adopted::default(), "the second boot moves nothing");
+        std::fs::remove_file(stray.join("notes.txt")).expect("unplant");
+        adopt(&stray, &llm);
+        assert!(!stray.exists(), "an emptied ~/llm goes");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A home that already holds records (a build with the fix ran before the stray tree was
+    /// adopted) takes the stray entries beside its own; a name both sides hold is never
+    /// overwritten - the stray copy stays and is reported.
+    #[test]
+    fn a_home_with_records_merges_the_stray_tree_and_never_overwrites() {
+        let base = adopt_scratch();
+        let (stray, llm) = (base.join("llm"), base.join(".swiss").join("llm"));
+        plant(stray.join("consoles").join("6d79").join("a.json"), "stray a");
+        plant(stray.join("consoles").join("6d79").join("b.json"), "stray b");
+        plant(stray.join("analysis").join("t2").join("task.json"), "stray t2");
+        plant(llm.join("consoles").join("6d79").join("a.json"), "home a");
+        plant(llm.join("analysis").join("t1").join("task.json"), "home t1");
+
+        let report = adopt(&stray, &llm);
+        assert_eq!(report.moved, 2, "b.json and t2: {report:?}");
+        let conflict = stray.join("consoles").join("6d79").join("a.json");
+        assert_eq!(report.left, vec![conflict.display().to_string()]);
+        assert_eq!(read(llm.join("consoles").join("6d79").join("a.json")), "home a");
+        assert_eq!(read(llm.join("consoles").join("6d79").join("b.json")), "stray b");
+        assert_eq!(read(llm.join("analysis").join("t1").join("task.json")), "home t1");
+        assert_eq!(read(llm.join("analysis").join("t2").join("task.json")), "stray t2");
+        assert_eq!(read(conflict), "stray a", "both copies survive");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn only_the_default_home_adopts_the_stray_tree() {
+        let user = std::env::temp_dir().join("swiss-adopt-user");
+        let default = swiss_core::paths::default_data_dir_in(&user);
+        assert_eq!(stray_llm(&default, &user), Some(user.join("llm")));
+        assert_eq!(stray_llm(&user.join("scratch-home"), &user), None,
+            "a $SWISS_HOME of its own never carries off the default instance's records");
     }
 
     #[tokio::test]
