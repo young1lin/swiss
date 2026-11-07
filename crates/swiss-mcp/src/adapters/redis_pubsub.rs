@@ -113,7 +113,7 @@ struct SubscriptionSlot(Arc<AtomicUsize>);
 impl SubscriptionSlot {
     fn take(count: &Arc<AtomicUsize>) -> Result<Self, String> {
         count
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
                 (n < SUBSCRIPTIONS_MAX).then_some(n + 1)
             })
             .map(|_| Self(count.clone()))
