@@ -525,6 +525,24 @@ async fn gw_write(port: u16, method: reqwest::Method, path: &str, body: Value) -
     (status, answer.json().await.expect("a JSON answer"))
 }
 
+/// One rev-checked secret write, as the client the SPEC names does it: "a 409 on a vault `rev` or a
+/// plugin `revision` re-reads, re-merges and retries". Every gateway this binary boots shares one
+/// process-wide vault, so a sibling test's write can land between the rev this reads and the PUT
+/// that presents it; the retry is that documented client step with `store_secret`'s budget, and
+/// the last answer is returned whatever it is, so the caller still asserts what landed.
+async fn gw_put_secret(port: u16, name: &str, value: &str) -> (u16, Value) {
+    let mut last = (409u16, json!({}));
+    for _ in 0..=3 {
+        let (status, listing) = gw_get(port, "/api/secrets").await;
+        assert_eq!(status, 200, "{listing}");
+        last = gw_write(port, reqwest::Method::PUT, &format!("/api/secrets/{name}"), json!({ "value": value, "rev": listing["rev"] })).await;
+        if last.0 != 409 {
+            return last;
+        }
+    }
+    last
+}
+
 // SPEC §host.setup: an item is compared with the masked read-back, so what `POST /api/mcps` stored
 // from the same words reads as the same definition, for every kind a manifest can name.
 #[tokio::test]
@@ -535,13 +553,7 @@ async fn a_definition_already_on_the_gateway_reads_as_unchanged() {
         "web": { "type": "http", "url": "http://127.0.0.1:1/mcp", "headers": { "Authorization": "Bearer ${secret://shared-key}" } },
         "db": { "type": "mysql", "host": "127.0.0.1", "port": 13306, "password": "${secret://shared-key}" },
     });
-    let (status, _) = gw_write(
-        gw.port,
-        reqwest::Method::PUT,
-        "/api/secrets/shared-key",
-        json!({ "value": "x", "rev": gw_get(gw.port, "/api/secrets").await.1["rev"] }),
-    )
-    .await;
+    let (status, _) = gw_put_secret(gw.port, "shared-key", "x").await;
     assert_eq!(status, 200);
     for (name, def) in mcps.as_object().expect("an object") {
         let mut body = def.clone();
@@ -728,9 +740,7 @@ async fn a_missing_secret_blocks_its_users_and_exits_4() {
     assert_eq!(document["next"][0]["who"], json!("human"));
     assert_eq!(document["next"][1]["do"], json!("swiss setup apply swiss.setup.json"));
 
-    let rev = gw_get(gw.port, "/api/secrets").await.1["rev"].clone();
-    let body = json!({ "value": "stored-by-a-human", "rev": rev });
-    let (status, _) = gw_write(gw.port, reqwest::Method::PUT, "/api/secrets/wait-key", body).await;
+    let (status, _) = gw_put_secret(gw.port, "wait-key", "stored-by-a-human").await;
     assert_eq!(status, 200);
 
     let (document, code) = apply_at(gw.port, &input(manifest, Path::new("")), Options::default()).await;
@@ -1271,9 +1281,7 @@ async fn show_prints_a_manifest_whose_mask_plan_refuses() {
     const LITERAL: &str = "show-literal-9f3a";
     const VAULT: &str = "show-vault-9f3a";
     let gw = gateway().await;
-    let (status, vault) = gw_get(gw.port, "/api/secrets").await;
-    assert_eq!(status, 200, "{vault}");
-    let (status, answer) = gw_write(gw.port, reqwest::Method::PUT, "/api/secrets/show-key", json!({ "value": VAULT, "rev": vault["rev"] })).await;
+    let (status, answer) = gw_put_secret(gw.port, "show-key", VAULT).await;
     assert_eq!(status, 200, "{answer}");
     let (status, answer) = gw_write(gw.port, reqwest::Method::POST, "/api/mcps", json!({
         "name": "db", "type": "mysql", "host": "127.0.0.1", "password": LITERAL, "start": false,
@@ -1363,15 +1371,7 @@ async fn secret_ask_opens_the_page_without_printing_the_link() {
     assert!(url.contains("token=ticket-sentinel-9f3a"), "the browser was not given the link");
     assert!(url.contains("#secrets?ask=prod-db-password"), "{url}");
 
-    let (status, vault) = gw_get(gw.port, "/api/secrets").await;
-    assert_eq!(status, 200, "{vault}");
-    let (status, stored) = gw_write(
-        gw.port,
-        reqwest::Method::PUT,
-        "/api/secrets/prod-db-password",
-        json!({ "value": "typed-by-a-human", "rev": vault["rev"] }),
-    )
-    .await;
+    let (status, stored) = gw_put_secret(gw.port, "prod-db-password", "typed-by-a-human").await;
     assert_eq!(status, 200, "{stored}");
     let (again, code) = ask_on(
         gw.port,
