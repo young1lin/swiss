@@ -26,6 +26,13 @@ All notable changes to swiss are recorded here. The format follows
   command first before any gate reads it, and refuse a document two commands could each head.
   The agent's tools also unwrap a command nested in a second `command` and lift a `db` written
   inside the document (SPEC §data.mongo-panel, §data.agent).
+- A number wrapper given a bare number, `{"$numberDecimal": 299.00}`, keeps its type. The
+  console's parser printed it as `NumberDecimal("[object Object]")` and the gateway refused it
+  as invalid Extended JSON. The console now reads it as `NumberDecimal("299.00")` would, the
+  digits as typed; the gateway keeps the type, its digits those of the double the JSON parser
+  made of the number (`299.0`), so the string form stays the exact one. The agent's tool
+  descriptions and prompt give the string form and an insert example (SPEC
+  §data.mongo-panel).
 
 ## [0.2.0] - 2026-11-08
 

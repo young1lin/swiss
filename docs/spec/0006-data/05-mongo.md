@@ -119,8 +119,13 @@ collection tab, and its console is a command console (§data.mongo-panel).
   `UUID("…")`, `BinData`, `Timestamp`, regex literals — and the inputs read the same forms plus
   JSON, unquoted keys, single quotes, comments and trailing commas. An Int32 stays a plain
   number, a longer integer becomes `$numberLong` **from its digits** (never through a JS number),
-  and a point or an exponent makes a Double. The suite pins that every type prints and re-reads
-  to the same BSON value, type included; a parse error names its line and column.
+  and a point or an exponent makes a Double. A number wrapper given a bare number
+  (`{"$numberDecimal": 299.00}`, `{"$numberLong": 5}`, as a model often writes one) reads as
+  its constructor would: the digits as typed, the type kept. The gateway reads such JSON too
+  (`to_doc`), the type kept, but its JSON parser has already made the number a double, so the
+  digits are the double's (`299.00` lands as `299.0`); the string form is the exact one. The
+  suite pins that every type prints and re-reads to the same BSON value, type included; a
+  parse error names its line and column.
 - **The collection tab** heads with the collection's facts (database, count, size, indexes,
   server version and topology) and a pane switch — Documents, Aggregation, Schema, Indexes,
   Explain, Validation (views hide the last two and every write) — with one primary action per

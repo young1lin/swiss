@@ -129,6 +129,21 @@ describe("reading the shell's syntax", () => {
     expect(mongoParse("[MinKey, MaxKey()]")).toEqual([{ $minKey: 1 }, { $maxKey: 1 }]);
   });
 
+  it("reads a number wrapper given a bare number as its constructor would, the type kept", () => {
+    // A model writes {"$numberDecimal": 299.00}; the digits stay as typed and the type stays Decimal128.
+    expect(mongoParse("{\"total\": {\"$numberDecimal\": 299.00}}")).toEqual({ total: { $numberDecimal: "299.00" } });
+    expect(mongoParse("{\"$numberDecimal\": 5}")).toEqual({ $numberDecimal: "5" });
+    expect(mongoParse("{\"$numberLong\": 5}")).toEqual({ $numberLong: "5" });
+    expect(mongoParse("{\"$numberLong\": 9007199254740993}")).toEqual({ $numberLong: "9007199254740993" });
+    expect(mongoParse("{\"$numberInt\": 7}")).toEqual({ $numberInt: "7" });
+    expect(mongoParse("{\"$numberDouble\": 1.5}")).toEqual({ $numberDouble: "1.5" });
+    // The string form and a document that only starts with the key are left as written.
+    expect(mongoParse("{\"$numberDecimal\": \"299.00\"}")).toEqual({ $numberDecimal: "299.00" });
+    expect(mongoParse("{\"$numberDecimal\": 1, \"x\": 2}")).toEqual({ $numberDecimal: 1, x: 2 });
+    expect(shellText(mongoParse("{\"t\": {\"$numberDecimal\": 299.00}}"))).toContain("NumberDecimal(\"299.00\")");
+    expect(() => mongoParse("{\"$numberLong\": 1.5}")).toThrow(MongoSyntaxError);
+  });
+
   it("an empty ObjectId() mints a fresh id", () => {
     const v = mongoParse("ObjectId()") as { $oid: string };
     expect(v.$oid).toMatch(/^[0-9a-f]{24}$/);

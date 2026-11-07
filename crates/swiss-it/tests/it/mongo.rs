@@ -215,6 +215,33 @@ async fn the_guard_refuses_server_commands_and_destructive_ones_without_the_flag
     assert!(colls["collections"].as_array().expect("list").iter().any(|c| c["name"] == json!("orders")));
 }
 
+/// A model writes a command's keys in any order and a number wrapper's digits as a bare
+/// number: the console and the agent read run what was meant, the command first and the
+/// type kept; a write out of order is still a write to the agent's gate (SPEC §data.mongo).
+#[tokio::test]
+async fn a_command_out_of_order_runs_as_meant_and_a_bare_decimal_keeps_its_type() {
+    let (f, _e, b) = browser("order", false).await;
+    let insert = obj(json!({
+        "documents": [{ "sku": "x-1", "total": { "$numberDecimal": 299.5 }, "qty": { "$numberLong": 5 }, "price": { "$numberDecimal": "19.90" } }],
+        "insert": "ledger"
+    }));
+    let done = b.run_command(&f.name, &insert).await.expect("the insert runs with the command put first");
+    assert_eq!(done["reply"]["n"], json!({ "$numberInt": "1" }), "{done}");
+    let err = b.run_read_command(&f.name, &insert, 10).await.expect_err("the agent's gate sees the insert");
+    assert!(err.contains("insert"), "{err}");
+    let find = obj(json!({ "filter": { "sku": "x-1" }, "limit": 1, "find": "ledger" }));
+    let read = b.run_read_command(&f.name, &find, 10).await.expect("the find runs with the command put first");
+    let doc = &read["reply"]["cursor"]["firstBatch"][0];
+    assert_eq!(doc["total"], json!({ "$numberDecimal": "299.5" }), "a Decimal128, not a double: {read}");
+    assert_eq!(doc["price"], json!({ "$numberDecimal": "19.90" }), "the string form keeps its digits: {read}");
+    assert_eq!(doc["qty"], json!({ "$numberLong": "5" }), "an Int64, not an Int32: {read}");
+    let typed = b.run_command(&f.name, &obj(json!({ "count": "ledger", "query": { "total": { "$type": "decimal" } } }))).await.expect("count");
+    assert_eq!(typed["reply"]["n"], json!({ "$numberInt": "1" }), "the server stored a decimal: {typed}");
+    let unclear = obj(json!({ "filter": {}, "count": "ledger", "find": "ledger" }));
+    let err = b.run_command(&f.name, &unclear).await.expect_err("two commands, neither first");
+    assert!(err.contains("unclear"), "{err}");
+}
+
 #[tokio::test]
 async fn with_the_flag_a_drop_runs() {
     let (f, _e, b) = browser("drop", true).await;

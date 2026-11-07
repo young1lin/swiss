@@ -61,6 +61,12 @@ function setField(o: Record<string, Ejson>, k: string, v: Ejson): void {
   else o[k] = v;
 }
 
+/** The number wrappers whose value is digits in a string, each read by the constructor that
+ *  makes it when a bare number stands in for the string. */
+const WRAPPER_CTOR: Record<string, string | undefined> = {
+  $numberDecimal: "NumberDecimal", $numberLong: "NumberLong", $numberInt: "NumberInt", $numberDouble: "Double",
+};
+
 function oneKey(m: Record<string, Ejson>): string | null {
   const keys = Object.keys(m);
   return keys.length ? keys[0] : null;
@@ -547,6 +553,7 @@ class Parser {
   }
 
   object(): Ejson {
+    const at = this.tok.at;
     this.advance(false);
     const out: Record<string, Ejson> = {};
     while (!(this.tok.kind === "punct" && this.tok.text === "}")) {
@@ -564,6 +571,11 @@ class Parser {
       }
     }
     this.advance(false);
+    // A number wrapper given a bare number ({"$numberDecimal": 299.00}, as a model often
+    // writes it) reads as its constructor would: the digits as typed, the type kept.
+    const keys = Object.keys(out);
+    const ctor = keys.length === 1 ? WRAPPER_CTOR[keys[0]] : undefined;
+    if (ctor && typeof out[keys[0]] !== "string") return this.construct(ctor, [out[keys[0]]], at);
     return out;
   }
 

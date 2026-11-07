@@ -87,11 +87,36 @@ pub fn doc_json(d: Document, mode: Ejson) -> Value {
 
 /// A document out of Extended JSON (either form), the failure naming what it was.
 pub fn to_doc(m: &Map<String, Value>, what: &str) -> Result<Document, String> {
-    Document::try_from(m.clone()).map_err(|e| format!("{what} is not valid Extended JSON: {e}"))
+    let mut m = m.clone();
+    m.values_mut().for_each(numbers_as_text);
+    Document::try_from(m).map_err(|e| format!("{what} is not valid Extended JSON: {e}"))
 }
 
 pub fn to_bson(v: &Value, what: &str) -> Result<Bson, String> {
-    Bson::try_from(v.clone()).map_err(|e| format!("{what} is not valid Extended JSON: {e}"))
+    let mut v = v.clone();
+    numbers_as_text(&mut v);
+    Bson::try_from(v).map_err(|e| format!("{what} is not valid Extended JSON: {e}"))
+}
+
+/// A number wrapper written with a bare number where Extended JSON wants its text -
+/// `{"$numberDecimal": 299.00}`, `{"$numberLong": 5}`, as a model or a hand often writes it -
+/// is read as that number's text, so the value lands with the type it names rather than
+/// failing the whole document. Without arbitrary-precision JSON the number went through an
+/// f64 on the way in: the text form stays the exact one.
+fn numbers_as_text(v: &mut Value) {
+    match v {
+        Value::Object(m) => {
+            if let (1, Some((k, n @ Value::Number(_)))) = (m.len(), m.iter_mut().next()) {
+                if matches!(k.as_str(), "$numberDecimal" | "$numberLong" | "$numberInt" | "$numberDouble") {
+                    *n = Value::String(n.to_string());
+                    return;
+                }
+            }
+            m.values_mut().for_each(numbers_as_text);
+        }
+        Value::Array(list) => list.iter_mut().for_each(numbers_as_text),
+        _ => {}
+    }
 }
 
 /// One canonical value re-spoken relaxed — the schema sample values a model reads.
@@ -2281,6 +2306,32 @@ mod tests {
         assert!(tie.contains("insert") && tie.contains("delete") && tie.contains("first"), "{tie}");
         let settled = command_first(cmd(json!({ "insert": "a", "delete": "b" }))).unwrap();
         assert_eq!(keys(&settled)[0], "insert");
+    }
+
+    #[test]
+    fn a_number_wrapper_given_a_bare_number_keeps_its_type() {
+        let d = to_doc(
+            &cmd(json!({
+                "total": { "$numberDecimal": 299.5 },
+                "exact": { "$numberDecimal": "299.00" },
+                "n": { "$numberLong": 5 },
+                "i": { "$numberInt": 7 },
+                "f": { "$numberDouble": 1.5 },
+                "nested": [{ "price": { "$numberDecimal": 15 } }],
+            })),
+            "document",
+        )
+        .unwrap();
+        assert_eq!(d.get("total"), Some(&Bson::Decimal128("299.5".parse().unwrap())));
+        assert_eq!(d.get("exact"), Some(&Bson::Decimal128("299.00".parse().unwrap())));
+        assert_eq!(d.get("n"), Some(&Bson::Int64(5)));
+        assert_eq!(d.get("i"), Some(&Bson::Int32(7)));
+        assert_eq!(d.get("f"), Some(&Bson::Double(1.5)));
+        let nested = d.get_array("nested").unwrap()[0].as_document().unwrap();
+        assert_eq!(nested.get("price"), Some(&Bson::Decimal128("15".parse().unwrap())));
+        assert_eq!(to_bson(&json!({ "$numberLong": 9 }), "value").unwrap(), Bson::Int64(9));
+        // A long that is not whole still fails, in the parser's words.
+        assert!(to_doc(&cmd(json!({ "n": { "$numberLong": 5.5 } })), "document").is_err());
     }
 
     // ---- where it points ----------------------------------------------------------------------
