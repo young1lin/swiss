@@ -444,6 +444,10 @@ fn scratch_dir(tag: &str) -> std::path::PathBuf {
     // The sealed state files (managed.json, jobs.json, tunnels.json) need a test master key,
     // and every write must stay inside this test's own directory.
     test_master_key();
+    // The process plugin's history database and tracked-record file live in the DATA home,
+    // which the whole binary shares - point it at the one scratch home like the other
+    // host-level test files, so nothing here reads or writes the real ~/.swiss.
+    let _ = swiss_core::paths::test_home();
     let dir = std::env::temp_dir().join(format!(
         "swiss-plugins-{tag}-{}",
         swiss_core::util::random_hex(8)
@@ -583,6 +587,13 @@ async fn full_app_with_store(
         Arc::new(move |cap: &str| cap == "connection-catalog" && catalog.has_provider())
     });
     let host = Arc::new(host);
+    // One data home serves the whole binary, so the process plugin's history database is
+    // shared by every concurrent boot. On a fresh home (a CI runner's always is) the first
+    // boots raced the file's creation and WAL switch, and a loser failed its plugin start
+    // with "database is locked" - its actions then answered 400 for that whole test. The
+    // boots serialize on the same DATA_DIR_LOCK the other home-sharing files use; once the
+    // home exists an open is a read, and a contended history append drops with a warning.
+    let _boot = swiss_core::paths::DATA_DIR_LOCK.lock().await;
     host.start_enabled().await;
     assert!(ctx.plugin_host.set(host.clone()).is_ok(), "host set once");
 
