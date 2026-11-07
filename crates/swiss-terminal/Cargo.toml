@@ -31,7 +31,7 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 [dev-dependencies]
 # test-utils pins the scratch SWISS_HOME for this crate's test binary, so a recording
 # test can never write into the real ~/.swiss/terminal.
-swiss-core = { path = "../swiss-core", version = "0.1.0", features = ["test-utils"] }
+swiss-core = { path = "../swiss-core", version = "0.2.0", features = ["test-utils"] }
 # test-util: the pausable clock. A 30-minute idle timeout and a 60-second reconnect grace
 # are asserted in microseconds instead of being trusted to a comment.
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync", "test-util"] }

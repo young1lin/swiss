@@ -45,8 +45,8 @@ regex = "1"
 [dev-dependencies]
 # test-utils pins the scratch SWISS_HOME and the deterministic master key for this crate's test
 # binary, so no plugin test can read or write the real ~/.swiss.
-swiss-core = { path = "../swiss-core", version = "0.1.0", features = ["test-utils"] }
-swiss-mcp = { path = "../swiss-mcp", version = "0.1.0", features = ["test-utils"] }
+swiss-core = { path = "../swiss-core", version = "0.2.0", features = ["test-utils"] }
+swiss-mcp = { path = "../swiss-mcp", version = "0.2.0", features = ["test-utils"] }
 # test-util: the pausable clock the process plugin's autostart retry is asserted with.
 tokio = { version = "1", features = ["test-util"] }
 # The route tests drive each router with oneshot.

@@ -40,7 +40,7 @@ async-trait = "0.1"
 
 [dev-dependencies]
 # test-utils pins the deterministic master key for this crate's own test binaries.
-swiss-core = { path = "../swiss-core", version = "0.1.0", features = ["test-utils"] }
+swiss-core = { path = "../swiss-core", version = "0.2.0", features = ["test-utils"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "sync", "test-util"] }
 # Router-level tests drive `mount()` with oneshot requests, the way the panel does.

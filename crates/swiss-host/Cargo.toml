@@ -56,5 +56,5 @@ base64 = "0.23"
 
 [dev-dependencies]
 # test-utils pins the deterministic master key for this crate's own test binaries.
-swiss-core = { path = "../swiss-core", version = "0.1.0", features = ["test-utils"] }
+swiss-core = { path = "../swiss-core", version = "0.2.0", features = ["test-utils"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

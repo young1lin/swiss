@@ -4,7 +4,7 @@ All notable changes to swiss are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] - 2026-11-08
 
 ### Added
 
@@ -1218,6 +1218,12 @@ All notable changes to swiss are recorded here. The format follows
   run instead of as a call no run joins. A spawned agent's Test closes its run row whatever
   the check found, including a program that does not resolve. A live Test whose provider no
   longer resolves is refused with a 400 that names it, not a 200 the event reader cannot parse.
+- The data and process histories take the hourly maintenance seat from their first start
+  (SPEC §host.history): register at start, unregister at stop, and the pass sweeps to the row
+  bound, compacts a file over its share (VACUUM with a WAL truncate) and refreshes the quota
+  snapshot the open measured. A store wedged at its share used to deny every write again after
+  a restart, because nothing ever re-measured the file the snapshot still held; the boot pass
+  now takes it back under and admission resumes.
 
 ## [0.1.4] - 2026-10-07
 
