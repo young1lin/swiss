@@ -190,11 +190,22 @@ async fn confirm(sink: &PubSubSink, watch: &PubSubWatch) -> Result<(), String> {
     futures_util::future::try_join_all(calls)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(refusal)
 }
 
-/// redis-rs reads an error reply to SUBSCRIBE as done, the same as the confirmation, so the PING
-/// after the last one is the check: a connection subscribed to anything answers ["pong", ""],
+/// The refusal sentence is the adapter's own (SPEC §data.pubsub). The newer redis-rs hands the
+/// server's -ERR answer to SUBSCRIBE to the call itself; the older one read it as done and left
+/// the PING check below to say it - whichever shape, the sentence is the same.
+fn refusal(e: redis::RedisError) -> String {
+    if matches!(e.kind(), redis::ErrorKind::Server(_)) {
+        format!("the server refused SUBSCRIBE: {e}")
+    } else {
+        e.to_string()
+    }
+}
+
+/// Older redis-rs reads an error reply to SUBSCRIBE as done, the same as the confirmation, so
+/// the PING after the last one is the check: a connection subscribed to anything answers ["pong", ""],
 /// one subscribed to nothing answers PONG. A name an ACL refuses beside names it allows is not
 /// caught - that channel simply stays silent.
 async fn verify_subscribed(sink: &mut PubSubSink) -> Result<(), String> {
