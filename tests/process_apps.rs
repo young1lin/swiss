@@ -751,6 +751,18 @@ async fn fs_listing_is_read_only_directories_first_and_marks_executables() {
     std::fs::write(dir.join("tool.exe"), b"x").expect("exe");
     std::fs::write(dir.join("run.BAT"), b"x").expect("bat");
     std::fs::write(dir.join("note.txt"), b"x").expect("txt");
+    // Unix has no executable spelling: the bitless .exe is not a program there.
+    // The batch spelling carries the executable bit instead, so exactly one
+    // file is a program - the platform split of is_executable (swiss-process).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            dir.join("run.BAT"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .expect("exec bit");
+    }
 
     let (app, _host) = full_app("pick", json!({})).await;
     let uri = format!("/api/process/fs?dir={}", q_dir(&dir));
@@ -777,8 +789,11 @@ async fn fs_listing_is_read_only_directories_first_and_marks_executables() {
         vec![
             ("inner".to_string(), true, false),
             ("note.txt".to_string(), false, false),
+            // run.BAT is a program both ways: the .bat extension on Windows, the
+            // 0o755 bit above on Unix. tool.exe is a program by extension only,
+            // and Unix asks the bit, not the spelling.
             ("run.BAT".to_string(), false, true),
-            ("tool.exe".to_string(), false, true),
+            ("tool.exe".to_string(), false, cfg!(windows)),
         ],
         "{text}"
     );
