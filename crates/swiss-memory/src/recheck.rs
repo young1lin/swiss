@@ -1683,13 +1683,13 @@ mod tests {
     fn a_long_file_shows_the_lines_around_what_its_notes_name() {
         // ~190 KB: the type on top, a call site near it, the declarations deep in the file.
         let mut lines: Vec<String> = (0..9000).map(|i| format!("    int filler{i:05};\n")).collect();
-        lines[2] = "public class OrderService {\n".into();
+        lines[2] = "public class OrderSyncService {\n".into();
         lines[60] = "        self.doCloseOrderDb(order);\n".into();
         lines[4999] = "    @Transactional(rollbackFor = Exception.class)\n".into();
         lines[5000] = "    public void doCloseOrderDb(Order order) {\n".into();
         lines[8500] = "    private Long saveCloseLog(CloseLog log) {\n".into();
         let text = lines.concat();
-        let path = "src/orders/OrderService.java";
+        let path = "src/orders/OrderSyncService.java";
         let read = |rel: &str, max: usize| (rel == path).then(|| text[..text.len().min(max)].to_string());
         let domains = vec![domain("d-00000001", "orders", &["src/orders"])];
         let memories = vec![
@@ -1701,7 +1701,7 @@ mod tests {
         let code = &out.batches[0].code[0];
         let part = code.part.as_deref().expect("a long file shows a part");
         assert!(part.starts_with("lines 1-12, ") && part.ends_with(" of 9000 - around what its notes name; the rest is not shown"), "{part}");
-        for line in ["public class OrderService {", "@Transactional(rollbackFor", "public void doCloseOrderDb(Order order) {", "private Long saveCloseLog(", "self.doCloseOrderDb(order);"] {
+        for line in ["public class OrderSyncService {", "@Transactional(rollbackFor", "public void doCloseOrderDb(Order order) {", "private Long saveCloseLog(", "self.doCloseOrderDb(order);"] {
             assert!(code.text.contains(line), "{line} is shown: {part}");
         }
         assert!(!code.text.contains("filler04000"), "a line far from every place is not");
@@ -1709,7 +1709,7 @@ mod tests {
         assert!(code.text.len() <= SHOWN_FILE_MAX);
         let p = recheck_prompt("javashop", &out.batches[0], None, false);
         assert!(p.contains(&format!("### `{path}` (lines 1-12, ")), "{p}");
-        assert_eq!(code_words("orderBtnState：已下单=2；REQUIRES_NEW 须经 self 调用，OrderService 与 a_b"), ["orderBtnState", "REQUIRES_NEW"]);
+        assert_eq!(code_words("syncState：已同步=2；REQUIRES_NEW 须经 self 调用，OrderSyncService 与 a_b"), ["syncState", "REQUIRES_NEW"]);
     }
 
     #[test]

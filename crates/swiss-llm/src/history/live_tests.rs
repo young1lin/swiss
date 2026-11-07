@@ -36,7 +36,7 @@ fn home(name: &str) -> std::path::PathBuf {
 fn scope(source: &str, parent: Option<i64>) -> RunContext {
     RunContext {
         task: Some("memory.sync".into()),
-        subject: Some("shop".into()),
+        subject: Some("acme-shop".into()),
         source: Some(source.into()),
         parent,
     }

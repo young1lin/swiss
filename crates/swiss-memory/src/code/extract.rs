@@ -782,37 +782,37 @@ mod tests {
     fn java_family_methods_are_definitions_their_calls_are_not() {
         let java = "package com.example.shop.job;\n\
                     @Component\n\
-                    public class OrderReviewCheckJob {\n\
+                    public class OrderSweepCheckJob {\n\
                     \x20   private static final int DAYS = 30;\n\
-                    \x20   private final NotificationBusinessPublisher publisher;\n\
-                    \x20   public OrderReviewCheckJob(NotificationBusinessPublisher publisher) {\n\
+                    \x20   private final EventPublisher publisher;\n\
+                    \x20   public OrderSweepCheckJob(EventPublisher publisher) {\n\
                     \x20   @Scheduled(cron = \"0 0 3 * * ?\")\n\
                     \x20   public void checkStaleOrders() {\n\
                     \x20       List<OrderPO> copies = mapper.selectActive(DAYS);\n\
                     \x20       for (OrderPO copy : copies) {\n\
                     \x20           if (idle(copy)) pause(copy);\n\
-                    \x20           sendStaleNotice(copy);\n\
+                    \x20           sendStalePush(copy);\n\
                     \x20           this.publisher.publish(copy);\n\
                     \x20           return compute(copy);\n\
                     \x20           throw new IllegalStateException(\"x\");\n\
                     \x20       } else if (x) {\n\
                     \x20       String text = format(copy);\n\
                     \x20   @Override public String toString() { return name; }\n\
-                    \x20   private void publishStaleNotice(OrderPO copy) {\n\
+                    \x20   private void publishStaleNote(OrderPO copy) {\n\
                     \x20   public static <T extends Base> Map<String, List<T>> group(List<T> items) throws IOException {\n\
                     \x20   protected abstract int[] counts(@Param(\"days\") int days);\n\
                     \x20   synchronized java.util.Optional<Long> latest(Long id,\n\
                     \x20                                                Long before) {\n\
                     \x20   String value() default \"\";\n\
                     \x20   // private void commented(Foo foo) {\n\
-                    \x20    * @see #sendStaleNotice(OrderPO)\n\
+                    \x20    * @see #sendStalePush(OrderPO)\n\
                     \x20   ACTIVE(\"a\"),\n\
                     }\n\
                     public @interface Audited {\n";
-        let found = defs("src/main/java/com/example/shop/job/OrderReviewCheckJob.java", java);
+        let found = defs("src/main/java/com/example/shop/job/OrderSweepCheckJob.java", java);
         assert_eq!(
             names(&found),
-            ["OrderReviewCheckJob", "checkStaleOrders", "toString", "publishStaleNotice", "group", "counts", "latest", "value", "Audited"]
+            ["OrderSweepCheckJob", "checkStaleOrders", "toString", "publishStaleNote", "group", "counts", "latest", "value", "Audited"]
         );
         let kinds: Vec<&str> = found.iter().map(|(_, k)| *k).collect();
         assert_eq!(kinds, ["class", "method", "method", "method", "method", "method", "method", "method", "interface"]);
@@ -844,17 +844,17 @@ mod tests {
             let facts = extract(path, text);
             (facts.refs, facts.comment_refs)
         };
-        let java = "// Pushed by OrderReviewCheckJob through GoogleFirebaseSupport.\n/**\n * @see #sendStaleNotice\n */\n\
-                    public class NotifySupport {\n    private static final String HOST = \"http://push.example/order_note_path\"; // send_side_note\n\
+        let java = "// Pushed by OrderSweepCheckJob through CloudPushSupport.\n/**\n * @see #sendStalePush\n */\n\
+                    public class NotifySupport {\n    private static final String HOST = \"http://push.example/order_path\"; // send_side_note\n\
                     \x20   void send() { push(RISK_PAUSE_KEY); /* old_push_name */ char quote = '\"'; String text = \"/* in_a_string */\"; }\n}\n";
         assert_eq!(
             split("src/NotifySupport.java", java),
             (
-                vec!["NotifySupport".to_string(), "order_note_path".into(), "RISK_PAUSE_KEY".into(), "in_a_string".into()],
+                vec!["NotifySupport".to_string(), "order_path".into(), "RISK_PAUSE_KEY".into(), "in_a_string".into()],
                 vec![
-                    "OrderReviewCheckJob".to_string(),
-                    "GoogleFirebaseSupport".into(),
-                    "sendStaleNotice".into(),
+                    "OrderSweepCheckJob".to_string(),
+                    "CloudPushSupport".into(),
+                    "sendStalePush".into(),
                     "send_side_note".into(),
                     "old_push_name".into()
                 ]

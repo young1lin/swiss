@@ -1062,18 +1062,18 @@ All notable changes to swiss are recorded here. The format follows
   stand; the refusal names which ceiling was passed.
 - A sync run whose builtin agent ran out of answer while thinking no longer passes its
   commits as synced (SPEC §memory.sync): the loop took a closing answer cut at `maxTokens`
-  with no text as the end, so r-a8315d1b on shop filed nothing, was recorded ok and moved
+  with no text as the end, so r-a8315d1b on a private repo filed nothing, was recorded ok and moved
   past its two commits, its summary blaming a 24-turn cap it never reached (seven rounds). A
   loop that ends without a closing line now says why - the token cap, the turn cap or neither -
   and when nothing was filed either the run fails and the commits wait for the next one.
 - A sync run over a large backlog fits its builtin agent (SPEC §memory.sync): the prompt was
-  sized only by its parts' caps, so 40 commits on shop made a 315 KB prompt, and the agent's
+  sized only by its parts' caps, so 40 commits on the same repo made a 315 KB prompt, and the agent's
   reads plus the thinking it replays every round passed the 512 KiB request cap ten minutes
   in, failing the run with nothing written. The prompt now stays within 160 KiB: over it the
   run takes half as many commits, down to one, and the rest wait for the next run.
 - A sync run over merged history sends every commit it chose (SPEC §memory.sync): it ended
   on the last chosen commit in reverse topological order and read `base..that`, so behind a
-  merge HEAD the other side dropped out - shop chose 68 commits and sent 40, and the next
+  merge HEAD the other side dropped out - the repo chose 68 commits and sent 40, and the next
   run would have diffed across the merge. A run now ends on a commit of HEAD's first-parent
   line, the furthest whose commits fit, and commits already synced no longer count as waiting.
 - Jobs' `retention.maxHistoryBytes` (64 MiB by default) is enforced (SPEC §jobs.runlog): it

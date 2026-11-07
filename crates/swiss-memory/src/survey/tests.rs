@@ -225,10 +225,10 @@ fn a_java_project_is_cut_by_business_under_its_package_path_and_its_sql_is_an_ar
 
 #[test]
 fn a_layered_java_project_is_cut_by_business_across_web_service_and_dal() {
-    // The shape of a real billing backend: `web`, `service` and `dal` (its mappers and
+    // The shape of a billing backend: `web`, `service` and `dal` (its mappers and
     // POs beneath) are the layers, `core` and `util` technical directories, and a script
     // at the checkout's root makes the split's base the root.
-    let base = "src/main/java/com/example/shop";
+    let base = "src/main/java/com/acme/billing";
     let mut paths: Vec<String> = vec!["fix-script.js".into(), "script/a.sql".into(), "script/b.sql".into(), "script/c.sql".into()];
     for p in [
         "web/InvoiceCtl.java",
@@ -245,7 +245,7 @@ fn a_layered_java_project_is_cut_by_business_across_web_service_and_dal() {
         "dal/po/InvoiceLinePO.java",
         "dal/po/InvoiceItemPO.java",
         "web/OrderCtl.java",
-        "service/OrderService.java",
+        "service/OrderSyncService.java",
         "dal/mapper/OrderMapper.java",
         "web/dto/orders/BuyerOrderStat.java",
         "web/dto/orders/SellerStat.java",
@@ -277,10 +277,10 @@ fn a_layered_java_project_is_cut_by_business_across_web_service_and_dal() {
             ("invoice".to_string(), vec![glob("Invoice"), format!("{base}/web/res/invoice")], 7),
             ("invoice/item".to_string(), vec![glob("InvoiceItem")], 3),
             ("invoice/line".to_string(), vec![glob("InvoiceLine")], 3),
-            ("team".to_string(), vec![glob("Team"), format!("{base}/web/dto/orders")], 5),
+            ("order".to_string(), vec![glob("Order"), format!("{base}/web/dto/orders")], 6),
             // `EcPay` and `Pm` are abbreviations, no names too short to be a business.
             ("ecpay".to_string(), vec![glob("EcPay"), format!("{base}/service/ecpay")], 4),
-            ("core".to_string(), vec![format!("{base}/core")], 3),
+            ("core".to_string(), vec![format!("{base}/core")], 2),
             ("util".to_string(), vec![format!("{base}/util")], 3),
             ("pm".to_string(), vec![glob("Pm")], 2),
             ("script".to_string(), vec!["script".to_string()], 3),
@@ -293,7 +293,7 @@ fn a_layered_java_project_is_cut_by_business_across_web_service_and_dal() {
 /// `InvoiceLine`, `InvoiceLineHistory` and the history's `Daily`, `Weekly` and
 /// `Monthly` - each name a service, a mapper and a model - beside a three-file `Team`.
 fn deep_invoice() -> (String, Vec<String>) {
-    let base = "src/main/java/com/example/shop".to_string();
+    let base = "src/main/java/com/acme/billing".to_string();
     let mut paths: Vec<String> = Vec::new();
     for name in [
         "Invoice",

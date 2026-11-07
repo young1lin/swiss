@@ -986,7 +986,7 @@ mod tests {
         std::fs::create_dir_all(&skill).expect("skill dir");
         std::fs::write(
             skill.join("stats-job.md"),
-            "# 订单统计定时任务\n## 各任务详解\n### OrderReviewCheckJob\n长期未结算的订单配置自动关闭，阈值 stale_days_limit（缺省 30 天）。\n",
+            "# 订单统计定时任务\n## 各任务详解\n### OrderSweepCheckJob\n长期未结算的订单配置自动关闭，阈值 stale_days_limit（缺省 30 天）。\n",
         )
         .expect("doc");
         bench.service.patch_project_settings(&project, &json!({ "docs": [".claude/skills/logic"] })).await.expect("sources");
@@ -996,17 +996,17 @@ mod tests {
 
         // docs finds the section, doc reads it, both open with the trust line.
         let found = tools.tool("docs", &json!({ "query": "30 天没有订单被暂停" })).await;
-        assert!(found.contains(".claude/skills/logic/order/stats-job.md:3 › 订单统计定时任务 › 各任务详解 › OrderReviewCheckJob"), "{found}");
+        assert!(found.contains(".claude/skills/logic/order/stats-job.md:3 › 订单统计定时任务 › 各任务详解 › OrderSweepCheckJob"), "{found}");
         assert!(found.starts_with(render::DOCS_TRUST) && found.contains("no card yet"), "{found}");
-        let read = tools.tool("doc", &json!({ "doc": "copy/stats-job.md", "section": 2 })).await;
-        assert!(read.contains("## Section 2: 订单统计定时任务 › 各任务详解 › OrderReviewCheckJob"), "{read}");
+        let read = tools.tool("doc", &json!({ "doc": "order/stats-job.md", "section": 2 })).await;
+        assert!(read.contains("## Section 2: 订单统计定时任务 › 各任务详解 › OrderSweepCheckJob"), "{read}");
         assert!(read.contains("stale_days_limit"), "{read}");
         assert!(tools.tool("docs", &json!({ "query": "订单", "kind": "roadmap" })).await.starts_with("error: kind is one of"));
         assert!(tools.tool("doc", &json!({ "doc": "nowhere.md" })).await.starts_with("error:"));
         assert!(tools.tool("code", &json!({})).await.starts_with("error:"));
 
         // A one-shot gets the documents inlined beside the notes.
-        let one_shot = FakeAsk::one_shot("OrderReviewCheckJob.");
+        let one_shot = FakeAsk::one_shot("OrderSweepCheckJob.");
         asked_by(&one_shot, &bench.service, &target, "找到 30 天没有订单，被暂停订单的相关代码", None).await.expect("answers");
         let prompt = one_shot.prompts.lock().expect("prompts")[0].clone();
         assert!(prompt.contains("## Documents the project keeps") && prompt.contains("stats-job.md"), "{prompt}");

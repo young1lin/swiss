@@ -316,10 +316,10 @@ async fn a_newer_scan_reads_every_file_again_before_a_find_answers() {
     // A find refreshes an index past its gap; within it the index answers as it is - unless
     // an older scan read it: then each file is read again first, once.
     let s = Scratch::new("rescan", Duration::from_secs(3600));
-    s.write("src/main/java/job/PauseJob.java", "public class PauseJob {\n    private void publishStaleNotice(Copy copy) {\n    }\n}\n");
+    s.write("src/main/java/job/PauseJob.java", "public class PauseJob {\n    private void publishStaleNote(Copy copy) {\n    }\n}\n");
     s.service.code_index(&s.repo()).await.expect("index");
     let defs = |hits: &swiss_memory::code::NameHits| hits.defs.iter().map(|d| (d.path.clone(), d.kind, d.line)).collect::<Vec<_>>();
-    let found = s.service.code_find(&s.repo(), "publishStaleNotice").await.expect("find");
+    let found = s.service.code_find(&s.repo(), "publishStaleNote").await.expect("find");
     assert_eq!(defs(&found), [("src/main/java/job/PauseJob.java".to_string(), "method", 2)]);
 
     let before = s.service.code_status(&s.repo()).await.expect("status").defs;
@@ -335,7 +335,7 @@ async fn a_newer_scan_reads_every_file_again_before_a_find_answers() {
     let service = MemoryService::at(&s.dir.join("store.sqlite3"));
     service.set_lister(Some(Arc::new(Walk { gap: Duration::from_secs(3600) })));
     assert_eq!(service.code_status(&s.repo()).await.expect("status").defs, before - 1, "the old facts answer until the refresh");
-    let found = service.code_find(&s.repo(), "publishStaleNotice").await.expect("find");
+    let found = service.code_find(&s.repo(), "publishStaleNote").await.expect("find");
     assert_eq!(defs(&found), [("src/main/java/job/PauseJob.java".to_string(), "method", 2)], "read again within its gap");
     let again = service.code_index(&s.repo()).await.expect("index");
     assert_eq!((again.read, again.touched), (0, 0), "each file is read again once: {again:?}");

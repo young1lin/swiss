@@ -1667,8 +1667,8 @@ mod tests {
         let domains = vec![Domain {
             id: "dom-1".into(),
             scope: "p".into(),
-            path: "shop/team".into(),
-            title: "Team copy".into(),
+            path: "order/ops".into(),
+            title: "Order ops".into(),
             summary: String::new(),
             body: String::new(),
             owns: vec![],
@@ -1682,29 +1682,29 @@ mod tests {
             verified_ms: 0,
         }];
         let answer = json!({"docs": [
-            {"path": "./k/jobs.md", "kind": "reference", "summary": "  The daily inactive check pauses a copy.  ", "domain": "`shop/team`",
-             "keywords": ["inactive", "Inactive", "不活跃"], "symbols": ["`OrderReviewCheckJob`", "checkStaleOrders()", "暂停", "tstd team"]},
+            {"path": "./k/jobs.md", "kind": "reference", "summary": "  The daily inactive check pauses an order.  ", "domain": "`order/ops`",
+             "keywords": ["inactive", "Inactive", "不活跃"], "symbols": ["`OrderSweepCheckJob`", "checkStaleOrders()", "暂停", "ops team"]},
             {"path": "k/plan.md", "kind": "roadmap", "summary": "x", "domain": "", "keywords": [], "symbols": []},
             {"path": "k/other.md", "kind": "design", "summary": "x", "domain": "", "keywords": [], "symbols": []}
         ]});
         let (cards, refused) = check_cards(&slice, &domains, &answer).expect("one card stands");
         assert_eq!(cards.len(), 1);
         let card = &cards[0];
-        assert_eq!((card.path.as_str(), card.kind, card.summary.as_str()), ("k/jobs.md", DocKind::Reference, "The daily inactive check pauses a copy."));
-        assert_eq!(card.domain.as_deref(), Some("shop/team"));
+        assert_eq!((card.path.as_str(), card.kind, card.summary.as_str()), ("k/jobs.md", DocKind::Reference, "The daily inactive check pauses an order."));
+        assert_eq!(card.domain.as_deref(), Some("order/ops"));
         assert_eq!(card.keywords, ["inactive", "不活跃"], "keywords once, case-insensitively");
-        assert_eq!(card.symbols, ["OrderReviewCheckJob", "checkStaleOrders"], "names only");
+        assert_eq!(card.symbols, ["OrderSweepCheckJob", "checkStaleOrders"], "names only");
         assert_eq!(refused.len(), 2, "{refused:?}");
         assert!(check_cards(&slice, &domains, &json!({"docs": []})).is_err());
         assert!(check_cards(&slice, &domains, &json!({"cards": []})).is_err());
         let prompt = card_prompt("shop", &slice, &domains, Some("zh"));
-        assert!(prompt.starts_with(MARKER) && prompt.contains("### `k/jobs.md`") && prompt.contains("`shop/team` - Team copy"));
+        assert!(prompt.starts_with(MARKER) && prompt.contains("### `k/jobs.md`") && prompt.contains("`order/ops` - Order ops"));
         assert!(prompt.contains("Chinese") || prompt.contains("中文"), "the language line");
     }
 
     #[test]
     fn a_snippet_shows_the_lines_that_hold_the_query() {
-        let text = "## OrderReviewCheckJob\nruns at 04:00\nthreshold stale_days_limit (default 30)\n订单配置自动暂停\nnotify\nmore\n";
+        let text = "## OrderSweepCheckJob\nruns at 04:00\nthreshold stale_days_limit (default 30)\n订单配置自动暂停\nnotify\nmore\n";
         let s = snippet(text, &search::units("自动暂停"));
         assert!(s.contains("订单配置自动暂停") && !s.contains("## Team"), "{s}");
     }
@@ -1720,7 +1720,7 @@ mod tests {
         let root = dir.join("repo");
         let skill = ".claude/skills/logic";
         write(&root, &format!("{skill}/sync/stats-job.md"),
-            "# 订单统计定时任务\n## 任务清单\n- OrderJob 每分钟\n## 各任务详解\n### OrderReviewCheckJob\n每日 04:00 扫描活跃订单配置，阈值天数 stale_days_limit（缺省 30）。\n长期未结算且无在途的订单配置自动关闭。\n");
+            "# 订单统计定时任务\n## 任务清单\n- StatJob 每分钟\n## 各任务详解\n### OrderSweepCheckJob\n每日 04:00 扫描活跃订单配置，阈值天数 stale_days_limit（缺省 30）。\n长期未结算且无在途的订单配置自动关闭。\n");
         write(&root, &format!("{skill}/notification/pitfalls.md"), "# 通知踩坑\n## 推送\n推送去重键要带用户。\n");
         write(&root, &format!("{skill}/billing/overview.md"), "# Billing\nOpen and close lines; the pause is elsewhere.\n");
         let service = MemoryService::at(&dir.join("store.sqlite3"));
@@ -1737,7 +1737,7 @@ mod tests {
         let hits = service.docs_search(&target, "找到 30 天没有订单，被暂停订单的相关代码", 5, None).await.expect("search");
         assert!(!hits.is_empty());
         assert_eq!(hits[0].doc.path, format!("{skill}/sync/stats-job.md"));
-        assert!(hits[0].heading.ends_with("OrderReviewCheckJob"), "{}", hits[0].heading);
+        assert!(hits[0].heading.ends_with("OrderSweepCheckJob"), "{}", hits[0].heading);
         assert!(hits.iter().filter(|h| h.doc.path == hits[0].doc.path).count() <= HITS_PER_DOC);
         // A path names its document; a read hands back the whole small document.
         let by_path = service.docs_search(&target, "sync/stats-job.md", 5, None).await.expect("path search");
@@ -1745,7 +1745,7 @@ mod tests {
         let view = service.doc_view(&target, "stats-job.md", None).await.expect("view");
         assert!(view.text.as_deref().is_some_and(|t| t.contains("stale_days_limit")) && view.outline.len() == 4);
         let one = service.doc_view(&target, &view.doc.id, Some(3)).await.expect("section");
-        assert!(one.text.as_deref().is_some_and(|t| t.starts_with("### OrderReviewCheckJob")));
+        assert!(one.text.as_deref().is_some_and(|t| t.starts_with("### OrderSweepCheckJob")));
         assert!(service.doc_view(&target, &view.doc.id, Some(9)).await.is_err());
 
         // A card lands on the text it was asked about, and its keywords are found.

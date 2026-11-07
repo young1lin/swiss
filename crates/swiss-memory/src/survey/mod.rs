@@ -751,7 +751,7 @@ fn layered_groups(
     if across.len() < 2 {
         return None;
     }
-    // A directory in a layer named for a business (`web/dto/orders` for `team`,
+    // A directory in a layer named for a business (`web/dto/orders` for `order`,
     // `web/res/invoice` for `invoice`) is that business's whole: the files in it named for
     // nothing (`BuyerOrderStat`) too, and one named for another business (the directory, a
     // longer entry, owns it on the map). The outermost such directory names a file's, by the

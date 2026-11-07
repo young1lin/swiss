@@ -172,7 +172,7 @@ breaks, so a section's line is the file's), at most 1 MiB kept (the document
 says it was cut); at most 2000 documents and 64 MiB a read, the rest counted as not kept. A
 file whose hash is unchanged is left alone. A new or changed one is kept whole: cut at its
 headings outside code fences into **sections**, each headed by its breadcrumb (`Stats jobs ›
-Jobs › OrderReviewCheckJob`) and its line, a section over 8 KiB cut at lines into
+Jobs › OrderSweepCheckJob`) and its line, a section over 8 KiB cut at lines into
 `(cont.)` pieces; its title is its first heading, else its file name. A document no source
 holds any more - the file gone, the source removed - is deleted with its sections, card and
 index rows; a project naming no source keeps none. A changed document keeps its card, marked
