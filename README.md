@@ -18,8 +18,6 @@ records, not gates — [SPEC §product.memory](docs/spec/0001-product.md#product
 
 ![The MCP page's test-pg server: tools, resources and its tool-call history](docs/assets/mcp-pgsql.png)
 
-![The Remote page's run history: every command, sync and pull on a target, with its output](docs/assets/remote.png)
-
 ## Install
 
 Download the archive for your OS and `SHA256SUMS` from
