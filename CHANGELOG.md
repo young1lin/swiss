@@ -6,6 +6,8 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-08
+
 ### Fixed
 
 - The analysis ledger and the console store live under the gateway's home. `AnalysisStore::home()`
