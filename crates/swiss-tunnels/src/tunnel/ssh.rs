@@ -1224,6 +1224,12 @@ impl swiss_host::services::remote::RemoteRead for SftpRead {
 
 /// One streaming remote write over SFTP. Same ownership story as SftpRead; `finish`
 /// flushes, `drop` without finish is an abort.
+///
+/// A chunk is only queued: russh-sftp keeps up to `max_concurrent_writes` WRITE requests
+/// in flight and checks the oldest ack whenever that queue is full, so a refused write
+/// still surfaces on a later chunk or at `finish`. Flushing per chunk would wait out every
+/// ack plus an fsync round trip each 64 KiB - two RTTs per chunk, which held a 170 MB
+/// upload over a 70 ms link to ~420 KB/s.
 struct SftpWrite {
     file: russh_sftp::client::fs::File,
     session: Option<Arc<russh_sftp::client::SftpSession>>,
@@ -1239,16 +1245,17 @@ impl swiss_host::services::remote::RemoteWrite for SftpWrite {
         use tokio::io::AsyncWriteExt;
         self.file.write_all(bytes).await.map_err(|err| {
             swiss_host::services::remote::RemoteError::Failed(format!("sftp write: {err}"))
-        })?;
-        self.file.flush().await.map_err(|err| {
-            swiss_host::services::remote::RemoteError::Failed(format!("sftp flush: {err}"))
-        })?;
-        Ok(())
+        })
     }
 
     async fn finish(&mut self) -> Result<(), swiss_host::services::remote::RemoteError> {
         use tokio::io::AsyncWriteExt;
-        let _ = self.file.flush().await;
+        // The flush drains every queued ack (then fsyncs once): a refused write is
+        // reported here, never dropped - a failed ack is consumed by the drain, so
+        // ignoring this error would let the close below report success.
+        self.file.flush().await.map_err(|err| {
+            swiss_host::services::remote::RemoteError::Failed(format!("sftp write: {err}"))
+        })?;
         self.file.shutdown().await.map_err(|err| {
             swiss_host::services::remote::RemoteError::Failed(format!("sftp close: {err}"))
         })?;

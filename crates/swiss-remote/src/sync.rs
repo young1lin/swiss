@@ -221,26 +221,11 @@ pub async fn sync_tree(
                 made_dirs.push(parent);
             }
         }
-        let bytes = std::fs::read(local).map_err(|err| format!("read {rel}: {err}"))?;
-        let mut writer = registry
-            .create(&target.endpoint, &holder, &remote_path)
-            .await
-            .map_err(|err| format!("create {remote_path}: {err}"))?;
-        for chunk in bytes.chunks(swiss_host::services::remote::REMOTE_CHUNK_BYTES) {
-            writer
-                .write_chunk(chunk)
-                .await
-                .map_err(|err| format!("write {rel}: {err}"))?;
-        }
-        writer
-            .finish()
-            .await
-            .map_err(|err| format!("commit {rel}: {err}"))?;
-        drop(writer);
+        let sent = upload_one(registry, target, &holder, local, rel, &remote_path, cancel).await?;
         report.uploaded += 1;
-        report.bytes += bytes.len() as u64;
+        report.bytes += sent;
         if opts.verbose {
-            emit(&format!("{rel} ({} bytes)\n", bytes.len()));
+            emit(&format!("{rel} ({sent} bytes)\n"));
         }
     }
     emit(&format!(
@@ -256,6 +241,63 @@ pub async fn sync_tree(
         },
     ));
     Ok(report)
+}
+
+/// Stream one local file up to `remote_path`, one chunk at a time: the file never
+/// sits whole in the gateway's memory (a 200 MB jar used to), and a cancel stops it
+/// between chunks. Dropping the writer before `finish` aborts the upload.
+async fn upload_one(
+    registry: &Arc<RemoteTransportRegistry>,
+    target: &RemoteTarget,
+    holder: &str,
+    local: &Path,
+    rel: &str,
+    remote_path: &str,
+    cancel: &swiss_host::services::action::CancelHandle,
+) -> Result<u64, String> {
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::File::open(local)
+        .await
+        .map_err(|err| format!("read {rel}: {err}"))?;
+    let mut writer = registry
+        .create(&target.endpoint, holder, remote_path)
+        .await
+        .map_err(|err| format!("create {remote_path}: {err}"))?;
+    let mut buf = vec![0u8; swiss_host::services::remote::REMOTE_CHUNK_BYTES];
+    let mut sent: u64 = 0;
+    loop {
+        if cancel.is_cancelled() {
+            return Err("the sync was canceled".into());
+        }
+        // Fill the whole chunk before sending: a short read is not the end of a file.
+        let mut filled = 0;
+        while filled < buf.len() {
+            let n = file
+                .read(&mut buf[filled..])
+                .await
+                .map_err(|err| format!("read {rel}: {err}"))?;
+            if n == 0 {
+                break;
+            }
+            filled += n;
+        }
+        if filled == 0 {
+            break;
+        }
+        writer
+            .write_chunk(&buf[..filled])
+            .await
+            .map_err(|err| format!("write {rel}: {err}"))?;
+        sent += filled as u64;
+        if filled < buf.len() {
+            break;
+        }
+    }
+    writer
+        .finish()
+        .await
+        .map_err(|err| format!("commit {rel}: {err}"))?;
+    Ok(sent)
 }
 
 /// Pull one remote file (relative to the workspace root) into `to`. Streams

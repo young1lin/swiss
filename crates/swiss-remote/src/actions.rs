@@ -1823,6 +1823,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_streams_a_file_bigger_than_one_chunk_byte_for_byte() {
+        let (system, fake) = system_with_fake();
+        let dir =
+            std::env::temp_dir().join(format!("swiss-big-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let chunk = swiss_host::services::remote::REMOTE_CHUNK_BYTES;
+        // One size lands exactly on a chunk boundary, the other leaves a short tail.
+        let even: Vec<u8> = (0..chunk * 2).map(|i| (i % 251) as u8).collect();
+        let ragged: Vec<u8> = (0..chunk * 3 + 7).map(|i| (i % 241) as u8).collect();
+        std::fs::write(dir.join("even.bin"), &even).expect("w");
+        std::fs::write(dir.join("ragged.bin"), &ragged).expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": dir.display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("uploaded").unwrap(), 2);
+        assert_eq!(
+            out.meta.get("bytes").unwrap(),
+            (even.len() + ragged.len()) as u64
+        );
+        let files = fake.files.lock().unwrap();
+        assert!(
+            files.get("/data/ws/proj/even.bin") == Some(&even),
+            "a chunk-aligned file arrives whole"
+        );
+        assert!(
+            files.get("/data/ws/proj/ragged.bin") == Some(&ragged),
+            "a file with a short last chunk arrives whole"
+        );
+        drop(files);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn pull_streams_one_file_to_a_local_path() {
         let (system, fake) = system_with_fake();
         fake.files
