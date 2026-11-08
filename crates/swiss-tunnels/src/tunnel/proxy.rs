@@ -176,15 +176,9 @@ pub async fn dial(p: &ResolvedProxy, host: &str, port: u16) -> Result<TcpStream,
                 FailureKind::Network,
             )
         })?;
-    // Nagle off, matching what russh::client::connect does for its own TCP dial: an
-    // interactive SSH session should not queue small packets on the proxied socket
-    // either (SPEC §tunnels.proxy).
-    if let Err(e) = stream.set_nodelay(true) {
-        swiss_core::log::warn(
-            "proxy set_nodelay failed",
-            Some(serde_json::json!({ "err": e.to_string() })),
-        );
-    }
+    // Tuned like a direct dial (SPEC §tunnels.proxy): Nagle off, so an interactive session
+    // does not queue small packets, and the Windows send buffer deep enough for uploads.
+    super::ssh::tune_ssh_socket(&stream);
     match p.scheme {
         ProxyScheme::Http => connect_http(stream, p, &username, &password, host, port).await,
         ProxyScheme::Socks5 => connect_socks5(stream, p, &username, &password, host, port).await,

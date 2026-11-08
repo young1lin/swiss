@@ -61,6 +61,41 @@ const KEEPALIVE: Duration = Duration::from_secs(15);
 const KEEPALIVE_MAX: usize = 3;
 /// A wedged transport must not block a shutdown (ssh.end()'s own cap).
 const END_TIMEOUT: Duration = Duration::from_millis(1500);
+/// The send buffer an SSH socket asks Windows for. Left alone, the socket kept Windows'
+/// 64 KiB default and an upload never had more than ~46 KB in flight: 1 MB/s to the test
+/// target at 42 ms RTT with no loss and an idle link. 4 MiB covers ~100 MB/s at 40 ms.
+/// Linux and macOS autotune the buffer and a fixed SO_SNDBUF would switch that off (and
+/// clamp it to net.core.wmem_max), so they keep their own.
+#[cfg(windows)]
+const SEND_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+/// SFTP WRITE requests kept in flight: OpenSSH's own sftp default (-R 64). At 32 KiB each
+/// that is 2 MiB, the window OpenSSH grants a session channel, so the pipeline - not the
+/// round trip - is no longer what bounds an upload.
+const SFTP_WRITES_IN_FLIGHT: usize = 64;
+/// How long one SFTP request may wait for its answer. A request's clock starts when it is
+/// queued, so a full 2 MiB write pipeline needs the link to drain it in time: 60 s keeps
+/// links down to ~35 KB/s working, where russh-sftp's 10 s default would fail below ~200 KB/s.
+/// A dead connection is still found by the keepalive (~45 s).
+const SFTP_REQUEST_TIMEOUT_SECS: u64 = 60;
+
+/// Tune a freshly dialed SSH socket: Nagle off (what russh::client::connect does for its
+/// own dial) and, on Windows, a send buffer deep enough for a long fat pipe. Both are
+/// best-effort - a refused option leaves a slower socket, never a failed dial.
+pub(crate) fn tune_ssh_socket(stream: &tokio::net::TcpStream) {
+    if let Err(err) = stream.set_nodelay(true) {
+        log::warn(
+            "ssh set_nodelay failed",
+            Some(json!({ "err": err.to_string() })),
+        );
+    }
+    #[cfg(windows)]
+    if let Err(err) = socket2::SockRef::from(stream).set_send_buffer_size(SEND_BUFFER_BYTES) {
+        log::warn(
+            "ssh send buffer not enlarged",
+            Some(json!({ "err": err.to_string() })),
+        );
+    }
+}
 /// What the far side is told it is talking to. xterm.js reports itself as an xterm with
 /// 256 colours, and telling the remote anything else means a wrong terminfo entry and a
 /// display that redraws incorrectly.
@@ -369,7 +404,7 @@ impl SshConnection {
             // channel stream (SSH-over-SSH, OpenSSH -J's model; each hop recursively
             // resolves its own jump first, and the 15s budget here covers the whole
             // chain). A proxied connection dials its own transport (CONNECT or socks5);
-            // the direct path stays exactly the russh sugar it always was. Save-time
+            // the direct path dials plain TCP. Both sockets are tuned the same way. Save-time
             // validation keeps proxy and jump mutually exclusive — jump wins if a
             // hand-edited file ever carries both.
             let mut jump_hold: Option<Box<dyn Send + 'static>> = None;
@@ -387,9 +422,19 @@ impl SshConnection {
                     .map_err(|err| as_tunnel_error(err, None))?
             } else {
                 match def.proxy.clone() {
-                    None => russh::client::connect(config, (def_host.as_str(), def_port), handler)
-                        .await
-                        .map_err(|err| as_tunnel_error(err, None))?,
+                    None => {
+                        // Dialed here, not by russh::client::connect, so the socket is
+                        // tuned before the handshake; an io error reads exactly as russh's
+                        // own (its IO variant is transparent).
+                        let stream =
+                            tokio::net::TcpStream::connect((def_host.as_str(), def_port))
+                                .await
+                                .map_err(|err| as_tunnel_error(err, None))?;
+                        tune_ssh_socket(&stream);
+                        russh::client::connect_stream(config, stream, handler)
+                            .await
+                            .map_err(|err| as_tunnel_error(err, None))?
+                    }
                     Some(url) => {
                         let mut proxy = super::proxy::parse(&url)
                             .map_err(|e| TunnelError::new(e, FailureKind::Config))?;
@@ -809,9 +854,15 @@ impl SshConnection {
             .request_subsystem(true, "sftp")
             .await
             .map_err(|err| as_tunnel_error(err, Some("the sftp request failed")))?;
-        let session = russh_sftp::client::SftpSession::new(channel.into_stream())
-            .await
-            .map_err(|err| TunnelError::new(format!("sftp: {err}"), FailureKind::Network))?;
+        let config = russh_sftp::client::Config {
+            max_concurrent_writes: SFTP_WRITES_IN_FLIGHT,
+            request_timeout_secs: SFTP_REQUEST_TIMEOUT_SECS,
+            ..Default::default()
+        };
+        let session =
+            russh_sftp::client::SftpSession::new_with_config(channel.into_stream(), config)
+                .await
+                .map_err(|err| TunnelError::new(format!("sftp: {err}"), FailureKind::Network))?;
         Ok(Arc::new(session))
     }
 
@@ -1465,6 +1516,27 @@ mod tests {
             "channel to db:5432 failed: auth failed for user root"
         );
         assert_eq!(te.kind, FailureKind::Auth);
+    }
+
+    #[tokio::test]
+    async fn a_tuned_ssh_socket_has_nagle_off_and_a_deep_send_buffer_on_windows() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        tune_ssh_socket(&stream);
+        assert!(stream.nodelay().expect("nodelay"), "Nagle is off");
+        #[cfg(windows)]
+        assert!(
+            socket2::SockRef::from(&stream)
+                .send_buffer_size()
+                .expect("SO_SNDBUF")
+                >= SEND_BUFFER_BYTES,
+            "the send buffer is no longer Windows' 64 KiB default"
+        );
     }
 
     #[test]
