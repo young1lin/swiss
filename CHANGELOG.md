@@ -41,6 +41,16 @@ All notable changes to swiss are recorded here. The format follows
 - The Redis console's command catalog is no longer empty on redis 6. `COMMAND INFO` without
   names lists every command only from redis 7; on an empty answer the gateway asks a bare
   `COMMAND`, so names and key positions complete on 6.x too (SPEC §data.redis-console).
+- `remote sync`/`push` re-sends an edit that keeps the file's byte count. The decision was
+  size-only, so a same-size edit looked up to date and never crossed the wire. The quick check
+  is now rsync's — size plus whole-second mtime equality, never newer or older, so disagreeing
+  clocks cannot loop, and a stat without an mtime keeps the size-only rule. Every upload
+  stamps the remote file with the local mtime: whole files through a new transport set-mtime
+  (SFTP SETSTAT), a delta by the script's utime before its rename. Files uploaded before the
+  rule carry the upload time as their mtime, so a size match with a mismatching mtime is
+  content-checked first — one `sha256sum` exec per batch of 200 paths (argv, never a shell
+  string) — and a match keeps its bytes, has only its mtime fixed and counts as up to date; a
+  target without `sha256sum` sends the batch whole with one note (SPEC §remote.actions).
 
 ## [0.2.0] - 2026-11-08
 

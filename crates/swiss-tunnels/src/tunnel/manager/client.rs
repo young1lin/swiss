@@ -109,6 +109,14 @@ pub trait SshLike: Send + Sync {
         path: String,
         hold: ConnectionLease,
     ) -> ConnFuture<'_, Result<Vec<swiss_host::services::remote::RemoteListing>, TunnelError>>;
+    /// Set one remote file's mtime (whole seconds since the epoch) over SFTP
+    /// SETSTAT - sync's quick-check bookkeeping (SPEC §remote.actions).
+    fn set_mtime(
+        &self,
+        path: String,
+        mtime_secs: u64,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<(), TunnelError>>;
     fn end(&self) -> ConnFuture<'_, ()>;
 }
 
@@ -201,6 +209,15 @@ impl SshLike for SshConnection {
         hold: ConnectionLease,
     ) -> ConnFuture<'_, Result<Vec<swiss_host::services::remote::RemoteListing>, TunnelError>> {
         Box::pin(async move { SshConnection::list_dir(self, path, hold).await })
+    }
+    /// Set one remote file's mtime over SFTP SETSTAT.
+    fn set_mtime(
+        &self,
+        path: String,
+        mtime_secs: u64,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<(), TunnelError>> {
+        Box::pin(async move { SshConnection::set_mtime(self, path, mtime_secs, hold).await })
     }
     fn end(&self) -> ConnFuture<'_, ()> {
         Box::pin(SshConnection::end(self))

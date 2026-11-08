@@ -156,6 +156,16 @@ pub mod testing {
         /// run against the file map through [crate::delta::mirror], the script's Rust
         /// twin. Off by default: python3 answers 127 like a target without it.
         pub python: std::sync::atomic::AtomicBool,
+        /// Per-file remote mtimes (whole seconds) that the set-mtime op and the
+        /// delta script's apply record; stat serves them. A file with no entry
+        /// stats a fixed stale time - exactly one uploaded before sync began
+        /// stamping mtimes.
+        pub mtimes: Mutex<HashMap<String, u64>>,
+        /// When set, stat reports no mtime for files: a transport that cannot see
+        /// one, where sync must fall back to its size-only rule.
+        pub omit_mtime: std::sync::atomic::AtomicBool,
+        /// When set, sha256sum answers 127: a target without the hashing tool.
+        pub no_sha256sum: std::sync::atomic::AtomicBool,
     }
 
     impl FakeTransport {
@@ -165,12 +175,21 @@ pub mod testing {
                 files: Arc::new(Mutex::new(HashMap::new())),
                 exec_calls: Mutex::new(Vec::new()),
                 python: std::sync::atomic::AtomicBool::new(false),
+                mtimes: Mutex::new(HashMap::new()),
+                omit_mtime: std::sync::atomic::AtomicBool::new(false),
+                no_sha256sum: std::sync::atomic::AtomicBool::new(false),
             })
         }
 
-        /// The delta script's two modes and the cleanup `rm`, run on the file map.
+        /// The delta script's two modes, the cleanup `rm` and sync's
+        /// `sha256sum` batch, run on the file map.
         fn emulate(&self, argv: &[String]) -> Option<FakeProgram> {
             use crate::delta::mirror;
+            // Hashing is its own emulation, not gated on python3: a target can
+            // have sha256sum without python just as easily as the reverse.
+            if argv.first().map(String::as_str) == Some("sha256sum") {
+                return Some(self.sha256sum_batch(argv));
+            }
             if !self.python.load(std::sync::atomic::Ordering::SeqCst) {
                 return None;
             }
@@ -200,6 +219,11 @@ pub mod testing {
                     Some(match mirror::apply(&base, &patch) {
                         Ok(rebuilt) => {
                             files.insert(arg(5), rebuilt);
+                            // The script's utime before the rename, mirrored: the
+                            // destination keeps the local mtime when one was sent.
+                            if let Some(secs) = argv.get(6).and_then(|s| s.parse::<u64>().ok()) {
+                                self.mtimes.lock().unwrap().insert(arg(5), secs);
+                            }
                             FakeProgram {
                                 argv0: "python3".into(),
                                 ..FakeProgram::default()
@@ -216,6 +240,41 @@ pub mod testing {
                     })
                 }
                 _ => None,
+            }
+        }
+
+        /// `sha256sum -- p1 p2 ...` over the file map, in the real command's
+        /// output shape (digest, two spaces, path; a missing file lands on stderr
+        /// and costs the exit code) so sync's parser runs against the truth.
+        fn sha256sum_batch(&self, argv: &[String]) -> FakeProgram {
+            use sha2::{Digest, Sha256};
+            if self.no_sha256sum.load(std::sync::atomic::Ordering::SeqCst) {
+                return FakeProgram {
+                    argv0: "sha256sum".into(),
+                    stderr: b"sh: 1: sha256sum: not found".to_vec(),
+                    exit: 127,
+                    ..FakeProgram::default()
+                };
+            }
+            let files = self.files.lock().unwrap();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            for path in argv.iter().skip(2) {
+                match files.get(path) {
+                    Some(bytes) => stdout.extend_from_slice(
+                        format!("{}  {path}\n", hex(&Sha256::digest(bytes))).as_bytes(),
+                    ),
+                    None => stderr.extend_from_slice(
+                        format!("sha256sum: {path}: No such file or directory\n").as_bytes(),
+                    ),
+                }
+            }
+            FakeProgram {
+                argv0: "sha256sum".into(),
+                exit: if stderr.is_empty() { 0 } else { 1 },
+                stdout,
+                stderr,
+                ..FakeProgram::default()
             }
         }
 
@@ -321,9 +380,24 @@ pub mod testing {
         ) -> Result<Option<RemoteFileStat>, RemoteError> {
             let files = self.files.lock().unwrap();
             if let Some(bytes) = files.get(path) {
+                let mtime_ms = if self.omit_mtime.load(std::sync::atomic::Ordering::SeqCst) {
+                    None
+                } else {
+                    // No recorded mtime reads as a stale one, exactly like a file
+                    // uploaded before sync began stamping mtimes.
+                    let stale = 1_700_000_000_000;
+                    Some(
+                        self.mtimes
+                            .lock()
+                            .unwrap()
+                            .get(path)
+                            .map(|secs| secs * 1000)
+                            .unwrap_or(stale),
+                    )
+                };
                 return Ok(Some(RemoteFileStat {
                     size: bytes.len() as u64,
-                    mtime_ms: Some(1_700_000_000_000),
+                    mtime_ms,
                     is_dir: false,
                 }));
             }
@@ -419,6 +493,25 @@ pub mod testing {
                 })
                 .collect())
         }
+
+        async fn set_mtime(
+            &self,
+            _endpoint: &str,
+            _holder: &str,
+            path: &str,
+            mtime_secs: u64,
+        ) -> Result<(), RemoteError> {
+            self.mtimes
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), mtime_secs);
+            Ok(())
+        }
+    }
+
+    /// Lowercase hex, the shape sha256sum prints.
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     pub struct FakeRead {

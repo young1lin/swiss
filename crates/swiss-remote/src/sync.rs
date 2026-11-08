@@ -21,18 +21,25 @@
 //! Sync is UPLOAD-ONLY and NEVER DELETES (SPEC §remote.actions): a sync that removes files
 //! remotely is a footgun no agent should hold. What it does: walk the local tree,
 //! skip the default excludes (.git, .swiss, target, node_modules - the build
-//! artifacts nobody wants on the far side), compare the size against the remote
-//! stat (size only - a same-size edit is not seen), and stream changed files through the transport's chunked write.
+//! artifacts nobody wants on the far side), compare size AND whole-second mtime against
+//! the remote stat (rsync's quick check; a stat without an mtime falls back to size
+//! only), and stream changed files through the transport's chunked write. An upload
+//! stamps the remote file with the local mtime so the next quick check passes; a
+//! same-size file whose mtime differs is content-checked in batches (one sha256sum
+//! exec per 200 paths) before it is sent, so files uploaded before this rule carry
+//! their bytes over untouched and only get their mtime fixed.
 //! A changed file of 1 MiB or more whose previous version is already on the target goes up as
 //! a delta against it ([crate::delta]); the whole file goes up whenever that is not possible.
 //!
 //! Both operations report COMPACTLY: one line per transferred file and one summary
 //! line at the end - an agent watching a run wants the shape, not a wall of text.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use swiss_host::services::remote::RemoteTransportRegistry;
+use sha2::{Digest, Sha256};
+use swiss_host::services::remote::{RemoteFileStat, RemoteTransportRegistry};
 
 use crate::delta::{self, DeltaError, DELTA_MIN_BYTES};
 use crate::target::{safe_join, RemoteTarget};
@@ -145,13 +152,412 @@ pub struct SyncReport {
     pub failures: Vec<String>,
 }
 
+/// The local mtime floored to whole seconds - the resolution SFTP carries.
+fn mtime_secs(meta: &std::fs::Metadata) -> Option<u64> {
+    meta.modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
+}
+
+/// One file's quick-check verdict: current when the size AND the whole-second
+/// mtime both match (SPEC §remote.actions). Equality only, never newer or older,
+/// so two machines whose clocks disagree cannot loop re-uploads; a stat that
+/// reports no mtime (or a local one that cannot be read) keeps the size-only
+/// rule these comparisons used to be.
+enum Freshness {
+    /// Missing, or a different size: send it.
+    Upload,
+    /// Size and mtime both match: nothing to do.
+    UpToDate,
+    /// Same size, different mtime: content-check it before sending anything -
+    /// the migration case, because a file uploaded before this rule carries the
+    /// upload time as its remote mtime.
+    VerifyContent,
+}
+
+fn freshness(existing: RemoteFileStat, len: u64, local_secs: Option<u64>) -> Freshness {
+    if existing.size != len {
+        return Freshness::Upload;
+    }
+    match (existing.mtime_ms, local_secs) {
+        (Some(remote_ms), Some(local)) if remote_ms / 1000 != local => Freshness::VerifyContent,
+        _ => Freshness::UpToDate,
+    }
+}
+
+/// One same-size file whose mtime differs, held back for the batch content check.
+struct PendingVerify {
+    local: PathBuf,
+    rel: String,
+    remote_path: String,
+    stat: RemoteFileStat,
+    len: u64,
+    local_secs: u64,
+}
+
+/// How many paths one hashing exec carries: a relayed link pays ~100 ms per
+/// round trip, so same-size files are settled in batches, never one by one.
+const HASH_BATCH: usize = 200;
+/// The output ceiling for one hashing batch: 64 hex digits, a separator and a
+/// path per line, a few hundred paths per batch.
+const HASH_OUT_CAP: usize = 8 * 1024 * 1024;
+
+/// Everything one uploaded file needs, shared by the fresh path and the
+/// content-verified path so a file worth sending goes up exactly one way.
+struct Uploader<'a> {
+    registry: &'a Arc<RemoteTransportRegistry>,
+    target: &'a RemoteTarget,
+    holder: String,
+    verbose: bool,
+    single: bool,
+    base_hint: Option<String>,
+    emit: &'a mut (dyn FnMut(&str) + Send),
+    cancel: &'a swiss_host::services::action::CancelHandle,
+    made_dirs: Vec<String>,
+    /// Cleared once the target turns out to have no python3: no retry per file.
+    delta_ok: bool,
+    /// The set-mtime failure note is printed once per run, not once per file.
+    mtime_note: bool,
+    report: &'a mut SyncReport,
+}
+
+impl Uploader<'_> {
+    /// The remote parent of one path, created once per run.
+    async fn mkdir_for(&mut self, remote_path: &str) -> Result<(), String> {
+        if let Some(parent) = Path::new(remote_path).parent() {
+            let parent = parent.to_string_lossy().into_owned();
+            if !self.made_dirs.contains(&parent) && !parent.is_empty() {
+                self.registry
+                    .mkdir_p(&self.target.endpoint, &self.holder, &parent)
+                    .await
+                    .map_err(|err| format!("mkdir {parent}: {err}"))?;
+                self.made_dirs.push(parent);
+            }
+        }
+        Ok(())
+    }
+
+    /// Send one file that is worth sending - as a delta when that is possible
+    /// and worth it, else whole - and stamp the remote mtime. `existing` is the
+    /// stat the quick check saw; a delta bases on the destination itself.
+    async fn push(
+        &mut self,
+        local: &Path,
+        rel: &str,
+        remote_path: &str,
+        existing: Option<RemoteFileStat>,
+        local_secs: Option<u64>,
+        len: u64,
+    ) -> Result<(), String> {
+        self.mkdir_for(remote_path).await?;
+        if self.delta_ok && len >= DELTA_MIN_BYTES {
+            let base = match existing {
+                Some(stat) if !stat.is_dir => Some(remote_path.to_string()),
+                Some(_) => None,
+                None if self.single => match &self.base_hint {
+                    Some(base) => Some(safe_join(&self.target.workspace_root, base)?),
+                    None => {
+                        guess_base(self.registry, self.target, &self.holder, remote_path, len)
+                            .await
+                    }
+                },
+                None => None,
+            };
+            if let Some(base) = base {
+                match delta::upload_delta(
+                    self.registry,
+                    self.target,
+                    &self.holder,
+                    local,
+                    remote_path,
+                    &base,
+                    self.cancel,
+                )
+                .await
+                {
+                    Ok(done) => {
+                        self.report.uploaded += 1;
+                        self.report.delta += 1;
+                        self.report.bytes += done.stats.len;
+                        self.report.sent += done.wire_bytes;
+                        if self.verbose {
+                            (self.emit)(&format!(
+                                "{rel} ({} bytes, delta against {}: {} bytes sent)\n",
+                                done.stats.len,
+                                shown(&self.target.workspace_root, &base),
+                                done.wire_bytes
+                            ));
+                        }
+                        return Ok(()); // the script stamped the mtime itself
+                    }
+                    Err(DeltaError::Canceled) => return Err("the sync was canceled".into()),
+                    Err(DeltaError::NoPython) => {
+                        self.delta_ok = false;
+                        (self.emit)(
+                            "python3 is not on the target, so no delta: whole files go up\n",
+                        );
+                    }
+                    Err(DeltaError::Fallback(reason)) => {
+                        (self.emit)(&format!(
+                            "{rel}: no delta ({reason}); the whole file goes up\n"
+                        ));
+                    }
+                }
+            }
+        }
+        let sent = upload_one(
+            self.registry,
+            self.target,
+            &self.holder,
+            local,
+            rel,
+            remote_path,
+            self.cancel,
+        )
+        .await?;
+        self.report.uploaded += 1;
+        self.report.bytes += sent;
+        self.report.sent += sent;
+        if self.verbose {
+            (self.emit)(&format!("{rel} ({sent} bytes)\n"));
+        }
+        self.stamp_mtime(remote_path, local_secs).await;
+        Ok(())
+    }
+
+    /// Best-effort remote mtime stamp so the next quick check passes. A refusal
+    /// or failure is noted once per run and the file still counts as uploaded -
+    /// the bytes are there; only the bookkeeping suffers (the next run
+    /// content-checks the file instead of skipping it).
+    async fn stamp_mtime(&mut self, remote_path: &str, local_secs: Option<u64>) {
+        let Some(secs) = local_secs else {
+            return;
+        };
+        if let Err(err) = self
+            .registry
+            .set_mtime(&self.target.endpoint, &self.holder, remote_path, secs)
+            .await
+        {
+            self.note_mtime_failure(&err);
+        }
+    }
+
+    /// A file whose content already matches: only its mtime is fixed, and it
+    /// counts as up to date. Even a failed stamp keeps that verdict - the bytes
+    /// are current; the next run just re-checks them.
+    async fn set_mtime_only(&mut self, remote_path: &str, rel: &str, local_secs: u64) {
+        match self
+            .registry
+            .set_mtime(&self.target.endpoint, &self.holder, remote_path, local_secs)
+            .await
+        {
+            Ok(()) => {
+                if self.verbose {
+                    (self.emit)(&format!(
+                        "{rel} (already current; the remote mtime now matches)\n"
+                    ));
+                }
+            }
+            Err(err) => self.note_mtime_failure(&err),
+        }
+        self.report.skipped += 1;
+    }
+
+    fn note_mtime_failure(&mut self, err: &swiss_host::services::remote::RemoteError) {
+        if !self.mtime_note {
+            self.mtime_note = true;
+            (self.emit)(&format!(
+                "the remote mtime could not be set ({err}); the next sync re-checks these files\n"
+            ));
+        }
+    }
+}
+
+/// The migration half: files uploaded before the mtime rule carry the upload
+/// time as their remote mtime, so a mismatching mtime alone must not re-send
+/// them. One sha256sum exec covers a batch of paths (argv, never a shell
+/// string); matching content keeps its bytes and only gets the mtime fixed, and
+/// a target that cannot hash sends the whole batch up with one note.
+async fn verify_batches(
+    uploader: &mut Uploader<'_>,
+    pending: Vec<PendingVerify>,
+) -> Result<(), String> {
+    let mut no_hash = false;
+    for batch in pending.chunks(HASH_BATCH) {
+        if uploader.cancel.is_cancelled() {
+            return Err("the sync was canceled".into());
+        }
+        let paths: Vec<String> = batch.iter().map(|p| p.remote_path.clone()).collect();
+        let remote = match remote_hashes(
+            uploader.registry,
+            uploader.target,
+            &uploader.holder,
+            &paths,
+            uploader.cancel,
+        )
+        .await
+        {
+            Some(hashes) => hashes,
+            None => {
+                if !no_hash {
+                    no_hash = true;
+                    (uploader.emit)(
+                        "the target has no sha256sum, so same-size files go up whole\n",
+                    );
+                }
+                HashMap::new()
+            }
+        };
+        // The local digests are file reads: keep them off the async worker.
+        let jobs: Vec<PathBuf> = batch.iter().map(|p| p.local.clone()).collect();
+        let want = batch.len();
+        let local = tokio::task::spawn_blocking(move || {
+            jobs.iter().map(|path| local_sha256(path)).collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_else(|_| vec![None; want]);
+        for (pending, digest) in batch.iter().zip(local) {
+            let same = digest.is_some_and(|want| remote.get(&pending.remote_path) == Some(&want));
+            if same {
+                uploader
+                    .set_mtime_only(&pending.remote_path, &pending.rel, pending.local_secs)
+                    .await;
+            } else {
+                uploader
+                    .push(
+                        &pending.local,
+                        &pending.rel,
+                        &pending.remote_path,
+                        Some(pending.stat),
+                        Some(pending.local_secs),
+                        pending.len,
+                    )
+                    .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// sha256 of every path in one batch, computed on the target by ONE exec.
+/// None when the target cannot hash at all; a path the command could not read
+/// is simply missing from the map, which the caller reads as "changed".
+async fn remote_hashes(
+    registry: &Arc<RemoteTransportRegistry>,
+    target: &RemoteTarget,
+    holder: &str,
+    paths: &[String],
+    cancel: &swiss_host::services::action::CancelHandle,
+) -> Option<HashMap<String, [u8; 32]>> {
+    let mut argv = vec!["sha256sum".to_string(), "--".to_string()];
+    argv.extend(paths.iter().cloned());
+    match crate::delta::capture_exec(registry, target, holder, argv, None, HASH_OUT_CAP, cancel)
+        .await
+    {
+        // 127 is the shell's "command not found": no hashing on that target.
+        Ok((127, _, _)) | Err(_) => None,
+        Ok((_, stdout, _)) => Some(parse_sha256sum(&stdout)),
+    }
+}
+
+/// Parse sha256sum's output into path -> digest. Each line is the hex digest,
+/// a space, a marker (a space for text mode, `*` for binary) and the name; a
+/// name containing a backslash or newline makes the whole name escaped with a
+/// leading backslash (coreutils' rule). A line that does not parse is dropped:
+/// its path then has no digest, which reads as "changed" - never as a skip.
+fn parse_sha256sum(stdout: &[u8]) -> HashMap<String, [u8; 32]> {
+    let mut out = HashMap::new();
+    for line in String::from_utf8_lossy(stdout).split('\n') {
+        let bytes = line.as_bytes();
+        // 64 hex digits + space + marker + at least one character of name.
+        if bytes.len() < 67
+            || bytes[64] != b' '
+            || (bytes[65] != b' ' && bytes[65] != b'*')
+            || !bytes[..64].iter().all(u8::is_ascii_hexdigit)
+        {
+            continue;
+        }
+        let name = if let Some(escaped) = line[66..].strip_prefix('\\') {
+            unescape_sha_name(escaped)
+        } else {
+            line[66..].to_string()
+        };
+        let mut digest = [0u8; 32];
+        let mut parsed = true;
+        for (i, byte) in digest.iter_mut().enumerate() {
+            match (hex_val(bytes[i * 2]), hex_val(bytes[i * 2 + 1])) {
+                (Some(hi), Some(lo)) => *byte = hi << 4 | lo,
+                _ => {
+                    parsed = false;
+                    break;
+                }
+            }
+        }
+        if parsed {
+            out.insert(name, digest);
+        }
+    }
+    out
+}
+
+fn hex_val(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// coreutils' backslash escaping, undone: `\\` is a backslash, `\\n` a newline,
+/// anything else keeps both characters.
+fn unescape_sha_name(escaped: &str) -> String {
+    let mut out = String::with_capacity(escaped.len());
+    let mut chars = escaped.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// The local file's sha256, streamed; None when it cannot be read (the caller
+/// then sends it, and the plain upload reports the real error).
+fn local_sha256(path: &Path) -> Option<[u8; 32]> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Some(hasher.finalize().into())
+}
+
 /// Run one sync. `emit` receives each progress line (already newline-terminated
 /// where wanted by the caller) so both the action's tap and tests can observe.
 pub async fn sync_tree(
     registry: &Arc<RemoteTransportRegistry>,
     target: &RemoteTarget,
     opts: &SyncOptions,
-    mut emit: impl FnMut(&str),
+    mut emit: impl FnMut(&str) + Send,
     cancel: &swiss_host::services::action::CancelHandle,
 ) -> Result<SyncReport, String> {
     if !target.capabilities.iter().any(|c| c == "sync") {
@@ -204,96 +610,67 @@ pub async fn sync_tree(
         scanned: pairs.len(),
         ..Default::default()
     };
-    let mut made_dirs: Vec<String> = Vec::new();
-    // Cleared once the target turns out to have no python3: no retry per file.
-    let mut delta_ok = opts.delta;
-    for (local, rel) in &pairs {
-        if cancel.is_cancelled() {
-            return Err("the sync was canceled".into());
-        }
-        let meta = match std::fs::metadata(local) {
-            Ok(m) => m,
-            Err(err) => {
-                report.failures.push(format!("{rel}: {err}"));
-                continue;
-            }
+    {
+        let mut uploader = Uploader {
+            registry,
+            target,
+            holder: holder.clone(),
+            verbose: opts.verbose,
+            single,
+            base_hint: opts.base.clone(),
+            emit: &mut emit,
+            cancel,
+            made_dirs: Vec::new(),
+            delta_ok: opts.delta,
+            mtime_note: false,
+            report: &mut report,
         };
-        let remote_path = safe_join(&target.workspace_root, rel)?;
-        let existing = match registry.stat(&target.endpoint, &holder, &remote_path).await {
-            Ok(stat) => stat,
-            Err(err) => return Err(format!("stat {remote_path}: {err}")),
-        };
-        // A missing file is the normal first-sync case, not an error.
-        let changed = existing.is_none_or(|stat| stat.size != meta.len());
-        if !changed {
-            report.skipped += 1;
-            continue;
-        }
-        if let Some(parent) = Path::new(&remote_path).parent() {
-            let parent = parent.to_string_lossy().into_owned();
-            if !made_dirs.contains(&parent) && !parent.is_empty() {
-                registry
-                    .mkdir_p(&target.endpoint, &holder, &parent)
-                    .await
-                    .map_err(|err| format!("mkdir {parent}: {err}"))?;
-                made_dirs.push(parent);
+        // Same-size files whose mtime differs are held back and content-checked
+        // in batches after the walk, so one exec settles up to 200 of them.
+        let mut verify: Vec<PendingVerify> = Vec::new();
+        for (local, rel) in &pairs {
+            if cancel.is_cancelled() {
+                return Err("the sync was canceled".into());
             }
-        }
-        if delta_ok && meta.len() >= DELTA_MIN_BYTES {
-            let base = match existing {
-                Some(stat) if !stat.is_dir => Some(remote_path.clone()),
-                Some(_) => None,
-                None if single => match &opts.base {
-                    Some(base) => Some(safe_join(&target.workspace_root, base)?),
-                    None => guess_base(registry, target, &holder, &remote_path, meta.len()).await,
-                },
-                None => None,
-            };
-            if let Some(base) = base {
-                match delta::upload_delta(
-                    registry,
-                    target,
-                    &holder,
-                    local,
-                    &remote_path,
-                    &base,
-                    cancel,
-                )
-                .await
-                {
-                    Ok(done) => {
-                        report.uploaded += 1;
-                        report.delta += 1;
-                        report.bytes += done.stats.len;
-                        report.sent += done.wire_bytes;
-                        if opts.verbose {
-                            emit(&format!(
-                                "{rel} ({} bytes, delta against {}: {} bytes sent)\n",
-                                done.stats.len,
-                                shown(&target.workspace_root, &base),
-                                done.wire_bytes
-                            ));
-                        }
-                        continue;
-                    }
-                    Err(DeltaError::Canceled) => return Err("the sync was canceled".into()),
-                    Err(DeltaError::NoPython) => {
-                        delta_ok = false;
-                        emit("python3 is not on the target, so no delta: whole files go up\n");
-                    }
-                    Err(DeltaError::Fallback(reason)) => {
-                        emit(&format!("{rel}: no delta ({reason}); the whole file goes up\n"));
-                    }
+            let meta = match std::fs::metadata(local) {
+                Ok(m) => m,
+                Err(err) => {
+                    uploader.report.failures.push(format!("{rel}: {err}"));
+                    continue;
                 }
+            };
+            let remote_path = safe_join(&target.workspace_root, rel)?;
+            let existing = match registry.stat(&target.endpoint, &holder, &remote_path).await {
+                Ok(stat) => stat,
+                Err(err) => return Err(format!("stat {remote_path}: {err}")),
+            };
+            // A missing file is the normal first-sync case, not an error.
+            let local_secs = mtime_secs(&meta);
+            match existing {
+                None => {
+                    uploader
+                        .push(local, rel, &remote_path, None, local_secs, meta.len())
+                        .await?
+                }
+                Some(stat) => match freshness(stat, meta.len(), local_secs) {
+                    Freshness::UpToDate => uploader.report.skipped += 1,
+                    Freshness::Upload => {
+                        uploader
+                            .push(local, rel, &remote_path, Some(stat), local_secs, meta.len())
+                            .await?
+                    }
+                    Freshness::VerifyContent => verify.push(PendingVerify {
+                        local: local.clone(),
+                        rel: rel.clone(),
+                        remote_path,
+                        stat,
+                        len: meta.len(),
+                        local_secs: local_secs.unwrap_or_default(),
+                    }),
+                },
             }
         }
-        let sent = upload_one(registry, target, &holder, local, rel, &remote_path, cancel).await?;
-        report.uploaded += 1;
-        report.bytes += sent;
-        report.sent += sent;
-        if opts.verbose {
-            emit(&format!("{rel} ({sent} bytes)\n"));
-        }
+        verify_batches(&mut uploader, verify).await?;
     }
     emit(&format!(
         "sync: {} scanned, {} uploaded ({} bytes{}), {} up to date{}\n",
@@ -665,5 +1042,77 @@ impl PullWalk<'_> {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_target_without_sha256sum_says_so_once_and_sends_the_files() {
+        let (system, fake) = crate::testing::system_with_fake();
+        fake.no_sha256sum
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        fake.files
+            .lock()
+            .unwrap()
+            .insert("/data/ws/proj/same.txt".into(), b"same".to_vec());
+        let dir =
+            std::env::temp_dir().join(format!("swiss-ntn-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        std::fs::write(dir.join("same.txt"), b"same").expect("w");
+        let target = system.resolve("dev").expect("the seeded target");
+        let opts = SyncOptions {
+            source: dir.clone(),
+            extra_excludes: Vec::new(),
+            to: None,
+            verbose: false,
+            delta: true,
+            base: None,
+        };
+        let mut lines = String::new();
+        let report = sync_tree(
+            &system.services().remote.clone(),
+            &target,
+            &opts,
+            |line: &str| lines.push_str(line),
+            &swiss_host::services::action::CancelSource::new().handle(),
+        )
+        .await
+        .expect("the sync runs");
+        assert_eq!(report.uploaded, 1, "no hashing: the file goes up whole");
+        assert_eq!(
+            lines.matches("sha256sum").count(),
+            1,
+            "the missing tool is explained exactly once: {lines}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sha256sum_output_parses_by_name_not_position() {
+        let digest = [0xabu8; 32];
+        let hexed: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        let out = format!("{hexed}  /a/b.txt\n{hexed} *binary.bin\n{hexed}  plain\n");
+        let map = parse_sha256sum(out.as_bytes());
+        assert_eq!(map.len(), 3, "{map:?}");
+        assert_eq!(map.get("/a/b.txt"), Some(&digest));
+        assert_eq!(map.get("binary.bin"), Some(&digest));
+        assert_eq!(map.get("plain"), Some(&digest));
+    }
+
+    #[test]
+    fn escaped_names_come_back_and_junk_lines_are_ignored() {
+        let digest = [7u8; 32];
+        let hexed: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        // The true name holds two backslashes and a newline; coreutils prints
+        // it with a leading marker backslash and every such character doubled.
+        let name = "\u{5c}one\u{5c}two\u{a}three.txt".to_string();
+        let escaped = "\u{5c}\u{5c}one\u{5c}\u{5c}two\u{5c}nthree.txt";
+        let out = format!("{hexed}  {escaped}\u{a}not a sha line at all\u{a}");
+        let map = parse_sha256sum(out.as_bytes());
+        assert_eq!(map.len(), 1, "{map:?}");
+        assert_eq!(map.get(name.as_str()), Some(&digest), "{map:?}");
     }
 }

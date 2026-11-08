@@ -249,6 +249,23 @@ impl RemoteTransportProvider for TunnelRemote {
             .await
             .map_err(as_remote_error)
     }
+
+    async fn set_mtime(
+        &self,
+        endpoint: &str,
+        _holder: &str,
+        path: &str,
+        mtime_secs: u64,
+    ) -> Result<(), RemoteError> {
+        let (conn, lease) = self
+            .manager
+            .lease_connection(endpoint)
+            .await
+            .map_err(as_remote_error)?;
+        conn.set_mtime(path.to_string(), mtime_secs, lease)
+            .await
+            .map_err(as_remote_error)
+    }
 }
 
 #[cfg(test)]

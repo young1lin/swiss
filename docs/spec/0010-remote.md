@@ -115,8 +115,19 @@ mounted it).
 - **Sync** is upload-only and **never deletes** — a sync that removes remote files is a footgun
   no agent should hold. It walks the local tree, skips the default excludes (`.git/`,
   `.swiss/`, `target/`, `node_modules/`, by path prefix) plus the binding's and the input's,
-  and uploads a file whose remote size differs or that is missing. Size is the only comparison:
-  an edit that keeps the byte count is not re-sent (a known gap). Caps: 20,000 files, depth
+  and uploads a file that is missing, whose remote size differs, or whose whole-second mtime
+  differs — rsync's quick check: equality only, never newer or older, so disagreeing clocks
+  cannot loop; the local time is floored to seconds because SFTP's is, and a stat that reports
+  no mtime falls back to the size-only rule. An upload stamps the remote file with the local
+  mtime — whole files through the transport's set-mtime (SFTP SETSTAT; a provider without one
+  refuses once per run and the mtime stays the upload time), a delta by the script's utime
+  before the rename. A same-size file whose mtime differs is content-checked before it is
+  sent: files uploaded before this rule carry the upload time as their mtime, and the first
+  sync after it must not re-upload a whole workspace. One `sha256sum` exec covers a batch of
+  up to 200 paths (argv, never a shell string; the escaped-name output is parsed by name, and
+  a path the command cannot read reads as changed); a file whose digests match keeps its bytes
+  and has only its mtime fixed, counting as up to date, and a target without `sha256sum`
+  sends the batch whole with one note. Caps: 20,000 files, depth
   32. Pull caps: 2,000 files, depth 32. Both report compactly — a summary line
   (`sync: N scanned, N uploaded (N bytes), N up to date`, with `; N by delta, N bytes sent`
   inside the parentheses when a delta went), one line per file only when `verbose`. The
@@ -128,8 +139,9 @@ mounted it).
   √len rounded up to a power of two, within 4–128 KiB) with a python3 script sent as stdin.
   The gateway rolls the weak checksum over the local file and uploads a patch of copy runs and
   literal bytes to a hidden `.<name>.<hex>.swiss-delta` beside the destination. The script
-  rebuilds into a temporary in the same directory, checks the whole file's sha256, and renames
-  it over the destination. The previous version is the destination itself; for a single file
+  rebuilds into a temporary in the same directory, checks the whole file's sha256, stamps the
+  local mtime, and renames it over the destination. The previous version is the destination
+  itself; for a single file
   whose destination does not exist yet it is `base` when given, else the newest sibling with the
   same extension (any case), not a dot file, within ×2 of the size — rsync's `--fuzzy`. A target
   without python3 (exit 127) turns delta off for the rest of the run with one note; any other

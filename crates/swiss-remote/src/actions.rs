@@ -1996,10 +1996,11 @@ mod tests {
         assert_eq!(out.meta.get("delta").unwrap(), 1);
         let calls = python_calls(&fake);
         assert_eq!(calls[0][2..4], ["sig", "/data/ws/proj/tp25.jar"], "{calls:?}");
-        let files = fake.files.lock().unwrap();
-        assert!(files.get("/data/ws/proj/tp26.jar") == Some(&new), "the new name holds the build");
-        assert!(files.get("/data/ws/proj/tp25.jar") == Some(&base), "the base is untouched");
-        drop(files);
+        {
+            let files = fake.files.lock().unwrap();
+            assert!(files.get("/data/ws/proj/tp26.jar") == Some(&new), "the new name holds the build");
+            assert!(files.get("/data/ws/proj/tp25.jar") == Some(&base), "the base is untouched");
+        }
 
         // An explicit base that does not exist: the whole file goes up, still correct.
         let out = action
@@ -2105,6 +2106,287 @@ mod tests {
             Err(ActionError::Failed(m)) => assert!(m.contains("single-file"), "{m}"),
             other => panic!("a tree sync with a base must fail, got {:?}", other.map(|o| o.output)),
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn hash_calls(fake: &FakeTransport) -> Vec<Vec<String>> {
+        fake.exec_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.argv.first().map(String::as_str) == Some("sha256sum"))
+            .map(|r| r.argv.clone())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_same_size_edit_is_uploaded_not_skipped() {
+        let (system, fake) = system_with_fake();
+        fake.files
+            .lock()
+            .unwrap()
+            .insert("/data/ws/proj/same.txt".into(), b"AAAA".to_vec());
+        let dir =
+            std::env::temp_dir().join(format!("swiss-sse-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        std::fs::write(dir.join("same.txt"), b"BBBB").expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": dir.join("same.txt").display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("uploaded").unwrap(), 1, "the same-size edit must go up");
+        assert_eq!(
+            fake.files
+                .lock()
+                .unwrap()
+                .get("/data/ws/proj/same.txt")
+                .map(Vec::as_slice),
+            Some(&b"BBBB"[..]),
+            "the remote file holds the edited bytes"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_sync_right_after_a_sync_uploads_nothing_and_runs_nothing_remote() {
+        let (system, fake) = system_with_fake();
+        let dir =
+            std::env::temp_dir().join(format!("swiss-agn-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(dir.join("sub")).expect("tree");
+        std::fs::write(dir.join("a.txt"), b"alpha").expect("w");
+        std::fs::write(dir.join("sub/b.txt"), b"beta").expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": dir.display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the first sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("uploaded").unwrap(), 2);
+        let execs_after_first = fake.exec_calls.lock().unwrap().len();
+        // The first sync stamped every mtime it uploaded, so the second run's
+        // quick check passes everywhere: no upload, no hashing, no exec at all.
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": dir.display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the second sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("uploaded").unwrap(), 0);
+        assert_eq!(out.meta.get("skipped").unwrap(), 2);
+        assert!(hash_calls(&fake).is_empty(), "nothing is hashed twice");
+        assert_eq!(
+            fake.exec_calls.lock().unwrap().len(),
+            execs_after_first,
+            "the second sync runs nothing remote"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_file_uploaded_before_the_mtime_rule_gets_its_mtime_fixed_not_its_bytes() {
+        let (system, fake) = system_with_fake();
+        // Seeded straight into the map: same bytes, same size, and the stale
+        // mtime of a file uploaded before sync began stamping them.
+        fake.files
+            .lock()
+            .unwrap()
+            .insert("/data/ws/proj/same.txt".into(), b"same".to_vec());
+        let dir =
+            std::env::temp_dir().join(format!("swiss-mig-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        std::fs::write(dir.join("same.txt"), b"same").expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": dir.display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("uploaded").unwrap(), 0, "the bytes are current");
+        assert_eq!(out.meta.get("skipped").unwrap(), 1, "counted up to date");
+        let calls = hash_calls(&fake);
+        assert_eq!(calls.len(), 1, "one batched hashing command: {calls:?}");
+        assert_eq!(calls[0], ["sha256sum", "--", "/data/ws/proj/same.txt"]);
+        let local_secs = std::fs::metadata(dir.join("same.txt"))
+            .expect("the local file stats")
+            .modified()
+            .expect("its mtime reads")
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("since the epoch")
+            .as_secs();
+        assert_eq!(
+            fake.mtimes.lock().unwrap().get("/data/ws/proj/same.txt"),
+            Some(&local_secs),
+            "the remote mtime now matches the local file"
+        );
+        assert_eq!(
+            fake.files
+                .lock()
+                .unwrap()
+                .get("/data/ws/proj/same.txt")
+                .map(Vec::as_slice),
+            Some(&b"same"[..]),
+            "the bytes went untouched"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn same_size_files_are_hashed_in_one_batched_command() {
+        let (system, fake) = system_with_fake();
+        {
+            let mut files = fake.files.lock().unwrap();
+            files.insert("/data/ws/proj/one.txt".into(), b"one".to_vec());
+            files.insert("/data/ws/proj/two.txt".into(), b"two".to_vec());
+            files.insert("/data/ws/proj/three.txt".into(), b"three".to_vec());
+        }
+        let dir =
+            std::env::temp_dir().join(format!("swiss-bat-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        std::fs::write(dir.join("one.txt"), b"one").expect("w");
+        std::fs::write(dir.join("two.txt"), b"two").expect("w");
+        std::fs::write(dir.join("three.txt"), b"three").expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": dir.display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("uploaded").unwrap(), 0);
+        assert_eq!(out.meta.get("skipped").unwrap(), 3);
+        let calls = hash_calls(&fake);
+        assert_eq!(calls.len(), 1, "one exec settles the whole batch: {calls:?}");
+        assert_eq!(calls[0].len(), 2 + 3, "sha256sum, --, then every path: {:?}", calls[0]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn without_sha256sum_the_same_size_files_go_up_whole_with_one_note() {
+        let (system, fake) = system_with_fake();
+        fake.no_sha256sum
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        fake.files
+            .lock()
+            .unwrap()
+            .insert("/data/ws/proj/same.txt".into(), b"same".to_vec());
+        let dir =
+            std::env::temp_dir().join(format!("swiss-nsh-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        std::fs::write(dir.join("same.txt"), b"same").expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": dir.display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("uploaded").unwrap(), 1, "no hashing: send it");
+        assert_eq!(
+            fake.exec_calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| r.argv.first().map(String::as_str) == Some("sha256sum"))
+                .count(),
+            1,
+            "the missing tool is asked about once"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_stat_without_an_mtime_falls_back_to_the_size_only_rule() {
+        let (system, fake) = system_with_fake();
+        fake.omit_mtime
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        fake.files
+            .lock()
+            .unwrap()
+            .insert("/data/ws/proj/same.txt".into(), b"AAAA".to_vec());
+        let dir =
+            std::env::temp_dir().join(format!("swiss-nmt-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        std::fs::write(dir.join("same.txt"), b"BBBB").expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": dir.display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        // The documented fallback: without an mtime to compare, size alone
+        // decides, and a same-size edit stays unseen on such a transport.
+        assert_eq!(out.meta.get("uploaded").unwrap(), 0);
+        assert_eq!(out.meta.get("skipped").unwrap(), 1);
+        assert!(hash_calls(&fake).is_empty());
+        assert_eq!(
+            fake.files
+                .lock()
+                .unwrap()
+                .get("/data/ws/proj/same.txt")
+                .map(Vec::as_slice),
+            Some(&b"AAAA"[..]),
+            "nothing was sent or hashed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_delta_upload_leaves_the_remote_mtime_at_the_local_one() {
+        let (system, fake) = system_with_fake();
+        fake.python.store(true, std::sync::atomic::Ordering::SeqCst);
+        let base = delta_noise(1_500_000, 6);
+        fake.files
+            .lock()
+            .unwrap()
+            .insert("/data/ws/proj/app.jar".into(), base.clone());
+        let dir =
+            std::env::temp_dir().join(format!("swiss-dmt-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let new = rebuilt(&base);
+        let local = dir.join("app.jar");
+        std::fs::write(&local, &new).expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": local.display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("delta").unwrap(), 1);
+        let local_secs = std::fs::metadata(&local)
+            .expect("the local file stats")
+            .modified()
+            .expect("its mtime reads")
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("since the epoch")
+            .as_secs();
+        assert_eq!(
+            fake.mtimes.lock().unwrap().get("/data/ws/proj/app.jar"),
+            Some(&local_secs),
+            "the delta's apply stamped the destination"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

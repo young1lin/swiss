@@ -841,6 +841,27 @@ impl SshConnection {
         Ok(result)
     }
 
+    /// Set one remote file's mtime over SFTP SETSTAT. atime rides along with
+    /// the same value: the wire format sends both whenever either is present,
+    /// and leaving atime unset would stamp it to the epoch.
+    pub async fn set_mtime(
+        &self,
+        path: String,
+        mtime_secs: u64,
+        hold: super::manager::ConnectionLease,
+    ) -> Result<(), TunnelError> {
+        let session = self.sftp_session().await?;
+        let mut attrs = russh_sftp::protocol::FileAttributes::default();
+        let secs = mtime_secs.min(u32::MAX as u64) as u32;
+        attrs.atime = Some(secs);
+        attrs.mtime = Some(secs);
+        session.set_metadata(&path, attrs).await.map_err(|err| {
+            TunnelError::new(format!("sftp setstat {path}: {err}"), FailureKind::Network)
+        })?;
+        drop(hold);
+        Ok(())
+    }
+
     pub async fn open_read(
         &self,
         path: String,

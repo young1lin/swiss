@@ -178,7 +178,11 @@ swiss remote write test conf/app.toml                          # UTF-8 stdin; cr
 Use OS-native absolute **local** paths for `--source` and `--to`; relative local paths are
 resolved by the gateway process, not reliably from the caller's current directory. Tree sync skips
 `.git/`, `.swiss/`, `target/`, and `node_modules/` plus every `--exclude`; it never
-deletes remote files. Use push/pull, not write/cat, for binary or large files.
+deletes remote files. A file goes up when it is missing, when its size differs, or when its
+whole-second mtime differs (rsync's quick check); every upload stamps the remote file with the
+local mtime, and a same-size file whose mtime differs is content-checked first — one batched
+`sha256sum` per 200 paths — so a gateway upgraded past the size-only rule fixes old mtimes
+without re-uploading a workspace. Use push/pull, not write/cat, for binary or large files.
 
 A changed file of 1 MiB or more goes up as a delta against its previous version when the target
 has python3: only the changed blocks cross the wire, and the file is rebuilt, checked by sha256

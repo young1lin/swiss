@@ -238,6 +238,24 @@ pub trait RemoteTransportProvider: Send + Sync {
         holder: &str,
         path: &str,
     ) -> Result<Vec<RemoteListing>, RemoteError>;
+
+    /// Set one remote file's modify time, in whole seconds since the epoch: the
+    /// bookkeeping half of sync's quick check (SPEC §remote.actions) - an upload
+    /// stamps the remote file with the local mtime so the next run sees it current
+    /// without reading it back. The default refusal keeps an exec-only provider
+    /// honest: sync then only compares sizes for what it uploads.
+    async fn set_mtime(
+        &self,
+        endpoint: &str,
+        holder: &str,
+        path: &str,
+        mtime_secs: u64,
+    ) -> Result<(), RemoteError> {
+        let _ = (endpoint, holder, path, mtime_secs);
+        Err(RemoteError::Unsupported(
+            "this transport cannot set a remote file's mtime".into(),
+        ))
+    }
 }
 
 /// Whether the transport capability can serve right now, and if not, who is missing —
@@ -429,6 +447,19 @@ impl RemoteTransportRegistry {
     ) -> Result<Vec<RemoteListing>, RemoteError> {
         let provider = self.files_provider()?;
         provider.list_dir(endpoint, holder, path).await
+    }
+
+    /// See [RemoteTransportProvider::set_mtime]; a provider that cannot says so
+    /// and the caller falls back to its size-only rule.
+    pub async fn set_mtime(
+        &self,
+        endpoint: &str,
+        holder: &str,
+        path: &str,
+        mtime_secs: u64,
+    ) -> Result<(), RemoteError> {
+        let provider = self.files_provider()?;
+        provider.set_mtime(endpoint, holder, path, mtime_secs).await
     }
 
     fn files_provider(&self) -> Result<Arc<dyn RemoteTransportProvider>, RemoteError> {

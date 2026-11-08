@@ -60,6 +60,8 @@ pub(super) struct FakeConn {
     pub(super) exec_output: Mutex<Vec<u8>>,
     /// The in-memory remote filesystem the fake file ops serve.
     files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    /// Per-file mtimes (whole seconds) the set-mtime op records and stat serves.
+    mtimes: Arc<Mutex<HashMap<String, u64>>>,
     /// Set to make every shell request fail - a server with PTYs disabled.
     pub(super) refuse_shell: AtomicBool,
     /// Set to make every connect fail with this error.
@@ -81,6 +83,7 @@ impl FakeConn {
             exec_exit: AtomicI32::new(0),
             exec_output: Mutex::new(Vec::new()),
             files: Arc::new(Mutex::new(HashMap::new())),
+            mtimes: Arc::new(Mutex::new(HashMap::new())),
             refuse_shell: AtomicBool::new(false),
             fail_with: Mutex::new(None),
         })
@@ -273,9 +276,12 @@ impl SshLike for FakeConn {
         Box::pin(async move {
             drop(hold);
             Ok(self.files.lock().unwrap().get(&path).map(|b| {
+                // A recorded mtime reads back; without one the file keeps the
+                // fake's traditional fixed timestamp.
+                let secs = self.mtimes.lock().unwrap().get(&path).copied();
                 swiss_host::services::remote::RemoteFileStat {
                     size: b.len() as u64,
-                    mtime_ms: Some(1_000),
+                    mtime_ms: Some(secs.unwrap_or(1).saturating_mul(1000)),
                     is_dir: false,
                 }
             }))
@@ -332,6 +338,18 @@ impl SshLike for FakeConn {
                 .lock()
                 .unwrap()
                 .insert(format!("{path}/"), Vec::new());
+            Ok(())
+        })
+    }
+    fn set_mtime(
+        &self,
+        path: String,
+        mtime_secs: u64,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<(), TunnelError>> {
+        Box::pin(async move {
+            drop(hold);
+            self.mtimes.lock().unwrap().insert(path, mtime_secs);
             Ok(())
         })
     }

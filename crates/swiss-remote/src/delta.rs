@@ -28,8 +28,10 @@
 //!    patch file over the same chunked write a full upload uses.
 //! 3. The same script rebuilds the file next to its destination from base + patch,
 //!    checks the result's sha256 against the local file's, and only then renames it
-//!    over the destination. A mismatch (the base changed meanwhile, a broken patch)
-//!    leaves the destination untouched and the caller falls back to a whole upload.
+//!    over the destination - carrying the local file's mtime, so sync's quick check
+//!    passes on the next run. A mismatch (the base changed meanwhile, a broken
+//!    patch) leaves the destination untouched and the caller falls back to a whole
+//!    upload.
 //!
 //! Wire formats, all integers big-endian:
 //! - signature: `SWSG` 0x01, base length u64, block u32, block count u32, then per
@@ -46,8 +48,8 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 use swiss_host::services::action::CancelHandle;
 use swiss_host::services::remote::{
-    RemoteExecEvent, RemoteExecRequest, RemoteTransportRegistry, EXEC_EVENT_QUEUE,
-    REMOTE_CHUNK_BYTES,
+    RemoteError, RemoteExecEvent, RemoteExecRequest, RemoteTransportRegistry,
+    EXEC_EVENT_QUEUE, REMOTE_CHUNK_BYTES,
 };
 
 use crate::target::RemoteTarget;
@@ -81,8 +83,9 @@ const MAX_CANDIDATES: usize = 16;
 const FILTER_BITS: u32 = 20;
 
 /// The remote half: `python3 - sig BASE BLOCK` answers the signature on stdout;
-/// `python3 - apply BASE PATCH DEST` rebuilds DEST. Python 3.5+ only, standard library
-/// only, so a stock RHEL/Debian/Ubuntu server runs it as is.
+/// `python3 - apply BASE PATCH DEST [MTIME_SECS]` rebuilds DEST and stamps
+/// MTIME_SECS as its mtime when given. Python 3.5+ only, standard library only,
+/// so a stock RHEL/Debian/Ubuntu server runs it as is.
 const REMOTE_SCRIPT: &str = r#"import hashlib, os, stat, struct, sys, tempfile, zlib
 
 def sig(path, bs):
@@ -106,7 +109,7 @@ def sig(path, bs):
     out.write(whole.digest())
     out.flush()
 
-def apply(base, patch, dest):
+def apply(base, patch, dest, mtime=None):
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest) or '.',
                                prefix='.' + os.path.basename(dest) + '.', suffix='.swiss-part')
     try:
@@ -155,6 +158,8 @@ def apply(base, patch, dest):
             os.umask(mask)
             mode = 0o666 & ~mask
         os.chmod(tmp, mode)
+        if mtime is not None:
+            os.utime(tmp, (mtime, mtime))
         os.replace(tmp, dest)
         tmp = None
     finally:
@@ -171,7 +176,8 @@ def apply(base, patch, dest):
 if sys.argv[1] == 'sig':
     sig(sys.argv[2], int(sys.argv[3]))
 elif sys.argv[1] == 'apply':
-    apply(sys.argv[2], sys.argv[3], sys.argv[4])
+    apply(sys.argv[2], sys.argv[3], sys.argv[4],
+          int(sys.argv[5]) if len(sys.argv) > 5 else None)
 else:
     raise SystemExit('swiss delta: unknown mode')
 "#;
@@ -269,7 +275,7 @@ impl Signature {
         }
         let mut weak = Vec::with_capacity(count);
         let mut strong = Vec::with_capacity(count);
-        for row in bytes[SIG_HEAD..SIG_HEAD + count * SIG_ROW].chunks_exact(SIG_ROW) {
+        for row in bytes[SIG_HEAD..SIG_HEAD + count * SIG_ROW].as_chunks::<SIG_ROW>().0 {
             weak.push(u32::from_be_bytes(row[..4].try_into().unwrap_or_default()));
             let mut s = [0u8; STRONG_LEN];
             s.copy_from_slice(&row[4..]);
@@ -579,9 +585,16 @@ pub async fn upload_delta(
     base_path: &str,
     cancel: &CancelHandle,
 ) -> Result<DeltaSent, DeltaError> {
-    let local_len = std::fs::metadata(local)
-        .map_err(|err| DeltaError::Fallback(format!("read {}: {err}", local.display())))?
-        .len();
+    let meta = std::fs::metadata(local)
+        .map_err(|err| DeltaError::Fallback(format!("read {}: {err}", local.display())))?;
+    let local_len = meta.len();
+    // The rebuilt destination carries the local mtime, so the next quick check
+    // passes without a content round trip.
+    let local_secs = meta
+        .modified()
+        .ok()
+        .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
     let block = block_size_for(local_len);
     let (code, sig_bytes, stderr) = run_script(
         registry,
@@ -625,20 +638,17 @@ pub async fn upload_delta(
             return Err(err);
         }
     };
-    let (code, _, stderr) = run_script(
-        registry,
-        target,
-        holder,
-        vec![
-            "apply".into(),
-            base_path.into(),
-            patch_path.clone(),
-            remote_path.into(),
-        ],
-        64 * 1024,
-        cancel,
-    )
-    .await?;
+    let mut apply_args = vec![
+        "apply".into(),
+        base_path.into(),
+        patch_path.clone(),
+        remote_path.into(),
+    ];
+    if let Some(secs) = local_secs {
+        apply_args.push(secs.to_string());
+    }
+    let (code, _, stderr) =
+        run_script(registry, target, holder, apply_args, 64 * 1024, cancel).await?;
     if code != 0 {
         // The script removes its patch itself; this covers a script that never ran.
         remove_quietly(registry, target, holder, &patch_path).await;
@@ -702,22 +712,24 @@ async fn send_patch(
     Ok(stats)
 }
 
-/// Run the remote script in one mode; answers (exit code, stdout, stderr's first line).
-async fn run_script(
+/// Run one remote command to completion and capture bounded stdout plus the
+/// last line of stderr - the plumbing the delta script and sync's content check
+/// share. `argv` travels as argv, never spliced into a command string: the one
+/// quoting step lives in the transport (SPEC §remote.security).
+pub(crate) async fn capture_exec(
     registry: &Arc<RemoteTransportRegistry>,
     target: &RemoteTarget,
     holder: &str,
-    args: Vec<String>,
+    argv: Vec<String>,
+    stdin: Option<String>,
     stdout_cap: usize,
     cancel: &CancelHandle,
-) -> Result<(i32, Vec<u8>, String), DeltaError> {
-    let mut argv = vec!["python3".to_string(), "-".to_string()];
-    argv.extend(args);
+) -> Result<(i32, Vec<u8>, String), RemoteError> {
     let request = RemoteExecRequest {
         argv,
         env: Vec::new(),
         cwd: None,
-        stdin: Some(REMOTE_SCRIPT.to_string()),
+        stdin,
     };
     let (tx, mut rx) = tokio::sync::mpsc::channel(EXEC_EVENT_QUEUE);
     let exec = registry.exec(&target.endpoint, holder, request, tx, cancel.clone());
@@ -754,14 +766,11 @@ async fn run_script(
     }
     let end = match result {
         Ok(end) => end,
-        Err(swiss_host::services::remote::RemoteError::Canceled(_)) => {
-            return Err(DeltaError::Canceled)
-        }
-        Err(err) => return Err(DeltaError::Fallback(format!("the delta step failed: {err}"))),
+        Err(err) => return Err(err),
     };
     if overflow {
-        return Err(DeltaError::Fallback(
-            "the target answered more than a block signature".into(),
+        return Err(RemoteError::Failed(
+            "the target answered more than the command's output cap".into(),
         ));
     }
     let reason = String::from_utf8_lossy(&stderr)
@@ -771,6 +780,33 @@ async fn run_script(
         .unwrap_or("no error text")
         .to_string();
     Ok((end.exit_code, stdout, reason))
+}
+
+/// Run the remote script in one mode; answers (exit code, stdout, stderr's first line).
+async fn run_script(
+    registry: &Arc<RemoteTransportRegistry>,
+    target: &RemoteTarget,
+    holder: &str,
+    args: Vec<String>,
+    stdout_cap: usize,
+    cancel: &CancelHandle,
+) -> Result<(i32, Vec<u8>, String), DeltaError> {
+    let mut argv = vec!["python3".to_string(), "-".to_string()];
+    argv.extend(args);
+    capture_exec(
+        registry,
+        target,
+        holder,
+        argv,
+        Some(REMOTE_SCRIPT.to_string()),
+        stdout_cap,
+        cancel,
+    )
+    .await
+    .map_err(|err| match err {
+        RemoteError::Canceled(_) => DeltaError::Canceled,
+        other => DeltaError::Fallback(format!("the delta step failed: {other}")),
+    })
 }
 
 async fn remove_quietly(
@@ -1115,16 +1151,31 @@ mod tests {
         let patch_path = dir.join(".app-2.jar.0000.swiss-delta");
         let dest = dir.join("app-2.jar");
         std::fs::write(&patch_path, &patch).expect("patch");
+        // The mtime the destination must carry once the apply is done.
+        let mtime = 1_234_567_890u64;
         let paths = [
             "apply".to_string(),
             base_path.to_string_lossy().into_owned(),
             patch_path.to_string_lossy().into_owned(),
             dest.to_string_lossy().into_owned(),
+            mtime.to_string(),
         ];
         let args: Vec<&str> = paths.iter().map(String::as_str).collect();
         let out = run_python(&python, &args);
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         assert!(std::fs::read(&dest).expect("dest") == new, "the python rebuild differs");
+        let stamped = std::fs::metadata(&dest)
+            .expect("the destination stats")
+            .modified()
+            .expect("its mtime reads");
+        assert_eq!(
+            stamped
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("since the epoch")
+                .as_secs(),
+            mtime,
+            "the destination carries the local mtime"
+        );
         assert!(!patch_path.exists(), "the patch is removed");
 
         // A corrupted patch fails and leaves the destination as it was.
