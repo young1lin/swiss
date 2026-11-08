@@ -180,6 +180,13 @@ resolved by the gateway process, not reliably from the caller's current director
 `.git/`, `.swiss/`, `target/`, and `node_modules/` plus every `--exclude`; it never
 deletes remote files. Use push/pull, not write/cat, for binary or large files.
 
+A changed file of 1 MiB or more goes up as a delta against its previous version when the target
+has python3: only the changed blocks cross the wire, and the file is rebuilt, checked by sha256
+and renamed into place. A push to a new name (`app-26.jar`) takes the delta against the newest
+same-extension sibling of similar size; `--base app-25.jar` names it instead. Without python3,
+or when a delta fails, the whole file goes up and the run says why. `--no-delta` sends whole
+files. The summary line shows it: `1 uploaded (171634451 bytes; 1 by delta, 931000 bytes sent)`.
+
 For exact stdin redirection:
 
 ```bash

@@ -87,7 +87,7 @@ mounted it).
 | Action | Input (strict; unknown fields refused) | Needs |
 |---|---|---|
 | `remote.exec` | `{target, argv[], env?: {NAME: value}, cwd?, stdin?, timeoutMs?}` | `exec` |
-| `remote.sync` | `{target, source, exclude?[], verbose?, to?}` — upload a local tree, or one file (`to` names it remotely) | `sync` |
+| `remote.sync` | `{target, source, exclude?[], verbose?, to?, delta?, base?}` — upload a local tree, or one file (`to` names it remotely) | `sync` |
 | `remote.pull` | `{target, remote, to?, verbose?}` — download one file or a directory tree | `sync` |
 | `remote.cat` | `{target, remote}` — one file's text, at most 128 KiB ("use remote.pull instead") | `files` or `sync` |
 | `remote.write` | `{target, remote, content}` — create or overwrite one file with the whole content | `files` or `sync` |
@@ -118,10 +118,26 @@ mounted it).
   and uploads a file whose remote size differs or that is missing. Size is the only comparison:
   an edit that keeps the byte count is not re-sent (a known gap). Caps: 20,000 files, depth
   32. Pull caps: 2,000 files, depth 32. Both report compactly — a summary line
-  (`sync: N scanned, N uploaded (N bytes), N up to date`), one line per file only when
-  `verbose`.
-- **Writes are not atomic**: a remote file is streamed in 64 KiB chunks over one SFTP session
-  and overwritten in place.
+  (`sync: N scanned, N uploaded (N bytes), N up to date`, with `; N by delta, N bytes sent`
+  inside the parentheses when a delta went), one line per file only when `verbose`. The
+  outcome's meta carries `delta` (files sent as a delta) and `sent` (content bytes that crossed
+  the wire).
+- **Delta.** A changed file of 1 MiB or more (`DELTA_MIN_BYTES`) whose previous version is on
+  the target goes up as a delta — rsync's algorithm, no rsync on either side. The target
+  computes block signatures (adler32 weak, sha256 cut to 16 bytes strong; the block is
+  √len rounded up to a power of two, within 4–128 KiB) with a python3 script sent as stdin.
+  The gateway rolls the weak checksum over the local file and uploads a patch of copy runs and
+  literal bytes to a hidden `.<name>.<hex>.swiss-delta` beside the destination. The script
+  rebuilds into a temporary in the same directory, checks the whole file's sha256, and renames
+  it over the destination. The previous version is the destination itself; for a single file
+  whose destination does not exist yet it is `base` when given, else the newest sibling with the
+  same extension (any case), not a dot file, within ×2 of the size — rsync's `--fuzzy`. A target
+  without python3 (exit 127) turns delta off for the rest of the run with one note; any other
+  delta failure sends that file whole with a note naming the reason, and the patch is removed.
+  `delta: false` runs nothing remote; `base` with `delta: false`, or `base` on a tree, is
+  refused.
+- **Whole-file writes are not atomic**: a remote file is streamed in 64 KiB chunks over one SFTP
+  session and overwritten in place. A delta write is: the rename lands the whole file or nothing.
 - **Cancel is an outcome**, not an error: `canceled: true`, `ok: false`. The channel is closed
   from this side, a bounded drain (3 s) collects what the far side flushes, and the run
   resolves as canceled — no future-dropping pretence.
@@ -315,8 +331,8 @@ swiss remote endpoints | targets | resolve [name]
 swiss remote target add <id> --endpoint <id|unique-label> --root <path> [--caps exec,sync,files]
 swiss remote target set <id> [--endpoint …] [--root …] [--caps …] [--label …] | target remove <id>
 swiss remote exec [name] [--cwd DIR] [--env NAME=VALUE]… [--stdin-file PATH|-] [--timeout 2h] [--detach] [--] ARGV…
-swiss remote sync [name] [--source PATH] [--exclude PATTERN]… [--verbose]
-swiss remote push [name] <file> [--to NAME] | cat [name] <path> | write [name] <path> | pull [name] <path> [--to LOCAL]
+swiss remote sync [name] [--source PATH] [--exclude PATTERN]… [--no-delta] [--verbose]
+swiss remote push [name] <file> [--to NAME] [--base REMOTE] [--no-delta] | cat [name] <path> | write [name] <path> | pull [name] <path> [--to LOCAL]
 swiss run status <id> | logs <id> [-f] | cancel <id>
 swiss run audit [--since 7d|36h|90m|30s|ISO] [--until ISO] [--target t] [--actor a] [--json] [--export DIR]
 ```

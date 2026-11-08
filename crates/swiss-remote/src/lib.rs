@@ -35,6 +35,7 @@
 
 pub mod actions;
 pub mod api;
+pub mod delta;
 pub mod groups;
 pub mod history;
 pub mod project;
@@ -151,6 +152,10 @@ pub mod testing {
         pub programs: Mutex<HashMap<String, FakeProgram>>,
         pub files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
         pub exec_calls: Mutex<Vec<RemoteExecRequest>>,
+        /// When set, `python3 - sig|apply ...` (the delta script) and `rm -f -- path`
+        /// run against the file map through [crate::delta::mirror], the script's Rust
+        /// twin. Off by default: python3 answers 127 like a target without it.
+        pub python: std::sync::atomic::AtomicBool,
     }
 
     impl FakeTransport {
@@ -159,7 +164,59 @@ pub mod testing {
                 programs: Mutex::new(HashMap::new()),
                 files: Arc::new(Mutex::new(HashMap::new())),
                 exec_calls: Mutex::new(Vec::new()),
+                python: std::sync::atomic::AtomicBool::new(false),
             })
+        }
+
+        /// The delta script's two modes and the cleanup `rm`, run on the file map.
+        fn emulate(&self, argv: &[String]) -> Option<FakeProgram> {
+            use crate::delta::mirror;
+            if !self.python.load(std::sync::atomic::Ordering::SeqCst) {
+                return None;
+            }
+            let arg = |i: usize| argv.get(i).cloned().unwrap_or_default();
+            let failed = |text: String| FakeProgram {
+                argv0: "python3".into(),
+                stderr: text.into_bytes(),
+                exit: 1,
+                ..FakeProgram::default()
+            };
+            let mut files = self.files.lock().unwrap();
+            match (arg(0).as_str(), arg(1).as_str(), arg(2).as_str()) {
+                ("python3", "-", "sig") => {
+                    let block: u32 = arg(4).parse().ok()?;
+                    Some(match files.get(&arg(3)) {
+                        Some(base) => FakeProgram {
+                            argv0: "python3".into(),
+                            stdout: mirror::signature(base, block),
+                            ..FakeProgram::default()
+                        },
+                        None => failed(format!("FileNotFoundError: {}", arg(3))),
+                    })
+                }
+                ("python3", "-", "apply") => {
+                    let patch = files.remove(&arg(4)).unwrap_or_default();
+                    let base = files.get(&arg(3)).cloned().unwrap_or_default();
+                    Some(match mirror::apply(&base, &patch) {
+                        Ok(rebuilt) => {
+                            files.insert(arg(5), rebuilt);
+                            FakeProgram {
+                                argv0: "python3".into(),
+                                ..FakeProgram::default()
+                            }
+                        }
+                        Err(reason) => failed(reason),
+                    })
+                }
+                ("rm", "-f", "--") => {
+                    files.remove(&arg(3));
+                    Some(FakeProgram {
+                        argv0: "rm".into(),
+                        ..FakeProgram::default()
+                    })
+                }
+                _ => None,
+            }
         }
 
         pub fn program(&self, argv0: &str, program: FakeProgram) {
@@ -199,12 +256,9 @@ pub mod testing {
             }
             self.exec_calls.lock().unwrap().push(request.clone());
             let argv0 = request.argv.first().cloned().unwrap_or_default();
-            let program = self
-                .programs
-                .lock()
-                .unwrap()
-                .get(&argv0)
-                .cloned()
+            let emulated = self.emulate(&request.argv);
+            let program = emulated
+                .or_else(|| self.programs.lock().unwrap().get(&argv0).cloned())
                 .unwrap_or(FakeProgram {
                     argv0: argv0.clone(),
                     stdout: Vec::new(),
@@ -216,8 +270,10 @@ pub mod testing {
             // The delay itself races cancel (biased): a canceled run must not sit
             // out a 60 s chunk gap to notice - that is the doc's "exits its
             // delayed program cleanly on cancel", and a timeout deadline would
-            // otherwise win the race.
-            for chunk in program.stdout.chunks(3) {
+            // otherwise win the race. A big answer (a delta signature) goes in
+            // bigger pieces so a test does not send it three bytes at a time.
+            let piece = if program.stdout.len() > 4096 { 4096 } else { 3 };
+            for chunk in program.stdout.chunks(piece) {
                 if program.delay_ms > 0 {
                     tokio::select! {
                         biased;

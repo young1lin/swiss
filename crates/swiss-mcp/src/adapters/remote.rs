@@ -153,7 +153,9 @@ fn tool_def(name: &str, known: &[String]) -> Tool {
                         "type": "array",
                         "items": { "type": "string" },
                         "description": "Extra exclude patterns on top of the defaults."
-                    }
+                    },
+                    "delta": { "type": "boolean", "description": "Send a changed file of 1 MiB or more as a delta against its previous version on the target (needs python3 there; falls back to the whole file). Default true." },
+                    "base": { "type": "string", "description": "Single-file upload to a new name: the remote file to take the delta against. Default: the newest sibling with the same extension and a similar size." }
                 },
                 "required": ["target"],
             }),
@@ -302,7 +304,7 @@ struct Plan {
 fn plan(tool: &str, args: &Map<String, Value>) -> Result<Plan, String> {
     let allowed: &[&str] = match tool {
         "remote_exec" => &["target", "argv", "cwd", "env", "timeoutMs"],
-        "remote_sync" => &["target", "source", "to", "exclude"],
+        "remote_sync" => &["target", "source", "to", "exclude", "delta", "base"],
         "remote_pull" => &["target", "remote", "to"],
         "remote_cat" => &["target", "remote"],
         "remote_write" => &["target", "remote", "content"],
@@ -333,10 +335,17 @@ fn plan(tool: &str, args: &Map<String, Value>) -> Result<Plan, String> {
             })
         }
         "remote_sync" => {
-            for key in ["source", "to"] {
+            for key in ["source", "to", "base"] {
                 if let Some(v) = opt_text(args, key)? {
                     input.insert(key.into(), json!(v));
                 }
+            }
+            match args.get("delta") {
+                None | Some(Value::Null) => {}
+                Some(Value::Bool(on)) => {
+                    input.insert("delta".into(), json!(on));
+                }
+                Some(other) => return Err(format!("delta must be a boolean, got {other}")),
             }
             if let Some(exclude) = args.get("exclude") {
                 if !exclude.is_null() {
@@ -964,6 +973,26 @@ mod tests {
             stubs[1].seen.lock().unwrap()[0],
             json!({ "target": "dev", "source": "dist/", "to": "site", "exclude": ["*.map"] })
         );
+        // sync: the delta switch and its base ride along; a non-boolean delta is refused.
+        let out = call(
+            &services,
+            "remote_sync",
+            json!({ "target": "dev", "source": "app.jar", "to": "app-2.jar", "base": "app-1.jar", "delta": true }),
+        )
+        .await;
+        assert!(!is_error(&out), "{}", text_of(&out));
+        assert_eq!(
+            stubs[1].seen.lock().unwrap()[1],
+            json!({ "target": "dev", "source": "app.jar", "to": "app-2.jar", "base": "app-1.jar", "delta": true })
+        );
+        let out = call(
+            &services,
+            "remote_sync",
+            json!({ "target": "dev", "delta": "no" }),
+        )
+        .await;
+        assert!(is_error(&out), "a text delta is refused");
+        assert!(text_of(&out).contains("delta must be a boolean"), "{}", text_of(&out));
         // pull: target + remote + to.
         let out = call(
             &services,

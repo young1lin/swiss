@@ -23,6 +23,8 @@
 //! skip the default excludes (.git, .swiss, target, node_modules - the build
 //! artifacts nobody wants on the far side), compare the size against the remote
 //! stat (size only - a same-size edit is not seen), and stream changed files through the transport's chunked write.
+//! A changed file of 1 MiB or more whose previous version is already on the target goes up as
+//! a delta against it ([crate::delta]); the whole file goes up whenever that is not possible.
 //!
 //! Both operations report COMPACTLY: one line per transferred file and one summary
 //! line at the end - an agent watching a run wants the shape, not a wall of text.
@@ -32,6 +34,7 @@ use std::sync::Arc;
 
 use swiss_host::services::remote::RemoteTransportRegistry;
 
+use crate::delta::{self, DeltaError, DELTA_MIN_BYTES};
 use crate::target::{safe_join, RemoteTarget};
 
 /// The excludes every sync starts from (SPEC §remote.actions), applied by path prefix.
@@ -50,6 +53,12 @@ pub struct SyncOptions {
     pub to: Option<String>,
     /// How much output one line of progress carries (a summary is always printed).
     pub verbose: bool,
+    /// Send big changed files as a delta when the target holds a previous version.
+    pub delta: bool,
+    /// Single-file only: the remote file (relative to the workspace, or absolute) to
+    /// take the delta against when the destination does not exist yet. None guesses a
+    /// sibling with the same extension and a similar size, newest first.
+    pub base: Option<String>,
 }
 
 /// Does `rel` (a slash-separated relative path) match an exclude? A trailing slash
@@ -129,6 +138,10 @@ pub struct SyncReport {
     pub uploaded: usize,
     pub skipped: usize,
     pub bytes: u64,
+    /// Files that went up as a delta.
+    pub delta: usize,
+    /// Bytes that crossed the link: whole files plus delta signatures and patches.
+    pub sent: u64,
     pub failures: Vec<String>,
 }
 
@@ -152,10 +165,13 @@ pub async fn sync_tree(
     // Single-file mode: a FILE source uploads just that one file, under its own
     // name or the caller's `to` name - no walk and no excludes, because the file
     // was named on purpose. A directory walks exactly as before.
-    let pairs: Vec<(PathBuf, String)> = if std::fs::metadata(&opts.source)
+    let single = std::fs::metadata(&opts.source)
         .map(|m| m.is_file())
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if opts.base.is_some() && !single {
+        return Err("base applies to a single-file upload only".into());
+    }
+    let pairs: Vec<(PathBuf, String)> = if single {
         let name = opts.to.clone().or_else(|| {
             opts.source
                 .file_name()
@@ -189,6 +205,8 @@ pub async fn sync_tree(
         ..Default::default()
     };
     let mut made_dirs: Vec<String> = Vec::new();
+    // Cleared once the target turns out to have no python3: no retry per file.
+    let mut delta_ok = opts.delta;
     for (local, rel) in &pairs {
         if cancel.is_cancelled() {
             return Err("the sync was canceled".into());
@@ -201,12 +219,12 @@ pub async fn sync_tree(
             }
         };
         let remote_path = safe_join(&target.workspace_root, rel)?;
-        let changed = match registry.stat(&target.endpoint, &holder, &remote_path).await {
-            Ok(Some(stat)) => stat.size != meta.len(),
-            // A missing file is the normal first-sync case, not an error.
-            Ok(None) => true,
+        let existing = match registry.stat(&target.endpoint, &holder, &remote_path).await {
+            Ok(stat) => stat,
             Err(err) => return Err(format!("stat {remote_path}: {err}")),
         };
+        // A missing file is the normal first-sync case, not an error.
+        let changed = existing.is_none_or(|stat| stat.size != meta.len());
         if !changed {
             report.skipped += 1;
             continue;
@@ -221,18 +239,68 @@ pub async fn sync_tree(
                 made_dirs.push(parent);
             }
         }
+        if delta_ok && meta.len() >= DELTA_MIN_BYTES {
+            let base = match existing {
+                Some(stat) if !stat.is_dir => Some(remote_path.clone()),
+                Some(_) => None,
+                None if single => match &opts.base {
+                    Some(base) => Some(safe_join(&target.workspace_root, base)?),
+                    None => guess_base(registry, target, &holder, &remote_path, meta.len()).await,
+                },
+                None => None,
+            };
+            if let Some(base) = base {
+                match delta::upload_delta(
+                    registry,
+                    target,
+                    &holder,
+                    local,
+                    &remote_path,
+                    &base,
+                    cancel,
+                )
+                .await
+                {
+                    Ok(done) => {
+                        report.uploaded += 1;
+                        report.delta += 1;
+                        report.bytes += done.stats.len;
+                        report.sent += done.wire_bytes;
+                        if opts.verbose {
+                            emit(&format!(
+                                "{rel} ({} bytes, delta against {}: {} bytes sent)\n",
+                                done.stats.len,
+                                shown(&target.workspace_root, &base),
+                                done.wire_bytes
+                            ));
+                        }
+                        continue;
+                    }
+                    Err(DeltaError::Canceled) => return Err("the sync was canceled".into()),
+                    Err(DeltaError::NoPython) => {
+                        delta_ok = false;
+                        emit("python3 is not on the target, so no delta: whole files go up\n");
+                    }
+                    Err(DeltaError::Fallback(reason)) => {
+                        emit(&format!("{rel}: no delta ({reason}); the whole file goes up\n"));
+                    }
+                }
+            }
+        }
         let sent = upload_one(registry, target, &holder, local, rel, &remote_path, cancel).await?;
         report.uploaded += 1;
         report.bytes += sent;
+        report.sent += sent;
         if opts.verbose {
             emit(&format!("{rel} ({sent} bytes)\n"));
         }
     }
     emit(&format!(
-        "sync: {} scanned, {} uploaded ({} bytes), {} up to date{}\n",
+        "sync: {} scanned, {} uploaded ({} bytes{}), {} up to date{}\n",
         report.scanned,
         report.uploaded,
         report.bytes,
+        delta_note(&report),
         report.skipped,
         if report.failures.is_empty() {
             String::new()
@@ -241,6 +309,79 @@ pub async fn sync_tree(
         },
     ));
     Ok(report)
+}
+
+/// The summary's delta clause: empty when every file went up whole, so the line
+/// keeps its old shape.
+pub fn delta_note(report: &SyncReport) -> String {
+    if report.delta == 0 {
+        return String::new();
+    }
+    format!("; {} by delta, {} bytes sent", report.delta, report.sent)
+}
+
+/// A remote path as the run output shows it: relative to the workspace when under it.
+fn shown(root: &str, path: &str) -> String {
+    let root = root.trim_end_matches('/');
+    path.strip_prefix(root)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .unwrap_or(path)
+        .to_string()
+}
+
+/// How many same-extension siblings [guess_base] stats for their modify time.
+const GUESS_CANDIDATES: usize = 8;
+
+/// A base for a destination that does not exist yet (rsync's --fuzzy): a sibling
+/// file with the same extension and a size within a factor of two, the newest of the
+/// closest few. `app-1.4.jar` pushed as `app-1.5.jar` diffs against the 1.4 build. A
+/// wrong guess costs the signature round trip and a patch about the file's size -
+/// never correctness: the rebuild is checked by sha256.
+async fn guess_base(
+    registry: &Arc<RemoteTransportRegistry>,
+    target: &RemoteTarget,
+    holder: &str,
+    remote_path: &str,
+    local_len: u64,
+) -> Option<String> {
+    let (dir, name) = remote_path.rsplit_once('/')?;
+    let dir = if dir.is_empty() { "/" } else { dir };
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, ext)| ext)
+        .filter(|ext| !ext.is_empty())?;
+    let listing = registry.list_dir(&target.endpoint, holder, dir).await.ok()?;
+    let mut candidates: Vec<_> = listing
+        .into_iter()
+        .filter(|entry| {
+            !entry.is_dir
+                && entry.name != name
+                // Dot files include the delta's own temporaries.
+                && !entry.name.starts_with('.')
+                && !entry.name.contains('/')
+                && !entry.name.contains('\\')
+                && entry
+                    .name
+                    .rsplit_once('.')
+                    .is_some_and(|(_, e)| e.eq_ignore_ascii_case(ext))
+                && entry.size >= local_len / 2
+                && entry.size <= local_len.saturating_mul(2)
+        })
+        .collect();
+    candidates.sort_by_key(|entry| entry.size.abs_diff(local_len));
+    candidates.truncate(GUESS_CANDIDATES);
+    let mut best: Option<(u64, String)> = None;
+    for entry in candidates {
+        let path = format!("{}/{}", dir.trim_end_matches('/'), entry.name);
+        let mtime = match registry.stat(&target.endpoint, holder, &path).await {
+            Ok(Some(stat)) if !stat.is_dir => stat.mtime_ms.unwrap_or(0),
+            _ => continue,
+        };
+        if best.as_ref().is_none_or(|(newest, _)| mtime > *newest) {
+            best = Some((mtime, path));
+        }
+    }
+    best.map(|(_, path)| path)
 }
 
 /// Stream one local file up to `remote_path`, one chunk at a time: the file never

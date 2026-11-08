@@ -59,6 +59,10 @@ pub struct RemoteArgs {
     pub to: Option<String>,
     pub source: Option<String>,
     pub exclude: Vec<String>,
+    /// Sync/push (SPEC §remote.actions): `--no-delta` sends whole files; `--base` names
+    /// the remote file a single-file upload's delta is taken against.
+    pub no_delta: bool,
+    pub base: Option<String>,
     pub env: Vec<(String, String)>,
     pub timeout: Option<String>,
     pub detach: bool,
@@ -147,6 +151,8 @@ pub fn parse(argv: &[String]) -> RemoteArgs {
             "--to" => a.to = Some(value(argv, &mut i, &inline)),
             "--source" => a.source = Some(value(argv, &mut i, &inline)),
             "--exclude" => a.exclude.push(value(argv, &mut i, &inline)),
+            "--base" => a.base = Some(value(argv, &mut i, &inline)),
+            "--no-delta" => a.no_delta = true,
             "--env" => {
                 let pair = value(argv, &mut i, &inline);
                 match pair.split_once('=') {
@@ -395,11 +401,11 @@ pub fn usage_text() -> String {
             "run a command on a target",
         ),
         (
-            "sync [name] [--source PATH] [--exclude PATTERN]... [--verbose]",
+            "sync [name] [--source PATH] [--exclude PATTERN]... [--no-delta] [--verbose]",
             "upload the local tree or one file",
         ),
         (
-            "push [name] <file> [--to NAME]",
+            "push [name] <file> [--to NAME] [--base REMOTE] [--no-delta]",
             "upload one file under a remote name",
         ),
         ("cat [name] <path>", "print one remote file to stdout"),
@@ -1235,6 +1241,7 @@ async fn cmd_sync(gw: Gateway, a: &RemoteArgs) -> i32 {
     if !a.exclude.is_empty() {
         input["exclude"] = json!(a.exclude);
     }
+    delta_input(a, &mut input);
     if a.verbose || a.json {
         input["verbose"] = json!(true);
     }
@@ -1280,6 +1287,7 @@ async fn cmd_push(gw: Gateway, a: &RemoteArgs) -> i32 {
     if let Some(to) = &a.to {
         input["to"] = json!(to);
     }
+    delta_input(a, &mut input);
     if a.verbose || a.json {
         input["verbose"] = json!(true);
     }
@@ -1292,6 +1300,17 @@ async fn cmd_push(gw: Gateway, a: &RemoteArgs) -> i32 {
         a,
     )
     .await
+}
+
+/// The delta switches sync and push share (SPEC §remote.actions). Delta is the
+/// action's default, so only an opt-out or a named base travels.
+fn delta_input(a: &RemoteArgs, input: &mut Value) {
+    if a.no_delta {
+        input["delta"] = json!(false);
+    }
+    if let Some(base) = &a.base {
+        input["base"] = json!(base);
+    }
 }
 
 async fn cmd_cat(gw: Gateway, a: &RemoteArgs) -> i32 {
@@ -2483,6 +2502,32 @@ mod tests {
         let a = parse(&argv(&["push", "--target", "dev", "app.exe"]));
         assert_eq!(a.words, vec!["app.exe"]);
         assert_eq!(a.target.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn push_carries_the_delta_switches_only_when_given() {
+        let a = parse(&argv(&[
+            "push", "dev", "app.jar", "--to", "app-2.jar", "--base", "app-1.jar",
+        ]));
+        assert_eq!(a.words, vec!["dev", "app.jar"]);
+        assert_eq!(a.base.as_deref(), Some("app-1.jar"));
+        assert!(!a.no_delta);
+        let mut input = json!({ "target": "dev" });
+        delta_input(&a, &mut input);
+        assert_eq!(input, json!({ "target": "dev", "base": "app-1.jar" }));
+
+        let a = parse(&argv(&["sync", "dev", "--no-delta", "--source=C:/w"]));
+        assert!(a.no_delta);
+        assert_eq!(a.source.as_deref(), Some("C:/w"));
+        let mut input = json!({ "target": "dev" });
+        delta_input(&a, &mut input);
+        assert_eq!(input, json!({ "target": "dev", "delta": false }));
+
+        // Neither flag: the action's default (delta on) applies, nothing extra goes.
+        let a = parse(&argv(&["push", "dev", "app.jar"]));
+        let mut input = json!({ "target": "dev" });
+        delta_input(&a, &mut input);
+        assert_eq!(input, json!({ "target": "dev" }));
     }
 
     #[test]

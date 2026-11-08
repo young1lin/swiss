@@ -430,6 +430,8 @@ struct ParsedSync {
     extra_excludes: Vec<String>,
     verbose: bool,
     to: Option<String>,
+    delta: bool,
+    base: Option<String>,
 }
 
 /// Stream one exec to completion: spawn the transport call, forward events to the
@@ -626,10 +628,11 @@ impl Action for RemoteExecAction {
 
 // --- remote.sync -------------------------------------------------------------------------
 
-const SYNC_FIELDS: [&str; 5] = ["target", "source", "exclude", "verbose", "to"];
+const SYNC_FIELDS: [&str; 7] = ["target", "source", "exclude", "verbose", "to", "delta", "base"];
 
 /// Upload a local tree to the target workspace (SPEC §remote.actions). One-way, no deletes:
-/// changed files (by size) stream up; up-to-date files are skipped; the summary
+/// changed files (by size) stream up - a big one as a delta against its previous
+/// version when the target holds one; up-to-date files are skipped; the summary
 /// line is the last thing the run prints.
 pub struct RemoteSyncAction {
     system: Arc<RemoteSystem>,
@@ -669,12 +672,25 @@ impl RemoteSyncAction {
         }
         let verbose = matches!(obj.get("verbose"), Some(Value::Bool(true)));
         let to = opt_text_field(&obj, "to")?;
+        let delta = match obj.get("delta") {
+            None | Some(Value::Null) => true,
+            Some(Value::Bool(on)) => *on,
+            Some(_) => return Err(ActionError::InvalidInput("delta must be a boolean".into())),
+        };
+        let base = opt_text_field(&obj, "base")?;
+        if base.is_some() && !delta {
+            return Err(ActionError::InvalidInput(
+                "base names a delta base; it contradicts delta: false".into(),
+            ));
+        }
         Ok(ParsedSync {
             target,
             source,
             extra_excludes: extra,
             verbose,
             to,
+            delta,
+            base,
         })
     }
 
@@ -695,6 +711,8 @@ impl RemoteSyncAction {
             extra_excludes: parsed.extra_excludes,
             to: parsed.to,
             verbose: parsed.verbose,
+            delta: parsed.delta,
+            base: parsed.base,
         };
         let report = {
             let mut lines = String::new();
@@ -718,10 +736,16 @@ impl RemoteSyncAction {
         meta.insert("uploaded".into(), json!(report.uploaded));
         meta.insert("skipped".into(), json!(report.skipped));
         meta.insert("bytes".into(), json!(report.bytes));
+        meta.insert("delta".into(), json!(report.delta));
+        meta.insert("sent".into(), json!(report.sent));
         let ok = report.failures.is_empty();
         let summary = format!(
-            "{} scanned, {} uploaded ({} bytes), {} up to date",
-            report.scanned, report.uploaded, report.bytes, report.skipped,
+            "{} scanned, {} uploaded ({} bytes{}), {} up to date",
+            report.scanned,
+            report.uploaded,
+            report.bytes,
+            crate::sync::delta_note(&report),
+            report.skipped,
         );
         let chars = summary.len();
         Ok(ActionOutcome {
@@ -774,7 +798,9 @@ impl Action for RemoteSyncAction {
                     "description": "Extra excludes on top of .git/.swiss/target/node_modules. Trailing slash = directory prefix."
                 },
                 "verbose": { "type": "boolean", "description": "One line per uploaded file; default summary only." },
-                "to": { "type": "string", "description": "Remote name for a single-file upload; default the source file's own name." }
+                "to": { "type": "string", "description": "Remote name for a single-file upload; default the source file's own name." },
+                "delta": { "type": "boolean", "description": "Send a changed file of 1 MiB or more as a delta against its previous version on the target (needs python3 there; falls back to the whole file). Default true." },
+                "base": { "type": "string", "description": "Single-file upload to a new name: the remote file to take the delta against. Default: the newest sibling with the same extension and a similar size." }
             },
             "additionalProperties": false
         })
@@ -1302,7 +1328,7 @@ pub fn register_all(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{system_with_fake, FakeProgram};
+    use crate::testing::{system_with_fake, FakeProgram, FakeTransport};
     use swiss_host::services::action::CancelSource;
     use swiss_host::services::runs::SubmitRequest;
     use swiss_host::services::RuntimeServices;
@@ -1858,6 +1884,227 @@ mod tests {
             "a file with a short last chunk arrives whole"
         );
         drop(files);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Bytes that do not repeat, so a delta has nothing to find by accident.
+    fn delta_noise(len: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 24) as u8
+            })
+            .collect()
+    }
+
+    /// A rebuilt artifact: bytes inserted near the front shift everything after them.
+    fn rebuilt(base: &[u8]) -> Vec<u8> {
+        let mut new = base[..4000].to_vec();
+        new.extend_from_slice(&delta_noise(1500, 99));
+        new.extend_from_slice(&base[4000..]);
+        new
+    }
+
+    fn python_calls(fake: &FakeTransport) -> Vec<Vec<String>> {
+        fake.exec_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.argv.first().map(String::as_str) == Some("python3"))
+            .map(|r| r.argv.clone())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn sync_sends_a_changed_big_file_as_a_delta_against_its_previous_version() {
+        let (system, fake) = system_with_fake();
+        fake.python.store(true, std::sync::atomic::Ordering::SeqCst);
+        let base = delta_noise(1_500_000, 1);
+        fake.files
+            .lock()
+            .unwrap()
+            .insert("/data/ws/proj/app.jar".into(), base.clone());
+        let dir =
+            std::env::temp_dir().join(format!("swiss-dlt-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let new = rebuilt(&base);
+        std::fs::write(dir.join("app.jar"), &new).expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": dir.join("app.jar").display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("delta").unwrap(), 1);
+        assert_eq!(out.meta.get("bytes").unwrap(), new.len() as u64);
+        let sent = out.meta.get("sent").unwrap().as_u64().unwrap();
+        assert!(sent < new.len() as u64 / 10, "sent {sent} of {}", new.len());
+        assert!(out.output.contains("1 by delta"), "{}", out.output);
+        let calls = python_calls(&fake);
+        assert_eq!(calls.len(), 2, "one signature, one apply: {calls:?}");
+        assert_eq!(calls[0][2..4], ["sig", "/data/ws/proj/app.jar"]);
+        assert_eq!(calls[1][2], "apply");
+        let files = fake.files.lock().unwrap();
+        assert!(
+            files.get("/data/ws/proj/app.jar") == Some(&new),
+            "the destination holds the new bytes"
+        );
+        assert!(
+            !files.keys().any(|k| k.contains(".swiss-delta")),
+            "the patch file is gone"
+        );
+        drop(files);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_push_to_a_new_name_takes_the_delta_against_the_newest_sibling() {
+        let (system, fake) = system_with_fake();
+        fake.python.store(true, std::sync::atomic::Ordering::SeqCst);
+        let base = delta_noise(1_200_000, 2);
+        {
+            let mut files = fake.files.lock().unwrap();
+            files.insert("/data/ws/proj/tp25.jar".into(), base.clone());
+            // Wrong extension or far off in size: never a base.
+            files.insert("/data/ws/proj/tp25.zip".into(), base.clone());
+            files.insert("/data/ws/proj/tiny.jar".into(), b"tiny".to_vec());
+        }
+        let dir =
+            std::env::temp_dir().join(format!("swiss-fzz-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let new = rebuilt(&base);
+        std::fs::write(dir.join("build.jar"), &new).expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({
+                    "target": "dev",
+                    "source": dir.join("build.jar").display().to_string(),
+                    "to": "tp26.jar"
+                }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("delta").unwrap(), 1);
+        let calls = python_calls(&fake);
+        assert_eq!(calls[0][2..4], ["sig", "/data/ws/proj/tp25.jar"], "{calls:?}");
+        let files = fake.files.lock().unwrap();
+        assert!(files.get("/data/ws/proj/tp26.jar") == Some(&new), "the new name holds the build");
+        assert!(files.get("/data/ws/proj/tp25.jar") == Some(&base), "the base is untouched");
+        drop(files);
+
+        // An explicit base that does not exist: the whole file goes up, still correct.
+        let out = action
+            .execute(
+                &json!({
+                    "target": "dev",
+                    "source": dir.join("build.jar").display().to_string(),
+                    "to": "tp27.jar",
+                    "base": "missing.jar"
+                }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("delta").unwrap(), 0);
+        assert_eq!(out.meta.get("sent").unwrap(), new.len() as u64);
+        assert!(
+            fake.files.lock().unwrap().get("/data/ws/proj/tp27.jar") == Some(&new),
+            "the fallback upload is whole"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn without_python3_on_the_target_whole_files_go_up_and_it_is_asked_once() {
+        let (system, fake) = system_with_fake();
+        // python stays off: python3 answers 127, the shape of a target without it.
+        let one = delta_noise(1_100_000, 3);
+        let two = delta_noise(1_100_000, 4);
+        {
+            let mut files = fake.files.lock().unwrap();
+            files.insert("/data/ws/proj/one.bin".into(), one[..1000].to_vec());
+            files.insert("/data/ws/proj/two.bin".into(), two[..1000].to_vec());
+        }
+        let dir =
+            std::env::temp_dir().join(format!("swiss-npy-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        std::fs::write(dir.join("one.bin"), &one).expect("w");
+        std::fs::write(dir.join("two.bin"), &two).expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": dir.display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("uploaded").unwrap(), 2);
+        assert_eq!(out.meta.get("delta").unwrap(), 0);
+        assert_eq!(out.meta.get("sent").unwrap(), (one.len() + two.len()) as u64);
+        assert_eq!(python_calls(&fake).len(), 1, "a missing python3 is asked about once");
+        let files = fake.files.lock().unwrap();
+        assert!(files.get("/data/ws/proj/one.bin") == Some(&one));
+        assert!(files.get("/data/ws/proj/two.bin") == Some(&two));
+        drop(files);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn delta_off_runs_no_script_and_base_needs_a_single_file_with_delta_on() {
+        let (system, fake) = system_with_fake();
+        fake.python.store(true, std::sync::atomic::Ordering::SeqCst);
+        let base = delta_noise(1_100_000, 5);
+        fake.files
+            .lock()
+            .unwrap()
+            .insert("/data/ws/proj/app.jar".into(), base.clone());
+        let dir =
+            std::env::temp_dir().join(format!("swiss-dof-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let new = rebuilt(&base);
+        std::fs::write(dir.join("app.jar"), &new).expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({
+                    "target": "dev",
+                    "source": dir.join("app.jar").display().to_string(),
+                    "delta": false
+                }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("delta").unwrap(), 0);
+        assert!(python_calls(&fake).is_empty(), "delta: false runs nothing remote");
+        assert!(fake.files.lock().unwrap().get("/data/ws/proj/app.jar") == Some(&new));
+
+        let refused = action.validate_input(&json!({
+            "target": "dev", "source": "x.jar", "delta": false, "base": "old.jar"
+        }));
+        assert!(refused.unwrap_err().contains("contradicts"));
+        match action
+            .execute(
+                &json!({ "target": "dev", "source": dir.display().to_string(), "base": "old.jar" }),
+                CancelSource::new().handle(),
+            )
+            .await
+        {
+            Err(ActionError::Failed(m)) => assert!(m.contains("single-file"), "{m}"),
+            other => panic!("a tree sync with a base must fail, got {:?}", other.map(|o| o.output)),
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

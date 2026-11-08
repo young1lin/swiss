@@ -22,6 +22,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 async-trait = "0.1"
 thiserror = "2"
+# Delta upload's strong checksum (SPEC §remote.actions); the host already links it.
+sha2 = "0.11"
 # The module's own history database (SPEC §remote.history, planned): the same sqlx 0.9
 # engine family the host store already links, sqlite only.
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "json"] }
