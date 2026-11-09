@@ -52,8 +52,8 @@ import {
 import type { TimelineItem } from "../ui/index.js";
 import { coalescedRead, type CoalescedRead } from "./remote-live.js";
 import { busOn, busOnResync } from "../bus/bus.js";
-import { Module } from "../bus/pb/swiss/bus/v1/bus_pb.js";
-import { HostSub, NoticeSchema, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
+import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, RunChangedSchema, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
 import { HistoryId, RemoteSub, TargetsId } from "../bus/pb/swiss/bus/v1/remote_pb.js";
 
 const PAGE = 20;
@@ -72,6 +72,7 @@ let usage = { bytes: 0, runs: 0 };
 let limits = null as ApiRemoteRunsResponse["limits"] | null;
 let target = ""; // the target filter, "" for all
 let targetIds = [] as string[]; // for the filter select, from the targets table
+let paintedTargets = ""; // the filter's painted list: a targets notice repaints the select, not the page
 let open = {} as Record<number, boolean>; // runId -> true while its row is expanded
 let bodies = {} as Record<number, RemoteRunBody>; // runId -> { text, next, total, done, capped, tail } for opened recorded rows
 let live = {} as Record<number, RemoteLiveBody>; // runId -> { text, cursor } for opened active rows
@@ -443,7 +444,9 @@ async function pullLive(id: number): Promise<void> {
     const pre = itemEl(id)?.querySelector(":scope > .tl-body [data-rlive] > pre");
     if (pre) pre.textContent = (l.capped ? tr("remoteRuns.liveCappedTail") + "\n" : "") + l.text;
   }
-  if (j.terminal) void refresh(); // the run moved into the record: repaint from it
+  // The run moved into the record: re-read through the owning route, coalesced - a burst of
+  // terminals still costs one /api/remote/runs, never one per open row (SPEC §remote.panel).
+  if (j.terminal) reRead?.push();
 }
 
 function armLive(): void {
@@ -546,6 +549,7 @@ function keptText(): string {
  *  (paintHead), so the search box keeps its text, caret and focus while someone types. */
 function render(): void {
   painted = signature();
+  paintedTargets = targetIds.join(",");
   const options = [h("option", { value: "" }, tr("remoteRuns.allTargets"))].concat(targetIds.map((id) => {
     return h("option", { value: id, selected: id === target }, id);
   }));
@@ -568,6 +572,27 @@ function render(): void {
       h("div", { id: "rrList" })));
   paintList();
   $("countChip").textContent = countText();
+}
+
+/** Repaint ONLY the filter's options when the target list moved (SPEC §remote.verify: the
+ *  filter follows the table). The select keeps its identity - its skin (ui/select.ts)
+ *  repaints the label on innerHTML writes and builds the dropdown at open - so a targets
+ *  change never rebuilds the head. A target the filter had chosen can vanish: back to All
+ *  and one reload of page 0. */
+function paintTargetFilter(): void {
+  const sel = document.querySelector<HTMLSelectElement>("#rrTarget");
+  if (!sel) return; // not painted yet: render()'s options carry the list
+  const keeping = sel.value;
+  fill(sel, [h("option", { value: "", selected: keeping === "" }, tr("remoteRuns.allTargets"))].concat(targetIds.map((id) => {
+    return h("option", { value: id, selected: id === keeping }, id);
+  })));
+  if (keeping && !targetIds.includes(keeping)) {
+    sel.value = "";
+    target = "";
+    cursors = [null];
+    page = 0;
+    void refresh();
+  }
 }
 
 /** What a poll may change in the head: the budget line and the shell's count. */
@@ -713,6 +738,14 @@ export async function refresh() {
   if (!onScreen) return; // a late continuation of a visit that has ended
   const v = visit;
   if (!(await load(v))) return;
+  // The filter's list is not part of the signature: a targets notice repaints the select
+  // alone, so the rows keep their nodes (and an open live body its place) while the
+  // table moves under them.
+  const idsNow = targetIds.join(",");
+  if (idsNow !== paintedTargets) {
+    paintedTargets = idsNow;
+    paintTargetFilter();
+  }
   // A poll that changed nothing repaints nothing: open rows keep their nodes and the
   // output someone is reading stays where it is (the Traffic discipline).
   if (signature() === painted) return;
@@ -728,20 +761,33 @@ export async function refresh() {
 /** Subscribe before the first read (SPEC §remote.panel): every event of the page's topics
  *  re-reads through the owning routes, coalesced as a notice is (remote-live.ts), and every
  *  WELCOME re-reads too. The three topics: this lane's runs (HOST.RUNS `remote` — a run from
- *  any surface appears the moment it is queued or moves), the record (REMOTE.HISTORY — a run
- *  filed, Clear, retention), and the target table (REMOTE.TARGETS — the filter's list). */
+ *  any surface appears the moment it is queued or moves; the body is a RunChanged, not a bare
+ *  notice), the record (REMOTE.HISTORY — a run filed, Clear, retention), and the target table
+ *  (REMOTE.TARGETS — the filter's list).
+ *
+ *  Only a targets move (or a resync) re-reads the target table: a run event never touches it,
+ *  and re-reading /api/remote/targets on every run move was a request the page did not owe
+ *  (SPEC §remote.verify). */
 function subscribeLive(): void {
   stopLive();
+  let targetsDirty = false; // mount's own load paints the filter's list before the first read
   reRead = coalescedRead(async () => {
-    await loadTargets();
+    if (targetsDirty) {
+      targetsDirty = false;
+      await loadTargets();
+    }
     await refresh();
   });
   const push = (): void => { reRead?.push(); };
+  const targetsMoved = (): void => {
+    targetsDirty = true;
+    reRead?.push();
+  };
   offs = [
-    busOnResync(push),
-    busOn({ module: Module.HOST, sub: HostSub.RUNS, key: "remote" }, RunsId.RUNS_CHANGED, NoticeSchema, push),
-    busOn({ module: Module.REMOTE, sub: RemoteSub.TARGETS, key: "" }, TargetsId.CHANGED, NoticeSchema, push),
-    busOn({ module: Module.REMOTE, sub: RemoteSub.HISTORY, key: "" }, HistoryId.CHANGED, NoticeSchema, push),
+    busOnResync(targetsMoved),
+    busOn({ module: Module.HOST, sub: HostSub.RUNS, key: "remote" }, RunsId.RUNS_CHANGED, RunChangedSchema, push),
+    busOn({ module: Module.REMOTE, sub: RemoteSub.TARGETS, key: "" }, TargetsId.TARGETS_CHANGED, NoticeSchema, targetsMoved),
+    busOn({ module: Module.REMOTE, sub: RemoteSub.HISTORY, key: "" }, HistoryId.HISTORY_CHANGED, NoticeSchema, push),
   ];
 }
 
@@ -769,6 +815,7 @@ export function unmount() {
   canceling = {};
   adopting = {};
   painted = "";
+  paintedTargets = "";
   page = 0;
   cursors = [null];
   target = "";

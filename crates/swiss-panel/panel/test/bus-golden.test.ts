@@ -26,6 +26,7 @@ import {
   FrameSchema,
   HelloSchema,
   Kind,
+  NoticeSchema,
   PingSchema,
   PongSchema,
   TopicsSchema,
@@ -39,7 +40,7 @@ import {
   SaveMode,
 } from "../src/bus/pb/swiss/bus/v1/data_pb.js";
 import { PrefsSchema } from "../src/bus/pb/swiss/bus/v1/panel_pb.js";
-import { NoticeSchema, RunChangedSchema, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
+import { RunChangedSchema, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 import { HEARTBEAT_MS, MAX_FRAME, PONG_DEADLINE_MS, PROTOCOL, RECONNECT_MAX_MS, RECONNECT_MIN_MS, RECONNECT_NOTICE_MS, REQUEST_TIMEOUT_MS } from "../src/bus/link.js";
 
 const PING_HEX = "1001180220012807420708c0ab93af9a34";

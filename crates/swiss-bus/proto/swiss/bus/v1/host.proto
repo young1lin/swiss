@@ -19,8 +19,8 @@ enum HostSub {
 }
 
 enum RemoteSeatId {
-  REMOTE_SEAT_ID_UNSPECIFIED = 0;
-  REMOTE_SEAT_ID_CHANGED = 1;
+  REMOTE_SEAT_UNSPECIFIED = 0;
+  REMOTE_SEAT_CHANGED = 1;
 }
 
 enum RunsId {
@@ -56,8 +56,4 @@ message RunChanged {
   optional int32 exit_code = 11;
 }
 
-// CHANGED. The notice is the whole content: a page re-reads the endpoints
-// through /api/remote (SPEC §remote.security — the inventory never rides the bus).
-message Notice {
 
-}

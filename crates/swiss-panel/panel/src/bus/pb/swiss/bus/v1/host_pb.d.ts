@@ -92,21 +92,6 @@ export declare type RunChanged = Message<"swiss.bus.v1.RunChanged"> & {
 export declare const RunChangedSchema: GenMessage<RunChanged>;
 
 /**
- * CHANGED. The notice is the whole content: a page re-reads the endpoints
- * through /api/remote (SPEC §remote.security — the inventory never rides the bus).
- *
- * @generated from message swiss.bus.v1.Notice
- */
-export declare type Notice = Message<"swiss.bus.v1.Notice"> & {
-};
-
-/**
- * Describes the message swiss.bus.v1.Notice.
- * Use `create(NoticeSchema)` to create a new message.
- */
-export declare const NoticeSchema: GenMessage<Notice>;
-
-/**
  * @generated from enum swiss.bus.v1.HostSub
  */
 export enum HostSub {
@@ -136,14 +121,14 @@ export declare const HostSubSchema: GenEnum<HostSub>;
  */
 export enum RemoteSeatId {
   /**
-   * @generated from enum value: REMOTE_SEAT_ID_UNSPECIFIED = 0;
+   * @generated from enum value: REMOTE_SEAT_UNSPECIFIED = 0;
    */
-  UNSPECIFIED = 0,
+  REMOTE_SEAT_UNSPECIFIED = 0,
 
   /**
-   * @generated from enum value: REMOTE_SEAT_ID_CHANGED = 1;
+   * @generated from enum value: REMOTE_SEAT_CHANGED = 1;
    */
-  CHANGED = 1,
+  REMOTE_SEAT_CHANGED = 1,
 }
 
 /**

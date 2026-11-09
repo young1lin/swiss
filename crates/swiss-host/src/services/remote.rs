@@ -321,7 +321,7 @@ impl RemoteTransportRegistry {
         self.bus.publish(
             v1::Module::Host as u32,
             v1::HostSub::RemoteSeat as u32,
-            v1::RemoteSeatId::Changed as u32,
+            v1::RemoteSeatId::RemoteSeatChanged as u32,
             "",
             "",
             body,
@@ -1126,7 +1126,10 @@ mod tests {
                 loop {
                     let frame = self.next().await;
                     if frame.kind == v1::Kind::Event as i32 {
-                        // A notice landing mid-handshake is parked as a frame, not dropped.
+                        // A notice landing mid-request is dropped: request_at answers the
+                        // request it asked for, and a notice() that follows reads the
+                        // next frame the seat sends. The tests pair each notice with the
+                        // move that caused it, so none arrives mid-request today.
                         continue;
                     }
                     assert_eq!(frame.reply_to, seq);
@@ -1138,7 +1141,7 @@ mod tests {
                 let frame = self.next().await;
                 assert_eq!(frame.module, v1::Module::Host as u32);
                 assert_eq!(frame.sub, v1::HostSub::RemoteSeat as u32);
-                assert_eq!(frame.id, v1::RemoteSeatId::Changed as u32);
+                assert_eq!(frame.id, v1::RemoteSeatId::RemoteSeatChanged as u32);
                 assert_eq!(frame.kind, v1::Kind::Event as i32);
                 assert!(frame.body.is_empty(), "a notice carries no body");
                 frame

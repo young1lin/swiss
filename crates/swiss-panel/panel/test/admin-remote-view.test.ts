@@ -31,8 +31,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { installBus, type BusSocket } from "../src/bus/bus.js";
 import { create, fromBinary, toBinary } from "../src/bus/codec.js";
-import { FrameSchema, Kind, LinkId, Module, TopicId, TopicsSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
-import { HostSub, NoticeSchema, RemoteSeatId, RunsId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
+import { FrameSchema, Kind, LinkId, Module, NoticeSchema, TopicId, TopicsSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, RemoteSeatId, RunsId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 import { HistoryId, RemoteSub, TargetsId } from "../src/bus/pb/swiss/bus/v1/remote_pb.js";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view is driven by its
@@ -349,9 +349,9 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     serve([BUILD]);
     await view.mount();
     requests = [];
-    sock.receive(noticeFrame(10 /* Module.REMOTE */, RemoteSub.TARGETS, TargetsId.CHANGED));
-    sock.receive(noticeFrame(10, RemoteSub.TARGETS, TargetsId.CHANGED));
-    sock.receive(noticeFrame(10, RemoteSub.TARGETS, TargetsId.CHANGED));
+    sock.receive(noticeFrame(10 /* Module.REMOTE */, RemoteSub.TARGETS, TargetsId.TARGETS_CHANGED));
+    sock.receive(noticeFrame(10, RemoteSub.TARGETS, TargetsId.TARGETS_CHANGED));
+    sock.receive(noticeFrame(10, RemoteSub.TARGETS, TargetsId.TARGETS_CHANGED));
     await settleMs(180);
     const reads = requests.filter((q) => q.path === "/api/remote/targets");
     // A burst of three notices costs one re-read (the coalescing contract).
@@ -375,7 +375,7 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect(requests.filter((q) => q.path === "/api/remote/runs?limit=1&target=build").length).toBe(1);
     // A record that moved may have moved what the cached answers said: the notice drops
     // the visit's cache, so the re-read asks the record again (SPEC §remote.panel).
-    sock.receive(noticeFrame(10, RemoteSub.HISTORY, HistoryId.CHANGED));
+    sock.receive(noticeFrame(10, RemoteSub.HISTORY, HistoryId.HISTORY_CHANGED));
     await settleMs(180);
     expect(requests.filter((q) => q.path === "/api/remote/runs?limit=1&target=build").length).toBe(2);
   });
@@ -655,10 +655,10 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     view.unmount();
     expect(topicFrames(TopicId.UNSUBSCRIBE).topics, "every topic leaves with id 2").toEqual(TARGETS_TOPICS);
     requests = [];
-    sock.receive(noticeFrame(Module.HOST, HostSub.REMOTE_SEAT, RemoteSeatId.CHANGED));
-    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.TARGETS, TargetsId.CHANGED));
+    sock.receive(noticeFrame(Module.HOST, HostSub.REMOTE_SEAT, RemoteSeatId.REMOTE_SEAT_CHANGED));
+    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.TARGETS, TargetsId.TARGETS_CHANGED));
     sock.receive(noticeFrame(Module.HOST, HostSub.RUNS, RunsId.RUNS_CHANGED, "remote"));
-    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.HISTORY, HistoryId.CHANGED));
+    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.HISTORY, HistoryId.HISTORY_CHANGED));
     await settleMs(250);
     expect(requests, "a page that went away reads nothing").toEqual([]);
   });

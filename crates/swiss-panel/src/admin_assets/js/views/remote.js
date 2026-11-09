@@ -45,8 +45,8 @@ import { actionBtn } from "../ui/action.js";
 import { commandOf, runOutcome, runTarget } from "./remote-runs.js";
 import { coalescedRead,                    } from "./remote-live.js";
 import { busOn, busOnResync } from "../bus/bus.js";
-import { Module } from "../bus/pb/swiss/bus/v1/bus_pb.js";
-import { HostSub, NoticeSchema, RemoteSeatId, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
+import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, RemoteSeatId, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
 import { HistoryId, RemoteSub, TargetsId } from "../bus/pb/swiss/bus/v1/remote_pb.js";
 
 let targets = []                     ;
@@ -61,7 +61,7 @@ let painted = ""; // structural signature of the drawn list; a poll that changes
 let collapsed = {}                           ; // the groups fold map, loaded once before the first paint
 /* The last-run column (SPEC §panel.pages), read from the run record's own route - no API of its own. */
 let lastRuns = null                                                      ; // target -> its newest run; null: the record did not answer, no column
-let olderLast = {}                                          ; // targets the newest page missed, asked once per visit
+let olderLast = {}                                          ; // targets the newest page missed; dropped again after every history notice
 /* The live wiring (SPEC §remote.panel): one coalesced re-read and the topics that drive it.
  * Module state like the rest of the page's paint, torn down in unmount. */
 let reRead                       = null;
@@ -96,10 +96,12 @@ async function quietJson   (path        )                    {
 }
 
 /** Each target's newest run. ONE read of the record's newest page, folded by target, the
- *  coordinator's in-flight runs first (they are newer than anything recorded). A target that page
- *  missed while older records exist is asked on its own, once per visit: the record answers that
- *  by walking back from its end, and for a target that never ran it walks all of it - fine once,
- *  not every poll. A new run on it lands in the newest page anyway. */
+ *  coordinator's in-flight runs first (they are newer than anything recorded). A target that
+ *  page missed while older records exist is asked on its own - and asked again after every
+ *  REMOTE.HISTORY notice, which drops this cache (SPEC §remote.panel): the record answers by
+ *  walking back from its end, and for a target that never ran it walks all of it, every notice.
+ *  That is the price the reset buys - a Clear must not leave a stale "never ran" - and a new
+ *  run on a listed target lands in the newest page anyway. */
 async function loadLastRuns()                {
   const page = await quietJson                       ("/api/remote/runs?limit=" + RUNS_PAGE);
   if (!page) { lastRuns = null; return; }
@@ -554,12 +556,12 @@ function subscribeLive()       {
   const push = ()       => { reRead?.push(); };
   offs = [
     busOnResync(push),
-    busOn({ module: Module.HOST, sub: HostSub.REMOTE_SEAT, key: "" }, RemoteSeatId.CHANGED, NoticeSchema, push),
-    busOn({ module: Module.REMOTE, sub: RemoteSub.TARGETS, key: "" }, TargetsId.CHANGED, NoticeSchema, push),
+    busOn({ module: Module.HOST, sub: HostSub.REMOTE_SEAT, key: "" }, RemoteSeatId.REMOTE_SEAT_CHANGED, NoticeSchema, push),
+    busOn({ module: Module.REMOTE, sub: RemoteSub.TARGETS, key: "" }, TargetsId.TARGETS_CHANGED, NoticeSchema, push),
     busOn({ module: Module.HOST, sub: HostSub.RUNS, key: "remote" }, RunsId.RUNS_CHANGED, NoticeSchema, push),
     // The record moved (a run filed, Clear, retention): also drop what this visit cached for
     // targets the newest page missed - the next read asks the record again (SPEC §remote.panel).
-    busOn({ module: Module.REMOTE, sub: RemoteSub.HISTORY, key: "" }, HistoryId.CHANGED, NoticeSchema, () => {
+    busOn({ module: Module.REMOTE, sub: RemoteSub.HISTORY, key: "" }, HistoryId.HISTORY_CHANGED, NoticeSchema, () => {
       olderLast = {};
       push();
     }),

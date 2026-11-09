@@ -43,14 +43,14 @@ export declare const RemoteSubSchema: GenEnum<RemoteSub>;
  */
 export enum TargetsId {
   /**
-   * @generated from enum value: TARGETS_ID_UNSPECIFIED = 0;
+   * @generated from enum value: TARGETS_UNSPECIFIED = 0;
    */
-  UNSPECIFIED = 0,
+  TARGETS_UNSPECIFIED = 0,
 
   /**
-   * @generated from enum value: TARGETS_ID_CHANGED = 1;
+   * @generated from enum value: TARGETS_CHANGED = 1;
    */
-  CHANGED = 1,
+  TARGETS_CHANGED = 1,
 }
 
 /**
@@ -63,14 +63,14 @@ export declare const TargetsIdSchema: GenEnum<TargetsId>;
  */
 export enum HistoryId {
   /**
-   * @generated from enum value: HISTORY_ID_UNSPECIFIED = 0;
+   * @generated from enum value: HISTORY_UNSPECIFIED = 0;
    */
-  UNSPECIFIED = 0,
+  HISTORY_UNSPECIFIED = 0,
 
   /**
-   * @generated from enum value: HISTORY_ID_CHANGED = 1;
+   * @generated from enum value: HISTORY_CHANGED = 1;
    */
-  CHANGED = 1,
+  HISTORY_CHANGED = 1,
 }
 
 /**

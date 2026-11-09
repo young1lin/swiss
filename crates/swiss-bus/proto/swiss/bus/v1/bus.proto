@@ -74,6 +74,14 @@ enum TopicId {
   TOPIC_ID_UNSUBSCRIBE = 2;
 }
 
+// A notice's body: empty on purpose, because the notice IS the whole content (SPEC
+// §bus.topics) - a page that hears one re-reads through the owning module's route,
+// where the data is masked (§remote.security). Every topic that publishes a bare
+// notice encodes this; it lives here, beside the link, not in any one module's file.
+message Notice {
+
+}
+
 // The page's first frame (SPEC §bus.link). protocol 1 is the only one this build speaks.
 message Hello {
   uint32 protocol = 1;

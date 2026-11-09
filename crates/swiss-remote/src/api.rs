@@ -928,7 +928,7 @@ mod tests {
                 let frame = self.next().await;
                 assert_eq!(frame.module, v1::Module::Remote as u32);
                 assert_eq!(frame.sub, v1::RemoteSub::Targets as u32);
-                assert_eq!(frame.id, v1::TargetsId::Changed as u32);
+                assert_eq!(frame.id, v1::TargetsId::TargetsChanged as u32);
                 assert_eq!(frame.kind, v1::Kind::Event as i32);
                 assert!(frame.body.is_empty(), "a notice carries no body");
             }

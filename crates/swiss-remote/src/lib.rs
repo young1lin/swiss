@@ -91,23 +91,29 @@ impl RemoteSystem {
     }
 
     /// The run log — what the plugin registers as the coordinator's history sink and
-    /// what /api/remote/runs reads. Opens on first use, once. Every call (re)attaches
-    /// the REMOTE.HISTORY notice: idempotent, and the open passes' deferred notice —
-    /// fired before any subscriber could exist — lands with the first attach.
+    /// what /api/remote/runs reads. Opens on first use, once, and that one open is the
+    /// only attach of the REMOTE.HISTORY notice: a later call must not overwrite
+    /// whatever closure the log now holds, or the log's own moves would publish
+    /// through a closure nobody installed. The open passes' deferred notice — fired
+    /// before any subscriber could exist — lands with that first attach.
     pub fn history(&self) -> Arc<RunHistory> {
-        let history = self
-            .history
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_or_insert_with(|| RunHistory::open(self.history_dir.clone()))
-            .clone();
+        let (history, opened) = {
+            let mut slot = self.history.lock().unwrap_or_else(|e| e.into_inner());
+            let opened = slot.is_none();
+            let history =
+                slot.get_or_insert_with(|| RunHistory::open(self.history_dir.clone())).clone();
+            (history, opened)
+        };
+        if !opened {
+            return history;
+        }
         let bus = self.services.bus.clone();
         history.set_notice(Arc::new(move || {
             let body = swiss_bus::pb::v1::Notice {}.encode_to_vec();
             bus.publish(
                 swiss_bus::pb::v1::Module::Remote as u32,
                 swiss_bus::pb::v1::RemoteSub::History as u32,
-                swiss_bus::pb::v1::HistoryId::Changed as u32,
+                swiss_bus::pb::v1::HistoryId::HistoryChanged as u32,
                 "",
                 "",
                 body,
@@ -145,7 +151,7 @@ impl RemoteSystem {
         self.services.bus.publish(
             swiss_bus::pb::v1::Module::Remote as u32,
             swiss_bus::pb::v1::RemoteSub::Targets as u32,
-            swiss_bus::pb::v1::TargetsId::Changed as u32,
+            swiss_bus::pb::v1::TargetsId::TargetsChanged as u32,
             "",
             "",
             body,

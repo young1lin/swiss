@@ -41,8 +41,8 @@ returning to it polls at once (`visibilitychange`). A poll is the memory reading
 (`/api/memory`, §host.memory), `/api/info` (the version stamp) and the active page's own
 `poll()`. A page whose server state reaches it on the bus (§bus.topics) reads nothing on the
 tick: the Remote pages export no network poll (§remote.panel). The memory chip is a reading,
-not a reload button: clicking it refreshes the reading only. The one explicit view refresh is the `r` key (`refreshNow`), which keeps Data's manual
-reload alive.
+not a reload button: clicking it refreshes the reading only. The one explicit view refresh is
+the `r` key (`refreshNow`), which keeps Data's manual reload alive.
 
 **Pages.** A view module exports a `PageModule`:
 

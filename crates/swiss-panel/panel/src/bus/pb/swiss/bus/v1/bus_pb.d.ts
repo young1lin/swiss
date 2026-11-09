@@ -106,6 +106,23 @@ export declare type Frame = Message<"swiss.bus.v1.Frame"> & {
 export declare const FrameSchema: GenMessage<Frame>;
 
 /**
+ * A notice's body: empty on purpose, because the notice IS the whole content (SPEC
+ * §bus.topics) - a page that hears one re-reads through the owning module's route,
+ * where the data is masked (§remote.security). Every topic that publishes a bare
+ * notice encodes this; it lives here, beside the link, not in any one module's file.
+ *
+ * @generated from message swiss.bus.v1.Notice
+ */
+export declare type Notice = Message<"swiss.bus.v1.Notice"> & {
+};
+
+/**
+ * Describes the message swiss.bus.v1.Notice.
+ * Use `create(NoticeSchema)` to create a new message.
+ */
+export declare const NoticeSchema: GenMessage<Notice>;
+
+/**
  * The page's first frame (SPEC §bus.link). protocol 1 is the only one this build speaks.
  *
  * @generated from message swiss.bus.v1.Hello

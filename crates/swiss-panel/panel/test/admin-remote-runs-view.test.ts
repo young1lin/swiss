@@ -28,8 +28,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { installBus, type BusSocket } from "../src/bus/bus.js";
 import { create, fromBinary, toBinary } from "../src/bus/codec.js";
-import { FrameSchema, Kind, LinkId, Module, TopicId, TopicsSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
-import { HostSub, NoticeSchema, RunChangedSchema, RunsId, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
+import { FrameSchema, Kind, LinkId, Module, NoticeSchema, TopicId, TopicsSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, RunChangedSchema, RunsId, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 import { HistoryId, RemoteSub, TargetsId } from "../src/bus/pb/swiss/bus/v1/remote_pb.js";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view is driven by its
@@ -642,7 +642,7 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     const it17 = item(17);
     // The tick reads nothing here (SPEC §remote.panel): a record notice moves the page,
     // and a re-read that changes nothing repaints nothing - open rows keep their nodes.
-    sock.receive(noticeFrame(10 /* Module.REMOTE */, RemoteSub.HISTORY, HistoryId.CHANGED));
+    sock.receive(noticeFrame(10 /* Module.REMOTE */, RemoteSub.HISTORY, HistoryId.HISTORY_CHANGED));
     await settleMs(180);
     expect(item(17)).toBe(it17);
     expect(it17.classList.contains("open")).toBe(true);
@@ -654,6 +654,40 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(item(30)).toBeTruthy();
     expect(item(17).classList.contains("open")).toBe(true);
     expect(block(17, "Output")?.querySelector("pre")?.textContent).toBe("ok");
+  });
+
+  it("a run event re-reads the record alone - the target table is not asked (SPEC §remote.verify)", async () => {
+    const sock = openBus();
+    serve([finished], []);
+    await view.mount();
+    requests = [];
+    sock.receive(runChangedFrame());
+    await settleMs(200); // the 150 ms coalescing settle
+    expect(requests.some((r) => r.path === "/api/remote/runs?limit=20"), "the record re-read").toBe(true);
+    expect(requests.some((r) => r.path === "/api/remote/targets"), "a run event never touches the target table").toBe(false);
+    await settleMs(1100); // no cap-time straggler either
+    expect(requests.some((r) => r.path === "/api/remote/targets")).toBe(false);
+  });
+
+  it("the target filter follows the table: a targets notice repaints its options, and a vanished choice falls back to All", async () => {
+    const sock = openBus();
+    serve([finished], []);
+    await view.mount();
+    const sel = $("rrTarget") as HTMLSelectElement;
+    sel.value = "dev";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await settleMs(200); // the filter's own coalesced re-read settles
+    // The dev-filtered read must answer, or the refresh that follows the targets notice
+    // gives up before it reaches the filter's repaint.
+    replies["/api/remote/runs?limit=20&target=dev"] = { runs: [], active: [], limits: LIMITS, usage: { bytes: 1536, runs: 1 } };
+    const listBefore = $("rrList");
+    // The table moves: dev is gone, stage arrives - and the run record stays as it was.
+    replies["/api/remote/targets"] = { targets: [{ id: "build", endpoint: "conn-1" }, { id: "stage", endpoint: "conn-1" }], groups: ["default"] };
+    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.TARGETS, TargetsId.TARGETS_CHANGED));
+    await settleMs(400); // the coalesced read, then the fallback read it triggers
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(["", "build", "stage"]);
+    expect(sel.value, "the vanished choice fell back to All").toBe("");
+    expect($("rrList"), "the page was not rebuilt around the select").toBe(listBefore);
   });
 
   it("subscribes to its three topics before the first /api/remote read", async () => {
@@ -694,8 +728,8 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(topicFrames(TopicId.UNSUBSCRIBE).topics, "every topic leaves with id 2").toEqual(RUNS_TOPICS);
     requests = [];
     sock.receive(noticeFrame(Module.HOST, HostSub.RUNS, RunsId.RUNS_CHANGED, "remote"));
-    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.TARGETS, TargetsId.CHANGED));
-    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.HISTORY, HistoryId.CHANGED));
+    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.TARGETS, TargetsId.TARGETS_CHANGED));
+    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.HISTORY, HistoryId.HISTORY_CHANGED));
     await settleMs(250);
     expect(requests, "a page that went away reads nothing").toEqual([]);
   });

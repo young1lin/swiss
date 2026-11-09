@@ -12,7 +12,7 @@ import { enumDesc, fileDesc, messageDesc, tsEnum } from "../../../../../vendor/p
  * Describes the file swiss/bus/v1/bus.proto.
  */
 export const file_swiss_bus_v1_bus = /*@__PURE__*/
-  fileDesc("ChZzd2lzcy9idXMvdjEvYnVzLnByb3RvEgxzd2lzcy5idXMudjEihgEKBUZhdWx0EgwKBGNvZGUYASABKAkSLwoGcGFyYW1zGAIgAygLMh8uc3dpc3MuYnVzLnYxLkZhdWx0LlBhcmFtc0VudHJ5Eg8KB21lc3NhZ2UYAyABKAkaLQoLUGFyYW1zRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASLAAQoFRnJhbWUSDgoGbW9kdWxlGAEgASgNEgsKA3N1YhgCIAEoDRIKCgJpZBgDIAEoDRIgCgRraW5kGAQgASgOMhIuc3dpc3MuYnVzLnYxLktpbmQSCwoDc2VxGAUgASgNEhAKCHJlcGx5X3RvGAYgASgNEgsKA2tleRgHIAEoCRIMCgRib2R5GAggASgMEiIKBWZhdWx0GAkgASgLMhMuc3dpc3MuYnVzLnYxLkZhdWx0Eg4KBm9yaWdpbhgKIAEoCSI5CgVIZWxsbxIQCghwcm90b2NvbBgBIAEoDRIPCgdwYWdlX2lkGAIgASgJEg0KBWJ1aWxkGAMgASgJIn8KB1dlbGNvbWUSEAoIcHJvdG9jb2wYASABKA0SDwoHY29ubl9pZBgCIAEoCRINCgVidWlsZBgDIAEoCRIYCgxoZWFydGJlYXRfbXMYBCABKARCAjACEhEKCW1heF9mcmFtZRgFIAEoDRIVCglzZXJ2ZXJfbXMYBiABKARCAjACIhsKBFBpbmcSEwoHc2VudF9tcxgBIAEoBEICMAIiMgoEUG9uZxITCgdzZW50X21zGAEgASgEQgIwAhIVCglzZXJ2ZXJfbXMYAiABKARCAjACIi4KA0J5ZRInCgZyZWFzb24YASABKA4yFy5zd2lzcy5idXMudjEuQnllUmVhc29uIhYKBUJ1aWxkEg0KBWJ1aWxkGAEgASgJIjEKBVRvcGljEg4KBm1vZHVsZRgBIAEoDRILCgNzdWIYAiABKA0SCwoDa2V5GAMgASgJIi0KBlRvcGljcxIjCgZ0b3BpY3MYASADKAsyEy5zd2lzcy5idXMudjEuVG9waWMqXwoGTW9kdWxlEg4KCk1PRFVMRV9CVVMQABIPCgtNT0RVTEVfSE9TVBAEEg8KC01PRFVMRV9EQVRBEAYSEQoNTU9EVUxFX1JFTU9URRAKEhAKDE1PRFVMRV9QQU5FTBAOKmEKBEtpbmQSFAoQS0lORF9VTlNQRUNJRklFRBAAEhAKDEtJTkRfUkVRVUVTVBABEhEKDUtJTkRfUkVTUE9OU0UQAhIOCgpLSU5EX0VWRU5UEAMSDgoKS0lORF9SRUxBWRAEKnYKCUJ5ZVJlYXNvbhIaChZCWUVfUkVBU09OX1VOU1BFQ0lGSUVEEAASEAoMQllFX1NIVVRET1dOEAESDAoIQllFX1NMT1cQAhIQCgxCWUVfUFJPVE9DT0wQAxIMCghCWUVfSURMRRAEEg0KCUJZRV9MSU1JVBAFKkYKBkJ1c1N1YhIXChNCVVNfU1VCX1VOU1BFQ0lGSUVEEAASEAoMQlVTX1NVQl9MSU5LEAESEQoNQlVTX1NVQl9UT1BJQxACKmoKBkxpbmtJZBIXChNMSU5LX0lEX1VOU1BFQ0lGSUVEEAASEQoNTElOS19JRF9IRUxMTxABEhAKDExJTktfSURfUElORxACEg8KC0xJTktfSURfQllFEAMSEQoNTElOS19JRF9CVUlMRBAEKlUKB1RvcGljSWQSGAoUVE9QSUNfSURfVU5TUEVDSUZJRUQQABIWChJUT1BJQ19JRF9TVUJTQ1JJQkUQARIYChRUT1BJQ19JRF9VTlNVQlNDUklCRRACYgZwcm90bzM");
+  fileDesc("ChZzd2lzcy9idXMvdjEvYnVzLnByb3RvEgxzd2lzcy5idXMudjEihgEKBUZhdWx0EgwKBGNvZGUYASABKAkSLwoGcGFyYW1zGAIgAygLMh8uc3dpc3MuYnVzLnYxLkZhdWx0LlBhcmFtc0VudHJ5Eg8KB21lc3NhZ2UYAyABKAkaLQoLUGFyYW1zRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASLAAQoFRnJhbWUSDgoGbW9kdWxlGAEgASgNEgsKA3N1YhgCIAEoDRIKCgJpZBgDIAEoDRIgCgRraW5kGAQgASgOMhIuc3dpc3MuYnVzLnYxLktpbmQSCwoDc2VxGAUgASgNEhAKCHJlcGx5X3RvGAYgASgNEgsKA2tleRgHIAEoCRIMCgRib2R5GAggASgMEiIKBWZhdWx0GAkgASgLMhMuc3dpc3MuYnVzLnYxLkZhdWx0Eg4KBm9yaWdpbhgKIAEoCSIICgZOb3RpY2UiOQoFSGVsbG8SEAoIcHJvdG9jb2wYASABKA0SDwoHcGFnZV9pZBgCIAEoCRINCgVidWlsZBgDIAEoCSJ/CgdXZWxjb21lEhAKCHByb3RvY29sGAEgASgNEg8KB2Nvbm5faWQYAiABKAkSDQoFYnVpbGQYAyABKAkSGAoMaGVhcnRiZWF0X21zGAQgASgEQgIwAhIRCgltYXhfZnJhbWUYBSABKA0SFQoJc2VydmVyX21zGAYgASgEQgIwAiIbCgRQaW5nEhMKB3NlbnRfbXMYASABKARCAjACIjIKBFBvbmcSEwoHc2VudF9tcxgBIAEoBEICMAISFQoJc2VydmVyX21zGAIgASgEQgIwAiIuCgNCeWUSJwoGcmVhc29uGAEgASgOMhcuc3dpc3MuYnVzLnYxLkJ5ZVJlYXNvbiIWCgVCdWlsZBINCgVidWlsZBgBIAEoCSIxCgVUb3BpYxIOCgZtb2R1bGUYASABKA0SCwoDc3ViGAIgASgNEgsKA2tleRgDIAEoCSItCgZUb3BpY3MSIwoGdG9waWNzGAEgAygLMhMuc3dpc3MuYnVzLnYxLlRvcGljKl8KBk1vZHVsZRIOCgpNT0RVTEVfQlVTEAASDwoLTU9EVUxFX0hPU1QQBBIPCgtNT0RVTEVfREFUQRAGEhEKDU1PRFVMRV9SRU1PVEUQChIQCgxNT0RVTEVfUEFORUwQDiphCgRLaW5kEhQKEEtJTkRfVU5TUEVDSUZJRUQQABIQCgxLSU5EX1JFUVVFU1QQARIRCg1LSU5EX1JFU1BPTlNFEAISDgoKS0lORF9FVkVOVBADEg4KCktJTkRfUkVMQVkQBCp2CglCeWVSZWFzb24SGgoWQllFX1JFQVNPTl9VTlNQRUNJRklFRBAAEhAKDEJZRV9TSFVURE9XThABEgwKCEJZRV9TTE9XEAISEAoMQllFX1BST1RPQ09MEAMSDAoIQllFX0lETEUQBBINCglCWUVfTElNSVQQBSpGCgZCdXNTdWISFwoTQlVTX1NVQl9VTlNQRUNJRklFRBAAEhAKDEJVU19TVUJfTElOSxABEhEKDUJVU19TVUJfVE9QSUMQAipqCgZMaW5rSWQSFwoTTElOS19JRF9VTlNQRUNJRklFRBAAEhEKDUxJTktfSURfSEVMTE8QARIQCgxMSU5LX0lEX1BJTkcQAhIPCgtMSU5LX0lEX0JZRRADEhEKDUxJTktfSURfQlVJTEQQBCpVCgdUb3BpY0lkEhgKFFRPUElDX0lEX1VOU1BFQ0lGSUVEEAASFgoSVE9QSUNfSURfU1VCU0NSSUJFEAESGAoUVE9QSUNfSURfVU5TVUJTQ1JJQkUQAmIGcHJvdG8z");
 
 /**
  * Describes the message swiss.bus.v1.Fault.
@@ -29,60 +29,67 @@ export const FrameSchema = /*@__PURE__*/
   messageDesc(file_swiss_bus_v1_bus, 1);
 
 /**
+ * Describes the message swiss.bus.v1.Notice.
+ * Use `create(NoticeSchema)` to create a new message.
+ */
+export const NoticeSchema = /*@__PURE__*/
+  messageDesc(file_swiss_bus_v1_bus, 2);
+
+/**
  * Describes the message swiss.bus.v1.Hello.
  * Use `create(HelloSchema)` to create a new message.
  */
 export const HelloSchema = /*@__PURE__*/
-  messageDesc(file_swiss_bus_v1_bus, 2);
+  messageDesc(file_swiss_bus_v1_bus, 3);
 
 /**
  * Describes the message swiss.bus.v1.Welcome.
  * Use `create(WelcomeSchema)` to create a new message.
  */
 export const WelcomeSchema = /*@__PURE__*/
-  messageDesc(file_swiss_bus_v1_bus, 3);
+  messageDesc(file_swiss_bus_v1_bus, 4);
 
 /**
  * Describes the message swiss.bus.v1.Ping.
  * Use `create(PingSchema)` to create a new message.
  */
 export const PingSchema = /*@__PURE__*/
-  messageDesc(file_swiss_bus_v1_bus, 4);
+  messageDesc(file_swiss_bus_v1_bus, 5);
 
 /**
  * Describes the message swiss.bus.v1.Pong.
  * Use `create(PongSchema)` to create a new message.
  */
 export const PongSchema = /*@__PURE__*/
-  messageDesc(file_swiss_bus_v1_bus, 5);
+  messageDesc(file_swiss_bus_v1_bus, 6);
 
 /**
  * Describes the message swiss.bus.v1.Bye.
  * Use `create(ByeSchema)` to create a new message.
  */
 export const ByeSchema = /*@__PURE__*/
-  messageDesc(file_swiss_bus_v1_bus, 6);
+  messageDesc(file_swiss_bus_v1_bus, 7);
 
 /**
  * Describes the message swiss.bus.v1.Build.
  * Use `create(BuildSchema)` to create a new message.
  */
 export const BuildSchema = /*@__PURE__*/
-  messageDesc(file_swiss_bus_v1_bus, 7);
+  messageDesc(file_swiss_bus_v1_bus, 8);
 
 /**
  * Describes the message swiss.bus.v1.Topic.
  * Use `create(TopicSchema)` to create a new message.
  */
 export const TopicSchema = /*@__PURE__*/
-  messageDesc(file_swiss_bus_v1_bus, 8);
+  messageDesc(file_swiss_bus_v1_bus, 9);
 
 /**
  * Describes the message swiss.bus.v1.Topics.
  * Use `create(TopicsSchema)` to create a new message.
  */
 export const TopicsSchema = /*@__PURE__*/
-  messageDesc(file_swiss_bus_v1_bus, 9);
+  messageDesc(file_swiss_bus_v1_bus, 10);
 
 /**
  * Describes the enum swiss.bus.v1.Module.
