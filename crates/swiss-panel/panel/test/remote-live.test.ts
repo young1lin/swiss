@@ -74,17 +74,22 @@ describe("coalescedRead (SPEC §bus.topics \"Notices\" - re-reads coalesce)", ()
   });
 
   it("one read in flight, at most one queued behind it", async () => {
+    let reads = 0;
     const parked = parkedRead();
-    const live = coalescedRead(parked.read);
+    const live = coalescedRead(async () => { reads += 1; await parked.read(); });
     live.push();
     await vi.advanceTimersByTimeAsync(150); // the read starts, parked
+    expect(reads, "the first notice starts one read").toBe(1);
     live.push();
     live.push();
     await vi.advanceTimersByTimeAsync(200); // queued behind the parked one
+    expect(reads, "notices arriving during a read never start a second one").toBe(1);
     parked.done();
     await vi.advanceTimersByTimeAsync(1); // the queued read runs, parked again
+    expect(reads, "exactly one queued read follows the finished one").toBe(2);
     parked.done();
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(reads, "a burst of three notices costs no more than one extra read").toBe(2);
     live.stop();
   });
 
@@ -103,12 +108,46 @@ describe("coalescedRead (SPEC §bus.topics \"Notices\" - re-reads coalesce)", ()
   });
 
   it("stop ends the chain: no timer, no queued read, no listener left", async () => {
+    // A pending settle timer must not survive stop(): however much time passes, no read.
+    let reads = 0;
     const parked = parkedRead();
-    const live = coalescedRead(parked.read);
+    const live = coalescedRead(async () => { reads += 1; await parked.read(); });
     live.push();
     live.stop();
     await vi.advanceTimersByTimeAsync(5000);
+    expect(reads, "stop clears the settle and cap timers").toBe(0);
     parked.done();
     await vi.advanceTimersByTimeAsync(5000);
+    expect(reads, "a stopped chain never starts a read later").toBe(0);
+
+    // A read already in flight when a notice queues behind it and stop() follows must
+    // not chain into another read when its promise resolves - the notice has to reach
+    // fire() first, or the queue never holds anything and the stopped check goes untested.
+    let during = 0;
+    const inFlight = parkedRead();
+    const stopped = coalescedRead(async () => { during += 1; await inFlight.read(); });
+    stopped.push();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(during, "the first read is in flight").toBe(1);
+    stopped.push();
+    await vi.advanceTimersByTimeAsync(150); // the notice reaches fire(): queued behind the parked read
+    stopped.stop();
+    inFlight.done();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(during, "no queued read is started after stop()").toBe(1);
+
+    // The visibilitychange listener is unsubscribed, so a hidden page stopped while
+    // held cannot be woken by a later visibilitychange either.
+    let hiddenReads = 0;
+    hidden(true);
+    const removed = vi.spyOn(document, "removeEventListener");
+    const held = coalescedRead(async () => { hiddenReads += 1; });
+    held.push();
+    held.stop();
+    expect(removed.mock.calls.some((call) => call[0] === "visibilitychange")).toBe(true);
+    hidden(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(hiddenReads, "there is no held read left to wake").toBe(0);
   });
 });

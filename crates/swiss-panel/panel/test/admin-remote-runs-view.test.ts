@@ -27,16 +27,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { installBus, type BusSocket } from "../src/bus/bus.js";
-import { create, toBinary } from "../src/bus/codec.js";
-import { FrameSchema, Kind, LinkId, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
-import { NoticeSchema, RunChangedSchema, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
-import { HistoryId, RemoteSub } from "../src/bus/pb/swiss/bus/v1/remote_pb.js";
+import { create, fromBinary, toBinary } from "../src/bus/codec.js";
+import { FrameSchema, Kind, LinkId, Module, TopicId, TopicsSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, NoticeSchema, RunChangedSchema, RunsId, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
+import { HistoryId, RemoteSub, TargetsId } from "../src/bus/pb/swiss/bus/v1/remote_pb.js";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view is driven by its
    page-registry surface (mount / refresh / unmount), so a typed import would add nothing. */
 let view: any;
 let replies: Record<string, unknown> = {};
 let requests: { path: string; method: string }[] = [];
+/* One ordered log for SUBSCRIBE frames and HTTP requests: "subscribe, then read" is an
+   ordering claim, so both halves have to be timed against the same sequence. */
+type WireEntry = { frame?: Uint8Array; get?: string };
+let wire: WireEntry[] = [];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
@@ -58,15 +62,32 @@ class FakeSocket implements BusSocket {
     this.listeners.set(type, list);
   }
   removeEventListener(): void { /* the link outlives each test */ }
-  send(data: Uint8Array): void { this.sent.push(data); }
+  send(data: Uint8Array): void { this.sent.push(data); wire.push({ frame: data }); }
   close(): void { /* never closed under test */ }
-  open(): void {
-    for (const fn of this.listeners.get("open") ?? []) fn(new Event("open"));
+  private emit(type: string, ev: Event): void {
+    for (const fn of this.listeners.get(type) ?? []) fn(ev);
   }
+  open(): void { this.emit("open", new Event("open")); }
+  /** A dropped link, so the bus reconnects and a second WELCOME can be delivered. */
+  drop(): void { this.emit("close", new Event("close")); }
   receive(bytes: Uint8Array): void {
     const copy = new Uint8Array(bytes);
     for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
   }
+  static latest(): FakeSocket {
+    const sock = FakeSocket.all[FakeSocket.all.length - 1];
+    if (!sock) throw new Error("the link did not create a socket");
+    return sock;
+  }
+}
+
+function welcome(): Uint8Array {
+  return toBinary(FrameSchema, create(FrameSchema, {
+    module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
+    body: toBinary(WelcomeSchema, create(WelcomeSchema, {
+      protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
+    })),
+  }));
 }
 
 function openBus(): FakeSocket {
@@ -79,25 +100,42 @@ function openBus(): FakeSocket {
     notice: () => {},
     url: "ws://127.0.0.1/api/bus",
   });
-  const sock = FakeSocket.all[FakeSocket.all.length - 1];
-  if (!sock) throw new Error("the link did not create a socket");
+  const sock = FakeSocket.latest();
   sock.open();
-  sock.receive(toBinary(FrameSchema, create(FrameSchema, {
-    module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
-    body: toBinary(WelcomeSchema, create(WelcomeSchema, {
-      protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
-    })),
-  })));
+  sock.receive(welcome());
   return sock;
 }
 
 /** One notice EVENT frame: an empty body is the whole content of a notice (SPEC §bus.topics). */
-function noticeFrame(module: number, sub: number, id: number): Uint8Array {
+function noticeFrame(module: number, sub: number, id: number, key = ""): Uint8Array {
   return toBinary(FrameSchema, create(FrameSchema, {
-    module, sub, id, kind: Kind.EVENT,
+    module, sub, id, kind: Kind.EVENT, key,
     body: toBinary(NoticeSchema, create(NoticeSchema, {})),
   }));
 }
+
+/** Every topic carried by a TOPIC frame of the given id, and where those frames sat in
+ *  the shared wire log. Decoded from the real bytes, never from a hand-built expectation. */
+function topicFrames(id: number): { at: number[]; topics: { module: number; sub: number; key: string }[] } {
+  const at: number[] = [];
+  const topics: { module: number; sub: number; key: string }[] = [];
+  wire.forEach((entry, i) => {
+    if (!entry.frame) return;
+    const frame = fromBinary(FrameSchema, entry.frame);
+    if (frame.module !== 0 || frame.sub !== 2 || frame.id !== id) return;
+    at.push(i);
+    for (const t of fromBinary(TopicsSchema, frame.body).topics) {
+      topics.push({ module: t.module, sub: t.sub, key: t.key });
+    }
+  });
+  return { at, topics };
+}
+
+const RUNS_TOPICS = [
+  { module: Module.HOST, sub: HostSub.RUNS, key: "remote" },
+  { module: Module.REMOTE, sub: RemoteSub.TARGETS, key: "" },
+  { module: Module.REMOTE, sub: RemoteSub.HISTORY, key: "" },
+];
 
 /** One HOST.RUNS `remote` RunChanged, the frame a queued or started run publishes. */
 function runChangedFrame(): Uint8Array {
@@ -124,6 +162,7 @@ beforeAll(async () => {
       const u = String(url);
       const method = init?.method || "GET";
       requests.push({ path: u, method });
+      wire.push({ get: u });
       const reply = replies[(method !== "GET" ? method + " " : "") + u] ?? replies[u];
       const ok = reply !== undefined;
       return Promise.resolve({ status: ok ? 200 : 404, ok, json: () => Promise.resolve(reply ?? { error: "no stub for " + u }) } as Response);
@@ -136,6 +175,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   requests = [];
+  wire = [];
   view.unmount();
   document.body.innerHTML = shellSkeleton();
 });
@@ -614,6 +654,54 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(item(30)).toBeTruthy();
     expect(item(17).classList.contains("open")).toBe(true);
     expect(block(17, "Output")?.querySelector("pre")?.textContent).toBe("ok");
+  });
+
+  it("subscribes to its three topics before the first /api/remote read", async () => {
+    openBus();
+    serve([finished], []);
+    await view.mount();
+    const firstGet = wire.findIndex((e) => e.get?.startsWith("/api/remote/"));
+    expect(firstGet, "the page did read through its owning route").toBeGreaterThan(-1);
+    const subs = topicFrames(TopicId.SUBSCRIBE);
+    expect(subs.topics, "HOST.RUNS remote, REMOTE.TARGETS, REMOTE.HISTORY").toEqual(RUNS_TOPICS);
+    expect(Math.max(...subs.at), "every TOPIC SUBSCRIBE (module 0, sub 2, id 1) precedes the first read").toBeLessThan(firstGet);
+  });
+
+  it("re-reads exactly once after a second WELCOME while its topics are held", async () => {
+    const sock = openBus();
+    serve([finished], []);
+    await view.mount();
+    requests = [];
+    sock.drop();
+    await settleMs(600); // the link's 500 ms reconnect, with the test's 0.5 jitter
+    const next = FakeSocket.latest();
+    expect(next, "a reconnect built a new socket").not.toBe(sock);
+    next.open();
+    next.receive(welcome());
+    await settleMs(200); // the 150 ms coalescing settle
+    const reads = (): number => requests.filter((r) => r.path === "/api/remote/runs?limit=20").length;
+    expect(reads(), "one coalesced re-read").toBe(1);
+    await settleMs(1200); // no cap-time straggler
+    expect(reads()).toBe(1);
+  });
+
+  it("unmount unsubscribes every topic, and later notice frames cost no request", async () => {
+    const sock = openBus();
+    serve([finished], []);
+    await view.mount();
+    wire = [];
+    view.unmount();
+    expect(topicFrames(TopicId.UNSUBSCRIBE).topics, "every topic leaves with id 2").toEqual(RUNS_TOPICS);
+    requests = [];
+    sock.receive(noticeFrame(Module.HOST, HostSub.RUNS, RunsId.RUNS_CHANGED, "remote"));
+    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.TARGETS, TargetsId.CHANGED));
+    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.HISTORY, HistoryId.CHANGED));
+    await settleMs(250);
+    expect(requests, "a page that went away reads nothing").toEqual([]);
+  });
+
+  it("the Runs page exports no poll (SPEC §remote.panel)", () => {
+    expect(view.poll).toBeUndefined();
   });
 });
 
