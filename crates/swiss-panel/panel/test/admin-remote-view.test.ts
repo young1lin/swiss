@@ -32,7 +32,7 @@ import { fileURLToPath } from "node:url";
 import { installBus, type BusSocket } from "../src/bus/bus.js";
 import { create, fromBinary, toBinary } from "../src/bus/codec.js";
 import { FrameSchema, Kind, LinkId, Module, NoticeSchema, TopicId, TopicsSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
-import { HostSub, RemoteSeatId, RunsId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
+import { HostSub, RemoteSeatId, RunChangedSchema, RunsId, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 import { HistoryId, RemoteSub, TargetsId } from "../src/bus/pb/swiss/bus/v1/remote_pb.js";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view is driven by its
@@ -84,14 +84,14 @@ beforeEach(() => {
 
 const BUILD = { id: "build", label: "Build", endpoint: "conn-1", workspaceRoot: "/data/ws/proj", capabilities: ["exec", "sync"] };
 
-function serve(targets: unknown[], groups?: string[], o: { state?: string; runs?: unknown[]; active?: unknown[]; nextBefore?: number; noRuns?: boolean } = {}) {
+function serve(targets: unknown[], groups?: string[], o: { state?: string; runs?: unknown[]; active?: unknown[]; nextBefore?: number; noRuns?: boolean; size?: number } = {}) {
   replies = {
     "/api/remote/endpoints": { presence: "serving", endpoints: [{ id: "conn-1", label: "Build box", state: o.state || "idle" }] },
     "/api/remote/targets": groups ? { targets, groups } : { targets },
   };
   if (!o.noRuns) {
     replies["/api/remote/runs?limit=100"] = {
-      runs: o.runs || [], active: o.active || [], usage: { bytes: 0, runs: (o.runs || []).length },
+      runs: o.runs || [], active: o.active || [], usage: { bytes: 0, runs: o.size ?? (o.runs || []).length },
       limits: { maxAgeMs: 30 * 86400000, maxTotalBytes: 1, maxRuns: 1, maxOutputBytes: 1 },
       ...(o.nextBefore ? { nextBefore: o.nextBefore } : {}),
     };
@@ -159,6 +159,17 @@ function noticeFrame(module: number, sub: number, id: number, key = ""): Uint8Ar
   return toBinary(FrameSchema, create(FrameSchema, {
     module, sub, id, kind: Kind.EVENT, key,
     body: toBinary(NoticeSchema, create(NoticeSchema, {})),
+  }));
+}
+
+/** One HOST.RUNS `remote` RunChanged; the lane is the run's target. */
+function runChangedFrame(lane: string): Uint8Array {
+  return toBinary(FrameSchema, create(FrameSchema, {
+    module: Module.HOST, sub: HostSub.RUNS, id: RunsId.RUNS_CHANGED, kind: Kind.EVENT, key: "remote",
+    body: toBinary(RunChangedSchema, create(RunChangedSchema, {
+      runId: 61n, revision: 2, state: RunState.RUNNING, action: "remote.exec",
+      owner: "manual", actor: "test", lane, queuedAtMs: BigInt(Date.now()),
+    })),
   }));
 }
 
@@ -361,23 +372,61 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect(requests.filter((q) => q.path === "/api/remote/targets").length).toBe(1);
   });
 
-  it("a history notice drops what the visit cached for targets the newest page missed", async () => {
-    const sock = openBus();
-    serve([BUILD], undefined, {
-      nextBefore: 50,
-      runs: [{ runId: 60, action: "remote.exec", state: "succeeded", exitCode: 0, queuedAt: ago(MIN), endedAt: ago(MIN), meta: { target: "dev" }, input: { target: "dev", argv: ["ls"] } }],
-    });
+  /* build sits past the newest page: its last run is asked on its own (the costly walk). */
+  const DEV_RUN = { runId: 60, action: "remote.exec", state: "succeeded", exitCode: 0, queuedAt: ago(MIN), endedAt: ago(MIN), meta: { target: "dev" }, input: { target: "dev", argv: ["ls"] } };
+  const probes = (): number => requests.filter((q) => q.path === "/api/remote/runs?limit=1&target=build").length;
+  function serveMissed(size: number): void {
+    serve([BUILD], undefined, { nextBefore: 50, runs: [DEV_RUN], size });
     replies["/api/remote/runs?limit=1&target=build"] = {
       runs: [{ runId: 3, action: "remote.exec", state: "succeeded", exitCode: 0, queuedAt: ago(3 * 86400000), endedAt: ago(3 * 86400000), meta: { target: "build" }, input: { target: "build", argv: ["make"] } }],
       active: [], usage: { bytes: 0, runs: 1 },
     };
+  }
+
+  it("a record that only grew keeps the visit's cached answer; the target's own run drops it (SPEC §remote.panel)", async () => {
+    const sock = openBus();
+    serveMissed(150);
     await view.mount();
-    expect(requests.filter((q) => q.path === "/api/remote/runs?limit=1&target=build").length).toBe(1);
-    // A record that moved may have moved what the cached answers said: the notice drops
-    // the visit's cache, so the re-read asks the record again (SPEC §remote.panel).
+    expect(probes()).toBe(1);
+    // A run filed for another target: the record grew, and build's answer still holds.
+    serveMissed(151);
     sock.receive(noticeFrame(10, RemoteSub.HISTORY, HistoryId.HISTORY_CHANGED));
     await settleMs(180);
-    expect(requests.filter((q) => q.path === "/api/remote/runs?limit=1&target=build").length).toBe(2);
+    expect(requests.filter((q) => q.path === "/api/remote/runs?limit=100").length, "the notice re-read the record").toBe(2);
+    expect(probes(), "an append never re-walks the record for build").toBe(1);
+    // build itself runs: its cached answer is moot, the next read asks again.
+    sock.receive(runChangedFrame("build"));
+    await settleMs(180);
+    expect(probes()).toBe(2);
+  });
+
+  it("a record that shrank drops every cached answer - a Clear or a retention pass", async () => {
+    const sock = openBus();
+    serveMissed(150);
+    await view.mount();
+    expect(probes()).toBe(1);
+    serveMissed(120);
+    sock.receive(noticeFrame(10, RemoteSub.HISTORY, HistoryId.HISTORY_CHANGED));
+    await settleMs(180);
+    expect(probes()).toBe(2);
+  });
+
+  it("a run event reads the record alone, decoded as the RunChanged it is", async () => {
+    const sock = openBus();
+    serve([BUILD], undefined, { runs: [] });
+    await view.mount();
+    const r = rowOf("build");
+    expect(r.querySelector(".lrow-col")?.textContent).toBe("No runs");
+    requests = [];
+    serve([BUILD], undefined, {
+      runs: [],
+      active: [{ runId: 61, action: "remote.exec", state: "running", queuedAt: ago(0), startedAt: ago(0), input: { target: "build", argv: ["make"] } }],
+    });
+    sock.receive(runChangedFrame("build"));
+    await settleMs(180);
+    expect(requests.map((q) => q.path), "the endpoints and the target table wait for their own topics").toEqual(["/api/remote/runs?limit=100"]);
+    expect(rowOf("build"), "the column is patched in place").toBe(r);
+    expect(r.querySelector(".lrow-col")?.textContent).toBe(" running");
   });
 
   /* The owner (2026-09-28): "the Remote page should let me run write and exec straight from the

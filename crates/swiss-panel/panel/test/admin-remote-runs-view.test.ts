@@ -37,6 +37,7 @@ import { HistoryId, RemoteSub, TargetsId } from "../src/bus/pb/swiss/bus/v1/remo
 let view: any;
 let replies: Record<string, unknown> = {};
 let requests: { path: string; method: string }[] = [];
+let held: Record<string, Promise<void>> = {}; // a path whose answer waits for its promise
 /* One ordered log for SUBSCRIBE frames and HTTP requests: "subscribe, then read" is an
    ordering claim, so both halves have to be timed against the same sequence. */
 type WireEntry = { frame?: Uint8Array; get?: string };
@@ -165,7 +166,9 @@ beforeAll(async () => {
       wire.push({ get: u });
       const reply = replies[(method !== "GET" ? method + " " : "") + u] ?? replies[u];
       const ok = reply !== undefined;
-      return Promise.resolve({ status: ok ? 200 : 404, ok, json: () => Promise.resolve(reply ?? { error: "no stub for " + u }) } as Response);
+      const res = { status: ok ? 200 : 404, ok, json: () => Promise.resolve(reply ?? { error: "no stub for " + u }) } as Response;
+      const gate = held[u];
+      return gate ? gate.then(() => res) : Promise.resolve(res);
     },
     confirm: () => true,
   });
@@ -176,6 +179,7 @@ beforeAll(async () => {
 beforeEach(() => {
   requests = [];
   wire = [];
+  held = {};
   view.unmount();
   document.body.innerHTML = shellSkeleton();
 });
@@ -678,15 +682,24 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     sel.dispatchEvent(new Event("change", { bubbles: true }));
     await settleMs(200); // the filter's own coalesced re-read settles
     // The dev-filtered read must answer, or the refresh that follows the targets notice
-    // gives up before it reaches the filter's repaint.
-    replies["/api/remote/runs?limit=20&target=dev"] = { runs: [], active: [], limits: LIMITS, usage: { bytes: 1536, runs: 1 } };
+    // gives up before it reaches the filter's repaint. Its slice moved too: a dev run filed.
+    const devRun = { ...finished, runId: 31, meta: { target: "dev" }, input: { ...finished.input, target: "dev" } };
+    replies["/api/remote/runs?limit=20&target=dev"] = { runs: [devRun], active: [], limits: LIMITS, usage: { bytes: 1536, runs: 2 } };
     const listBefore = $("rrList");
+    // The whole record's page 0 answers only when released, so what paints before it is visible.
+    let release = (): void => {};
+    held["/api/remote/runs?limit=20"] = new Promise<void>((r) => { release = r; });
     // The table moves: dev is gone, stage arrives - and the run record stays as it was.
     replies["/api/remote/targets"] = { targets: [{ id: "build", endpoint: "conn-1" }, { id: "stage", endpoint: "conn-1" }], groups: ["default"] };
     sock.receive(noticeFrame(Module.REMOTE, RemoteSub.TARGETS, TargetsId.TARGETS_CHANGED));
-    await settleMs(400); // the coalesced read, then the fallback read it triggers
+    await settleMs(250); // the coalesced read, now waiting on the unfiltered read it fell back to
     expect(Array.from(sel.options).map((o) => o.value)).toEqual(["", "build", "stage"]);
     expect(sel.value, "the vanished choice fell back to All").toBe("");
+    expect(item(31), "a vanished target's slice never paints under All").toBeUndefined();
+    release();
+    await settleMs(50);
+    expect(item(17), "page 0 of the whole record").toBeTruthy();
+    expect(requests.filter((r) => r.path === "/api/remote/runs?limit=20").length, "one fallback read, not a second refresh").toBe(2);
     expect($("rrList"), "the page was not rebuilt around the select").toBe(listBefore);
   });
 

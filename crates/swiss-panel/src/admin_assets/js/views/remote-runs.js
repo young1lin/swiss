@@ -577,22 +577,22 @@ function render()       {
 /** Repaint ONLY the filter's options when the target list moved (SPEC §remote.verify: the
  *  filter follows the table). The select keeps its identity - its skin (ui/select.ts)
  *  repaints the label on innerHTML writes and builds the dropdown at open - so a targets
- *  change never rebuilds the head. A target the filter had chosen can vanish: back to All
- *  and one reload of page 0. */
-function paintTargetFilter()       {
+ *  change never rebuilds the head. A target the filter had chosen can vanish: back to All,
+ *  and true - the read in hand is that target's slice, so the caller reads page 0 of the
+ *  whole record before it paints anything. */
+function paintTargetFilter()          {
   const sel = document.querySelector                   ("#rrTarget");
-  if (!sel) return; // not painted yet: render()'s options carry the list
+  if (!sel) return false; // not painted yet: render()'s options carry the list
   const keeping = sel.value;
   fill(sel, [h("option", { value: "", selected: keeping === "" }, tr("remoteRuns.allTargets"))].concat(targetIds.map((id) => {
     return h("option", { value: id, selected: id === keeping }, id);
   })));
-  if (keeping && !targetIds.includes(keeping)) {
-    sel.value = "";
-    target = "";
-    cursors = [null];
-    page = 0;
-    void refresh();
-  }
+  if (!keeping || targetIds.includes(keeping)) return false;
+  sel.value = "";
+  target = "";
+  cursors = [null];
+  page = 0;
+  return true;
 }
 
 /** What a poll may change in the head: the budget line and the shell's count. */
@@ -740,11 +740,15 @@ export async function refresh() {
   if (!(await load(v))) return;
   // The filter's list is not part of the signature: a targets notice repaints the select
   // alone, so the rows keep their nodes (and an open live body its place) while the
-  // table moves under them.
+  // table moves under them. A chosen target that vanished is read again here, unfiltered,
+  // before anything paints: the slice in hand belongs to a target the select no longer offers.
   const idsNow = targetIds.join(",");
   if (idsNow !== paintedTargets) {
     paintedTargets = idsNow;
-    paintTargetFilter();
+    if (paintTargetFilter()) {
+      if (search.q) paintList(); // the results widen with the filter, as a choice in the select does
+      if (!(await load(v))) return;
+    }
   }
   // A poll that changed nothing repaints nothing: open rows keep their nodes and the
   // output someone is reading stays where it is (the Traffic discipline).

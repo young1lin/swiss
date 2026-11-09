@@ -46,7 +46,7 @@ import { commandOf, runOutcome, runTarget } from "./remote-runs.js";
 import { coalescedRead, type CoalescedRead } from "./remote-live.js";
 import { busOn, busOnResync } from "../bus/bus.js";
 import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
-import { HostSub, RemoteSeatId, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
+import { HostSub, RemoteSeatId, RunChangedSchema, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
 import { HistoryId, RemoteSub, TargetsId } from "../bus/pb/swiss/bus/v1/remote_pb.js";
 
 let targets = [] as RemoteTargetRow[];
@@ -61,7 +61,8 @@ let painted = ""; // structural signature of the drawn list; a poll that changes
 let collapsed = {} as Record<string, boolean>; // the groups fold map, loaded once before the first paint
 /* The last-run column (SPEC §panel.pages), read from the run record's own route - no API of its own. */
 let lastRuns = null as Record<string, ApiRemoteRunRow | undefined> | null; // target -> its newest run; null: the record did not answer, no column
-let olderLast = {} as Record<string, ApiRemoteRunRow | null>; // targets the newest page missed; dropped again after every history notice
+let olderLast = {} as Record<string, ApiRemoteRunRow | null>; // targets the newest page missed; kept until it can be wrong
+let recordRuns = -1; // the record's row count at the last read: fewer means rows were removed
 /* The live wiring (SPEC §remote.panel): one coalesced re-read and the topics that drive it.
  * Module state like the rest of the page's paint, torn down in unmount. */
 let reRead: CoalescedRead | null = null;
@@ -97,14 +98,17 @@ async function quietJson<T>(path: string): Promise<T | null> {
 
 /** Each target's newest run. ONE read of the record's newest page, folded by target, the
  *  coordinator's in-flight runs first (they are newer than anything recorded). A target that
- *  page missed while older records exist is asked on its own - and asked again after every
- *  REMOTE.HISTORY notice, which drops this cache (SPEC §remote.panel): the record answers by
- *  walking back from its end, and for a target that never ran it walks all of it, every notice.
- *  That is the price the reset buys - a Clear must not leave a stale "never ran" - and a new
- *  run on a listed target lands in the newest page anyway. */
+ *  page missed while older records exist is asked on its own, and the answer is kept until it
+ *  can be wrong (SPEC §remote.panel): the record answers by walking back from its end, and for
+ *  a target that never ran it walks all of it. A record that only grew never makes it wrong -
+ *  a target that ran since is in the newest page - so an entry goes when its target's run
+ *  moves (subscribeLive), and the whole cache goes on a WELCOME and on a read that finds the
+ *  record smaller or down to one page (a Clear, a retention pass). */
 async function loadLastRuns(): Promise<void> {
   const page = await quietJson<ApiRemoteRunsResponse>("/api/remote/runs?limit=" + RUNS_PAGE);
   if (!page) { lastRuns = null; return; }
+  if (!page.nextBefore || page.usage.runs < recordRuns) olderLast = {};
+  recordRuns = page.usage.runs;
   const by: Record<string, ApiRemoteRunRow | undefined> = {};
   const put = (r: ApiRemoteRunRow): void => {
     const t = runTarget(r);
@@ -488,6 +492,7 @@ async function removeTarget(id: string): Promise<void> {
 export async function mount() {
   collapsed = loadCollapsed("targets");
   olderLast = {}; // a new visit asks the record again
+  recordRuns = -1;
   subscribeLive();
   if (!(await load())) return;
   render();
@@ -549,23 +554,38 @@ function patchCols(): void {
  *  re-reads through the owning routes, coalesced as a notice is (remote-live.ts), and every
  *  WELCOME re-reads too — the resync after a reconnect. The four topics: the seat (the
  *  endpoint dots and the Tunnels presence line), the target table, and the run record's two
- *  sides — a run moving (HOST.RUNS `remote`) also moves the last-run column. */
+ *  sides. A run moving (HOST.RUNS `remote`) or the record moving only moves the last-run
+ *  column, so those read the record's newest page alone; the seat, the table and a WELCOME
+ *  read the whole page. */
 function subscribeLive(): void {
   stopLive();
-  reRead = coalescedRead(refresh);
-  const push = (): void => { reRead?.push(); };
+  let whole = false; // cleared before the read, so a page event during it queues one more
+  reRead = coalescedRead(async () => {
+    if (!whole) { await refreshLastRuns(); return; }
+    whole = false;
+    await refresh();
+  });
+  const page = (): void => { whole = true; reRead?.push(); };
+  const column = (): void => { reRead?.push(); };
   offs = [
-    busOnResync(push),
-    busOn({ module: Module.HOST, sub: HostSub.REMOTE_SEAT, key: "" }, RemoteSeatId.REMOTE_SEAT_CHANGED, NoticeSchema, push),
-    busOn({ module: Module.REMOTE, sub: RemoteSub.TARGETS, key: "" }, TargetsId.TARGETS_CHANGED, NoticeSchema, push),
-    busOn({ module: Module.HOST, sub: HostSub.RUNS, key: "remote" }, RunsId.RUNS_CHANGED, NoticeSchema, push),
-    // The record moved (a run filed, Clear, retention): also drop what this visit cached for
-    // targets the newest page missed - the next read asks the record again (SPEC §remote.panel).
-    busOn({ module: Module.REMOTE, sub: RemoteSub.HISTORY, key: "" }, HistoryId.HISTORY_CHANGED, NoticeSchema, () => {
-      olderLast = {};
-      push();
+    // A link that was down may have missed a run event: nothing cached is vouched for.
+    busOnResync(() => { olderLast = {}; page(); }),
+    busOn({ module: Module.HOST, sub: HostSub.REMOTE_SEAT, key: "" }, RemoteSeatId.REMOTE_SEAT_CHANGED, NoticeSchema, page),
+    busOn({ module: Module.REMOTE, sub: RemoteSub.TARGETS, key: "" }, TargetsId.TARGETS_CHANGED, NoticeSchema, page),
+    // The lane is the target: once it runs again, its newest run is in the newest page.
+    busOn({ module: Module.HOST, sub: HostSub.RUNS, key: "remote" }, RunsId.RUNS_CHANGED, RunChangedSchema, (run) => {
+      delete olderLast[run.lane];
+      column();
     }),
+    busOn({ module: Module.REMOTE, sub: RemoteSub.HISTORY, key: "" }, HistoryId.HISTORY_CHANGED, NoticeSchema, column),
   ];
+}
+
+/** A run or record move: the last-run column is all it can change, patched in place. */
+async function refreshLastRuns(): Promise<void> {
+  await loadLastRuns();
+  if (dragging || draggingGroup) return; // afterDrag() paints the catch-up
+  patchCols();
 }
 
 function stopLive(): void {

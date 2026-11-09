@@ -530,10 +530,14 @@ copies configuration.
   three and HOST.REMOTE_SEAT (the endpoint dots and the Tunnels presence line). A run from any
   surface — CLI, MCP, jobs, the panel — appears the moment it is queued or starts, changes
   state the moment it does, and moves into the record the moment it ends; a Clear, a target
-  added from the CLI or an endpoint dropping shows in every open window at once. A history
-  notice also drops what the Targets visit cached for targets the newest page missed. Targets'
-  `poll()` reads nothing: on the tick it rewrites the last-run column's relative times from what
-  the page already holds. A plugin enabled or disabled in another window is not on the bus; the
+  added from the CLI or an endpoint dropping shows in every open window at once. On Targets a
+  run or record event moves only the last-run column, so it re-reads the record's newest page
+  alone; the seat, the target table and a WELCOME re-read the whole page. A target that newest
+  page missed is asked on its own once per visit, and the answer is kept until it can be wrong:
+  a HOST.RUNS event drops its lane's answer, and a WELCOME or a read that finds the record
+  smaller or down to one page (a Clear, a retention pass) drops them all — a record that only
+  grew never does. Targets' `poll()` reads nothing: on the tick it rewrites the last-run
+  column's relative times from what the page already holds. A plugin enabled or disabled in another window is not on the bus; the
   pages learn it from their next read.
 
 ## §remote.verify — Live verification
