@@ -543,10 +543,14 @@ with Runs open in one window and Targets in another:
 1. **No cadence.** Both pages idle for 30 s with every row closed: the network log shows no
    `/api/remote/*` request. The pages read on an event, a WELCOME or a user action, nothing else.
 2. **A run from any surface.** Ten concurrent `swiss remote exec <target> --detach -- sleep 8`
-   from a terminal: within a second eight rows read running and two queued, each queued row
-   turns running as a slot frees, each moves into the record as it ends, no run is ever listed
-   twice, and the target's last-run column on Targets follows.
-3. **A queued cancel.** `swiss run cancel <id>` on a queued run removes its row at once.
+   from a terminal: within a second eight rows read running, each moves into the record as it
+   ends, no run is ever listed twice, and the target's last-run column on Targets follows. The
+   ninth and tenth submissions are refused with 429 — the per-target lane holds eight and
+   `remote exec` does not queue behind them — and nothing appears for them on either page: a
+   refused run never existed. (`queued` is the jobs lane's overlap=queue-one state, not
+   something `remote exec` produces.)
+3. **A cancel.** `swiss run cancel <id>` on a running run collapses its row into the record
+   at once, grouped with its like (SPEC §remote.panel's Runs grouping).
 4. **Another window's writes.** Clear in one window empties the record in the other;
    `swiss remote target add` shows the target on Targets and in the Runs filter without a reload.
 5. **The seat.** Disabling Tunnels changes the presence line on Targets at once and enabling it
