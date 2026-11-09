@@ -936,6 +936,52 @@ async fn the_hourly_sweep_publishes_only_when_it_removed_a_line() {
     let _ = history.close().await;
 }
 
+/// A Clear whose spill ledger reads empty but whose attached database still holds
+/// rows is a move all the same (SPEC §remote.history): spill and database keep their
+/// own retention, so an empty spill does not mean an empty record - without this
+/// notice another window never learns the record emptied. A second clear over
+/// both-empty stays silent. The path is the real one: RunHistory::clear_records
+/// over an attached database, never RemoteHistory::clear directly.
+#[tokio::test]
+async fn a_clear_publishes_when_only_the_database_held_rows() {
+    let (_app, system, history, logs_root, _fake) = wired().await;
+    let logs = logs_root.join("remote");
+    std::fs::create_dir_all(logs.join("out")).unwrap();
+    std::fs::write(logs.join("out").join("9300.txt"), b"db-only run output").unwrap();
+    let line = json!({
+        "runId": 9300, "action": "remote.exec", "state": "succeeded", "exitCode": 0,
+        "endedAtMs": 1_000, "target": "dev", "actor": "api",
+        "input": { "target": "dev", "argv": ["emit"] },
+    });
+    // Straight into the database, bypassing the spill: the spill ledger stays (0, 0).
+    history
+        .record_run(&line, Some(&logs.join("out").join("9300.txt")), None)
+        .await
+        .unwrap();
+    let _ = history.flush().await;
+    // One binding: RemoteSystem::history() re-attaches the bus notice on every call,
+    // so the counting closure is installed on a handle taken once and kept.
+    let spill = system.history();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = count.clone();
+    spill.set_notice(Arc::new(move || {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }));
+    spill.clear_records().await;
+    assert_eq!(
+        count.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "a clear that emptied only the database moved the answer"
+    );
+    spill.clear_records().await;
+    assert_eq!(
+        count.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "a clear over both-empty stays silent"
+    );
+    let _ = history.close().await;
+}
+
 
 // --- round-1 review: the honest ack and the live cursor over the module store ----------------------
 

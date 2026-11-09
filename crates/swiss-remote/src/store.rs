@@ -703,18 +703,27 @@ impl RemoteHistory {
         content_from_envelope_text(&text).map(Some)
     }
 
-    /// Drop every record, output and content row. Internal row identity survives: the
-    /// next recorded run gets a fresh internal id while its WIRE id comes from the
-    /// coordinator, which numbers from [Self::last_run_id] and never reuses one.
-    pub async fn clear(&self) -> Result<(), String> {
+    /// Drop every record, output and content row, answering how many `run` rows went.
+    /// Internal row identity survives: the next recorded run gets a fresh internal id
+    /// while its WIRE id comes from the coordinator, which numbers from
+    /// [Self::last_run_id] and never reuses one. The count decides the clear's notice
+    /// (SPEC §remote.history): the spill ledger alone cannot - an empty spill does not
+    /// mean an empty database.
+    pub async fn clear(&self) -> Result<u64, String> {
+        // The store's job future is pinned to Result<(), String> by the host's
+        // contract, so the count travels through a cell the transaction writes only
+        // after its commit - a rolled-back clear reports zero.
+        let gone = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counted = gone.clone();
         self.store
-            .submit(128, |pool| {
+            .submit(128, move |pool| {
                 Box::pin(async move {
                     let work = async {
                         let mut tx = pool.begin().await?;
                         sqlx::query("DELETE FROM run_output").execute(&mut *tx).await?;
                         sqlx::query("DELETE FROM run_content").execute(&mut *tx).await?;
-                        sqlx::query("DELETE FROM run").execute(&mut *tx).await?;
+                        let removed =
+                            sqlx::query("DELETE FROM run").execute(&mut *tx).await?.rows_affected();
                         // The rows are gone by hand: stamp the sweep fence so a spill
                         // line still on disk cannot bring a wiped run back.
                         sqlx::query(
@@ -726,6 +735,7 @@ impl RemoteHistory {
                         .execute(&mut *tx)
                         .await?;
                         tx.commit().await?;
+                        counted.store(removed, std::sync::atomic::Ordering::Release);
                         Ok::<(), sqlx::Error>(())
                     };
                     work.await.map_err(|e| e.to_string())
@@ -736,7 +746,7 @@ impl RemoteHistory {
         self.meta_cache.lock().unwrap_or_else(|e| e.into_inner()).remove("swept_before_ms");
         // The rows are gone: expire every live scan cursor over them (Q4).
         self.snapshot.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        Ok(())
+        Ok(gone.load(std::sync::atomic::Ordering::Acquire))
     }
 
     /// One maintenance pass (SPEC host.history): the store's bounded checkpoint /

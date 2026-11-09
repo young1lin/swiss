@@ -339,9 +339,11 @@ removes it at stop.
   a page costs a page.
 - **Changes are announced** (REMOTE.HISTORY, a notice, §bus.topics). The record publishes when
   what the query answers moves for a reason a run's own events do not carry (§host.actions): a
-  record filed — a late one included, after a sink's acknowledgment bound broke — Clear, a
-  retention pass (the spill's budget pass, the database's hourly sweep) that removed a line or
-  evicted a file, and the open at start, whose import and mask pass may rewrite rows. A pass
+  record filed — a late one included, after a sink's acknowledgment bound broke — a Clear that
+  removed something from either the spill or the database (they keep their own retention, so an
+  empty spill ledger does not mean an empty record), a retention pass (the spill's budget pass,
+  the database's hourly sweep) that removed a line or evicted a file, and the open at start,
+  whose import and mask pass may rewrite rows. A pass
   that removed nothing publishes nothing: every page read runs the O(1) budget check, and a
   notice that caused a read that caused a notice would never stop.
 - **Output reads.** `/output?after=&max=` reads the stored file (128 KiB at most per read) with

@@ -428,13 +428,20 @@ impl RunHistory {
             let ledger = self.ledger.lock().unwrap_or_else(|e| e.into_inner());
             (ledger.total_bytes, ledger.runs)
         };
+        let mut moved = had != (0, 0);
         if let Some(h) = self.attached().await {
-            let _ = h.clear().await;
+            // The database keeps its own retention: rows can sit there while the spill
+            // ledger reads empty, so its count decides the move too (SPEC
+            // §remote.history). A failed clear leaves the spill's own verdict.
+            let cleared = h.clear().await;
+            if let Ok(gone) = cleared {
+                moved = moved || gone > 0;
+            }
         }
         self.clear();
         // A clear over an empty record answers nothing new: not a move (SPEC
         // §remote.history).
-        if had != (0, 0) {
+        if moved {
             self.changed();
         }
     }
