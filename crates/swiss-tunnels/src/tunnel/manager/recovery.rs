@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use crate::tunnel::types::{is_retryable, RuleDef, RuleState, TunnelError};
+use crate::tunnel::types::{is_retryable, FailureKind, RuleDef, RuleState, TunnelError};
 use super::TunnelManager;
 use swiss_core::log;
 
@@ -92,6 +92,40 @@ impl TunnelManager {
                 );
             });
         }
+    }
+
+    /// SPEC §tunnels.selfheal: channel opens on this session stopped being answered
+    /// while the transport still answers keepalives — keepalive cannot see this, so the
+    /// judgment arrives from the open budget. The response is deliberately ordinary: end
+    /// the client quietly (intentional, so the watcher does not double-report), then run
+    /// the same loss path a dead transport runs — ports released first, `reconnecting`
+    /// with the reason, backoff on the redial, linked MCP pools dropped on recovery.
+    pub(super) fn on_connection_wedged(self: &Arc<Self>, conn_id: &str) {
+        let client = self
+            .conns
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(conn_id)
+            .cloned();
+        let weak = Arc::downgrade(self);
+        let id = conn_id.to_string();
+        tokio::spawn(async move {
+            log::warn(
+                "ssh session judged wedged",
+                Some(json!({ "connection": id, "healing": "end and redial" })),
+            );
+            if let Some(client) = client {
+                client.end().await;
+            }
+            let Some(mgr) = weak.upgrade() else { return };
+            mgr.on_connection_lost(
+                &id,
+                &TunnelError::new(
+                    "session judged wedged: channel opens stopped being answered",
+                    FailureKind::Network,
+                ),
+            );
+        });
     }
 
     pub(super) fn schedule_retry(self: &Arc<Self>, rule: &RuleDef) {
@@ -272,6 +306,92 @@ mod tests {
         for port in ports {
             assert!(port_is_free(port).await);
         }
+    }
+
+    // --- a wedged session (SPEC §tunnels.selfheal) -----------------------------------------
+
+    #[tokio::test]
+    async fn a_wedged_connection_redials_its_rules() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let mut ports = Vec::new();
+        let mut ids = Vec::new();
+        for i in 0..2 {
+            let port = free_port().await;
+            ids.push(
+                add_rule(
+                    &store,
+                    RuleInput {
+                        auto_reconnect: true,
+                        reconnect_interval: 1.0,
+                        ..rule_input(&format!("r{i}"), &c.id, port, echo)
+                    },
+                )
+                .id,
+            );
+            ports.push(port);
+        }
+        m.start_all().await;
+        assert_eq!(round_trip(ports[0], "hi").await, "HI");
+
+        nth(&built, 0).wedge();
+        assert!(
+            wait_until(Duration::from_secs(5), || ids
+                .iter().all(|id| state_of(&m, id) == "reconnecting"))
+            .await,
+            "one rule stayed up under a wedged session"
+        );
+        for port in &ports {
+            assert!(port_is_free(*port).await);
+        }
+        let reason = field(&row_of(&m, &ids[0]), "reason")
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(reason.contains("wedged"), "{reason}");
+
+        assert!(
+            wait_until(Duration::from_secs(10), || ids
+                .iter().all(|id| state_of(&m, id) == "up"))
+            .await,
+            "the redial never brought them back up"
+        );
+        assert_eq!(round_trip(ports[0], "back").await, "BACK");
+        // The quiet end from the judgment, plus the teardown's own release — what matters
+        // is that the wedged client WAS ended, not left half-alive in the map.
+        assert!(nth(&built, 0).ended() >= 1, "the wedged client was ended");
+        assert_eq!(built_len(&built), 2, "the retry dialed a fresh client");
+        m.close_all().await;
+    }
+
+    #[tokio::test]
+    async fn a_wedged_rule_without_auto_reconnect_lands_in_error() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+
+        m.start_rule(&r.id).await.expect("start");
+        nth(&built, 0).wedge();
+        assert!(
+            wait_until(Duration::from_secs(5), || state_of(&m, &r.id) == "error").await,
+            "state stayed {}",
+            state_of(&m, &r.id)
+        );
+        assert!(port_is_free(port).await);
+        let reason = field(&row_of(&m, &r.id), "reason")
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(reason.contains("wedged"), "{reason}");
+        // The judgment is a network-shaped failure: nothing here says "do not retry"
+        // the way an auth failure does — only the rule's own autoReconnect is off.
+        assert!(nth(&built, 0).ended() >= 1, "the wedged client was ended");
+        assert_eq!(built_len(&built), 1, "no auto-reconnect, no second client");
     }
 
     // --- reconnect policy -------------------------------------------------------------------

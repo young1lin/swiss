@@ -33,7 +33,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -65,6 +65,11 @@ const KEEPALIVE_MAX: usize = 3;
 /// pool timeout, and nothing at the transport layer ever sees a failure. The data path
 /// after a successful open keeps no timeout: an idle pooled socket is legitimate.
 const OPEN_BUDGET: Duration = Duration::from_secs(10);
+/// SPEC §tunnels.selfheal: this many consecutive unanswered opens on one connection judge
+/// the session wedged and report it once. Any answered open — success or refusal — resets
+/// the count, so an unreachable target (whose opens time out alone) never tears down its
+/// healthy neighbours.
+const WEDGE_OPENS: usize = 3;
 /// A wedged transport must not block a shutdown (ssh.end()'s own cap).
 const END_TIMEOUT: Duration = Duration::from_millis(1500);
 /// What the far side is told it is talking to. xterm.js reports itself as an xterm with
@@ -168,6 +173,10 @@ pub struct SshHooks {
     pub on_host_key: Option<HostKeyCallback>,
     /// The transport died while connected. The manager releases ports and decides about retrying.
     pub on_lost: Option<Arc<dyn Fn(TunnelError) + Send + Sync>>,
+    /// SPEC §tunnels.selfheal: channel opens stopped being answered while the transport
+    /// still answers keepalives. The manager ends this client and runs the ordinary loss
+    /// path — same fan-out as on_lost, reached from a judgment keepalive cannot make.
+    pub on_wedged: Option<Arc<dyn Fn() + Send + Sync>>,
     /// SPEC §tunnels.jump: dial through a jump. Attached by the manager (the shared chain) or
     /// by the Test path (a throwaway chain); absent on direct and proxied connections.
     pub jump: Option<JumpDialer>,
@@ -263,6 +272,9 @@ pub struct SshConnection {
     /// runtime jumps it past the handshake). Atomic only so a test can set it through
     /// the shared Arc.
     open_budget_ms: AtomicU64,
+    /// Consecutive unanswered opens so far (SPEC §tunnels.selfheal). An answered open —
+    /// success or refusal — resets it; WEDGE_OPENS in a row fires on_wedged.
+    open_timeouts: AtomicUsize,
     def: Mutex<SshConnDef>,
     state: Mutex<ConnState>,
     reason: Mutex<Option<String>>,
@@ -280,6 +292,7 @@ impl SshConnection {
     pub fn new(def: SshConnDef, hooks: SshHooks) -> Arc<Self> {
         Arc::new(SshConnection {
             open_budget_ms: AtomicU64::new(OPEN_BUDGET.as_millis() as u64),
+            open_timeouts: AtomicUsize::new(0),
             def: Mutex::new(def),
             state: Mutex::new(ConnState::Idle),
             reason: Mutex::new(None),
@@ -489,6 +502,9 @@ impl SshConnection {
             closed: closed_rx,
             jump_hold,
         });
+        // A fresh session answers opens: whatever wedge count an earlier incarnation
+        // of this client accumulated starts over (SPEC §tunnels.selfheal).
+        self.open_timeouts.store(0, Ordering::Relaxed);
         self.set_state(ConnState::Connected, None);
         Ok(())
     }
@@ -566,10 +582,24 @@ impl SshConnection {
         )
         .await;
         let channel = match opened {
-            Ok(result) => result.map_err(|err| {
-                as_tunnel_error(err, Some(&format!("channel to {host}:{port} failed")))
-            })?,
+            // An answer arrived — success or refusal — so the session is alive: any
+            // wedge count it had accumulated is history.
+            Ok(result) => {
+                self.open_timeouts.store(0, Ordering::Relaxed);
+                result.map_err(|err| {
+                    as_tunnel_error(err, Some(&format!("channel to {host}:{port} failed")))
+                })?
+            }
             Err(_budget_spent) => {
+                // SPEC §tunnels.selfheal: consecutive unanswered opens judge the session
+                // wedged — keepalive cannot see this shape, the transport still answers.
+                // The hook fires once per episode, on the open that completes the count.
+                let prev = self.open_timeouts.fetch_add(1, Ordering::Relaxed);
+                if prev + 1 == WEDGE_OPENS {
+                    if let Some(on_wedged) = &self.hooks.on_wedged {
+                        on_wedged();
+                    }
+                }
                 return Err(TunnelError::new(
                     format!(
                         "channel open to {host}:{port} timed out after {open_budget:?}"
@@ -1628,9 +1658,29 @@ mod tests {
         }
 
         async fn connected(def: &SshConnDef) -> Arc<SshConnection> {
-            let c = SshConnection::new(def.clone(), SshHooks::default());
+            connected_with(def, SshHooks::default()).await
+        }
+
+        async fn connected_with(def: &SshConnDef, hooks: SshHooks) -> Arc<SshConnection> {
+            let c = SshConnection::new(def.clone(), hooks);
             c.connect().await.expect("the test server accepts");
             c
+        }
+
+        /// Hooks whose on_wedged increments a shared counter, so a test asserts exactly
+        /// when the judgment fires.
+        fn wedged_hooks() -> (Arc<AtomicUsize>, SshHooks) {
+            let fired = Arc::new(AtomicUsize::new(0));
+            let counted = fired.clone();
+            (
+                fired,
+                SshHooks {
+                    on_wedged: Some(Arc::new(move || {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                    })),
+                    ..Default::default()
+                },
+            )
         }
 
         /// SPEC §tunnels.selfheal: an open the session never answers fails after the
@@ -1689,6 +1739,85 @@ mod tests {
             assert!(
                 t0.elapsed() < Duration::from_secs(5),
                 "an answered refusal is immediate, not budgeted"
+            );
+            let _ = c.end().await;
+        }
+
+        /// SPEC §tunnels.selfheal: three consecutive unanswered opens judge the session
+        /// wedged; the hook fires on the open that completes the count, once per episode
+        /// — a fourth timeout does not fire it again.
+        #[tokio::test]
+        async fn three_unanswered_opens_judge_the_session_wedged() {
+            let (port, _policy) = spawn_opens_ssh_server(TestOpens::Wedge).await;
+            let (fired, hooks) = wedged_hooks();
+            let c = connected_with(&def_to(port), hooks).await;
+            c.set_open_budget(Duration::from_millis(120));
+            for i in 1..=3 {
+                assert!(
+                    c.open_channel("127.0.0.1", 9).await.is_err(),
+                    "open {i} must fail on its budget"
+                );
+                assert_eq!(
+                    fired.load(Ordering::SeqCst),
+                    if i == 3 { 1 } else { 0 },
+                    "the judgment fires with the third unanswered open"
+                );
+            }
+            assert!(c.open_channel("127.0.0.1", 9).await.is_err());
+            assert_eq!(fired.load(Ordering::SeqCst), 1, "fires once per episode");
+            let _ = c.end().await;
+        }
+
+        /// SPEC §tunnels.selfheal: the judgment is consecutive — any answered open
+        /// resets the count, so a session that recovers mid-count is never torn down.
+        #[tokio::test]
+        async fn an_answered_open_resets_the_wedge_count() {
+            let (port, policy) = spawn_opens_ssh_server(TestOpens::Wedge).await;
+            let (fired, hooks) = wedged_hooks();
+            let c = connected_with(&def_to(port), hooks).await;
+            c.set_open_budget(Duration::from_millis(120));
+            // Two unanswered opens: one short of the judgment.
+            for _ in 0..2 {
+                assert!(c.open_channel("127.0.0.1", 9).await.is_err());
+            }
+            assert_eq!(fired.load(Ordering::SeqCst), 0);
+            // An answered open — even one whose target never dials — proves the session
+            // is alive and clears the count.
+            *policy.lock().unwrap() = TestOpens::Forward;
+            assert!(
+                c.open_channel("127.0.0.1", 9).await.is_ok(),
+                "the Forward policy answers the open; the target need not exist"
+            );
+            *policy.lock().unwrap() = TestOpens::Wedge;
+            // Two more unanswered opens still do not complete a fresh count of three.
+            for _ in 0..2 {
+                assert!(c.open_channel("127.0.0.1", 9).await.is_err());
+                assert_eq!(fired.load(Ordering::SeqCst), 0);
+            }
+            assert!(c.open_channel("127.0.0.1", 9).await.is_err());
+            assert_eq!(
+                fired.load(Ordering::SeqCst),
+                1,
+                "a count that restarted from zero completes at three"
+            );
+            let _ = c.end().await;
+        }
+
+        /// SPEC §tunnels.selfheal: a refusal is an answered open — a target that says
+        /// no, however often, never judges its session wedged.
+        #[tokio::test]
+        async fn refusals_never_judge_a_session_wedged() {
+            let (port, _policy) = spawn_opens_ssh_server(TestOpens::Refuse).await;
+            let (fired, hooks) = wedged_hooks();
+            let c = connected_with(&def_to(port), hooks).await;
+            c.set_open_budget(Duration::from_millis(120));
+            for _ in 0..5 {
+                assert!(c.open_channel("127.0.0.1", 9).await.is_err());
+            }
+            assert_eq!(
+                fired.load(Ordering::SeqCst),
+                0,
+                "every refusal is an answer; only silence counts"
             );
             let _ = c.end().await;
         }

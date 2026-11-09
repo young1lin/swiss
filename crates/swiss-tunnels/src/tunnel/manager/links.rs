@@ -383,4 +383,49 @@ mod tests {
         );
         m.close_all().await;
     }
+
+    #[tokio::test]
+    async fn a_wedge_recovery_releases_the_pool_without_asking_for_a_restart() {
+        // SPEC §tunnels.selfheal: a wedged session heals through the same loss path a dead
+        // transport runs, so a linked MCP's pool is dropped with the old session and no
+        // restart notice is raised.
+        let (_dir, store) = scratch();
+        let (m, built) = manager_with(
+            &store,
+            Some(Box::new(View {
+                started: vec!["pg-analytics".into()],
+                release: true,
+            })),
+            None,
+        );
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(
+            &store,
+            RuleInput {
+                auto_reconnect: true,
+                reconnect_interval: 1.0,
+                mcps: Some(vec!["pg-analytics".into()]),
+                ..rule_input("pg", &c.id, port, echo)
+            },
+        );
+        m.start_rule(&r.id).await.expect("start");
+        nth(&built, 0).wedge();
+        assert!(
+            wait_until(Duration::from_secs(5), || state_of(&m, &r.id) == "reconnecting").await,
+            "state stayed {}",
+            state_of(&m, &r.id)
+        );
+        assert!(
+            wait_until(Duration::from_secs(10), || state_of(&m, &r.id) == "up").await,
+            "the redial never brought it back up"
+        );
+        assert_eq!(
+            m.tunnels_for_mcp("pg-analytics")[0]["stalePool"],
+            json!(false),
+            "the pool was dropped with the wedged session"
+        );
+        m.close_all().await;
+    }
 }

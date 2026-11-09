@@ -50,6 +50,16 @@ impl TunnelManager {
                 mgr.on_connection_lost(&lost_id, &err);
             }
         });
+        // SPEC §tunnels.selfheal: opens stopped being answered — the manager ends this
+        // client and runs the same loss path on_lost runs. Weak for the same reason: the
+        // connection table must not close into an Arc cycle.
+        let weak_wedge = Arc::downgrade(self);
+        let wedged_id = def.id.clone();
+        let on_wedged: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            if let Some(mgr) = weak_wedge.upgrade() {
+                mgr.on_connection_wedged(&wedged_id);
+            }
+        });
         // SPEC §tunnels.jump: the dialer this connection's dial calls back into when its def
         // carries a jump. Weak so the connection table never closes into an Arc cycle
         // (manager -> client -> hook -> manager); a manager that is already gone fails
@@ -74,6 +84,7 @@ impl TunnelManager {
             SshHooks {
                 on_host_key: Some(on_host_key),
                 on_lost: Some(on_lost),
+                on_wedged: Some(on_wedged),
                 jump: Some(jump),
             },
         )

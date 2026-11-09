@@ -111,7 +111,9 @@ key leaves it absent. This lets `setup apply` ask for confirmation without pinni
   user leaves. Dialling is single-flight.
 - **Budget.** TCP + key exchange + auth (and any proxy handshake or jump chain) fit in one 15 s
   budget (`READY_TIMEOUT`). Keepalive 15 s × 3 detects a NAT-dropped link in about 45 s; a
-  watcher per client reports the loss with a generation, so a stale report is ignored.
+  watcher per client reports the loss with a generation, so a stale report is ignored. A
+  session that answers keepalives but stops answering channel opens is invisible here —
+  §tunnels.selfheal judges it from the forward layer.
 - **Auth.** `key` (a private key file, `~` expanded, an optional passphrase) or `password`.
 - **Host keys are TOFU.** The fingerprint (`SHA256:…`, OpenSSH format) is learned on the first
   connect; a changed key is refused with the expected and actual fingerprints, and the panel
@@ -133,9 +135,10 @@ key leaves it absent. This lets `setup apply` ask for confirmation without pinni
 - **Per-rule serialisation.** Every operation on a rule holds that rule's async mutex for the
   whole operation; run state is snapshotted under a short lock, and **no lock is held across an
   await**.
-- **Loss and recovery.** When a client dies, each affected rule **releases its port first, then
-  reports** `reconnecting` with the reason; recovery runs through each rule's own queue; a user
-  stop racing it wins (re-checked under the lock).
+- **Loss and recovery.** When a client dies, or is judged wedged (§tunnels.selfheal), each
+  affected rule **releases its port first, then reports** `reconnecting` with the reason;
+  recovery runs through each rule's own queue; a user stop racing it wins (re-checked under
+  the lock).
 - **Backoff.** `interval × 2^(n−1)` with the exponent capped at 8, capped at 5 minutes,
   ±20 % jitter; a success resets the count. Retry timers hold weak references and are
   abortable.
@@ -161,6 +164,16 @@ is the only probe that sees this, so it owns the judgment.
   refusal keeps today's meaning — the session proved it is alive, the target is what said
   no. The data path stays timeout-free: an idle pooled socket is legitimate and is never
   probed.
+- **The wedge judgment.** Three opens on one connection timing out consecutively — with
+  no answered open in between — judge the session wedged: the client is ended, and every
+  rule on it runs the ordinary loss path (§tunnels.forward) — port released first,
+  `reconnecting` with the reason, re-dial under the existing backoff, linked MCP pools
+  dropped on recovery. A rule with `autoReconnect` off lands in `error`, exactly as a
+  transport loss does.
+- **Not a target probe.** The judgment is connection-wide and resets on any answered
+  open, so one unreachable target (its opens time out while a sibling rule's opens
+  succeed) fails fast without tearing down healthy neighbours; re-dial churn while a
+  target is down is bounded by the existing backoff.
 
 ## §tunnels.proxy — Proxy dialling
 

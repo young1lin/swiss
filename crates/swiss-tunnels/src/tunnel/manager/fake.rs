@@ -123,6 +123,15 @@ impl FakeConn {
             ));
         }
     }
+
+    /// SPEC §tunnels.selfheal: channel opens stopped being answered while the transport
+    /// stays up — unlike die(), the state is still Connected, which is the whole shape.
+    /// The manager must end this client and run the loss path for every rule riding it.
+    pub(super) fn wedge(&self) {
+        if let Some(on_wedged) = &self.hooks.on_wedged {
+            on_wedged();
+        }
+    }
 }
 
 impl SshLike for FakeConn {
