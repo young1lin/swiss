@@ -67,6 +67,10 @@ A target row, camelCase on the wire:
   non-empty id is accepted.
 - **Store.** The sealed `~/.swiss/remote.json` (§core.sealed), written through on every
   mutation. A pre-groups file (a bare array) still opens.
+- **Every write is announced** (REMOTE.TARGETS, a notice, §bus.topics). Each write of
+  `remote.json` — a route, the CLI through the same routes, a group operation of the targets
+  scope — publishes once the file is written, while the table's lock is still held. A refused
+  write publishes nothing.
 
 | Route | Answers |
 |---|---|
@@ -333,6 +337,13 @@ removes it at stop.
   inclusive and `until` exclusive, both on `endedAt`, as epoch ms or ISO-8601; a malformed time
   is a 400, never a silently widened window. Reading walks the index from its end in blocks, so
   a page costs a page.
+- **Changes are announced** (REMOTE.HISTORY, a notice, §bus.topics). The record publishes when
+  what the query answers moves for a reason a run's own events do not carry (§host.actions): a
+  record filed — a late one included, after a sink's acknowledgment bound broke — Clear, a
+  retention pass (the spill's budget pass, the database's hourly sweep) that removed a line or
+  evicted a file, and the open at start, whose import and mask pass may rewrite rows. A pass
+  that removed nothing publishes nothing: every page read runs the O(1) budget check, and a
+  notice that caused a read that caused a notice would never stop.
 - **Output reads.** `/output?after=&max=` reads the stored file (128 KiB at most per read) with
   the same cursor contract as the live one; `/content` answers the sealed body - a write's
   content or an exec's stdin, whichever the run kept - or 404 when none was.

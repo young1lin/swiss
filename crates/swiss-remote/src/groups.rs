@@ -43,7 +43,9 @@ impl TargetGroups {
     /// RemoteSystem::with_store itself, so there is no error branch here - the
     /// store's own Result is the whole story.
     fn with<T>(&self, f: impl FnOnce(&mut TargetStore) -> Result<T, String>) -> Result<T, String> {
-        self.system.with_store(f)
+        // Through with_store_saving: a group operation that saved publishes
+        // REMOTE.TARGETS like any other write of the table (SPEC §remote.targets).
+        self.system.with_store_saving(f)
     }
 }
 

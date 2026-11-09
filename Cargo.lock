@@ -5913,10 +5913,12 @@ version = "0.2.1"
 dependencies = [
  "async-trait",
  "axum",
+ "prost",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "sqlx",
+ "swiss-bus",
  "swiss-core",
  "swiss-host",
  "swiss-remote",

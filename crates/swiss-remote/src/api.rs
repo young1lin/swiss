@@ -433,7 +433,7 @@ async fn write_target(state: &Arc<RemoteState>, id: Option<&str>, body: Value) -
             );
         }
     }
-    let written = system.with_store(|store| match id {
+    let written = system.with_store_saving(|store| match id {
         Some(id) => store.update(id, target.clone()).map(|_| ()),
         None => store.add(target.clone()).map(|_| ()),
     });
@@ -459,7 +459,7 @@ async fn delete_target(State(state): State<Arc<RemoteState>>, Path(id): Path<Str
     let Some(system) = state.live() else {
         return not_running();
     };
-    match system.with_store(|store| store.remove(&id)) {
+    match system.with_store_saving(|store| store.remove(&id)) {
         Ok(()) => admin_json(StatusCode::OK, json!({ "removed": id })),
         Err(message) => admin_error(StatusCode::NOT_FOUND, &message),
     }
@@ -806,5 +806,216 @@ mod tests {
         let (status, value) = send(&router, "POST", "/api/remote/targets", body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(value["error"].as_str().unwrap().contains("Tunnels"));
+    }
+
+    /// REMOTE.TARGETS notices (SPEC §remote.targets): a subscribed link, its frames
+    /// decoded. Same harness shape as the host's seat-notice tests.
+    mod target_notices {
+        use super::*;
+        use prost::Message as _;
+        use swiss_bus::IoMsg;
+        use swiss_bus::pb::v1;
+        use tokio::sync::mpsc;
+
+        struct Channel {
+            rx: mpsc::Receiver<IoMsg>,
+            tx: mpsc::Sender<IoMsg>,
+        }
+
+        impl swiss_bus::Io for Channel {
+            fn recv(
+                &mut self,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<IoMsg>> + Send + '_>>
+            {
+                Box::pin(async move { self.rx.recv().await })
+            }
+            fn send(
+                &mut self,
+                msg: IoMsg,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + '_>> {
+                Box::pin(async move { self.tx.send(msg).await.is_ok() })
+            }
+        }
+
+        /// One link subscribed to the target table's notices, opened before the write.
+        struct Peer {
+            tx: mpsc::Sender<IoMsg>,
+            rx: mpsc::Receiver<IoMsg>,
+            seq: u32,
+        }
+
+        impl Peer {
+            async fn open(bus: &Arc<swiss_bus::Bus>) -> Self {
+                let (tx, rx) = mpsc::channel(32);
+                let (out, incoming) = mpsc::channel(32);
+                tokio::spawn(swiss_bus::run(bus.clone(), Channel { rx, tx: out }));
+                let mut peer = Self { tx, rx: incoming, seq: 1 };
+                let welcome = peer
+                    .request_at(
+                        0,
+                        v1::BusSub::Link as u32,
+                        v1::LinkId::Hello as u32,
+                        v1::Hello {
+                            protocol: 1,
+                            page_id: "page-a".
+                                into(),
+                            build: "test".into(),
+                        }
+                        .encode_to_vec(),
+                    )
+                    .await;
+                assert!(welcome.fault.is_none());
+                let answer = peer
+                    .request_at(
+                        0,
+                        v1::BusSub::Topic as u32,
+                        v1::TopicId::Subscribe as u32,
+                        v1::Topics {
+                            topics: vec![v1::Topic {
+                                module: v1::Module::Remote as u32,
+                                sub: v1::RemoteSub::Targets as u32,
+                                key: String::new(),
+                            }],
+                        }
+                        .encode_to_vec(),
+                    )
+                    .await;
+                assert!(answer.fault.is_none());
+                peer
+            }
+
+            async fn next(&mut self) -> v1::Frame {
+                loop {
+                    match self.rx.recv().await.expect("link frame") {
+                        IoMsg::Binary(bytes) => {
+                            return v1::Frame::decode(bytes.as_slice()).expect("frame");
+                        }
+                        IoMsg::Ping(_) | IoMsg::Pong(_) => continue,
+                        other => panic!("expected binary, got {other:?}"),
+                    }
+                }
+            }
+
+            async fn request_at(&mut self, module: u32, sub: u32, id: u32, body: Vec<u8>) -> v1::Frame {
+                let seq = self.seq;
+                self.seq += 1;
+                self.tx
+                    .send(IoMsg::Binary(
+                        v1::Frame {
+                            module,
+                            sub,
+                            id,
+                            kind: v1::Kind::Request as i32,
+                            seq,
+                            body,
+                            ..Default::default()
+                        }
+                        .encode_to_vec(),
+                    ))
+                    .await
+                    .expect("send");
+                loop {
+                    let frame = self.next().await;
+                    if frame.kind == v1::Kind::Event as i32 {
+                        continue;
+                    }
+                    assert_eq!(frame.reply_to, seq);
+                    return frame;
+                }
+            }
+
+            async fn notice(&mut self) {
+                let frame = self.next().await;
+                assert_eq!(frame.module, v1::Module::Remote as u32);
+                assert_eq!(frame.sub, v1::RemoteSub::Targets as u32);
+                assert_eq!(frame.id, v1::TargetsId::Changed as u32);
+                assert_eq!(frame.kind, v1::Kind::Event as i32);
+                assert!(frame.body.is_empty(), "a notice carries no body");
+            }
+
+            fn drained(&mut self) -> bool {
+                matches!(self.rx.try_recv(), Err(mpsc::error::TryRecvError::Empty))
+            }
+        }
+
+        async fn settle() {
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+        }
+
+        #[tokio::test]
+        async fn every_target_write_publishes_once_and_a_refusal_publishes_nothing() {
+            let (state, _system, router) = app();
+            let bus = state.live().expect("the system").services().bus.clone();
+            let mut peer = Peer::open(&bus).await;
+
+            let (status, _body) = send(
+                &router,
+                "POST",
+                "/api/remote/targets",
+                row("build", "conn-1"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            settle().await;
+            peer.notice().await;
+
+            let mut edited = row("build", "conn-1");
+            edited["workspaceRoot"] = json!("/srv/other");
+            let (status, _body) = send(
+                &router,
+                "POST",
+                "/api/remote/targets/build",
+                edited,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            let (status, _body) =
+                send(&router, "DELETE", "/api/remote/targets/build", Value::Null).await;
+            assert_eq!(status, StatusCode::OK);
+            settle().await;
+            peer.notice().await;
+            peer.notice().await;
+
+            // A duplicate add is refused at the door: the table did not move, so the
+            // topic stays silent (SPEC §remote.targets).
+            let (status, _body) = send(
+                &router,
+                "POST",
+                "/api/remote/targets",
+                row("dev", "conn-1"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            // A parse refusal either.
+            let mut bad = row("x", "conn-1");
+            bad["password"] = json!("hunter2");
+            let (status, _body) = send(&router, "POST", "/api/remote/targets", bad).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            settle().await;
+            assert!(peer.drained(), "refused writes announce nothing");
+        }
+
+        #[tokio::test]
+        async fn a_group_write_publishes_like_a_route_write() {
+            let (state, system, router) = app();
+            let bus = state.live().expect("the system").services().bus.clone();
+            let mut peer = Peer::open(&bus).await;
+
+            let (status, _body) = get_json(&router, "/api/remote/targets").await;
+            assert_eq!(status, StatusCode::OK);
+            settle().await;
+            assert!(peer.drained(), "a read announces nothing");
+
+            // The targets scope's family operations go through the same saving path
+            // (groups.rs), so a rename moves the topic too (SPEC §remote.targets).
+            system
+                .with_store_saving(|s| s.set_group_names(&["default".into(), "prod".into()]))
+                .expect("groups");
+            settle().await;
+            peer.notice().await;
+            assert!(peer.drained());
+        }
     }
 }

@@ -138,6 +138,13 @@ pub struct RunHistory {
     /// before its record exists. At most max_concurrent entries (the coordinator's
     /// bound), never more.
     open: Mutex<HashMap<u64, (Arc<OutputFile>, Value)>>,
+    /// The REMOTE.HISTORY notice (SPEC §remote.history), attached by the system that
+    /// owns this log. Publishes and reads nothing else, so a pass may call it under
+    /// the ledger lock.
+    notice: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// The open passes rewrote rows before any notice could exist; the first attach
+    /// publishes for them (SPEC §remote.history: the open at start).
+    rewrote_at_open: std::sync::atomic::AtomicBool,
 }
 
 /// One run's output file while it streams: the tee the coordinator writes into. Past
@@ -264,10 +271,15 @@ impl RunHistory {
             run_floor: std::sync::atomic::AtomicU64::new(0),
             ledger: Mutex::new(Ledger::default()),
             open: Mutex::new(HashMap::new()),
+            notice: Mutex::new(None),
+            rewrote_at_open: std::sync::atomic::AtomicBool::new(false),
         };
         // Before the ledger is built, so it counts what the passes sealed and masked.
-        history.seal_legacy_content();
-        history.mask_recorded_literals();
+        let sealed = history.seal_legacy_content();
+        let masked = history.mask_recorded_literals();
+        history
+            .rewrote_at_open
+            .store(sealed || masked, std::sync::atomic::Ordering::SeqCst);
         let mut known = HashSet::new();
         let ledger = history.scan(|line| {
             known.insert(line.run_id);
@@ -296,6 +308,37 @@ impl RunHistory {
         self.limits
     }
 
+    /// Attach the REMOTE.HISTORY notice. Idempotent; the first attach also publishes
+    /// for rows the open passes rewrote before any notice existed (SPEC
+    /// §remote.history). The database, when attached later or already attached,
+    /// gets the same notice — its hourly sweep removes rows on its own.
+    pub fn set_notice(&self, notice: Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(attached) = self.store.try_read() {
+            if let Some(store) = attached.as_ref() {
+                store.set_notice(notice.clone());
+            }
+        }
+        *self.notice.lock().unwrap_or_else(|e| e.into_inner()) = Some(notice);
+        if self
+            .rewrote_at_open
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.changed();
+        }
+    }
+
+    /// What the query answers moved. The callback owes this type's locks nothing.
+    fn changed(&self) {
+        let notice = self
+            .notice
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(notice) = notice {
+            notice();
+        }
+    }
+
     /// The sanitized input of a run that began and has not finished — for the active
     /// rows of the runs page, which the coordinator's view does not carry.
     pub fn in_flight_input(&self, run_id: u64) -> Option<Value> {
@@ -317,6 +360,16 @@ impl RunHistory {
         if let Some(floor) = history.last_run_id().await {
             self.run_floor
                 .fetch_max(floor, std::sync::atomic::Ordering::SeqCst);
+        }
+        // The database's hourly sweep removes rows on its own: it owes the notice
+        // itself, so the spill forwards what it holds (SPEC §remote.history).
+        let notice = self
+            .notice
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(notice) = notice {
+            history.set_notice(notice);
         }
         *self.store.write().await = Some(history);
     }
@@ -371,10 +424,19 @@ impl RunHistory {
     /// [Self::clear] over whichever authority holds the log. A clear resets the wire
     /// records, never the coordinator's numbering and never the internal identity.
     pub async fn clear_records(&self) {
+        let had = {
+            let ledger = self.ledger.lock().unwrap_or_else(|e| e.into_inner());
+            (ledger.total_bytes, ledger.runs)
+        };
         if let Some(h) = self.attached().await {
             let _ = h.clear().await;
         }
         self.clear();
+        // A clear over an empty record answers nothing new: not a move (SPEC
+        // §remote.history).
+        if had != (0, 0) {
+            self.changed();
+        }
     }
 
     /// What the log holds right now: (bytes on disk, runs).
@@ -473,9 +535,10 @@ impl RunHistory {
     /// machine key yet) is left exactly as it is - the next open tries again rather than
     /// dropping what it could not keep. Nothing to move costs one streaming walk and no
     /// rewrite, which is every start after the first.
-    fn seal_legacy_content(&self) {
+    /// Whether the pass rewrote rows (SPEC §remote.history: the open at start).
+    fn seal_legacy_content(&self) -> bool {
         if !self.any_line(|m| legacy_body(m).is_some()) {
-            return;
+            return false;
         }
         self.rewrite_index(|m| {
             let moved = match (m.get("runId").and_then(Value::as_u64), legacy_body(m)) {
@@ -497,7 +560,7 @@ impl RunHistory {
                     m.insert("contentTruncated".into(), json!(true));
                 }
             }
-        });
+        })
     }
 
     /// Records written before 2026-10-22 keep an exec's argv and cwd as typed, so a password
@@ -506,13 +569,13 @@ impl RunHistory {
     /// exports. One pass at open masks each such value the way [RunHistory::record] masks
     /// one today ([mask_record]); the database rows get the same pass in
     /// [crate::store::RemoteHistory::open]. Nothing to mask costs one streaming walk.
-    fn mask_recorded_literals(&self) {
+    fn mask_recorded_literals(&self) -> bool {
         if !self.any_line(|m| mask_record(&mut m.clone())) {
-            return;
+            return false;
         }
         self.rewrite_index(|m| {
             mask_record(m);
-        });
+        })
     }
 
     /// Whether any whole line of the index passes `test` - one streaming walk, stopping at
@@ -530,7 +593,7 @@ impl RunHistory {
     /// The index rewritten line by line through `edit`, into a temporary file renamed over
     /// it - never the whole file in memory. A torn line (a kill mid-append) is dropped, as in
     /// evict; a failed rewrite leaves the index exactly as it was.
-    fn rewrite_index(&self, mut edit: impl FnMut(&mut Map<String, Value>)) {
+    fn rewrite_index(&self, mut edit: impl FnMut(&mut Map<String, Value>)) -> bool {
         let tmp = self.dir.join(format!("{INDEX_FILE}.tmp"));
         let rewrite = (|| -> std::io::Result<()> {
             let src = File::open(self.index_path())?;
@@ -549,9 +612,10 @@ impl RunHistory {
         })();
         if rewrite.is_err() {
             let _ = std::fs::remove_file(&tmp);
-            return;
+            return false;
         }
         chmod_private(&self.index_path(), private_file_mode());
+        true
     }
 
     /// A page of records, newest first, strictly before `before` when given, filtered by
@@ -889,6 +953,10 @@ impl RunHistory {
         let mut ledger = self.scan(|_| {});
         ledger.hold_until_ms = hold_until;
         *self.ledger.lock().unwrap_or_else(|e| e.into_inner()) = ledger;
+        // A pass that removed a line or evicted a file moved the answer; one that
+        // changed nothing stays silent, so a read can never feed its own notice
+        // (SPEC §remote.history).
+        self.changed();
     }
 
     /// Append one finished run: the line, then the budgets. `Err` means the record is
@@ -1021,10 +1089,17 @@ impl RunHistorySink for RunHistory {
                     .record_run(&line, Some(&out), Some(&content))
                     .await
                 {
-                    Ok(()) => HistoryAck::Recorded,
+                    // The notice leaves only once the change is visible through the
+                    // query authority (SPEC §bus.topics) — the database's commit,
+                    // when it holds the log; the spill line otherwise.
+                    Ok(()) => {
+                        self.changed();
+                        HistoryAck::Recorded
+                    }
                     Err(reason) => HistoryAck::Unavailable { reason },
                 };
             }
+            self.changed();
             HistoryAck::Recorded
         })
     }
@@ -2068,6 +2143,115 @@ mod tests {
         assert_eq!(history.usage(), (0, 0));
         assert!(history.page(None, 20, None).0.is_empty());
         assert!(!dir.join(OUT_DIR).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A counting notice: what every notices test holds against the log.
+    fn counting_notice() -> (Arc<std::sync::atomic::AtomicUsize>, Arc<dyn Fn() + Send + Sync>) {
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let closure = {
+            let count = count.clone();
+            Arc::new(move || {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }) as Arc<dyn Fn() + Send + Sync>
+        };
+        (count, closure)
+    }
+
+    fn notices(count: &std::sync::atomic::AtomicUsize) -> usize {
+        count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_record_filed_publishes_once_and_a_read_publishes_nothing() {
+        let dir = scratch();
+        let history = RunHistory::open(dir.clone());
+        let (count, notice) = counting_notice();
+        history.set_notice(notice);
+
+        run(&history, 1, b"kept\n", now_ms());
+        assert_eq!(notices(&count), 1, "the filing is announced");
+        run(&history, 2, b"also kept\n", now_ms());
+        assert_eq!(notices(&count), 2, "each filing once");
+
+        // The read path runs the O(1) budget check on every page: a pass that
+        // changed nothing publishes nothing, or the notice would feed its own
+        // read forever (SPEC §remote.history).
+        assert!(!history.page(None, 20, None).0.is_empty());
+        assert_eq!(notices(&count), 2, "a read announces nothing");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clear_publishes_when_the_record_held_something_and_only_then() {
+        let dir = scratch();
+        let history = RunHistory::open(dir.clone());
+        let (count, notice) = counting_notice();
+        history.set_notice(notice);
+        run(&history, 1, b"kept\n", now_ms());
+        assert_eq!(notices(&count), 1);
+
+        // The same minimal runtime finish_recorded uses: clear_records is async.
+        let clear = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a minimal runtime for the clear");
+        clear.block_on(history.clear_records());
+        assert_eq!(notices(&count), 2, "a clear over a held record moves the answer");
+        clear.block_on(history.clear_records());
+        assert_eq!(notices(&count), 2, "a clear over an empty record does not");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_evicting_pass_publishes_more_than_its_filings_alone() {
+        let dir = scratch();
+        // A byte budget one record cannot stay under: the second filing must evict
+        // the first, and that eviction is a publish the filing alone does not
+        // explain (SPEC §remote.history: a retention pass that removed a line).
+        let history = RunHistory::open_with(
+            dir.clone(),
+            Limits {
+                max_total_bytes: 1,
+                max_runs: 1,
+                audit_window_ms: 0,
+                ..Limits::default()
+            },
+        );
+        let (count, notice) = counting_notice();
+        history.set_notice(notice);
+
+        run(&history, 1, b"first\n", now_ms());
+        run(&history, 2, b"second\n", now_ms());
+        assert!(
+            notices(&count) > 2,
+            "two filings and at least one eviction: {}",
+            notices(&count)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_open_passes_publish_once_a_notice_exists() {
+        // A legacy record (a clear body in the index) plus a masked literal: both
+        // open passes rewrite rows. A clean log's open passes rewrite nothing.
+        let dir = scratch();
+        {
+            let history = RunHistory::open(dir.clone());
+            write(&history, 1, "SECRET=1\n");
+            make_legacy(&dir, 1, "SECRET=1\n");
+        }
+        let history = RunHistory::open(dir.clone());
+        let (count, notice) = counting_notice();
+        history.set_notice(notice);
+        assert_eq!(notices(&count), 1, "the open passes' move is announced once");
+        let (_, again) = counting_notice();
+        history.set_notice(again);
+        assert_eq!(notices(&count), 1, "and never again");
+
+        let clean = RunHistory::open(scratch());
+        let (count, notice) = counting_notice();
+        clean.set_notice(notice);
+        assert_eq!(notices(&count), 0, "a clean open moved nothing");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

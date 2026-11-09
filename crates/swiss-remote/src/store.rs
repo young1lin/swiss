@@ -102,6 +102,14 @@ pub struct RemoteHistory {
     /// The chunk sealing keys (SPEC host.history): run_output parts seal at write and
     /// open at read; an empty candidate list is the degraded plain-block mode.
     keys: swiss_host::history::seal::ChunkKeys,
+    /// The REMOTE.HISTORY notice (SPEC §remote.history), forwarded by the spill this
+    /// database attaches to: the hourly sweep removes rows on its own, outside any
+    /// route or run, and it owes the notice itself. Publishes and reads nothing else.
+    notice: std::sync::Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// The open import moved rows before any notice could exist (the database opens
+    /// before the spill attaches it, SPEC §remote.history); the first notice
+    /// publishes for them.
+    rewrote_at_open: std::sync::atomic::AtomicBool,
 }
 
 /// The output stream's parts as the run writer lays them down: the run id is the event
@@ -117,6 +125,28 @@ static REMOTE_BODY_TABLES: &[swiss_host::history::cell::BodyPartTable] = &[swiss
 }];
 
 impl RemoteHistory {
+    /// The REMOTE.HISTORY notice, forwarded by the owning spill at attach.
+    pub fn set_notice(&self, notice: Arc<dyn Fn() + Send + Sync>) {
+        *self.notice.lock().unwrap_or_else(|e| e.into_inner()) = Some(notice);
+        if self
+            .rewrote_at_open
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.changed();
+        }
+    }
+
+    fn changed(&self) {
+        let notice = self
+            .notice
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(notice) = notice {
+            notice();
+        }
+    }
+
     /// The Data page's decoder for this file's sealed output parts (SPEC §data.sqlite
     /// "Decoded cells").
     pub fn cell_decoder(&self) -> Arc<dyn swiss_host::services::module_db::ModuleCellDecoder> {
@@ -151,6 +181,8 @@ impl RemoteHistory {
             meta_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             snapshot: std::sync::atomic::AtomicU64::new(1),
             keys: swiss_host::history::seal::ChunkKeys::resolve(),
+            notice: std::sync::Mutex::new(None),
+            rewrote_at_open: std::sync::atomic::AtomicBool::new(false),
         });
         // Enroll in the physical quota (SPEC host.history): the declared default
         // shares with the protected window flag - an over-share denial still denies,
@@ -724,6 +756,11 @@ impl RemoteHistory {
     /// and the byte budgets are the retention phase's physical accounting).
     pub async fn sweep(&self, age_ms: u64) {
         let cutoff = swiss_core::util::now_ms().saturating_sub(age_ms) as i64;
+        // How many rows this pass removes — a sweep that removed nothing publishes
+        // nothing (SPEC §remote.history): the hourly timer must not wake the Runs
+        // page every hour it changes no row.
+        let gone_rows = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = gone_rows.clone();
         // The sweep rides submit_exempt, not submit: a quota that refuses the
         // sweep can never reclaim the bytes it is policing - the share would
         // wedge with no exit (the store contract, host history store.rs).
@@ -741,6 +778,7 @@ impl RemoteHistory {
                                 .into_iter()
                                 .map(|r| r.try_get::<i64, _>(0))
                                 .collect::<Result<Vec<_>, _>>()?;
+                        counted.store(gone.len(), std::sync::atomic::Ordering::SeqCst);
                         for id in &gone {
                             sqlx::query("DELETE FROM run_output WHERE run_id = ?")
                                 .bind(id)
@@ -782,6 +820,9 @@ impl RemoteHistory {
             self.meta_cache.lock().unwrap_or_else(|e| e.into_inner()).remove("swept_before_ms");
         }
         self.snapshot.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if gone_rows.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            self.changed();
+        }
     }
 
     // --- legacy import --------------------------------------------------------------------------
@@ -797,6 +838,7 @@ impl RemoteHistory {
         self.set_meta("legacy_import", "active").await;
         let index = remote_dir.join("runs.jsonl");
         let mut torn: u64 = 0;
+        let mut imported: u64 = 0;
         if let Ok(text) = std::fs::read_to_string(&index) {
             // Streaming forward, oldest first, so internal ids follow the wire order.
             for line in text.lines() {
@@ -818,6 +860,7 @@ impl RemoteHistory {
                 if let Err(e) = self.record_run(&v, out_path.as_deref(), content_path.as_deref()).await {
                     return Err(format!("importing run {run_id}: {e}"));
                 }
+                imported += 1;
             }
             if !text.is_empty() && !text.ends_with('\n') {
                 torn += 1;
@@ -827,6 +870,12 @@ impl RemoteHistory {
             self.set_meta("legacy_torn_tail", &torn.to_string()).await;
         }
         self.set_meta("legacy_import", "done").await;
+        // Rows the import rewrote (SPEC §remote.history: the open at start) — the
+        // first notice publishes for them, once the spill attaches one.
+        if imported > 0 {
+            self.rewrote_at_open
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         Ok(())
     }
 

@@ -311,6 +311,11 @@ export enum Module {
   DATA = 6,
 
   /**
+   * @generated from enum value: MODULE_REMOTE = 10;
+   */
+  REMOTE = 10,
+
+  /**
    * @generated from enum value: MODULE_PANEL = 14;
    */
   PANEL = 14,

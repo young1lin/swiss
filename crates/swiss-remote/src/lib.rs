@@ -45,6 +45,7 @@ pub mod target;
 
 use std::sync::{Arc, Mutex};
 
+use prost::Message as _;
 use swiss_host::services::RuntimeServices;
 
 pub use groups::register_remote_scopes;
@@ -90,13 +91,29 @@ impl RemoteSystem {
     }
 
     /// The run log — what the plugin registers as the coordinator's history sink and
-    /// what /api/remote/runs reads. Opens on first use, once.
+    /// what /api/remote/runs reads. Opens on first use, once. Every call (re)attaches
+    /// the REMOTE.HISTORY notice: idempotent, and the open passes' deferred notice —
+    /// fired before any subscriber could exist — lands with the first attach.
     pub fn history(&self) -> Arc<RunHistory> {
-        self.history
+        let history = self
+            .history
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get_or_insert_with(|| RunHistory::open(self.history_dir.clone()))
-            .clone()
+            .clone();
+        let bus = self.services.bus.clone();
+        history.set_notice(Arc::new(move || {
+            let body = swiss_bus::pb::v1::Notice {}.encode_to_vec();
+            bus.publish(
+                swiss_bus::pb::v1::Module::Remote as u32,
+                swiss_bus::pb::v1::RemoteSub::History as u32,
+                swiss_bus::pb::v1::HistoryId::Changed as u32,
+                "",
+                "",
+                body,
+            );
+        }));
+        history
     }
 
     /// Run a closure over the table under its lock. For mutations only; reads on the
@@ -104,6 +121,35 @@ impl RemoteSystem {
     pub fn with_store<R>(&self, f: impl FnOnce(&mut TargetStore) -> R) -> R {
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut store)
+    }
+
+    /// A mutation of the target table: the write runs under the lock, and a write
+    /// that saved publishes REMOTE.TARGETS while the lock is still held (SPEC
+    /// §remote.targets) — a refused write, one the store answered Err without
+    /// writing, publishes nothing.
+    pub fn with_store_saving<T>(
+        &self,
+        f: impl FnOnce(&mut TargetStore) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        let out = f(&mut store);
+        if out.is_ok() {
+            self.targets_changed();
+        }
+        out
+    }
+
+    /// The target table was written (REMOTE.TARGETS, a notice, SPEC §bus.topics).
+    pub(crate) fn targets_changed(&self) {
+        let body = swiss_bus::pb::v1::Notice {}.encode_to_vec();
+        self.services.bus.publish(
+            swiss_bus::pb::v1::Module::Remote as u32,
+            swiss_bus::pb::v1::RemoteSub::Targets as u32,
+            swiss_bus::pb::v1::TargetsId::Changed as u32,
+            "",
+            "",
+            body,
+        );
     }
 
     /// Resolve a target id for a run: clone the row out under the lock, then work

@@ -10,6 +10,7 @@ enum Module {
   MODULE_BUS = 0;
   MODULE_HOST = 4;
   MODULE_DATA = 6;
+  MODULE_REMOTE = 10;
   MODULE_PANEL = 14;
 }
 

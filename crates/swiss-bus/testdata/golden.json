@@ -193,6 +193,34 @@
     "key": ""
   },
   {
+    "bodyType": "Notice",
+    "body": {},
+    "origin": "page-a",
+    "name": "targets-notice",
+    "hex": "080a100118012003280c5206706167652d61",
+    "module": 10,
+    "sub": 1,
+    "id": 1,
+    "kind": "EVENT",
+    "seq": 12,
+    "replyTo": 0,
+    "key": ""
+  },
+  {
+    "bodyType": "Notice",
+    "body": {},
+    "origin": "page-a",
+    "name": "history-notice",
+    "hex": "080a100218012003280d5206706167652d61",
+    "module": 10,
+    "sub": 2,
+    "id": 1,
+    "kind": "EVENT",
+    "seq": 13,
+    "replyTo": 0,
+    "key": ""
+  },
+  {
     "bodyType": "RunChanged",
     "body": {
       "runId": 12,

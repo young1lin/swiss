@@ -16,6 +16,10 @@ publish.workspace = true
 # no SSH client linked at all.
 swiss-core = { path = "../swiss-core" }
 swiss-host = { path = "../swiss-host" }
+# REMOTE.TARGETS / REMOTE.HISTORY notices (SPEC §remote.targets, §remote.history):
+# both publish on the host's bus; the empty Notice body is encoded with prost.
+swiss-bus = { path = "../swiss-bus" }
+prost = { version = "0.14", default-features = false, features = ["derive", "std"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync", "fs", "io-util"] }
 serde = { version = "1", features = ["derive"] }

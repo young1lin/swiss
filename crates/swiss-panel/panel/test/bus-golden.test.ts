@@ -172,7 +172,7 @@ describe("golden frames (SPEC §bus.codegen)", () => {
   const entries = JSON.parse(text) as Golden[];
 
   it("decodes every frame to its fields and re-encodes to its bytes", () => {
-    expect(entries.length).toBeGreaterThanOrEqual(13);
+    expect(entries.length).toBeGreaterThanOrEqual(15);
     for (const entry of entries) {
       if (entry.name === "ping") expect(entry.hex).toBe(PING_HEX);
       if (entry.name === "pong") expect(entry.hex).toBe(PONG_HEX);

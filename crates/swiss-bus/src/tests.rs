@@ -762,6 +762,16 @@ fn golden_entries() -> Vec<serde_json::Value> {
             serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-b"}),
         ),
         (
+            "targets-notice",
+            frame!(10, 1, 1, Kind::Event, 12, 0, "", "page-a", v1::Notice {}.encode_to_vec(), None),
+            serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a"}),
+        ),
+        (
+            "history-notice",
+            frame!(10, 2, 1, Kind::Event, 13, 0, "", "page-a", v1::Notice {}.encode_to_vec(), None),
+            serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a"}),
+        ),
+        (
             "runs-changed",
             frame!(4, 1, 1, Kind::Event, 10, 0, "remote", "page-a", v1::RunChanged {
                 run_id: 12,

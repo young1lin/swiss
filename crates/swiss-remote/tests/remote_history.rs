@@ -902,6 +902,40 @@ async fn maintain_runs_the_age_sweep() {
     let _ = history.close().await;
 }
 
+/// The database's own retention pass publishes the history notice when it removed
+/// a line and stays silent when it removed nothing (SPEC §remote.history: the
+/// hourly sweep must not wake the Runs page every hour it changes no row).
+#[tokio::test]
+async fn the_hourly_sweep_publishes_only_when_it_removed_a_line() {
+    let (_app, _system, _opened, logs_root, _fake) = wired().await;
+    let logs = logs_root.join("remote");
+    std::fs::create_dir_all(logs.join("out")).unwrap();
+    std::fs::write(logs.join("out").join("9200.txt"), b"old run output").unwrap();
+    let line = |id: u64, ended: u64| {
+        json!({
+            "runId": id, "action": "remote.exec", "state": "succeeded", "exitCode": 0,
+            "endedAtMs": ended, "target": "dev", "actor": "api",
+            "input": { "target": "dev", "argv": ["emit"] },
+        })
+    };
+    let history = RemoteHistory::open(logs.parent().unwrap()).await.unwrap();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = count.clone();
+    history.set_notice(Arc::new(move || {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }));
+    history
+        .record_run(&line(9200, 1_000), Some(&logs.join("out").join("9200.txt")), None)
+        .await
+        .unwrap();
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0, "a commit through the spill's finish path is its notice, not this one");
+    history.sweep(7 * 24 * 60 * 60 * 1000).await;
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1, "the row the sweep removed moved the answer");
+    history.sweep(7 * 24 * 60 * 60 * 1000).await;
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1, "a sweep that removed nothing stays silent");
+    let _ = history.close().await;
+}
+
 
 // --- round-1 review: the honest ack and the live cursor over the module store ----------------------
 

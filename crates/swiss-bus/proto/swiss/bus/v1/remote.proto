@@ -1,0 +1,22 @@
+// REMOTE (SPEC §bus.registry, SPEC §remote.targets, SPEC §remote.history). Module 10.
+// Both topics are notices: an empty body, because a notice is the whole content —
+// a page re-reads through the owning module's route (SPEC §remote.security).
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+enum RemoteSub {
+  REMOTE_SUB_UNSPECIFIED = 0;
+  REMOTE_SUB_TARGETS = 1;
+  REMOTE_SUB_HISTORY = 2;
+}
+
+enum TargetsId {
+  TARGETS_ID_UNSPECIFIED = 0;
+  TARGETS_ID_CHANGED = 1;
+}
+
+enum HistoryId {
+  HISTORY_ID_UNSPECIFIED = 0;
+  HISTORY_ID_CHANGED = 1;
+}
