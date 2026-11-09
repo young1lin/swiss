@@ -301,6 +301,11 @@ export enum Module {
   BUS = 0,
 
   /**
+   * @generated from enum value: MODULE_HOST = 4;
+   */
+  HOST = 4,
+
+  /**
    * @generated from enum value: MODULE_DATA = 6;
    */
   DATA = 6,

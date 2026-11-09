@@ -148,8 +148,11 @@ impl RuntimeServices {
         let actions = Arc::new(ActionRegistry::new());
         let children = ChildRegistry::new();
         let module_dbs = Arc::new(module_db::ModuleDbSeat::new());
+        // The bus exists before the coordinator: HOST.RUNS publishes on it
+        // (SPEC §host.actions: Run events).
+        let bus = swiss_bus::Bus::new(stamp);
         Arc::new(RuntimeServices {
-            runs: RunCoordinator::new(actions.clone()),
+            runs: RunCoordinator::new(actions.clone(), bus.clone()),
             actions,
             supervisor: Supervisor::new(Arc::clone(&children)),
             catalog: Arc::new(CatalogRegistry::new()),
@@ -161,7 +164,7 @@ impl RuntimeServices {
             module_dbs,
             maintenance: Arc::new(maintenance::MaintenanceSeat::new()),
             boot_pass_taken: AtomicBool::new(false),
-            bus: swiss_bus::Bus::new(stamp),
+            bus,
         })
     }
 

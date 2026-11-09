@@ -1,0 +1,46 @@
+// HOST.RUNS (SPEC §bus.registry, SPEC §host.actions). Module 4, sub 1.
+// One run's state, published while the coordinator still holds its bookkeeping
+// lock, so one run's events leave in the order its states were committed. The
+// body carries no free text: input, label, error and output stay behind the
+// owning module's route, where they are masked (SPEC §remote.security).
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+enum HostSub {
+  HOST_SUB_UNSPECIFIED = 0;
+  HOST_SUB_RUNS = 1;
+}
+
+enum RunsId {
+  RUNS_ID_UNSPECIFIED = 0;
+  RUNS_CHANGED = 1;
+}
+
+// A run's lifecycle state (SPEC §host.actions). Terminal: succeeded / failed /
+// timed out / canceled. Value names are unique across the package.
+enum RunState {
+  RUN_STATE_UNSPECIFIED = 0;
+  RUN_STATE_QUEUED = 1;
+  RUN_STATE_RUNNING = 2;
+  RUN_STATE_SUCCEEDED = 3;
+  RUN_STATE_FAILED = 4;
+  RUN_STATE_TIMED_OUT = 5;
+  RUN_STATE_CANCELED = 6;
+}
+
+// CHANGED. revision: 1 queued, 2 running, 3 terminal — a run only moves forward.
+message RunChanged {
+  uint64 run_id = 1 [jstype = JS_NUMBER];
+  uint32 revision = 2;
+  RunState state = 3;
+  string action = 4;
+  string owner = 5;
+  string actor = 6;
+  // The remote lane's target; "" for the local pool.
+  string lane = 7;
+  uint64 queued_at_ms = 8 [jstype = JS_NUMBER];
+  optional uint64 started_at_ms = 9 [jstype = JS_NUMBER];
+  optional uint64 ended_at_ms = 10 [jstype = JS_NUMBER];
+  optional int32 exit_code = 11;
+}

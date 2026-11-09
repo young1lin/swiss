@@ -179,6 +179,32 @@
     "origin": ""
   },
   {
+    "bodyType": "RunChanged",
+    "body": {
+      "runId": 12,
+      "revision": 3,
+      "state": "FAILED",
+      "action": "remote.exec",
+      "owner": "manual",
+      "actor": "cli:user@host",
+      "lane": "build",
+      "queuedAtMs": 1793784600000,
+      "startedAtMs": 1793784600005,
+      "endedAtMs": 1793784608015,
+      "exitCode": 2
+    },
+    "origin": "page-a",
+    "key": "remote",
+    "name": "runs-changed",
+    "hex": "0804100118012003280a3a0672656d6f74654248080c10031804220b72656d6f74652e657865632a066d616e75616c320d636c693a7573657240686f73743a056275696c6440c0ab93af9a3448c5ab93af9a34508fea93af9a3458025206706167652d61",
+    "module": 4,
+    "sub": 1,
+    "id": 1,
+    "kind": "EVENT",
+    "seq": 10,
+    "replyTo": 0
+  },
+  {
     "bodyType": "Prefs",
     "body": {
       "lang": "zh"

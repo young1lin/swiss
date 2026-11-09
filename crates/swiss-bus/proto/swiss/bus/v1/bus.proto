@@ -8,6 +8,7 @@ package swiss.bus.v1;
 // The owning module. 0 is omitted on the wire, which is why PING's bytes do not carry it.
 enum Module {
   MODULE_BUS = 0;
+  MODULE_HOST = 4;
   MODULE_DATA = 6;
   MODULE_PANEL = 14;
 }

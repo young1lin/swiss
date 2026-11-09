@@ -48,7 +48,9 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use futures_util::FutureExt;
+use prost::Message as _;
 use serde_json::{json, Value};
+use swiss_bus::pb::v1;
 use std::panic::AssertUnwindSafe;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -507,10 +509,107 @@ impl Inner {
     }
 }
 
+/// The lane as HOST.RUNS spells it: the remote target's name, "" for the local pool.
+fn lane_name(lane: &RunLane) -> &str {
+    match lane {
+        RunLane::Local => "",
+        RunLane::Remote(target) => target,
+    }
+}
+
+fn proto_state(state: RunState) -> v1::RunState {
+    match state {
+        RunState::Queued => v1::RunState::Queued,
+        RunState::Running => v1::RunState::Running,
+        RunState::Succeeded => v1::RunState::Succeeded,
+        RunState::Failed => v1::RunState::Failed,
+        RunState::TimedOut => v1::RunState::TimedOut,
+        RunState::Canceled => v1::RunState::Canceled,
+    }
+}
+
+/// What one HOST.RUNS event carries (SPEC §host.actions: Run events): the run's
+/// state — id, action, owner, actor, lane, times, exit code — and never its input,
+/// label, error or output, which can hold a credential literal only the owning
+/// module knows how to mask.
+struct RunEvent {
+    run_id: u64,
+    state: RunState,
+    action: String,
+    owner: String,
+    actor: String,
+    lane: String,
+    queued_at_ms: u64,
+    started_at_ms: Option<u64>,
+    ended_at_ms: Option<u64>,
+    exit_code: Option<i32>,
+}
+
+impl RunEvent {
+    /// A submission that waits: revision 1, no start.
+    fn queued(run_id: u64, request: &SubmitRequest, lane: &RunLane, queued_at_ms: u64) -> Self {
+        Self {
+            run_id,
+            state: RunState::Queued,
+            action: request.action_type.clone(),
+            owner: request.owner.clone(),
+            actor: request.actor.clone(),
+            lane: lane_name(lane).to_owned(),
+            queued_at_ms,
+            started_at_ms: None,
+            ended_at_ms: None,
+            exit_code: None,
+        }
+    }
+
+    /// A start, at submit or from the queue: revision 2.
+    fn running(
+        run_id: u64,
+        owner: &str,
+        actor: &str,
+        action: &str,
+        lane: &RunLane,
+        queued_at_ms: u64,
+        started_at_ms: u64,
+    ) -> Self {
+        Self {
+            run_id,
+            state: RunState::Running,
+            action: action.to_owned(),
+            owner: owner.to_owned(),
+            actor: actor.to_owned(),
+            lane: lane_name(lane).to_owned(),
+            queued_at_ms,
+            started_at_ms: Some(started_at_ms),
+            ended_at_ms: None,
+            exit_code: None,
+        }
+    }
+
+    /// The terminal state, or canceled for a queued run a cancel dropped: revision 3.
+    fn terminal(view: &RunView, lane: &RunLane) -> Self {
+        Self {
+            run_id: view.run_id,
+            state: view.state,
+            action: view.action_type.clone(),
+            owner: view.owner.clone(),
+            actor: view.actor.clone(),
+            lane: lane_name(lane).to_owned(),
+            queued_at_ms: view.queued_at_ms,
+            started_at_ms: view.started_at_ms,
+            ended_at_ms: view.ended_at_ms,
+            exit_code: view.exit_code,
+        }
+    }
+}
+
 /// The coordinator. Shared as one Arc between RuntimeServices, the jobs scheduler and the
 /// API handlers.
 pub struct RunCoordinator {
     registry: Arc<ActionRegistry>,
+    /// HOST.RUNS publishes here (SPEC §host.actions: Run events). The bus never
+    /// calls back into the coordinator, so the lock order below holds one way.
+    bus: Arc<swiss_bus::Bus>,
     inner: Mutex<Inner>,
     /// The history sinks (usually none, at most one per plugin that keeps a record).
     /// Its own lock: a sink is consulted at run start, outside the bookkeeping lock.
@@ -525,9 +624,10 @@ impl RunCoordinator {
         &self.registry
     }
 
-    pub fn new(registry: Arc<ActionRegistry>) -> Arc<Self> {
+    pub fn new(registry: Arc<ActionRegistry>, bus: Arc<swiss_bus::Bus>) -> Arc<Self> {
         Arc::new(RunCoordinator {
             registry,
+            bus,
             inner: Mutex::new(Inner {
                 capacity: RunCapacity::default(),
                 remote_per_target: DEFAULT_MAX_REMOTE_RUNS_PER_TARGET,
@@ -661,6 +761,51 @@ impl RunCoordinator {
                 .count()
     }
 
+    /// Publish HOST.RUNS for one state a run just entered (SPEC §host.actions: Run
+    /// events). The caller still holds the inner lock — commit order is event order
+    /// (SPEC §bus.topics) — and the lock order is this lock, then the bus's own; the
+    /// bus never calls back. A refused submission never reaches here: it never
+    /// became a run.
+    fn announce(&self, event: RunEvent) {
+        #[cfg(test)]
+        assert!(
+            self.inner.try_lock().is_err(),
+            "run events publish under the bookkeeping lock"
+        );
+        let revision = if event.state.is_terminal() {
+            3
+        } else if event.state == RunState::Running {
+            2
+        } else {
+            1
+        };
+        // The key is the action's namespace — the type up to its first dot — so a
+        // page hears only the runs it shows ("remote.exec" -> "remote").
+        let key = event.action.split('.').next().unwrap_or_default().to_owned();
+        let body = v1::RunChanged {
+            run_id: event.run_id,
+            revision,
+            state: proto_state(event.state) as i32,
+            action: event.action,
+            owner: event.owner,
+            actor: event.actor,
+            lane: event.lane,
+            queued_at_ms: event.queued_at_ms,
+            started_at_ms: event.started_at_ms,
+            ended_at_ms: event.ended_at_ms,
+            exit_code: event.exit_code,
+        }
+        .encode_to_vec();
+        self.bus.publish(
+            v1::Module::Host as u32,
+            v1::HostSub::Runs as u32,
+            v1::RunsId::RunsChanged as u32,
+            &key,
+            "",
+            body,
+        );
+    }
+
     /// Register + start (or queue) one run. Returns immediately with the run id — an HTTP
     /// request must never own a background task's lifetime (SPEC §host.actions).
     pub fn submit(self: &Arc<Self>, request: SubmitRequest) -> Result<SubmittedRun, SubmitError> {
@@ -724,6 +869,7 @@ impl RunCoordinator {
                 )));
             }
             inner.outputs.insert(run_id, output.clone());
+            let event = RunEvent::queued(run_id, &request, &lane, queued_at);
             inner.queued.push_back(QueuedRun {
                 run_id,
                 request,
@@ -731,6 +877,7 @@ impl RunCoordinator {
                 queued_at_ms: queued_at,
                 done: done_tx,
             });
+            self.announce(event);
         } else {
             return Err(SubmitError::Capacity(full.unwrap_or_default()));
         }
@@ -781,6 +928,15 @@ impl RunCoordinator {
                     .await
             })
         };
+        let event = RunEvent::running(
+            run_id,
+            &owner,
+            &actor,
+            &action_type,
+            &lane,
+            queued_at_ms,
+            started_at,
+        );
         inner.active.insert(
             run_id,
             ActiveRun {
@@ -795,6 +951,7 @@ impl RunCoordinator {
                 join: Some(join),
             },
         );
+        self.announce(event);
     }
 
     /// One run's whole life: resolve the action, race execution against the deadline
@@ -956,10 +1113,15 @@ impl RunCoordinator {
     fn finish(self: &Arc<Self>, run_id: u64, view: RunView) {
         {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            inner.active.remove(&run_id);
-            inner.finished.push_front(view);
+            let lane = inner
+                .active
+                .remove(&run_id)
+                .map(|a| a.lane)
+                .unwrap_or(RunLane::Local);
+            inner.finished.push_front(view.clone());
             inner.finished.truncate(FINISHED_RING);
             retire_output_locked(&mut inner, run_id);
+            self.announce(RunEvent::terminal(&view, &lane));
         }
         self.dispatch_queue();
     }
@@ -988,12 +1150,14 @@ impl RunCoordinator {
     }
 
     /// Enter the finished ring without touching the active set (queued runs canceled in
-    /// place).
-    fn push_finished(&self, run_id: u64, view: RunView) {
+    /// place). `lane` is the run's lane: the event names it even though the run never
+    /// started.
+    fn push_finished(&self, run_id: u64, view: RunView, lane: &RunLane) {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner.finished.push_front(view);
+        inner.finished.push_front(view.clone());
         inner.finished.truncate(FINISHED_RING);
         retire_output_locked(&mut inner, run_id);
+        self.announce(RunEvent::terminal(&view, lane));
     }
 
     /// Start queued runs while the pool has room, FIFO.
@@ -1058,6 +1222,7 @@ impl RunCoordinator {
             let QueuedRun {
                 run_id,
                 request,
+                lane,
                 queued_at_ms,
                 done,
                 ..
@@ -1065,7 +1230,7 @@ impl RunCoordinator {
             let view = queued_canceled_view(run_id, &request, queued_at_ms);
             drop(inner);
             let _ = done.send(view.clone());
-            self.push_finished(run_id, view.clone());
+            self.push_finished(run_id, view.clone(), &lane);
             return Some(view);
         }
         // Not active, not queued: finished (first-wins no-op) or unknown.
@@ -1120,7 +1285,7 @@ impl RunCoordinator {
             }
         }
         // Drop matching queued runs as canceled.
-        let mut canceled_queued: Vec<RunView> = Vec::new();
+        let mut canceled_queued: Vec<(RunView, RunLane)> = Vec::new();
         {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let mut kept = VecDeque::new();
@@ -1129,15 +1294,15 @@ impl RunCoordinator {
                     count += 1;
                     let view = queued_canceled_view(q.run_id, &q.request, q.queued_at_ms);
                     let _ = q.done.send(view.clone());
-                    canceled_queued.push(view);
+                    canceled_queued.push((view, q.lane));
                 } else {
                     kept.push_back(q);
                 }
             }
             inner.queued = kept;
         }
-        for view in canceled_queued {
-            self.push_finished(view.run_id, view);
+        for (view, lane) in canceled_queued {
+            self.push_finished(view.run_id, view, &lane);
         }
         count
     }
@@ -1587,6 +1752,15 @@ mod tests {
     }
 
     fn coordinator(capacity: RunCapacity) -> (Arc<RunCoordinator>, Arc<AtomicUsize>) {
+        let (runs, _bus, starts) = coordinator_with_bus(capacity);
+        (runs, starts)
+    }
+
+    /// The coordinator and its bus, so HOST.RUNS tests can subscribe a peer to the
+    /// events the coordinator publishes.
+    fn coordinator_with_bus(
+        capacity: RunCapacity,
+    ) -> (Arc<RunCoordinator>, Arc<swiss_bus::Bus>, Arc<AtomicUsize>) {
         let starts = Arc::new(AtomicUsize::new(0));
         let registry = ActionRegistry::new();
         registry
@@ -1594,6 +1768,13 @@ mod tests {
                 starts: starts.clone(),
             }))
             .expect("register sleep");
+        registry
+            .register(Arc::new(NamespacedRemoteSleepAction {
+                inner: SleepAction {
+                    starts: starts.clone(),
+                },
+            }))
+            .expect("register namespaced remote sleep");
         registry
             .register(Arc::new(RemoteSleepAction {
                 inner: SleepAction {
@@ -1607,9 +1788,10 @@ mod tests {
         registry
             .register(Arc::new(PanicAction))
             .expect("register panic");
-        let coordinator = RunCoordinator::new(Arc::new(registry));
+        let bus = swiss_bus::Bus::new(Arc::new(|| "test".to_string()));
+        let coordinator = RunCoordinator::new(Arc::new(registry), bus.clone());
         coordinator.set_capacity(capacity);
-        (coordinator, starts)
+        (coordinator, bus, starts)
     }
 
     fn request(owner: &str, label: &str, ms: u64) -> SubmitRequest {
@@ -2591,5 +2773,444 @@ mod tests {
             "the floor is committed to the sequence file - an uncommitted floor hands one id to two processes: {committed}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The sleep under a `remote.` type name: its events key to the "remote"
+    /// namespace, whatever lane it actually runs in.
+    struct NamespacedRemoteSleepAction {
+        inner: SleepAction,
+    }
+
+    #[async_trait]
+    impl Action for NamespacedRemoteSleepAction {
+        fn type_name(&self) -> &'static str {
+            "remote.sleep"
+        }
+        fn schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        fn lane(&self, input: &Value) -> RunLane {
+            RunLane::Remote(input["target"].as_str().unwrap_or_default().to_string())
+        }
+        async fn execute(
+            &self,
+            input: &Value,
+            cancel: CancelHandle,
+        ) -> Result<ActionOutcome, ActionError> {
+            self.inner.execute(input, cancel).await
+        }
+    }
+
+    /// HOST.RUNS over the real pump, without sockets (SPEC §host.actions: Run events,
+    /// SPEC §bus.topics): a subscribed link, its frames decoded as RunChanged.
+    mod run_events {
+        use super::*;
+        use tokio::sync::mpsc;
+
+        struct Channel {
+            rx: mpsc::Receiver<swiss_bus::IoMsg>,
+            tx: mpsc::Sender<swiss_bus::IoMsg>,
+        }
+
+        impl swiss_bus::Io for Channel {
+            fn recv(&mut self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<swiss_bus::IoMsg>> + Send + '_>> {
+                Box::pin(async move { self.rx.recv().await })
+            }
+            fn send(&mut self, msg: swiss_bus::IoMsg) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + '_>> {
+                Box::pin(async move { self.tx.send(msg).await.is_ok() })
+            }
+        }
+
+        /// One subscribed link. `open` subscribes BEFORE the first submission: events
+        /// that left while nobody listened are gone, and the tests must see that.
+        struct Peer {
+            tx: mpsc::Sender<swiss_bus::IoMsg>,
+            rx: mpsc::Receiver<swiss_bus::IoMsg>,
+            seq: u32,
+            events: std::collections::VecDeque<v1::Frame>,
+        }
+
+        impl Peer {
+            async fn open(bus: &Arc<swiss_bus::Bus>, key: &str) -> Self {
+                let (tx, rx) = mpsc::channel(32);
+                let (out, incoming) = mpsc::channel(32);
+                tokio::spawn(swiss_bus::run(bus.clone(), Channel { rx, tx: out }));
+                let mut peer = Self { tx, rx: incoming, seq: 1, events: Default::default() };
+                let welcome = peer
+                    .request_at(
+                        0,
+                        v1::BusSub::Link as u32,
+                        v1::LinkId::Hello as u32,
+                        v1::Hello { protocol: 1, page_id: "page-a".into(), build: "test".into() }
+                            .encode_to_vec(),
+                    )
+                    .await;
+                assert!(welcome.fault.is_none());
+                let answer = peer
+                    .request_at(
+                        0,
+                        v1::BusSub::Topic as u32,
+                        v1::TopicId::Subscribe as u32,
+                        v1::Topics {
+                            topics: vec![v1::Topic {
+                                module: v1::Module::Host as u32,
+                                sub: v1::HostSub::Runs as u32,
+                                key: key.to_owned(),
+                            }],
+                        }
+                        .encode_to_vec(),
+                    )
+                    .await;
+                assert!(answer.fault.is_none());
+                peer
+            }
+
+            async fn next(&mut self) -> v1::Frame {
+                loop {
+                    match self.rx.recv().await.expect("link frame") {
+                        swiss_bus::IoMsg::Binary(bytes) => {
+                            return v1::Frame::decode(bytes.as_slice()).expect("frame");
+                        }
+                        // The pump's keepalive ticks land here between frames; they
+                        // are not link protocol for this harness.
+                        swiss_bus::IoMsg::Ping(_) | swiss_bus::IoMsg::Pong(_) => continue,
+                        other => panic!("expected binary, got {other:?}"),
+                    }
+                }
+            }
+
+            async fn request_at(&mut self, module: u32, sub: u32, id: u32, body: Vec<u8>) -> v1::Frame {
+                let seq = self.seq;
+                self.seq += 1;
+                self.tx
+                    .send(swiss_bus::IoMsg::Binary(
+                        v1::Frame {
+                            module,
+                            sub,
+                            id,
+                            kind: v1::Kind::Request as i32,
+                            seq,
+                            body,
+                            ..Default::default()
+                        }
+                        .encode_to_vec(),
+                    ))
+                    .await
+                    .expect("send");
+                loop {
+                    let frame = self.next().await;
+                    if frame.kind == v1::Kind::Event as i32 {
+                        self.events.push_back(frame);
+                        continue;
+                    }
+                    assert_eq!(frame.reply_to, seq);
+                    return frame;
+                }
+            }
+
+            async fn event(&mut self) -> v1::Frame {
+                if let Some(event) = self.events.pop_front() {
+                    return event;
+                }
+                let event = self.next().await;
+                assert_eq!(event.kind, v1::Kind::Event as i32);
+                event
+            }
+
+            /// True when nothing more is waiting — an event that "never left" is proven
+            /// here, not by a timeout. Anything already arrived is parked, never eaten:
+            /// try_recv alone would consume a frame and drop it.
+            fn drained(&mut self) -> bool {
+                loop {
+                    match self.rx.try_recv() {
+                        Ok(swiss_bus::IoMsg::Binary(bytes)) => {
+                            self.events
+                                .push_back(v1::Frame::decode(bytes.as_slice()).expect("frame"));
+                        }
+                        Ok(swiss_bus::IoMsg::Ping(_) | swiss_bus::IoMsg::Pong(_)) => continue,
+                        Ok(other) => panic!("expected binary, got {other:?}"),
+                        Err(_) => return self.events.is_empty(),
+                    }
+                }
+            }
+        }
+
+        fn changed(frame: &v1::Frame) -> v1::RunChanged {
+            assert_eq!(frame.module, v1::Module::Host as u32);
+            assert_eq!(frame.sub, v1::HostSub::Runs as u32);
+            assert_eq!(frame.id, v1::RunsId::RunsChanged as u32);
+            assert_eq!(frame.kind, v1::Kind::Event as i32);
+            v1::RunChanged::decode(frame.body.as_slice()).expect("RunChanged body")
+        }
+
+        fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+            haystack.windows(needle.len()).any(|window| window == needle)
+        }
+
+        // SPEC §host.actions: one run's events follow its states — queued, running,
+        // terminal — in the order they were committed; a run that starts at once skips
+        // queued. revision: 1 queued, 2 running, 3 terminal.
+        #[tokio::test]
+        async fn run_events_follow_queued_running_terminal() {
+            let (runs, bus, _) = coordinator_with_bus(RunCapacity {
+                max_concurrent: 1,
+                max_queued: 4,
+            });
+            let mut peer = Peer::open(&bus, "").await;
+            let first = runs.submit(request("manual", "first", 120)).expect("starts at once");
+            let second = runs
+                .submit({
+                    let mut r = request("manual", "second", 120);
+                    r.queue_if_busy = true;
+                    r
+                })
+                .expect("queues behind");
+
+            let event = changed(&peer.event().await);
+            assert_eq!(
+                (event.run_id, event.revision, event.state),
+                (first.run_id, 2, v1::RunState::Running as i32),
+                "a run that starts at once begins at RUNNING"
+            );
+            assert!(event.started_at_ms.is_some());
+            assert!(event.queued_at_ms > 0);
+            let event = changed(&peer.event().await);
+            assert_eq!(
+                (event.run_id, event.revision, event.state),
+                (second.run_id, 1, v1::RunState::Queued as i32),
+                "a submission that waits enters at QUEUED"
+            );
+            assert!(event.started_at_ms.is_none());
+
+            let _ = first.done.await;
+            let _ = second.done.await;
+            settle().await;
+            let event = changed(&peer.event().await);
+            assert_eq!((event.run_id, event.revision, event.state),
+                (first.run_id, 3, v1::RunState::Succeeded as i32));
+            let event = changed(&peer.event().await);
+            assert_eq!((event.run_id, event.revision, event.state),
+                (second.run_id, 2, v1::RunState::Running as i32));
+            let event = changed(&peer.event().await);
+            assert_eq!((event.run_id, event.revision, event.state),
+                (second.run_id, 3, v1::RunState::Succeeded as i32));
+            assert!(peer.drained(), "the lifecycle is complete");
+        }
+
+        // The terminal event leaves only after the record is acknowledged and the ring
+        // holds the run: a reader acting on the event finds the run everywhere it should
+        // be (SPEC §host.actions: Run events).
+        #[tokio::test]
+        async fn the_terminal_event_leaves_after_the_ack_and_the_ring() {
+            let (runs, bus, _) = coordinator_with_bus(RunCapacity {
+                max_concurrent: 2,
+                max_queued: 2,
+            });
+            let mut peer = Peer::open(&bus, "").await;
+            let (release, gate) = oneshot::channel::<()>();
+            let sink = Arc::new(GatedAck {
+                started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                acked: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                gate: Mutex::new(Some(gate)),
+            });
+            runs.add_history_sink(sink.clone());
+            let submitted = runs.submit(request("manual", "held", 1)).expect("submitted");
+            let running = changed(&peer.event().await);
+            assert_eq!(running.run_id, submitted.run_id);
+            for _ in 0..500 {
+                if sink.started.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            assert!(sink.started.load(Ordering::SeqCst), "the run reached its sink");
+            settle().await;
+            assert!(
+                peer.drained(),
+                "the terminal event waits for the record's acknowledgment"
+            );
+            assert!(!runs.get(submitted.run_id).expect("run").state.is_terminal());
+
+            release.send(()).expect("release the record");
+            let event = changed(&peer.event().await);
+            assert_eq!(
+                (event.run_id, event.revision, event.state),
+                (submitted.run_id, 3, v1::RunState::Succeeded as i32)
+            );
+            assert!(sink.acked.load(Ordering::SeqCst), "the sink finished first");
+            assert!(runs.get(submitted.run_id).expect("run").state.is_terminal());
+        }
+
+        // A queued run a cancel drops — by id and by owner — publishes its terminal
+        // CANCELED event too (SPEC §host.actions: Run events).
+        #[tokio::test]
+        async fn a_queued_run_dropped_by_cancel_publishes_canceled() {
+            let (runs, bus, _) = coordinator_with_bus(RunCapacity {
+                max_concurrent: 1,
+                max_queued: 4,
+            });
+            let mut peer = Peer::open(&bus, "").await;
+            let hold = runs.submit(request("manual", "hold", 5_000)).expect("holds the pool");
+            let via_cancel = runs.submit({
+                let mut r = request("alice", "via-cancel", 100);
+                r.queue_if_busy = true;
+                r
+            })
+            .expect("queued");
+            let via_owner = runs.submit({
+                let mut r = request("bob", "via-owner", 100);
+                r.queue_if_busy = true;
+                r
+            })
+            .expect("queued");
+            for (id, revision) in [(hold.run_id, 2), (via_cancel.run_id, 1), (via_owner.run_id, 1)] {
+                let event = changed(&peer.event().await);
+                assert_eq!((event.run_id, event.revision), (id, revision));
+            }
+
+            let view = runs.cancel(via_cancel.run_id).await.expect("canceled by id");
+            assert_eq!(view.state, RunState::Canceled);
+            assert_eq!(runs.cancel_owner("bob").await, 1, "canceled by owner");
+            for id in [via_cancel.run_id, via_owner.run_id] {
+                let event = changed(&peer.event().await);
+                assert_eq!(
+                    (event.run_id, event.revision, event.state),
+                    (id, 3, v1::RunState::Canceled as i32),
+                    "a dropped queued run reports its own terminal state"
+                );
+                assert!(event.started_at_ms.is_none());
+            }
+
+            runs.cancel(hold.run_id).await.expect("cancel the hold");
+            let event = changed(&peer.event().await);
+            assert_eq!(
+                (event.run_id, event.revision, event.state),
+                (hold.run_id, 3, v1::RunState::Canceled as i32)
+            );
+            settle().await;
+            assert!(peer.drained());
+        }
+
+        // A submission that was refused never became a run: nothing is published for it
+        // (SPEC §host.actions: Run events).
+        #[tokio::test]
+        async fn a_refused_submission_publishes_nothing() {
+            let (runs, bus, _) = coordinator_with_bus(RunCapacity {
+                max_concurrent: 1,
+                max_queued: 0,
+            });
+            let mut peer = Peer::open(&bus, "").await;
+            let unknown = runs.submit(SubmitRequest {
+                action_type: "no.such".into(),
+                ..request("manual", "unknown", 10)
+            });
+            assert!(unknown.is_err());
+            let hold = runs.submit(request("manual", "hold", 60)).expect("holds the pool");
+            let full = runs.submit(request("manual", "full", 10));
+            assert!(full.is_err(), "the pool is full and the queue holds nothing");
+            let _ = hold.done.await;
+            settle().await;
+
+            // Exactly the one accepted run's own lifecycle; the refusals never appear.
+            let event = changed(&peer.event().await);
+            assert_eq!(event.run_id, hold.run_id);
+            assert_eq!((event.revision, event.state), (2, v1::RunState::Running as i32));
+            let event = changed(&peer.event().await);
+            assert_eq!(event.run_id, hold.run_id);
+            assert_eq!((event.revision, event.state), (3, v1::RunState::Succeeded as i32));
+            assert!(peer.drained());
+        }
+
+        // The topic key is the action's namespace — the type up to its first dot — so a
+        // page hears only the runs it shows (SPEC §bus.registry: HOST.RUNS).
+        #[tokio::test]
+        async fn run_events_are_keyed_by_action_namespace() {
+            let (runs, bus, _) = coordinator_with_bus(RunCapacity {
+                max_concurrent: 4,
+                max_queued: 4,
+            });
+            let mut remote = Peer::open(&bus, "remote").await;
+            let mut all = Peer::open(&bus, "").await;
+            let far = runs
+                .submit(SubmitRequest {
+                    action_type: "remote.sleep".into(),
+                    input: json!({ "target": "dev", "ms": 1 }),
+                    ..request("manual", "far", 1)
+                })
+                .expect("remote-namespace run");
+            let near = runs.submit(request("manual", "near", 1)).expect("local run");
+            let _ = far.done.await;
+            let _ = near.done.await;
+            settle().await;
+
+            for revision in [2, 3] {
+                let frame = remote.event().await;
+                assert_eq!(frame.key, "remote", "the key is the namespace");
+                let event = changed(&frame);
+                assert_eq!((event.run_id, event.revision), (far.run_id, revision));
+                assert_eq!(event.lane, "dev", "the lane names the target");
+            }
+            assert!(remote.drained(), "the remote key never carries the local pool");
+
+            let mut seen = Vec::new();
+            while !all.drained() {
+                let event = changed(&all.event().await);
+                seen.push((event.run_id, event.revision));
+            }
+            seen.sort_unstable();
+            assert_eq!(
+                seen,
+                vec![
+                    (far.run_id, 2),
+                    (far.run_id, 3),
+                    (near.run_id, 2),
+                    (near.run_id, 3),
+                ],
+                "the empty key hears every namespace"
+            );
+        }
+
+        // The body carries no free text: the label and the panic message stay behind
+        // the owning module's route, where they can be masked (SPEC §remote.security,
+        // §host.actions: Run events).
+        #[tokio::test]
+        async fn run_events_carry_no_free_text() {
+            let (runs, bus, _) = coordinator_with_bus(RunCapacity {
+                max_concurrent: 2,
+                max_queued: 2,
+            });
+            let mut peer = Peer::open(&bus, "").await;
+            let label = "L-sentinel-label-4f2c31";
+            let submitted = runs
+                .submit(SubmitRequest {
+                    action_type: "test.panic".into(),
+                    label: label.to_owned(),
+                    input: json!({}),
+                    ..request("manual", "boom", 1)
+                })
+                .expect("submitted");
+            let view = submitted.done.await.expect("the final view");
+            // The free text was real — it reached the view — so its absence below is
+            // the event's doing, not the action's.
+            assert_eq!(view.label, label);
+            assert_eq!(view.error.as_deref(), Some("action panicked; the run was terminated"));
+            settle().await;
+
+            let mut frames = Vec::new();
+            while !peer.drained() {
+                frames.push(peer.event().await);
+            }
+            assert!(frames.len() >= 2, "the panicking run still reported");
+            for frame in &frames {
+                assert!(
+                    !contains(frame.body.as_slice(), label.as_bytes()),
+                    "a label never rides the bus"
+                );
+                assert!(
+                    !contains(frame.body.as_slice(), b"action panicked"),
+                    "an error message never rides the bus"
+                );
+            }
+        }
     }
 }

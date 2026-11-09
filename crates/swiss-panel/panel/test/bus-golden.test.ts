@@ -39,6 +39,7 @@ import {
   SaveMode,
 } from "../src/bus/pb/swiss/bus/v1/data_pb.js";
 import { PrefsSchema } from "../src/bus/pb/swiss/bus/v1/panel_pb.js";
+import { RunChangedSchema, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 import { HEARTBEAT_MS, MAX_FRAME, PONG_DEADLINE_MS, PROTOCOL, RECONNECT_MAX_MS, RECONNECT_MIN_MS, RECONNECT_NOTICE_MS, REQUEST_TIMEOUT_MS } from "../src/bus/link.js";
 
 const PING_HEX = "1001180220012807420708c0ab93af9a34";
@@ -140,6 +141,20 @@ function assertBody(entry: Golden, frame: Frame): void {
     expect(prefs.lang, entry.name).toBe("zh");
     expect(prefs.theme, entry.name).toBeUndefined();
     expect(prefs.codeScheme, entry.name).toBeUndefined();
+  } else if (entry.bodyType === "RunChanged") {
+    // protobuf-es ignores jstype: 64-bit fields decode as bigint on this side.
+    const run = fromBinary(RunChangedSchema, frame.body);
+    expect(run.runId, entry.name).toBe(BigInt(entry.body.runId as number));
+    expect(run.revision, entry.name).toBe(entry.body.revision);
+    expect(run.state, entry.name).toBe(RunState.FAILED);
+    expect(run.action, entry.name).toBe("remote.exec");
+    expect(run.owner, entry.name).toBe("manual");
+    expect(run.actor, entry.name).toBe("cli:user@host");
+    expect(run.lane, entry.name).toBe("build");
+    expect(run.queuedAtMs, entry.name).toBe(BigInt(entry.body.queuedAtMs as number));
+    expect(run.startedAtMs, entry.name).toBe(BigInt(entry.body.startedAtMs as number));
+    expect(run.endedAtMs, entry.name).toBe(BigInt(entry.body.endedAtMs as number));
+    expect(run.exitCode, entry.name).toBe(entry.body.exitCode);
   } else if (entry.bodyType === "") {
     expect(frame.body.length, entry.name).toBe(0);
   } else {
@@ -152,7 +167,7 @@ describe("golden frames (SPEC §bus.codegen)", () => {
   const entries = JSON.parse(text) as Golden[];
 
   it("decodes every frame to its fields and re-encodes to its bytes", () => {
-    expect(entries.length).toBeGreaterThanOrEqual(11);
+    expect(entries.length).toBeGreaterThanOrEqual(12);
     for (const entry of entries) {
       if (entry.name === "ping") expect(entry.hex).toBe(PING_HEX);
       if (entry.name === "pong") expect(entry.hex).toBe(PONG_HEX);

@@ -5727,6 +5727,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "lz4_flex",
+ "prost",
  "serde",
  "serde_json",
  "sha2 0.11.1",

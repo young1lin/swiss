@@ -675,6 +675,20 @@ fn assert_body(ty: &str, bytes: &[u8], fields: &serde_json::Value, name: &str) {
             assert!(prefs.theme.is_none(), "{name}");
             assert!(prefs.code_scheme.is_none(), "{name}");
         }
+        "RunChanged" => {
+            let run = v1::RunChanged::decode(bytes).expect(name);
+            assert_eq!(run.run_id, fields["runId"].as_u64().expect("runId"), "{name}");
+            assert_eq!(run.revision, fields["revision"].as_u64().expect("revision") as u32, "{name}");
+            assert_eq!(run.state, v1::RunState::Failed as i32, "{name}");
+            assert_eq!(run.action, "remote.exec", "{name}");
+            assert_eq!(run.owner, "manual", "{name}");
+            assert_eq!(run.actor, "cli:user@host", "{name}");
+            assert_eq!(run.lane, "build", "{name}");
+            assert_eq!(run.queued_at_ms, PING_SENT, "{name}");
+            assert_eq!(run.started_at_ms, Some(PING_SENT + 5), "{name}");
+            assert_eq!(run.ended_at_ms, Some(PING_SENT + 8015), "{name}");
+            assert_eq!(run.exit_code, Some(2), "{name}");
+        }
         "" => assert!(bytes.is_empty(), "{name}"),
         other => panic!("{name}: unknown body {other}"),
     }
@@ -737,6 +751,23 @@ fn golden_entries() -> Vec<serde_json::Value> {
             "consoles-list",
             frame!(6, 1, 1, Kind::Response, 6, 5, "", "", v1::ConsoleList { consoles: vec![console], next: "c1".to_owned() }.encode_to_vec(), None),
             serde_json::json!({"bodyType":"ConsoleList","body":{"next":"c1"}}),
+        ),
+        (
+            "runs-changed",
+            frame!(4, 1, 1, Kind::Event, 10, 0, "remote", "page-a", v1::RunChanged {
+                run_id: 12,
+                revision: 3,
+                state: v1::RunState::Failed as i32,
+                action: "remote.exec".to_owned(),
+                owner: "manual".to_owned(),
+                actor: "cli:user@host".to_owned(),
+                lane: "build".to_owned(),
+                queued_at_ms: PING_SENT,
+                started_at_ms: Some(PING_SENT + 5),
+                ended_at_ms: Some(PING_SENT + 8015),
+                exit_code: Some(2),
+            }.encode_to_vec(), None),
+            serde_json::json!({"bodyType":"RunChanged","body":{"runId":12,"revision":3,"state":"FAILED","action":"remote.exec","owner":"manual","actor":"cli:user@host","lane":"build","queuedAtMs":1793784600000u64,"startedAtMs":1793784600005u64,"endedAtMs":1793784608015u64,"exitCode":2},"origin":"page-a","key":"remote"}),
         ),
         (
             "prefs-relay",

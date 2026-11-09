@@ -72,6 +72,20 @@ v1 job shape) come from the process plugin.
   §jobs.runlog).
 - **`actor`** — who asked: `cli:<user>@<host>` (self-declared over loopback), `mcp:<token
   label>`, `panel`, `jobs`, or `api` when omitted. The audit trail's who column.
+- **Run events** (HOST.RUNS, §bus.registry). The coordinator publishes `RunChanged` for each
+  state a run enters, while it still holds its bookkeeping lock, so one run's events leave in
+  the order its states were committed: **queued** (a submission that waits), **running** (a
+  start, at submit or from the queue), the **terminal** state — only once every history sink has
+  acknowledged or its bound broke (§host.history) and the view is in the finished ring, so a
+  page that reads on that event finds the record and no longer finds the run active — and
+  **canceled** for a queued run a cancel or a stop dropped. A refused submission publishes
+  nothing: it never became a run. The key is the action's namespace, its type up to the first
+  `.` (`remote.exec` → `remote`), so a page hears only the runs it shows. `revision` is 1 queued,
+  2 running, 3 terminal: a run only moves forward. The body is the run's state — id, action,
+  owner, actor, the target of a remote lane (empty for the local pool), state, the queued,
+  started and ended times, the exit code — and never its input, label, error or output: those
+  can hold a credential literal only the owning module knows how to mask (§remote.security), so
+  a page reads them through that module's route.
 
 **The process supervisor** (`services/process.rs`) runs every child: bounded capture that
 truncates while reading (16 KiB default — never `read_to_end`), pipes joined without hanging

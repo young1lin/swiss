@@ -13,6 +13,9 @@ publish.workspace = true
 swiss-core = { path = "../swiss-core" }
 # The event bus (SPEC §bus). The host holds the hub; this crate does not name a subsystem.
 swiss-bus = { path = "../swiss-bus" }
+# HOST.RUNS encodes its bodies (SPEC §host.actions: Run events); the same minimal
+# prost the bus itself links.
+prost = { version = "0.14", default-features = false, features = ["derive", "std"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "signal", "sync", "fs", "io-util", "process"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
