@@ -43,6 +43,11 @@ import { btn, checkField, closeSheet, dot, field, hint, note, iconBtn, moreBtn, 
 import { actionBtn } from "../ui/action.js";
                                              
 import { commandOf, runOutcome, runTarget } from "./remote-runs.js";
+import { coalescedRead,                    } from "./remote-live.js";
+import { busOn, busOnResync } from "../bus/bus.js";
+import { Module } from "../bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, NoticeSchema, RemoteSeatId, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
+import { HistoryId, RemoteSub, TargetsId } from "../bus/pb/swiss/bus/v1/remote_pb.js";
 
 let targets = []                     ;
 let endpoints = []                       ;
@@ -57,6 +62,10 @@ let collapsed = {}                           ; // the groups fold map, loaded on
 /* The last-run column (SPEC §panel.pages), read from the run record's own route - no API of its own. */
 let lastRuns = null                                                      ; // target -> its newest run; null: the record did not answer, no column
 let olderLast = {}                                          ; // targets the newest page missed, asked once per visit
+/* The live wiring (SPEC §remote.panel): one coalesced re-read and the topics that drive it.
+ * Module state like the rest of the page's paint, torn down in unmount. */
+let reRead                       = null;
+let offs                    = [];
 
 const CAPS = ["exec", "sync", "files"];
 const RUNS_PAGE = 100; // the runs route's own ceiling (history.rs clamps the limit there)
@@ -477,6 +486,7 @@ async function removeTarget(id        )                {
 export async function mount() {
   collapsed = loadCollapsed("targets");
   olderLast = {}; // a new visit asks the record again
+  subscribeLive();
   if (!(await load())) return;
   render();
   $("pane").onclick = (event            )       => {
@@ -533,6 +543,39 @@ function patchCols()       {
     was.forEach((c, i) => { if (c.outerHTML !== now[i].outerHTML) c.replaceWith(now[i]); });
   }
 }
-export async function poll() { await refresh(); }
+/** Subscribe before the first read (SPEC §remote.panel): every event of the page's topics
+ *  re-reads through the owning routes, coalesced as a notice is (remote-live.ts), and every
+ *  WELCOME re-reads too — the resync after a reconnect. The four topics: the seat (the
+ *  endpoint dots and the Tunnels presence line), the target table, and the run record's two
+ *  sides — a run moving (HOST.RUNS `remote`) also moves the last-run column. */
+function subscribeLive()       {
+  stopLive();
+  reRead = coalescedRead(refresh);
+  const push = ()       => { reRead?.push(); };
+  offs = [
+    busOnResync(push),
+    busOn({ module: Module.HOST, sub: HostSub.REMOTE_SEAT, key: "" }, RemoteSeatId.CHANGED, NoticeSchema, push),
+    busOn({ module: Module.REMOTE, sub: RemoteSub.TARGETS, key: "" }, TargetsId.CHANGED, NoticeSchema, push),
+    busOn({ module: Module.HOST, sub: HostSub.RUNS, key: "remote" }, RunsId.RUNS_CHANGED, NoticeSchema, push),
+    // The record moved (a run filed, Clear, retention): also drop what this visit cached for
+    // targets the newest page missed - the next read asks the record again (SPEC §remote.panel).
+    busOn({ module: Module.REMOTE, sub: RemoteSub.HISTORY, key: "" }, HistoryId.CHANGED, NoticeSchema, () => {
+      olderLast = {};
+      push();
+    }),
+  ];
+}
+
+function stopLive()       {
+  for (const off of offs) off();
+  offs = [];
+  reRead?.stop();
+  reRead = null;
+}
+
+/** The tick paints nothing new from the network (SPEC §remote.panel): the last-run column's
+ *  relative times move on the clock, not on a read, so they are rewritten from what the page
+ *  already holds. */
+export function poll() { patchCols(); }
 export function countText() { return targets.length ? trn(targets.length, "remote.nTargets.one", "remote.nTargets.other") : ""; }
-export function unmount() {}
+export function unmount() { stopLive(); }

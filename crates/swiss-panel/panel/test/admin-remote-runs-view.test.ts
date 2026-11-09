@@ -26,9 +26,14 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { installBus, type BusSocket } from "../src/bus/bus.js";
+import { create, toBinary } from "../src/bus/codec.js";
+import { FrameSchema, Kind, LinkId, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { NoticeSchema, RunChangedSchema, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
+import { HistoryId, RemoteSub } from "../src/bus/pb/swiss/bus/v1/remote_pb.js";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view is driven by its
-   page-registry surface (mount / refresh / poll / unmount), so a typed import would add nothing. */
+   page-registry surface (mount / refresh / unmount), so a typed import would add nothing. */
 let view: any;
 let replies: Record<string, unknown> = {};
 let requests: { path: string; method: string }[] = [];
@@ -36,6 +41,76 @@ let requests: { path: string; method: string }[] = [];
 const here = dirname(fileURLToPath(import.meta.url));
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
 const settle = async (): Promise<void> => { for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+/* A bus the live tests drive by hand (the bus-link suite's FakeSocket shape): events arrive
+   as real frames, so the page's subscriptions run the code a browser would. */
+class FakeSocket implements BusSocket {
+  static all: FakeSocket[] = [];
+  sent: Uint8Array[] = [];
+  binaryType: BinaryType = "blob";
+  private listeners = new Map<string, Array<(ev: Event) => void>>();
+  constructor() {
+    FakeSocket.all.push(this);
+  }
+  addEventListener(type: string, listener: (ev: Event) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+  removeEventListener(): void { /* the link outlives each test */ }
+  send(data: Uint8Array): void { this.sent.push(data); }
+  close(): void { /* never closed under test */ }
+  open(): void {
+    for (const fn of this.listeners.get("open") ?? []) fn(new Event("open"));
+  }
+  receive(bytes: Uint8Array): void {
+    const copy = new Uint8Array(bytes);
+    for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
+  }
+}
+
+function openBus(): FakeSocket {
+  FakeSocket.all.length = 0;
+  installBus({
+    socket: FakeSocket,
+    random: () => 0.5,
+    reload: () => {},
+    info: () => Promise.resolve(),
+    notice: () => {},
+    url: "ws://127.0.0.1/api/bus",
+  });
+  const sock = FakeSocket.all[FakeSocket.all.length - 1];
+  if (!sock) throw new Error("the link did not create a socket");
+  sock.open();
+  sock.receive(toBinary(FrameSchema, create(FrameSchema, {
+    module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
+    body: toBinary(WelcomeSchema, create(WelcomeSchema, {
+      protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
+    })),
+  })));
+  return sock;
+}
+
+/** One notice EVENT frame: an empty body is the whole content of a notice (SPEC §bus.topics). */
+function noticeFrame(module: number, sub: number, id: number): Uint8Array {
+  return toBinary(FrameSchema, create(FrameSchema, {
+    module, sub, id, kind: Kind.EVENT,
+    body: toBinary(NoticeSchema, create(NoticeSchema, {})),
+  }));
+}
+
+/** One HOST.RUNS `remote` RunChanged, the frame a queued or started run publishes. */
+function runChangedFrame(): Uint8Array {
+  return toBinary(FrameSchema, create(FrameSchema, {
+    module: 4, sub: 1, id: 1, kind: Kind.EVENT, key: "remote",
+    body: toBinary(RunChangedSchema, create(RunChangedSchema, {
+      runId: 30n, revision: 2, state: RunState.RUNNING, action: "remote.exec",
+      owner: "manual", actor: "test", lane: "remote", queuedAtMs: BigInt(Date.now()),
+    })),
+  }));
+}
+
+const settleMs = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 function shellSkeleton(): string {
   const html = readFileSync(join(here, "..", "..", "src", "admin_assets", "index.html"), "utf8");
@@ -517,20 +592,25 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(requests.some((r) => r.path === "/api/remote/runs" && r.method === "DELETE")).toBe(true);
   });
 
-  it("a poll that changes nothing leaves the rows alone - an open row stays open", async () => {
+  it("a notice that changes nothing leaves the rows alone - an open row stays open; a new run repaints", async () => {
+    const sock = openBus();
     serve([finished], []);
     replies["/api/remote/runs/17/output?after=0&max=131072"] = { runId: 17, cursor: 0, nextCursor: 2, output: "ok", total: 2, terminal: true };
     await view.mount();
     open(17);
     await settle();
     const it17 = item(17);
-    await view.poll();
+    // The tick reads nothing here (SPEC §remote.panel): a record notice moves the page,
+    // and a re-read that changes nothing repaints nothing - open rows keep their nodes.
+    sock.receive(noticeFrame(10 /* Module.REMOTE */, RemoteSub.HISTORY, HistoryId.CHANGED));
+    await settleMs(180);
     expect(item(17)).toBe(it17);
     expect(it17.classList.contains("open")).toBe(true);
     // A new run arriving does repaint - and the open row comes back open.
     serve([{ ...finished, runId: 30, exitCode: 1 }, finished], []);
     replies["/api/remote/runs/17/output?after=0&max=131072"] = { runId: 17, cursor: 0, nextCursor: 2, output: "ok", total: 2, terminal: true };
-    await view.poll();
+    sock.receive(runChangedFrame());
+    await settleMs(180);
     expect(item(30)).toBeTruthy();
     expect(item(17).classList.contains("open")).toBe(true);
     expect(block(17, "Output")?.querySelector("pre")?.textContent).toBe("ok");

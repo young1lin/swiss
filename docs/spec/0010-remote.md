@@ -496,8 +496,8 @@ copies configuration.
   The row line names the stdin's size (`sh -s · stdin 2.0 KB`), and the open row unseals the
   script on Show - a row that said only `sh -s` answered nothing about WHAT ran (the owner's
   finding, twice). An open live row follows its output every 1.5 s through
-  `/api/runs/{id}/output`; the list itself polls every 6 s and never rebuilds an open row.
-  Reads are 128 KiB.
+  `/api/runs/{id}/output` — output is a stream, not state, and stays off the bus; a re-read
+  never rebuilds an open row. Reads are 128 KiB.
 - **The whole command, copyable.** An opened row shows the command exactly — argv quoted word
   by word by the same rule as `quote_posix`, so a pasted copy runs as the same argv — with a
   Copy button.
@@ -516,8 +516,43 @@ copies configuration.
   unfinished scan that found nothing says that the newer part of the record is not searched
   yet, never "no matches" (§host.history). A stopped plugin's record is named unavailable; a
   refused scan gives its reason and a **Search again**. The target filter narrows the results
-  on the spot, and a poll leaves both the results and the box alone. Runs still in flight are
+  on the spot, and a re-read leaves both the results and the box alone. Runs still in flight are
   not searched, because their output is not in the record yet.
 - Filter by target; Clear sits in the ⋯ menu (a destructive verb gets no standing button). The
   budget line states the limits and that the last 7 days are always traceable; an evicted row
   says its output was cleared and the record kept.
+- **Live without a poll.** Neither page reads anything on the panel's 6 s tick (§panel). Each
+  subscribes before its first read, then re-reads on every event of its topics, coalesced as a
+  notice is (§bus.topics), and after every WELCOME. Runs listens to HOST.RUNS `remote`,
+  REMOTE.HISTORY and REMOTE.TARGETS (the target filter's list); Targets listens to the same
+  three and HOST.REMOTE_SEAT (the endpoint dots and the Tunnels presence line). A run from any
+  surface — CLI, MCP, jobs, the panel — appears the moment it is queued or starts, changes
+  state the moment it does, and moves into the record the moment it ends; a Clear, a target
+  added from the CLI or an endpoint dropping shows in every open window at once. A history
+  notice also drops what the Targets visit cached for targets the newest page missed. Targets'
+  `poll()` reads nothing: on the tick it rewrites the last-run column's relative times from what
+  the page already holds. A plugin enabled or disabled in another window is not on the bus; the
+  pages learn it from their next read.
+
+## §remote.verify — Live verification
+
+The suites prove each publish point and each page's reaction. What only a running gateway and a
+real browser can prove is walked on the test instance (§testing.live), never on production,
+with Runs open in one window and Targets in another:
+
+1. **No cadence.** Both pages idle for 30 s with every row closed: the network log shows no
+   `/api/remote/*` request. The pages read on an event, a WELCOME or a user action, nothing else.
+2. **A run from any surface.** Ten concurrent `swiss remote exec <target> --detach -- sleep 8`
+   from a terminal: within a second eight rows read running and two queued, each queued row
+   turns running as a slot frees, each moves into the record as it ends, no run is ever listed
+   twice, and the target's last-run column on Targets follows.
+3. **A queued cancel.** `swiss run cancel <id>` on a queued run removes its row at once.
+4. **Another window's writes.** Clear in one window empties the record in the other;
+   `swiss remote target add` shows the target on Targets and in the Runs filter without a reload.
+5. **The seat.** Disabling Tunnels changes the presence line on Targets at once and enabling it
+   restores it; a run against a target whose connection cannot dial turns its endpoint dot red
+   as the dial fails.
+6. **Reconnect.** Restarting the test instance shows the reconnecting line; after the WELCOME
+   both pages match a fresh load.
+7. **A hidden tab.** Runs submitted while the tab is hidden cause no request until it is shown,
+   then one.

@@ -25,10 +25,15 @@
    A real DOM (happy-dom) since P6-2: the library's rows, sheet and menu are real nodes, so the
    suite reads them the way a user sees them instead of a hand-rolled stub's serialisation. */
 
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { installBus, type BusSocket } from "../src/bus/bus.js";
+import { create, toBinary } from "../src/bus/codec.js";
+import { FrameSchema, Kind, LinkId, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { NoticeSchema } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
+import { HistoryId, RemoteSub, TargetsId } from "../src/bus/pb/swiss/bus/v1/remote_pb.js";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view is driven by its
    page-registry surface (mount / refresh / countText), so a typed import would add nothing. */
@@ -97,6 +102,69 @@ function menuItem(label: string): HTMLElement {
 function ago(ms: number): string {
   return new Date(Date.now() - ms).toISOString();
 }
+
+/* A bus the live tests drive by hand (the bus-link suite's FakeSocket shape): events arrive
+   as real frames, so the page's subscriptions run the code a browser would. */
+class FakeSocket implements BusSocket {
+  static all: FakeSocket[] = [];
+  sent: Uint8Array[] = [];
+  binaryType: BinaryType = "blob";
+  private listeners = new Map<string, Array<(ev: Event) => void>>();
+  constructor() {
+    FakeSocket.all.push(this);
+  }
+  addEventListener(type: string, listener: (ev: Event) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+  removeEventListener(): void { /* the link outlives each test */ }
+  send(data: Uint8Array): void { this.sent.push(data); }
+  close(): void { /* never closed under test */ }
+  open(): void {
+    for (const fn of this.listeners.get("open") ?? []) fn(new Event("open"));
+  }
+  receive(bytes: Uint8Array): void {
+    const copy = new Uint8Array(bytes);
+    for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
+  }
+}
+
+function welcome(): Uint8Array {
+  return toBinary(FrameSchema, create(FrameSchema, {
+    module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
+    body: toBinary(WelcomeSchema, create(WelcomeSchema, {
+      protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
+    })),
+  }));
+}
+
+/** One notice EVENT frame: an empty body is the whole content of a notice (SPEC §bus.topics). */
+function noticeFrame(module: number, sub: number, id: number): Uint8Array {
+  return toBinary(FrameSchema, create(FrameSchema, {
+    module, sub, id, kind: Kind.EVENT,
+    body: toBinary(NoticeSchema, create(NoticeSchema, {})),
+  }));
+}
+
+function openBus(): FakeSocket {
+  FakeSocket.all.length = 0;
+  installBus({
+    socket: FakeSocket,
+    random: () => 0.5,
+    reload: () => {},
+    info: () => Promise.resolve(),
+    notice: () => {},
+    url: "ws://127.0.0.1/api/bus",
+  });
+  const sock = FakeSocket.all[FakeSocket.all.length - 1];
+  if (!sock) throw new Error("the link did not create a socket");
+  sock.open();
+  sock.receive(welcome());
+  return sock;
+}
+
+const settleMs = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
   it("the view module exists at the entry the page descriptor points at", () => {
@@ -217,6 +285,61 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect(rowOf("build")).toBe(r);
     expect(r.querySelector("[data-rmmore]")).toBe(more);
     expect(r.querySelector(".lrow-col")?.textContent).toBe("2 min. ago");
+  });
+
+  it("the tick reads nothing: the last-run column moves on the clock alone (SPEC §remote.panel)", async () => {
+    serve([BUILD], undefined, {
+      runs: [{ runId: 5, action: "remote.exec", state: "succeeded", exitCode: 0, queuedAt: ago(3 * MIN), endedAt: ago(3 * MIN), meta: { target: "build" }, input: { target: "build", argv: ["ls"] } }],
+    });
+    await view.mount();
+    const r = rowOf("build");
+    expect(r.querySelector(".lrow-col")?.textContent).toBe("3 min. ago");
+    requests = [];
+    const twoMinutesLater = Date.now() + 2 * MIN;
+    vi.spyOn(Date, "now").mockReturnValue(twoMinutesLater);
+    try {
+      await view.poll();
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(requests).toEqual([]);
+    expect(r.querySelector(".lrow-col")?.textContent).toBe("5 min. ago");
+  });
+
+  it("a target-table notice re-reads through the routes, coalesced (SPEC §remote.panel)", async () => {
+    const sock = openBus();
+    serve([BUILD]);
+    await view.mount();
+    requests = [];
+    sock.receive(noticeFrame(10 /* Module.REMOTE */, RemoteSub.TARGETS, TargetsId.CHANGED));
+    sock.receive(noticeFrame(10, RemoteSub.TARGETS, TargetsId.CHANGED));
+    sock.receive(noticeFrame(10, RemoteSub.TARGETS, TargetsId.CHANGED));
+    await settleMs(180);
+    const reads = requests.filter((q) => q.path === "/api/remote/targets");
+    // A burst of three notices costs one re-read (the coalescing contract).
+    expect(reads.length).toBe(1);
+    expect(requests.some((q) => q.path === "/api/remote/endpoints")).toBe(true);
+    await settleMs(1200);
+    expect(requests.filter((q) => q.path === "/api/remote/targets").length).toBe(1);
+  });
+
+  it("a history notice drops what the visit cached for targets the newest page missed", async () => {
+    const sock = openBus();
+    serve([BUILD], undefined, {
+      nextBefore: 50,
+      runs: [{ runId: 60, action: "remote.exec", state: "succeeded", exitCode: 0, queuedAt: ago(MIN), endedAt: ago(MIN), meta: { target: "dev" }, input: { target: "dev", argv: ["ls"] } }],
+    });
+    replies["/api/remote/runs?limit=1&target=build"] = {
+      runs: [{ runId: 3, action: "remote.exec", state: "succeeded", exitCode: 0, queuedAt: ago(3 * 86400000), endedAt: ago(3 * 86400000), meta: { target: "build" }, input: { target: "build", argv: ["make"] } }],
+      active: [], usage: { bytes: 0, runs: 1 },
+    };
+    await view.mount();
+    expect(requests.filter((q) => q.path === "/api/remote/runs?limit=1&target=build").length).toBe(1);
+    // A record that moved may have moved what the cached answers said: the notice drops
+    // the visit's cache, so the re-read asks the record again (SPEC §remote.panel).
+    sock.receive(noticeFrame(10, RemoteSub.HISTORY, HistoryId.CHANGED));
+    await settleMs(180);
+    expect(requests.filter((q) => q.path === "/api/remote/runs?limit=1&target=build").length).toBe(2);
   });
 
   /* The owner (2026-09-28): "the Remote page should let me run write and exec straight from the

@@ -232,6 +232,7 @@ in §decisions.
 - [§remote.project — Project binding, notes and the skill](spec/0010-remote.md#remoteproject--project-binding-notes-and-the-skill)
 - [§remote.mcp — `/mcp/remote`](spec/0010-remote.md#remotemcp--mcpremote)
 - [§remote.panel — The Targets and Runs pages](spec/0010-remote.md#remotepanel--the-targets-and-runs-pages)
+- [§remote.verify — Live verification](spec/0010-remote.md#remoteverify--live-verification)
 
 ### 0011 · [§process — Processes and the supervisor](spec/0011-process.md)
 

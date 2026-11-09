@@ -241,7 +241,7 @@ describe("the Remote Runs search box (SPEC §remote.panel)", () => {
     expect($("toast").textContent, "a missing record is not shouted about").toBe("");
   });
 
-  it("a poll repaints neither the results nor the box someone is typing in", async () => {
+  it("a re-read repaints neither the results nor the box someone is typing in", async () => {
     serve();
     replies["POST /api/history/query"] = { hits: hits(12), complete: true, next: {} };
     await view.mount();
@@ -249,12 +249,14 @@ describe("the Remote Runs search box (SPEC §remote.panel)", () => {
     search("running");
     await until(() => rowIds().length === 1);
     replies["/api/remote/runs?limit=20"] = { runs: [run(30), run(17)], active: [], limits: LIMITS, usage: { bytes: 4096, runs: 41 } };
-    await view.poll();
+    // The re-read a notice now drives is the same refresh() path the poll once called
+    // (SPEC §remote.panel): the results are the search's, never the record page's.
+    await view.refresh();
     expect(rowIds(), "the results are what the search found").toEqual(["12"]);
     expect(box(), "the same input node - focus and caret survive").toBe(input);
     expect($("countChip").textContent).toBe("41 runs");
     expect($("pane").querySelector(".pane-sub")?.textContent).toContain("41 runs recorded");
-    // Back to the list: the poll's newer page is what it shows.
+    // Back to the list: the re-read's newer page is what it shows.
     press("Escape");
     expect(rowIds()).toEqual(["30", "17"]);
   });

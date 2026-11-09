@@ -50,6 +50,11 @@ import {
   timelineToggle, valueBlock,
 } from "../ui/index.js";
                                                    
+import { coalescedRead,                    } from "./remote-live.js";
+import { busOn, busOnResync } from "../bus/bus.js";
+import { Module } from "../bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, NoticeSchema, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
+import { HistoryId, RemoteSub, TargetsId } from "../bus/pb/swiss/bus/v1/remote_pb.js";
 
 const PAGE = 20;
 const LIVE_EVERY_MS = 1500; // how often an OPEN live row pulls its output; the 6 s poll moves the list
@@ -80,6 +85,9 @@ let painted = "";
    number; an answer carrying an older one writes nothing and paints nothing. */
 let visit = 0;
 let onScreen = false;
+/* The live wiring (SPEC §remote.panel): one coalesced re-read and the topics that drive it. */
+let reRead                       = null;
+let offs                    = [];
 
 async function load(v        ) {
   const q = "/api/remote/runs?limit=" + PAGE +
@@ -620,6 +628,7 @@ async function step(delta        )                {
 export async function mount() {
   onScreen = true;
   const v = ++visit;
+  subscribeLive();
   await loadTargets();
   if (v !== visit) return;
   if (!(await load(v))) return;
@@ -716,11 +725,40 @@ export async function refresh() {
   // body with it; an open row then has nothing to show until its recorded output is read.
   adoptFinished();
 }
-export async function poll() { await refresh(); }
+/** Subscribe before the first read (SPEC §remote.panel): every event of the page's topics
+ *  re-reads through the owning routes, coalesced as a notice is (remote-live.ts), and every
+ *  WELCOME re-reads too. The three topics: this lane's runs (HOST.RUNS `remote` — a run from
+ *  any surface appears the moment it is queued or moves), the record (REMOTE.HISTORY — a run
+ *  filed, Clear, retention), and the target table (REMOTE.TARGETS — the filter's list). */
+function subscribeLive()       {
+  stopLive();
+  reRead = coalescedRead(async () => {
+    await loadTargets();
+    await refresh();
+  });
+  const push = ()       => { reRead?.push(); };
+  offs = [
+    busOnResync(push),
+    busOn({ module: Module.HOST, sub: HostSub.RUNS, key: "remote" }, RunsId.RUNS_CHANGED, NoticeSchema, push),
+    busOn({ module: Module.REMOTE, sub: RemoteSub.TARGETS, key: "" }, TargetsId.CHANGED, NoticeSchema, push),
+    busOn({ module: Module.REMOTE, sub: RemoteSub.HISTORY, key: "" }, HistoryId.CHANGED, NoticeSchema, push),
+  ];
+}
+
+function stopLive()       {
+  for (const off of offs) off();
+  offs = [];
+  reRead?.stop();
+  reRead = null;
+}
+
+/* No poll export (SPEC §remote.panel): the tick reads nothing here. The list moves on bus
+ * events; an open live row follows its output on its own 1.5 s timer (armLive). */
 export function countText() { return usage.runs ? trn(usage.runs, "remoteRuns.nRuns.one", "remoteRuns.nRuns.other") : ""; }
 export function unmount() {
   onScreen = false;
   visit++;
+  stopLive();
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   // A return visit starts on page 0 with no filter: the record moved on while the page
   // was away, so a stale cursor or filter would show a stale slice of it.
