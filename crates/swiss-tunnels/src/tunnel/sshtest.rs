@@ -31,6 +31,7 @@
 
 #![cfg(test)]
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -75,12 +76,29 @@ pub enum TestAuth {
 pub enum TestOpens {
     Forward,
     Refuse,
+    /// Only the direct-tcpip open is parked; session opens still answer — a target
+    /// whose SYN a firewall drops, behind an otherwise healthy session.
     Wedge,
+    /// Every open is parked, session channels included — the wedged-session shape
+    /// keepalive cannot see and the liveness probe goes silent on.
+    WedgeAll,
+    /// The open is parked, then accepted after the delay: an answer that arrives
+    /// after the client's budget has already failed the open.
+    Late(Duration),
 }
 
 /// The per-server open policy, shared with the test so it can wedge a live session and
 /// un-wedge it again: every session's handler reads the cell on each channel open.
 pub type OpensPolicy = Arc<Mutex<TestOpens>>;
+
+/// What the opens server counted, shared with the test: session-channel opens seen
+/// (the liveness probe's shape — assert the probe actually happened) and channel closes
+/// (a late answer's channel must be closed, not leaked to the session's end).
+#[derive(Clone, Default)]
+pub struct OpensStats {
+    pub session_opens: Arc<AtomicUsize>,
+    pub closes: Arc<AtomicUsize>,
+}
 
 /// What the fake exec server answers one exec request with (SPEC §remote.transport):
 /// channel success, stdout, stderr, then — when `exit` is set — the exit status
@@ -127,10 +145,14 @@ struct TestHandler {
     stdin_bytes: usize,
     /// The direct-tcpip policy this session reads on every open (SPEC §tunnels.selfheal).
     opens: OpensPolicy,
-    /// Opens held unanswered under TestOpens::Wedge. Dropping a ChannelOpenHandle rejects
-    /// the open, so a wedged one must be parked here until the session ends — that is the
-    /// whole difference between "refuse" and "never answer".
+    /// Opens held unanswered under TestOpens::Wedge/WedgeAll. Dropping a ChannelOpenHandle
+    /// rejects the open, so a wedged one must be parked here until the session ends — that is
+    /// the whole difference between "refuse" and "never answer".
     wedged_opens: Vec<russh::server::ChannelOpenHandle>,
+    /// Counters shared with the test (OpensStats): session opens seen and channel closes
+    /// seen, so a test can assert the liveness probe happened and a late answer's channel
+    /// was closed.
+    stats: OpensStats,
 }
 
 impl TestHandler {
@@ -196,7 +218,16 @@ impl russh::server::Handler for TestHandler {
             // Hold the handle and say nothing — never confirmed, never rejected. Parking
             // it on the handler (not dropping, not forgetting) keeps it recoverable when
             // the session ends.
-            TestOpens::Wedge => self.wedged_opens.push(reply),
+            TestOpens::Wedge | TestOpens::WedgeAll => self.wedged_opens.push(reply),
+            // Park, then accept after the delay: an answer that arrives past the client's
+            // budget. The handle moves into the timer task; the channel the client closes
+            // on the late confirmation needs nothing from this handler.
+            TestOpens::Late(after) => {
+                tokio::spawn(async move {
+                    tokio::time::sleep(after).await;
+                    let _ = reply.accept().await;
+                });
+            }
         }
         Ok(())
     }
@@ -207,9 +238,29 @@ impl russh::server::Handler for TestHandler {
         reply: russh::server::ChannelOpenHandle,
         _session: &mut russh::server::Session,
     ) -> Result<(), Self::Error> {
-        // Dropping the handle rejects, so accept explicitly: session channels are how
-        // exec (and later SFTP) reach this server.
+        // Counted before the policy: WedgeAll parks this too (the truly wedged session
+        // answers nothing), every other policy accepts — session channels are how exec
+        // (and later SFTP) reach this server, and how the client's liveness probe asks
+        // "is the session itself alive?" (SPEC §tunnels.selfheal).
+        self.stats.session_opens.fetch_add(1, Ordering::SeqCst);
+        let policy = *self.opens.lock().expect("open policy");
+        if policy == TestOpens::WedgeAll {
+            self.wedged_opens.push(reply);
+            return Ok(());
+        }
+        // Dropping the handle rejects, so accept explicitly.
         reply.accept().await;
+        Ok(())
+    }
+
+    async fn channel_close(
+        &mut self,
+        _channel: russh::ChannelId,
+        _session: &mut russh::server::Session,
+    ) -> Result<(), Self::Error> {
+        // Counted so a test can prove a late-answered channel was closed by the client
+        // instead of leaking open until the session ends.
+        self.stats.closes.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -303,7 +354,7 @@ fn serve_connections(
     auth: TestAuth,
     track: Option<Arc<Mutex<Vec<russh::server::Handle>>>>,
 ) -> tokio::task::JoinHandle<()> {
-    serve_connections_full(listener, config, auth, track, None, default_opens())
+    serve_connections_full(listener, config, auth, track, None, default_opens(), OpensStats::default())
 }
 
 /// The accept loop with an optional exec script handed to every session's handler.
@@ -314,7 +365,7 @@ fn serve_connections_exec(
     track: Option<Arc<Mutex<Vec<russh::server::Handle>>>>,
     exec: Option<ExecScript>,
 ) -> tokio::task::JoinHandle<()> {
-    serve_connections_full(listener, config, auth, track, exec, default_opens())
+    serve_connections_full(listener, config, auth, track, exec, default_opens(), OpensStats::default())
 }
 
 fn default_opens() -> OpensPolicy {
@@ -331,6 +382,7 @@ fn serve_connections_full(
     track: Option<Arc<Mutex<Vec<russh::server::Handle>>>>,
     exec: Option<ExecScript>,
     opens: OpensPolicy,
+    stats: OpensStats,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Ok((socket, _)) = listener.accept().await {
@@ -338,9 +390,16 @@ fn serve_connections_full(
             let track = track.clone();
             let exec = exec.clone();
             let opens = opens.clone();
+            let stats = stats.clone();
             tokio::spawn(async move {
-                let handler =
-                    TestHandler { auth, exec, stdin_bytes: 0, opens, wedged_opens: Vec::new() };
+                let handler = TestHandler {
+                    auth,
+                    exec,
+                    stdin_bytes: 0,
+                    opens,
+                    wedged_opens: Vec::new(),
+                    stats,
+                };
                 if let Ok(run) = russh::server::run_stream(config, socket, handler).await {
                     if let Some(track) = &track {
                         if let Ok(mut list) = track.lock() {
@@ -389,9 +448,18 @@ pub async fn spawn_ssh_server_with(auth: TestAuth) -> u16 {
 /// §tunnels.selfheal): accept-all auth plus a shared policy cell, so a test can wedge a
 /// live session mid-flight and un-wedge it again. Returns the port and the cell.
 pub async fn spawn_opens_ssh_server(opens: TestOpens) -> (u16, OpensPolicy) {
+    let (port, policy, _stats) = spawn_opens_stats_ssh_server(opens).await;
+    (port, policy)
+}
+
+/// The opens server plus its counters (SPEC §tunnels.selfheal): the same policy cell,
+/// and the session opens and channel closes the server has seen — so a test asserts
+/// the liveness probe happened and a late answer's channel was closed.
+pub async fn spawn_opens_stats_ssh_server(opens: TestOpens) -> (u16, OpensPolicy, OpensStats) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ssh");
     let port = listener.local_addr().expect("ssh addr").port();
     let policy: OpensPolicy = Arc::new(Mutex::new(opens));
+    let stats = OpensStats::default();
     serve_connections_full(
         listener,
         test_server_config(),
@@ -399,8 +467,9 @@ pub async fn spawn_opens_ssh_server(opens: TestOpens) -> (u16, OpensPolicy) {
         None,
         None,
         policy.clone(),
+        stats.clone(),
     );
-    (port, policy)
+    (port, policy, stats)
 }
 
 /// Bind 127.0.0.1:<port> with SO_REUSEADDR, so a killed server's port can be taken back

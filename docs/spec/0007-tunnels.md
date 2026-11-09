@@ -162,18 +162,28 @@ is the only probe that sees this, so it owns the judgment.
   accepted socket is closed (the client errors fast instead of hanging on its pool
   timeout), the rule's `channelFailures` counts it, and `lastError` names it. An answered
   refusal keeps today's meaning — the session proved it is alive, the target is what said
-  no. The data path stays timeout-free: an idle pooled socket is legitimate and is never
-  probed.
+  no. An answer that arrives after the budget is closed at once — left alone it would
+  hold its channel, and sshd's TCP connection to the target, open until the session
+  ended — and it counts as the answered open it is. The data path stays timeout-free: an
+  idle pooled socket is legitimate and is never probed.
 - **The wedge judgment.** Three opens on one connection timing out consecutively — with
-  no answered open in between — judge the session wedged: the client is ended, and every
-  rule on it runs the ordinary loss path (§tunnels.forward) — port released first,
+  no answered open in between — complete a count, and before that count may judge
+  anything, one liveness probe opens a session channel under the same budget: the one
+  open sshd answers without dialing anything. Any answer — a channel, or a refusal —
+  proves the session alive and clears the count, so nothing is torn down; only the
+  probe's own silence judges the session wedged: the client is ended, and every rule on
+  it runs the ordinary loss path (§tunnels.forward) — port released first,
   `reconnecting` with the reason, re-dial under the existing backoff, linked MCP pools
   dropped on recovery. A rule with `autoReconnect` off lands in `error`, exactly as a
-  transport loss does.
+  transport loss does. The judgment fires once per episode, and the probe is
+  single-flight: a burst of concurrent timeouts buys exactly one session open.
 - **Not a target probe.** The judgment is connection-wide and resets on any answered
   open, so one unreachable target (its opens time out while a sibling rule's opens
-  succeed) fails fast without tearing down healthy neighbours; re-dial churn while a
-  target is down is bounded by the existing backoff.
+  succeed) fails fast without tearing down healthy neighbours. A target blackholed
+  behind a firewall — its SYN dropped, sshd silent on the connect while the session
+  itself is healthy — costs only its own opens' budgets: the probe is answered, the
+  session (with the exec, PTY and SFTP channels riding it) stays up. The price of that
+  certainty is one session open per three consecutive timeouts.
 
 ## §tunnels.proxy — Proxy dialling
 

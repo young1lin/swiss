@@ -277,8 +277,13 @@ pub struct SshConnection {
     /// the shared Arc.
     open_budget_ms: AtomicU64,
     /// Consecutive unanswered opens so far (SPEC §tunnels.selfheal). An answered open —
-    /// success or refusal — resets it; WEDGE_OPENS in a row fires on_wedged.
-    open_timeouts: AtomicUsize,
+    /// success or refusal, in time or late — resets it; WEDGE_OPENS in a row sends a
+    /// liveness probe before anything may be judged. Arc: the background probe and the
+    /// late-answer closers clear it too.
+    open_timeouts: Arc<AtomicUsize>,
+    /// A liveness probe is in flight (single-flight, SPEC §tunnels.selfheal): concurrent
+    /// timeouts of one episode probe once.
+    probing: Arc<AtomicBool>,
     def: Mutex<SshConnDef>,
     state: Mutex<ConnState>,
     reason: Mutex<Option<String>>,
@@ -296,7 +301,8 @@ impl SshConnection {
     pub fn new(def: SshConnDef, hooks: SshHooks) -> Arc<Self> {
         Arc::new(SshConnection {
             open_budget_ms: AtomicU64::new(OPEN_BUDGET.as_millis() as u64),
-            open_timeouts: AtomicUsize::new(0),
+            open_timeouts: Arc::new(AtomicUsize::new(0)),
+            probing: Arc::new(AtomicBool::new(false)),
             def: Mutex::new(def),
             state: Mutex::new(ConnState::Idle),
             reason: Mutex::new(None),
@@ -510,8 +516,10 @@ impl SshConnection {
             jump_hold,
         });
         // A fresh session answers opens: whatever wedge count an earlier incarnation
-        // of this client accumulated starts over (SPEC §tunnels.selfheal).
+        // of this client accumulated starts over, and its probe is spent (SPEC
+        // §tunnels.selfheal).
         self.open_timeouts.store(0, Ordering::Relaxed);
+        self.probing.store(false, Ordering::Relaxed);
         self.set_state(ConnState::Connected, None);
         Ok(())
     }
@@ -577,17 +585,23 @@ impl SshConnection {
         // SPEC §tunnels.selfheal: the open rides one budget, so a session that never
         // answers fails the socket instead of hanging it; an answered refusal keeps its
         // ordinary meaning — the session proved it is alive, the target is what said no.
+        // The future is owned, never dropped: an answer that arrives after the budget
+        // would otherwise leak its channel (and the TCP connection sshd opened to the
+        // target) until the session ends — russh sends a late confirmation to a closed
+        // receiver and ignores the failure.
         let open_budget = Duration::from_millis(self.open_budget_ms.load(Ordering::Relaxed));
-        let opened = tokio::time::timeout(
-            open_budget,
-            handle.channel_open_direct_tcpip(
-                host.to_string(),
+        let dial = handle.clone();
+        let open_host = host.to_string();
+        let mut opening = Box::pin(async move {
+            dial.channel_open_direct_tcpip(
+                open_host,
                 port as u32,
                 "127.0.0.1".to_string(),
                 0,
-            ),
-        )
-        .await;
+            )
+            .await
+        });
+        let opened = tokio::time::timeout(open_budget, &mut opening).await;
         let channel = match opened {
             // An answer arrived — success or refusal — so the session is alive: any
             // wedge count it had accumulated is history.
@@ -598,14 +612,27 @@ impl SshConnection {
                 })?
             }
             Err(_budget_spent) => {
-                // SPEC §tunnels.selfheal: consecutive unanswered opens judge the session
-                // wedged — keepalive cannot see this shape, the transport still answers.
-                // The hook fires once per episode, on the open that completes the count.
-                let prev = self.open_timeouts.fetch_add(1, Ordering::Relaxed);
-                if prev + 1 == WEDGE_OPENS {
-                    if let Some(on_wedged) = &self.hooks.on_wedged {
-                        on_wedged();
+                // SPEC §tunnels.selfheal: the open keeps running in the background. A
+                // late answer — confirmation or refusal — proves the session alive
+                // (clearing whatever count the silence built) and its channel is closed
+                // at once: the caller is gone, and the channel must not sit open until
+                // the session ends.
+                let timeouts = self.open_timeouts.clone();
+                tokio::spawn(async move {
+                    if let Ok(channel) = opening.await {
+                        let _ = channel.close().await;
                     }
+                    timeouts.store(0, Ordering::Relaxed);
+                });
+                // SPEC §tunnels.selfheal: consecutive unanswered opens may judge the
+                // session wedged — keepalive cannot see this shape, the transport still
+                // answers. The judgment itself waits for a liveness probe: a blackholed
+                // target silences its own opens while the session stays healthy, and
+                // only silence on the probe's session channel — the one open sshd
+                // answers without dialing anything — is the session's own silence.
+                let prev = self.open_timeouts.fetch_add(1, Ordering::Relaxed);
+                if prev + 1 == WEDGE_OPENS && !self.probing.swap(true, Ordering::Relaxed) {
+                    self.spawn_liveness_probe(handle);
                 }
                 return Err(TunnelError::new(
                     format!(
@@ -616,6 +643,42 @@ impl SshConnection {
             }
         };
         Ok(Box::pin(channel.into_stream()))
+    }
+
+    /// SPEC §tunnels.selfheal: before WEDGE_OPENS unanswered opens may judge the session
+    /// wedged, one background probe opens a session channel — the one open sshd answers
+    /// without dialing anything. Any answer (a channel, or a refusal) proves the session
+    /// alive and clears the count; only the probe's own silence judges the session
+    /// wedged, and only if no answer landed while it was out. The judgment fires once
+    /// per episode; after a probe's answer the count starts a fresh episode.
+    fn spawn_liveness_probe(&self, handle: Arc<Handle<ClientHandler>>) {
+        let timeouts = self.open_timeouts.clone();
+        let probing = self.probing.clone();
+        let on_wedged = self.hooks.on_wedged.clone();
+        let budget = Duration::from_millis(self.open_budget_ms.load(Ordering::Relaxed));
+        tokio::spawn(async move {
+            let dial = handle;
+            let probed = tokio::time::timeout(budget, dial.channel_open_session()).await;
+            match probed {
+                // A channel: the session answered — close the probe's channel at once.
+                Ok(Ok(channel)) => {
+                    let _ = channel.close().await;
+                    timeouts.store(0, Ordering::Relaxed);
+                }
+                // A refusal — or a session that already ended — is an answer as well.
+                Ok(Err(_answered_no)) => timeouts.store(0, Ordering::Relaxed),
+                // Silence on the one open that needs no target: the session is judged
+                // wedged, unless an answer landed while the probe was out.
+                Err(_probe_spent) => {
+                    if timeouts.load(Ordering::Relaxed) >= WEDGE_OPENS {
+                        if let Some(on_wedged) = on_wedged {
+                            on_wedged();
+                        }
+                    }
+                }
+            }
+            probing.store(false, Ordering::Relaxed);
+        });
     }
 
     /// Tests shrink the budget so §tunnels.selfheal's ten seconds cost milliseconds;
@@ -1640,7 +1703,7 @@ mod tests {
 
     mod selfheal {
         use super::super::*;
-        use crate::tunnel::sshtest::{spawn_opens_ssh_server, TestOpens};
+        use crate::tunnel::sshtest::{spawn_opens_ssh_server, spawn_opens_stats_ssh_server, TestOpens};
         use std::sync::Arc;
         use std::time::Duration;
 
@@ -1688,6 +1751,20 @@ mod tests {
                     ..Default::default()
                 },
             )
+        }
+
+        /// Wait (bounded) for a background task's effect: the liveness probe and the
+        /// late-answer closer run on spawned tasks, so the assertion follows them instead
+        /// of sleeping a fixed guess.
+        async fn soon(mut landed: impl FnMut() -> bool) {
+            let t0 = std::time::Instant::now();
+            while !landed() {
+                assert!(
+                    t0.elapsed() < Duration::from_secs(5),
+                    "the background task did not land in time"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
         }
 
         /// SPEC §tunnels.selfheal: an open the session never answers fails after the
@@ -1751,25 +1828,27 @@ mod tests {
         }
 
         /// SPEC §tunnels.selfheal: three consecutive unanswered opens judge the session
-        /// wedged; the hook fires on the open that completes the count, once per episode
-        /// — a fourth timeout does not fire it again.
+        /// wedged — no longer on the third open itself, but once the liveness probe it
+        /// spawns has also gone unanswered — and once per episode: a fourth timeout does
+        /// not fire it again.
         #[tokio::test]
         async fn three_unanswered_opens_judge_the_session_wedged() {
-            let (port, _policy) = spawn_opens_ssh_server(TestOpens::Wedge).await;
+            let (port, _policy) = spawn_opens_ssh_server(TestOpens::WedgeAll).await;
             let (fired, hooks) = wedged_hooks();
             let c = connected_with(&def_to(port), hooks).await;
             c.set_open_budget(Duration::from_millis(120));
-            for i in 1..=3 {
+            for _ in 1..=3 {
                 assert!(
                     c.open_channel("127.0.0.1", 9).await.is_err(),
-                    "open {i} must fail on its budget"
-                );
-                assert_eq!(
-                    fired.load(Ordering::SeqCst),
-                    if i == 3 { 1 } else { 0 },
-                    "the judgment fires with the third unanswered open"
+                    "each open fails on its budget"
                 );
             }
+            assert_eq!(
+                fired.load(Ordering::SeqCst),
+                0,
+                "the judgment waits for the liveness probe, not the third open"
+            );
+            soon(|| fired.load(Ordering::SeqCst) == 1).await;
             assert!(c.open_channel("127.0.0.1", 9).await.is_err());
             assert_eq!(fired.load(Ordering::SeqCst), 1, "fires once per episode");
             let _ = c.end().await;
@@ -1779,7 +1858,7 @@ mod tests {
         /// resets the count, so a session that recovers mid-count is never torn down.
         #[tokio::test]
         async fn an_answered_open_resets_the_wedge_count() {
-            let (port, policy) = spawn_opens_ssh_server(TestOpens::Wedge).await;
+            let (port, policy) = spawn_opens_ssh_server(TestOpens::WedgeAll).await;
             let (fired, hooks) = wedged_hooks();
             let c = connected_with(&def_to(port), hooks).await;
             c.set_open_budget(Duration::from_millis(120));
@@ -1795,18 +1874,16 @@ mod tests {
                 c.open_channel("127.0.0.1", 9).await.is_ok(),
                 "the Forward policy answers the open; the target need not exist"
             );
-            *policy.lock().unwrap() = TestOpens::Wedge;
+            *policy.lock().unwrap() = TestOpens::WedgeAll;
             // Two more unanswered opens still do not complete a fresh count of three.
             for _ in 0..2 {
                 assert!(c.open_channel("127.0.0.1", 9).await.is_err());
                 assert_eq!(fired.load(Ordering::SeqCst), 0);
             }
             assert!(c.open_channel("127.0.0.1", 9).await.is_err());
-            assert_eq!(
-                fired.load(Ordering::SeqCst),
-                1,
-                "a count that restarted from zero completes at three"
-            );
+            // A count that restarted from zero completes at three — then the probe it
+            // spawns goes unanswered too, and the judgment fires.
+            soon(|| fired.load(Ordering::SeqCst) == 1).await;
             let _ = c.end().await;
         }
 
@@ -1825,6 +1902,131 @@ mod tests {
                 fired.load(Ordering::SeqCst),
                 0,
                 "every refusal is an answer; only silence counts"
+            );
+            let _ = c.end().await;
+        }
+
+        /// SPEC §tunnels.selfheal: a target blackholed behind a firewall (its SYN dropped,
+        /// sshd silent for the target's connect while the session itself is healthy) never
+        /// judges its session wedged — each judgment attempt probes a session channel, the
+        /// probe is answered, the count clears, and the session (with the exec, PTY and
+        /// SFTP channels riding it) stays up.
+        #[tokio::test]
+        async fn a_blackholed_target_never_judges_a_live_session_wedged() {
+            let (port, _policy, stats) =
+                spawn_opens_stats_ssh_server(TestOpens::Wedge).await;
+            let (fired, hooks) = wedged_hooks();
+            let c = connected_with(&def_to(port), hooks).await;
+            c.set_open_budget(Duration::from_millis(120));
+            // Two full counts against the blackholed target: the count completes, the
+            // probe asks, the session answers, the count clears — nothing is torn down.
+            for _ in 0..6 {
+                assert!(c.open_channel("127.0.0.1", 9).await.is_err());
+                assert_eq!(
+                    fired.load(Ordering::SeqCst),
+                    0,
+                    "a blackholed target never judges its session"
+                );
+            }
+            soon(|| stats.session_opens.load(Ordering::SeqCst) >= 1).await;
+            assert_eq!(fired.load(Ordering::SeqCst), 0);
+            // The probe's answer cleared the count: two more timeouts are one short of
+            // even asking again.
+            for _ in 0..2 {
+                assert!(c.open_channel("127.0.0.1", 9).await.is_err());
+                assert_eq!(fired.load(Ordering::SeqCst), 0);
+            }
+            let _ = c.end().await;
+        }
+
+        /// SPEC §tunnels.selfheal: a session that answers nothing — direct-tcpip and
+        /// session channels alike — is judged wedged exactly once: the probe goes out
+        /// once (single-flight), its silence fires the judgment, and further timeouts in
+        /// the same episode neither probe again nor fire again.
+        #[tokio::test]
+        async fn a_session_that_answers_nothing_is_judged_wedged() {
+            let (port, _policy, stats) =
+                spawn_opens_stats_ssh_server(TestOpens::WedgeAll).await;
+            let (fired, hooks) = wedged_hooks();
+            let c = connected_with(&def_to(port), hooks).await;
+            c.set_open_budget(Duration::from_millis(120));
+            for _ in 1..=3 {
+                assert!(c.open_channel("127.0.0.1", 9).await.is_err());
+            }
+            soon(|| fired.load(Ordering::SeqCst) == 1).await;
+            assert_eq!(
+                stats.session_opens.load(Ordering::SeqCst),
+                1,
+                "the liveness probe is single-flight: one session open"
+            );
+            for _ in 0..2 {
+                assert!(c.open_channel("127.0.0.1", 9).await.is_err());
+            }
+            assert_eq!(fired.load(Ordering::SeqCst), 1, "fires once per episode");
+            assert_eq!(
+                stats.session_opens.load(Ordering::SeqCst),
+                1,
+                "no second probe in one episode"
+            );
+            let _ = c.end().await;
+        }
+
+        /// SPEC §tunnels.selfheal: concurrent opens timing out together complete the count
+        /// once and probe once — the probe is single-flight, so a burst of timeouts buys
+        /// exactly one session open.
+        #[tokio::test]
+        async fn concurrent_timeouts_probe_once() {
+            let (port, _policy, stats) =
+                spawn_opens_stats_ssh_server(TestOpens::WedgeAll).await;
+            let (fired, hooks) = wedged_hooks();
+            let c = connected_with(&def_to(port), hooks).await;
+            c.set_open_budget(Duration::from_millis(120));
+            let (a, b, d, e) = tokio::join!(
+                c.open_channel("127.0.0.1", 9),
+                c.open_channel("127.0.0.1", 9),
+                c.open_channel("127.0.0.1", 9),
+                c.open_channel("127.0.0.1", 9),
+            );
+            assert!(a.is_err() && b.is_err() && d.is_err() && e.is_err());
+            soon(|| fired.load(Ordering::SeqCst) == 1).await;
+            assert_eq!(
+                stats.session_opens.load(Ordering::SeqCst),
+                1,
+                "four concurrent timeouts, one probe"
+            );
+            let _ = c.end().await;
+        }
+
+        /// SPEC §tunnels.selfheal: an answer that arrives after the budget — the target
+        /// finally picked up, or sshd's own connect timed out — must not leak. The open
+        /// fails on its budget; the late answer's channel is closed at once (the server
+        /// sees CHANNEL_CLOSE) and counts as an answered open, so the episode never even
+        /// reaches the judgment.
+        #[tokio::test]
+        async fn a_late_answer_after_the_budget_is_closed_not_leaked() {
+            let (port, _policy, stats) = spawn_opens_stats_ssh_server(
+                TestOpens::Late(Duration::from_millis(400)),
+            )
+            .await;
+            let (fired, hooks) = wedged_hooks();
+            let c = connected_with(&def_to(port), hooks).await;
+            c.set_open_budget(Duration::from_millis(120));
+            let err = match c.open_channel("127.0.0.1", 9).await {
+                Err(err) => err,
+                Ok(_channel) => panic!("the answer is 400 ms out; the open must fail first"),
+            };
+            assert!(
+                err.message.contains("timed out"),
+                "the budget must name itself: {}",
+                err.message
+            );
+            // The answer lands well after the budget: the background waiter closes its
+            // channel instead of dropping it on the floor.
+            soon(|| stats.closes.load(Ordering::SeqCst) >= 1).await;
+            assert_eq!(
+                fired.load(Ordering::SeqCst),
+                0,
+                "a late answer proves the session alive; nothing was judged"
             );
             let _ = c.end().await;
         }
