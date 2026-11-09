@@ -92,6 +92,9 @@ impl TunnelManager {
         for r in was_running.iter().chain(&dependent_rules) {
             let _ = self.start_rule(&r.id).await; // the rule holds its own error state
         }
+        // SPEC §host.seats: the endpoint inventory moved — the seat's notice owes a page
+        // its re-read.
+        self.remote_seat_changed();
         Ok(def)
     }
 
@@ -159,6 +162,8 @@ impl TunnelManager {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(id);
+        // SPEC §host.seats: an endpoint left the inventory.
+        self.remote_seat_changed();
         Ok(())
     }
 

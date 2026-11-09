@@ -113,9 +113,18 @@ impl FakeConn {
         *self.state.lock().unwrap() == ConnState::Connected
     }
 
+    /// The same contract as the real client's: store, then fire on_state (SPEC §host.seats).
+    fn set_state(&self, state: ConnState, reason: Option<String>) {
+        *self.state.lock().unwrap() = state;
+        *self.reason.lock().unwrap() = reason;
+        if let Some(on_state) = &self.hooks.on_state {
+            on_state(state);
+        }
+    }
+
     /// The transport dies under whatever rules are riding it.
     pub(super) fn die(&self, kind: FailureKind) {
-        *self.state.lock().unwrap() = ConnState::Error;
+        self.set_state(ConnState::Error, None);
         if let Some(on_lost) = &self.hooks.on_lost {
             on_lost(TunnelError::new(
                 format!("ssh connection lost: {} failure", kind.as_str()),
@@ -158,12 +167,10 @@ impl SshLike for FakeConn {
             self.dials.fetch_add(1, Ordering::SeqCst);
             let failure = self.fail_with.lock().unwrap().clone();
             if let Some(err) = failure {
-                *self.state.lock().unwrap() = ConnState::Error;
-                *self.reason.lock().unwrap() = Some(err.message.clone());
+                self.set_state(ConnState::Error, Some(err.message.clone()));
                 return Err(err);
             }
-            *self.state.lock().unwrap() = ConnState::Connected;
-            *self.reason.lock().unwrap() = None;
+            self.set_state(ConnState::Connected, None);
             Ok(())
         })
     }
@@ -231,7 +238,7 @@ impl SshLike for FakeConn {
     fn end(&self) -> ConnFuture<'_, ()> {
         Box::pin(async move {
             self.ended.fetch_add(1, Ordering::SeqCst);
-            *self.state.lock().unwrap() = ConnState::Idle;
+            self.set_state(ConnState::Idle, None);
         })
     }
     fn exec(

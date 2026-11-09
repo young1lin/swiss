@@ -487,10 +487,15 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
                     None => conn_input(&Map::new()),
                 };
                 match with_store(&t, |s| s.add_connection(&input)) {
-                    Ok(def) => admin_json(
-                        StatusCode::CREATED,
-                        json!({ "connection": mask_conn(&def) }),
-                    ),
+                    Ok(def) => {
+                        // SPEC §host.seats: an endpoint joined the inventory — the seat's
+                        // notice owes a page its re-read.
+                        t.manager.remote_seat_changed();
+                        admin_json(
+                            StatusCode::CREATED,
+                            json!({ "connection": mask_conn(&def) }),
+                        )
+                    }
                     Err(err) => fail_str(&err),
                 }
             },
@@ -830,6 +835,54 @@ mod tests {
             Some(Vec::new()),
             "an explicit [] clears the links"
         );
+    }
+
+    /// SPEC §host.seats: a connection saved through the API is the seat's inventory
+    /// moving — the route fires the notice a subscribed page re-reads on.
+    #[tokio::test]
+    async fn a_connection_saved_over_the_api_fires_the_seat_notice() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tower::ServiceExt;
+
+        swiss_core::secure::key::use_test_master_key();
+        let dir =
+            std::env::temp_dir().join(format!("swiss-tapi-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("the scratch dir");
+        let store = Arc::new(Mutex::new(TunnelStore::new(
+            dir.join("tunnels.json"),
+            19999,
+        )));
+        let manager = TunnelManager::new(store.clone(), None);
+        let count = Arc::new(AtomicUsize::new(0));
+        let sink = count.clone();
+        manager.set_remote_seat_changed(Some(Arc::new(move || {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })));
+        let app = mount(Arc::new(Tunnels {
+            store,
+            manager,
+            mcp_display: None,
+        }));
+
+        let save = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/tunnels/connections")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({ "name": "box", "host": "127.0.0.1", "username": "u",
+                                "authType": "password", "password": "p" }).to_string(),
+                    ))
+                    .expect("request literal"),
+            )
+            .await
+            .expect("infallible router");
+        assert_eq!(save.status(), StatusCode::CREATED);
+        assert_eq!(count.load(Ordering::SeqCst), 1, "the save announced itself");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// The panel's `api()` helper stamps `Content-Type: application/json` on EVERY request, and

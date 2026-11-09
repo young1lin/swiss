@@ -540,6 +540,12 @@ impl PluginInstance for TunnelsInstance {
             .remote
             .register(self.remote.clone(), TUNNELS_ID)
             .map_err(|err| format!("remote transport registration: {err}"))?;
+        // The seat is taken: connection state moves and connection saves now owe the
+        // seat's notice (SPEC §host.seats) — the Remote page's endpoint dots follow
+        // without a poll. The register notice above already covered the presence move.
+        let seat = self.services.remote.clone();
+        self.manager
+            .set_remote_seat_changed(Some(Arc::new(move || seat.changed())));
         self.services
             .shells
             .register(self.shells.clone(), TUNNELS_ID)
@@ -561,6 +567,9 @@ impl PluginInstance for TunnelsInstance {
         // operations before anything closes, but it does NOT get a drain window — a
         // remote exec is a RUN with its own deadline and its own cancel path, and the
         // connections closing underneath turn any survivor into an honestly-failed run.
+        // The seat's callback comes off before close_all: the idle storm that follows a
+        // withdraw is not inventory news (SPEC §host.seats).
+        self.manager.set_remote_seat_changed(None);
         self.services.remote.begin_withdraw();
         self.services.shells.begin_withdraw();
         self.shells.ledger().begin_withdraw();

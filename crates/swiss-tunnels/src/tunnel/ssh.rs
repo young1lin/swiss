@@ -180,6 +180,10 @@ pub struct SshHooks {
     /// SPEC §tunnels.jump: dial through a jump. Attached by the manager (the shared chain) or
     /// by the Test path (a throwaway chain); absent on direct and proxied connections.
     pub jump: Option<JumpDialer>,
+    /// The connection's state moved (idle → connecting → connected, or error). The manager
+    /// forwards it to the remote seat's changed() (SPEC §host.seats), so a page that shows
+    /// endpoint dots re-reads without a poll.
+    pub on_state: Option<Arc<dyn Fn(ConnState) + Send + Sync>>,
 }
 
 /// What the host-key check decided, shared between the russh Handler (where the key arrives)
@@ -357,6 +361,9 @@ impl SshConnection {
     fn set_state(&self, state: ConnState, reason: Option<String>) {
         *self.state.lock().unwrap_or_else(|e| e.into_inner()) = state;
         *self.reason.lock().unwrap_or_else(|e| e.into_inner()) = reason;
+        if let Some(on_state) = &self.hooks.on_state {
+            on_state(state);
+        }
     }
 
     async fn dial(self: &Arc<Self>) -> Result<(), TunnelError> {

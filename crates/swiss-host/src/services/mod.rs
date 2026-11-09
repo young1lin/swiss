@@ -157,7 +157,7 @@ impl RuntimeServices {
             supervisor: Supervisor::new(Arc::clone(&children)),
             catalog: Arc::new(CatalogRegistry::new()),
             shells: Arc::new(ShellRegistry::new()),
-            remote: Arc::new(RemoteTransportRegistry::new()),
+            remote: Arc::new(RemoteTransportRegistry::new(bus.clone())),
             children,
             boot,
             history_query: Arc::new(history_query::HistoryQuerySeat::sharing(module_dbs.clone())),

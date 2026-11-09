@@ -60,6 +60,16 @@ impl TunnelManager {
                 mgr.on_connection_wedged(&wedged_id);
             }
         });
+        // SPEC §host.seats: a state move is the remote seat's inventory moving. The
+        // endpoint dots re-read on the notice this fires; Weak for the same cycle
+        // reason as on_lost above.
+        let weak_seat = Arc::downgrade(self);
+        let on_state: Arc<dyn Fn(crate::tunnel::types::ConnState) + Send + Sync> =
+            Arc::new(move |_| {
+                if let Some(mgr) = weak_seat.upgrade() {
+                    mgr.remote_seat_changed();
+                }
+            });
         // SPEC §tunnels.jump: the dialer this connection's dial calls back into when its def
         // carries a jump. Weak so the connection table never closes into an Arc cycle
         // (manager -> client -> hook -> manager); a manager that is already gone fails
@@ -86,6 +96,7 @@ impl TunnelManager {
                 on_lost: Some(on_lost),
                 on_wedged: Some(on_wedged),
                 jump: Some(jump),
+                on_state: Some(on_state),
             },
         )
     }

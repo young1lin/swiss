@@ -675,6 +675,10 @@ fn assert_body(ty: &str, bytes: &[u8], fields: &serde_json::Value, name: &str) {
             assert!(prefs.theme.is_none(), "{name}");
             assert!(prefs.code_scheme.is_none(), "{name}");
         }
+        "Notice" => {
+            assert_eq!(v1::Notice::decode(bytes).expect(name), v1::Notice {}, "{name}");
+            assert!(bytes.is_empty(), "{name}: a notice carries no body");
+        }
         "RunChanged" => {
             let run = v1::RunChanged::decode(bytes).expect(name);
             assert_eq!(run.run_id, fields["runId"].as_u64().expect("runId"), "{name}");
@@ -751,6 +755,11 @@ fn golden_entries() -> Vec<serde_json::Value> {
             "consoles-list",
             frame!(6, 1, 1, Kind::Response, 6, 5, "", "", v1::ConsoleList { consoles: vec![console], next: "c1".to_owned() }.encode_to_vec(), None),
             serde_json::json!({"bodyType":"ConsoleList","body":{"next":"c1"}}),
+        ),
+        (
+            "seat-notice",
+            frame!(4, 2, 1, Kind::Event, 11, 0, "", "page-b", v1::Notice {}.encode_to_vec(), None),
+            serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-b"}),
         ),
         (
             "runs-changed",

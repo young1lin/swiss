@@ -49,9 +49,12 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use prost::Message as _;
 use tokio::sync::mpsc;
 
 use crate::services::action::CancelHandle;
+use swiss_bus::pb::v1;
+
 
 /// One remote machine an operation can be sent to. Identity is the provider's connection
 /// id (for tunnels: the SshConnDef id) — two servers that merely share host and port are
@@ -281,9 +284,12 @@ impl RemotePresence {
 /// The single-provider registry, the catalog/shell shape once more. One remote
 /// transport per process: the day a second one exists, this grows a per-capability map
 /// — not a silent overwrite.
-#[derive(Default)]
 pub struct RemoteTransportRegistry {
     state: Mutex<RemoteState>,
+    /// The seat announces itself here (HOST.REMOTE_SEAT, SPEC §host.seats): presence
+    /// moves publish under the state lock, provider `changed()` calls publish without
+    /// reading anything.
+    bus: Arc<swiss_bus::Bus>,
 }
 
 #[derive(Default)]
@@ -295,8 +301,31 @@ struct RemoteState {
 }
 
 impl RemoteTransportRegistry {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(bus: Arc<swiss_bus::Bus>) -> Self {
+        Self {
+            state: Mutex::new(RemoteState::default()),
+            bus,
+        }
+    }
+
+    /// HOST.REMOTE_SEAT CHANGED (SPEC §host.seats). Publishes and reads nothing — a
+    /// provider may call it from inside its own locks.
+    pub fn changed(&self) {
+        self.announce();
+    }
+
+    /// The notice itself: an empty body, because a notice is the whole content — the
+    /// page re-reads through /api/remote, where masking lives (SPEC §remote.security).
+    fn announce(&self) {
+        let body = v1::Notice {}.encode_to_vec();
+        self.bus.publish(
+            v1::Module::Host as u32,
+            v1::HostSub::RemoteSeat as u32,
+            v1::RemoteSeatId::Changed as u32,
+            "",
+            "",
+            body,
+        );
     }
 
     /// Register the one provider. Err names the incumbent when the seat is taken — even
@@ -317,6 +346,11 @@ impl RemoteTransportRegistry {
         state.provider_id = Some(provider_id.to_string());
         state.last_provider_id = Some(provider_id.to_string());
         state.withdrawing = false;
+        // Presence moved while the lock is held: the notice cannot land before the
+        // state it announces (SPEC §host.seats).
+        self.announce();
+        #[cfg(test)]
+        assert!(self.state.try_lock().is_err());
         Ok(())
     }
 
@@ -327,15 +361,20 @@ impl RemoteTransportRegistry {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.provider.is_some() {
             state.withdrawing = true;
+            self.announce();
         }
     }
 
-    /// A provider's stop, last half: the seat is free for the next start.
+    /// A provider's stop, last half: the seat is free for the next start. A seat
+    /// that was already empty did not move, so it announces nothing.
     pub fn clear(&self) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.provider = None;
+        let moved = state.provider.take().is_some();
         state.provider_id = None;
         state.withdrawing = false;
+        if moved {
+            self.announce();
+        }
     }
 
     /// The live provider snapshot for an operation call, with the withdraw gate applied.
@@ -494,6 +533,12 @@ mod tests {
                 files: Arc::new(Mutex::new(std::collections::HashMap::new())),
             })
         }
+    }
+
+    /// A registry with its bus, the tests' one construction point.
+    fn registry() -> (Arc<RemoteTransportRegistry>, Arc<swiss_bus::Bus>) {
+        let bus = swiss_bus::Bus::new(Arc::new(|| "test".to_string()));
+        (Arc::new(RemoteTransportRegistry::new(bus.clone())), bus)
     }
 
     #[async_trait]
@@ -761,7 +806,7 @@ mod tests {
 
     #[test]
     fn a_duplicate_registration_is_refused_and_the_incumbent_stays() {
-        let reg = RemoteTransportRegistry::new();
+        let (reg, _bus) = registry();
         reg.register(StubTransport::new(), "tunnels")
             .expect("first registers");
         let err = reg
@@ -774,7 +819,7 @@ mod tests {
 
     #[tokio::test]
     async fn withdrawal_refuses_new_operations_and_clear_releases_the_seat() {
-        let reg = RemoteTransportRegistry::new();
+        let (reg, _bus) = registry();
         reg.register(StubTransport::new(), "tunnels")
             .expect("registers");
         reg.begin_withdraw();
@@ -815,7 +860,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_absent_provider_is_named_rather_than_reported_as_no_hosts() {
-        let reg = RemoteTransportRegistry::new();
+        let (reg, _bus) = registry();
         assert!(matches!(reg.presence(), RemotePresence::Absent(None)));
         assert!(reg.list().is_empty());
         let (tx, _rx) = mpsc::channel(EXEC_EVENT_QUEUE);
@@ -844,7 +889,7 @@ mod tests {
 
     #[tokio::test]
     async fn exec_streams_events_and_reports_the_exit_status() {
-        let reg = RemoteTransportRegistry::new();
+        let (reg, _bus) = registry();
         let stub = StubTransport::new();
         reg.register(stub.clone(), "tunnels").expect("registers");
         let (tx, mut rx) = mpsc::channel(EXEC_EVENT_QUEUE);
@@ -879,7 +924,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_endpoints_are_named() {
-        let reg = RemoteTransportRegistry::new();
+        let (reg, _bus) = registry();
         reg.register(StubTransport::new(), "tunnels")
             .expect("registers");
         let (tx, _rx) = mpsc::channel(EXEC_EVENT_QUEUE);
@@ -906,7 +951,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_operations_round_trip_through_the_seam_in_chunks() {
-        let reg = RemoteTransportRegistry::new();
+        let (reg, _bus) = registry();
         let stub = StubTransport::new();
         reg.register(stub.clone(), "tunnels").expect("registers");
         reg.mkdir_p("build-01", "sync", "/data/ws/proj/src")
@@ -947,7 +992,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_exec_only_provider_refuses_file_operations_as_unsupported() {
-        let reg = RemoteTransportRegistry::new();
+        let (reg, _bus) = registry();
         reg.register(Arc::new(ExecOnlyTransport), "tunnels")
             .expect("registers");
         match reg.stat("any", "test", "/x").await {
@@ -961,7 +1006,7 @@ mod tests {
     async fn a_hundred_lifecycles_leave_the_registry_exactly_empty() {
         // The same churn discipline the catalog and shell registries are held to:
         // enable/disable must not leak providers or rows.
-        let reg = RemoteTransportRegistry::new();
+        let (reg, _bus) = registry();
         for _ in 0..100 {
             reg.register(StubTransport::new(), "tunnels")
                 .expect("registers");
@@ -973,5 +1018,207 @@ mod tests {
         assert!(!reg.has_provider());
         reg.register(StubTransport::new(), "tunnels")
             .expect("registers after the churn");
+    }
+
+    /// The seat's notices (HOST.REMOTE_SEAT, SPEC §host.seats): a subscribed link,
+    /// its frames decoded. Same harness shape as the run-events module.
+    mod seat_notices {
+        use super::*;
+        use swiss_bus::IoMsg;
+        use tokio::sync::mpsc;
+
+        struct Channel {
+            rx: mpsc::Receiver<IoMsg>,
+            tx: mpsc::Sender<IoMsg>,
+        }
+
+        impl swiss_bus::Io for Channel {
+            fn recv(
+                &mut self,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<IoMsg>> + Send + '_>>
+            {
+                Box::pin(async move { self.rx.recv().await })
+            }
+            fn send(
+                &mut self,
+                msg: IoMsg,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + '_>> {
+                Box::pin(async move { self.tx.send(msg).await.is_ok() })
+            }
+        }
+
+        /// One link subscribed to the seat's notices, opened before the seat moves.
+        struct Peer {
+            tx: mpsc::Sender<IoMsg>,
+            rx: mpsc::Receiver<IoMsg>,
+            seq: u32,
+        }
+
+        impl Peer {
+            async fn open(bus: &Arc<swiss_bus::Bus>) -> Self {
+                let (tx, rx) = mpsc::channel(32);
+                let (out, incoming) = mpsc::channel(32);
+                tokio::spawn(swiss_bus::run(bus.clone(), Channel { rx, tx: out }));
+                let mut peer = Self { tx, rx: incoming, seq: 1 };
+                let welcome = peer
+                    .request_at(
+                        0,
+                        v1::BusSub::Link as u32,
+                        v1::LinkId::Hello as u32,
+                        v1::Hello {
+                            protocol: 1,
+                            page_id: "page-a".into(),
+                            build: "test".into(),
+                        }
+                        .encode_to_vec(),
+                    )
+                    .await;
+                assert!(welcome.fault.is_none());
+                let answer = peer
+                    .request_at(
+                        0,
+                        v1::BusSub::Topic as u32,
+                        v1::TopicId::Subscribe as u32,
+                        v1::Topics {
+                            topics: vec![v1::Topic {
+                                module: v1::Module::Host as u32,
+                                sub: v1::HostSub::RemoteSeat as u32,
+                                key: String::new(),
+                            }],
+                        }
+                        .encode_to_vec(),
+                    )
+                    .await;
+                assert!(answer.fault.is_none());
+                peer
+            }
+
+            async fn next(&mut self) -> v1::Frame {
+                loop {
+                    match self.rx.recv().await.expect("link frame") {
+                        IoMsg::Binary(bytes) => {
+                            return v1::Frame::decode(bytes.as_slice()).expect("frame");
+                        }
+                        IoMsg::Ping(_) | IoMsg::Pong(_) => continue,
+                        other => panic!("expected binary, got {other:?}"),
+                    }
+                }
+            }
+
+            async fn request_at(&mut self, module: u32, sub: u32, id: u32, body: Vec<u8>) -> v1::Frame {
+                let seq = self.seq;
+                self.seq += 1;
+                self.tx
+                    .send(IoMsg::Binary(
+                        v1::Frame {
+                            module,
+                            sub,
+                            id,
+                            kind: v1::Kind::Request as i32,
+                            seq,
+                            body,
+                            ..Default::default()
+                        }
+                        .encode_to_vec(),
+                    ))
+                    .await
+                    .expect("send");
+                loop {
+                    let frame = self.next().await;
+                    if frame.kind == v1::Kind::Event as i32 {
+                        // A notice landing mid-handshake is parked as a frame, not dropped.
+                        continue;
+                    }
+                    assert_eq!(frame.reply_to, seq);
+                    return frame;
+                }
+            }
+
+            async fn notice(&mut self) -> v1::Frame {
+                let frame = self.next().await;
+                assert_eq!(frame.module, v1::Module::Host as u32);
+                assert_eq!(frame.sub, v1::HostSub::RemoteSeat as u32);
+                assert_eq!(frame.id, v1::RemoteSeatId::Changed as u32);
+                assert_eq!(frame.kind, v1::Kind::Event as i32);
+                assert!(frame.body.is_empty(), "a notice carries no body");
+                frame
+            }
+
+            fn drained(&mut self) -> bool {
+                matches!(self.rx.try_recv(), Err(mpsc::error::TryRecvError::Empty))
+            }
+        }
+
+        async fn settle() {
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+        }
+
+        #[tokio::test]
+        async fn the_seat_announces_register_withdraw_and_clear() {
+            let (reg, bus) = registry();
+            let mut peer = Peer::open(&bus).await;
+
+            reg.register(StubTransport::new(), "tunnels")
+                .expect("takes the seat");
+            settle().await;
+            peer.notice().await;
+
+            reg.begin_withdraw();
+            settle().await;
+            peer.notice().await;
+
+            reg.clear();
+            settle().await;
+            peer.notice().await;
+
+            // The notice is the whole content: nothing else rides the topic.
+            assert!(peer.drained(), "three moves, three notices");
+        }
+
+        #[tokio::test]
+        async fn changed_publishes_from_inside_a_caller_lock() {
+            let (reg, bus) = registry();
+            let mut peer = Peer::open(&bus).await;
+            reg.register(StubTransport::new(), "tunnels")
+                .expect("takes the seat");
+            settle().await;
+            peer.notice().await;
+
+            // The provider owes changed() on inventory moves, which happen under ITS
+            // locks — so the call must neither read the seat nor wait on anything.
+            let guard = std::sync::Mutex::new(());
+            let held = guard.lock().unwrap();
+            reg.changed();
+            drop(held);
+            settle().await;
+            peer.notice().await;
+            assert!(peer.drained());
+        }
+
+        #[tokio::test]
+        async fn a_refusal_and_an_empty_clear_are_not_moves() {
+            let (reg, bus) = registry();
+            let mut peer = Peer::open(&bus).await;
+
+            reg.register(StubTransport::new(), "tunnels")
+                .expect("takes the seat");
+            settle().await;
+            peer.notice().await;
+
+            // A refused registration is not a presence move: the incumbent never left.
+            assert!(reg.register(StubTransport::new(), "other").is_err());
+            settle().await;
+            assert!(peer.drained(), "a refusal announces nothing");
+
+            reg.clear();
+            settle().await;
+            peer.notice().await;
+            // A clear over an already-empty seat is not one either.
+            reg.clear();
+            settle().await;
+            assert!(peer.drained(), "an empty clear announces nothing");
+        }
     }
 }

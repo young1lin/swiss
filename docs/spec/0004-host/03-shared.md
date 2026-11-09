@@ -257,6 +257,12 @@ The seat is held by `RuntimeServices`; the provider registers on start and on st
 | Shell (`services/shell.rs`) | tunnels → terminal | A session is a lease (terminals never hand back voluntarily, drain 3 s); `PtySession` is a transport-neutral duplex, so terminal links no SSH client (ADR-011) |
 | Remote transport (`services/remote.rs`) | tunnels → remote | exec, SFTP and streaming in 64 KiB chunks; §remote |
 
+**The remote transport seat announces itself** (HOST.REMOTE_SEAT, a notice, §bus.topics). It
+publishes when its presence moves — a provider registers, begins to withdraw, or clears — and
+whenever the provider calls `changed()`, which the provider owes on every change to what `list`
+answers: an endpoint added, edited or removed, or its connection state moving. `changed()`
+publishes and reads nothing, so a provider may call it from inside its own locks.
+
 The composition also feeds Data's connection picker the sidebar's visual order: registry
 names sorted by the flat manual order (unranked last, by name), sliced by group.
 

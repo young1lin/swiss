@@ -179,6 +179,20 @@
     "origin": ""
   },
   {
+    "bodyType": "Notice",
+    "body": {},
+    "origin": "page-b",
+    "name": "seat-notice",
+    "hex": "0804100218012003280b5206706167652d62",
+    "module": 4,
+    "sub": 2,
+    "id": 1,
+    "kind": "EVENT",
+    "seq": 11,
+    "replyTo": 0,
+    "key": ""
+  },
+  {
     "bodyType": "RunChanged",
     "body": {
       "runId": 12,

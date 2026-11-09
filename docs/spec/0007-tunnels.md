@@ -243,7 +243,10 @@ The tunnels connections are the **one** host inventory. `TunnelShells` implement
 shell capability for the terminal (§terminal): PTY sessions take a reference on the shared
 client, and credentials never leave `ssh.rs`. `TunnelRemote` implements the remote transport
 for the remote plugin (§remote): exec requests over the same clients, POSIX-quoted here where
-the SSH string is built, returning events and exit codes only.
+the SSH string is built, returning events and exit codes only. It calls the seat's `changed()`
+(§host.seats) on every connection state transition — idle, connecting, connected, error — and
+on every connection added, edited or deleted, so the Remote page's endpoint dots follow without
+a poll.
 
 ## §tunnels.panel — The pages
 

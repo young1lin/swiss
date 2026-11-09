@@ -202,6 +202,11 @@ pub struct TunnelManager {
     /// connection through it "ssh connection is not established" (a rapid Restart of the
     /// tunnels plugin did exactly this to two Redis rules).
     closed: AtomicBool,
+    /// The remote seat's changed() (SPEC §host.seats), set by the composition once a
+    /// transport provider registers and cleared when it withdraws. Connection state
+    /// moves (SshHooks::on_state) and connection saves fire it, so the Remote page's
+    /// endpoint dots follow without a poll.
+    seat_changed: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl TunnelManager {
@@ -223,7 +228,27 @@ impl TunnelManager {
             mcps,
             make_connection,
             closed: AtomicBool::new(false),
+            seat_changed: Mutex::new(None),
         })
+    }
+
+    /// Hand the manager the remote seat's changed() — the composition's one wiring point
+    /// around provider registration (SPEC §host.seats). None detaches it again.
+    pub fn set_remote_seat_changed(&self, changed: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self.seat_changed.lock().unwrap_or_else(|e| e.into_inner()) = changed;
+    }
+
+    /// The seat's inventory or state moved. The callback is cloned out before the call:
+    /// it publishes to the bus and owes this lock nothing.
+    pub(super) fn remote_seat_changed(&self) {
+        let changed = self
+            .seat_changed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(changed) = changed {
+            changed();
+        }
     }
 
     /// Lower the `close_all` gate so rules may start again. The plugin's start path calls
@@ -260,5 +285,76 @@ impl TunnelManager {
                 task.abort();
             }
         }
+    }
+}
+
+/// The seat's notice from the manager's side (SPEC §host.seats): state moves and
+/// connection saves fire whatever the composition attached.
+#[cfg(test)]
+mod seat_tests {
+    use super::test_util::{add_conn, manager, scratch};
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    fn counting_seat(manager: &Arc<TunnelManager>) -> Arc<AtomicUsize> {
+        let count = Arc::new(AtomicUsize::new(0));
+        let sink = count.clone();
+        manager.set_remote_seat_changed(Some(Arc::new(move || {
+            sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        })));
+        count
+    }
+
+    #[tokio::test]
+    async fn a_state_move_fires_the_seat_notice() {
+        let (_dir, store) = scratch();
+        let (mgr, _built) = manager(&store);
+        let def = add_conn(&store);
+        let count = counting_seat(&mgr);
+
+        mgr.dial(&def).await.expect("the fake connects");
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the connected move announced itself"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failing_dial_announces_the_error_move() {
+        let (_dir, store) = scratch();
+        let (mgr, _built) =
+            super::test_util::manager_with(&store, None, Some(crate::tunnel::types::TunnelError::new(
+                "down",
+                crate::tunnel::types::FailureKind::Network,
+            )));
+        let def = add_conn(&store);
+        let count = counting_seat(&mgr);
+
+        assert!(mgr.dial(&def).await.is_err());
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the error move announced itself"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_edit_and_a_delete_fire_the_seat_notice() {
+        let (_dir, store) = scratch();
+        let (mgr, _built) = manager(&store);
+        let def = add_conn(&store);
+        let count = counting_seat(&mgr);
+
+        mgr.apply_connection_update(&def.id, &super::test_util::conn_input())
+            .await
+            .expect("the edit saves");
+        assert!(count.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+
+        mgr.delete_connection(&def.id).await.expect("the delete saves");
+        assert!(
+            count.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+            "an edit and a delete each announced the inventory"
+        );
     }
 }

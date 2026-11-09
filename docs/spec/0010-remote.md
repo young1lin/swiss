@@ -222,6 +222,9 @@ The host defines the seat (`services/remote.rs`, §host.seats); tunnels provides
   in-flight ones end through their cancel path.
 - **Errors** map onto a transport-neutral `RemoteError`; cancellation keeps its own kind so the
   outcome can be an honest "canceled".
+- **The inventory is announced.** The provider calls the seat's `changed()` whenever `list`
+  would answer differently, and the seat publishes HOST.REMOTE_SEAT (§host.seats), so the
+  Targets page learns an endpoint's state and the provider's presence without asking.
 
 ## §remote.utf8 — UTF-8 end to end
 
