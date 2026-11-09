@@ -324,10 +324,12 @@ removes it at stop.
 - **The query.** `GET /api/remote/runs?before=&limit=&target=&since=&until=&actor=` → `{runs,
   active, limits {maxAgeMs, maxTotalBytes, maxRuns, maxOutputBytes, auditWindowMs}, usage,
   nextBefore}`. Newest first, 20 per page by default (at most 100), paged by the older-than
-  cursor; `active` are the remote runs the coordinator holds that are not yet recorded, so a
-  page paints from one read. `since` is inclusive and `until` exclusive, both on `endedAt`, as
-  epoch ms or ISO-8601; a malformed time is a 400, never a silently widened window. Reading
-  walks the index from its end in blocks, so a page costs a page.
+  cursor; `active` are the remote runs the coordinator still holds, less any run the page's
+  `runs` already carries — the record commits a moment before the coordinator retires the run,
+  and a read in that moment listed it twice — so a page paints from one read. `since` is
+  inclusive and `until` exclusive, both on `endedAt`, as epoch ms or ISO-8601; a malformed time
+  is a 400, never a silently widened window. Reading walks the index from its end in blocks, so
+  a page costs a page.
 - **Output reads.** `/output?after=&max=` reads the stored file (128 KiB at most per read) with
   the same cursor contract as the live one; `/content` answers the sealed body - a write's
   content or an exec's stdin, whichever the run kept - or 404 when none was.

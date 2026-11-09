@@ -174,16 +174,23 @@ async fn list_runs(
         actor,
     })
     .await;
-    // Active = not terminal: the record only ever holds finished runs, so there is
-    // no overlap to reconcile. They are happening now, so a window that reaches now
-    // includes them; the actor predicate applies as it does to the record.
+    // Active = not terminal, less the ids this page's `runs` already carries: the
+    // record commits a moment before the coordinator retires the run, and a read
+    // in that moment listed it twice, once per list. They are happening now, so a
+    // window that reaches now includes them; the actor predicate applies as it
+    // does to the record.
     let now = swiss_core::util::now_ms();
+    let recorded: std::collections::HashSet<u64> = runs
+        .iter()
+        .filter_map(|row| row.get("runId").and_then(Value::as_u64))
+        .collect();
     let active: Vec<Value> = system
         .services()
         .runs
         .list()
         .into_iter()
         .filter(|v| v.action_type.starts_with("remote.") && !v.state.is_terminal())
+        .filter(|v| !recorded.contains(&v.run_id))
         .map(|v| {
             let mut row = v.to_json(false);
             if let Some(input) = history.in_flight_input(v.run_id) {
@@ -636,6 +643,129 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A sink that acknowledges only when released: the window this file's dedup
+    /// lives in — the record has the run, the coordinator still holds it active —
+    /// stays open for as long as the test needs to read it.
+    struct HoldAck {
+        asked: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        gate: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    }
+
+    impl swiss_host::services::runs::RunHistorySink for HoldAck {
+        fn begin(
+            &self,
+            _run_id: u64,
+            _request: &swiss_host::services::runs::SubmitRequest,
+        ) -> Option<Arc<dyn swiss_host::services::action::RunOutputTee>> {
+            Some(Arc::new(NullTee))
+        }
+        fn finish<'a>(
+            &'a self,
+            _view: swiss_host::services::runs::RunView,
+            _request: swiss_host::services::runs::SubmitRequest,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = swiss_host::services::runs::HistoryAck> + Send + 'a>,
+        > {
+            Box::pin(async move {
+                self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+                let gate = self.gate.lock().unwrap_or_else(|e| e.into_inner()).take();
+                if let Some(gate) = gate {
+                    let _ = gate.await;
+                }
+                swiss_host::services::runs::HistoryAck::Recorded
+            })
+        }
+    }
+
+    struct NullTee;
+    impl swiss_host::services::action::RunOutputTee for NullTee {
+        fn write(&self, _bytes: &[u8]) {}
+    }
+
+    // SPEC §remote.history: the record commits a moment before the coordinator retires
+    // the run; a read in that moment listed it twice, once in `runs` and once in
+    // `active`. The ids the page already carries are left out.
+    #[tokio::test]
+    async fn a_run_already_recorded_is_not_listed_as_active() {
+        let (system, fake) = crate::testing::system_with_fake();
+        fake.program(
+            "make",
+            crate::testing::FakeProgram {
+                argv0: "make".into(),
+                stdout: b"ok\n".to_vec(),
+                stderr: Vec::new(),
+                exit: 0,
+                delay_ms: 0,
+            },
+        );
+        crate::actions::register_all(system.clone(), &system.services().actions).unwrap();
+        // The record first (it files the run), the hold after it (it pins the run in
+        // the coordinator past the commit): sink order is finish order.
+        let record: Arc<dyn swiss_host::services::runs::RunHistorySink> =
+            system.history().clone();
+        system.services().runs.add_history_sink(record);
+        let (release, gate) = tokio::sync::oneshot::channel::<()>();
+        let hold = Arc::new(HoldAck {
+            asked: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            gate: std::sync::Mutex::new(Some(gate)),
+        });
+        system.services().runs.add_history_sink(hold.clone());
+        let state = RemoteState::new();
+        state.install(system.clone());
+        let router = mount(state);
+
+        let submitted = system
+            .services()
+            .runs
+            .submit(swiss_host::services::runs::SubmitRequest {
+                owner: "manual".into(),
+                label: "build".into(),
+                action_type: "remote.exec".into(),
+                input: json!({ "target": "dev", "argv": ["make"] }),
+                timeout_ms: 30_000,
+                queue_if_busy: false,
+                actor: "test".into(),
+            })
+            .expect("submitted");
+        for _ in 0..500 {
+            if hold.asked.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        assert!(
+            hold.asked.load(std::sync::atomic::Ordering::SeqCst),
+            "the run reached its sinks"
+        );
+
+        // The moment both lists could see it: the record holds it AND the coordinator
+        // still reports it running. It appears exactly once.
+        let (status, page) = get_json(&router, "/api/remote/runs").await;
+        assert_eq!(status, StatusCode::OK);
+        let listed = page["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(page["active"].as_array().unwrap())
+            .filter(|row| row["runId"].as_u64() == Some(submitted.run_id))
+            .count();
+        assert_eq!(listed, 1, "the run is not listed twice: {page}");
+        assert_eq!(page["runs"].as_array().unwrap().len(), 1);
+        assert_eq!(page["active"], json!([]));
+
+        release.send(()).expect("release the hold");
+        let view = submitted.done.await.expect("the final view");
+        assert_eq!(view.state.as_str(), "succeeded");
+        let _ = std::fs::remove_dir_all(
+            system
+                .history()
+                .dir()
+                .parent()
+                .and_then(std::path::Path::parent)
+                .unwrap(),
+        );
     }
 
     #[tokio::test]
