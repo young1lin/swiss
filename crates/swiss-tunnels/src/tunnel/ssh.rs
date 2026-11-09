@@ -59,6 +59,12 @@ const READY_TIMEOUT: Duration = Duration::from_secs(15);
 /// carrying nothing, and the local port stays bound. 15s x 3 detects it in ~45s.
 const KEEPALIVE: Duration = Duration::from_secs(15);
 const KEEPALIVE_MAX: usize = 3;
+/// SPEC §tunnels.selfheal: a direct-tcpip open that no answer reaches within this budget
+/// fails the caller's socket. A wedged session accepts TCP, answers keepalives and never
+/// confirms a channel open — without this budget the socket hangs until the client's own
+/// pool timeout, and nothing at the transport layer ever sees a failure. The data path
+/// after a successful open keeps no timeout: an idle pooled socket is legitimate.
+const OPEN_BUDGET: Duration = Duration::from_secs(10);
 /// A wedged transport must not block a shutdown (ssh.end()'s own cap).
 const END_TIMEOUT: Duration = Duration::from_millis(1500);
 /// What the far side is told it is talking to. xterm.js reports itself as an xterm with
@@ -251,6 +257,12 @@ struct Live {
 }
 
 pub struct SshConnection {
+    /// The channel-open budget of SPEC §tunnels.selfheal, held as milliseconds.
+    /// OPEN_BUDGET everywhere in production; tests shrink it so the ten seconds cost
+    /// milliseconds of wall clock (a paused clock cannot pay for real socket IO — the
+    /// runtime jumps it past the handshake). Atomic only so a test can set it through
+    /// the shared Arc.
+    open_budget_ms: AtomicU64,
     def: Mutex<SshConnDef>,
     state: Mutex<ConnState>,
     reason: Mutex<Option<String>>,
@@ -267,6 +279,7 @@ pub struct SshConnection {
 impl SshConnection {
     pub fn new(def: SshConnDef, hooks: SshHooks) -> Arc<Self> {
         Arc::new(SshConnection {
+            open_budget_ms: AtomicU64::new(OPEN_BUDGET.as_millis() as u64),
             def: Mutex::new(def),
             state: Mutex::new(ConnState::Idle),
             reason: Mutex::new(None),
@@ -538,13 +551,41 @@ impl SshConnection {
             };
             live.handle.clone()
         };
-        let channel = handle
-            .channel_open_direct_tcpip(host.to_string(), port as u32, "127.0.0.1".to_string(), 0)
-            .await
-            .map_err(|err| {
+        // SPEC §tunnels.selfheal: the open rides one budget, so a session that never
+        // answers fails the socket instead of hanging it; an answered refusal keeps its
+        // ordinary meaning — the session proved it is alive, the target is what said no.
+        let open_budget = Duration::from_millis(self.open_budget_ms.load(Ordering::Relaxed));
+        let opened = tokio::time::timeout(
+            open_budget,
+            handle.channel_open_direct_tcpip(
+                host.to_string(),
+                port as u32,
+                "127.0.0.1".to_string(),
+                0,
+            ),
+        )
+        .await;
+        let channel = match opened {
+            Ok(result) => result.map_err(|err| {
                 as_tunnel_error(err, Some(&format!("channel to {host}:{port} failed")))
-            })?;
+            })?,
+            Err(_budget_spent) => {
+                return Err(TunnelError::new(
+                    format!(
+                        "channel open to {host}:{port} timed out after {open_budget:?}"
+                    ),
+                    FailureKind::Network,
+                ));
+            }
+        };
         Ok(Box::pin(channel.into_stream()))
+    }
+
+    /// Tests shrink the budget so §tunnels.selfheal's ten seconds cost milliseconds;
+    /// production always opens with OPEN_BUDGET.
+    #[cfg(test)]
+    pub(crate) fn set_open_budget(&self, budget: Duration) {
+        self.open_budget_ms.store(budget.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// Open an interactive PTY on this connection and pump it against `endpoint`.
@@ -1551,5 +1592,105 @@ mod tests {
             err.message
         );
         let _ = std::fs::remove_file(&key);
+    }
+
+    // --- the open budget (SPEC §tunnels.selfheal) ------------------------------------------------
+    //
+    // A real russh client against a real russh server on loopback; the server's open
+    // policy is the only variable. The budget is shrunk per client so the ten seconds
+    // cost milliseconds — a paused clock cannot stand in for real socket IO (the
+    // runtime jumps it past the handshake).
+
+    mod selfheal {
+        use super::super::*;
+        use crate::tunnel::sshtest::{spawn_opens_ssh_server, TestOpens};
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        fn def_to(port: u16) -> SshConnDef {
+            SshConnDef {
+                id: "selfheal".into(),
+                name: "selfheal".into(),
+                host: "127.0.0.1".into(),
+                port,
+                username: "u".into(),
+                auth_type: crate::tunnel::types::AuthType::Password,
+                group: None,
+                key_path: None,
+                passphrase: None,
+                password: Some("pw".into()),
+                host_key: None,
+                proxy: None,
+                proxy_username: None,
+                proxy_password: None,
+                jump: None,
+            }
+        }
+
+        async fn connected(def: &SshConnDef) -> Arc<SshConnection> {
+            let c = SshConnection::new(def.clone(), SshHooks::default());
+            c.connect().await.expect("the test server accepts");
+            c
+        }
+
+        /// SPEC §tunnels.selfheal: an open the session never answers fails after the
+        /// budget instead of hanging — the incident shape, where sshd answers keepalives
+        /// and never confirms a channel open.
+        #[tokio::test]
+        async fn an_unanswered_open_fails_after_the_budget() {
+            let (port, _policy) = spawn_opens_ssh_server(TestOpens::Wedge).await;
+            let c = connected(&def_to(port)).await;
+            c.set_open_budget(Duration::from_millis(250));
+            let t0 = std::time::Instant::now();
+            let err = match c.open_channel("127.0.0.1", 9).await {
+                Err(err) => err,
+                // ByteStream is not Debug, so expect_err is out; the Ok arm names the
+                // failure better than the trait error would.
+                Ok(_channel) => panic!("the wedged policy never answers; the open must fail"),
+            };
+            assert!(
+                err.message.contains("timed out"),
+                "the budget must name itself: {}",
+                err.message
+            );
+            assert_eq!(err.kind, FailureKind::Network);
+            assert!(
+                t0.elapsed() >= Duration::from_millis(250),
+                "the full budget must be spent, not a polite guess"
+            );
+            assert!(
+                t0.elapsed() < Duration::from_secs(5),
+                "a shrunk budget must not turn into a wall-clock hang"
+            );
+            let _ = c.end().await;
+        }
+
+        /// SPEC §tunnels.selfheal: a refusal is an answered open — it fails fast, names
+        /// the channel, and is never a timeout.
+        #[tokio::test]
+        async fn a_refused_open_answers_rather_than_times_out() {
+            let (port, _policy) = spawn_opens_ssh_server(TestOpens::Refuse).await;
+            let c = connected(&def_to(port)).await;
+            let t0 = std::time::Instant::now();
+            let err = match c.open_channel("127.0.0.1", 9).await {
+                Err(err) => err,
+                Ok(_channel) => panic!("the refusing policy answers no; the open must fail"),
+            };
+            assert!(
+                !err.message.contains("timed out"),
+                "a refusal is an answer: {}",
+                err.message
+            );
+            assert!(
+                err.message.contains("channel"),
+                "names the channel: {}",
+                err.message
+            );
+            assert!(
+                t0.elapsed() < Duration::from_secs(5),
+                "an answered refusal is immediate, not budgeted"
+            );
+            let _ = c.end().await;
+        }
     }
 }

@@ -190,6 +190,7 @@ in §decisions.
 - [§tunnels.store — Connections, rules and tunnels.json](spec/0007-tunnels.md#tunnelsstore--connections-rules-and-tunnelsjson)
 - [§tunnels.ssh — The SSH client](spec/0007-tunnels.md#tunnelsssh--the-ssh-client)
 - [§tunnels.forward — Forward rules](spec/0007-tunnels.md#tunnelsforward--forward-rules)
+- [§tunnels.selfheal — A wedged session](spec/0007-tunnels.md#tunnelsselfheal--a-wedged-session)
 - [§tunnels.proxy — Proxy dialling](spec/0007-tunnels.md#tunnelsproxy--proxy-dialling)
 - [§tunnels.jump — Jump hosts](spec/0007-tunnels.md#tunnelsjump--jump-hosts)
 - [§tunnels.mcp — MCPs that ride a tunnel](spec/0007-tunnels.md#tunnelsmcp--mcps-that-ride-a-tunnel)

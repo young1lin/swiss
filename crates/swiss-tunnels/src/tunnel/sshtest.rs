@@ -68,6 +68,20 @@ pub enum TestAuth {
     RejectAll,
 }
 
+/// What the test SSH server does with a direct-tcpip channel open (SPEC §tunnels.selfheal):
+/// forward it to the requested address, refuse it (an answered no — the session proves it
+/// is alive), or never answer at all — the wedged-session shape keepalive cannot see.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TestOpens {
+    Forward,
+    Refuse,
+    Wedge,
+}
+
+/// The per-server open policy, shared with the test so it can wedge a live session and
+/// un-wedge it again: every session's handler reads the cell on each channel open.
+pub type OpensPolicy = Arc<Mutex<TestOpens>>;
+
 /// What the fake exec server answers one exec request with (SPEC §remote.transport):
 /// channel success, stdout, stderr, then — when `exit` is set — the exit status
 /// and channel close. A None `exit` is a WEDGED command: the handler returns, the
@@ -111,6 +125,12 @@ struct TestHandler {
     exec: Option<ExecScript>,
     /// Stdin bytes seen so far, for StdinMode::Count.
     stdin_bytes: usize,
+    /// The direct-tcpip policy this session reads on every open (SPEC §tunnels.selfheal).
+    opens: OpensPolicy,
+    /// Opens held unanswered under TestOpens::Wedge. Dropping a ChannelOpenHandle rejects
+    /// the open, so a wedged one must be parked here until the session ends — that is the
+    /// whole difference between "refuse" and "never answer".
+    wedged_opens: Vec<russh::server::ChannelOpenHandle>,
 }
 
 impl TestHandler {
@@ -154,16 +174,30 @@ impl russh::server::Handler for TestHandler {
         reply: russh::server::ChannelOpenHandle,
         _session: &mut russh::server::Session,
     ) -> Result<(), Self::Error> {
-        reply.accept().await;
-        let target = (host_to_connect.to_string(), port_to_connect as u16);
-        tokio::spawn(async move {
-            // The far side of the channel: dial the requested address and pump
-            // bytes both ways until either end closes.
-            if let Ok(mut tcp) = TcpStream::connect(target).await {
-                let mut chan = channel.into_stream();
-                let _ = tokio::io::copy_bidirectional(&mut chan, &mut tcp).await;
+        // Copy the policy out before any await: a MutexGuard is not Send, and the
+        // Forward arm awaits inside this match.
+        let policy = *self.opens.lock().expect("open policy");
+        match policy {
+            TestOpens::Forward => {
+                reply.accept().await;
+                let target = (host_to_connect.to_string(), port_to_connect as u16);
+                tokio::spawn(async move {
+                    // The far side of the channel: dial the requested address and pump
+                    // bytes both ways until either end closes.
+                    if let Ok(mut tcp) = TcpStream::connect(target).await {
+                        let mut chan = channel.into_stream();
+                        let _ = tokio::io::copy_bidirectional(&mut chan, &mut tcp).await;
+                    }
+                });
             }
-        });
+            // Dropping the handle rejects the open: an answered refusal, the shape a
+            // session that is alive but a target that says no produces.
+            TestOpens::Refuse => drop(reply),
+            // Hold the handle and say nothing — never confirmed, never rejected. Parking
+            // it on the handler (not dropping, not forgetting) keeps it recoverable when
+            // the session ends.
+            TestOpens::Wedge => self.wedged_opens.push(reply),
+        }
         Ok(())
     }
 
@@ -269,7 +303,7 @@ fn serve_connections(
     auth: TestAuth,
     track: Option<Arc<Mutex<Vec<russh::server::Handle>>>>,
 ) -> tokio::task::JoinHandle<()> {
-    serve_connections_exec(listener, config, auth, track, None)
+    serve_connections_full(listener, config, auth, track, None, default_opens())
 }
 
 /// The accept loop with an optional exec script handed to every session's handler.
@@ -280,13 +314,33 @@ fn serve_connections_exec(
     track: Option<Arc<Mutex<Vec<russh::server::Handle>>>>,
     exec: Option<ExecScript>,
 ) -> tokio::task::JoinHandle<()> {
+    serve_connections_full(listener, config, auth, track, exec, default_opens())
+}
+
+fn default_opens() -> OpensPolicy {
+    Arc::new(Mutex::new(TestOpens::Forward))
+}
+
+/// The accept loop with the full handler payload: exec script and direct-tcpip open
+/// policy (SPEC §tunnels.selfheal). The two wrappers above keep their old signatures.
+#[allow(clippy::too_many_arguments)]
+fn serve_connections_full(
+    listener: TcpListener,
+    config: Arc<russh::server::Config>,
+    auth: TestAuth,
+    track: Option<Arc<Mutex<Vec<russh::server::Handle>>>>,
+    exec: Option<ExecScript>,
+    opens: OpensPolicy,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Ok((socket, _)) = listener.accept().await {
             let config = config.clone();
             let track = track.clone();
             let exec = exec.clone();
+            let opens = opens.clone();
             tokio::spawn(async move {
-                let handler = TestHandler { auth, exec, stdin_bytes: 0 };
+                let handler =
+                    TestHandler { auth, exec, stdin_bytes: 0, opens, wedged_opens: Vec::new() };
                 if let Ok(run) = russh::server::run_stream(config, socket, handler).await {
                     if let Some(track) = &track {
                         if let Ok(mut list) = track.lock() {
@@ -329,6 +383,24 @@ pub async fn spawn_ssh_server_with(auth: TestAuth) -> u16 {
     let port = listener.local_addr().expect("ssh addr").port();
     serve_connections(listener, test_server_config(), auth, None);
     port
+}
+
+/// The same server whose direct-tcpip open policy the test controls (SPEC
+/// §tunnels.selfheal): accept-all auth plus a shared policy cell, so a test can wedge a
+/// live session mid-flight and un-wedge it again. Returns the port and the cell.
+pub async fn spawn_opens_ssh_server(opens: TestOpens) -> (u16, OpensPolicy) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ssh");
+    let port = listener.local_addr().expect("ssh addr").port();
+    let policy: OpensPolicy = Arc::new(Mutex::new(opens));
+    serve_connections_full(
+        listener,
+        test_server_config(),
+        TestAuth::AcceptAll,
+        None,
+        None,
+        policy.clone(),
+    );
+    (port, policy)
 }
 
 /// Bind 127.0.0.1:<port> with SO_REUSEADDR, so a killed server's port can be taken back

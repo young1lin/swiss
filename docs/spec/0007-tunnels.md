@@ -126,7 +126,8 @@ key leaves it absent. This lets `setup apply` ask for confirmation without pinni
 
 - **Start** binds the local port, acquires the client and runs the accept loop (at most 200
   sockets per rule); each socket is pumped to a `direct-tcpip` channel with byte counts; TCP
-  keepalive 30 s. A successful start persists `enabled:true`.
+  keepalive 30 s, and the channel open itself waits at most 10 s (§tunnels.selfheal). A
+  successful start persists `enabled:true`.
 - **Stop** closes the listener and every socket and verifies the port can be bound again;
   `persist` decides whether `enabled` is cleared.
 - **Per-rule serialisation.** Every operation on a rule holds that rule's async mutex for the
@@ -146,6 +147,20 @@ key leaves it absent. This lets `setup apply` ask for confirmation without pinni
 - **Rows** carry `sockets`, `bytesIn`, `bytesOut`, `channelFailures`, `lastError`, and the dot
   state: connected/up green, connecting/starting/reconnecting yellow, error red, idle/stopped
   grey.
+
+## §tunnels.selfheal — A wedged session
+
+Keepalive (§tunnels.ssh) detects a dead transport; a session can also die silently above it:
+sshd keeps answering keepalives while every `direct-tcpip` open hangs — the local port stays
+bound, the rule stays green, and the MCPs behind it time out their pools. The forward layer
+is the only probe that sees this, so it owns the judgment.
+
+- **The open budget.** A `direct-tcpip` open that no answer reaches in 10 s fails: the
+  accepted socket is closed (the client errors fast instead of hanging on its pool
+  timeout), the rule's `channelFailures` counts it, and `lastError` names it. An answered
+  refusal keeps today's meaning — the session proved it is alive, the target is what said
+  no. The data path stays timeout-free: an idle pooled socket is legitimate and is never
+  probed.
 
 ## §tunnels.proxy — Proxy dialling
 
