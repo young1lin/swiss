@@ -696,6 +696,9 @@ mod tests {
     #[test]
     fn put_then_lookup_then_delete_round_trips() {
         let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        // Pin the test key before the shared vault file: one sealed under the OS key by
+        // whichever test ran first cannot be read once another test pins this one.
+        crate::secure::key::use_test_master_key();
         let home = crate::paths::test_home();
         let path = home.join("secrets.json");
         inject_vault(&path);
@@ -738,6 +741,7 @@ mod tests {
     #[test]
     fn of_several_writers_on_one_rev_exactly_one_lands() {
         let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        crate::secure::key::use_test_master_key();
         let path = crate::paths::test_home().join("secrets.json");
         inject_vault(&path);
         let rev = vault_rev();
@@ -771,6 +775,7 @@ mod tests {
     #[test]
     fn an_invalid_name_never_mutates_anything() {
         let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        crate::secure::key::use_test_master_key();
         let home = crate::paths::test_home();
         let path = home.join("secrets.json");
         inject_vault(&path);
@@ -793,6 +798,7 @@ mod tests {
     #[test]
     fn inject_loads_a_pre_sealed_vault() {
         let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        crate::secure::key::use_test_master_key();
         let home = crate::paths::test_home();
         let path = home.join("secrets.json");
         inject_vault(&path);
@@ -810,6 +816,7 @@ mod tests {
         // write carries it along, and a delete prunes its own slot - a name that was never
         // stored is tolerated until then.
         let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        crate::secure::key::use_test_master_key();
         let home = crate::paths::test_home();
         let path = home.join("secrets.json");
         inject_vault(&path);
@@ -857,6 +864,7 @@ mod tests {
     #[test]
     fn the_mask_hides_every_stored_value_of_eight_bytes_or_more() {
         let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        crate::secure::key::use_test_master_key();
         let path = crate::paths::test_home().join("secrets.json");
         inject_vault(&path);
         put_secret(&path, "mask-long", "long-value-1234", vault_rev()).expect("put");
@@ -873,6 +881,7 @@ mod tests {
     #[test]
     fn a_grant_covers_names_groups_or_everything() {
         let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        crate::secure::key::use_test_master_key();
         let path = crate::paths::test_home().join("secrets.json");
         inject_vault(&path);
         put_secret(&path, "grant-a", "v", vault_rev()).expect("put");
@@ -910,6 +919,7 @@ mod tests {
         // beside the values. An old file names neither, so it reads as the single default
         // group with every secret unassigned (they render in the first group).
         let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        crate::secure::key::use_test_master_key();
         let home = crate::paths::test_home();
         let path = home.join("secrets.json");
         inject_vault(&path);
