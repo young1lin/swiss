@@ -133,7 +133,9 @@ pub struct JobsState {
     path: PathBuf,
     jobs: Mutex<HashMap<String, JobRunState>>,
     /// JOBS.LIST (SPEC §jobs.runlog). The hook must not re-enter this table: it runs
-    /// after the file write, with the map lock released.
+    /// after the file write, with the map lock released. It follows the TABLE, not the
+    /// file: `/api/jobs` answers from this map, which moved whether or not the
+    /// best-effort persist did, so a failed write still publishes.
     notice: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
@@ -195,18 +197,16 @@ impl JobsState {
     /// a refused occurrence still counts, or the job would re-fire every tick while
     /// the pool is full.
     pub fn claim(&self, job: &str, at_ms: i64, occurrence_key: Option<&str>) {
-        let wrote = {
+        {
             let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
             let st = jobs.entry(job.to_string()).or_default();
             st.last_run_at = Some(at_ms);
             if let Some(key) = occurrence_key {
                 st.last_occurrence_key = Some(key.to_string());
             }
-            self.persist(&jobs)
-        };
-        if wrote {
-            self.note();
+            self.persist(&jobs);
         }
+        self.note();
     }
 
     /// Record the terminal facts of the last run. `run_id` is the shared
@@ -214,7 +214,7 @@ impl JobsState {
     /// none and does not settle - a run that could not start did not exit, and
     /// lastOk must not claim otherwise.
     pub fn settle(&self, job: &str, ok: bool, run_id: Option<u64>) {
-        let wrote = {
+        {
             let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
             let st = jobs.entry(job.to_string()).or_default();
             st.last_ok = Some(ok);
@@ -224,11 +224,9 @@ impl JobsState {
             } else {
                 st.consecutive_failures.saturating_add(1)
             };
-            self.persist(&jobs)
-        };
-        if wrote {
-            self.note();
+            self.persist(&jobs);
         }
+        self.note();
     }
 
     /// Migration-only (SPEC §jobs.migrate): seed a v1 row's run facts without
@@ -239,15 +237,17 @@ impl JobsState {
     pub fn seed(&self, job: &str, last_run_at: Option<i64>, last_ok: Option<bool>) {
         let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let st = jobs.entry(job.to_string()).or_default();
+        let before = st.clone();
         if st.last_run_at.is_none() {
             st.last_run_at = last_run_at;
         }
         if st.last_ok.is_none() {
             st.last_ok = last_ok;
         }
-        let wrote = self.persist(&jobs);
+        let moved = *st != before;
+        self.persist(&jobs);
         drop(jobs);
-        if wrote {
+        if moved {
             self.note();
         }
     }
@@ -255,15 +255,15 @@ impl JobsState {
     /// Drop a deleted definition's line. The run history stays in the log file, which
     /// outlives the job that wrote it; only the scheduling facts go.
     pub fn forget(&self, job: &str) {
-        let wrote = {
+        let removed = {
             let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
-            if jobs.remove(job).is_some() {
-                self.persist(&jobs)
-            } else {
-                false
+            let removed = jobs.remove(job).is_some();
+            if removed {
+                self.persist(&jobs);
             }
+            removed
         };
-        if wrote {
+        if removed {
             self.note();
         }
     }
@@ -271,7 +271,7 @@ impl JobsState {
     /// Seal the table to disk. The error is only logged: every caller is on a RUN path
     /// where the run has already happened - the exact opposite trade of
     /// JobStore::save, whose caller MUST hear about a config write that did not
-    /// persist (SPEC §jobs.config).
+    /// persist (SPEC §jobs.config). The answer says whether the file holds the table.
     fn persist(&self, jobs: &HashMap<String, JobRunState>) -> bool {
         let body = json!({
             "version": 1,
@@ -468,5 +468,36 @@ mod tests {
             None,
             "forget publishes after the line is gone"
         );
+    }
+
+    // SPEC §jobs.runlog: the notice follows the table. A persist that fails (here the state
+    // path is a directory) leaves /api/jobs answering the moved table, so it still publishes;
+    // a seed that changes nothing and a missing forget publish nothing.
+    #[test]
+    fn a_failed_persist_still_publishes_what_the_table_moved() {
+        swiss_core::secure::key::use_test_master_key();
+        let path = scratch("unwritable");
+        std::fs::create_dir_all(&path).expect("a directory where the file would go");
+        let st = JobsState::open(path.clone());
+        let notes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sink = notes.clone();
+        st.set_notice(Some(Arc::new(move || {
+            sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        })));
+        let count = || notes.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(!st.persist(&HashMap::new()), "the state file cannot be written");
+        st.claim("echo", 1_000, None);
+        assert_eq!(count(), 1, "claim");
+        st.settle("echo", true, Some(9));
+        assert_eq!(count(), 2, "settle");
+        assert_eq!(st.get("echo").last_ok, Some(true), "the table moved");
+        st.seed("echo", Some(5), Some(false));
+        assert_eq!(count(), 2, "a seed that changes nothing publishes nothing");
+        st.seed("fresh", Some(5), Some(false));
+        assert_eq!(count(), 3, "a seed that fills facts publishes");
+        st.forget("echo");
+        assert_eq!(count(), 4, "forget");
+        st.forget("echo");
+        assert_eq!(count(), 4, "a missing forget publishes nothing");
     }
 }
