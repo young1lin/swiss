@@ -49,6 +49,10 @@ import { createOverlay } from "../term-overlay.js";
 import { loadSearchAddon } from "../vendor/xterm/addon-search-0.16.0/index.js";
 import { openLocalSheet } from "./terminal-settings.js";
 import { tr, trn } from "../i18n.js";
+import { busOn } from "../bus/bus.js";
+import { coalescedRead } from "../bus/live.js";
+import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
+import { SessionsId, TerminalSub } from "../bus/pb/swiss/bus/v1/terminal_pb.js";
 import { closeSheet, sheet, showSheet } from "../ui/sheet.js";
 import { btn, iconBtn } from "../ui/button.js";
 import { objTab } from "../ui/tab.js";
@@ -1193,20 +1197,25 @@ function releaseModels() {
   });
 }
 
-export async function mount() {
-  epoch += 1;               // stale callbacks from the last mount die here
-  releaseModels();
-  models = [];
-  active = null;
-  dismissed = new Set();   // a fresh mount knows nothing of the last page's tabs
-  await reload();
+let stopLive                      = null;
+
+/** Tabs and the count chip re-read the list on TERMINAL.SESSIONS (SPEC §terminal.panel).
+ *  bytesOut and attached are not what the tabs paint, so they are not why this runs. */
+function followTerminalSessions(read                        )             {
+  const burst = coalescedRead(read);
+  const off = busOn(
+    { module: Module.TERMINAL, sub: TerminalSub.SESSIONS, key: "" },
+    SessionsId.SESSIONS_CHANGED,
+    NoticeSchema,
+    () => { burst.push(); },
+  );
+  return () => {
+    off();
+    burst.stop();
+  };
 }
 
-export async function refresh() { await reload(); }
-
-/** The shell's slow cadence: republish the listing so tabs pick up bytesOut and the
- *  attached dot, and let a staged-but-unwired listing row stay honest. */
-export async function poll() {
+async function onSessions()                {
   if (!$("term-stage")) return;
   const r = await api(sessionsUrl());
   if (r.status === 503) return;   // the navigation chrome already carries the story
@@ -1216,8 +1225,23 @@ export async function poll() {
   const listed = new Set(sessions.map((s) => { return s && s.id; }));
   for (const d of Array.from(dismissed)) if (!listed.has(d)) dismissed.delete(d);
   paintTabs();
-  $("countChip").textContent = countText();   // the chip counts this listing; it has no poll of its own
+  $("countChip").textContent = countText();   // the chip counts this listing
 }
+
+export async function mount() {
+  epoch += 1;               // stale callbacks from the last mount die here
+  const my = epoch;
+  if (stopLive) { stopLive(); stopLive = null; }
+  releaseModels();
+  models = [];
+  active = null;
+  dismissed = new Set();   // a fresh mount knows nothing of the last page's tabs
+  await reload();
+  if (my !== epoch) return;
+  stopLive = followTerminalSessions(() => onSessions());
+}
+
+export async function refresh() { await reload(); }
 
 export function countText() {
   return sessions.length ? trn(sessions.length, "terminal.nLive.one", "terminal.nLive.other") : "";
@@ -1225,6 +1249,7 @@ export function countText() {
 
 export function unmount() {
   epoch += 1;
+  if (stopLive) { stopLive(); stopLive = null; }
   const pane = $("pane");
   if (pane) pane.classList.remove("term-host", "full");
   if (themeWatch) { themeWatch.disconnect(); themeWatch = null; }

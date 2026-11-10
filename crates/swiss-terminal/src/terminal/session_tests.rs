@@ -1024,3 +1024,79 @@ async fn a_second_attachment_joins_rather_than_replaces() {
         "one live tab still counts as attached"
     );
 }
+
+/// SPEC §terminal.sessions: an open and a close each publish, after the list can see
+/// them. Output bytes and attach do not. A refused open publishes nothing. Shutdown
+/// publishes once for the rows it took, not again when each driver deregisters.
+#[tokio::test]
+async fn a_session_opening_or_closing_notifies_and_output_does_not() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let mut refused = Harness::new(quiet(false));
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hook = hits.clone();
+    refused.sessions.set_notice(Some(Arc::new(move || {
+        hook.fetch_add(1, Ordering::SeqCst);
+    })));
+    let err = refused.open(LOCAL_TARGET).await.expect_err("local is off");
+    assert!(err.to_string().contains("disabled"), "{err}");
+    assert_eq!(hits.load(Ordering::SeqCst), 0, "a refused open publishes nothing");
+
+    let mut h = Harness::new(quiet(true));
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hook = hits.clone();
+    h.sessions.set_notice(Some(Arc::new(move || {
+        hook.fetch_add(1, Ordering::SeqCst);
+    })));
+    let opened = h.open(LOCAL_TARGET).await.expect("opens");
+    let far = h.far();
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    assert_eq!(h.sessions.list().len(), 1);
+    assert!(h.sessions.list()[0].recording.is_none(), "no store means no recording URL");
+    far.say("hello from the shell").await;
+    for _ in 0..50 {
+        if h.sessions.list()[0].bytes_out >= 20 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(h.sessions.list()[0].bytes_out >= 20, "the output was counted");
+    assert_eq!(hits.load(Ordering::SeqCst), 1, "output bytes publish nothing");
+    let _attachment = h
+        .sessions
+        .attach(&opened.id, &opened.ticket)
+        .await
+        .expect("attaches");
+    for _ in 0..50 {
+        if h.sessions.list()[0].attached {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(h.sessions.list()[0].attached, "the driver saw the attach");
+    assert_eq!(hits.load(Ordering::SeqCst), 1, "attach publishes nothing");
+    h.sessions.close(&opened.id).await.expect("closes");
+    for _ in 0..50 {
+        if h.sessions.list().is_empty() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(h.sessions.list().is_empty(), "the session left the table");
+    assert_eq!(hits.load(Ordering::SeqCst), 2, "the close publishes once it is gone");
+
+    let mut stopping = Harness::new(quiet(true));
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hook = hits.clone();
+    stopping.sessions.set_notice(Some(Arc::new(move || {
+        hook.fetch_add(1, Ordering::SeqCst);
+    })));
+    let _opened = stopping.open(LOCAL_TARGET).await.expect("opens");
+    let _far = stopping.far();
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    let closed = stopping.sessions.shutdown().await;
+    assert_eq!(closed, 1);
+    assert!(stopping.sessions.list().is_empty());
+    assert_eq!(hits.load(Ordering::SeqCst), 2, "shutdown publishes once, not again per driver");
+}

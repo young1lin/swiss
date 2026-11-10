@@ -438,10 +438,12 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
 
   it("republishes the context bar's count wherever the listing is replaced (SPEC §panel.ui, found on a walk)", () => {
     // Opening a session left the chip blank until another page's poll happened to redraw it:
-    // reload() and poll() replaced `sessions` from the wire and repainted the tabs, never the
-    // chip. Both write it now, the way remote.ts writes its own after a load.
+    // reload() and the TERMINAL.SESSIONS re-read replace `sessions` from the wire and
+    // repaint the tabs, and both write the chip. The page exports no poll.
     const writes = view.match(/\$\("countChip"\)\.textContent = countText\(\);/g) ?? [];
     expect(writes.length).toBe(2);
+    expect(view).not.toMatch(/export async function poll/);
+    expect(view).toContain("TerminalSub.SESSIONS");
   });
 
   it("resets the paintTabs memo wherever the DOM changed outside paintTabs", () => {

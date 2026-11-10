@@ -120,6 +120,11 @@ ordering, half-open liveness, an output stream that died while input lives on).
   sessions are uncapped and do not spend the remote budget (owner decision 2026-09-12). A
   reservation holds the slot from the cap check to the open, so two concurrent opens cannot both
   pass the last free slot.
+- **The list is live.** Opening a session, and a close that takes it out of the table, publish
+  TERMINAL.SESSIONS after `GET /api/terminal/sessions` can see the change. The row's label and
+  recording URL are fixed at open: a tab rename and an OSC title stay in the browser, and the
+  recording cap stops the file without changing the list. `bytesOut` and `attached` move without
+  a notice.
 - **Every close says why.** The sentence goes into the terminal as a visible `[gateway]` line
   (except when the shell exited on its own — it already said goodbye), into the recording's end
   marker and into the `error` frame. Final frames get 250 ms to flush.
@@ -298,6 +303,8 @@ closed session keeps its tab so the scrollback stays readable. The label precede
 name, then the shell's OSC 0/2 title, then the connection name (`tabLabel`); an empty title falls
 back, and shells that never send one do not stall anything. Rename by double-click or right-click
 on the tab; middle-click closes. A mount epoch invalidates callbacks from a previous mount.
+The session tabs and the count chip re-read the list on TERMINAL.SESSIONS. The PTY socket is
+unchanged (§terminal.api).
 
 **Reconnect.** Back off from 500 ms doubling to 5 s, minting a fresh ticket each attempt. After a
 reconnect the page resets terminal modes (`ESC[?1000l ?1002l ?1003l ?1006l ?2004l`) so a catch-up

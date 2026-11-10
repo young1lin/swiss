@@ -72,6 +72,9 @@ use swiss_core::platform::pty::ShellCandidate;
 /// in the memory budget rather than a preference.
 pub const CATCHUP_BYTES: usize = 64 * 1024;
 
+/// TERMINAL.SESSIONS (SPEC §terminal.sessions). Empty: the page re-reads the list.
+pub type SessionsNotice = Arc<dyn Fn() + Send + Sync>;
+
 /// How many frames may sit between the driver and one attached socket. Small: this queue
 /// existing at all is what lets the driver notice a stalled client, and a deep one would
 /// only move the stall somewhere it cannot be seen.
@@ -307,6 +310,8 @@ struct Table {
     history: Option<Arc<super::history::TerminalHistory>>,
     tickets: TicketBook,
     state: Mutex<TableState>,
+    /// Set by the composition. Called only after the list GET can see the change.
+    notice: Mutex<Option<SessionsNotice>>,
 }
 
 /// The public face: everything /api/terminal does, minus the HTTP.
@@ -331,8 +336,15 @@ impl TerminalSessions {
                 history,
                 tickets: TicketBook::new(),
                 state: Mutex::new(TableState::default()),
+                notice: Mutex::new(None),
             }),
         })
+    }
+
+    /// The composition's TERMINAL.SESSIONS hook. Output bytes and attach do not
+    /// call it: those counters are not a change to the list.
+    pub fn set_notice(&self, hook: Option<SessionsNotice>) {
+        *self.table.notice.lock().unwrap_or_else(|e| e.into_inner()) = hook;
     }
 
     pub fn config(&self) -> &TerminalConfig {
@@ -501,6 +513,8 @@ impl TerminalSessions {
             );
         }
         tokio::spawn(driver.run());
+        // The row is in the table, so the list GET sees it (SPEC §terminal.sessions).
+        self.table.note();
 
         Ok(Opened {
             ticket: table.tickets.mint(&id),
@@ -581,6 +595,11 @@ impl TerminalSessions {
             // finishes its recording, then flips its closed flag.
             (count, live.into_values().map(|e| e.closed).collect::<Vec<_>>())
         };
+        // The rows are already gone from the list. One notice, not one per driver:
+        // each driver's later remove finds nothing.
+        if count > 0 {
+            self.table.note();
+        }
         // WAIT for the drivers before the caller closes the store: without this, the
         // store flips to Stopping the moment the table is clear and every final
         // part/finish submit is refused (NotOpen) — the tail of every live recording
@@ -703,19 +722,31 @@ impl Table {
             .ok_or(TerminalError::NoSession)
     }
 
-    /// A driver deregistering itself. The only place a session leaves the table, so the
-    /// listing and the tickets can never disagree about what exists.
-    fn remove(&self, id: &str, reason: &CloseReason) {
-        {
-            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-            state.live.remove(id);
+    fn note(&self) {
+        let hook = self.notice.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(hook) = hook {
+            hook();
         }
+    }
+
+    /// A driver deregistering itself. The only place a session leaves the table, so the
+    /// listing and the tickets can never disagree about what exists. A shutdown has
+    /// already taken the row; this then finds nothing and publishes nothing.
+    fn remove(&self, id: &str, reason: &CloseReason) {
+        let removed = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.live.remove(id).is_some()
+        };
         self.tickets.forget(id);
+        if !removed {
+            return;
+        }
         swiss_core::log::log(
             "info",
             "terminal session closed",
             Some(serde_json::json!({ "session": id, "reason": reason.text() })),
         );
+        self.note();
     }
 }
 

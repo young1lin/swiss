@@ -1,0 +1,16 @@
+// TERMINAL.SESSIONS (SPEC §bus.registry, SPEC §terminal.sessions). Module 9, sub 1.
+// A NOTICE with no key: a session opened, or a close removed it from the list.
+// The PTY bytes keep their own socket. bytesOut and attached do not publish.
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+enum TerminalSub {
+  TERMINAL_SUB_UNSPECIFIED = 0;
+  TERMINAL_SUB_SESSIONS = 1;
+}
+
+enum SessionsId {
+  SESSIONS_ID_UNSPECIFIED = 0;
+  SESSIONS_CHANGED = 1;
+}

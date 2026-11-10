@@ -343,6 +343,11 @@ export enum Module {
   JOBS = 8,
 
   /**
+   * @generated from enum value: MODULE_TERMINAL = 9;
+   */
+  TERMINAL = 9,
+
+  /**
    * @generated from enum value: MODULE_REMOTE = 10;
    */
   REMOTE = 10,

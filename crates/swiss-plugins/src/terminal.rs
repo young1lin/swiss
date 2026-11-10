@@ -287,6 +287,18 @@ impl PluginInstance for TerminalInstance {
             Arc::new(LocalShells::with_wiring(wiring)),
             history.clone(),
         );
+        // TERMINAL.SESSIONS: one notice per open or close. The list's label and
+        // recording URL are fixed at open, and bytesOut / attached are counters
+        // (SPEC §terminal.sessions).
+        let bus = self.services.bus.clone();
+        sessions.set_notice(Some(std::sync::Arc::new(move || {
+            swiss_host::notice::publish_at(
+                &bus,
+                swiss_bus::pb::v1::Module::Terminal as u32,
+                swiss_bus::pb::v1::TerminalSub::Sessions as u32,
+                swiss_bus::pb::v1::SessionsId::SessionsChanged as u32,
+            );
+        })));
         self.state.install(sessions);
         if let Some(history) = &history {
             self.state.install_history(history.clone());
