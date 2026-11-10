@@ -408,7 +408,8 @@ mod tests {
 
     /// SPEC §host.memory: nobody subscribed, the sampler stays at 0 across 30 s.
     /// The first subscriber is read at once. The same rounded figures are not
-    /// published again. The last unsubscribe stops the sampling.
+    /// published again. The last unsubscribe stops the sampling, and the next
+    /// subscriber hears the figures again even though they have not moved.
     #[tokio::test(start_paused = true)]
     async fn no_subscriber_does_not_sample_and_an_unchanged_reading_is_not_republished() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -446,5 +447,15 @@ mod tests {
         tx.send(false).expect("the watch is open");
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         assert_eq!(samples.load(Ordering::SeqCst), 2, "the last unsubscribe stops sampling");
+
+        // Demand falling forgot the last figures: the next subscriber hears the same ones.
+        tx.send(true).expect("the watch is open");
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        assert_eq!(samples.load(Ordering::SeqCst), 3, "a new subscriber is sampled at once");
+        assert_eq!(
+            published.load(Ordering::SeqCst),
+            2,
+            "unchanged figures are published again for a new subscriber"
+        );
     }
 }
