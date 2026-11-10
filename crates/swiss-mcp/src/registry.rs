@@ -194,6 +194,9 @@ pub struct Registry {
     notice: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// The demand holder. Aborted with the probe task.
     holder: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The demand the holder follows, kept so start_timer re-arms the holder that
+    /// stop_timer aborted (a plugin disabled and enabled again, SPEC §mcp.registry).
+    demand: Mutex<Option<tokio::sync::watch::Receiver<bool>>>,
 }
 
 /// The longest the reaper sleeps while a deadline is pending: deadlines are wall-clock, so a
@@ -222,6 +225,7 @@ impl Registry {
             reap_wake: tokio::sync::Notify::new(),
             notice: Mutex::new(None),
             holder: Mutex::new(None),
+            demand: Mutex::new(None),
         })
     }
 
@@ -822,6 +826,11 @@ impl Registry {
         if let Ok(mut slot) = self.sweeper.lock() {
             *slot = Some(sweep);
         }
+        // stop_timer aborted the holder with the probe; the demand it followed is still there.
+        let demand = self.demand.lock().ok().and_then(|slot| slot.clone());
+        if let Some(demand) = demand {
+            self.spawn_holder(demand);
+        }
     }
 
     /// Mark every started entry's health unknown, keeping when it was last checked: called when
@@ -863,8 +872,16 @@ impl Registry {
 
     /// Keep calling `watch` once a period while `demand` is true (SPEC §mcp.registry).
     /// The probe's own lapse still forgets health once demand has been false for two
-    /// periods, and that notice has no subscriber to re-arm it.
-    pub fn hold_while_demanded(self: &Arc<Self>, mut demand: tokio::sync::watch::Receiver<bool>) {
+    /// periods, and that notice has no subscriber to re-arm it. The demand is kept:
+    /// stop_timer aborts the holder with the probe, and start_timer arms it again.
+    pub fn hold_while_demanded(self: &Arc<Self>, demand: tokio::sync::watch::Receiver<bool>) {
+        if let Ok(mut slot) = self.demand.lock() {
+            *slot = Some(demand.clone());
+        }
+        self.spawn_holder(demand);
+    }
+
+    fn spawn_holder(self: &Arc<Self>, mut demand: tokio::sync::watch::Receiver<bool>) {
         let this = self.clone();
         let interval = std::time::Duration::from_millis(self.interval_ms);
         let handle = tokio::spawn(async move {
@@ -2026,6 +2043,40 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(120)).await;
         assert_eq!(row(&r, "db")["state"], "unknown");
         assert_eq!(notes.load(Ordering::SeqCst), held + 1);
+        r.stop_timer();
+    }
+
+    // SPEC §mcp.registry: a plugin disabled and enabled again runs stop_timer then
+    // start_timer. The holder comes back with the probe, so a page still showing the MCPs
+    // keeps health Up instead of flapping to Unknown every two periods.
+    #[tokio::test(start_paused = true)]
+    async fn demand_still_holds_the_probe_after_stop_timer_and_start_timer() {
+        let r = reg();
+        let fake = Fake {
+            ping: Some(Ok(())),
+            ..Default::default()
+        }
+        .arc();
+        r.register("db", Source::Config, def(json!({"type": "fake"})), fake.clone())
+            .unwrap();
+        r.start("db").await.unwrap();
+        let (tx, rx) = tokio::sync::watch::channel(true);
+        r.hold_while_demanded(rx);
+        r.start_timer();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(row(&r, "db")["state"], "up");
+
+        r.stop_timer();
+        r.start_timer();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let pings = fake.pings();
+        tokio::time::sleep(Duration::from_secs(300)).await;
+        assert_eq!(row(&r, "db")["state"], "up", "five periods after the restart, still held");
+        assert!(fake.pings() >= pings + 5, "the probe kept its interval: {}", fake.pings());
+
+        tx.send(false).unwrap();
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        assert_eq!(row(&r, "db")["state"], "unknown", "the re-armed holder follows the demand");
         r.stop_timer();
     }
 
