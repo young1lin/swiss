@@ -9,10 +9,11 @@ All notable changes to swiss are recorded here. The format follows
 ### Added
 
 - The Process page's Add sheet has a Template select: pick how dsh starts - `dsh web`, or
-  `dsh web --no-open` for Start with swiss - and name, program, args, port 3080 and the image
-  are filled in. dsh runs as `node.exe` behind its npm shim, so the image the form guessed
-  from the program (`dsh`) read the running app as a conflict with itself; the template sets
-  `node` (SPEC §process.panel).
+  `dsh web --no-open` for Start with swiss - and name, program, args, port and the image are
+  filled in. The port starts at 3080 and stays yours: change Ports (3080 may be taken) and
+  the `--port` in args follows it. dsh runs as `node.exe` behind its npm shim, so the image
+  the form guessed from the program (`dsh`) read the running app as a conflict with itself;
+  the template sets `node` (SPEC §process.panel).
 
 ### Fixed
 

@@ -633,15 +633,20 @@ Sheets:
     the field is empty or still holds the last template's), program, args, ports and image.
     Autostart, dir, stop, env, log and UI stay as they are; None empties the filled fields
     again, the name only if a template put it there. One quiet line under the select says
-    what the chosen template decided. The table is `views/process/templates.ts`, and two dsh
-    launches ship: `dsh web` (opens the browser on each start) and `dsh web --no-open` (for
-    Start with swiss - nothing pops up at boot, and Logs has the link with its token), both
-    with `--port 3080`, ports `[3080]` and image `node`. dsh is an npm-installed Node CLI:
+    what the chosen template decided. **The port is the reader's**: a template's port is only
+    where it starts (another process may hold it), a port already in Ports survives picking
+    or switching a template, and a template is a launch ON a port - while its args are
+    untouched, editing Ports to one port rebuilds them, so `--port` and the declared port
+    never split. Args the reader edited stay as typed. The table is
+    `views/process/templates.ts`, and two dsh launches ship: `dsh web` (opens the browser on
+    each start) and `dsh web --no-open` (for Start with swiss - nothing pops up at boot, and
+    Logs has the link with its token), both `--port <port>` with ports `[<port>]` (3080 until
+    changed) and image `node`. dsh is an npm-installed Node CLI:
     `dsh` resolves to `dsh.cmd`, which runs `node.exe`, and the image the form derived from
     the program (`dsh`) read the running app as a conflict with itself - "port 3080 is held by
     pid N (node.exe)" after a start that timed out (the owner's finding, 2026-11-10). `node`
-    matches `node.exe` on Windows and `node` on Unix; `--port` pins the port the row declares.
-    No `ui`: dsh's link carries a per-start token the config cannot know.
+    matches `node.exe` on Windows and `node` on Unix. No `ui`: dsh's link carries a
+    per-start token the config cannot know.
   - `env` is `KEY=value` lines through `envToText`/`envToObj` (`fields.ts`, the proc MCP
     form's editor), kept exactly as typed, so a reference stays a reference.
   - Both start and stop args use one line per argv entry, preserving spaces within entries

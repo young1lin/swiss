@@ -20,8 +20,11 @@
  * dsh is an npm-installed Node CLI: `dsh` resolves to dsh.cmd, which runs node.exe, and
  * node.exe is what listens. A form left to derive the image from the program ("dsh") read the
  * running app as a conflict with itself (2026-11-10). `node` matches node.exe on Windows and
- * node on Unix (SPEC §process.apps image). `--port` pins the port the row declares, so a
- * changed dsh default can never split the two. */
+ * node on Unix (SPEC §process.apps image).
+ *
+ * The port is the reader's: 3080 is only where it starts, since another process may hold it.
+ * A template is a launch ON a port - `--port` in its argv is the port the row declares, so the
+ * form rebuilds the argv as Ports changes and the two can never split. */
 import { tk } from "../../i18n.js";
                                            
 
@@ -30,23 +33,31 @@ import { tk } from "../../i18n.js";
                 
                                                                                            
               
-                                                                                      
-                
+                                                
+               
+                                                                                                
+                              
  
 
-const DSH_PORT = 3080;
-
-function dsh(...flags          )           {
-  return {
+function dsh(...flags          )                             {
+  return (port) => ({
     name: "dsh",
-    start: { program: "dsh", args: ["web", ...flags, "--port", String(DSH_PORT)] },
-    ports: [DSH_PORT],
+    start: { program: "dsh", args: ["web", ...flags, "--port", String(port)] },
+    ports: [port],
     image: "node",
-  };
+  });
 }
 
 /* Option order is the select's order. */
 export const APP_TEMPLATES                              = {
-  "dsh-web": { label: tk("process.template.dshWeb"), why: tk("process.template.dshWebWhy"), app: dsh() },
-  "dsh-web-no-open": { label: tk("process.template.dshWebNoOpen"), why: tk("process.template.dshWebNoOpenWhy"), app: dsh("--no-open") },
+  "dsh-web": { label: tk("process.template.dshWeb"), why: tk("process.template.dshWebWhy"), port: 3080, app: dsh() },
+  "dsh-web-no-open": { label: tk("process.template.dshWebNoOpen"), why: tk("process.template.dshWebNoOpenWhy"), port: 3080, app: dsh("--no-open") },
 };
+
+/* The one port a Ports text names, or null for none, several or a bad one. */
+export function singlePort(text        )                {
+  const parts = text.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length !== 1 || !/^\d+$/.test(parts[0])) return null;
+  const n = Number(parts[0]);
+  return n >= 1 && n <= 65535 ? n : null;
+}

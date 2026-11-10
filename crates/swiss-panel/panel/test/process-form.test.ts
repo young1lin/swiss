@@ -203,6 +203,43 @@ describe("the process app editor session", () => {
     expect(($("pr-f-program") as HTMLInputElement).value).toBe("dsh");
   });
 
+  it("the port is the reader's: --port follows Ports, survives a template switch, and saves as one", async () => {
+    await editor.openForm(null);
+    const template = $("pr-f-template") as HTMLSelectElement;
+    const pick = (key: string): void => { template.value = key; template.dispatchEvent(new Event("change")); };
+    const ports = $("pr-f-ports") as HTMLInputElement;
+    const typePorts = (text: string): void => { ports.value = text; ports.dispatchEvent(new Event("input")); };
+    pick("dsh-web");
+    expect(ports.value).toBe("3080");
+    typePorts("3892");
+    expect(($("pr-f-args") as HTMLTextAreaElement).value).toBe("web\n--port\n3892");
+    // Half-typed or several ports leave the args on the last port that read as one.
+    typePorts("38");
+    typePorts("3892, 3893");
+    typePorts("3892");
+    pick("dsh-web-no-open");
+    expect(ports.value).toBe("3892");
+    expect(($("pr-f-args") as HTMLTextAreaElement).value).toBe("web\n--no-open\n--port\n3892");
+    await save();
+    const body = JSON.parse(puts()[0].body || "{}");
+    expect(body.config.apps[0].start.args).toEqual(["web", "--no-open", "--port", "3892"]);
+    expect(body.config.apps[0].ports).toEqual([3892]);
+  });
+
+  it("a port typed before the template is kept, and args the reader edited never follow Ports", async () => {
+    await editor.openForm(null);
+    const template = $("pr-f-template") as HTMLSelectElement;
+    const ports = $("pr-f-ports") as HTMLInputElement;
+    ports.value = "4100";
+    template.value = "dsh-web";
+    template.dispatchEvent(new Event("change"));
+    expect(($("pr-f-args") as HTMLTextAreaElement).value).toBe("web\n--port\n4100");
+    value("args", "web\n--port\n4100\n--host\n127.0.0.1");
+    ports.value = "4200";
+    ports.dispatchEvent(new Event("input"));
+    expect(($("pr-f-args") as HTMLTextAreaElement).value).toBe("web\n--port\n4100\n--host\n127.0.0.1");
+  });
+
   it("Edit offers no template: an existing app's launch is edited, not re-picked", async () => {
     config = { apps: [app()] };
     await editor.openForm("demo");

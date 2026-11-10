@@ -24,7 +24,7 @@ import { closeSheet, sheet, showSheet } from "../../ui/sheet.js";
 import { checkField, field, form, formCap, formFold, hint, pair } from "../../ui/form.js";
 import { envToObj, envToText } from "../../fields.js";
 import { pickPanel, pickerRow } from "../../ui/pick.js";
-import { APP_TEMPLATES } from "./templates.js";
+import { APP_TEMPLATES, singlePort } from "./templates.js";
 import type { AppEntry } from "./types.js";
 
 interface ConfigAnswer { config?: { apps?: AppEntry[]; [key: string]: unknown }; revision?: number }
@@ -46,9 +46,10 @@ interface EditorSession {
   saving: boolean;
   picker: { parent: string | null; sep: string; sequence: number };
   filled: { args: ArgFill | null; stopArgs: ArgFill | null };
-  /* The name the last template put in the Name field: a later template (or None) may replace
-   * it, but never a name the reader typed. */
-  templateName: string | null;
+  /* What the last template put in the form: its key, the name (a later template or None may
+   * replace it, never a name the reader typed) and the args text (Ports rebuilds it while it is
+   * untouched, never args the reader edited). */
+  template: { key: string; name: string; args: string } | null;
   onSaved?: () => Promise<void>;
 }
 
@@ -189,22 +190,43 @@ function templateField(): HTMLElement {
   return field({ label: tr("process.form.template"), control: select, hint: h("span", { id: "pr-f-template-why" }, tr("process.form.templateHint")) });
 }
 
+function templateOf(key: string): (typeof APP_TEMPLATES)[string] | null {
+  return Object.prototype.hasOwnProperty.call(APP_TEMPLATES, key) ? APP_TEMPLATES[key] : null;
+}
+
 /* A template fills what it decides - name (only while the field is empty or still holds the
  * last template's), program, args, ports and image - and leaves autostart, dir, stop, env, log
- * and UI as they are. None empties those same fields again, the name only if a template put
- * it there. */
+ * and UI as they are. The port is the reader's: one already in Ports stays (3080 may be taken),
+ * and only an empty or unreadable one takes the template's. None empties the filled fields
+ * again, the name only if a template put it there. */
 function applyTemplate(session: EditorSession, key: string): void {
   if (!owns(session)) return;
-  const t = Object.prototype.hasOwnProperty.call(APP_TEMPLATES, key) ? APP_TEMPLATES[key] : null;
+  const t = templateOf(key);
   const set = (id: string, text: string): void => { control<HTMLInputElement | HTMLTextAreaElement>(session, id).value = text; };
   const name = control<HTMLInputElement>(session, "pr-f-name");
-  if (!name.value.trim() || name.value === session.templateName) name.value = t ? t.app.name : "";
-  session.templateName = t ? t.app.name : null;
-  set("pr-f-program", t ? t.app.start.program : "");
-  set("pr-f-args", t ? (t.app.start.args || []).join("\n") : "");
-  set("pr-f-ports", t ? (t.app.ports || []).join(", ") : "");
-  set("pr-f-image", t ? t.app.image || "" : "");
+  const prior = session.template;
+  const port = t ? singlePort(control<HTMLInputElement>(session, "pr-f-ports").value) ?? t.port : 0;
+  const filled = t ? t.app(port) : null;
+  if (!name.value.trim() || (prior && name.value === prior.name)) name.value = filled ? filled.name : "";
+  const args = filled ? (filled.start.args || []).join("\n") : "";
+  set("pr-f-program", filled ? filled.start.program : "");
+  set("pr-f-args", args);
+  set("pr-f-ports", filled ? (filled.ports || []).join(", ") : "");
+  set("pr-f-image", filled ? filled.image || "" : "");
+  session.template = filled ? { key, name: filled.name, args } : null;
   control(session, "pr-f-template-why").textContent = t ? tr(t.why) : tr("process.form.templateHint");
+}
+
+/* Ports changed under a template: rebuild its argv on the new port, so `--port` and the
+ * declared port never split. Args the reader edited are theirs and stay as typed. */
+function followPort(session: EditorSession): void {
+  if (!owns(session) || !session.template) return;
+  const t = templateOf(session.template.key);
+  const args = control<HTMLTextAreaElement>(session, "pr-f-args");
+  const port = singlePort(control<HTMLInputElement>(session, "pr-f-ports").value);
+  if (!t || port == null || args.value !== session.template.args) return;
+  args.value = (t.app(port).start.args || []).join("\n");
+  session.template.args = args.value;
 }
 
 function formSheet(session: EditorSession, app: AppEntry | null): HTMLElement {
@@ -451,7 +473,7 @@ export async function openForm(name: string | null, onSaved?: () => Promise<void
   const session: EditorSession = {
     host: $("sheet"), root: pending, controller: new AbortController(), original: null,
     baseline: null, saving: false, picker: { parent: null, sep: "\\", sequence: 0 },
-    filled: { args: null, stopArgs: null }, templateName: null, onSaved,
+    filled: { args: null, stopArgs: null }, template: null, onSaved,
     observer: new MutationObserver(() => { if (active === session && !owns(session)) disposeForm(); }),
   };
   active = session;
@@ -483,6 +505,7 @@ export async function openForm(name: string | null, onSaved?: () => Promise<void
   if (!app) {
     const template = control<HTMLSelectElement>(session, "pr-f-template");
     template.onchange = (): void => applyTemplate(session, template.value);
+    control<HTMLInputElement>(session, "pr-f-ports").oninput = (): void => followPort(session);
   }
   wireKeys(session);
   control<HTMLInputElement>(session, app ? "pr-f-program" : "pr-f-name").focus();
