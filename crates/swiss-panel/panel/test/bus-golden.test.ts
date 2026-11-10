@@ -40,7 +40,7 @@ import {
   SaveMode,
 } from "../src/bus/pb/swiss/bus/v1/data_pb.js";
 import { PrefsSchema } from "../src/bus/pb/swiss/bus/v1/panel_pb.js";
-import { RunChangedSchema, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
+import { MemoryReadingSchema, RunChangedSchema, RunState } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 import { HEARTBEAT_MS, MAX_FRAME, PONG_DEADLINE_MS, PROTOCOL, RECONNECT_MAX_MS, RECONNECT_MIN_MS, RECONNECT_NOTICE_MS, REQUEST_TIMEOUT_MS } from "../src/bus/link.js";
 
 const PING_HEX = "1001180220012807420708c0ab93af9a34";
@@ -161,6 +161,15 @@ function assertBody(entry: Golden, frame: Frame): void {
     expect(run.startedAtMs, entry.name).toBe(BigInt(entry.body.startedAtMs as number));
     expect(run.endedAtMs, entry.name).toBe(BigInt(entry.body.endedAtMs as number));
     expect(run.exitCode, entry.name).toBe(entry.body.exitCode);
+  } else if (entry.bodyType === "MemoryReading") {
+    // HOST.MEMORY carries the reading itself (SPEC §host.memory); at_ms decodes as bigint here.
+    const reading = fromBinary(MemoryReadingSchema, frame.body);
+    expect(reading.gatewayMb, entry.name).toBe(entry.body.gatewayMb);
+    expect(reading.privateMb, entry.name).toBe(entry.body.privateMb);
+    expect(reading.childrenMb, entry.name).toBe(entry.body.childrenMb);
+    expect(reading.processCount, entry.name).toBe(entry.body.processCount);
+    expect(reading.childrenPending, entry.name).toBe(false);
+    expect(reading.atMs, entry.name).toBe(BigInt(entry.body.atMs as number));
   } else if (entry.bodyType === "") {
     expect(frame.body.length, entry.name).toBe(0);
   } else {
