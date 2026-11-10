@@ -81,8 +81,8 @@ async fn brief_one(gw: &Gateway, target: &Value, endpoints: Option<&Value>) {
     let caps = caps_of(target);
     let timeout = target["defaultTimeoutMs"].as_u64().map(|ms| format!(", default timeout {}", minutes(ms))).unwrap_or_default();
     println!("can: {caps}{timeout}");
-    if state != "online" && state != "?" {
-        println!("note: the endpoint is {state}; a command now waits for it or fails");
+    if let Some(note) = state_note(&state) {
+        println!("note: {note}");
     }
 
     let running = running_on(gw, id).await;
@@ -173,6 +173,17 @@ fn endpoint_of(endpoints: Option<&Value>, id: &str) -> (String, String) {
         ),
         None if endpoints.is_some() => (id.to_string(), "not served".to_string()),
         None => (id.to_string(), "?".to_string()),
+    }
+}
+
+/// What an endpoint's state means for the next command (the tunnels states: idle, connecting,
+/// connected, error), `None` when there is nothing to say.
+pub fn state_note(state: &str) -> Option<String> {
+    match state {
+        "connected" | "?" => None,
+        "idle" => Some("the endpoint is idle; the first command dials it".into()),
+        "not served" => Some("no connection serves this endpoint; a command fails until Tunnels is on and has it".into()),
+        other => Some(format!("the endpoint is {other}; a command dials it again and may fail")),
     }
 }
 
@@ -316,5 +327,13 @@ mod tests {
         assert!(line.starts_with("#7 "), "{line}");
         assert!(line.contains("exit 0 make -j8 by cli:codex - why: rebuild after the fix"), "{line}");
         assert_eq!(one_line("abcdef", 4), "abc…");
+    }
+
+    // Found live 2026-11-11: a connected endpoint was briefed as one a command waits for.
+    #[test]
+    fn a_connected_endpoint_needs_no_note() {
+        assert_eq!(state_note("connected"), None);
+        assert!(state_note("idle").is_some_and(|note| note.contains("first command dials")));
+        assert!(state_note("error").is_some_and(|note| note.contains("may fail")));
     }
 }

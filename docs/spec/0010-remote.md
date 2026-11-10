@@ -370,7 +370,9 @@ an agent setting:
   refusal shows a request-shaped example and, when `--why` sits after the command word, says it
   became part of the remote argv.
 - **`origin`** — where the caller ran: `{agent, version, session, cwd, log}`, each ≤ 1 KiB.
-  The CLI reads it from the environment the agent gave its shell (`src/remote_cli/origin.rs`),
+  The CLI reads it from the environment the agent gave its shell (`src/remote_cli/origin.rs`) as
+  it was at launch (`swiss_core::env::launch_var`: `main` strikes `CLAUDECODE`, `CLAUDE_CODE_*`
+  and `DSH_SESSION_ID` from its own environment before any command runs, §host.daemon),
   first match wins, so an agent that set a session id beats an outer one's inherited markers:
   `CLAUDE_CODE_SESSION_ID` (claude-code; the log `<CLAUDE_CONFIG_DIR|~/.claude>/projects/*/<id>.jsonl`,
   the version from `AI_AGENT`), `DSH_SESSION_ID` (dsh; `<DSH_HOME|~/.dsh>/sessions/*/<id>`),

@@ -123,12 +123,35 @@ pub fn scrub_command(command: &mut Command) {
 /// spawned nothing yet.
 pub unsafe fn scrub_process_env() {
     let present = launcher_noise_present();
+    // Kept for launch_var: the CLI must still say which agent ran it (SPEC §remote.history
+    // Provenance) after the variables that say so are gone from its environment.
+    let struck = present
+        .iter()
+        .filter_map(|name| std::env::var(name).ok().map(|value| (name.clone(), value)))
+        .collect();
+    let _ = STRUCK.set(struck);
     for name in LAUNCHER_NOISE {
         std::env::remove_var(name);
     }
     for name in present {
         std::env::remove_var(name);
     }
+}
+
+/// What [scrub_process_env] struck, as it was at launch; empty when it never ran.
+static STRUCK: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+
+/// A variable as this process was launched with it: the live environment, else the value the
+/// scrub took away. Only for describing the launcher (who called this CLI); nothing read here
+/// is ever handed to a child.
+pub fn launch_var(name: &str) -> Option<String> {
+    std::env::var(name).ok().or_else(|| {
+        STRUCK
+            .get()?
+            .iter()
+            .find(|(struck, _)| struck.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.clone())
+    })
 }
 
 #[cfg(test)]
@@ -205,9 +228,34 @@ mod tests {
         }
     }
 
+    /// Both tests below plant noise and scrub; one scrubbing between the other's plant and
+    /// check would strike the planted marker.
+    static PLANTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn a_scrubbed_marker_is_still_known_as_the_launcher() {
+        // The 2026-11-11 bug: main scrubs first, so the CLI could no longer tell a coding
+        // agent ran it and no remote run carried an origin. The scrub strikes, launch_var
+        // still answers, and the live environment never gets the value back.
+        let _planting = PLANTING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // SAFETY: test-only planting; the lock above keeps the other planting test out.
+        unsafe {
+            std::env::set_var("CLAUDE_CODE_LAUNCH_PROBE", "session-1");
+            scrub_process_env();
+        }
+        assert!(std::env::var("CLAUDE_CODE_LAUNCH_PROBE").is_err());
+        assert_eq!(launch_var("CLAUDE_CODE_LAUNCH_PROBE").as_deref(), Some("session-1"));
+        assert_eq!(launch_var("claude_code_launch_probe").as_deref(), Some("session-1"));
+        assert_eq!(launch_var("SWISS_NO_SUCH_LAUNCH_VAR"), None);
+        // A variable the scrub never touches reads live.
+        assert!(launch_var("PATH").is_some());
+    }
+
     #[test]
     fn scrubbing_a_command_strikes_the_noise_and_only_the_noise() {
         use std::process::Command;
+
+        let _planting = PLANTING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
         // SAFETY: test-only planting of env vars; this test binary tolerates the race the
         // same way every other env-planting test in the workspace does.

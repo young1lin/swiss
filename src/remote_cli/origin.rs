@@ -58,8 +58,10 @@ impl Origin {
 }
 
 /// The calling agent from this process's environment, `None` for a person at a terminal.
+/// `launch_var`, not `std::env::var`: main strikes the agent markers (CLAUDECODE,
+/// CLAUDE_CODE_*, DSH_SESSION_ID) before any command runs, so only the launch snapshot has them.
 pub fn detect() -> Option<Origin> {
-    let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let env = |name: &str| swiss_core::env::launch_var(name).filter(|v| !v.trim().is_empty());
     let home = swiss_core::paths::home_dir();
     let cwd = std::env::current_dir().ok();
     detect_from(&env, &home, cwd.as_deref())
