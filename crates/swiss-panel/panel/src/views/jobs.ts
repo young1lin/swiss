@@ -17,7 +17,13 @@
 import { $ } from "../util.js";
 import { fill } from "../h.js";
 import { jobsChipText, loadJobs } from "../polling.js";
-import { probeJobs } from "../jobs.js";
+import { patchJobs, probeJobs } from "../jobs.js";
+import { busOn } from "../bus/bus.js";
+import { coalescedRead } from "../bus/live.js";
+import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, RunChangedSchema, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
+import type { RunChanged } from "../bus/pb/swiss/bus/v1/host_pb.js";
+import { JobsListId, JobsSub } from "../bus/pb/swiss/bus/v1/jobs_pb.js";
 import { pluginInventory } from "../page-registry.js";
 import { clearJobsView } from "../job-state.js";
 import { tr } from "../i18n.js";
@@ -34,11 +40,44 @@ function unavailable() {
   }));
 }
 
+let stopList: (() => void) | null = null;
+let stopRuns: (() => void) | null = null;
+let jobsRead: { push(): void; stop(): void } | null = null;
+
+/** JOBS.LIST, and HOST.RUNS whose owner is jobs, coalesced into one list read (SPEC §jobs.panel). */
+export function followJobs(): void {
+  if (stopList) return;
+  const read = coalescedRead(() => loadJobs(true));
+  jobsRead = read;
+  stopList = busOn(
+    { module: Module.JOBS, sub: JobsSub.LIST, key: "" },
+    JobsListId.JOBS_LIST_CHANGED,
+    NoticeSchema,
+    () => { read.push(); },
+  );
+  stopRuns = busOn(
+    { module: Module.HOST, sub: HostSub.RUNS, key: "" },
+    RunsId.RUNS_CHANGED,
+    RunChangedSchema,
+    (msg: RunChanged) => { if (msg.owner === "jobs") read.push(); },
+  );
+}
+
 export async function mount() {
   if (!pluginInventory() && !(await probeJobs())) { unavailable(); return; }
+  followJobs();
   await loadJobs();
 }
 export function refresh() { return loadJobs(); }
-export function poll() { return loadJobs(true); }
+/** Relative last/next, from the rows already held. No request (SPEC §jobs.panel). */
+export function clock(): void { patchJobs(); }
 export function countText() { return jobsChipText(); }
-export function unmount() { clearJobsView(); }
+export function unmount() {
+  clearJobsView();
+  if (stopList) stopList();
+  if (stopRuns) stopRuns();
+  stopList = null;
+  stopRuns = null;
+  if (jobsRead) jobsRead.stop();
+  jobsRead = null;
+}

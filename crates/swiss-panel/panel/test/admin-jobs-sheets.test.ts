@@ -27,6 +27,10 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vite
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { installBus, type BusSocket } from "../src/bus/bus.js";
+import { create, toBinary } from "../src/bus/codec.js";
+import { FrameSchema, Kind, Module } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, RunChangedSchema, RunState, RunsId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the module's public surface is
    driven by name (renderJobs, openRunsSheet), so a typed import would be circular. */
@@ -38,6 +42,8 @@ let polling: any;
 let replies: Record<string, unknown> = {};
 /* Runs inside a POST before it answers: a case does there what the browser does in that window. */
 let duringPost: (() => void) | null = null;
+let calls: string[] = [];
+let jobsView: { followJobs(): void; clock(): void; unmount(): void; poll?: unknown };
 
 const here = dirname(fileURLToPath(import.meta.url));
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
@@ -61,8 +67,10 @@ beforeAll(async () => {
   Object.assign(globalThis, {
     fetch: (url: string, init?: RequestInit): Promise<Response> => {
       const u = String(url);
+      const key = (init?.method === "POST" ? "POST " : "") + u;
+      calls.push(key);
       if (init?.method === "POST" && duringPost) duringPost();
-      const reply = replies[(init?.method === "POST" ? "POST " : "") + u] ?? replies[u];
+      const reply = replies[key] ?? replies[u];
       const ok = reply !== undefined;
       return Promise.resolve({ status: ok ? 200 : 404, ok, json: () => Promise.resolve(reply ?? { error: "no stub for " + u }) } as Response);
     },
@@ -71,13 +79,16 @@ beforeAll(async () => {
   jobs = await import("../src/jobs.js");
   state = await import("../src/job-state.js");
   polling = await import("../src/polling.js");
+  jobsView = await import("../src/views/jobs.js");
   (await import("../src/ui-state.js")).setCurrentView("jobs");
+  openJobsBus();
 });
 
 afterEach(() => { vi.useRealTimers(); });
 
 beforeEach(() => {
   replies = {};
+  calls = [];
   duringPost = null;
   document.body.innerHTML = shellSkeleton();
   state.setJobRows([]);
@@ -90,6 +101,69 @@ function caps(): string[] {
 /** True when `a` comes before `b` in document order. */
 function before(a: Element, b: Element): boolean {
   return !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+class JobsSocket implements BusSocket {
+  static all: JobsSocket[] = [];
+  binaryType: BinaryType = "blob";
+  private listeners = new Map<string, Array<(ev: Event) => void>>();
+  constructor() { JobsSocket.all.push(this); }
+  addEventListener(type: string, listener: (ev: Event) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+  removeEventListener(): void { /* the link outlives the case */ }
+  send(_data: Uint8Array): void { /* the case does not read what the page sent */ }
+  close(): void { /* never closed under test */ }
+  private emit(type: string, ev: Event): void {
+    for (const fn of this.listeners.get(type) ?? []) fn(ev);
+  }
+  open(): void { this.emit("open", new Event("open")); }
+  receive(bytes: Uint8Array): void {
+    const copy = new Uint8Array(bytes);
+    for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
+  }
+}
+
+let bus: JobsSocket;
+
+function openJobsBus(): void {
+  JobsSocket.all.length = 0;
+  installBus({
+    socket: JobsSocket,
+    random: () => 0.5,
+    reload: () => {},
+    info: () => Promise.resolve(),
+    notice: () => {},
+    url: "ws://127.0.0.1/api/bus",
+  });
+  bus = JobsSocket.all[JobsSocket.all.length - 1];
+  bus.open();
+}
+
+function runFrame(owner: string, state: RunState, runId = 7n): Uint8Array {
+  return toBinary(FrameSchema, create(FrameSchema, {
+    module: Module.HOST,
+    sub: HostSub.RUNS,
+    id: RunsId.RUNS_CHANGED,
+    kind: Kind.EVENT,
+    seq: 1,
+    key: "",
+    origin: "page-a",
+    body: toBinary(RunChangedSchema, create(RunChangedSchema, {
+      runId,
+      revision: 3,
+      state,
+      action: "jobs.run",
+      owner,
+      actor: "",
+      lane: "",
+      queuedAtMs: 1000n,
+      startedAtMs: 1000n,
+      endedAtMs: 1012n,
+    })),
+  }));
 }
 
 describe("the Jobs head (SPEC §panel.pages)", () => {
@@ -125,10 +199,9 @@ describe("the list stays put under the poll", () => {
   });
 
   it("Run now keeps its focus through the run, and the row shows the outcome", async () => {
-    vi.useFakeTimers();
+    // SPEC §jobs.panel: the wait is the terminal HOST.RUNS event. A success costs no GET.
     replies["/api/jobs"] = { jobs: [Object.assign({}, job, { lastOk: true })], groups: ["default"] };
     replies["POST /api/jobs/echo/run"] = { runId: 7 };
-    replies["/api/runs/7"] = { runId: 7, state: "succeeded", ms: 12 };
     state.setJobRows([job]);
     jobs.renderJobs();
     const run = $("pane").querySelector('[data-job="echo"] [data-run]') as HTMLButtonElement;
@@ -137,8 +210,10 @@ describe("the list stays put under the poll", () => {
     // the moment it is disabled; happy-dom does not, so the case does it by hand where Chrome does.
     duringPost = (): void => { run.disabled = false; run.blur(); run.disabled = true; };
     run.click();
-    await vi.advanceTimersByTimeAsync(1200);
-    await vi.runOnlyPendingTimersAsync();
+    await tick();
+    bus.receive(runFrame("jobs", RunState.SUCCEEDED));
+    await tick();
+    expect(calls.filter((c) => c === "/api/runs/7")).toEqual([]);
     expect($("pane").querySelector('[data-job="echo"] [data-run]')).toBe(run); // patched, not rebuilt
     expect(run.disabled).toBe(false);
     expect(document.activeElement).toBe(run);
@@ -344,5 +419,64 @@ describe("the run history, as the event list", () => {
     expect($("sheet").querySelector(".note")?.textContent).toBe("No runs recorded yet — wait for the schedule, or press Run now.");
     $("jr-done").click();
     expect($("sheet").hidden).toBe(true);
+  });
+});
+
+describe("the jobs list hears the bus (SPEC §jobs.panel)", () => {
+  const job = { name: "echo", command: "cmd /c echo hi", enabled: true, trigger: { kind: "interval", everyMs: 3600000, firstRun: "after-interval" } };
+
+  it("a remote run is not a jobs read, and two jobs events are one read", async () => {
+    vi.useFakeTimers();
+    replies["/api/jobs"] = { jobs: [job], groups: ["default"] };
+    jobsView.followJobs();
+    calls = [];
+    bus.receive(runFrame("remote", RunState.SUCCEEDED));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(calls.filter((c) => c === "/api/jobs")).toEqual([]);
+    bus.receive(runFrame("jobs", RunState.SUCCEEDED));
+    bus.receive(runFrame("jobs", RunState.FAILED));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(calls.filter((c) => c === "/api/jobs")).toEqual(["/api/jobs"]);
+    jobsView.unmount();
+  });
+
+  it("clock redraws the held rows and asks for nothing", () => {
+    replies["/api/jobs"] = { jobs: [job], groups: ["default"] };
+    state.setJobRows([job]);
+    jobs.renderJobs();
+    calls = [];
+    jobsView.clock();
+    expect(calls).toEqual([]);
+    expect(jobsView.poll).toBeUndefined();
+  });
+
+  it("a failed run costs one GET for the error, and an early event is kept", async () => {
+    replies["/api/jobs"] = { jobs: [job], groups: ["default"] };
+    replies["POST /api/jobs/echo/run"] = { runId: 7 };
+    replies["/api/runs/7"] = { runId: 7, state: "failed", error: "disk full" };
+    state.setJobRows([job]);
+    jobs.renderJobs();
+    const run = $("pane").querySelector('[data-job="echo"] [data-run]') as HTMLButtonElement;
+    duringPost = (): void => { bus.receive(runFrame("jobs", RunState.FAILED)); };
+    run.click();
+    await tick();
+    expect(calls.filter((c) => c === "/api/runs/7")).toEqual(["/api/runs/7"]);
+    expect($("toast").textContent).toContain("disk full");
+  });
+
+  it("leaving the page does not end the wait", async () => {
+    replies["/api/jobs"] = { jobs: [job], groups: ["default"] };
+    replies["POST /api/jobs/echo/run"] = { runId: 9 };
+    replies["/api/runs/9"] = { runId: 9, state: "failed", error: "still here" };
+    state.setJobRows([job]);
+    jobs.renderJobs();
+    const run = $("pane").querySelector('[data-job="echo"] [data-run]') as HTMLButtonElement;
+    run.click();
+    await tick();
+    jobsView.unmount();
+    calls = [];
+    bus.receive(runFrame("jobs", RunState.FAILED, 9n));
+    await tick();
+    expect(calls.filter((c) => c.startsWith("/api/runs/"))).toEqual(["/api/runs/9"]);
   });
 });

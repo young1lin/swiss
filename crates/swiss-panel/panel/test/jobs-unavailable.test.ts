@@ -22,7 +22,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/page-registry.js", () => ({ pluginInventory: () => null }));
-vi.mock("../src/jobs.js", () => ({ probeJobs: async () => false }));
+vi.mock("../src/jobs.js", () => ({ probeJobs: async () => false, patchJobs: () => undefined }));
 vi.mock("../src/polling.js", () => ({ jobsChipText: () => "", loadJobs: async () => undefined }));
 vi.mock("../src/job-state.js", () => ({ clearJobsView: () => undefined }));
 

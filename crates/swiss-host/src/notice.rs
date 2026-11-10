@@ -22,6 +22,11 @@ use swiss_bus::pb::v1;
 
 /// Publish one HOST notice. `sub` and `id` are the generated enum values.
 pub fn publish(bus: &swiss_bus::Bus, sub: u32, id: u32) {
+    publish_at(bus, v1::Module::Host as u32, sub, id);
+}
+
+/// Publish one empty notice on any module. The page re-reads the owner's route.
+pub fn publish_at(bus: &swiss_bus::Bus, module: u32, sub: u32, id: u32) {
     let body = v1::Notice {}.encode_to_vec();
-    bus.publish(v1::Module::Host as u32, sub, id, "", "", body);
+    bus.publish(module, sub, id, "", "", body);
 }

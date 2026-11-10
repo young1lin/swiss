@@ -40,7 +40,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Map, Value};
 
@@ -132,6 +132,9 @@ impl JobRunState {
 pub struct JobsState {
     path: PathBuf,
     jobs: Mutex<HashMap<String, JobRunState>>,
+    /// JOBS.LIST (SPEC §jobs.runlog). The hook must not re-enter this table: it runs
+    /// after the file write, with the map lock released.
+    notice: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl JobsState {
@@ -159,6 +162,19 @@ impl JobsState {
         JobsState {
             path,
             jobs: Mutex::new(jobs),
+            notice: Mutex::new(None),
+        }
+    }
+
+    /// Where a facts-table notice goes (SPEC §jobs.runlog). The composition passes the bus.
+    pub fn set_notice(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self.notice.lock().unwrap_or_else(|e| e.into_inner()) = hook;
+    }
+
+    pub(crate) fn note(&self) {
+        let hook = self.notice.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(hook) = hook {
+            hook();
         }
     }
 
@@ -179,13 +195,18 @@ impl JobsState {
     /// a refused occurrence still counts, or the job would re-fire every tick while
     /// the pool is full.
     pub fn claim(&self, job: &str, at_ms: i64, occurrence_key: Option<&str>) {
-        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
-        let st = jobs.entry(job.to_string()).or_default();
-        st.last_run_at = Some(at_ms);
-        if let Some(key) = occurrence_key {
-            st.last_occurrence_key = Some(key.to_string());
+        let wrote = {
+            let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            let st = jobs.entry(job.to_string()).or_default();
+            st.last_run_at = Some(at_ms);
+            if let Some(key) = occurrence_key {
+                st.last_occurrence_key = Some(key.to_string());
+            }
+            self.persist(&jobs)
+        };
+        if wrote {
+            self.note();
         }
-        self.persist(&jobs);
     }
 
     /// Record the terminal facts of the last run. `run_id` is the shared
@@ -193,16 +214,21 @@ impl JobsState {
     /// none and does not settle - a run that could not start did not exit, and
     /// lastOk must not claim otherwise.
     pub fn settle(&self, job: &str, ok: bool, run_id: Option<u64>) {
-        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
-        let st = jobs.entry(job.to_string()).or_default();
-        st.last_ok = Some(ok);
-        st.last_run_id = run_id;
-        st.consecutive_failures = if ok {
-            0
-        } else {
-            st.consecutive_failures.saturating_add(1)
+        let wrote = {
+            let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            let st = jobs.entry(job.to_string()).or_default();
+            st.last_ok = Some(ok);
+            st.last_run_id = run_id;
+            st.consecutive_failures = if ok {
+                0
+            } else {
+                st.consecutive_failures.saturating_add(1)
+            };
+            self.persist(&jobs)
         };
-        self.persist(&jobs);
+        if wrote {
+            self.note();
+        }
     }
 
     /// Migration-only (SPEC §jobs.migrate): seed a v1 row's run facts without
@@ -219,15 +245,26 @@ impl JobsState {
         if st.last_ok.is_none() {
             st.last_ok = last_ok;
         }
-        self.persist(&jobs);
+        let wrote = self.persist(&jobs);
+        drop(jobs);
+        if wrote {
+            self.note();
+        }
     }
 
     /// Drop a deleted definition's line. The run history stays in the log file, which
     /// outlives the job that wrote it; only the scheduling facts go.
     pub fn forget(&self, job: &str) {
-        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
-        if jobs.remove(job).is_some() {
-            self.persist(&jobs);
+        let wrote = {
+            let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            if jobs.remove(job).is_some() {
+                self.persist(&jobs)
+            } else {
+                false
+            }
+        };
+        if wrote {
+            self.note();
         }
     }
 
@@ -235,16 +272,20 @@ impl JobsState {
     /// where the run has already happened - the exact opposite trade of
     /// JobStore::save, whose caller MUST hear about a config write that did not
     /// persist (SPEC §jobs.config).
-    fn persist(&self, jobs: &HashMap<String, JobRunState>) {
+    fn persist(&self, jobs: &HashMap<String, JobRunState>) -> bool {
         let body = json!({
             "version": 1,
             "jobs": jobs.iter().map(|(k, v)| (k.clone(), v.to_json())).collect::<Map<String, Value>>(),
         });
-        if let Err(err) = write_secure_json(&self.path, &body) {
-            log::warn(
-                "jobs-state.json persist failed",
-                Some(json!({ "err": err, "path": self.path.display().to_string() })),
-            );
+        match write_secure_json(&self.path, &body) {
+            Ok(()) => true,
+            Err(err) => {
+                log::warn(
+                    "jobs-state.json persist failed",
+                    Some(json!({ "err": err, "path": self.path.display().to_string() })),
+                );
+                false
+            }
         }
     }
 }
@@ -402,5 +443,30 @@ mod tests {
         });
         let st = JobRunState::from_json(&v);
         assert_eq!(st, JobRunState::default(), "each bad field degrades alone");
+    }
+
+    // SPEC §jobs.runlog: settle publishes after the file holds lastOk; a forget of a missing job publishes nothing.
+    #[test]
+    fn settle_publishes_after_the_file_holds_last_ok_and_a_missing_forget_publishes_nothing() {
+        swiss_core::secure::key::use_test_master_key();
+        let path = scratch("notice");
+        let st = JobsState::open(path.clone());
+        let saw = Arc::new(Mutex::new(None));
+        let sink = saw.clone();
+        let file = path.clone();
+        st.set_notice(Some(Arc::new(move || {
+            let raw = read_secure_json(&file).ok().flatten().unwrap_or(json!({}));
+            *sink.lock().expect("saw") = raw["jobs"]["echo"]["lastOk"].as_bool();
+        })));
+        st.forget("echo");
+        assert!(saw.lock().expect("saw").is_none(), "a missing job publishes nothing");
+        st.settle("echo", true, Some(9));
+        assert_eq!(*saw.lock().expect("saw"), Some(true));
+        st.forget("echo");
+        assert_eq!(
+            *saw.lock().expect("saw"),
+            None,
+            "forget publishes after the line is gone"
+        );
     }
 }

@@ -375,6 +375,17 @@ pub async fn run_gateway() -> Result<(), String> {
             swiss_bus::pb::v1::VaultId::VaultChanged as u32,
         );
     })));
+    // JOBS.LIST (SPEC §jobs.panel). A definition write and a settled run fact publish
+    // from the jobs system. A group edit is that definition write.
+    let jobs_bus = services.bus.clone();
+    jobs.set_list_notice(Some(std::sync::Arc::new(move || {
+        swiss_host::notice::publish_at(
+            &jobs_bus,
+            swiss_bus::pb::v1::Module::Jobs as u32,
+            swiss_bus::pb::v1::JobsSub::List as u32,
+            swiss_bus::pb::v1::JobsListId::JobsListChanged as u32,
+        );
+    })));
     // The consoles' history (SPEC §data.history): constructed closed here so the /api/db mount
     // can carry it; the Data plugin's start opens logs/data.db and its stop closes it.
     let data_history = swiss_data::history::DataHistory::new(swiss_core::paths::data_path(&["logs"]));

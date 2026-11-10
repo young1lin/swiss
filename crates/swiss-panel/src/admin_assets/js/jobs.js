@@ -20,15 +20,15 @@
    Same architecture as Tunnels: the data loader and the row template live in polling.js next to
    loadTunnels/ruleRowHtml; this module owns the pane render, the poll-safe patch, the create/edit
    sheets, the run-history sheet and the row actions. The rendering contract (main.js) applies in
-   full: the 6s poll may only call patchJobs(), never rebuild the list — everything editable lives
+   full: a refresh may only call patchJobs(), never rebuild the list — everything editable lives
    in the shared #sheet.
 
    Availability is probed once at boot: an older gateway serves no /api/jobs (404) and a disabled
    subsystem answers 503 with the row that turned it off — either way the tab hides itself,
-   because a tab that can only toast an error every 6 seconds is noise, not a feature.
+   because a tab that can only toast an error is noise, not a feature.
 
    v2 (SPEC §jobs.config, SPEC §jobs.api): rows read the v2 fields (title, labels, trigger summary), Run
-   now submits {"async": true} and polls /api/runs/{id} — closing the page never cancels a job —
+   now submits {"async": true} and waits for the run's HOST.RUNS event — closing the page never cancels a job —
    and the Advanced sheet edits the definition through the plugin config row: schema-driven form
    (action input built from GET /api/actions, run.js's builder) plus a JSON editor, round-tripping
    losslessly so fields this form does not know survive the save.
@@ -37,6 +37,10 @@
                                                            
                                                                                                   
 import { $, api, apiJson, errText, refocusIfIdle, targetEl, toast } from "./util.js";
+import { busOn, busOnResync } from "./bus/bus.js";
+import { Module } from "./bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, RunChangedSchema, RunState, RunsId } from "./bus/pb/swiss/bus/v1/host_pb.js";
+                                                                   
 import { assignMember, groupFieldNode, groupOf as makeGroupOf, lastGroup, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "./groups.js";
 import { jobGroupsList, loadJobs } from "./polling.js";
 import { argFieldsNode, readRunArgs } from "./run.js";
@@ -374,41 +378,139 @@ function wireJobs()       {
 
 /* --- actions ---------------------------------------------------------------------------------- */
 
-/** Run now submits {"async": true} (SPEC §jobs.runlog) and polls the coordinator's run view: the
- * run outlives the page, and the row stays live through the poll. The toast still names the
- * outcome, because the record settles into the history either way. */
+/** Run now waits at most this long for the terminal HOST.RUNS event (SPEC §jobs.panel). */
+const RUN_WAIT_MS = 30 * 60 * 1000;
+
+                   
+               
+                          
+                                       
+ 
+
+const runWaits = new Map                 ();
+const earlyRuns = new Map                    ();
+let postsInFlight = 0;
+let stopRunWatch                      = null;
+
+function runTerminal(state          )          {
+  return state === RunState.SUCCEEDED || state === RunState.FAILED
+    || state === RunState.TIMED_OUT || state === RunState.CANCELED;
+}
+
+function runStateWord(state          )         {
+  if (state === RunState.SUCCEEDED) return "succeeded";
+  if (state === RunState.FAILED) return "failed";
+  if (state === RunState.TIMED_OUT) return "timed out";
+  if (state === RunState.CANCELED) return "canceled";
+  return "done";
+}
+
+function runDuration(msg            )                {
+  if (msg.startedAtMs == null || msg.endedAtMs == null) return null;
+  return Number(msg.endedAtMs) - Number(msg.startedAtMs);
+}
+
+function pruneEarlyRuns()       {
+  if (postsInFlight > 0) return;
+  for (const id of [...earlyRuns.keys()]) if (!runWaits.has(id)) earlyRuns.delete(id);
+}
+
+function watchJobRuns()       {
+  if (stopRunWatch) return;
+  stopRunWatch = busOn(
+    { module: Module.HOST, sub: HostSub.RUNS, key: "" },
+    RunsId.RUNS_CHANGED,
+    RunChangedSchema,
+    (msg) => {
+      if (msg.owner !== "jobs") return;
+      const id = Number(msg.runId);
+      if (runWaits.has(id) && runTerminal(msg.state)) { void finishRun(id, msg, null); return; }
+      if (postsInFlight > 0 && runTerminal(msg.state)) {
+        const prev = earlyRuns.get(id);
+        if (!prev || msg.revision >= prev.revision) earlyRuns.set(id, msg);
+      }
+    },
+  );
+  busOnResync(() => { void resyncWaitingRuns(); });
+}
+
+async function finishRun(id        , msg                   , knownError               )                {
+  const waiter = runWaits.get(id);
+  if (!waiter) return;
+  runWaits.delete(id);
+  earlyRuns.delete(id);
+  clearTimeout(waiter.timer);
+  const ok = msg ? msg.state === RunState.SUCCEEDED : knownError == null;
+  const state = msg ? runStateWord(msg.state) : (ok ? "succeeded" : "failed");
+  const ms = msg ? runDuration(msg) : null;
+  let error = knownError || "";
+  if (!ok && knownError == null) {
+    const v = await apiJson                    ("/api/runs/" + id);
+    error = v && v.error ? v.error : "";
+  }
+  clearJobBusy(waiter.name);
+  toast(tr("jobs.nameState", { name: waiter.name, state }) + (ms != null ? tr("jobs.msMs", { ms }) : "") +
+    (error ? tr("jobs.error", { error }) : ""), !ok);
+  await loadJobs(true);
+  refocusIfIdle(waiter.pressed);
+}
+
+function giveUpRun(id        )       {
+  const waiter = runWaits.get(id);
+  if (!waiter) return;
+  runWaits.delete(id);
+  earlyRuns.delete(id);
+  clearJobBusy(waiter.name);
+  patchJobs();
+  refocusIfIdle(waiter.pressed);
+  toast(tr("jobs.nameStillRunningWatch", { name: waiter.name }), false);
+}
+
+/** One read of each run still open, after a WELCOME dropped the events (SPEC §jobs.panel). */
+async function resyncWaitingRuns()                {
+  for (const id of [...runWaits.keys()]) {
+    const v = await apiJson                                    ("/api/runs/" + id);
+    if (!v || !v.state || v.state === "queued" || v.state === "running") continue;
+    const waiter = runWaits.get(id);
+    if (!waiter) continue;
+    runWaits.delete(id);
+    earlyRuns.delete(id);
+    clearTimeout(waiter.timer);
+    const ok = v.state === "succeeded";
+    clearJobBusy(waiter.name);
+    toast(tr("jobs.nameState", { name: waiter.name, state: v.state }) +
+      (v.error ? tr("jobs.error", { error: v.error }) : ""), !ok);
+    await loadJobs(true);
+    refocusIfIdle(waiter.pressed);
+  }
+}
+
+/** Run now submits {"async": true} (SPEC §jobs.runlog) and waits for that run's terminal
+ * HOST.RUNS event. The wait is the page's own subscription: leaving the page does not end it. */
 async function runJob(name        )                {
   const pressed = document.activeElement;
+  watchJobRuns();
   setJobBusy(name);
   patchJobs();
+  postsInFlight += 1;
   const j = await apiJson                    ("/api/jobs/" + encodeURIComponent(name) + "/run", {
     method: "POST",
     body: JSON.stringify({ async: true }),
   });
-  if (!j || j.runId == null) { clearJobBusy(name); patchJobs(); refocusIfIdle(pressed); return; }
-  const runId = j.runId;
-  // Bounded poll: queued -> running -> terminal. The job's own timeoutMs bounds the run; the
-  // poll gives up after 30 minutes and lets the history sheet tell the rest of the story.
-  for (let i = 0; i < 1800; i++) {
-    await new Promise((res) => { setTimeout(res, 1000); });
-    // The coordinator's run view is FLAT ({runId, state, ms, …}) — only the sync door wraps
-    // its record in {run}. Reading v.run here left the button on "…" for the full 30-minute
-    // poll after a 40 ms echo had long finished.
-    const v = await apiJson                                                                 ("/api/runs/" + runId);
-    if (!v || !v.state) continue;
-    if (v.state === "queued" || v.state === "running") continue;
+  postsInFlight -= 1;
+  if (!j || j.runId == null) {
+    pruneEarlyRuns();
     clearJobBusy(name);
-    const ok = v.state === "succeeded";
-    toast(tr("jobs.nameState", { name, state: v.state }) + (v.ms != null ? tr("jobs.msMs", { ms: v.ms }) : "") +
-      (v.error ? tr("jobs.error", { error: v.error }) : ""), !ok);
-    await loadJobs(true); // the patch path: the pressed button stays the same node
+    patchJobs();
     refocusIfIdle(pressed);
     return;
   }
-  clearJobBusy(name);
-  patchJobs();
-  refocusIfIdle(pressed);
-  toast(tr("jobs.nameStillRunningWatch", { name }), false);
+  const runId = j.runId;
+  const timer = setTimeout(() => { giveUpRun(runId); }, RUN_WAIT_MS);
+  runWaits.set(runId, { name, pressed, timer });
+  const early = earlyRuns.get(runId);
+  pruneEarlyRuns();
+  if (early && runTerminal(early.state)) await finishRun(runId, early, null);
 }
 
 function deleteJob(job           )       {

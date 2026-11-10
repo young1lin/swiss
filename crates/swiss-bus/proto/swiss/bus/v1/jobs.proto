@@ -1,0 +1,16 @@
+// JOBS.LIST (SPEC §bus.registry, SPEC §jobs.panel). Module 8, sub 1.
+// A NOTICE with no key: a definition was written, a run's facts settled, a job
+// was forgotten, or its groups moved. The page re-reads GET /api/jobs.
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+enum JobsSub {
+  JOBS_SUB_UNSPECIFIED = 0;
+  JOBS_SUB_LIST = 1;
+}
+
+enum JobsListId {
+  JOBS_LIST_ID_UNSPECIFIED = 0;
+  JOBS_LIST_CHANGED = 1;
+}

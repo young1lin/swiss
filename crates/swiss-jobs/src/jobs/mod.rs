@@ -356,6 +356,11 @@ pub struct JobSystem {
 }
 
 impl JobSystem {
+    /// JOBS.LIST (SPEC §jobs.panel). Facts and definition writes share one hook.
+    pub fn set_list_notice(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
+        self.state.set_notice(hook);
+    }
+
     pub fn open(
         path: PathBuf,
         services: Arc<RuntimeServices>,
@@ -1276,7 +1281,11 @@ impl JobSystem {
         self.config_store
             .update_plugin("jobs", expected, row.clone())
             .map_err(|e| e.to_string())?;
-        self.apply_config(&row)
+        self.apply_config(&row)?;
+        // The definition file holds the change. A group edit is this same write
+        // (SPEC §jobs.panel), so the route does not publish a second time.
+        self.state.note();
+        Ok(())
     }
 
     /// One job's API row (SPEC §jobs.api): every v1 field the panel reads, exactly the
@@ -2126,6 +2135,12 @@ mod tests {
         let store =
             ConfigStore::from_loaded(dir.join("gone").join("gateway.config.json"), json!({}));
         let sys = JobSystem::open(dir.join("jobs.json"), test_services(), store);
+        // SPEC §jobs.panel: a refused definitions write publishes nothing.
+        let notes = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let sink = notes.clone();
+        sys.set_list_notice(Some(std::sync::Arc::new(move || {
+            *sink.lock().expect("notes") += 1;
+        })));
 
         match sys.upsert_v1(interval_job("doomed", 60)) {
             Err(WriteError::Persist(err)) => assert!(!err.is_empty()),
@@ -2135,6 +2150,7 @@ mod tests {
             sys.all_views().is_empty(),
             "nothing half-applied: the row never landed"
         );
+        assert_eq!(*notes.lock().expect("notes"), 0, "a refused write publishes nothing");
         // Deleting something that was never there is not a failed write; it is a miss.
         assert!(matches!(sys.delete("never-existed"), Ok(false)));
     }
@@ -2163,6 +2179,15 @@ mod tests {
         // The v1 /api/jobs shape still SHOWS the facts next to the definition.
         assert_eq!(view["lastOk"], json!(false));
         assert!(view["lastRunAt"].as_str().is_some());
+        // SPEC §jobs.panel: a definitions write publishes once.
+        let notes = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let sink = notes.clone();
+        sys.set_list_notice(Some(std::sync::Arc::new(move || {
+            *sink.lock().expect("notes") += 1;
+        })));
+        let before = *notes.lock().expect("notes");
+        sys.upsert_v1(interval_job("edit-me", 180)).expect("valid edit");
+        assert_eq!(*notes.lock().expect("notes"), before + 1);
         assert!(matches!(sys.delete("edit-me"), Ok(true)));
         assert!(matches!(sys.delete("edit-me"), Ok(false)), "already gone");
         assert!(sys.all_views().is_empty());

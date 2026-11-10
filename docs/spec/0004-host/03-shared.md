@@ -9,6 +9,7 @@ One model (`swiss_host::groups`, ADR-015), seven scopes: `mcps`, `tokens`, `conn
 host routes by the scope string with no match arm. A write that returns Ok publishes that
 scope's owner topic (§bus.registry); a refused write publishes nothing. `tokens` publishes
 HOST.TOKENS. `secrets` publishes HOST.VAULT from the vault write itself (`set_vault_groups`).
+`jobs` publishes JOBS.LIST from the definition write (`commit_row`).
 
 **Invariants** (unit-tested once, in `groups.rs`):
 

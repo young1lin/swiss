@@ -328,6 +328,11 @@ export enum Module {
   DATA = 6,
 
   /**
+   * @generated from enum value: MODULE_JOBS = 8;
+   */
+  JOBS = 8,
+
+  /**
    * @generated from enum value: MODULE_REMOTE = 10;
    */
   REMOTE = 10,
