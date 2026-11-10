@@ -30,7 +30,7 @@
 import { $, CODE_KEY, THEME_KEY, api, isTyping, toast } from "./util.js";
 import { loadCollapsed } from "./groups.js";
 import { initSelects } from "./ui/select.js";
-import { initPages, pageHasPendingChanges, pageUsesSidebar, pollPage } from "./page-registry.js";
+import { clockPage, initPages, pageHasPendingChanges, pageUsesSidebar, pollPage } from "./page-registry.js";
 import { openDetail } from "./detail.js";
 import { patchSidebar } from "./menu.js";
 import { loadMemory, refreshNow } from "./polling.js";
@@ -219,6 +219,8 @@ function poll()       {
   void loadMemory(true);
   void loadInfo();
   void pollPage();
+  // The same tick repaints relative times. clock() reads nothing (SPEC §remote.panel).
+  clockPage();
 }
 
 setBusLinePainter(repaintBusLine);

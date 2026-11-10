@@ -669,3 +669,23 @@ Rejected:
 - **OT or CRDT (Yjs, Automerge).** They solve two people typing at once, which this product
   does not have.
 - **The terminal's socket.** A per-session byte pump with its own tickets; unrelated.
+
+## ADR-040 — The panel has no tick; gauges are sampled on demand
+
+**Accepted.** Spec: §bus, §panel. After the bus (ADR-039) every list still re-read itself
+every 6 s, and a change made elsewhere showed up to 6 s late or, for a page off the tick,
+never. Every table swiss changes announces a notice, the page re-reads its route coalesced,
+and the 6 s timer is deleted. State that is a sample rather than a commit (the memory
+reading, MCP health) is sampled by the gateway only while a visible page subscribes (hub
+demand, §bus.topics), so idle costs nothing (§host.memory).
+
+Rejected:
+
+- **Pushing every record over the bus.** The routes already mask and shape, and several
+  tables are large.
+- **Keeping the tick as a safety net.** It hides a missing notice instead of failing a test.
+- **A sampler that runs for the life of the process.** That spends the idle memory the
+  product does not have (§host.memory).
+
+A writer that forgets to publish is a bug a test must catch, because nothing re-reads by
+itself any more.

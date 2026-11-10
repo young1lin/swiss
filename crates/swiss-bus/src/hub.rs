@@ -18,7 +18,8 @@
 //!
 //! Publishing never waits. The lock order is the hub lock, then a link's queue
 //! account: a publisher holds both only across a `try_send`, and the link task
-//! never takes the hub lock while it holds the account.
+//! never takes the hub lock while it holds the account. Demand is recomputed
+//! under that same hub lock, on subscribe, unsubscribe, welcome and close.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -136,6 +137,9 @@ struct Inner {
     next_link: u64,
     handlers: HashMap<(u32, u32), HandlerSlot>,
     next_generation: u64,
+    /// One sender per (module, sub) something asked about. Created on the first
+    /// `demand` call; until then nobody is sampling that pair (SPEC §bus.topics).
+    demand: HashMap<(u32, u32), watch::Sender<bool>>,
 }
 
 pub(crate) struct Opened {
@@ -172,6 +176,7 @@ impl Bus {
                 next_link: 1,
                 handlers: HashMap::new(),
                 next_generation: 1,
+                demand: HashMap::new(),
             }),
             stamp,
             stop,
@@ -233,6 +238,21 @@ impl Bus {
         }
     }
 
+    /// True while at least one welcomed link subscribes to `(module, sub)` under any
+    /// key (SPEC §bus.topics "Demand"). A receiver created while that already holds
+    /// starts true. A link that has not been welcomed does not count, which is the
+    /// same rule publish uses.
+    pub fn demand(&self, module: u32, sub: u32) -> watch::Receiver<bool> {
+        let mut inner = lock(&self.inner);
+        if let Some(tx) = inner.demand.get(&(module, sub)) {
+            return tx.subscribe();
+        }
+        let on = demand_held(&inner, module, sub);
+        let (tx, rx) = watch::channel(on);
+        inner.demand.insert((module, sub), tx);
+        rx
+    }
+
     /// Tell every open link the gateway is stopping, then wait until each has left.
     /// The wait is the caller's; a link that never reads its socket stays until the
     /// caller drops this future (SPEC §bus.link).
@@ -275,7 +295,14 @@ impl Bus {
     }
 
     fn close(&self, id: u64) {
-        let removed = lock(&self.inner).links.remove(&id).is_some();
+        let removed = {
+            let mut inner = lock(&self.inner);
+            let removed = inner.links.remove(&id).is_some();
+            if removed {
+                refresh_demand(&mut inner);
+            }
+            removed
+        };
         if removed {
             self.drained.notify_waiters();
         }
@@ -303,6 +330,9 @@ impl Bus {
             let Some(link) = inner.links.get_mut(&id) else { return false };
             link.welcomed = true;
         }
+        // A subscribe that arrived before WELCOME starts counting here. The wire
+        // welcomes first; the flag is what demand reads either way.
+        refresh_demand(&mut inner);
         push_held(&mut inner, id, out)
     }
 
@@ -351,6 +381,7 @@ impl Bus {
             return Err(());
         }
         link.topics = next;
+        refresh_demand(&mut inner);
         Ok(())
     }
 
@@ -360,6 +391,7 @@ impl Bus {
         for topic in topics {
             link.topics.remove(&Topic { module: topic.module, sub: topic.sub, key: topic.key.clone() });
         }
+        refresh_demand(&mut inner);
     }
 
     /// Forward a relay unread. `Err` means it is not on the relay list; the caller
@@ -484,6 +516,27 @@ fn push_held(inner: &mut Inner, id: u64, out: &Outgoing) -> bool {
         link.next_seq = seq.saturating_add(1);
     }
     true
+}
+
+fn demand_held(inner: &Inner, module: u32, sub: u32) -> bool {
+    inner.links.values().any(|link| {
+        link.welcomed && link.topics.iter().any(|topic| topic.module == module && topic.sub == sub)
+    })
+}
+
+fn refresh_demand(inner: &mut Inner) {
+    let keys: Vec<(u32, u32)> = inner.demand.keys().copied().collect();
+    for (module, sub) in keys {
+        let on = demand_held(inner, module, sub);
+        let Some(tx) = inner.demand.get(&(module, sub)) else { continue };
+        tx.send_if_modified(|cur| {
+            if *cur == on {
+                return false;
+            }
+            *cur = on;
+            true
+        });
+    }
 }
 
 fn wants(link: &Link, module: u32, sub: u32, key: &str) -> bool {

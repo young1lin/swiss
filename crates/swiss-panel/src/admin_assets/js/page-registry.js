@@ -491,10 +491,14 @@ async function pollPage()                {
   catch (error) { toast(errText(error), true); }
   finally { polling = false; }
 }
+/** Relative times, from data the page already holds. Never a network read (SPEC §remote.panel). */
+function clockPage()       {
+  if (active && active.module.clock) active.module.clock();
+}
 async function refreshPage()                {
   if (!active) return;
   try { if (active.module.refresh) await active.module.refresh(); else if (active.module.poll) await active.module.poll(); }
   catch (error) { toast(errText(error), true); }
 }
 
-export { currentPageCount, fitRailLabels, fitTabs, hashTarget, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR, refreshPage, reloadPluginInventory };
+export { clockPage, currentPageCount, fitRailLabels, fitTabs, hashTarget, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR, refreshPage, reloadPluginInventory };

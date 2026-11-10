@@ -20,11 +20,13 @@
 mod codec;
 mod hub;
 mod link;
+mod notifier;
 mod route;
 
 pub mod pb;
 
 pub use hub::{Answer, Bus, Call, Handler, Registration, Stamp};
+pub use notifier::Notifier;
 pub use link::{run, Io, IoMsg};
 pub use route::accept;
 
@@ -74,6 +76,11 @@ pub const RECONNECT_NOTICE: std::time::Duration = std::time::Duration::from_secs
 
 /// A debug build re-reads the panel stamp on this interval and publishes BUILD when it changes.
 pub const STAMP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// At most one throttled notice per topic and key per this long (SPEC §bus.topics).
+/// The first poke in a quiet gap publishes at once; the rest of the gap fold into one
+/// trailing publish at its end.
+pub const NOTICE_GAP: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// One LIST page stays under this, which is inside the frame limit (SPEC §bus.requests).
 pub const LIST_PAGE_MAX: usize = 2 * 1024 * 1024;

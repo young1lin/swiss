@@ -365,6 +365,7 @@ in §decisions.
 - [ADR-037 — Memory's agents are chosen by layer and pooled](spec/0018-decisions.md#adr-037--memorys-agents-are-chosen-by-layer-and-pooled)
 - [ADR-038 — The window shell uses the system webview](spec/0018-decisions.md#adr-038--the-window-shell-uses-the-system-webview)
 - [ADR-039 — The event bus: one WebSocket, protobuf frames, generated codecs](spec/0018-decisions.md#adr-039--the-event-bus-one-websocket-protobuf-frames-generated-codecs)
+- [ADR-040 — The panel has no tick; gauges are sampled on demand](spec/0018-decisions.md#adr-040--the-panel-has-no-tick-gauges-are-sampled-on-demand)
 
 ### 0019 · [§bus — The event bus](spec/0019-bus.md)
 

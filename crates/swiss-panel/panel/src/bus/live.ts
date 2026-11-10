@@ -14,16 +14,27 @@
  * limitations under the License.
  */
 
-/* The Remote pages' live re-read (SPEC §remote.panel "Live without a poll", §bus.topics
-   "Notices"). A notice says that something moved, never what, so the page re-reads through
-   its owning route - but a burst must cost at most one more read, not one read a frame:
+/* One coalesced re-read, and a subscription held only while the document is visible
+   (SPEC §bus.topics "Notices", "Demand").
+
+   coalescedRead is the one coalescer. Remote Targets and Remote Runs use it; a later
+   page imports it from here rather than growing a second one with different numbers.
+   A notice says that something moved, never what, so the page re-reads through its
+   owning route — but a burst must cost at most one more read, not one read a frame:
 
    - 150 ms after the last notice, and never more than 1 s after the first of a burst;
    - one read in flight, at most one queued behind it;
    - a hidden page holds its re-read until it is visible again.
 
-   The coalescing lives here so both Remote pages share one reading of it, and the view tests
-   drive the timers through the same numbers the SPEC states. */
+   busOnWhileVisible is for a topic the gateway samples only while someone is looking
+   (the memory reading, MCP health). It subscribes while the document is visible,
+   unsubscribes on hide, and on show subscribes again and then calls onVisible, which
+   is the page's re-read. Every other topic stays subscribed while hidden and lets the
+   coalescer hold its read. */
+
+import type { DescMessage } from "../vendor/protobuf/2.16.0/descriptors.js";
+import type { MessageShape } from "../vendor/protobuf/2.16.0/types.js";
+import { busOn, type BusTopic } from "./bus.js";
 
 const SETTLE_MS = 150;
 const CAP_MS = 1000;
@@ -97,5 +108,48 @@ export function coalescedRead(read: () => Promise<unknown>): CoalescedRead {
       capTimer = null;
       document.removeEventListener("visibilitychange", onVisible);
     },
+  };
+}
+
+/** Subscribe while the document is visible. Hide sends UNSUBSCRIBE; show subscribes
+ *  again and then calls `onVisible`. The returned function is unmount: if the topic
+ *  was already dropped because the document is hidden, it sends nothing more. */
+export function busOnWhileVisible<Desc extends DescMessage>(
+  topic: BusTopic,
+  id: number,
+  body: Desc,
+  fn: (msg: MessageShape<Desc>, origin: string) => void,
+  onVisible: () => void,
+): () => void {
+  let off: (() => void) | null = null;
+  let stopped = false;
+
+  const hold = (): void => {
+    if (stopped || off || document.visibilityState !== "visible") return;
+    off = busOn(topic, id, body, fn);
+  };
+
+  const onChange = (): void => {
+    if (stopped) return;
+    if (document.visibilityState === "visible") {
+      if (off) return;
+      hold();
+      onVisible();
+    } else if (off) {
+      off();
+      off = null;
+    }
+  };
+
+  document.addEventListener("visibilitychange", onChange);
+  hold();
+
+  return () => {
+    stopped = true;
+    document.removeEventListener("visibilitychange", onChange);
+    if (off) {
+      off();
+      off = null;
+    }
   };
 }

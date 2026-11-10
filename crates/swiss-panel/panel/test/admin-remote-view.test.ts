@@ -347,7 +347,8 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     const twoMinutesLater = Date.now() + 2 * MIN;
     vi.spyOn(Date, "now").mockReturnValue(twoMinutesLater);
     try {
-      await view.poll();
+      expect(view.poll, "Targets no longer polls; the shell calls clock").toBeUndefined();
+      view.clock();
     } finally {
       vi.restoreAllMocks();
     }

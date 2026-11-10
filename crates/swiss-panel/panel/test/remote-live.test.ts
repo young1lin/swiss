@@ -16,12 +16,16 @@
 
 // @vitest-environment happy-dom
 
-/* The Remote pages' coalesced re-read (SPEC §remote.panel "Live without a poll",
- * §bus.topics "Notices"): the numbers the SPEC states, held here so a burst can never
- * cost more than one extra read. */
+/* The shared coalesced re-read (SPEC §bus.topics "Notices") and a subscription held
+ * only while the document is visible (SPEC §bus.topics "Demand"). The numbers the
+ * SPEC states are held here so a burst can never cost more than one extra read. */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { coalescedRead } from "../src/views/remote-live.js";
+import { create, fromBinary, toBinary } from "../src/bus/codec.js";
+import { installBus, type BusSocket } from "../src/bus/bus.js";
+import { busOnWhileVisible, coalescedRead } from "../src/bus/live.js";
+import { FrameSchema, Kind, LinkId, Module, NoticeSchema, TopicId, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, RemoteSeatId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 
 function hidden(value: boolean): void {
   vi.spyOn(document, "hidden", "get").mockReturnValue(value);
@@ -149,5 +153,108 @@ describe("coalescedRead (SPEC §bus.topics \"Notices\" - re-reads coalesce)", ()
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(2000);
     expect(hiddenReads, "there is no held read left to wake").toBe(0);
+  });
+});
+
+/* A bus the visibility test drives by hand: SUBSCRIBE and UNSUBSCRIBE are real frames. */
+class FakeSocket implements BusSocket {
+  static all: FakeSocket[] = [];
+  sent: Uint8Array[] = [];
+  binaryType: BinaryType = "blob";
+  private listeners = new Map<string, Array<(ev: Event) => void>>();
+  constructor() { FakeSocket.all.push(this); }
+  addEventListener(type: string, listener: (ev: Event) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+  removeEventListener(): void { /* the link outlives the assertion */ }
+  send(data: Uint8Array): void { this.sent.push(data); }
+  close(): void { /* left open: the test ends the page, not the socket */ }
+  private emit(type: string, ev: Event): void {
+    for (const fn of this.listeners.get(type) ?? []) fn(ev);
+  }
+  open(): void { this.emit("open", new Event("open")); }
+  receive(bytes: Uint8Array): void {
+    const copy = new Uint8Array(bytes);
+    for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
+  }
+  static latest(): FakeSocket {
+    const sock = FakeSocket.all[FakeSocket.all.length - 1];
+    if (!sock) throw new Error("the link did not create a socket");
+    return sock;
+  }
+}
+
+function welcome(): Uint8Array {
+  return toBinary(FrameSchema, create(FrameSchema, {
+    module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
+    body: toBinary(WelcomeSchema, create(WelcomeSchema, {
+      protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
+    })),
+  }));
+}
+
+function openBus(): FakeSocket {
+  FakeSocket.all.length = 0;
+  installBus({
+    socket: FakeSocket,
+    random: () => 0.5,
+    reload: () => {},
+    info: () => Promise.resolve(),
+    notice: () => {},
+    url: "ws://127.0.0.1/api/bus",
+  });
+  const sock = FakeSocket.latest();
+  sock.open();
+  sock.receive(welcome());
+  return sock;
+}
+
+/** TOPIC request ids, in the order the link sent them. HELLO and PING are not topics. */
+function topicIds(sock: FakeSocket): number[] {
+  const ids: number[] = [];
+  for (const bytes of sock.sent) {
+    const frame = fromBinary(FrameSchema, bytes);
+    if (frame.module === 0 && frame.sub === 2) ids.push(frame.id);
+  }
+  return ids;
+}
+
+function setVisible(value: boolean): void {
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue(value ? "visible" : "hidden");
+}
+
+describe("busOnWhileVisible (SPEC §bus.topics \"Demand\")", () => {
+  // SPEC §bus.topics: a sampled topic is held only while the document is visible.
+  it("subscribes while visible, drops the topic on hide, and re-reads once on show", () => {
+    setVisible(true);
+    const sock = openBus();
+    let shown = 0;
+    const stop = busOnWhileVisible(
+      { module: Module.HOST, sub: HostSub.REMOTE_SEAT, key: "" },
+      RemoteSeatId.REMOTE_SEAT_CHANGED,
+      NoticeSchema,
+      () => {},
+      () => { shown += 1; },
+    );
+    expect(topicIds(sock)).toEqual([TopicId.SUBSCRIBE]);
+    expect(shown, "the first subscribe is the page's own read, not onVisible").toBe(0);
+
+    setVisible(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(topicIds(sock)).toEqual([TopicId.SUBSCRIBE, TopicId.UNSUBSCRIBE]);
+    expect(shown).toBe(0);
+
+    setVisible(true);
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(topicIds(sock)).toEqual([TopicId.SUBSCRIBE, TopicId.UNSUBSCRIBE, TopicId.SUBSCRIBE]);
+    expect(shown, "show re-subscribes and then re-reads once").toBe(1);
+
+    setVisible(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    const sent = topicIds(sock).length;
+    stop();
+    expect(topicIds(sock).length, "unmount while hidden sends nothing more").toBe(sent);
   });
 });

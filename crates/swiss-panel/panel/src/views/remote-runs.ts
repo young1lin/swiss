@@ -50,14 +50,14 @@ import {
   timelineToggle, valueBlock,
 } from "../ui/index.js";
 import type { TimelineItem } from "../ui/index.js";
-import { coalescedRead, type CoalescedRead } from "./remote-live.js";
+import { coalescedRead, type CoalescedRead } from "../bus/live.js";
 import { busOn, busOnResync } from "../bus/bus.js";
 import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
 import { HostSub, RunChangedSchema, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
 import { HistoryId, RemoteSub, TargetsId } from "../bus/pb/swiss/bus/v1/remote_pb.js";
 
 const PAGE = 20;
-const LIVE_EVERY_MS = 1500; // how often an OPEN live row pulls its output; the 6 s poll moves the list
+const LIVE_EVERY_MS = 1500; // how often an OPEN live row pulls its output; the list moves on the bus
 /** What one open live row may hold, in characters — the same 256 KB the gateway itself keeps
  *  live (runs.rs MAX_LIVE_OUTPUT_BYTES): a runaway stream must not grow the tab's memory while
  *  someone watches, and the finished record repaints the row from its durable tail. */
@@ -763,7 +763,7 @@ export async function refresh() {
   adoptFinished();
 }
 /** Subscribe before the first read (SPEC §remote.panel): every event of the page's topics
- *  re-reads through the owning routes, coalesced as a notice is (remote-live.ts), and every
+ *  re-reads through the owning routes, coalesced as a notice is (bus/live.ts), and every
  *  WELCOME re-reads too. The three topics: this lane's runs (HOST.RUNS `remote` — a run from
  *  any surface appears the moment it is queued or moves; the body is a RunChanged, not a bare
  *  notice), the record (REMOTE.HISTORY — a run filed, Clear, retention), and the target table

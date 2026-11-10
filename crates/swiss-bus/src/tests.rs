@@ -182,6 +182,7 @@ fn limits_match_the_spec() {
     assert_eq!(crate::RECONNECT_MAX, Duration::from_secs(30));
     assert_eq!(crate::RECONNECT_NOTICE, Duration::from_secs(3));
     assert_eq!(STAMP_INTERVAL, Duration::from_secs(6));
+    assert_eq!(crate::NOTICE_GAP, Duration::from_millis(250));
     assert_eq!(crate::LIST_PAGE_MAX, 2 * 1024 * 1024);
 }
 
@@ -834,4 +835,176 @@ fn unhex(text: &str) -> Vec<u8> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex"))
         .collect()
+}
+
+/// WELCOME without the link pump, so a test can subscribe a link that is not yet
+/// welcomed. The frame is only there so `welcome` has something to queue.
+fn welcome_link(bus: &Bus, id: u64) {
+    let out = crate::codec::Outgoing {
+        module: 0,
+        sub: 1,
+        id: 1,
+        kind: Kind::Response as i32,
+        reply_to: 1,
+        key: String::new(),
+        body: Vec::new(),
+        fault: None,
+        origin: String::new(),
+    };
+    assert!(bus.welcome(id, &out), "the link is open");
+}
+
+// SPEC §bus.topics: demand rises with the first welcomed subscriber and falls when the last one leaves.
+#[test]
+fn demand_rises_on_the_first_subscriber_and_falls_on_the_last() {
+    let bus = bus();
+    let mut demand = bus.demand(7, 1);
+    assert!(!*demand.borrow_and_update(), "nobody is subscribed");
+
+    let left = bus.try_open().expect("a link");
+    welcome_link(&bus, left.id);
+    bus.subscribe(left.id, &[topic(7, 1, "left")]).expect("under the cap");
+    assert!(demand.has_changed().expect("the watch stays open"));
+    assert!(*demand.borrow_and_update());
+
+    let right = bus.try_open().expect("a link");
+    welcome_link(&bus, right.id);
+    bus.subscribe(right.id, &[topic(7, 1, "right")]).expect("under the cap");
+    assert!(!demand.has_changed().expect("the watch stays open"), "a second link keeps the flag true");
+    assert!(*demand.borrow());
+
+    bus.unsubscribe(left.id, &[topic(7, 1, "left")]);
+    assert!(!demand.has_changed().expect("the watch stays open"));
+    assert!(*demand.borrow(), "one link still subscribes");
+
+    drop(right);
+    assert!(demand.has_changed().expect("the watch stays open"));
+    assert!(!*demand.borrow(), "the last link's close drops demand");
+}
+
+// SPEC §bus.topics: a link that has not been welcomed does not count toward demand.
+#[test]
+fn demand_ignores_a_link_that_is_not_welcomed() {
+    let bus = bus();
+    let opened = bus.try_open().expect("a link");
+    bus.subscribe(opened.id, &[topic(5, 1, "srv")]).expect("under the cap");
+    let mut demand = bus.demand(5, 1);
+    assert!(!*demand.borrow_and_update());
+    // WELCOME is what starts the count: the topic was already on the link.
+    welcome_link(&bus, opened.id);
+    assert!(demand.has_changed().expect("the watch stays open"));
+    assert!(*demand.borrow());
+}
+
+// SPEC §bus.topics: a receiver taken while demand already holds starts true.
+#[test]
+fn a_demand_receiver_made_while_demand_holds_starts_true() {
+    let bus = bus();
+    let opened = bus.try_open().expect("a link");
+    welcome_link(&bus, opened.id);
+    bus.subscribe(opened.id, &[topic(4, 6, "")]).expect("under the cap");
+    let first = bus.demand(4, 6);
+    assert!(*first.borrow());
+    let second = bus.demand(4, 6);
+    assert!(*second.borrow());
+}
+
+/// Let a spawned sleep park, and a woken one finish, before the assertion reads.
+/// `advance` wakes a deadline; the task runs on a later poll, the same way the
+/// idle-limit test waits out its protocol ping.
+async fn idle() {
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+}
+
+fn drain_bins(end: &mut End) -> Vec<Frame> {
+    let mut out = Vec::new();
+    loop {
+        match end.rx.try_recv() {
+            Ok(IoMsg::Binary(bytes)) => out.push(decode(&bytes)),
+            Ok(IoMsg::Ping(_)) | Ok(IoMsg::Pong(_)) => {}
+            Ok(other) => panic!("expected a frame, got {other:?}"),
+            Err(TryRecvError::Empty) => return out,
+            Err(TryRecvError::Disconnected) => panic!("the link closed"),
+        }
+    }
+}
+
+// SPEC §bus.topics: a throttled notice publishes the first poke at once and one trailing poke at the gap's end.
+#[tokio::test(start_paused = true)]
+async fn notifier_publishes_the_first_poke_at_once_and_one_trailing_for_a_burst() {
+    let bus = bus();
+    let mut end = open(&bus, "page-a", 8).await;
+    subscribe(&mut end, vec![topic(4, 3, "")]).await;
+    let notifier = crate::Notifier::new(Arc::clone(&bus), 4, 3, 1, crate::NOTICE_GAP);
+    for _ in 0..10 {
+        notifier.poke("mcp");
+    }
+    // Park the gap's sleep at t = 0, and let the link forward the first notice, before time moves.
+    tokio::time::advance(Duration::from_millis(0)).await;
+    idle().await;
+    let frames = drain_bins(&mut end);
+    assert_eq!(frames.len(), 1, "the first poke publishes at once");
+    assert_eq!(frames[0].key, "mcp");
+    assert_eq!(frames[0].kind, Kind::Event as i32);
+    assert!(frames[0].body.is_empty(), "a notice carries nothing");
+
+    tokio::time::advance(crate::NOTICE_GAP - Duration::from_millis(1)).await;
+    idle().await;
+    assert!(drain_bins(&mut end).is_empty(), "the trailing notice waits out the gap");
+
+    tokio::time::advance(Duration::from_millis(1)).await;
+    idle().await;
+    let frames = drain_bins(&mut end);
+    assert_eq!(frames.len(), 1, "ten pokes inside the gap are two frames");
+    assert_eq!(frames[0].key, "mcp");
+}
+
+// SPEC §bus.topics: one key's gap does not hold another key's notice.
+#[tokio::test(start_paused = true)]
+async fn notifier_keys_are_independent() {
+    let bus = bus();
+    let mut end = open(&bus, "page-a", 8).await;
+    subscribe(&mut end, vec![topic(4, 3, "")]).await;
+    let notifier = crate::Notifier::new(Arc::clone(&bus), 4, 3, 1, crate::NOTICE_GAP);
+    notifier.poke("a");
+    notifier.poke("b");
+    notifier.poke("a");
+    tokio::time::advance(Duration::from_millis(0)).await;
+    idle().await;
+    let frames = drain_bins(&mut end);
+    assert_eq!(frames.iter().map(|frame| frame.key.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+
+    tokio::time::advance(crate::NOTICE_GAP).await;
+    idle().await;
+    let frames = drain_bins(&mut end);
+    assert_eq!(frames.len(), 1, "only the key that was poked again trails");
+    assert_eq!(frames[0].key, "a");
+}
+
+// SPEC §bus.topics: a key that stays quiet for a whole gap is forgotten, so the next poke publishes at once.
+#[tokio::test(start_paused = true)]
+async fn notifier_forgets_a_quiet_key() {
+    let bus = bus();
+    let mut end = open(&bus, "page-a", 8).await;
+    subscribe(&mut end, vec![topic(4, 3, "")]).await;
+    let notifier = crate::Notifier::new(Arc::clone(&bus), 4, 3, 1, crate::NOTICE_GAP);
+    notifier.poke("mcp");
+    tokio::time::advance(Duration::from_millis(0)).await;
+    idle().await;
+    assert_eq!(drain_bins(&mut end).len(), 1);
+    assert_eq!(notifier.retained_keys(), 1, "the gap is still open");
+
+    tokio::time::advance(crate::NOTICE_GAP).await;
+    idle().await;
+    assert!(drain_bins(&mut end).is_empty(), "a quiet gap publishes nothing more");
+    assert_eq!(notifier.retained_keys(), 0, "a quiet key is dropped");
+
+    notifier.poke("mcp");
+    tokio::time::advance(Duration::from_millis(0)).await;
+    idle().await;
+    let frames = drain_bins(&mut end);
+    assert_eq!(frames.len(), 1, "the next poke is a first poke again");
+    assert_eq!(frames[0].key, "mcp");
 }

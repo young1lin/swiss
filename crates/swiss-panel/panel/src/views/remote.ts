@@ -43,7 +43,7 @@ import { btn, checkField, closeSheet, dot, field, hint, note, iconBtn, moreBtn, 
 import { actionBtn } from "../ui/action.js";
 import type { RowCol } from "../ui/index.js";
 import { commandOf, runOutcome, runTarget } from "./remote-runs.js";
-import { coalescedRead, type CoalescedRead } from "./remote-live.js";
+import { coalescedRead, type CoalescedRead } from "../bus/live.js";
 import { busOn, busOnResync } from "../bus/bus.js";
 import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
 import { HostSub, RemoteSeatId, RunChangedSchema, RunsId } from "../bus/pb/swiss/bus/v1/host_pb.js";
@@ -551,7 +551,7 @@ function patchCols(): void {
   }
 }
 /** Subscribe before the first read (SPEC §remote.panel): every event of the page's topics
- *  re-reads through the owning routes, coalesced as a notice is (remote-live.ts), and every
+ *  re-reads through the owning routes, coalesced as a notice is (bus/live.ts), and every
  *  WELCOME re-reads too — the resync after a reconnect. The four topics: the seat (the
  *  endpoint dots and the Tunnels presence line), the target table, and the run record's two
  *  sides. A run moving (HOST.RUNS `remote`) or the record moving only moves the last-run
@@ -595,9 +595,8 @@ function stopLive(): void {
   reRead = null;
 }
 
-/** The tick paints nothing new from the network (SPEC §remote.panel): the last-run column's
- *  relative times move on the clock, not on a read, so they are rewritten from what the page
- *  already holds. */
-export function poll() { patchCols(); }
+/** Relative times only, from what the page already holds (SPEC §remote.panel). The shell
+ *  calls this on its 6 s tick; it never reads the network. */
+export function clock() { patchCols(); }
 export function countText() { return targets.length ? trn(targets.length, "remote.nTargets.one", "remote.nTargets.other") : ""; }
 export function unmount() { stopLive(); }
