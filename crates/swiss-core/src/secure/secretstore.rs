@@ -502,12 +502,20 @@ pub fn put_secret(
 /// section of a bundle has. Nothing is deleted: a name absent from the bundle keeps its value,
 /// because an import is a restore, not a mirror. Entries whose name is not valid or whose value
 /// is not a string are skipped, not fatal — the env section of a bundle tolerates the same, and
-/// one bad hand-edited entry must not cost the operator the other forty. The caller writes the
-/// result together with the rest of the bundle. A file that cannot be read is an error.
+/// one bad hand-edited entry must not cost the operator the other forty. [import_with] hands
+/// the result to the caller's batch, so it lands together with the rest of the bundle. A file
+/// that cannot be read is an error.
 pub fn merged_for_import(
     path: &Path,
     entries: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
+    merged_vault(path, entries).map(|merged| file_value(&merged))
+}
+
+fn merged_vault(
+    path: &Path,
+    entries: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Vault, String> {
     // Merge against the FILE, not the in-process vault: 'swiss import' runs in a fresh CLI
     // process where nothing has injected the vault yet, and the merge promise (a name the
     // bundle does not mention keeps its value) is about what is stored on disk.
@@ -523,7 +531,7 @@ pub fn merged_for_import(
             merged.secrets.insert(name.clone(), s.to_string());
         }
     }
-    Ok(file_value(&merged))
+    Ok(merged)
 }
 
 /// Whether an import would store a value. Masked, empty and illegal names are not values
@@ -534,26 +542,30 @@ pub fn import_would_store(entries: &serde_json::Map<String, serde_json::Value>) 
         .any(|(name, value)| valid_name(name) && value.as_str().is_some())
 }
 
-/// Merge `entries` into the vault file and the in-process copy, then publish HOST.VAULT.
-/// Returns whether a value was stored. A set with nothing to store writes nothing and
-/// publishes nothing; a file that cannot be read is still an error, so the caller's other
-/// files stay untouched (SPEC §host.vault).
-pub fn import_merged(
+/// Restore `entries` into the vault as one part of a bundle (SPEC §host.cli, §host.vault).
+/// The merged file goes to `write` beside the bundle's other files, so they all land or none
+/// do; only after `write` succeeded does the in-process copy take the merge and HOST.VAULT
+/// publish. `write` gets `None` when nothing would be stored (masked, empty or illegal
+/// names): the vault is not rewritten and nothing publishes. A vault that cannot be read
+/// refuses before `write` runs, so the other files stay untouched too. Returns whether a
+/// value was stored.
+pub fn import_with(
     path: &Path,
     entries: &serde_json::Map<String, serde_json::Value>,
+    write: impl FnOnce(Option<(PathBuf, serde_json::Value)>) -> Result<(), String>,
 ) -> Result<bool, String> {
     let _one = one_mutation();
     if !import_would_store(entries) {
         if !entries.is_empty() {
             read_file(path).map_err(left_in_place)?;
         }
+        write(None)?;
         return Ok(false);
     }
-    let merged = merged_for_import(path, entries)?;
-    write_secure_json(path, &merged)?;
-    let loaded = read_file(path).map_err(left_in_place)?;
+    let merged = merged_vault(path, entries)?;
+    write(Some((path.to_path_buf(), file_value(&merged))))?;
     let committed = if let Ok(mut slot) = vault().write() {
-        *slot = loaded;
+        *slot = merged;
         true
     } else {
         false
@@ -1011,21 +1023,34 @@ mod tests {
         inject_vault(&path);
         let (_silence, hits) = count_notices();
 
+        // What the bundle's batch does with the vault file it is handed.
+        let land = |file: Option<(PathBuf, serde_json::Value)>| match file {
+            Some((at, value)) => write_secure_json(&at, &value),
+            None => Ok(()),
+        };
         let mut empty = serde_json::Map::new();
-        assert!(!import_merged(&path, &empty).expect("empty"));
+        assert!(!import_with(&path, &empty, land).expect("empty"));
         assert_eq!(*hits.lock().expect("hits"), 0);
         assert!(!path.exists(), "a no-op import does not create the file");
 
         empty.insert("NotAName".into(), serde_json::json!("x"));
-        assert!(!import_merged(&path, &empty).expect("illegal"));
+        assert!(!import_with(&path, &empty, land).expect("illegal"));
         assert_eq!(*hits.lock().expect("hits"), 0);
 
+        // A batch that fails leaves the vault where it was: no value in GET, no notice.
         let mut entries = serde_json::Map::new();
         entries.insert("imported-key".into(), serde_json::json!("sk_live"));
-        assert!(import_merged(&path, &entries).expect("merge"));
+        let err = import_with(&path, &entries, |_| Err("a sibling file refused".into()));
+        assert_eq!(err, Err("a sibling file refused".to_string()));
+        assert_eq!(*hits.lock().expect("hits"), 0);
+        assert_eq!(vault_lookup("imported-key"), None);
+        assert!(!path.exists(), "the refused batch wrote no vault");
+
+        assert!(import_with(&path, &entries, land).expect("merge"));
         assert_eq!(*hits.lock().expect("hits"), 1);
         assert_eq!(vault_lookup("imported-key").as_deref(), Some("sk_live"));
         assert!(list_secrets().contains(&"imported-key".to_string()));
+        assert_eq!(stored_names(&path).expect("stored").1, vec!["imported-key".to_string()]);
         let _ = std::fs::remove_file(&path);
     }
 }

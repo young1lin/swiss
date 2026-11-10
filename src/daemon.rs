@@ -325,33 +325,38 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
         }
         files.push((path, json!(merged)));
     }
-    // Before the vault write and the batch: a new machine's home is this import.
+    // Before the batch: a new machine's home is this import.
     swiss_core::platform::mkdir_private(&data_dir());
-    let mut wrote_secrets = false;
+    let mut entries = serde_json::Map::new();
     if let Some(vault) = obj.get("secrets") {
         // Accept the export shape ({rev, secrets: {name -> value}}) or a bare map; imported
         // values win, nothing is deleted (SPEC §host.vault — a restore, not a mirror). The static
         // empty map is only for a section that is neither — a borrowed Map::new() would die
         // at the end of the expression.
-        let entries: serde_json::Map<String, Value> = match vault.get("secrets") {
+        let given: serde_json::Map<String, Value> = match vault.get("secrets") {
             Some(inner) => inner.as_object().cloned().unwrap_or_default(),
             None => vault.as_object().cloned().unwrap_or_default(),
         };
         // A masked entry carries no value, so it must not become one: writing SECRET_MASK
         // would replace a good local secret with six asterisks. Those names are skipped and
         // whatever this machine holds for them stays (2026-09-28).
-        let entries: serde_json::Map<String, Value> = entries
+        entries = given
             .into_iter()
             .filter(|(_, v)| v.as_str() != Some(SECRET_MASK))
             .collect();
-        if !entries.is_empty() {
-            let path = swiss_core::secure::secretstore::secret_store_path();
-            // A torn vault fails here, before the other files are written. A set with no
-            // value to store writes nothing (SPEC §host.vault).
-            wrote_secrets = swiss_core::secure::secretstore::import_merged(&path, &entries)?;
-        }
     }
-    replace_all_secure_json(&files)?;
+    // The vault rides the same batch: a target that cannot be read refuses the bundle before
+    // any file, the vault included, changes. A torn vault refuses before the batch; a set with
+    // no value to store leaves the vault out of it (SPEC §host.vault).
+    let wrote_secrets = swiss_core::secure::secretstore::import_with(
+        &swiss_core::secure::secretstore::secret_store_path(),
+        &entries,
+        |vault_file| {
+            let mut batch = files.clone();
+            batch.extend(vault_file);
+            replace_all_secure_json(&batch)
+        },
+    )?;
     let mut names: Vec<String> = files
         .iter()
         .filter_map(|(path, _)| path.file_name())
@@ -1473,6 +1478,41 @@ mod tests {
         assert!(!data_path(&["env.json"]).exists(), "the env section did not land either");
         std::fs::remove_file(data_path(&["secrets.json"])).expect("clear the torn vault");
         assert_eq!(export_state().expect("the export")["config"]["port"], json!(1));
+        clear_state();
+    }
+
+    // SPEC §host.cli: the vault lands in the same batch as the other files. A target that
+    // cannot be read refuses the bundle before the vault moves, on disk or in this process.
+    #[tokio::test]
+    async fn an_unreadable_target_leaves_the_vault_as_it_was() {
+        let _lock = daemon_state().await;
+        clear_state();
+        seal("secrets.json", json!({ "rev": 3, "secrets": { "kept": "v" } }));
+        swiss_core::secure::secretstore::inject_vault(
+            &swiss_core::secure::secretstore::secret_store_path(),
+        );
+        std::fs::write(data_path(&["gateway.config.json"]), "{ not json")
+            .expect("plant a torn config");
+        let err = import_state(&json!({
+            "version": 1,
+            "config": { "port": 2 },
+            "secrets": { "secrets": { "torn-batch-name": "value" } }
+        }))
+        .unwrap_err();
+        assert!(
+            err.contains("gateway.config.json") && err.contains("stays as it is"),
+            "{err}"
+        );
+        assert_eq!(stored_vault(), json!({ "kept": "v" }), "the vault file did not move");
+        assert_eq!(
+            swiss_core::secure::secretstore::vault_lookup("torn-batch-name"),
+            None,
+            "nor did this process's copy"
+        );
+        assert_eq!(
+            std::fs::read_to_string(data_path(&["gateway.config.json"])).expect("kept"),
+            "{ not json"
+        );
         clear_state();
     }
 
