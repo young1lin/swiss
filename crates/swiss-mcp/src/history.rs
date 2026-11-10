@@ -208,22 +208,26 @@ impl McpHistory {
         self.store.state_label()
     }
 
-    /// Re-enroll under a different share map: the store's own seam, exposed so a
-    /// test can drive its share to exhaustion within a test's lifetime (the
-    /// declared shares are hundreds of megabytes). Production only ever passes
-    /// [swiss_host::history::quota::QuotaPolicy::default].
+    /// Where an MCP.CALLS notice goes (SPEC §mcp.calls): after a commit that moved what
+    /// `/api/mcps/{name}/calls` answers - a record, a clear, or a sweep.
     pub fn set_calls_notice(&self, hook: Option<crate::calls::CallsNotice>) {
         if let Ok(mut slot) = self.calls_notice.lock() {
             *slot = hook;
         }
     }
 
+    /// Where an MCP.TRAFFIC notice goes: after a commit that moved the traffic archive -
+    /// a record or a sweep.
     pub fn set_traffic_notice(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
         if let Ok(mut slot) = self.traffic_notice.lock() {
             *slot = hook;
         }
     }
 
+    /// Re-enroll under a different share map: the store's own seam, exposed so a
+    /// test can drive its share to exhaustion within a test's lifetime (the
+    /// declared shares are hundreds of megabytes). Production only ever passes
+    /// [swiss_host::history::quota::QuotaPolicy::default].
     pub fn set_quota(&self, policy: swiss_host::history::quota::QuotaPolicy) {
         self.store.set_quota(policy, false);
     }
@@ -607,34 +611,45 @@ impl McpHistory {
     /// Age-based retention over the durable index — the hourly sweep's new body. Byte
     /// budgets are physical accounting and land with the retention phase. Timestamps are
     /// PARSED for the comparison, the same rule the jsonl sweep_age used, rather than
-    /// compared as text.
+    /// compared as text. After the commit, each MCP that lost calls gets its MCP.CALLS
+    /// notice and a traffic sweep its MCP.TRAFFIC notice: an open Logs or Traffic page
+    /// re-reads instead of showing rows the archive no longer holds (SPEC §mcp.calls).
     pub async fn sweep(&self, age_ms: i64) {
+        let calls_notice = self.calls_notice.lock().ok().and_then(|slot| slot.clone());
+        let traffic_notice = self.traffic_notice.lock().ok().and_then(|slot| slot.clone());
         // The sweep rides submit_exempt, not submit: a quota that refuses the
         // sweep can never reclaim the bytes it is policing - the share would
         // wedge with no exit (the store contract, host history store.rs).
         let submitted = self.store.submit_exempt(64, move |pool| {
             Box::pin(async move {
                 let cutoff = swiss_core::util::now_ms() as i64 - age_ms;
-                let expired = |rows: Vec<(i64, String)>| -> Vec<i64> {
-                    rows.into_iter()
-                        .filter(|(_, at)| {
-                            swiss_core::util::parse_iso_ms(at)
-                                .map(|t| t < cutoff)
-                                .unwrap_or(false)
-                        })
-                        .map(|(id, _)| id)
-                        .collect()
+                let old = |at: &str| {
+                    swiss_core::util::parse_iso_ms(at)
+                        .map(|t| t < cutoff)
+                        .unwrap_or(false)
                 };
-                let calls: Vec<(i64, String)> = sqlx::query_as("SELECT id, at FROM call")
-                    .fetch_all(&pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let calls: Vec<(i64, String, String)> =
+                    sqlx::query_as("SELECT id, at, mcp FROM call")
+                        .fetch_all(&pool)
+                        .await
+                        .map_err(|e| e.to_string())?;
                 let traffic: Vec<(i64, String)> = sqlx::query_as("SELECT id, at FROM traffic")
                     .fetch_all(&pool)
                     .await
                     .map_err(|e| e.to_string())?;
+                let expired_calls: Vec<(i64, String)> = calls
+                    .into_iter()
+                    .filter(|(_, at, _)| old(at))
+                    .map(|(id, _, mcp)| (id, mcp))
+                    .collect();
+                let expired_traffic: Vec<i64> = traffic
+                    .into_iter()
+                    .filter(|(_, at)| old(at))
+                    .map(|(id, _)| id)
+                    .collect();
                 let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-                for id in expired(calls) {
+                for (id, _) in &expired_calls {
+                    let id = *id;
                     sqlx::query("DELETE FROM call_body WHERE call_id = ?")
                         .bind(id)
                         .execute(&mut *tx)
@@ -646,14 +661,30 @@ impl McpHistory {
                         .await
                         .map_err(|e| e.to_string())?;
                 }
-                for id in expired(traffic) {
+                for id in &expired_traffic {
                     sqlx::query("DELETE FROM traffic WHERE id = ?")
-                        .bind(id)
+                        .bind(*id)
                         .execute(&mut *tx)
                         .await
                         .map_err(|e| e.to_string())?;
                 }
-                tx.commit().await.map_err(|e| e.to_string())
+                tx.commit().await.map_err(|e| e.to_string())?;
+                // After the commit, so a re-read sees the rows gone.
+                if let Some(notice) = calls_notice {
+                    let mut swept: Vec<&str> =
+                        expired_calls.iter().map(|(_, mcp)| mcp.as_str()).collect();
+                    swept.sort_unstable();
+                    swept.dedup();
+                    for mcp in swept {
+                        notice(mcp);
+                    }
+                }
+                if !expired_traffic.is_empty() {
+                    if let Some(notice) = traffic_notice {
+                        notice();
+                    }
+                }
+                Ok(())
             })
         });
         if let Err(e) = submitted {

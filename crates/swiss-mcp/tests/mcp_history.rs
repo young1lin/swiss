@@ -1264,30 +1264,81 @@ async fn a_cursor_inside_a_leading_multibyte_char_advances_to_the_boundary() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
-/// SPEC §mcp.calls: a database call notifies after the insert commits, and a
-/// clear notifies only when a row was removed. read_calls then sees that state.
+/// SPEC §mcp.calls: a database call notifies after the insert commits, a clear only
+/// when a row was removed, and a sweep once per MCP that lost calls. The hook itself
+/// asks a reader of its own, so each notice proves the commit came first - a flush
+/// before the read would only prove the queue drained.
 #[tokio::test]
 async fn a_database_call_notifies_after_it_commits_and_an_empty_clear_does_not() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     let home = swiss_core::paths::test_home().join("mcp-hist-notice");
     let _ = std::fs::remove_dir_all(&home);
     let history = McpHistory::open(&home.join("logs")).await.unwrap();
-    let hits = Arc::new(AtomicUsize::new(0));
-    let hits_hook = hits.clone();
-    history.set_calls_notice(Some(Arc::new(move |_| {
-        hits_hook.fetch_add(1, Ordering::SeqCst);
+    let db = home.join("logs").join("mcp.db");
+    let seen: Arc<Mutex<Vec<(String, i64)>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    history.set_calls_notice(Some(Arc::new(move |mcp: &str| {
+        let rows =
+            count_seen_by_another_reader(&db, "SELECT count(*) FROM call WHERE mcp = ?", &[mcp]);
+        sink.lock().unwrap().push((mcp.to_string(), rows));
     })));
+    let take = || std::mem::take(&mut *seen.lock().unwrap());
     record(&history, "db", "needle-tool", "out");
     history.flush().await;
-    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    assert_eq!(take(), vec![("db".to_string(), 1)], "the notice saw the committed call");
     let page = history.read_calls("db", 0, 20, None).await;
     assert_eq!(page["calls"][0]["tool"], json!("needle-tool"));
     history.clear_calls("nobody").await;
-    assert_eq!(hits.load(Ordering::SeqCst), 1, "a clear of nothing publishes nothing");
+    assert_eq!(take(), vec![], "a clear of nothing publishes nothing");
     history.clear_calls("db").await;
-    assert_eq!(hits.load(Ordering::SeqCst), 2);
-    let page = history.read_calls("db", 0, 20, None).await;
-    assert!(page["calls"].as_array().unwrap().is_empty());
+    assert_eq!(take(), vec![("db".to_string(), 0)], "the notice saw the clear");
+
+    // The hourly sweep: one notice per MCP whose calls it removed, after its commit.
+    record(&history, "db", "old", "out");
+    record(&history, "fs", "old", "out");
+    history.flush().await;
+    take();
+    history.sweep(10_i64 * 365 * 24 * 60 * 60 * 1000).await;
+    assert_eq!(take(), vec![], "a sweep that removes nothing publishes nothing");
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    history.sweep(0).await;
+    assert_eq!(
+        take(),
+        vec![("db".to_string(), 0), ("fs".to_string(), 0)],
+        "each swept MCP heard once, after the rows were gone"
+    );
     let _ = history.close().await;
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// What a reader of its own sees in the store's file at this instant: one count on a fresh
+/// connection, on a thread and runtime of its own, so neither the store's pool nor its
+/// write queue stands between. A notice hook calls it, and it must not await on the
+/// writer's runtime - the answer is what a page re-reading on that notice would get.
+fn count_seen_by_another_reader(db: &std::path::Path, sql: &'static str, binds: &[&str]) -> i64 {
+    let url = format!("sqlite://{}?mode=ro", db.to_string_lossy().replace('\\', "/"));
+    let binds: Vec<String> = binds.iter().map(|b| b.to_string()).collect();
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a reader runtime")
+            .block_on(async move {
+                let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(1)
+                    .connect(&url)
+                    .await
+                    .expect("reach the store's file");
+                let mut query = sqlx::query_scalar(sql);
+                for bind in binds {
+                    query = query.bind(bind);
+                }
+                let n: i64 = query.fetch_one(&pool).await.expect("count");
+                pool.close().await;
+                n
+            })
+    })
+    .join()
+    .expect("the reader thread")
+}
+

@@ -221,8 +221,8 @@ why ids carry their sub's name (`HistoryId` is already REMOTE.HISTORY's).
 | | 5 VAULT | 1 VAULT_CHANGED | EVENT | `Notice` | — | a secret put or deleted, vault groups set, an import merged, a `secrets` group edit |
 | | 6 MEMORY | 1 MEMORY_READING | EVENT | `MemoryReading` | — | a sample while demand holds (D5) |
 | 5 MCP | 1 SERVERS | 1 SERVERS_CHANGED | EVENT | `Notice` | — | what `GET /api/mcps` answers moved: register, start, stop, restart, update, rename, delete, an idle reap, a probe round, `forget_health` that changed a row, an order or `mcps` group edit |
-| | 2 CALLS | 1 CALLS_CHANGED | EVENT | `Notice` | MCP name | a call row committed; that MCP's log cleared (rows removed); its stderr ring grew (throttled) |
-| | 3 TRAFFIC | 1 TRAFFIC_CHANGED | EVENT | `Notice` | — | a traffic row committed (throttled); the traffic log cleared |
+| | 2 CALLS | 1 CALLS_CHANGED | EVENT | `Notice` | MCP name | a call row committed; that MCP's log cleared (rows removed); the age sweep removed its calls; its stderr ring grew (throttled) |
+| | 3 TRAFFIC | 1 TRAFFIC_CHANGED | EVENT | `Notice` | — | a traffic row committed (throttled); the traffic log cleared; the age sweep removed rows |
 | 7 TUNNELS | 1 TABLE | 1 TUNNELS_TABLE_CHANGED | EVENT | `Notice` | — | a rule's or connection's state or reason moved; a rule or connection created, edited, deleted; start-all / stop-all; a port freed; a `conns` or `rules` group edit |
 | 8 JOBS | 1 LIST | 1 JOBS_LIST_CHANGED | EVENT | `Notice` | — | definitions written; `lastRunAt` / `lastOk` settled; a job forgotten; a `jobs` group edit |
 | 9 TERMINAL | 1 SESSIONS | 1 SESSIONS_CHANGED | EVENT | `Notice` | — | a session opened, closed, relabelled; recording turned on or off |

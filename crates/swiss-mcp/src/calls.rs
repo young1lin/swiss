@@ -592,6 +592,7 @@ async fn append_one(
     }
     // Inside the queue, so a sweep can never race an append into a half-written file.
     if now_ms().saturating_sub(swept_at) > SWEEP_EVERY_MS {
+        // The append's own notice follows, so what this drops needs none of its own.
         sweep_age(log, mcp, state)?;
     }
     Ok(())
@@ -681,14 +682,14 @@ fn trim(log: &CallLog, mcp: &str, state: &Arc<Mutex<FileState>>) -> Result<(), S
 ///
 /// A torn line (killed mid-append) has no usable date; it is dropped with the expired prefix
 /// rather than treated as current, which is the same thing the readers do to it.
-fn sweep_age(log: &CallLog, mcp: &str, state: &Arc<Mutex<FileState>>) -> Result<(), String> {
+fn sweep_age(log: &CallLog, mcp: &str, state: &Arc<Mutex<FileState>>) -> Result<usize, String> {
     if let Ok(mut s) = state.lock() {
         s.swept_at = now_ms();
     }
     let path = log.file_for(mcp);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
-        Err(_) => return Ok(()), // no file yet
+        Err(_) => return Ok(0), // no file yet
     };
     let cutoff = now_ms() as i64 - MAX_AGE_MS;
     let lines: Vec<&str> = text.split('\n').filter(|l| !l.is_empty()).collect();
@@ -706,7 +707,7 @@ fn sweep_age(log: &CallLog, mcp: &str, state: &Arc<Mutex<FileState>>) -> Result<
         }
     }
     if keep_from == 0 {
-        return Ok(()); // nothing has expired
+        return Ok(0); // nothing has expired
     }
     let kept: Vec<&str> = lines[keep_from..].to_vec();
     let out = if kept.is_empty() {
@@ -733,7 +734,7 @@ fn sweep_age(log: &CallLog, mcp: &str, state: &Arc<Mutex<FileState>>) -> Result<
         "call log aged out",
         Some(serde_json::json!({ "mcp": mcp, "dropped": keep_from, "kept": kept.len() })),
     );
-    Ok(())
+    Ok(keep_from)
 }
 
 /// Remove payload files for entries no longer in the index.
@@ -788,8 +789,11 @@ impl CallLog {
             let queue = st.lock().ok().map(|s| s.queue.clone());
             let Some(queue) = queue else { continue };
             let _guard = queue.lock().await;
-            if let Err(err) = sweep_age(self, &mcp, &st) {
-                on_error("sweep", &err);
+            match sweep_age(self, &mcp, &st) {
+                // The lines are gone from disk: an open Logs re-reads (SPEC §mcp.calls).
+                Ok(dropped) if dropped > 0 => self.poke_calls(&mcp),
+                Ok(_) => {}
+                Err(err) => on_error("sweep", &err),
             }
         }
     }

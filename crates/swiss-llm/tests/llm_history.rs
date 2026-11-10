@@ -1471,18 +1471,21 @@ async fn a_run_says_what_it_was_for_who_started_it_and_what_it_started() {
 }
 
 /// SPEC §llm.history: a committed call notifies, and the read after flush sees it.
-/// A sweep that removes nothing publishes nothing; one that removes rows does.
+/// A sweep that removes nothing publishes nothing; one that removes rows does. The hook
+/// itself asks a reader of its own, so each notice proves the commit came first.
 #[tokio::test]
 async fn a_committed_call_notifies_after_it_is_readable_and_an_empty_sweep_does_not() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     let dir = home("llm-hist-notice");
     let history = LlmHistory::open(&dir).await.expect("open");
-    let hits = Arc::new(AtomicUsize::new(0));
-    let hits_hook = hits.clone();
+    let db = dir.join("llm.db");
+    let seen: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
     history.set_history_notice(Some(Arc::new(move || {
-        hits_hook.fetch_add(1, Ordering::SeqCst);
+        let rows = count_seen_by_another_reader(&db, "SELECT count(*) FROM call", &[]);
+        sink.lock().unwrap().push(rows);
     })));
+    let take = || std::mem::take(&mut *seen.lock().unwrap());
     history.record_chat(ChatCall {
         provider: "glm",
         model: "glm-5.3",
@@ -1508,17 +1511,50 @@ async fn a_committed_call_notifies_after_it_is_readable_and_an_empty_sweep_does_
         },
     });
     history.flush().await;
-    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    assert_eq!(take(), vec![1], "the notice saw the committed call");
     let page = history.read_calls(0, 10, None, None).await.expect("read");
     assert!(
         page["calls"][0]["preview"].as_str().unwrap_or("").contains("noticed"),
         "{page}"
     );
     history.sweep(10_i64 * 365 * 24 * 60 * 60 * 1000).await;
-    assert_eq!(hits.load(Ordering::SeqCst), 1, "a sweep that removes nothing publishes nothing");
+    assert_eq!(take(), Vec::<i64>::new(), "a sweep that removes nothing publishes nothing");
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     history.sweep(0).await;
-    assert_eq!(hits.load(Ordering::SeqCst), 2);
+    assert_eq!(take(), vec![0], "the notice saw the rows gone");
     let page = history.read_calls(0, 10, None, None).await.expect("read");
     assert!(page["calls"].as_array().unwrap().is_empty(), "{page}");
     history.close().await.expect("close");
 }
+
+/// What a reader of its own sees in llm.db at this instant: one count on a fresh
+/// connection, on a thread and runtime of its own, so neither the store's pool nor its
+/// write queue stands between. A notice hook calls it, and it must not await on the
+/// writer's runtime - the answer is what a page re-reading on that notice would get.
+fn count_seen_by_another_reader(db: &std::path::Path, sql: &'static str, binds: &[&str]) -> i64 {
+    let url = format!("sqlite://{}?mode=ro", db.to_string_lossy().replace('\\', "/"));
+    let binds: Vec<String> = binds.iter().map(|b| b.to_string()).collect();
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a reader runtime")
+            .block_on(async move {
+                let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(1)
+                    .connect(&url)
+                    .await
+                    .expect("reach the store's file");
+                let mut query = sqlx::query_scalar(sql);
+                for bind in binds {
+                    query = query.bind(bind);
+                }
+                let n: i64 = query.fetch_one(&pool).await.expect("count");
+                pool.close().await;
+                n
+            })
+    })
+    .join()
+    .expect("the reader thread")
+}
+
