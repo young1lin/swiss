@@ -425,6 +425,18 @@ pub async fn run_gateway() -> Result<(), String> {
     // The children registry of the shared services (SPEC §process.children): /api/memory
     // reads its roots from here, and every MCP seat built after this point carries it.
     let _ = ctx.children.set(services.children.clone());
+    // HOST.MEMORY (SPEC §host.memory). One sample while any page holds the topic,
+    // at once when the first subscriber arrives, then every 6 s. Nobody looking,
+    // nothing is sampled.
+    let memory_children = services.children.clone();
+    swiss_host::mem::spawn_gateway_sampler(
+        services.bus.clone(),
+        services.bus.demand(
+            swiss_bus::pb::v1::Module::Host as u32,
+            swiss_bus::pb::v1::HostSub::Memory as u32,
+        ),
+        move || memory_children.roots(),
+    );
 
     // The plugin host (SPEC §host.plugins). The four built-ins register in inventory/page order
     // (MCP+Traffic, Tunnels, Data, Jobs) and boot in the REVERSE, so tunnels come up before

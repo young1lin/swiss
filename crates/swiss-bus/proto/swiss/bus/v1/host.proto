@@ -22,6 +22,7 @@ enum HostSub {
   HOST_SUB_PLUGINS = 3;
   HOST_SUB_TOKENS = 4;
   HOST_SUB_VAULT = 5;
+  HOST_SUB_MEMORY = 6;
 }
 
 enum RemoteSeatId {
@@ -81,6 +82,25 @@ message RunChanged {
   optional uint64 started_at_ms = 9 [jstype = JS_NUMBER];
   optional uint64 ended_at_ms = 10 [jstype = JS_NUMBER];
   optional int32 exit_code = 11;
+}
+
+// HOST.MEMORY (SPEC §bus.registry, SPEC §host.memory). Module 4, sub 6.
+// The reading itself: one sample serves every open page. Sampled only while
+// some link subscribes. private_mb is the route's heapUsedMb and heapTotalMb.
+// children_mb is absent while the route's childrenPending is true and it has
+// no childrenMb. externalMb is always 0 and is not on the wire.
+enum MemoryId {
+  MEMORY_ID_UNSPECIFIED = 0;
+  MEMORY_READING = 1;
+}
+
+message MemoryReading {
+  double gateway_mb = 1;
+  double private_mb = 2;
+  optional double children_mb = 3;
+  uint32 process_count = 4;
+  bool children_pending = 5;
+  uint64 at_ms = 6 [jstype = JS_NUMBER];
 }
 
 

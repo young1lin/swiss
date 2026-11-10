@@ -33,7 +33,7 @@ import { initSelects } from "./ui/select.js";
 import { clockPage, initPages, pageHasPendingChanges, pageUsesSidebar, pollPage, watchPluginInventory } from "./page-registry.js";
 import { openDetail } from "./detail.js";
 import { patchSidebar } from "./menu.js";
-import { loadMemory, refreshNow } from "./polling.js";
+import { loadMemory, refreshNow, watchMemoryChip } from "./polling.js";
 import { exitImmersive, immersiveOn, initImmersive } from "./immersive.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
@@ -211,12 +211,11 @@ if (window.matchMedia as unknown) {
 
 /* Navigation and deep links are owned by the page registry. */
 
-/* Polling is cheap: /api/mcps is status-only, and /api/memory is an in-process reading (Toolhelp32
-   on Windows, /proc on Linux) - no child process is ever spawned for it (SPEC §host.memory). Polling
-   still pauses when the tab is hidden: nobody is looking. */
+/* The tick still refreshes pages that export poll, and repaints relative times. Memory
+   is not on it: the chip reads HOST.MEMORY, and only while this document is visible
+   (SPEC §host.memory). */
 function poll(): void {
   if (document.visibilityState !== "visible") return;
-  void loadMemory(true);
   void pollPage();
   // The same tick repaints relative times. clock() reads nothing (SPEC §remote.panel).
   clockPage();
@@ -230,6 +229,7 @@ installBus({
 });
 watchPluginInventory(); // HOST.PLUGINS for the life of the page (SPEC §host.plugins)
 watchTokens(); // HOST.TOKENS for the life of the page (SPEC §host.tokens)
+watchMemoryChip(); // HOST.MEMORY while this document is visible (SPEC §host.memory)
 busOnResync(() => { void loadInfo(); }); // /api/info once per WELCOME (SPEC §bus.link)
 initPrefs({ lang: applyLang, theme: (theme) => { setTheme(theme); paintThemeBtn(); }, codeScheme: setCodeScheme });
 

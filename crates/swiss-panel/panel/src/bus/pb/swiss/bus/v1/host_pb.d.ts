@@ -92,6 +92,47 @@ export declare type RunChanged = Message<"swiss.bus.v1.RunChanged"> & {
 export declare const RunChangedSchema: GenMessage<RunChanged>;
 
 /**
+ * @generated from message swiss.bus.v1.MemoryReading
+ */
+export declare type MemoryReading = Message<"swiss.bus.v1.MemoryReading"> & {
+  /**
+   * @generated from field: double gateway_mb = 1;
+   */
+  gatewayMb: number;
+
+  /**
+   * @generated from field: double private_mb = 2;
+   */
+  privateMb: number;
+
+  /**
+   * @generated from field: optional double children_mb = 3;
+   */
+  childrenMb?: number | undefined;
+
+  /**
+   * @generated from field: uint32 process_count = 4;
+   */
+  processCount: number;
+
+  /**
+   * @generated from field: bool children_pending = 5;
+   */
+  childrenPending: boolean;
+
+  /**
+   * @generated from field: uint64 at_ms = 6 [jstype = JS_NUMBER];
+   */
+  atMs: bigint;
+};
+
+/**
+ * Describes the message swiss.bus.v1.MemoryReading.
+ * Use `create(MemoryReadingSchema)` to create a new message.
+ */
+export declare const MemoryReadingSchema: GenMessage<MemoryReading>;
+
+/**
  * HOST.PLUGINS (SPEC §bus.registry, SPEC §host.plugins). Module 4, sub 3.
  * A NOTICE, keyed by the plugin id: the inventory row moved, so the shell
  * re-reads GET /api/plugins. The body is empty on purpose.
@@ -128,6 +169,11 @@ export enum HostSub {
    * @generated from enum value: HOST_SUB_VAULT = 5;
    */
   VAULT = 5,
+
+  /**
+   * @generated from enum value: HOST_SUB_MEMORY = 6;
+   */
+  MEMORY = 6,
 }
 
 /**
@@ -290,4 +336,30 @@ export enum RunState {
  * Describes the enum swiss.bus.v1.RunState.
  */
 export declare const RunStateSchema: GenEnum<RunState>;
+
+/**
+ * HOST.MEMORY (SPEC §bus.registry, SPEC §host.memory). Module 4, sub 6.
+ * The reading itself: one sample serves every open page. Sampled only while
+ * some link subscribes. private_mb is the route's heapUsedMb and heapTotalMb.
+ * children_mb is absent while the route's childrenPending is true and it has
+ * no childrenMb. externalMb is always 0 and is not on the wire.
+ *
+ * @generated from enum swiss.bus.v1.MemoryId
+ */
+export enum MemoryId {
+  /**
+   * @generated from enum value: MEMORY_ID_UNSPECIFIED = 0;
+   */
+  MEMORY_ID_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: MEMORY_READING = 1;
+   */
+  MEMORY_READING = 1,
+}
+
+/**
+ * Describes the enum swiss.bus.v1.MemoryId.
+ */
+export declare const MemoryIdSchema: GenEnum<MemoryId>;
 

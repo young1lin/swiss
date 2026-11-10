@@ -401,6 +401,26 @@
     "key": ""
   },
   {
+    "bodyType": "MemoryReading",
+    "body": {
+      "gatewayMb": 12.5,
+      "privateMb": 40.0,
+      "childrenMb": 3.5,
+      "processCount": 4,
+      "atMs": 1700000000000
+    },
+    "origin": "page-a",
+    "name": "memory-reading",
+    "hex": "0804100618012003281a4224090000000000002940110000000000004440190000000000000c4020043080d095ffbc315206706167652d61",
+    "module": 4,
+    "sub": 6,
+    "id": 1,
+    "kind": "EVENT",
+    "seq": 26,
+    "replyTo": 0,
+    "key": ""
+  },
+  {
     "bodyType": "Notice",
     "body": {},
     "origin": "page-a",

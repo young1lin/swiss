@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
-                                                                                                                                        
+                                                                                                                                                       
+import { busOnWhileVisible } from "./bus/live.js";
+import { Module } from "./bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, MemoryId, MemoryReadingSchema } from "./bus/pb/swiss/bus/v1/host_pb.js";
+                                                                      
 import { $, api, apiJson, dotTitle, toast } from "./util.js";
 import { tr, trn } from "./i18n.js";
 import { h } from "./h.js";
@@ -72,8 +76,9 @@ function renderMemory()       {
   lines.push(tr("polling.clickRefreshMemoryReading"));
   chip.title = lines.join("\n");
   // The chip stays a control on every paint (the toolbar button is long gone), not only the
-  // old childrenPending retry — this function re-runs every 6s poll and would otherwise
-  // strip the class and the click with the first one. The click itself is memory-ONLY: the
+  // old childrenPending retry — this function re-runs on every HOST.MEMORY reading and
+  // would otherwise strip the class and the click with the first one. The click itself is
+  // memory-ONLY: the
   // chip shows a reading, and a reading is not a reload button — the full refresh lives on
   // the r key (refreshNow below).
   chip.className = "chip button";
@@ -84,6 +89,34 @@ function renderMemory()       {
  *  number, so a click asks for the number — reloading the active view under the pointer
  *  (focus, scroll, an expanded row) is a side effect nobody asked for. */
 function refreshMemoryNow()       { void loadMemory(true); }
+
+/** HOST.MEMORY (SPEC §host.memory). Held only while the document is visible, so a
+ *  hidden window costs the gateway no sample. Show re-reads once; a reading repaints
+ *  the chip without another GET. privateMb is both heap fields; externalMb is 0. */
+function watchMemoryChip()             {
+  return busOnWhileVisible(
+    { module: Module.HOST, sub: HostSub.MEMORY, key: "" },
+    MemoryId.MEMORY_READING,
+    MemoryReadingSchema,
+    (msg) => { applyReading(msg); },
+    () => { void loadMemory(true); },
+  );
+}
+
+function applyReading(msg               )       {
+  const info                = {
+    gatewayMb: msg.gatewayMb,
+    heapUsedMb: msg.privateMb,
+    heapTotalMb: msg.privateMb,
+    externalMb: 0,
+    processCount: msg.processCount,
+    childrenPending: msg.childrenPending,
+    at: String(msg.atMs),
+  };
+  if (msg.childrenMb !== undefined) info.childrenMb = msg.childrenMb;
+  setMemoryInfo(info);
+  renderMemory();
+}
 
 /** The panel's ONE explicit view refresh (the r key — the chip's click is memory-only, see
  *  refreshMemoryNow): re-read memory with the child walk, and reload the active view. On
@@ -319,4 +352,4 @@ function connRowNode(c                        )              {
 }
 
 
-export { connRowNode, isTunnelsView, tunBusyWord, tunDot, jobGroupsList, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowNode, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };
+export { connRowNode, isTunnelsView, tunBusyWord, tunDot, jobGroupsList, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowNode, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip, watchMemoryChip };

@@ -285,3 +285,9 @@ bytes; the Node-era field names), `childrenMb`, `processCount`, `childrenPending
   runs is not the gateway's memory.
 - **One walk, two readers.** The walk keeps a subtotal per root. `/api/memory` sums the
   subtotals, and the Process page's children rows read them from the same cache.
+- **The panel reads it through HOST.MEMORY.** While any page holds the topic the gateway
+  samples every 6 s, and at once when the first subscriber arrives, and publishes a
+  `MemoryReading`. A sample whose rounded figures match the last published one is not
+  published. No subscriber, no sample. The chip subscribes only while the document is
+  visible, does one `GET /api/memory?tree=1` when it subscribes, and repaints from the
+  readings. Clicking the chip still reads once.

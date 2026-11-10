@@ -60,4 +60,7 @@ base64 = "0.23"
 [dev-dependencies]
 # test-utils pins the deterministic master key for this crate's own test binaries.
 swiss-core = { path = "../swiss-core", version = "0.2.0", features = ["test-utils"] }
+# Paused time for the memory sampler test (SPEC §host.memory). test-util is already
+# in the workspace through swiss-mcp; this turns it on for this crate's tests only.
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "time", "sync", "test-util"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

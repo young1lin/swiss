@@ -680,6 +680,15 @@ fn assert_body(ty: &str, bytes: &[u8], fields: &serde_json::Value, name: &str) {
             assert_eq!(v1::Notice::decode(bytes).expect(name), v1::Notice {}, "{name}");
             assert!(bytes.is_empty(), "{name}: a notice carries no body");
         }
+        "MemoryReading" => {
+            let reading = v1::MemoryReading::decode(bytes).expect(name);
+            assert_eq!(reading.gateway_mb.to_bits(), 12.5f64.to_bits(), "{name}");
+            assert_eq!(reading.private_mb.to_bits(), 40.0f64.to_bits(), "{name}");
+            assert_eq!(reading.children_mb.map(f64::to_bits), Some(3.5f64.to_bits()), "{name}");
+            assert_eq!(reading.process_count, 4, "{name}");
+            assert!(!reading.children_pending, "{name}");
+            assert_eq!(reading.at_ms, 1_700_000_000_000, "{name}");
+        }
         "RunChanged" => {
             let run = v1::RunChanged::decode(bytes).expect(name);
             assert_eq!(run.run_id, fields["runId"].as_u64().expect("runId"), "{name}");
@@ -843,6 +852,18 @@ fn golden_entries() -> Vec<serde_json::Value> {
             "terminal-sessions",
             frame!(9, 1, 1, Kind::Event, 25, 0, "", "page-a", v1::Notice {}.encode_to_vec(), None),
             serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a"}),
+        ),
+        (
+            "memory-reading",
+            frame!(4, 6, 1, Kind::Event, 26, 0, "", "page-a", v1::MemoryReading {
+                gateway_mb: 12.5,
+                private_mb: 40.0,
+                children_mb: Some(3.5),
+                process_count: 4,
+                children_pending: false,
+                at_ms: 1_700_000_000_000,
+            }.encode_to_vec(), None),
+            serde_json::json!({"bodyType":"MemoryReading","body":{"gatewayMb":12.5,"privateMb":40.0,"childrenMb":3.5,"processCount":4,"atMs":1700000000000u64},"origin":"page-a"}),
         ),
         (
             "plugins-notice",

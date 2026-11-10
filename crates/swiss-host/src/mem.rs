@@ -54,6 +54,122 @@ fn cache() -> &'static std::sync::Mutex<Option<(u64, String, TreeResult)>> {
 /// Walking the process tree is the expensive part, so a result is reused for this long.
 const CACHE_MS: u64 = 20_000;
 
+/// How often HOST.MEMORY samples while a page holds the topic (SPEC §host.memory).
+pub const SAMPLE_EVERY: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// The rounded figures a `MemoryReading` carries. `at_ms` is not one of them: a
+/// new timestamp is not a new reading. Compared by bits so two identical
+/// roundings compare equal.
+#[derive(Clone)]
+pub struct MemoryFigures {
+    pub gateway_mb: f64,
+    pub private_mb: f64,
+    pub children_mb: Option<f64>,
+    pub process_count: u32,
+    pub children_pending: bool,
+}
+
+impl PartialEq for MemoryFigures {
+    fn eq(&self, other: &Self) -> bool {
+        self.gateway_mb.to_bits() == other.gateway_mb.to_bits()
+            && self.private_mb.to_bits() == other.private_mb.to_bits()
+            && self.children_mb.map(f64::to_bits) == other.children_mb.map(f64::to_bits)
+            && self.process_count == other.process_count
+            && self.children_pending == other.children_pending
+    }
+}
+
+/// The route's JSON, as the chip prints it. `childrenMb` absent stays absent.
+pub fn figures_of(info: &Value) -> MemoryFigures {
+    MemoryFigures {
+        gateway_mb: info["gatewayMb"].as_f64().unwrap_or(0.0),
+        private_mb: info["heapUsedMb"].as_f64().unwrap_or(0.0),
+        children_mb: info.get("childrenMb").and_then(Value::as_f64),
+        process_count: info["processCount"].as_u64().unwrap_or(1) as u32,
+        children_pending: info["childrenPending"].as_bool().unwrap_or(false),
+    }
+}
+
+fn publish_reading(bus: &swiss_bus::Bus, figures: &MemoryFigures) {
+    use prost::Message as _;
+    let reading = swiss_bus::pb::v1::MemoryReading {
+        gateway_mb: figures.gateway_mb,
+        private_mb: figures.private_mb,
+        children_mb: figures.children_mb,
+        process_count: figures.process_count,
+        children_pending: figures.children_pending,
+        at_ms: swiss_core::util::now_ms(),
+    };
+    bus.publish(
+        swiss_bus::pb::v1::Module::Host as u32,
+        swiss_bus::pb::v1::HostSub::Memory as u32,
+        swiss_bus::pb::v1::MemoryId::MemoryReading as u32,
+        "",
+        "",
+        reading.encode_to_vec(),
+    );
+}
+
+/// Sample `read` while `demand` is true: at once when it rises, then every
+/// `every`. Returns how many times `read` ran. A sample whose figures match
+/// the last published one is not published. Demand falling clears that memory,
+/// so the next subscriber gets a reading even when the figures have not moved.
+/// Must be spawned on a tokio runtime.
+pub fn spawn_memory_sampler<R, P>(
+    mut demand: tokio::sync::watch::Receiver<bool>,
+    every: std::time::Duration,
+    read: R,
+    publish: P,
+) -> std::sync::Arc<std::sync::atomic::AtomicUsize>
+where
+    R: Fn() -> MemoryFigures + Send + Sync + 'static,
+    P: Fn(&MemoryFigures) + Send + Sync + 'static,
+{
+    let samples = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = samples.clone();
+    tokio::spawn(async move {
+        let mut last: Option<MemoryFigures> = None;
+        loop {
+            if !*demand.borrow_and_update() {
+                last = None;
+                if demand.changed().await.is_err() {
+                    return;
+                }
+                continue;
+            }
+            let figures = read();
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if last.as_ref() != Some(&figures) {
+                publish(&figures);
+                last = Some(figures);
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(every) => {}
+                result = demand.changed() => {
+                    if result.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    samples
+}
+
+/// The gateway's sampler: `?tree=1`'s reading, on HOST.MEMORY, while demand holds.
+pub fn spawn_gateway_sampler(
+    bus: std::sync::Arc<swiss_bus::Bus>,
+    demand: tokio::sync::watch::Receiver<bool>,
+    roots: impl Fn() -> Vec<u32> + Send + Sync + 'static,
+) {
+    let _samples = spawn_memory_sampler(
+        demand,
+        SAMPLE_EVERY,
+        move || figures_of(&get_memory_info(&roots(), true)),
+        move |figures| publish_reading(&bus, figures),
+    );
+}
+
 /// Drop the cached child measurement so the next walk re-measures (call after start/stop/restart).
 pub fn invalidate_memory_cache() {
     if let Ok(mut c) = cache().lock() {
@@ -65,7 +181,8 @@ pub fn invalidate_memory_cache() {
 ///
 /// The gateway's own numbers are read in-process — free and always current. Child subtrees are
 /// only walked when proc-type MCPs actually exist AND the caller asks for it (`measure_children`):
-/// every panel path asks with `?tree=1` (the 6 s poll, the memory chip's click, the r key) and
+/// every panel path asks with `?tree=1` (the chip's subscribe and click, the r key, and
+/// the HOST.MEMORY sampler) and
 /// leans on the cache below to bound the cost, while a tree-less call gets
 /// `childrenPending: true`. A walk that found nothing reports `childrenPending`
 /// rather than a confident-looking zero — "0 MB across 0 processes" reads exactly like "there
@@ -287,5 +404,47 @@ mod tests {
         // memory chip double-count the process it is describing.
         let _lock = tree_cache();
         assert!(swiss_core::platform::process_tree_working_set(&[std::process::id()]).is_none());
+    }
+
+    /// SPEC §host.memory: nobody subscribed, the sampler stays at 0 across 30 s.
+    /// The first subscriber is read at once. The same rounded figures are not
+    /// published again. The last unsubscribe stops the sampling.
+    #[tokio::test(start_paused = true)]
+    async fn no_subscriber_does_not_sample_and_an_unchanged_reading_is_not_republished() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let published = Arc::new(AtomicUsize::new(0));
+        let published_hook = published.clone();
+        let figures = super::MemoryFigures {
+            gateway_mb: 12.5,
+            private_mb: 40.0,
+            children_mb: Some(3.5),
+            process_count: 4,
+            children_pending: false,
+        };
+        let samples = super::spawn_memory_sampler(
+            rx,
+            std::time::Duration::from_secs(6),
+            move || figures.clone(),
+            move |_figures| {
+                published_hook.fetch_add(1, Ordering::SeqCst);
+            },
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        assert_eq!(samples.load(Ordering::SeqCst), 0, "no subscriber, no sample");
+
+        tx.send(true).expect("the watch is open");
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        assert_eq!(samples.load(Ordering::SeqCst), 1, "the first subscriber is sampled at once");
+        assert_eq!(published.load(Ordering::SeqCst), 1);
+
+        tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+        assert_eq!(samples.load(Ordering::SeqCst), 2, "the interval sampled again");
+        assert_eq!(published.load(Ordering::SeqCst), 1, "the same rounded figures are not published");
+
+        tx.send(false).expect("the watch is open");
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        assert_eq!(samples.load(Ordering::SeqCst), 2, "the last unsubscribe stops sampling");
     }
 }
