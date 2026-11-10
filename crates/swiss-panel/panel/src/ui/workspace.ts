@@ -23,7 +23,8 @@
  *              sideRow()s - the projects, the connections.
  *   wsHead     the main column's head: the subject's name and a sub line, its actions, the tabs.
  *   wsSplit    two panes side by side under the head: one at a fixed width (a list you pick
- *              from at the start, an inspector at the end) and one that takes the rest.
+ *              from at the start, an inspector at the end) and one that takes the rest; the
+ *              edge between them is a grip the reader drags.
  *   wsBar      a strip of controls across a pane (its tools; `rows` a line each), or under it
  *              (`foot`: a count).
  *   wsScroll   the part of a pane that scrolls; `pad` for a reading column (a record, a form).
@@ -76,14 +77,35 @@ export function wsHead(o: { title: string; sub?: HChild; actions?: HChild[]; nav
     o.nav ? h("div", { class: "ws-nav" }, o.nav) : null);
 }
 
+/** What the flexible pane keeps however far the fixed one is dragged, in px: the --ws-rest-min
+ *  token, which caps the fixed pane in the stylesheet too (a width remembered in a wider window). */
+const WS_REST_MIN = 320;
+/** The bound of a drag on a split that is not laid out, so has no width to read. */
+const WS_FIXED_MAX = 960;
+
 /** `fixed`: which pane keeps its width - the start (a list, --ws-list-w) or the end (an
- *  inspector, --ws-aside-w). Each pane is a column; what scrolls in it is a wsScroll. */
-export function wsSplit(o: { fixed: "start" | "end"; start: HChild; end: HChild; startLabel?: string; endLabel?: string; id?: string }): HTMLElement {
+ *  inspector, --ws-aside-w). Each pane is a column; what scrolls in it is a wsScroll.
+ *  The edge between the two is a grip: the reader drags the fixed pane wider or narrower, a
+ *  double-click puts the token's width back. The width is one per kind of pane (`ws-list`,
+ *  `ws-aside`), so the tabs of a page and the pages themselves keep one line; `key` names a
+ *  split that should remember its own. It does not fold: the list is how a record is picked. */
+export function wsSplit(o: { fixed: "start" | "end"; start: HChild; end: HChild; startLabel?: string; endLabel?: string; id?: string; key?: string }): HTMLElement {
   const pane = (fixed: boolean, label: string | undefined, body: HChild): HTMLElement =>
     h("section", { class: "ws-pane" + (fixed ? " fixed " + o.fixed : ""), aria: { label } }, body);
-  return h("div", { class: "ws-split", id: o.id },
-    pane(o.fixed === "start", o.startLabel, o.start),
-    pane(o.fixed === "end", o.endLabel, o.end));
+  const atEnd = o.fixed === "end";
+  const start = pane(!atEnd, o.startLabel, o.start);
+  const end = pane(atEnd, o.endLabel, o.end);
+  const split = h("div", { class: "ws-split", id: o.id });
+  const edge = grip(atEnd ? end : start, {
+    axis: "x", key: o.key ?? (atEnd ? "ws-aside" : "ws-list"), min: atEnd ? 240 : 220, end: atEnd,
+    label: (atEnd ? o.endLabel : o.startLabel) ?? "",
+    max: () => {
+      const room = Math.round(split.getBoundingClientRect().width);
+      return room > 0 ? room - WS_REST_MIN : WS_FIXED_MAX;
+    },
+  });
+  split.append(start, edge, end);
+  return split;
 }
 
 /** `rows` stacks the controls a line each (a narrow list's tools: the mode, the search, the

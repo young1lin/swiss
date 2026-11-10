@@ -364,7 +364,12 @@ literal.
   half its minimum, a double-click, Enter on the focused edge, or the chevron the edge shows
   while the sidebar is under the pointer - leaving a thin strip whose click brings it back. The
   shell's MCP list (`side`), every workspace's side column (`ws-side`) and Data's browser
-  (`db-side`) fold. The size and the fold are remembered per browser (`swiss_grip_<key>`);
+  (`db-side`) fold. A workspace's split (`wsSplit`) carries the same edge between its two
+  panes and does not fold - the list is how a record is picked: the list at the start
+  (`ws-list`, 220 px at least) or the inspector at the end (`ws-aside`, 240 px at least) is
+  dragged, one width per kind so a page's tabs keep one line, a double-click puts the token's
+  width back, and the other pane always keeps `--ws-rest-min` (the drag stops there, and the
+  stylesheet caps a width remembered in a wider window). The size and the fold are remembered per browser (`swiss_grip_<key>`);
   with no `size` the stylesheet's width stands until the reader moves the edge. A change ends
   with a window `resize`, so the pages that measure their space remeasure. `folded` starts a
   foldable pane folded while nothing is remembered (a pane the reader opens when they want

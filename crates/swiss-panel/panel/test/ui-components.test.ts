@@ -925,15 +925,54 @@ describe("ui/workspace", () => {
     expect(bare.querySelector(".ws-sub, .ws-acts, .ws-nav")).toBeNull();
   });
 
-  it("wsSplit: the fixed pane named by side, each pane a labelled section", () => {
+  it("wsSplit: the fixed pane named by side, each pane a labelled section, a grip between them", () => {
     const list = wsSplit({ id: "body", fixed: "start", start: "list", end: "detail", startLabel: "Notes", endLabel: "Note" });
     expect(list.id).toBe("body");
-    const panes = Array.from(list.children) as HTMLElement[];
-    expect(panes.map((p) => p.className)).toEqual(["ws-pane fixed start", "ws-pane"]);
+    expect(Array.from(list.children).map((p) => p.className)).toEqual(["ws-pane fixed start", "grip x", "ws-pane"]);
+    const panes = Array.from(list.querySelectorAll(":scope > .ws-pane"));
     expect(panes.map((p) => p.getAttribute("aria-label"))).toEqual(["Notes", "Note"]);
     expect(panes.map((p) => p.textContent)).toEqual(["list", "detail"]);
-    const insp = wsSplit({ fixed: "end", start: "graph", end: "inspector" });
-    expect(Array.from(insp.children).map((p) => p.className)).toEqual(["ws-pane", "ws-pane fixed end"]);
+    expect(list.querySelector(".grip")?.getAttribute("aria-label"), "named for the pane it sizes").toBe("Resize Notes");
+    expect(list.querySelector(".grip .grip-btn"), "the list a record is picked from does not fold").toBeNull();
+    const insp = wsSplit({ fixed: "end", start: "graph", end: "inspector", endLabel: "Inspector" });
+    expect(Array.from(insp.children).map((p) => p.className)).toEqual(["ws-pane", "grip x end", "ws-pane fixed end"]);
+    expect(insp.querySelector(".grip")?.getAttribute("aria-label")).toBe("Resize Inspector");
+  });
+
+  it("wsSplit's edge sizes the fixed pane and remembers it: one width per kind of pane, or the split's own key", () => {
+    const key = (g: Element | null, k: string): void => { g?.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); };
+    const fixedOf = (s: HTMLElement): HTMLElement => s.querySelector(":scope > .ws-pane.fixed") as HTMLElement;
+    try {
+      const list = wsSplit({ fixed: "start", start: "list", end: "detail" });
+      expect(fixedOf(list).style.width, "the token's width until the reader moves the edge").toBe("");
+      // Nothing is laid out here: the measured width is 0, so the arrows start at the minimum.
+      key(list.querySelector(".grip"), "ArrowRight");
+      expect(fixedOf(list).style.width).toBe("236px");
+      expect(JSON.parse(localStorage.getItem("swiss_grip_ws-list") ?? "null")).toEqual({ size: 236, folded: false });
+      // Another tab's list paints: the same width, so the edge does not jump between tabs.
+      expect(fixedOf(wsSplit({ fixed: "start", start: "a", end: "b" })).style.width).toBe("236px");
+      // An inspector at the end is its own width, and the arrow towards the start widens it.
+      const insp = wsSplit({ fixed: "end", start: "graph", end: "inspector" });
+      expect(fixedOf(insp).style.width).toBe("");
+      key(insp.querySelector(".grip"), "ArrowLeft");
+      expect(fixedOf(insp).style.width).toBe("256px");
+      expect(localStorage.getItem("swiss_grip_ws-aside")).not.toBeNull();
+      // A split that names its own key keeps its own.
+      const own = wsSplit({ fixed: "start", start: "a", end: "b", key: "ws-own" });
+      expect(fixedOf(own).style.width).toBe("");
+      // The double-click puts the token's width back and forgets.
+      list.querySelector(".grip")?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      expect(fixedOf(list).style.width).toBe("");
+      expect(localStorage.getItem("swiss_grip_ws-list")).toBeNull();
+    } finally { localStorage.clear(); }
+  });
+
+  it("the fixed pane's remembered width cannot crowd the other pane out of a narrower window", () => {
+    // The grip writes the width inline; the sheet caps it, leaving the flexible pane its floor.
+    const rule = /\.ws-pane\.fixed \{([^}]*)\}/.exec(sheet("ui.css"))?.[1] ?? "";
+    expect(rule).toMatch(/flex:\s*none/);
+    expect(rule).toContain("max-width: max(50%, calc(100% - var(--ws-rest-min)))");
+    expect(sheet("base.css")).toMatch(/--ws-rest-min:\s*320px/);
   });
 
   it("wsBar runs along one line, or a line per row; foot is the count under a pane", () => {

@@ -385,7 +385,7 @@ function workspaceSample(now        )              {
       ], "notes", { key: "gws", label: tr("gallery.d.pages") }),
     }),
     wsSplit({
-      fixed: "start",
+      fixed: "start", startLabel: tr("gallery.d.tabNotes"),
       start: [
         wsBar({ rows: [[filterInput({ placeholder: tr("gallery.d.searchNotes"), label: tr("gallery.d.searchNotes") })]] }),
         wsScroll({}, pickList({ label: tr("gallery.d.tabNotes") },

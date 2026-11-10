@@ -106,6 +106,8 @@
       --ws-list-w: 360px;
       --ws-list-w-narrow: 300px;
       --ws-aside-w: 320px;
+      /* What a split's flexible pane keeps however wide the reader drags the fixed one. */
+      --ws-rest-min: 320px;
       /* An assistant docked at a page's end edge (ui/chat.ts chatPane): its width before the
          reader drags it. */
       --chat-pane-w: 400px;

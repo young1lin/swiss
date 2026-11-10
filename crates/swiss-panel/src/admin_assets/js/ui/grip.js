@@ -15,7 +15,8 @@
  */
 
 /* The grip (SPEC §panel.ui): the edge between two panes that the reader drags to give one of
- * them more room - a sidebar's right edge, a workspace's side column. It sits between the
+ * them more room - a sidebar's right edge, a workspace's side column, the list beside the
+ * record picked from it (ui/workspace.ts wsSplit). It sits between the
  * pane it sizes (the one BEFORE it) and the pane that takes the rest, and draws nothing of its
  * own until the pointer finds it: a hairline turns accent under the pointer and while held.
  *

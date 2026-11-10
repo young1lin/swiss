@@ -162,7 +162,7 @@ const SIG: Record<string, string> = {
   chatStats: ".chat-compose > .chat-stats > button.chat-ctx[aria-haspopup=dialog] > svg.chat-ring",
   wsSide: "aside.ws-side > .ws-side-head > .sec-cap",
   wsHead: "header.ws-head > .ws-head-row h1.ws-title",
-  wsSplit: ".ws-split > section.ws-pane.fixed.start + section.ws-pane",
+  wsSplit: ".ws-split > section.ws-pane.fixed.start + .grip.x[role=separator] + section.ws-pane",
   wsBar: ".ws-bar",
   wsScroll: ".ws-scroll",
   pickList: ".pick-list[role=listbox] > .pick-row",
