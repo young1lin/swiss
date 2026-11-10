@@ -31,6 +31,9 @@ use serde_json::{json, Value};
 
 use crate::daemon::{read_gateway_token, resolve_port};
 
+mod brief;
+mod origin;
+
 /// How long one exec may run unless --timeout, the project binding, or the target
 /// row says otherwise (SPEC §remote.cli: CLI > binding > target > this).
 const DEFAULT_EXEC_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1000;
@@ -86,6 +89,11 @@ pub struct RemoteArgs {
     pub notes_write: bool,
     pub notes_append: bool,
     pub notes_file: Option<String>,
+    /// The run's reason (SPEC §remote.history "Provenance"): which request this command serves,
+    /// kept with the record. A coding agent must give one for exec, write and sync.
+    pub why: Option<String>,
+    /// `swiss run audit --session <id>`: only the runs one agent conversation submitted.
+    pub session: Option<String>,
 }
 
 /// Split argv at the FIRST bare `--`. Before it: flags and words; after it: ARGV
@@ -173,6 +181,8 @@ pub fn parse(argv: &[String]) -> RemoteArgs {
             "--write" => a.notes_write = true,
             "--append" => a.notes_append = true,
             "--file" => a.notes_file = Some(value(argv, &mut i, &inline)),
+            "--why" => a.why = Some(value(argv, &mut i, &inline)),
+            "--session" => a.session = Some(value(argv, &mut i, &inline)),
             other => a.unknown.push(other.to_string()),
         }
         i += 1;
@@ -357,8 +367,17 @@ async fn run(argv: &[String]) -> i32 {
         eprintln!("--write, --append and --file are notes' own (swiss remote notes)");
         return 1;
     }
+    if a.why.is_some() && !matches!(a.sub.as_str(), "exec" | "sync" | "push" | "write" | "cat" | "pull") {
+        eprintln!("--why goes with a command that runs on a target (exec, sync, push, write, cat, pull)");
+        return 1;
+    }
+    if a.session.is_some() {
+        eprintln!("--session is swiss run audit's");
+        return 1;
+    }
     let gw = Gateway::at(a.port.unwrap_or_else(resolve_port));
     match a.sub.as_str() {
+        "brief" => brief::cmd_brief(&gw, &a).await,
         "endpoints" => cmd_endpoints(gw, &a).await,
         "targets" => cmd_targets(gw, &a).await,
         "target" => cmd_target(gw, &a).await,
@@ -381,6 +400,10 @@ async fn run(argv: &[String]) -> i32 {
 pub fn usage_text() -> String {
     let mut s = String::from("usage: swiss remote <command> [options]\n\n");
     for (cmd, text) in [
+        (
+            "brief [name]",
+            "before acting on a target: its endpoint, what runs there, the last runs and why, its note index",
+        ),
         ("endpoints", "list the endpoints the transport can serve"),
         ("targets", "list configured targets"),
         (
@@ -418,17 +441,17 @@ pub fn usage_text() -> String {
             "download a file or folder",
         ),
         (
-            "notes [id] [--write|--append] [--file PATH]",
-            "a target's local notes: list, read, or set (body on stdin)",
+            "notes [id [topic]] [--write|--append] [--file PATH]",
+            "a target's local notes: the index <id>.md and its topic notes; list, read, or set (body on stdin)",
         ),
     ] {
         s.push_str(&format!("  {cmd:<70} {text}\n"));
     }
     s.push_str(
-        "  run status <id> | run logs <id> [-f] | run cancel <id>              the run surface\n",
+        "  run status <id> | run logs <id> [-f] | run cancel <id> | run why <id>  the run surface\n",
     );
     s.push_str(
-        "  run audit [--since 7d|ISO] [--until ISO] [--target t] [--actor a] [--json] [--export DIR]\n",
+        "  run audit [--since 7d|ISO] [--until ISO] [--target t] [--actor a] [--session s] [--json] [--export DIR]\n",
     );
     s.push_str(
         "                                                                         who ran what, where, with what result - the last 7 days by default\n",
@@ -453,6 +476,12 @@ pub fn usage_text() -> String {
     );
     s.push_str(
         "Every remote run is recorded - who, what, where, exit, output - for seven days at least: swiss run audit.\n",
+    );
+    s.push_str(
+        "--why \"<the request this serves>\" goes before the command and is kept with the run; a coding agent\n",
+    );
+    s.push_str(
+        "must give it for exec, write and sync. swiss run why <id> shows it with what the agent was asked.\n",
     );
     s.push_str(
         "Timeout precedence: --timeout > project binding > target default > 2h (max 24h).\n",
@@ -1063,6 +1092,44 @@ fn cli_actor() -> String {
     "cli".to_string()
 }
 
+/// The run input with its provenance (SPEC §remote.history "Provenance"): the caller's
+/// `--why`, and the coding agent this process runs under. An agent must say why before a
+/// command that changes the far side, so a record read days later answers what it was for;
+/// a person at a terminal is never asked.
+pub fn provenance(
+    action: &str,
+    mut input: Value,
+    a: &RemoteArgs,
+    origin: Option<&origin::Origin>,
+) -> Result<Value, String> {
+    let why = a.why.as_deref().map(str::trim).filter(|why| !why.is_empty());
+    if let Some(why) = why {
+        let max = swiss_remote::trail::WHY_MAX_CHARS;
+        if why.chars().count() > max {
+            return Err(format!("--why is longer than {max} characters; one sentence naming the request is enough"));
+        }
+        input["why"] = json!(why);
+    } else if a.why.is_some() {
+        return Err("--why is empty: name the request this run serves".into());
+    }
+    let Some(origin) = origin else { return Ok(input) };
+    if why.is_none() && origin::needs_why(action) {
+        let kind = action.trim_start_matches("remote.");
+        let mut refusal = format!(
+            "refused: {} runs this {kind} without saying why. Put --why before the command, e.g.\n  \
+             swiss remote exec test --why \"check the disk the user asked about\" -- df -h\n\
+             The reason is kept with the run; swiss run why <id> shows it with what you were asked.",
+            origin.agent
+        );
+        if a.passthrough.iter().any(|word| word == "--why" || word.starts_with("--why=")) {
+            refusal.push_str("\nA --why after the command word is part of the remote command; move it before.");
+        }
+        return Err(refusal);
+    }
+    input["origin"] = origin.to_json();
+    Ok(input)
+}
+
 /// Submit one remote run and, unless --detach, stream its live output through the
 /// cursor API until it is terminal - then exit with the REMOTE exit code (SPEC §remote.cli):
 /// `swiss remote exec build -- false` exits 1 because false did.
@@ -1074,8 +1141,19 @@ async fn submit_and_stream(
     timeout_ms: Option<u64>,
     a: &RemoteArgs,
 ) -> i32 {
-    let mut body =
-        json!({ "action": action, "input": input, "label": label, "actor": cli_actor() });
+    let origin = origin::detect();
+    let input = match provenance(action, input, a, origin.as_ref()) {
+        Ok(input) => input,
+        Err(refusal) => {
+            eprintln!("{refusal}");
+            return 2;
+        }
+    };
+    let actor = match &origin {
+        Some(origin) => format!("{}:{}", cli_actor(), origin.agent),
+        None => cli_actor(),
+    };
+    let mut body = json!({ "action": action, "input": input, "label": label, "actor": actor });
     if let Some(ms) = timeout_ms {
         body["timeoutMs"] = json!(ms);
     }
@@ -1402,17 +1480,28 @@ fn cmd_notes(a: &RemoteArgs) -> i32 {
         return 1;
     }
     let dir = swiss_core::paths::data_path(&["remote-notes"]);
+    let topic = a.words.get(1).map(String::as_str);
+    if let Some(topic) = topic {
+        if !swiss_remote::target::valid_id(topic) {
+            eprintln!("{topic:?} is not a topic name (lowercase, digits, inner dashes)");
+            return 1;
+        }
+    }
     if !a.notes_write && !a.notes_append {
-        return notes_read(&dir, a.words.first().map(String::as_str));
+        return notes_read(&dir, a.words.first().map(String::as_str), topic);
     }
     let Some(alias) = a.words.first().cloned() else {
-        eprintln!("usage: swiss remote notes --write <id> [--file PATH]   (body on stdin)");
+        eprintln!("usage: swiss remote notes --write <id> [topic] [--file PATH]   (body on stdin)");
         return 1;
     };
     if !swiss_remote::target::valid_id(&alias) {
         eprintln!("{alias:?} is not a target id (lowercase, digits, inner dashes)");
         return 1;
     }
+    let (dir, name) = match topic {
+        Some(topic) => (dir.join(&alias), topic.to_string()),
+        None => (dir, alias.clone()),
+    };
     let raw = match read_note_body(a) {
         Ok(raw) => raw,
         Err(err) => {
@@ -1427,7 +1516,7 @@ fn cmd_notes(a: &RemoteArgs) -> i32 {
             return 1;
         }
     };
-    let path = dir.join(format!("{alias}.md"));
+    let path = dir.join(format!("{name}.md"));
     let written = if a.notes_append && path.exists() {
         match std::fs::read_to_string(&path) {
             Ok(existing) => note_appended(&existing, &body),
@@ -1443,13 +1532,44 @@ fn cmd_notes(a: &RemoteArgs) -> i32 {
         eprintln!("cannot write {}: {err}", path.display());
         return 1;
     }
+    let what = match topic {
+        Some(topic) => format!("topic {topic} of {alias}"),
+        None => format!("note for {alias}"),
+    };
     println!(
-        "note for {alias}: {} ({} lines) at {}",
+        "{what}: {} ({} lines) at {}",
         if a.notes_append { "appended" } else { "written" },
         written.lines().count(),
         path.display()
     );
+    if topic.is_none() && written.len() > brief::INDEX_BUDGET {
+        println!(
+            "note: {} is past the {} an index should be; keep the index short and move detail into topics (swiss remote notes --write {alias} <topic>)",
+            human_bytes(written.len() as u64),
+            human_bytes(brief::INDEX_BUDGET as u64)
+        );
+    }
     0
+}
+
+/// The topic notes a target's index points to: `<dir>/<alias>/<topic>.md`, by name.
+fn notes_topics(dir: &std::path::Path, alias: &str) -> Vec<(String, u64)> {
+    let Ok(entries) = std::fs::read_dir(dir.join(alias)) else {
+        return Vec::new();
+    };
+    let mut topics: Vec<(String, u64)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let stem = name.to_str()?.strip_suffix(".md")?;
+            if !swiss_remote::target::valid_id(stem) {
+                return None;
+            }
+            Some((stem.to_string(), entry.metadata().ok()?.len()))
+        })
+        .collect();
+    topics.sort();
+    topics
 }
 
 /// The body as the caller gave it: stdin, or the file `--file` names (no shell
@@ -1464,9 +1584,10 @@ fn read_note_body(a: &RemoteArgs) -> Result<String, String> {
     Ok(raw)
 }
 
-/// `swiss remote notes` (which targets have a note, newest first) and
-/// `swiss remote notes <id>` (the note itself, verbatim).
-fn notes_read(dir: &std::path::Path, alias: Option<&str>) -> i32 {
+/// `swiss remote notes` (which targets have a note, newest first),
+/// `swiss remote notes <id>` (the index note itself, verbatim; its topics on stderr, so a
+/// redirect copies the note alone) and `swiss remote notes <id> <topic>` (one topic note).
+fn notes_read(dir: &std::path::Path, alias: Option<&str>, topic: Option<&str>) -> i32 {
     let Some(alias) = alias else {
         let notes = notes_list(dir);
         if notes.is_empty() {
@@ -1475,7 +1596,12 @@ fn notes_read(dir: &std::path::Path, alias: Option<&str>) -> i32 {
         }
         println!("TARGET                   SIZE        AGE  NOTE");
         for n in &notes {
-            println!("{:<24} {:>9} {:>10}  {}", n.alias, human_bytes(n.bytes), ago(n.modified), n.preview);
+            let topics = match notes_topics(dir, &n.alias).len() {
+                0 => String::new(),
+                1 => "(1 topic) ".to_string(),
+                count => format!("({count} topics) "),
+            };
+            println!("{:<24} {:>9} {:>10}  {topics}{}", n.alias, human_bytes(n.bytes), ago(n.modified), n.preview);
         }
         return 0;
     };
@@ -1483,14 +1609,31 @@ fn notes_read(dir: &std::path::Path, alias: Option<&str>) -> i32 {
         eprintln!("{alias:?} is not a target id (lowercase, digits, inner dashes)");
         return 1;
     }
-    let path = dir.join(format!("{alias}.md"));
+    let topics = notes_topics(dir, alias);
+    let path = match topic {
+        Some(topic) => dir.join(alias).join(format!("{topic}.md")),
+        None => dir.join(format!("{alias}.md")),
+    };
+    let topic_line = || {
+        let names: Vec<&str> = topics.iter().map(|(name, _)| name.as_str()).collect();
+        format!("topics of {alias}: {} (swiss remote notes {alias} <topic>)", names.join(", "))
+    };
     match std::fs::read_to_string(&path) {
         Ok(text) => {
             print!("{text}");
+            if topic.is_none() && !topics.is_empty() {
+                eprintln!("\n{}", topic_line());
+            }
             0
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("no notes for {alias} (swiss remote notes lists every target that has one)");
+            match topic {
+                Some(topic) => eprintln!("no topic {topic} for {alias}"),
+                None => eprintln!("no notes for {alias} (swiss remote notes lists every target that has one)"),
+            }
+            if !topics.is_empty() {
+                eprintln!("{}", topic_line());
+            }
             1
         }
         Err(err) => {
@@ -1782,11 +1925,127 @@ pub async fn run_main(argv: Vec<String>) -> i32 {
             )
         }
         "audit" => cmd_audit(&gw, &a).await,
+        "why" => {
+            let Some(id) = a.words.first().and_then(|w| w.trim_start_matches('#').parse::<u64>().ok()) else {
+                eprintln!("usage: swiss run why <id>");
+                return 1;
+            };
+            cmd_why(&gw, id, a.json).await
+        }
         other => {
-            eprintln!("unknown run subcommand: {other} (status, logs, cancel, audit)");
+            eprintln!("unknown run subcommand: {other} (status, logs, cancel, audit, why)");
             1
         }
     }
+}
+
+/// `swiss run why <id>` (SPEC §remote.history "Provenance"): the reason the run carries, the
+/// agent that submitted it, and what that agent's own log shows around the call - what the
+/// person asked, what the agent said before it, the call itself.
+async fn cmd_why(gw: &Gateway, id: u64, as_json: bool) -> i32 {
+    let trail = match gw.get(&format!("/api/remote/runs/{id}/trail")).await {
+        Ok(trail) => trail["trail"].clone(),
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let record = gw.get(&format!("/api/remote/runs/{id}")).await.ok();
+    if as_json {
+        let out = json!({ "runId": id, "record": record, "trail": trail });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+        return 0;
+    }
+    print!("{}", why_text(id, record.as_ref(), &trail));
+    0
+}
+
+/// What `swiss run why` prints for one run.
+pub fn why_text(id: u64, record: Option<&Value>, trail: &Value) -> String {
+    let mut out = String::new();
+    let input = record.map(|r| &r["input"]).unwrap_or(&Value::Null);
+    match record {
+        Some(row) => out.push_str(&format!(
+            "run {id}: {} on {} by {} - {}\n",
+            audit_command(row),
+            row["meta"]["target"].as_str().or(input["target"].as_str()).unwrap_or("-"),
+            row["actor"].as_str().unwrap_or("-"),
+            audit_outcome(row),
+        )),
+        None => out.push_str(&format!("run {id}: still running\n")),
+    }
+    match input["why"].as_str() {
+        Some(why) => out.push_str(&format!("why:    {why}\n")),
+        None => out.push_str("why:    (none given)\n"),
+    }
+    let origin = &input["origin"];
+    if let Some(agent) = origin["agent"].as_str() {
+        let mut from = agent.to_string();
+        if let Some(version) = origin["version"].as_str() {
+            from.push_str(&format!(" {version}"));
+        }
+        if let Some(session) = origin["session"].as_str() {
+            from.push_str(&format!(", session {session}"));
+        }
+        if let Some(cwd) = origin["cwd"].as_str() {
+            from.push_str(&format!(", in {cwd}"));
+        }
+        out.push_str(&format!("from:   {from}\n"));
+    }
+    if trail.is_null() {
+        if origin.is_null() && record.is_some() {
+            out.push_str("trail:  none - no coding agent submitted it (a person, the panel, or MCP)\n");
+        } else {
+            out.push_str("trail:  still looking in the agent's log (it shows within a minute of the run)\n");
+        }
+        return out;
+    }
+    if !trail["found"].as_bool().unwrap_or(false) {
+        out.push_str(&format!(
+            "trail:  not found - {}\n",
+            trail["reason"].as_str().unwrap_or("the call was not in the agent's log")
+        ));
+        return out;
+    }
+    if let Some(session) = trail["session"].as_str().filter(|s| !s.is_empty() && origin["session"].is_null()) {
+        out.push_str(&format!("session {session}\n"));
+    }
+    if let Some(asked) = trail["asked"]["text"].as_str() {
+        out.push_str(&format!("\nasked  {}\n{}\n", at_text(&trail["asked"]["at"]), indent(asked)));
+    }
+    for said in trail["said"].as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            "\nsaid   {}\n{}\n",
+            at_text(&said["at"]),
+            indent(said["text"].as_str().unwrap_or(""))
+        ));
+    }
+    out.push_str(&format!(
+        "\ncall   {} {}{}\n{}\n",
+        at_text(&trail["at"]),
+        trail["tool"].as_str().unwrap_or("?"),
+        trail["callsBefore"]
+            .as_u64()
+            .filter(|n| *n > 0)
+            .map(|n| format!(" (after {n} other calls since the ask)"))
+            .unwrap_or_default(),
+        indent(trail["call"].as_str().unwrap_or(""))
+    ));
+    out
+}
+
+/// A trail instant (epoch ms) as the audit spells one: UTC, to the second.
+fn at_text(at: &Value) -> String {
+    let Some(ms) = at.as_i64() else { return String::new() };
+    time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(ms) * 1_000_000)
+        .ok()
+        .and_then(|at| at.format(&time::format_description::well_known::Rfc3339).ok())
+        .map(|iso| iso.get(..19).unwrap_or(&iso).replace('T', " "))
+        .unwrap_or_default()
+}
+
+fn indent(text: &str) -> String {
+    text.lines().map(|line| format!("  {line}")).collect::<Vec<_>>().join("\n")
 }
 
 // --- `swiss run audit`: the last seven days, one line a run (SPEC §remote.history) ------------------
@@ -2049,13 +2308,18 @@ async fn cmd_audit(gw: &Gateway, a: &RemoteArgs) -> i32 {
             }
         },
     };
-    let rows = match audit_rows(gw, a, since, until).await {
+    let mut rows = match audit_rows(gw, a, since, until).await {
         Ok(rows) => rows,
         Err(err) => {
             eprintln!("{err}");
             return 1;
         }
     };
+    // One agent conversation's runs, by the session its origin named (Codex and opencode name
+    // none; their session shows in swiss run why).
+    if let Some(session) = a.session.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        rows.retain(|row| row["input"]["origin"]["session"].as_str() == Some(session));
+    }
     if a.json {
         println!(
             "{}",
@@ -2066,6 +2330,9 @@ async fn cmd_audit(gw: &Gateway, a: &RemoteArgs) -> i32 {
     } else {
         for row in &rows {
             println!("{}", audit_line(row));
+            if let Some(why) = row["input"]["why"].as_str().filter(|w| !w.trim().is_empty()) {
+                println!("{:21}why: {}", "", brief::one_line(why, 160));
+            }
         }
         if rows
             .iter()
@@ -2357,6 +2624,79 @@ mod tests {
         assert_eq!(names, vec!["prod", "dev"], "newest first: {names:?}");
         assert_eq!(notes[1].preview, "# dev note");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_note_index_keeps_its_topics_in_a_folder_of_its_own() {
+        let dir = std::env::temp_dir().join(format!("swiss-notes-topics-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("test")).unwrap();
+        std::fs::write(dir.join("test.md"), "# test index\n").unwrap();
+        std::fs::write(dir.join("test").join("v3.md"), "v3 detail").unwrap();
+        std::fs::write(dir.join("test").join("db.md"), "db").unwrap();
+        std::fs::write(dir.join("test").join("Bad.md"), "not a topic").unwrap();
+        assert_eq!(notes_topics(&dir, "test"), vec![("db".to_string(), 2), ("v3".to_string(), 9)]);
+        assert!(notes_topics(&dir, "prod").is_empty());
+        // The topic folder is no note of its own in the listing.
+        let names: Vec<String> = notes_list(&dir).into_iter().map(|n| n.alias).collect();
+        assert_eq!(names, vec!["test"]);
+        assert_eq!(notes_read(&dir, Some("test"), Some("v3")), 0);
+        assert_eq!(notes_read(&dir, Some("test"), Some("gone")), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn why_goes_before_the_command_and_an_agent_must_give_it() {
+        let a = parse_command(&argv(&["exec", "test", "--why", "check the disk", "df", "-h"]));
+        assert_eq!(a.why.as_deref(), Some("check the disk"));
+        assert_eq!(a.passthrough, vec!["df", "-h"]);
+        let agent = origin::Origin { agent: "codex".into(), ..Default::default() };
+        let input = provenance("remote.exec", json!({"target": "test"}), &a, Some(&agent)).unwrap();
+        assert_eq!(input["why"], "check the disk");
+        assert_eq!(input["origin"]["agent"], "codex");
+
+        // After the command word it is the far side's argv, and the agent is refused.
+        let late = parse_command(&argv(&["exec", "test", "df", "--why", "x"]));
+        assert_eq!(late.why, None);
+        let refusal = provenance("remote.exec", json!({}), &late, Some(&agent)).unwrap_err();
+        assert!(refusal.contains("--why before the command"), "{refusal}");
+        assert!(refusal.contains("move it before"), "{refusal}");
+        // A read needs no reason; a person at a terminal is never asked.
+        assert!(provenance("remote.cat", json!({}), &late, Some(&agent)).is_ok());
+        let person = provenance("remote.exec", json!({}), &late, None).unwrap();
+        assert!(person.get("origin").is_none() && person.get("why").is_none());
+        let empty = parse_command(&argv(&["exec", "test", "--why=", "--", "df"]));
+        assert!(provenance("remote.exec", json!({}), &empty, None).is_err());
+    }
+
+    #[test]
+    fn run_why_shows_the_reason_the_agent_and_its_trail() {
+        let record = json!({
+            "runId": 9, "action": "remote.exec", "state": "succeeded", "actor": "cli:claude-code",
+            "meta": {"target": "test"},
+            "input": {"argv": ["df", "-h"], "why": "the disk the user asked about",
+                      "origin": {"agent": "claude-code", "session": "s-1", "cwd": "~/src/app"}},
+        });
+        let pending = why_text(9, Some(&record), &Value::Null);
+        assert!(pending.contains("run 9: df -h on test by cli:claude-code - exit 0"), "{pending}");
+        assert!(pending.contains("why:    the disk the user asked about"), "{pending}");
+        assert!(pending.contains("from:   claude-code, session s-1, in ~/src/app"), "{pending}");
+        assert!(pending.contains("still looking"), "{pending}");
+        let trail = json!({
+            "found": true, "session": "s-1", "tool": "Bash", "at": 1_793_784_600_000i64, "callsBefore": 2,
+            "asked": {"at": 1_793_784_590_000i64, "text": "is test out of disk?"},
+            "said": [{"at": 1_793_784_595_000i64, "text": "Checking test."}],
+            "call": "swiss remote exec test --why ... -- df -h",
+        });
+        let found = why_text(9, Some(&record), &trail);
+        assert!(found.contains("asked  2026-11-04 09:29:50\n"), "{found}");
+        assert!(found.contains("\n  is test out of disk?\n"), "{found}");
+        assert!(found.contains("\n  Checking test.\n"), "{found}");
+        assert!(found.contains("Bash (after 2 other calls since the ask)"), "{found}");
+        let missing = why_text(9, Some(&record), &json!({"found": false, "reason": "no call matched"}));
+        assert!(missing.contains("trail:  not found - no call matched"), "{missing}");
+        let manual = why_text(3, Some(&json!({"runId": 3, "input": {"argv": ["ls"]}})), &Value::Null);
+        assert!(manual.contains("why:    (none given)") && manual.contains("no coding agent"), "{manual}");
     }
 
     #[test]

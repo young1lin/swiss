@@ -43,46 +43,58 @@ use swiss_host::history::store::{Durability, ModuleHistoryStore, OwnerPolicy};
 
 use crate::history::{OutputChunk, PageQuery, StoredContent, MAX_READ_BYTES};
 
-/// The Remote owner's schema, version 1 (the host's version discipline: DDL and stamp
+/// The Remote owner's schema, version 2 (the host's version discipline: DDL and stamp
 /// commit in one transaction; an unknown newer version refuses the open untouched).
-static REMOTE_SCHEMA: &[SchemaStep] = &[SchemaStep::new(
-    1,
-    &[
-        // One row per finished run: run_id is the coordinator's wire id (UNIQUE — the
-        // importer's natural key), ended_ms/target/actor are the page's indexed
-        // predicates, view is the exact wire record the panel has always read.
-        "CREATE TABLE run (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id INTEGER NOT NULL UNIQUE,
-            ended_ms INTEGER NOT NULL,
-            target TEXT,
-            actor TEXT,
-            view TEXT NOT NULL
-        )",
-        "CREATE INDEX run_page ON run (run_id DESC)",
-        // The output stream, chunked and codec-tagged with its byte offset — a byte
-        // cursor read touches only the chunks it needs (SPEC `remote.history).
-        "CREATE TABLE run_output (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id INTEGER NOT NULL,
-            part INTEGER NOT NULL,
-            ofs INTEGER NOT NULL,
-            codec INTEGER NOT NULL,
-            plain INTEGER NOT NULL,
-            block BLOB NOT NULL,
-            UNIQUE (run_id, part)
-        )",
-        "CREATE INDEX run_output_span ON run_output (run_id, ofs)",
-        // A remote.write's body, as the SEALED envelope text verbatim — the database
-        // never holds a new plaintext copy of a sensitive file (SPEC `host.refs).
-        "CREATE TABLE run_content (
+static REMOTE_SCHEMA: &[SchemaStep] = &[
+    SchemaStep::new(
+        1,
+        &[
+            // One row per finished run: run_id is the coordinator's wire id (UNIQUE — the
+            // importer's natural key), ended_ms/target/actor are the page's indexed
+            // predicates, view is the exact wire record the panel has always read.
+            "CREATE TABLE run (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL UNIQUE,
+                ended_ms INTEGER NOT NULL,
+                target TEXT,
+                actor TEXT,
+                view TEXT NOT NULL
+            )",
+            "CREATE INDEX run_page ON run (run_id DESC)",
+            // The output stream, chunked and codec-tagged with its byte offset — a byte
+            // cursor read touches only the chunks it needs (SPEC `remote.history).
+            "CREATE TABLE run_output (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                part INTEGER NOT NULL,
+                ofs INTEGER NOT NULL,
+                codec INTEGER NOT NULL,
+                plain INTEGER NOT NULL,
+                block BLOB NOT NULL,
+                UNIQUE (run_id, part)
+            )",
+            "CREATE INDEX run_output_span ON run_output (run_id, ofs)",
+            // A remote.write's body, as the SEALED envelope text verbatim — the database
+            // never holds a new plaintext copy of a sensitive file (SPEC `host.refs).
+            "CREATE TABLE run_content (
+                run_id INTEGER PRIMARY KEY,
+                envelope TEXT NOT NULL
+            )",
+            // The meta table is the host store's own (schema versioning, import markers):
+            // shared infrastructure, never redefined per module.
+        ],
+    ),
+    // v2: a run's trail (SPEC §remote.history "Provenance"), keyed by the wire run id
+    // and filed apart from the run row - it usually lands while the run is still going.
+    SchemaStep::new(
+        2,
+        &["CREATE TABLE run_trail (
             run_id INTEGER PRIMARY KEY,
-            envelope TEXT NOT NULL
-        )",
-        // The meta table is the host store's own (schema versioning, import markers):
-        // shared infrastructure, never redefined per module.
-    ],
-)];
+            at_ms INTEGER NOT NULL,
+            trail TEXT NOT NULL
+        )"],
+    ),
+];
 
 /// The version of [RemoteHistory::mask_recorded_literals] a database last ran - bumped when
 /// `swiss_core::secure::literal` learns a slot the rows filed before it may hold.
@@ -703,6 +715,53 @@ impl RemoteHistory {
         content_from_envelope_text(&text).map(Some)
     }
 
+    /// File a run's trail (SPEC §remote.history "Provenance"), masked and bounded by
+    /// [crate::trail::filed]. Best effort: a refused write is logged, never retried - the
+    /// run itself is already recorded or still running.
+    pub async fn record_trail(&self, run_id: u64, trail: &Value) {
+        let text = crate::trail::filed(trail).to_string();
+        let at = swiss_core::util::now_ms() as i64;
+        let submitted = self.store.submit(text.len() + 64, move |pool| {
+            Box::pin(async move {
+                sqlx::query(
+                    "INSERT INTO run_trail (run_id, at_ms, trail) VALUES (?, ?, ?)                      ON CONFLICT(run_id) DO UPDATE SET at_ms = excluded.at_ms, trail = excluded.trail",
+                )
+                .bind(run_id as i64)
+                .bind(at)
+                .bind(text)
+                .execute(&pool)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+            })
+        });
+        if let Err(err) = submitted {
+            swiss_core::log::warn("remote trail admission", Some(serde_json::json!({ "err": err.to_string() })));
+            return;
+        }
+        if self.flush().await.is_ok() {
+            self.changed();
+        }
+    }
+
+    /// The trail filed for one run, if any.
+    pub async fn trail(&self, run_id: u64) -> Option<Value> {
+        self.store
+            .query::<Option<String>, _>(move |pool| {
+                Box::pin(async move {
+                    let row = sqlx::query("SELECT trail FROM run_trail WHERE run_id = ?")
+                        .bind(run_id as i64)
+                        .fetch_optional(&pool)
+                        .await?;
+                    row.map(|r| r.try_get::<String, _>(0)).transpose()
+                })
+            })
+            .await
+            .ok()
+            .flatten()
+            .and_then(|t| serde_json::from_str(&t).ok())
+    }
+
     /// Drop every record, output and content row, answering how many `run` rows went.
     /// Internal row identity survives: the next recorded run gets a fresh internal id
     /// while its WIRE id comes from the coordinator, which numbers from
@@ -722,6 +781,7 @@ impl RemoteHistory {
                         let mut tx = pool.begin().await?;
                         sqlx::query("DELETE FROM run_output").execute(&mut *tx).await?;
                         sqlx::query("DELETE FROM run_content").execute(&mut *tx).await?;
+                        sqlx::query("DELETE FROM run_trail").execute(&mut *tx).await?;
                         let removed =
                             sqlx::query("DELETE FROM run").execute(&mut *tx).await?.rows_affected();
                         // The rows are gone by hand: stamp the sweep fence so a spill
@@ -798,7 +858,18 @@ impl RemoteHistory {
                                 .bind(id)
                                 .execute(&mut *tx)
                                 .await?;
+                            sqlx::query("DELETE FROM run_trail WHERE run_id = ?")
+                                .bind(id)
+                                .execute(&mut *tx)
+                                .await?;
                         }
+                        // A trail whose run never got recorded (or was cleared) ages out too.
+                        sqlx::query(
+                            "DELETE FROM run_trail WHERE at_ms < ? AND run_id NOT IN (SELECT run_id FROM run)",
+                        )
+                        .bind(cutoff)
+                        .execute(&mut *tx)
+                        .await?;
                         sqlx::query("DELETE FROM run WHERE ended_ms < ?")
                             .bind(cutoff)
                             .execute(&mut *tx)

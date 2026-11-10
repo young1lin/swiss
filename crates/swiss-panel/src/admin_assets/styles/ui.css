@@ -533,6 +533,8 @@
     .tl-sum.has-hit { flex-wrap: wrap; row-gap: 0; }
     .tl-hit { flex: 1 0 100%; min-width: 0; padding-left: calc(var(--ic-s) + var(--s2)); font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tl-hit mark { background: var(--code-hit); color: var(--text); border-radius: 2px; }
+    /* The caller's reason for a run, the same second line in prose: quieter than the command. */
+    .tl-why { flex: 1 0 100%; min-width: 0; padding-left: calc(var(--ic-s) + var(--s2)); font-size: var(--f-caption); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tl-item.open { background: var(--card); box-shadow: 0 0 0 1px var(--sep-soft); margin: var(--s1) 0; }
     .tl-item.open > .tl-sum:hover { background: none; }
     /* A column, a grid step between blocks: a call's body is its arguments and its reply, and as

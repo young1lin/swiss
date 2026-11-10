@@ -12,11 +12,12 @@ same queue, cancel, cursor and history as every other run — not a second job s
 |---|---|
 | `crates/swiss-remote` | `target` (the table), `actions` (the five actions), `sync` (file movement), `project` (the binding), `history` (the run log), `groups` (the targets scope), `api` (`/api/remote`) |
 | `crates/swiss-plugins/src/remote.rs` | The descriptor, start/stop, the builtin MCP mount |
-| `src/remote_cli.rs` | `swiss remote …`, `swiss run …` |
+| `src/remote_cli.rs`, `src/remote_cli/` | `swiss remote …`, `swiss run …`; `brief.rs` (§remote.cli `brief`), `origin.rs` (the calling agent, §remote.history Provenance) |
+| `crates/swiss-remote/src/trail/` | Why a run ran: `why`/`origin` validation, the follower, the agent log readers (§remote.history Provenance) |
 | `crates/swiss-mcp/src/adapters/remote.rs` | `/mcp/remote` (§remote.mcp) |
 | `crates/swiss-tunnels/src/tunnel/remote.rs` | `TunnelRemote`, the transport provider, and `quote_posix` |
 | Panel `views/remote.ts`, `views/remote-runs.ts` | The Targets and Runs pages |
-| `src/skill_assets/remote/SKILL.md` | The `swiss-remote` skill (§remote.project) |
+| `src/skill_assets/remote/SKILL.md`, `REFERENCE.md` | The `swiss-remote` skill and its reference (§remote.project) |
 
 `swiss-remote` depends on `swiss-core` and `swiss-host` only — never on `swiss-tunnels`. The
 endpoint is an id resolved through the host's remote transport seat (§host.seats), so the SSH
@@ -349,24 +350,84 @@ removes it at stop.
 - **Output reads.** `/output?after=&max=` reads the stored file (128 KiB at most per read) with
   the same cursor contract as the live one; `/content` answers the sealed body - a write's
   content or an exec's stdin, whichever the run kept - or 404 when none was.
-- **Actor** — §host.actions: `cli:<user>@<host>`, `mcp:<token label>`, `panel`, `jobs`, or `api`
+- **Actor** — §host.actions: `cli` (or `cli:<agent>` when a coding agent ran the CLI, see
+  Provenance; never a login name), `mcp:<token label>`, `panel`, `jobs`, or `api`
   (blank or over 128 bytes also falls back). The MCP actor comes from the call source captured
   when the server was built, not a task-local read inside the call (rmcp drives `call_tool` from
   its own task, where the task-local is empty).
 
+### Provenance — why a run ran
+
+The owner's ask (2026-11-11): a command a coding agent ran on its own must be traceable
+afterwards to what the person asked. Three layers, each its own evidence, none of them a hook or
+an agent setting:
+
+- **`why`** — one sentence the caller gives (≤ 300 characters, trimmed, an empty one refused).
+  Every remote action's input accepts it beside its own fields (`trail::FIELDS`; input stays
+  strict, anything else is refused). The CLI sends `--why`; the MCP tools take `why`. A coding
+  agent's `exec`, `write`, `sync` and `push` through the CLI are refused without it (a person
+  at a terminal is never asked), as are `remote_exec` and `remote_write` through MCP. The
+  refusal shows a request-shaped example and, when `--why` sits after the command word, says it
+  became part of the remote argv.
+- **`origin`** — where the caller ran: `{agent, version, session, cwd, log}`, each ≤ 1 KiB.
+  The CLI reads it from the environment the agent gave its shell (`src/remote_cli/origin.rs`),
+  first match wins, so an agent that set a session id beats an outer one's inherited markers:
+  `CLAUDE_CODE_SESSION_ID` (claude-code; the log `<CLAUDE_CONFIG_DIR|~/.claude>/projects/*/<id>.jsonl`,
+  the version from `AI_AGENT`), `DSH_SESSION_ID` (dsh; `<DSH_HOME|~/.dsh>/sessions/*/<id>`),
+  `CODEX_SESSION_ID`/`CODEX_THREAD_ID` or a `CODEX_*` marker (codex; `<CODEX_HOME|~/.codex>/sessions`),
+  `OPENCODE`/`OPENCODE_PID` (opencode; `OPENCODE_DB`, else `~/.local/share/opencode/opencode.db`),
+  then a bare `CLAUDECODE` (claude-code with no session: no trail). Paths under the home are
+  sent as `~/…`, so a record never carries the user name. The actor becomes `cli:<agent>`.
+- **The trail** — what the agent's own log shows around the call: the person's last request
+  before it (`asked`, ≤ 2000 chars), the agent's last words before the call (`said`, up to 4,
+  ≤ 600 each) and the call (`tool`, `call` ≤ 2000, `at`, `callsBefore` since the ask). A
+  follower (`trail::Follower`) starts with every run whose origin names a readable agent and
+  looks at 2 s, every 3 s for a minute, then every 20 s, until 45 s after the run ended (never
+  past 25 h). The readers (`trail/logs.rs`) turn each log into the same asked/said/called
+  events: Claude Code's session jsonl (and its subagents), DSH's session folder (zstd frames
+  read from the end), Codex's recent rollouts, opencode's SQLite (read-only). Codex and
+  opencode give no session id, so their reader looks through the conversations written around
+  the run's start. A match is a call logged between 30 min before and 10 s after the run began
+  that holds ≥ 0.6 of the run's own words, never one another run already claimed. `log` is
+  read only when it has the shape that agent's own log has for that session, so a run input
+  cannot point the reader at any other file. A call that never shows files
+  `{found: false, agent, session, reason}`, never a blank.
+- **Stored apart, masked.** The trail lands in `run_trail` (schema v2, keyed by the wire run id,
+  filed while the run may still be going), cut to 16 KiB by dropping the earliest `said`, every
+  text through the credential-literal and vault-value masks. Retention removes a run's trail
+  with its row; a trail whose run never got recorded ages out at the same cutoff; Clear
+  empties it.
+- **Readers.** `GET /api/remote/runs/{id}/trail` → `{runId, trail}`: `trail` is null while the
+  follower is still looking or when the run named no agent; an unknown id is a 404.
+  `swiss run why <id>` prints the reason, the origin and the trail; `swiss run audit` prints
+  each run's `why` under its line, and `--session <id>` keeps one conversation's runs; the
+  Runs page shows the why under the row and opens the trail as a flow (§remote.panel).
+
 ## §remote.cli — `swiss remote` and `swiss run`
 
 ```
-swiss remote endpoints | targets | resolve [name]
+swiss remote brief [name] | endpoints | targets | resolve [name]
+swiss remote notes [id [topic]] [--write|--append] [--file PATH]
 swiss remote target add <id> --endpoint <id|unique-label> --root <path> [--caps exec,sync,files]
 swiss remote target set <id> [--endpoint …] [--root …] [--caps …] [--label …] | target remove <id>
-swiss remote exec [name] [--cwd DIR] [--env NAME=VALUE]… [--stdin-file PATH|-] [--timeout 2h] [--detach] [--] ARGV…
+swiss remote exec [name] [--why TEXT] [--cwd DIR] [--env NAME=VALUE]… [--stdin-file PATH|-] [--timeout 2h] [--detach] [--] ARGV…
 swiss remote sync [name] [--source PATH] [--exclude PATTERN]… [--no-delta] [--verbose]
 swiss remote push [name] <file> [--to NAME] [--base REMOTE] [--no-delta] | cat [name] <path> | write [name] <path> | pull [name] <path> [--to LOCAL]
-swiss run status <id> | logs <id> [-f] | cancel <id>
-swiss run audit [--since 7d|36h|90m|30s|ISO] [--until ISO] [--target t] [--actor a] [--json] [--export DIR]
+swiss run status <id> | logs <id> [-f] | cancel <id> | why <id>
+swiss run audit [--since 7d|36h|90m|30s|ISO] [--until ISO] [--target t] [--actor a] [--session s] [--json] [--export DIR]
 ```
 
+- **`brief`** (`src/remote_cli/brief.rs`): what an agent should know before its first command
+  on a target, in one call — the target's endpoint and state, root, capabilities and default
+  timeout; the remote runs going on it now; its last 5 runs with outcome, actor and why; its note
+  index (cut at a line end past 6 KiB, with the hint to move detail into topics) and its topic
+  list. The target is `--target`, else the first word that is a target id or a project action
+  (the skill passes the whole sentence that followed its name), else, for a bare brief in a
+  bound project, `defaultTarget`; otherwise every target, one line each. It is a briefing, not
+  a gate: a gateway that is down or a name that is no target still prints what is known and
+  exits 0, so the skill that runs it as it loads never fails to load.
+- **`--why`** goes with exec, sync, push, write, cat and pull (any other subcommand refuses
+  it) and is local, so it goes before the command word (§remote.history Provenance).
 - **The hard rule.** Everything after a bare `--` is argv for the far side, passed through
   untouched. For `exec`, argv also begins at the first command word: `exec dev ls -a` equals
   `exec dev -- ls -a`.
@@ -410,7 +471,8 @@ swiss run audit [--since 7d|36h|90m|30s|ISO] [--until ISO] [--target t] [--actor
   the middle (found live 2026-10-06).
 - **Audit.** One line per run — time to the second, actor, target, action, argv quoted by the
   POSIX rules (an exec fed stdin adds `< [2.0K stdin]`), result, duration, bytes (a `*` when
-  the output was evicted), `#id`. The last
+  the output was evicted), `#id`, and the run's `why` on the line under it. `--session` keeps
+  the runs whose `origin.session` is the one given. The last
   7 days by default; `--export DIR` writes `runs.jsonl`, `out/<id>.txt` for every output still
   on disk, and `out/<id>.content` - the sealed body of every run that kept one (an exec's stdin
   script, a write's content). A handover without the script answers only what the argv already
@@ -443,14 +505,26 @@ that has one (newest first, with size, age and a first-line preview), `swiss rem
 <id>` prints the note verbatim, and `--write`/`--append <id>` replace or extend it — body on
 stdin or `--file`, LF-normalized, capped at 64 KiB, an empty body refused so a broken pipe
 cannot wipe a memory. The verbs are flags, never words, so a target named `write` stays
-readable as `swiss remote notes write`. No gateway is involved: the CLI resolves the home
+readable as `swiss remote notes write`. **The note is an index**, like a MEMORY.md: one line a
+fact or a pointer, kept under 6 KiB (a write past that says so, and the brief cuts there).
+Detail read now and then goes in a **topic**, `~/.swiss/remote-notes/<alias>/<topic>.md` (a
+topic name has the target-id shape), read by `swiss remote notes <id> <topic>` and written by
+`--write`/`--append <id> <topic>`. The list counts each target's topics, reading the index
+names them on stderr, and a missing topic lists the ones there are. No gateway is involved: the CLI resolves the home
 through the same data_path the gateway uses, so no caller guesses where the notes live (an
 agent's glob miss once read as "no notes" and the memory went unused).
 
 **The skills.** `src/skill_assets/SKILL.md` (`swiss`: what the gateway is, its boundaries, the
-panel and `swiss --help`) and `src/skill_assets/remote/SKILL.md` (`swiss-remote`: the command
-reference, the MCP tools, the UTF-8 and audit contracts, the notes). `swiss skill install`
-writes the ones the user chooses, `swiss-memory` (§memory.mcp The skill) among them (§host.cli).
+panel and `swiss --help`) and `src/skill_assets/remote/SKILL.md` (`swiss-remote`, slim on
+purpose — the owner, 2026-11-11: it only forwards SSH commands — the brief, `--why`, the run
+rules, files, notes and tracing in under 6 KiB) with `REFERENCE.md` installed beside it (setup,
+bindings, quoting, stdin, transfer detail, MCP, UTF-8, records). Claude Code's copy runs the
+brief as the skill loads: its step becomes `` !`swiss remote brief $ARGUMENTS` `` and its
+frontmatter gains `allowed-tools: Bash(swiss remote brief:*)`, so `/swiss-remote test` opens on
+the test brief; every other client's copy says to run it first
+(`skill_install::tests::the_remote_skill_runs_its_brief_where_the_client_can`).
+`swiss skill install` writes the ones the user chooses, `swiss-memory` (§memory.mcp The skill)
+among them (§host.cli).
 `disable-model-invocation: true` is the owner's choice; keep it.
 
 ## §remote.mcp — `/mcp/remote`
@@ -468,6 +542,8 @@ The builtin `remote` MCP (def type `remote`): five tools — `remote_exec`, `rem
   sync and pull name are **gateway-side** paths, which a model on another machine must not
   mistake for its own. The alias list is read live, so a target added on the page appears on the
   next `tools/list`.
+- **`why`** on every tool (≤ 300 characters), required by `remote_exec` and `remote_write`:
+  the refusal asks for the request the run serves (§remote.history Provenance).
 - `env` is an object passed through verbatim; unknown arguments are refused; a missing
   `timeoutMs` gets the same 2 h the CLI gives. `remote_exec` does not take `stdin` — the owner's
   call (2026-10-06): the field is the action's and the CLI's.
@@ -509,6 +585,13 @@ copies configuration.
   Copy button.
 - **The actor shows the surface only** (`cli`, `mcp`, `panel`, …), never the machine's user or
   host name, and is never translated.
+- **Why it ran** (§remote.history Provenance). A row with a `why` shows it as one quiet line
+  under the command (a differing why breaks a ×N fold). An opened row with a why or an origin
+  adds a Why block under the command: the reason (or "No reason given"), one fact line with
+  the agent and version, the session and the working directory, and - for a recorded run with
+  an origin - the trail read once as the row opens: a flow of the ask, the agent's last words
+  and the call (with how many other calls came between), "Reading the agent's log…" while
+  the gateway is still looking (the next open asks again), or why it was not found.
 - **Search is the first thing in the head, always visible** (2026-10-12). It searches what the
   recorded runs printed, through `POST /api/history/query` with module `remote`. ASCII letters
   fold and everything else matches as typed. The output is searched, not the command: the

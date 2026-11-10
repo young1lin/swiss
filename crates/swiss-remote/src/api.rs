@@ -101,6 +101,7 @@ pub fn mount(state: Arc<RemoteState>) -> Router<()> {
         .route("/api/remote/runs/{id}", get(get_run))
         .route("/api/remote/runs/{id}/output", get(run_output))
         .route("/api/remote/runs/{id}/content", get(run_content))
+        .route("/api/remote/runs/{id}/trail", get(run_trail))
         .with_state(state)
 }
 
@@ -323,6 +324,24 @@ async fn run_content(State(state): State<Arc<RemoteState>>, Path(id): Path<Strin
         ),
         Err(err) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
     }
+}
+
+/// GET /api/remote/runs/{id}/trail: why the run ran, as read from the submitting agent's
+/// own log (SPEC §remote.history "Provenance"). `trail` is null while the follower is
+/// still looking, or for a run that named no agent origin; an unknown id 404s.
+async fn run_trail(State(state): State<Arc<RemoteState>>, Path(id): Path<String>) -> Response {
+    let Some(system) = state.live() else {
+        return not_running();
+    };
+    let Some(run_id) = id.parse::<u64>().ok() else {
+        return unknown_run(&id);
+    };
+    let history = system.history();
+    let trail = history.trail_record(run_id).await;
+    if trail.is_none() && history.get_record(run_id).await.is_none() && history.in_flight_input(run_id).is_none() {
+        return unknown_run(&id);
+    }
+    admin_json(StatusCode::OK, json!({ "runId": run_id, "trail": trail }))
 }
 
 fn unknown_run(id: &str) -> Response {

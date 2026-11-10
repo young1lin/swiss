@@ -117,6 +117,35 @@ export interface RemoteRunInput {
   contentBytes?: number;
   /** A remote.exec's stdin size - the record keeps the size and nothing else. */
   stdinBytes?: number;
+  /** SPEC §remote.history "Provenance": the request the caller said this run serves. */
+  why?: string;
+  /** The coding agent that submitted the run, as the CLI read it from its environment. */
+  origin?: RemoteRunOrigin;
+}
+
+/** Where a run came from: the agent, its version, its conversation, and where it keeps it. */
+export interface RemoteRunOrigin {
+  agent?: string;
+  version?: string;
+  session?: string;
+  cwd?: string;
+  log?: string;
+}
+
+/** What GET /api/remote/runs/{id}/trail reads from the submitting agent's own log: what the
+ *  person asked, what the agent said before the call, and the call - or why none was found. */
+export interface RemoteRunTrail {
+  found: boolean;
+  agent?: string;
+  session?: string;
+  reason?: string;
+  tool?: string;
+  at?: number;
+  score?: number;
+  asked?: { at: number; text: string } | null;
+  said?: Array<{ at: number; text: string }>;
+  callsBefore?: number;
+  call?: string;
 }
 
 /** A remote run's meta as actions.rs stamps it: target/endpoint on every kind, the sync

@@ -213,12 +213,18 @@ fn with_utf8_locale(mut pairs: Vec<(String, String)>) -> Vec<(String, String)> {
 }
 
 fn refuse_unknown(obj: &Map<String, Value>, known: &[&str], path: &str) -> Result<(), ActionError> {
+    // Every action's input may say why it runs and where its caller ran (SPEC
+    // §remote.history "Provenance"): the record keeps both, the action reads neither.
+    let top = path == "input";
     for key in obj.keys() {
-        if !known.contains(&key.as_str()) {
+        if !known.contains(&key.as_str()) && !(top && crate::trail::FIELDS.contains(&key.as_str())) {
             return Err(ActionError::InvalidInput(format!(
                 "{path}.{key} is not a known field"
             )));
         }
+    }
+    if top {
+        crate::trail::validate(obj).map_err(ActionError::InvalidInput)?;
     }
     Ok(())
 }

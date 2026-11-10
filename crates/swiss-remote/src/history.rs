@@ -145,6 +145,9 @@ pub struct RunHistory {
     /// The open passes rewrote rows before any notice could exist; the first attach
     /// publishes for them (SPEC §remote.history: the open at start).
     rewrote_at_open: std::sync::atomic::AtomicBool,
+    /// The trail followers (SPEC §remote.history "Provenance"): a run whose input names an
+    /// agent origin gets its submitting call looked up in that agent's log.
+    trails: crate::trail::Trails,
 }
 
 /// One run's output file while it streams: the tee the coordinator writes into. Past
@@ -273,6 +276,7 @@ impl RunHistory {
             open: Mutex::new(HashMap::new()),
             notice: Mutex::new(None),
             rewrote_at_open: std::sync::atomic::AtomicBool::new(false),
+            trails: crate::trail::Trails::default(),
         };
         // Before the ledger is built, so it counts what the passes sealed and masked.
         let sealed = history.seal_legacy_content();
@@ -411,6 +415,17 @@ impl RunHistory {
             return h.output(run_id, after, max).await;
         }
         self.output(run_id, after, max)
+    }
+
+    /// The trail filed for a run (SPEC §remote.history "Provenance"): only the database
+    /// keeps one, so a log without it has none.
+    pub async fn trail_record(&self, run_id: u64) -> Option<Value> {
+        self.attached().await?.trail(run_id).await
+    }
+
+    /// The trail readers, for tests that swap in their own.
+    pub fn trails(&self) -> &crate::trail::Trails {
+        &self.trails
     }
 
     /// [Self::content] over the attached authority first.
@@ -1063,6 +1078,12 @@ impl RunHistorySink for RunHistory {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(run_id, (tee.clone(), sanitized_input(&request.input)));
+        // The sink hook is synchronous: a store mid-attach simply gets no trail for this run.
+        if let Ok(store) = self.store.try_read() {
+            if let Some(store) = store.as_ref() {
+                self.trails.follow(run_id, &request.input, store.clone());
+            }
+        }
         Some(tee)
     }
 

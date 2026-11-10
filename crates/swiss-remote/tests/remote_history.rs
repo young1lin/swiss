@@ -1201,3 +1201,109 @@ async fn spill_only_records_recover_at_every_open_but_never_past_a_sweep() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+// --- Provenance: why, origin and the trail (SPEC §remote.history "Provenance") ------------------
+
+async fn submit(app: &axum::Router, input: Value) -> u64 {
+    let (status, submitted) = call(
+        app,
+        "POST",
+        "/api/runs",
+        json!({ "action": "remote.exec", "input": input, "timeoutMs": 30000 }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::ACCEPTED, "{submitted}");
+    submitted["runId"].as_u64().unwrap()
+}
+
+async fn terminal(app: &axum::Router, run_id: u64) -> Value {
+    for _ in 0..500 {
+        let (_, run) = call(app, "GET", &format!("/api/runs/{run_id}?output=0"), Value::Null).await;
+        if run["state"] != "queued" && run["state"] != "running" {
+            return run;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+    panic!("the run never went terminal");
+}
+
+#[tokio::test]
+async fn a_run_keeps_its_reason_and_files_the_trail_its_agent_logged() {
+    let (app, system, _history, _logs, _fake) = wired().await;
+    let spill = system.history();
+    let trails = spill.trails();
+    trails.set_pace(swiss_remote::trail::Pace::every(std::time::Duration::from_millis(20)));
+    let asked = Arc::new(std::sync::Mutex::new(Vec::<Vec<String>>::new()));
+    let saw = asked.clone();
+    trails.set_finder(Some(Arc::new(move |ask: &swiss_remote::trail::TrailAsk| {
+        saw.lock().unwrap().push(ask.words.clone());
+        Ok(Some(json!({
+            "found": true, "agent": ask.agent, "session": ask.session, "callId": "t1",
+            "asked": { "at": 1, "text": "is dev up? try redis-cli -a hunter2hunter2 ping" },
+            "said": [], "call": "swiss remote exec dev --why 'check dev answers' -- true"
+        })))
+    })));
+    let session = "00000000-1111-4222-8333-444444444444";
+    let origin = json!({
+        "agent": "claude-code", "session": session,
+        "log": format!("~/.claude/projects/C--src/{session}.jsonl")
+    });
+    let run_id = submit(&app, json!({ "target": "dev", "argv": ["true"], "why": "check dev answers", "origin": origin })).await;
+    assert_eq!(terminal(&app, run_id).await["state"], "succeeded");
+    let mut trail = Value::Null;
+    for _ in 0..250 {
+        let (status, body) = call(&app, "GET", &format!("/api/remote/runs/{run_id}/trail"), Value::Null).await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+        if !body["trail"].is_null() {
+            trail = body["trail"].clone();
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(trail["callId"], "t1", "{trail}");
+    assert!(!trail.to_string().contains("hunter2hunter2"), "the filed trail is masked: {trail}");
+    let words = asked.lock().unwrap()[0].clone();
+    for want in ["dev", "true", "check", "answers"] {
+        assert!(words.contains(&want.to_string()), "{want} in {words:?}");
+    }
+    let (_, record) = call(&app, "GET", &format!("/api/remote/runs/{run_id}"), Value::Null).await;
+    assert_eq!(record["input"]["why"], "check dev answers", "{record}");
+    assert_eq!(record["input"]["origin"]["agent"], "claude-code", "{record}");
+
+    // A run that named no agent gets no trail, and the route says so plainly.
+    let plain = exec_and_wait(&app, "dev", "true").await;
+    let (status, body) = call(&app, "GET", &format!("/api/remote/runs/{plain}/trail"), Value::Null).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(body["trail"].is_null(), "{body}");
+    let (status, _) = call(&app, "GET", "/api/remote/runs/987654/trail", Value::Null).await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+
+    // A malformed reason fails the run before anything is sent.
+    let bad = submit(&app, json!({ "target": "dev", "argv": ["true"], "why": "  " })).await;
+    let run = terminal(&app, bad).await;
+    assert_ne!(run["state"], "succeeded", "{run}");
+    assert!(run.to_string().contains("input.why is empty"), "{run}");
+}
+
+#[tokio::test]
+async fn a_trail_that_never_shows_is_filed_as_unmatched() {
+    let (app, system, _history, _logs, _fake) = wired().await;
+    let spill = system.history();
+    let trails = spill.trails();
+    trails.set_pace(swiss_remote::trail::Pace::every(std::time::Duration::from_millis(20)));
+    trails.set_finder(Some(Arc::new(|_: &swiss_remote::trail::TrailAsk| Ok(None))));
+    let origin = json!({ "agent": "codex", "log": "~/.codex/sessions" });
+    let run_id = submit(&app, json!({ "target": "dev", "argv": ["true"], "why": "look", "origin": origin })).await;
+    terminal(&app, run_id).await;
+    for _ in 0..250 {
+        let (_, body) = call(&app, "GET", &format!("/api/remote/runs/{run_id}/trail"), Value::Null).await;
+        if !body["trail"].is_null() {
+            assert_eq!(body["trail"]["found"], false, "{body}");
+            assert_eq!(body["trail"]["agent"], "codex", "{body}");
+            assert!(body["trail"]["reason"].as_str().unwrap().contains("matched"), "{body}");
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the follower never gave up");
+}

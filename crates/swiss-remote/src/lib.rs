@@ -42,6 +42,7 @@ pub mod project;
 pub mod store;
 pub mod sync;
 pub mod target;
+pub mod trail;
 
 use std::sync::{Arc, Mutex};
 

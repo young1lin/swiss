@@ -31,6 +31,9 @@ sha2 = "0.11"
 # The module's own history database (SPEC §remote.history, planned): the same sqlx 0.9
 # engine family the host store already links, sqlite only.
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "json"] }
+# A run's trail reads DSH's session log, written as concatenated zstd frames (SPEC
+# §remote.history "Provenance"); the workspace already links this version.
+zstd = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 # test-utils pins the deterministic master key for this crate's own test binaries.

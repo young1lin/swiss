@@ -21,16 +21,28 @@
 //! binary.
 //!
 //! Which skills land is the user's answer, so nothing here installs by default and a refresh never
-//! adds one. An install replaces `SKILL.md` and, for the `swiss` skill, `SETUP.md` beside it. The
-//! rest of the directory is the user's, and a replacement that fails leaves the copy that was there.
+//! adds one. An install replaces `SKILL.md` and the companions shipped beside it (`SETUP.md` for
+//! `swiss`, `REFERENCE.md` for `swiss-remote`). The rest of the directory is the user's, and a
+//! replacement that fails leaves the copy that was there.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 /// All shipped skills are embedded at compile time; Node is never needed to build the exe.
 const SKILL_MD: &str = include_str!("skill_assets/SKILL.md");
 const SETUP_MD: &str = include_str!("../SETUP.md");
 const REMOTE_SKILL_MD: &str = include_str!("skill_assets/remote/SKILL.md");
+const REMOTE_REFERENCE_MD: &str = include_str!("skill_assets/remote/REFERENCE.md");
 const MEMORY_SKILL_MD: &str = include_str!("skill_assets/memory/SKILL.md");
+
+/// The remote skill's step that asks for the brief (SPEC §remote.cli `brief`). Claude Code runs a
+/// `` !`command` `` in a skill as the skill loads, with `$ARGUMENTS` the words that followed its
+/// name, so its copy carries the brief already run (`/swiss-remote test` opens on the `test`
+/// brief) and the one tool that needs grants itself; every other client reads the step.
+const BRIEF_STEP: &str =
+    "Run `swiss remote brief <target>` before your first command on a target; bare, it lists every target.";
+const BRIEF_RAN: &str = "This brief ran as the skill loaded; for another target run `swiss remote brief <target>`.\n\n!`swiss remote brief $ARGUMENTS`";
+const BRIEF_TOOLS: &str = "allowed-tools: Bash(swiss remote brief:*)";
 
 const SKILL_NAME: &str = "swiss";
 const REMOTE_SKILL_NAME: &str = "swiss-remote";
@@ -109,6 +121,27 @@ fn shipped_body(name: &str) -> Option<&'static str> {
         .map(|(_, body)| *body)
 }
 
+/// A shipped skill as it lands in one root: the remote skill's Claude Code copy runs its brief
+/// as it loads (see [BRIEF_STEP]); every other copy is the text as shipped.
+fn rendered(name: &str, root: &str) -> Option<Cow<'static, str>> {
+    let body = shipped_body(name)?;
+    if name != REMOTE_SKILL_NAME || root != ".claude" {
+        return Some(Cow::Borrowed(body));
+    }
+    let ran = body.replacen(BRIEF_STEP, BRIEF_RAN, 1);
+    // The first "\n---\n" closes the frontmatter: the body opens with "---\n".
+    Some(Cow::Owned(ran.replacen("\n---\n", &format!("\n{BRIEF_TOOLS}\n---\n"), 1)))
+}
+
+/// The files a skill ships beside its `SKILL.md`, installed and replaced with it.
+fn companions(name: &str) -> &'static [(&'static str, &'static str)] {
+    match name {
+        SKILL_NAME => &[("SETUP.md", SETUP_MD)],
+        REMOTE_SKILL_NAME => &[("REFERENCE.md", REMOTE_REFERENCE_MD)],
+        _ => &[],
+    }
+}
+
 /// Every shipped name, for `--all` and for the refusal that lists them.
 pub fn shipped_names() -> Vec<String> {
     SHIPPED_SKILLS.iter().map(|(name, _)| (*name).to_string()).collect()
@@ -150,18 +183,21 @@ impl Places {
         self.root_dir(root).join(name).join("SKILL.md")
     }
 
-    fn setup_file(&self, root: &str) -> PathBuf {
-        self.root_dir(root).join(SKILL_NAME).join("SETUP.md")
+    fn companion_file(&self, root: &str, name: &str, file: &str) -> PathBuf {
+        self.root_dir(root).join(name).join(file)
     }
 
-    fn setup_current(&self, root: &str) -> bool {
-        std::fs::read(self.setup_file(root)).ok().is_some_and(|found| found == SETUP_MD.as_bytes())
+    fn companions_current(&self, root: &str, name: &str) -> bool {
+        companions(name).iter().all(|(file, text)| {
+            std::fs::read(self.companion_file(root, name, file)).ok().is_some_and(|found| found == text.as_bytes())
+        })
     }
 
-    fn location(&self, root: &str, name: &str, body: &str) -> SkillLocation {
+    fn location(&self, root: &str, name: &str) -> SkillLocation {
         let path = self.skill_file(root, name);
+        let body = rendered(name, root).unwrap_or_default();
         let (installed, state, error) = match std::fs::read(&path) {
-            Ok(found) if found == body.as_bytes() && (name != SKILL_NAME || self.setup_current(root)) => {
+            Ok(found) if found == body.as_bytes() && self.companions_current(root, name) => {
                 (Some(true), CopyState::Current, None)
             }
             Ok(_) => (Some(true), CopyState::Outdated, None),
@@ -187,7 +223,7 @@ impl Places {
                 name: (*name).into(),
                 description: frontmatter(body, "description").unwrap_or_default(),
                 loads_by_itself: loads_by_itself(body),
-                locations: ROOTS.iter().map(|root| self.location(root, name, body)).collect(),
+                locations: ROOTS.iter().map(|root| self.location(root, name)).collect(),
             })
             .collect()
     }
@@ -198,35 +234,35 @@ impl Places {
         if !valid_target(name, root) {
             return Err("unknown skill or skill directory".into());
         }
-        let body = shipped_body(name).ok_or_else(|| "unknown skill".to_string())?;
+        let body = rendered(name, root).ok_or_else(|| "unknown skill".to_string())?;
         let target = self.skill_file(root, name);
         let directory = target
             .parent()
             .ok_or_else(|| "a skill file has a directory".to_string())?;
         std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
         let staged = directory.join(format!(".SKILL-{}.tmp", swiss_core::util::random_hex(12)));
-        let result = std::fs::write(&staged, body)
+        let result = std::fs::write(&staged, body.as_bytes())
             .and_then(|_| retry_busy(|| std::fs::rename(&staged, &target)))
             .map_err(|e| format!("could not install {name} in {root}: {e}"));
         if result.is_err() {
             let _ = std::fs::remove_file(&staged);
             return result;
         }
-        if name == SKILL_NAME {
-            return self.write_setup(root);
+        for (file, text) in companions(name) {
+            self.write_companion(root, name, file, text)?;
         }
-        result
+        Ok(())
     }
 
-    /// `SETUP.md` beside the swiss skill, staged the same way `SKILL.md` is.
-    fn write_setup(&self, root: &str) -> Result<(), String> {
-        let target = self.setup_file(root);
-        let directory = target.parent().ok_or_else(|| "SETUP.md has a directory".to_string())?;
+    /// A companion beside its skill (`SETUP.md`, `REFERENCE.md`), staged the same way `SKILL.md` is.
+    fn write_companion(&self, root: &str, name: &str, file: &str, text: &str) -> Result<(), String> {
+        let target = self.companion_file(root, name, file);
+        let directory = target.parent().ok_or_else(|| format!("{file} has a directory"))?;
         std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
-        let staged = directory.join(format!(".SETUP-{}.tmp", swiss_core::util::random_hex(12)));
-        let result = std::fs::write(&staged, SETUP_MD)
+        let staged = directory.join(format!(".{file}-{}.tmp", swiss_core::util::random_hex(12)));
+        let result = std::fs::write(&staged, text)
             .and_then(|_| retry_busy(|| std::fs::rename(&staged, &target)))
-            .map_err(|e| format!("could not install SETUP.md in {root}: {e}"));
+            .map_err(|e| format!("could not install {file} in {root}: {e}"));
         if result.is_err() {
             let _ = std::fs::remove_file(&staged);
         }
@@ -412,8 +448,9 @@ mod tests {
         let home = TempHome::new();
         let written = home.places().install_named(&shipped_names()).expect("install every skill");
         assert_eq!(written.len(), 2 * SHIPPED_SKILLS.len());
-        for (name, body) in SHIPPED_SKILLS {
+        for (name, _) in SHIPPED_SKILLS {
             for root in [".claude", ".agents"] {
+                let body = rendered(name, root).expect("shipped");
                 assert_eq!(std::fs::read(home.file(root, name)).expect("installed"), body.as_bytes());
             }
         }
@@ -433,8 +470,9 @@ mod tests {
         let places = Places { home: home.0.clone(), claude_config: Some(config.clone()) };
         let written = places.install_named(&shipped_names()).expect("install with a config dir");
         assert_eq!(written.len(), 2 * SHIPPED_SKILLS.len());
-        for (name, body) in SHIPPED_SKILLS {
+        for (name, _) in SHIPPED_SKILLS {
             let path = config.join("skills").join(name).join("SKILL.md");
+            let body = rendered(name, ".claude").expect("shipped");
             assert_eq!(std::fs::read(&path).expect("the config dir's skill"), body.as_bytes());
         }
         assert!(!home.0.join(".claude").exists());
@@ -662,6 +700,35 @@ mod tests {
         }
         home.places().install_one("swiss-remote", ".claude").expect("another skill");
         assert!(!home.0.join(".claude/skills/swiss-remote/SETUP.md").exists());
+    }
+
+    // SPEC §remote.cli `brief`: `/swiss-remote test` in Claude Code opens on the test brief; the
+    // other clients are told to run it first. The detail moved to REFERENCE.md beside the skill.
+    #[test]
+    fn the_remote_skill_runs_its_brief_where_the_client_can() {
+        assert_eq!(REMOTE_SKILL_MD.matches(BRIEF_STEP).count(), 1, "the step the Claude Code copy replaces");
+        assert!(REMOTE_SKILL_MD.len() < 6 * 1024, "the skill stays slim: {} bytes", REMOTE_SKILL_MD.len());
+        assert!(REMOTE_SKILL_MD.contains("REFERENCE.md") && REMOTE_SKILL_MD.contains("--why"));
+
+        let home = TempHome::new();
+        home.places().install_named(&names(&["swiss-remote"])).expect("install");
+        let claude = std::fs::read_to_string(home.file(".claude", "swiss-remote")).expect("claude copy");
+        assert!(claude.contains("\n!`swiss remote brief $ARGUMENTS`"), "{claude}");
+        assert!(!claude.contains(BRIEF_STEP));
+        let head = claude.split("\n---\n").next().expect("frontmatter");
+        assert!(head.ends_with("\nallowed-tools: Bash(swiss remote brief:*)"), "{head}");
+        assert_eq!(frontmatter(&claude, "name").as_deref(), Some("swiss-remote"));
+        assert!(!loads_by_itself(&claude), "still the user's to invoke");
+
+        let agents = std::fs::read_to_string(home.file(".agents", "swiss-remote")).expect("agents copy");
+        assert_eq!(agents, REMOTE_SKILL_MD, "a client without `!` reads the step as shipped");
+        for root in [".claude", ".agents"] {
+            let reference = home.0.join(root).join("skills").join("swiss-remote").join("REFERENCE.md");
+            assert_eq!(std::fs::read_to_string(&reference).expect("REFERENCE.md"), REMOTE_REFERENCE_MD);
+            assert_eq!(state_of(&home.places().status(), "swiss-remote", root), CopyState::Current);
+        }
+        std::fs::remove_file(home.0.join(".agents/skills/swiss-remote/REFERENCE.md")).expect("drop it");
+        assert_eq!(state_of(&home.places().status(), "swiss-remote", ".agents"), CopyState::Outdated, "a missing companion is refreshed");
     }
 
     #[test]

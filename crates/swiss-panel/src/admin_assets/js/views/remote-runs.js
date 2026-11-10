@@ -39,16 +39,17 @@
    asked why a search sat at the bottom of the page behind a button ("默认就能搜索").
    ================================================================================================ */
                                                                                                                               
-                                                                                                                         
+                                                                                                                                         
 import { $, api, apiJson, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
                                       
 import { tr, trn } from "../i18n.js";
 import { copyLogText, readableBody } from "../logs.js";
 import {
-  actionBtn, btn, closeMenu, collapseRuns, emptyNode, filterInput, iconBtn, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, textNode, timeline, timelineMeta,
-  timelineToggle, valueBlock,
+  actionBtn, btn, closeMenu, collapseRuns, emptyNode, factLine, filterInput, flow, iconBtn, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, textNode, timeline,
+  timeLabel, timelineMeta, timelineToggle, valueBlock,
 } from "../ui/index.js";
+                                               
                                                    
 import { coalescedRead,                    } from "../bus/live.js";
 import { busOn, busOnResync } from "../bus/bus.js";
@@ -78,6 +79,10 @@ let bodies = {}                                 ; // runId -> { text, next, tota
 let live = {}                                  ; // runId -> { text, cursor } for opened active rows
 let contents = {}                                    ; // runId -> a write's body or an exec's stdin, unsealed while shown
 let unsealing = {}                           ; // runId -> true while its /content read is in flight
+/* runId -> what the submitting agent's log showed around the call (SPEC §remote.history
+   "Provenance"), read once when a row with an origin opens; null while the gateway is still
+   looking, which a later open asks again. */
+let trails = {}                                         ;
 let liveTimer = null                                         ;
 let painted = "";
 /* Which visit of this page is on screen (2026-09-29). Every await below can outlive the visit
@@ -227,7 +232,9 @@ function runItem(r                 , isLive         )               {
     // Nor does a run fed stdin: the same `sh -s` may have read a different script, and the
     // record keeps only its size.
     same: isLive || r.input?.stdinBytes != null ? undefined
-      : [kind, arg, tgt, actorLabel(r.actor), r.input?.cwd || "", bad || "ok", r.outputBytes ?? ""].join("\u0000"),
+      : [kind, arg, tgt, actorLabel(r.actor), r.input?.cwd || "", bad || "ok", r.outputBytes ?? "", r.input?.why || ""].join("\u0000"),
+    // The caller's reason, one quiet line under the command (SPEC §remote.history "Provenance").
+    why: r.input?.why || undefined,
     data: { rrun: r.runId },
   };
 }
@@ -273,6 +280,59 @@ export function actorLabel(actor                           )         {
   return cut > 0 ? actor.slice(0, cut) : actor;
 }
 
+/** Why a run ran (SPEC §remote.history "Provenance"): the reason its caller gave, the agent and
+ *  conversation it came from, and - read from that agent's own log - what the person asked,
+ *  what the agent said just before, and the call itself. One quiet line a step. */
+function whyNode(r                 , isLive         )         {
+  const input = r.input || {}                  ;
+  const origin = input.origin;
+  if (!input.why && !origin) return null;
+  const from = origin
+    ? factLine([
+      [origin.agent, origin.version].filter(Boolean).join(" ") || null,
+      origin.session ? tr("remoteRuns.sessionS", { s: origin.session }) : null,
+      origin.cwd ? h("code", null, origin.cwd) : null,
+    ])
+    : null;
+  const parts           = [input.why ? null : note(tr("remoteRuns.noWhy")), from];
+  if (origin && !isLive) {
+    const t = trails[r.runId]                                     ; // undefined: not asked yet
+    if (t == null) parts.push(note(tr("remoteRuns.trailLooking"), { busy: t === undefined }));
+    else if (!t.found) parts.push(note(tr("remoteRuns.trailMissing", { reason: t.reason || "" })));
+    else parts.push(trailFlow(t));
+  }
+  return valueBlock({ label: tr("remoteRuns.why"), text: input.why || undefined }, ...parts);
+}
+
+/** The trail as a flow: the ask, the agent's last words before the call, the call. */
+function trailFlow(t                )              {
+  const at = (ms                    ) => (ms ? timeLabel(ms) : "");
+  const steps             = [];
+  if (t.asked) steps.push({ id: "asked", lead: "user", title: tr("remoteRuns.trailAsked"), detail: t.asked.text, meta: at(t.asked.at) });
+  (t.said || []).forEach((s, i) => {
+    steps.push({ id: "said" + i, lead: "bot", title: tr("remoteRuns.trailSaid"), detail: s.text, meta: at(s.at) });
+  });
+  steps.push({
+    id: "call", lead: "terminal", title: t.tool || "call", mono: true,
+    summary: t.call || "", summaryMono: true,
+    detail: t.callsBefore ? tr("remoteRuns.callsBefore", { n: t.callsBefore }) : undefined,
+    meta: at(t.at),
+  });
+  return flow(steps);
+}
+
+/** Read a run's trail once its row opens. A null answer (the gateway is still reading the
+ *  agent's log) is kept as null, so the row says so, and the next open asks again. */
+async function loadTrail(id        )                {
+  const r = findRun(id);
+  if (!r || !r.input?.origin || isLiveRun(id) || trails[id]) return;
+  const v = visit;
+  const j = await quiet                                  ("/api/remote/runs/" + id + "/trail");
+  if (v !== visit || !open[id]) return;
+  trails[id] = j ? j.trail : { found: false, reason: tr("remoteRuns.runRolledRecord") };
+  repaintBody(id);
+}
+
 /** An open row: what its columns left out (the id, the target, who, the directory, the state),
  *  the whole command, then the output as the value block Logs and Traffic open to. */
 function bodyNode(run                   )         {
@@ -293,7 +353,7 @@ function bodyNode(run                   )         {
     const liveText = l && l.text
       ? (l.capped ? tr("remoteRuns.liveCappedTail") + "\n" : "") + l.text
       : null;
-    return [meta, commandNode(r), stdinNode(r, true), valueBlock(
+    return [meta, commandNode(r), whyNode(r, true), stdinNode(r, true), valueBlock(
       {
         label: tr("remoteRuns.liveOutput"),
         data: { rlive: r.runId },
@@ -309,7 +369,7 @@ function bodyNode(run                   )         {
         ? textNode(liveText, true, "logs").node
         : note(r.state === "queued" ? tr("remoteRuns.queuedWaitingFreeSlot") : tr("remoteRuns.output")))];
   }
-  const out           = [meta, commandNode(r), stdinNode(r, false)];
+  const out           = [meta, commandNode(r), whyNode(r, false), stdinNode(r, false)];
   if (r.error) out.push(valueBlock({ label: tr("remoteRuns.error") }, ...readableBody(r.error, true)));
   const b = bodies[r.runId];
   if (!b) return out.concat(note(tr("remoteRuns.loading"), { busy: true }));
@@ -503,7 +563,7 @@ function toggle(id        )       {
   const root = document.querySelector             ("#pane .tl");
   if (root && run.length) timelineToggle(root, String(id), open[id] ? bodyNode(run) : undefined);
   if (open[id]) {
-    if (isLiveRun(id)) void pullLive(id); else void loadBody(id, false);
+    if (isLiveRun(id)) void pullLive(id); else { void loadBody(id, false); void loadTrail(id); }
   }
   armLive();
 }
@@ -562,6 +622,7 @@ async function clearAll()                {
   bodies = {};
   contents = {};
   unsealing = {};
+  trails = {};
   open = {};
   cursors = [null];
   page = 0;
@@ -850,6 +911,7 @@ export function unmount() {
   // was away, so a stale cursor or filter would show a stale slice of it.
   open = {};
   bodies = {};
+  trails = {};
   contents = {}; // an unsealed body lives only while its page is on screen
   unsealing = {};
   live = {};

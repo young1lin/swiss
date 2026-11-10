@@ -218,6 +218,7 @@ jobs:
           mkdir -p dist-stage/skills/swiss dist-stage/skills/swiss-remote dist-stage/skills/swiss-memory
           cp src/skill_assets/SKILL.md dist-stage/skills/swiss/SKILL.md
           cp src/skill_assets/remote/SKILL.md dist-stage/skills/swiss-remote/SKILL.md
+          cp src/skill_assets/remote/REFERENCE.md dist-stage/skills/swiss-remote/REFERENCE.md
           cp src/skill_assets/memory/SKILL.md dist-stage/skills/swiss-memory/SKILL.md
           cp SETUP.md dist-stage/SETUP.md
           cp SETUP.md dist-stage/skills/swiss/SETUP.md

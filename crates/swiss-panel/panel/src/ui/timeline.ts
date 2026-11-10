@@ -34,6 +34,7 @@
  *   hit       a search result's reason: the matched text on a second line, level with the
  *             time, the match itself marked - a row that only says `bash -s` cannot say why
  *             it is in the results
+ *   why       the reason the caller gave for the row, the same quiet second line (a hit wins)
  *
  * No box and no row lines (U7): rows sit on the page, the hover is the row, and the one
  * expanded row becomes a card. No handlers either: the view's delegated listener answers
@@ -62,6 +63,8 @@ export interface TimelineItem {
   /** Why the row is in a search's results: the match and the text either side of it on its
    *  line. One line, cut with an ellipsis; the open body has the whole output. */
   hit?: { before: string; match: string; after: string };
+  /** The reason the row exists, in the caller's words: one quiet line under it, cut. */
+  why?: string;
   data?: AttrMap;
 }
 
@@ -159,7 +162,7 @@ function itemNode(run: TimelineItem[], o: TimelineOpts, showWho: boolean): HTMLE
   const open = !!o.open && o.open.has(it.id);
   const slow = it.ms != null && it.ms >= (o.slowMs ?? 1000);
   return h("div", { class: "tl-item" + (open ? " open" : ""), data: Object.assign({ "tl-id": it.id }, it.data) },
-    h("button", { type: "button", class: it.hit ? "tl-sum has-hit" : "tl-sum", aria: { expanded: String(open) } },
+    h("button", { type: "button", class: it.hit || it.why ? "tl-sum has-hit" : "tl-sum", aria: { expanded: String(open) } },
       h("span", { class: "tl-chev" }, iconNode("chevron-right")),
       h("time", { class: "tl-time", dateTime: new Date(it.at).toISOString() }, timeLabel(it.at)),
       h("span", { class: "tl-title" }, it.title),
@@ -170,7 +173,8 @@ function itemNode(run: TimelineItem[], o: TimelineOpts, showWho: boolean): HTMLE
       it.ms != null ? h("span", { class: "tl-ms" + (slow ? " slow" : "") }, fmtMs(it.ms)) : null,
       it.live ? h("span", { class: "tl-live" }, dot(it.live.queued ? "idle" : "starting", null), it.live.text) : null,
       // Inside the summary, so a click on the reason opens the row like a click on its time.
-      it.hit ? h("span", { class: "tl-hit" }, it.hit.before, h("mark", null, it.hit.match), it.hit.after) : null),
+      it.hit ? h("span", { class: "tl-hit" }, it.hit.before, h("mark", null, it.hit.match), it.hit.after)
+        : it.why ? h("span", { class: "tl-why", title: it.why }, it.why) : null),
     open && o.body ? h("div", { class: "tl-body" }, o.body(it, run)) : null);
 }
 

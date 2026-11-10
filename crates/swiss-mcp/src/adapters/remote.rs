@@ -114,6 +114,10 @@ fn target_description(known: &[String]) -> String {
 fn tool_def(name: &str, known: &[String]) -> Tool {
     let target = target_description(known);
     let note = routing_note(known);
+    let why = json!({
+        "type": "string",
+        "description": "One sentence naming the request this run serves (at most 300 characters). It is kept with the run so whoever reads the record later knows what it was for."
+    });
     let (description, schema): (String, Value) = match name {
         "remote_exec" => (
             format!(
@@ -134,9 +138,10 @@ fn tool_def(name: &str, known: &[String]) -> Tool {
                         "additionalProperties": { "type": "string" },
                         "description": "Extra environment variables as name to value. LANG / LC_ALL given here override the UTF-8 default."
                     },
-                    "timeoutMs": { "type": "integer", "description": "Deadline in milliseconds (default two hours)." }
+                    "timeoutMs": { "type": "integer", "description": "Deadline in milliseconds (default two hours)." },
+                    "why": why
                 },
-                "required": ["target", "argv"],
+                "required": ["target", "argv", "why"],
             }),
         ),
         "remote_sync" => (
@@ -155,7 +160,8 @@ fn tool_def(name: &str, known: &[String]) -> Tool {
                         "description": "Extra exclude patterns on top of the defaults."
                     },
                     "delta": { "type": "boolean", "description": "Send a changed file of 1 MiB or more as a delta against its previous version on the target (needs python3 there; falls back to the whole file). Default true." },
-                    "base": { "type": "string", "description": "Single-file upload to a new name: the remote file to take the delta against. Default: the newest sibling with the same extension and a similar size." }
+                    "base": { "type": "string", "description": "Single-file upload to a new name: the remote file to take the delta against. Default: the newest sibling with the same extension and a similar size." },
+                    "why": why
                 },
                 "required": ["target"],
             }),
@@ -169,7 +175,8 @@ fn tool_def(name: &str, known: &[String]) -> Tool {
                 "properties": {
                     "target": { "type": "string", "description": target },
                     "remote": { "type": "string", "description": "Workspace-relative file or directory path on the target." },
-                    "to": { "type": "string", "description": "Gateway-side destination path; default the same relative path." }
+                    "to": { "type": "string", "description": "Gateway-side destination path; default the same relative path." },
+                    "why": why
                 },
                 "required": ["target", "remote"],
             }),
@@ -182,7 +189,8 @@ fn tool_def(name: &str, known: &[String]) -> Tool {
                 "type": "object",
                 "properties": {
                     "target": { "type": "string", "description": target },
-                    "remote": { "type": "string", "description": "Workspace-relative file path on the target." }
+                    "remote": { "type": "string", "description": "Workspace-relative file path on the target." },
+                    "why": why
                 },
                 "required": ["target", "remote"],
             }),
@@ -196,9 +204,10 @@ fn tool_def(name: &str, known: &[String]) -> Tool {
                 "properties": {
                     "target": { "type": "string", "description": target },
                     "remote": { "type": "string", "description": "Workspace-relative file path on the target." },
-                    "content": { "type": "string", "description": "The full file content to write (UTF-8 text)." }
+                    "content": { "type": "string", "description": "The full file content to write (UTF-8 text)." },
+                    "why": why
                 },
-                "required": ["target", "remote", "content"],
+                "required": ["target", "remote", "content", "why"],
             }),
         ),
         other => unreachable!("tool table out of sync: {other}"),
@@ -302,12 +311,32 @@ struct Plan {
 /// codebase follows, so a model's typo fails here instead of being silently
 /// dropped half-way to the target.
 fn plan(tool: &str, args: &Map<String, Value>) -> Result<Plan, String> {
+    let mut plan = plan_input(tool, args)?;
+    // The run's reason (SPEC §remote.history "Provenance"): kept with the record, so whoever
+    // reads it later knows which request the command served. The action caps its length.
+    match opt_text(args, "why")?.map(|why| why.trim().to_string()) {
+        Some(why) if why.is_empty() => return Err("why is empty: name the request this run serves".into()),
+        Some(why) => plan.input["why"] = json!(why),
+        None if WHY_REQUIRED.contains(&tool) => {
+            return Err(format!(
+                "{tool} needs why: one sentence naming the request this run serves (kept with the run)"
+            ))
+        }
+        None => {}
+    }
+    Ok(plan)
+}
+
+/// The tools that change the far side: a caller says why before it runs one.
+const WHY_REQUIRED: [&str; 2] = ["remote_exec", "remote_write"];
+
+fn plan_input(tool: &str, args: &Map<String, Value>) -> Result<Plan, String> {
     let allowed: &[&str] = match tool {
-        "remote_exec" => &["target", "argv", "cwd", "env", "timeoutMs"],
-        "remote_sync" => &["target", "source", "to", "exclude", "delta", "base"],
-        "remote_pull" => &["target", "remote", "to"],
-        "remote_cat" => &["target", "remote"],
-        "remote_write" => &["target", "remote", "content"],
+        "remote_exec" => &["target", "argv", "cwd", "env", "timeoutMs", "why"],
+        "remote_sync" => &["target", "source", "to", "exclude", "delta", "base", "why"],
+        "remote_pull" => &["target", "remote", "to", "why"],
+        "remote_cat" => &["target", "remote", "why"],
+        "remote_write" => &["target", "remote", "content", "why"],
         _ => return Err(format!("unknown tool {tool}")),
     };
     if let Some(key) = args.keys().find(|k| !allowed.contains(&k.as_str())) {
@@ -864,7 +893,7 @@ mod tests {
         let out = call(
             &services,
             "remote_exec",
-            json!({ "target": "dev", "argv": ["make", "-j8"] }),
+            json!({ "target": "dev", "argv": ["make", "-j8"], "why": "build the board image" }),
         )
         .await;
         assert!(!is_error(&out), "{}", text_of(&out));
@@ -877,7 +906,7 @@ mod tests {
         assert!(text.contains("(run "), "the run id rides along: {text}");
         // The action saw exactly the routed input.
         let seen = stubs[0].seen.lock().unwrap();
-        assert_eq!(seen[0], json!({ "target": "dev", "argv": ["make", "-j8"] }));
+        assert_eq!(seen[0], json!({ "target": "dev", "argv": ["make", "-j8"], "why": "build the board image" }));
     }
 
     /// Drive one call through a server whose factory-time source is `source`.
@@ -928,7 +957,7 @@ mod tests {
                 &services,
                 source,
                 "remote_exec",
-                json!({ "target": "dev", "argv": ["true"] }),
+                json!({ "target": "dev", "argv": ["true"], "why": "t" }),
             )
             .await;
             assert!(!is_error(&out), "{}", text_of(&out));
@@ -949,7 +978,7 @@ mod tests {
         let out = call(
             &services,
             "remote_exec",
-            json!({ "target": "dev", "argv": ["false"] }),
+            json!({ "target": "dev", "argv": ["false"], "why": "t" }),
         )
         .await;
         assert!(is_error(&out), "a failed command is an error result");
@@ -1021,13 +1050,13 @@ mod tests {
         let out = call(
             &services,
             "remote_write",
-            json!({ "target": "dev", "remote": "hello.txt", "content": "hi\n" }),
+            json!({ "target": "dev", "remote": "hello.txt", "content": "hi\n", "why": "greet" }),
         )
         .await;
         assert!(!is_error(&out), "{}", text_of(&out));
         assert_eq!(
             stubs[4].seen.lock().unwrap()[0],
-            json!({ "target": "dev", "remote": "hello.txt", "content": "hi\n" })
+            json!({ "target": "dev", "remote": "hello.txt", "content": "hi\n", "why": "greet" })
         );
     }
 
@@ -1042,7 +1071,8 @@ mod tests {
                 "argv": ["make"],
                 "cwd": "build",
                 "env": { "BOARD": "rpi", "JOBS": "8" },
-                "timeoutMs": 120000
+                "timeoutMs": 120000,
+                "why": "build for the rpi board"
             }),
         )
         .await;
@@ -1055,7 +1085,8 @@ mod tests {
                 "argv": ["make"],
                 "cwd": "build",
                 "env": { "BOARD": "rpi", "JOBS": "8" },
-                "timeoutMs": 120000
+                "timeoutMs": 120000,
+                "why": "build for the rpi board"
             })
         );
     }
@@ -1092,6 +1123,12 @@ mod tests {
         .await;
         assert!(is_error(&out));
         assert!(text_of(&out).contains("timeoutMs"), "{}", text_of(&out));
+
+        let out = call(&services, "remote_exec", json!({ "target": "dev", "argv": ["ls"] })).await;
+        assert!(is_error(&out));
+        assert!(text_of(&out).contains("needs why"), "an exec says why: {}", text_of(&out));
+        let out = call(&services, "remote_exec", json!({ "target": "dev", "argv": ["ls"], "why": " " })).await;
+        assert!(text_of(&out).contains("why is empty"), "{}", text_of(&out));
     }
 
     #[tokio::test]

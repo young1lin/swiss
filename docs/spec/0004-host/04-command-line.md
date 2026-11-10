@@ -51,9 +51,11 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   scanner.
 - **Selected skill installation.** `POST /api/skills/install` accepts `{name, root}`, restricted
   to the three embedded names and `.claude` / `.agents`. It stages and atomically replaces that
-  target's `SKILL.md` and, for the `swiss` skill, `SETUP.md` beside it, preserving other files and
-  skills, then returns the current inspection shape. A `swiss` copy whose `SETUP.md` is missing or
-  differs is `outdated`. Unknown targets and extra request fields are refused before filesystem
+  target's `SKILL.md` and the companions shipped beside it (`SETUP.md` for `swiss`, `REFERENCE.md`
+  for `swiss-remote`), preserving other files and skills, then returns the current inspection
+  shape. A copy whose companion is missing or differs is `outdated`. A skill may land differently
+  per root: `swiss-remote`'s `.claude` copy runs its brief as it loads (§remote.project), and the
+  check compares each root against what that root gets. Unknown targets and extra request fields are refused before filesystem
   access. Writes run
   on the blocking pool and require the same admin session.
 - **`export` / `import`** — the one plaintext escape: a v1 bundle of config, managed, tunnels,
@@ -112,14 +114,14 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
 
   Skills ship inside the binary, so a new version may change them, and a copy on disk does not
   change by itself. `skill list` marks a copy that differs from this binary's as `outdated`, which
-  includes a `SKILL.md` edited by hand, or a `swiss` copy whose `SETUP.md` differs. Updating swiss
+  includes a `SKILL.md` edited by hand, or a copy whose companion (`SETUP.md`, `REFERENCE.md`) differs. Updating swiss
   is therefore two steps: replace the executable, then `swiss skill install --installed`;
   `SETUP.md`, which the `swiss` skill points at, and what `swiss update` prints both say so. No gateway boot and no panel load refreshes a skill behind the user's back
   (`cli::tests::no_terminal_and_no_names_refuses_and_installs_nothing`,
   `a_terminal_prompt_defaults_to_no`, `skill_install::tests::installed_refreshes_and_never_adds`).
 
-  Every write stages `SKILL.md` beside the target and renames it over, and the `swiss` skill's
-  `SETUP.md` the same way, so what the user keeps in that directory stays and a replacement that
+  Every write stages `SKILL.md` beside the target and renames it over, and each companion
+  the same way, so what the user keeps in that directory stays and a replacement that
   fails leaves the old copy
   (`a_reinstall_keeps_what_the_user_put_beside_the_skill`,
   `a_failed_replacement_keeps_the_old_copy`). A denied rename is tried again for about a second:
