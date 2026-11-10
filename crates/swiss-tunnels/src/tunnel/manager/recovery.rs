@@ -70,14 +70,21 @@ impl TunnelManager {
                 {
                     let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
                     data.lost = true;
-                    data.reason = Some(err.message.clone());
+                    let next_reason = Some(err.message.clone());
                     // An auth or host-key failure must not be retried: hammering the server every
                     // 10s earns a fail2ban ban, and a changed host key needs a human.
-                    data.state = if retrying {
+                    let next = if retrying {
                         RuleState::Reconnecting
                     } else {
                         RuleState::Error
                     };
+                    let changed = data.state != next || data.reason != next_reason;
+                    data.state = next;
+                    data.reason = next_reason;
+                    drop(data);
+                    if changed {
+                        mgr.table_changed();
+                    }
                 }
                 if retrying {
                     mgr.schedule_retry(&rule);

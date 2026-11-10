@@ -68,6 +68,7 @@ impl TunnelManager {
             Arc::new(move |_| {
                 if let Some(mgr) = weak_seat.upgrade() {
                     mgr.remote_seat_changed();
+                    mgr.table_changed();
                 }
             });
         // SPEC §tunnels.jump: the dialer this connection's dial calls back into when its def

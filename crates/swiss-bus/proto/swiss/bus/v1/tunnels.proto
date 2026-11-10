@@ -1,0 +1,18 @@
+// TUNNELS.TABLE (SPEC §bus.registry, SPEC §tunnels.panel). Module 7, sub 1.
+// A NOTICE with no key: a rule's state or reason moved, a rule or connection
+// was created, edited or deleted, start-all or stop-all ran, a port was freed,
+// or a conns or rules group edit landed. The page re-reads GET /api/tunnels.
+// Byte counters do not publish.
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+enum TunnelsSub {
+  TUNNELS_SUB_UNSPECIFIED = 0;
+  TUNNELS_SUB_TABLE = 1;
+}
+
+enum TunnelsTableId {
+  TUNNELS_TABLE_ID_UNSPECIFIED = 0;
+  TUNNELS_TABLE_CHANGED = 1;
+}

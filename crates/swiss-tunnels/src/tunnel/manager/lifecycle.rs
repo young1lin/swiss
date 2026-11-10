@@ -77,7 +77,12 @@ impl TunnelManager {
                 .as_ref()
                 .is_some_and(|c| c.state() == ConnState::Connected);
             if listening && live {
+                let changed = data.state != RuleState::Up;
                 data.state = RuleState::Up;
+                if changed {
+                    drop(data);
+                    self.table_changed();
+                }
                 return Ok(());
             }
             listening
@@ -97,16 +102,29 @@ impl TunnelManager {
                     rule.connection_id.as_str()
                 }
             );
-            let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
-            data.state = RuleState::Error;
-            data.reason = Some(reason.clone());
+            let changed = {
+                let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
+                let next = Some(reason.clone());
+                let changed = data.state != RuleState::Error || data.reason != next;
+                data.state = RuleState::Error;
+                data.reason = next;
+                changed
+            };
+            if changed {
+                self.table_changed();
+            }
             return Err(TunnelError::new(reason, FailureKind::Config));
         };
         {
             let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
+            let changed = data.state != RuleState::Starting || data.reason.is_some();
             data.state = RuleState::Starting;
             data.reason = None;
             data.port_owner = None;
+            drop(data);
+            if changed {
+                self.table_changed();
+            }
         }
 
         let started = async {
@@ -149,6 +167,7 @@ impl TunnelManager {
                 {
                     let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
                     data.forward = Some(fwd);
+                    let changed = data.state != RuleState::Up;
                     data.state = RuleState::Up;
                     data.retries = 0; // a successful connect resets the backoff for the next outage
                     if data.lost {
@@ -157,6 +176,10 @@ impl TunnelManager {
                         data.pools_released = released;
                     } else {
                         data.started_at = Some(now);
+                    }
+                    drop(data);
+                    if changed {
+                        self.table_changed();
                     }
                 }
                 // The tunnel is UP; failing to persist the enabled flag is a disk problem, not a
@@ -212,12 +235,19 @@ impl TunnelManager {
                 {
                     let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
                     data.port_owner = owner;
-                    data.state = if retrying {
+                    let next = if retrying {
                         RuleState::Reconnecting
                     } else {
                         RuleState::Error
                     };
-                    data.reason = Some(reason.clone());
+                    let next_reason = Some(reason.clone());
+                    let changed = data.state != next || data.reason != next_reason;
+                    data.state = next;
+                    data.reason = next_reason;
+                    drop(data);
+                    if changed {
+                        self.table_changed();
+                    }
                 }
                 if retrying {
                     self.schedule_retry(&rule);
@@ -268,8 +298,15 @@ impl TunnelManager {
                 continue;
             }
             self.teardown(&rt).await;
-            let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
-            data.state = RuleState::Stopped;
+            let changed = {
+                let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
+                let changed = data.state != RuleState::Stopped;
+                data.state = RuleState::Stopped;
+                changed
+            };
+            if changed {
+                self.table_changed();
+            }
         }
     }
 
@@ -294,8 +331,9 @@ impl TunnelManager {
         let _guard = rt.op.lock().await;
         self.clear_retry(&rt);
         self.teardown(&rt).await;
-        {
+        let changed = {
             let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
+            let changed = data.state != RuleState::Stopped || data.reason.is_some();
             data.state = RuleState::Stopped;
             data.reason = None;
             data.lost = false;
@@ -304,6 +342,10 @@ impl TunnelManager {
             data.reconnected_at = None;
             data.pools_released.clear();
             data.port_owner = None;
+            changed
+        };
+        if changed {
+            self.table_changed();
         }
         if persist {
             self.with_store(|s| s.set_enabled(id, false))
@@ -502,5 +544,69 @@ mod tests {
         let up = state_of(&m, &r.id) == "up";
         assert_eq!(up, !port_is_free(port).await);
         m.close_all().await;
+    }
+
+    /// SPEC §tunnels.panel: a state move publishes TUNNELS.TABLE, a connection state
+    /// publishes that and the seat, and a stop that changes nothing publishes nothing.
+    #[tokio::test]
+    async fn a_state_move_publishes_the_table_and_a_connection_move_publishes_both() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::tunnel::types::FailureKind;
+
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let table = Arc::new(AtomicUsize::new(0));
+        let seat = Arc::new(AtomicUsize::new(0));
+        let table_hook = table.clone();
+        let seat_hook = seat.clone();
+        m.set_table_notice(Some(Arc::new(move || {
+            table_hook.fetch_add(1, Ordering::SeqCst);
+        })));
+        m.set_remote_seat_changed(Some(Arc::new(move || {
+            seat_hook.fetch_add(1, Ordering::SeqCst);
+        })));
+
+        let missing = m.delete_rule("no-such-rule", false).await;
+        assert!(missing.is_err());
+        assert_eq!(table.load(Ordering::SeqCst), 0, "a refused delete publishes nothing");
+
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+        m.start_rule(&r.id).await.expect("start");
+        assert!(table.load(Ordering::SeqCst) >= 1, "start publishes the table");
+
+        m.stop_rule(&r.id, true, true).await.expect("stop");
+        let after_stop = table.load(Ordering::SeqCst);
+        m.stop_rule(&r.id, true, true).await.expect("second stop");
+        assert_eq!(
+            table.load(Ordering::SeqCst),
+            after_stop,
+            "a stop that changes nothing publishes nothing"
+        );
+
+        m.start_all().await;
+        let after_start_all = table.load(Ordering::SeqCst);
+        assert!(after_start_all > after_stop, "start-all publishes");
+        m.stop_all(true).await.expect("stop all");
+        let after_stop_all = table.load(Ordering::SeqCst);
+        assert!(after_stop_all > after_start_all, "stop-all publishes");
+
+        m.apply_rule_update(&r.id, &rule_input("renamed", &c.id, port, echo))
+            .await
+            .expect("edit");
+        let after_edit = table.load(Ordering::SeqCst);
+        assert!(after_edit > after_stop_all, "a saved rule edit publishes");
+        m.delete_rule(&r.id, true).await.expect("delete");
+        assert!(table.load(Ordering::SeqCst) > after_edit, "a delete publishes");
+
+        let again = add_rule(&store, rule_input("pg", &c.id, port, echo));
+        m.start_rule(&again.id).await.expect("start again");
+        let before_die = (table.load(Ordering::SeqCst), seat.load(Ordering::SeqCst));
+        nth(&built, built_len(&built) - 1).die(FailureKind::Network);
+        assert!(seat.load(Ordering::SeqCst) > before_die.1, "a connection state publishes the seat");
+        assert!(table.load(Ordering::SeqCst) > before_die.0, "a connection state publishes the table");
     }
 }

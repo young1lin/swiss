@@ -491,6 +491,7 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
                         // SPEC §host.seats: an endpoint joined the inventory — the seat's
                         // notice owes a page its re-read.
                         t.manager.remote_seat_changed();
+                        t.manager.table_changed();
                         admin_json(
                             StatusCode::CREATED,
                             json!({ "connection": mask_conn(&def) }),
@@ -582,6 +583,7 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
                 if body.get("start") == Some(&Value::Bool(true)) {
                     let _ = t.manager.start_rule(&id).await;
                 }
+                t.manager.table_changed();
                 let row = t.manager.rule_row(&id);
                 let mut out = Map::new();
                 if let Some(row) = row {
@@ -753,6 +755,7 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
                         json!({ "error": err, "owner": owner.to_json() }),
                     );
                 }
+                t.manager.table_changed();
                 admin_json(
                     StatusCode::OK,
                     json!({ "port": port, "killed": owner.to_json() }),

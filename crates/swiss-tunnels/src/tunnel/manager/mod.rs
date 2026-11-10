@@ -207,6 +207,9 @@ pub struct TunnelManager {
     /// moves (SshHooks::on_state) and connection saves fire it, so the Remote page's
     /// endpoint dots follow without a poll.
     seat_changed: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// TUNNELS.TABLE (SPEC §tunnels.panel). State, reason, definitions and groups.
+    /// Byte counters do not publish.
+    table_notice: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl TunnelManager {
@@ -229,6 +232,7 @@ impl TunnelManager {
             make_connection,
             closed: AtomicBool::new(false),
             seat_changed: Mutex::new(None),
+            table_notice: Mutex::new(None),
         })
     }
 
@@ -248,6 +252,24 @@ impl TunnelManager {
             .clone();
         if let Some(changed) = changed {
             changed();
+        }
+    }
+
+    /// Where a TUNNELS.TABLE notice goes (SPEC §tunnels.panel). The composition passes the bus.
+    pub fn set_table_notice(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self.table_notice.lock().unwrap_or_else(|e| e.into_inner()) = hook;
+    }
+
+    /// The table a page would read has moved. The hook is cloned out first: it publishes
+    /// and must not need the rule lock this call may be leaving.
+    pub(super) fn table_changed(&self) {
+        let hook = self
+            .table_notice
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(hook) = hook {
+            hook();
         }
     }
 

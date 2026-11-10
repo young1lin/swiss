@@ -404,6 +404,20 @@ pub async fn run_gateway() -> Result<(), String> {
         swiss_bus::pb::v1::Module::Mcp as u32,
         swiss_bus::pb::v1::McpSub::Servers as u32,
     ));
+    // TUNNELS.TABLE for a group edit (SPEC §tunnels.panel). A conns or rules write
+    // lands in the store, not through the manager, so the route publishes it. The
+    // manager's own hook covers state and definition writes.
+    let tunnels_bus = services.bus.clone();
+    let tunnels_note = std::sync::Arc::new(move || {
+        swiss_host::notice::publish_at(
+            &tunnels_bus,
+            swiss_bus::pb::v1::Module::Tunnels as u32,
+            swiss_bus::pb::v1::TunnelsSub::Table as u32,
+            swiss_bus::pb::v1::TunnelsTableId::TunnelsTableChanged as u32,
+        );
+    });
+    ctx.group_scopes.set_notice("conns", tunnels_note.clone());
+    ctx.group_scopes.set_notice("rules", tunnels_note);
     // The consoles' history (SPEC §data.history): constructed closed here so the /api/db mount
     // can carry it; the Data plugin's start opens logs/data.db and its stop closes it.
     let data_history = swiss_data::history::DataHistory::new(swiss_core::paths::data_path(&["logs"]));

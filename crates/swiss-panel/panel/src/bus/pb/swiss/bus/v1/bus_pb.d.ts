@@ -333,6 +333,11 @@ export enum Module {
   DATA = 6,
 
   /**
+   * @generated from enum value: MODULE_TUNNELS = 7;
+   */
+  TUNNELS = 7,
+
+  /**
    * @generated from enum value: MODULE_JOBS = 8;
    */
   JOBS = 8,

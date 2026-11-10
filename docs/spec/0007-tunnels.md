@@ -256,14 +256,17 @@ for the remote plugin (§remote): exec requests over the same clients, POSIX-quo
 the SSH string is built, returning events and exit codes only. It calls the seat's `changed()`
 (§host.seats) on every connection state transition — idle, connecting, connected, error — and
 on every connection added, edited or deleted, so the Remote page's endpoint dots follow without
-a poll.
+a poll. Separately, every rule state transition, every rule or connection created, edited or
+deleted, start-all, stop-all, a freed port and a conns or rules group edit publish
+TUNNELS.TABLE. The traffic counters on a rule row move without a notice; they are fresh
+whenever the table is read.
 
 ## §tunnels.panel — The pages
 
 - **Two pages over one scope switch** (`mountTunnelsPage("conns" | "rules")`), grouped cards
-  with collapse state, drag to reorder and regroup through the groups family; a poll patches
-  dots, reasons, buttons and counts in place and redraws only when the row set changes, never
-  while dragging.
+  with collapse state, drag to reorder and regroup through the groups family; a TUNNELS.TABLE
+  or MCP.SERVERS notice re-reads and patches dots, reasons, buttons and counts in place and
+  redraws only when the row set changes, never while dragging.
 - **Rule rows**: an inline Start/Stop, ⋯ with Edit, Copy local port, Force free (only with a
   `portOwner`), Delete; a 409 lists the dependants and confirms before the forced resend.
 - **Connection rows**: Test (a hostkey failure offers Trust, then retries); ⋯ Edit, Copy host,

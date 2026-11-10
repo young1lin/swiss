@@ -22,7 +22,11 @@ import type { HChild } from "./h.js";
 import { copyText } from "./connect.js";
 import { assignMember, groupOf as makeGroupOf, mountGroup, newGroupFlow, saveOrder, slice } from "./groups.js";
 import { connRowNode, isTunnelsView, loadList, loadTunnels, ruleRowNode, tunBusyWord, tunData, tunDot, tunGroupsList, tunRows, tunScope } from "./polling.js";
-import { followMcpServers } from "./mcp-live.js";
+import { busOn } from "./bus/bus.js";
+import { busOnWhileVisible, coalescedRead } from "./bus/live.js";
+import { Module, NoticeSchema } from "./bus/pb/swiss/bus/v1/bus_pb.js";
+import { McpSub, ServersId } from "./bus/pb/swiss/bus/v1/mcp_pb.js";
+import { TunnelsSub, TunnelsTableId } from "./bus/pb/swiss/bus/v1/tunnels_pb.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
 import { currentView } from "./ui-state.js";
 import { clearTunBusy, clearTunView, setTunBusy, setTunDragging, setTunDraggingGroup, setTunPendingGroup, setMountedTunScope, tunBusyOf, tunDragging, tunDraggingGroup, tunFolds, mountedTunScope } from "./tunnel-state.js";
@@ -416,31 +420,54 @@ async function deleteConn(conn: ApiTunnelConnectionRow): Promise<void> {
 /* --- the two L2 pages' shared lifecycle -----------------------------------------------------------
    views/tunnels.js (#tunnels, SSH Connections) and views/tunnel-forwards.js
    (#tunnel-forwards, Port Forwards) are thin modules over this one: same data, same
-   rendering, same polling — only the scope differs, and each mount states its own. No
+   rendering, same notices — only the scope differs, and each mount states its own. No
    business logic is duplicated on either side of the pair. */
 
 /** Mount one tunnels page: pin the scope, then load. Scope is the /api/groups family's own
  *  word ("conns"|"rules"); everything in this module reads it through mountedTunScope(). */
-let stopMcpServers: (() => void) | null = null;
+let stopLive: (() => void) | null = null;
+
+/** TUNNELS.TABLE stays subscribed while hidden; the coalescer holds the read.
+ *  MCP.SERVERS is held only while visible, so a hide parks the health probe.
+ *  Both push the same read: one burst is one GET /api/tunnels and one GET /api/mcps. */
+function followTunnelsTable(): () => void {
+  const burst = coalescedRead(async () => {
+    await loadList();
+    await loadTunnels(true);
+  });
+  const stopMcp = busOnWhileVisible(
+    { module: Module.MCP, sub: McpSub.SERVERS, key: "" },
+    ServersId.SERVERS_CHANGED,
+    NoticeSchema,
+    () => { burst.push(); },
+    () => { burst.push(); },
+  );
+  const stopTable = busOn(
+    { module: Module.TUNNELS, sub: TunnelsSub.TABLE, key: "" },
+    TunnelsTableId.TUNNELS_TABLE_CHANGED,
+    NoticeSchema,
+    () => { burst.push(); },
+  );
+  return () => {
+    stopMcp();
+    stopTable();
+    burst.stop();
+  };
+}
 
 async function mountTunnelsPage(scope: string): Promise<void> {
   setMountedTunScope(scope);
-  if (stopMcpServers) stopMcpServers();
-  stopMcpServers = followMcpServers(() => loadList());
+  if (stopLive) stopLive();
+  stopLive = followTunnelsTable();
   return loadTunnels();
 }
 
 function refreshTunnelsPage(): Promise<void> { return loadTunnels(); }
 
-async function pollTunnelsPage() {
-  await loadList();
-  await loadTunnels(true);
-}
-
 function unmountTunnelsPage() {
-  if (stopMcpServers) stopMcpServers();
-  stopMcpServers = null;
+  if (stopLive) stopLive();
+  stopLive = null;
   clearTunView();
 }
 
-export { assignTunScoped, deleteConn, deleteRule, forceFreePort, mountTunnelsPage, moveTunRow, patchTunnels, pollTunnelsPage, refreshTunnelsPage, renderTunnels, ruleAct, saveTunOrder, startAllRules, stopAllRules, testConn, tunCfg, tunnelsCountText, unmountTunnelsPage, wireTunnels, withTunBusy };
+export { assignTunScoped, deleteConn, deleteRule, forceFreePort, mountTunnelsPage, moveTunRow, patchTunnels, refreshTunnelsPage, renderTunnels, ruleAct, saveTunOrder, startAllRules, stopAllRules, testConn, tunCfg, tunnelsCountText, unmountTunnelsPage, wireTunnels, withTunBusy };

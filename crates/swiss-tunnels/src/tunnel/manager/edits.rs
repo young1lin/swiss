@@ -44,6 +44,7 @@ impl TunnelManager {
         if was_running {
             let _ = self.start_rule(id).await; // the rule holds its own error state
         }
+        self.table_changed();
         Ok(def)
     }
 
@@ -93,8 +94,9 @@ impl TunnelManager {
             let _ = self.start_rule(&r.id).await; // the rule holds its own error state
         }
         // SPEC §host.seats: the endpoint inventory moved — the seat's notice owes a page
-        // its re-read.
+        // its re-read. The tunnels table reads the same connection.
         self.remote_seat_changed();
+        self.table_changed();
         Ok(def)
     }
 
@@ -115,6 +117,7 @@ impl TunnelManager {
             .remove(id);
         self.with_store(|s| s.remove_rule(id))
             .map_err(OpError::msg)?;
+        self.table_changed();
         Ok(())
     }
 
@@ -164,6 +167,7 @@ impl TunnelManager {
             .remove(id);
         // SPEC §host.seats: an endpoint left the inventory.
         self.remote_seat_changed();
+        self.table_changed();
         Ok(())
     }
 
@@ -235,6 +239,7 @@ impl TunnelManager {
                 ) {
                     c.set_def(def);
                 }
+                self.table_changed();
                 Ok(Some(fp))
             }
             // Not update_connection({...def, hostKey: undefined}): the store deliberately
@@ -243,6 +248,7 @@ impl TunnelManager {
             None => {
                 self.with_store(|s| s.clear_host_key(id))
                     .map_err(OpError::msg)?;
+                self.table_changed();
                 Ok(None)
             }
         }

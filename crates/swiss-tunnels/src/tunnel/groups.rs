@@ -98,3 +98,61 @@ pub fn register_tunnel_scopes(scopes: &GroupScopes, store: &Arc<Mutex<TunnelStor
         TunnelGroups::scope(store.clone(), GroupKind::Rules),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use swiss_host::groups::GroupScopes;
+
+    use super::register_tunnel_scopes;
+    use crate::tunnel::store::TunnelStore;
+
+    /// SPEC §host.groups: a conns or rules edit the route notes publishes once.
+    /// A refused write is not noted, which is what the route does on Err.
+    #[test]
+    fn a_conns_and_a_rules_edit_publish_once_and_a_refusal_does_not() {
+        swiss_core::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-tgroups-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let store = Arc::new(std::sync::Mutex::new(TunnelStore::new(
+            dir.join("tunnels.json"),
+            19999,
+        )));
+        let scopes = GroupScopes::new();
+        register_tunnel_scopes(&scopes, &store);
+        let n = Arc::new(AtomicUsize::new(0));
+        let conns = n.clone();
+        let rules = n.clone();
+        scopes.set_notice(
+            "conns",
+            Arc::new(move || {
+                conns.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+        scopes.set_notice(
+            "rules",
+            Arc::new(move || {
+                rules.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+        let conns_scope = scopes.get("conns").expect("conns");
+        conns_scope
+            .set_names(vec!["default".into(), "lab".into()])
+            .expect("rename the list");
+        scopes.note("conns");
+        assert_eq!(n.load(Ordering::SeqCst), 1);
+        let rules_scope = scopes.get("rules").expect("rules");
+        rules_scope
+            .set_names(vec!["default".into(), "lab".into()])
+            .expect("rename the rules list");
+        scopes.note("rules");
+        assert_eq!(n.load(Ordering::SeqCst), 2);
+        assert!(conns_scope.set_names(vec![]).is_err(), "an empty list is refused");
+        assert_eq!(n.load(Ordering::SeqCst), 2, "the route does not note a refusal");
+    }
+}

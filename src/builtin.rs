@@ -520,6 +520,18 @@ impl PluginInstance for TunnelsInstance {
         // Lower the close_all gate synchronously, before the routes mount: a Start click that
         // beats the boot task to the manager must not be refused as "closed".
         self.manager.reopen();
+        // TUNNELS.TABLE (SPEC §tunnels.panel). Installed before boot starts rules, so a
+        // state the page can already read is a notice. Cleared in stop before close_all:
+        // the idle storm that follows a withdraw is not a table the page should re-read.
+        let table_bus = self.services.bus.clone();
+        self.manager.set_table_notice(Some(Arc::new(move || {
+            swiss_host::notice::publish_at(
+                &table_bus,
+                swiss_bus::pb::v1::Module::Tunnels as u32,
+                swiss_bus::pb::v1::TunnelsSub::Table as u32,
+                swiss_bus::pb::v1::TunnelsTableId::TunnelsTableChanged as u32,
+            );
+        })));
         let manager = self.manager.clone();
         scope.spawn(async move {
             for result in manager.start_enabled().await {
@@ -552,6 +564,8 @@ impl PluginInstance for TunnelsInstance {
             .map_err(|err| {
                 // The remote provider registered above must not survive a failed start.
                 self.services.remote.clear();
+                self.manager.set_remote_seat_changed(None);
+                self.manager.set_table_notice(None);
                 format!("interactive shell registration: {err}")
             })?;
         Ok(())
@@ -568,8 +582,10 @@ impl PluginInstance for TunnelsInstance {
         // remote exec is a RUN with its own deadline and its own cancel path, and the
         // connections closing underneath turn any survivor into an honestly-failed run.
         // The seat's callback comes off before close_all: the idle storm that follows a
-        // withdraw is not inventory news (SPEC §host.seats).
+        // withdraw is not inventory news (SPEC §host.seats). The table hook comes off
+        // with it, for the same storm.
         self.manager.set_remote_seat_changed(None);
+        self.manager.set_table_notice(None);
         self.services.remote.begin_withdraw();
         self.services.shells.begin_withdraw();
         self.shells.ledger().begin_withdraw();
