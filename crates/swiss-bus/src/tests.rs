@@ -790,6 +790,11 @@ fn golden_entries() -> Vec<serde_json::Value> {
             serde_json::json!({"bodyType":"RunChanged","body":{"runId":12,"revision":3,"state":"FAILED","action":"remote.exec","owner":"manual","actor":"cli:user@host","lane":"build","queuedAtMs":1793784600000u64,"startedAtMs":1793784600005u64,"endedAtMs":1793784608015u64,"exitCode":2},"origin":"page-a","key":"remote"}),
         ),
         (
+            "plugins-notice",
+            frame!(4, 3, 1, Kind::Event, 14, 0, "alpha", "page-a", v1::Notice {}.encode_to_vec(), None),
+            serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a","key":"alpha"}),
+        ),
+        (
             "prefs-relay",
             frame!(14, 1, 1, Kind::Relay, 2, 0, "", "left", v1::Prefs { lang: Some("zh".to_owned()), theme: None, code_scheme: None }.encode_to_vec(), None),
             serde_json::json!({"bodyType":"Prefs","body":{"lang":"zh"},"origin":"left"}),

@@ -28,7 +28,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
+use prost::Message as _;
 use serde_json::{json, Value};
+use swiss_bus::pb::v1;
 
 use super::descriptor::{PluginDescriptor, PluginState};
 use super::factory::{ApplyOutcome, PluginFactory, PluginInstance};
@@ -132,11 +134,17 @@ impl PluginEntry {
 /// the shared services (the connection catalog today).
 pub type CapabilityProbe = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
+/// HOST.PLUGINS (SPEC §host.plugins). The composition installs one; a test that
+/// only counts notices installs its own. Absent means a lifecycle pass publishes
+/// nothing, which is what every existing host test relies on.
+pub type PluginsNotice = Arc<dyn Fn(&str) + Send + Sync>;
+
 pub struct PluginHost {
     store: Arc<ConfigStore>,
     plugins: RwLock<Vec<Arc<PluginEntry>>>,
     /// Set once by the composition root; absent means no capability is provided.
     capability_probe: RwLock<Option<CapabilityProbe>>,
+    plugins_notice: Mutex<Option<PluginsNotice>>,
 }
 
 impl PluginHost {
@@ -145,6 +153,42 @@ impl PluginHost {
             store,
             plugins: RwLock::new(Vec::new()),
             capability_probe: RwLock::new(None),
+            plugins_notice: Mutex::new(None),
+        }
+    }
+
+    /// Where a plugin-inventory notice goes (SPEC §host.plugins). The composition
+    /// passes the bus; a test passes a counter. Calling it again replaces the hook.
+    pub fn set_plugins_notice(&self, hook: Option<PluginsNotice>) {
+        *self
+            .plugins_notice
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = hook;
+    }
+
+    /// The composition's hook: an empty HOST.PLUGINS notice keyed by the plugin id.
+    pub fn set_plugins_bus(&self, bus: Arc<swiss_bus::Bus>) {
+        self.set_plugins_notice(Some(Arc::new(move |id: &str| {
+            let body = v1::Notice {}.encode_to_vec();
+            bus.publish(
+                v1::Module::Host as u32,
+                v1::HostSub::Plugins as u32,
+                v1::PluginsId::PluginsChanged as u32,
+                id,
+                "",
+                body,
+            );
+        })));
+    }
+
+    fn note_plugins(&self, id: &str) {
+        let hook = self
+            .plugins_notice
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(hook) = hook {
+            hook(id);
         }
     }
 
@@ -280,11 +324,36 @@ impl PluginHost {
     /// two simultaneous starts of a stopped plugin run `create` ONCE (single-flight), and a
     /// disable racing an enable lands in whichever order the queue admits, then re-checks.
     pub async fn reconcile(self: &Arc<Self>, id: &str) -> Result<(), String> {
+        self.reconcile_inner(id, true).await
+    }
+
+    /// Reconcile after a config row was persisted, then publish HOST.PLUGINS once
+    /// (SPEC §host.plugins). The pass itself stays quiet: a save is one notice,
+    /// whether or not the instance also moved.
+    pub async fn reconcile_saved(self: &Arc<Self>, id: &str) -> Result<(), String> {
+        let result = self.reconcile_inner(id, false).await;
+        self.note_plugins(id);
+        result
+    }
+
+    /// One lifecycle pass. `note` publishes when the row a GET would answer has
+    /// moved — state or last error — and stays silent when `set_state` wrote the
+    /// state the plugin already held. Starting and Stopping inside the pass are
+    /// not their own notices: the op lock is still held, and enable, disable and
+    /// a failed start each leave one notice for the row the pass settled on.
+    async fn reconcile_inner(self: &Arc<Self>, id: &str, note: bool) -> Result<(), String> {
         let entry = self
             .plugin(id)
             .ok_or_else(|| format!("unknown plugin: {id}"))?;
         let _guard = entry.op.lock().await;
-        self.reconcile_locked(&entry).await
+        let before_state = entry.state();
+        let before_error = entry.last_error();
+        let result = self.reconcile_locked(&entry).await;
+        let moved = entry.state() != before_state || entry.last_error() != before_error;
+        if note && moved {
+            self.note_plugins(id);
+        }
+        result
     }
 
     async fn reconcile_locked(self: &Arc<Self>, entry: &Arc<PluginEntry>) -> Result<(), String> {

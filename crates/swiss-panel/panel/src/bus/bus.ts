@@ -85,10 +85,16 @@ function topicKey(topic: BusTopic): string {
 }
 
 function deliver(frame: Frame): void {
-  const slot = topics.get(topicKey({ module: frame.module, sub: frame.sub, key: frame.key }));
-  const list = slot ? slot.ids.get(frame.id) : undefined;
-  if (!list) return;
-  for (const fn of list) fn(frame);
+  // A subscription under key "" receives every key of the sub (SPEC §bus.topics).
+  // The hub already fans a keyed event out to that subscription; the frame still
+  // carries the key it was published with, so the lookup has to do the same.
+  const keys = frame.key === "" ? [""] : [frame.key, ""];
+  for (const key of keys) {
+    const slot = topics.get(topicKey({ module: frame.module, sub: frame.sub, key }));
+    const list = slot ? slot.ids.get(frame.id) : undefined;
+    if (!list) continue;
+    for (const fn of list) fn(frame);
+  }
 }
 
 export function installBus(opts: BusOptions = {}): void {

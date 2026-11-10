@@ -26,6 +26,9 @@ import { resetPaneScroll, trackPaneScroll } from "./pane-scroll.js";
 import { tk, tr, wireLabel } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
 import { emptyNode, note } from "./ui/page.js";
+import { busOn } from "./bus/bus.js";
+import { Module, NoticeSchema } from "./bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, PluginsId } from "./bus/pb/swiss/bus/v1/host_pb.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
 const legacy                   = [
@@ -48,6 +51,8 @@ const systemPage                 = { id: "system", pluginId: "host", label: tk("
 const GROUP_LABELS = { mcp: tk("pageRegistry.mcp"), tunnels: tk("pageRegistry.tunnels"), data: tk("pageRegistry.data"), jobs: tk("pageRegistry.jobs"), host: tk("pageRegistry.settings") };
 const registry = createPageRegistry();
 registry.replace(legacy);
+let inventoryListener                      = null;
+let pluginsWatch                      = null;
 let inventory                            = null;
 let active                                                                         = null;
 let sequence = 0;
@@ -398,7 +403,28 @@ async function reloadPluginInventory()                                     {
     inventory = next;
   }
   paintNavigation();
+  // The Plugins page, when it is mounted, paints from this read (SPEC §host.plugins).
+  if (inventoryListener) inventoryListener();
   return inventory;
+}
+
+/** The Plugins page's paint. One listener: the page registers on mount and drops it
+ *  on unmount, so a notice while the page is closed still re-reads but does not paint. */
+function onPluginInventory(fn            )             {
+  inventoryListener = fn;
+  return () => { if (inventoryListener === fn) inventoryListener = null; };
+}
+
+/** The shell's one HOST.PLUGINS subscription, for the life of the page (SPEC §host.plugins).
+ *  A notice re-reads GET /api/plugins once; the mounted Plugins page paints from that. */
+function watchPluginInventory()       {
+  if (pluginsWatch) return;
+  pluginsWatch = busOn(
+    { module: Module.HOST, sub: HostSub.PLUGINS, key: "" },
+    PluginsId.PLUGINS_CHANGED,
+    NoticeSchema,
+    () => { void reloadPluginInventory().catch((error) => { toast(errText(error), true); }); },
+  );
 }
 
 /** A hash names a descriptor's path; stable page ids remain aliases for existing links.
@@ -501,4 +527,4 @@ async function refreshPage()                {
   catch (error) { toast(errText(error), true); }
 }
 
-export { clockPage, currentPageCount, fitRailLabels, fitTabs, hashTarget, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR, refreshPage, reloadPluginInventory };
+export { clockPage, currentPageCount, fitRailLabels, fitTabs, hashTarget, initPages, layoutOf, navigatePage, onPluginInventory, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR, refreshPage, reloadPluginInventory, watchPluginInventory };

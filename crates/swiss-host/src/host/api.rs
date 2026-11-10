@@ -243,8 +243,10 @@ async fn put_config(
         ),
         Ok(snapshot) => {
             // Reconcile applies what the plugin declares applicable — an in-place apply,
-            // a restart, or a noted revision.
-            let _ = host.reconcile(&id).await;
+            // a restart, or a noted revision — and the save publishes HOST.PLUGINS once
+            // after the row is persisted (SPEC §host.plugins). A refused PUT returned
+            // above and publishes nothing.
+            let _ = host.reconcile_saved(&id).await;
             // The response tells the whole truth about the row that just landed (SPEC §jobs.config, §jobs.apply):
             // warnings name what is savable but not currently runnable, and
             // applied:false means the running instance has not taken the row yet.

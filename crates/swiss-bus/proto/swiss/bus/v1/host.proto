@@ -12,15 +12,24 @@ syntax = "proto3";
 
 package swiss.bus.v1;
 
+// HOST.PLUGINS (SPEC §bus.registry, SPEC §host.plugins). Module 4, sub 3.
+// A NOTICE, keyed by the plugin id: the inventory row moved, so the shell
+// re-reads GET /api/plugins. The body is empty on purpose.
 enum HostSub {
   HOST_SUB_UNSPECIFIED = 0;
   HOST_SUB_RUNS = 1;
   HOST_SUB_REMOTE_SEAT = 2;
+  HOST_SUB_PLUGINS = 3;
 }
 
 enum RemoteSeatId {
   REMOTE_SEAT_UNSPECIFIED = 0;
   REMOTE_SEAT_CHANGED = 1;
+}
+
+enum PluginsId {
+  PLUGINS_ID_UNSPECIFIED = 0;
+  PLUGINS_CHANGED = 1;
 }
 
 enum RunsId {

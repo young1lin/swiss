@@ -92,6 +92,10 @@ export declare type RunChanged = Message<"swiss.bus.v1.RunChanged"> & {
 export declare const RunChangedSchema: GenMessage<RunChanged>;
 
 /**
+ * HOST.PLUGINS (SPEC §bus.registry, SPEC §host.plugins). Module 4, sub 3.
+ * A NOTICE, keyed by the plugin id: the inventory row moved, so the shell
+ * re-reads GET /api/plugins. The body is empty on purpose.
+ *
  * @generated from enum swiss.bus.v1.HostSub
  */
 export enum HostSub {
@@ -109,6 +113,11 @@ export enum HostSub {
    * @generated from enum value: HOST_SUB_REMOTE_SEAT = 2;
    */
   REMOTE_SEAT = 2,
+
+  /**
+   * @generated from enum value: HOST_SUB_PLUGINS = 3;
+   */
+  PLUGINS = 3,
 }
 
 /**
@@ -135,6 +144,26 @@ export enum RemoteSeatId {
  * Describes the enum swiss.bus.v1.RemoteSeatId.
  */
 export declare const RemoteSeatIdSchema: GenEnum<RemoteSeatId>;
+
+/**
+ * @generated from enum swiss.bus.v1.PluginsId
+ */
+export enum PluginsId {
+  /**
+   * @generated from enum value: PLUGINS_ID_UNSPECIFIED = 0;
+   */
+  PLUGINS_ID_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PLUGINS_CHANGED = 1;
+   */
+  PLUGINS_CHANGED = 1,
+}
+
+/**
+ * Describes the enum swiss.bus.v1.PluginsId.
+ */
+export declare const PluginsIdSchema: GenEnum<PluginsId>;
 
 /**
  * @generated from enum swiss.bus.v1.RunsId

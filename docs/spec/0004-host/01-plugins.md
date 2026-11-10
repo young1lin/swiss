@@ -52,6 +52,15 @@ deliberately declares no `requires`, so its target table stays editable while tu
 consumers read) and `memory` (§memory: mounts its own built-in MCP entry the way remote does;
 `requires: ["llm"]` for the semantic tier and sync runs — a badge, never a refusal).
 
+**Inventory on the bus.** A lifecycle pass that leaves a plugin in a different state, or with a
+different last error, publishes HOST.PLUGINS (module 4, sub 3, an empty `Notice`, keyed by the
+plugin id) once, when the pass returns — the row `GET /api/plugins` answers. Starting and
+Stopping inside that pass are not separate notices. A pass that sets the state the plugin
+already holds publishes nothing. A saved config publishes once after the file holds the row,
+including when the pass moved nothing; a refused save publishes nothing. The shell subscribes
+for the life of the page and re-reads `GET /api/plugins`. The Plugins page paints from that
+read and has no poll of its own.
+
 **The acceptance test for the contract:** a new tool is added without touching host business
 logic, the jobs scheduler or the panel shell. Disabling it makes jobs that reference its
 action show dependency-unavailable while everything else keeps working. Loading third-party

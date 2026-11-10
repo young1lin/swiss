@@ -537,8 +537,8 @@ copies configuration.
   a HOST.RUNS event drops its lane's answer, and a WELCOME or a read that finds the record
   smaller or down to one page (a Clear, a retention pass) drops them all — a record that only
 grew never does. Targets' `clock()` reads nothing: on the tick it rewrites the last-run
-column's relative times from what the page already holds. A plugin enabled or disabled in another window is not on the bus; the
-  pages learn it from their next read.
+column's relative times from what the page already holds. A plugin enabled or disabled
+  elsewhere reaches the nav through HOST.PLUGINS (§host.plugins).
 
 ## §remote.verify — Live verification
 

@@ -34,13 +34,14 @@
 import { $, apiJson, refocusIfIdle, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
                                       
-import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
+import { onPluginInventory, pluginInventory, reloadPluginInventory } from "../page-registry.js";
 import { tr, trn } from "../i18n.js";
 import { card, dot, emptyNode, pageFoot, paneBody, paneHead, row, section, sw, tag } from "../ui/index.js";
                                                
 
 let busy                          = {}; // plugin id -> true while its own toggle is in flight
 let painted = ""; // the structural signature of the drawn list; a change means rebuild
+let stopInventory                      = null;
 /* The never-loaded fallback carries every field the inventory answers with, so an
    unreachable-empty list is still a truthful ApiPluginsResponse. */
 function inv()                     { return pluginInventory() || { plugins: [], revision: 0, pages: [] }; }
@@ -140,7 +141,7 @@ function render()       {
 
 /** Bring a drawn row up to a freshly built one without replacing it: the text block (name,
  *  dot, sub-line or red line) is swapped only when it reads differently, and the switch is
- *  the SAME node with its state moved - so a poll never steals keyboard focus from the switch
+ *  the SAME node with its state moved - so a notice never steals keyboard focus from the switch
  *  a hand just pressed, and a hover title under the pointer does not flicker every tick. */
 function patchRow(node         , fresh             )       {
   const main = node.querySelector(".lrow-main");
@@ -156,8 +157,9 @@ function patchRow(node         , fresh             )       {
   }
 }
 
-/** Poll-safe update: every row's words, dot and switch, the startup row and the revision.
- *  Structure - a plugin appearing or going - is a rebuild. */
+/** Notice-safe update: every row's words, dot and switch, and the revision.
+ *  Structure - a plugin appearing or going - is a rebuild. The shell's inventory
+ *  read is what calls this (SPEC §host.plugins); the page does not read again. */
 function patch()       {
   const pane = $("pane");
   const rev = pane.querySelector(".page-foot-rev");
@@ -208,15 +210,24 @@ async function toggle(id               )                {
   if (reply && reply.plugin && reply.plugin.lastError) toast(reply.plugin.lastError, true);
 }
 
+/** Paint from the inventory the shell just read. No request of our own. */
+function followInventory()       {
+  patch();
+  const chip = document.getElementById("countChip");
+  if (chip) chip.textContent = chipText();
+}
+
 export async function mount()                {
   busy = {};
+  stopInventory = onPluginInventory(followInventory);
   try { await reloadPluginInventory(); } catch (error) { /* the toast is enough; draw what we have */ }
   render();
 }
 export async function refresh()                { await mount(); }
-export async function poll()                {
-  try { await reloadPluginInventory(); } catch (error) { return; }
-  patch();
-}
 export function countText()         { return chipText(); }
-export function unmount() { busy = {}; painted = ""; }
+export function unmount() {
+  if (stopInventory) stopInventory();
+  stopInventory = null;
+  busy = {};
+  painted = "";
+}

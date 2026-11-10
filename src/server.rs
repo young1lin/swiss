@@ -365,6 +365,10 @@ pub async fn run_gateway() -> Result<(), String> {
     // start fails is recorded on its inventory row and the boot continues: one plugin's
     // failure is a row, never a failed gateway.
     let mut host = swiss_host::host::PluginHost::new(config_store.clone());
+    // HOST.PLUGINS (SPEC §host.plugins): the shell re-reads the inventory when a
+    // plugin's state, last error or saved config moves. Installed before register
+    // so a boot reconcile can publish.
+    host.set_plugins_bus(services.bus.clone());
     let deps = crate::builtin::BuiltinDeps {
         registry: registry.clone(),
         managed: store.clone(),

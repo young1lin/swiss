@@ -247,6 +247,20 @@
     "replyTo": 0
   },
   {
+    "bodyType": "Notice",
+    "body": {},
+    "origin": "page-a",
+    "key": "alpha",
+    "name": "plugins-notice",
+    "hex": "0804100318012003280e3a05616c7068615206706167652d61",
+    "module": 4,
+    "sub": 3,
+    "id": 1,
+    "kind": "EVENT",
+    "seq": 14,
+    "replyTo": 0
+  },
+  {
     "bodyType": "Prefs",
     "body": {
       "lang": "zh"

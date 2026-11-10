@@ -19,7 +19,7 @@ import { enumDesc, fileDesc, messageDesc, tsEnum } from "../../../../../vendor/p
  * Describes the file swiss/bus/v1/host.proto.
  */
 export const file_swiss_bus_v1_host = /*@__PURE__*/
-  fileDesc("Chdzd2lzcy9idXMvdjEvaG9zdC5wcm90bxIMc3dpc3MuYnVzLnYxIrUCCgpSdW5DaGFuZ2VkEhIKBnJ1bl9pZBgBIAEoBEICMAISEAoIcmV2aXNpb24YAiABKA0SJQoFc3RhdGUYAyABKA4yFi5zd2lzcy5idXMudjEuUnVuU3RhdGUSDgoGYWN0aW9uGAQgASgJEg0KBW93bmVyGAUgASgJEg0KBWFjdG9yGAYgASgJEgwKBGxhbmUYByABKAkSGAoMcXVldWVkX2F0X21zGAggASgEQgIwAhIeCg1zdGFydGVkX2F0X21zGAkgASgEQgIwAkgAiAEBEhwKC2VuZGVkX2F0X21zGAogASgEQgIwAkgBiAEBEhYKCWV4aXRfY29kZRgLIAEoBUgCiAEBQhAKDl9zdGFydGVkX2F0X21zQg4KDF9lbmRlZF9hdF9tc0IMCgpfZXhpdF9jb2RlKlAKB0hvc3RTdWISGAoUSE9TVF9TVUJfVU5TUEVDSUZJRUQQABIRCg1IT1NUX1NVQl9SVU5TEAESGAoUSE9TVF9TVUJfUkVNT1RFX1NFQVQQAipECgxSZW1vdGVTZWF0SWQSGwoXUkVNT1RFX1NFQVRfVU5TUEVDSUZJRUQQABIXChNSRU1PVEVfU0VBVF9DSEFOR0VEEAEqMwoGUnVuc0lkEhcKE1JVTlNfSURfVU5TUEVDSUZJRUQQABIQCgxSVU5TX0NIQU5HRUQQASqyAQoIUnVuU3RhdGUSGQoVUlVOX1NUQVRFX1VOU1BFQ0lGSUVEEAASFAoQUlVOX1NUQVRFX1FVRVVFRBABEhUKEVJVTl9TVEFURV9SVU5OSU5HEAISFwoTUlVOX1NUQVRFX1NVQ0NFRURFRBADEhQKEFJVTl9TVEFURV9GQUlMRUQQBBIXChNSVU5fU1RBVEVfVElNRURfT1VUEAUSFgoSUlVOX1NUQVRFX0NBTkNFTEVEEAZiBnByb3RvMw");
+  fileDesc("Chdzd2lzcy9idXMvdjEvaG9zdC5wcm90bxIMc3dpc3MuYnVzLnYxIrUCCgpSdW5DaGFuZ2VkEhIKBnJ1bl9pZBgBIAEoBEICMAISEAoIcmV2aXNpb24YAiABKA0SJQoFc3RhdGUYAyABKA4yFi5zd2lzcy5idXMudjEuUnVuU3RhdGUSDgoGYWN0aW9uGAQgASgJEg0KBW93bmVyGAUgASgJEg0KBWFjdG9yGAYgASgJEgwKBGxhbmUYByABKAkSGAoMcXVldWVkX2F0X21zGAggASgEQgIwAhIeCg1zdGFydGVkX2F0X21zGAkgASgEQgIwAkgAiAEBEhwKC2VuZGVkX2F0X21zGAogASgEQgIwAkgBiAEBEhYKCWV4aXRfY29kZRgLIAEoBUgCiAEBQhAKDl9zdGFydGVkX2F0X21zQg4KDF9lbmRlZF9hdF9tc0IMCgpfZXhpdF9jb2RlKmYKB0hvc3RTdWISGAoUSE9TVF9TVUJfVU5TUEVDSUZJRUQQABIRCg1IT1NUX1NVQl9SVU5TEAESGAoUSE9TVF9TVUJfUkVNT1RFX1NFQVQQAhIUChBIT1NUX1NVQl9QTFVHSU5TEAMqRAoMUmVtb3RlU2VhdElkEhsKF1JFTU9URV9TRUFUX1VOU1BFQ0lGSUVEEAASFwoTUkVNT1RFX1NFQVRfQ0hBTkdFRBABKjwKCVBsdWdpbnNJZBIaChZQTFVHSU5TX0lEX1VOU1BFQ0lGSUVEEAASEwoPUExVR0lOU19DSEFOR0VEEAEqMwoGUnVuc0lkEhcKE1JVTlNfSURfVU5TUEVDSUZJRUQQABIQCgxSVU5TX0NIQU5HRUQQASqyAQoIUnVuU3RhdGUSGQoVUlVOX1NUQVRFX1VOU1BFQ0lGSUVEEAASFAoQUlVOX1NUQVRFX1FVRVVFRBABEhUKEVJVTl9TVEFURV9SVU5OSU5HEAISFwoTUlVOX1NUQVRFX1NVQ0NFRURFRBADEhQKEFJVTl9TVEFURV9GQUlMRUQQBBIXChNSVU5fU1RBVEVfVElNRURfT1VUEAUSFgoSUlVOX1NUQVRFX0NBTkNFTEVEEAZiBnByb3RvMw");
 
 /**
  * Describes the message swiss.bus.v1.RunChanged.
@@ -35,6 +35,10 @@ export const HostSubSchema = /*@__PURE__*/
   enumDesc(file_swiss_bus_v1_host, 0);
 
 /**
+ * HOST.PLUGINS (SPEC §bus.registry, SPEC §host.plugins). Module 4, sub 3.
+ * A NOTICE, keyed by the plugin id: the inventory row moved, so the shell
+ * re-reads GET /api/plugins. The body is empty on purpose.
+ *
  * @generated from enum swiss.bus.v1.HostSub
  */
 export const HostSub = /*@__PURE__*/
@@ -53,10 +57,22 @@ export const RemoteSeatId = /*@__PURE__*/
   tsEnum(RemoteSeatIdSchema);
 
 /**
+ * Describes the enum swiss.bus.v1.PluginsId.
+ */
+export const PluginsIdSchema = /*@__PURE__*/
+  enumDesc(file_swiss_bus_v1_host, 2);
+
+/**
+ * @generated from enum swiss.bus.v1.PluginsId
+ */
+export const PluginsId = /*@__PURE__*/
+  tsEnum(PluginsIdSchema);
+
+/**
  * Describes the enum swiss.bus.v1.RunsId.
  */
 export const RunsIdSchema = /*@__PURE__*/
-  enumDesc(file_swiss_bus_v1_host, 2);
+  enumDesc(file_swiss_bus_v1_host, 3);
 
 /**
  * @generated from enum swiss.bus.v1.RunsId
@@ -68,7 +84,7 @@ export const RunsId = /*@__PURE__*/
  * Describes the enum swiss.bus.v1.RunState.
  */
 export const RunStateSchema = /*@__PURE__*/
-  enumDesc(file_swiss_bus_v1_host, 3);
+  enumDesc(file_swiss_bus_v1_host, 4);
 
 /**
  * A run's lifecycle state (SPEC §host.actions). Terminal: succeeded / failed /

@@ -30,7 +30,7 @@
 import { $, CODE_KEY, THEME_KEY, api, isTyping, toast } from "./util.js";
 import { loadCollapsed } from "./groups.js";
 import { initSelects } from "./ui/select.js";
-import { clockPage, initPages, pageHasPendingChanges, pageUsesSidebar, pollPage } from "./page-registry.js";
+import { clockPage, initPages, pageHasPendingChanges, pageUsesSidebar, pollPage, watchPluginInventory } from "./page-registry.js";
 import { openDetail } from "./detail.js";
 import { patchSidebar } from "./menu.js";
 import { loadMemory, refreshNow } from "./polling.js";
@@ -229,6 +229,7 @@ installBus({
   info: () => api("/api/info"),
   notice: mountBusLine,
 });
+watchPluginInventory(); // HOST.PLUGINS for the life of the page (SPEC §host.plugins)
 initPrefs({ lang: applyLang, theme: (theme) => { setTheme(theme); paintThemeBtn(); }, codeScheme: setCodeScheme });
 
 setInterval(poll, 6000);

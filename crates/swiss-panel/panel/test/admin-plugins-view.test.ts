@@ -18,15 +18,14 @@
 
 /* The Plugins page (the host's own management view): name + one grey line + a switch per row,
    a dot only when the state disagrees with the switch (SPEC §panel.settings), a start-at-sign-in row,
-   and a poll that patches state in place without ever rebuilding structure.
+   and an inventory read that patches state in place without ever rebuilding structure.
 
    REWRITTEN FOR R5 (SPEC §panel.toolchain), and the rewrite is the point. The builders used to return
    HTML strings, so every assertion here was a substring test against markup nobody parsed.
    Now they return nodes, so the suite runs on a real DOM (happy-dom, per file) and asks what
    it always meant: does the switch carry role and state, does the grey line name the pages,
-   does the dot's title follow the host's vocabulary. The poll cases are new with the real
-   DOM - the in-place patch is this page's own regression, and only a real tree can pin node
-   identity across it. */
+   does the dot's title follow the host's vocabulary. The in-place patch is this page's own
+   regression, and only a real tree can pin node identity across it. */
 
 import { describe, expect, it, beforeAll, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -34,10 +33,16 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fill } from "../src/h.js";
 import type { ApiPluginRow } from "../src/types/api.js";
+import { installBus, type BusSocket } from "../src/bus/bus.js";
+import { create, toBinary } from "../src/bus/codec.js";
+import { FrameSchema, Kind, LinkId, Module, NoticeSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, PluginsId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view's public surface is
    asserted by name below (the pure builders), so a typed import would be circular. */
 let view: any;
+let reloadPluginInventory: () => Promise<unknown>;
+let watchPluginInventory: () => void;
 let inventory: unknown = { plugins: [], revision: 0 };
 let autostartReply: unknown = null;
 let userPathReply: unknown = null;
@@ -46,9 +51,65 @@ let puts: { url: string; body: unknown }[] = [];
 /* Runs inside the enable/disable POST, before it answers: a case uses it to do what the browser
  * does in that window (blur the switch it just disabled) and to move the inventory on. */
 let duringToggle: (() => void) | null = null;
+let pluginGets = 0;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
+
+/* A bus the notice case drives by hand. key "" on the subscription must still hear a
+   frame published under the plugin id (SPEC §bus.topics). */
+class PluginsSocket implements BusSocket {
+  static all: PluginsSocket[] = [];
+  sent: Uint8Array[] = [];
+  binaryType: BinaryType = "blob";
+  private listeners = new Map<string, Array<(ev: Event) => void>>();
+  constructor() { PluginsSocket.all.push(this); }
+  addEventListener(type: string, listener: (ev: Event) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+  removeEventListener(): void { /* the link outlives the case */ }
+  send(data: Uint8Array): void { this.sent.push(data); }
+  close(): void { /* never closed under test */ }
+  private emit(type: string, ev: Event): void {
+    for (const fn of this.listeners.get(type) ?? []) fn(ev);
+  }
+  open(): void { this.emit("open", new Event("open")); }
+  receive(bytes: Uint8Array): void {
+    const copy = new Uint8Array(bytes);
+    for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
+  }
+}
+
+let pluginsBus: PluginsSocket;
+
+function pluginsNotice(key: string): Uint8Array {
+  return toBinary(FrameSchema, create(FrameSchema, {
+    module: Module.HOST, sub: HostSub.PLUGINS, id: PluginsId.PLUGINS_CHANGED, kind: Kind.EVENT, key,
+    body: toBinary(NoticeSchema, create(NoticeSchema, {})),
+  }));
+}
+
+function openPluginsBus(): void {
+  PluginsSocket.all.length = 0;
+  installBus({
+    socket: PluginsSocket,
+    random: () => 0.5,
+    reload: () => {},
+    info: () => Promise.resolve(),
+    notice: () => {},
+    url: "ws://127.0.0.1/api/bus",
+  });
+  pluginsBus = PluginsSocket.all[PluginsSocket.all.length - 1];
+  pluginsBus.open();
+  pluginsBus.receive(toBinary(FrameSchema, create(FrameSchema, {
+    module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
+    body: toBinary(WelcomeSchema, create(WelcomeSchema, {
+      protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
+    })),
+  })));
+}
 
 /* The shell skeleton, taken from the SERVED index.html rather than invented here (the same
  * rule as the tokens suite): the page-registry graph paints the rail on inventory reload, so
@@ -72,7 +133,10 @@ beforeAll(async () => {
   Object.assign(globalThis, {
     fetch: (url: string, init?: RequestInit): Promise<Response> => {
       const u = String(url);
-      if (u === "/api/plugins") return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve(inventory) } as Response);
+      if (u === "/api/plugins") {
+        if (!init || !init.method || init.method === "GET") pluginGets += 1;
+        return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve(inventory) } as Response);
+      }
       if (init?.method === "POST" && /^\/api\/plugins\/[^/]+\/(enable|disable)$/.test(u)) {
         if (duringToggle) duringToggle();
         return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ plugin: {} }) } as Response);
@@ -93,6 +157,9 @@ beforeAll(async () => {
   });
   document.body.innerHTML = shellSkeleton(); // before the import: the graph wires on evaluation
   view = await import("../src/views/plugins.js");
+  const registry = await import("../src/page-registry.js");
+  reloadPluginInventory = registry.reloadPluginInventory;
+  watchPluginInventory = registry.watchPluginInventory;
 });
 
 beforeEach(() => {
@@ -101,6 +168,7 @@ beforeEach(() => {
   userPathReply = null;
   puts = [];
   duringToggle = null;
+  pluginGets = 0;
   document.body.innerHTML = shellSkeleton();
   if (view) view.unmount(); // the real lifecycle between pages resets the module state
 });
@@ -204,9 +272,9 @@ describe("the plugins row", () => {
   });
 });
 
-/* The page itself, through the real load path: mount reads /api/plugins and /api/autostart
- * under the fetch stub, and the poll patches state IN PLACE - the row nodes and their switches
- * keep their identity while the words, the dot and the revision follow the inventory. */
+/* The page itself, through the real load path: mount reads /api/plugins once, and a later
+ * inventory read (the shell's, on HOST.PLUGINS) patches state IN PLACE - the row nodes and
+ * their switches keep their identity while the words, the dot and the revision follow. */
 describe("the Plugins page through mount", () => {
   it("paints rows, the Startup section and a foot that is the revision alone", async () => {
     inventory = { plugins: [
@@ -235,7 +303,7 @@ describe("the Plugins page through mount", () => {
     expect(Array.from($("pane").querySelectorAll(".sec-cap")).map((c) => c.textContent)).toEqual(["Installed"]);
   });
 
-  it("poll patches state in place - the row and its switch are the SAME nodes, the words follow", async () => {
+  it("an inventory read patches state in place - the row and its switch are the SAME nodes, the words follow", async () => {
     inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: true, state: "active" }], revision: 1, pages: [] };
     await view.mount();
     const row = $("pane").querySelector("[data-plugin]") as HTMLElement;
@@ -244,7 +312,7 @@ describe("the Plugins page through mount", () => {
     expect(row.querySelector(".dot")).toBeNull();
 
     inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: true, state: "failed", lastError: "port taken" }], revision: 2, pages: [] };
-    await view.poll();
+    await reloadPluginInventory();
 
     expect($("pane").querySelector("[data-plugin]")).toBe(row); // patched, not rebuilt
     expect(row.querySelector(".lrow-name .dot")?.className).toBe("dot error");
@@ -252,13 +320,13 @@ describe("the Plugins page through mount", () => {
     expect(row.querySelector(".lrow-err")?.textContent).toBe("port taken");
     expect($("pane").querySelector(".page-foot-rev")?.textContent).toBe("revision 2");
     expect(view.countText()).toBe("1 plugin · 1 on · 1 failed");
-    // The switch is the node a hand just pressed: a poll must not take the focus off it.
+    // The switch is the node a hand just pressed: a re-read must not take the focus off it.
     expect(row.querySelector("[data-toggle]")).toBe(toggle);
     expect(document.activeElement).toBe(toggle);
 
     // Switched off elsewhere: the same switch moves to unchecked, and the dot goes away.
     inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: false, state: "disabled" }], revision: 3, pages: [] };
-    await view.poll();
+    await reloadPluginInventory();
     expect(row.querySelector("[data-toggle]")).toBe(toggle);
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(row.querySelector(".dot")).toBeNull();
@@ -294,7 +362,7 @@ describe("the Plugins page through mount", () => {
       { id: "mcp", label: "MCP", enabled: true, state: "active" },
       { id: "tunnels", label: "Tunnels", enabled: false, state: "idle" },
     ], revision: 2, pages: [] };
-    await view.poll();
+    await reloadPluginInventory();
     const rows = $("pane").querySelectorAll("[data-plugin]");
     expect(rows.length).toBe(2);
     expect(rows[1].querySelector("[data-toggle]")?.getAttribute("aria-checked")).toBe("false");
@@ -307,6 +375,22 @@ describe("the Plugins page through mount", () => {
     expect($("pane").querySelector("[data-plugin]")).toBeNull();
     expect($("pane").querySelector(".page-foot-rev")?.textContent).toBe("revision 0");
     expect(view.countText()).toBe("0 plugins · 0 on");
+  });
+
+  // SPEC §host.plugins: the shell's HOST.PLUGINS notice is one GET, and the mounted page paints from it.
+  it("a HOST.PLUGINS notice repaints from the shell's one read", async () => {
+    inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: true, state: "active" }], revision: 1, pages: [] };
+    await view.mount();
+    expect(pluginGets).toBe(1);
+    expect(view.poll).toBeUndefined();
+    openPluginsBus();
+    watchPluginInventory();
+    inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: true, state: "failed", lastError: "port taken" }], revision: 2, pages: [] };
+    const before = pluginGets;
+    pluginsBus.receive(pluginsNotice("mcp"));
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(pluginGets - before).toBe(1);
+    expect($("pane").querySelector(".lrow-err")?.textContent).toBe("port taken");
   });
 
   // The pane frame moved into the library with pane() (SPEC §panel.ui): ui.css owns it now.
