@@ -111,6 +111,9 @@ pub const TOOL_HISTORY_MAX: usize = 300;
 
 const REDACTED: &str = "•••";
 
+/// An MCP.CALLS notice. The argument is the MCP's name.
+pub type CallsNotice = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
 /// One call log: a directory tree plus everything mutable about writing it. Shared as an
 /// `Arc<CallLog>` between the app context, the registry and every adapter it builds - the
 /// adapters record into exactly the log their app reads.
@@ -123,6 +126,8 @@ pub struct CallLog {
     /// The module database the MCP plugin attaches while enabled (SPEC §host.history):
     /// when set, IT is the authority and the jsonl tree is the pre-cutover fallback.
     history: std::sync::RwLock<Option<std::sync::Arc<crate::history::McpHistory>>>,
+    /// MCP.CALLS (SPEC §mcp.calls). The composition passes a notifier poke, keyed by name.
+    calls_notice: Mutex<Option<CallsNotice>>,
 }
 
 impl CallLog {
@@ -133,6 +138,29 @@ impl CallLog {
             files: Mutex::new(HashMap::new()),
             aliases: Mutex::new(HashMap::new()),
             history: std::sync::RwLock::new(None),
+            calls_notice: Mutex::new(None),
+        }
+    }
+
+    /// Where an MCP.CALLS notice goes. Copied onto an attached history so the database
+    /// path publishes the same way the jsonl path does.
+    pub fn set_calls_notice(&self, hook: Option<CallsNotice>) {
+        if let Ok(mut slot) = self.calls_notice.lock() {
+            *slot = hook.clone();
+        }
+        if let Some(history) = self.attached_history() {
+            history.set_calls_notice(hook);
+        }
+    }
+
+    pub(crate) fn poke_calls(&self, name: &str) {
+        let hook = self
+            .calls_notice
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
+        if let Some(hook) = hook {
+            hook(name);
         }
     }
 
@@ -140,6 +168,8 @@ impl CallLog {
     /// rename and sweep lands in it. The legacy files are NOT touched from that moment:
     /// they stay as the inventoried import source they became (SPEC §mcp.logs).
     pub fn attach_history(&self, history: std::sync::Arc<crate::history::McpHistory>) {
+        let hook = self.calls_notice.lock().ok().and_then(|slot| slot.clone());
+        history.set_calls_notice(hook);
         if let Ok(mut slot) = self.history.write() {
             *slot = Some(history);
         }
@@ -479,8 +509,9 @@ impl CallLog {
             let _guard = queue.lock().await;
             let mut entry = entry;
             let result = append_one(&log, &mcp_for_task, &state, &mut entry, &output, long).await;
-            if let Err(err) = result {
-                on_error("append", &err);
+            match result {
+                Ok(()) => log.poke_calls(&mcp_for_task),
+                Err(err) => on_error("append", &err),
             }
         });
     }
@@ -1026,8 +1057,13 @@ impl CallLog {
         if let Ok(mut map) = self.files.lock() {
             map.remove(mcp);
         }
-        let _ = std::fs::remove_file(self.file_for(mcp));
+        let path = self.file_for(mcp);
+        let had = std::fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false);
+        let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir_all(self.body_dir(mcp));
+        if had {
+            self.poke_calls(mcp);
+        }
     }
 
     /// Follow a rename, so the history isn't stranded under a name that no longer exists.
@@ -1236,6 +1272,44 @@ mod tests {
         // The append runs in its own task; a reader must wait for it rather than merely finding
         // the write queue unlocked, which it is right up until that task first runs.
         assert_eq!(entries(mcp).await.len(), 1);
+    }
+
+    /// SPEC §mcp.calls: the notice runs after the line is on disk, and a clear
+    /// publishes only when a row was actually removed.
+    #[tokio::test]
+    async fn a_call_is_on_disk_inside_the_notice_and_a_clear_notices_only_when_rows_go() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let log = test_log();
+        let mcp = "notice-on-disk";
+        log.clear_calls(mcp).await;
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let body = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let hits_hook = hits.clone();
+        let body_hook = body.clone();
+        let dir = log.dir().to_path_buf();
+        let hook_dir = dir.clone();
+        log.set_calls_notice(Some(std::sync::Arc::new(move |name| {
+            hits_hook.fetch_add(1, Ordering::SeqCst);
+            let text = std::fs::read_to_string(hook_dir.join(format!("{name}.jsonl"))).unwrap_or_default();
+            *body_hook.lock().unwrap_or_else(|e| e.into_inner()) = text;
+        })));
+        log.record_call(Some(mcp), &source(), rec("needle", None, true, "one"));
+        let _ = entries(mcp).await;
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert!(
+            body.lock().unwrap_or_else(|e| e.into_inner()).contains("needle"),
+            "the notice ran before the line was readable"
+        );
+        let before_empty = hits.load(Ordering::SeqCst);
+        log.clear_calls("notice-on-disk-missing").await;
+        assert_eq!(hits.load(Ordering::SeqCst), before_empty, "a clear of nothing publishes nothing");
+        log.clear_calls(mcp).await;
+        assert_eq!(hits.load(Ordering::SeqCst), before_empty + 1);
+        assert!(
+            !dir.join(format!("{mcp}.jsonl")).exists(),
+            "the clear notice runs after the file is gone"
+        );
+        log.set_calls_notice(None);
     }
 
     #[tokio::test]

@@ -124,6 +124,8 @@ pub struct TrafficLog {
     /// Set once a database has been attached: after that the ring holds live rows and the
     /// legacy tail must never be folded over them.
     ever_attached: std::sync::atomic::AtomicBool,
+    /// MCP.TRAFFIC (SPEC §mcp.traffic). The composition passes a notifier poke.
+    traffic_notice: std::sync::Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl TrafficLog {
@@ -145,6 +147,24 @@ impl TrafficLog {
             completed: tokio::sync::watch::Sender::new(0),
             history: std::sync::RwLock::new(None),
             ever_attached: std::sync::atomic::AtomicBool::new(false),
+            traffic_notice: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Where an MCP.TRAFFIC notice goes. Copied onto an attached history.
+    pub fn set_traffic_notice(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
+        if let Ok(mut slot) = self.traffic_notice.lock() {
+            *slot = hook.clone();
+        }
+        if let Some(history) = self.attached_history() {
+            history.set_traffic_notice(hook);
+        }
+    }
+
+    fn poke_traffic(&self) {
+        let hook = self.traffic_notice.lock().ok().and_then(|slot| slot.clone());
+        if let Some(hook) = hook {
+            hook();
         }
     }
 
@@ -224,6 +244,8 @@ impl TrafficLog {
             }
             s.restored = true;
         }
+        let hook = self.traffic_notice.lock().ok().and_then(|slot| slot.clone());
+        history.set_traffic_notice(hook);
         if let Ok(mut slot) = self.history.write() {
             *slot = Some(history);
         }
@@ -575,9 +597,16 @@ impl TrafficLog {
         }
         if let Some(history) = self.attached_history() {
             history.record_traffic(recorded);
-        } else if armed.is_some() {
-            for entry in recorded {
-                self.persist_traffic(entry);
+        } else {
+            if !recorded.is_empty() {
+                // The ring is what GET /api/traffic reads on this path. The file
+                // write follows; a page re-read sees the row already.
+                self.poke_traffic();
+            }
+            if armed.is_some() {
+                for entry in recorded {
+                    self.persist_traffic(entry);
+                }
             }
         }
     }
@@ -823,8 +852,9 @@ impl TrafficLog {
             return;
         }
         self.ensure_restored();
-        let armed = {
+        let (armed, removed) = {
             let Ok(mut s) = self.state.lock() else { return };
+            let before = s.ring.len();
             match client_key {
                 Some(key) => s.ring.retain(|e| self.client_key_of(e) != key),
                 None => {
@@ -832,8 +862,11 @@ impl TrafficLog {
                     s.seq = 0;
                 }
             }
-            s.file.clone()
+            (s.file.clone(), s.ring.len() != before)
         };
+        if removed {
+            self.poke_traffic();
+        }
         if armed.is_some() {
             // The file follows the ring: rewritten from whatever survives.
             let state = self.state.clone();
@@ -1030,6 +1063,33 @@ mod tests {
     /// per app, so two logs in one process are two rings that never see each other. Before
     /// the change this test could not be written at all — there was one process-global ring
     /// and every caller shared it, which is also why the tests below used to serialize.
+    /// SPEC §mcp.traffic: a committed row publishes, and a clear that removes
+    /// nothing publishes nothing. The ring is what this path's GET reads.
+    #[tokio::test]
+    async fn a_recorded_row_publishes_and_an_empty_clear_does_not() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let log = TrafficLog::memory();
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let hits_hook = hits.clone();
+        let state = log.state.clone();
+        log.set_traffic_notice(Some(std::sync::Arc::new(move || {
+            hits_hook.fetch_add(1, Ordering::SeqCst);
+            assert!(
+                !state.lock().unwrap_or_else(|e| e.into_inner()).ring.is_empty()
+                    || hits_hook.load(Ordering::SeqCst) > 1,
+                "the notice ran before the ring held the row"
+            );
+        })));
+        log.clear_traffic(None).await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        log.record_traffic("db", Some(&request("tools/call", json!({}))), None, true, 1, None);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        log.clear_traffic(None).await;
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+        log.clear_traffic(None).await;
+        assert_eq!(hits.load(Ordering::SeqCst), 2, "a second clear removes nothing");
+    }
+
     #[tokio::test]
     async fn two_logs_in_one_process_never_see_each_others_rows() {
         let a = TrafficLog::memory();

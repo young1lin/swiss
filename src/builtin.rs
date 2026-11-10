@@ -245,6 +245,29 @@ struct McpInstance {
 #[async_trait]
 impl PluginInstance for McpInstance {
     async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
+        // MCP.CALLS and MCP.TRAFFIC (SPEC §mcp.calls, SPEC §mcp.traffic). The first
+        // poke of a burst publishes at once; the rest collapse to one trailing notice.
+        // Calls are keyed by the MCP name. Installed before any hosted server records.
+        let calls_bus = self.services.bus.clone();
+        let calls = swiss_bus::Notifier::new(
+            calls_bus,
+            swiss_bus::pb::v1::Module::Mcp as u32,
+            swiss_bus::pb::v1::McpSub::Calls as u32,
+            swiss_bus::pb::v1::CallsId::CallsChanged as u32,
+            swiss_bus::NOTICE_GAP,
+        );
+        self.call_log
+            .set_calls_notice(Some(std::sync::Arc::new(move |name| calls.poke(name))));
+        let traffic_bus = self.services.bus.clone();
+        let traffic = swiss_bus::Notifier::new(
+            traffic_bus,
+            swiss_bus::pb::v1::Module::Mcp as u32,
+            swiss_bus::pb::v1::McpSub::Traffic as u32,
+            swiss_bus::pb::v1::TrafficId::TrafficChanged as u32,
+            swiss_bus::NOTICE_GAP,
+        );
+        self.traffic
+            .set_traffic_notice(Some(std::sync::Arc::new(move || traffic.poke(""))));
         // The history database opens FIRST (SPEC §host.history): boot-gated, migrated,
         // legacy-imported and attached before any hosted MCP can record a call, so the
         // very first row of a fresh cutover lands in the module's own authority. A failed
@@ -321,6 +344,10 @@ impl PluginInstance for McpInstance {
     }
 
     async fn stop(&self) {
+        // Drop the notices before close: a dying child's stderr is not a log the page
+        // should re-read while the plugin is going away.
+        self.call_log.set_calls_notice(None);
+        self.traffic.set_traffic_notice(None);
         // The W3 order (SPEC §host.seats): withdraw first (no NEW leases reach a pool that is about
         // to close), drain what is in flight with an honest warning when the wait was not
         // clean, close the pools, and only then free the catalog seat for the next start.

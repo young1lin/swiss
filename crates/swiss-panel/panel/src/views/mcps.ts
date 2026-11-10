@@ -16,7 +16,7 @@
 
 import { isMcpKind } from "../util.js";
 import { loadList, mcpChipText } from "../polling.js";
-import { loadCalls, loadMeta, loadPage, pageState } from "../detail.js";
+import { loadCalls, loadMeta, loadPage, pageState, stopCallWatch } from "../detail.js";
 import { renderPane } from "../pane.js";
 import { histClose } from "../run-history.js";
 import { mcpDetail } from "../mcp-state.js";
@@ -49,5 +49,6 @@ export function countText() { return mcpChipText(); }
 export function unmount() {
   if (stopServers) stopServers();
   stopServers = null;
+  stopCallWatch();
   histClose();
 }

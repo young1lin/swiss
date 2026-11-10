@@ -1263,3 +1263,31 @@ async fn a_cursor_inside_a_leading_multibyte_char_advances_to_the_boundary() {
     let _ = history.close().await;
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// SPEC §mcp.calls: a database call notifies after the insert commits, and a
+/// clear notifies only when a row was removed. read_calls then sees that state.
+#[tokio::test]
+async fn a_database_call_notifies_after_it_commits_and_an_empty_clear_does_not() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let home = swiss_core::paths::test_home().join("mcp-hist-notice");
+    let _ = std::fs::remove_dir_all(&home);
+    let history = McpHistory::open(&home.join("logs")).await.unwrap();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_hook = hits.clone();
+    history.set_calls_notice(Some(Arc::new(move |_| {
+        hits_hook.fetch_add(1, Ordering::SeqCst);
+    })));
+    record(&history, "db", "needle-tool", "out");
+    history.flush().await;
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    let page = history.read_calls("db", 0, 20, None).await;
+    assert_eq!(page["calls"][0]["tool"], json!("needle-tool"));
+    history.clear_calls("nobody").await;
+    assert_eq!(hits.load(Ordering::SeqCst), 1, "a clear of nothing publishes nothing");
+    history.clear_calls("db").await;
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+    let page = history.read_calls("db", 0, 20, None).await;
+    assert!(page["calls"].as_array().unwrap().is_empty());
+    let _ = history.close().await;
+    let _ = std::fs::remove_dir_all(&home);
+}

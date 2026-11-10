@@ -23,9 +23,9 @@ import { FrameSchema, Kind, LinkId, TopicId, WelcomeSchema } from "../src/bus/pb
 
 /* The Traffic page's context-bar chip counts the MCPs (mcpChipText over mcpRows). Found on the
    SPEC §panel.pages, found on a walk: a cold load straight onto #traffic read "0 MCPs · 0 up" and kept reading it,
-   because nothing on that page ever loaded the MCP list - the Servers page's poll is what fills
-   it, and that page was never visited. The view now loads the list it counts, on mount and on
-   every poll. */
+   because nothing on that page ever loaded the MCP list - the Servers page was what filled
+   it, and that page was never visited. The view loads the list it counts on mount, and
+   re-reads the activity list on MCP.TRAFFIC. */
 
 const calls: string[] = [];
 vi.mock("../src/traffic.js", () => ({
@@ -52,10 +52,62 @@ describe("the Traffic view counts MCPs it loaded itself (SPEC §panel.pages)", (
     expect(calls).toEqual(["loadList", "trafficReload"]);
   });
 
-  it("every poll refreshes the MCP list with the activity, so the chip follows state changes", async () => {
-    await view.poll();
-    expect(calls).toContain("loadList");
-    expect(calls).toContain("loadTraffic");
+  it("a MCP.TRAFFIC burst is one list read, and the page exports no poll (SPEC §mcp.traffic)", async () => {
+    expect((view as { poll?: unknown }).poll).toBeUndefined();
+    class Sock implements BusSocket {
+      static all: Sock[] = [];
+      binaryType: BinaryType = "blob";
+      sent: Uint8Array[] = [];
+      private listeners = new Map<string, Array<(ev: Event) => void>>();
+      constructor() { Sock.all.push(this); }
+      addEventListener(type: string, listener: (ev: Event) => void): void {
+        const list = this.listeners.get(type) ?? [];
+        list.push(listener);
+        this.listeners.set(type, list);
+      }
+      removeEventListener(): void { /* unused */ }
+      send(data: Uint8Array): void { this.sent.push(new Uint8Array(data)); }
+      close(): void { /* unused */ }
+      open(): void {
+        for (const fn of this.listeners.get("open") ?? []) fn(new Event("open"));
+      }
+      receive(bytes: Uint8Array): void {
+        const copy = new Uint8Array(bytes);
+        for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
+      }
+    }
+    installBus({
+      socket: Sock,
+      random: () => 0.5,
+      reload: () => undefined,
+      info: () => Promise.resolve(),
+      notice: () => undefined,
+      url: "ws://127.0.0.1/api/bus",
+    });
+    const sock = Sock.all[Sock.all.length - 1];
+    sock.open();
+    sock.receive(toBinary(FrameSchema, create(FrameSchema, {
+      module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
+      body: toBinary(WelcomeSchema, create(WelcomeSchema, {
+        protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
+      })),
+    })));
+    vi.useFakeTimers();
+    await view.mount();
+    calls.length = 0;
+    const { Module, NoticeSchema } = await import("../src/bus/pb/swiss/bus/v1/bus_pb.js");
+    const { McpSub, TrafficId } = await import("../src/bus/pb/swiss/bus/v1/mcp_pb.js");
+    const body = toBinary(NoticeSchema, create(NoticeSchema, {}));
+    const frame = toBinary(FrameSchema, create(FrameSchema, {
+      module: Module.MCP, sub: McpSub.TRAFFIC, id: TrafficId.TRAFFIC_CHANGED,
+      kind: Kind.EVENT, seq: 2, key: "", origin: "page-a", body,
+    }));
+    sock.receive(frame);
+    sock.receive(frame);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(calls.filter((c) => c === "loadTraffic")).toEqual(["loadTraffic"]);
+    view.unmount();
+    vi.useRealTimers();
   });
 
   it("mount holds MCP.SERVERS, and hide sends UNSUBSCRIBE (SPEC §mcp.registry)", async () => {

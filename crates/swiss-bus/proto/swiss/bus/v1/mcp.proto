@@ -7,9 +7,23 @@ package swiss.bus.v1;
 enum McpSub {
   MCP_SUB_UNSPECIFIED = 0;
   MCP_SUB_SERVERS = 1;
+  MCP_SUB_CALLS = 2;
+  MCP_SUB_TRAFFIC = 3;
 }
 
 enum ServersId {
   SERVERS_ID_UNSPECIFIED = 0;
   SERVERS_CHANGED = 1;
+}
+
+// MCP.CALLS, keyed by the MCP's name.
+enum CallsId {
+  CALLS_ID_UNSPECIFIED = 0;
+  CALLS_CHANGED = 1;
+}
+
+// MCP.TRAFFIC, no key.
+enum TrafficId {
+  TRAFFIC_ID_UNSPECIFIED = 0;
+  TRAFFIC_CHANGED = 1;
 }

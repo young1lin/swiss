@@ -16,22 +16,26 @@
 
 import { clearTrafficView, loadTraffic, resetTrafficSig, trafficReload } from "../traffic.js";
 import { loadList, mcpChipText } from "../polling.js";
-import { followMcpServers } from "../mcp-live.js";
+import { followMcpServers, followMcpTraffic } from "../mcp-live.js";
 // The context bar's chip here counts the MCPs (mcpChipText), so this page loads the list it
 // counts: a cold load straight onto #traffic used to read "0 MCPs" for good, because only the
 // Servers page ever fetched it (found on a walk of SPEC §panel.pages).
 let stopServers: (() => void) | null = null;
+let stopTraffic: (() => void) | null = null;
 export async function mount() {
   if (stopServers) stopServers();
+  if (stopTraffic) stopTraffic();
   stopServers = followMcpServers(() => loadList());
+  stopTraffic = followMcpTraffic(() => loadTraffic());
   await loadList();
   return trafficReload(true);
 }
 export function refresh() { resetTrafficSig(); return loadTraffic(); }
-export async function poll() { await Promise.all([loadList(), loadTraffic()]); }
 export function countText() { return mcpChipText(); }
 export function unmount() {
   if (stopServers) stopServers();
+  if (stopTraffic) stopTraffic();
   stopServers = null;
+  stopTraffic = null;
   clearTrafficView();
 }

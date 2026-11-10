@@ -11,7 +11,7 @@ import { enumDesc, fileDesc, tsEnum } from "../../../../../vendor/protobuf/2.16.
  * Describes the file swiss/bus/v1/mcp.proto.
  */
 export const file_swiss_bus_v1_mcp = /*@__PURE__*/
-  fileDesc("ChZzd2lzcy9idXMvdjEvbWNwLnByb3RvEgxzd2lzcy5idXMudjEqNgoGTWNwU3ViEhcKE01DUF9TVUJfVU5TUEVDSUZJRUQQABITCg9NQ1BfU1VCX1NFUlZFUlMQASo8CglTZXJ2ZXJzSWQSGgoWU0VSVkVSU19JRF9VTlNQRUNJRklFRBAAEhMKD1NFUlZFUlNfQ0hBTkdFRBABYgZwcm90bzM");
+  fileDesc("ChZzd2lzcy9idXMvdjEvbWNwLnByb3RvEgxzd2lzcy5idXMudjEqXgoGTWNwU3ViEhcKE01DUF9TVUJfVU5TUEVDSUZJRUQQABITCg9NQ1BfU1VCX1NFUlZFUlMQARIRCg1NQ1BfU1VCX0NBTExTEAISEwoPTUNQX1NVQl9UUkFGRklDEAMqPAoJU2VydmVyc0lkEhoKFlNFUlZFUlNfSURfVU5TUEVDSUZJRUQQABITCg9TRVJWRVJTX0NIQU5HRUQQASo2CgdDYWxsc0lkEhgKFENBTExTX0lEX1VOU1BFQ0lGSUVEEAASEQoNQ0FMTFNfQ0hBTkdFRBABKjwKCVRyYWZmaWNJZBIaChZUUkFGRklDX0lEX1VOU1BFQ0lGSUVEEAASEwoPVFJBRkZJQ19DSEFOR0VEEAFiBnByb3RvMw");
 
 /**
  * Describes the enum swiss.bus.v1.McpSub.
@@ -36,4 +36,32 @@ export const ServersIdSchema = /*@__PURE__*/
  */
 export const ServersId = /*@__PURE__*/
   tsEnum(ServersIdSchema);
+
+/**
+ * Describes the enum swiss.bus.v1.CallsId.
+ */
+export const CallsIdSchema = /*@__PURE__*/
+  enumDesc(file_swiss_bus_v1_mcp, 2);
+
+/**
+ * MCP.CALLS, keyed by the MCP's name.
+ *
+ * @generated from enum swiss.bus.v1.CallsId
+ */
+export const CallsId = /*@__PURE__*/
+  tsEnum(CallsIdSchema);
+
+/**
+ * Describes the enum swiss.bus.v1.TrafficId.
+ */
+export const TrafficIdSchema = /*@__PURE__*/
+  enumDesc(file_swiss_bus_v1_mcp, 3);
+
+/**
+ * MCP.TRAFFIC, no key.
+ *
+ * @generated from enum swiss.bus.v1.TrafficId
+ */
+export const TrafficId = /*@__PURE__*/
+  tsEnum(TrafficIdSchema);
 

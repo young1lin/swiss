@@ -158,6 +158,10 @@ pub struct McpHistory {
     /// The chunk sealing keys (SPEC host.history): body parts seal at write and open
     /// at read; an empty candidate list is the documented degraded plain-block mode.
     keys: swiss_host::history::seal::ChunkKeys,
+    /// MCP.CALLS, keyed by MCP name. Fired after the insert commits.
+    calls_notice: std::sync::Mutex<Option<crate::calls::CallsNotice>>,
+    /// MCP.TRAFFIC. Fired after the traffic insert commits.
+    traffic_notice: std::sync::Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl McpHistory {
@@ -189,6 +193,8 @@ impl McpHistory {
             meta_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             snapshot: std::sync::atomic::AtomicU64::new(1),
             keys: swiss_host::history::seal::ChunkKeys::resolve(),
+            calls_notice: std::sync::Mutex::new(None),
+            traffic_notice: std::sync::Mutex::new(None),
         });
         history
             .import_legacy()
@@ -206,6 +212,18 @@ impl McpHistory {
     /// test can drive its share to exhaustion within a test's lifetime (the
     /// declared shares are hundreds of megabytes). Production only ever passes
     /// [swiss_host::history::quota::QuotaPolicy::default].
+    pub fn set_calls_notice(&self, hook: Option<crate::calls::CallsNotice>) {
+        if let Ok(mut slot) = self.calls_notice.lock() {
+            *slot = hook;
+        }
+    }
+
+    pub fn set_traffic_notice(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
+        if let Ok(mut slot) = self.traffic_notice.lock() {
+            *slot = hook;
+        }
+    }
+
     pub fn set_quota(&self, policy: swiss_host::history::quota::QuotaPolicy) {
         self.store.set_quota(policy, false);
     }
@@ -269,13 +287,19 @@ impl McpHistory {
         let (entry, full_output, _long) = crate::calls::build_entry(source, rec);
         let mcp = mcp.to_string();
         let keys = self.keys.clone();
+        let notice = self.calls_notice.lock().ok().and_then(|slot| slot.clone());
         let submitted = self.store.submit(
             entry.args.len() + entry.output.len() + full_output.len() + 256,
             move |pool| {
                 Box::pin(async move {
                     insert_call(&pool, &mcp, &entry, &full_output, &keys)
                         .await
-                        .map_err(|e| e.to_string())
+                        .map_err(|e| e.to_string())?;
+                    // After the commit, so a re-read sees the row (SPEC §mcp.calls).
+                    if let Some(notice) = notice {
+                        notice(&mcp);
+                    }
+                    Ok(())
                 })
             },
         );
@@ -530,11 +554,16 @@ impl McpHistory {
     /// over exactly as the jsonl clear always did.
     pub async fn clear_calls(&self, mcp: &str) {
         let mcp = mcp.to_string();
+        let notice = self.calls_notice.lock().ok().and_then(|slot| slot.clone());
         let submitted = self.store.submit(64, move |pool| {
             Box::pin(async move {
-                clear_calls_tx(&pool, &mcp)
-                    .await
-                    .map_err(|e| e.to_string())
+                let removed = clear_calls_tx(&pool, &mcp).await.map_err(|e| e.to_string())?;
+                if removed > 0 {
+                    if let Some(notice) = notice {
+                        notice(&mcp);
+                    }
+                }
+                Ok(())
             })
         });
         if let Err(e) = submitted {
@@ -644,11 +673,16 @@ impl McpHistory {
             return;
         }
         let estimate: usize = entries.iter().map(|e| e.body.len() + 512).sum();
+        let notice = self.traffic_notice.lock().ok().and_then(|slot| slot.clone());
         let submitted = self.store.submit(estimate, move |pool| {
             Box::pin(async move {
                 insert_traffic(&pool, &entries)
                     .await
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| e.to_string())?;
+                if let Some(notice) = notice {
+                    notice();
+                }
+                Ok(())
             })
         });
         if let Err(e) = submitted {
@@ -800,11 +834,18 @@ impl McpHistory {
     /// the same transaction. Clear never forgets which token is which client.
     pub async fn clear_traffic(&self, client_key: Option<&str>) {
         let key = client_key.map(str::to_string);
+        let notice = self.traffic_notice.lock().ok().and_then(|slot| slot.clone());
         let submitted = self.store.submit(64, move |pool| {
             Box::pin(async move {
-                clear_traffic_tx(&pool, key.as_deref())
+                let removed = clear_traffic_tx(&pool, key.as_deref())
                     .await
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| e.to_string())?;
+                if removed > 0 {
+                    if let Some(notice) = notice {
+                        notice();
+                    }
+                }
+                Ok(())
             })
         });
         if let Err(e) = submitted {
@@ -1129,17 +1170,18 @@ async fn insert_call(
     tx.commit().await
 }
 
-async fn clear_calls_tx(pool: &SqlitePool, mcp: &str) -> Result<(), sqlx::Error> {
+async fn clear_calls_tx(pool: &SqlitePool, mcp: &str) -> Result<u64, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM call_body WHERE call_id IN (SELECT id FROM call WHERE mcp = ?)")
         .bind(mcp)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM call WHERE mcp = ?")
+    let deleted = sqlx::query("DELETE FROM call WHERE mcp = ?")
         .bind(mcp)
         .execute(&mut *tx)
         .await?;
-    tx.commit().await
+    tx.commit().await?;
+    Ok(deleted.rows_affected())
 }
 
 async fn rename_calls_tx(pool: &SqlitePool, from: &str, to: &str) -> Result<(), sqlx::Error> {
@@ -1256,20 +1298,19 @@ async fn upsert_client_dim(
     Ok(())
 }
 
-async fn clear_traffic_tx(pool: &SqlitePool, client_key: Option<&str>) -> Result<(), sqlx::Error> {
+async fn clear_traffic_tx(pool: &SqlitePool, client_key: Option<&str>) -> Result<u64, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    match client_key {
+    let deleted = match client_key {
         Some(key) => {
             sqlx::query("DELETE FROM traffic WHERE client_key = ?")
                 .bind(key)
                 .execute(&mut *tx)
-                .await?;
+                .await?
         }
-        None => {
-            sqlx::query("DELETE FROM traffic").execute(&mut *tx).await?;
-        }
-    }
-    tx.commit().await
+        None => sqlx::query("DELETE FROM traffic").execute(&mut *tx).await?,
+    };
+    tx.commit().await?;
+    Ok(deleted.rows_affected())
 }
 
 async fn import_calls_batch(

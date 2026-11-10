@@ -26,9 +26,42 @@ import { renderCallsOnly } from "./run-history.js";
 import { rowOf } from "./sidebar.js";
 import { clearMcpBusy, mcpBusyVerb, mcpDetail, selectedMcp, setLastAction, setMcpBusy, setMcpDetail, setSelectedMcp } from "./mcp-state.js";
 import { tr, trn } from "./i18n.js";
+import { busOn } from "./bus/bus.js";
+import { coalescedRead } from "./bus/live.js";
+import { Module, NoticeSchema } from "./bus/pb/swiss/bus/v1/bus_pb.js";
+import { CallsId, McpSub } from "./bus/pb/swiss/bus/v1/mcp_pb.js";
 import { closeMenu } from "./ui/menu.js";
 import { setIconBtn } from "./ui/button.js";
 import { openFieldSheet } from "./ui/sheet.js";
+
+/* MCP.CALLS for the open logs page (SPEC §mcp.calls). Page 0 of this MCP only;
+   loadCalls(isPoll) ignores an offset page and a switch in flight. */
+let stopCalls                      = null;
+let callsWatch                = null;
+
+function watchCalls()       {
+  const d = mcpDetail();
+  const name = d && d.tab === "logs" ? d.name : null;
+  if (name === callsWatch) return;
+  if (stopCalls) stopCalls();
+  stopCalls = null;
+  callsWatch = name;
+  if (!name) return;
+  const who = name;
+  const burst = coalescedRead(() => loadCalls(who, true));
+  stopCalls = busOn(
+    { module: Module.MCP, sub: McpSub.CALLS, key: who },
+    CallsId.CALLS_CHANGED,
+    NoticeSchema,
+    () => { burst.push(); },
+  );
+}
+
+export function stopCallWatch()       {
+  if (stopCalls) stopCalls();
+  stopCalls = null;
+  callsWatch = null;
+}
 
 /* --- lifecycle actions ------------------------------------------------------------------------ */
 async function act(name        , verb        )                {
@@ -97,7 +130,7 @@ async function removeMcp(name        )                {
       : tr("detail.deleteNameStopsRemovesPermanently", { name }))) return;
   const ok = await apiJson("/api/mcps/" + encodeURIComponent(name), { method: "DELETE" });
   if (!ok) return;
-  if (selectedMcp() === name) { setSelectedMcp(null); setMcpDetail(null); }
+  if (selectedMcp() === name) { setSelectedMcp(null); setMcpDetail(null); watchCalls(); }
   toast(tr("detail.deletedName", { name }));
   await loadList();
   renderPane();
@@ -208,6 +241,7 @@ function openDetail(name        )       {
     tools: pageState(), resources: pageState(), prompts: pageState(),
   };
   setMcpDetail(d);
+  watchCalls();
   closeMenu(); // a fresh MCP opens with no menu: the flag and the node go together
   patchSidebar();
   renderPane();
@@ -508,6 +542,7 @@ function showTab(tab        )       {
   // SPEC §mcp.calls: a pending switch already owns the tab; re-entering it must not fire a second
   // request for the same target on top of the one in flight.
   if (tab === "logs" && d.callsPendingPage == null) void loadCalls(d.name);
+  watchCalls();
 }
 /** The pager's target: the open detail's active kind page, or null when the tab is not a
  *  kind page (run / config / logs have no pager). */

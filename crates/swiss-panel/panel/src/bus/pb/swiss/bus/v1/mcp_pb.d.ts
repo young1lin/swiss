@@ -25,6 +25,16 @@ export enum McpSub {
    * @generated from enum value: MCP_SUB_SERVERS = 1;
    */
   SERVERS = 1,
+
+  /**
+   * @generated from enum value: MCP_SUB_CALLS = 2;
+   */
+  CALLS = 2,
+
+  /**
+   * @generated from enum value: MCP_SUB_TRAFFIC = 3;
+   */
+  TRAFFIC = 3,
 }
 
 /**
@@ -51,4 +61,48 @@ export enum ServersId {
  * Describes the enum swiss.bus.v1.ServersId.
  */
 export declare const ServersIdSchema: GenEnum<ServersId>;
+
+/**
+ * MCP.CALLS, keyed by the MCP's name.
+ *
+ * @generated from enum swiss.bus.v1.CallsId
+ */
+export enum CallsId {
+  /**
+   * @generated from enum value: CALLS_ID_UNSPECIFIED = 0;
+   */
+  CALLS_ID_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: CALLS_CHANGED = 1;
+   */
+  CALLS_CHANGED = 1,
+}
+
+/**
+ * Describes the enum swiss.bus.v1.CallsId.
+ */
+export declare const CallsIdSchema: GenEnum<CallsId>;
+
+/**
+ * MCP.TRAFFIC, no key.
+ *
+ * @generated from enum swiss.bus.v1.TrafficId
+ */
+export enum TrafficId {
+  /**
+   * @generated from enum value: TRAFFIC_ID_UNSPECIFIED = 0;
+   */
+  TRAFFIC_ID_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: TRAFFIC_CHANGED = 1;
+   */
+  TRAFFIC_CHANGED = 1,
+}
+
+/**
+ * Describes the enum swiss.bus.v1.TrafficId.
+ */
+export declare const TrafficIdSchema: GenEnum<TrafficId>;
 

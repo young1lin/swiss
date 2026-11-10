@@ -99,7 +99,7 @@ describe("MCP.SERVERS is held only while the page is visible (SPEC §mcp.registr
     stop();
   });
 
-  it("Servers and Tunnels left the tick; Traffic still exports a poll", async () => {
+  it("Servers, Traffic and Tunnels export no poll (SPEC §mcp.panel)", async () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const html = readFileSync(join(here, "..", "..", "src", "admin_assets", "index.html"), "utf8");
     const ids = Array.from(html.matchAll(/id="([a-zA-Z0-9_-]+)"/g)).map((m) => m[1]);
@@ -111,6 +111,6 @@ describe("MCP.SERVERS is held only while the page is visible (SPEC §mcp.registr
     expect((mcps as { poll?: unknown }).poll).toBeUndefined();
     expect((tunnels as { poll?: unknown }).poll).toBeUndefined();
     expect((forwards as { poll?: unknown }).poll).toBeUndefined();
-    expect(typeof traffic.poll).toBe("function");
+    expect((traffic as { poll?: unknown }).poll).toBeUndefined();
   });
 });

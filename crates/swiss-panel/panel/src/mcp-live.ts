@@ -17,9 +17,10 @@
 /* MCP.SERVERS, held only while the document is visible (SPEC §mcp.registry). Hide
    sends UNSUBSCRIBE, which is what lets the health probe park. */
 
+import { busOn } from "./bus/bus.js";
 import { busOnWhileVisible, coalescedRead } from "./bus/live.js";
 import { Module, NoticeSchema } from "./bus/pb/swiss/bus/v1/bus_pb.js";
-import { McpSub, ServersId } from "./bus/pb/swiss/bus/v1/mcp_pb.js";
+import { McpSub, ServersId, TrafficId } from "./bus/pb/swiss/bus/v1/mcp_pb.js";
 
 /** Re-read `GET /api/mcps` on MCP.SERVERS while this page is visible. */
 export function followMcpServers(read: () => Promise<unknown>): () => void {
@@ -29,6 +30,22 @@ export function followMcpServers(read: () => Promise<unknown>): () => void {
     ServersId.SERVERS_CHANGED,
     NoticeSchema,
     () => { burst.push(); },
+    () => { burst.push(); },
+  );
+  return () => {
+    off();
+    burst.stop();
+  };
+}
+
+/** Re-read the traffic list on MCP.TRAFFIC. One burst is one read. Stays subscribed
+ *  while hidden; the coalescer holds the read. */
+export function followMcpTraffic(read: () => Promise<unknown>): () => void {
+  const burst = coalescedRead(read);
+  const off = busOn(
+    { module: Module.MCP, sub: McpSub.TRAFFIC, key: "" },
+    TrafficId.TRAFFIC_CHANGED,
+    NoticeSchema,
     () => { burst.push(); },
   );
   return () => {

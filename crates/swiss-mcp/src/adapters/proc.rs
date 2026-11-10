@@ -565,7 +565,11 @@ impl ProcAdapter {
 }
 
 /// Pump child stderr into the ring until the pipe ends.
-async fn pump_stderr(mut stderr: tokio::process::ChildStderr, ring: Arc<std::sync::Mutex<String>>) {
+async fn pump_stderr(
+    mut stderr: tokio::process::ChildStderr,
+    ring: Arc<std::sync::Mutex<String>>,
+    on_grew: Arc<dyn Fn() + Send + Sync>,
+) {
     use tokio::io::AsyncReadExt;
     let mut buf = vec![0u8; 4096];
     loop {
@@ -574,10 +578,15 @@ async fn pump_stderr(mut stderr: tokio::process::ChildStderr, ring: Arc<std::syn
             Ok(0) | Err(_) => break,
             Ok(n) => {
                 let text = decode_child_output(&buf[..n]);
+                if text.is_empty() {
+                    continue;
+                }
                 if let Ok(mut guard) = ring.lock() {
                     guard.push_str(&text);
                     cap_ring(&mut guard, STDERR_MAX);
                 }
+                // MCP.CALLS, keyed by this MCP. The composition throttles the poke.
+                on_grew();
             }
         }
     }
@@ -690,7 +699,13 @@ impl super::Adapter for ProcAdapter {
         // that fails instantly still leaves its last words in the ring.
         if let Some(stderr) = spawned.child.stderr.take() {
             let ring = self.stderr.clone();
-            tokio::spawn(pump_stderr(stderr, ring));
+            let log = self.log.clone();
+            let name = self.name.clone();
+            let on_grew: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                let current = name.read().unwrap_or_else(|e| e.into_inner()).clone();
+                log.poke_calls(&current);
+            });
+            tokio::spawn(pump_stderr(stderr, ring, on_grew));
         }
 
         let stdout = spawned.child.stdout.take();
