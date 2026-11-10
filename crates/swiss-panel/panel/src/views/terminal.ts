@@ -1236,9 +1236,16 @@ export async function mount() {
   models = [];
   active = null;
   dismissed = new Set();   // a fresh mount knows nothing of the last page's tabs
+  // Subscribe, then read (SPEC §bus.topics). A notice that lands before the first paint has
+  // no stage to patch yet, so it is owed: one more listing once the paint is up.
+  let owed = false;
+  stopLive = followTerminalSessions(() => {
+    if (!$("term-stage")) { owed = true; return Promise.resolve(); }
+    return onSessions();
+  });
   await reload();
   if (my !== epoch) return;
-  stopLive = followTerminalSessions(() => onSessions());
+  if (owed) void onSessions();
 }
 
 export async function refresh() { await reload(); }

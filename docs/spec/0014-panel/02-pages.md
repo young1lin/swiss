@@ -17,7 +17,8 @@ and is relabelled by the chrome repaint.
 - In a desktop window, an unselected pane with registered servers shows a workspace landing
   page built from `paneHead`, `section`, `card` and `row`: up to six explicit Open actions,
   plus Add MCP. It reads the inventory only; rendering never requests tools or wakes a lazy
-  process. Polls patch state marks and keep keyboard focus. The sidebar remains the complete
+  process. The re-read an inventory notice (or a WELCOME) brings patches state marks and keeps
+  keyboard focus. The sidebar remains the complete
   list. An empty store retains the shared empty state. The gallery's `desktop-overview` scene
   shows the composition; `mcp-overview.test.ts` drives its actions, text safety and focus.
 - The resource head pins in two layers (name row, then the tabs); a `ResizeObserver` measures
@@ -25,7 +26,7 @@ and is relabelled by the chrome repaint.
   `.wide`.
 - **Logs** is the reference event list: the time only, day headings, a duration column; via /
   client / size in the open row's meta line; ×N for the same tool + arguments + result, folded
-  per page; which rows are open survives a poll; bodies load lazily.
+  per page; which rows are open survives a notice's re-read; bodies load lazily.
 - JSON of 80 characters or fewer renders compact on one line. One visible copy button; Copy raw
   behind `⋯`.
 - Tools, Resources and Prompts are `row()`s with a `<code>` name, Try and an enable toggle; the
@@ -74,7 +75,8 @@ is label · endpoint · the root (mono) · capabilities. A dot only when not res
 connecting, red error). The last-run column (No runs; a live pulse while running or queued;
 `relTime` with a red tag on failure) is fed by `/api/remote/runs` plus one
 `?limit=1&target=` read per uncovered target once per page entry; an API error drops the column
-silently, and the poll patches the cell. Editing a target always sends its `id`.
+silently, and the re-read a REMOTE.HISTORY or run notice brings patches the cell. Editing a
+target always sends its `id`.
 
 **Remote Runs.** An event list whose who column is target · source; the title is the action,
 the argument the command (a sync reads `src → dst`). A failure is a red tag; a live run is an
@@ -208,7 +210,8 @@ System. The per-plugin last-page preference still reopens an existing user's las
   with `lastError` as the row's error line. An unmet requirement is a warn tag ("no provider")
   on the sub-line. The sub-line counts the plugin's pages (the list in its title); the page
   foot is the revision.
-- The poll patches rows in place, so a switch keeps its focus.
+- The re-read a HOST.PLUGINS notice (or a WELCOME) brings patches rows in place, so a switch
+  keeps its focus.
 
 **Secrets** (`views/secrets.ts`) — the vault (§host.vault). Names only, write-only: a value is
 never shown again, and a forgotten one is re-stored, never revealed.

@@ -29,7 +29,7 @@
    did the half-typed value survive the poll. The seam is gone with the string it existed
    to serve. */
 
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { installBus, type BusSocket } from "../src/bus/bus.js";
 import { create, toBinary } from "../src/bus/codec.js";
 import { FrameSchema, Kind, LinkId, Module, NoticeSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
@@ -322,18 +322,30 @@ describe("the Secrets page (SPEC §host.vault)", () => {
     expect($("rowsCanary")).toBe(marker);
   });
 
-  // SPEC §host.vault: a HOST.VAULT notice re-reads the list once, and the page exports no poll.
-  it("a HOST.VAULT notice re-reads the list once", async () => {
+  // SPEC §host.vault, §bus.topics: a burst of HOST.VAULT notices re-reads the list once,
+  // through the coalescer, and the page exports no poll.
+  it("a burst of HOST.VAULT notices re-reads the list once", async () => {
     openVaultBus();
     body = { secrets: ["a"], rev: 1 };
     await view.mount();
     expect(view.poll).toBeUndefined();
     const before = calls.filter((c) => c.method === "GET" && c.url === "/api/secrets").length;
     body = { secrets: ["a", "b"], rev: 2 };
-    VaultSocket.all[VaultSocket.all.length - 1].receive(toBinary(FrameSchema, create(FrameSchema, {
+    const sock = VaultSocket.all[VaultSocket.all.length - 1];
+    const notice = toBinary(FrameSchema, create(FrameSchema, {
       module: Module.HOST, sub: HostSub.VAULT, id: VaultId.VAULT_CHANGED, kind: Kind.EVENT,
       body: toBinary(NoticeSchema, create(NoticeSchema, {})),
-    })));
+    }));
+    vi.useFakeTimers();
+    try {
+      sock.receive(notice);
+      sock.receive(notice);
+      await vi.advanceTimersByTimeAsync(149);
+      expect(calls.filter((c) => c.method === "GET" && c.url === "/api/secrets").length - before, "the burst settles before it reads").toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+    } finally {
+      vi.useRealTimers();
+    }
     for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
     expect(calls.filter((c) => c.method === "GET" && c.url === "/api/secrets").length - before).toBe(1);
     expect($("pane").textContent).toContain("b");

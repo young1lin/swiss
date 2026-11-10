@@ -53,12 +53,18 @@ describe("no page is on a shell tick (SPEC §panel)", () => {
     }
   });
 
+  // The shell's minute clock calls the active page's clock() (page-registry). A page that
+  // shows a relative time or an uptime exports one; none of them reads.
   it("every clock() asks for nothing", async () => {
-    const jobs = await import("../src/views/jobs.js");
-    const remote = await import("../src/views/remote.js");
-    const before = fetches.length;
-    jobs.clock();
-    remote.clock();
-    expect(fetches.length).toBe(before);
+    const ticking: string[] = [];
+    for (const id of pages) {
+      const view = await import("../src/views/" + id + ".js") as { clock?: () => void };
+      if (typeof view.clock !== "function") continue;
+      ticking.push(id);
+      const before = fetches.length;
+      view.clock();
+      expect(fetches.length, id).toBe(before);
+    }
+    expect(ticking).toEqual(expect.arrayContaining(["jobs", "remote", "llm-agents", "llm-history"]));
   });
 });

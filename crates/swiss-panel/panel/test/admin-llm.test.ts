@@ -21,7 +21,7 @@
    GET /api/llm/status from it, the way the plugin does: every sheet prefills from the ROW,
    saves go GET-then-CAS-PUT, and a credential typed as a literal never leaves the browser. */
 
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,7 +32,7 @@ import { installBus, type BusSocket } from "../src/bus/bus.js";
 import { create, toBinary } from "../src/bus/codec.js";
 import { FrameSchema, Kind, LinkId, Module, NoticeSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
 import { HostSub, VaultId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
-import { LlmConfigId, LlmSub } from "../src/bus/pb/swiss/bus/v1/llm_pb.js";
+import { LlmConfigId, LlmSub, TelemetryId } from "../src/bus/pb/swiss/bus/v1/llm_pb.js";
 
 type Body = Record<string, unknown>;
 type Row = {
@@ -1020,6 +1020,57 @@ describe("the LLM plugin - Agents", () => {
     await new Promise((r) => setTimeout(r, 250));
     expect(sent("GET", "/api/llm/status").length - before).toBe(1);
     agents.unmount();
+  });
+
+  // SPEC §llm.panel: the three topics feed one coalescer, so a save that moves the config,
+  // the reporter and the vault together is one status read, not three.
+  it("CONFIG, TELEMETRY and HOST.VAULT notices in one settle window are one status read", async () => {
+    openAgentVaultBus();
+    await agents.mount();
+    const before = sent("GET", "/api/llm/status").length;
+    const sock = AgentVaultSocket.all[AgentVaultSocket.all.length - 1];
+    const frame = (module: number, sub: number, id: number, seq: number): Uint8Array => toBinary(FrameSchema, create(FrameSchema, {
+      module, sub, id, kind: Kind.EVENT, seq, body: toBinary(NoticeSchema, create(NoticeSchema, {})),
+    }));
+    vi.useFakeTimers();
+    try {
+      sock.receive(frame(Module.LLM, LlmSub.CONFIG, LlmConfigId.LLM_CONFIG_CHANGED, 2));
+      await vi.advanceTimersByTimeAsync(50);
+      sock.receive(frame(Module.LLM, LlmSub.TELEMETRY, TelemetryId.TELEMETRY_CHANGED, 3));
+      await vi.advanceTimersByTimeAsync(50);
+      sock.receive(frame(Module.HOST, HostSub.VAULT, VaultId.VAULT_CHANGED, 4));
+      await vi.advanceTimersByTimeAsync(149);
+      expect(sent("GET", "/api/llm/status").length - before, "the window is still settling").toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+    } finally {
+      vi.useRealTimers();
+    }
+    await settle();
+    expect(sent("GET", "/api/llm/status").length - before).toBe(1);
+    agents.unmount();
+  });
+
+  // SPEC §panel: the shell's minute clock repaints the Reporting card's ages from what the
+  // page holds; nothing is read.
+  it("clock() repaints the Reporting card's last export age and asks for nothing", async () => {
+    row.telemetry = { endpoint: "http://127.0.0.1:4317", protocol: "grpc" };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const t0 = Date.parse("2026-10-09T12:00:00.000Z");
+      vi.setSystemTime(t0);
+      telemetry = { sent: 42, dropped: 0, lastExportMs: t0 - 5000 };
+      await agents.mount();
+      const before = text("#laTel");
+      const asked = calls.length;
+      vi.setSystemTime(t0 + 3 * 3_600_000);
+      agents.clock();
+      expect(text("#laTel"), "the last export's age moved on").not.toBe(before);
+      expect(text("#laTel")).toContain("42 sent");
+      expect(calls.length, "a clock tick reads nothing").toBe(asked);
+    } finally {
+      vi.useRealTimers();
+      agents.unmount();
+    }
   });
 
   it("keeps system prompts collapsed in create, edit and the expanded record", async () => {

@@ -27,6 +27,7 @@ import { tk, tr, wireLabel } from "./i18n.js";
 import { popupMenu } from "./ui/menu.js";
 import { emptyNode, note } from "./ui/page.js";
 import { busOn } from "./bus/bus.js";
+import { coalescedRead } from "./bus/live.js";
 import { Module, NoticeSchema } from "./bus/pb/swiss/bus/v1/bus_pb.js";
 import { HostSub, PluginsId } from "./bus/pb/swiss/bus/v1/host_pb.js";
 
@@ -415,15 +416,21 @@ function onPluginInventory(fn: () => void): () => void {
 }
 
 /** The shell's one HOST.PLUGINS subscription, for the life of the page (SPEC §host.plugins).
- *  A notice re-reads GET /api/plugins once; the mounted Plugins page paints from that. */
+ *  A burst of notices, or a WELCOME, re-reads GET /api/plugins once (SPEC §bus.topics); the
+ *  mounted Plugins page paints from that. */
 function watchPluginInventory(): void {
   if (pluginsWatch) return;
-  pluginsWatch = busOn(
+  const burst = coalescedRead(() => reloadPluginInventory().catch((error) => { toast(errText(error), true); }));
+  const off = busOn(
     { module: Module.HOST, sub: HostSub.PLUGINS, key: "" },
     PluginsId.PLUGINS_CHANGED,
     NoticeSchema,
-    () => { void reloadPluginInventory().catch((error) => { toast(errText(error), true); }); },
+    () => { burst.push(); },
   );
+  pluginsWatch = () => {
+    off();
+    burst.stop();
+  };
 }
 
 /** A hash names a descriptor's path; stable page ids remain aliases for existing links.

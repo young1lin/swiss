@@ -36,6 +36,7 @@ import type { ApiMcpRow, ApiTokenCreated, ApiTokenRow, ApiTokensResponse } from 
 import type { GroupCfg, GroupSlice } from "../types/dom.js";
 import { $, TOKEN_ID_KEY, api, apiJson, targetEl } from "../util.js";
 import { busOn } from "../bus/bus.js";
+import { coalescedRead } from "../bus/live.js";
 import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
 import { HostSub, TokensId } from "../bus/pb/swiss/bus/v1/host_pb.js";
 import { fill, h } from "../h.js";
@@ -87,15 +88,22 @@ export function onTokens(fn: () => void): () => void {
   return () => { if (tokensListener === fn) tokensListener = null; };
 }
 
-/** The shell's one HOST.TOKENS subscription, for the life of the page. */
+/** The shell's one HOST.TOKENS subscription, for the life of the page. A burst is one
+ *  read (SPEC §bus.topics). WELCOME's read is the shell's loadInfo, so the coalescer's
+ *  own resync stays off. */
 export function watchTokens(): void {
   if (tokensWatch) return;
-  tokensWatch = busOn(
+  const burst = coalescedRead(() => loadTokens(), { resync: false });
+  const off = busOn(
     { module: Module.HOST, sub: HostSub.TOKENS, key: "" },
     TokensId.TOKENS_CHANGED,
     NoticeSchema,
-    () => { void loadTokens(); },
+    () => { burst.push(); },
   );
+  tokensWatch = () => {
+    off();
+    burst.stop();
+  };
 }
 
 export async function loadTokens(): Promise<void> {

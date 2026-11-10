@@ -39,6 +39,7 @@ import type { ApiSecretWriteResponse } from "../types/api.js";
 import type { GroupCfg, GroupSlice } from "../types/dom.js";
 import { $, apiJson, targetEl, toast } from "../util.js";
 import { busOn } from "../bus/bus.js";
+import { coalescedRead } from "../bus/live.js";
 import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
 import { HostSub, VaultId } from "../bus/pb/swiss/bus/v1/host_pb.js";
 import { fill, h } from "../h.js";
@@ -431,14 +432,21 @@ export async function reloadVault(): Promise<void> {
   patch();
 }
 
+/** HOST.VAULT while the page is mounted: a burst is one read, held while hidden, and a
+ *  WELCOME re-reads too (SPEC §bus.topics). */
 function followVault(): void {
   if (stopVault) stopVault();
-  stopVault = busOn(
+  const burst = coalescedRead(() => reloadVault());
+  const off = busOn(
     { module: Module.HOST, sub: HostSub.VAULT, key: "" },
     VaultId.VAULT_CHANGED,
     NoticeSchema,
-    () => { void reloadVault(); },
+    () => { burst.push(); },
   );
+  stopVault = () => {
+    off();
+    burst.stop();
+  };
 }
 
 export async function mount() {

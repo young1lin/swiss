@@ -518,6 +518,40 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(stdin()!.querySelector("pre")?.textContent).toBe("echo hello\nexit 0\n");
   });
 
+  // SPEC §remote.history: an unsealed body lives only while it is on screen. Closing the row
+  // forgets the stdin, so opening it again reads it again, and an answer that lands after the
+  // row closed is not kept.
+  it("closing a row forgets its unsealed stdin; an answer for a row closed meanwhile is dropped", async () => {
+    const ran = {
+      ...finished, runId: 42, state: "succeeded", exitCode: 0,
+      input: { target: "build", argv: ["bash", "-s"], stdinBytes: 9 }, outputBytes: 3, stdinStored: true,
+    };
+    const path = "/api/remote/runs/42/content";
+    const reads = (): number => requests.filter((r) => r.path === path).length;
+    serve([ran], []);
+    replies["/api/remote/runs/42/output?after=0&max=131072"] = { runId: 42, cursor: 0, nextCursor: 3, output: "ok\n", total: 3, terminal: true };
+    replies[path] = { runId: 42, content: "echo ok\n", truncated: false };
+    await view.mount();
+    open(42);
+    await settle();
+    expect(block(42, "Stdin sent")?.querySelector("pre")?.textContent).toBe("echo ok\n");
+    open(42); // close
+    await settle();
+    let release: () => void = () => {};
+    held[path] = new Promise<void>((r) => { release = r; });
+    open(42);
+    expect(reads(), "the reopened row reads its stdin again").toBe(2);
+    expect(block(42, "Stdin sent")?.textContent).toContain("Loading…");
+    open(42); // closed while that read is out
+    release();
+    await settle();
+    delete held[path];
+    open(42);
+    await settle();
+    expect(reads(), "the late answer was not kept: the next open reads").toBe(3);
+    expect(block(42, "Stdin sent")?.querySelector("pre")?.textContent).toBe("echo ok\n");
+  });
+
   it("a stdin put away with Hide stays away through a re-read of the record", async () => {
     const sock = openBus();
     const ran = {

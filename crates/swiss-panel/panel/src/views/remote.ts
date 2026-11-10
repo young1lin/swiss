@@ -560,11 +560,12 @@ function patchCols(): void {
 function subscribeLive(): void {
   stopLive();
   let whole = false; // cleared before the read, so a page event during it queues one more
+  // The WELCOME below clears the cache first, so the coalescer's own resync stays off.
   reRead = coalescedRead(async () => {
     if (!whole) { await refreshLastRuns(); return; }
     whole = false;
     await refresh();
-  });
+  }, { resync: false });
   const page = (): void => { whole = true; reRead?.push(); };
   const column = (): void => { reRead?.push(); };
   offs = [

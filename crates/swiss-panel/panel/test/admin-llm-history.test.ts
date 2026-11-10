@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 import type * as HistoryView from "../src/views/llm-history.js";
 import { installBus, type BusSocket } from "../src/bus/bus.js";
 import { create, toBinary } from "../src/bus/codec.js";
-import { FrameSchema, Kind, Module, NoticeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { FrameSchema, Kind, LinkId, Module, NoticeSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
 import { LlmHistoryId, LlmSub } from "../src/bus/pb/swiss/bus/v1/llm_pb.js";
 
 interface Call { method: string; path: string }
@@ -275,6 +275,9 @@ class HistSock implements BusSocket {
   removeEventListener(): void { /* unused */ }
   send(data: Uint8Array): void { this.sent.push(new Uint8Array(data)); }
   close(): void { /* unused */ }
+  open(): void {
+    for (const fn of this.listeners.get("open") ?? []) fn(new Event("open"));
+  }
   receive(bytes: Uint8Array): void {
     const copy = new Uint8Array(bytes);
     for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
@@ -292,6 +295,16 @@ function armHistoryBus(): HistSock {
     url: "ws://127.0.0.1/api/bus",
   });
   return HistSock.all[HistSock.all.length - 1];
+}
+
+/** The gateway's WELCOME: the first one opens the link, a later one is a reconnect or a restart. */
+function welcome(sock: HistSock): void {
+  sock.receive(toBinary(FrameSchema, create(FrameSchema, {
+    module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
+    body: toBinary(WelcomeSchema, create(WelcomeSchema, {
+      protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
+    })),
+  })));
 }
 
 async function historyNotice(sock: HistSock): Promise<void> {
@@ -765,6 +778,45 @@ describe("llm history page", () => {
     await historyNotice(sock);
     await settle();
     expect(text("#lhCallsList")).toContain("a fresh round trip");
+  });
+
+  // SPEC §bus.resync: notices sent while the link was down are gone, so every WELCOME
+  // (a reconnect, a same-build gateway restart) re-reads what the page shows, once.
+  it("a WELCOME re-reads the lists once; the first WELCOME before mount reads nothing extra", async () => {
+    const sock = armHistoryBus();
+    sock.open();
+    welcome(sock);
+    await mount();
+    const listReads = (): number => calls.filter((c) => c.path.startsWith("/api/llm/history/calls") || c.path.startsWith("/api/llm/history/runs")).length;
+    expect(listReads(), "mount reads calls and runs once each").toBe(2);
+    calls = [];
+    vi.useFakeTimers();
+    try {
+      welcome(sock);
+      await vi.advanceTimersByTimeAsync(200);
+    } finally {
+      vi.useRealTimers();
+    }
+    await settle();
+    expect(listReads(), "the reconnect re-reads both lists, once").toBe(2);
+  });
+
+  // SPEC §panel: the 6 s tick is gone; the shell's minute clock repaints relative times
+  // from what the page holds, and nothing is read.
+  it("clock() repaints the relative times from what the page holds and asks for nothing", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.parse(CALL.at) + 60_000);
+      await mount();
+      const before = text("#lhCallsList");
+      const asked = calls.length;
+      vi.setSystemTime(Date.parse(CALL.at) + 3 * 3_600_000);
+      view.clock();
+      expect(text("#lhCallsList"), "the call's age moved on").not.toBe(before);
+      expect(calls.length, "a clock tick reads nothing").toBe(asked);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("open and closed runs wear their state on the lead where finished runs wear the dot", async () => {

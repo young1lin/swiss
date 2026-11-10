@@ -124,4 +124,51 @@ describe("the terminal session list", () => {
     expect(document.getElementById("countChip")?.textContent).toBe("1 live");
     expect(document.getElementById("term-tabs")?.textContent).toContain("Local shell");
   });
+
+  // SPEC §bus.topics "Subscribe, then read": a session that opens while mount's own listing
+  // is out lands as a notice with no stage to patch yet. It is owed, and read once the
+  // stage is painted, so the tabs never keep the stale first answer.
+  it("a notice while mount's first listing is out is owed and read once the stage is up", async () => {
+    document.body.innerHTML = shellSkeleton();
+    sessions = [];
+    sessionGets = 0;
+    Sock.all.length = 0;
+    let answerFirst: ((r: Response) => void) | null = null;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const path = String(url);
+      if (path.includes("/api/terminal/targets")) {
+        return new Response(JSON.stringify(TARGETS), { status: 200 });
+      }
+      if (path.includes("/api/terminal/sessions")) {
+        sessionGets += 1;
+        if (sessionGets === 1) return new Promise<Response>((r) => { answerFirst = r; });
+        return new Response(JSON.stringify(sessions), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+    installBus({
+      socket: Sock,
+      random: () => 0.5,
+      reload: () => undefined,
+      info: () => Promise.resolve(),
+      notice: () => undefined,
+      url: "ws://127.0.0.1/api/bus",
+    });
+    const mounted = view.mount();
+    for (let i = 0; i < 10 && !answerFirst; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(answerFirst, "mount's listing is out, parked").not.toBeNull();
+    sessions = [{
+      id: "abc", target: "local", label: "Local shell", opened: "2026-11-10T00:00:00Z",
+      bytesOut: 20, attached: true, recording: null,
+    }];
+    notice(Sock.all[Sock.all.length - 1]);
+    await new Promise((r) => setTimeout(r, 250));
+    expect(sessionGets, "no stage yet: the notice's read is owed, not sent").toBe(1);
+    answerFirst!(new Response("[]", { status: 200 })); // the listing from before the open
+    await mounted;
+    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(sessionGets, "the owed read went out after the paint").toBe(2);
+    expect(document.getElementById("countChip")?.textContent).toBe("1 live");
+    expect(document.getElementById("term-tabs")?.textContent).toContain("Local shell");
+  });
 });

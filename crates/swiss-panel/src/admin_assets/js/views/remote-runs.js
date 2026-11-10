@@ -400,6 +400,7 @@ async function loadContent(id        )                {
     if (v === visit) delete unsealing[id];
   }
   if (v !== visit) return; // the page left: an unsealed body lives only while it is on screen
+  if (!open[id]) return; // the row closed while the read was out: nothing is on screen to keep it
   contents[id] = j ? { text: j.content, truncated: !!j.truncated } : { error: tr("remoteRuns.contentUnavailable") };
   repaintBody(id);
 }
@@ -489,11 +490,12 @@ function armLive()       {
 }
 
 /** Expand or collapse one row in place - a poll must not close what was just opened. A folded
- *  row is open when any run in it is; closing it forgets them all. */
+ *  row is open when any run in it is; closing it forgets them all, and with them what was
+ *  unsealed for them (an unsealed body lives only while it is on screen). */
 function toggle(id        )       {
   const run = runOf(id);
   const wasOpen = run.some((r) => { return !!open[r.runId]; });
-  run.forEach((r) => { open[r.runId] = false; });
+  run.forEach((r) => { open[r.runId] = false; delete contents[r.runId]; });
   open[id] = !wasOpen;
   // Before the first paint: the read marks the stdin as being unsealed, so the body opens on
   // its loading line rather than flashing the Show it is about to replace.
@@ -807,13 +809,15 @@ export async function refresh() {
 function subscribeLive()       {
   stopLive();
   let targetsDirty = false; // mount's own load paints the filter's list before the first read
+  // A WELCOME re-reads the target table too (targetsMoved below), so the coalescer's own
+  // resync stays off.
   reRead = coalescedRead(async () => {
     if (targetsDirty) {
       targetsDirty = false;
       await loadTargets();
     }
     await refresh();
-  });
+  }, { resync: false });
   const push = ()       => { reRead?.push(); };
   const targetsMoved = ()       => {
     targetsDirty = true;
@@ -944,10 +948,11 @@ function setNeedle(q        )       {
 }
 
 /** A search from the beginning; "" is the list. Rows open in the old picture close - the new
- *  one may not hold them. */
+ *  one may not hold them - and what they unsealed goes with them. */
 function startSearch(q        )       {
   search = newSearch(q, search.gen + 1);
   open = {};
+  contents = {};
   armLive();
   paintList();
   if (q) void scanRound();

@@ -257,4 +257,52 @@ describe("busOnWhileVisible (SPEC §bus.topics \"Demand\")", () => {
     stop();
     expect(topicIds(sock).length, "unmount while hidden sends nothing more").toBe(sent);
   });
+
+  // SPEC §bus.topics "Resync": a held topic is re-read after every WELCOME; a hidden page
+  // holds nothing and re-reads on show instead.
+  it("a WELCOME while held re-reads once; while hidden it waits for the show", () => {
+    setVisible(true);
+    const sock = openBus();
+    let shown = 0;
+    const stop = busOnWhileVisible(
+      { module: Module.HOST, sub: HostSub.REMOTE_SEAT, key: "" },
+      RemoteSeatId.REMOTE_SEAT_CHANGED,
+      NoticeSchema,
+      () => {},
+      () => { shown += 1; },
+    );
+    sock.receive(welcome());
+    expect(shown, "the reconnect re-reads what the page shows").toBe(1);
+    setVisible(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    sock.receive(welcome());
+    expect(shown, "nothing held, nothing re-read").toBe(1);
+    stop();
+    setVisible(true);
+    sock.receive(welcome());
+    expect(shown, "an unmounted page is not re-read").toBe(1);
+  });
+});
+
+describe("coalescedRead after a WELCOME (SPEC §bus.topics \"Resync\")", () => {
+  // The link that was down may have missed any notice: every follower re-reads once.
+  it("pushes one re-read per WELCOME unless the page owns its resync; stop drops it", async () => {
+    setVisible(true);
+    const sock = openBus();
+    let reads = 0;
+    let owned = 0;
+    const live = coalescedRead(async () => { reads += 1; });
+    const own = coalescedRead(async () => { owned += 1; }, { resync: false });
+    sock.receive(welcome());
+    await vi.advanceTimersByTimeAsync(149);
+    expect(reads, "the resync is coalesced like a notice").toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reads).toBe(1);
+    expect(owned, "a page that owns its resync is not pushed").toBe(0);
+    live.stop();
+    sock.receive(welcome());
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(reads, "a stopped coalescer is off the resync list").toBe(1);
+    own.stop();
+  });
 });

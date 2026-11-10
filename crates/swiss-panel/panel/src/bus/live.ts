@@ -24,17 +24,20 @@
 
    - 150 ms after the last notice, and never more than 1 s after the first of a burst;
    - one read in flight, at most one queued behind it;
-   - a hidden page holds its re-read until it is visible again.
+   - a hidden page holds its re-read until it is visible again;
+   - every WELCOME pushes one re-read too (SPEC §bus.topics "Resync"): the link that was
+     down may have missed any notice. A page whose resync reads more than its notices do
+     (Remote clears its caches first) passes { resync: false } and pushes on its own.
 
    busOnWhileVisible is for a topic the gateway samples only while someone is looking
    (the memory reading, MCP health). It subscribes while the document is visible,
    unsubscribes on hide, and on show subscribes again and then calls onVisible, which
-   is the page's re-read. Every other topic stays subscribed while hidden and lets the
+   is the page's re-read; a WELCOME while it is held calls onVisible too. Every other topic stays subscribed while hidden and lets the
    coalescer hold its read. */
 
 import type { DescMessage } from "../vendor/protobuf/2.16.0/descriptors.js";
 import type { MessageShape } from "../vendor/protobuf/2.16.0/types.js";
-import { busOn, type BusTopic } from "./bus.js";
+import { busOn, busOnResync, type BusTopic } from "./bus.js";
 
 const SETTLE_MS = 150;
 const CAP_MS = 1000;
@@ -46,7 +49,12 @@ export interface CoalescedRead {
   stop(): void;
 }
 
-export function coalescedRead(read: () => Promise<unknown>): CoalescedRead {
+export interface CoalescedReadOptions {
+  /** Push one re-read after every WELCOME. Default true. */
+  resync?: boolean;
+}
+
+export function coalescedRead(read: () => Promise<unknown>, opts: CoalescedReadOptions = {}): CoalescedRead {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let capTimer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
@@ -91,15 +99,18 @@ export function coalescedRead(read: () => Promise<unknown>): CoalescedRead {
   };
   document.addEventListener("visibilitychange", onVisible);
 
+  const push = (): void => {
+    if (stopped) return;
+    // The settle restarts on every notice: 150 ms after the LAST one of the burst.
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(fire, SETTLE_MS);
+    // The cap arms once per burst: never more than 1 s after the FIRST notice.
+    if (!capTimer) capTimer = setTimeout(fire, CAP_MS);
+  };
+  const offResync = opts.resync === false ? null : busOnResync(push);
+
   return {
-    push(): void {
-      if (stopped) return;
-      // The settle restarts on every notice: 150 ms after the LAST one of the burst.
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(fire, SETTLE_MS);
-      // The cap arms once per burst: never more than 1 s after the FIRST notice.
-      if (!capTimer) capTimer = setTimeout(fire, CAP_MS);
-    },
+    push,
     stop(): void {
       stopped = true;
       if (timer) clearTimeout(timer);
@@ -107,6 +118,7 @@ export function coalescedRead(read: () => Promise<unknown>): CoalescedRead {
       timer = null;
       capTimer = null;
       document.removeEventListener("visibilitychange", onVisible);
+      if (offResync) offResync();
     },
   };
 }
@@ -143,9 +155,13 @@ export function busOnWhileVisible<Desc extends DescMessage>(
 
   document.addEventListener("visibilitychange", onChange);
   hold();
+  // A WELCOME re-subscribes what is held (bus.ts); the page re-reads what it shows. A
+  // hidden page holds nothing and re-reads on show instead.
+  const offResync = busOnResync(() => { if (!stopped && off) onVisible(); });
 
   return () => {
     stopped = true;
+    offResync();
     document.removeEventListener("visibilitychange", onChange);
     if (off) {
       off();

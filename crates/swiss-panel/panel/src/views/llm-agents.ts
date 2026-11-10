@@ -1029,8 +1029,16 @@ export function unmount(): void {
   if (stopLive) { stopLive(); stopLive = null; }
 }
 
+/** Relative times only (SPEC §panel): the telemetry card's "last export" moves on between
+ *  exports, which publish nothing while the exporter is idle. Repaints from the held status
+ *  and reads nothing. */
+export function clock(): void {
+  const node = $("laTel");
+  if (node && status) node.replaceWith(telemetryNode(status, hasBlock));
+}
+
 export async function refresh(): Promise<void> {
-  if (await load() !== null || !status) return; // keep the last paint; the next poll asks again
+  if (await load() !== null || !status) return; // keep the last paint; the next notice asks again
   if (signature(status) !== painted) render();
   else $("laTel").replaceWith(telemetryNode(status, hasBlock));
 }

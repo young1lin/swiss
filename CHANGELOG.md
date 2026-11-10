@@ -20,9 +20,10 @@ All notable changes to swiss are recorded here. The format follows
 - An opened Runs row fed stdin shows the script it ran. The stdin was kept sealed all along,
   but the row showed only "Stdin sent 2.3 KB" until an icon-only Show at the far end of the
   block was clicked, so a `bash -s` row read as one whose stdin was lost. Opening the row now
-  unseals it above the output; Hide puts it away and a re-read leaves it away. A live row no
-  longer says the text "is not kept": it says the text comes with the record, and shows it
-  once the run is filed. A write's body still waits for Show (SPEC §remote.panel).
+  unseals it above the output; Hide puts it away and a re-read leaves it away; closing the row
+  forgets the text until it opens again. A live row no longer says the text "is not kept":
+  it says the text comes with the record, and shows it once the run is filed. A write's body
+  still waits for Show (SPEC §remote.panel).
 
 ## [0.2.1] - 2026-11-08
 

@@ -377,8 +377,9 @@ describe("the Plugins page through mount", () => {
     expect(view.countText()).toBe("0 plugins · 0 on");
   });
 
-  // SPEC §host.plugins: the shell's HOST.PLUGINS notice is one GET, and the mounted page paints from it.
-  it("a HOST.PLUGINS notice repaints from the shell's one read", async () => {
+  // SPEC §host.plugins, §bus.topics: a burst of the shell's HOST.PLUGINS notices is one GET,
+  // and the mounted page paints from it.
+  it("a burst of HOST.PLUGINS notices repaints from the shell's one read", async () => {
     inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: true, state: "active" }], revision: 1, pages: [] };
     await view.mount();
     expect(pluginGets).toBe(1);
@@ -387,7 +388,16 @@ describe("the Plugins page through mount", () => {
     watchPluginInventory();
     inventory = { plugins: [{ id: "mcp", label: "MCP", enabled: true, state: "failed", lastError: "port taken" }], revision: 2, pages: [] };
     const before = pluginGets;
-    pluginsBus.receive(pluginsNotice("mcp"));
+    vi.useFakeTimers();
+    try {
+      pluginsBus.receive(pluginsNotice("mcp"));
+      pluginsBus.receive(pluginsNotice("mcp"));
+      await vi.advanceTimersByTimeAsync(149);
+      expect(pluginGets - before, "the burst settles before it reads").toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+    } finally {
+      vi.useRealTimers();
+    }
     for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
     expect(pluginGets - before).toBe(1);
     expect($("pane").querySelector(".lrow-err")?.textContent).toBe("port taken");

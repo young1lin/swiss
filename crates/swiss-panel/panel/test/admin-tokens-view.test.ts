@@ -33,7 +33,7 @@
    it now types into the actual label input and checks the value survived, which is the
    behaviour the regression was about. */
 
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { installBus, type BusSocket } from "../src/bus/bus.js";
 import { create, toBinary } from "../src/bus/codec.js";
 import { FrameSchema, Kind, LinkId, Module, NoticeSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
@@ -279,8 +279,9 @@ describe("the Token page (MCP group)", () => {
     expect(after.value).toBe("default");
   });
 
-  // SPEC §host.tokens: a HOST.TOKENS notice re-reads the list once, and the page exports no poll.
-  it("a HOST.TOKENS notice re-reads the list once", async () => {
+  // SPEC §host.tokens, §bus.topics: a burst of HOST.TOKENS notices re-reads the list once,
+  // through the coalescer, and the page exports no poll.
+  it("a burst of HOST.TOKENS notices re-reads the list once", async () => {
     body = { tokens: [{ id: "t0", label: "default" }] };
     await view.mount();
     expect(tokenGets).toBe(1);
@@ -289,10 +290,20 @@ describe("the Token page (MCP group)", () => {
     view.watchTokens();
     body = { tokens: [{ id: "t0", label: "default" }, { id: "t1", label: "cursor" }] };
     const before = tokenGets;
-    sock.receive(toBinary(FrameSchema, create(FrameSchema, {
+    const notice = toBinary(FrameSchema, create(FrameSchema, {
       module: Module.HOST, sub: HostSub.TOKENS, id: TokensId.TOKENS_CHANGED, kind: Kind.EVENT,
       body: toBinary(NoticeSchema, create(NoticeSchema, {})),
-    })));
+    }));
+    vi.useFakeTimers();
+    try {
+      sock.receive(notice);
+      sock.receive(notice); // the page's own write echoes back as a second notice
+      await vi.advanceTimersByTimeAsync(149);
+      expect(tokenGets - before, "the burst settles before it reads").toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+    } finally {
+      vi.useRealTimers();
+    }
     for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
     expect(tokenGets - before).toBe(1);
     expect($("pane").textContent).toContain("cursor");

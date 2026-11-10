@@ -1407,6 +1407,10 @@ export async function mount()                {
   if (wanted != null && $("lhRunsList")) runSheet(wanted);
 }
 
+/** Relative times only (SPEC §panel): the lists repaint from what the page holds, the
+ *  same in-place swap a notice's re-read does, and nothing is read. */
+export function clock()       { paintLists(); }
+
 export function unmount()       {
   visit++;
   if (stopLive) stopLive();

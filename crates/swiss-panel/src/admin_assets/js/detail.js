@@ -35,7 +35,8 @@ import { setIconBtn } from "./ui/button.js";
 import { openFieldSheet } from "./ui/sheet.js";
 
 /* MCP.CALLS for the open logs page (SPEC §mcp.calls). Page 0 of this MCP only;
-   loadCalls(isPoll) ignores an offset page and a switch in flight. */
+   loadCalls(isPoll) ignores an offset page and a switch in flight. The subscription is keyed
+   by the MCP's name, so a rename re-keys it, and dropping it stops its coalescer too. */
 let stopCalls                      = null;
 let callsWatch                = null;
 
@@ -49,12 +50,16 @@ function watchCalls()       {
   if (!name) return;
   const who = name;
   const burst = coalescedRead(() => loadCalls(who, true));
-  stopCalls = busOn(
+  const off = busOn(
     { module: Module.MCP, sub: McpSub.CALLS, key: who },
     CallsId.CALLS_CHANGED,
     NoticeSchema,
     () => { burst.push(); },
   );
+  stopCalls = () => {
+    off();
+    burst.stop();
+  };
 }
 
 export function stopCallWatch()       {
@@ -113,6 +118,7 @@ function renameMcp(name        )       {
       if (selectedMcp() === name) setSelectedMcp(next);
       const open = mcpDetail();
       if (open && open.name === name) open.name = next;
+      watchCalls(); // the open Logs follows the new name's key
       toast(tr("detail.renamedNameNext", { name, next }));
       await loadList();
       renderPane();
@@ -539,10 +545,11 @@ function showTab(tab        )       {
   if (tab === "config") void loadRevisions(d.name);
   // Run needs the tool list to build its argument form.
   if (tab === "run" && !d.tools.loaded && !d.tools.loading) void loadPage(d.name, "tools");
+  // Subscribe, then read (SPEC §bus.topics): a call that lands during the read re-reads.
+  watchCalls();
   // SPEC §mcp.calls: a pending switch already owns the tab; re-entering it must not fire a second
   // request for the same target on top of the one in flight.
   if (tab === "logs" && d.callsPendingPage == null) void loadCalls(d.name);
-  watchCalls();
 }
 /** The pager's target: the open detail's active kind page, or null when the tab is not a
  *  kind page (run / config / logs have no pager). */
