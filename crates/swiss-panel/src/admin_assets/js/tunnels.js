@@ -22,6 +22,7 @@ import { fill, h } from "./h.js";
 import { copyText } from "./connect.js";
 import { assignMember, groupOf as makeGroupOf, mountGroup, newGroupFlow, saveOrder, slice } from "./groups.js";
 import { connRowNode, isTunnelsView, loadList, loadTunnels, ruleRowNode, tunBusyWord, tunData, tunDot, tunGroupsList, tunRows, tunScope } from "./polling.js";
+import { followMcpServers } from "./mcp-live.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
 import { currentView } from "./ui-state.js";
 import { clearTunBusy, clearTunView, setTunBusy, setTunDragging, setTunDraggingGroup, setTunPendingGroup, setMountedTunScope, tunBusyOf, tunDragging, tunDraggingGroup, tunFolds, mountedTunScope } from "./tunnel-state.js";
@@ -420,8 +421,12 @@ async function deleteConn(conn                        )                {
 
 /** Mount one tunnels page: pin the scope, then load. Scope is the /api/groups family's own
  *  word ("conns"|"rules"); everything in this module reads it through mountedTunScope(). */
+let stopMcpServers                      = null;
+
 async function mountTunnelsPage(scope        )                {
   setMountedTunScope(scope);
+  if (stopMcpServers) stopMcpServers();
+  stopMcpServers = followMcpServers(() => loadList());
   return loadTunnels();
 }
 
@@ -433,6 +438,8 @@ async function pollTunnelsPage() {
 }
 
 function unmountTunnelsPage() {
+  if (stopMcpServers) stopMcpServers();
+  stopMcpServers = null;
   clearTunView();
 }
 

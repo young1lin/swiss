@@ -1,0 +1,15 @@
+// MCP.SERVERS (SPEC §bus.registry, SPEC §mcp.registry). Module 5, sub 1.
+// A NOTICE with no key: the server list moved. The page re-reads GET /api/mcps.
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+enum McpSub {
+  MCP_SUB_UNSPECIFIED = 0;
+  MCP_SUB_SERVERS = 1;
+}
+
+enum ServersId {
+  SERVERS_ID_UNSPECIFIED = 0;
+  SERVERS_CHANGED = 1;
+}

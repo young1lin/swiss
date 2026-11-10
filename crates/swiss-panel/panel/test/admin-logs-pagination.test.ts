@@ -350,28 +350,11 @@ describe("SPEC §mcp.calls: the pager is the scroll anchor, focus follows the ac
 });
 
 describe("SPEC §mcp.calls: history pages hold still, errors are honest", () => {
-  it("the MCP poll refreshes calls on page 0 and stays off every older page", async () => {
-    const d = fakeDetail();
-    mountLogs(d); // page 0, committed
+  it("the servers view does not poll the call log", async () => {
+    // SPEC §mcp.registry: the server list left the tick. Page 0 of the call log follows
+    // MCP.CALLS, which is not this view's subscription.
     const mcps = await import("../src/views/mcps.js");
-    // The list answer must still contain the row — the real loadList closes the detail of an
-    // MCP that vanished from the list, which is not what this test is about.
-    const list = { mcps: [{ ...ROW }], groups: ["default"] };
-    const p1 = mcps.poll();
-    await ok(list, 0); // the list half of the poll parks, then resolves
-    expect(requests.some((r) => r.url.includes("/calls?")), "page 0 is polled").toBe(true);
-    await ok({ calls: PAGE0, more: true, stderr: "" }, 0); // the calls half — poll can finish
-    await p1;
-    // Back to a committed older page: reading position, not a live view.
-    const d2 = fakeDetail();
-    mountLogs(d2);
-    d2.callsPage = 2;
-    requests.length = 0;
-    parked.length = 0;
-    const p2 = mcps.poll();
-    await ok(list, 0);
-    await p2;
-    expect(requests.some((r) => r.url.includes("/calls?")), "an offset page is never polled").toBe(false);
+    expect((mcps as { poll?: unknown }).poll).toBeUndefined();
   });
 
   it("a poll request itself refuses an offset page or a pending switch", () => {
@@ -387,20 +370,13 @@ describe("SPEC §mcp.calls: history pages hold still, errors are honest", () => 
     expect(requests.length, "no poll while a switch is mid-transaction").toBe(0);
   });
 
-  it("the poll never races a foreground load in flight — a stolen generation would swallow the failure", async () => {
+  it("a foreground load in flight still reports its own failure", async () => {
     const d = fakeDetail();
     mountLogs(d, { rows: PAGE0.slice(0, 3), more: false }); // single page, no pager
     detail.showTab("logs"); // the re-entry foreground load parks, unresolved
     expect(requests.filter((r) => r.url.includes("/calls?")).length).toBe(1);
     const mcps = await import("../src/views/mcps.js");
-    const list = { mcps: [{ ...ROW }], groups: ["default"] };
-    const p = mcps.poll();
-    await ok(list, 1); // the list half (parked behind the re-entry load) resolves; the calls half must not have fired at all
-    await p;
-    expect(
-      requests.filter((r) => r.url.includes("/calls?")).length,
-      "no poll load while a foreground load is in flight",
-    ).toBe(1);
+    expect((mcps as { poll?: unknown }).poll, "the servers view has no tick to race this load").toBeUndefined();
     await net(0); // the foreground load dies — its failure is still the newest word
     expect(d.callsError).toBe("Could not load calls.");
     expect(d.calls, "the committed rows stay").toEqual(PAGE0.slice(0, 3));

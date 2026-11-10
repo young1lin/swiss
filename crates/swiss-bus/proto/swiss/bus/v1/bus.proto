@@ -9,6 +9,7 @@ package swiss.bus.v1;
 enum Module {
   MODULE_BUS = 0;
   MODULE_HOST = 4;
+  MODULE_MCP = 5;
   MODULE_DATA = 6;
   MODULE_JOBS = 8;
   MODULE_REMOTE = 10;

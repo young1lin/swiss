@@ -323,6 +323,11 @@ export enum Module {
   HOST = 4,
 
   /**
+   * @generated from enum value: MODULE_MCP = 5;
+   */
+  MCP = 5,
+
+  /**
    * @generated from enum value: MODULE_DATA = 6;
    */
   DATA = 6,

@@ -20,20 +20,34 @@ import { loadCalls, loadMeta, loadPage, pageState } from "../detail.js";
 import { renderPane } from "../pane.js";
 import { histClose } from "../run-history.js";
 import { mcpDetail } from "../mcp-state.js";
-export async function mount() { await loadList(); renderPane(); }
-export async function poll() {
+import { followMcpServers } from "../mcp-live.js";
+
+let stopServers: (() => void) | null = null;
+
+export async function mount() {
+  if (stopServers) stopServers();
+  stopServers = followMcpServers(() => loadList());
+  await loadList();
+  renderPane();
+}
+/** A manual refresh still re-reads the open logs page. The tick does not. */
+async function reloadShown(): Promise<void> {
   await loadList();
   const d = mcpDetail();
-  // SPEC §mcp.calls: only page 0 is live — an offset page is a reading position a poll must not
+  // SPEC §mcp.calls: only page 0 is live — an offset page is a reading position a refresh must not
   // drift, and a switch in flight owns the tab until it commits.
   if (d && d.tab === "logs" && d.callsPage === 0 && d.callsPendingPage == null) await loadCalls(d.name, true);
 }
 export async function refresh() {
-  await poll();
+  await reloadShown();
   const d = mcpDetail();
   if (!d) return;
   await loadMeta(d.name);
   if (isMcpKind(d.tab)) { d[d.tab] = pageState(); await loadPage(d.name, d.tab); }
 }
 export function countText() { return mcpChipText(); }
-export function unmount() { histClose(); }
+export function unmount() {
+  if (stopServers) stopServers();
+  stopServers = null;
+  histClose();
+}

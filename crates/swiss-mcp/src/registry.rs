@@ -157,6 +157,16 @@ impl EntryInner {
 
 type Evictor = Box<dyn Fn(&str) + Send + Sync>;
 
+/// The fields of `GET /api/mcps` a probe notice is about: name, lifecycle, state, latency, reason.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct ListAnswer {
+    name: String,
+    lifecycle: &'static str,
+    status: &'static str,
+    latency: Option<u64>,
+    reason: Option<String>,
+}
+
 pub struct Registry {
     entries: RwLock<HashMap<String, Arc<EntryInner>>>,
     /// The call log every registered MCP records into - shared with the adapters (handed out
@@ -180,6 +190,10 @@ pub struct Registry {
     probed: tokio::sync::Notify,
     /// Wakes the reaper when a deadline is armed earlier than the one it sleeps toward.
     reap_wake: tokio::sync::Notify,
+    /// MCP.SERVERS (SPEC §mcp.registry). Fires after a change `GET /api/mcps` would show.
+    notice: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// The demand holder. Aborted with the probe task.
+    holder: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 /// The longest the reaper sleeps while a deadline is pending: deadlines are wall-clock, so a
@@ -206,7 +220,39 @@ impl Registry {
             probe_wake: tokio::sync::Notify::new(),
             probed: tokio::sync::Notify::new(),
             reap_wake: tokio::sync::Notify::new(),
+            notice: Mutex::new(None),
+            holder: Mutex::new(None),
         })
+    }
+
+    /// Where an MCP.SERVERS notice goes (SPEC §mcp.registry). The composition passes the bus.
+    pub fn set_notice(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self.notice.lock().unwrap_or_else(|e| e.into_inner()) = hook;
+    }
+
+    fn note(&self) {
+        let hook = self.notice.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    /// What a probe round is allowed to announce: state, latency, reason. A round that
+    /// only moves `last_check` changed nothing the list is noticed for.
+    fn answered(&self) -> Vec<ListAnswer> {
+        let mut rows = Vec::new();
+        for entry in self.all() {
+            let Ok(d) = entry.data.read() else { continue };
+            rows.push(ListAnswer {
+                name: d.name.clone(),
+                lifecycle: d.lifecycle.as_str(),
+                status: d.status.as_str(),
+                latency: d.latency_ms,
+                reason: d.last_error.clone(),
+            });
+        }
+        rows.sort();
+        rows
     }
 
     /// Someone is reading health - the MCP list, the connection catalog, a page of tools: keep
@@ -295,6 +341,8 @@ impl Registry {
             deleted: AtomicBool::new(false),
         });
         entries.insert(name.to_string(), entry.clone());
+        drop(entries);
+        self.note();
         Ok(entry)
     }
 
@@ -462,6 +510,7 @@ impl Registry {
                     Some(json!({ "name": name, "type": adapter.kind() })),
                 );
                 swiss_host::mem::invalidate_memory_cache();
+                self.note();
                 Ok(())
             }
             Err(err) => {
@@ -478,6 +527,7 @@ impl Registry {
                     "mcp start failed",
                     Some(json!({ "name": name, "err": error })),
                 );
+                self.note();
                 Err(err)
             }
         }
@@ -532,6 +582,7 @@ impl Registry {
         }
         log::log("info", "mcp stopped", Some(json!({ "name": name })));
         swiss_host::mem::invalidate_memory_cache();
+        self.note();
         Ok(())
     }
 
@@ -600,6 +651,7 @@ impl Registry {
             "mcp config updated",
             Some(json!({ "name": name, "type": kind, "started": start })),
         );
+        self.note();
         Ok(())
     }
 
@@ -674,6 +726,7 @@ impl Registry {
         if let Ok(d) = entry.data.read() {
             d.adapter.rename(new_name);
         }
+        self.note();
         Ok(())
     }
 
@@ -704,6 +757,7 @@ impl Registry {
             "mcp deleted",
             Some(json!({ "name": name, "source": source.as_str() })),
         );
+        self.note();
         Ok(())
     }
 
@@ -773,6 +827,7 @@ impl Registry {
     /// Mark every started entry's health unknown, keeping when it was last checked: called when
     /// nobody has read health for two probe intervals and the probe parks.
     fn forget_health(&self) {
+        let before = self.answered();
         for entry in self.all() {
             let Ok(mut d) = entry.data.write() else { continue };
             if d.lifecycle == Lifecycle::Started {
@@ -780,6 +835,9 @@ impl Registry {
                 d.latency_ms = None;
                 d.last_error = None;
             }
+        }
+        if self.answered() != before {
+            self.note();
         }
     }
 
@@ -803,6 +861,38 @@ impl Registry {
             .min()
     }
 
+    /// Keep calling `watch` once a period while `demand` is true (SPEC §mcp.registry).
+    /// The probe's own lapse still forgets health once demand has been false for two
+    /// periods, and that notice has no subscriber to re-arm it.
+    pub fn hold_while_demanded(self: &Arc<Self>, mut demand: tokio::sync::watch::Receiver<bool>) {
+        let this = self.clone();
+        let interval = std::time::Duration::from_millis(self.interval_ms);
+        let handle = tokio::spawn(async move {
+            loop {
+                if !*demand.borrow_and_update() {
+                    if demand.changed().await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                this.watch();
+                tokio::select! {
+                    _ = tokio::time::sleep(interval) => {}
+                    result = demand.changed() => {
+                        if result.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        if let Ok(mut slot) = self.holder.lock() {
+            if let Some(previous) = slot.replace(handle) {
+                previous.abort();
+            }
+        }
+    }
+
     pub fn stop_timer(&self) {
         if let Ok(mut slot) = self.timer.lock() {
             if let Some(handle) = slot.take() {
@@ -814,9 +904,15 @@ impl Registry {
                 handle.abort();
             }
         }
+        if let Ok(mut slot) = self.holder.lock() {
+            if let Some(handle) = slot.take() {
+                handle.abort();
+            }
+        }
     }
 
     pub async fn check_all(&self) {
+        let before = self.answered();
         self.sweep_page_caches();
         // Promise.all in the Node build: spawn per entry so one slow DB ping does not delay the
         // probes of every other MCP behind it.
@@ -829,6 +925,9 @@ impl Registry {
         }
         for task in spawned {
             let _ = task.await;
+        }
+        if self.answered() != before {
+            self.note();
         }
     }
 
@@ -1808,6 +1907,125 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert_eq!(fake.pings(), 3, "the next look wakes it again");
         assert_eq!(row(&r, "db")["state"], "up");
+        r.stop_timer();
+    }
+
+    // SPEC §mcp.registry: a lifecycle change publishes; a duplicate register does not.
+    #[tokio::test]
+    async fn register_start_stop_and_delete_publish_and_a_duplicate_does_not() {
+        let notes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sink = notes.clone();
+        let r = reg();
+        r.set_notice(Some(Arc::new(move || {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })));
+        let fake = Fake {
+            ping: Some(Ok(())),
+            ..Default::default()
+        }
+        .arc();
+        r.register("db", Source::Config, def(json!({"type": "fake"})), fake)
+            .unwrap();
+        assert_eq!(notes.load(Ordering::SeqCst), 1);
+        assert!(r
+            .register(
+                "db",
+                Source::Config,
+                def(json!({"type": "fake"})),
+                Fake::default().arc(),
+            )
+            .is_err());
+        assert_eq!(notes.load(Ordering::SeqCst), 1, "a refused register publishes nothing");
+        r.start("db").await.unwrap();
+        assert_eq!(notes.load(Ordering::SeqCst), 2);
+        r.stop("db").await.unwrap();
+        assert_eq!(notes.load(Ordering::SeqCst), 3);
+        r.delete("db").await.unwrap();
+        assert_eq!(notes.load(Ordering::SeqCst), 4);
+    }
+
+    // SPEC §mcp.registry: a probe publishes when the answer moved, and not when it did not.
+    #[tokio::test]
+    async fn a_probe_round_publishes_only_when_health_moved_and_forget_publishes() {
+        let notes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sink = notes.clone();
+        let r = reg();
+        r.set_notice(Some(Arc::new(move || {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })));
+        r.register(
+            "db",
+            Source::Config,
+            def(json!({"type": "fake"})),
+            Fake {
+                ping: Some(Ok(())),
+                ..Default::default()
+            }
+            .arc(),
+        )
+        .unwrap();
+        r.start("db").await.unwrap();
+        let after_start = notes.load(Ordering::SeqCst);
+        r.check_all().await;
+        assert_eq!(notes.load(Ordering::SeqCst), after_start + 1);
+        assert_eq!(row(&r, "db")["state"], "up");
+        r.check_all().await;
+        assert_eq!(
+            notes.load(Ordering::SeqCst),
+            after_start + 1,
+            "the same answer publishes nothing"
+        );
+        r.forget_health();
+        assert_eq!(notes.load(Ordering::SeqCst), after_start + 2);
+        assert_eq!(row(&r, "db")["state"], "unknown");
+        r.forget_health();
+        assert_eq!(
+            notes.load(Ordering::SeqCst),
+            after_start + 2,
+            "forgetting health that is already unknown publishes nothing"
+        );
+    }
+
+    // SPEC §mcp.registry: demand holds the probe; without it the window lapses after two periods.
+    #[tokio::test(start_paused = true)]
+    async fn demand_holds_the_probe_across_five_periods_and_then_lapses() {
+        let notes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sink = notes.clone();
+        let r = reg();
+        r.set_notice(Some(Arc::new(move || {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })));
+        let fake = Fake {
+            ping: Some(Ok(())),
+            ..Default::default()
+        }
+        .arc();
+        r.register("db", Source::Config, def(json!({"type": "fake"})), fake.clone())
+            .unwrap();
+        r.start("db").await.unwrap();
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        r.hold_while_demanded(rx);
+        r.start_timer();
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        assert_eq!(fake.pings(), 0, "nothing starts the probe without demand");
+
+        tx.send(true).unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(row(&r, "db")["state"], "up");
+        let held = notes.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_secs(300)).await;
+        assert_eq!(row(&r, "db")["state"], "up", "five periods on, still not unknown");
+        assert!(fake.pings() >= 5, "the probe kept its interval: {}", fake.pings());
+        assert_eq!(
+            notes.load(Ordering::SeqCst),
+            held,
+            "a round that changed nothing publishes nothing"
+        );
+
+        tx.send(false).unwrap();
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        assert_eq!(row(&r, "db")["state"], "unknown");
+        assert_eq!(notes.load(Ordering::SeqCst), held + 1);
         r.stop_timer();
     }
 

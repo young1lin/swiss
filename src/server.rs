@@ -386,6 +386,24 @@ pub async fn run_gateway() -> Result<(), String> {
             swiss_bus::pb::v1::JobsListId::JobsListChanged as u32,
         );
     })));
+    // MCP.SERVERS (SPEC §mcp.registry). Lifecycle and probe changes publish from
+    // the registry. A group edit is not one of those writes, so the route publishes it.
+    let mcp_bus = services.bus.clone();
+    let mcp_note = std::sync::Arc::new(move || {
+        swiss_host::notice::publish_at(
+            &mcp_bus,
+            swiss_bus::pb::v1::Module::Mcp as u32,
+            swiss_bus::pb::v1::McpSub::Servers as u32,
+            swiss_bus::pb::v1::ServersId::ServersChanged as u32,
+        );
+    });
+    registry.set_notice(Some(mcp_note.clone()));
+    ctx.group_scopes.set_notice("mcps", mcp_note);
+    let health = registry.clone();
+    health.hold_while_demanded(services.bus.demand(
+        swiss_bus::pb::v1::Module::Mcp as u32,
+        swiss_bus::pb::v1::McpSub::Servers as u32,
+    ));
     // The consoles' history (SPEC §data.history): constructed closed here so the /api/db mount
     // can carry it; the Data plugin's start opens logs/data.db and its stop closes it.
     let data_history = swiss_data::history::DataHistory::new(swiss_core::paths::data_path(&["logs"]));
