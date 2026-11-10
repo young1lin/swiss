@@ -165,6 +165,50 @@ describe("the process app editor session", () => {
     expect(body.config.apps[0].start.args).toEqual(["server.js", "", "--port 4317"]);
   });
 
+  it("a dsh template fills the whole launch with node as the image, and saves it as argv", async () => {
+    await editor.openForm(null);
+    const template = $("pr-f-template") as HTMLSelectElement;
+    expect(Array.from(template.options).map((o) => o.value)).toEqual(["", "dsh-web", "dsh-web-no-open"]);
+    template.value = "dsh-web-no-open";
+    template.dispatchEvent(new Event("change"));
+    expect(($("pr-f-name") as HTMLInputElement).value).toBe("dsh");
+    expect(($("pr-f-args") as HTMLTextAreaElement).value).toBe("web\n--no-open\n--port\n3080");
+    expect($("pr-f-template-why").textContent).toContain("node");
+    ($("pr-f-autostart") as HTMLInputElement).checked = true;
+    await save();
+    const body = JSON.parse(puts()[0].body || "{}");
+    expect(body.config.apps[0]).toEqual({
+      name: "dsh",
+      start: { program: "dsh", args: ["web", "--no-open", "--port", "3080"] },
+      ports: [3080],
+      image: "node",
+      autostart: true,
+    });
+  });
+
+  it("a template never replaces a typed name, and None empties only what a template filled", async () => {
+    await editor.openForm(null);
+    const template = $("pr-f-template") as HTMLSelectElement;
+    const pick = (key: string): void => { template.value = key; template.dispatchEvent(new Event("change")); };
+    pick("dsh-web");
+    value("dir", "~\\work");
+    pick("");
+    expect(($("pr-f-name") as HTMLInputElement).value).toBe("");
+    expect(($("pr-f-program") as HTMLInputElement).value).toBe("");
+    expect(($("pr-f-image") as HTMLInputElement).value).toBe("");
+    expect(($("pr-f-dir") as HTMLInputElement).value).toBe("~\\work");
+    value("name", "my-dsh");
+    pick("dsh-web");
+    expect(($("pr-f-name") as HTMLInputElement).value).toBe("my-dsh");
+    expect(($("pr-f-program") as HTMLInputElement).value).toBe("dsh");
+  });
+
+  it("Edit offers no template: an existing app's launch is edited, not re-picked", async () => {
+    config = { apps: [app()] };
+    await editor.openForm("demo");
+    expect(document.getElementById("pr-f-template")).toBeNull();
+  });
+
   it("refuses Add with an existing name without issuing a PUT", async () => {
     config = { apps: [app()] };
     await editor.openForm(null);

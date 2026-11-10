@@ -28,7 +28,7 @@ in `swiss_core::platform`:
 | `crates/swiss-plugins/src/process.rs` | `ProcessPlugin`: the factory, the two actions' registration, mounting the routes |
 | `src/process_cli.rs` | `swiss process …` (§process.cli) |
 | `crates/swiss-panel/panel/src/views/process.ts` | Inventory, row actions and mount-owned polling (§process.panel) |
-| `crates/swiss-panel/panel/src/views/process/` | Shared types, session-owned editor/picker and log follow/history |
+| `crates/swiss-panel/panel/src/views/process/` | Shared types, session-owned editor/picker, the Add sheet's templates (`templates.ts`) and log follow/history |
 
 **The plugin** — id `process`, label Process, version 0.2, config schema version 2,
 `restart_on_config_change: false` (config applies in place, §process.apps), `requires: []`.
@@ -627,6 +627,21 @@ Sheets:
     an executable fills Program. A first save teaches the next step - the toast says Start on
     the row is what runs it. The shared form uses a zero-minimum grid track and the picker
     path input may shrink: a long directory path must never push Go or Up outside the dialog.
+  - **Templates** (Add only; an existing app's launch is edited, not re-picked). A Template
+    select over the form fills a known program's whole launch, so the reader picks HOW it
+    starts instead of working out which executable ends up owning the port: name (only while
+    the field is empty or still holds the last template's), program, args, ports and image.
+    Autostart, dir, stop, env, log and UI stay as they are; None empties the filled fields
+    again, the name only if a template put it there. One quiet line under the select says
+    what the chosen template decided. The table is `views/process/templates.ts`, and two dsh
+    launches ship: `dsh web` (opens the browser on each start) and `dsh web --no-open` (for
+    Start with swiss - nothing pops up at boot, and Logs has the link with its token), both
+    with `--port 3080`, ports `[3080]` and image `node`. dsh is an npm-installed Node CLI:
+    `dsh` resolves to `dsh.cmd`, which runs `node.exe`, and the image the form derived from
+    the program (`dsh`) read the running app as a conflict with itself - "port 3080 is held by
+    pid N (node.exe)" after a start that timed out (the owner's finding, 2026-11-10). `node`
+    matches `node.exe` on Windows and `node` on Unix; `--port` pins the port the row declares.
+    No `ui`: dsh's link carries a per-start token the config cannot know.
   - `env` is `KEY=value` lines through `envToText`/`envToObj` (`fields.ts`, the proc MCP
     form's editor), kept exactly as typed, so a reference stays a reference.
   - Both start and stop args use one line per argv entry, preserving spaces within entries

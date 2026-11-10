@@ -24,6 +24,7 @@ import { closeSheet, sheet, showSheet } from "../../ui/sheet.js";
 import { checkField, field, form, formCap, formFold, hint, pair } from "../../ui/form.js";
 import { envToObj, envToText } from "../../fields.js";
 import { pickPanel, pickerRow } from "../../ui/pick.js";
+import { APP_TEMPLATES } from "./templates.js";
                                            
 
                                                                                                     
@@ -45,6 +46,9 @@ import { pickPanel, pickerRow } from "../../ui/pick.js";
                   
                                                                    
                                                              
+                                                                                             
+                                              
+                              
                                 
  
 
@@ -177,6 +181,32 @@ function area(id        , value        , rowsN        )                      {
   return h("textarea", { id: id, rows: rowsN }, value)                       ;
 }
 
+/* The Template select, Add only: an existing app's launch is edited, not re-picked. */
+function templateField()              {
+  const select = h("select", { id: "pr-f-template" },
+    h("option", { value: "" }, tr("process.form.templateNone")),
+    ...Object.keys(APP_TEMPLATES).map((key) => h("option", { value: key }, tr(APP_TEMPLATES[key].label))))                     ;
+  return field({ label: tr("process.form.template"), control: select, hint: h("span", { id: "pr-f-template-why" }, tr("process.form.templateHint")) });
+}
+
+/* A template fills what it decides - name (only while the field is empty or still holds the
+ * last template's), program, args, ports and image - and leaves autostart, dir, stop, env, log
+ * and UI as they are. None empties those same fields again, the name only if a template put
+ * it there. */
+function applyTemplate(session               , key        )       {
+  if (!owns(session)) return;
+  const t = Object.prototype.hasOwnProperty.call(APP_TEMPLATES, key) ? APP_TEMPLATES[key] : null;
+  const set = (id        , text        )       => { control                                        (session, id).value = text; };
+  const name = control                  (session, "pr-f-name");
+  if (!name.value.trim() || name.value === session.templateName) name.value = t ? t.app.name : "";
+  session.templateName = t ? t.app.name : null;
+  set("pr-f-program", t ? t.app.start.program : "");
+  set("pr-f-args", t ? (t.app.start.args || []).join("\n") : "");
+  set("pr-f-ports", t ? (t.app.ports || []).join(", ") : "");
+  set("pr-f-image", t ? t.app.image || "" : "");
+  control(session, "pr-f-template-why").textContent = t ? tr(t.why) : tr("process.form.templateHint");
+}
+
 function formSheet(session               , app                 )              {
   const a           = app || { name: "", start: { program: "" } };
   const startArgs = a.start.args || [];
@@ -198,6 +228,8 @@ function formSheet(session               , app                 )              {
         // The common case is four answers (SPEC §process.panel): what to
         // call it, what to run, with what arguments, on which ports. Image,
         // working dir, the stop command, env, log and UI live behind the fold.
+        // A template above them answers all four for a known program.
+        app ? null : templateField(),
         field({ label: tr("process.form.name"), required: true, control: h("input", { type: "text", id: "pr-f-name", value: a.name, placeholder: tr("process.form.nameExample"), readOnly: !!app }), hint: tr("process.form.nameHint") }),
         field({ label: tr("process.form.program"), required: true, control: input("pr-f-program", a.start.program, "node"), hint: tr("process.form.programHint"), action: btn(tr("process.pick.pick"), { id: "pr-f-browse", kind: "ghost" }) }),
         // The picker panel, not a second sheet: the house sheet is one slot, so
@@ -419,7 +451,7 @@ export async function openForm(name               , onSaved                     
   const session                = {
     host: $("sheet"), root: pending, controller: new AbortController(), original: null,
     baseline: null, saving: false, picker: { parent: null, sep: "\\", sequence: 0 },
-    filled: { args: null, stopArgs: null }, onSaved,
+    filled: { args: null, stopArgs: null }, templateName: null, onSaved,
     observer: new MutationObserver(() => { if (active === session && !owns(session)) disposeForm(); }),
   };
   active = session;
@@ -448,6 +480,10 @@ export async function openForm(name               , onSaved                     
     if (ev.key === "Enter") { ev.preventDefault(); ev.stopPropagation(); void pickerLoad(session, pickPath.value.trim()); }
   };
   control(session, "prPickUp").onclick = ()       => { void pickerLoad(session, session.picker.parent); };
+  if (!app) {
+    const template = control                   (session, "pr-f-template");
+    template.onchange = ()       => applyTemplate(session, template.value);
+  }
   wireKeys(session);
   control                  (session, app ? "pr-f-program" : "pr-f-name").focus();
 }
