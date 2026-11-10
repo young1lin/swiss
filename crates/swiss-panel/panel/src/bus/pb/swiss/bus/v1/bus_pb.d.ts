@@ -348,6 +348,11 @@ export enum Module {
   REMOTE = 10,
 
   /**
+   * @generated from enum value: MODULE_LLM = 13;
+   */
+  LLM = 13,
+
+  /**
    * @generated from enum value: MODULE_PANEL = 14;
    */
   PANEL = 14,

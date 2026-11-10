@@ -28,6 +28,7 @@
    filled. Test asks the SAVED block, so it refuses while the form holds an unsaved edit.
    ================================================================================================ */
 import { $, toast } from "../util.js";
+import { followLlmConfig } from "../llm-live.js";
                                       
 import { fill, h } from "../h.js";
 import { tr } from "../i18n.js";
@@ -271,20 +272,10 @@ async function reload()                   {
   return true;
 }
 
-export async function mount()                {
-  visit++;
-  painted = "";
-  readForm = null;
-  await reload();
-}
+let stopLive                      = null;
 
-export function unmount()       {
-  visit++;
-  readForm = null;
-}
-
-/** The poll repaints the in-force card alone: the form under the operator's hands stays. */
-export async function poll()                {
+/** A CONFIG notice repaints the in-force card alone when the form is dirty. */
+async function onConfig()                {
   const at = visit;
   const r = await loadStatus();
   if (at !== visit || !r.data || !status) return;
@@ -296,6 +287,22 @@ export async function poll()                {
   } else {
     await reload();
   }
+}
+
+export async function mount()                {
+  visit++;
+  painted = "";
+  readForm = null;
+  if (stopLive) stopLive();
+  stopLive = followLlmConfig(() => onConfig());
+  await reload();
+}
+
+export function unmount()       {
+  visit++;
+  readForm = null;
+  if (stopLive) stopLive();
+  stopLive = null;
 }
 
 export async function refresh()                {

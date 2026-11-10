@@ -259,12 +259,41 @@ impl PluginInstance for LlmInstance {
     async fn start(self: Arc<Self>, scope: &mut PluginScope) -> Result<(), String> {
         crate::llm_shell::register(&self.services)?;
         *self.console_handler.lock().await = Some(self.consoles.register(self.services.clone()));
+        // LLM.CONFIG is one notice per apply or stop. TELEMETRY and HISTORY are
+        // throttled: the first poke of a burst publishes at once (SPEC §llm.panel).
+        let config_bus = self.services.bus.clone();
+        self.state.set_config_notice(Some(std::sync::Arc::new(move || {
+            swiss_host::notice::publish_at(
+                &config_bus,
+                swiss_bus::pb::v1::Module::Llm as u32,
+                swiss_bus::pb::v1::LlmSub::Config as u32,
+                swiss_bus::pb::v1::LlmConfigId::LlmConfigChanged as u32,
+            );
+        })));
+        let telemetry_bus = self.services.bus.clone();
+        let telemetry = swiss_bus::Notifier::new(
+            telemetry_bus,
+            swiss_bus::pb::v1::Module::Llm as u32,
+            swiss_bus::pb::v1::LlmSub::Telemetry as u32,
+            swiss_bus::pb::v1::TelemetryId::TelemetryChanged as u32,
+            swiss_bus::NOTICE_GAP,
+        );
+        self.state.set_telemetry_notice(Some(std::sync::Arc::new(move || telemetry.poke(""))));
         self.state.apply(self.config.clone());
         // The module history (SPEC §llm.history): opens before anything can record, so
         // the first call of the session files too. A failed open is a warned, degraded
         // start - asking keeps working, nothing records (the terminal owner's rule).
         match swiss_llm::history::LlmHistory::open(&self.logs_dir).await {
             Ok(history) => {
+                let history_bus = self.services.bus.clone();
+                let history_note = swiss_bus::Notifier::new(
+                    history_bus,
+                    swiss_bus::pb::v1::Module::Llm as u32,
+                    swiss_bus::pb::v1::LlmSub::History as u32,
+                    swiss_bus::pb::v1::LlmHistoryId::LlmHistoryChanged as u32,
+                    swiss_bus::NOTICE_GAP,
+                );
+                history.set_history_notice(Some(std::sync::Arc::new(move || history_note.poke(""))));
                 // The hourly maintenance seat (SPEC host.history): checkpoint,
                 // conditional VACUUM, ledger reconciliation, usage-snapshot
                 // refresh and the 180-day sweep (SPEC llm.history), run by the
@@ -337,6 +366,7 @@ impl PluginInstance for LlmInstance {
         let history = self.history.lock().await.take();
         if let Some(history) = history {
             history.flush().await;
+            history.set_history_notice(None);
             // The closing count: what the record holds as it goes away (the ops
             // signal remote's stop logs for its own history).
             let (calls, runs, bytes) = history.usage().await;

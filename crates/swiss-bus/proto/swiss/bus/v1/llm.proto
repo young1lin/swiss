@@ -1,0 +1,30 @@
+// LLM.CONFIG, LLM.TELEMETRY, LLM.HISTORY (SPEC §bus.registry, SPEC §llm.panel).
+// Module 13. Notices are empty: the page re-reads the route it already reads.
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+enum LlmSub {
+  LLM_SUB_UNSPECIFIED = 0;
+  LLM_SUB_CONFIG = 1;
+  LLM_SUB_TELEMETRY = 2;
+  LLM_SUB_HISTORY = 3;
+}
+
+// LLM.CONFIG. apply and stop bump the generation.
+enum LlmConfigId {
+  LLM_CONFIG_ID_UNSPECIFIED = 0;
+  LLM_CONFIG_CHANGED = 1;
+}
+
+// LLM.TELEMETRY. An export finished or failed, or a span was dropped or rejected.
+enum TelemetryId {
+  TELEMETRY_ID_UNSPECIFIED = 0;
+  TELEMETRY_CHANGED = 1;
+}
+
+// LLM.HISTORY. A committed write, or a sweep or trim that removed rows.
+enum LlmHistoryId {
+  LLM_HISTORY_ID_UNSPECIFIED = 0;
+  LLM_HISTORY_CHANGED = 1;
+}

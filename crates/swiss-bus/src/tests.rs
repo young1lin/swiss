@@ -825,6 +825,21 @@ fn golden_entries() -> Vec<serde_json::Value> {
             serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a"}),
         ),
         (
+            "llm-config",
+            frame!(13, 1, 1, Kind::Event, 22, 0, "", "page-a", v1::Notice {}.encode_to_vec(), None),
+            serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a"}),
+        ),
+        (
+            "llm-telemetry",
+            frame!(13, 2, 1, Kind::Event, 23, 0, "", "page-a", v1::Notice {}.encode_to_vec(), None),
+            serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a"}),
+        ),
+        (
+            "llm-history",
+            frame!(13, 3, 1, Kind::Event, 24, 0, "", "page-a", v1::Notice {}.encode_to_vec(), None),
+            serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a"}),
+        ),
+        (
             "plugins-notice",
             frame!(4, 3, 1, Kind::Event, 14, 0, "alpha", "page-a", v1::Notice {}.encode_to_vec(), None),
             serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a","key":"alpha"}),

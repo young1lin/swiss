@@ -32,6 +32,7 @@ import { installBus, type BusSocket } from "../src/bus/bus.js";
 import { create, toBinary } from "../src/bus/codec.js";
 import { FrameSchema, Kind, LinkId, Module, NoticeSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
 import { HostSub, VaultId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
+import { LlmConfigId, LlmSub } from "../src/bus/pb/swiss/bus/v1/llm_pb.js";
 
 type Body = Record<string, unknown>;
 type Row = {
@@ -846,6 +847,29 @@ describe("the LLM plugin - Embedding", () => {
     expect(embedding.hasPendingChanges()).toBe(false);
   });
 
+  it("unsaved changes keep the form; a CONFIG notice repaints only the in-force card (SPEC §llm.panel)", async () => {
+    openAgentVaultBus();
+    await embedding.mount();
+    await settle();
+    type("#leDims", "32");
+    expect(embedding.hasPendingChanges()).toBe(true);
+    const dims = q<HTMLInputElement>("#leDims");
+    row.embedding = { provider: "ollama", model: "other-embed" };
+    AgentVaultSocket.all[AgentVaultSocket.all.length - 1].receive(toBinary(FrameSchema, create(FrameSchema, {
+      module: Module.LLM, sub: LlmSub.CONFIG, id: LlmConfigId.LLM_CONFIG_CHANGED, kind: Kind.EVENT,
+      body: toBinary(NoticeSchema, create(NoticeSchema, {})),
+    })));
+    await new Promise((r) => setTimeout(r, 250));
+    await settle();
+    expect(q("#leDims")).toBe(dims);
+    expect(dims.value).toBe("32");
+    expect(embedding.hasPendingChanges()).toBe(true);
+    expect(text("#leInForce")).toContain("other-embed");
+    expect((providers as { poll?: unknown }).poll).toBeUndefined();
+    expect((embedding as { poll?: unknown }).poll).toBeUndefined();
+    embedding.unmount();
+  });
+
   it("Save writes the block into the row; a bad number is refused first; Test refuses an unsaved edit", async () => {
     override = (c) => c.path === "/api/llm/embedding/test" ? [200, { ok: true, model: "openai:bge-m3:native", dims: 1024, ms: 40 }] : undefined;
     await embedding.mount();
@@ -980,7 +1004,7 @@ function openAgentVaultBus(): void {
 }
 
 describe("the LLM plugin - Agents", () => {
-  // SPEC §host.vault: a HOST.VAULT notice re-reads agent status once. The page keeps its poll until the tick goes.
+  // SPEC §llm.panel: CONFIG, TELEMETRY and HOST.VAULT share one re-read. The page exports no poll.
   it("a HOST.VAULT notice re-reads status once", async () => {
     openAgentVaultBus();
     row.agents = { distiller: { runtime: "builtin", provider: "glm", secrets: ["stripe-key"] } };
@@ -988,11 +1012,12 @@ describe("the LLM plugin - Agents", () => {
     const before = sent("GET", "/api/llm/status").length;
     expect(before).toBeGreaterThan(0);
     row.agents = { distiller: { runtime: "builtin", provider: "glm", secrets: ["stripe-key", "other-key"] } };
+    expect((agents as { poll?: unknown }).poll).toBeUndefined();
     AgentVaultSocket.all[AgentVaultSocket.all.length - 1].receive(toBinary(FrameSchema, create(FrameSchema, {
       module: Module.HOST, sub: HostSub.VAULT, id: VaultId.VAULT_CHANGED, kind: Kind.EVENT,
       body: toBinary(NoticeSchema, create(NoticeSchema, {})),
     })));
-    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 250));
     expect(sent("GET", "/api/llm/status").length - before).toBe(1);
     agents.unmount();
   });

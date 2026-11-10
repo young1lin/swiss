@@ -445,6 +445,8 @@ pub struct LlmHistory {
     handle: u64,
     /// The name every activity mark this handle sets carries (see [release]).
     holder: String,
+    /// LLM.HISTORY (SPEC §llm.history). Poked after a committed write.
+    history_notice: std::sync::Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
 }
 
 /// One trim at a time, and not again within [TRIM_GAP_MS] of the last.
@@ -550,6 +552,7 @@ impl LlmHistory {
             live: LiveRuns::default(),
             handle,
             holder,
+            history_notice: std::sync::Mutex::new(None),
         });
         release::enroll(&history);
         Ok(history)
@@ -613,6 +616,7 @@ impl LlmHistory {
         // The sweep rides submit_exempt, not submit: a quota that refuses the
         // sweep can never reclaim the bytes it is policing - the share would
         // wedge with no exit (the store contract, host history store.rs).
+        let notice = self.history_notice();
         let submitted = self.store.submit_exempt(64, move |pool| {
             Box::pin(async move {
                 let cutoff = swiss_core::util::now_ms() as i64 - age_ms;
@@ -636,7 +640,10 @@ impl LlmHistory {
                         .await
                         .map_err(|e| e.to_string())?;
                 let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-                for id in expired(calls) {
+                let gone_calls = expired(calls);
+                let gone_runs = expired(runs);
+                let removed = gone_calls.len() + gone_runs.len();
+                for id in gone_calls {
                     sqlx::query("DELETE FROM call_body WHERE call_id = ?")
                         .bind(id)
                         .execute(&mut *tx)
@@ -648,7 +655,7 @@ impl LlmHistory {
                         .await
                         .map_err(|e| e.to_string())?;
                 }
-                for id in expired(runs) {
+                for id in gone_runs {
                     let turns: Vec<i64> = sqlx::query("SELECT id FROM turn WHERE run_id = ?")
                         .bind(id)
                         .fetch_all(&mut *tx)
@@ -676,7 +683,13 @@ impl LlmHistory {
                         .await
                         .map_err(|e| e.to_string())?;
                 }
-                tx.commit().await.map_err(|e| e.to_string())
+                tx.commit().await.map_err(|e| e.to_string())?;
+                if removed > 0 {
+                    if let Some(notice) = notice {
+                        notice();
+                    }
+                }
+                Ok(())
             })
         });
         if let Err(err) = submitted {
@@ -694,6 +707,11 @@ impl LlmHistory {
     pub async fn trim(&self) -> Trimmed {
         let trimmed = trim_store(&self.store, &self.keys).await;
         self.trim_gate.last_ms.store(swiss_core::util::now_ms() as i64, Ordering::Release);
+        if trimmed.calls + trimmed.runs > 0 {
+            if let Some(notice) = self.history_notice() {
+                notice();
+            }
+        }
         trimmed
     }
 
@@ -715,20 +733,66 @@ impl LlmHistory {
         let store = self.store.clone();
         let keys = self.keys.clone();
         let gate = self.trim_gate.clone();
+        let notice = self.history_notice();
         runtime.spawn(async move {
-            trim_store(&store, &keys).await;
+            let trimmed = trim_store(&store, &keys).await;
+            if trimmed.calls + trimmed.runs > 0 {
+                if let Some(notice) = notice {
+                    notice();
+                }
+            }
             gate.last_ms.store(swiss_core::util::now_ms() as i64, Ordering::Release);
             gate.running.store(false, Ordering::Release);
         });
     }
 
+    /// Where an LLM.HISTORY notice goes.
+    pub fn set_history_notice(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
+        if let Ok(mut slot) = self.history_notice.lock() {
+            *slot = hook;
+        }
+    }
+
+    fn history_notice(&self) -> Option<std::sync::Arc<dyn Fn() + Send + Sync>> {
+        self.history_notice.lock().ok().and_then(|slot| slot.clone())
+    }
+
     /// Admit one priced write; a refusal over the share starts a trim (see
-    /// [trim_soon](Self::trim_soon)) so the next writes land again.
+    /// [trim_soon](Self::trim_soon)) so the next writes land again. A job that
+    /// returns Ok publishes LLM.HISTORY from inside the job, after the commit.
     fn submit<F>(&self, estimated_bytes: usize, job: F) -> Result<(), HistoryWriteError>
     where
         F: FnOnce(SqlitePool) -> futures_util::future::BoxFuture<'static, Result<(), String>> + Send + 'static,
     {
-        let submitted = self.store.submit(estimated_bytes, job);
+        self.submit_with(estimated_bytes, job, true)
+    }
+
+    /// The same admission with no notice. A caller that returns Ok when nothing
+    /// changed pokes itself only on the arm that wrote.
+    fn submit_quiet<F>(&self, estimated_bytes: usize, job: F) -> Result<(), HistoryWriteError>
+    where
+        F: FnOnce(SqlitePool) -> futures_util::future::BoxFuture<'static, Result<(), String>> + Send + 'static,
+    {
+        self.submit_with(estimated_bytes, job, false)
+    }
+
+    fn submit_with<F>(&self, estimated_bytes: usize, job: F, notify: bool) -> Result<(), HistoryWriteError>
+    where
+        F: FnOnce(SqlitePool) -> futures_util::future::BoxFuture<'static, Result<(), String>> + Send + 'static,
+    {
+        let notice = if notify { self.history_notice() } else { None };
+        let submitted = self.store.submit(estimated_bytes, move |pool| {
+            let fut = job(pool);
+            Box::pin(async move {
+                let result = fut.await;
+                if result.is_ok() {
+                    if let Some(notice) = notice {
+                        notice();
+                    }
+                }
+                result
+            })
+        });
         if let Err(HistoryWriteError::QuotaDenied { .. }) = &submitted {
             self.trim_soon();
         }

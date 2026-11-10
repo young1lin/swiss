@@ -24,11 +24,15 @@
    one fetch with no per-turn round trips, the words a run is named by, the pager, and the
    honest 503 (plugin off). */
 
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type * as HistoryView from "../src/views/llm-history.js";
+import { installBus, type BusSocket } from "../src/bus/bus.js";
+import { create, toBinary } from "../src/bus/codec.js";
+import { FrameSchema, Kind, Module, NoticeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { LlmHistoryId, LlmSub } from "../src/bus/pb/swiss/bus/v1/llm_pb.js";
 
 interface Call { method: string; path: string }
 type Answer = [number, unknown];
@@ -256,6 +260,50 @@ async function clickMenu(label: string): Promise<void> {
 }
 
 const mount = async (): Promise<void> => { await view.mount(); await settle(); };
+
+class HistSock implements BusSocket {
+  static all: HistSock[] = [];
+  binaryType: BinaryType = "blob";
+  sent: Uint8Array[] = [];
+  private listeners = new Map<string, Array<(ev: Event) => void>>();
+  constructor() { HistSock.all.push(this); }
+  addEventListener(type: string, listener: (ev: Event) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+  removeEventListener(): void { /* unused */ }
+  send(data: Uint8Array): void { this.sent.push(new Uint8Array(data)); }
+  close(): void { /* unused */ }
+  receive(bytes: Uint8Array): void {
+    const copy = new Uint8Array(bytes);
+    for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
+  }
+}
+
+function armHistoryBus(): HistSock {
+  HistSock.all.length = 0;
+  installBus({
+    socket: HistSock,
+    random: () => 0.5,
+    reload: () => undefined,
+    info: () => Promise.resolve(),
+    notice: () => undefined,
+    url: "ws://127.0.0.1/api/bus",
+  });
+  return HistSock.all[HistSock.all.length - 1];
+}
+
+async function historyNotice(sock: HistSock): Promise<void> {
+  vi.useFakeTimers();
+  const body = toBinary(NoticeSchema, create(NoticeSchema, {}));
+  sock.receive(toBinary(FrameSchema, create(FrameSchema, {
+    module: Module.LLM, sub: LlmSub.HISTORY, id: LlmHistoryId.LLM_HISTORY_CHANGED,
+    kind: Kind.EVENT, seq: 2, key: "", origin: "page-a", body,
+  })));
+  await vi.advanceTimersByTimeAsync(200);
+  vi.useRealTimers();
+}
 
 describe("llm history page", () => {
   it("a restored conversation's inspectors work without History being mounted", async () => {
@@ -691,8 +739,10 @@ describe("llm history page", () => {
     expect(text("#pane")).toContain("glm / glm-5.3");
   });
 
-  it("a poll patches the lists in place - the search box keeps its text and focus - and a failed poll keeps what is painted", async () => {
+  it("a HISTORY notice patches the lists in place - the search box keeps its text and focus - and a failed re-read keeps what is painted (SPEC §llm.history)", async () => {
+    const sock = armHistoryBus();
     await mount();
+    expect((view as { poll?: unknown }).poll).toBeUndefined();
     const search = q<HTMLInputElement>("#lhSearch");
     search.value = "half-typed";
     search.focus();
@@ -702,7 +752,7 @@ describe("llm history page", () => {
       if (c.path.startsWith("/api/llm/history/calls")) return [200, { calls: [fresh], page: 0, pageSize: 20, more: false }];
       return undefined;
     };
-    await view.poll();
+    await historyNotice(sock);
     await settle();
     // the same input node, still focused, still holding the half-typed needle
     expect(q("#lhSearch")).toBe(search);
@@ -710,9 +760,9 @@ describe("llm history page", () => {
     expect(document.activeElement).toBe(search);
     // the list itself moved to the fresh answer
     expect(text("#lhCallsList")).toContain("a fresh round trip");
-    // a failed poll never wipes the lists it cannot replace
+    // a failed re-read never wipes the lists it cannot replace
     off = true;
-    await view.poll();
+    await historyNotice(sock);
     await settle();
     expect(text("#lhCallsList")).toContain("a fresh round trip");
   });
@@ -821,6 +871,7 @@ describe("llm history page", () => {
       if (String(url).includes("/sync/runs/r-pending/cancel")) { posts++; return pending; }
       return original(url, opts);
     }) as typeof fetch;
+    const sock = armHistoryBus();
     try {
       await mount();
       q<HTMLButtonElement>("[data-hrun='12'] [data-hstop]").focus();
@@ -831,7 +882,7 @@ describe("llm history page", () => {
       expect(other.getAttribute("aria-label")).toBe("stopping…");
       await click(other);
       expect(posts).toBe(1);
-      await view.poll();
+      await historyNotice(sock);
       finish({ ok: false, status: 400, json: () => Promise.resolve({ message: "refused" }) } as Response);
       await settle();
       expect(q<HTMLButtonElement>("[data-hrun='12'] [data-hstop]").disabled).toBe(false);

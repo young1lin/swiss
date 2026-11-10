@@ -81,6 +81,8 @@ struct Inner {
 pub struct Reporter {
     inner: Mutex<Inner>,
     wake: Notify,
+    /// LLM.TELEMETRY (SPEC §llm.telemetry). The composition pokes a notifier.
+    telemetry_notice: Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
 }
 
 /// What one export attempt came to.
@@ -96,6 +98,20 @@ enum Step {
 impl Reporter {
     pub fn new() -> Arc<Reporter> {
         Arc::new(Reporter::default())
+    }
+
+    /// Where an LLM.TELEMETRY notice goes.
+    pub fn set_telemetry_notice(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
+        if let Ok(mut slot) = self.telemetry_notice.lock() {
+            *slot = hook;
+        }
+    }
+
+    fn note_telemetry(&self) {
+        let hook = self.telemetry_notice.lock().ok().and_then(|slot| slot.clone());
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -138,13 +154,18 @@ impl Reporter {
         if inner.config.is_none() {
             return;
         }
+        let mut dropped = false;
         if inner.queue.len() >= QUEUE_MAX {
             inner.queue.pop_front();
             inner.status.dropped += 1;
+            dropped = true;
         }
         inner.queue.push_back(record);
         let full = inner.queue.len() >= BATCH_MAX;
         drop(inner);
+        if dropped {
+            self.note_telemetry();
+        }
         if full {
             self.wake.notify_one();
         }
@@ -219,16 +240,20 @@ impl Reporter {
         let mut request = config.request(batch);
         match client.export(&request).await {
             Ok(accepted) => {
-                let mut inner = self.lock();
-                let rejected = accepted.rejected.clamp(0, count as i64) as u64;
-                inner.status.sent += count as u64 - rejected;
-                inner.status.rejected += rejected;
-                inner.status.last_export_ms = Some(swiss_core::util::now_ms());
-                if rejected > 0 {
-                    inner.status.last_error = Some(format!("the collector refused {rejected} of {count} records: {}", accepted.message));
-                    inner.status.last_error_ms = inner.status.last_export_ms;
-                }
-                Step::Sent { more: inner.queue.len() >= BATCH_MAX }
+                let more = {
+                    let mut inner = self.lock();
+                    let rejected = accepted.rejected.clamp(0, count as i64) as u64;
+                    inner.status.sent += count as u64 - rejected;
+                    inner.status.rejected += rejected;
+                    inner.status.last_export_ms = Some(swiss_core::util::now_ms());
+                    if rejected > 0 {
+                        inner.status.last_error = Some(format!("the collector refused {rejected} of {count} records: {}", accepted.message));
+                        inner.status.last_error_ms = inner.status.last_export_ms;
+                    }
+                    inner.queue.len() >= BATCH_MAX
+                };
+                self.note_telemetry();
+                Step::Sent { more }
             }
             Err(err) => {
                 let records = std::mem::take(&mut request.resource_logs[0].scope_logs[0].log_records);
@@ -257,6 +282,8 @@ impl Reporter {
         } else {
             inner.status.dropped += records.len() as u64;
         }
+        drop(inner);
+        self.note_telemetry();
     }
 
     #[cfg(test)]
@@ -290,6 +317,14 @@ mod tests {
         }
         let status = reporter.status();
         assert_eq!((status.queued, status.dropped, status.enabled), (QUEUE_MAX, 3, true));
+        // SPEC §llm.telemetry: a span dropped publishes; a push that only queues does not.
+        let noted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let noted_hook = noted.clone();
+        reporter.set_telemetry_notice(Some(std::sync::Arc::new(move || {
+            noted_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        })));
+        reporter.push(record());
+        assert_eq!(noted.load(std::sync::atomic::Ordering::SeqCst), 1, "the overflow publishes");
         reporter.configure(None);
         let status = reporter.status();
         assert_eq!((status.queued, status.enabled), (0, false));
@@ -302,10 +337,18 @@ mod tests {
     async fn an_export_sends_the_batch_and_counts_it() {
         let (url, server) = crate::provider::tests::fake_server(200, "{}".into()).await;
         let reporter = configured(&url, "http/json");
+        // SPEC §llm.telemetry: a finished export publishes; an idle pass publishes nothing.
+        let noted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let noted_hook = noted.clone();
+        reporter.set_telemetry_notice(Some(std::sync::Arc::new(move || {
+            noted_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        })));
         let session = reporter.session("distiller", "memory.sync");
         session.prompt("go");
+        assert_eq!(noted.load(std::sync::atomic::Ordering::SeqCst), 0, "a queued span publishes nothing");
         let mut wire = None;
         assert_eq!(reporter.export_once(&mut wire).await, Step::Sent { more: false });
+        assert_eq!(noted.load(std::sync::atomic::Ordering::SeqCst), 1);
         let status = reporter.status();
         assert_eq!((status.sent, status.queued, status.last_error.as_deref()), (1, 0, None));
         let (_, body) = server.await.expect("server");
@@ -315,6 +358,7 @@ mod tests {
         let record = &sent["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
         assert_eq!(record["body"]["stringValue"], "claude_code.user_prompt");
         assert_eq!(reporter.export_once(&mut wire).await, Step::Idle);
+        assert_eq!(noted.load(std::sync::atomic::Ordering::SeqCst), 1, "an idle pass publishes nothing");
     }
 
     #[tokio::test]
@@ -322,8 +366,15 @@ mod tests {
         let reporter = configured("http://127.0.0.1:9", "http/protobuf");
         reporter.push(record());
         reporter.push(record());
+        // SPEC §llm.telemetry: a failed export publishes.
+        let noted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let noted_hook = noted.clone();
+        reporter.set_telemetry_notice(Some(std::sync::Arc::new(move || {
+            noted_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        })));
         let mut wire = None;
         assert_eq!(reporter.export_once(&mut wire).await, Step::Failed);
+        assert_eq!(noted.load(std::sync::atomic::Ordering::SeqCst), 1);
         let status = reporter.status();
         assert_eq!((status.queued, status.dropped), (2, 0));
         assert!(status.last_error.is_some());

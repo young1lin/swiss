@@ -224,6 +224,7 @@ impl LlmHistory {
         let model = model.map(str::to_string);
         let scope = super::context().clipped();
         type Before = Option<(Option<String>, Option<String>)>;
+        let notice = self.history_notice();
         let (reply, receipt) = tokio::sync::oneshot::channel::<Result<Before, String>>();
         // The reopen's lane (submit_exempt): the reader's own lifecycle write.
         let submitted = self.store.submit_exempt(64, move |pool| {
@@ -255,9 +256,12 @@ impl LlmHistory {
                     .bind(&agent)
                     .bind(&scope.task)
                     .bind(&scope.subject)
-                    .execute(&pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                .execute(&pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                if let Some(notice) = &notice {
+                    notice();
+                }
                 let _ = reply.send(Ok(Some(before)));
                 Ok(())
             })
@@ -576,6 +580,7 @@ impl LlmHistory {
         // as the session-END stamp (a quota that refuses a reader's close
         // would wedge the run open forever). Withdrawal still refuses it: a
         // closed store answers NotOpen, and the route maps that honestly.
+        let notice = self.history_notice();
         let (reply, receipt) = tokio::sync::oneshot::channel::<Result<Option<()>, String>>();
         let submitted = self.store.submit_exempt(64, move |pool| {
             Box::pin(async move {
@@ -586,6 +591,9 @@ impl LlmHistory {
                     .await
                     .map_err(|e| e.to_string())?;
                 if closed.rows_affected() > 0 {
+                    if let Some(notice) = &notice {
+                        notice();
+                    }
                     let _ = reply.send(Ok(Some(())));
                     return Ok(());
                 }
@@ -618,6 +626,7 @@ impl LlmHistory {
         self.flush().await;
         let agent = agent.to_string();
         let scope = super::context().clipped();
+        let notice = self.history_notice();
         let (reply, receipt) = tokio::sync::oneshot::channel::<Result<bool, String>>();
         // The close's lane (submit_exempt): a lifecycle write a quota must not wedge.
         let submitted = self.store.submit_exempt(64, move |pool| {
@@ -638,6 +647,11 @@ impl LlmHistory {
                 .execute(&pool)
                 .await
                 .map_err(|e| e.to_string())?;
+                if reopened.rows_affected() > 0 {
+                    if let Some(notice) = &notice {
+                        notice();
+                    }
+                }
                 let _ = reply.send(Ok(reopened.rows_affected() > 0));
                 Ok(())
             })
@@ -657,15 +671,21 @@ impl LlmHistory {
         // The run's own queued writes (its finish) land first: this one closes over them.
         self.flush().await;
         let now = swiss_core::log::iso_now();
+        let notice = self.history_notice();
         let (reply, receipt) = tokio::sync::oneshot::channel::<Result<(), String>>();
         let submitted = self.store.submit_exempt(64, move |pool| {
             Box::pin(async move {
-                sqlx::query("UPDATE run SET ok = 0, at_end = coalesce(at_end, ?) WHERE id = ? AND kind = 1")
+                let failed = sqlx::query("UPDATE run SET ok = 0, at_end = coalesce(at_end, ?) WHERE id = ? AND kind = 1")
                     .bind(&now)
                     .bind(run_id)
                     .execute(&pool)
                     .await
                     .map_err(|e| e.to_string())?;
+                if failed.rows_affected() > 0 {
+                    if let Some(notice) = &notice {
+                        notice();
+                    }
+                }
                 let _ = reply.send(Ok(()));
                 Ok(())
             })

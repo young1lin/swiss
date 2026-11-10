@@ -172,8 +172,9 @@ impl LlmHistory {
             None => (None, Vec::new(), 0),
         };
         let keys = self.keys.clone();
+        let notice = self.history_notice();
         let (reply, receipt) = tokio::sync::oneshot::channel::<bool>();
-        let submitted = self.submit(weight + 256, move |pool| {
+        let submitted = self.submit_quiet(weight + 256, move |pool| {
             Box::pin(async move {
                 let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
                 for piece in &pieces {
@@ -207,6 +208,11 @@ impl LlmHistory {
                 .await
                 .map_err(|e| e.to_string())?;
                 tx.commit().await.map_err(|e| e.to_string())?;
+                if cleared.rows_affected() > 0 {
+                    if let Some(notice) = &notice {
+                        notice();
+                    }
+                }
                 let _ = reply.send(cleared.rows_affected() > 0);
                 Ok(())
             })

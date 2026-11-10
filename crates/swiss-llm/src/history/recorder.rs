@@ -366,8 +366,9 @@ impl RunRecorder {
         // The mark names its holder: the door may release it once that holder is
         // provably gone (SPEC llm.history), never while it still drives.
         let holder = history.holder.clone();
+        let notice = history.history_notice();
         let (reply, receipt) = tokio::sync::oneshot::channel::<Result<i64, String>>();
-        let submitted = history.submit(128, move |pool| {
+        let submitted = history.submit_quiet(128, move |pool| {
             Box::pin(async move {
                 let marked = sqlx::query(
                     "UPDATE run SET pending = 1, attempt = attempt + 1, holder = ?
@@ -380,6 +381,9 @@ impl RunRecorder {
                 .await;
                 let attempt = match marked {
                     Ok(result) if result.rows_affected() > 0 => {
+                        if let Some(notice) = &notice {
+                            notice();
+                        }
                         let row = sqlx::query("SELECT attempt FROM run WHERE id = ?")
                             .bind(run_id)
                             .fetch_one(&pool)
@@ -508,8 +512,9 @@ impl RunRecorder {
         let weight = envelope_text.len() + pieces.iter().map(|piece| piece.text.len()).sum::<usize>();
         let estimate = weight + 256;
         let keys = history.keys.clone();
+        let notice = history.history_notice();
         let (reply, receipt) = tokio::sync::oneshot::channel::<Result<(), String>>();
-        let submitted = history.submit(estimate, move |pool| {
+        let submitted = history.submit_quiet(estimate, move |pool| {
             let envelope_text = envelope_text.clone();
             let pieces = pieces.clone();
             Box::pin(async move {
@@ -569,6 +574,9 @@ impl RunRecorder {
                     return Ok(());
                 }
                 tx.commit().await.map_err(|e| e.to_string())?;
+                if let Some(notice) = &notice {
+                    notice();
+                }
                 let _ = reply.send(Ok(()));
                 Ok(())
             })
@@ -614,8 +622,9 @@ impl RunRecorder {
             .lock()
             .map(|held| held.as_deref() == Some("reserve"))
             .unwrap_or(false);
+        let notice = history.history_notice();
         let (reply, receipt) = tokio::sync::oneshot::channel::<Result<i64, String>>();
-        let submitted = history.submit(256, move |pool| {
+        let submitted = history.submit_quiet(256, move |pool| {
             Box::pin(async move {
                 // ONE open conversation per agent and scope, decided by the write
                 // itself: the conditional INSERT is atomic across handles, processes
@@ -663,7 +672,12 @@ impl RunRecorder {
                     .await
                 };
                 let landed = match inserted {
-                    Ok(result) if result.rows_affected() > 0 => result.last_insert_rowid(),
+                    Ok(result) if result.rows_affected() > 0 => {
+                        if let Some(notice) = &notice {
+                            notice();
+                        }
+                        result.last_insert_rowid()
+                    }
                     Ok(_) => {
                         let _ = reply.send(Err("open-run-exists".to_string()));
                         return Ok(());

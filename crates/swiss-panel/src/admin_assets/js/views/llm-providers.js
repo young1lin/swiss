@@ -28,6 +28,7 @@
    yet; Test asks it one prompt, unreported (a provider is no agent).
    ================================================================================================ */
 import { $, targetEl, toast } from "../util.js";
+import { followLlmConfig } from "../llm-live.js";
 import { fill, h } from "../h.js";
 import { tk, tr, trn } from "../i18n.js";
 import {
@@ -793,9 +794,12 @@ function onClick(event            )       {
   }
 }
 
+let stopLive                      = null;
 export async function mount()                {
   visit++;
   painted = "";
+  if (stopLive) stopLive();
+  stopLive = followLlmConfig(() => refresh());
   const at = visit;
   const r = await loadStatus();
   if (at !== visit) return;
@@ -807,7 +811,11 @@ export async function mount()                {
   render();
 }
 
-export function unmount()       { visit++; }
+export function unmount()       {
+  visit++;
+  if (stopLive) stopLive();
+  stopLive = null;
+}
 
 export async function refresh()                {
   const at = visit;
@@ -816,8 +824,6 @@ export async function refresh()                {
   status = r.data;
   if (signature() !== painted) render();
 }
-
-export async function poll()                { await refresh(); }
 
 export function countText()         {
   const n = status ? status.providers.length : 0;

@@ -14,6 +14,7 @@ enum Module {
   MODULE_TUNNELS = 7;
   MODULE_JOBS = 8;
   MODULE_REMOTE = 10;
+  MODULE_LLM = 13;
   MODULE_PANEL = 14;
 }
 

@@ -34,6 +34,7 @@ import type { HChild } from "../h.js";
 import { locale, tr, trn } from "../i18n.js";
 import { JV_LINES, actionBtn, btn, card, closeSheet, decodeStrings, dot, emptyNode, factLine, failNote, filterInput, flow, flowHead, flowIO, flowProse, flowToggle, fmtMs, formFold, jsonCodeNode, kvRow, markdownNode, note, pager, paneBody, popupMenu, refLink, relTime, row, seg, scrollBox, section, setActionBusy, sheet, showSheet, speaker, splitJsonBlock, stackSheet, tag, textNode, transcript, transcriptText, transcriptTurn, valueBlock } from "../ui/index.js";
 import type { FlowStep, RowCol, TranscriptTurn } from "../ui/index.js";
+import { followLlmHistory } from "../llm-live.js";
 import { call, takeWantedRun } from "./llm-core.js";
 
 const PAGE = 20;
@@ -1379,8 +1380,21 @@ async function reload(): Promise<void> {
   paintLists();
 }
 
+let stopLive: (() => void) | null = null;
+
+/** A HISTORY notice patches the lists. It never rebuilds the page, so a search
+ *  box mid-typing keeps its node and its focus. A failed re-read keeps the paint. */
+async function patchLists(): Promise<void> {
+  const at = visit;
+  const [callsOk, runsOk] = await Promise.all([loadCalls(), loadRuns()]);
+  if (at !== visit || !callsOk || !runsOk || !listed) return;
+  paintLists();
+}
+
 export async function mount(): Promise<void> {
   visit++;
+  if (stopLive) stopLive();
+  stopLive = followLlmHistory(() => patchLists());
   callsPage = 0;
   runsPage = 0;
   runIndex.clear();
@@ -1395,17 +1409,9 @@ export async function mount(): Promise<void> {
 
 export function unmount(): void {
   visit++;
+  if (stopLive) stopLive();
+  stopLive = null;
   document.removeEventListener("click", onClick);
   document.removeEventListener("keydown", onKey);
 }
 
-/** The poll: nothing here changes behind the page's back except new calls and
- * runs. It may PATCH the lists, never rebuild the page - a repaint would wipe
- * the search box mid-typing and steal focus. A failed poll keeps what is
- * painted; the next successful one patches (and clears `failed`). */
-export async function poll(): Promise<void> {
-  const at = visit;
-  const [callsOk, runsOk] = await Promise.all([loadCalls(), loadRuns()]);
-  if (at !== visit || !callsOk || !runsOk || !listed) return;
-  paintLists();
-}

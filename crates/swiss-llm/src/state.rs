@@ -49,6 +49,8 @@ pub struct LlmState {
     /// the cancel route reads it, the loop observes it, every terminal path
     /// releases it.
     seats: RwLock<HashMap<String, Seat>>,
+    /// LLM.CONFIG (SPEC §llm.panel). The composition publishes; a missing hook is silent.
+    config_notice: std::sync::Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
 }
 
 /// One in-flight conversation.
@@ -68,7 +70,20 @@ impl LlmState {
             reporter: Reporter::new(),
             history: RwLock::new(None),
             seats: RwLock::new(HashMap::new()),
+            config_notice: std::sync::Mutex::new(None),
         })
+    }
+
+    /// Where an LLM.CONFIG notice goes. Called after the generation bump.
+    pub fn set_config_notice(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
+        if let Ok(mut slot) = self.config_notice.lock() {
+            *slot = hook;
+        }
+    }
+
+    /// Where an LLM.TELEMETRY notice goes. The reporter throttles through it.
+    pub fn set_telemetry_notice(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
+        self.reporter.set_telemetry_notice(hook);
     }
 
     /// The plugin opened its history store: every chat and embedding built from now on
@@ -208,6 +223,10 @@ impl LlmState {
 
     fn bump(&self) {
         self.generation.send_modify(|g| *g += 1);
+        let hook = self.config_notice.lock().ok().and_then(|slot| slot.clone());
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     pub fn serving(&self) -> bool {
@@ -310,8 +329,27 @@ mod tests {
         assert!(!state.session(&state.agent("cc").expect("cc"), "memory.sync").reporting(), "a child reports itself");
         state.stop();
         assert_eq!(*watch.borrow(), 2);
+        // SPEC §llm.panel: apply and stop each publish CONFIG. A missing hook publishes nothing.
         assert!(state.embedding().is_none() && !state.session(&local, "memory.sync").reporting());
         assert_eq!(state.newest_agent(), None, "a stopped plugin has no agent to fall back to");
         assert_eq!(state.config().agents.len(), 4, "the row stays readable while stopped");
+    }
+
+    /// SPEC §llm.panel: apply and stop each publish once, after the generation moves.
+    #[test]
+    fn apply_and_stop_publish_config() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let state = LlmState::new();
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let hits_hook = hits.clone();
+        state.set_config_notice(Some(std::sync::Arc::new(move || {
+            hits_hook.fetch_add(1, Ordering::SeqCst);
+        })));
+        state.apply(row());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(*state.watch().borrow(), 1);
+        state.stop();
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+        assert_eq!(*state.watch().borrow(), 2);
     }
 }

@@ -1469,3 +1469,56 @@ async fn a_run_says_what_it_was_for_who_started_it_and_what_it_started() {
     assert_eq!(child_sheet["parentRun"]["task"], "memory.recheck");
     history.close().await.expect("close");
 }
+
+/// SPEC §llm.history: a committed call notifies, and the read after flush sees it.
+/// A sweep that removes nothing publishes nothing; one that removes rows does.
+#[tokio::test]
+async fn a_committed_call_notifies_after_it_is_readable_and_an_empty_sweep_does_not() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let dir = home("llm-hist-notice");
+    let history = LlmHistory::open(&dir).await.expect("open");
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_hook = hits.clone();
+    history.set_history_notice(Some(Arc::new(move || {
+        hits_hook.fetch_add(1, Ordering::SeqCst);
+    })));
+    history.record_chat(ChatCall {
+        provider: "glm",
+        model: "glm-5.3",
+        agent: Some("distiller"),
+        system: None,
+        prompt: "notice-needle",
+        turn: None,
+        wire: None,
+        request: None,
+        replay: None,
+        attempt: None,
+        outcome: ChatOutcome::Ok {
+            texts: &["noticed".to_string()],
+            thinking: &[],
+            tool_calls: &[],
+            cut: false,
+            tokens: Tokens { input: 1, output: 1, cache_read: 0, cache_creation: 0 },
+            ms: 4,
+            ttft_ms: None,
+            request_id: "",
+            stop_reason: None,
+            contents: &serde_json::json!({}),
+        },
+    });
+    history.flush().await;
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    let page = history.read_calls(0, 10, None, None).await.expect("read");
+    assert!(
+        page["calls"][0]["preview"].as_str().unwrap_or("").contains("noticed"),
+        "{page}"
+    );
+    history.sweep(10_i64 * 365 * 24 * 60 * 60 * 1000).await;
+    assert_eq!(hits.load(Ordering::SeqCst), 1, "a sweep that removes nothing publishes nothing");
+    history.sweep(0).await;
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+    let page = history.read_calls(0, 10, None, None).await.expect("read");
+    assert!(page["calls"].as_array().unwrap().is_empty(), "{page}");
+    history.close().await.expect("close");
+}
