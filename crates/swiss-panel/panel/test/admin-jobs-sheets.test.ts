@@ -440,7 +440,7 @@ describe("the jobs list hears the bus (SPEC §jobs.panel)", () => {
     jobsView.unmount();
   });
 
-  it("clock redraws the held rows and asks for nothing", () => {
+  it("clock redraws the held rows and asks for nothing (SPEC §panel)", () => {
     replies["/api/jobs"] = { jobs: [job], groups: ["default"] };
     state.setJobRows([job]);
     jobs.renderJobs();

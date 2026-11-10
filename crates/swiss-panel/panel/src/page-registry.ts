@@ -57,7 +57,6 @@ let inventory: ApiPluginsResponse | null = null;
 let active: { id: string; module: PageModule; controller: AbortController } | null = null;
 let sequence = 0;
 let boot: Promise<void> | null = null;
-let polling = false;
 /* The one tab-strip width watcher (SPEC §panel.nav): re-created never, re-pointed every repaint. */
 let tabsObserver: ResizeObserver | null = null;
 
@@ -510,21 +509,14 @@ async function navigatePage(id: string, force?: boolean): Promise<void> {
   if (ticket === sequence) $("countChip").textContent = currentPageCount();
 }
 
-async function pollPage(): Promise<void> {
-  if (polling || !active || !active.module.poll) return;
-  polling = true;
-  try { await active.module.poll(); }
-  catch (error) { toast(errText(error), true); }
-  finally { polling = false; }
-}
-/** Relative times, from data the page already holds. Never a network read (SPEC §remote.panel). */
+/** Relative times, from data the page already holds. Never a network read (SPEC §panel). */
 function clockPage(): void {
   if (active && active.module.clock) active.module.clock();
 }
 async function refreshPage(): Promise<void> {
-  if (!active) return;
-  try { if (active.module.refresh) await active.module.refresh(); else if (active.module.poll) await active.module.poll(); }
+  if (!active || !active.module.refresh) return;
+  try { await active.module.refresh(); }
   catch (error) { toast(errText(error), true); }
 }
 
-export { clockPage, currentPageCount, fitRailLabels, fitTabs, hashTarget, initPages, layoutOf, navigatePage, onPluginInventory, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR, refreshPage, reloadPluginInventory, watchPluginInventory };
+export { clockPage, currentPageCount, fitRailLabels, fitTabs, hashTarget, initPages, layoutOf, navigatePage, onPluginInventory, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR, refreshPage, reloadPluginInventory, watchPluginInventory };

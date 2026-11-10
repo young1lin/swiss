@@ -13,11 +13,16 @@ import { CODE_KEY, THEME_KEY } from "../src/util.js";
 import { codeSchemeFor } from "../src/ui/code-scheme.js";
 
 const pages = vi.hoisted(() => ({ navigate: vi.fn(async () => {}) }));
+const memory = vi.hoisted(() => ({ loads: 0 }));
 vi.mock("../src/page-registry.js", () => ({
   initPages: async () => {}, pageHasPendingChanges: () => false, pageUsesSidebar: () => false,
-  pollPage: () => {}, clockPage: () => {}, watchPluginInventory: () => {}, navigatePage: pages.navigate,
+  clockPage: () => {}, watchPluginInventory: () => {}, navigatePage: pages.navigate,
 }));
-vi.mock("../src/polling.js", () => ({ loadMemory: async () => {}, refreshNow: () => {} }));
+vi.mock("../src/polling.js", () => ({
+  loadMemory: async () => { memory.loads++; },
+  refreshNow: () => {},
+  watchMemoryChip: () => {},
+}));
 vi.mock("../src/views/tokens.js", () => ({ loadTokens: async () => {}, watchTokens: () => {} }));
 
 async function settle(): Promise<void> {
@@ -145,4 +150,21 @@ it("a received choice of the language already in force neither repaints nor remo
   expect(pages.navigate).toHaveBeenCalledTimes(navigated + 1);
   expect(filter.getAttribute("placeholder")).not.toBe("untouched");
   expect(relays(peer), "received choices never echo").toHaveLength(relayed);
+});
+
+it("a visible minute of the shell clock reads nothing (SPEC §panel)", async () => {
+  let reads = 0;
+  const prior = globalThis.fetch;
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    reads++;
+    return prior(input, init);
+  });
+  const loads = memory.loads;
+  try {
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reads).toBe(0);
+    expect(memory.loads).toBe(loads);
+  } finally {
+    vi.stubGlobal("fetch", prior);
+  }
 });

@@ -42,7 +42,6 @@ export interface PageMenuItemSpec {
 export interface PageModule {
   mount?: (ctx: { signal: AbortSignal }) => void | Promise<void>;
   unmount?: () => void | Promise<void>;
-  poll?: () => void | Promise<void>;
   clock?: () => void; // relative times only, no network
   refresh?: () => void | Promise<void>;
   canLeave?: () => boolean;

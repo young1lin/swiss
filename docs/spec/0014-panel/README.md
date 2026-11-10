@@ -32,17 +32,21 @@ script tracks `admin_assets/` (`rerun-if-changed` on the directory), so after `n
 the next release build re-embeds what changed, an added or removed file included.
 
 **The rendering contract.** The page body is rebuilt only by an explicit load or a user action,
-never by a poll and never while something in it has focus. A poll patches in place — the
+never by a notice's re-read and never while something in it has focus. A notice's re-read patches in place — the
 sidebar rows, the detail header, a status cell — so a caret, a scroll position, an open menu
-or a half-typed field survives every tick.
+or a half-typed field survives every re-read.
 
-**Polling.** One `setInterval(poll, 6000)`; a tick is skipped while the tab is hidden, and
-returning to it polls at once (`visibilitychange`). A poll is the memory reading
-(`/api/memory`, §host.memory), `/api/info` (the version stamp) and the active page's own
-`poll()`. A page whose server state reaches it on the bus (§bus.topics) reads nothing on the
-tick: the Remote pages export no network poll (§remote.panel). The memory chip is a reading,
-not a reload button: clicking it refreshes the reading only. The one explicit view refresh is
-the `r` key (`refreshNow`), which keeps Data's manual reload alive.
+**No tick.** The panel has no network timer of its own. A page reads on mount, after every
+WELCOME (§bus.topics), on `r`, and when a notice of a topic it shows arrives, coalesced; every
+table swiss changes reaches an open page that way (§bus.registry). What still runs on a timer
+is named where it lives: following one open item (a Remote run's output, a process log, an
+LLM dialogue, a sync or review sheet, a Redis stream, a Data analysis execution) and sampling
+a system swiss does not own (Data Activity, the Pub/Sub listing, the Process inventory). A
+page's `clock()` repaints times relative to now from what the page holds, every 6 s while
+the document is visible; it never reads the network. The shell holds three topics for every
+page: HOST.PLUGINS (the nav), HOST.TOKENS (the token list) and HOST.MEMORY (the chip, held only
+while the document is visible). The memory chip is a reading, not a reload button: clicking
+it reads once. The one explicit view refresh is `r` (`refreshNow`).
 
 **Pages.** A view module exports a `PageModule`:
 
@@ -50,7 +54,7 @@ the `r` key (`refreshNow`), which keeps Data's manual reload alive.
 interface PageModule {
   mount?: (ctx: { signal: AbortSignal }) => void | Promise<void>;
   unmount?: () => void | Promise<void>;
-  poll?: () => void | Promise<void>;
+  clock?: () => void;                // relative times only, no network
   refresh?: () => void | Promise<void>;
   canLeave?: () => boolean;          // false = navigation, a language flip, a reload are held
   countText?: () => string;          // the context bar's count readout

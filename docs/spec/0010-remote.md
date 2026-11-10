@@ -523,7 +523,7 @@ copies configuration.
 - Filter by target; Clear sits in the ⋯ menu (a destructive verb gets no standing button). The
   budget line states the limits and that the last 7 days are always traceable; an evicted row
   says its output was cleared and the record kept.
-- **Live without a poll.** Neither page reads anything on the panel's 6 s tick (§panel). Each
+- **Live without a poll.** Neither page reads the network on a timer (§panel). Each
   subscribes before its first read, then re-reads on every event of its topics, coalesced as a
   notice is (§bus.topics), and after every WELCOME. Runs listens to HOST.RUNS `remote`,
   REMOTE.HISTORY and REMOTE.TARGETS (the target filter's list); Targets listens to the same
@@ -536,8 +536,9 @@ copies configuration.
   page missed is asked on its own once per visit, and the answer is kept until it can be wrong:
   a HOST.RUNS event drops its lane's answer, and a WELCOME or a read that finds the record
   smaller or down to one page (a Clear, a retention pass) drops them all — a record that only
-grew never does. Targets' `clock()` reads nothing: on the tick it rewrites the last-run
-column's relative times from what the page already holds. A plugin enabled or disabled
+grew never does. Targets' `clock()` reads nothing: every 6 s, while the document is
+visible, it rewrites the last-run column's relative times from what the page already
+holds. A plugin enabled or disabled
   elsewhere reaches the nav through HOST.PLUGINS (§host.plugins).
 
 ## §remote.verify — Live verification

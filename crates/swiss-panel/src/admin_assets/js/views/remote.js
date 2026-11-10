@@ -596,7 +596,7 @@ function stopLive()       {
 }
 
 /** Relative times only, from what the page already holds (SPEC §remote.panel). The shell
- *  calls this on its 6 s tick; it never reads the network. */
+ *  calls this every 6 s while the document is visible; it never reads the network. */
 export function clock() { patchCols(); }
 export function countText() { return targets.length ? trn(targets.length, "remote.nTargets.one", "remote.nTargets.other") : ""; }
 export function unmount() { stopLive(); }

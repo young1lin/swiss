@@ -641,7 +641,7 @@ Sheets:
   running process is left running.
 
 **Polling.** `GET /api/process` every 2 s while the page is shown and every 500 ms while a row
-is busy; children every 5 s. Shell and local polls share one in-flight request per inventory;
+is busy; children every 5 s. The page's own sampler keeps one in-flight request per inventory;
 hidden documents do not poll. Each mount owns its abort signal and requests: late responses
 cannot repaint another page or restart timers. Memory-only updates patch the gateway line,
 app changes patch individual rows, and child-only responses paint immediately. Sheets own

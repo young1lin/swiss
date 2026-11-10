@@ -285,7 +285,7 @@ function reconcile(): void {
       const node = nodes.find((n) => n.dataset.prrow === r.name);
       if (appSignatures.get(r.name) === rowSignature(r)) {
         // Text-only churn (the uptime words moved): patch them in place so
-        // the row node - and the focus inside it - survives the tick.
+        // the row node - and the focus inside it - survives the sample.
         if (node && r.uptimeSec != null) {
           const up = node.querySelector<HTMLElement>("[data-pruptime]");
           const text = tr("process.uptime", { up: durShort(r.uptimeSec) });
@@ -423,7 +423,6 @@ export async function refresh(): Promise<void> {
   await Promise.all([load(), loadChildren()]);
   if (current(s)) paint();
 }
-export function poll(): Promise<void> { return document.hidden ? Promise.resolve() : load(); }
 export function countText(): string { return trn(rows.length, "process.appsOne", "process.appsOther", { n: String(rows.length) }); }
 
 export function unmount(): void {

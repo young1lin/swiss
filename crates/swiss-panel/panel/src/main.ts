@@ -19,18 +19,18 @@
    the old panel rebuilt the whole table from a string every 6 seconds, which flickered, dropped text
    selection and scroll position, and — a real bug — wiped whatever you had typed into the edit form.
 
-   So: the 6s poll may ONLY patch the sidebar rows and the detail header (dot, subtitle, primary
-   action). The tab body is rebuilt only in response to an explicit load or user action, never by the
-   poll, and never while it holds focus.
+   So: a notice's re-read may ONLY patch the sidebar rows and the detail header (dot, subtitle,
+   primary action). The tab body is rebuilt only in response to an explicit load or user action,
+   never by that re-read, and never while it holds focus.
 
-   This is the entry module: boot, appearance, the toolbar/keyboard wiring, and the poll. Every view
-   lives in its own module next to this one; /admin/js/* is served with no-store, so a rebuilt emit
+   This is the entry module: boot, appearance, and the toolbar/keyboard wiring. Every view lives
+   in its own module next to this one; /admin/js/* is served with no-store, so a rebuilt emit
    reaches the browser on the next reload (SPEC §panel.toolchain).
    ================================================================================================ */
 import { $, CODE_KEY, THEME_KEY, api, isTyping, toast } from "./util.js";
 import { loadCollapsed } from "./groups.js";
 import { initSelects } from "./ui/select.js";
-import { clockPage, initPages, pageHasPendingChanges, pageUsesSidebar, pollPage, watchPluginInventory } from "./page-registry.js";
+import { clockPage, initPages, pageHasPendingChanges, pageUsesSidebar, watchPluginInventory } from "./page-registry.js";
 import { openDetail } from "./detail.js";
 import { patchSidebar } from "./menu.js";
 import { loadMemory, refreshNow, watchMemoryChip } from "./polling.js";
@@ -211,13 +211,10 @@ if (window.matchMedia as unknown) {
 
 /* Navigation and deep links are owned by the page registry. */
 
-/* The tick still refreshes pages that export poll, and repaints relative times. Memory
-   is not on it: the chip reads HOST.MEMORY, and only while this document is visible
-   (SPEC §host.memory). */
-function poll(): void {
+/* Relative times, every 6 s while the document is visible. clock() reads nothing
+   (SPEC §panel). The bus reconnects on its own when the page is shown (SPEC §bus.link). */
+function clockTick(): void {
   if (document.visibilityState !== "visible") return;
-  void pollPage();
-  // The same tick repaints relative times. clock() reads nothing (SPEC §remote.panel).
   clockPage();
 }
 
@@ -233,8 +230,8 @@ watchMemoryChip(); // HOST.MEMORY while this document is visible (SPEC §host.me
 busOnResync(() => { void loadInfo(); }); // /api/info once per WELCOME (SPEC §bus.link)
 initPrefs({ lang: applyLang, theme: (theme) => { setTheme(theme); paintThemeBtn(); }, codeScheme: setCodeScheme });
 
-setInterval(poll, 6000);
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") poll(); });
+setInterval(clockTick, 6000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") clockPage(); });
 // Closing the page with buffered (uncommitted) edits would lose them silently; the native
 // dialog is the only hook available for beforeunload, so it is plain by necessity.
 window.addEventListener("beforeunload", (e) => {
@@ -244,10 +241,9 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 
-// The toolbar refresh button is gone: every view already reloads on the 6s poll, so the
-// button duplicated it. The memory chip's click re-reads memory only (polling.js
-// refreshMemoryNow — a reading is not a reload button); the ONE explicit view refresh left
-// is the r key below, which keeps Data's manual reload alive.
+// The toolbar refresh button is gone. The memory chip's click re-reads memory only
+// (polling.js refreshMemoryNow — a reading is not a reload button); the one explicit view
+// refresh left is the r key below, which keeps Data's manual reload alive.
 
 $<HTMLInputElement>("filter").oninput = (e) => { setListFilter((e.currentTarget as HTMLInputElement).value); patchSidebar(); };
 initImmersive(); // the context bar's focus control: the page body can take the whole window
@@ -289,6 +285,6 @@ setFoldMap(loadCollapsed("mcps")); // before the first paint, so folded groups n
 setTunFolds(loadCollapsed("conns"), loadCollapsed("rules")); // same, per tunnels page scope
 setJobFolds(loadCollapsed("jobs")); // the jobs scope's own fold map (SPEC §host.groups)
 showApp();
-// Ask for the child walk on the very first paint too, so the chip never shows a gateway-only total
-// that a poll silently corrects 6s later.
+// Ask for the child walk on the first paint, so the chip is not a gateway-only total until
+// the first HOST.MEMORY reading.
 void loadMemory(true);

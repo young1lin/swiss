@@ -103,6 +103,7 @@ beforeEach(() => {
 describe("the Process page (process plugin, SPEC §process.panel)", () => {
   it("the view module exists at the entry the page descriptor points at", () => {
     expect(existsSync(join(here, "..", "src", "views", "process.ts"))).toBe(true);
+    expect(view.poll, "the shell tick is gone; the page sampler is the only timer (SPEC §process.panel)").toBeUndefined();
   });
 
   it("the head is one sentence, the gateway's own facts under it, and the one primary", async () => {
@@ -540,7 +541,7 @@ describe("SPEC §process.panel - the capture is events, not a stream", () => {
   });
 });
 
-  it("the shell AbortSignal disarms local and exported polling", async () => {
+  it("the shell AbortSignal disarms the page sampler", async () => {
     serve([app({})]);
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     vi.useFakeTimers();
@@ -551,7 +552,6 @@ describe("SPEC §process.panel - the capture is events, not a stream", () => {
     $("pane").textContent = "another page";
     try {
       await vi.advanceTimersByTimeAsync(6000);
-      await view.poll();
       expect(fetchSpy.mock.calls.length).toBe(reads);
       expect($("pane").textContent).toBe("another page");
     } finally { view.unmount(); vi.useRealTimers(); }
@@ -566,26 +566,29 @@ describe("SPEC §process.panel - the capture is events, not a stream", () => {
     const reads = fetchSpy.mock.calls.length;
     try {
       await vi.advanceTimersByTimeAsync(6000);
-      await view.poll();
       expect(fetchSpy.mock.calls.length).toBe(reads);
     } finally { hidden.mockRestore(); view.unmount(); vi.useRealTimers(); }
   });
 
   it("memory-only inventory updates preserve focused row controls", async () => {
     serve([app({ status: "running", pid: 9 })]);
-    await view.mount();
-    const button = rowNamed("cc-otel").querySelector<HTMLButtonElement>("[data-pract]");
-    button!.focus();
-    replies["/api/process"] = { apps: [app({ status: "running", pid: 9 })], gateway: { pid: 4242, uptimeSec: 3600, memMb: 25 } };
-    await view.poll();
-    expect(rowNamed("cc-otel").querySelector("[data-pract]")).toBe(button);
-    expect(document.activeElement).toBe(button);
-    expect($("prGateway").textContent).toContain("25 MB");
-    view.unmount();
+    vi.useFakeTimers();
+    try {
+      await view.mount();
+      const button = rowNamed("cc-otel").querySelector<HTMLButtonElement>("[data-pract]");
+      button!.focus();
+      replies["/api/process"] = { apps: [app({ status: "running", pid: 9 })], gateway: { pid: 4242, uptimeSec: 3600, memMb: 25 } };
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(rowNamed("cc-otel").querySelector("[data-pract]")).toBe(button);
+      expect(document.activeElement).toBe(button);
+      expect($("prGateway").textContent).toContain("25 MB");
+    } finally { view.unmount(); vi.useRealTimers(); }
   });
 
   it("an uptime tick patches the row's own text - the focused control keeps its node; a status change still replaces the row", async () => {
     serve([app({ status: "running", ports: [4317], pid: 9, uptimeSec: 60 })]);
+    vi.useFakeTimers();
+    try {
     await view.mount();
     const rowNode = rowNamed("cc-otel");
     (rowNode as unknown as { __tag: number }).__tag = 7;
@@ -594,7 +597,7 @@ describe("SPEC §process.panel - the capture is events, not a stream", () => {
     expect(document.activeElement).toBe(stop);
     expect(rowNode.querySelector("[data-pruptime]")?.textContent).toContain("60 sec");
     replies["/api/process"] = { apps: [app({ status: "running", ports: [4317], pid: 9, uptimeSec: 130 })], gateway: { pid: 4242, uptimeSec: 3600, memMb: 18 } };
-    await view.poll();
+    await vi.advanceTimersByTimeAsync(2000);
     // The row is the SAME element, still in the document, focus intact - only
     // its uptime words changed, so nothing under the keyboard was replaced.
     const kept = rowNamed("cc-otel");
@@ -604,9 +607,9 @@ describe("SPEC §process.panel - the capture is events, not a stream", () => {
     expect(kept.querySelector("[data-pruptime]")?.textContent).toContain("2 min");
     // A structural change (the status) still replaces the row.
     replies["/api/process"] = { apps: [app({ status: "stopped", ports: [4317], pid: 9 })], gateway: { pid: 4242, uptimeSec: 3600, memMb: 18 } };
-    await view.poll();
+    await vi.advanceTimersByTimeAsync(2000);
     expect(rowNamed("cc-otel")).not.toBe(rowNode);
-    view.unmount();
+    } finally { view.unmount(); vi.useRealTimers(); }
   });
 
   it("an unknown app still shows the failed action instead of hiding it behind generic status prose", async () => {
@@ -630,7 +633,7 @@ describe("SPEC §process.panel - the capture is events, not a stream", () => {
     view.unmount();
   });
 
-  it("a child-only poll paints without waiting for an inventory response", async () => {
+  it("a child-only sample paints without waiting for an inventory response", async () => {
     serve([]);
     vi.useFakeTimers();
     await view.mount();
@@ -660,32 +663,37 @@ describe("SPEC §process.panel - the capture is events, not a stream", () => {
     } finally { view.unmount(); }
   });
 
-  it("overlapping shell and local polls share one in-flight inventory request", async () => {
+  it("the page sampler keeps one in-flight inventory request (SPEC §process.panel)", async () => {
     serve([app({})]);
+    vi.useFakeTimers();
     await view.mount();
     const original = globalThis.fetch;
     let reads = 0;
-    const finishes: ((r: Response) => void)[] = [];
+    let finish: (r: Response) => void = () => {};
     vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
       if (String(url) === "/api/process") {
         reads++;
-        return new Promise<Response>((resolve) => { finishes.push(resolve); });
+        return new Promise<Response>((resolve) => { finish = resolve; });
       }
       return original(url, init);
     });
-    const a = view.poll();
-    const b = view.poll();
-    for (const finish of finishes) finish({ ok: true, status: 200, json: async () => ({ apps: [app({})] }) } as Response);
-    await Promise.all([a, b]);
-    try { expect(reads).toBe(1); } finally { view.unmount(); }
+    try {
+      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(reads).toBe(1);
+      finish({ ok: true, status: 200, json: async () => ({ apps: [app({})] }) } as Response);
+    } finally { view.unmount(); vi.useRealTimers(); }
   });
 
   it("a changed reason repaints the affected row even when its verdict stays unknown", async () => {
     serve([app({ status: "unknown", reason: "first reason" })]);
-    await view.mount();
-    replies["/api/process"] = { apps: [app({ status: "unknown", reason: "new reason" })], gateway: { pid: 4242, uptimeSec: 3600, memMb: 18 } };
-    await view.poll();
-    try { expect(rowNamed("cc-otel").textContent).toContain("new reason"); } finally { view.unmount(); }
+    vi.useFakeTimers();
+    try {
+      await view.mount();
+      replies["/api/process"] = { apps: [app({ status: "unknown", reason: "new reason" })], gateway: { pid: 4242, uptimeSec: 3600, memMb: 18 } };
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(rowNamed("cc-otel").textContent).toContain("new reason");
+    } finally { view.unmount(); vi.useRealTimers(); }
   });
 
   it("gateway child groups fold and retain their state after refresh", async () => {
