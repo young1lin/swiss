@@ -386,7 +386,8 @@ an agent setting:
   follower (`trail::Follower`) starts with every run whose origin names a readable agent and
   looks at 2 s, every 3 s for a minute, then every 20 s, until 45 s after the run ended (never
   past 25 h). The readers (`trail/logs.rs`) turn each log into the same asked/said/called
-  events: Claude Code's session jsonl (and its subagents), DSH's session folder (zstd frames
+  events: Claude Code's session jsonl (and its subagents; what the person typed while the agent
+  worked is a `queued_command` attachment, an ask like any other), DSH's session folder (zstd frames
   read from the end), Codex's recent rollouts, opencode's SQLite (read-only). Codex and
   opencode give no session id, so their reader looks through the conversations written around
   the run's start. A match is a call logged between 30 min before and 10 s after the run began

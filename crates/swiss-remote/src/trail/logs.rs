@@ -361,6 +361,16 @@ pub fn claude_events(text: &str) -> Vec<Event> {
         let content = &entry["message"]["content"];
         match entry["type"].as_str() {
             Some("user") => push_asked(&mut events, at, &texts_of(content, "text")),
+            // What the person typed while the agent was mid-turn is logged as a queued
+            // command, never as a user line (seen 2026-11-11); a harness-queued one is not theirs.
+            Some("attachment") => {
+                let queued = &entry["attachment"];
+                if queued["type"] == "queued_command"
+                    && (queued["origin"]["kind"] == "human" || queued["humanTurn"] == true)
+                {
+                    push_asked(&mut events, at, &texts_of(&queued["prompt"], "text"));
+                }
+            }
             Some("assistant") => {
                 for block in content.as_array().into_iter().flatten() {
                     match block["type"].as_str() {
@@ -750,6 +760,34 @@ mod tests {
         assert!(pick(&early, std::slice::from_ref(&stream)).is_none(), "a call after the run began is not its own");
         let other = ask("claude-code", &["prod", "systemctl", "restart", "redis"], run_at);
         assert!(pick(&other, std::slice::from_ref(&stream)).is_none(), "too few words in common");
+    }
+
+    #[test]
+    fn a_message_typed_mid_turn_is_the_latest_ask() {
+        // The shape Claude Code 2.1 logs a message queued while it works (2026-11-11).
+        let queued = |ts: &str, kind: &str, human: bool, prompt: &str| {
+            json!({ "type": "attachment", "timestamp": ts, "attachment": { "type": "queued_command",
+                "prompt": prompt, "commandMode": "prompt", "origin": { "kind": kind }, "humanTurn": human } })
+            .to_string()
+        };
+        let log = [
+            json!({ "type": "user", "timestamp": "2026-11-11T01:00:00Z", "message": { "content": "slim the skill" } })
+                .to_string(),
+            queued("2026-11-11T01:05:00Z", "human", true, "then test it and quick-deploy"),
+            queued("2026-11-11T01:06:00Z", "task-notification", false, "a background job ended"),
+            json!({ "type": "queue-operation", "operation": "enqueue", "timestamp": "2026-11-11T01:05:00Z",
+                "content": "then test it and quick-deploy" })
+            .to_string(),
+        ]
+        .join("\n");
+        let asks: Vec<String> = claude_events(&log)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::Asked { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asks, ["slim the skill", "then test it and quick-deploy"]);
     }
 
     #[test]
