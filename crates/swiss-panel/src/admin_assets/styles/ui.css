@@ -307,8 +307,13 @@
     /* The workspace template (SPEC §panel.nav): a full-bleed body - no padding, no measure, no scroll
        of its own; the page inside divides the space itself (Data, Terminal). Clipped, never
        hidden: a hidden box still scrolls under a focus() or scrollIntoView() that reaches a
-       few pixels past its edge, and the whole page then sat shifted with no way to scroll back. */
-    .pane.full { display: flex; flex-direction: column; overflow: clip; padding: 0; }
+       few pixels past its edge, and the whole page then sat shifted with no way to scroll back.
+       min-width:0 goes with the clip: a clipped box is not a scroll container, so as a flex
+       item of .shell its automatic minimum is its content's min-content width, and a workspace
+       whose columns add up past the window (Memory: projects + list + a note at full measure)
+       pushed the whole shell out from under the context bar instead of narrowing its flexible
+       column. */
+    .pane.full { display: flex; flex-direction: column; overflow: clip; min-width: 0; padding: 0; }
     .pane.full > * { max-width: none; } /* .pane > * caps at --measure: a workspace left 40% of a wide window blank (19998) */
 
     /* --- page scaffolding, lists, menus, sheets (from views.css) -------------------------------- */

@@ -889,6 +889,15 @@ describe("ui/workspace", () => {
     expect(sheet("ui.css")).toMatch(/\.pane\.full > \* \{ max-width: none; \}/);
   });
 
+  it("the full pane may narrow below its content: clipped, it is no scroll container, so it says min-width:0", () => {
+    // overflow:clip keeps a flex item's automatic minimum at its min-content width. Memory's
+    // columns (projects + list + a note at full measure) added up past a 1530px window, the
+    // pane refused to shrink and the whole shell slid out from under the context bar.
+    const rule = /\.pane\.full \{([^}]*)\}/.exec(sheet("ui.css"))?.[1] ?? "";
+    expect(rule).toMatch(/overflow:\s*clip/);
+    expect(rule).toMatch(/min-width:\s*0\b/);
+  });
+
   it("wsSide: a captioned aside over a listbox of source rows; tools only when given", () => {
     const side = wsSide({ cap: "Projects", id: "rail", tools: [iconBtn("plus", "New project")] }, sideRow({ name: "a" }), sideRow({ name: "b" }));
     expect(side.tagName).toBe("ASIDE");
