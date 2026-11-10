@@ -496,8 +496,12 @@ copies configuration.
   while they vary; a failed run as a red tag saying how; the duration. Identical consecutive
   runs fold into ×N — never a run fed stdin: the same argv may have read a different script.
   The row line names the stdin's size (`sh -s · stdin 2.0 KB`), and the open row unseals the
-  script on Show - a row that said only `sh -s` answered nothing about WHAT ran (the owner's
-  finding, twice). An open live row follows its output every 1.5 s through
+  script as it opens, above the output; Hide puts it away and a re-read leaves it away. A row
+  that said only `sh -s` answered nothing about WHAT ran (the owner's finding, twice), and a
+  third time on 2026-11-10: behind an icon-only Show at the block's far end, "Stdin sent
+  2.3 KB" with no text read as a stdin that was lost. A live row has no record to unseal yet
+  and says the text comes with it, never "not kept". A write's body still waits for Show (it
+  can be a whole `.env`). An open live row follows its output every 1.5 s through
   `/api/runs/{id}/output` — output is a stream, not state, and stays off the bus; a re-read
   never rebuilds an open row. Reads are 128 KiB.
 - **The whole command, copyable.** An opened row shows the command exactly — argv quoted word

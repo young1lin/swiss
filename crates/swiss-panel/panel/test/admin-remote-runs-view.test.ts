@@ -486,9 +486,11 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
   });
 
   /* 2026-10-10: the stdin IS kept now - sealed beside the record exactly as a write's
-     body is (a `bash -s` row that cannot say WHAT ran was the owner's finding). Show
-     unseals it through the same route; rows recorded before it was kept keep the note. */
-  it("an exec's stdin is sealed beside the record: Show unseals and paints it, Hide puts it away", async () => {
+     body is (a `bash -s` row that cannot say WHAT ran was the owner's finding). 2026-11-10:
+     the open row unseals it as it opens - behind an icon-only Show at the block's far end,
+     "Stdin sent 2.3 KB" with no text read as a stdin that was lost. Hide puts it away and
+     Show brings it back; rows recorded before it was kept keep the note. */
+  it("an exec's stdin is sealed beside the record: opening the row shows it, Hide puts it away, Show brings it back", async () => {
     const ran = {
       ...finished, runId: 38, state: "succeeded", exitCode: 0,
       input: { target: "build", argv: ["bash", "-s"], stdinBytes: 17 }, outputBytes: 4, stdinStored: true,
@@ -497,20 +499,75 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     replies["/api/remote/runs/38/output?after=0&max=131072"] = { runId: 38, cursor: 0, nextCursor: 4, output: "ok\n", total: 4, terminal: true };
     replies["/api/remote/runs/38/content"] = { runId: 38, content: "echo hello\nexit 0\n", truncated: false };
     await view.mount();
+    expect(requests.some((r) => r.path === "/api/remote/runs/38/content"), "a closed row unseals nothing").toBe(false);
     open(38);
+    const stdin = (): HTMLElement | undefined => block(38, "Stdin sent");
+    expect(stdin(), "the sealed-stdin block is there").toBeTruthy();
+    expect(stdin()!.querySelector("[data-rcontent]"), "the open paints the loading line, not a Show about to vanish").toBeNull();
+    expect(stdin()!.textContent).toContain("Loading…");
     await settle();
     expect(item(38).querySelector(".tl-arg")?.textContent).toBe("bash -s · stdin 17 B");
-    const block = (): HTMLElement | undefined => Array.from(item(38).querySelectorAll<HTMLElement>(".vblock"))
-      .find((b) => b.querySelector(".vblock-cap")?.textContent === "Stdin sent");
-    expect(block(), "the sealed-stdin block is there").toBeTruthy();
-    expect(block()!.querySelector(".vblock-note")?.textContent).toBe("17 B");
-    expect(block()!.querySelector("pre")).toBeNull();
-    expect(requests.some((r) => r.path === "/api/remote/runs/38/content"), "nothing is unsealed until asked").toBe(false);
-    (block()!.querySelector("[data-rcontent]") as HTMLElement).click();
+    expect(stdin()!.querySelector(".vblock-note")?.textContent).toBe("17 B");
+    expect(stdin()!.querySelector("pre")?.textContent, "the script shows without a click").toBe("echo hello\nexit 0\n");
+    expect(block(38, "Output")?.querySelector("pre")?.textContent).toBe("ok\n");
+    expect(requests.filter((r) => r.path === "/api/remote/runs/38/content").length, "one read").toBe(1);
+    (stdin()!.querySelector("[data-rcontenthide]") as HTMLElement).click();
+    expect(stdin()!.querySelector("pre")).toBeNull();
+    (stdin()!.querySelector("[data-rcontent]") as HTMLElement).click();
     await settle();
-    expect(block()!.querySelector("pre")?.textContent).toBe("echo hello\nexit 0\n");
-    (block()!.querySelector("[data-rcontenthide]") as HTMLElement).click();
-    expect(block()!.querySelector("pre")).toBeNull();
+    expect(stdin()!.querySelector("pre")?.textContent).toBe("echo hello\nexit 0\n");
+  });
+
+  it("a stdin put away with Hide stays away through a re-read of the record", async () => {
+    const sock = openBus();
+    const ran = {
+      ...finished, runId: 39, state: "succeeded", exitCode: 0,
+      input: { target: "build", argv: ["bash", "-s"], stdinBytes: 9 }, outputBytes: 3, stdinStored: true,
+    };
+    serve([ran], []);
+    replies["/api/remote/runs/39/output?after=0&max=131072"] = { runId: 39, cursor: 0, nextCursor: 3, output: "ok\n", total: 3, terminal: true };
+    replies["/api/remote/runs/39/content"] = { runId: 39, content: "echo ok\n", truncated: false };
+    await view.mount();
+    open(39);
+    await settle();
+    (block(39, "Stdin sent")!.querySelector("[data-rcontenthide]") as HTMLElement).click();
+    // A new run arrives: the list repaints, and the open row comes back with its stdin put away.
+    serve([{ ...finished, runId: 40, exitCode: 0, state: "succeeded" }, ran], []);
+    sock.receive(runChangedFrame());
+    await settleMs(180);
+    expect(item(39).classList.contains("open")).toBe(true);
+    expect(block(39, "Stdin sent")?.querySelector("pre")).toBeNull();
+    expect(block(39, "Stdin sent")?.querySelector("[data-rcontent]")).toBeTruthy();
+    expect(requests.filter((r) => r.path === "/api/remote/runs/39/content").length, "Hide is not undone by a read").toBe(1);
+  });
+
+  /* A live row has no record yet, so nothing is sealed to read - it said "the text is not
+     kept" until 2026-11-10, which the finished row then contradicted. It says when the text
+     comes, and the row that finishes while open shows the script without a click. */
+  it("a live run fed stdin says the text comes with the record, and shows it once the run is filed", async () => {
+    const sock = openBus();
+    const live = { ...running, runId: 41, input: { target: "build", argv: ["bash", "-s"], stdinBytes: 52 } };
+    serve([], [live]);
+    replies["/api/runs/41/output?after=0&max=131072"] = { runId: 41, state: "running", cursor: 0, nextCursor: 0, output: "", truncated: false, terminal: false };
+    await view.mount();
+    open(41);
+    await settle();
+    const body = (): string => item(41).querySelector(".tl-body")?.textContent || "";
+    expect(body()).toContain("Stdin sent");
+    expect(body()).toContain("The text shows here once the run is recorded.");
+    expect(body()).not.toContain("not kept");
+    expect(requests.some((r) => r.path === "/api/remote/runs/41/content"), "nothing sealed to read yet").toBe(false);
+    // The run is filed: the record names it, sealed stdin and all.
+    const filed = { ...finished, runId: 41, state: "succeeded", exitCode: 0, input: live.input, outputBytes: 3, stdinStored: true };
+    serve([filed], []);
+    replies["/api/remote/runs/41/output?after=0&max=131072"] = { runId: 41, cursor: 0, nextCursor: 3, output: "ok\n", total: 3, terminal: true };
+    replies["/api/remote/runs/41/content"] = { runId: 41, content: "echo ok\n", truncated: false };
+    sock.receive(noticeFrame(Module.REMOTE, RemoteSub.HISTORY, HistoryId.HISTORY_CHANGED));
+    await settleMs(180);
+    await settle();
+    expect(block(41, "Stdin sent")?.querySelector("pre")?.textContent).toBe("echo ok\n");
+    expect(block(41, "Output")?.querySelector("pre")?.textContent).toBe("ok\n");
+    view.unmount(); // stop the live timer
   });
 
   it("runs fed stdin never fold - the same argv may have read a different script", async () => {

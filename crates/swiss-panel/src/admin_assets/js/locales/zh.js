@@ -2059,6 +2059,7 @@ const zh                         = {
   "remoteRuns.contentNotKept": "这次写入({size})发生在开始保存写入内容之前，内容没有保存。",
   "remoteRuns.stdinNotKept": "标准输入：已发送 {size}；内容不保存。",
   "remoteRuns.stdinSent": "发送的标准输入",
+  "remoteRuns.stdinAfterRun": "运行记录下来后，内容显示在这里。",
   "remoteRuns.argStdin": "标准输入 {size}",
   "remoteRuns.showStdin": "显示",
   "remoteRuns.contentUnavailable": "无法读取写入的内容。",

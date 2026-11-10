@@ -2119,6 +2119,7 @@ const en                         = {
   "remoteRuns.contentNotKept": "This write ({size}) was recorded before written content was kept.",
   "remoteRuns.stdinNotKept": "Stdin: {size} sent; the text is not kept.",
   "remoteRuns.stdinSent": "Stdin sent",
+  "remoteRuns.stdinAfterRun": "The text shows here once the run is recorded.",
   "remoteRuns.argStdin": "stdin {size}",
   "remoteRuns.showStdin": "Show",
   "remoteRuns.contentUnavailable": "The written content could not be read.",

@@ -76,7 +76,8 @@ let paintedTargets = ""; // the filter's painted list: a targets notice repaints
 let open = {} as Record<number, boolean>; // runId -> true while its row is expanded
 let bodies = {} as Record<number, RemoteRunBody>; // runId -> { text, next, total, done, capped, tail } for opened recorded rows
 let live = {} as Record<number, RemoteLiveBody>; // runId -> { text, cursor } for opened active rows
-let contents = {} as Record<number, RemoteRunContent>; // runId -> a write's unsealed body while Show is on
+let contents = {} as Record<number, RemoteRunContent>; // runId -> a write's body or an exec's stdin, unsealed while shown
+let unsealing = {} as Record<number, boolean>; // runId -> true while its /content read is in flight
 let liveTimer = null as ReturnType<typeof setInterval> | null;
 let painted = "";
 /* Which visit of this page is on screen (2026-09-29). Every await below can outlive the visit
@@ -292,7 +293,7 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
     const liveText = l && l.text
       ? (l.capped ? tr("remoteRuns.liveCappedTail") + "\n" : "") + l.text
       : null;
-    return [meta, commandNode(r), stdinNode(r), valueBlock(
+    return [meta, commandNode(r), stdinNode(r, true), valueBlock(
       {
         label: tr("remoteRuns.liveOutput"),
         data: { rlive: r.runId },
@@ -308,7 +309,7 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
         ? textNode(liveText, true, "logs").node
         : note(r.state === "queued" ? tr("remoteRuns.queuedWaitingFreeSlot") : tr("remoteRuns.output")))];
   }
-  const out: HChild[] = [meta, commandNode(r), stdinNode(r)];
+  const out: HChild[] = [meta, commandNode(r), stdinNode(r, false)];
   if (r.error) out.push(valueBlock({ label: tr("remoteRuns.error") }, ...readableBody(r.error, true)));
   const b = bodies[r.runId];
   if (!b) return out.concat(note(tr("remoteRuns.loading"), { busy: true }));
@@ -339,18 +340,25 @@ function bodyNode(run: ApiRemoteRunRow[]): HChild {
 
 /** An exec's stdin (SPEC §remote.history): the script or SQL the run actually ran, kept
  *  SEALED beside the record exactly as a write's body is - a stdin can carry a password
- *  in clear, so the index never holds the text and the row unseals it only on Show.
+ *  in clear, so the index never holds the text. The open row unseals it as it opens
+ *  (showStdin): until 2026-11-10 it waited for an icon-only Show at the far end of the
+ *  block, and the owner read "Stdin sent 2.3 KB" with no text as a stdin that was lost -
+ *  the third time a `bash -s` row answered nothing about WHAT ran. Hide puts it away.
  *  Rows recorded before it was kept say their size and nothing else. */
-function stdinNode(r: ApiRemoteRunRow): HChild {
+function stdinNode(r: ApiRemoteRunRow, isLive: boolean): HChild {
   const bytes = r.input?.stdinBytes;
   if (bytes == null) return null;
-  if (!r.stdinStored) {
-    return kindOf(r) === "exec" && bytes > 0 ? note(tr("remoteRuns.stdinNotKept", { size: fmtBytes(bytes) })) : null;
-  }
   const label = tr("remoteRuns.stdinSent");
   const size = fmtBytes(bytes);
+  // A live run's record is not filed yet, so nothing is sealed to read: the text is sealed
+  // as the run finishes. A live row said "the text is not kept" here until 2026-11-10.
+  if (isLive) return bytes > 0 ? valueBlock({ label, notes: [size] }, note(tr("remoteRuns.stdinAfterRun"))) : null;
+  if (!r.stdinStored) {
+    return kindOf(r) === "exec" && bytes > 0 ? note(tr("remoteRuns.stdinNotKept", { size })) : null;
+  }
   const c = contents[r.runId];
   if (!c) {
+    if (unsealing[r.runId]) return valueBlock({ label, notes: [size] }, note(tr("remoteRuns.loading"), { busy: true }));
     return valueBlock({ label, notes: [size], tools: [iconBtn("eye", tr("remoteRuns.showStdin"), { data: { rcontent: r.runId } })] });
   }
   if ("error" in c) return valueBlock({ label, notes: [size] }, note(c.error));
@@ -382,9 +390,28 @@ function writtenNode(r: ApiRemoteRunRow): HChild {
 }
 
 async function loadContent(id: number): Promise<void> {
-  const j = await apiJson<{ content: string; truncated: boolean }>("/api/remote/runs/" + id + "/content");
+  if (unsealing[id]) return; // a Show racing the open that already asked
+  unsealing[id] = true;
+  const v = visit;
+  let j: { content: string; truncated: boolean } | null = null;
+  try {
+    j = await apiJson<{ content: string; truncated: boolean }>("/api/remote/runs/" + id + "/content");
+  } finally {
+    if (v === visit) delete unsealing[id];
+  }
+  if (v !== visit) return; // the page left: an unsealed body lives only while it is on screen
   contents[id] = j ? { text: j.content, truncated: !!j.truncated } : { error: tr("remoteRuns.contentUnavailable") };
   repaintBody(id);
+}
+
+/** Unseal a recorded run's stdin as its row opens - the run's script belongs beside its output.
+ *  Asked when a row opens and when an open live row becomes a recorded one (adoptFinished),
+ *  never on a re-read: a stdin someone put away with Hide stays away. A write's body still
+ *  waits for Show (it can be a whole `.env`). */
+function showStdin(id: number): void {
+  const r = findRun(id);
+  if (!r || !r.stdinStored || isLiveRun(id) || contents[id] || unsealing[id]) return;
+  void loadContent(id);
 }
 
 /** The drawn row a run id heads, or null. */
@@ -468,6 +495,9 @@ function toggle(id: number): void {
   const wasOpen = run.some((r) => { return !!open[r.runId]; });
   run.forEach((r) => { open[r.runId] = false; });
   open[id] = !wasOpen;
+  // Before the first paint: the read marks the stdin as being unsealed, so the body opens on
+  // its loading line rather than flashing the Show it is about to replace.
+  if (open[id]) showStdin(id);
   const root = document.querySelector<HTMLElement>("#pane .tl");
   if (root && run.length) timelineToggle(root, String(id), open[id] ? bodyNode(run) : undefined);
   if (open[id]) {
@@ -518,6 +548,7 @@ function adoptFinished(): void {
     if (!open[id] || isLiveRun(id) || bodies[id] || adopting[id]) return;
     if (!runOf(id).length) return; // not on this page any more; nothing to fill
     adopting[id] = true;
+    showStdin(id); // the record now holds the sealed stdin the live row could not show
     void loadBody(id, false).finally((): void => { delete adopting[id]; });
   });
 }
@@ -528,6 +559,7 @@ async function clearAll(): Promise<void> {
   if (!j) return;
   bodies = {};
   contents = {};
+  unsealing = {};
   open = {};
   cursors = [null];
   page = 0;
@@ -815,6 +847,7 @@ export function unmount() {
   open = {};
   bodies = {};
   contents = {}; // an unsealed body lives only while its page is on screen
+  unsealing = {};
   live = {};
   canceling = {};
   adopting = {};
