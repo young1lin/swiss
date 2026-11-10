@@ -325,6 +325,9 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
         }
         files.push((path, json!(merged)));
     }
+    // Before the vault write and the batch: a new machine's home is this import.
+    swiss_core::platform::mkdir_private(&data_dir());
+    let mut wrote_secrets = false;
     if let Some(vault) = obj.get("secrets") {
         // Accept the export shape ({rev, secrets: {name -> value}}) or a bare map; imported
         // values win, nothing is deleted (SPEC §host.vault — a restore, not a mirror). The static
@@ -343,18 +346,21 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
             .collect();
         if !entries.is_empty() {
             let path = swiss_core::secure::secretstore::secret_store_path();
-            let merged = swiss_core::secure::secretstore::merged_for_import(&path, &entries)?;
-            files.push((path, merged));
+            // A torn vault fails here, before the other files are written. A set with no
+            // value to store writes nothing (SPEC §host.vault).
+            wrote_secrets = swiss_core::secure::secretstore::import_merged(&path, &entries)?;
         }
     }
-    // The home may not exist yet: an import is how a new machine gets its first state.
-    swiss_core::platform::mkdir_private(&data_dir());
     replace_all_secure_json(&files)?;
-    Ok(files
+    let mut names: Vec<String> = files
         .iter()
         .filter_map(|(path, _)| path.file_name())
         .map(|name| name.to_string_lossy().into_owned())
-        .collect())
+        .collect();
+    if wrote_secrets {
+        names.push("secrets.json".into());
+    }
+    Ok(names)
 }
 
 /// Record `rec` as the port's daemon — unless the file names a DIFFERENT process that is still

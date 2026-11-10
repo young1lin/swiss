@@ -30,6 +30,10 @@
    to serve. */
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { installBus, type BusSocket } from "../src/bus/bus.js";
+import { create, toBinary } from "../src/bus/codec.js";
+import { FrameSchema, Kind, LinkId, Module, NoticeSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, VaultId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,6 +103,50 @@ beforeEach(() => {
   location.hash = "#secrets";
   document.body.innerHTML = shellSkeleton();
 });
+
+class VaultSocket implements BusSocket {
+  static all: VaultSocket[] = [];
+  binaryType: BinaryType = "blob";
+  private listeners = new Map<string, Array<(ev: Event) => void>>();
+  constructor() { VaultSocket.all.push(this); }
+  addEventListener(type: string, listener: (ev: Event) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+  removeEventListener(): void { /* the link outlives the case */ }
+  send(_data: Uint8Array): void { /* the case does not read what the page sent */ }
+  close(): void { /* never closed under test */ }
+  private emit(type: string, ev: Event): void {
+    for (const fn of this.listeners.get(type) ?? []) fn(ev);
+  }
+  open(): void { this.emit("open", new Event("open")); }
+  receive(bytes: Uint8Array): void {
+    const copy = new Uint8Array(bytes);
+    for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
+  }
+}
+
+function openVaultBus(): VaultSocket {
+  VaultSocket.all.length = 0;
+  installBus({
+    socket: VaultSocket,
+    random: () => 0.5,
+    reload: () => {},
+    info: () => Promise.resolve(),
+    notice: () => {},
+    url: "ws://127.0.0.1/api/bus",
+  });
+  const sock = VaultSocket.all[VaultSocket.all.length - 1];
+  sock.open();
+  sock.receive(toBinary(FrameSchema, create(FrameSchema, {
+    module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
+    body: toBinary(WelcomeSchema, create(WelcomeSchema, {
+      protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
+    })),
+  })));
+  return sock;
+}
 
 describe("the Secrets page (SPEC §host.vault)", () => {
   it("the view module exists at the entry every page descriptor points at", () => {
@@ -249,7 +297,7 @@ describe("the Secrets page (SPEC §host.vault)", () => {
     expect(del?.url).toBe("/api/secrets/old?rev=9");
   });
 
-  it("poll patches rows only — the store form survives it", async () => {
+  it("a vault read patches rows only — the store form survives it", async () => {
     body = { secrets: ["a"], rev: 1 };
     await view.mount();
     // Simulate the user mid-typing in the value box - the one place a value is ever typed.
@@ -258,7 +306,7 @@ describe("the Secrets page (SPEC §host.vault)", () => {
     const groupsRegion = $("skGroups");
 
     body = { secrets: ["a", "b"], rev: 2 };
-    await view.poll();
+    await view.reloadVault();
 
     expect(($("skValue") as HTMLInputElement).value).toBe("half-typed"); // not rebuilt
     expect($("skValue")).toBe(valueBox);                                // the same node, even
@@ -270,8 +318,26 @@ describe("the Secrets page (SPEC §host.vault)", () => {
     const marker = document.createElement("i");
     marker.id = "rowsCanary";
     groupsRegion.appendChild(marker);
-    await view.poll();
+    await view.reloadVault();
     expect($("rowsCanary")).toBe(marker);
+  });
+
+  // SPEC §host.vault: a HOST.VAULT notice re-reads the list once, and the page exports no poll.
+  it("a HOST.VAULT notice re-reads the list once", async () => {
+    openVaultBus();
+    body = { secrets: ["a"], rev: 1 };
+    await view.mount();
+    expect(view.poll).toBeUndefined();
+    const before = calls.filter((c) => c.method === "GET" && c.url === "/api/secrets").length;
+    body = { secrets: ["a", "b"], rev: 2 };
+    VaultSocket.all[VaultSocket.all.length - 1].receive(toBinary(FrameSchema, create(FrameSchema, {
+      module: Module.HOST, sub: HostSub.VAULT, id: VaultId.VAULT_CHANGED, kind: Kind.EVENT,
+      body: toBinary(NoticeSchema, create(NoticeSchema, {})),
+    })));
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(calls.filter((c) => c.method === "GET" && c.url === "/api/secrets").length - before).toBe(1);
+    expect($("pane").textContent).toContain("b");
+    view.unmount();
   });
 
   it("a name the server sent is text, never markup (SPEC §panel.toolchain)", async () => {
@@ -289,20 +355,20 @@ describe("the Secrets page (SPEC §host.vault)", () => {
     expect($("pane").querySelectorAll('[data-secret="' + hostile + '"]').length).toBe(1);
   });
 
-  it("the Group select keeps the user's pick across a poll, and follows a renamed list", async () => {
+  it("the Group select keeps the user's pick across a vault read, and follows a renamed list", async () => {
     body = { secrets: ["a"], rev: 1, groups: ["default", "ci"], secretGroups: {} };
     await view.mount();
     const sel = $("skGroup") as HTMLSelectElement;
     expect(Array.from(sel.options).map((o) => o.value)).toEqual(["default", "ci"]);
 
     sel.value = "ci"; // the hand that just picked a group
-    await view.poll();
+    await view.reloadVault();
     expect(($("skGroup") as HTMLSelectElement).value).toBe("ci");
 
     // The group is gone from the family: the box must not be left pointing at a dead option,
     // because the next store would assign into a 400 (SPEC §host.groups).
     body = { secrets: ["a"], rev: 2, groups: ["default"], secretGroups: {} };
-    await view.poll();
+    await view.reloadVault();
     const after = $("skGroup") as HTMLSelectElement;
     expect(Array.from(after.options).map((o) => o.value)).toEqual(["default"]);
     expect(after.value).toBe("default");

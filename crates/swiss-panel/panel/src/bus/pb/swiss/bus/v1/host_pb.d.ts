@@ -123,6 +123,11 @@ export enum HostSub {
    * @generated from enum value: HOST_SUB_TOKENS = 4;
    */
   TOKENS = 4,
+
+  /**
+   * @generated from enum value: HOST_SUB_VAULT = 5;
+   */
+  VAULT = 5,
 }
 
 /**
@@ -193,6 +198,30 @@ export enum TokensId {
  * Describes the enum swiss.bus.v1.TokensId.
  */
 export declare const TokensIdSchema: GenEnum<TokensId>;
+
+/**
+ * HOST.VAULT (SPEC §bus.registry, SPEC §host.vault). Module 4, sub 5.
+ * A NOTICE with no key: a secret was stored or removed, the vault's groups moved,
+ * or an import merged. The page re-reads GET /api/secrets. The body is empty.
+ *
+ * @generated from enum swiss.bus.v1.VaultId
+ */
+export enum VaultId {
+  /**
+   * @generated from enum value: VAULT_ID_UNSPECIFIED = 0;
+   */
+  VAULT_ID_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: VAULT_CHANGED = 1;
+   */
+  VAULT_CHANGED = 1,
+}
+
+/**
+ * Describes the enum swiss.bus.v1.VaultId.
+ */
+export declare const VaultIdSchema: GenEnum<VaultId>;
 
 /**
  * @generated from enum swiss.bus.v1.RunsId

@@ -148,3 +148,10 @@ disabled state; its page is a host asset.
   import; import skips any value equal to the mask so it never overwrites a real secret.
 - No zeroize (ADR-007): values must stay resident to be resolved; the attack surface is the
   file and the children, not the heap.
+- **On the bus.** A put, a delete, a vault-group write and an import that stored a value
+  publish HOST.VAULT (module 4, sub 5, an empty `Notice`) once the file is written and the
+  in-process vault shows it. A refused write publishes nothing. An import whose entries are
+  all skipped — masked, empty, or not a vault name — publishes nothing and leaves the file
+  as it was. A change another process makes to the file is not announced; the next read
+  shows it. The Secrets page re-reads `GET /api/secrets` from the notice and has no poll.
+  LLM Agents re-reads `GET /api/llm/status` from the same notice (§llm.agents).

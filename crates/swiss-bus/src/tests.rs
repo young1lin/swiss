@@ -795,6 +795,11 @@ fn golden_entries() -> Vec<serde_json::Value> {
             serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a"}),
         ),
         (
+            "vault-notice",
+            frame!(4, 5, 1, Kind::Event, 16, 0, "", "page-a", v1::Notice {}.encode_to_vec(), None),
+            serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a"}),
+        ),
+        (
             "plugins-notice",
             frame!(4, 3, 1, Kind::Event, 14, 0, "alpha", "page-a", v1::Notice {}.encode_to_vec(), None),
             serde_json::json!({"bodyType":"Notice","body":{},"origin":"page-a","key":"alpha"}),

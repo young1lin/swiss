@@ -21,6 +21,7 @@ enum HostSub {
   HOST_SUB_REMOTE_SEAT = 2;
   HOST_SUB_PLUGINS = 3;
   HOST_SUB_TOKENS = 4;
+  HOST_SUB_VAULT = 5;
 }
 
 enum RemoteSeatId {
@@ -39,6 +40,14 @@ enum PluginsId {
 enum TokensId {
   TOKENS_ID_UNSPECIFIED = 0;
   TOKENS_CHANGED = 1;
+}
+
+// HOST.VAULT (SPEC §bus.registry, SPEC §host.vault). Module 4, sub 5.
+// A NOTICE with no key: a secret was stored or removed, the vault's groups moved,
+// or an import merged. The page re-reads GET /api/secrets. The body is empty.
+enum VaultId {
+  VAULT_ID_UNSPECIFIED = 0;
+  VAULT_CHANGED = 1;
 }
 
 enum RunsId {

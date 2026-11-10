@@ -363,6 +363,18 @@ pub async fn run_gateway() -> Result<(), String> {
     });
     ctx.tokens.set_notice(Some(tokens_note.clone()));
     ctx.group_scopes.set_notice("tokens", tokens_note);
+    // HOST.VAULT (SPEC §host.vault). The vault lives in swiss-core, which cannot
+    // hold the bus, so the hook is process-wide. A secrets group edit is a
+    // set_vault_groups write and publishes there; a second GroupScopes hook
+    // would be a second frame for the same Ok.
+    let vault_bus = services.bus.clone();
+    swiss_core::secure::secretstore::set_vault_notice(Some(std::sync::Arc::new(move || {
+        swiss_host::notice::publish(
+            &vault_bus,
+            swiss_bus::pb::v1::HostSub::Vault as u32,
+            swiss_bus::pb::v1::VaultId::VaultChanged as u32,
+        );
+    })));
     // The consoles' history (SPEC §data.history): constructed closed here so the /api/db mount
     // can carry it; the Data plugin's start opens logs/data.db and its stop closes it.
     let data_history = swiss_data::history::DataHistory::new(swiss_core::paths::data_path(&["logs"]));

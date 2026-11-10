@@ -38,6 +38,9 @@
 import type { ApiSecretWriteResponse } from "../types/api.js";
 import type { GroupCfg, GroupSlice } from "../types/dom.js";
 import { $, apiJson, targetEl, toast } from "../util.js";
+import { busOn } from "../bus/bus.js";
+import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, VaultId } from "../bus/pb/swiss/bus/v1/host_pb.js";
 import { fill, h } from "../h.js";
 import { copyText } from "../connect.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
@@ -420,18 +423,39 @@ async function removeSecret(name: string): Promise<void> {
   toast(tr("secrets.deletedName", { name }));
 }
 
+let stopVault: (() => void) | null = null;
+
+/** The notice's read: the groups region only, so a half-typed value survives it. */
+export async function reloadVault(): Promise<void> {
+  await loadSecrets();
+  patch();
+}
+
+function followVault(): void {
+  if (stopVault) stopVault();
+  stopVault = busOn(
+    { module: Module.HOST, sub: HostSub.VAULT, key: "" },
+    VaultId.VAULT_CHANGED,
+    NoticeSchema,
+    () => { void reloadVault(); },
+  );
+}
+
 export async function mount() {
   collapsed = loadCollapsed("secrets"); // before the first paint, so folded groups never flash open
+  followVault();
   await loadSecrets();
   render();
 }
 export async function refresh() { await loadSecrets(); render(); }
-export async function poll() { await loadSecrets(); patch(); }
 export function countText() {
   const n = secrets.list.length;
   return trn(n, "secrets.nSecrets.one", "secrets.nSecrets.other");
 }
-export function unmount() { painted = ""; }
+export function unmount() {
+  painted = "";
+  if (stopVault) { stopVault(); stopVault = null; }
+}
 
 /* Exported for the suite (the requiresBadge precedent): the two mutations and the order move,
  * driven under a fetch stub against the real DOM the view builds. */

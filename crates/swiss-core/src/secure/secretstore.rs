@@ -38,7 +38,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock};
 
 use super::statefile::{left_in_place, read_secure_json, write_secure_json};
 use crate::paths::data_path;
@@ -389,6 +389,26 @@ impl MutateError {
 
 static MUTATION: Mutex<()> = Mutex::new(());
 
+/// HOST.VAULT (SPEC §host.vault). The composition installs the bus publish; a test installs
+/// a counter. The hook must not mutate the vault: it runs while the mutation lock is held.
+static VAULT_NOTICE: Mutex<Option<Arc<dyn Fn() + Send + Sync>>> = Mutex::new(None);
+
+/// Where a vault notice goes. `None` is the boot default and every process that does not
+/// own the bus, so a CLI import in another process publishes nothing.
+pub fn set_vault_notice(hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+    *VAULT_NOTICE.lock().unwrap_or_else(PoisonError::into_inner) = hook;
+}
+
+fn vault_changed() {
+    let hook = VAULT_NOTICE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
 /// One mutation at a time: the rev compare, the sealed write and the commit are one step, or two
 /// writers on one rev both pass the compare and the second silently drops the first (SPEC
 /// §host.vault). A poisoned lock still serves: persist-then-commit leaves no half-done state behind.
@@ -415,8 +435,15 @@ fn persist_then_commit(path: &Path, candidate: Vault) -> Result<u64, MutateError
     read_file(path).map_err(|err| MutateError::Seal(left_in_place(err)))?;
     write_secure_json(path, &file_value(&candidate)).map_err(MutateError::Seal)?;
     let rev = candidate.rev;
-    if let Ok(mut v) = vault().write() {
+    let committed = if let Ok(mut v) = vault().write() {
         *v = candidate;
+        true
+    } else {
+        false
+    };
+    // GET reads the in-process vault. Publish only after that copy moved.
+    if committed {
+        vault_changed();
     }
     Ok(rev)
 }
@@ -497,6 +524,44 @@ pub fn merged_for_import(
         }
     }
     Ok(file_value(&merged))
+}
+
+/// Whether an import would store a value. Masked, empty and illegal names are not values
+/// (SPEC §host.vault): they must not rewrite the file or publish a notice.
+pub fn import_would_store(entries: &serde_json::Map<String, serde_json::Value>) -> bool {
+    entries
+        .iter()
+        .any(|(name, value)| valid_name(name) && value.as_str().is_some())
+}
+
+/// Merge `entries` into the vault file and the in-process copy, then publish HOST.VAULT.
+/// Returns whether a value was stored. A set with nothing to store writes nothing and
+/// publishes nothing; a file that cannot be read is still an error, so the caller's other
+/// files stay untouched (SPEC §host.vault).
+pub fn import_merged(
+    path: &Path,
+    entries: &serde_json::Map<String, serde_json::Value>,
+) -> Result<bool, String> {
+    let _one = one_mutation();
+    if !import_would_store(entries) {
+        if !entries.is_empty() {
+            read_file(path).map_err(left_in_place)?;
+        }
+        return Ok(false);
+    }
+    let merged = merged_for_import(path, entries)?;
+    write_secure_json(path, &merged)?;
+    let loaded = read_file(path).map_err(left_in_place)?;
+    let committed = if let Ok(mut slot) = vault().write() {
+        *slot = loaded;
+        true
+    } else {
+        false
+    };
+    if committed {
+        vault_changed();
+    }
+    Ok(true)
 }
 
 /// Remove one secret. Absent names answer NotFound rather than quietly bumping the rev.
@@ -877,5 +942,90 @@ mod tests {
         // The sealed file carries the group labels but never the value.
         let raw = String::from_utf8_lossy(&std::fs::read(&path).expect("file")).to_string();
         assert!(!raw.contains("\"v\""), "the value never lands in the clear");
+    }
+
+    use std::sync::{Arc, Mutex};
+
+    struct SilenceNotice;
+    impl Drop for SilenceNotice {
+        fn drop(&mut self) {
+            set_vault_notice(None);
+        }
+    }
+
+    fn count_notices() -> (SilenceNotice, Arc<Mutex<u32>>) {
+        let hits = Arc::new(Mutex::new(0u32));
+        let sink = hits.clone();
+        set_vault_notice(Some(Arc::new(move || {
+            *sink.lock().expect("hits") += 1;
+        })));
+        (SilenceNotice, hits)
+    }
+
+    // SPEC §host.vault: put, delete and a group write each publish once; a refused write publishes nothing.
+    #[test]
+    fn put_delete_and_groups_each_publish_once_and_a_refusal_publishes_nothing() {
+        let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        crate::secure::key::use_test_master_key();
+        let path = crate::paths::test_home().join("secrets-notice.json");
+        let _ = std::fs::remove_file(&path);
+        inject_vault(&path);
+        let (_silence, hits) = count_notices();
+        let rev = put_secret(&path, "notice-key", "v", vault_rev()).expect("put");
+        assert_eq!(*hits.lock().expect("hits"), 1);
+        assert!(put_secret(&path, "NotAName", "v", rev).is_err());
+        assert!(put_secret(&path, "notice-key", "v", 0).is_err());
+        assert_eq!(*hits.lock().expect("hits"), 1, "a refused put publishes nothing");
+        let rev = delete_secret(&path, "notice-key", rev).expect("delete");
+        assert_eq!(*hits.lock().expect("hits"), 2);
+        assert!(delete_secret(&path, "notice-key", rev).is_err());
+        assert_eq!(*hits.lock().expect("hits"), 2, "a missing name publishes nothing");
+        let _ = set_vault_groups(
+            &path,
+            vault_rev(),
+            vec!["default".into(), "ops".into()],
+            std::collections::HashMap::new(),
+            Vec::new(),
+        )
+        .expect("groups");
+        assert_eq!(*hits.lock().expect("hits"), 3);
+        assert!(set_vault_groups(
+            &path,
+            0,
+            Vec::new(),
+            std::collections::HashMap::new(),
+            Vec::new(),
+        )
+        .is_err());
+        assert_eq!(*hits.lock().expect("hits"), 3, "a refused group write publishes nothing");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // SPEC §host.vault: an import that stores a value publishes once, after GET can see it; a no-op publishes nothing.
+    #[test]
+    fn an_import_merge_publishes_once_and_a_noop_publishes_nothing() {
+        let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        crate::secure::key::use_test_master_key();
+        let path = crate::paths::test_home().join("secrets-import-notice.json");
+        let _ = std::fs::remove_file(&path);
+        inject_vault(&path);
+        let (_silence, hits) = count_notices();
+
+        let mut empty = serde_json::Map::new();
+        assert!(!import_merged(&path, &empty).expect("empty"));
+        assert_eq!(*hits.lock().expect("hits"), 0);
+        assert!(!path.exists(), "a no-op import does not create the file");
+
+        empty.insert("NotAName".into(), serde_json::json!("x"));
+        assert!(!import_merged(&path, &empty).expect("illegal"));
+        assert_eq!(*hits.lock().expect("hits"), 0);
+
+        let mut entries = serde_json::Map::new();
+        entries.insert("imported-key".into(), serde_json::json!("sk_live"));
+        assert!(import_merged(&path, &entries).expect("merge"));
+        assert_eq!(*hits.lock().expect("hits"), 1);
+        assert_eq!(vault_lookup("imported-key").as_deref(), Some("sk_live"));
+        assert!(list_secrets().contains(&"imported-key".to_string()));
+        let _ = std::fs::remove_file(&path);
     }
 }

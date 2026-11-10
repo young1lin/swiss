@@ -28,6 +28,10 @@ import { fileURLToPath } from "node:url";
 import type * as ProvidersView from "../src/views/llm-providers.js";
 import type * as EmbeddingView from "../src/views/llm-embedding.js";
 import type * as AgentsView from "../src/views/llm-agents.js";
+import { installBus, type BusSocket } from "../src/bus/bus.js";
+import { create, toBinary } from "../src/bus/codec.js";
+import { FrameSchema, Kind, LinkId, Module, NoticeSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, VaultId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 
 type Body = Record<string, unknown>;
 type Row = {
@@ -932,7 +936,67 @@ function toolChecks(): Array<[string, boolean]> {
   return [...document.querySelectorAll<HTMLInputElement>("[data-latool]")].map((c) => [c.dataset.latool || "", c.checked]);
 }
 
+class AgentVaultSocket implements BusSocket {
+  static all: AgentVaultSocket[] = [];
+  binaryType: BinaryType = "blob";
+  private listeners = new Map<string, Array<(ev: Event) => void>>();
+  constructor() { AgentVaultSocket.all.push(this); }
+  addEventListener(type: string, listener: (ev: Event) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+  removeEventListener(): void { /* the link outlives the case */ }
+  send(_data: Uint8Array): void { /* the case does not read what the page sent */ }
+  close(): void { /* never closed under test */ }
+  private emit(type: string, ev: Event): void {
+    for (const fn of this.listeners.get(type) ?? []) fn(ev);
+  }
+  open(): void { this.emit("open", new Event("open")); }
+  receive(bytes: Uint8Array): void {
+    const copy = new Uint8Array(bytes);
+    for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
+  }
+}
+
+function openAgentVaultBus(): void {
+  AgentVaultSocket.all.length = 0;
+  installBus({
+    socket: AgentVaultSocket,
+    random: () => 0.5,
+    reload: () => {},
+    info: () => Promise.resolve(),
+    notice: () => {},
+    url: "ws://127.0.0.1/api/bus",
+  });
+  const sock = AgentVaultSocket.all[AgentVaultSocket.all.length - 1];
+  sock.open();
+  sock.receive(toBinary(FrameSchema, create(FrameSchema, {
+    module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
+    body: toBinary(WelcomeSchema, create(WelcomeSchema, {
+      protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
+    })),
+  })));
+}
+
 describe("the LLM plugin - Agents", () => {
+  // SPEC §host.vault: a HOST.VAULT notice re-reads agent status once. The page keeps its poll until the tick goes.
+  it("a HOST.VAULT notice re-reads status once", async () => {
+    openAgentVaultBus();
+    row.agents = { distiller: { runtime: "builtin", provider: "glm", secrets: ["stripe-key"] } };
+    await agents.mount();
+    const before = sent("GET", "/api/llm/status").length;
+    expect(before).toBeGreaterThan(0);
+    row.agents = { distiller: { runtime: "builtin", provider: "glm", secrets: ["stripe-key", "other-key"] } };
+    AgentVaultSocket.all[AgentVaultSocket.all.length - 1].receive(toBinary(FrameSchema, create(FrameSchema, {
+      module: Module.HOST, sub: HostSub.VAULT, id: VaultId.VAULT_CHANGED, kind: Kind.EVENT,
+      body: toBinary(NoticeSchema, create(NoticeSchema, {})),
+    })));
+    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(sent("GET", "/api/llm/status").length - before).toBe(1);
+    agents.unmount();
+  });
+
   it("keeps system prompts collapsed in create, edit and the expanded record", async () => {
     await agents.mount();
     const prompt = document.querySelector("[data-larow=distiller] [data-lablock=prompt]");

@@ -29,6 +29,9 @@
    that already reads Claude Code (cc-otel) reads these unchanged.
    ================================================================================================ */
 import { $, targetEl, toast } from "../util.js";
+import { busOn } from "../bus/bus.js";
+import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, VaultId } from "../bus/pb/swiss/bus/v1/host_pb.js";
                                       
 import { fill, h } from "../h.js";
 import { tk, tr, trn } from "../i18n.js";
@@ -65,6 +68,7 @@ const ASK_MAX = 2000;
 let status = null                    ;
 let painted = "";
 let visit = 0; // bumped by mount and unmount: a late answer from an ended visit paints nothing
+let stopVault                      = null;
 
 const RUNTIMES               = ["builtin", "chat", "claude", "pi", "db"];
 const EFFORTS              = ["low", "medium", "high", "max"];
@@ -1015,12 +1019,25 @@ export async function mount()                {
     return;
   }
   render();
+  // HOST.VAULT: secretsInForce moves when the vault does (SPEC §host.vault). The page's
+  // own poll stays until the tick goes; this is the vault's notice, not that poll.
+  if (at !== visit) return;
+  if (stopVault) stopVault();
+  stopVault = busOn(
+    { module: Module.HOST, sub: HostSub.VAULT, key: "" },
+    VaultId.VAULT_CHANGED,
+    NoticeSchema,
+    () => { void refresh(); },
+  );
   // Sent here to make an agent (the Data page's "Make a DB agent"): its Add sheet, preset.
   const preset = takeAgentPreset();
   if (preset) void openAgent(null, preset);
 }
 
-export function unmount()       { visit++; }
+export function unmount()       {
+  visit++;
+  if (stopVault) { stopVault(); stopVault = null; }
+}
 
 export async function refresh()                {
   if (await load() !== null || !status) return; // keep the last paint; the next poll asks again
