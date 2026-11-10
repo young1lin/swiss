@@ -6,7 +6,9 @@ Part 03 of [§host](README.md), chapter 0004 of the [swiss specification](../../
 
 One model (`swiss_host::groups`, ADR-015), seven scopes: `mcps`, `tokens`, `conns`, `rules`,
 `jobs`, `secrets`, `targets`. Each owner registers its scope in the `GroupScopes` table; the
-host routes by the scope string with no match arm.
+host routes by the scope string with no match arm. A write that returns Ok publishes that
+scope's owner topic (§bus.registry); a refused write publishes nothing. `tokens` publishes
+HOST.TOKENS.
 
 **Invariants** (unit-tested once, in `groups.rs`):
 

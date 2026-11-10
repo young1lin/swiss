@@ -19,7 +19,7 @@
 /* Token management lives in the MCP group (the toolbar button is gone): the token exists
    FOR MCP clients, so the page that lists, creates, rotates and revokes them sits beside
    Servers and Traffic. This suite pins the view module's own contract: what mount paints,
-   the count chip, and — the regression this page must never recommit — that the 6s poll
+   the count chip, and — the regression this page must never recommit — that a token read
    patches the GROUPS REGION only, because rebuilding the pane would wipe the label input the
    user may be typing a new token's name into.
 
@@ -34,11 +34,16 @@
    behaviour the regression was about. */
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { installBus, type BusSocket } from "../src/bus/bus.js";
+import { create, toBinary } from "../src/bus/codec.js";
+import { FrameSchema, Kind, LinkId, Module, NoticeSchema, WelcomeSchema } from "../src/bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, TokensId } from "../src/bus/pb/swiss/bus/v1/host_pb.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 let body: unknown = { tokens: [] };
+let tokenGets = 0;
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view's public surface is
    asserted by name below (the connect-flow helpers), so a typed import would be circular. */
 let view: any;
@@ -60,7 +65,10 @@ function shellSkeleton(): string {
 beforeAll(async () => {
   const prevFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
   Object.assign(globalThis, {
-    fetch: () => Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve(body) }),
+    fetch: () => {
+      tokenGets += 1;
+      return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve(body) });
+    },
     confirm: () => true,
   });
   afterAll(() => {
@@ -74,8 +82,53 @@ beforeAll(async () => {
 /* A clean shell per test so one test's pane cannot leak into the next; within a test #pane
  * keeps its identity, which is what the poll case is about. */
 beforeEach(() => {
+  tokenGets = 0;
   document.body.innerHTML = shellSkeleton();
 });
+
+class TokenSocket implements BusSocket {
+  static all: TokenSocket[] = [];
+  binaryType: BinaryType = "blob";
+  private listeners = new Map<string, Array<(ev: Event) => void>>();
+  constructor() { TokenSocket.all.push(this); }
+  addEventListener(type: string, listener: (ev: Event) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+  removeEventListener(): void { /* the link outlives the case */ }
+  send(_data: Uint8Array): void { /* the case does not read what the page sent */ }
+  close(): void { /* never closed under test */ }
+  private emit(type: string, ev: Event): void {
+    for (const fn of this.listeners.get(type) ?? []) fn(ev);
+  }
+  open(): void { this.emit("open", new Event("open")); }
+  receive(bytes: Uint8Array): void {
+    const copy = new Uint8Array(bytes);
+    for (const fn of this.listeners.get("message") ?? []) fn(new MessageEvent("message", { data: copy.buffer }));
+  }
+}
+
+function openTokenBus(): TokenSocket {
+  TokenSocket.all.length = 0;
+  installBus({
+    socket: TokenSocket,
+    random: () => 0.5,
+    reload: () => {},
+    info: () => Promise.resolve(),
+    notice: () => {},
+    url: "ws://127.0.0.1/api/bus",
+  });
+  const sock = TokenSocket.all[TokenSocket.all.length - 1];
+  sock.open();
+  sock.receive(toBinary(FrameSchema, create(FrameSchema, {
+    module: 0, sub: 1, id: LinkId.HELLO, kind: Kind.RESPONSE, seq: 1, replyTo: 1,
+    body: toBinary(WelcomeSchema, create(WelcomeSchema, {
+      protocol: 1, connId: "7", build: "stamp-a", heartbeatMs: 60000n, maxFrame: 65536, serverMs: 0n,
+    })),
+  })));
+  return sock;
+}
 
 describe("the Token page (MCP group)", () => {
   it("the view module exists at the entry every page descriptor points at", () => {
@@ -182,7 +235,7 @@ describe("the Token page (MCP group)", () => {
     expect($("tkGroups").textContent).toContain("ci");
   });
 
-  it("poll patches the groups region only - a half-typed label survives it", async () => {
+  it("a token read patches the groups region only - a half-typed label survives it", async () => {
     body = { tokens: [{ id: "t0", label: "default" }] };
     await view.mount();
     // The canary is now the real control, not a string: somebody is mid-word in the label box.
@@ -191,7 +244,7 @@ describe("the Token page (MCP group)", () => {
     const groupsRegion = $("tkGroups");
 
     body = { tokens: [{ id: "t0", label: "default" }, { id: "t1", label: "cursor" }] };
-    await view.poll();
+    await view.loadTokens();
 
     expect(($("tkLabel") as HTMLInputElement).value).toBe("claude-co"); // not rebuilt
     expect($("tkLabel")).toBe(label);                                   // the same node, even
@@ -203,27 +256,46 @@ describe("the Token page (MCP group)", () => {
     const marker = document.createElement("i");
     marker.id = "rowsCanary";
     groupsRegion.appendChild(marker);
-    await view.poll();
+    await view.loadTokens();
     expect($("rowsCanary")).toBe(marker);
   });
 
-  it("the Group select keeps the user's pick across a poll, and follows a renamed list", async () => {
+  it("the Group select keeps the user's pick across a token read, and follows a renamed list", async () => {
     body = { tokens: [{ id: "t0", label: "default" }], groups: ["default", "clients"], tokenGroups: {} };
     await view.mount();
     const sel = $("tkGroup") as HTMLSelectElement;
     expect(Array.from(sel.options).map((o) => o.value)).toEqual(["default", "clients"]);
 
     sel.value = "clients"; // the hand that just picked a group
-    await view.poll();
+    await view.loadTokens();
     expect(($("tkGroup") as HTMLSelectElement).value).toBe("clients");
 
     // The group is gone from the family: the box must not be left pointing at a dead option,
     // because the next create would assign into a 400 (SPEC §host.groups).
     body = { tokens: [{ id: "t0", label: "default" }], groups: ["default"], tokenGroups: {} };
-    await view.poll();
+    await view.loadTokens();
     const after = $("tkGroup") as HTMLSelectElement;
     expect(Array.from(after.options).map((o) => o.value)).toEqual(["default"]);
     expect(after.value).toBe("default");
+  });
+
+  // SPEC §host.tokens: a HOST.TOKENS notice re-reads the list once, and the page exports no poll.
+  it("a HOST.TOKENS notice re-reads the list once", async () => {
+    body = { tokens: [{ id: "t0", label: "default" }] };
+    await view.mount();
+    expect(tokenGets).toBe(1);
+    expect(view.poll).toBeUndefined();
+    const sock = openTokenBus();
+    view.watchTokens();
+    body = { tokens: [{ id: "t0", label: "default" }, { id: "t1", label: "cursor" }] };
+    const before = tokenGets;
+    sock.receive(toBinary(FrameSchema, create(FrameSchema, {
+      module: Module.HOST, sub: HostSub.TOKENS, id: TokensId.TOKENS_CHANGED, kind: Kind.EVENT,
+      body: toBinary(NoticeSchema, create(NoticeSchema, {})),
+    })));
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(tokenGets - before).toBe(1);
+    expect($("pane").textContent).toContain("cursor");
   });
 
   it("still exports the connect-flow helpers connect.js depends on", () => {

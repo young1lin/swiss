@@ -1075,7 +1075,10 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     .map(str::to_string)
                     .collect();
                 match impl_.set_names(names) {
-                    Ok(groups) => admin_json(StatusCode::OK, json!({ "groups": groups })),
+                    Ok(groups) => {
+                        ctx.group_scopes.note(&scope);
+                        admin_json(StatusCode::OK, json!({ "groups": groups }))
+                    }
                     Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
                 }
             },
@@ -1108,6 +1111,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 }
                 match impl_.rename(from, to) {
                     Ok((groups, moved)) => {
+                        ctx.group_scopes.note(&scope);
                         admin_json(StatusCode::OK, json!({ "groups": groups, "moved": moved }))
                     }
                     Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
@@ -1138,7 +1142,10 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     );
                 }
                 match impl_.assign(&id, raw.and_then(Value::as_str)) {
-                    Ok(group) => admin_json(StatusCode::OK, json!({ "group": group })),
+                    Ok(group) => {
+                        ctx.group_scopes.note(&scope);
+                        admin_json(StatusCode::OK, json!({ "group": group }))
+                    }
                     Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
                 }
             },
@@ -1169,7 +1176,10 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     .map(str::to_string)
                     .collect();
                 match impl_.set_order(ids) {
-                    Ok(order) => admin_json(StatusCode::OK, json!({ "order": order })),
+                    Ok(order) => {
+                        ctx.group_scopes.note(&scope);
+                        admin_json(StatusCode::OK, json!({ "order": order }))
+                    }
                     Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
                 }
             },

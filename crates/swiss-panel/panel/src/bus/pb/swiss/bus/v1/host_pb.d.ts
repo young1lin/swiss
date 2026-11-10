@@ -118,6 +118,11 @@ export enum HostSub {
    * @generated from enum value: HOST_SUB_PLUGINS = 3;
    */
   PLUGINS = 3,
+
+  /**
+   * @generated from enum value: HOST_SUB_TOKENS = 4;
+   */
+  TOKENS = 4,
 }
 
 /**
@@ -164,6 +169,30 @@ export enum PluginsId {
  * Describes the enum swiss.bus.v1.PluginsId.
  */
 export declare const PluginsIdSchema: GenEnum<PluginsId>;
+
+/**
+ * HOST.TOKENS (SPEC §bus.registry, SPEC §host.tokens). Module 4, sub 4.
+ * A NOTICE with no key: the token list or its groups moved. The shell re-reads
+ * GET /api/tokens. The body is empty on purpose.
+ *
+ * @generated from enum swiss.bus.v1.TokensId
+ */
+export enum TokensId {
+  /**
+   * @generated from enum value: TOKENS_ID_UNSPECIFIED = 0;
+   */
+  TOKENS_ID_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: TOKENS_CHANGED = 1;
+   */
+  TOKENS_CHANGED = 1,
+}
+
+/**
+ * Describes the enum swiss.bus.v1.TokensId.
+ */
+export declare const TokensIdSchema: GenEnum<TokensId>;
 
 /**
  * @generated from enum swiss.bus.v1.RunsId

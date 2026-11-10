@@ -298,9 +298,16 @@ pub trait GroupScope: Send + Sync {
 /// same way a plugin joins the host - SPEC §host.plugins's "mechanism in the host, business in the
 /// plugin", applied to groups.
 #[derive(Default)]
-pub struct GroupScopes(
-    std::sync::RwLock<std::collections::HashMap<&'static str, std::sync::Arc<dyn GroupScope>>>,
-);
+pub struct GroupScopes {
+    scopes: std::sync::RwLock<
+        std::collections::HashMap<&'static str, std::sync::Arc<dyn GroupScope>>,
+    >,
+    /// Fired after a group write that returned Ok (SPEC §host.groups). The composition
+    /// installs one per scope; a refused write never reaches it.
+    notices: std::sync::Mutex<
+        std::collections::HashMap<String, std::sync::Arc<dyn Fn() + Send + Sync>>,
+    >,
+}
 
 impl GroupScopes {
     pub fn new() -> Self {
@@ -308,13 +315,35 @@ impl GroupScopes {
     }
 
     pub fn register(&self, scope: &'static str, impl_: std::sync::Arc<dyn GroupScope>) {
-        if let Ok(mut map) = self.0.write() {
+        if let Ok(mut map) = self.scopes.write() {
             map.insert(scope, impl_);
         }
     }
 
     pub fn get(&self, scope: &str) -> Option<std::sync::Arc<dyn GroupScope>> {
-        self.0.read().ok().and_then(|map| map.get(scope).cloned())
+        self.scopes.read().ok().and_then(|map| map.get(scope).cloned())
+    }
+
+    /// The owner's topic for this scope (SPEC §host.groups). Replaces any previous hook.
+    pub fn set_notice(&self, scope: &str, hook: std::sync::Arc<dyn Fn() + Send + Sync>) {
+        self.notices
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(scope.to_owned(), hook);
+    }
+
+    /// Publish the scope's notice. A scope with no hook, and a refused write that
+    /// never calls this, publish nothing.
+    pub fn note(&self, scope: &str) {
+        let hook = self
+            .notices
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(scope)
+            .cloned();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 }
 
@@ -539,5 +568,19 @@ mod tests {
         scopes.register("mcps", std::sync::Arc::new(Fixed));
         assert!(scopes.get("mcps").is_some());
         assert!(scopes.get("nope").is_none());
+    }
+
+    // SPEC §host.groups: a successful group write notes the scope; a scope with no hook publishes nothing.
+    #[test]
+    fn a_scope_notice_fires_once_and_a_missing_hook_fires_nothing() {
+        let scopes = GroupScopes::new();
+        let hits = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let hits2 = hits.clone();
+        scopes.set_notice("tokens", std::sync::Arc::new(move || {
+            *hits2.lock().expect("hits") += 1;
+        }));
+        scopes.note("tokens");
+        scopes.note("secrets");
+        assert_eq!(*hits.lock().expect("hits"), 1);
     }
 }

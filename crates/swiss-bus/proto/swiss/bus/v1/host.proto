@@ -20,6 +20,7 @@ enum HostSub {
   HOST_SUB_RUNS = 1;
   HOST_SUB_REMOTE_SEAT = 2;
   HOST_SUB_PLUGINS = 3;
+  HOST_SUB_TOKENS = 4;
 }
 
 enum RemoteSeatId {
@@ -30,6 +31,14 @@ enum RemoteSeatId {
 enum PluginsId {
   PLUGINS_ID_UNSPECIFIED = 0;
   PLUGINS_CHANGED = 1;
+}
+
+// HOST.TOKENS (SPEC §bus.registry, SPEC §host.tokens). Module 4, sub 4.
+// A NOTICE with no key: the token list or its groups moved. The shell re-reads
+// GET /api/tokens. The body is empty on purpose.
+enum TokensId {
+  TOKENS_ID_UNSPECIFIED = 0;
+  TOKENS_CHANGED = 1;
 }
 
 enum RunsId {

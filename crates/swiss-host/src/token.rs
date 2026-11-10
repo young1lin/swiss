@@ -24,7 +24,7 @@
 //! On first boot the pre-multi-token secret migrates to a "default" token, so clients already
 //! configured with the old secret keep authenticating unchanged.
 
-use std::sync::RwLock;
+use std::sync::{Arc, Mutex, RwLock};
 
 use swiss_core::util::{new_secret, random_hex, timing_safe_eq};
 
@@ -102,7 +102,9 @@ fn safe_eq(a: &str, b: &str) -> bool {
 
 pub struct TokenManager {
     items: RwLock<Vec<TokenRec>>,
-    store: std::sync::Arc<dyn TokenPersistence>,
+    store: Arc<dyn TokenPersistence>,
+    /// HOST.TOKENS (SPEC §host.tokens). Absent in a test that does not care.
+    notice: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl TokenManager {
@@ -126,6 +128,20 @@ impl TokenManager {
         Self {
             items: RwLock::new(items),
             store,
+            notice: Mutex::new(None),
+        }
+    }
+
+    /// Where a token-list notice goes (SPEC §host.tokens). The composition passes
+    /// the bus; a test passes a counter.
+    pub fn set_notice(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self.notice.lock().unwrap_or_else(|e| e.into_inner()) = hook;
+    }
+
+    fn changed(&self) {
+        let hook = self.notice.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(hook) = hook {
+            hook();
         }
     }
 
@@ -176,9 +192,15 @@ impl TokenManager {
             secret: new_secret(),
             created_at: swiss_core::log::iso_now(),
         };
-        if let Ok(mut items) = self.items.write() {
+        let saved = if let Ok(mut items) = self.items.write() {
             items.push(rec.clone());
             self.store.save_tokens(&items);
+            true
+        } else {
+            false
+        };
+        if saved {
+            self.changed();
         }
         rec
     }
@@ -190,6 +212,8 @@ impl TokenManager {
         rec.secret = new_secret();
         let out = rec.clone();
         self.store.save_tokens(&items);
+        drop(items);
+        self.changed();
         Some(out)
     }
 
@@ -203,6 +227,10 @@ impl TokenManager {
         let changed = items.len() < before;
         if changed {
             self.store.save_tokens(&items);
+        }
+        drop(items);
+        if changed {
+            self.changed();
         }
         changed
     }

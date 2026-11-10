@@ -15,10 +15,10 @@ import { codeSchemeFor } from "../src/ui/code-scheme.js";
 const pages = vi.hoisted(() => ({ navigate: vi.fn(async () => {}) }));
 vi.mock("../src/page-registry.js", () => ({
   initPages: async () => {}, pageHasPendingChanges: () => false, pageUsesSidebar: () => false,
-  pollPage: () => {}, navigatePage: pages.navigate,
+  pollPage: () => {}, clockPage: () => {}, watchPluginInventory: () => {}, navigatePage: pages.navigate,
 }));
 vi.mock("../src/polling.js", () => ({ loadMemory: async () => {}, refreshNow: () => {} }));
-vi.mock("../src/views/tokens.js", () => ({ loadTokens: async () => {} }));
+vi.mock("../src/views/tokens.js", () => ({ loadTokens: async () => {}, watchTokens: () => {} }));
 
 async function settle(): Promise<void> {
   await vi.dynamicImportSettled();

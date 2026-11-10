@@ -52,6 +52,10 @@ Chinese) says one thing: run `swiss open`. No username/password and no logout �
 - **The config token** — the variable named by `tokenEnv` (overlay, then process env), then
   `SWISS_TOKEN`. The first boot seeds a token (`random_hex(24)`) when none exists.
 - Token groups are the `tokens` scope (§host.groups); tokens have no manual order.
+- Create, rotate, remove and a `tokens` group edit publish HOST.TOKENS (module 4, sub 4, an
+  empty `Notice`). A refused write publishes nothing. The shell re-reads `GET /api/tokens`;
+  the Tokens page paints from that read and has no poll of its own. `/api/info` is read once
+  at boot and after each WELCOME (§bus.link).
 
 ## §host.config — Config and the config store
 

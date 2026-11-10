@@ -22,10 +22,10 @@
    Servers and Traffic (the toolbar button is gone): manage the credential where the story
    that needs it is told.
 
-   The view is poll-safe the way Jobs and Plugins are: the 6s poll refetches the list and
-   patches the ROWS CONTAINER only — a full repaint would wipe the label input while
-   somebody is typing a new token's name into it. The once-only secret box lives in
-   the tokens domain (setTokenViewSecret) and survives both poll and refresh until navigation leaves.
+   The view is notice-safe: the shell's HOST.TOKENS read patches the ROWS CONTAINER only —
+   a full repaint would wipe the label input while somebody is typing a new token's name
+   into it. The once-only secret box lives in the tokens domain (setTokenViewSecret) and
+   survives both that read and refresh until navigation leaves.
 
    Groups (SPEC §host.groups): the list renders through the groups component with dragging off —
    creation time is the tokens' order, so the scope's order route is a 400 and no row can be
@@ -35,6 +35,9 @@
                                                                                                   
                                                             
 import { $, TOKEN_ID_KEY, api, apiJson, targetEl } from "../util.js";
+import { busOn } from "../bus/bus.js";
+import { Module, NoticeSchema } from "../bus/pb/swiss/bus/v1/bus_pb.js";
+import { HostSub, TokensId } from "../bus/pb/swiss/bus/v1/host_pb.js";
 import { fill, h } from "../h.js";
 import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
@@ -75,6 +78,26 @@ export function setActiveTokenSecret(secret               )       { tokensDomain
 
 /** The tokens domain's load (the old util-state boot and connect.ts both funnel here):
  * /api/tokens, then the group family on top. */
+let tokensListener                      = null;
+let tokensWatch                      = null;
+
+/** The Tokens page paints from the shell's read (SPEC §host.tokens). */
+export function onTokens(fn            )             {
+  tokensListener = fn;
+  return () => { if (tokensListener === fn) tokensListener = null; };
+}
+
+/** The shell's one HOST.TOKENS subscription, for the life of the page. */
+export function watchTokens()       {
+  if (tokensWatch) return;
+  tokensWatch = busOn(
+    { module: Module.HOST, sub: HostSub.TOKENS, key: "" },
+    TokensId.TOKENS_CHANGED,
+    NoticeSchema,
+    () => { void loadTokens(); },
+  );
+}
+
 export async function loadTokens()                {
   const r = await api("/api/tokens");
   if (!r.ok) return;
@@ -84,6 +107,7 @@ export async function loadTokens()                {
   // which the component draws as no divider at all.
   tokensDomain.groups = j.groups && j.groups.length ? j.groups : ["default"];
   tokensDomain.members = j.tokenGroups || {};
+  if (tokensListener) tokensListener();
 }
 
 /** Same rule as src/token.ts `pickCopyToken` — remembered id, else the `default` label, else first. */
@@ -268,7 +292,7 @@ function render()       {
   wire();
 }
 
-/** Poll-safe update: the groups region only, and only when the structure changed. The
+/** Notice-safe update: the groups region only, and only when the structure changed. The
  *  create form and the secret box are never touched from here. */
 function patch()       {
   if (signature() === painted) return;
@@ -342,18 +366,24 @@ function wire()       {
   };
 }
 
+let stopTokens                      = null;
+
 export async function mount()                {
   tokensDomain.viewSecret = null; // the once-only box is per-visit, like the sheet it replaced
   collapsed = loadCollapsed("tokens"); // before the first paint, so folded groups never flash open
+  stopTokens = onTokens(() => { patch(); });
   await refreshTokens();
   render();
 }
 export async function refresh()                { await refreshTokens(); render(); }
-export async function poll()                { await refreshTokens(); patch(); }
 export function countText()         {
   const n = tokenRows().length;
   return trn(n, "tokens.nTokens.one", "tokens.nTokens.other");
 }
-export function unmount()       { painted = ""; }
+export function unmount()       {
+  if (stopTokens) stopTokens();
+  stopTokens = null;
+  painted = "";
+}
 
 export { pickCopyToken, refreshTokens, rememberedTokenId };

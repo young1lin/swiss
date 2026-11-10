@@ -351,6 +351,18 @@ pub async fn run_gateway() -> Result<(), String> {
     // The same hub the plugins will register on (SPEC §bus). Set before the listener
     // accepts, like the catalog beside it.
     let _ = ctx.bus.set(services.bus.clone());
+    // HOST.TOKENS (SPEC §host.tokens): create, rotate, remove and a tokens group
+    // edit. Installed once the hub exists; a refused write never reaches it.
+    let tokens_bus = services.bus.clone();
+    let tokens_note = std::sync::Arc::new(move || {
+        swiss_host::notice::publish(
+            &tokens_bus,
+            swiss_bus::pb::v1::HostSub::Tokens as u32,
+            swiss_bus::pb::v1::TokensId::TokensChanged as u32,
+        );
+    });
+    ctx.tokens.set_notice(Some(tokens_note.clone()));
+    ctx.group_scopes.set_notice("tokens", tokens_note);
     // The consoles' history (SPEC §data.history): constructed closed here so the /api/db mount
     // can carry it; the Data plugin's start opens logs/data.db and its stop closes it.
     let data_history = swiss_data::history::DataHistory::new(swiss_core::paths::data_path(&["logs"]));

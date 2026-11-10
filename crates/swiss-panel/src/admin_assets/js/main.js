@@ -37,13 +37,13 @@ import { loadMemory, refreshNow } from "./polling.js";
 import { exitImmersive, immersiveOn, initImmersive } from "./immersive.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
-import { loadTokens } from "./views/tokens.js";
+import { loadTokens, watchTokens } from "./views/tokens.js";
 import { setFoldMap, setKnownPanelVersion, setListFilter } from "./ui-state.js";
 import { setTunFolds } from "./tunnel-state.js";
 import { setJobFolds } from "./job-state.js";
 import { mcpDetail, selectedMcp, setGatewayInfo } from "./mcp-state.js";
 import { initPrefs, relayPrefs } from "./bus/prefs.js";
-import { installBus } from "./bus/bus.js";
+import { busOnResync, installBus } from "./bus/bus.js";
 import { mountBusLine, repaintBusLine } from "./bus/line.js";
 import { applyLang, initLangButton, loadLocale, paintChrome, setBusLinePainter, tk, tr } from "./i18n.js";
 import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
@@ -93,8 +93,8 @@ function showApp()       {
 }
 
 /** Host facts the panel needs once: the token's env var name, and the named-token list (no
- *  secrets) for the management view. The panel stamp arrives on the bus WELCOME, not here
- *  (SPEC §bus.link); this poll stays until the token list has its own phase. */
+ *  secrets) for the management view. Read at boot and after every WELCOME (SPEC §bus.link).
+ *  The token list itself moves on HOST.TOKENS (SPEC §host.tokens). */
 async function loadInfo()                {
   try {
     const r = await api("/api/info");
@@ -217,7 +217,6 @@ if (window.matchMedia           ) {
 function poll()       {
   if (document.visibilityState !== "visible") return;
   void loadMemory(true);
-  void loadInfo();
   void pollPage();
   // The same tick repaints relative times. clock() reads nothing (SPEC §remote.panel).
   clockPage();
@@ -230,6 +229,8 @@ installBus({
   notice: mountBusLine,
 });
 watchPluginInventory(); // HOST.PLUGINS for the life of the page (SPEC §host.plugins)
+watchTokens(); // HOST.TOKENS for the life of the page (SPEC §host.tokens)
+busOnResync(() => { void loadInfo(); }); // /api/info once per WELCOME (SPEC §bus.link)
 initPrefs({ lang: applyLang, theme: (theme) => { setTheme(theme); paintThemeBtn(); }, codeScheme: setCodeScheme });
 
 setInterval(poll, 6000);
