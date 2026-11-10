@@ -226,6 +226,68 @@ describe("the process app editor session", () => {
     expect(body.config.apps[0].ports).toEqual([3892]);
   });
 
+  it("an emptied Ports drops --port and the image; a port typed again brings both back", async () => {
+    await editor.openForm(null);
+    const template = $("pr-f-template") as HTMLSelectElement;
+    const ports = $("pr-f-ports") as HTMLInputElement;
+    const typePorts = (text: string): void => { ports.value = text; ports.dispatchEvent(new Event("input")); };
+    template.value = "dsh-web-no-open";
+    template.dispatchEvent(new Event("change"));
+    typePorts("");
+    expect(($("pr-f-args") as HTMLTextAreaElement).value).toBe("web\n--no-open");
+    expect(($("pr-f-image") as HTMLInputElement).value).toBe("");
+    typePorts("4100");
+    expect(($("pr-f-args") as HTMLTextAreaElement).value).toBe("web\n--no-open\n--port\n4100");
+    expect(($("pr-f-image") as HTMLInputElement).value).toBe("node");
+    typePorts("");
+    await save();
+    const body = JSON.parse(puts()[0].body || "{}");
+    expect(body.config.apps[0]).toEqual({ name: "dsh", start: { program: "dsh", args: ["web", "--no-open"] } });
+  });
+
+  it("an image the reader typed survives an emptied Ports, and its refusal opens the fold", async () => {
+    await editor.openForm(null);
+    const template = $("pr-f-template") as HTMLSelectElement;
+    const ports = $("pr-f-ports") as HTMLInputElement;
+    template.value = "dsh-web";
+    template.dispatchEvent(new Event("change"));
+    value("image", "node.exe");
+    ports.value = "";
+    ports.dispatchEvent(new Event("input"));
+    expect(($("pr-f-image") as HTMLInputElement).value).toBe("node.exe");
+    const fold = $("pr-f-image").closest("details") as HTMLDetailsElement;
+    expect(fold.open).toBe(false);
+    await save();
+    expect(puts()).toHaveLength(0);
+    expect($("pr-f-err").textContent).toBe("image is only for apps that declare ports");
+    expect(fold.open).toBe(true);
+  });
+
+  it("the first save locks the template: the saved sheet edits the app, it does not re-pick it", async () => {
+    await editor.openForm(null);
+    const template = $("pr-f-template") as HTMLSelectElement;
+    template.value = "dsh-web";
+    template.dispatchEvent(new Event("change"));
+    respond = (request) => {
+      if (request.method === "PUT") {
+        config = JSON.parse(request.body || "{}").config;
+        revision++;
+        return Promise.resolve(answer({ config, revision, warnings: ["App is still running"] }));
+      }
+      return Promise.resolve(answer({ config, revision }));
+    };
+    await save();
+    expect($("sheet").hidden).toBe(false);
+    expect(template.disabled).toBe(true);
+    template.value = "";
+    template.dispatchEvent(new Event("change"));
+    expect(($("pr-f-program") as HTMLInputElement).value).toBe("dsh");
+    const ports = $("pr-f-ports") as HTMLInputElement;
+    ports.value = "4200";
+    ports.dispatchEvent(new Event("input"));
+    expect(($("pr-f-args") as HTMLTextAreaElement).value).toBe("web\n--port\n3080");
+  });
+
   it("a port typed before the template is kept, and args the reader edited never follow Ports", async () => {
     await editor.openForm(null);
     const template = $("pr-f-template") as HTMLSelectElement;

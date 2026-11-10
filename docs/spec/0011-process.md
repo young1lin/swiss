@@ -637,7 +637,12 @@ Sheets:
     where it starts (another process may hold it), a port already in Ports survives picking
     or switching a template, and a template is a launch ON a port - while its args are
     untouched, editing Ports to one port rebuilds them, so `--port` and the declared port
-    never split. Args the reader edited stay as typed. The table is
+    never split. Emptied Ports is a launch on no declared port: `--port` leaves the args and
+    the image leaves the fold (an image without ports is a refused save, and the reader never
+    saw the field); a port typed again brings both back. Half-typed or several ports change
+    nothing. Args or an image the reader edited stay as typed. A refusal about the image opens
+    the fold it lives in. The first save locks the select: the sheet that stays open (with
+    warnings) edits the saved app, and Ports stops rebuilding its args. The table is
     `views/process/templates.ts`, and two dsh launches ship: `dsh web` (opens the browser on
     each start) and `dsh web --no-open` (for Start with swiss - nothing pops up at boot, and
     Logs has the link with its token), both `--port <port>` with ports `[<port>]` (3080 until

@@ -24,7 +24,9 @@
  *
  * The port is the reader's: 3080 is only where it starts, since another process may hold it.
  * A template is a launch ON a port - `--port` in its argv is the port the row declares, so the
- * form rebuilds the argv as Ports changes and the two can never split. */
+ * form rebuilds the argv as Ports changes and the two can never split. An emptied Ports is a
+ * launch on no declared port: no `--port` (the program picks its own) and no image, since an
+ * image only names who may hold a declared port. */
 import { tk } from "../../i18n.js";
                                            
 
@@ -35,17 +37,20 @@ import { tk } from "../../i18n.js";
               
                                                 
                
-                                                                                                
-                              
+                                                                                             
+                                                                               
+                                     
  
 
-function dsh(...flags          )                             {
-  return (port) => ({
-    name: "dsh",
-    start: { program: "dsh", args: ["web", ...flags, "--port", String(port)] },
-    ports: [port],
-    image: "node",
-  });
+function dsh(...flags          )                                    {
+  return (port) => port == null
+    ? { name: "dsh", start: { program: "dsh", args: ["web", ...flags] } }
+    : {
+      name: "dsh",
+      start: { program: "dsh", args: ["web", ...flags, "--port", String(port)] },
+      ports: [port],
+      image: "node",
+    };
 }
 
 /* Option order is the select's order. */

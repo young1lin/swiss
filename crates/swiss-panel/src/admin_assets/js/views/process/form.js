@@ -47,9 +47,9 @@ import { APP_TEMPLATES, singlePort } from "./templates.js";
                                                                    
                                                              
                                                                                             
-                                                                                                
-                                                 
-                                                               
+                                                                                             
+                                                                 
+                                                                              
                                 
  
 
@@ -213,20 +213,45 @@ function applyTemplate(session               , key        )       {
   set("pr-f-args", args);
   set("pr-f-ports", filled ? (filled.ports || []).join(", ") : "");
   set("pr-f-image", filled ? filled.image || "" : "");
-  session.template = filled ? { key, name: filled.name, args } : null;
+  session.template = filled ? { key, name: filled.name, args, image: filled.image || "" } : null;
   control(session, "pr-f-template-why").textContent = t ? tr(t.why) : tr("process.form.templateHint");
 }
 
 /* Ports changed under a template: rebuild its argv on the new port, so `--port` and the
- * declared port never split. Args the reader edited are theirs and stay as typed. */
+ * declared port never split. Emptied Ports drops `--port` and the image (an image without a
+ * port is a refused save, and it sits in the fold); a port typed again brings both back. A
+ * half-typed or several-port text changes nothing. Args or an image the reader edited are
+ * theirs and stay as typed. */
 function followPort(session               )       {
   if (!owns(session) || !session.template) return;
   const t = templateOf(session.template.key);
+  if (!t) return;
+  const text = control                  (session, "pr-f-ports").value.trim();
+  const port = text ? singlePort(text) : null;
+  if (text && port == null) return;
+  const next = t.app(port);
   const args = control                     (session, "pr-f-args");
-  const port = singlePort(control                  (session, "pr-f-ports").value);
-  if (!t || port == null || args.value !== session.template.args) return;
-  args.value = (t.app(port).start.args || []).join("\n");
-  session.template.args = args.value;
+  if (args.value === session.template.args) {
+    args.value = (next.start.args || []).join("\n");
+    session.template.args = args.value;
+  }
+  const image = control                  (session, "pr-f-image");
+  if (image.value === session.template.image) {
+    image.value = next.image || "";
+    session.template.image = image.value;
+  }
+}
+
+/* After the first save the sheet edits a saved app, and a saved app's launch is edited, not
+ * re-picked (templateField): the select locks and Ports stops rebuilding the argv. */
+function lockTemplate(session               )       {
+  session.template = null;
+  const select = session.root.querySelector                   ("#pr-f-template");
+  if (select) {
+    select.onchange = null;
+    select.disabled = true;
+  }
+  control                  (session, "pr-f-ports").oninput = null;
 }
 
 function formSheet(session               , app                 )              {
@@ -400,7 +425,15 @@ function formArgv(session               , controlId        , fill               
 async function saveForm(session               )                {
   if (!owns(session) || session.saving) return;
   const read = readForm(session);
-  if (typeof read === "string") { showFormErr(session, read); return; }
+  if (typeof read === "string") {
+    showFormErr(session, read);
+    // The image lives in the fold: a refusal about it opens the fold so the field is in view.
+    if (read === tr("process.form.imageNeedsPorts")) {
+      const fold = control(session, "pr-f-image").closest("details");
+      if (fold) fold.open = true;
+    }
+    return;
+  }
   showFormErr(session, null);
   showFormWarnings(session, []);
   session.saving = true;
@@ -442,6 +475,7 @@ async function saveForm(session               )                {
       session.baseline = fingerprint(saved);
       control                  (session, "pr-f-name").value = saved.name;
       control                  (session, "pr-f-name").readOnly = true;
+      if (isNew) lockTemplate(session);
       toast(isNew ? tr("process.form.savedStart", { name: read.name }) : tr("process.form.saved", { name: read.name }));
       const warnings = Array.isArray(body.warnings) ? body.warnings.filter((w         )              => typeof w === "string") : [];
       if (warnings.length) {
