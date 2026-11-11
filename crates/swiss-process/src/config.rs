@@ -127,6 +127,23 @@ pub fn expand_dir(dir: &str) -> Option<PathBuf> {
     expanded.is_absolute().then_some(expanded)
 }
 
+/// A `program` as the spawn sees it: a leading `~/` (or `~\`) expands against
+/// the user's home like `dir` and `log` do, with the rest joined part by part
+/// so either separator works on every platform (SPEC §process.apps). Anything
+/// else is passed as written - a bare name still resolves on PATH at spawn.
+/// It is what lets one template name `~/.cc-otel/cc-otel` on Windows and Unix
+/// alike (resolution adds `.exe` on Windows).
+pub fn expand_program(program: &str) -> String {
+    let Some(rest) = program.strip_prefix("~/").or_else(|| program.strip_prefix("~\\")) else {
+        return program.to_string();
+    };
+    let mut path = swiss_core::paths::home_dir();
+    for part in rest.split(['/', '\\']).filter(|p| !p.is_empty()) {
+        path.push(part);
+    }
+    path.to_string_lossy().into_owned()
+}
+
 /// Does this declared image name match the process that owns a port? No path
 /// separators allowed in the declaration; the comparison ignores case, and on
 /// Windows a declaration without an extension also matches `<name>.exe` (SPEC
@@ -505,14 +522,14 @@ pub fn validate_config_for_start(
 pub fn config_warnings(config: &ProcessConfig, program_resolves: &dyn Fn(&str) -> bool) -> Vec<String> {
     let mut warnings = Vec::new();
     for app in &config.apps {
-        if !program_resolves(&app.start.program) {
+        if !program_resolves(&expand_program(&app.start.program)) {
             warnings.push(format!(
                 "{}: start.program {} does not resolve on PATH",
                 app.name, app.start.program
             ));
         }
         if let Some(stop) = &app.stop {
-            if !program_resolves(&stop.program) {
+            if !program_resolves(&expand_program(&stop.program)) {
                 warnings.push(format!(
                     "{}: stop.program {} does not resolve on PATH",
                     app.name, stop.program
@@ -728,5 +745,32 @@ mod tests {
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(warnings[0].contains("does not resolve on PATH"), "{warnings:?}");
         assert!(warnings[1].contains("does not exist"), "{warnings:?}");
+    }
+
+    #[test]
+    fn a_program_under_home_expands_its_tilde_and_a_bare_name_does_not() {
+        let home = swiss_core::paths::home_dir();
+        let expected = home.join(".cc-otel").join("cc-otel").to_string_lossy().into_owned();
+        assert_eq!(expand_program("~/.cc-otel/cc-otel"), expected);
+        assert_eq!(expand_program("~\\.cc-otel\\cc-otel"), expected);
+        assert_eq!(expand_program("cc-otel"), "cc-otel");
+        assert_eq!(expand_program("~cc-otel"), "~cc-otel", "only ~/ and ~\\ are home");
+        // The warnings check the program the spawn would run, never the text.
+        let config = read_config(
+            &json!({ "apps": [{
+                "name": "cc-otel",
+                "start": { "program": "~/.cc-otel/cc-otel", "args": ["start"] },
+                "stop": { "program": "~/.cc-otel/cc-otel", "args": ["stop"] }
+            }]}),
+            &rules(),
+        )
+        .unwrap();
+        let seen = std::sync::Mutex::new(Vec::new());
+        let warnings = config_warnings(&config, &|program| {
+            seen.lock().unwrap().push(program.to_string());
+            true
+        });
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(*seen.lock().unwrap(), vec![expected.clone(), expected]);
     }
 }

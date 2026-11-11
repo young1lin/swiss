@@ -168,7 +168,7 @@ describe("the process app editor session", () => {
   it("a dsh template fills the whole launch with node as the image, and saves it as argv", async () => {
     await editor.openForm(null);
     const template = $("pr-f-template") as HTMLSelectElement;
-    expect(Array.from(template.options).map((o) => o.value)).toEqual(["", "dsh-web", "dsh-web-no-open"]);
+    expect(Array.from(template.options).map((o) => o.value)).toEqual(["", "dsh-web", "dsh-web-no-open", "cc-otel"]);
     template.value = "dsh-web-no-open";
     template.dispatchEvent(new Event("change"));
     expect(($("pr-f-name") as HTMLInputElement).value).toBe("dsh");
@@ -184,6 +184,75 @@ describe("the process app editor session", () => {
       image: "node",
       autostart: true,
     });
+  });
+
+  it("the cc-otel template fills its own ports, the daemon image, a stop command and the UI", async () => {
+    await editor.openForm(null);
+    const template = $("pr-f-template") as HTMLSelectElement;
+    // A port typed before the pick is not cc-otel's: its ports are its yaml's.
+    value("ports", "3080");
+    template.value = "cc-otel";
+    template.dispatchEvent(new Event("change"));
+    expect(($("pr-f-name") as HTMLInputElement).value).toBe("cc-otel");
+    expect(($("pr-f-program") as HTMLInputElement).value).toBe("~/.cc-otel/cc-otel");
+    expect(($("pr-f-ports") as HTMLInputElement).value).toBe("4317, 4318, 8899");
+    expect(($("pr-f-stop-program") as HTMLInputElement).value).toBe("~/.cc-otel/cc-otel");
+    expect(($("pr-f-stop-args") as HTMLTextAreaElement).value).toBe("stop");
+    expect($("pr-f-template-why").textContent).toContain("cc-otel.yaml");
+    ($("pr-f-autostart") as HTMLInputElement).checked = true;
+    await save();
+    const body = JSON.parse(puts()[0].body || "{}");
+    expect(body.config.apps[0]).toEqual({
+      name: "cc-otel",
+      start: { program: "~/.cc-otel/cc-otel", args: ["start"] },
+      ports: [4317, 4318, 8899],
+      image: "cc-otel",
+      autostart: true,
+      stop: { program: "~/.cc-otel/cc-otel", args: ["stop"] },
+      ui: "http://localhost:8899",
+    });
+  });
+
+  it("cc-otel's Ports moves only the image; its argv never takes a --port", async () => {
+    await editor.openForm(null);
+    const template = $("pr-f-template") as HTMLSelectElement;
+    const ports = $("pr-f-ports") as HTMLInputElement;
+    const typePorts = (text: string): void => { ports.value = text; ports.dispatchEvent(new Event("input")); };
+    template.value = "cc-otel";
+    template.dispatchEvent(new Event("change"));
+    typePorts("4317, 4318, 9900");
+    expect(($("pr-f-args") as HTMLTextAreaElement).value).toBe("start");
+    expect(($("pr-f-image") as HTMLInputElement).value).toBe("cc-otel");
+    typePorts("");
+    expect(($("pr-f-args") as HTMLTextAreaElement).value).toBe("start");
+    expect(($("pr-f-image") as HTMLInputElement).value).toBe("");
+    typePorts("4317, 4318, 9900");
+    expect(($("pr-f-image") as HTMLInputElement).value).toBe("cc-otel");
+    await save();
+    const body = JSON.parse(puts()[0].body || "{}");
+    expect(body.config.apps[0].ports).toEqual([4317, 4318, 9900]);
+    expect(body.config.apps[0].start.args).toEqual(["start"]);
+  });
+
+  it("switching away from cc-otel takes back its stop command and UI, never ones the reader typed", async () => {
+    await editor.openForm(null);
+    const template = $("pr-f-template") as HTMLSelectElement;
+    const pick = (key: string): void => { template.value = key; template.dispatchEvent(new Event("change")); };
+    pick("cc-otel");
+    pick("dsh-web-no-open");
+    expect(($("pr-f-name") as HTMLInputElement).value).toBe("dsh");
+    expect(($("pr-f-stop-program") as HTMLInputElement).value).toBe("");
+    expect(($("pr-f-stop-args") as HTMLTextAreaElement).value).toBe("");
+    expect(($("pr-f-ui") as HTMLInputElement).value).toBe("");
+    value("ui", "http://127.0.0.1:3080");
+    value("stop-program", "taskkill");
+    pick("cc-otel");
+    expect(($("pr-f-ui") as HTMLInputElement).value).toBe("http://127.0.0.1:3080");
+    expect(($("pr-f-stop-program") as HTMLInputElement).value).toBe("taskkill");
+    expect(($("pr-f-stop-args") as HTMLTextAreaElement).value).toBe("");
+    pick("");
+    expect(($("pr-f-ui") as HTMLInputElement).value).toBe("http://127.0.0.1:3080");
+    expect(($("pr-f-program") as HTMLInputElement).value).toBe("");
   });
 
   it("a template never replaces a typed name, and None empties only what a template filled", async () => {

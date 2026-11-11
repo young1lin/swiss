@@ -224,8 +224,8 @@ reads as no apps; there is no migration code.
 |---|---|
 | `apps` | At most 64 entries. Their order is the page's order and the start-with-swiss order |
 | `name` | Required, unique, `^[a-z0-9-]{1,32}$`. It is the key in routes, the CLI and the history, and it names the capture file |
-| `start` | Required: `{program, args?}`, typed argv, never a string to split (§process.actions). `program` must not be empty; `args` holds at most 64 entries |
-| `stop` | Optional, same shape. Without it, Stop is a hard kill, and the row says so (`stopIsKill`) |
+| `start` | Required: `{program, args?}`, typed argv, never a string to split (§process.actions). `program` must not be empty; `args` holds at most 64 entries. A bare name resolves on PATH at spawn. A leading `~/` (or `~\`) expands against the user's home, the rest joined part by part so either separator works, and is stored as typed: `~/.cc-otel/cc-otel` is one config for Windows and Unix, since resolution adds `.exe` on Windows. The save's PATH warning checks the expanded path |
+| `stop` | Optional, same shape and the same `~/` rule. Without it, Stop is a hard kill, and the row says so (`stopIsKill`) |
 | `dir` | Optional working directory; defaults to the user's home. A leading `~` expands, and the result must be absolute, or the save is refused. A directory missing at start fails that start, naming the directory |
 | `ports` | Optional, at most 16, each 1–65535. A port is unique within its entry and across entries (one port belongs to one app), and is never the port this gateway listens on |
 | `image` | Required when `ports` is set, and refused without `ports`. It is the executable basename expected to own the ports: no path separators, compared case-insensitively. On Windows a name without an extension also matches `<name>.exe`. `swiss` and `swiss.exe` are refused |
@@ -317,6 +317,7 @@ appended to the history. The panel and the CLI poll `GET /api/process` to see it
    | The spawned process exits 0, and the app has `ports` | Polling goes on. The ports bind → ok. The window ends first → failed: "launcher exited 0 but nothing listens on 4318" |
    | The spawned process exits 0, and the app has no `ports` | ok: "exited 0; declare ports to track what it started" |
    | An app without `ports` is still alive 2 s after the spawn (`SETTLE`) | ok: "running (pid N)" |
+   | The window ends with a declared port bound by a process whose image does not match | failed, as a conflict (start with swiss does not retry it), naming the holder - never "not listening", since the port IS bound: "started (pid N), but port 3080 is held by pid M (node.exe), not the image dsh - if that is this app, set image to node.exe; still running, not killed". Another user's socket reads "port 4317 is owned by another user", with no image advice; after a launcher's exit 0 the sentence leads "launcher exited 0, but …" |
    | The window ends with the spawned process alive and a port still not bound | failed: "started (pid N) but not listening on 4318 after 30 s; still running, not killed" |
 
 4. **A start never kills what it started**, not when the window ends and not on a failure. A
@@ -629,21 +630,24 @@ Sheets:
     path input may shrink: a long directory path must never push Go or Up outside the dialog.
   - **Templates** (Add only; an existing app's launch is edited, not re-picked). A Template
     select over the form fills a known program's whole launch, so the reader picks HOW it
-    starts instead of working out which executable ends up owning the port: name (only while
-    the field is empty or still holds the last template's), program, args, ports and image.
-    Autostart, dir, stop, env, log and UI stay as they are; None empties the filled fields
-    again, the name only if a template put it there. One quiet line under the select says
-    what the chosen template decided. **The port is the reader's**: a template's port is only
-    where it starts (another process may hold it), a port already in Ports survives picking
-    or switching a template, and a template is a launch ON a port - while its args are
-    untouched, editing Ports to one port rebuilds them, so `--port` and the declared port
-    never split. Emptied Ports is a launch on no declared port: `--port` leaves the args and
-    the image leaves the fold (an image without ports is a refused save, and the reader never
-    saw the field); a port typed again brings both back. Half-typed or several ports change
-    nothing. Args or an image the reader edited stay as typed. A refusal about the image opens
+    starts instead of working out which executable ends up owning the port: program, args,
+    ports and image outright; name, the stop command (program and args as one answer) and UI
+    only while the field is empty or still holds the last template's text, so a later
+    template or None may take them back but never replaces what the reader typed. Autostart,
+    dir, env and log stay as they are; None empties the filled fields again. One quiet line
+    under the select says what the chosen template decided. **A `--port` template's port is
+    the reader's**: its port is only where it starts (another process may hold it), a port
+    already in Ports survives picking or switching a template, and the template is a launch
+    ON a port - while its args are untouched, editing Ports to one port rebuilds them, so
+    `--port` and the declared port never split. A template whose program keeps its ports in
+    its own config file fills those ports whatever Ports held, and Ports moves only its image.
+    Emptied Ports is a launch on no declared port: `--port` leaves the args and the image
+    leaves the fold (an image without ports is a refused save, and the reader never saw the
+    field); a port typed again brings both back. Half-typed or several ports change nothing
+    for a `--port` template. Args or an image the reader edited stay as typed. A refusal about the image opens
     the fold it lives in. The first save locks the select: the sheet that stays open (with
     warnings) edits the saved app, and Ports stops rebuilding its args. The table is
-    `views/process/templates.ts`, and two dsh launches ship: `dsh web` (opens the browser on
+    `views/process/templates.ts`, and three launches ship. Two are dsh: `dsh web` (opens the browser on
     each start) and `dsh web --no-open` (for Start with swiss - nothing pops up at boot, and
     Logs has the link with its token), both `--port <port>` with ports `[<port>]` (3080 until
     changed) and image `node`. dsh is an npm-installed Node CLI:
@@ -651,7 +655,12 @@ Sheets:
     the program (`dsh`) read the running app as a conflict with itself - "port 3080 is held by
     pid N (node.exe)" after a start that timed out (the owner's finding, 2026-11-10). `node`
     matches `node.exe` on Windows and `node` on Unix. No `ui`: dsh's link carries a
-    per-start token the config cannot know.
+    per-start token the config cannot know. The third is `cc-otel start`: program
+    `~/.cc-otel/cc-otel` (where `cc-otel install` puts it, off PATH; see `start` above),
+    args `start`, stop `~/.cc-otel/cc-otel stop`, ports `[4317, 4318, 8899]` (cc-otel.yaml's
+    OTLP gRPC, OTLP HTTP and dashboard), image `cc-otel` and UI `http://localhost:8899`.
+    `start` is a launcher that forks the daemon and exits 0, so the image is the daemon's,
+    and its stop command spares the daemon a hard kill.
   - `env` is `KEY=value` lines through `envToText`/`envToObj` (`fields.ts`, the proc MCP
     form's editor), kept exactly as typed, so a reference stays a reference.
   - Both start and stop args use one line per argv entry, preserving spaces within entries

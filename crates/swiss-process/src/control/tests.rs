@@ -510,6 +510,46 @@ async fn a_start_window_that_ends_never_kills_a_live_process() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_port_bound_under_another_image_is_named_never_not_listening() {
+    // The dsh shape found on 19999 (2026-11-10): `dsh` is dsh.cmd, so the
+    // spawned pid is cmd.exe and its node.exe binds 3080, while the image the
+    // form derived from the program is `dsh`. The port IS bound: the failure
+    // names who holds it and the image that would match.
+    let rig = rig(
+        vec![read_app(&json!({
+            "name": "dsh",
+            "start": { "program": "dsh", "args": ["web", "--port", "3080"] },
+            "ports": [3080],
+            "image": "dsh",
+            "autostart": true
+        }))],
+        999,
+    );
+    rig.probe.state.lock().unwrap().procs.insert(
+        4321,
+        OwnerFact { pid: 4321, image: "cmd.exe".to_string(), created_at: 1_700_000_000_000 },
+    );
+    let probe = rig.probe.clone();
+    *rig.spawner.on_spawn.lock().unwrap() = Box::new(move |_spec| {
+        let probe = probe.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(POLL_STEP).await;
+            listen(&probe, 3080, 79700, "node.exe");
+        });
+        Ok(Spawned { pid: 4321, created_at: Some(1_700_000_000_000), shares_job: false, exits: None })
+    });
+    let outcome = rig.control.run_start(&rig.control.app("dsh").unwrap(), "panel").await;
+    assert!(!outcome.ok);
+    assert_eq!(
+        outcome.message,
+        "started (pid 4321), but port 3080 is held by pid 79700 (node.exe), not the image dsh - \
+         if that is this app, set image to node.exe; still running, not killed"
+    );
+    assert!(outcome.conflict, "start with swiss leaves it alone, no retry");
+    assert!(rig.killer.killed.lock().unwrap().is_empty(), "a failed start never kills");
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_launcher_that_exits_0_polls_on_and_fails_only_at_the_window_end() {
     let rig = rig(vec![otel_app()], 999);
     *rig.spawner.on_spawn.lock().unwrap() = Box::new(|_spec| {
@@ -1565,11 +1605,11 @@ async fn a_port_held_by_pid_0_is_a_stranger_in_the_window() {
         .run_start(&rig.control.app("cc-otel").unwrap(), "panel")
         .await;
     assert!(!outcome.ok, "a stranger's port never settles an ok");
-    assert!(
-        outcome.message.contains("not listening on"),
-        "{:?}",
-        outcome.message
+    assert_eq!(
+        outcome.message,
+        "started (pid 5), but port 4317 is owned by another user; still running, not killed"
     );
+    assert!(outcome.conflict, "a stranger's port is a conflict, not a slow start");
     assert!(rig
         .control
         .record

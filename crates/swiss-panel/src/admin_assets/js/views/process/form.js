@@ -35,6 +35,7 @@ import { APP_TEMPLATES, singlePort } from "./templates.js";
  * was joined from, captured so a field the user never touched can hand its
  * original argv back whole (see formArgv). */
                                                   
+                                                                                                                                    
 
                          
                     
@@ -47,9 +48,9 @@ import { APP_TEMPLATES, singlePort } from "./templates.js";
                                                                    
                                                              
                                                                                             
-                                                                                             
-                                                                 
-                                                                              
+                                                                                            
+                                                                                       
+                                
                                 
  
 
@@ -194,42 +195,64 @@ function templateOf(key        )                                        {
   return Object.prototype.hasOwnProperty.call(APP_TEMPLATES, key) ? APP_TEMPLATES[key] : null;
 }
 
-/* A template fills what it decides - name (only while the field is empty or still holds the
- * last template's), program, args, ports and image - and leaves autostart, dir, stop, env, log
- * and UI as they are. The port is the reader's: one already in Ports stays (3080 may be taken),
- * and only an empty or unreadable one takes the template's. None empties the filled fields
- * again, the name only if a template put it there. */
+/* A template fills what it decides. Program, args, ports and image it sets outright; the name,
+ * the stop command and the UI only while the field is empty or still holds the last template's
+ * text, so a later template or None may replace them but never text the reader typed. Autostart,
+ * dir, env and log stay as they are. A `--port` launch's port is the reader's: one already in
+ * Ports stays (3080 may be taken), and only an empty or unreadable one takes the template's; a
+ * template with its own ports (cc-otel's are in its yaml) fills those. None empties the filled
+ * fields again. */
 function applyTemplate(session               , key        )       {
   if (!owns(session)) return;
   const t = templateOf(key);
-  const set = (id        , text        )       => { control                                        (session, id).value = text; };
-  const name = control                  (session, "pr-f-name");
+  const ctl = (id        )                                         => control                                        (session, id);
   const prior = session.template;
-  const port = t ? singlePort(control                  (session, "pr-f-ports").value) ?? t.port : 0;
-  const filled = t ? t.app(port) : null;
-  if (!name.value.trim() || (prior && name.value === prior.name)) name.value = filled ? filled.name : "";
+  const typed = singlePort(ctl("pr-f-ports").value);
+  const filled = t ? t.app(t.portInArgs && typed != null ? [typed] : t.ports) : null;
+  const name = filled ? filled.name : "";
+  const stopProgram = filled && filled.stop ? filled.stop.program : "";
+  const stopArgs = filled && filled.stop ? (filled.stop.args || []).join("\n") : "";
+  const ui = filled ? filled.ui || "" : "";
+  const shared = (el                                        , last                    )          =>
+    !el.value.trim() || (last !== undefined && el.value === last);
+  if (shared(ctl("pr-f-name"), prior?.name)) ctl("pr-f-name").value = name;
+  // The stop command is one answer: program and args move together or not at all.
+  const stopP = ctl("pr-f-stop-program");
+  const stopA = ctl("pr-f-stop-args");
+  if ((!stopP.value.trim() && !stopA.value.trim()) || (prior && stopP.value === prior.stopProgram && stopA.value === prior.stopArgs)) {
+    stopP.value = stopProgram;
+    stopA.value = stopArgs;
+  }
+  if (shared(ctl("pr-f-ui"), prior?.ui)) ctl("pr-f-ui").value = ui;
   const args = filled ? (filled.start.args || []).join("\n") : "";
-  set("pr-f-program", filled ? filled.start.program : "");
-  set("pr-f-args", args);
-  set("pr-f-ports", filled ? (filled.ports || []).join(", ") : "");
-  set("pr-f-image", filled ? filled.image || "" : "");
-  session.template = filled ? { key, name: filled.name, args, image: filled.image || "" } : null;
+  ctl("pr-f-program").value = filled ? filled.start.program : "";
+  ctl("pr-f-args").value = args;
+  ctl("pr-f-ports").value = filled ? (filled.ports || []).join(", ") : "";
+  ctl("pr-f-image").value = filled ? filled.image || "" : "";
+  session.template = filled ? { key, name, stopProgram, stopArgs, ui, args, image: filled.image || "" } : null;
   control(session, "pr-f-template-why").textContent = t ? tr(t.why) : tr("process.form.templateHint");
 }
 
-/* Ports changed under a template: rebuild its argv on the new port, so `--port` and the
- * declared port never split. Emptied Ports drops `--port` and the image (an image without a
- * port is a refused save, and it sits in the fold); a port typed again brings both back. A
- * half-typed or several-port text changes nothing. Args or an image the reader edited are
- * theirs and stay as typed. */
+/* Ports changed under a template. A `--port` launch rebuilds its argv on the new port, so
+ * `--port` and the declared port never split; a half-typed or several-port text changes
+ * nothing. A template with its own ports has no port in its argv: only the image follows. Either
+ * way an emptied Ports drops the image (an image without a port is a refused save, and it sits
+ * in the fold) and `--port` with it, and a port typed again brings both back. Args or an image
+ * the reader edited are theirs and stay as typed. */
 function followPort(session               )       {
   if (!owns(session) || !session.template) return;
   const t = templateOf(session.template.key);
   if (!t) return;
   const text = control                  (session, "pr-f-ports").value.trim();
-  const port = text ? singlePort(text) : null;
-  if (text && port == null) return;
-  const next = t.app(port);
+  let ports           = [];
+  if (text && t.portInArgs) {
+    const port = singlePort(text);
+    if (port == null) return;
+    ports = [port];
+  } else if (text) {
+    ports = t.ports;
+  }
+  const next = t.app(ports);
   const args = control                     (session, "pr-f-args");
   if (args.value === session.template.args) {
     args.value = (next.start.args || []).join("\n");

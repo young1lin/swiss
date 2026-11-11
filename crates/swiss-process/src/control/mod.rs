@@ -36,7 +36,7 @@ use swiss_core::secure::statefile;
 use swiss_host::services::BootInfo;
 use tokio::sync::mpsc;
 
-use crate::config::{expand_dir, image_matches, AppConfig, ConfigRules};
+use crate::config::{expand_dir, expand_program, image_matches, AppConfig, ConfigRules};
 use crate::facts::FactSnapshot;
 use crate::history::{HistoryEntry, ProcessHistory};
 use crate::logs;
@@ -822,7 +822,7 @@ impl AppControl {
         }
 
         let spec = SpawnSpec {
-            program: app.start.program.clone(),
+            program: expand_program(&app.start.program),
             args: resolved_args,
             cwd,
             env,
@@ -842,6 +842,11 @@ impl AppControl {
         // A launcher that exits 0 does NOT end the window (SPEC §process.apps):
         // the child it started may still bind, so polling goes on to the end.
         let mut launcher_exited = false;
+        // The last poll's stranger on a declared port: the window's failure
+        // names it. The port IS bound, so "not listening" would be false - on
+        // 2026-11-10 dsh's own node.exe held 3080 under the image `dsh` and the
+        // start read "not listening on 3080 after 30s".
+        let mut stranger: Option<(u32, String, u16)> = None;
         loop {
             if let Some(code) = poll_exit(&mut exits) {
                 if code != 0 {
@@ -865,7 +870,12 @@ impl AppControl {
             let up = if app.ports.is_empty() {
                 self.deps.probe.process(pid).await.is_some()
             } else {
-                match self.ports_state(app).await {
+                let state = self.ports_state(app).await;
+                stranger = match &state {
+                    PortsState::Stranger(other, image, port) => Some((*other, image.clone(), *port)),
+                    _ => None,
+                };
+                match state {
                     PortsState::AllUp => true,
                     // An unreadable table judges by the no-ports rows (SPEC
                     // §process.apps): the spawned pid decides. A dead
@@ -880,6 +890,19 @@ impl AppControl {
             if tokio::time::Instant::now() >= deadline {
                 // The window ends: the app stays exactly as it is - a live
                 // process is NEVER killed by a failed start (SPEC §process.apps).
+                if let Some((other, image, port)) = &stranger {
+                    // A port that came up under another image is a conflict,
+                    // not a slow app: start with swiss does not retry it.
+                    let mut outcome = Outcome::failed(
+                        "start",
+                        window_stranger_sentence(app, pid, launcher_exited, *other, image, *port),
+                    );
+                    outcome.conflict = true;
+                    if launcher_exited {
+                        outcome.exit_code = Some(0);
+                    }
+                    return outcome;
+                }
                 let mut outcome = Outcome::failed(
                     "start",
                     if app.ports.is_empty() {
@@ -1121,7 +1144,7 @@ impl AppControl {
                     }
                 }
                 let spec = SpawnSpec {
-                    program: stop.program.clone(),
+                    program: expand_program(&stop.program),
                     args: resolved_args,
                     cwd: app.dir.as_deref().and_then(expand_dir),
                     env: Vec::new(),
@@ -1792,6 +1815,37 @@ fn conflict_sentence(pid: u32, image: &str, port: u16) -> String {
     } else {
         format!("port {port} is held by pid {pid} ({image})")
     }
+}
+
+/// The start window's failure when a declared port is bound by a process whose
+/// image does not match (SPEC §process.apps): who holds it, and - when that
+/// owner has a name - the image the config would need if it is this app (an
+/// npm shim such as `dsh` runs as node.exe).
+fn window_stranger_sentence(
+    app: &AppConfig,
+    pid: u32,
+    launcher_exited: bool,
+    other: u32,
+    image: &str,
+    port: u16,
+) -> String {
+    let lead = if launcher_exited {
+        "launcher exited 0".to_string()
+    } else {
+        format!("started (pid {pid})")
+    };
+    let mut sentence = format!("{lead}, but {}", conflict_sentence(other, image, port));
+    if other != 0 && !image.is_empty() {
+        if let Some(declared) = app.image.as_deref() {
+            sentence.push_str(&format!(
+                ", not the image {declared} - if that is this app, set image to {image}"
+            ));
+        }
+    }
+    if !launcher_exited {
+        sentence.push_str("; still running, not killed");
+    }
+    sentence
 }
 
 fn first_port(app: &AppConfig) -> u16 {
