@@ -410,7 +410,8 @@ an agent setting:
   worked is a `queued_command` attachment, an ask like any other), DSH's session folder (zstd frames
   read from the end), Codex's recent rollouts (the newest 3 days, a whole month of them with a
   session id: a rollout stays in the folder of the day its conversation began), opencode's
-  SQLite (read-only). opencode and a Codex with no thread id give no session id, so their
+  SQLite (read-only; the newest 4000 `text` and `tool` parts of the window, so a busy window
+  drops its oldest rows, never the call). opencode and a Codex with no thread id give no session id, so their
   reader looks through the conversations written around the run's start. A match is a call logged between 30 min before and 10 s after the run began
   that holds ≥ 0.6 of the run's own words, never one another run already claimed. `log` is
   read only when it has the shape that agent's own log has for that session, so a run input

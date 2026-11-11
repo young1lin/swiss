@@ -725,11 +725,16 @@ async fn opencode_read(ask: &TrailAsk) -> Result<Option<Value>, String> {
     let mut conn = sqlx::SqliteConnection::connect_with(&options)
         .await
         .map_err(|e| format!("the agent's database cannot be opened: {e}"))?;
+    // Every placeholder numbered: sqlx counts a bare `?` on its own and skips the `?N` ones, so
+    // a bare `?` after `?3` took the third value, and `LIMIT ''` failed every look with
+    // "datatype mismatch" (2026-11-11). Only the parts the events come from, the newest first:
+    // past the row cap, the oldest go, never the call just before the run.
     let rows = sqlx::query(
         "SELECT p.session_id, p.time_created, p.data, coalesce(json_extract(m.data, '$.role'), '') \
          FROM part p JOIN message m ON m.id = p.message_id \
-         WHERE p.time_created >= ? AND p.time_created <= ? AND (?3 = '' OR p.session_id = ?3) \
-         ORDER BY p.time_created LIMIT ?",
+         WHERE p.time_created >= ?1 AND p.time_created <= ?2 AND (?3 = '' OR p.session_id = ?3) \
+         AND json_extract(p.data, '$.type') IN ('text', 'tool') \
+         ORDER BY p.time_created DESC LIMIT ?4",
     )
     .bind(ask.before_ms - BEFORE_WINDOW_MS)
     .bind(ask.before_ms + AFTER_SLACK_MS)
@@ -739,7 +744,7 @@ async fn opencode_read(ask: &TrailAsk) -> Result<Option<Value>, String> {
     .await
     .map_err(|e| format!("the agent's database cannot be read: {e}"))?;
     let mut streams: Vec<Stream> = Vec::new();
-    for row in rows {
+    for row in rows.into_iter().rev() {
         let (Ok(session), Ok(at), Ok(data), Ok(role)) =
             (row.try_get::<String, _>(0), row.try_get::<i64, _>(1), row.try_get::<String, _>(2), row.try_get::<String, _>(3))
         else {
@@ -1023,6 +1028,66 @@ mod tests {
         assert!(cmd(r#"tools.exec_command({cmd:"open"#).is_empty());
         // A `cmd` inside another value is not the key.
         assert_eq!(cmd(r#"tools.exec_command({name:"xcmd: no", cmd:"yes"})"#), ["yes"]);
+    }
+
+    #[test]
+    fn opencode_reads_its_own_database_and_finds_the_call() {
+        let dir = std::env::temp_dir().join(format!("swiss-trail-opencode-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("opencode.db");
+        let at = 1_794_377_000_000_i64;
+        let made = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            use sqlx::Connection;
+            let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&db).create_if_missing(true);
+            let mut conn = sqlx::SqliteConnection::connect_with(&options).await?;
+            // The two tables as opencode creates them (read from a live database 2026-11-11).
+            for table in [
+                "CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, \
+                 time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)",
+                "CREATE TABLE part (id text PRIMARY KEY, message_id text NOT NULL, session_id text NOT NULL, \
+                 time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)",
+            ] {
+                sqlx::query(table).execute(&mut conn).await?;
+            }
+            for (id, role, time) in [("m1", "user", at), ("m2", "assistant", at + 1000)] {
+                sqlx::query("INSERT INTO message VALUES (?1, 'ses_a', ?2, ?2, ?3)")
+                    .bind(id)
+                    .bind(time)
+                    .bind(json!({ "role": role }).to_string())
+                    .execute(&mut conn)
+                    .await?;
+            }
+            let call = json!({ "type": "tool", "tool": "bash", "callID": "call_oc", "state": {
+                "status": "completed", "input": { "command": "swiss remote exec test --why 'check the disk' -- df -h" },
+                "time": { "start": at + 2000, "end": at + 3000 }
+            }});
+            for (id, message, time, data) in [
+                ("p1", "m1", at, json!({ "type": "text", "text": "is the disk on test full?" })),
+                ("p2", "m2", at + 1000, json!({ "type": "text", "text": "Checking the disk." })),
+                ("p2s", "m2", at + 1500, json!({ "type": "step-start" })),
+                ("p3", "m2", at + 2000, call),
+            ] {
+                sqlx::query("INSERT INTO part VALUES (?1, ?2, 'ses_a', ?3, ?3, ?4)")
+                    .bind(id)
+                    .bind(message)
+                    .bind(time)
+                    .bind(data.to_string())
+                    .execute(&mut conn)
+                    .await?;
+            }
+            conn.close().await
+        });
+        made.expect("the fixture database");
+        let mut look = ask("opencode", &["test", "df", "-h", "check", "the", "disk"], at + 2500);
+        look.log = db.clone();
+        let trail = opencode_find(&look).expect("the database reads").expect("the call is found");
+        assert_eq!(trail["callId"], "call_oc", "{trail}");
+        assert_eq!(trail["session"], "ses_a", "{trail}");
+        assert_eq!(trail["asked"]["text"], "is the disk on test full?", "{trail}");
+        look.session = "ses_b".into();
+        assert!(opencode_find(&look).expect("the database reads").is_none(), "another session's call is not this run's");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
