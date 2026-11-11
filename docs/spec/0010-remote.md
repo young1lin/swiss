@@ -448,9 +448,11 @@ swiss run audit [--since 7d|36h|90m|30s|ISO] [--until ISO] [--target t] [--actor
   (§remote.actions); `-` reads this process's own stdin. The CLI reads the file itself, so no
   local shell's quoting, redirection (pwsh has no `<`) or pipeline line endings (pwsh adds CRLF
   to text it pipes into a program) touch it. It is a local flag, so it goes before the command
-  word. When the command is a shell reading its script from stdin (`sh -s`, a bare `bash`) and
-  the text has CRLF line ends, the CLI prints a note — sh keeps each `\r` — and sends the text
-  unchanged.
+  word. When the command is a shell reading its script from stdin (`sh -s`, a bare `bash`, after
+  a `sudo …` too; not `-c`, not a script file) and the text has CRLF line ends, the CLI sends it
+  with LF: sh keeps each `\r`, so `true\r` is "command not found" (exit 127, 2026-11-11: a file
+  pwsh's `Set-Content` wrote ends its last line with CRLF). A lone `\r` stays; any other
+  command gets its stdin byte for byte.
 - **A script cut apart is refused.** pwsh ends a quoted argument at its closing quote, so the
   POSIX `'\''` idiom splits `bash -c '… '\''x'\'' …'` into a script that stops early plus stray
   words, and bash fails with "unexpected EOF while looking for matching". Before submitting, the

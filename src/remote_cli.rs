@@ -911,10 +911,7 @@ async fn cmd_exec(gw: Gateway, a: &RemoteArgs) -> i32 {
         input["env"] = Value::Object(env);
     }
     if let Some(text) = stdin {
-        if let Some(note) = crlf_note(&argv, &text) {
-            eprintln!("{note}");
-        }
-        input["stdin"] = json!(text);
+        input["stdin"] = json!(lf_script(&argv, &text).unwrap_or(text));
     }
     submit_and_stream(
         &gw,
@@ -1067,16 +1064,16 @@ pub fn split_script_refusal(argv: &[String]) -> Option<String> {
     ))
 }
 
-/// A note - not a refusal - when a shell is about to read its script from stdin and the
-/// text has CRLF line ends: sh keeps each \r, so every line fails with `$'\r': command
-/// not found`. The text still goes as it is; stdin is never rewritten.
-pub fn crlf_note(argv: &[String], text: &str) -> Option<String> {
+/// A script a shell is about to read from stdin, with LF line ends where it had CRLF: sh
+/// keeps each \r, so every such line fails with `$'\r': command not found`. Windows writes
+/// them without being asked - PowerShell's Set-Content ends even an LF here-string with one
+/// (the 2026-11-11 run lost only its last line, `|| true\r`). A note telling the agent was not
+/// enough; no shell script means a CR there. Any other stdin (SQL, data) still goes as it is.
+pub fn lf_script(argv: &[String], text: &str) -> Option<String> {
     let call = shell_call(argv)?;
     let script_on_stdin = !call.letters.contains('c')
         && (call.letters.contains('s') || call.operands.is_empty());
-    (script_on_stdin && text.contains("\r\n")).then(|| {
-        "note: the script has CRLF line ends and the far shell keeps each \\r ($'\\r': command not found); save it with LF line ends".to_string()
-    })
+    (script_on_stdin && text.contains("\r\n")).then(|| text.replace("\r\n", "\n"))
 }
 
 /// Which surface submitted the run, for the record (SPEC §remote.history): `cli`, as against `panel` or
@@ -2772,15 +2769,20 @@ mod tests {
     }
 
     #[test]
-    fn a_crlf_script_for_a_stdin_shell_gets_a_note() {
-        let note = |words: &[&str], text: &str| crlf_note(&argv(words), text);
-        assert!(note(&["sh", "-s"], "set -e\r\nls\r\n").is_some());
-        assert!(note(&["bash"], "ls\r\n").is_some());
-        assert!(note(&["sh", "-s"], "set -e\nls\n").is_none());
-        // Not a script on stdin: SQL, or a shell whose script is elsewhere.
-        assert!(note(&["psql", "-X"], "SELECT 1;\r\n").is_none());
-        assert!(note(&["bash", "-c", "cat"], "a\r\n").is_none());
-        assert!(note(&["bash", "job.sh"], "a\r\n").is_none());
+    fn a_crlf_script_for_a_stdin_shell_goes_with_lf() {
+        let lf = |words: &[&str], text: &str| lf_script(&argv(words), text);
+        assert_eq!(lf(&["sh", "-s"], "set -e\r\nls\r\n").as_deref(), Some("set -e\nls\n"));
+        assert_eq!(lf(&["bash"], "ls\r\n").as_deref(), Some("ls\n"));
+        // What Set-Content wrote for an LF here-string: only the end it added was CRLF.
+        assert_eq!(lf(&["bash", "-s"], "ls\nps -ef || true\r\n").as_deref(), Some("ls\nps -ef || true\n"));
+        assert_eq!(lf(&["sudo", "-n", "bash", "-s", "--", "a"], "id\r\n").as_deref(), Some("id\n"));
+        // A lone CR is not a line end; LF text needs nothing.
+        assert_eq!(lf(&["sh", "-s"], "printf 'a\rb'\r\n").as_deref(), Some("printf 'a\rb'\n"));
+        assert!(lf(&["sh", "-s"], "set -e\nls\n").is_none());
+        // Not a script on stdin: SQL, or a shell whose script is elsewhere - as it is.
+        assert!(lf(&["psql", "-X"], "SELECT 1;\r\n").is_none());
+        assert!(lf(&["bash", "-c", "cat"], "a\r\n").is_none());
+        assert!(lf(&["bash", "job.sh"], "a\r\n").is_none());
     }
 
     #[test]
