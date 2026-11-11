@@ -332,6 +332,45 @@ fn signalable(pid: u32) -> Option<libc::pid_t> {
     Some(pid as libc::pid_t)
 }
 
+/// The named variables as THIS process's ancestors hold them, nearest first - see the Windows
+/// twin. Linux reads each ancestor's /proc/<pid>/environ (what it was started with); macOS
+/// has no /proc and answers nothing, so its callers fall back to their own environment.
+pub fn ancestor_env(names: &[&str]) -> Vec<(String, String)> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut found = Vec::new();
+        let mut child = std::process::id();
+        for _ in 0..12 {
+            let Some(parent) = std::fs::read_to_string(format!("/proc/{child}/stat"))
+                .ok()
+                .and_then(|stat| ppid_from_stat(&stat))
+            else {
+                break;
+            };
+            if parent <= 1 {
+                break;
+            }
+            if let Ok(raw) = std::fs::read(format!("/proc/{parent}/environ")) {
+                for entry in raw.split(|byte| *byte == 0) {
+                    let text = String::from_utf8_lossy(entry);
+                    if let Some((name, value)) = text.split_once('=') {
+                        if names.contains(&name) {
+                            found.push((name.to_string(), value.to_string()));
+                        }
+                    }
+                }
+            }
+            child = parent;
+        }
+        found
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = names;
+        Vec::new()
+    }
+}
+
 /// Whether a pid names a live process — the pid-file reader's existence probe.
 /// The process that spawned THIS one: parent pid + image name. Linux reads both from
 /// /proc (getppid + the parent's comm). On macOS there is no /proc and the seam

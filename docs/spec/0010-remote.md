@@ -378,19 +378,29 @@ an agent setting:
   the version from `AI_AGENT`), `DSH_SESSION_ID` (dsh; `<DSH_HOME|~/.dsh>/sessions/*/<id>`),
   `CODEX_SESSION_ID`/`CODEX_THREAD_ID` or a `CODEX_*` marker (codex; `<CODEX_HOME|~/.codex>/sessions`),
   `OPENCODE`/`OPENCODE_PID` (opencode; `OPENCODE_DB`, else `~/.local/share/opencode/opencode.db`),
-  then a bare `CLAUDECODE` (claude-code with no session: no trail). Paths under the home are
-  sent as `~/…`, so a record never carries the user name. The actor becomes `cli:<agent>`.
+  then a bare `CLAUDECODE` (claude-code with no session: no trail). A home variable the shell
+  lacks is read from the agent processes above it (`swiss_core::platform::ancestor_env`: the
+  PEB environment block on Windows, `/proc/<pid>/environ` on Linux, 12 levels): the Codex app
+  launched with another account's `CODEX_HOME` - on any drive - hands its tool shell none
+  (2026-11-11). The candidates, the shell's value, then each ancestor's, the default, then every
+  home folder named like the default (`.codex-work` beside `.codex`), are tried in that order
+  and the one holding the session wins; with no session to check, the first. Paths under the
+  home are sent as `~/…`, so a record never carries the user name. The actor becomes
+  `cli:<agent>`.
 - **The trail** — what the agent's own log shows around the call: the person's last request
   before it (`asked`, ≤ 2000 chars), the agent's last words before the call (`said`, up to 4,
-  ≤ 600 each) and the call (`tool`, `call` ≤ 2000, `at`, `callsBefore` since the ask). A
+  ≤ 600 each) and the call (`tool`, `call` ≤ 2000, `at`, `callsBefore` since the ask). A call
+  whose argv is a shell running one script (`powershell -Command <script>`, `bash -lc <script>`,
+  `cmd /c <script>`) is that script, not the shell's path. A
   follower (`trail::Follower`) starts with every run whose origin names a readable agent and
   looks at 2 s, every 3 s for a minute, then every 20 s, until 45 s after the run ended (never
   past 25 h). The readers (`trail/logs.rs`) turn each log into the same asked/said/called
   events: Claude Code's session jsonl (and its subagents; what the person typed while the agent
   worked is a `queued_command` attachment, an ask like any other), DSH's session folder (zstd frames
-  read from the end), Codex's recent rollouts, opencode's SQLite (read-only). Codex and
-  opencode give no session id, so their reader looks through the conversations written around
-  the run's start. A match is a call logged between 30 min before and 10 s after the run began
+  read from the end), Codex's recent rollouts (the newest 3 days, a whole month of them with a
+  session id: a rollout stays in the folder of the day its conversation began), opencode's
+  SQLite (read-only). opencode and a Codex with no thread id give no session id, so their
+  reader looks through the conversations written around the run's start. A match is a call logged between 30 min before and 10 s after the run began
   that holds ≥ 0.6 of the run's own words, never one another run already claimed. `log` is
   read only when it has the shape that agent's own log has for that session, so a run input
   cannot point the reader at any other file. A call that never shows files
@@ -593,7 +603,8 @@ copies configuration.
   adds a Why block under the command: the reason (or "No reason given"), one fact line with
   the agent and version, the session and the working directory, and - for a recorded run with
   an origin - the trail read once as the row opens: a flow of the ask, the agent's last words
-  and the call (with how many other calls came between), "Reading the agent's log…" while
+  and the call (with how many other calls came between; it opens to the whole command with a
+  Copy button, and stays open across repaints), "Reading the agent's log…" while
   the gateway is still looking (the next open asks again), or why it was not found.
 - **Search is the first thing in the head, always visible** (2026-10-12). It searches what the
   recorded runs printed, through `POST /api/history/query` with module `remote`. ASCII letters

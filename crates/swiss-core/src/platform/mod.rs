@@ -47,7 +47,7 @@ mod procfs;
 mod windows;
 #[cfg(windows)]
 pub use windows::{
-    descendant_pids, detach_command, detach_command_without_breakaway, dpapi_protect,
+    ancestor_env, descendant_pids, detach_command, detach_command_without_breakaway, dpapi_protect,
     dpapi_unprotect, expand_env, keep_std_handles_from_children, machine_id, machine_path_read,
     parent_process, pid_alive, process_created_at, process_name, process_tree_working_set,
     process_working_set, run_entry_read, run_entry_remove, run_entry_write, self_private_bytes,
@@ -59,7 +59,7 @@ pub use windows::{
 mod unix;
 #[cfg(not(windows))]
 pub use unix::{
-    descendant_pids, detach_command, dpapi_protect, dpapi_unprotect, keep_std_handles_from_children,
+    ancestor_env, descendant_pids, detach_command, dpapi_protect, dpapi_unprotect, keep_std_handles_from_children,
     kill_process_group, machine_id, parent_process, pid_alive, process_created_at, process_name,
     process_tree_working_set, process_working_set, self_private_bytes, self_working_set,
     tcp_listeners, tree_kill,

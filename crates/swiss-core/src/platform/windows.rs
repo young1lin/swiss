@@ -640,6 +640,153 @@ pub fn process_name(pid: u32) -> Option<String> {
     }
 }
 
+/// How far up the tree [ancestor_env] looks: a shell, a wrapper or two, the agent's runtime,
+/// its app.
+const ANCESTOR_DEPTH: usize = 12;
+
+/// The named variables as THIS process's ancestors hold them, nearest first (one pair per
+/// ancestor that has one). An agent may keep a variable from the tool shell it starts - the
+/// Codex app runs on its own CODEX_HOME and does not hand it on (2026-11-11) - so where the
+/// agent keeps its state is read from the agent's own process. Answers what could be read: a
+/// process that refuses PROCESS_VM_READ is passed over. A hint the caller checks against the
+/// disk, never an identity claim.
+pub fn ancestor_env(names: &[&str]) -> Vec<(String, String)> {
+    // SAFETY: the snapshot handle is closed on every path; PROCESSENTRY32W is initialized with
+    // its own size as the API requires.
+    let parents = unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return Vec::new();
+        };
+        let mut parents: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                parents.insert(entry.th32ProcessID, entry.th32ParentProcessID);
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = windows::Win32::Foundation::CloseHandle(snapshot);
+        parents
+    };
+    let mut found = Vec::new();
+    let mut child = std::process::id();
+    let mut child_born = process_created_at(child);
+    for _ in 0..ANCESTOR_DEPTH {
+        let Some(&parent) = parents.get(&child) else { break };
+        if parent == 0 || parent == child {
+            break;
+        }
+        let born = process_created_at(parent);
+        // A parent that exited leaves its pid to be reused: a "parent" younger than its child
+        // is a stranger, and so is everything above it.
+        if born.zip(child_born).is_some_and(|(parent, child)| parent > child) {
+            break;
+        }
+        for (name, value) in process_environment(parent).unwrap_or_default() {
+            if names.iter().any(|wanted| wanted.eq_ignore_ascii_case(&name)) {
+                found.push((name, value));
+            }
+        }
+        child = parent;
+        child_born = born;
+    }
+    found
+}
+
+/// Another process's environment block, read from its PEB: the PEB's ProcessParameters, then
+/// RTL_USER_PROCESS_PARAMETERS' Environment and EnvironmentSize. The two offsets are the
+/// 64-bit layout every Windows since Vista keeps (and a WOW64 process keeps a 64-bit PEB
+/// beside its 32-bit one, which is the one ProcessBasicInformation names).
+#[cfg(target_pointer_width = "64")]
+fn process_environment(pid: u32) -> Option<Vec<(String, String)>> {
+    use std::ffi::c_void;
+    use windows::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
+    use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
+
+    /// PROCESS_BASIC_INFORMATION as the kernel writes it, declared here so the PEB type and
+    /// its feature gates stay out of this crate.
+    #[repr(C)]
+    #[derive(Default)]
+    struct BasicInformation {
+        exit_status: i32,
+        peb: usize,
+        affinity_mask: usize,
+        base_priority: i32,
+        process_id: usize,
+        parent_process_id: usize,
+    }
+    const PEB_PROCESS_PARAMETERS: usize = 0x20;
+    const PARAMETERS_ENVIRONMENT: usize = 0x80;
+    const PARAMETERS_ENVIRONMENT_SIZE: usize = 0x3F0;
+    /// A block past this is not an environment worth reading.
+    const ENVIRONMENT_MAX: usize = 1 << 20;
+
+    // SAFETY: the handle is closed on every path; every read lands in a buffer this frame owns
+    // and sized to the read; a failed read answers None and nothing is dereferenced.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, false, pid).ok()?;
+        let read = |at: usize, into: *mut c_void, len: usize| -> bool {
+            ReadProcessMemory(handle, at as *const c_void, into, len, None).is_ok()
+        };
+        let block = (|| {
+            let mut info = BasicInformation::default();
+            let status = NtQueryInformationProcess(
+                handle,
+                ProcessBasicInformation,
+                &mut info as *mut BasicInformation as *mut c_void,
+                std::mem::size_of::<BasicInformation>() as u32,
+                std::ptr::null_mut(),
+            );
+            if status.0 < 0 || info.peb == 0 {
+                return None;
+            }
+            let mut parameters = 0usize;
+            if !read(info.peb + PEB_PROCESS_PARAMETERS, &mut parameters as *mut usize as *mut c_void, 8) || parameters == 0 {
+                return None;
+            }
+            let (mut environment, mut size) = (0usize, 0usize);
+            if !read(parameters + PARAMETERS_ENVIRONMENT, &mut environment as *mut usize as *mut c_void, 8)
+                || !read(parameters + PARAMETERS_ENVIRONMENT_SIZE, &mut size as *mut usize as *mut c_void, 8)
+                || environment == 0
+                || size < 2
+            {
+                return None;
+            }
+            let mut block = vec![0u16; size.min(ENVIRONMENT_MAX) / 2];
+            read(environment, block.as_mut_ptr() as *mut c_void, block.len() * 2).then_some(block)
+        })();
+        let _ = windows::Win32::Foundation::CloseHandle(handle);
+        block.map(|block| environment_pairs(&block))
+    }
+}
+
+#[cfg(not(target_pointer_width = "64"))]
+fn process_environment(_pid: u32) -> Option<Vec<(String, String)>> {
+    None
+}
+
+/// `NAME=VALUE\0...\0\0` (UTF-16) as pairs. A name never starts the entry with `=`: the
+/// `=C:=C:\dir` entries cmd keeps per drive are skipped.
+fn environment_pairs(block: &[u16]) -> Vec<(String, String)> {
+    block
+        .split(|unit| *unit == 0)
+        .take_while(|entry| !entry.is_empty())
+        // `=C:=C:\src` and its kind are cmd's per-drive working directories, not variables.
+        .filter(|entry| entry.first() != Some(&u16::from(b'=')))
+        .filter_map(|entry| {
+            let text = String::from_utf16_lossy(entry);
+            let cut = text.get(1..)?.find('=')? + 1;
+            Some((text[..cut].to_string(), text[cut + 1..].to_string()))
+        })
+        .collect()
+}
+
 /// The pid that owns a LISTENING socket on `port`, for either IP family. `None` =
 /// nothing is listening or the table could not be read; the caller's diagnostic words cover
 /// both. Now a lookup into the full table read (see `tcp_listeners`), so the two never
@@ -955,6 +1102,30 @@ pub fn process_tree_working_set(roots: &[u32]) -> Option<(u64, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_environment_block_reads_as_pairs() {
+        let block: Vec<u16> = "=C:=C:\\dev\0CODEX_HOME=D:\\agents\\codex-work\0A=b=c\0\0junk"
+            .encode_utf16()
+            .collect();
+        assert_eq!(
+            environment_pairs(&block),
+            [
+                ("CODEX_HOME".to_string(), r"D:\agents\codex-work".to_string()),
+                ("A".to_string(), "b=c".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_parents_environment_is_read_from_its_own_process() {
+        // The test binary's parent (cargo, a shell) has a PATH of its own: reading it proves
+        // the PEB walk lands on a real environment block, not on what this process holds.
+        let paths = ancestor_env(&["PATH"]);
+        assert!(!paths.is_empty(), "no ancestor's PATH was read");
+        assert!(paths.iter().all(|(name, value)| name.eq_ignore_ascii_case("PATH") && !value.is_empty()));
+        assert!(ancestor_env(&["SWISS_NO_SUCH_ANCESTOR_VAR"]).is_empty());
+    }
 
     #[test]
     fn parent_process_names_the_test_runner_that_spawned_it() {

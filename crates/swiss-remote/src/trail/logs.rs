@@ -266,9 +266,25 @@ fn call_text(input: &Value) -> String {
     };
     match input.get("command") {
         Some(Value::String(command)) => command.clone(),
-        Some(Value::Array(argv)) => argv.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" "),
+        Some(Value::Array(argv)) => {
+            let argv: Vec<&str> = argv.iter().filter_map(Value::as_str).collect();
+            shell_script(&argv).map_or_else(|| argv.join(" "), str::to_string)
+        }
         _ => input.to_string(),
     }
+}
+
+/// The script a shell was handed, when an argv is only a shell, its switches and that script:
+/// Codex logs `[<path>\powershell.exe, -Command, <script>]` (or `bash -lc <script>`), and the
+/// shell's path is most of a one-line call while saying nothing about what ran (2026-11-11).
+fn shell_script<'a>(argv: &[&'a str]) -> Option<&'a str> {
+    let [shell, switches @ .., flag, script] = argv else { return None };
+    let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell).to_ascii_lowercase();
+    let name = name.strip_suffix(".exe").unwrap_or(&name);
+    let is_shell = ["bash", "sh", "zsh", "dash", "fish", "powershell", "pwsh", "cmd"].contains(&name);
+    let runs_script = ["-c", "-lc", "-ic", "-command", "/c"].contains(&flag.to_ascii_lowercase().as_str());
+    let only_switches = switches.iter().all(|s| s.starts_with('-') || s.starts_with('/'));
+    (is_shell && runs_script && only_switches).then_some(*script)
 }
 
 fn texts_of(blocks: &Value, kind: &str) -> String {
@@ -495,11 +511,14 @@ fn codex_streams(ask: &TrailAsk) -> Result<Vec<Stream>, String> {
             && name.ends_with(".jsonl")
             && (ask.session.is_empty() || name.ends_with(&format!("{}.jsonl", ask.session)))
     };
-    // Rollouts live under YYYY/MM/DD: only the newest days are walked.
+    // Rollouts live under YYYY/MM/DD of the day the conversation BEGAN: only the newest days
+    // are walked, and with a session id a whole month of them - a conversation kept open for
+    // weeks still writes to the folder of its first day, and the name narrows the walk anyway.
+    let days = if ask.session.is_empty() { 3 } else { 31 };
     let mut files: Vec<PathBuf> = Vec::new();
     for year in newest_dirs(&ask.log, 2) {
         for month in newest_dirs(&year, 2) {
-            for day in newest_dirs(&month, 3) {
+            for day in newest_dirs(&month, days) {
                 files.extend(recent_files(&day, keep, since));
             }
         }
@@ -833,7 +852,21 @@ mod tests {
         let text = lines.iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
         let events = codex_events(&text);
         assert!(matches!(&events[0], Event::Asked { text, .. } if text == "deploy to test"));
-        assert!(matches!(&events[1], Event::Call { at: 5, text, .. } if text == "pwsh -Command swiss remote exec test -- uptime"));
+        assert!(matches!(&events[1], Event::Call { at: 5, text, .. } if text == "swiss remote exec test -- uptime"), "the script, not the shell");
+    }
+
+    #[test]
+    fn a_shell_wrapper_gives_way_to_its_script() {
+        let ps = r"C:\Program Files\WindowsApps\OpenAI.CodexPrimaryRuntime_x64\dependencies\native\powershell.exe";
+        let text = |argv: Value| call_text(&json!({ "command": argv }));
+        assert_eq!(text(json!([ps, "-Command", "swiss remote exec test -- pwd"])), "swiss remote exec test -- pwd");
+        assert_eq!(text(json!(["/bin/bash", "-lc", "ls -la"])), "ls -la");
+        assert_eq!(text(json!(["pwsh.exe", "-NoProfile", "-NonInteractive", "-Command", "Get-Date"])), "Get-Date");
+        assert_eq!(text(json!(["cmd.exe", "/C", "dir"])), "dir");
+        // Anything else stays the whole argv: a plain program, an argument between, no script flag.
+        assert_eq!(text(json!(["swiss", "remote", "exec", "test", "-c", "x"])), "swiss remote exec test -c x");
+        assert_eq!(text(json!(["bash", "deploy.sh", "-c", "x"])), "bash deploy.sh -c x");
+        assert_eq!(text(json!(["bash", "-c"])), "bash -c");
     }
 
     #[test]
