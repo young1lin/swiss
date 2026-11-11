@@ -391,8 +391,13 @@ an agent setting:
   before it (`asked`, ≤ 2000 chars), the agent's last words before the call (`said`, up to 4,
   ≤ 600 each) and the call (`tool`, `call` ≤ 2000, `at`, `callsBefore` since the ask). A call
   whose argv is a shell running one script (`powershell -Command <script>`, `bash -lc <script>`,
-  `cmd /c <script>`) is that script, not the shell's path. A
-  follower (`trail::Follower`) starts with every run whose origin names a readable agent and
+  `cmd /c <script>`) is that script, not the shell's path. A Codex code-mode cell (a `custom_tool_call`
+  named `exec` whose input is JavaScript such as `const r = await tools.exec_command({cmd: "…"})`)
+  is the commands its `exec_command` calls carry as string literals (`cmd`, `"cmd"` or `'cmd'`,
+  any JS quote, escapes read), and the `CommandExecution` item Codex logs for that same command
+  is the same call, not a second one: `callsBefore` counts it once (2026-11-11). A cell whose
+  command is built at run time (a variable, `${…}`) stays its JavaScript. A
+  follower (`trail::Trails`) starts with every run whose origin names a readable agent and
   looks at 2 s, every 3 s for a minute, then every 20 s, until 45 s after the run ended (never
   past 25 h). The readers (`trail/logs.rs`) turn each log into the same asked/said/called
   events: Claude Code's session jsonl (and its subagents; what the person typed while the agent

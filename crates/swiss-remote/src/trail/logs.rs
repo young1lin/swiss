@@ -264,7 +264,8 @@ fn call_text(input: &Value) -> String {
         },
         other => other.clone(),
     };
-    match input.get("command") {
+    // `command` for a shell tool, `cmd` for Codex's exec_command.
+    match input.get("command").or_else(|| input.get("cmd")) {
         Some(Value::String(command)) => command.clone(),
         Some(Value::Array(argv)) => {
             let argv: Vec<&str> = argv.iter().filter_map(Value::as_str).collect();
@@ -285,6 +286,96 @@ fn shell_script<'a>(argv: &[&'a str]) -> Option<&'a str> {
     let runs_script = ["-c", "-lc", "-ic", "-command", "/c"].contains(&flag.to_ascii_lowercase().as_str());
     let only_switches = switches.iter().all(|s| s.starts_with('-') || s.starts_with('/'));
     (is_shell && runs_script && only_switches).then_some(*script)
+}
+
+/// The shell commands a Codex code-mode cell runs: each `tools.exec_command({cmd: "..."})`
+/// whose `cmd` is a plain string literal, unescaped. The cell is JavaScript around the command
+/// (`const r = await tools.exec_command({...}); text(r.output)`), and a trail line showing the
+/// wrapper hides what ran (2026-11-11).
+fn code_mode_commands(js: &str) -> Vec<String> {
+    const CALL: &str = "exec_command(";
+    let mut commands = Vec::new();
+    let mut rest = js;
+    while let Some(at) = rest.find(CALL) {
+        rest = &rest[at + CALL.len()..];
+        // This call's arguments end where the next call begins, at the latest.
+        let scope = &rest[..rest.find(CALL).unwrap_or(rest.len())];
+        if let Some(command) = cmd_literal(scope) {
+            commands.push(command);
+        }
+    }
+    commands
+}
+
+/// The string given as `cmd` in the object literal `args` opens with: the key bare or quoted,
+/// the value a string literal.
+fn cmd_literal(args: &str) -> Option<String> {
+    let mut rest = args.trim_start().strip_prefix('{')?;
+    loop {
+        let at = rest.find("cmd")?;
+        let before = rest[..at].trim_end().chars().last();
+        let after = &rest[at + 3..];
+        let is_key = matches!(before, None | Some('{' | ',' | '"' | '\''));
+        let value = after.strip_prefix(['"', '\'']).unwrap_or(after).trim_start().strip_prefix(':');
+        if let (true, Some(value)) = (is_key, value.map(str::trim_start)) {
+            if value.starts_with(['"', '\'', '`']) {
+                return js_string(value);
+            }
+        }
+        rest = after;
+    }
+}
+
+/// A JavaScript string literal at the start of `text`, unescaped: `"..."`, `'...'` or a
+/// template literal with no `${}` in it. `None` for anything else, or an unclosed one.
+fn js_string(text: &str) -> Option<String> {
+    let mut chars = text.chars();
+    let quote = chars.next().filter(|q| matches!(q, '"' | '\'' | '`'))?;
+    let mut out = String::new();
+    let mut high: Option<u32> = None;
+    let push = |out: &mut String, high: &mut Option<u32>, unit: u32| {
+        match (high.take(), unit) {
+            (Some(h), 0xDC00..=0xDFFF) => out.extend(char::from_u32(0x10000 + ((h - 0xD800) << 10) + (unit - 0xDC00))),
+            (_, 0xD800..=0xDBFF) => *high = Some(unit),
+            (_, unit) => out.extend(char::from_u32(unit)),
+        }
+    };
+    let hex = |chars: &mut std::str::Chars, n: usize| -> Option<u32> {
+        let digits: String = chars.by_ref().take(n).collect();
+        (digits.len() == n).then(|| u32::from_str_radix(&digits, 16).ok()).flatten()
+    };
+    while let Some(c) = chars.next() {
+        match c {
+            c if c == quote => return Some(out),
+            '$' if quote == '`' && chars.clone().next() == Some('{') => return None,
+            '\\' => match chars.next()? {
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                'b' => out.push('\u{8}'),
+                'f' => out.push('\u{c}'),
+                'v' => out.push('\u{b}'),
+                '0' => out.push('\0'),
+                'x' => push(&mut out, &mut high, hex(&mut chars, 2)?),
+                'u' if chars.clone().next() == Some('{') => {
+                    chars.next();
+                    let digits: String = chars.by_ref().take_while(|d| *d != '}').collect();
+                    push(&mut out, &mut high, u32::from_str_radix(&digits, 16).ok()?);
+                }
+                'u' => push(&mut out, &mut high, hex(&mut chars, 4)?),
+                // A backslash before a line end continues the line.
+                '\r' => {
+                    if chars.clone().next() == Some('\n') {
+                        chars.next();
+                    }
+                }
+                '\n' => {}
+                other => out.push(other),
+            },
+            other => out.push(other),
+        }
+    }
+    None
 }
 
 fn texts_of(blocks: &Value, kind: &str) -> String {
@@ -538,6 +629,9 @@ fn codex_streams(ask: &TrailAsk) -> Result<Vec<Stream>, String> {
 
 pub fn codex_events(text: &str) -> Vec<Event> {
     let mut events = Vec::new();
+    // The commands a tool call logged above runs: Codex logs the command it then started
+    // once more when it ends, and one call is not two (`callsBefore`).
+    let mut started: Vec<String> = Vec::new();
     for line in text.lines() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else { continue };
         let at = iso_ms(&entry["timestamp"]);
@@ -565,26 +659,43 @@ pub fn codex_events(text: &str) -> Vec<Event> {
                 Some("assistant") => push_said(&mut events, at, &texts_of(&payload["content"], "output_text")),
                 _ => {}
             },
-            (Some("response_item"), Some("function_call")) => events.push(Event::Call {
-                at,
-                id: payload["call_id"].as_str().unwrap_or_default().to_string(),
-                tool: payload["name"].as_str().unwrap_or_default().to_string(),
-                text: call_text(&payload["arguments"]),
-            }),
-            (Some("response_item"), Some("custom_tool_call")) => events.push(Event::Call {
-                at,
-                id: payload["call_id"].as_str().unwrap_or_default().to_string(),
-                tool: payload["name"].as_str().unwrap_or_default().to_string(),
-                text: payload["input"].as_str().unwrap_or_default().to_string(),
-            }),
-            // The command itself, logged when it ended, stamped with when it started.
+            (Some("response_item"), Some("function_call")) => {
+                let text = call_text(&payload["arguments"]);
+                started.push(text.trim().to_string());
+                events.push(Event::Call {
+                    at,
+                    id: payload["call_id"].as_str().unwrap_or_default().to_string(),
+                    tool: payload["name"].as_str().unwrap_or_default().to_string(),
+                    text,
+                });
+            }
+            (Some("response_item"), Some("custom_tool_call")) => {
+                let input = payload["input"].as_str().unwrap_or_default();
+                // A code-mode cell shows the commands it runs, else its own text.
+                let commands = code_mode_commands(input);
+                let text = if commands.is_empty() { input.to_string() } else { commands.join("\n") };
+                started.extend(commands.iter().map(|command| command.trim().to_string()));
+                events.push(Event::Call {
+                    at,
+                    id: payload["call_id"].as_str().unwrap_or_default().to_string(),
+                    tool: payload["name"].as_str().unwrap_or_default().to_string(),
+                    text,
+                });
+            }
+            // The command itself, logged when it ended, stamped with when it started - unless
+            // it is what a call above already showed.
             (Some("event_msg"), Some("item_completed")) if payload["item"]["type"] == "CommandExecution" => {
                 let item = &payload["item"];
+                let text = call_text(&json!({ "command": item["command"] }));
+                if let Some(k) = started.iter().position(|command| *command == text.trim()) {
+                    started.remove(k);
+                    continue;
+                }
                 events.push(Event::Call {
                     at: payload["started_at_ms"].as_i64().unwrap_or(at),
                     id: item["id"].as_str().unwrap_or_default().to_string(),
                     tool: "shell".to_string(),
-                    text: call_text(&json!({ "command": item["command"] })),
+                    text,
                 });
             }
             _ => {}
@@ -867,6 +978,51 @@ mod tests {
         assert_eq!(text(json!(["swiss", "remote", "exec", "test", "-c", "x"])), "swiss remote exec test -c x");
         assert_eq!(text(json!(["bash", "deploy.sh", "-c", "x"])), "bash deploy.sh -c x");
         assert_eq!(text(json!(["bash", "-c"])), "bash -c");
+    }
+
+    #[test]
+    fn a_code_mode_cell_is_the_command_it_runs_and_one_call() {
+        // Shaped like the 2026-11-11 rollout: the cell (JavaScript around the command) is
+        // logged as it is sent, the command once more when it ends.
+        let script = "$script = @'\nprintf '%s\\n' 'x'\n'@; swiss remote exec test --why \"看看\" --stdin-file a.sh -- bash -s";
+        let cell = format!(
+            "const r = await tools.exec_command({{cmd:{},\"workdir\":\"C:\\\\tmp\",\"yield_time_ms\":10000}}); text(r.output)",
+            serde_json::to_string(script).unwrap()
+        );
+        let lines = [
+            json!({ "type": "response_item", "timestamp": "2026-11-11T01:56:34Z", "payload": { "type": "custom_tool_call", "name": "exec",
+                "call_id": "call_read", "input": "const r = await tools.exec_command({cmd:\"Get-Content SKILL.md\"}); text(r.output)" } }),
+            json!({ "type": "event_msg", "timestamp": "2026-11-11T01:56:38Z", "payload": { "type": "item_completed", "started_at_ms": 4,
+                "item": { "type": "CommandExecution", "id": "exec-1", "command": ["pwsh.exe", "-Command", "Get-Content SKILL.md"] } } }),
+            json!({ "type": "response_item", "timestamp": "2026-11-11T01:56:44Z", "payload": { "type": "custom_tool_call", "name": "exec",
+                "call_id": "call_run", "input": cell } }),
+            json!({ "type": "event_msg", "timestamp": "2026-11-11T01:56:47Z", "payload": { "type": "item_completed", "started_at_ms": 5,
+                "item": { "type": "CommandExecution", "id": "exec-2", "command": ["pwsh.exe", "-Command", script] } } }),
+        ];
+        let text = lines.iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+        let events = codex_events(&text);
+        assert_eq!(events.len(), 2, "each command once: {events:?}");
+        assert!(matches!(&events[1], Event::Call { id, text, .. } if id == "call_run" && text == script), "{events:?}");
+
+        // A command no call above showed still counts on its own.
+        let alone = codex_events(&lines[3].to_string());
+        assert!(matches!(&alone[..], [Event::Call { id, .. }] if id == "exec-2"), "{alone:?}");
+    }
+
+    #[test]
+    fn a_js_string_literal_reads_as_its_text() {
+        let cmd = |js: &str| code_mode_commands(js);
+        assert_eq!(cmd(r#"await tools.exec_command({cmd:"a\nb \"q\" \\ \u00e9 \ud83d\ude00"})"#), ["a\nb \"q\" \\ é 😀"]);
+        assert_eq!(cmd(r#"tools.exec_command({ workdir: 'C:\\cmd', "cmd": 'it\'s' })"#), ["it's"]);
+        assert_eq!(cmd("tools.exec_command({cmd: `ls\n-la`})"), ["ls\n-la"]);
+        // Two calls in one cell, each its own command.
+        assert_eq!(cmd(r#"await tools.exec_command({cmd:"one"}); await tools.exec_command({cmd:"two"})"#), ["one", "two"]);
+        // Not a literal: a variable, an interpolation, an unclosed string - nothing to show.
+        assert!(cmd("tools.exec_command({cmd: script})").is_empty());
+        assert!(cmd("tools.exec_command({cmd: `ls ${dir}`})").is_empty());
+        assert!(cmd(r#"tools.exec_command({cmd:"open"#).is_empty());
+        // A `cmd` inside another value is not the key.
+        assert_eq!(cmd(r#"tools.exec_command({name:"xcmd: no", cmd:"yes"})"#), ["yes"]);
     }
 
     #[test]
