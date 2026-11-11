@@ -375,7 +375,10 @@ impl RunHistory {
         if let Some(notice) = notice {
             history.set_notice(notice);
         }
-        *self.store.write().await = Some(history);
+        *self.store.write().await = Some(history.clone());
+        // The trail searches the last gateway left unfinished go on (SPEC §remote.history
+        // "Provenance").
+        self.trails.resume(history).await;
     }
 
     /// Detach — the plugin's stop, before the bounded close. Returns the database it

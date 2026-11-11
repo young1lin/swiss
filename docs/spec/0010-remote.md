@@ -399,7 +399,13 @@ an agent setting:
   command is built at run time (a variable, `${…}`) stays its JavaScript. A
   follower (`trail::Trails`) starts with every run whose origin names a readable agent and
   looks at 2 s, every 3 s for a minute, then every 20 s, until 45 s after the run ended (never
-  past 25 h). The readers (`trail/logs.rs`) turn each log into the same asked/said/called
+  past 25 h). The search is kept in `run_trail_pending` (schema v3: the agent, session, log,
+  the run's words masked as one text, the start) until its trail is filed, in the same
+  transaction; a gateway that starts with kept searches looks again for 45 s (every run of the
+  stopped gateway is over) and files what it finds or that nothing matched, and the call ids the
+  trails filed in the last 25 h stay taken. A kept search whose agent or log shape is not one it
+  reads is answered `{found: false}`, never read. With following off they wait; the age sweep
+  removes them. The readers (`trail/logs.rs`) turn each log into the same asked/said/called
   events: Claude Code's session jsonl (and its subagents; what the person typed while the agent
   worked is a `queued_command` attachment, an ask like any other), DSH's session folder (zstd frames
   read from the end), Codex's recent rollouts (the newest 3 days, a whole month of them with a
@@ -413,8 +419,8 @@ an agent setting:
 - **Stored apart, masked.** The trail lands in `run_trail` (schema v2, keyed by the wire run id,
   filed while the run may still be going), cut to 16 KiB by dropping the earliest `said`, every
   text through the credential-literal and vault-value masks. Retention removes a run's trail
-  with its row; a trail whose run never got recorded ages out at the same cutoff; Clear
-  empties it.
+  with its row; a trail whose run never got recorded, and a kept search, age out at the same
+  cutoff; Clear empties both.
 - **Readers.** `GET /api/remote/runs/{id}/trail` → `{runId, trail}`: `trail` is null while the
   follower is still looking or when the run named no agent; an unknown id is a 404.
   `swiss run why <id>` prints the reason, the origin and the trail; `swiss run audit` prints

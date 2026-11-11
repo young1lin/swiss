@@ -1307,3 +1307,103 @@ async fn a_trail_that_never_shows_is_filed_as_unmatched() {
     }
     panic!("the follower never gave up");
 }
+
+const SESSION: &str = "00000000-1111-4222-8333-444444444444";
+
+/// A run input carrying a Claude Code origin, as the CLI sends it.
+fn claude_input() -> Value {
+    json!({ "target": "dev", "argv": ["true"], "why": "check dev answers", "origin": {
+        "agent": "claude-code", "session": SESSION,
+        "log": format!("~/.claude/projects/C--src/{SESSION}.jsonl")
+    }})
+}
+
+async fn trail_of(history: &Arc<RemoteHistory>, run_id: u64) -> Value {
+    for _ in 0..250 {
+        if let Some(trail) = history.trail(run_id).await {
+            return trail;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("no trail was filed for run {run_id}");
+}
+
+async fn kept_searches(history: &Arc<RemoteHistory>) -> Vec<u64> {
+    history.flush().await.unwrap();
+    history.pending_trails().await.into_iter().map(|(run_id, _)| run_id).collect()
+}
+
+#[tokio::test]
+async fn a_trail_search_is_kept_until_its_trail_is_filed() {
+    let dir = std::env::temp_dir().join(format!("swiss-remote-kept-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let history = RemoteHistory::open(&dir).await.unwrap();
+    let trails = swiss_remote::trail::Trails::default();
+    trails.set_pace(swiss_remote::trail::Pace::every(std::time::Duration::from_millis(20)));
+    let shown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let show = shown.clone();
+    trails.set_finder(Some(Arc::new(move |ask: &swiss_remote::trail::TrailAsk| {
+        if !show.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(None);
+        }
+        Ok(Some(json!({ "found": true, "agent": ask.agent, "session": ask.session, "callId": "t11", "said": [] })))
+    })));
+    trails.follow(11, &claude_input(), history.clone());
+    let mut kept = Vec::new();
+    for _ in 0..250 {
+        kept = kept_searches(&history).await;
+        if !kept.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(kept, vec![11], "the search is kept while it looks");
+    shown.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(trail_of(&history, 11).await["callId"], "t11");
+    assert!(kept_searches(&history).await.is_empty(), "filing the trail ends the kept search");
+    let _ = history.close().await;
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn a_trail_search_a_stopped_gateway_left_goes_on_at_the_next_start() {
+    let dir = std::env::temp_dir().join(format!("swiss-remote-resume-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let began = swiss_core::util::now_ms() as i64;
+    let ask = swiss_remote::trail::ask_of(&claude_input(), began).expect("a readable origin");
+    {
+        let history = RemoteHistory::open(&dir).await.unwrap();
+        // A trail filed before the stop took call t-old.
+        history
+            .record_trail(8, &json!({ "found": true, "agent": "claude-code", "session": SESSION, "callId": "t-old", "said": [] }))
+            .await;
+        history.record_pending_trail(9, &ask.to_pending()).await;
+        // A kept search naming a file no agent keeps is never read, only answered.
+        let mut odd = ask.to_pending();
+        odd["log"] = json!(dir.join("id_ed25519").to_string_lossy());
+        history.record_pending_trail(10, &odd).await;
+        assert_eq!(kept_searches(&history).await, vec![9, 10]);
+        let _ = history.close().await;
+    }
+    let history = RemoteHistory::open(&dir).await.unwrap();
+    let trails = swiss_remote::trail::Trails::default();
+    trails.set_pace(swiss_remote::trail::Pace::every(std::time::Duration::from_millis(20)));
+    let asked = Arc::new(std::sync::Mutex::new(Vec::<swiss_remote::trail::TrailAsk>::new()));
+    let saw = asked.clone();
+    trails.set_finder(Some(Arc::new(move |ask: &swiss_remote::trail::TrailAsk| {
+        saw.lock().unwrap().push(ask.clone());
+        Ok(Some(json!({ "found": true, "agent": ask.agent, "session": ask.session, "callId": "t9", "said": [] })))
+    })));
+    trails.resume(history.clone()).await;
+    assert_eq!(trail_of(&history, 9).await["callId"], "t9");
+    let unread = trail_of(&history, 10).await;
+    assert_eq!(unread["found"], false, "{unread}");
+    assert!(unread["reason"].as_str().unwrap().contains("restarted"), "{unread}");
+    let looked = asked.lock().unwrap()[0].clone();
+    assert_eq!((looked.log.clone(), looked.before_ms), (ask.log.clone(), began));
+    assert!(looked.words.contains(&"answers".to_string()), "{:?}", looked.words);
+    assert!(looked.claimed.contains("t-old"), "a call taken before the stop stays taken");
+    assert!(kept_searches(&history).await.is_empty(), "both kept searches are answered");
+    let _ = history.close().await;
+    std::fs::remove_dir_all(&dir).ok();
+}

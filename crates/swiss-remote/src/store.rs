@@ -94,6 +94,16 @@ static REMOTE_SCHEMA: &[SchemaStep] = &[
             trail TEXT NOT NULL
         )"],
     ),
+    // v3: a trail still being looked for - what the follower asks of the agent's log - so a
+    // restart picks the search up instead of leaving the run without one (2026-11-11).
+    SchemaStep::new(
+        3,
+        &["CREATE TABLE run_trail_pending (
+            run_id INTEGER PRIMARY KEY,
+            at_ms INTEGER NOT NULL,
+            ask TEXT NOT NULL
+        )"],
+    ),
 ];
 
 /// The version of [RemoteHistory::mask_recorded_literals] a database last ran - bumped when
@@ -723,8 +733,48 @@ impl RemoteHistory {
         let at = swiss_core::util::now_ms() as i64;
         let submitted = self.store.submit(text.len() + 64, move |pool| {
             Box::pin(async move {
+                // Filed and no longer pending, in one transaction: a restart between the two
+                // would look again for a trail it already has.
+                let work = async {
+                    let mut tx = pool.begin().await?;
+                    sqlx::query(
+                        "INSERT INTO run_trail (run_id, at_ms, trail) VALUES (?, ?, ?) \
+                         ON CONFLICT(run_id) DO UPDATE SET at_ms = excluded.at_ms, trail = excluded.trail",
+                    )
+                    .bind(run_id as i64)
+                    .bind(at)
+                    .bind(text)
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query("DELETE FROM run_trail_pending WHERE run_id = ?")
+                        .bind(run_id as i64)
+                        .execute(&mut *tx)
+                        .await?;
+                    tx.commit().await
+                };
+                work.await.map_err(|e| e.to_string())
+            })
+        });
+        if let Err(err) = submitted {
+            swiss_core::log::warn("remote trail admission", Some(serde_json::json!({ "err": err.to_string() })));
+            return;
+        }
+        if self.flush().await.is_ok() {
+            self.changed();
+        }
+    }
+
+    /// Note a trail being looked for ([crate::trail::TrailAsk::to_pending]): the row outlives
+    /// a restart, and the next start looks again ([crate::trail::Trails::resume]). Filing the
+    /// trail removes it. Best effort, like the trail itself.
+    pub async fn record_pending_trail(&self, run_id: u64, ask: &Value) {
+        let text = ask.to_string();
+        let at = swiss_core::util::now_ms() as i64;
+        let submitted = self.store.submit(text.len() + 64, move |pool| {
+            Box::pin(async move {
                 sqlx::query(
-                    "INSERT INTO run_trail (run_id, at_ms, trail) VALUES (?, ?, ?)                      ON CONFLICT(run_id) DO UPDATE SET at_ms = excluded.at_ms, trail = excluded.trail",
+                    "INSERT INTO run_trail_pending (run_id, at_ms, ask) VALUES (?, ?, ?) \
+                     ON CONFLICT(run_id) DO UPDATE SET at_ms = excluded.at_ms, ask = excluded.ask",
                 )
                 .bind(run_id as i64)
                 .bind(at)
@@ -737,11 +787,52 @@ impl RemoteHistory {
         });
         if let Err(err) = submitted {
             swiss_core::log::warn("remote trail admission", Some(serde_json::json!({ "err": err.to_string() })));
-            return;
         }
-        if self.flush().await.is_ok() {
-            self.changed();
-        }
+    }
+
+    /// The trails a stopped gateway was still looking for: run id and what it asked.
+    pub async fn pending_trails(&self) -> Vec<(u64, Value)> {
+        self.store
+            .query::<Vec<(i64, String)>, _>(move |pool| {
+                Box::pin(async move {
+                    sqlx::query("SELECT run_id, ask FROM run_trail_pending ORDER BY run_id")
+                        .fetch_all(&pool)
+                        .await?
+                        .into_iter()
+                        .map(|r| -> Result<(i64, String), sqlx::Error> { Ok((r.try_get(0)?, r.try_get(1)?)) })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+            })
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(run_id, ask)| Some((u64::try_from(run_id).ok()?, serde_json::from_str(&ask).ok()?)))
+            .collect()
+    }
+
+    /// The agent call ids the trails filed since `since_ms` took: a search picked up after a
+    /// restart must not take one of them again.
+    pub async fn claimed_calls(&self, since_ms: i64) -> Vec<String> {
+        self.store
+            .query::<Vec<String>, _>(move |pool| {
+                Box::pin(async move {
+                    sqlx::query("SELECT trail FROM run_trail WHERE at_ms >= ?")
+                        .bind(since_ms)
+                        .fetch_all(&pool)
+                        .await?
+                        .into_iter()
+                        .map(|r| r.try_get::<String, _>(0))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+            })
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|text| {
+                let trail: Value = serde_json::from_str(&text).ok()?;
+                trail.get("callId")?.as_str().filter(|id| !id.is_empty()).map(str::to_string)
+            })
+            .collect()
     }
 
     /// The trail filed for one run, if any.
@@ -782,6 +873,7 @@ impl RemoteHistory {
                         sqlx::query("DELETE FROM run_output").execute(&mut *tx).await?;
                         sqlx::query("DELETE FROM run_content").execute(&mut *tx).await?;
                         sqlx::query("DELETE FROM run_trail").execute(&mut *tx).await?;
+                        sqlx::query("DELETE FROM run_trail_pending").execute(&mut *tx).await?;
                         let removed =
                             sqlx::query("DELETE FROM run").execute(&mut *tx).await?.rows_affected();
                         // The rows are gone by hand: stamp the sweep fence so a spill
@@ -870,6 +962,11 @@ impl RemoteHistory {
                         .bind(cutoff)
                         .execute(&mut *tx)
                         .await?;
+                        // A search nobody picked up (following was off at every start since).
+                        sqlx::query("DELETE FROM run_trail_pending WHERE at_ms < ?")
+                            .bind(cutoff)
+                            .execute(&mut *tx)
+                            .await?;
                         sqlx::query("DELETE FROM run WHERE ended_ms < ?")
                             .bind(cutoff)
                             .execute(&mut *tx)

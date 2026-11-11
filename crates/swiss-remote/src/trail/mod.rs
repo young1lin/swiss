@@ -124,6 +124,47 @@ pub fn ask_of(input: &Value, before_ms: i64) -> Option<TrailAsk> {
     })
 }
 
+impl TrailAsk {
+    /// The search as the database keeps it until the trail is filed
+    /// ([crate::store::RemoteHistory::record_pending_trail]), so a restart can look again.
+    /// The words go masked, as one text: a credential typed in the command never lands in
+    /// the row, at the cost of that one word in the match.
+    pub fn to_pending(&self) -> Value {
+        json!({
+            "agent": self.agent,
+            "session": self.session,
+            "log": self.log.to_string_lossy(),
+            "words": mask_text(&self.words.join(" ")),
+            "beforeMs": self.before_ms,
+        })
+    }
+
+    /// A kept search read back, held to the rules of [ask_of]: a row in the database is no
+    /// more a way to read an arbitrary file than a run input is.
+    pub fn from_pending(kept: &Value) -> Option<TrailAsk> {
+        let agent = kept.get("agent")?.as_str()?.to_string();
+        if !READABLE_AGENTS.contains(&agent.as_str()) {
+            return None;
+        }
+        let session = kept.get("session")?.as_str()?.to_string();
+        if session.is_empty() && !SESSIONLESS_AGENTS.contains(&agent.as_str()) {
+            return None;
+        }
+        let log = PathBuf::from(kept.get("log")?.as_str()?);
+        if !logs::shaped_like(&agent, &session, &log) {
+            return None;
+        }
+        Some(TrailAsk {
+            agent,
+            session,
+            log,
+            words: kept.get("words")?.as_str()?.split_whitespace().map(str::to_string).collect(),
+            before_ms: kept.get("beforeMs")?.as_i64()?,
+            claimed: HashSet::new(),
+        })
+    }
+}
+
 /// `~/x` (or `~\x`) under `home`; any other path as given.
 pub fn expand_home(path: &str, home: &Path) -> PathBuf {
     match path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
@@ -220,11 +261,27 @@ impl Pace {
     }
 }
 
+/// The call ids the trails took, so no two runs take one call.
+#[derive(Default)]
+struct Claimed {
+    /// Taken since this start, per log.
+    per_log: HashMap<PathBuf, VecDeque<String>>,
+    /// Taken by the trails filed before this start (any log), read once from the database
+    /// when the follower resumes ([Trails::resume]).
+    before_start: HashSet<String>,
+}
+
+impl Claimed {
+    fn of(&self, log: &Path) -> HashSet<String> {
+        self.per_log.get(log).into_iter().flatten().chain(&self.before_start).cloned().collect()
+    }
+}
+
 /// The trail follower: one background task per run that carries an agent origin.
 pub struct Trails {
     finder: Mutex<Option<Finder>>,
     pace: Mutex<Pace>,
-    claimed: Arc<Mutex<HashMap<PathBuf, VecDeque<String>>>>,
+    claimed: Arc<Mutex<Claimed>>,
 }
 
 impl Default for Trails {
@@ -232,7 +289,7 @@ impl Default for Trails {
         Trails {
             finder: Mutex::new(Some(Arc::new(logs::find))),
             pace: Mutex::new(Pace::default()),
-            claimed: Arc::new(Mutex::new(HashMap::new())),
+            claimed: Arc::new(Mutex::new(Claimed::default())),
         }
     }
 }
@@ -248,10 +305,18 @@ impl Trails {
         *self.pace.lock().unwrap_or_else(|e| e.into_inner()) = pace;
     }
 
+    fn finder(&self) -> Option<Finder> {
+        self.finder.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn pace(&self) -> Pace {
+        *self.pace.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Start following one run: look in its agent's log until the call that submitted it
     /// shows, then file the trail. A run without a readable origin is left alone.
     pub fn follow(&self, run_id: u64, input: &Value, store: Arc<crate::store::RemoteHistory>) {
-        let Some(finder) = self.finder.lock().unwrap_or_else(|e| e.into_inner()).clone() else {
+        let Some(finder) = self.finder() else {
             return;
         };
         let Some(ask) = ask_of(input, swiss_core::util::now_ms() as i64) else {
@@ -260,9 +325,41 @@ impl Trails {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        let claimed = self.claimed.clone();
-        let pace = *self.pace.lock().unwrap_or_else(|e| e.into_inner());
-        runtime.spawn(follow(run_id, ask, finder, pace, store, claimed));
+        runtime.spawn(follow(run_id, ask, finder, self.pace(), store, self.claimed.clone(), false));
+    }
+
+    /// Pick up the searches a stopped gateway left unfinished (the database keeps each until
+    /// its trail is filed). Every run of that gateway is over - runs die with it - so each
+    /// search looks for [AFTER_END] more, then files what it found or that nothing matched.
+    /// The call ids filed since [FOLLOW_AT_MOST] ago stay taken, for these searches and the
+    /// new runs alike. With following off, the kept searches wait for a start that follows,
+    /// or for the sweep.
+    pub async fn resume(&self, store: Arc<crate::store::RemoteHistory>) {
+        let Some(finder) = self.finder() else {
+            return;
+        };
+        let since = swiss_core::util::now_ms() as i64 - FOLLOW_AT_MOST.as_millis() as i64;
+        let earlier = store.claimed_calls(since).await;
+        self.claimed.lock().unwrap_or_else(|e| e.into_inner()).before_start.extend(earlier);
+        let kept = store.pending_trails().await;
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        for (run_id, search) in kept {
+            match TrailAsk::from_pending(&search) {
+                Some(ask) => {
+                    runtime.spawn(follow(run_id, ask, finder.clone(), self.pace(), store.clone(), self.claimed.clone(), true));
+                }
+                None => {
+                    let text = |key: &str| search.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
+                    let trail = json!({
+                        "found": false, "agent": text("agent"), "session": text("session"),
+                        "reason": "the gateway restarted, and the search it kept for this run's call is not one it can read"
+                    });
+                    store.record_trail(run_id, &trail).await;
+                }
+            }
+        }
     }
 }
 
@@ -272,20 +369,20 @@ async fn follow(
     finder: Finder,
     pace: Pace,
     store: Arc<crate::store::RemoteHistory>,
-    claimed: Arc<Mutex<HashMap<PathBuf, VecDeque<String>>>>,
+    claimed: Arc<Mutex<Claimed>>,
+    resumed: bool,
 ) {
+    if !resumed {
+        store.record_pending_trail(run_id, &ask.to_pending()).await;
+    }
     let began = Instant::now();
-    let mut ended: Option<Instant> = None;
+    // A run of a gateway that stopped is already over.
+    let mut ended: Option<Instant> = resumed.then(Instant::now);
     let mut wait = pace.first;
     let mut last_error: Option<String>;
     loop {
         tokio::time::sleep(wait).await;
-        ask.claimed = claimed
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&ask.log)
-            .map(|ids| ids.iter().cloned().collect())
-            .unwrap_or_default();
+        ask.claimed = claimed.lock().unwrap_or_else(|e| e.into_inner()).of(&ask.log);
         let look = ask.clone();
         let reader = finder.clone();
         match tokio::task::spawn_blocking(move || reader(&look)).await {
@@ -313,12 +410,13 @@ async fn follow(
     }
 }
 
-fn claim(claimed: &Mutex<HashMap<PathBuf, VecDeque<String>>>, log: &Path, id: &str) {
+fn claim(claimed: &Mutex<Claimed>, log: &Path, id: &str) {
     let mut claimed = claimed.lock().unwrap_or_else(|e| e.into_inner());
-    if !claimed.contains_key(log) && claimed.len() >= CLAIMED_LOGS {
-        claimed.clear();
+    let per_log = &mut claimed.per_log;
+    if !per_log.contains_key(log) && per_log.len() >= CLAIMED_LOGS {
+        per_log.clear();
     }
-    let ids = claimed.entry(log.to_path_buf()).or_default();
+    let ids = per_log.entry(log.to_path_buf()).or_default();
     ids.push_back(id.to_string());
     while ids.len() > CLAIMED_PER_LOG {
         ids.pop_front();
@@ -416,6 +514,29 @@ mod tests {
         assert!(ask_of(&dsh, 0).is_none(), "dsh does");
         assert_eq!(expand_home("~/a/b.jsonl", &home), home.join("a/b.jsonl"));
         assert_eq!(expand_home("C:/a.jsonl", &home), PathBuf::from("C:/a.jsonl"));
+    }
+
+    #[test]
+    fn a_kept_search_reads_back_masked_and_only_with_its_own_log_shape() {
+        let session = "00000000-1111-4222-8333-444444444444";
+        let input = json!({ "target": "dev", "argv": ["redis-cli", "-a", "hunter2hunter2", "ping"], "origin": {
+            "agent": "claude-code", "session": session,
+            "log": format!("~/.claude/projects/C--src/{session}.jsonl")
+        }});
+        let ask = ask_of(&input, 42).expect("a readable origin");
+        let kept = ask.to_pending();
+        assert!(!kept.to_string().contains("hunter2hunter2"), "{kept}");
+        let back = TrailAsk::from_pending(&kept).expect("reads back");
+        assert_eq!((back.agent.as_str(), back.session.as_str(), back.before_ms), ("claude-code", session, 42));
+        assert_eq!(back.log, ask.log);
+        assert!(back.words.contains(&"ping".to_string()), "{:?}", back.words);
+        let mut elsewhere = kept.clone();
+        elsewhere["log"] = json!("C:/Users/x/.ssh/id_ed25519");
+        assert!(TrailAsk::from_pending(&elsewhere).is_none(), "a kept row is never a way to read another file");
+        let mut sessionless = kept.clone();
+        sessionless["session"] = json!("");
+        assert!(TrailAsk::from_pending(&sessionless).is_none(), "claude-code needs its session");
+        assert!(TrailAsk::from_pending(&json!({ "agent": "cursor" })).is_none());
     }
 
     #[test]
