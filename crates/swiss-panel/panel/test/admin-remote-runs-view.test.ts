@@ -376,6 +376,44 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(it17.querySelector(".tl-body")).toBeNull();
   });
 
+  it("the Why block's trail steps open: the call shows its whole command, and a repaint keeps it open", async () => {
+    // The 2026-11-11 walk: the call line looked clickable (its chevron on hover) and opened
+    // nothing, while a Codex shell call's one line was mostly the powershell.exe path.
+    const call = "C:\\Program Files\\WindowsApps\\OpenAI\\powershell.exe -Command swiss remote exec test --why x -- bash -s";
+    const traced = { ...finished, runId: 40, input: { ...finished.input, why: "check the V3 errors", origin: { agent: "codex", session: "s-1" } } };
+    serve([traced], []);
+    replies["/api/remote/runs/40/output?after=0&max=131072"] = { runId: 40, cursor: 0, nextCursor: 0, output: "", total: 0, terminal: true };
+    replies["/api/remote/runs/40/trail"] = {
+      runId: 40,
+      trail: { found: true, agent: "codex", tool: "shell", at: Date.now(), asked: { at: Date.now(), text: "look at the V3 errors" },
+        said: [{ at: Date.now(), text: "Reading the brief first." }], callsBefore: 13, call },
+    };
+    await view.mount();
+    open(40);
+    await settle();
+    // Asked afresh each time: a repaint replaces the block, and a stale node proves nothing.
+    const step = (id: string): HTMLElement =>
+      Array.from(block(40, "Why")!.querySelectorAll<HTMLElement>(".fl-step")).find((n) => n.dataset.flId === id) as HTMLElement;
+    expect(step("call").classList.contains("open")).toBe(false);
+    (step("call").querySelector(".fl-sum") as HTMLElement).click();
+    expect(step("call").classList.contains("open")).toBe(true);
+    expect(item(40).classList.contains("open"), "the row itself stays open").toBe(true);
+    const body = step("call").querySelector<HTMLElement>(".fl-body")!;
+    expect(body.hidden).toBe(false);
+    expect(body.textContent).toContain(call);
+    // The ask unclamps the same way, with no body of its own.
+    (step("asked").querySelector(".fl-sum") as HTMLElement).click();
+    expect(step("asked").classList.contains("open")).toBe(true);
+    // A repaint of the row (another open asks the trail again) keeps both open.
+    open(40);
+    open(40);
+    await settle();
+    expect(step("call").classList.contains("open")).toBe(true);
+    expect(step("asked").classList.contains("open")).toBe(true);
+    (step("call").querySelector(".fl-sum") as HTMLElement).click();
+    expect(step("call").classList.contains("open")).toBe(false);
+  });
+
   it("a long output pages through Load more, and a capped one shows its tail", async () => {
     const capped = { ...finished, runId: 21, outputBytes: 131072 * 2, outputCapped: true, tail: "the last lines\n" };
     serve([capped], []);

@@ -46,8 +46,8 @@ import type { HChild } from "../h.js";
 import { tr, trn } from "../i18n.js";
 import { copyLogText, readableBody } from "../logs.js";
 import {
-  actionBtn, btn, closeMenu, collapseRuns, emptyNode, factLine, filterInput, flow, iconBtn, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu, textNode, timeline,
-  timeLabel, timelineMeta, timelineToggle, valueBlock,
+  actionBtn, btn, closeMenu, collapseRuns, emptyNode, factLine, filterInput, flow, flowIO, flowToggle, iconBtn, menuOpen, moreBtn, note, pager, paneBody, paneHead, popupMenu,
+  textNode, timeline, timeLabel, timelineMeta, timelineToggle, transcriptText, valueBlock,
 } from "../ui/index.js";
 import type { FlowStep } from "../ui/index.js";
 import type { TimelineItem } from "../ui/index.js";
@@ -83,6 +83,9 @@ let unsealing = {} as Record<number, boolean>; // runId -> true while its /conte
    "Provenance"), read once when a row with an origin opens; null while the gateway is still
    looking, which a later open asks again. */
 let trails = {} as Record<number, RemoteRunTrail | null>;
+/* runId -> the trail steps opened (the ask or a said line in full, the call's whole command),
+   kept so a repaint of the row does not fold them again. */
+let trailOpen = {} as Record<number, Set<string>>;
 let liveTimer = null as ReturnType<typeof setInterval> | null;
 let painted = "";
 /* Which visit of this page is on screen (2026-09-29). Every await below can outlive the visit
@@ -299,13 +302,15 @@ function whyNode(r: ApiRemoteRunRow, isLive: boolean): HChild {
     const t = trails[r.runId] as RemoteRunTrail | null | undefined; // undefined: not asked yet
     if (t == null) parts.push(note(tr("remoteRuns.trailLooking"), { busy: t === undefined }));
     else if (!t.found) parts.push(note(tr("remoteRuns.trailMissing", { reason: t.reason || "" })));
-    else parts.push(trailFlow(t));
+    else parts.push(trailFlow(r.runId, t));
   }
   return valueBlock({ label: tr("remoteRuns.why"), text: input.why || undefined }, ...parts);
 }
 
-/** The trail as a flow: the ask, the agent's last words before the call, the call. */
-function trailFlow(t: RemoteRunTrail): HTMLElement {
+/** The trail as a flow: the ask, the agent's last words before the call, the call. Every step
+ *  opens (the pane's click, data-rtrail): the ask and a said line unclamp to their whole text,
+ *  the call shows its whole command - one line cut with an ellipsis is rarely all of it. */
+function trailFlow(runId: number, t: RemoteRunTrail): HTMLElement {
   const at = (ms: number | undefined) => (ms ? timeLabel(ms) : "");
   const steps: FlowStep[] = [];
   if (t.asked) steps.push({ id: "asked", lead: "user", title: tr("remoteRuns.trailAsked"), detail: t.asked.text, meta: at(t.asked.at) });
@@ -318,7 +323,25 @@ function trailFlow(t: RemoteRunTrail): HTMLElement {
     detail: t.callsBefore ? tr("remoteRuns.callsBefore", { n: t.callsBefore }) : undefined,
     meta: at(t.at),
   });
-  return flow(steps);
+  const call = t.call || "";
+  const node = flow(steps, {
+    open: trailOpen[runId],
+    eager: true,
+    body: (s) => (s.id === "call" && call
+      ? flowIO([{ label: tr("remoteRuns.command"), body: transcriptText(call, { mono: true }), copy: call, copyLabel: tr("remoteRuns.copyCommand") }])
+      : null),
+  });
+  node.dataset.rtrail = String(runId);
+  return node;
+}
+
+/** Open or fold one trail step where it stands, and remember it for the next repaint. */
+function toggleTrailStep(root: HTMLElement, step: HTMLElement): void {
+  const runId = Number(root.dataset.rtrail);
+  const id = step.dataset.flId;
+  if (!id) return;
+  const opened = (trailOpen[runId] ||= new Set());
+  if (flowToggle(root, id)) opened.add(id); else opened.delete(id);
 }
 
 /** Read a run's trail once its row opens. A null answer (the gateway is still reading the
@@ -623,6 +646,7 @@ async function clearAll(): Promise<void> {
   contents = {};
   unsealing = {};
   trails = {};
+  trailOpen = {};
   open = {};
   cursors = [null];
   page = 0;
@@ -785,6 +809,11 @@ export async function mount() {
       }]);
       return;
     }
+    // A trail step inside an open row (whyNode): its own toggle, never the row's.
+    const flSum = t.closest<HTMLElement>(".fl-sum");
+    const trail = flSum ? flSum.closest<HTMLElement>("[data-rtrail]") : null;
+    const flStep = flSum ? flSum.closest<HTMLElement>(".fl-step") : null;
+    if (trail && flStep) { toggleTrailStep(trail, flStep); return; }
     // A row's summary is a real <button> (ui/timeline.ts): Enter and Space arrive as this click.
     // Only the summary toggles - a click inside the open body is someone reading it.
     const sum = t.closest<HTMLElement>(".tl-sum");
@@ -912,6 +941,7 @@ export function unmount() {
   open = {};
   bodies = {};
   trails = {};
+  trailOpen = {};
   contents = {}; // an unsealed body lives only while its page is on screen
   unsealing = {};
   live = {};
