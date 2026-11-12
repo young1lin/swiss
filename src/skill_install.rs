@@ -170,7 +170,7 @@ pub struct Places {
 }
 
 /// One skills directory this process will read or refresh.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct SeatView {
     pub kind: crate::skill_seats::SeatKind,
     pub dir: PathBuf,
@@ -343,6 +343,9 @@ impl Places {
     /// `skills`); `agents` takes the skills directory itself. The skills subdirectory may not
     /// exist yet — the next install creates it.
     pub fn add_seat(&self, kind: crate::skill_seats::SeatKind, given: &std::path::Path) -> Result<PathBuf, String> {
+        if !given.is_absolute() {
+            return Err(format!("{} is not absolute", given.display()));
+        }
         if !given.is_dir() {
             return Err(format!("{} is not a directory", given.display()));
         }
@@ -364,7 +367,7 @@ impl Places {
                 && crate::skill_seats::same_dir(&seat.dir, &dir)
         });
         if is_default {
-            return Err(format!("{} is a default seat and comes back from the environment", dir.display()));
+            return Err(format!("default seat: {} comes back from the environment", dir.display()));
         }
         crate::skill_seats::forget(&self.ledger, &dir)
     }
@@ -470,6 +473,14 @@ pub fn status() -> Result<Vec<SkillStatus>, String> {
 
 pub fn install_selected(name: &str, root: &str) -> Result<(), String> {
     Places::of_this_user()?.install_one(name, root)
+}
+
+/// The inspection the CLI's `--json` and `GET /api/skills` both return.
+pub fn inspection(places: &Places) -> serde_json::Value {
+    serde_json::json!({
+        "seats": places.seats(),
+        "skills": places.status(),
+    })
 }
 
 /// How often, and how far apart, a denied replace is tried again (about a second in all).

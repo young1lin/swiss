@@ -224,6 +224,10 @@ impl Harness {
             .await
     }
 
+    async fn delete_json(&self, path: &str, body: Value) -> (StatusCode, Value) {
+        self.send(json_req(Request::delete(path), body)).await
+    }
+
     async fn send(&self, req: Request<Body>) -> (StatusCode, Value) {
         let mut req = req;
         // Every local client sends a Host; the loopback guard ahead of the routes reads it.

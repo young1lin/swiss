@@ -65,6 +65,8 @@ pub struct Parsed {
     pub all: bool,
     /// `skill install --installed`: refresh what is there, add nothing.
     pub installed: bool,
+    /// `skill seat add --kind`. Absent means claude.
+    pub kind: Option<String>,
     pub port: Option<u16>,
     /// A --port that was given but is not a usable port. Refused before anything is acted on.
     pub bad_port: bool,
@@ -144,12 +146,15 @@ On Windows or macOS, double-click the app or run swiss without arguments to open
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
   skill list [--json]
-                   each AI skill this binary ships: what it does, whether it loads by itself,
-                   where it is installed, and whether that copy still matches this binary
+                   each seat (kind, directory, where it came from) and each skill's state
   skill install [<name>... | --all | --installed]
                    with no names, asks per skill at a terminal (default no) and refuses without
-                   one. --installed refreshes the copies already there and adds none: run it
+                   one. --installed refreshes every known seat and adds none: run it
                    after replacing the executable
+  skill seat add <dir> [--kind claude|agents]
+                   record a Claude config directory, or an agents skills directory
+  skill seat forget <dir>
+                   drop a recorded seat; a default seat is refused
   autostart [on|off]
                    show, enable or disable start-at-sign-in — a registry Run value on
                    Windows, a LaunchAgent on macOS, a systemd user unit on Linux
@@ -266,6 +271,7 @@ pub fn parse_argv(argv: &[String]) -> Parsed {
             "--no-open" => p.no_open = true,
             "--all" if p.cmd == "skill" => p.all = true,
             "--installed" if p.cmd == "skill" => p.installed = true,
+            "--kind" if p.cmd == "skill" => p.kind = Some(value(argv, &mut i)),
             "-h" | "--help" => p.help = true,
             "-v" | "--version" => p.version = true,
             other => p.unknown.push(other.to_string()),
@@ -618,9 +624,15 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
                     st.port
                 ));
                 io.out(&row("log", &st.log_file));
+                if let Some(line) = outdated_skills_line() {
+                    io.out(&line);
+                }
                 return 3;
             }
             io.out(&render_status(&st));
+            if let Some(line) = outdated_skills_line() {
+                io.out(&line);
+            }
             0
         }
         "logs" => {
@@ -818,12 +830,31 @@ fn how_a_skill_runs(skill: &SkillStatus) -> &'static str {
 }
 
 /// What `skill list` prints, and what a refusal shows so the choice can be made.
-fn skill_lines(rows: &[SkillStatus]) -> Vec<String> {
+/// One block per seat: kind, directory, where it came from, then each skill's state.
+fn skill_lines(places: &Places) -> Vec<String> {
+    let rows = places.status();
     let mut lines = Vec::new();
-    for skill in rows {
-        lines.push(format!("{} ({})", skill.name, how_a_skill_runs(skill)));
-        lines.push(format!("  {}", skill.description));
-        for place in &skill.locations {
+    if let Some(note) = places.ledger_note() {
+        lines.push(note);
+    }
+    for seat in places.seats() {
+        let kind = match seat.kind {
+            crate::skill_seats::SeatKind::Claude => "claude",
+            crate::skill_seats::SeatKind::Agents => "agents",
+        };
+        let source = match seat.source {
+            crate::skill_seats::SeatSource::Env => "env",
+            crate::skill_seats::SeatSource::Ledger => "ledger",
+            crate::skill_seats::SeatSource::Both => "both",
+        };
+        lines.push(format!("{kind}  {}  {source}", seat.dir.display()));
+        for skill in &rows {
+            let Some(place) = skill.locations.iter().find(|place| {
+                place.kind == seat.kind
+                    && crate::skill_seats::same_dir(std::path::Path::new(&place.dir), &seat.dir)
+            }) else {
+                continue;
+            };
             let state = match (place.state, &place.error) {
                 (CopyState::Current, _) => "current".to_string(),
                 (CopyState::Outdated, _) => "outdated".to_string(),
@@ -832,10 +863,34 @@ fn skill_lines(rows: &[SkillStatus]) -> Vec<String> {
                 (CopyState::Unreadable, Some(err)) => format!("cannot check ({err})"),
                 (CopyState::Unreadable, None) => "cannot check".to_string(),
             };
-            lines.push(format!("  {:<8} {state:<13} {}", place.root, place.path));
+            lines.push(format!(
+                "  {}  {state}  {}",
+                skill.name,
+                how_a_skill_runs(skill)
+            ));
         }
     }
     lines
+}
+
+/// `swiss status` names outdated copies only when there is at least one.
+fn outdated_skills_line() -> Option<String> {
+    let places = Places::of_this_user().ok()?;
+    outdated_skill_line(&places)
+}
+
+fn outdated_skill_line(places: &Places) -> Option<String> {
+    let n = places
+        .status()
+        .into_iter()
+        .flat_map(|skill| skill.locations)
+        .filter(|place| place.state == CopyState::Outdated)
+        .count();
+    match n {
+        0 => None,
+        1 => Some("skills: 1 outdated copy (swiss skill install --installed)".to_string()),
+        n => Some(format!("skills: {n} outdated copies (swiss skill install --installed)")),
+    }
 }
 
 /// `swiss skill …` (SPEC §host.cli). `ask` reaches the person at a terminal, and is None without
@@ -849,29 +904,29 @@ fn skill_command(
     match p.sub.as_deref() {
         Some("list") => skill_list(p, io, places),
         Some("install") => skill_install(p, io, places, ask),
+        Some("seat") => skill_seat(p, io, places),
         Some(other) => {
             io.err(&format!("unknown skill subcommand: {other}"));
             1
         }
         None => {
-            io.err("usage: swiss skill list [--json] | swiss skill install [<name>... | --all | --installed]");
+            io.err("usage: swiss skill list [--json] | swiss skill install [<name>... | --all | --installed] | swiss skill seat add|forget <dir>");
             1
         }
     }
 }
 
 fn skill_list(p: &Parsed, io: &dyn Io, places: &Places) -> i32 {
-    if !p.names.is_empty() || p.all || p.installed {
+    if !p.names.is_empty() || p.all || p.installed || p.kind.is_some() {
         io.err("swiss skill list takes only --json");
         return SKILL_REFUSED;
     }
     let rows = places.status();
     if p.json {
-        let document = serde_json::json!({ "skills": rows });
-        io.out(&serde_json::to_string_pretty(&document).unwrap_or_default());
+        io.out(&serde_json::to_string_pretty(&crate::skill_install::inspection(places)).unwrap_or_default());
         return 0;
     }
-    for line in skill_lines(&rows) {
+    for line in skill_lines(places) {
         io.out(&line);
     }
     if rows.iter().flat_map(|s| &s.locations).any(|l| l.state == CopyState::Outdated) {
@@ -887,6 +942,10 @@ fn skill_install(
     places: &Places,
     ask: Option<&mut dyn FnMut(&str) -> String>,
 ) -> i32 {
+    if p.kind.is_some() {
+        io.err("--kind belongs to swiss skill seat add");
+        return SKILL_REFUSED;
+    }
     let selectors = usize::from(!p.names.is_empty()) + usize::from(p.all) + usize::from(p.installed);
     if selectors > 1 {
         io.err("swiss skill install takes one of: names, --all, --installed");
@@ -908,7 +967,7 @@ fn skill_install(
         chosen
     } else {
         io.err("nothing installed: which skills land is the user's choice, and no terminal is here to ask.");
-        for line in skill_lines(&places.status()) {
+        for line in skill_lines(places) {
             io.err(&line);
         }
         io.err("Ask the user, then: swiss skill install <name>...  (or --all)");
@@ -966,6 +1025,66 @@ fn skill_refresh(io: &dyn Io, places: &Places) -> i32 {
         io.err(failure);
     }
     i32::from(!refresh.failed.is_empty())
+}
+
+fn skill_seat(p: &Parsed, io: &dyn Io, places: &Places) -> i32 {
+    if p.all || p.installed || p.json {
+        io.err("usage: swiss skill seat add <dir> [--kind claude|agents] | swiss skill seat forget <dir>");
+        return SKILL_REFUSED;
+    }
+    let action = p.names.first().map(String::as_str);
+    let dir = p.names.get(1).map(String::as_str);
+    if p.names.len() != 2 {
+        io.err("usage: swiss skill seat add <dir> [--kind claude|agents] | swiss skill seat forget <dir>");
+        return SKILL_REFUSED;
+    }
+    let dir = dir.expect("len checked");
+    match action {
+        Some("add") => {
+            let kind = match p.kind.as_deref().unwrap_or("claude") {
+                "claude" => crate::skill_seats::SeatKind::Claude,
+                "agents" => crate::skill_seats::SeatKind::Agents,
+                other => {
+                    io.err(&format!("unknown seat kind: {other}"));
+                    return SKILL_REFUSED;
+                }
+            };
+            match places.add_seat(kind, std::path::Path::new(dir)) {
+                Ok(skills) => {
+                    io.out(&format!("seat added: {}", skills.display()));
+                    0
+                }
+                Err(err) => {
+                    io.err(&err);
+                    1
+                }
+            }
+        }
+        Some("forget") => {
+            if p.kind.is_some() {
+                io.err("--kind belongs to swiss skill seat add");
+                return SKILL_REFUSED;
+            }
+            match places.forget_seat(std::path::Path::new(dir)) {
+                Ok(()) => {
+                    io.out(&format!("seat forgotten: {dir}"));
+                    0
+                }
+                Err(err) if err.starts_with("default seat:") => {
+                    io.err(&err);
+                    SKILL_REFUSED
+                }
+                Err(err) => {
+                    io.err(&err);
+                    1
+                }
+            }
+        }
+        _ => {
+            io.err("usage: swiss skill seat add <dir> [--kind claude|agents] | swiss skill seat forget <dir>");
+            SKILL_REFUSED
+        }
+    }
 }
 
 /// The `--json` shape of status — camelCase, absent-not-null, the Node build's StatusResult,
@@ -1491,8 +1610,9 @@ mod tests {
         let bench = SkillBench::new();
         assert_eq!(bench.run(&["list"], None), 0);
         assert!(bench.nothing_was_written(), "listing creates nothing");
-        assert!(bench.out_text().contains("swiss-memory (loads by itself"), "{}", bench.out_text());
-        assert!(bench.out_text().contains("swiss (runs only when you ask"), "{}", bench.out_text());
+        assert!(bench.out_text().contains("loads by itself when a task matches"), "{}", bench.out_text());
+        assert!(bench.out_text().contains("runs only when you ask"), "{}", bench.out_text());
+        assert!(bench.out_text().contains(" env"), "{}", bench.out_text());
         assert!(!bench.out_text().contains("--installed"), "{}", bench.out_text());
 
         let file = bench.home.join(".agents/skills/swiss/SKILL.md");
@@ -1511,6 +1631,47 @@ mod tests {
         assert_eq!(swiss["loadsByItself"], serde_json::json!(false));
         assert_eq!(swiss["locations"][1]["state"], serde_json::json!("current"));
         assert_eq!(swiss["locations"][0]["state"], serde_json::json!("absent"));
+        let seats = document["seats"].as_array().expect("seats");
+        assert_eq!(seats.len(), 2);
+        assert!(seats.iter().all(|seat| seat["source"] == "both" || seat["source"] == "env"));
+    }
+
+    #[test]
+    fn status_names_outdated_copies_only_when_there_are_some() {
+        let bench = SkillBench::new();
+        let places = bench.places();
+        assert_eq!(outdated_skill_line(&places), None);
+        let file = bench.home.join(".agents/skills/swiss/SKILL.md");
+        std::fs::create_dir_all(file.parent().expect("dir")).expect("mkdir");
+        std::fs::write(&file, "an older copy").expect("plant");
+        assert_eq!(
+            outdated_skill_line(&places).as_deref(),
+            Some("skills: 1 outdated copy (swiss skill install --installed)")
+        );
+        let other = bench.home.join(".claude/skills/swiss-memory/SKILL.md");
+        std::fs::create_dir_all(other.parent().expect("dir")).expect("mkdir");
+        std::fs::write(&other, "an older copy").expect("plant");
+        assert_eq!(
+            outdated_skill_line(&places).as_deref(),
+            Some("skills: 2 outdated copies (swiss skill install --installed)")
+        );
+    }
+
+    #[test]
+    fn seat_add_and_forget_round_trip_on_the_command() {
+        let bench = SkillBench::new();
+        let config = bench.home.join("claude-b");
+        std::fs::create_dir_all(&config).expect("mkdir");
+        assert_eq!(bench.run(&["seat", "add", config.to_str().expect("utf-8")], None), 0);
+        assert!(bench.out_text().contains("seat added:"), "{}", bench.out_text());
+        let agents = bench.places().seats().into_iter().find(|s| s.kind == crate::skill_seats::SeatKind::Agents).expect("agents");
+        bench.out.lock().expect("out").clear();
+        bench.err.lock().expect("err").clear();
+        assert_eq!(bench.run(&["seat", "forget", &agents.dir.to_string_lossy()], None), SKILL_REFUSED);
+        assert!(bench.err_text().contains("default seat"), "{}", bench.err_text());
+        let skills = config.join("skills");
+        assert_eq!(bench.run(&["seat", "forget", &skills.to_string_lossy()], None), 0);
+        assert_eq!(bench.places().seats().len(), 2);
     }
 
     #[test]

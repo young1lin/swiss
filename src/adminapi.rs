@@ -728,28 +728,112 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     }));
 
     // Read-only skill inspection, under the same admin session gate as every /api route.
+    // Seats are the default directories of this process plus the ledger. Nothing here writes.
     r = r.route("/api/skills", get(|| async {
-        match crate::skill_install::status() {
-            Ok(skills) => admin_json(StatusCode::OK, json!({ "skills": skills })),
+        match crate::skill_install::Places::of_this_user() {
+            Ok(places) => admin_json(StatusCode::OK, crate::skill_install::inspection(&places)),
             Err(error) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
         }
     }));
     r = r.route("/api/skills/install", post(|body: crate::reply::NodeBody| async move {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
-        struct Install { name: String, root: String }
+        struct Install {
+            name: String,
+            #[serde(default)]
+            root: Option<String>,
+            #[serde(default)]
+            dir: Option<String>,
+        }
         let Ok(target) = serde_json::from_value::<Install>(body.0) else {
             return admin_error(StatusCode::BAD_REQUEST, "expected a skill name and directory");
         };
-        if !crate::skill_install::valid_target(&target.name, &target.root) {
-            return admin_error(StatusCode::BAD_REQUEST, "unknown skill or skill directory");
-        }
-        match tokio::task::spawn_blocking(move || {
-            crate::skill_install::install_selected(&target.name, &target.root)?;
-            crate::skill_install::status()
-        }).await {
-            Ok(Ok(skills)) => admin_json(StatusCode::OK, json!({ "skills": skills })),
+        let name = target.name;
+        let outcome = match (target.root, target.dir) {
+            (Some(root), None) => {
+                if !crate::skill_install::valid_target(&name, &root) {
+                    return admin_error(StatusCode::BAD_REQUEST, "unknown skill or skill directory");
+                }
+                tokio::task::spawn_blocking(move || {
+                    let places = crate::skill_install::Places::of_this_user()?;
+                    places.install_one(&name, &root)?;
+                    Ok::<_, String>(crate::skill_install::inspection(&places))
+                }).await
+            }
+            (None, Some(dir)) => tokio::task::spawn_blocking(move || {
+                let places = crate::skill_install::Places::of_this_user()?;
+                places.install_in(&name, std::path::Path::new(&dir))?;
+                Ok::<_, String>(crate::skill_install::inspection(&places))
+            }).await,
+            _ => return admin_error(StatusCode::BAD_REQUEST, "expected a skill name and directory"),
+        };
+        match outcome {
+            Ok(Ok(body)) => admin_json(StatusCode::OK, body),
+            Ok(Err(error)) if error == "unknown skill directory" => {
+                admin_error_code(StatusCode::BAD_REQUEST, "skills.unknownDir", &error)
+            }
+            Ok(Err(error)) if error.starts_with("unknown skill") => {
+                admin_error(StatusCode::BAD_REQUEST, &error)
+            }
+            Ok(Err(error)) if error.contains("was not changed") => {
+                admin_error_code(StatusCode::BAD_REQUEST, "skills.seatInvalid", &error)
+            }
             Ok(Err(error)) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
+            Err(error) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+        }
+    }));
+    r = r.route("/api/skills/refresh", post(|| async {
+        match tokio::task::spawn_blocking(|| {
+            let places = crate::skill_install::Places::of_this_user()?;
+            let refresh = places.refresh_installed();
+            let mut body = crate::skill_install::inspection(&places);
+            body["replaced"] = json!(refresh.replaced);
+            body["failed"] = json!(refresh.failed);
+            Ok::<_, String>(body)
+        }).await {
+            Ok(Ok(body)) => admin_json(StatusCode::OK, body),
+            Ok(Err(error)) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
+            Err(error) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+        }
+    }));
+    r = r.route("/api/skills/seats", post(|body: crate::reply::NodeBody| async move {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct AddSeat { kind: String, dir: String }
+        let Ok(seat) = serde_json::from_value::<AddSeat>(body.0) else {
+            return admin_error_code(StatusCode::BAD_REQUEST, "skills.seatInvalid", "expected a seat kind and directory");
+        };
+        let kind = match seat.kind.as_str() {
+            "claude" => crate::skill_seats::SeatKind::Claude,
+            "agents" => crate::skill_seats::SeatKind::Agents,
+            _ => return admin_error_code(StatusCode::BAD_REQUEST, "skills.seatInvalid", "kind is claude or agents"),
+        };
+        match tokio::task::spawn_blocking(move || {
+            let places = crate::skill_install::Places::of_this_user()?;
+            places.add_seat(kind, std::path::Path::new(&seat.dir))?;
+            Ok::<_, String>(crate::skill_install::inspection(&places))
+        }).await {
+            Ok(Ok(body)) => admin_json(StatusCode::OK, body),
+            Ok(Err(error)) => admin_error_code(StatusCode::BAD_REQUEST, "skills.seatInvalid", &error),
+            Err(error) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+        }
+    }).delete(|body: crate::reply::NodeBody| async move {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ForgetSeat { dir: String }
+        let Ok(seat) = serde_json::from_value::<ForgetSeat>(body.0) else {
+            return admin_error(StatusCode::BAD_REQUEST, "expected a seat directory");
+        };
+        match tokio::task::spawn_blocking(move || {
+            let places = crate::skill_install::Places::of_this_user()?;
+            places.forget_seat(std::path::Path::new(&seat.dir))?;
+            Ok::<_, String>(crate::skill_install::inspection(&places))
+        }).await {
+            Ok(Ok(body)) => admin_json(StatusCode::OK, body),
+            Ok(Err(error)) if error.starts_with("default seat:") => {
+                admin_error_code(StatusCode::BAD_REQUEST, "skills.seatDefault", &error)
+            }
+            Ok(Err(error)) => admin_error_code(StatusCode::BAD_REQUEST, "skills.seatInvalid", &error),
             Err(error) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
         }
     }));
