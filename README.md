@@ -89,7 +89,7 @@ On either desktop, running `swiss` without arguments or `swiss gui` opens the sa
 The explicit `swiss gui` command returns after launching it; use `swiss gui -f` to keep the
 window in the foreground. Linux has no desktop window: the gateway serves and a browser looks.
 The panel and AI skills are embedded in the single executable.
-**Settings → System** shows skill installation in
+**Settings → System** shows the version and build, then skill installation in
 `~/.claude/skills` and `~/.agents/skills`, alongside startup and PATH settings.
 
 1. `swiss start` brings the gateway up on `127.0.0.1:19999` and opens the panel.

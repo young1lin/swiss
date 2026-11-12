@@ -23,11 +23,28 @@
 
 /* --- host chrome (src/adminapi.rs) -------------------------------------------------------------- */
 
-/** GET /api/info - adminapi.rs:533, the boot handshake (token env name + panel stamp). */
+/** GET /api/info - adminapi.rs, the boot handshake (token env name, panel stamp, build). */
+export interface ApiBuildInfo {
+  hash: string;
+  time: string;
+  /** Absent on a gateway older than the About section. The page shows what is there. */
+  version?: string;
+  /** The rustc target triple. Absent on an older gateway. */
+  target?: string;
+}
+
 export interface ApiInfoResponse {
   tokenEnv: string;
   panelVersion: string;
-  build: Record<string, unknown>;
+  build: ApiBuildInfo;
+}
+
+/** GET /api/update/check. `latest` is null when the repository has published nothing. */
+export interface ApiUpdateCheckResponse {
+  current: string;
+  currentVersion: string;
+  latest: { tag: string; url: string } | null;
+  newer: boolean;
 }
 
 /** GET /api/memory - swiss-host/src/mem.rs; polled for the footer readout. */

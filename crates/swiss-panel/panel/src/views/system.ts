@@ -21,6 +21,7 @@ import { desktopQuit } from "../desktop.js";
 import { tr } from "../i18n.js";
 import { btn, card, closeSheet, emptyNode, hint, iconBtn, note, paneBody, paneHead, row, section, sheet, showSheet, sw, tag } from "../ui/index.js";
 import { actionBtn } from "../ui/action.js";
+import { aboutSection, handleAboutClick, resetAbout } from "./system-about.js";
 import type { ApiSkillStatus, ApiMachineSetting as MachineSetting, MachineSettingKey as MachineKey } from "../types/api.js"; // Admin API contracts.
 const machine: Record<MachineKey, MachineSetting | null> = { autostart: null, "user-path": null };
 const busy = new Set<MachineKey>();
@@ -138,6 +139,7 @@ function systemBodyNode(): HTMLElement {
   const controls = [startupRowNode(machine.autostart), pathRowNode(machine["user-path"])].filter((node): node is HTMLElement => node !== null);
   return paneBody({ wide: true },
     paneHead({ desc: tr("system.descOneLine") }),
+    aboutSection(),
     controls.length ? section({ cap: tr("plugins.thisMachine") }, card(controls)) : null,
     skillsSection(),
     section({ cap: tr("system.runtime") },
@@ -211,7 +213,9 @@ async function mount(): Promise<void> {
   // One delegated claim on the pane (SPEC §panel.toolchain): the quit button is reached through the
   // pane's own listener, so the wiring survives any repaint of the pane's children.
   $("pane").onclick = (event: MouseEvent): void => {
-    if (targetEl(event)?.closest("#system-quit")) openQuitSheet();
+    const hit = targetEl(event);
+    if (hit && handleAboutClick(hit)) return;
+    if (hit?.closest("#system-quit")) openQuitSheet();
     if (targetEl(event)?.closest("#system-skills-refresh")) { void refreshSkills(); return; }
     const install = targetEl(event)?.closest<HTMLElement>("[data-skill-install]");
     if (install) { void installSkill(install.dataset.skillInstall || "", install.dataset.skillDirectory || ""); return; }
@@ -220,6 +224,14 @@ async function mount(): Promise<void> {
   };
 }
 
-function unmount(): void { generation++; busy.clear(); skillBusy.clear(); machine.autostart = null; machine["user-path"] = null; skills = null; }
+function unmount(): void {
+  generation++;
+  resetAbout();
+  busy.clear();
+  skillBusy.clear();
+  machine.autostart = null;
+  machine["user-path"] = null;
+  skills = null;
+}
 
 export { mount, mount as refresh, unmount, openQuitSheet, quitSheetNode, requestQuit, systemBodyNode };
