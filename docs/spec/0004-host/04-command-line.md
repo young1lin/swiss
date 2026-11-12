@@ -97,12 +97,28 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
 - Both machine settings reach the admin API through `AppContext` seams (`autostart`,
   `user_path`) that only the boot sequence sets to the OS providers, so no test composition can
   write the host (§testing.rules).
-- **`update`** — checks GitHub for a newer release; updating stays a manual exe swap, then
-  `swiss skill install --installed`. Settings → System asks the same question through
+- **`update`** — `swiss update` checks GitHub. When the newest release publishes `update.json`,
+  the check also names the download (`patch from <version>, <size> (full <size>)` or
+  `full, <size>`) and tells you to run `swiss update --apply`. A dev build
+  (`SWISS_CHANNEL=dev`, the default outside the release CI) says `--apply` will refuse it.
+  `swiss update --apply [--force]` downloads, verifies, replaces this exe and restarts the
+  gateway on the same port. Exit 0 is updated or already newest, 1 is a failure with nothing
+  changed or rolled back, 2 is a refusal (dev build without `--force`, a macOS `.app` bundle,
+  an unwritable directory, a live `update.lock`, a gateway running a different exe, or a
+  downgrade). `--force` also allows the same version and a dev build. Nothing downgrades.
+  `SWISS_UPDATE_SOURCE` must be an `http://127.0.0.1:<port>/`, `http://localhost:<port>/` or
+  `http://[::1]:<port>/` URL, or the command exits 2. It replaces the manifest URL, the asset base
+  and the check's release: the check then reads `tag` and `notes` from that `update.json` and
+  never asks GitHub. Each attempt writes
+  `<data dir>/update/last.json` (`from`, `to`, `via`, `bytes`, `ok`, `phase`, `error`,
+  `rolledBack`, `startedAt`, `finishedAt`, `by`). A failed skill refresh is a warning; the
+  update still exits 0. The manual swap remains the path for an app bundle and for a release
+  this binary cannot read. Settings → System asks the same check through
   `GET /api/update/check` (the boot sequence's `UpdateCheck` seam; the CLI calls `check`
   directly). The body is `{current, currentVersion, latest: {tag, url} | null, newer}`.
   A composition that mounted no checker answers 503, and a check that cannot reach GitHub
-  answers 502 `update.unreachable`. Neither path downloads or replaces the binary.
+  answers 502 `update.unreachable`. The gateway process does not download or replace the
+  binary.
 - **`skill list` / `skill install`** — the embedded `swiss`, `swiss-remote` and `swiss-memory`
   skills, and which of them land is the user's answer:
 

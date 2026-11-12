@@ -194,6 +194,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cmake clang
 
       - name: Build
+        env:
+          SWISS_CHANNEL: release
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package macOS desktop application

@@ -11,6 +11,9 @@ All notable changes to swiss are recorded here. The format follows
 - A release publishes a zstd full archive for each target and, when the patch is at most 60%
   of that archive, patches from the previous three releases, plus `update.json` naming them
   (SPEC §release.ci).
+- `swiss update --apply` installs a newer release from a short-lived process: a zstd patch
+  when the local exe matches one, otherwise the full archive, then a gateway restart
+  (ADR-041, SPEC §host.cli).
 - Settings → System leads with About: the running version, the commit and when it was built,
   a check for a newer GitHub release that runs only when asked, and a diagnostics copy that
   counts plugins, MCPs and memory without naming them (SPEC §panel.pages, SPEC §host.cli).

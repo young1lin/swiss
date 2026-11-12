@@ -46,8 +46,10 @@ adds nothing.
 
 ## Update
 
-Replacing the program is a manual copy of the new exe over the old one, after the checksum
-matches. Then `swiss skill install --installed`.
+`swiss update` compares this build with the newest release. `swiss update --apply` downloads
+and replaces the exe, then restarts the gateway and refreshes installed skills. A dev build
+refuses `--apply` unless `--force` is set. Replacing the program by hand is still: copy the
+new exe over the old one after the checksum matches, then `swiss skill install --installed`.
 
 ## Configure
 

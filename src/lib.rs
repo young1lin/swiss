@@ -40,6 +40,7 @@ pub mod setup_cli;
 pub mod skill_install;
 pub mod skill_seats;
 pub mod subsystems;
+pub mod update;
 pub mod update_check;
 pub mod userpath;
 

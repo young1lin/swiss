@@ -2,9 +2,12 @@
 
 Chapter 0017 of the [swiss specification](../SPEC.md).
 
-swiss ships as one binary per platform from GitHub Releases (ADR-006); there is no installer
-and no self-update — `swiss update` only compares the running build with the newest release
-and prints how to swap the exe (§host.cli). Nothing goes to crates.io: the workspace sets
+swiss ships as one binary per platform from GitHub Releases (ADR-006); there is no installer.
+`swiss update` compares the running build with the newest release. `swiss update --apply`
+downloads and replaces the exe from a short-lived CLI process, never from the resident
+gateway (ADR-041, §host.cli). The release job publishes the compressed exe, the patches and
+`update.json` (below); the workflow itself never downloads or replaces a binary. Nothing goes
+to crates.io: the workspace sets
 `publish = false`, since a stray `cargo publish` would claim ten crate names for one binary.
 The workflow is `.github/workflows/build.yml`.
 

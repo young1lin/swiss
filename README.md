@@ -146,12 +146,21 @@ The full model is [SPEC §security](docs/spec/0015-security.md).
 
 ## Update
 
-`swiss update` compares the running build with the newest GitHub release and prints the steps.
-The update itself stays a manual swap, on purpose — a downloader inside a resident process is
-the opposite of the memory budget this project exists for.
+`swiss update` compares this build with the newest GitHub release. When that release
+publishes `update.json`, it names the download. `swiss update --apply` installs it: a
+short-lived process downloads a zstd patch (or the full exe), checks the hash, replaces
+the file and restarts the gateway. The gateway itself never downloads. A build made from
+source is channel `dev` and `--apply` refuses it unless you pass `--force`. A macOS `.app`
+bundle stays a manual copy.
 
 ```
-swiss update     # "up to date", or the newest release and its download link
+swiss update
+swiss update --apply
+```
+
+The manual swap is still the fallback:
+
+```
 swiss stop
 # replace swiss(.exe) with the binary extracted from the new release archive
 swiss skill install --installed   # every copy swiss has installed, in every directory it has seen
@@ -207,7 +216,8 @@ how to read and amend it, the chapter table and a map from every anchor to its c
 ## Non-goals
 
 - **Never remote.** Loopback-only is the boundary; forward over SSH instead of widening it.
-- **No self-updating binary.** `swiss update` checks and instructs; the swap is yours.
+- **No updater in the resident gateway.** `swiss update --apply` downloads and swaps from a
+  short-lived process; the gateway does not.
 - **No saving on `proc` MCPs.** An `npx`/`uvx` child is 50–150 MB and stays exactly that.
 
 ## Contributing and security

@@ -49,6 +49,9 @@ pub struct StartOptions {
     pub args: Vec<String>,
     /// How long to wait for the daemon to answer /health before calling the start failed.
     pub timeout_ms: Option<u64>,
+    /// Set `SWISS_PORT` on the child without rewriting gateway.config.json. The updater
+    /// uses this so a restarted gateway listens on the port it just left.
+    pub port_env_only: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -101,6 +104,13 @@ pub fn parse_version_hash(line: &str) -> Option<&str> {
     let end = rest.find(',')?;
     let hash = rest[..end].trim();
     (!hash.is_empty()).then_some(hash)
+}
+
+/// The version token in a version line ("swiss 0.1.0 (23047d8, 2026-09-11T13:16:40Z)").
+pub fn parse_version_number(line: &str) -> Option<&str> {
+    let rest = line.trim().strip_prefix("swiss ")?;
+    let version = rest.split_whitespace().next()?;
+    (!version.is_empty()).then_some(version)
 }
 
 /// The build of the gateway binary ON DISK: run the entry's own --version and read its hash
@@ -514,7 +524,9 @@ fn tail_log(path: &Path) -> String {
 /// child shares nothing a terminal hangup is delivered to.
 pub async fn start_daemon(opts: StartOptions) -> StartResult {
     if let Some(port) = opts.port {
-        persist_listen_port(port);
+        if !opts.port_env_only {
+            persist_listen_port(port);
+        }
     }
     let port = opts.port.unwrap_or_else(resolve_port);
     let entry = opts.entry.unwrap_or_else(server_entry);

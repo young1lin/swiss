@@ -77,6 +77,7 @@ impl swiss::update_check::UpdateCheck for FakeUpdate {
             current: swiss::update_check::current_version(),
             latest,
             newer,
+            plan: None,
         })
     }
 }

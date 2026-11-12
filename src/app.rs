@@ -63,6 +63,7 @@ pub fn build_info() -> Value {
         "time": env!("SWISS_BUILD_TIME"),
         "version": env!("CARGO_PKG_VERSION"),
         "target": env!("SWISS_TARGET"),
+        "channel": env!("SWISS_CHANNEL"),
     })
 }
 

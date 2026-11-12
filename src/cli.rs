@@ -75,6 +75,10 @@ pub struct Parsed {
     pub foreground: bool,
     pub follow: bool,
     pub force: bool,
+    /// `swiss update --apply`.
+    pub apply: bool,
+    /// Hidden: the panel's spawn sets `by` in last.json. Not in the usage text.
+    pub by_panel: bool,
     pub json: bool,
     pub no_open: bool,
     pub lines: Option<u64>,
@@ -160,7 +164,9 @@ On Windows or macOS, double-click the app or run swiss without arguments to open
                    Windows, a LaunchAgent on macOS, a systemd user unit on Linux
   path [on|off]    show, add or remove swiss on your own PATH — this exe's folder in the
                    user Path on Windows, a ~/.local/bin/swiss symlink elsewhere
-  update           check GitHub for a newer release; updating stays a manual exe swap
+  update [--apply] [--force]
+                   check GitHub for a newer release; --apply downloads and replaces this exe
+                   then restarts the gateway. A dev build needs --force
   serve            run the gateway in this process (what the daemon spawns)
   remote …         run commands and move files on SSH targets (swiss remote help)
   run …            a run's status / logs / cancel; `run audit` lists the last 7 days of
@@ -199,6 +205,7 @@ options
       --no-open    start: do not open the panel in a browser
   -n, --lines <n>  logs: how many lines to show first (default 200)
       --force      stop: kill a live pid even if it cannot be confirmed as this gateway
+                   update: reinstall the same version, and allow a dev build
       --json       status: emit JSON
   -h, --help       this text
   -v, --version    print the version
@@ -267,6 +274,8 @@ pub fn parse_argv(argv: &[String]) -> Parsed {
             "--foreground" => p.foreground = true,
             "--follow" => p.follow = true,
             "--force" => p.force = true,
+            "--apply" if p.cmd.is_empty() || p.cmd == "update" => p.apply = true,
+            "--by-panel" if p.cmd.is_empty() || p.cmd == "update" => p.by_panel = true,
             "--json" => p.json = true,
             "--no-open" => p.no_open = true,
             "--all" if p.cmd == "skill" => p.all = true,
@@ -780,7 +789,44 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
                 1
             }
         },
-        "update" => match crate::update_check::check().await {
+        "update" => {
+            if p.apply {
+                let exe = match std::env::current_exe() {
+                    Ok(exe) => exe,
+                    Err(err) => {
+                        io.err(&format!("cannot find this exe: {err}"));
+                        return 1;
+                    }
+                };
+                let env = crate::update::ApplyEnv {
+                    exe,
+                    channel: crate::update::channel().to_string(),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    hash: env!("SWISS_GIT_HASH").to_string(),
+                    target: env!("SWISS_TARGET").to_string(),
+                    port: ops.port(),
+                    data_dir: swiss_core::paths::data_dir(),
+                    force: p.force,
+                    by: if p.by_panel { "panel".to_string() } else { "cli".to_string() },
+                };
+                let fetch = match crate::update::apply::HttpFetch::real() {
+                    Ok(fetch) => fetch,
+                    Err(err) => {
+                        io.err(&err);
+                        return 2;
+                    }
+                };
+                let outcome = crate::update::apply(&env, &fetch, &crate::update::apply::RealGateway).await;
+                for line in &outcome.lines {
+                    if line.starts_with("warning:") {
+                        io.err(line);
+                    } else {
+                        io.out(line);
+                    }
+                }
+                return outcome.code;
+            }
+            match crate::update_check::check().await {
             Ok(info) => {
                 for line in info.render().lines() {
                     io.out(line);
@@ -789,9 +835,10 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
             }
             Err(err) => {
                 io.err(&err);
-                1
+                if err.contains("SWISS_UPDATE_SOURCE") { 2 } else { 1 }
             }
-        },
+        }
+        }
         "skill" => {
             let places = match Places::of_this_user() {
                 Ok(places) => places,
