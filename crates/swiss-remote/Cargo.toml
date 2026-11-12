@@ -33,7 +33,7 @@ sha2 = "0.11"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "json"] }
 # A run's trail reads DSH's session log, written as concatenated zstd frames (SPEC
 # §remote.history "Provenance"); the workspace already links this version.
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 # test-utils pins the deterministic master key for this crate's own test binaries.
