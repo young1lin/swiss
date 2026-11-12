@@ -828,6 +828,7 @@ fn skill_lines(rows: &[SkillStatus]) -> Vec<String> {
                 (CopyState::Current, _) => "current".to_string(),
                 (CopyState::Outdated, _) => "outdated".to_string(),
                 (CopyState::Absent, _) => "not installed".to_string(),
+                (CopyState::Missing, _) => "folder missing".to_string(),
                 (CopyState::Unreadable, Some(err)) => format!("cannot check ({err})"),
                 (CopyState::Unreadable, None) => "cannot check".to_string(),
             };
@@ -948,7 +949,10 @@ fn skill_prompt(io: &dyn Io, places: &Places, ask: &mut dyn FnMut(&str) -> Strin
 
 fn skill_refresh(io: &dyn Io, places: &Places) -> i32 {
     let refresh = places.refresh_installed();
-    if refresh.replaced.is_empty() && refresh.failed.is_empty() {
+    for note in &refresh.skipped {
+        io.out(note);
+    }
+    if refresh.replaced.is_empty() && refresh.failed.is_empty() && refresh.skipped.is_empty() {
         io.out("nothing to refresh: no installed copy differs from this binary");
         return 0;
     }
@@ -1388,7 +1392,11 @@ mod tests {
         }
 
         fn places(&self) -> Places {
-            Places { home: self.home.clone(), claude_config: None }
+            Places {
+                home: self.home.clone(),
+                claude_config: None,
+                ledger: self.home.join(crate::skill_seats::FILE_NAME),
+            }
         }
 
         fn run(&self, args: &[&str], ask: Option<&mut dyn FnMut(&str) -> String>) -> i32 {

@@ -107,12 +107,17 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   ```
 
   `--json` prints the inspection shape above. An unknown name or two selectors at once refuse with
-  exit 2 before anything is written; exit 1 is a write that failed. A skill goes to exactly two
-  directories: `.claude` for Claude Code (`$CLAUDE_CONFIG_DIR/skills` when that is set, because
-  Claude Code then reads nothing under `~/.claude`) and `.agents` for every other client
-  (`skill_install::tests::skills_go_to_exactly_the_two_directories`). The CLI, `GET /api/skills` and
-  `POST /api/skills/install` share that one list. Copies an older build left in `~/.cursor/skills`
-  or `~/.codex/skills` are not touched and not refreshed
+  exit 2 before anything is written; exit 1 is a write that failed. A skill has two kinds of
+  seat. Claude Code reads `$CLAUDE_CONFIG_DIR/skills` when that is set, and `~/.claude/skills`
+  otherwise; every other client reads `~/.agents/skills`. Those two are the default seats of the
+  process that is asking. A successful install records its seat in plain `skill-seats.json`
+  (`skill_install::tests::install_records_its_seat_once`), so a later process whose environment
+  does not name that directory still knows it. `swiss skill install` without `--installed` still
+  writes only the two default seats. `swiss skill install --installed` refreshes every known
+  seat and never adds a skill or recreates a directory that is gone
+  (`installed_refreshes_and_never_adds`, `installed_refreshes_every_seat_and_never_adds`).
+  The CLI, `GET /api/skills` and `POST /api/skills/install` share that list. Copies an older
+  build left in `~/.cursor/skills` or `~/.codex/skills` are not touched and not refreshed
   (`a_refresh_leaves_a_copy_outside_the_two_directories`). Whether a skill loads by itself is read
   from its `disable-model-invocation` line, not written twice.
 

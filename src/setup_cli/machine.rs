@@ -223,12 +223,15 @@ fn read_back(answer: &Value, wanted: bool) -> Result<(), String> {
     Err(format!("it did not change: {}", literal::mask(detail)))
 }
 
-/// Every copy not already this binary's. The rest of each directory is the user's.
+/// Every copy not already this binary's, in the seat that holds it. A missing seat is skipped:
+/// refresh and setup do not create a directory back.
 fn install(name: &str) -> Result<(), String> {
     let places = Places::of_this_user()?;
     for skill in places.status().iter().filter(|skill| skill.name == name) {
-        for place in skill.locations.iter().filter(|place| place.state != CopyState::Current) {
-            places.install_one(name, &place.root)?;
+        for place in skill.locations.iter().filter(|place| {
+            matches!(place.state, CopyState::Absent | CopyState::Outdated | CopyState::Unreadable)
+        }) {
+            places.install_in(name, std::path::Path::new(&place.dir))?;
         }
     }
     Ok(())

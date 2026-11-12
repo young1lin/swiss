@@ -138,8 +138,8 @@ async fn machine_section(gw: &Gateway, warnings: &mut Vec<Warning>) -> Option<Va
     (!machine.is_empty()).then_some(Value::Object(machine))
 }
 
-/// Shipped skills with a copy in either directory. One that cannot be read stays out: absence
-/// leaves it untouched, which is the safe guess.
+/// Shipped skills with a copy in a seat that is still there. A missing seat is not a copy.
+/// One that cannot be read stays out: absence leaves it untouched, which is the safe guess.
 fn installed_skills() -> Result<Vec<String>, String> {
     let places = Places::of_this_user()?;
     let mut names = Vec::new();
@@ -147,7 +147,9 @@ fn installed_skills() -> Result<Vec<String>, String> {
         if skill.locations.iter().any(|place| place.state == CopyState::Unreadable) {
             continue;
         }
-        if skill.locations.iter().any(|place| place.state != CopyState::Absent) {
+        if skill.locations.iter().any(|place| {
+            matches!(place.state, CopyState::Current | CopyState::Outdated)
+        }) {
             names.push(skill.name);
         }
     }
