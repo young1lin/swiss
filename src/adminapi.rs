@@ -775,7 +775,9 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             Ok(Err(error)) if error.starts_with("unknown skill") => {
                 admin_error(StatusCode::BAD_REQUEST, &error)
             }
-            Ok(Err(error)) if error.contains("was not changed") => {
+            Ok(Err(error))
+                if error.contains("was not changed") || error.starts_with(crate::skill_install::MISSING_SEAT) =>
+            {
                 admin_error_code(StatusCode::BAD_REQUEST, "skills.seatInvalid", &error)
             }
             Ok(Err(error)) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &error),

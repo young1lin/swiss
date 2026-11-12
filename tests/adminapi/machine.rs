@@ -157,9 +157,16 @@ async fn skill_seats_are_listed_added_refreshed_and_forgotten() {
     let (status, body) = h.post("/api/skills/seats", json!({ "kind": "claude", "dir": &config })).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let added = body["seats"].as_array().expect("seats").iter().find(|seat| seat["source"] == "ledger");
-    let added = added.expect("the new seat");
+    let added = added.expect("the new seat").clone();
     assert_eq!(added["kind"], "claude");
     assert!(std::path::Path::new(added["dir"].as_str().expect("dir")).starts_with(swiss_core::paths::data_dir()));
+    // The config directory exists and its skills/ does not yet: that is a live seat to install into.
+    assert_eq!(added["exists"], true, "{body}");
+    let added_dir = std::path::PathBuf::from(added["dir"].as_str().expect("dir"));
+    assert!(!added_dir.exists());
+    let (status, body) = h.post("/api/skills/install", json!({ "name": "swiss", "dir": &added_dir })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(added_dir.join("swiss").join("SKILL.md").is_file());
 
     let planted = user.join(".agents").join("skills").join("swiss").join("SKILL.md");
     std::fs::create_dir_all(planted.parent().expect("dir")).expect("mkdir");
@@ -174,6 +181,17 @@ async fn skill_seats_are_listed_added_refreshed_and_forgotten() {
     })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["code"], "skills.seatDefault", "{body}");
+
+    // With the config directory gone the seat is missing, and an install never recreates it.
+    std::fs::remove_dir_all(&config).expect("remove the config dir");
+    let (status, body) = h.get("/api/skills").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let gone = body["seats"].as_array().expect("seats").iter().find(|seat| seat["source"] == "ledger").expect("still listed");
+    assert_eq!(gone["exists"], false, "{body}");
+    let (status, body) = h.post("/api/skills/install", json!({ "name": "swiss", "dir": &added_dir })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "skills.seatInvalid", "{body}");
+    assert!(!config.exists(), "the refused install created nothing");
 
     let (status, body) = h.delete_json("/api/skills/seats", json!({
         "dir": added["dir"].as_str().expect("dir"),

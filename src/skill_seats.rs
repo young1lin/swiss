@@ -55,8 +55,9 @@ pub enum SeatSource {
     Both,
 }
 
+/// A field a later version adds is ignored on read, so an older binary never treats a newer
+/// ledger as broken and refuses to install.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct LedgerSeat {
     pub kind: SeatKind,
     pub dir: String,
@@ -65,7 +66,6 @@ pub struct LedgerSeat {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 struct LedgerFile {
     schema: u32,
     seats: Vec<LedgerSeat>,
@@ -142,6 +142,16 @@ pub fn forget(path: &Path, dir: &Path) -> Result<(), String> {
 
 pub fn same_dir(a: &Path, b: &Path) -> bool {
     dir_key(a) == dir_key(b)
+}
+
+/// Whether a recorded seat is still there. A claude seat is `<config>/skills`, and the config
+/// directory is what the user named: while it exists the seat is live even before its first
+/// install creates `skills`. An agents seat is the skills directory itself.
+pub fn seat_present(kind: SeatKind, dir: &Path) -> bool {
+    match kind {
+        SeatKind::Claude if ends_with_skills(dir) => dir.parent().is_some_and(Path::is_dir),
+        _ => dir.is_dir(),
+    }
 }
 
 pub fn ends_with_skills(path: &Path) -> bool {

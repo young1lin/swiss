@@ -967,6 +967,10 @@ fn skill_install(
         chosen
     } else {
         io.err("nothing installed: which skills land is the user's choice, and no terminal is here to ask.");
+        for skill in places.status() {
+            io.err(&format!("{} ({})", skill.name, how_a_skill_runs(&skill)));
+            io.err(&format!("  {}", skill.description));
+        }
         for line in skill_lines(places) {
             io.err(&line);
         }
@@ -1546,6 +1550,12 @@ mod tests {
         let said = bench.err_text();
         for name in ["swiss", "swiss-remote", "swiss-memory", "swiss skill install <name>"] {
             assert!(said.contains(name), "{name}: {said}");
+        }
+        // The choice needs what each skill does, as the terminal prompt shows it.
+        for skill in bench.places().status() {
+            assert!(!skill.description.is_empty(), "{}", skill.name);
+            assert!(said.contains(&format!("  {}", skill.description)), "{}: {said}", skill.name);
+            assert!(said.contains(&format!("{} ({})", skill.name, how_a_skill_runs(&skill))), "{said}");
         }
     }
 

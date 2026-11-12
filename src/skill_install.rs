@@ -178,6 +178,9 @@ pub struct SeatView {
     pub exists: bool,
 }
 
+/// The start of the error `install_in` gives for a ledger seat whose directory is gone.
+pub const MISSING_SEAT: &str = "missing seat";
+
 impl Places {
     pub fn of_this_user() -> Result<Self, String> {
         let home = std::env::var_os("USERPROFILE")
@@ -224,7 +227,7 @@ impl Places {
                 } else {
                     out.push(SeatView {
                         kind: row.kind,
-                        exists: dir.is_dir(),
+                        exists: crate::skill_seats::seat_present(row.kind, &dir),
                         dir,
                         source: crate::skill_seats::SeatSource::Ledger,
                     });
@@ -245,7 +248,7 @@ impl Places {
         let dir = crate::skill_seats::normalize_dir(&self.root_dir(kind.root()));
         SeatView {
             kind,
-            exists: dir.is_dir(),
+            exists: crate::skill_seats::seat_present(kind, &dir),
             dir,
             source: crate::skill_seats::SeatSource::Env,
         }
@@ -325,6 +328,7 @@ impl Places {
     }
 
     /// Install into a seat this process already knows (a default seat or a ledger seat).
+    /// A ledger seat whose directory is gone is refused: an install never recreates it.
     pub fn install_in(&self, name: &str, dir: &std::path::Path) -> Result<(), String> {
         let seat = self
             .seats()
@@ -333,6 +337,9 @@ impl Places {
             .ok_or_else(|| "unknown skill directory".to_string())?;
         if shipped_body(name).is_none() {
             return Err("unknown skill".into());
+        }
+        if !seat.exists && seat.source == crate::skill_seats::SeatSource::Ledger {
+            return Err(format!("{MISSING_SEAT}: {} is gone; forget the seat or restore the directory", seat.dir.display()));
         }
         crate::skill_seats::ensure_writable(&self.ledger)?;
         self.write_skill(name, seat.kind, &seat.dir)?;
@@ -1004,7 +1011,7 @@ mod tests {
         let old = skills.join("swiss").join("SKILL.md");
         std::fs::create_dir_all(old.parent().expect("dir")).expect("mkdir");
         std::fs::write(&old, "an older copy").expect("plant");
-        let gone = home.0.join("gone-skills");
+        let gone = home.0.join("gone-config").join("skills");
         crate::skill_seats::remember(&places.ledger, crate::skill_seats::SeatKind::Claude, &gone).expect("missing seat");
 
         let refresh = places.refresh_installed();
@@ -1013,7 +1020,7 @@ mod tests {
         assert!(refresh.failed.is_empty(), "{refresh:?}");
         assert_eq!(std::fs::read_to_string(&old).expect("refreshed"), SKILL_MD);
         assert!(!skills.join("swiss-memory").exists(), "an absent skill stays absent");
-        assert!(!gone.exists(), "a missing seat is not created");
+        assert!(!gone.parent().expect("config").exists(), "a missing seat is not created");
         assert!(refresh.skipped.iter().any(|note| note.contains("missing")), "{refresh:?}");
         let crate::skill_seats::LedgerLoad::Seats(rows) = crate::skill_seats::load(&places.ledger) else {
             panic!("refresh does not rewrite the ledger away");
@@ -1064,6 +1071,52 @@ mod tests {
         assert!(from_config.ends_with("skills") && !from_config.ends_with("skills/skills") && !from_config.ends_with("skills\\skills"));
         assert!(crate::skill_seats::same_dir(&from_skills, &already));
         assert!(places.add_seat(crate::skill_seats::SeatKind::Claude, &home.0.join("missing")).is_err());
+
+        // The config directory is what the user named, so its seat is live before skills/ exists:
+        // each shipped skill there is absent and installable, not "folder missing".
+        assert!(!from_config.exists());
+        let seat = places.seats().into_iter().find(|seat| crate::skill_seats::same_dir(&seat.dir, &from_config)).expect("seat");
+        assert!(seat.exists, "{seat:?}");
+        for skill in places.status() {
+            let place = skill.locations.iter().find(|p| crate::skill_seats::same_dir(std::path::Path::new(&p.dir), &from_config)).expect("place");
+            assert_eq!(place.state, CopyState::Absent, "{}", skill.name);
+        }
+        places.install_in("swiss", &from_config).expect("the first install creates skills/");
+        assert!(from_config.join("swiss").join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn a_missing_ledger_seat_refuses_an_install() {
+        let home = TempHome::new();
+        let places = home.places();
+        let config = home.0.join("claude-gone");
+        std::fs::create_dir_all(&config).expect("mkdir");
+        let skills = places.add_seat(crate::skill_seats::SeatKind::Claude, &config).expect("seat");
+        std::fs::remove_dir_all(&config).expect("the user removes the account");
+
+        let seat = places.seats().into_iter().find(|seat| crate::skill_seats::same_dir(&seat.dir, &skills)).expect("seat");
+        assert!(!seat.exists);
+        let err = places.install_in("swiss", &skills).expect_err("refused");
+        assert!(err.starts_with(MISSING_SEAT), "{err}");
+        assert!(!config.exists(), "nothing was created back");
+    }
+
+    #[test]
+    fn a_ledger_field_from_a_later_version_is_ignored() {
+        let home = TempHome::new();
+        std::fs::create_dir_all(&home.0).expect("mkdir");
+        let places = home.places();
+        let dir = home.0.join("agents-b");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let row = serde_json::json!({
+            "schema": 1,
+            "note": "added later",
+            "seats": [{ "kind": "agents", "dir": dir, "addedAt": "2026-11-12T06:00:00Z", "label": "work" }],
+        });
+        std::fs::write(&places.ledger, serde_json::to_vec(&row).expect("json")).expect("plant");
+        assert!(places.ledger_note().is_none());
+        assert!(places.seats().iter().any(|seat| crate::skill_seats::same_dir(&seat.dir, &dir)));
+        places.install_one("swiss", ".agents").expect("a newer ledger does not block an install");
     }
 
     #[test]

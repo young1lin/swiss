@@ -50,10 +50,13 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   locations: [{root, kind, dir, source, path, installed, state, error?}]}]}`. `source` is `env`,
   `ledger` or `both`. `installed` is true/false, or null when the filesystem refused the check
   or the seat's directory is gone; `state` is `absent`, `current`, `outdated`, `unreadable` or
-  `missing`. There is no idle scanner.
+  `missing`. A claude seat is gone when its config directory is: the `skills` under it may not
+  exist before the first install, and its skills then read `absent`. An agents seat is gone when
+  its skills directory is. Only a ledger seat can be `missing`. There is no idle scanner.
 - **Selected skill installation.** `POST /api/skills/install` accepts `{name, root}` for a
   default seat, or `{name, dir}` where `dir` is a known seat. A directory that is not a known
-  seat is 400 `skills.unknownDir`. It stages and atomically replaces that seat's `SKILL.md`
+  seat is 400 `skills.unknownDir`, and a ledger seat that is gone is 400 `skills.seatInvalid`:
+  an install never recreates it (`a_missing_ledger_seat_refuses_an_install`). It stages and atomically replaces that seat's `SKILL.md`
   and the companions shipped beside it (`SETUP.md` for `swiss`, `REFERENCE.md` for
   `swiss-remote`), preserving other files and skills, then returns the current inspection
   shape. A copy whose companion is missing or differs is `outdated`. A skill may land
@@ -186,7 +189,10 @@ because the vault cannot be read back and the source is not stored. A slot that 
 holds the mask sentinel; a `${secret://name}` or `${ENV_VAR}` reference is kept, since it is not the
 value, and a reference's default is masked with the rest of the slot because the default is typed
 text. `machine.path` and `machine.autostart` are the booleans those seats report, and stay out when
-this process cannot read them. `skills` names the shipped skills present in the caller's directories.
+this process cannot read them. `skills` names the shipped skills present in the caller's two default
+seats, and `apply` installs into those two, as `swiss skill install <name>` does. A seat only the
+ledger knows belongs to another account and is left to `swiss skill install --installed`
+(`a_ledger_seat_neither_counts_nor_is_written`, `a_ledger_only_copy_is_not_exported`).
 A plugin that is not serving is left out of the sections it holds, and so is a connection or rule
 name that two rows share. Absence means untouched, and show does not guess or delete. Giving that
 manifest to `plan` or `apply` is refused wherever the mask sits

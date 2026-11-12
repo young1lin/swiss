@@ -27,7 +27,8 @@ use super::apply::fail;
 use super::refuse::{join, nearest, Problem};
 use super::report::{Item, Status};
 use crate::remote_cli::Gateway;
-use crate::skill_install::{shipped_names, CopyState, Places};
+use crate::skill_install::{shipped_names, CopyState, Places, SkillLocation};
+use crate::skill_seats::SeatSource;
 use swiss_core::secure::literal;
 
 const KEYS: [&str; 3] = ["path", "autostart", "skills"];
@@ -150,10 +151,17 @@ pub async fn read_state(gw: &Gateway, machine: &Machine) -> MachineState {
     state
 }
 
+/// A default seat of this process (§host.cli): `machine.skills` installs where
+/// `swiss skill install <names>` does. A seat only the ledger knows is another account's, and
+/// `swiss skill install --installed` keeps it current.
+fn in_default_seat(place: &SkillLocation) -> bool {
+    place.source != SeatSource::Ledger
+}
+
 fn copies_of(places: &Places, name: &str) -> Result<Vec<CopyState>, String> {
     let mut copies = Vec::new();
     for skill in places.status().iter().filter(|skill| skill.name == name) {
-        for place in &skill.locations {
+        for place in skill.locations.iter().filter(|place| in_default_seat(place)) {
             if place.state == CopyState::Unreadable {
                 return Err(format!("cannot read {}: {}", place.path, place.error.as_deref().unwrap_or("no detail")));
             }
@@ -223,13 +231,17 @@ fn read_back(answer: &Value, wanted: bool) -> Result<(), String> {
     Err(format!("it did not change: {}", literal::mask(detail)))
 }
 
-/// Every copy not already this binary's, in the seat that holds it. A missing seat is skipped:
-/// refresh and setup do not create a directory back.
+/// Every default-seat copy not already this binary's. Ledger seats are left to
+/// `swiss skill install --installed`.
 fn install(name: &str) -> Result<(), String> {
-    let places = Places::of_this_user()?;
+    install_at(&Places::of_this_user()?, name)
+}
+
+fn install_at(places: &Places, name: &str) -> Result<(), String> {
     for skill in places.status().iter().filter(|skill| skill.name == name) {
         for place in skill.locations.iter().filter(|place| {
-            matches!(place.state, CopyState::Absent | CopyState::Outdated | CopyState::Unreadable)
+            in_default_seat(place)
+                && matches!(place.state, CopyState::Absent | CopyState::Outdated | CopyState::Unreadable)
         }) {
             places.install_in(name, std::path::Path::new(&place.dir))?;
         }
@@ -268,6 +280,33 @@ mod tests {
         let read = read_section(Some(&json!({ "path": true, "skills": ["swiss", "swiss"] })), &mut problems);
         assert_eq!((read.path, read.autostart), (Some(true), None));
         assert_eq!(read.skills, ["swiss"], "a name written twice is one choice");
+    }
+
+    // SPEC §host.cli: `machine.skills` installs into the default seats, as `swiss skill install
+    // <names>` does. A copy in a ledger seat neither decides the status nor gets written.
+    #[test]
+    fn a_ledger_seat_neither_counts_nor_is_written() {
+        let home = std::env::temp_dir().join(format!("swiss-setup-seat-{}", swiss_core::util::random_hex(8)));
+        let places = Places {
+            home: home.clone(),
+            claude_config: None,
+            ledger: home.join(crate::skill_seats::FILE_NAME),
+        };
+        let other = home.join("other-agents");
+        std::fs::create_dir_all(&other).expect("mkdir");
+        let seat = places.add_seat(crate::skill_seats::SeatKind::Agents, &other).expect("seat");
+        places.install_in("swiss", &seat).expect("a copy in the ledger seat");
+        let stale = seat.join("swiss-memory").join("SKILL.md");
+        std::fs::create_dir_all(stale.parent().expect("dir")).expect("mkdir");
+        std::fs::write(&stale, "an older copy").expect("plant");
+
+        assert_eq!(copies_of(&places, "swiss").expect("read"), vec![CopyState::Absent, CopyState::Absent]);
+        install_at(&places, "swiss-memory").expect("install");
+
+        assert_eq!(std::fs::read_to_string(&stale).expect("left"), "an older copy");
+        assert!(home.join(".agents").join("skills").join("swiss-memory").join("SKILL.md").is_file());
+        assert!(home.join(".claude").join("skills").join("swiss-memory").join("SKILL.md").is_file());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     // SPEC §host.setup: absent, current or outdated decide the status, and a copy that cannot be read
