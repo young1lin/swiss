@@ -918,7 +918,9 @@ mod tests {
         assert!(workflow.contains("cp SETUP.md dist-stage/SETUP.md"));
         assert!(workflow.contains("cp SETUP.md dist-stage/skills/swiss/SETUP.md"));
         assert!(workflow.contains("cp SETUP.md dist-bin/SETUP.md"));
-        assert!(workflow.contains("SETUP.md > SHA256SUMS"));
+        // SHA256SUMS covers SETUP.md beside the archives, the update assets and update.json.
+        assert!(workflow.contains("add swiss-*.patch.zst update.json SETUP.md"));
+        assert!(workflow.contains("sha256sum \"${files[@]}\" > SHA256SUMS"));
     }
 
     #[test]
