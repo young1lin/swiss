@@ -13,7 +13,8 @@ All notable changes to swiss are recorded here. The format follows
   counts plugins, MCPs and memory without naming them (SPEC §panel.pages, SPEC §host.cli).
 - Skill seats: an install records the directory it wrote, `swiss skill install --installed`
   and Settings → System refresh every recorded directory, and `swiss status` names outdated
-  copies when there are some (SPEC §host.cli, SPEC §panel.settings).
+  copies when there are some. A deploy runs that refresh once and treats a failure as a
+  warning (SPEC §host.cli, SPEC §panel.settings, SPEC §host.ops).
 
 ### Fixed
 

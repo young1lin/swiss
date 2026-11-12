@@ -124,7 +124,9 @@ dispatch; `gui --help` and `gui --version` finish without opening a window.
 - **Deploy** only with `scripts/deploy.ps1`: gates (unit tests, the integration suite,
   clippy; `-SkipGates` skips all) → release build → stop → copy into `bin\` (retried while the
   old process releases its handle) → start → status → prove `/health`'s `build.hash` equals
-  `bin\swiss.exe --version`, or fail with both values. The outage is stop + copy + start, and
+  `bin\swiss.exe --version`, or fail with both values. After that proof it runs
+  `swiss skill install --installed` once and prints the output; a non-zero exit is a warning,
+  not a failed deploy. The outage is stop + copy + start, and
   the script prints it. `-Quick` is the operator's quick deploy, to see a change live: no
   gates, and the `quick` profile (the release profile without LTO, 16 codegen units,
   incremental, into `target\quick`) in place of the release build — minutes sooner, a larger
