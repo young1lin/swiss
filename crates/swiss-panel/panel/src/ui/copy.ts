@@ -66,6 +66,10 @@ export function copyBtn(text: string | (() => string), o: { label?: string } = {
     b.toggleAttribute("data-copied", ok);
     window.clearTimeout(timer);
     timer = window.setTimeout((): void => {
+      /* A torn-down DOM (a test file that clicked and finished) can leave this timer the last
+       * thing alive; with no document there is no glyph to restore - the page took it (SPEC
+       * §panel.ui, the same typeof guard copyText gives navigator). */
+      if (typeof document === "undefined") return;
       mark("copy", label);
       b.removeAttribute("data-copied");
     }, COPIED_MS);

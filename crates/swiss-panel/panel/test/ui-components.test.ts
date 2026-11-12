@@ -2778,6 +2778,24 @@ describe("ui/copy - copyBtn and copyText", () => {
     expect(b.querySelector("use")!.getAttribute("href")).toContain("copy");
   });
 
+  it("the restore timer stays quiet once the document left - a finished test file's stray click timer never wakes", async () => {
+    vi.useFakeTimers();
+    clip(async () => undefined);
+    const b = copyBtn("words");
+    b.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(b.hasAttribute("data-copied")).toBe(true);
+    const doc = (globalThis as { document?: Document }).document;
+    Reflect.deleteProperty(globalThis, "document");
+    try {
+      // Before the guard this threw ReferenceError: document is not defined - an unhandled
+      // error vitest fails the whole run on (the CI failure this test pins).
+      await vi.advanceTimersByTimeAsync(1500);
+    } finally {
+      Object.defineProperty(globalThis, "document", { configurable: true, value: doc });
+    }
+  });
+
   it("a refused clipboard with no fallback says Copy failed under a cross, never Copied", async () => {
     clip(async () => { throw new Error("denied"); });
     const b = copyBtn("words");
