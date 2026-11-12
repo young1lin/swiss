@@ -44,20 +44,30 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   An existing entry is left unchanged unless `--replace`. When an entry was written, `next` says
   to restart the client; a plan, an unchanged entry and a failed one owe no restart.
 - **Skill inspection.** `GET /api/skills`, behind the admin session, checks only the three
-  embedded skill names in the two directories a skill goes to (below). It reads each `SKILL.md`,
-  creates nothing, and returns `{skills: [{name, description, loadsByItself, locations: [{root,
-  path, installed, state, error?}]}]}`. `installed` is true/false, or null when the filesystem
-  refused the check; `state` is `absent`, `current`, `outdated` or `unreadable`. There is no idle
-  scanner.
-- **Selected skill installation.** `POST /api/skills/install` accepts `{name, root}`, restricted
-  to the three embedded names and `.claude` / `.agents`. It stages and atomically replaces that
-  target's `SKILL.md` and the companions shipped beside it (`SETUP.md` for `swiss`, `REFERENCE.md`
-  for `swiss-remote`), preserving other files and skills, then returns the current inspection
-  shape. A copy whose companion is missing or differs is `outdated`. A skill may land differently
-  per root: `swiss-remote`'s `.claude` copy runs its brief as it loads (§remote.project), and the
-  check compares each root against what that root gets. Unknown targets and extra request fields are refused before filesystem
-  access. Writes run
-  on the blocking pool and require the same admin session.
+  embedded skill names in every known seat: the two default directories of this process, plus
+  any seat recorded in `skill-seats.json` (below). It reads each `SKILL.md`, creates nothing,
+  and returns `{seats: [{kind, dir, source, exists}], skills: [{name, description, loadsByItself,
+  locations: [{root, kind, dir, source, path, installed, state, error?}]}]}`. `source` is `env`,
+  `ledger` or `both`. `installed` is true/false, or null when the filesystem refused the check
+  or the seat's directory is gone; `state` is `absent`, `current`, `outdated`, `unreadable` or
+  `missing`. A claude seat is gone when its config directory is: the `skills` under it may not
+  exist before the first install, and its skills then read `absent`. An agents seat is gone when
+  its skills directory is. Only a ledger seat can be `missing`. There is no idle scanner.
+- **Selected skill installation.** `POST /api/skills/install` accepts `{name, root}` for a
+  default seat, or `{name, dir}` where `dir` is a known seat. A directory that is not a known
+  seat is 400 `skills.unknownDir`, and a ledger seat that is gone is 400 `skills.seatInvalid`:
+  an install never recreates it (`a_missing_ledger_seat_refuses_an_install`). It stages and atomically replaces that seat's `SKILL.md`
+  and the companions shipped beside it (`SETUP.md` for `swiss`, `REFERENCE.md` for
+  `swiss-remote`), preserving other files and skills, then returns the current inspection
+  shape. A copy whose companion is missing or differs is `outdated`. A skill may land
+  differently per kind: `swiss-remote`'s claude copy runs its brief as it loads
+  (§remote.project), and the check compares each seat against what that kind gets. Unknown
+  targets and extra request fields are refused before filesystem access.
+  `POST /api/skills/refresh` is `swiss skill install --installed`: `{replaced, failed, skills}`.
+  `POST /api/skills/seats` records `{kind, dir}` and answers the inspection; a path that is not
+  absolute, not a directory, or a ledger that cannot be parsed is 400 `skills.seatInvalid` and
+  the ledger file is left as it was. `DELETE /api/skills/seats` forgets `{dir}`; a default seat
+  is 400 `skills.seatDefault`. Writes run on the blocking pool and require the same admin session.
 - **`export` / `import`** — the one plaintext escape: a v1 bundle of config, managed, tunnels,
   OAuth, env and secrets (vault values masked, §host.vault). It moves those six and no more:
   `remote.json`, `memory/store.sqlite3`, the LLM records and each module's history databases stay
@@ -97,22 +107,33 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   skills, and which of them land is the user's answer:
 
   ```text
-  swiss skill list [--json]        each skill: what it does, whether it loads by itself, where it is,
-                                   and whether that copy still matches this binary
+  swiss skill list [--json]        one block per seat (kind, directory, env|ledger|both) and each
+                                   skill's state; --json is {seats, skills}
   swiss skill install              at a terminal, asks per skill, default no;
                                    with no terminal, refuses with exit 2 and the list
-  swiss skill install <name>...    exactly these
+  swiss skill install <name>...    exactly these, into the two default seats, which are recorded
   swiss skill install --all        every shipped skill, said out loud
-  swiss skill install --installed  refresh what is already there; never adds. What an update runs
+  swiss skill install --installed  refresh every known seat; never adds. What an update runs
+  swiss skill seat add <dir> [--kind claude|agents]
+                                   record a Claude config directory, or an agents skills directory
+  swiss skill seat forget <dir>    drop a recorded seat; a default seat is refused
   ```
 
+  `swiss status` adds one line when any copy is outdated, and stays quiet otherwise:
+  `skills: N outdated copies (swiss skill install --installed)`.
+
   `--json` prints the inspection shape above. An unknown name or two selectors at once refuse with
-  exit 2 before anything is written; exit 1 is a write that failed. A skill goes to exactly two
-  directories: `.claude` for Claude Code (`$CLAUDE_CONFIG_DIR/skills` when that is set, because
-  Claude Code then reads nothing under `~/.claude`) and `.agents` for every other client
-  (`skill_install::tests::skills_go_to_exactly_the_two_directories`). The CLI, `GET /api/skills` and
-  `POST /api/skills/install` share that one list. Copies an older build left in `~/.cursor/skills`
-  or `~/.codex/skills` are not touched and not refreshed
+  exit 2 before anything is written; exit 1 is a write that failed. A skill has two kinds of
+  seat. Claude Code reads `$CLAUDE_CONFIG_DIR/skills` when that is set, and `~/.claude/skills`
+  otherwise; every other client reads `~/.agents/skills`. Those two are the default seats of the
+  process that is asking. A successful install records its seat in plain `skill-seats.json`
+  (`skill_install::tests::install_records_its_seat_once`), so a later process whose environment
+  does not name that directory still knows it. `swiss skill install` without `--installed` still
+  writes only the two default seats. `swiss skill install --installed` refreshes every known
+  seat and never adds a skill or recreates a directory that is gone
+  (`installed_refreshes_and_never_adds`, `installed_refreshes_every_seat_and_never_adds`).
+  The CLI, `GET /api/skills` and `POST /api/skills/install` share that list. Copies an older
+  build left in `~/.cursor/skills` or `~/.codex/skills` are not touched and not refreshed
   (`a_refresh_leaves_a_copy_outside_the_two_directories`). Whether a skill loads by itself is read
   from its `disable-model-invocation` line, not written twice.
 
@@ -168,7 +189,10 @@ because the vault cannot be read back and the source is not stored. A slot that 
 holds the mask sentinel; a `${secret://name}` or `${ENV_VAR}` reference is kept, since it is not the
 value, and a reference's default is masked with the rest of the slot because the default is typed
 text. `machine.path` and `machine.autostart` are the booleans those seats report, and stay out when
-this process cannot read them. `skills` names the shipped skills present in the caller's directories.
+this process cannot read them. `skills` names the shipped skills present in the caller's two default
+seats, and `apply` installs into those two, as `swiss skill install <name>` does. A seat only the
+ledger knows belongs to another account and is left to `swiss skill install --installed`
+(`a_ledger_seat_neither_counts_nor_is_written`, `a_ledger_only_copy_is_not_exported`).
 A plugin that is not serving is left out of the sections it holds, and so is a connection or rule
 name that two rows share. Absence means untouched, and show does not guess or delete. Giving that
 manifest to `plan` or `apply` is refused wherever the mask sits

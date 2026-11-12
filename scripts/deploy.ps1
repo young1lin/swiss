@@ -297,6 +297,13 @@ if ($running -ne $built) {
 }
 $outage.Stop()
 Phase ("deployed: $running is serving on 19999 from $Exe (19999 was down {0:N1} s)" -f $outage.Elapsed.TotalSeconds)
+# The new binary's skills, over copies already installed, in every directory it has seen.
+# A skill the user declined stays absent. A failure here does not roll the deploy back.
+Phase 'refreshing installed skills'
+& $Exe skill install --installed
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "warning: skill refresh exited $LASTEXITCODE - the deploy itself succeeded"
+}
 # Other programs reach `swiss remote ...` through PATH; the script only says when bin\ is
 # missing from it - changing a user's PATH is their call.
 $binAbs = (Resolve-Path $BinDir).Path

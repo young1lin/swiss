@@ -19,15 +19,12 @@ import { fill, h } from "../h.js";
 import { currentView } from "../ui-state.js";
 import { desktopQuit } from "../desktop.js";
 import { tr } from "../i18n.js";
-import { btn, card, closeSheet, emptyNode, hint, iconBtn, note, paneBody, paneHead, row, section, sheet, showSheet, sw, tag } from "../ui/index.js";
-import { actionBtn } from "../ui/action.js";
+import { btn, card, closeSheet, emptyNode, hint, paneBody, paneHead, row, section, sheet, showSheet, sw } from "../ui/index.js";
 import { aboutSection, handleAboutClick, resetAbout } from "./system-about.js";
-import type { ApiSkillStatus, ApiMachineSetting as MachineSetting, MachineSettingKey as MachineKey } from "../types/api.js"; // Admin API contracts.
+import { applySkills, handleSkillsClick, resetSkills, skillsSection } from "./system-skills.js";
+import type { ApiMachineSetting as MachineSetting, ApiSkillsResponse, MachineSettingKey as MachineKey } from "../types/api.js"; // Admin API contracts.
 const machine: Record<MachineKey, MachineSetting | null> = { autostart: null, "user-path": null };
 const busy = new Set<MachineKey>();
-let skills: ApiSkillStatus[] | null = null;
-const skillBusy = new Set<string>();
-let skillRead = 0;
 let generation = 0;
 
 export function startupRowNode(a: MachineSetting | null): HTMLElement | null {
@@ -44,26 +41,6 @@ export function pathRowNode(p: MachineSetting | null): HTMLElement | null {
     toggle: sw(p.enabled, tr("plugins.togglePath"), { data: { "userpath-toggle": true, "machine-toggle": "user-path" }, disabled: busy.has("user-path") }),
     data: { userpath: true }, title: p.dir || undefined,
   }) : null;
-}
-
-function skillsSection(): HTMLElement {
-  const body = skills ? card(skills.map(skill => row({
-    name: skill.name, data: { skill: skill.name },
-    cols: skill.locations.map(location => {
-      const state = tr(location.installed === true ? "system.skillInstalled" : location.installed === false ? "system.skillMissing" : "system.skillUnknown");
-      const key = skill.name + ":" + location.root;
-      const label = tr(location.installed === true ? "system.updateSkill" : "system.installSkill", { name: skill.name, root: location.root });
-      return { v: h("span", { data: { "skill-root": location.root }, title: location.path + (location.error ? " · " + location.error : "") },
-        h("code", null, location.root), " ", tag(state, { tone: location.installed === null ? "warn" : undefined }), " ",
-        iconBtn("download", label, { ghost: true, disabled: skillBusy.has(key), data: { "skill-install": skill.name, "skill-directory": location.root } })) };
-    }),
-  }))) : note(tr("system.skillsUnavailable"));
-  // Refresh reads every skill's install state again: the refresh glyph, its word in the tooltip
-  // (SPEC §panel.design rule 7). NOT a restart - nothing is rebuilt, the page just looks again.
-  const part = section({ cap: tr("system.skills"), note: tr("system.skillsHint"), tools: [actionBtn("refresh", tr("system.refreshSkills"), { id: "system-skills-refresh", title: tr("system.refreshSkillsHint"), disabled: skillBusy.size > 0 })] },
-    body, note(tr("system.skillsActionHint")));
-  part.id = "system-skills";
-  return part;
 }
 
 async function readStatus<T>(path: string): Promise<T | null> {
@@ -92,35 +69,6 @@ async function toggleMachine(key: MachineKey): Promise<void> {
   busy.delete(key);
   if (next) { machine[key] = next; if (key === "user-path") toast(tr("plugins.pathNewTerminals")); }
   patchMachine(); refocusIfIdle(pressed);
-}
-
-async function refreshSkills(): Promise<void> {
-  if (skillBusy.size) return;
-  const ticket = generation;
-  const read = ++skillRead;
-  const button = $<HTMLButtonElement>("system-skills-refresh");
-  if (button) button.disabled = true;
-  const next = await readStatus<{ skills: ApiSkillStatus[] }>("/api/skills");
-  if (ticket !== generation || read !== skillRead || currentView() !== "system") return;
-  skills = next?.skills || null;
-  document.getElementById("system-skills")?.replaceWith(skillsSection());
-}
-
-async function installSkill(name: string, root: string): Promise<void> {
-  const key = name + ":" + root;
-  if (skillBusy.has(key)) return;
-  const ticket = generation;
-  skillRead++;
-  skillBusy.add(key);
-  document.getElementById("system-skills")?.replaceWith(skillsSection());
-  const result = await apiJson<{ skills: ApiSkillStatus[] }>("/api/skills/install", { method: "POST", body: JSON.stringify({ name, root }) });
-  if (ticket !== generation || currentView() !== "system") return;
-  skillBusy.delete(key);
-  // Merge only this target: concurrent installs must not overwrite each other's statuses.
-  const location = result?.skills.find(skill => skill.name === name)?.locations.find(item => item.root === root);
-  const current = skills?.find(skill => skill.name === name)?.locations.find(item => item.root === root);
-  if (location && current) Object.assign(current, location);
-  document.getElementById("system-skills")?.replaceWith(skillsSection());
 }
 
 /** The process action is deliberately a Settings page, not permanent app chrome: quitting the
@@ -202,23 +150,20 @@ async function requestQuit(): Promise<void> {
 async function mount(): Promise<void> {
   const ticket = ++generation;
   busy.clear();
-  skillBusy.clear();
   const [startup, path, checked] = await Promise.all([
     readStatus<MachineSetting>("/api/autostart"), readStatus<MachineSetting>("/api/user-path"),
-    readStatus<{ skills: ApiSkillStatus[] }>("/api/skills"),
+    readStatus<ApiSkillsResponse>("/api/skills"),
   ]);
   if (ticket !== generation || currentView() !== "system") return;
-  machine.autostart = startup; machine["user-path"] = path; skills = checked?.skills || null;
+  machine.autostart = startup; machine["user-path"] = path; applySkills(checked);
   fill($("pane"), systemBodyNode());
   // One delegated claim on the pane (SPEC §panel.toolchain): the quit button is reached through the
   // pane's own listener, so the wiring survives any repaint of the pane's children.
   $("pane").onclick = (event: MouseEvent): void => {
     const hit = targetEl(event);
     if (hit && handleAboutClick(hit)) return;
+    if (hit && handleSkillsClick(hit)) return;
     if (hit?.closest("#system-quit")) openQuitSheet();
-    if (targetEl(event)?.closest("#system-skills-refresh")) { void refreshSkills(); return; }
-    const install = targetEl(event)?.closest<HTMLElement>("[data-skill-install]");
-    if (install) { void installSkill(install.dataset.skillInstall || "", install.dataset.skillDirectory || ""); return; }
     const key = targetEl(event)?.closest("[data-machine-toggle]")?.getAttribute("data-machine-toggle");
     if (key === "autostart" || key === "user-path") void toggleMachine(key);
   };
@@ -227,11 +172,10 @@ async function mount(): Promise<void> {
 function unmount(): void {
   generation++;
   resetAbout();
+  resetSkills();
   busy.clear();
-  skillBusy.clear();
   machine.autostart = null;
   machine["user-path"] = null;
-  skills = null;
 }
 
 export { mount, mount as refresh, unmount, openQuitSheet, quitSheetNode, requestQuit, systemBodyNode };

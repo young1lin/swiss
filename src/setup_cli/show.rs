@@ -138,20 +138,29 @@ async fn machine_section(gw: &Gateway, warnings: &mut Vec<Warning>) -> Option<Va
     (!machine.is_empty()).then_some(Value::Object(machine))
 }
 
-/// Shipped skills with a copy in either directory. One that cannot be read stays out: absence
-/// leaves it untouched, which is the safe guess.
+/// Shipped skills with a copy in a default seat of this process, the seats `machine.skills`
+/// installs into. A ledger seat is another account's and does not speak for this one.
+/// One that cannot be read stays out: absence leaves it untouched, which is the safe guess.
 fn installed_skills() -> Result<Vec<String>, String> {
-    let places = Places::of_this_user()?;
+    Ok(installed_in(&Places::of_this_user()?))
+}
+
+fn installed_in(places: &Places) -> Vec<String> {
     let mut names = Vec::new();
     for skill in places.status() {
-        if skill.locations.iter().any(|place| place.state == CopyState::Unreadable) {
+        let defaults: Vec<_> = skill
+            .locations
+            .iter()
+            .filter(|place| place.source != crate::skill_seats::SeatSource::Ledger)
+            .collect();
+        if defaults.iter().any(|place| place.state == CopyState::Unreadable) {
             continue;
         }
-        if skill.locations.iter().any(|place| place.state != CopyState::Absent) {
+        if defaults.iter().any(|place| matches!(place.state, CopyState::Current | CopyState::Outdated)) {
             names.push(skill.name);
         }
     }
-    Ok(names)
+    names
 }
 
 async fn secrets_section(gw: &Gateway) -> Result<Option<Value>, String> {
@@ -593,6 +602,26 @@ fn leaks_a_default(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // SPEC §host.setup: `machine.skills` names what the default seats hold. A copy only a ledger
+    // seat (another account) holds is not exported, or applying the manifest would add it here.
+    #[test]
+    fn a_ledger_only_copy_is_not_exported() {
+        let home = std::env::temp_dir().join(format!("swiss-show-seat-{}", swiss_core::util::random_hex(8)));
+        let places = Places {
+            home: home.clone(),
+            claude_config: None,
+            ledger: home.join(crate::skill_seats::FILE_NAME),
+        };
+        let other = home.join("other-agents");
+        std::fs::create_dir_all(&other).expect("mkdir");
+        let seat = places.add_seat(crate::skill_seats::SeatKind::Agents, &other).expect("seat");
+        places.install_in("swiss-memory", &seat).expect("ledger copy");
+        places.install_one("swiss", ".agents").expect("default copy");
+
+        assert_eq!(installed_in(&places), vec!["swiss".to_string()]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     const VALUE: &str = "show-literal-9f3a";
 

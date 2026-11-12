@@ -79,8 +79,14 @@ fn setup_machine(user_path: FakeUserPath) -> Harness {
     })
 }
 
+fn skill_files_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|err| err.into_inner())
+}
+
 #[tokio::test]
 async fn shipped_skill_status_is_read_only_and_reports_both_roots() {
+    let _guard = skill_files_lock();
     let h = setup_machine(FakeUserPath::default());
     let (status, body) = h.get("/api/skills").await;
     assert_eq!(status, StatusCode::OK);
@@ -104,6 +110,7 @@ async fn shipped_skill_status_is_read_only_and_reports_both_roots() {
 
 #[tokio::test]
 async fn selected_skill_install_refuses_arbitrary_names_roots_and_paths() {
+    let _guard = skill_files_lock();
     let h = setup_machine(FakeUserPath::default());
     for body in [json!({}), json!({ "name": "../other", "root": ".agents" }),
         json!({ "name": "swiss", "root": "../other" }),
@@ -113,6 +120,88 @@ async fn selected_skill_install_refuses_arbitrary_names_roots_and_paths() {
         let (status, _) = h.post("/api/skills/install", body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
+}
+
+#[tokio::test]
+async fn skill_seats_are_listed_added_refreshed_and_forgotten() {
+    let _guard = skill_files_lock();
+    let h = setup_machine(FakeUserPath::default());
+    let user = std::path::PathBuf::from(std::env::var_os("USERPROFILE").expect("sandbox home"));
+    let ledger = swiss_core::paths::data_dir().join("skill-seats.json");
+    let _ = std::fs::remove_file(&ledger);
+
+    let (status, body) = h.get("/api/skills").await;
+    assert_eq!(status, StatusCode::OK);
+    let seats = body["seats"].as_array().expect("seats");
+    assert!(seats.len() >= 2, "{body}");
+    for seat in seats {
+        let dir = seat["dir"].as_str().expect("dir");
+        assert!(std::path::Path::new(dir).starts_with(swiss_core::paths::data_dir()), "{dir}");
+        assert!(seat["exists"].is_boolean());
+        assert!(seat["source"].is_string());
+    }
+
+    let (status, body) = h.post("/api/skills/install", json!({
+        "name": "swiss",
+        "dir": user.join("not-a-seat"),
+    })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "skills.unknownDir", "{body}");
+
+    let (status, body) = h.post("/api/skills/seats", json!({ "kind": "claude", "dir": "relative/claude" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "skills.seatInvalid", "{body}");
+
+    let config = user.join("claude-b");
+    std::fs::create_dir_all(&config).expect("mkdir");
+    let (status, body) = h.post("/api/skills/seats", json!({ "kind": "claude", "dir": &config })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let added = body["seats"].as_array().expect("seats").iter().find(|seat| seat["source"] == "ledger");
+    let added = added.expect("the new seat").clone();
+    assert_eq!(added["kind"], "claude");
+    assert!(std::path::Path::new(added["dir"].as_str().expect("dir")).starts_with(swiss_core::paths::data_dir()));
+    // The config directory exists and its skills/ does not yet: that is a live seat to install into.
+    assert_eq!(added["exists"], true, "{body}");
+    let added_dir = std::path::PathBuf::from(added["dir"].as_str().expect("dir"));
+    assert!(!added_dir.exists());
+    let (status, body) = h.post("/api/skills/install", json!({ "name": "swiss", "dir": &added_dir })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(added_dir.join("swiss").join("SKILL.md").is_file());
+
+    let planted = user.join(".agents").join("skills").join("swiss").join("SKILL.md");
+    std::fs::create_dir_all(planted.parent().expect("dir")).expect("mkdir");
+    std::fs::write(&planted, "an older copy").expect("plant");
+    let (status, body) = h.post("/api/skills/refresh", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["replaced"].as_array().expect("replaced").iter().any(|p| p.as_str() == Some(&planted.to_string_lossy())), "{body}");
+    assert!(body["skills"].is_array());
+
+    let (status, body) = h.delete_json("/api/skills/seats", json!({
+        "dir": user.join(".agents").join("skills"),
+    })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "skills.seatDefault", "{body}");
+
+    // With the config directory gone the seat is missing, and an install never recreates it.
+    std::fs::remove_dir_all(&config).expect("remove the config dir");
+    let (status, body) = h.get("/api/skills").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let gone = body["seats"].as_array().expect("seats").iter().find(|seat| seat["source"] == "ledger").expect("still listed");
+    assert_eq!(gone["exists"], false, "{body}");
+    let (status, body) = h.post("/api/skills/install", json!({ "name": "swiss", "dir": &added_dir })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "skills.seatInvalid", "{body}");
+    assert!(!config.exists(), "the refused install created nothing");
+
+    let (status, body) = h.delete_json("/api/skills/seats", json!({
+        "dir": added["dir"].as_str().expect("dir"),
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["seats"].as_array().expect("seats").iter().all(|seat| seat["source"] != "ledger"));
+
+    let _ = std::fs::remove_file(&ledger);
+    let _ = std::fs::remove_dir_all(user.join(".agents"));
+    let _ = std::fs::remove_dir_all(&config);
 }
 
 #[tokio::test]
