@@ -33,6 +33,8 @@ async fn exposes_the_tokens_env_var_name_never_the_token() {
     assert!(!body.to_string().contains(TOKEN), "{body}");
     // The build stamp (SPEC §host.daemon) — present, and never a secret either.
     assert_eq!(body["build"]["hash"], json!(env!("SWISS_GIT_HASH")));
+    assert_eq!(body["build"]["version"], json!(env!("CARGO_PKG_VERSION")));
+    assert_eq!(body["build"]["target"], json!(env!("SWISS_TARGET")));
     assert!(!body["build"].to_string().contains(TOKEN), "{body}");
 }
 

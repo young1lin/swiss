@@ -54,11 +54,16 @@ const RESPONSE_CAPTURE: usize = 16 * 1024;
 
 /// Which build is running — the stamp build.rs planted at compile time (SPEC §host.daemon). Served on
 /// every surface an operator can check (/health, /api/info, the status command, --version), so
-/// "is the running daemon the binary I just built?" is answerable without guessing. A short git
-/// hash and an RFC 3339 time, nothing more: this is a loopback-only service, and a commit id
-/// names code, not the machine or its user.
+/// "is the running daemon the binary I just built?" is answerable without guessing. `hash` and
+/// `time` are the pair those readers already use; `version` is this crate's version and `target`
+/// is the rustc triple. Still no machine name and no user: a commit id names code, not the machine.
 pub fn build_info() -> Value {
-    json!({ "hash": env!("SWISS_GIT_HASH"), "time": env!("SWISS_BUILD_TIME") })
+    json!({
+        "hash": env!("SWISS_GIT_HASH"),
+        "time": env!("SWISS_BUILD_TIME"),
+        "version": env!("CARGO_PKG_VERSION"),
+        "target": env!("SWISS_TARGET"),
+    })
 }
 
 /// One MCP endpoint per started MCP, cached by the entry's generation — the port of the Node
@@ -132,6 +137,10 @@ pub struct AppContext {
     /// 503, so no suite run can register, unregister or rewrite anything on the host.
     pub autostart: std::sync::OnceLock<Arc<dyn crate::autostart::AutoStart>>,
     pub user_path: std::sync::OnceLock<Arc<dyn crate::userpath::UserPath>>,
+    /// Release check for `GET /api/update/check`. Set once at boot to `GithubUpdateCheck`.
+    /// Unset in every test composition, so the route answers 503 and opens no connection.
+    /// The CLI calls `update_check::check` directly and does not read this seam.
+    pub update_check: std::sync::OnceLock<Arc<dyn crate::update_check::UpdateCheck>>,
     /// The gateway's own children (SPEC §process.children): the one list runs, proc MCPs
     /// and terminals register into, and /api/memory takes its roots from. Set once by the
     /// boot sequence from RuntimeServices; unset in test compositions, where there are no
@@ -173,6 +182,7 @@ impl AppContext {
             session: std::sync::OnceLock::new(),
             autostart: std::sync::OnceLock::new(),
             user_path: std::sync::OnceLock::new(),
+            update_check: std::sync::OnceLock::new(),
             children: std::sync::OnceLock::new(),
             bus: std::sync::OnceLock::new(),
             handlers: Mutex::new(HashMap::new()),

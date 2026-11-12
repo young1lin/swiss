@@ -36,6 +36,7 @@ use axum::Router;
 use serde_json::{json, Map, Value};
 
 use crate::app::{admin_error, admin_json, AppContext};
+use crate::reply::admin_error_code;
 use swiss_core::log;
 use swiss_host::config::ServerDef;
 use swiss_host::managed::{now_ms, ManagedEntry, RevisionRec};
@@ -675,6 +676,21 @@ fn machine_setting_unmounted(what: &str) -> Response {
     )
 }
 
+/// The body of `GET /api/update/check`. `current` is the crate version alone; `currentVersion`
+/// is the longer tag `current_version()` already prints for the CLI.
+fn update_check_body(info: &crate::update_check::UpdateInfo) -> Value {
+    let latest = info
+        .latest
+        .as_ref()
+        .map(|release| json!({ "tag": release.tag, "url": release.url }));
+    json!({
+        "current": env!("CARGO_PKG_VERSION"),
+        "currentVersion": crate::update_check::current_version(),
+        "latest": latest,
+        "newer": info.newer,
+    })
+}
+
 // --- mounting -----------------------------------------------------------------------------------
 
 pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
@@ -696,6 +712,19 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             StatusCode::OK,
             json!({ "tokenEnv": ctx.token_env, "panelVersion": swiss_panel::admin::panel_version_stamp(), "build": crate::app::build_info() }),
         )
+    }));
+
+    // The same GitHub read as `swiss update`, on click only. An unset seam — every test
+    // composition — answers 503 and builds no client. A failed read names the code the panel
+    // translates; the English sentence stays for the CLI and the logs.
+    r = r.route("/api/update/check", get(|State(ctx): State<Arc<AppContext>>| async move {
+        let Some(checker) = ctx.update_check.get() else {
+            return machine_setting_unmounted("update check");
+        };
+        match checker.check().await {
+            Ok(info) => admin_json(StatusCode::OK, update_check_body(&info)),
+            Err(err) => admin_error_code(StatusCode::BAD_GATEWAY, "update.unreachable", &err),
+        }
     }));
 
     // Read-only skill inspection, under the same admin session gate as every /api route.

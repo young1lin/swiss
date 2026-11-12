@@ -137,6 +137,8 @@ async fn health_and_panel_serve() {
     let health = json.unwrap();
     assert_eq!(health["ok"], json!(true));
     assert_eq!(health["build"]["hash"], json!(env!("SWISS_GIT_HASH")));
+    assert_eq!(health["build"]["version"], json!(env!("CARGO_PKG_VERSION")));
+    assert_eq!(health["build"]["target"], json!(env!("SWISS_TARGET")));
     assert!(!health["build"]["time"].as_str().unwrap_or("").is_empty());
 
     let (status, _, text) = send(&app, local(Request::get("/").body(Body::empty()).unwrap())).await;
@@ -237,6 +239,8 @@ async fn admin_api_lists_mcps_and_info() {
     // The build stamp rides here too (SPEC §host.daemon) — additive to the Node shape; the panel
     // reads named fields only.
     assert_eq!(info["build"]["hash"], json!(env!("SWISS_GIT_HASH")));
+    assert_eq!(info["build"]["version"], json!(env!("CARGO_PKG_VERSION")));
+    assert_eq!(info["build"]["target"], json!(env!("SWISS_TARGET")));
 }
 
 #[tokio::test]

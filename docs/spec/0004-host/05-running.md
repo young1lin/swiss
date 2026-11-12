@@ -99,9 +99,11 @@ dispatch; `gui --help` and `gui --version` finish without opening a window.
 - **Status** reports the running build (`/health`) against the binary on disk (`--version` of
   the pid file's entry) and says "restart to pick it up" when they differ; `--json` carries
   `build` and `diskBuild`.
-- **Build stamp.** `build.rs` sets `SWISS_GIT_HASH` (`<short>` or `<short>-dirty`) and
-  `SWISS_BUILD_TIME` (RFC 3339 UTC), both `unknown` without git — the build never fails for it.
-  `swiss --version` prints `swiss <version> (<hash>, <time>)`.
+- **Build stamp.** `build.rs` sets `SWISS_GIT_HASH` (`<short>` or `<short>-dirty`),
+  `SWISS_BUILD_TIME` (RFC 3339 UTC) and `SWISS_TARGET` (the rustc target triple). The hash and
+  the time are `unknown` without git, and the target is `unknown` when cargo did not set it —
+  the build never fails for a missing stamp. `build_info()` serves `{hash, time, version, target}`.
+  `swiss --version` prints `swiss <version> (<hash>, <time>)` and does not include the target.
 - **Logs.** JSON lines `{ts, level, msg, extra?}` on stderr, redirected by the daemon into
   `gateway-<port>.log`, rotated at 10 MB keeping one generation. Stdout belongs to the command, so
   a state migration that logs during `swiss export` or `swiss api` cannot reach a redirected

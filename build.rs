@@ -31,6 +31,10 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
+    // Cargo sets TARGET for the build script. A missing value stamps "unknown" rather than
+    // failing the build — the same rule as the git hash below.
+    let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
+    println!("cargo:rustc-env=SWISS_TARGET={target}");
     let hash = git_hash().unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=SWISS_GIT_HASH={hash}");
     println!("cargo:rustc-env=SWISS_BUILD_TIME={}", rfc3339_now());
