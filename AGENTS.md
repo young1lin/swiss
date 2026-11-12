@@ -171,9 +171,10 @@ why `[profile.dev]` keeps line tables only.
   acceptance spec (SPEC §testing), and with a real-browser walk
   (`.agents/rules/panel-proof-of-life.md`).
 - **Every visible panel string goes through `tr()`/`trn()`** (SPEC §panel.i18n): keys are
-  `<module>.<semanticId>` (e.g. `terminal.bar.open`), English lives in `panel/src/locales/en.ts`
-  and every other locale (currently `zh.ts`) carries the same keys; both entries are part of the
-  change, and `npm run check` fails a missing key or a bare literal. A nav label the gateway
+  `<module>.<semanticId>` (e.g. `terminal.bar.open`), English lives in
+  `panel/src/locales/en/*.ts` (one file per area, `en.ts` is the barrel), and `zh/` carries
+  the same files and keys; both entries are part of the change, and `npm run check` fails a
+  missing key or a bare literal. A nav label the gateway
   SERVES as text goes through `wireLabel()` (i18n.ts) instead.
 - **Backend refusals are localized too, not only the panel's own copy** (SPEC §panel.i18n): an
   admin route whose refusal the panel shows answers `{error, code}` through
@@ -181,8 +182,9 @@ why `[profile.dev]` keeps line tables only.
   (`console.changed`) and `error` stays the English sentence for the CLI and the logs. The
   panel says it through `servedError()` (i18n.ts), whose `SERVED_CODES` table maps the code to
   a `served.*` key in both locales. A new refusal adds its code on the server and its key in
-  `en.ts`/`zh.ts` in the same change; never toast a server's English `error` for a refusal
-  the gateway itself writes. Engine and database errors still pass through as sent.
+  the matching part under `locales/en/` and `locales/zh/` in the same change; never toast a
+  server's English `error` for a refusal the gateway itself writes. Engine and database
+  errors still pass through as sent.
 - **LF everywhere.** `.gitattributes` enforces `* text=auto eol=lf`; editors on Windows must not
   convert back.
 - **Write all code comments in English**, including in docs code samples.
