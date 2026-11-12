@@ -31,11 +31,16 @@ The bus adds `bus.unavailable`, `bus.unknown`, `bus.badBody`, `bus.notRelayable`
 Two English sentences predate codes and are mapped by their text: `wireLabel` for a served
 nav label, and `moduleDbMessage` for a module-database refusal.
 
-- **Keys are symbolic**, `<module>.<semanticId>` (`addSheet.addMcp`), in `locales/en.ts` and
-  `locales/zh.ts` (TS sources, about 1,800 entries each). English is a static import and the
-  floor; Chinese is a lazy import. The switch to symbolic keys was one codemod
-  (`panel/scripts/migrate-i18n-keys.mjs`, kept as the record; it only runs on the pre-migration
-  tree).
+- **Keys are symbolic**, `<module>.<semanticId>` (`addSheet.addMcp`). English lives in
+  `locales/en/*.ts` (one file per area; `locales/en.ts` is the barrel) and `locales/zh/`
+  carries the same files and keys (TS sources, about 4,200 entries each). English is a
+  static import and the floor; Chinese is a lazy import of that barrel. The switch to
+  symbolic keys was one codemod (`panel/scripts/migrate-i18n-keys.mjs`, kept as the record;
+  it only runs on the pre-migration tree, and it refuses once `locales/en` is a directory).
+  A prefix lives in exactly one part — `memory`, `llm`, `gallery`, `data-mongo`, `data`
+  (every other `data*` prefix, plus `analysis`), `ops` (process, jobs, logs, runs, remote,
+  tunnels, terminal, traffic) and `shell` (the rest) — and `test/i18n-parts.test.ts`
+  enforces that assignment.
 - `tr(key, vars)` looks up the active dictionary, then English, then answers the key itself.
   `trn(n, oneKey, otherKey, vars)` picks through `Intl.PluralRules` of the installed locale
   (Chinese has only `other`). `tk(key)` is an identity marker for module-level tables: module

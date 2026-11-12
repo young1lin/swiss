@@ -15,8 +15,9 @@
  */
 
 /* The panel's second language (SPEC §panel.i18n). Every visible string is a symbolic key
-   (`<module>.<semanticId>`) wrapped in tr()/trn(); English (locales/en.ts) is the always-loaded
-   floor and Chinese is one flat dictionary fetched on demand. Nothing here probes navigator.language — the
+   (`<module>.<semanticId>`) wrapped in tr()/trn(); English (the locales/en.ts barrel over
+   locales/en/*.ts, one file per area) is the always-loaded floor and Chinese is one flat
+   dictionary fetched on demand. Nothing here probes navigator.language — the
    preference is per-browser (localStorage), exactly like the theme, because it describes
    this screen. Explicit choices follow across open pages through PANEL.PREFS.
 

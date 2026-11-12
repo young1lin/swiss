@@ -25,6 +25,8 @@
  * in the repo as the record of how the migration was performed. A re-run on the
  * ALREADY-migrated tree would treat every symbolic key as English copy and corrupt the
  * call sites and en.ts, so the guard below refuses to start and exits non-zero.
+ * The tables were later split into locales/en/ and locales/zh/; the guard at the top
+ * refuses that tree before a rewrite could destroy the barrels.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -34,6 +36,13 @@ import ts from "typescript";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const panel = path.resolve(here, "..");
 const srcDir = path.join(panel, "src");
+
+/* The split tables: this codemod rewrites locales/en.ts and locales/zh.ts wholesale. */
+const enParts = path.join(srcDir, "locales", "en");
+if (fs.existsSync(enParts) && fs.statSync(enParts).isDirectory()) {
+  console.error("historical migration: the locale tables are split into locales/en/ and locales/zh/");
+  process.exit(1);
+}
 
 /* --- the re-run guard: a tr()/tk()/trn() literal that already reads as a symbolic key
  * (lowercase module dot camelCase id) proves the migration already ran; rewriting again
