@@ -45,6 +45,16 @@ ignore = [
     # macOS targets only, compile-time only. gtk-rs has not moved off it; the ignore goes when
     # they do.
     { id = "RUSTSEC-2024-0370", reason = "compile-time only, under the gtk-rs 0.18 GUI bindings; no fixed release upstream" },
+
+    # RUSTSEC-2026-0459, SQLite before 3.54.0 can hand back uninitialized page-cache memory when
+    # a database is opened beside a crafted -wal whose page size differs from the database's.
+    # The fix rides libsqlite3-sys 0.39, which needs rusqlite 0.41 - and no sqlx release carries
+    # it: the tree is on sqlx 0.9, the newest line there is, and it pins 0.37. swiss opens
+    # SQLite files that it or the admin put on disk - the memory store under the gateway home,
+    # and the files the Data page is pointed at - all on the loopback single-admin host, so the
+    # crafted pair could only read that same admin's own process back to that same admin. The
+    # ignore goes away with the first sqlx that carries libsqlite3-sys >= 0.39.
+    { id = "RUSTSEC-2026-0459", reason = "no fixed sqlx release carries libsqlite3-sys 0.39; swiss opens only its own or the admin's chosen SQLite files on the loopback host" },
 ]
 
 [licenses]
