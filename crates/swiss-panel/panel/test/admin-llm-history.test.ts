@@ -780,7 +780,7 @@ describe("llm history page", () => {
     expect(text("#lhCallsList")).toContain("a fresh round trip");
   });
 
-  // SPEC §bus.resync: notices sent while the link was down are gone, so every WELCOME
+  // SPEC §bus.topics: notices sent while the link was down are gone, so every WELCOME
   // (a reconnect, a same-build gateway restart) re-reads what the page shows, once.
   it("a WELCOME re-reads the lists once; the first WELCOME before mount reads nothing extra", async () => {
     const sock = armHistoryBus();
