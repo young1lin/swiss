@@ -185,7 +185,8 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
     expect(refreshPosts).toBe(0);
     expect(document.body.textContent).toContain("1 outdated");
     document.querySelector<HTMLButtonElement>("#system-skills-update")?.click();
-    await vi.waitFor(() => { expect(document.querySelector("#toast")?.textContent).toContain("Updated 1 copies"); });
+    await vi.waitFor(() => { expect(document.querySelector("#toast")?.textContent).toContain("Updated 1 copy"); });
+    expect(document.querySelector("#toast")?.textContent).not.toContain("copies");
     expect(refreshPosts).toBe(1);
     expect(skillWrites).toEqual([]);
   });

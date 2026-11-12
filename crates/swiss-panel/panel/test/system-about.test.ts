@@ -386,6 +386,24 @@ describe("Settings → System About", () => {
     });
   });
 
+  it("keeps the release notes link apart from the last attempt and titles the whole reason", async () => {
+    const reason = "sha256 mismatch for C:\\Program Files\\swiss\\bin\\swiss.exe.new";
+    statusReply = () => Promise.resolve(jsonResponse(200, {
+      channel: "release", canApply: true, refusal: null, running: false,
+      last: { ok: false, phase: "verify", error: reason, rolledBack: false },
+    }));
+    updateReply = () => Promise.resolve(jsonResponse(200, {
+      current: "0.2.2", currentVersion: "0.2.2 (abc1234)", newer: true, plan: PLAN,
+      latest: { tag: "v9.9.9", url: "https://example.com/notes" },
+    }));
+    await system.mount();
+    document.querySelector<HTMLButtonElement>("#system-about-check")?.click();
+    await vi.waitFor(() => { expect(document.querySelector("#system-about-apply")).not.toBeNull(); });
+    const sub = document.querySelector("[data-about-update] .lrow-sub");
+    expect(sub?.textContent).toContain(`Release notes · Last update failed at verify: ${reason}`);
+    expect(sub?.querySelector("span.muted")?.getAttribute("title")).toBe(`Last update failed at verify: ${reason}`);
+  });
+
   it("reads an attempt that found nothing newer without a via or a size", async () => {
     statusReply = () => Promise.resolve(jsonResponse(200, {
       channel: "release", canApply: true, refusal: null, running: false,

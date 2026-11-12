@@ -165,8 +165,12 @@ function updateRowNode(state: UpdatePhase): HTMLElement {
   const refusal = state.kind === "newer" && statusView.refusal && !updating
     ? servedError({ code: statusView.refusal, error: "" }, "")
     : null;
-  const previous = statusView.last ? h("span", { class: "muted" }, lastText(statusView.last)) : null;
-  const sub = notes || refusal || previous ? [notes, refusal, previous] : null;
+  const lastLine = statusView.last ? lastText(statusView.last) : "";
+  // The sub line is one ellipsized line, so a long failure reason keeps its whole text in the
+  // tooltip, and the parts are kept apart by the same " · " the version row uses.
+  const previous = lastLine ? h("span", { class: "muted", title: lastLine }, lastLine) : null;
+  const parts = [notes, refusal, previous].filter((part) => part != null && part !== "");
+  const sub = parts.length ? parts.flatMap((part, i) => (i ? [" · ", part] : [part])) : null;
   const label = state.kind === "error" ? tr("system.aboutRetry") : tr("system.aboutCheck");
   const newer = state.kind === "newer" ? state : null;
   const plan = newer?.plan ?? null;

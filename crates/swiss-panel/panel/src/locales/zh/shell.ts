@@ -39,7 +39,7 @@ const shell: Record<string, string> = {
   "system.skillFolderMissing": "文件夹缺失",
   "system.skillsOutdated": "{n} 个已过期",
   "system.skillsUpdateAll": "全部更新",
-  "system.skillsUpdated": "已更新 {n} 个副本",
+  "system.skillsUpdated.other": "已更新 {n} 个副本",
   "system.skillsAdd": "添加 Claude 配置目录…",
   "system.skillsAddTitle": "添加 Claude 配置目录",
   "system.skillsAddLabel": "配置目录",

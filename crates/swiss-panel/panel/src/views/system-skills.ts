@@ -20,7 +20,7 @@
 import { $, api, apiJson, toast } from "../util.js";
 import { h } from "../h.js";
 import { currentView } from "../ui-state.js";
-import { servedError, tr } from "../i18n.js";
+import { servedError, tr, trn } from "../i18n.js";
 import { btn, card, closeSheet, iconBtn, note, row, section, sheet, showSheet, tag } from "../ui/index.js";
 import { actionBtn } from "../ui/action.js";
 import { openFieldSheet } from "../ui/sheet.js";
@@ -223,7 +223,7 @@ async function updateAll(): Promise<void> {
     applySkills(result);
     const failed = result.failed || [];
     if (failed.length) toast(failed.join("\n"), true);
-    else toast(tr("system.skillsUpdated", { n: (result.replaced || []).length }));
+    else toast(trn((result.replaced || []).length, "system.skillsUpdated.one", "system.skillsUpdated.other"));
   }
   repaint();
 }
