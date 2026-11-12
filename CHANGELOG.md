@@ -6,6 +6,12 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Settings → System leads with About: the running version, the commit and when it was built,
+  a check for a newer GitHub release that runs only when asked, and a diagnostics copy that
+  counts plugins, MCPs and memory without naming them (SPEC §panel.pages, SPEC §host.cli).
+
 ## [0.2.2] - 2026-11-12
 
 ### Added

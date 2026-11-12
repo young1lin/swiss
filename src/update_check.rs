@@ -19,6 +19,12 @@
 //! stop, replace the exe, start. This command only compares the running build against the
 //! newest GitHub release and prints how to do the replacement by hand; a downloader inside a
 //! resident process would be the opposite of the memory budget this project exists for.
+//!
+//! `GET /api/update/check` calls the same `check` through the [`UpdateCheck`] seam the boot
+//! sequence sets. A composition that leaves the seam unset answers 503 and opens no connection.
+//! The CLI calls `check` directly.
+
+use async_trait::async_trait;
 
 pub const REPO: &str = "young1lin/swiss";
 
@@ -34,6 +40,24 @@ pub struct UpdateInfo {
     /// None: the repository has published no releases yet — a pre-release repo's honest state.
     pub latest: Option<Release>,
     pub newer: bool,
+}
+
+/// One GitHub read. The boot sequence installs [`GithubUpdateCheck`]; tests install a fake,
+/// or nothing, and the route then refuses without building an HTTP client.
+#[async_trait]
+pub trait UpdateCheck: Send + Sync {
+    async fn check(&self) -> Result<UpdateInfo, String>;
+}
+
+/// The provider the real gateway mounts. It does not keep a client between calls.
+pub struct GithubUpdateCheck;
+
+#[async_trait]
+impl UpdateCheck for GithubUpdateCheck {
+    async fn check(&self) -> Result<UpdateInfo, String> {
+        // The free function, not this method: the CLI and this seam share one request.
+        crate::update_check::check().await
+    }
 }
 
 /// The running build's name tag: version plus the build stamp's commit (SPEC §host.daemon).

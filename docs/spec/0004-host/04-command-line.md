@@ -88,7 +88,11 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   `user_path`) that only the boot sequence sets to the OS providers, so no test composition can
   write the host (§testing.rules).
 - **`update`** — checks GitHub for a newer release; updating stays a manual exe swap, then
-  `swiss skill install --installed`.
+  `swiss skill install --installed`. Settings → System asks the same question through
+  `GET /api/update/check` (the boot sequence's `UpdateCheck` seam; the CLI calls `check`
+  directly). The body is `{current, currentVersion, latest: {tag, url} | null, newer}`.
+  A composition that mounted no checker answers 503, and a check that cannot reach GitHub
+  answers 502 `update.unreachable`. Neither path downloads or replaces the binary.
 - **`skill list` / `skill install`** — the embedded `swiss`, `swiss-remote` and `swiss-memory`
   skills, and which of them land is the user's answer:
 

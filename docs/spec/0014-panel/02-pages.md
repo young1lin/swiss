@@ -226,6 +226,13 @@ never shown again, and a forgotten one is re-stored, never revealed.
 
 **System** (`views/system.ts`) owns the machine and runtime settings:
 
+- **About** (`views/system-about.ts`) is first. It shows this build — `swiss <version>`, the
+  commit, and the build time in the reader's locale — with a warn tag when the hash ends in
+  `-dirty`, and copies the `swiss --version` line. **Updates** calls `GET /api/update/check`
+  only when the operator clicks; the page never checks on mount, on WELCOME, or on a timer.
+  A 503 removes that row until the page is left. A newer release links its notes in a new tab.
+  **Diagnostics** copies counts and states only — no names, paths, hostnames, tokens, or
+  connection strings — and a failed read is that line's `unavailable`.
 - **This machine** holds start at sign-in (`/api/autostart`) and swiss on the user's PATH
   (`/api/user-path`): the OS is the store, no revision (§host.cli). A PATH change toasts that
   only new terminals see it. A gateway without a route shows no row for it.

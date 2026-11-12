@@ -1510,6 +1510,17 @@ mod tests {
         // SPEC §host.daemon: "which build is this" is answerable from the binary itself, and the
         // parenthesised pair is exactly what the status command and deploy.ps1 parse.
         let line = version_line();
+        // Byte-identical to the line scripts parse: version, hash, time. The target triple
+        // rides on build_info and stays out of this sentence.
+        assert_eq!(
+            line,
+            format!(
+                "swiss {} ({}, {})",
+                env!("CARGO_PKG_VERSION"),
+                env!("SWISS_GIT_HASH"),
+                env!("SWISS_BUILD_TIME"),
+            ),
+        );
         let rest = line
             .strip_prefix(&format!("swiss {} (", env!("CARGO_PKG_VERSION")))
             .unwrap_or_else(|| panic!("not the version shape: {line}"));

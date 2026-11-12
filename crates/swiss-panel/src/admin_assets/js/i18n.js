@@ -167,6 +167,7 @@ const SERVED_CODES                         = {
   "bus.offline": tk("served.busOffline"),
   "bus.timeout": tk("served.busTimeout"),
   "bus.tooLarge": tk("served.busTooLarge"),
+  "update.unreachable": tk("served.updateUnreachable"),
 };
 
 /** A refusal's words: its code's own copy, filled from `params`; a code this build does not

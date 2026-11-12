@@ -139,7 +139,8 @@ registration (`host/engine.rs`): a silently shadowed route would be a boundary h
 | `/api/tokens…` | §host.tokens — host-owned though the Token page sits in the MCP group, so disabling MCP takes the page off the air but leaves the credential API and CLI serving |
 | `/api/secrets…` | §host.vault |
 | `/api/groups/{scope}…` | §host.groups |
-| `GET /api/info` | `tokenEnv`, `panelVersion`, `build` — the panel reloads itself when the build changes |
+| `GET /api/info` | `tokenEnv`, `panelVersion`, `build` `{hash, time, version, target}` — the panel reloads itself when the build changes |
+| `GET /api/update/check` | `{current, currentVersion, latest: {tag, url} \| null, newer}`. 503 when the composition mounted no checker; 502 `update.unreachable` when GitHub cannot be reached. No download |
 | `GET /api/bus` | the event-bus upgrade (SPEC §bus): one WebSocket per page, one protobuf frame per message. Behind the session gate, and the upgrade must carry an `Origin` naming this `Host` (SPEC §bus.security) |
 | `GET/PUT /api/autostart`, `GET/PUT /api/user-path` | the two OS-level settings (§host.cli); 503 in a composition that mounted no provider |
 | `GET /api/memory[?tree=1]` | §host.memory |
