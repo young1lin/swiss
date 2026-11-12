@@ -12,36 +12,71 @@ import { assetsDir } from "./styles.js";
 
 const writes: { path: string; enabled: boolean }[] = [];
 let skillReads = 0;
-const skillWrites: { name: string; root: string }[] = [];
+const skillWrites: { name: string; root?: string; dir?: string }[] = [];
+const seatPosts: { kind?: string; dir?: string }[] = [];
+const seatDeletes: { dir?: string }[] = [];
+let refreshPosts = 0;
 const installedTargets = new Set<string>();
 let installWait: Promise<void> | null = null;
 let installFailure = false;
-function skillReply(): Response {
-  return new Response(JSON.stringify({ skills: ["swiss", "swiss-memory", "swiss-remote"].map(name => ({
+let markOutdated = false;
+let missingSeat = false;
+let seatInvalid = false;
+function skillDocument(): { skills: unknown[]; seats?: unknown[]; replaced?: string[]; failed?: string[] } {
+  const skills = ["swiss", "swiss-memory", "swiss-remote"].map(name => ({
     name, locations: [".claude", ".agents"].map(root => {
-      const unreadable = name === "swiss" && root === ".agents";
-      const installed = installedTargets.has(name + ":" + root) || (name === "swiss" && root === ".claude");
+      const outdated = markOutdated && name === "swiss" && root === ".agents";
+      const unreadable = name === "swiss" && root === ".agents" && !outdated;
+      const installed = outdated || installedTargets.has(name + ":" + root) || (name === "swiss" && root === ".claude");
       return {
         root, path: "/user/" + root + "/skills/" + name + "/SKILL.md",
         installed: unreadable ? null : installed,
+        ...(outdated ? { state: "outdated" } : {}),
         ...(unreadable ? { error: "permission denied" } : {}),
       };
     }),
-  })) }));
+  }));
+  const seats = missingSeat ? [
+    { kind: "claude", dir: "/user/.claude/skills", source: "env", exists: true },
+    { kind: "agents", dir: "/user/.agents/skills", source: "env", exists: true },
+    { kind: "claude", dir: "/user/gone", source: "ledger", exists: false },
+  ] : undefined;
+  return { skills, ...(seats ? { seats } : {}) };
+}
+function skillReply(): Response {
+  return new Response(JSON.stringify(skillDocument()));
 }
 beforeEach(() => {
   install("en", null);
   setCurrentView("system");
   document.body.innerHTML = '<main id="pane"></main><div id="sheet" hidden></div><div id="toast"></div>';
   writes.length = 0; skillReads = 0;
-  skillWrites.length = 0; installedTargets.clear(); installWait = null; installFailure = false;
+  skillWrites.length = 0; seatPosts.length = 0; seatDeletes.length = 0; refreshPosts = 0;
+  installedTargets.clear(); installWait = null; installFailure = false;
+  markOutdated = false; missingSeat = false; seatInvalid = false;
   vi.stubGlobal("fetch", async (path: string, init?: RequestInit) => {
     if (path === "/api/skills/install") {
-      const target = JSON.parse(String(init?.body)) as { name: string; root: string };
+      const target = JSON.parse(String(init?.body)) as { name: string; root?: string; dir?: string };
       skillWrites.push(target);
       if (installWait) await installWait;
       if (installFailure) return new Response(JSON.stringify({ error: "permission denied" }), { status: 500 });
-      installedTargets.add(target.name + ":" + target.root);
+      installedTargets.add(target.name + ":" + (target.root || target.dir));
+      return skillReply();
+    }
+    if (path === "/api/skills/refresh") {
+      refreshPosts++;
+      const body = skillDocument();
+      body.replaced = ["/user/.agents/skills/swiss/SKILL.md"];
+      body.failed = [];
+      return new Response(JSON.stringify(body));
+    }
+    if (path === "/api/skills/seats" && init?.method === "DELETE") {
+      seatDeletes.push(JSON.parse(String(init.body)) as { dir?: string });
+      return skillReply();
+    }
+    if (path === "/api/skills/seats") {
+      seatPosts.push(JSON.parse(String(init?.body)) as { kind?: string; dir?: string });
+      if (seatInvalid) return new Response(JSON.stringify({ error: "not absolute", code: "skills.seatInvalid" }), { status: 400 });
       return skillReply();
     }
     if (path === "/api/skills") {
@@ -75,14 +110,15 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
   it("shows every skill's two locations and distinguishes missing from an unreadable path", async () => {
     await system.mount();
     const rows = document.querySelectorAll("[data-skill]");
-    expect(rows).toHaveLength(3);
-    const first = rows[0];
-    expect(first?.textContent).toContain("swiss");
-    expect(first?.textContent).toContain("Installed");
-    expect(first?.textContent).toContain("Cannot check");
-    expect(rows[1]?.textContent).toContain("Not installed");
-    expect(first?.querySelector('[data-skill-root=".agents"]')?.getAttribute("title")).toContain("permission denied");
+    expect(rows).toHaveLength(6);
+    expect(document.body.textContent).toContain("Installed");
+    expect(document.body.textContent).toContain("Cannot check");
+    expect(document.body.textContent).toContain("Not installed");
+    expect(document.querySelector('[data-skill-root=".agents"]')?.getAttribute("title")).toContain("permission denied");
     expect(writes).toEqual([]);
+    expect(skillWrites).toEqual([]);
+    expect(seatPosts).toEqual([]);
+    expect(refreshPosts).toBe(0);
     expect(skillReads).toBe(1);
   });
 
@@ -141,6 +177,41 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
     finish?.();
     await vi.waitFor(() => { expect(installedTargets.size).toBe(1); });
     expect(document.querySelector("#pane")?.textContent).toBe("another page");
+  });
+
+  it("updates every outdated copy once, and only when asked", async () => {
+    markOutdated = true;
+    await system.mount();
+    expect(refreshPosts).toBe(0);
+    expect(document.body.textContent).toContain("1 outdated");
+    document.querySelector<HTMLButtonElement>("#system-skills-update")?.click();
+    await vi.waitFor(() => { expect(document.querySelector("#toast")?.textContent).toContain("Updated 1 copies"); });
+    expect(refreshPosts).toBe(1);
+    expect(skillWrites).toEqual([]);
+  });
+
+  it("shows the served reason when a Claude directory cannot be added", async () => {
+    seatInvalid = true;
+    await system.mount();
+    document.querySelector<HTMLButtonElement>("#system-skills-add")?.click();
+    const input = document.querySelector<HTMLInputElement>("#g-name");
+    expect(input).not.toBeNull();
+    if (input) input.value = "relative/claude";
+    document.querySelector<HTMLButtonElement>("#g-save")?.click();
+    await vi.waitFor(() => { expect(document.querySelector("#g-err")?.textContent).toContain("not an absolute directory"); });
+    expect(seatPosts[0]).toEqual({ kind: "claude", dir: "relative/claude" });
+  });
+
+  it("forgets a missing recorded directory and does not offer install there", async () => {
+    missingSeat = true;
+    await system.mount();
+    const missing = document.querySelector("[data-skill-missing]");
+    expect(missing?.textContent).toContain("folder missing");
+    expect(missing?.querySelector("[data-skill-install]")).toBeNull();
+    missing?.querySelector<HTMLButtonElement>("[data-skill-forget]")?.click();
+    expect(document.querySelector("#skill-forget-confirm")).not.toBeNull();
+    document.querySelector<HTMLButtonElement>("#skill-forget-confirm")?.click();
+    await vi.waitFor(() => { expect(seatDeletes).toEqual([{ dir: "/user/gone" }]); });
   });
 });
 

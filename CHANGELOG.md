@@ -11,6 +11,14 @@ All notable changes to swiss are recorded here. The format follows
 - Settings → System leads with About: the running version, the commit and when it was built,
   a check for a newer GitHub release that runs only when asked, and a diagnostics copy that
   counts plugins, MCPs and memory without naming them (SPEC §panel.pages, SPEC §host.cli).
+- Skill seats: an install records the directory it wrote, `swiss skill install --installed`
+  and Settings → System refresh every recorded directory, and `swiss status` names outdated
+  copies when there are some (SPEC §host.cli, SPEC §panel.settings).
+
+### Fixed
+
+- Settings → System follows a Claude config directory recorded by an install, instead of
+  only the directory the gateway process itself was started with.
 
 ## [0.2.2] - 2026-11-12
 

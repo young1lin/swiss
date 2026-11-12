@@ -89,9 +89,37 @@ export interface ApiMcpListResponse {
 /** One MCP row - adminapi.rs:949 builds it; latency/lastCheck/reason/startedAt/oauth are
  *  absent until first value (the Node undefined-drop the comment at adminapi.rs:972 names). */
 /** GET /api/skills: shipped names only; null means a filesystem check was refused. */
+export interface ApiSkillLocation {
+  root: string;
+  kind?: string;
+  dir?: string;
+  source?: string;
+  path: string;
+  installed: boolean | null;
+  state?: string;
+  error?: string;
+}
+
+export interface ApiSkillSeat {
+  kind: string;
+  dir: string;
+  source: string;
+  exists: boolean;
+}
+
 export interface ApiSkillStatus {
   name: string;
-  locations: { root: string; path: string; installed: boolean | null; error?: string }[];
+  description?: string;
+  loadsByItself?: boolean;
+  locations: ApiSkillLocation[];
+}
+
+/** The inspection, and the refresh answer which adds replaced and failed. */
+export interface ApiSkillsResponse {
+  seats?: ApiSkillSeat[];
+  skills?: ApiSkillStatus[];
+  replaced?: string[];
+  failed?: string[];
 }
 
 export type MachineSettingKey = "autostart" | "user-path";

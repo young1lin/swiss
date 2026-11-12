@@ -236,14 +236,16 @@ never shown again, and a forgotten one is re-stored, never revealed.
 - **This machine** holds start at sign-in (`/api/autostart`) and swiss on the user's PATH
   (`/api/user-path`): the OS is the store, no revision (§host.cli). A PATH change toasts that
   only new terminals see it. A gateway without a route shows no row for it.
-- **AI skills** reads `GET /api/skills` on mount and explicit Refresh. Each shipped skill
-  (`swiss`, `swiss-memory`, `swiss-remote`) has one row, with a status for `.claude` and
-  `.agents` (§host.cli). A `SKILL.md` file means installed; a missing file means not installed;
-  an unreadable path means cannot check, with the path and error on hover. The page never
-  installs on mount or Refresh. Each skill/directory cell has a download action that installs
-  or updates only that target through `POST /api/skills/install`; its accessible label names
-  both the skill and directory. Only that cell is disabled during the write. Errors retain
-  the prior status, successful writes update the selected cell, and late responses cannot
-  repaint another page.
+- **AI skills** (`views/system-skills.ts`) reads `GET /api/skills` on mount and explicit Refresh.
+  One table per seat: Claude Code or other agents, the directory, and whether it came from
+  this process, from the ledger, or both. Each shipped skill has its state in that seat.
+  A `missing` ledger seat says "folder missing", offers Forget, and has no install button.
+  When any copy is outdated the section shows "{n} outdated" and **Update all**, which
+  `POST`s `/api/skills/refresh` only on that click. **Add Claude config directory** records
+  a seat and shows the served reason on 400. The page never installs or refreshes on mount
+  or Refresh. A download action installs or updates only that skill in that seat through
+  `POST /api/skills/install` (`{name, root}` for a default seat, `{name, dir}` for a recorded
+  one). Only that cell is disabled during the write. Errors retain the prior status,
+  successful writes update the selected cell, and late responses cannot repaint another page.
 - **Runtime** keeps Quit through a confirming sheet. Quit stays red (the rule 4 exception).
 

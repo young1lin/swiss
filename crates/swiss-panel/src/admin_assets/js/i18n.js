@@ -168,6 +168,9 @@ const SERVED_CODES                         = {
   "bus.timeout": tk("served.busTimeout"),
   "bus.tooLarge": tk("served.busTooLarge"),
   "update.unreachable": tk("served.updateUnreachable"),
+  "skills.unknownDir": tk("served.skillsUnknownDir"),
+  "skills.seatInvalid": tk("served.skillsSeatInvalid"),
+  "skills.seatDefault": tk("served.skillsSeatDefault"),
 };
 
 /** A refusal's words: its code's own copy, filled from `params`; a code this build does not
