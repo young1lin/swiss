@@ -6,6 +6,8 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-12
+
 ### Added
 
 - The Process page's Add sheet has a Template select: pick how dsh starts - `dsh web`, or
@@ -14,7 +16,31 @@ All notable changes to swiss are recorded here. The format follows
   the `--port` in args follows it; empty Ports and `--port` and the image leave with it. dsh
   runs as `node.exe` behind its npm shim, so the image the form guessed from the program
   (`dsh`) read the running app as a conflict with itself; the template sets `node`. The first
-  save locks the select: a sheet kept open by warnings edits the saved app (SPEC §process.panel).
+  save locks the select: a sheet kept open by warnings edits the saved app. The same select
+  offers `cc-otel start`: `~/.cc-otel/cc-otel` start and stop with cc-otel.yaml's ports
+  (4317/4318/8899) and its UI link, and a program's leading `~/` now expands against the
+  home, as dir and log already did (SPEC §process.panel).
+- The panel is live on the event bus, not on a tick: the global 6-second poll is gone. Every
+  page re-reads on WELCOME and then follows its own topics - the memory chip, tokens, the
+  vault, the nav's plugins, the jobs list and Run now, the tunnels table, the MCP call log,
+  traffic and health, terminal sessions, the four LLM pages, and the Remote Targets and Runs
+  pages - and pages looking at the same store share one re-read (SPEC §bus).
+- A run says why it ran. `swiss remote exec`, `sync` and `write` take `--why`, a target
+  briefs before the first command (`swiss remote brief`), and the CLI names the coding agent
+  that ran it - Claude Code, Codex, opencode or DSH - from its own markers or an ancestor's
+  environment, so the record still says who acted after the launcher's variables are scrubbed
+  (SPEC §remote.history).
+- The Why-trail: an opened run can show what the agent was asked and what it ran, read from
+  the agent's own conversation log - gated to that log's shape and masked of secrets before
+  anything is stored or served. A trail search goes on after a gateway restarts, a Codex
+  code-mode cell is the command it runs, counted once, and a message typed while Claude Code
+  works is the trail's ask, and opencode's trail reads its database again; `swiss run audit
+  --session <id>` narrows the audit to the runs one agent conversation submitted
+  (SPEC §remote.history).
+- Tunnels self-heal (SPEC tunnels.selfheal): a channel open waits at most 10s, three
+  unanswered opens judge a wedged session, and the session is probed before it is judged -
+  a late answer closes instead of wedging.
+- The edge of a workspace split can be dragged.
 
 ### Fixed
 
@@ -25,6 +51,19 @@ All notable changes to swiss are recorded here. The format follows
   forgets the text until it opens again. A live row no longer says the text "is not kept":
   it says the text comes with the record, and shows it once the run is filed. A write's body
   still waits for Show (SPEC §remote.panel).
+- A run that commits to the record while the Runs page is reading appears once, not in both
+  of the page's lists.
+- JOBS.LIST follows the facts table, not its file.
+- MCP health: `start_timer` re-arms the health holder `stop_timer` aborted, and the age
+  sweeps publish what they removed.
+- An import lands the vault in the bundle's one batch; a new memory subscriber hears
+  unchanged figures.
+- A start that finds its port held names the holder: the failure says which pid and image
+  hold the port ("port 3080 is held by pid M (node.exe), not the image dsh"), suggests the
+  image fix, and Start with swiss does not retry a conflict.
+- A CRLF script piped to a stdin shell goes with LF.
+- Clearing the run history consults both stores before deciding it moved nothing.
+- A workspace pane narrows instead of pushing the shell past the window.
 
 ## [0.2.1] - 2026-11-08
 

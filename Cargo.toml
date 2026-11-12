@@ -42,7 +42,7 @@ authors = ["young1lin"]
 license = "Apache-2.0"
 repository = "https://github.com/young1lin/swiss"
 rust-version = "1.98"
-version = "0.2.1"
+version = "0.2.2"
 # Shipped as release archives (README, Install), not through crates.io: a stray `cargo publish`
 # would claim ten crate names for one binary. Lift this only with a plan to publish all ten.
 publish = false
@@ -158,8 +158,8 @@ libc = "0.2"
 [dev-dependencies]
 # Test-only: a real MCP client (rmcp's own) against the gateway over a real socket, plus raw-HTTP
 # probes for the 2025-era handshake. Dev-deps do not enter the shipping binary's feature set.
-swiss-core = { path = "crates/swiss-core", version = "0.2.1", features = ["test-utils"] }
-swiss-mcp = { path = "crates/swiss-mcp", version = "0.2.1", features = ["test-utils"] }
+swiss-core = { path = "crates/swiss-core", version = "0.2.2", features = ["test-utils"] }
+swiss-mcp = { path = "crates/swiss-mcp", version = "0.2.2", features = ["test-utils"] }
 rmcp = { version = "3.2", default-features = false, features = [
     "client", "transport-streamable-http-client-reqwest",
 ] }
