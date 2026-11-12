@@ -23,6 +23,7 @@ enum HostSub {
   HOST_SUB_TOKENS = 4;
   HOST_SUB_VAULT = 5;
   HOST_SUB_MEMORY = 6;
+  HOST_SUB_UPDATE = 7;
 }
 
 enum RemoteSeatId {
@@ -101,6 +102,14 @@ message MemoryReading {
   uint32 process_count = 4;
   bool children_pending = 5;
   uint64 at_ms = 6 [jstype = JS_NUMBER];
+}
+
+// HOST.UPDATE (SPEC §bus.registry, ADR-041). Module 4, sub 7.
+// A NOTICE: an apply was accepted or the short-lived updater exited. The About
+// page re-reads GET /api/update/status. The body is empty.
+enum UpdateId {
+  UPDATE_ID_UNSPECIFIED = 0;
+  UPDATE_CHANGED = 1;
 }
 
 

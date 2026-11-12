@@ -229,8 +229,16 @@ never shown again, and a forgotten one is re-stored, never revealed.
 - **About** (`views/system-about.ts`) is first. It shows this build — `swiss <version>`, the
   commit, and the build time in the reader's locale — with a warn tag when the hash ends in
   `-dirty`, and copies the `swiss --version` line. **Updates** calls `GET /api/update/check`
-  only when the operator clicks; the page never checks on mount, on WELCOME, or on a timer.
-  A 503 removes that row until the page is left. A newer release links its notes in a new tab.
+  only when the operator clicks; the page never checks or applies on mount, on WELCOME, or
+  on a timer. A 503 removes that row until the page is left. A newer release links its notes
+  in a new tab. `GET /api/update/status` decides the rest: `canApply` with a plan shows
+  "Update to {tag} ({size})" and a confirm sheet (the download, that open terminals and
+  running runs end, and that the page reloads). A `refusal` shows that sentence instead of
+  the button. `running` shows "Updating…" and no button. `last` is the muted line for the
+  previous attempt, including a failure and "(rolled back)", and "already the newest" for one
+  that found nothing to install. The page subscribes to
+  `HOST.UPDATE` while mounted, re-reads status on that notice and on WELCOME, and drops
+  the subscription when the page is left.
   **Diagnostics** copies counts and states only — no names, paths, hostnames, tokens, or
   connection strings — and a failed read is that line's `unavailable`.
 - **This machine** holds start at sign-in (`/api/autostart`) and swiss on the user's PATH

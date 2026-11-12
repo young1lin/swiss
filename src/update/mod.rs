@@ -23,9 +23,11 @@ pub mod fetch;
 pub mod manifest;
 pub mod patch;
 pub mod replace;
+pub mod spawn;
 
 #[cfg(test)]
 mod tests;
 
 pub use apply::{apply, ApplyEnv, Outcome};
+pub use spawn::{real as real_spawner, InFlight, Spawned, UpdateSpawner};
 pub use check::{channel, check, current_version, is_newer, GithubUpdateCheck, UpdateCheck, UpdateInfo};

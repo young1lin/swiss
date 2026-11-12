@@ -115,10 +115,18 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   update still exits 0. The manual swap remains the path for an app bundle and for a release
   this binary cannot read. Settings → System asks the same check through
   `GET /api/update/check` (the boot sequence's `UpdateCheck` seam; the CLI calls `check`
-  directly). The body is `{current, currentVersion, latest: {tag, url} | null, newer}`.
-  A composition that mounted no checker answers 503, and a check that cannot reach GitHub
-  answers 502 `update.unreachable`. The gateway process does not download or replace the
-  binary.
+  directly). The body is `{current, currentVersion, latest: {tag, url} | null, newer, plan}`
+  where `plan` is `{via, bytes, full} | null` (`via` is `patch` or `full`; `bytes` is the
+  asset that would be fetched). A composition that mounted no checker answers 503, and a
+  check that cannot reach GitHub answers 502 `update.unreachable`. The panel's Update
+  button is `POST /api/update/apply` (202 `{started: true}`, then the child
+  `swiss update --apply --by-panel`). The panel never passes `--force`: a dev build and the same
+  version stay refused there, and forcing is the terminal's call.
+  `GET /api/update/status` is `{channel, canApply, refusal, running, last}`. `running` is
+  true while this process's updater child is alive or `update.lock` names a live pid.
+  `canApply` is false when `refusal` is `update.devBuild`, `update.bundle`,
+  `update.readOnly` or `update.otherExe`. The gateway process does not download or
+  replace the binary.
 - **`skill list` / `skill install`** — the embedded `swiss`, `swiss-remote` and `swiss-memory`
   skills, and which of them land is the user's answer:
 

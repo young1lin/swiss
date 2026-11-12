@@ -699,7 +699,8 @@ It downloads a zstd patch from the previous exe when the local file's SHA-256 ma
 (`zstd --patch-from`, level 19, window log 27), otherwise the full `.zst`, checks the hash,
 probes the new exe, then renames. The decode streams into `<exe>.new` with a running SHA-256,
 so the updater holds only the old exe, as the patch's reference. The gateway only learns about
-an update when that process stops it and starts the new file. A signed manifest is the open item; until then the trust
+an update when that process stops it and starts the new file. The panel's Update button spawns
+the same command and never forces. A signed manifest is the open item; until then the trust
 is HTTPS to GitHub plus the SHA-256 in `update.json`.
 
 Rejected:

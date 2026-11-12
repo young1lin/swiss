@@ -171,6 +171,12 @@ const SERVED_CODES: Record<string, string> = {
   "skills.unknownDir": tk("served.skillsUnknownDir"),
   "skills.seatInvalid": tk("served.skillsSeatInvalid"),
   "skills.seatDefault": tk("served.skillsSeatDefault"),
+  "update.devBuild": tk("served.updateDevBuild"),
+  "update.bundle": tk("served.updateBundle"),
+  "update.readOnly": tk("served.updateReadOnly"),
+  "update.otherExe": tk("served.updateOtherExe"),
+  "update.running": tk("served.updateRunning"),
+  "update.cannotDetach": tk("served.updateCannotDetach"),
 };
 
 /** A refusal's words: its code's own copy, filled from `params`; a code this build does not

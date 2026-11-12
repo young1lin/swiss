@@ -45,6 +45,8 @@ export interface ApiUpdateCheckResponse {
   currentVersion: string;
   latest: { tag: string; url: string } | null;
   newer: boolean;
+  /** The download the CLI would name, when update.json named one. */
+  plan?: { via: "patch" | "full"; bytes: number; full: number } | null;
 }
 
 /** GET /api/memory - swiss-host/src/mem.rs; polled for the footer readout. */

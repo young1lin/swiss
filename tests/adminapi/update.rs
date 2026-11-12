@@ -17,7 +17,7 @@
 //! GET /api/update/check through a fake seam. The real GitHub client stays unbuilt.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use axum::http::StatusCode;
@@ -142,4 +142,134 @@ async fn update_check_reports_unreachable() {
     assert_eq!(body["code"], json!("update.unreachable"));
     assert_eq!(body["error"], json!("cannot reach github: offline"));
     assert_eq!(fake.calls(), 1);
+}
+
+struct FakeSpawn {
+    kind: &'static str,
+    calls: AtomicUsize,
+    release: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+#[async_trait]
+impl swiss::update::UpdateSpawner for FakeSpawn {
+    async fn spawn(&self) -> Result<swiss::update::Spawned, swiss::update::apply::Refusal> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        match self.kind {
+            "start" => Ok(swiss::update::Spawned::Started { pid: 42, done: None }),
+            "hold" => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                *self.release.lock().unwrap() = Some(tx);
+                Ok(swiss::update::Spawned::Started { pid: 7, done: Some(rx) })
+            }
+            "detach" => Ok(swiss::update::Spawned::CannotDetach),
+            _ => Err(swiss::update::apply::Refusal {
+                status: 400,
+                code: "update.devBuild",
+                message: "this build was made from source (channel dev); pass --force to replace it".into(),
+            }),
+        }
+    }
+}
+
+impl FakeSpawn {
+    fn release_child(&self) {
+        if let Some(tx) = self.release.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+fn mount_apply(kind: &'static str) -> (super::Harness, Arc<FakeSpawn>) {
+    let fake = Arc::new(FakeSpawn { kind, calls: AtomicUsize::new(0), release: Mutex::new(None) });
+    let seam = fake.clone();
+    let h = setup_with(move |ctx| {
+        let installed: Arc<dyn swiss::update::UpdateSpawner> = seam;
+        let _ = ctx.update_apply.set(installed);
+    });
+    (h, fake)
+}
+
+#[tokio::test]
+async fn unset_update_apply_answers_503() {
+    let h = setup();
+    let (status, body) = h.post("/api/update/apply", json!({})).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["error"], json!("update is not available in this composition"));
+}
+
+#[tokio::test]
+async fn update_apply_accepts_a_spawn_and_refuses_without_one() {
+    let (h, fake) = mount_apply("start");
+    let (status, body) = h.post("/api/update/apply", json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body["started"], json!(true));
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+
+    let (h, fake) = mount_apply("detach");
+    let (status, body) = h.post("/api/update/apply", json!({})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], json!("update.cannotDetach"));
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+
+    let (h, fake) = mount_apply("dev");
+    let (status, body) = h.post("/api/update/apply", json!({})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], json!("update.devBuild"));
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn update_status_is_local_and_always_shaped() {
+    let h = setup();
+    let (status, body) = h.get("/api/update/status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["channel"], json!(swiss::update::channel()));
+    assert_eq!(body["canApply"], json!(false));
+    assert_eq!(body["refusal"], json!("update.devBuild"));
+    assert!(body.get("last").is_some(), "{body}");
+    assert!(body["running"].is_boolean(), "{body}");
+}
+
+#[tokio::test]
+async fn a_running_updater_blocks_a_second_apply_and_publishes_when_it_exits() {
+    let fake = Arc::new(FakeSpawn { kind: "hold", calls: AtomicUsize::new(0), release: Mutex::new(None) });
+    let seam = fake.clone();
+    let run = Arc::new(Mutex::new(None));
+    let slot = run.clone();
+    let h = setup_with(move |ctx| {
+        *slot.lock().unwrap() = Some(ctx.update_run.clone());
+        let installed: Arc<dyn swiss::update::UpdateSpawner> = seam;
+        let _ = ctx.update_apply.set(installed);
+        let _ = ctx.bus.set(swiss_bus::Bus::new(Arc::new(|| "stamp".to_string())));
+    });
+    let (status, body) = h.post("/api/update/apply", json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["started"], json!(true));
+    let (again, body) = h.post("/api/update/apply", json!({})).await;
+    assert_eq!(again, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], json!("update.running"));
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 1, "the second apply must not spawn");
+    fake.release_child();
+    let published = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let guard = run.lock().unwrap();
+            let Some(inflight) = guard.as_ref() else {
+                drop(guard);
+                tokio::task::yield_now().await;
+                continue;
+            };
+            let notes = inflight.published();
+            if notes.iter().any(|(sub, id)| {
+                *sub == swiss_bus::pb::v1::HostSub::Update as u32
+                    && *id == swiss_bus::pb::v1::UpdateId::UpdateChanged as u32
+            }) {
+                assert!(!inflight.running());
+                return;
+            }
+            drop(guard);
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(published.is_ok(), "HOST.UPDATE was not published when the updater exited");
 }

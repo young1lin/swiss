@@ -174,6 +174,11 @@ export enum HostSub {
    * @generated from enum value: HOST_SUB_MEMORY = 6;
    */
   MEMORY = 6,
+
+  /**
+   * @generated from enum value: HOST_SUB_UPDATE = 7;
+   */
+  UPDATE = 7,
 }
 
 /**
@@ -362,4 +367,28 @@ export enum MemoryId {
  * Describes the enum swiss.bus.v1.MemoryId.
  */
 export declare const MemoryIdSchema: GenEnum<MemoryId>;
+
+/**
+ * HOST.UPDATE (SPEC §bus.registry, ADR-041). Module 4, sub 7.
+ * A NOTICE: an apply was accepted or the short-lived updater exited. The About
+ * page re-reads GET /api/update/status. The body is empty.
+ *
+ * @generated from enum swiss.bus.v1.UpdateId
+ */
+export enum UpdateId {
+  /**
+   * @generated from enum value: UPDATE_ID_UNSPECIFIED = 0;
+   */
+  UPDATE_ID_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: UPDATE_CHANGED = 1;
+   */
+  UPDATE_CHANGED = 1,
+}
+
+/**
+ * Describes the enum swiss.bus.v1.UpdateId.
+ */
+export declare const UpdateIdSchema: GenEnum<UpdateId>;
 
