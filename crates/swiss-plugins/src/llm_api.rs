@@ -78,6 +78,7 @@ pub fn mount_with_analysis(state: Arc<LlmState>, services: Arc<RuntimeServices>,
         .route("/api/llm/agents/test/cancel", post(agent_test_cancel))
         .route("/api/llm/agents/test/steer", post(agent_test_steer))
         .route("/api/llm/agents/test/steer/withdraw", post(agent_test_withdraw))
+        .route("/api/llm/agents/run/stream", post(crate::llm_run::stream))
         .route("/api/llm/db/stream", post(crate::llm_db::stream))
         .route("/api/llm/db/conversation", get(crate::llm_db::open_conversation))
         .route("/api/llm/db/conversations", get(crate::llm_db::conversations))
@@ -465,7 +466,7 @@ async fn embedding_test(State(state): State<Arc<LlmState>>, bytes: Bytes) -> Res
 /// The snapshot line naming the working directory, in the Test's environment and in a
 /// later turn's moved note alike: the last one the dialogue holds is what the model was
 /// last told.
-const WORKDIR: &str = "Working directory: ";
+pub(crate) const WORKDIR: &str = "Working directory: ";
 
 /// What the Test's tools reach and how to use them, closing its environment snapshot.
 /// Without it the model guesses at the pin (users paste absolute paths into prompts)
@@ -500,7 +501,7 @@ fn tool_notes(taken: &[&str], secrets: &[(String, String)]) -> String {
 }
 
 /// Names as a person lists them: "a", "a and b", "a, b and c".
-fn spoken(names: &[&str]) -> String {
+pub(crate) fn spoken(names: &[&str]) -> String {
     match names {
         [] => String::new(),
         [one] => one.to_string(),
@@ -511,7 +512,7 @@ fn spoken(names: &[&str]) -> String {
 /// The repository a directory sits in and where its HEAD stands - the branch, or the
 /// commit a detached HEAD names - read from the files git keeps: no git process for a
 /// fact this small. A worktree's or submodule's `.git` file names its real directory.
-fn repository(dir: &std::path::Path) -> Option<String> {
+pub(crate) fn repository(dir: &std::path::Path) -> Option<String> {
     let top = dir.ancestors().find(|at| at.join(".git").exists())?;
     let dot = top.join(".git");
     let git = if dot.is_file() {

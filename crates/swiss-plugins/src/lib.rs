@@ -32,6 +32,7 @@ pub mod llm_api;
 pub mod llm_tools;
 mod llm_db;
 mod llm_db_memory;
+mod llm_run;
 mod llm_search;
 mod llm_test_tools;
 mod llm_secrets;
