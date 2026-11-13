@@ -17,6 +17,7 @@
 import type { ApiDbColumn, ApiDbConnectionRow } from "./types/api.js";
 import type { DbCellMeta } from "./types/state.js";
 import { $, apiJson, el, errText, toast } from "./util.js";
+import { scaled } from "./ui/ui-scale.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbOpenCellEditor } from "./data-cell.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -186,14 +187,15 @@ function dbOpenInlineEdit(kind: "update" | "insert", key: string | null, i: numb
   ta.value = current == null ? "" : String(current);
   ta.style.left = (rect.left - wrapRect.left + wrap.scrollLeft) + "px";
   ta.style.top = (rect.top - wrapRect.top + wrap.scrollTop) + "px";
-  ta.style.minHeight = Math.max(rect.height, 22) + "px";
-  ta.style.width = Math.max(rect.width + 24, 96) + "px";
+  // The editor's floors and cap are px at 100%, at the interface size in force (SPEC §panel.scale).
+  ta.style.minHeight = Math.max(rect.height, scaled(22)) + "px";
+  ta.style.width = Math.max(rect.width + scaled(24), scaled(96)) + "px";
   wrap.appendChild(ta);
   dbInlineEdit = { td: td, ta: ta, kind: kind, key: key, i: i, column: column, meta: meta };
 
   function autoSize(): void {
     ta.style.height = "auto";
-    ta.style.height = Math.min(Math.max(ta.scrollHeight, 22), 320) + "px";
+    ta.style.height = Math.min(Math.max(ta.scrollHeight, scaled(22)), scaled(320)) + "px";
   }
   ta.oninput = autoSize;
   ta.onkeydown = (e: KeyboardEvent): void => {

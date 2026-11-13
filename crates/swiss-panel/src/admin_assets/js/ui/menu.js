@@ -27,6 +27,7 @@
 import { h } from "../h.js";
 import { tr } from "../i18n.js";
 import { iconNode } from "./icon.js";
+import { scaled, scaledCss } from "./ui-scale.js";
 import { heldDot } from "./status.js";
 
 /** One popupMenu row. The union is load-bearing: a separator is { sep: true } with NO
@@ -254,8 +255,9 @@ function popupMenu(anchor                                                       
   // content floor won and the dropdown floated 73px short of the thing that opened it).
   // The anchor's width joins the CSS floor through max(), so a small anchor (a toolbar
   // overflow button) keeps the stylesheet's 160px unchanged.
-  if (anchor.width) node.style.minWidth = window.innerWidth - 16 < Math.max(160, Math.ceil(anchor.width))
-    ? Math.max(0, window.innerWidth - 16) + "px" : "max(160px, " + Math.ceil(anchor.width) + "px)";
+  // 160 is the stylesheet's floor in px at 100%, at the interface size in force (SPEC §panel.scale).
+  if (anchor.width) node.style.minWidth = window.innerWidth - 16 < Math.max(scaled(160), Math.ceil(anchor.width))
+    ? Math.max(0, window.innerWidth - 16) + "px" : "max(" + scaledCss(160) + ", " + Math.ceil(anchor.width) + "px)";
   // Aligned to the button's LEFT edge and growing right, over the detail pane. Right-aligning it
   // instead pushed a sidebar menu back across the list it was opened from, hiding those rows.
   // The clamp itself is clampMenuPos (SPEC §data).

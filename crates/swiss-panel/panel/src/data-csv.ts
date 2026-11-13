@@ -86,7 +86,7 @@ function dbOpenImport(): void {
       h("div", { class: "db-console-row" },
         h("input", { type: "file", id: "dbImpFile", accept: ".csv,text/csv", style: "width:auto" }),
         hint(tr("dataCsv.pasteBelowFirstRow"))),
-      h("textarea", { id: "dbImpText", spellcheck: false, placeholder: tr("dataCsv.idNameN1Alice"), style: "min-height:120px" }),
+      h("textarea", { id: "dbImpText", spellcheck: false, placeholder: tr("dataCsv.idNameN1Alice"), style: "min-height:calc(120px * var(--ui-scale))" }),
       h("div", { id: "dbImpMap", hidden: true }),
       h("div", { id: "dbImpPreview", hidden: true }),
     ],

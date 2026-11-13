@@ -48,6 +48,7 @@
 import type { AttrMap, HChild } from "../h.js";
 import { h } from "../h.js";
 import { grip } from "./grip.js";
+import { scaled } from "./ui-scale.js";
 
 /** A wsSide comes with its grip: the reader sets its width (one for every workspace page) or
  *  folds it away; the --ws-side-w token stays the default. */
@@ -99,9 +100,11 @@ export function wsSplit(o: { fixed: "start" | "end"; start: HChild; end: HChild;
   const edge = grip(atEnd ? end : start, {
     axis: "x", key: o.key ?? (atEnd ? "ws-aside" : "ws-list"), min: atEnd ? 240 : 220, end: atEnd,
     label: (atEnd ? o.endLabel : o.startLabel) ?? "",
+    // Room on screen, as the grip reads a `max` it calls (SPEC §panel.scale): the constants are
+    // px at 100%, so they meet the measured width at the size in force.
     max: () => {
       const room = Math.round(split.getBoundingClientRect().width);
-      return room > 0 ? room - WS_REST_MIN : WS_FIXED_MAX;
+      return room > 0 ? room - scaled(WS_REST_MIN) : scaled(WS_FIXED_MAX);
     },
   });
   split.append(start, edge, end);

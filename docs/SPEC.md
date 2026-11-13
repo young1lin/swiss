@@ -296,6 +296,7 @@ in §decisions.
 - [§panel.nav — Navigation, the shell and page layouts](spec/0014-panel/01-shell.md#panelnav--navigation-the-shell-and-page-layouts)
 - [§panel.design — The design language](spec/0014-panel/01-shell.md#paneldesign--the-design-language)
 - [§panel.code — Code blocks and their colour schemes](spec/0014-panel/01-shell.md#panelcode--code-blocks-and-their-colour-schemes)
+- [§panel.scale — The interface size](spec/0014-panel/01-shell.md#panelscale--the-interface-size)
 - [§panel.ui — The UI library](spec/0014-panel/01-shell.md#panelui--the-ui-library)
 - [§panel.pages — Per-page look rules](spec/0014-panel/02-pages.md#panelpages--per-page-look-rules)
 - [§panel.groups — The grouped list](spec/0014-panel/02-pages.md#panelgroups--the-grouped-list)

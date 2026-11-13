@@ -51,16 +51,26 @@
          picker with the two free to drift apart. */
       color-scheme: light;
 
+      /* Interface size (SPEC §panel.scale): every length from 3px up is written
+         calc(Npx * var(--ui-scale)), so one factor grows the type, the air, the rows and the
+         columns together - the page's own zoom, picked in the header, instead of the browser's.
+         Hairlines (1px, 2px) stay put. <html data-scale> holds the step, set before the first
+         paint like data-theme; no attribute is 100%. The root font size carries the factor too,
+         so a width rule written in rem (@container app, below) moves with it - a px media query
+         cannot. */
+      --ui-scale: 1;
+      font-size: calc(16px * var(--ui-scale));
+
       /* Type ramp — five roles, nothing in between. */
-      --f-title: 22px;      /* pane title */
-      --f-head: 15px;       /* pane description, sheet heading */
-      --f-body: 14px;       /* default */
-      --f-label: 13px;      /* secondary text */
-      --f-caption: 12px;    /* group captions, uppercase */
-      --rail-w: 56px;
-      --rail-seat-h: 42px;
-      --rail-caption: 10px;
-      --context-h: 40px;
+      --f-title: calc(22px * var(--ui-scale));      /* pane title */
+      --f-head: calc(15px * var(--ui-scale));       /* pane description, sheet heading */
+      --f-body: calc(14px * var(--ui-scale));       /* default */
+      --f-label: calc(13px * var(--ui-scale));      /* secondary text */
+      --f-caption: calc(12px * var(--ui-scale));    /* group captions, uppercase */
+      --rail-w: calc(56px * var(--ui-scale));
+      --rail-seat-h: calc(42px * var(--ui-scale));
+      --rail-caption: calc(10px * var(--ui-scale));
+      --context-h: calc(40px * var(--ui-scale));
 
       /* Weight ramp (SPEC §panel.design) - four roles; every font-weight in every sheet is one of these. */
       --w-body: 400;        /* running text, an unselected tab */
@@ -69,52 +79,52 @@
       --w-title: 600;       /* pane, sheet and bar titles */
 
       /* 4pt spacing grid. */
-      --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+      --s1: calc(4px * var(--ui-scale)); --s2: calc(8px * var(--ui-scale)); --s3: calc(12px * var(--ui-scale)); --s4: calc(16px * var(--ui-scale)); --s5: calc(20px * var(--ui-scale)); --s6: calc(24px * var(--ui-scale)); --s8: calc(32px * var(--ui-scale));
 
       /* Content measure. Nothing in the pane is ever full-bleed. */
-      --measure: 920px;
-      --measure-wide: 1180px;
+      --measure: calc(920px * var(--ui-scale));
+      --measure-wide: calc(1180px * var(--ui-scale));
       --chart-line-width: 2px;
 
-      --r-card: 8px;
-      --r-row: 6px;
-      --r-btn: 6px;
-      --r-code: 4px; /* code inside a line of text (ui/markdown.ts) */
-      --sheet-wide: 1040px; /* a wide sheet: a file, a commit, a patch */
+      --r-card: calc(8px * var(--ui-scale));
+      --r-row: calc(6px * var(--ui-scale));
+      --r-btn: calc(6px * var(--ui-scale));
+      --r-code: calc(4px * var(--ui-scale)); /* code inside a line of text (ui/markdown.ts) */
+      --sheet-wide: calc(1040px * var(--ui-scale)); /* a wide sheet: a file, a commit, a patch */
       --sheet-chat-h: 88dvh; /* a chat keeps its input inside the viewport as its transcript grows */
       --r-pill: 980px;
 
       /* Component sizes (SPEC §panel.ui): the few a component needs that are not a step of the 4pt
          scale. A new one lands here, named, before any rule uses it (test/css-literals.test.ts). */
-      --ic-s: 12px;         /* a disclosure chevron */
-      --ic-m: 14px;         /* a glyph inside a button, a menu row */
-      --dot: 6px;           /* the status dot - and so the lead column of a list row */
-      --row-h: 42px;        /* a list row: two lines of text clear it (SPEC §panel.nav) */
-      --f-doc: 18px;        /* a record's title at the head of its detail (ui/workspace.ts docHead) */
+      --ic-s: calc(12px * var(--ui-scale));         /* a disclosure chevron */
+      --ic-m: calc(14px * var(--ui-scale));         /* a glyph inside a button, a menu row */
+      --dot: calc(6px * var(--ui-scale));           /* the status dot - and so the lead column of a list row */
+      --row-h: calc(42px * var(--ui-scale));        /* a list row: two lines of text clear it (SPEC §panel.nav) */
+      --f-doc: calc(18px * var(--ui-scale));        /* a record's title at the head of its detail (ui/workspace.ts docHead) */
       /* The flow (ui/flow.ts): a step's glyph column, and the height past which one side of a
          step's input or output scrolls instead of flooding the flow. */
-      --fl-lead: 16px;
+      --fl-lead: calc(16px * var(--ui-scale));
       --tc-user-max: 82%;
-      --fl-io-h: 280px;
+      --fl-io-h: calc(280px * var(--ui-scale));
       /* The prose cap: a round's thinking and a folded system prompt scroll here, so one
          long thought cannot push the answer and the box below it off the column. */
-      --fl-prose-h: 340px;
+      --fl-prose-h: calc(340px * var(--ui-scale));
       /* A workspace's columns (ui/workspace.ts): the source list, the list a detail is picked
          from, an inspector at the end; each with a narrower step under 1200px. */
-      --ws-side-w: 224px;
-      --ws-side-w-narrow: 184px;
-      --ws-list-w: 360px;
-      --ws-list-w-narrow: 300px;
-      --ws-aside-w: 320px;
+      --ws-side-w: calc(224px * var(--ui-scale));
+      --ws-side-w-narrow: calc(184px * var(--ui-scale));
+      --ws-list-w: calc(360px * var(--ui-scale));
+      --ws-list-w-narrow: calc(300px * var(--ui-scale));
+      --ws-aside-w: calc(320px * var(--ui-scale));
       /* What a split's flexible pane keeps however wide the reader drags the fixed one. */
-      --ws-rest-min: 320px;
+      --ws-rest-min: calc(320px * var(--ui-scale));
       /* An assistant docked at a page's end edge (ui/chat.ts chatPane): its width before the
          reader drags it. */
-      --chat-pane-w: 400px;
+      --chat-pane-w: calc(400px * var(--ui-scale));
       /* The graph's frame (ui/graph.ts): a stage's height, a compact inline one's, and the
          legend's strokes - the canvas's own widths. */
-      --graph-h: 460px;
-      --graph-h-compact: 240px;
+      --graph-h: calc(460px * var(--ui-scale));
+      --graph-h-compact: calc(240px * var(--ui-scale));
       --graph-stroke: 1.5px;
       --graph-stroke-heavy: 2.5px;
 
@@ -185,8 +195,8 @@
       --syn-punct: #080808;
       --shadow-card: 0 0 0 1px var(--sep); /* the hairline ring is the card's whole edge */
       --shadow-btn: none;
-      --shadow-sheet: 0 24px 60px rgba(20, 24, 36, 0.24), 0 0 0 1px var(--sep);
-      --shadow-pop: 0 8px 24px rgba(20, 24, 36, 0.14), 0 0 0 1px var(--sep);
+      --shadow-sheet: 0 calc(24px * var(--ui-scale)) calc(60px * var(--ui-scale)) rgba(20, 24, 36, 0.24), 0 0 0 1px var(--sep);
+      --shadow-pop: 0 calc(8px * var(--ui-scale)) calc(24px * var(--ui-scale)) rgba(20, 24, 36, 0.14), 0 0 0 1px var(--sep);
       /* Scrollbars (SPEC §panel.design) are ink of the text colour, so one declaration serves both themes
          and a surface with its own ground (the terminal stage) re-points the two tokens. */
       --scroll-thumb: color-mix(in srgb, var(--text) 16%, transparent);
@@ -225,8 +235,8 @@
       --amber: #fbbf24;
       --shadow-card: 0 0 0 1px var(--sep), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       --shadow-btn: none;
-      --shadow-sheet: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--sep);
-      --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--sep);
+      --shadow-sheet: 0 calc(24px * var(--ui-scale)) calc(60px * var(--ui-scale)) rgba(0, 0, 0, 0.6), 0 0 0 1px var(--sep);
+      --shadow-pop: 0 calc(8px * var(--ui-scale)) calc(24px * var(--ui-scale)) rgba(0, 0, 0, 0.5), 0 0 0 1px var(--sep);
       --term-bg: #0b0c0e;   /* one step below --bg, so the stage still reads as its own surface */
       --term-bar: #141518;
     }
@@ -304,12 +314,18 @@
 
     /* Browser and desktop share typography and contrast. Only the native shell chrome differs. */
     :root[data-desktop="true"] {
-      --rail-w: 64px;
-      --rail-seat-h: 48px;
-      --rail-caption: 11px;
-      --context-h: 44px;
+      --rail-w: calc(64px * var(--ui-scale));
+      --rail-seat-h: calc(48px * var(--ui-scale));
+      --rail-caption: calc(11px * var(--ui-scale));
+      --context-h: calc(44px * var(--ui-scale));
     }
     :root[data-desktop="true"] .rail-brand { display: none; }
+    /* The interface size steps (SPEC §panel.scale): the header's picks, ui/ui-scale.ts UI_SCALES. */
+    :root[data-scale="90"] { --ui-scale: 0.9; }
+    :root[data-scale="110"] { --ui-scale: 1.1; }
+    :root[data-scale="125"] { --ui-scale: 1.25; }
+    :root[data-scale="150"] { --ui-scale: 1.5; }
+    :root[data-scale="175"] { --ui-scale: 1.75; }
 
     * { box-sizing: border-box; }
     html, body { height: 100%; }
@@ -332,10 +348,10 @@
     /* Thin scrollbars everywhere (SPEC §panel.design): 10px, a rounded thumb inset 3px, no arrows, no
        track. Chromium reads the ::-webkit-scrollbar rules; setting the standard properties too
        would switch those off, so they are for engines without the pseudo-elements (Firefox). */
-    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar { width: calc(10px * var(--ui-scale)); height: calc(10px * var(--ui-scale)); }
     ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
     ::-webkit-scrollbar-button { display: none; }
-    ::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); border: 3px solid transparent; background-clip: padding-box; border-radius: 10px; }
+    ::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); border: calc(3px * var(--ui-scale)) solid transparent; background-clip: padding-box; border-radius: calc(10px * var(--ui-scale)); }
     ::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
     @supports not selector(::-webkit-scrollbar) {
       * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
@@ -344,7 +360,7 @@
 
     /* --- controls ------------------------------------------------------------------------------ */
     button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
-    :focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; border-radius: 6px; }
+    :focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; border-radius: calc(6px * var(--ui-scale)); }
 
     /* --- shell --------------------------------------------------------------------------------- */
     /* The adaptive shell (SPEC §panel.nav, redrawn): a left plugin RAIL for global navigation and
@@ -371,7 +387,7 @@
        cross). In the rail it is the one saturated thing, which is what keeps the rail reading
        as the panel's spine. */
     .rail-brand { display: flex; align-items: center; justify-content: center; padding: var(--s1) 0 var(--s2); }
-    .brand-mark { width: 20px; height: 20px; border-radius: 5px; flex: 0 0 auto; }
+    .brand-mark { width: calc(20px * var(--ui-scale)); height: calc(20px * var(--ui-scale)); border-radius: calc(5px * var(--ui-scale)); flex: 0 0 auto; }
     .rail-nav {
       display: flex; flex-direction: column; gap: 2px;
       padding: 0 var(--s1); min-height: 0; overflow-y: auto;
@@ -397,7 +413,7 @@
       padding: 0 var(--s1);
       color: var(--text-2);
     }
-    .rail-btn .ic { width: 18px; height: 18px; }
+    .rail-btn .ic { width: calc(18px * var(--ui-scale)); height: calc(18px * var(--ui-scale)); }
     /* 10px is the ceiling fitRailLabels starts from (it writes the fitted size inline);
        100% is the seat's content box - the padding above is the air - and the ellipsis is
        the guard of last resort. */
@@ -417,10 +433,11 @@
     /* The memory chip is a control (renderMemory wires a memory-only click): mono because
        the value is a copyable number, .chip.button for the hover affordance. */
     #memChip { font-family: var(--mono); font-size: var(--f-caption); }
-    /* 960px is the support floor: the memory number goes, and so does the dot that only
-       ever separated it from the count - a separator with nothing on its right is an
-       orphan. Found on the post-review walk; the spec's S5 text says the same. */
-    @media (max-width: 960px) { #memChip, #countChip::after { display: none; } }
+    /* 960px (60rem at 100%) is the support floor: the memory number goes, and so does the dot
+       that only ever separated it from the count - a separator with nothing on its right is an
+       orphan. Found on the post-review walk; the spec's S5 text says the same. The width is
+       asked of #app in rem, so a larger interface size reaches the floor sooner (SPEC §panel.scale). */
+    @container app (max-width: 60rem) { #memChip, #countChip::after { display: none; } }
     .chip {
       font-size: var(--f-label); font-variant-numeric: tabular-nums;
       color: var(--text-3); background: none;
@@ -432,7 +449,9 @@
        drawn (SPEC §panel.nav, as revised) — multi-page, single-page and workspace plugins share
        one bar height and one body origin; a workspace changes only how the BODY is framed.
        min-height:0 is what lets the inner scrollers actually scroll inside a flex column. */
-    #app { display: flex; height: 100vh; }
+    /* #app is also the container the shell's width rules ask (container app, in rem): a media
+       query takes px only and would not move with the interface size (SPEC §panel.scale). */
+    #app { display: flex; height: 100vh; container: app / inline-size; }
     .workbench { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     .shell { display: flex; flex: 1; min-height: 0; }
 
@@ -492,7 +511,7 @@
       visibility: hidden; width: 0; min-width: 0; padding: 0; border-right: 0; overflow: hidden;
     }
     body.immersive .ctxbar {
-      height: 40px; padding: 0 var(--s4); overflow: hidden;
+      height: calc(40px * var(--ui-scale)); padding: 0 var(--s4); overflow: hidden;
     }
     /* A workspace may expose one shell-control dock in its own top row. Once the app zone
        is safely in that dock, the context bar owes the page no empty strip at all. */
@@ -512,7 +531,7 @@
 
     /* --- sidebar ------------------------------------------------------------------------------- */
     .sidebar {
-      width: 248px; flex: none; display: flex; flex-direction: column;
+      width: calc(248px * var(--ui-scale)); flex: none; display: flex; flex-direction: column;
       background: var(--sidebar); border-right: 1px solid var(--sep);
     }
     .side-head { display: flex; gap: var(--s1); padding: var(--s3) var(--s2) var(--s1); }
@@ -532,7 +551,7 @@
        method (http / npx / uvx / ...), which is short, uniform, and the thing you actually scan for. */
     .side-row {
       display: flex; align-items: center; gap: var(--s2);
-      width: 100%; height: 30px; flex: none; text-align: left;
+      width: 100%; height: calc(30px * var(--ui-scale)); flex: none; text-align: left;
       padding: 0 var(--s2); border-radius: var(--r-row);
       color: var(--text);
     }
@@ -555,7 +574,7 @@
        pg and http both blue); mono on a 5% wash says "launch method" and nothing else. */
     .side-type {
       flex: none; font-family: var(--mono); font-size: var(--f-caption); font-weight: var(--w-name);
-      white-space: nowrap; padding: 1px 6px; border-radius: 4px;
+      white-space: nowrap; padding: 1px calc(6px * var(--ui-scale)); border-radius: calc(4px * var(--ui-scale));
       color: var(--text-3); background: color-mix(in srgb, var(--text) 5%, transparent);
     }
     /* A type GLYPH carries no box (SPEC §panel.nav): the mark is a label in the row's own
@@ -565,4 +584,4 @@
     .side-type:has(.ic) { padding: 0; background: none; color: var(--text-3); }
     .side-row:hover .side-type:has(.ic),
     .side-row[aria-selected="true"] .side-type:has(.ic) { color: var(--text-2); }
-    .side-type .ic { display: block; width: 14px; height: 14px; }
+    .side-type .ic { display: block; width: calc(14px * var(--ui-scale)); height: calc(14px * var(--ui-scale)); }

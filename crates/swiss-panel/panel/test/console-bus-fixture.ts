@@ -101,7 +101,7 @@ export class ConsolePeer implements BusSocket {
         ...console, revision: BigInt(console.revision), createdAt: BigInt(console.createdAt), updatedAt: BigInt(console.updatedAt), agentTab: console.agentTab ?? undefined, closedAt: console.closedAt == null ? undefined : BigInt(console.closedAt),
       } })) });
   }
-  prefs(choice: { lang?: string; theme?: string; codeScheme?: string }): void {
+  prefs(choice: { lang?: string; theme?: string; codeScheme?: string; uiScale?: string }): void {
     this.receive({ module: Module.PANEL, sub: PanelSub.PREFS, id: PrefsId.PREFS_CHANGED, kind: Kind.RELAY,
       origin: "other-page", body: toBinary(PrefsSchema, create(PrefsSchema, choice)) });
   }

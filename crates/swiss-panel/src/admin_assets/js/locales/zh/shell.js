@@ -311,6 +311,9 @@ const shell                         = {
   "main.codeIntellijDark": "IntelliJ Dark",
   "main.codeGithub": "GitHub（随界面明暗）",
   "main.switchDark": "切换到深色",
+  "main.uiScale": "界面大小",
+  "main.uiScalePct": "{n}%",
+  "main.uiScaleDefault": "{n}%（默认）",
   /* --- menu --- */
   "menu.idleLazyChildWakes": "空闲——还没有子进程，首次请求时唤醒",
   "menu.disabled": "已停用",

@@ -19,11 +19,12 @@
    from views.css, so the file's size is the plainest measure of whether that is happening.
    Frozen at P1a-2 in bytes with LF line endings (a CRLF checkout must not read as growth);
    a commit that shrinks it lowers the number in the same commit. SPEC §panel.ui started it at
-   94,663 bytes. */
+   94,663 bytes. A length is counted as the px it is: the interface size's wrapper,
+   calc(Npx * var(--ui-scale)) (SPEC §panel.scale), is how every length is written, not a shape. */
 import { describe, expect, it } from "vitest";
 import { sheet } from "./styles.js";
 
-const FROZEN_VIEWS_BYTES = 58029; // Traffic uses the shared client dropdown instead of its own table.
+const FROZEN_VIEWS_BYTES = 58022; // The Data container queries' comment, shortened when they went rem (SPEC §panel.scale).
 
 export function lfBytes(css: string): number {
   return Buffer.byteLength(css.replace(/\r\n/g, "\n"), "utf8");
@@ -31,7 +32,7 @@ export function lfBytes(css: string): number {
 
 describe("SPEC §panel.ui - views.css does not grow", () => {
   it("is at or below its frozen size", () => {
-    const n = lfBytes(sheet("views.css"));
+    const n = lfBytes(sheet("views.css").replace(/calc\((-?\d*\.?\d+px) \* var\(--ui-scale\)\)/g, "$1"));
     expect(n, "views.css grew to " + n + " bytes - a new shape belongs in ui.css (and ui/), not in a page's sheet").toBeLessThanOrEqual(FROZEN_VIEWS_BYTES);
   });
 });

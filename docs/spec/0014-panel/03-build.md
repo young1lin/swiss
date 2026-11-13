@@ -49,7 +49,7 @@ nav label, and `moduleDbMessage` for a module-database refusal.
 - `locale()` answers `en` or `zh-CN` and is what every `toLocale*` / `Intl` call receives.
 - **The preference** is `swiss_lang`; absent is English. `navigator.language` is not
   consulted. `<html lang>` follows it. A top-level `await loadLocale()` runs before the first
-  paint. Explicit language, theme and code-scheme choices follow across every open page,
+  paint. Explicit language, theme, code-scheme and interface-size (§panel.scale) choices follow across every open page,
   including the desktop window, on PANEL.PREFS (§bus.registry). Only the changed field is
   relayed. Receiving stores and applies through the same functions without relaying again;
   a received language already on screen and stored neither repaints nor re-navigates. Boot,

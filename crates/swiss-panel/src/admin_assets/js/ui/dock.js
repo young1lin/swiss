@@ -41,15 +41,19 @@
  * builds the dock again from the stored value. A change ends with a window resize event, so
  * the pages that measure their space remeasure.
  *
+ * Sizes are px at 100%, painted through --ui-scale, as a grip's are (ui/grip.ts, SPEC
+ * §panel.scale): the console keeps its share of the column when the interface size changes.
+ *
  * A DOM-only mechanism: no API, no app state. */
 import { h } from "../h.js";
 import { tr } from "../i18n.js";
 import { iconBtn } from "./button.js";
+import { scaledCss, uiScale } from "./ui-scale.js";
 
                            
                                                                                       
               
-                                                              
+                                                                      
                
                                                                                       
               
@@ -128,14 +132,16 @@ export function dock(top             , bar             , bottom             , o 
 
   // The room the top pane may take: the column less the head and what the lower pane keeps.
   const maxOf = ()         => {
-    const room = root.getBoundingClientRect().height - head.getBoundingClientRect().height - o.restMin;
+    const room = (root.getBoundingClientRect().height - head.getBoundingClientRect().height) / uiScale() - o.restMin;
     return Math.max(o.min, Math.round(room) || o.min);
   };
   const paint = ()       => {
     if (st.fold) root.dataset.fold = st.fold;
     else delete root.dataset.fold;
     // Folded down under the head, the lower pane leaves the top pane the whole column.
-    top.style.flex = st.fold === "bottom" ? "1 1 auto" : "0 1 " + st.size + "px";
+    // The basis apart from the shorthand, as ui/grip.ts writes it.
+    top.style.flex = st.fold === "bottom" ? "1 1 auto" : "0 1 auto";
+    if (st.fold !== "bottom") top.style.flexBasis = scaledCss(st.size);
     edge.setAttribute("aria-valuenow", String(st.fold === "top" ? 0 : st.size));
     setIcon(foldBtn, st.fold === "bottom" ? "chevron-up" : "chevron-down",
       tr(st.fold === "bottom" ? "ui.dock.show" : "ui.dock.hide", { name: o.restLabel }));
@@ -159,7 +165,7 @@ export function dock(top             , bar             , bottom             , o 
   // the body carries the mark meanwhile so the cursor holds and no text selects. A folded top
   // pane's drag starts from nothing, and one filling the column (the lower pane folded) from
   // what it fills, so the hand brings either back.
-  let from = 0, base = 0, hi = 0, keep = 0, moved = false, held = false;
+  let from = 0, base = 0, hi = 0, keep = 0, moved = false, held = false, k = 1;
   const control = (t                    )          => {
     const el = t instanceof Element ? t.closest(CONTROL) : null;
     return !!el && head.contains(el);
@@ -168,8 +174,9 @@ export function dock(top             , bar             , bottom             , o 
     if (e.button !== 0 || control(e.target)) return;
     e.preventDefault();
     from = e.clientY;
+    k = uiScale();
     keep = st.size;
-    base = st.fold === "top" ? 0 : st.fold === "bottom" ? Math.round(top.getBoundingClientRect().height) || st.size : st.size;
+    base = st.fold === "top" ? 0 : st.fold === "bottom" ? Math.round(top.getBoundingClientRect().height / k) || st.size : st.size;
     hi = maxOf();
     moved = false;
     held = true;
@@ -179,7 +186,7 @@ export function dock(top             , bar             , bottom             , o 
   });
   head.addEventListener("pointermove", (e              ) => {
     if (!held) return;
-    const dy = e.clientY - from;
+    const dy = (e.clientY - from) / k;
     if (!moved && Math.abs(dy) <= SLOP) return;
     moved = true;
     const raw = base + dy;

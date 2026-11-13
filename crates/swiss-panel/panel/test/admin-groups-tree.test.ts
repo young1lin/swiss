@@ -272,8 +272,8 @@ describe("the CSS contract (over the shipped sheet)", () => {
 
   it("the head is a band in both densities: --sep-soft ground, no tree rail, no folder glyph", () => {
     expect(base).toMatch(/\n    \.grp-head \{[^}]*background: var\(--sep-soft\)/);
-    expect(base).toMatch(/\.grp--side \.grp-head \{ height: 28px/);
-    expect(base).toMatch(/\.grp--page \.grp-head \{ height: 36px/);
+    expect(base).toMatch(/\.grp--side \.grp-head \{ height: calc\(28px \* var\(--ui-scale\)\)/);
+    expect(base).toMatch(/\.grp--page \.grp-head \{ height: calc\(36px \* var\(--ui-scale\)\)/);
     expect(base).not.toMatch(/.grp[^ {]*::before/);
     expect(base).not.toContain("grp-folder");
     // SPEC §panel.design brought i-folder back to the sprite (the tunnel key picker's directory

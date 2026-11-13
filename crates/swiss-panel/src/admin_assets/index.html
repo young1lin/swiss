@@ -42,6 +42,9 @@
          script repaints the chrome later, but the attribute picks CJK glyph variants
          before any of that runs. The default ("en") is already on <html>. */
       try { if (localStorage.getItem("swiss_lang") === "zh-CN") document.documentElement.lang = "zh-CN"; } catch (e) { /* blocked */ }
+      /* The interface size (SPEC §panel.scale): ui/ui-scale.ts scaleStep, before the first paint. */
+      var scale = null; try { scale = localStorage.getItem("swiss_scale"); } catch (e) { /* blocked */ }
+      if (/^(90|110|125|150|175)$/.test(scale || "")) document.documentElement.setAttribute("data-scale", scale);
     })();
   </script>
 <body>
@@ -102,6 +105,7 @@
     <!-- The redis type glyphs (2026-09-28), Lucide path data: string, hash, list, set {braces},
          zset (arrow-up-narrow-wide as i-sort), stream (activity). A key row and its card lead with one. -->
     <symbol id="i-type" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></symbol>
+    <symbol id="i-text-size" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m2.5 18 5-12 5 12"/><path d="M4.2 14h6.6"/><path d="m15 18 3-7 3 7"/><path d="M15.9 16h4.2"/></symbol>
     <symbol id="i-hash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3 8 21"/><path d="m16 3-2 18"/></symbol>
     <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></symbol>
     <symbol id="i-braces" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></symbol>
@@ -186,6 +190,7 @@
       <span class="chip" id="countChip"></span>
       <span class="chip" id="memChip" title="swiss resident set">mem …</span>
       <span class="app-zone" id="appZone">
+        <button class="btn ghost icon" id="scaleBtn" title="Interface size" aria-label="Interface size"><svg class="ic" aria-hidden="true"><use href="#i-text-size"></use></svg></button>
         <button class="btn ghost icon" id="codeBtn" title="Code colors" aria-label="Code colors"><svg class="ic" aria-hidden="true"><use href="#i-palette"></use></svg></button>
         <button class="btn ghost icon" id="themeBtn" title="Appearance" aria-label="Appearance"><svg class="ic" aria-hidden="true"><use href="#i-moon"></use></svg></button>
         <!-- The language flip (SPEC §panel.i18n): its static title is the one target-language

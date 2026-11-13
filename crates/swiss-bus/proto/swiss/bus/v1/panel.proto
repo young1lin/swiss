@@ -14,9 +14,11 @@ enum PrefsId {
   PREFS_CHANGED = 1;
 }
 
-// A language, theme or code-scheme choice. Unset fields did not change.
+// A language, theme, code-scheme or interface-size choice. Unset fields did not change.
 message Prefs {
   optional string lang = 1;
   optional string theme = 2;
   optional string code_scheme = 3;
+  // The interface size step, "90" to "175" (SPEC §panel.scale).
+  optional string ui_scale = 4;
 }

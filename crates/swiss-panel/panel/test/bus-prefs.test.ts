@@ -11,6 +11,7 @@ import { PanelSub, PrefsId, PrefsSchema } from "../src/bus/pb/swiss/bus/v1/panel
 import { LANG_KEY, langPref, locale, toggleLang, tr } from "../src/i18n.js";
 import { CODE_KEY, THEME_KEY } from "../src/util.js";
 import { codeSchemeFor } from "../src/ui/code-scheme.js";
+import { SCALE_KEY, UI_SCALES } from "../src/ui/ui-scale.js";
 
 const pages = vi.hoisted(() => ({ navigate: vi.fn(async () => {}) }));
 const memory = vi.hoisted(() => ({ loads: 0 }));
@@ -150,6 +151,41 @@ it("a received choice of the language already in force neither repaints nor remo
   expect(pages.navigate).toHaveBeenCalledTimes(navigated + 1);
   expect(filter.getAttribute("placeholder")).not.toBe("untouched");
   expect(relays(peer), "received choices never echo").toHaveLength(relayed);
+});
+
+it("the interface size: the header's pick stores, applies and relays once; a received step applies without echo, a stray one is ignored (SPEC §panel.scale)", async () => {
+  const peer = ConsolePeer.current;
+  const relayed = relays(peer).length;
+  const root = document.documentElement;
+  try {
+    document.getElementById("scaleBtn")!.click();
+    const picks = [...document.querySelectorAll<HTMLButtonElement>("#menu button")];
+    expect(picks.map(b => b.textContent)).toEqual(UI_SCALES.map(s => s === "100" ? tr("main.uiScaleDefault", { n: s }) : tr("main.uiScalePct", { n: s })));
+    const big = picks.find(b => b.textContent === tr("main.uiScalePct", { n: "125" }));
+    if (!big) throw new Error("interface size menu missing 125%");
+    big.click();
+    expect(localStorage.getItem(SCALE_KEY)).toBe("125");
+    expect(root.getAttribute("data-scale")).toBe("125");
+    expect(relays(peer).slice(relayed)).toMatchObject([{ uiScale: "125" }]);
+    expect(relays(peer)[relayed].theme).toBeUndefined();
+    expect(relays(peer)[relayed].lang).toBeUndefined();
+
+    peer.prefs({ uiScale: "150" });
+    await settle();
+    expect(localStorage.getItem(SCALE_KEY)).toBe("150");
+    expect(root.getAttribute("data-scale")).toBe("150");
+    peer.prefs({ uiScale: "bogus" });
+    await settle();
+    expect(root.getAttribute("data-scale"), "a stray step changes nothing").toBe("150");
+    peer.prefs({ uiScale: "100" });
+    await settle();
+    expect(localStorage.getItem(SCALE_KEY)).toBeNull();
+    expect(root.hasAttribute("data-scale")).toBe(false);
+    expect(relays(peer), "received choices never echo").toHaveLength(relayed + 1);
+  } finally {
+    localStorage.removeItem(SCALE_KEY);
+    root.removeAttribute("data-scale");
+  }
 });
 
 it("a visible minute of the shell clock reads nothing (SPEC §panel)", async () => {

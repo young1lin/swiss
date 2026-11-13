@@ -49,6 +49,7 @@ import { applyLang, initLangButton, loadLocale, paintChrome, setBusLinePainter, 
 import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
 import type { MenuItem } from "./ui/menu.js";
 import { CODE_SCHEMES, codeSchemeFor } from "./ui/code-scheme.js";
+import { UI_SCALES, scalePref, setScale } from "./ui/ui-scale.js";
 import { closeSheet, initSheet, sheetOpen } from "./ui/sheet.js";
 import { grip } from "./ui/grip.js";
 import { initDesktop } from "./desktop.js";
@@ -173,6 +174,29 @@ $("codeBtn").onclick = (e) => {
   popupMenu($("codeBtn").getBoundingClientRect(), items);
 };
 paintCodeBtn();
+/* The interface size (SPEC §panel.scale): the panel's own zoom beside the theme and the code
+   scheme, so a small 1080p screen reads without zooming the browser. A menu of steps; the pick
+   applies at once, so the open page is the preview. */
+function paintScaleBtn(): void {
+  $("scaleBtn").title = tr("main.uiScale");
+  $("scaleBtn").setAttribute("aria-label", tr("main.uiScale"));
+}
+$("scaleBtn").onclick = (e) => {
+  e.stopPropagation();
+  const cur = scalePref();
+  const items: MenuItem[] = [{ label: tr("main.uiScale"), heading: true, fn: (): void => { /* a heading */ } }];
+  UI_SCALES.forEach((step: string): void => {
+    items.push({
+      label: tr(step === "100" ? "main.uiScaleDefault" : "main.uiScalePct", { n: step }), pick: true, on: step === cur,
+      fn: (): void => {
+        setScale(step);
+        relayPrefs({ uiScale: step });
+      },
+    });
+  });
+  popupMenu($("scaleBtn").getBoundingClientRect(), items);
+};
+paintScaleBtn();
 $("themeBtn").onclick = (e) => {
   e.stopPropagation();
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
@@ -194,7 +218,7 @@ function mountSideGrip(): void {
   shell.insertBefore(grip(side, { axis: "x", key: "side", min: 180, max: 560, label: tr("i18n.mcps"), fold: true }), side.nextSibling);
 }
 mountSideGrip();
-initLangButton((): void => { paintThemeBtn(); paintCodeBtn(); mountSideGrip(); }); // the 文/A flip (SPEC §panel.i18n): hands over the chrome repainters so it stays whole
+initLangButton((): void => { paintThemeBtn(); paintCodeBtn(); paintScaleBtn(); mountSideGrip(); }); // the 文/A flip (SPEC §panel.i18n): hands over the chrome repainters so it stays whole
 // Every dropdown in the panel becomes the shared custom control: what is in the DOM now, plus
 // whatever the views create later (observed), so no view ever opts in or out.
 initSelects();
@@ -228,7 +252,7 @@ watchPluginInventory(); // HOST.PLUGINS for the life of the page (SPEC §host.pl
 watchTokens(); // HOST.TOKENS for the life of the page (SPEC §host.tokens)
 watchMemoryChip(); // HOST.MEMORY while this document is visible (SPEC §host.memory)
 busOnResync(() => { void loadInfo(); }); // /api/info once per WELCOME (SPEC §bus.link)
-initPrefs({ lang: applyLang, theme: (theme) => { setTheme(theme); paintThemeBtn(); }, codeScheme: setCodeScheme });
+initPrefs({ lang: applyLang, theme: (theme) => { setTheme(theme); paintThemeBtn(); }, codeScheme: setCodeScheme, uiScale: setScale });
 
 setInterval(clockTick, 6000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") clockPage(); });

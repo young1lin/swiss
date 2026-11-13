@@ -314,6 +314,9 @@ const shell: Record<string, string> = {
   "main.codeIntellijDark": "IntelliJ Dark",
   "main.codeGithub": "GitHub (light / dark with the theme)",
   "main.switchDark": "Switch to dark",
+  "main.uiScale": "Interface size",
+  "main.uiScalePct": "{n}%",
+  "main.uiScaleDefault": "{n}% (default)",
   /* --- menu --- */
   "menu.idleLazyChildWakes": "idle — lazy: no child yet, wakes on the first request",
   "menu.disabled": "disabled",

@@ -50,6 +50,10 @@
       else if (lang !== "en") {
         try { if (localStorage.getItem("swiss_lang") === "zh-CN") document.documentElement.lang = "zh-CN"; } catch (e) { /* blocked */ }
       }
+      /* The interface size (SPEC §panel.scale): ?scale=125 wins over the panel's own, as for the theme. */
+      var scale = q.get("scale");
+      if (!scale) { try { scale = localStorage.getItem("swiss_scale"); } catch (e) { scale = null; } }
+      if (/^(90|110|125|150|175)$/.test(scale || "")) document.documentElement.setAttribute("data-scale", scale);
     })();
   </script>
 </head>

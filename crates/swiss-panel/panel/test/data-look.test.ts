@@ -867,7 +867,7 @@ describe("the grid's look in views.css (SPEC §panel.pages, §panel.design)", ()
 
   it("the grid draws no vertical lines and its rows are 4px taller", () => {
     expect(rule(".db-grid th, .db-grid td")).not.toContain("border-right");
-    expect(rule(".db-grid td")).toContain("padding-top: 6px");
+    expect(rule(".db-grid td")).toContain("padding-top: calc(6px * var(--ui-scale))");
   });
 
   it("a row's checkbox and delete wait for the row: hover, focus inside, or checked", () => {
